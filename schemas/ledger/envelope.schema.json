@@ -1,0 +1,183 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://nodes.culture.dev/schemas/ledger/envelope.schema.json",
+  "title": "Work ledger record envelope",
+  "description": "The common envelope carried by every work-ledger record (PRD §10.3). Records are immutable; a correction appends a new record whose `supersedes` names the record it replaces (PRD §10.1). Authority is constrained by producer (PRD §10.4) — that rule is enforced at append time by the ledger runtime, not by this schema, because it depends on the caller's authenticated identity rather than on the document alone.",
+  "type": "object",
+  "required": [
+    "id",
+    "schema_version",
+    "record_type",
+    "run_id",
+    "origin",
+    "authority",
+    "subject_ref",
+    "data",
+    "provenance_refs",
+    "supersedes",
+    "created_at",
+    "content_digest"
+  ],
+  "additionalProperties": false,
+  "properties": {
+    "id": {
+      "$ref": "#/$defs/identifier",
+      "description": "Stable identifier of this ledger record, e.g. `ledger_01J...`."
+    },
+    "schema_version": {
+      "type": "string",
+      "pattern": "^nodes\\.culture\\.dev/ledger/v[0-9A-Za-z]+$",
+      "description": "Ledger schema version this record was written against."
+    },
+    "record_type": {
+      "$ref": "#/$defs/recordType"
+    },
+    "run_id": {
+      "$ref": "#/$defs/identifier",
+      "description": "Run this record belongs to. Every record is run-scoped."
+    },
+    "node_run_id": {
+      "oneOf": [
+        {
+          "$ref": "#/$defs/identifier"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "description": "Node run that produced the record, or null for run-level records."
+    },
+    "attempt_id": {
+      "oneOf": [
+        {
+          "$ref": "#/$defs/identifier"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "description": "Attempt that produced the record, or null when the record is not attempt-scoped. Actor identity, graph token, node run, and attempt are separate records (PRD §3.1)."
+    },
+    "origin": {
+      "$ref": "#/$defs/origin"
+    },
+    "authority": {
+      "$ref": "#/$defs/authority"
+    },
+    "subject_ref": {
+      "oneOf": [
+        {
+          "$ref": "#/$defs/identifier"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "description": "What this record is about (a task, a result, a claim). Explicitly null when the record stands alone, e.g. an announcement."
+    },
+    "data": {
+      "type": "object",
+      "description": "Record-type payload. Shape is constrained by the record-type schema that $refs this envelope."
+    },
+    "provenance_refs": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/identifier"
+      },
+      "uniqueItems": true,
+      "description": "Ledger records this one rests on. May be empty, but the field is always present: an absent provenance chain stays explicit rather than implied (PRD §10.5)."
+    },
+    "supersedes": {
+      "oneOf": [
+        {
+          "$ref": "#/$defs/identifier"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "description": "The record this one replaces, or null. Corrections append; they never mutate."
+    },
+    "created_at": {
+      "type": "string",
+      "format": "date-time",
+      "description": "RFC 3339 timestamp at which the record was appended."
+    },
+    "content_digest": {
+      "$ref": "#/$defs/digest",
+      "$comment": "Computed by the ledger runtime over the canonical JSON form of the record (see internal/contracts.CanonicalJSON and .Digest) at append time. A proposed ledger delta (PRD §10.7) is not yet a record and carries no envelope; it is a separate shape.",
+      "description": "sha256 digest of the canonical form of this record."
+    }
+  },
+  "$defs": {
+    "identifier": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 128,
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9_.:@/+-]*$"
+    },
+    "digest": {
+      "type": "string",
+      "pattern": "^sha256:[0-9a-f]{64}$"
+    },
+    "recordType": {
+      "type": "string",
+      "description": "MVP record types (PRD §10.2). Additional domain record types may be registered by schema later, but may not redefine core authority semantics.",
+      "enum": [
+        "announcement",
+        "claim",
+        "assumption",
+        "question",
+        "task",
+        "decision",
+        "success_signal",
+        "evidence",
+        "result",
+        "review"
+      ]
+    },
+    "authority": {
+      "type": "string",
+      "description": "Core authority values (PRD §10.4). No actor promotes its own proposal by changing this field; the ledger runtime enforces the producer/authority matrix.",
+      "enum": [
+        "proposed",
+        "confirmed",
+        "observed",
+        "derived",
+        "rejected",
+        "superseded"
+      ]
+    },
+    "origin": {
+      "type": "object",
+      "description": "Who produced the record. Identity is not execution (PRD §7): the actor named here is the producer, not necessarily the executor of the underlying work.",
+      "required": [
+        "kind",
+        "actor_id"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "kind": {
+          "type": "string",
+          "enum": [
+            "agent",
+            "human",
+            "runner",
+            "service",
+            "engine",
+            "validator"
+          ]
+        },
+        "actor_id": {
+          "$ref": "#/$defs/identifier"
+        },
+        "actor_revision": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 256,
+          "description": "Producer revision (model build, runner revision, validator version) when the producer can report one."
+        }
+      }
+    }
+  }
+}

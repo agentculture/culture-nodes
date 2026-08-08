@@ -1,0 +1,99 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://nodes.culture.dev/schemas/ledger/task.schema.json",
+  "title": "Ledger record: task",
+  "description": "A bounded unit of work with dependencies and acceptance conditions (PRD §10.2, §10.6). Execution status and assurance state are separate axes: an actor may drive execution to `completed` by producing a result, but only acceptance checks, a verifier, or an authorized review can make the assurance state `verified`.",
+  "allOf": [
+    {
+      "$ref": "envelope.schema.json"
+    }
+  ],
+  "required": [
+    "record_type"
+  ],
+  "properties": {
+    "record_type": {
+      "const": "task"
+    },
+    "data": {
+      "type": "object",
+      "$comment": "Phase 0: payload shape is deliberately loose — properties are optional and no additionalProperties bound is set. The property names come from the PRD §10.6 task anatomy so authors and adapters converge on one vocabulary before a later task pins the contract.",
+      "properties": {
+        "goal": {
+          "type": "string",
+          "minLength": 1
+        },
+        "announcement_ref": {
+          "type": "string"
+        },
+        "owner_ref": {
+          "type": "string"
+        },
+        "assigned_actor_id": {
+          "type": "string"
+        },
+        "actor_requirements": {
+          "type": "object"
+        },
+        "depends_on": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "contract": {
+          "type": "object"
+        },
+        "permitted_operations": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "success_signal_refs": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "resource_budget": {
+          "type": "object"
+        },
+        "status": {
+          "type": "string",
+          "enum": [
+            "proposed",
+            "ready",
+            "claimed",
+            "running",
+            "blocked",
+            "completed",
+            "failed",
+            "cancelled"
+          ]
+        },
+        "assurance_state": {
+          "type": "string",
+          "enum": [
+            "unverified",
+            "evidence_attached",
+            "verified",
+            "rejected"
+          ]
+        },
+        "result_refs": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "evidence_refs": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        }
+      }
+    }
+  }
+}

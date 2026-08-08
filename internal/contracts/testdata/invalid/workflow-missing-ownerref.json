@@ -1,0 +1,40 @@
+{
+  "apiVersion": "nodes.culture.dev/v1alpha1",
+  "kind": "Workflow",
+  "metadata": {
+    "name": "minimal",
+    "version": "0.1.0",
+    "ownerRef": "team/platform-ai",
+    "description": "INVALID FIXTURE: the build node has no ownerRef. Ownership is architecture (PRD 9.4) - every node carries a resolved owner, so the omission must be reported at /spec/nodes/build/ownerRef."
+  },
+  "spec": {
+    "entry": "build",
+    "contract": {
+      "input": {
+        "schemaRef": "./contracts/change-request.schema.json"
+      },
+      "output": {
+        "schemaRef": "./contracts/delivery-result.schema.json"
+      }
+    },
+    "nodes": {
+      "build": {
+        "kind": "agent",
+        "uses": "actor://company/developer@sha256:333333"
+      },
+      "finish": {
+        "kind": "end",
+        "ownerRef": "team/platform-ai",
+        "output": {
+          "from": "/nodes/build/output"
+        }
+      }
+    },
+    "edges": [
+      {
+        "from": "build.completed",
+        "to": "finish"
+      }
+    ]
+  }
+}

@@ -1,0 +1,40 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://nodes.culture.dev/schemas/ledger/decision.schema.json",
+  "title": "Ledger record: decision",
+  "description": "A selected option and the authority that selected it (PRD §10.2). The selecting authority is carried by the envelope's `origin` and `authority`, not restated in the payload.",
+  "allOf": [
+    {
+      "$ref": "envelope.schema.json"
+    }
+  ],
+  "required": [
+    "record_type"
+  ],
+  "properties": {
+    "record_type": {
+      "const": "decision"
+    },
+    "data": {
+      "type": "object",
+      "$comment": "Phase 0: payload shape is deliberately loose. Named properties are optional and documentary; a later task pins the payload contract per record type.",
+      "properties": {
+        "question": {
+          "type": "string"
+        },
+        "selected": {
+          "type": "string"
+        },
+        "options": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "rationale": {
+          "type": "string"
+        }
+      }
+    }
+  }
+}

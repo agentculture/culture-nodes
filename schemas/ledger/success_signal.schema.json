@@ -1,0 +1,40 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://nodes.culture.dev/schemas/ledger/success_signal.schema.json",
+  "title": "Ledger record: success_signal",
+  "description": "A mechanically inspectable condition for acceptance (PRD §10.2, §10.10). Success signals are executable assertions where possible — encoded as tests or validators, not stated in prose.",
+  "allOf": [
+    {
+      "$ref": "envelope.schema.json"
+    }
+  ],
+  "required": [
+    "record_type"
+  ],
+  "properties": {
+    "record_type": {
+      "const": "success_signal"
+    },
+    "data": {
+      "type": "object",
+      "$comment": "Phase 0: payload shape is deliberately loose. `check.kind` is intentionally an open string until the check registry lands with the compiler.",
+      "properties": {
+        "statement": {
+          "type": "string"
+        },
+        "check": {
+          "type": "object",
+          "properties": {
+            "kind": {
+              "type": "string"
+            }
+          }
+        },
+        "mechanical": {
+          "type": "boolean",
+          "description": "False means the signal is not yet machine-checkable, and says so instead of implying it is."
+        }
+      }
+    }
+  }
+}

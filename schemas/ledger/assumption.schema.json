@@ -1,0 +1,36 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://nodes.culture.dev/schemas/ledger/assumption.schema.json",
+  "title": "Ledger record: assumption",
+  "description": "A premise allowed temporarily but not confirmed (PRD §10.2). An assumption stays visible in the open-assumptions projection until it is confirmed as a claim or rejected.",
+  "allOf": [
+    {
+      "$ref": "envelope.schema.json"
+    }
+  ],
+  "required": [
+    "record_type"
+  ],
+  "properties": {
+    "record_type": {
+      "const": "assumption"
+    },
+    "data": {
+      "type": "object",
+      "$comment": "Phase 0: payload shape is deliberately loose. Named properties are optional and documentary; a later task pins the payload contract per record type.",
+      "properties": {
+        "statement": {
+          "type": "string",
+          "minLength": 1
+        },
+        "expires_at": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "risk_if_wrong": {
+          "type": "string"
+        }
+      }
+    }
+  }
+}

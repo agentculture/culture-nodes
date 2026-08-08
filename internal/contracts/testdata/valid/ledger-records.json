@@ -1,0 +1,255 @@
+[
+  {
+    "id": "ledger_fixture_announcement",
+    "schema_version": "nodes.culture.dev/ledger/v1alpha1",
+    "record_type": "announcement",
+    "run_id": "run_fixture",
+    "node_run_id": null,
+    "attempt_id": null,
+    "origin": {
+      "kind": "agent",
+      "actor_id": "actor_intake"
+    },
+    "authority": "proposed",
+    "subject_ref": null,
+    "data": {
+      "headline": "Deliver the change request end to end.",
+      "scope": "One repository, one change set."
+    },
+    "provenance_refs": [],
+    "supersedes": null,
+    "created_at": "2026-08-08T15:00:00Z",
+    "content_digest": "sha256:34e3b793022d2bd1e7e3c3b2e04a87e80fefa1d9ab3b8c8375f43378785d21a9"
+  },
+  {
+    "id": "ledger_fixture_claim",
+    "schema_version": "nodes.culture.dev/ledger/v1alpha1",
+    "record_type": "claim",
+    "run_id": "run_fixture",
+    "node_run_id": "nr_fixture_build",
+    "attempt_id": "att_fixture_build_1",
+    "origin": {
+      "kind": "agent",
+      "actor_id": "actor_developer"
+    },
+    "authority": "proposed",
+    "subject_ref": "ledger_fixture_task",
+    "data": {
+      "statement": "The change set builds against the pinned workspace."
+    },
+    "provenance_refs": [],
+    "supersedes": null,
+    "created_at": "2026-08-08T15:10:00Z",
+    "content_digest": "sha256:8ac6e4bb9b54d3fe7cb1823694feeb21852a7c258e702df107f264ccf62a1ffd"
+  },
+  {
+    "id": "ledger_fixture_assumption",
+    "schema_version": "nodes.culture.dev/ledger/v1alpha1",
+    "record_type": "assumption",
+    "run_id": "run_fixture",
+    "node_run_id": "nr_fixture_intake",
+    "attempt_id": "att_fixture_intake_1",
+    "origin": {
+      "kind": "agent",
+      "actor_id": "actor_intake"
+    },
+    "authority": "proposed",
+    "subject_ref": null,
+    "data": {
+      "statement": "The target repository already has a test suite.",
+      "risk_if_wrong": "The verification node has nothing mechanical to check."
+    },
+    "provenance_refs": [],
+    "supersedes": null,
+    "created_at": "2026-08-08T15:01:00Z",
+    "content_digest": "sha256:d47253d9b84fac918ded8fbffe29076ed91ed6f56931cab3d1aeaa4127b0d06a"
+  },
+  {
+    "id": "ledger_fixture_question",
+    "schema_version": "nodes.culture.dev/ledger/v1alpha1",
+    "record_type": "question",
+    "run_id": "run_fixture",
+    "node_run_id": "nr_fixture_intake",
+    "attempt_id": "att_fixture_intake_1",
+    "origin": {
+      "kind": "agent",
+      "actor_id": "actor_intake"
+    },
+    "authority": "proposed",
+    "subject_ref": null,
+    "data": {
+      "question": "Which environment should the change be verified against?",
+      "blocking": true
+    },
+    "provenance_refs": [],
+    "supersedes": null,
+    "created_at": "2026-08-08T15:02:00Z",
+    "content_digest": "sha256:c09d7b1a01bef9878f572b6f4dcf2c8f66aa779a28fb466ef82cf5b0fc1e7d92"
+  },
+  {
+    "id": "ledger_fixture_task",
+    "schema_version": "nodes.culture.dev/ledger/v1alpha1",
+    "record_type": "task",
+    "run_id": "run_fixture",
+    "node_run_id": "nr_fixture_plan",
+    "attempt_id": "att_fixture_plan_1",
+    "origin": {
+      "kind": "agent",
+      "actor_id": "actor_planner"
+    },
+    "authority": "proposed",
+    "subject_ref": null,
+    "data": {
+      "goal": "Add the missing handler and its test.",
+      "owner_ref": "team/developer-experience",
+      "depends_on": [],
+      "status": "ready",
+      "assurance_state": "unverified"
+    },
+    "provenance_refs": [
+      "ledger_fixture_announcement"
+    ],
+    "supersedes": null,
+    "created_at": "2026-08-08T15:05:00Z",
+    "content_digest": "sha256:a0b3ab797d78c6b43759993022d2c7173270794fcc57189cf851e4838abdb0f5"
+  },
+  {
+    "id": "ledger_fixture_decision",
+    "schema_version": "nodes.culture.dev/ledger/v1alpha1",
+    "record_type": "decision",
+    "run_id": "run_fixture",
+    "node_run_id": "nr_fixture_plan",
+    "attempt_id": "att_fixture_plan_1",
+    "origin": {
+      "kind": "human",
+      "actor_id": "user_ori"
+    },
+    "authority": "confirmed",
+    "subject_ref": "ledger_fixture_question",
+    "data": {
+      "question": "Which environment should the change be verified against?",
+      "selected": "staging",
+      "options": [
+        "staging",
+        "production"
+      ],
+      "rationale": "Production verification needs an approval this run does not have."
+    },
+    "provenance_refs": [
+      "ledger_fixture_question"
+    ],
+    "supersedes": null,
+    "created_at": "2026-08-08T15:06:00Z",
+    "content_digest": "sha256:a3979f1dacdbcc879bda5a5fb7b9b17bfb97e0b647b583e45e4da63d5176c9ae"
+  },
+  {
+    "id": "ledger_fixture_success_signal",
+    "schema_version": "nodes.culture.dev/ledger/v1alpha1",
+    "record_type": "success_signal",
+    "run_id": "run_fixture",
+    "node_run_id": "nr_fixture_plan",
+    "attempt_id": "att_fixture_plan_1",
+    "origin": {
+      "kind": "agent",
+      "actor_id": "actor_planner"
+    },
+    "authority": "proposed",
+    "subject_ref": "ledger_fixture_task",
+    "data": {
+      "statement": "The pinned test suite exits zero in the pinned image.",
+      "check": {
+        "kind": "process_exit"
+      },
+      "mechanical": true
+    },
+    "provenance_refs": [],
+    "supersedes": null,
+    "created_at": "2026-08-08T15:07:00Z",
+    "content_digest": "sha256:61a1ff0d1a59f5fd7703e23ff7ee0ca9656ef81cd9adab5539fa5099f1bd388f"
+  },
+  {
+    "id": "ledger_fixture_evidence",
+    "schema_version": "nodes.culture.dev/ledger/v1alpha1",
+    "record_type": "evidence",
+    "run_id": "run_fixture",
+    "node_run_id": "nr_fixture_test",
+    "attempt_id": "att_fixture_test_1",
+    "origin": {
+      "kind": "runner",
+      "actor_id": "runner_headspace_docker"
+    },
+    "authority": "observed",
+    "subject_ref": "ledger_fixture_result",
+    "data": {
+      "producer_id": "runner_headspace_docker",
+      "collection_method": "runner_wait_status",
+      "observed_at": "2026-08-08T15:20:00Z",
+      "covered_scope": "Exit status of the pinned test command.",
+      "completeness": "complete",
+      "measurements": {
+        "exit_code": 0
+      }
+    },
+    "provenance_refs": [],
+    "supersedes": null,
+    "created_at": "2026-08-08T15:20:01Z",
+    "content_digest": "sha256:7f227db1653b6b723b07c8f2f6eb488f1f09e2f083ca7a3f5e02bbb274f5ff2e"
+  },
+  {
+    "id": "ledger_fixture_result",
+    "schema_version": "nodes.culture.dev/ledger/v1alpha1",
+    "record_type": "result",
+    "run_id": "run_fixture",
+    "node_run_id": "nr_fixture_verify",
+    "attempt_id": "att_fixture_verify_1",
+    "origin": {
+      "kind": "agent",
+      "actor_id": "actor_verifier"
+    },
+    "authority": "proposed",
+    "subject_ref": "ledger_fixture_task",
+    "data": {
+      "outcome": "changes_required",
+      "claim_refs": [
+        "ledger_fixture_claim"
+      ],
+      "evidence_refs": [
+        "ledger_fixture_evidence"
+      ]
+    },
+    "provenance_refs": [
+      "ledger_fixture_evidence"
+    ],
+    "supersedes": null,
+    "created_at": "2026-08-08T15:25:00Z",
+    "content_digest": "sha256:2c7c748f1bc57e7fa4807c88b652b4536bbf325f31157ee1b0d1f75ba9aac7b7"
+  },
+  {
+    "id": "ledger_fixture_review",
+    "schema_version": "nodes.culture.dev/ledger/v1alpha1",
+    "record_type": "review",
+    "run_id": "run_fixture",
+    "node_run_id": null,
+    "attempt_id": null,
+    "origin": {
+      "kind": "human",
+      "actor_id": "user_ori"
+    },
+    "authority": "confirmed",
+    "subject_ref": "ledger_fixture_claim",
+    "data": {
+      "verdict": "confirm",
+      "reviewed_refs": [
+        "ledger_fixture_claim"
+      ],
+      "ledger_version": "42",
+      "reviewer_authority": "group/platform-ai-approvers"
+    },
+    "provenance_refs": [
+      "ledger_fixture_evidence"
+    ],
+    "supersedes": null,
+    "created_at": "2026-08-08T15:30:00Z",
+    "content_digest": "sha256:645c107549c386dbd8f9e7e2beb7ce74a2f4277d24a95498a148ed65a3697b6c"
+  }
+]

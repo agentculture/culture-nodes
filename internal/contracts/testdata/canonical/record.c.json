@@ -1,0 +1,16 @@
+{
+      "data"   :   {
+            "nested"    : { "b" : true , "c" : false , "a" : null } ,
+            "numbers"   : [ 0 , 1 , -3 , 2.5 , 1e3 , 1.0 , 123456789012345678901234567890 ] ,
+            "empty_arr" : [ ] ,
+            "text"      : "héllo \"quoted\" <tag> & ampersand\ttab" ,
+            "empty_obj" : { }
+      } ,
+      "authority"       : "proposed" ,
+      "id"              : "ledger_1" ,
+      "supersedes"      : null ,
+      "record_type"     : "claim" ,
+      "created_at"      : "2026-08-08T15:00:00Z" ,
+      "content_digest"  : "sha256:9615a8946bdad6740751c9a2fe5b2dd0720a6794b5891dd6ab5c023a46406d87" ,
+      "provenance_refs" : [ ]
+}

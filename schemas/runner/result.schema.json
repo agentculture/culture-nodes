@@ -1,0 +1,329 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://nodes.culture.dev/schemas/runner/result.schema.json",
+  "title": "Runner result",
+  "description": "The structured result a runner returns for an operation (PRD §13.7), kept runner-neutral. Isolation is not truth: a result is trustworthy because the operation was typed, the policy enforced, the inputs immutable, and each observation attributed with declared completeness. Every result therefore declares, per observation, whether the runner directly measured the fact and whether the measurement covers the whole declared scope. Text printed by the executed process is process-reported content and is never an observation about that process's own behaviour.",
+  "type": "object",
+  "required": [
+    "operation_id",
+    "state",
+    "timing",
+    "environment",
+    "changes",
+    "observations"
+  ],
+  "additionalProperties": false,
+  "properties": {
+    "operation_id": {
+      "$ref": "#/$defs/identifier"
+    },
+    "state": {
+      "type": "string",
+      "description": "Technical state of the operation. It is not a domain outcome: mapping a result onto a node's declared outcome is the engine's job (PRD §3.4).",
+      "enum": [
+        "completed",
+        "failed",
+        "timed_out",
+        "cancelled",
+        "rejected"
+      ]
+    },
+    "exit": {
+      "type": "object",
+      "description": "Process exit as observed by the runner. Required when the operation actually ran.",
+      "required": [
+        "code",
+        "signal"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "code": {
+          "oneOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "Exit code, or null when the process did not exit normally. Null is explicit, never a stand-in zero."
+        },
+        "signal": {
+          "oneOf": [
+            {
+              "type": "string",
+              "minLength": 1
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      }
+    },
+    "timing": {
+      "type": "object",
+      "required": [
+        "started_at",
+        "finished_at",
+        "duration_ms"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "started_at": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "finished_at": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "duration_ms": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "billed_duration_ms": {
+          "type": "integer",
+          "minimum": 0,
+          "description": "Reported by runners that bill execution, e.g. a managed function platform."
+        }
+      }
+    },
+    "environment": {
+      "type": "object",
+      "description": "Digests that make the operation replayable (PRD §13.7). Re-execution may still be nondeterministic when dependencies, clocks, randomness, or network were allowed; the ledger records those allowances rather than claiming hermetic behaviour.",
+      "required": [
+        "runner_revision",
+        "image_digest",
+        "policy_digest"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "runner_revision": {
+          "$ref": "#/$defs/digest"
+        },
+        "image_digest": {
+          "$ref": "#/$defs/digest"
+        },
+        "input_digest": {
+          "oneOf": [
+            {
+              "$ref": "#/$defs/digest"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "Digest of the input workspace, or null when the operation had no workspace."
+        },
+        "policy_digest": {
+          "$ref": "#/$defs/digest"
+        },
+        "platform_request_id": {
+          "type": "string",
+          "minLength": 1,
+          "description": "Platform-assigned execution identity when the runner's platform issues one."
+        },
+        "memory_mib": {
+          "type": "integer",
+          "minimum": 1
+        }
+      }
+    },
+    "changes": {
+      "type": "object",
+      "description": "Workspace changes. `complete` is true only when the runner controlled and compared the entire relevant workspace (PRD §10.5). A runner that cannot compare the workspace reports `complete: false` — it does not omit the field.",
+      "required": [
+        "complete"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "complete": {
+          "type": "boolean"
+        },
+        "paths": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "uniqueItems": true
+        },
+        "snapshot_digest": {
+          "$ref": "#/$defs/digest"
+        },
+        "diff_artifact_ref": {
+          "type": "string",
+          "minLength": 1
+        },
+        "truncated": {
+          "type": "boolean",
+          "description": "True when the path list was bounded and does not enumerate every change."
+        }
+      }
+    },
+    "artifacts": {
+      "type": "object",
+      "description": "References to stored artifacts. Log references point at complete stored logs even when the inline capture was bounded.",
+      "properties": {
+        "stdout_ref": {
+          "type": "string",
+          "minLength": 1
+        },
+        "stderr_ref": {
+          "type": "string",
+          "minLength": 1
+        },
+        "output_workspace_ref": {
+          "type": "string",
+          "minLength": 1
+        },
+        "result_payload_ref": {
+          "type": "string",
+          "minLength": 1,
+          "description": "Set when the result payload exceeded the transport limit and was stored out of band."
+        }
+      },
+      "additionalProperties": {
+        "type": "string",
+        "minLength": 1
+      }
+    },
+    "resource_usage": {
+      "type": "object",
+      "description": "Resource measurements the runner directly observed. Report only what was measured; its completeness is declared in `observations`.",
+      "additionalProperties": true,
+      "properties": {
+        "max_memory_mib": {
+          "type": "number",
+          "minimum": 0
+        },
+        "cpu_seconds": {
+          "type": "number",
+          "minimum": 0
+        }
+      }
+    },
+    "observations": {
+      "type": "object",
+      "description": "Per-observation honesty declarations. The four named keys are required so every adapter states, for each core fact, whether it measured it and whether the measurement was complete. Additional runner-specific observations may be added.",
+      "required": [
+        "exit_status",
+        "changed_paths",
+        "logs",
+        "resource_usage"
+      ],
+      "properties": {
+        "exit_status": {
+          "$ref": "#/$defs/observation"
+        },
+        "changed_paths": {
+          "$ref": "#/$defs/observation"
+        },
+        "logs": {
+          "$ref": "#/$defs/observation",
+          "description": "Covers capture of the process's output stream — not the truth of anything the process printed."
+        },
+        "resource_usage": {
+          "$ref": "#/$defs/observation"
+        }
+      },
+      "additionalProperties": {
+        "$ref": "#/$defs/observation"
+      }
+    },
+    "error": {
+      "type": "object",
+      "description": "Set when `state` is not `completed`. `retryable` is a declaration by the adapter: only explicitly retryable categories are retried automatically (PRD §13.5).",
+      "required": [
+        "kind",
+        "retryable"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "kind": {
+          "type": "string",
+          "enum": [
+            "retryable_transport",
+            "rate_limited",
+            "runner_unavailable",
+            "rejected_input",
+            "auth_or_policy",
+            "contract_failure",
+            "execution_failure",
+            "timeout",
+            "cancellation"
+          ]
+        },
+        "retryable": {
+          "type": "boolean"
+        },
+        "message": {
+          "type": "string"
+        }
+      }
+    }
+  },
+  "allOf": [
+    {
+      "$comment": "An operation that ran to completion must report the exit it observed; a rejected or cancelled operation need not.",
+      "if": {
+        "properties": {
+          "state": {
+            "const": "completed"
+          }
+        },
+        "required": [
+          "state"
+        ]
+      },
+      "then": {
+        "required": [
+          "exit"
+        ]
+      }
+    }
+  ],
+  "$defs": {
+    "identifier": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 128,
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9_.:@/+-]*$"
+    },
+    "digest": {
+      "type": "string",
+      "pattern": "^sha256:[0-9a-f]{64}$"
+    },
+    "observation": {
+      "type": "object",
+      "description": "One attributed observation. `measured` says the runner itself determined the fact; `complete` says the determination covers the whole declared scope. Both false is a legitimate, honest answer.",
+      "required": [
+        "measured",
+        "complete"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "measured": {
+          "type": "boolean"
+        },
+        "complete": {
+          "type": "boolean"
+        },
+        "method": {
+          "type": "string",
+          "minLength": 1,
+          "description": "How the fact was determined, e.g. `runner_wait_status`, `workspace_snapshot_diff`, `platform_report`."
+        },
+        "scope": {
+          "type": "string",
+          "minLength": 1,
+          "description": "What the observation covers. Never widened beyond what was actually inspected."
+        },
+        "note": {
+          "type": "string",
+          "description": "Why an observation is absent or partial, when it is."
+        }
+      }
+    }
+  }
+}

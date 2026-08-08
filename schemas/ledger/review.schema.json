@@ -1,0 +1,52 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://nodes.culture.dev/schemas/ledger/review.schema.json",
+  "title": "Ledger record: review",
+  "description": "A confirmation, rejection, or requested revision (PRD §10.2, §10.8). Review is explicit and transactional: a batch confirm/reject is all-or-nothing, and a review that names a stale ledger version or frame checksum is rejected rather than applied to changed work.",
+  "allOf": [
+    {
+      "$ref": "envelope.schema.json"
+    }
+  ],
+  "required": [
+    "record_type"
+  ],
+  "properties": {
+    "record_type": {
+      "const": "review"
+    },
+    "data": {
+      "type": "object",
+      "$comment": "Phase 0: payload shape is deliberately loose — properties are optional and no additionalProperties bound is set. The property names come from the PRD §10.8 review transaction.",
+      "properties": {
+        "verdict": {
+          "type": "string",
+          "enum": [
+            "confirm",
+            "reject",
+            "changes_requested"
+          ]
+        },
+        "reviewed_refs": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "ledger_version": {
+          "type": "string"
+        },
+        "frame_checksum": {
+          "type": "string"
+        },
+        "reviewer_authority": {
+          "type": "string",
+          "description": "The authority under which the reviewer acted, e.g. an approver group reference."
+        },
+        "comment": {
+          "type": "string"
+        }
+      }
+    }
+  }
+}

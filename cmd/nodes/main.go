@@ -22,6 +22,7 @@ Modes:
   validate   validate a workflow or contract definition
   run        start a workflow run
   inspect    inspect ledger records for a run
+  migrate    apply pending PostgreSQL migrations (NODES_DATABASE_URL or --database-url)
 `
 
 var modes = map[string]bool{
@@ -32,6 +33,7 @@ var modes = map[string]bool{
 	"validate":  true,
 	"run":       true,
 	"inspect":   true,
+	"migrate":   true,
 }
 
 func main() {
@@ -44,6 +46,11 @@ func main() {
 	if !modes[mode] {
 		fmt.Fprintf(os.Stderr, "nodes: unknown mode %q\n\n%s", mode, usage)
 		os.Exit(1)
+	}
+
+	// migrate is wired up (task t6); every other mode is still a scaffold.
+	if mode == "migrate" {
+		os.Exit(runMigrate(os.Args[2:]))
 	}
 
 	fmt.Fprintf(os.Stderr, "nodes: mode %q is not implemented yet (scaffold)\n", mode)

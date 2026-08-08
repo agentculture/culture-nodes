@@ -79,8 +79,13 @@ func commands() map[string]handlerFunc {
 	for _, name := range processModes {
 		m[name] = stubModeHandler(name)
 	}
+	// Implemented process modes replace their stub. Registered after the loop
+	// so adding one is a single line and the stub list stays the source of
+	// truth for what is still outstanding.
 	m["serve"] = cmdServe
 	m["all"] = cmdAll
+	m["worker"] = cmdWorker
+	m["scheduler"] = cmdScheduler
 	return m
 }
 

@@ -25,8 +25,8 @@ var explainCatalog = map[string]string{
 	"cli overview": explainCLI,
 
 	"serve":     explainServe,
-	"scheduler": explainStubMode("scheduler", "run the scheduler process"),
-	"worker":    explainStubMode("worker", "run the worker process"),
+	"scheduler": explainScheduler,
+	"worker":    explainWorker,
 	"all":       explainAll,
 	"validate":  explainValidate,
 	"run":       explainStubMode("run", "start a workflow run"),

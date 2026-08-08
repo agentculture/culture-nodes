@@ -16,6 +16,9 @@ Numbered SQL migrations for the authoritative PostgreSQL store (prd-spec
   trigger), `ledger_reviews`, `ledger_projection_versions`.
 - `0004_observability.sql` — `artifacts`, `events`, `outbox`,
   `idempotency_keys`.
+- `0005_queue_signals.sql` — `queue_signals` (disposable delivery storage
+  for the Postgres queue driver, `internal/queue/postgres`; not
+  authoritative state -- see the file's header comment).
 
 ## Policy
 

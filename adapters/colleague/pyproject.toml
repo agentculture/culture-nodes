@@ -1,0 +1,43 @@
+[project]
+name = "culture-nodes-colleague-bridge"
+version = "0.1.0"
+description = "Reference actor-protocol bridge: dispatches Culture Nodes invocations to a colleague subprocess. Runs OUTSIDE the culture-nodes deployment, beside a colleague repo checkout."
+readme = "README.md"
+license = "Apache-2.0"
+requires-python = ">=3.12"
+authors = [{name = "AgentCulture"}]
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Programming Language :: Python :: 3.12",
+    "License :: OSI Approved :: Apache Software License",
+    "Topic :: Software Development",
+    "Intended Audience :: Developers",
+]
+# Stdlib-only runtime deps (h13 / c15 reference-adapter constraint): the
+# bridge talks HTTP via http.server/urllib and shells out to the `colleague`
+# binary via subprocess — nothing here may grow a PyPI dependency graph the
+# bridge's host has to reconcile with colleague's own venv.
+dependencies = []
+
+[project.urls]
+Homepage = "https://github.com/agentculture/culture-nodes"
+Issues = "https://github.com/agentculture/culture-nodes/issues"
+
+[project.scripts]
+colleague-bridge = "colleague_bridge.__main__:main"
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/colleague_bridge"]
+
+[dependency-groups]
+dev = [
+    "pytest>=8.0",
+]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-ra"

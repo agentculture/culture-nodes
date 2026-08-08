@@ -1,0 +1,21 @@
+-- 0007_ledger_origin_actor_revision.sql
+--
+-- The ledger envelope (prd-spec §10.3) carries `origin.actor_revision` --
+-- the producer's revision: a model build, a runner revision digest, a
+-- validator version. `ledger_records` (migration 0003) has a column for
+-- every other envelope field but not that one, so a record carrying it
+-- could not be stored without losing it, and a lost field means the
+-- record's content digest no longer verifies when it is read back. Both of
+-- the reference records in schemas/examples set it.
+--
+-- Storing a producer's revision is the difference between "a runner
+-- observed this" and "runner revision sha256:… observed this", which is
+-- what makes evidence attributable at all (prd-spec §10.5).
+--
+-- Expand-contract policy (docs/adr/0002-migration-policy.md): this is an
+-- expand migration. The column is nullable with no default and no
+-- constraint, so a binary that predates it keeps reading and writing
+-- `ledger_records` exactly as before -- it simply never populates a column
+-- it does not know about. Nothing is dropped, renamed, or tightened.
+
+ALTER TABLE ledger_records ADD COLUMN IF NOT EXISTS origin_actor_revision TEXT;

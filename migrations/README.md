@@ -19,6 +19,11 @@ Numbered SQL migrations for the authoritative PostgreSQL store (prd-spec
 - `0005_queue_signals.sql` — `queue_signals` (disposable delivery storage
   for the Postgres queue driver, `internal/queue/postgres`; not
   authoritative state -- see the file's header comment).
+- `0006_artifact_blobs.sql` — `artifact_blobs` (small-artifact BYTEA store)
+  plus the `artifacts(namespace_id, uri)` unique index.
+- `0007_ledger_origin_actor_revision.sql` — expand-only: adds
+  `ledger_records.origin_actor_revision`, the one prd-spec §10.3 envelope
+  field `0003` had no column for.
 
 ## Policy
 

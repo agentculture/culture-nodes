@@ -11,9 +11,10 @@ Purpose
 -------
 Agent-first entry point for Culture Nodes, the durable ledger-native
 workflow orchestrator described in docs/initial-design/. Today it exposes
-introspection verbs (this command family) and recognizes — but does not
-yet implement — the process-lifecycle modes (serve, scheduler, worker,
-all, validate, run, inspect); those land in later build-plan tasks.
+introspection verbs (this command family), compiles workflow definitions
+(validate), and recognizes — but does not yet implement — the
+process-lifecycle modes (serve, scheduler, worker, all, run, inspect);
+those land in later build-plan tasks.
 
 Commands
 --------
@@ -23,7 +24,8 @@ Commands
   nodes overview            One-paragraph descriptive snapshot.
   nodes doctor               Environment/identity checks.
   nodes cli overview         Describe the CLI surface itself.
-  nodes serve|scheduler|worker|all|validate|run|inspect
+  nodes validate <file>      Compile a workflow definition; report diagnostics.
+  nodes serve|scheduler|worker|all|run|inspect
                              Recognized process modes (not implemented yet).
 
 Machine-readable output
@@ -68,6 +70,7 @@ func newLearnPayload() learnPayload {
 		{Path: []string{"overview"}, Summary: "One-paragraph descriptive snapshot."},
 		{Path: []string{"doctor"}, Summary: "Environment/identity checks."},
 		{Path: []string{"cli", "overview"}, Summary: "Describe the CLI surface itself."},
+		{Path: []string{"validate"}, Summary: "Compile a workflow definition and report diagnostics."},
 	}
 	for _, mode := range processModes {
 		commands = append(commands, learnCommand{

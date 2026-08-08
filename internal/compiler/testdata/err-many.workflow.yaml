@@ -1,0 +1,45 @@
+apiVersion: nodes.culture.dev/v1alpha1
+kind: Workflow
+
+metadata:
+  name: many
+  version: 1.0.0
+  ownerRef: team/platform-ai
+
+spec:
+  entry: ghost
+
+  contract:
+    input:
+      schemaRef: ./contracts/in.schema.json
+    output:
+      schemaRef: ./contracts/out.schema.json
+
+  limits:
+    maxTransitions: 8
+    maxVisitsPerNode: 2
+
+  nodes:
+    start:
+      kind: agent
+      ownerRef: team/platform-ai
+      uses: actor://company/start@sha256:aaaaaa
+      contract:
+        outcomes:
+          completed:
+            schemaRef: ./contracts/start.schema.json
+      input:
+        bindings:
+          a: /nodes/missing/output
+          b: /ledger/projections/nope
+
+    finish:
+      kind: end
+      ownerRef: team/platform-ai
+      output:
+        from: /nodes/start/output
+
+  edges:
+    - from: start.completed
+      to: finish
+      when: 1 +

@@ -1,0 +1,87 @@
+# A workflow that routes a *technical* status. `build.timed_out` is not a
+# domain outcome — no contract declares it — but PRD §3.4's engine statuses
+# may still originate an edge, which is how a workflow sends a timeout
+# somewhere useful instead of ending the run.
+#
+# The distinction this fixture exists to keep visible: build.completed is a
+# domain outcome and follows an edge because the actor answered; build.timed_out
+# follows an edge because the *dispatch* failed and the author said where a
+# failed dispatch should go. The node run is failed either way the second case
+# happens; the run is not.
+apiVersion: nodes.culture.dev/v1alpha1
+kind: Workflow
+
+metadata:
+  name: engine-technical-route
+  version: 1.0.0
+  ownerRef: team/platform-ai
+
+spec:
+  entry: build
+
+  contract:
+    input:
+      schema:
+        type: object
+    output:
+      schema:
+        type: object
+
+  limits:
+    maxDuration: 1h
+    maxTransitions: 8
+    maxVisitsPerNode: 4
+    maxParallelTokens: 1
+
+  nodes:
+    build:
+      kind: agent
+      ownerRef: team/platform-ai
+      uses: actor://company/builder@sha256:111111
+      input:
+        from: /run/input
+      contract:
+        outcomes:
+          completed:
+            schema:
+              type: object
+      policy:
+        timeout: 1m
+        retry:
+          maxAttempts: 1
+          backoff: none
+
+    repair:
+      kind: agent
+      ownerRef: team/platform-ai
+      uses: actor://company/repair@sha256:222222
+      contract:
+        outcomes:
+          completed:
+            schema:
+              type: object
+              required: [repaired]
+              properties:
+                repaired:
+                  type: boolean
+      policy:
+        timeout: 1m
+        retry:
+          maxAttempts: 1
+          backoff: none
+
+    finish:
+      kind: end
+      ownerRef: team/platform-ai
+      output:
+        from: /nodes/repair/output
+
+  edges:
+    - from: build.completed
+      to: finish
+
+    - from: build.timed_out
+      to: repair
+
+    - from: repair.completed
+      to: finish

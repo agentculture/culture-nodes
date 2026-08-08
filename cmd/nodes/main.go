@@ -35,6 +35,9 @@ Introspection:
   doctor             environment/identity checks
   cli overview       describe the CLI surface itself
 
+Database:
+  migrate            apply pending schema migrations (NODES_DATABASE_URL)
+
 Process modes (recognized, not yet implemented):
   serve  scheduler  worker  all  validate  run  inspect
 
@@ -62,6 +65,11 @@ func commands() map[string]handlerFunc {
 		"overview": cmdOverview,
 		"doctor":   cmdDoctor,
 		"cli":      cmdCLI,
+		// migrate predates full clifmt wiring: runMigrate owns its own
+		// stream/exit contract (results stdout, error:/hint: stderr).
+		"migrate": func(args []string, _ bool) (int, error) {
+			return runMigrate(args), nil
+		},
 	}
 	for _, name := range processModes {
 		m[name] = stubModeHandler(name)

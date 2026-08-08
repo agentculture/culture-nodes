@@ -313,12 +313,12 @@ func TestConformance_DoctorHealthyFromRepoRoot(t *testing.T) {
 }
 
 func TestConformance_StubModeIsCliErrorNotResult(t *testing.T) {
-	// "scheduler" stands in for a still-stubbed process mode; "serve" and
-	// "all" are real as of this task (cmd/nodes/serve.go) and are exercised
-	// by internal/api's own suite and TestConformance_ServeRequiresDatabaseURL
+	// "run" stands in for a still-stubbed process mode; serve/all/scheduler/
+	// worker are all real now (serve.go, worker.go, scheduler.go) and are
+	// exercised by their own suites and TestConformance_ServeRequiresDatabaseURL
 	// below instead.
 	dir := t.TempDir()
-	r := runNodes(t, dir, "scheduler")
+	r := runNodes(t, dir, "run")
 
 	assertNeverMixed(t, r)
 	if r.Stdout != "" {

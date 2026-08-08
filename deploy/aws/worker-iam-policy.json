@@ -1,0 +1,68 @@
+{
+  "Version": "2012-10-17",
+  "Statement": [
+    {
+      "Sid": "InvokeRegisteredCodeRunnerFunctions",
+      "Effect": "Allow",
+      "Action": [
+        "lambda:InvokeFunction"
+      ],
+      "Resource": [
+        "arn:aws:lambda:us-east-1:000000000000:function:culture-nodes-runner-default",
+        "arn:aws:lambda:us-east-1:000000000000:function:culture-nodes-runner-tests"
+      ]
+    },
+    {
+      "Sid": "ReadRegisteredFunctionPinning",
+      "Effect": "Allow",
+      "Action": [
+        "lambda:GetFunction"
+      ],
+      "Resource": [
+        "arn:aws:lambda:us-east-1:000000000000:function:culture-nodes-runner-default",
+        "arn:aws:lambda:us-east-1:000000000000:function:culture-nodes-runner-tests"
+      ]
+    },
+    {
+      "Sid": "DenyInvokeOutsideRegisteredFunctions",
+      "Effect": "Deny",
+      "Action": [
+        "lambda:InvokeFunction",
+        "lambda:InvokeFunctionUrl"
+      ],
+      "NotResource": [
+        "arn:aws:lambda:us-east-1:000000000000:function:culture-nodes-runner-default",
+        "arn:aws:lambda:us-east-1:000000000000:function:culture-nodes-runner-tests"
+      ]
+    },
+    {
+      "Sid": "ArtifactBucketObjects",
+      "Effect": "Allow",
+      "Action": [
+        "s3:GetObject",
+        "s3:PutObject",
+        "s3:DeleteObject"
+      ],
+      "Resource": [
+        "arn:aws:s3:::culture-nodes-artifacts-000000000000/artifacts/*"
+      ]
+    },
+    {
+      "Sid": "ArtifactBucketListing",
+      "Effect": "Allow",
+      "Action": [
+        "s3:ListBucket"
+      ],
+      "Resource": [
+        "arn:aws:s3:::culture-nodes-artifacts-000000000000"
+      ],
+      "Condition": {
+        "StringLike": {
+          "s3:prefix": [
+            "artifacts/*"
+          ]
+        }
+      }
+    }
+  ]
+}

@@ -1,7 +1,7 @@
 [project]
-name = "culture-agent-template"
+name = "culture-nodes"
 version = "0.6.1"
-description = "culture-agent-template — a clonable template for AgentCulture mesh agents."
+description = "A workflow front and framework for Culture. Composes mesh agents and their verbs into node-based workflows — define a graph of nodes, run it across the Culture mesh, and inspect what each node did."
 readme = "README.md"
 license = "Apache-2.0"
 requires-python = ">=3.12"
@@ -16,18 +16,18 @@ classifiers = [
 dependencies = []
 
 [project.urls]
-Homepage = "https://github.com/agentculture/culture-agent-template"
-Issues = "https://github.com/agentculture/culture-agent-template/issues"
+Homepage = "https://github.com/agentculture/culture-nodes"
+Issues = "https://github.com/agentculture/culture-nodes/issues"
 
 [project.scripts]
-culture-agent-template = "culture_agent_template.cli:main"
+nodes = "culture_nodes.cli:main"
 
 [build-system]
 requires = ["hatchling"]
 build-backend = "hatchling.build"
 
 [tool.hatch.build.targets.wheel]
-packages = ["culture_agent_template"]
+packages = ["culture_nodes"]
 
 [dependency-groups]
 dev = [
@@ -42,10 +42,10 @@ dev = [
 ]
 
 [tool.coverage.run]
-source = ["culture_agent_template"]
-omit = ["culture_agent_template/__pycache__/*"]
+source = ["culture_nodes"]
+omit = ["culture_nodes/__pycache__/*"]
 # Emit repo-relative paths in coverage.xml so SonarCloud maps them to
-# sonar.sources=culture_agent_template (absolute/.venv paths fail to map → empty coverage).
+# sonar.sources=culture_nodes (absolute/.venv paths fail to map → empty coverage).
 relative_files = true
 
 [tool.coverage.report]
@@ -60,7 +60,7 @@ exclude_lines = [
 [tool.isort]
 profile = "black"
 line_length = 100
-known_first_party = ["culture_agent_template"]
+known_first_party = ["culture_nodes"]
 
 [tool.black]
 line-length = 100

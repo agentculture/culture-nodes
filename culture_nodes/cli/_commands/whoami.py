@@ -1,4 +1,4 @@
-"""``culture-agent-template whoami`` — the smallest identity probe.
+"""``culture-nodes whoami`` — the smallest identity probe.
 
 Reports the agent's identity as declared in ``culture.yaml``: its nick
 (``suffix``), the backend it runs on, and the served model (if any) — plus the
@@ -13,10 +13,10 @@ from __future__ import annotations
 import argparse
 from pathlib import Path
 
-from culture_agent_template import __version__
-from culture_agent_template.cli._output import emit_result
+from culture_nodes import __version__
+from culture_nodes.cli._output import emit_result
 
-_FALLBACK_NICK = "culture-agent-template"
+_FALLBACK_NICK = "culture-nodes"
 
 
 def find_culture_yaml() -> Path | None:

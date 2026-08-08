@@ -1,4 +1,4 @@
 agents:
-- suffix: culture-agent-template
+- suffix: culture-nodes
   backend: colleague
   model: sakamakismile/Qwen3.6-27B-Text-NVFP4-MTP

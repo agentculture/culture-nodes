@@ -1,0 +1,41 @@
+{
+  "operation_id": "op_fixture_missing_observation",
+  "state": "completed",
+  "exit": {
+    "code": 0,
+    "signal": null
+  },
+  "timing": {
+    "started_at": "2026-08-08T15:00:00Z",
+    "finished_at": "2026-08-08T15:01:12Z",
+    "duration_ms": 72000
+  },
+  "environment": {
+    "runner_revision": "sha256:26951e7ab41e0d560d84c11d196fb79378c4f4f5986392115bb7ca48009e1677",
+    "image_digest": "sha256:0604fdb7edd7a8eacbcbdebdf7aad00db03650efd7f927f4b16f6cd0e0c3747e",
+    "input_digest": null,
+    "policy_digest": "sha256:ca7acf0a841461bfd3e8d38fa0a80f7c7131dcc59c95d225f5c0987bfad35973"
+  },
+  "changes": {
+    "complete": false,
+    "paths": []
+  },
+  "observations": {
+    "exit_status": {
+      "measured": true,
+      "complete": true,
+      "method": "runner_wait_status"
+    },
+    "logs": {
+      "measured": true,
+      "complete": true,
+      "method": "stream_capture_to_artifact",
+      "note": "INVALID FIXTURE: the changed_paths observation is missing. A runner that cannot compare the workspace says so; it does not omit the declaration and leave the reader to assume coverage. The omission must be reported at /observations/changed_paths."
+    },
+    "resource_usage": {
+      "measured": false,
+      "complete": false,
+      "note": "Not measured by this runner."
+    }
+  }
+}

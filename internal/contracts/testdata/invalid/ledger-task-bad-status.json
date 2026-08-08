@@ -1,0 +1,23 @@
+{
+  "id": "ledger_fixture_bad_task_status",
+  "schema_version": "nodes.culture.dev/ledger/v1alpha1",
+  "record_type": "task",
+  "run_id": "run_fixture",
+  "node_run_id": null,
+  "attempt_id": null,
+  "origin": {
+    "kind": "agent",
+    "actor_id": "actor_planner"
+  },
+  "authority": "proposed",
+  "subject_ref": null,
+  "data": {
+    "goal": "INVALID FIXTURE: `verified` is not a task execution status (PRD §10.6) — it is an assurance state, and conflating the two is how an actor's own completion claim gets read as verification. Reaching /data/status also proves the record schema dispatches to the per-type schema.",
+    "status": "verified",
+    "assurance_state": "unverified"
+  },
+  "provenance_refs": [],
+  "supersedes": null,
+  "created_at": "2026-08-08T15:05:00Z",
+  "content_digest": "sha256:a0b3ab797d78c6b43759993022d2c7173270794fcc57189cf851e4838abdb0f5"
+}

@@ -1,0 +1,159 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://nodes.culture.dev/schemas/ledger/record.schema.json",
+  "title": "Work ledger record",
+  "description": "Any MVP work-ledger record (PRD §10.2). The envelope always applies; the record-type schema is selected by `record_type`. Dispatch is if/then rather than oneOf on purpose: a `record_type` that is not registered then fails once, against /record_type, instead of producing one rejection per branch and burying the actual problem.",
+  "$ref": "envelope.schema.json",
+  "allOf": [
+    {
+      "if": {
+        "properties": {
+          "record_type": {
+            "const": "announcement"
+          }
+        },
+        "required": [
+          "record_type"
+        ]
+      },
+      "then": {
+        "$ref": "announcement.schema.json"
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "record_type": {
+            "const": "claim"
+          }
+        },
+        "required": [
+          "record_type"
+        ]
+      },
+      "then": {
+        "$ref": "claim.schema.json"
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "record_type": {
+            "const": "assumption"
+          }
+        },
+        "required": [
+          "record_type"
+        ]
+      },
+      "then": {
+        "$ref": "assumption.schema.json"
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "record_type": {
+            "const": "question"
+          }
+        },
+        "required": [
+          "record_type"
+        ]
+      },
+      "then": {
+        "$ref": "question.schema.json"
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "record_type": {
+            "const": "task"
+          }
+        },
+        "required": [
+          "record_type"
+        ]
+      },
+      "then": {
+        "$ref": "task.schema.json"
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "record_type": {
+            "const": "decision"
+          }
+        },
+        "required": [
+          "record_type"
+        ]
+      },
+      "then": {
+        "$ref": "decision.schema.json"
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "record_type": {
+            "const": "success_signal"
+          }
+        },
+        "required": [
+          "record_type"
+        ]
+      },
+      "then": {
+        "$ref": "success_signal.schema.json"
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "record_type": {
+            "const": "evidence"
+          }
+        },
+        "required": [
+          "record_type"
+        ]
+      },
+      "then": {
+        "$ref": "evidence.schema.json"
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "record_type": {
+            "const": "result"
+          }
+        },
+        "required": [
+          "record_type"
+        ]
+      },
+      "then": {
+        "$ref": "result.schema.json"
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "record_type": {
+            "const": "review"
+          }
+        },
+        "required": [
+          "record_type"
+        ]
+      },
+      "then": {
+        "$ref": "review.schema.json"
+      }
+    }
+  ]
+}

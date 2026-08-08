@@ -1,0 +1,40 @@
+{
+  "id": "ledger_01JAV3QK2M0000000000000002",
+  "schema_version": "nodes.culture.dev/ledger/v1alpha1",
+  "record_type": "evidence",
+  "run_id": "run_01JAV3QK2M0000000000000001",
+  "node_run_id": "nr_01JAV3QK2M0000000000000008",
+  "attempt_id": "att_01JAV3QK2M0000000000000010",
+  "origin": {
+    "kind": "runner",
+    "actor_id": "runner_headspace_docker",
+    "actor_revision": "sha256:26951e7ab41e0d560d84c11d196fb79378c4f4f5986392115bb7ca48009e1677"
+  },
+  "authority": "observed",
+  "subject_ref": "ledger_01JAV3QK2M0000000000000001",
+  "data": {
+    "producer_id": "runner_headspace_docker",
+    "producer_revision": "sha256:26951e7ab41e0d560d84c11d196fb79378c4f4f5986392115bb7ca48009e1677",
+    "collection_method": "runner_wait_status",
+    "input_digest": "sha256:4a47928ffa17db6918ff85a9dc308cf44c8532c399dc4ffd1894899cb1d20051",
+    "environment_digest": "sha256:955c4be06ca61ba364734ed381443517db94f2ff1bce053080d3e0851658c8b6",
+    "operation_digest": "sha256:dd736a9312f4a4c0083f2d2065090d2381b6dbe1985312a32a5b5140ca70888d",
+    "observed_at": "2026-08-08T15:01:12Z",
+    "covered_scope": "Exit status of the pinned test command. Says nothing about what the process printed.",
+    "completeness": "complete",
+    "artifact_refs": [
+      "artifact://logs/stdout",
+      "artifact://logs/stderr"
+    ],
+    "measurements": {
+      "exit_code": 0,
+      "duration_ms": 72000
+    }
+  },
+  "provenance_refs": [
+    "ledger_01JAV3QK2M0000000000000001"
+  ],
+  "supersedes": null,
+  "created_at": "2026-08-08T15:01:13Z",
+  "content_digest": "sha256:6f1aa912d29bb1964643cff6eb6dc38a415e1a7d8c912763f0a75ad6900b7be5"
+}

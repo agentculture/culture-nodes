@@ -1,0 +1,35 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://nodes.culture.dev/schemas/ledger/question.schema.json",
+  "title": "Ledger record: question",
+  "description": "An unresolved item required or parked for later (PRD §10.2). A blocking question is a first-class obstacle: mechanical acceptance can require that none remain open (PRD §10.10).",
+  "allOf": [
+    {
+      "$ref": "envelope.schema.json"
+    }
+  ],
+  "required": [
+    "record_type"
+  ],
+  "properties": {
+    "record_type": {
+      "const": "question"
+    },
+    "data": {
+      "type": "object",
+      "$comment": "Phase 0: payload shape is deliberately loose. Named properties are optional and documentary; a later task pins the payload contract per record type.",
+      "properties": {
+        "question": {
+          "type": "string",
+          "minLength": 1
+        },
+        "blocking": {
+          "type": "boolean"
+        },
+        "answer": {
+          "type": "string"
+        }
+      }
+    }
+  }
+}

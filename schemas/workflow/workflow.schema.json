@@ -1,0 +1,675 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://nodes.culture.dev/schemas/workflow/workflow.schema.json",
+  "title": "Workflow authoring document",
+  "description": "The authoring format for a Culture Nodes workflow (PRD §9.1, §11.1). YAML is authoring sugar; JSON is canonical, so this schema validates the JSON form. It is a *syntax and structure* gate only (PRD §11.4): graph reachability, contract compatibility, binding resolution, digest pinning, and policy checks are compiler jobs and are deliberately not attempted here. A published workflow version is immutable and content-addressed; a run pins one digest.",
+  "type": "object",
+  "required": [
+    "apiVersion",
+    "kind",
+    "metadata",
+    "spec"
+  ],
+  "additionalProperties": false,
+  "properties": {
+    "apiVersion": {
+      "const": "nodes.culture.dev/v1alpha1"
+    },
+    "kind": {
+      "const": "Workflow"
+    },
+    "metadata": {
+      "$ref": "#/$defs/metadata"
+    },
+    "spec": {
+      "$ref": "#/$defs/spec"
+    }
+  },
+  "$defs": {
+    "name": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 128,
+      "pattern": "^[a-z0-9][a-z0-9-]*$"
+    },
+    "outcomeName": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 128,
+      "pattern": "^[a-z][a-z0-9_]*$",
+      "description": "A declared domain outcome of a node, e.g. `completed`, `passed`, `changes_required`."
+    },
+    "ownerRef": {
+      "type": "string",
+      "minLength": 3,
+      "maxLength": 256,
+      "pattern": "^[a-z][a-z0-9-]*/[a-z0-9][a-z0-9._-]*$",
+      "description": "Resolved owner, e.g. `team/platform-ai`. Ownership is architecture (PRD §7): every node carries one, and authoring defaults may reduce repetition but never remove the resolved owner from the normalized JSON."
+    },
+    "semver": {
+      "type": "string",
+      "pattern": "^[0-9]+\\.[0-9]+\\.[0-9]+(-[0-9A-Za-z.-]+)?(\\+[0-9A-Za-z.-]+)?$"
+    },
+    "duration": {
+      "type": "string",
+      "pattern": "^([0-9]+(ms|s|m|h))+$",
+      "description": "Go-style duration literal, e.g. `900ms`, `5m`, `2h`, `1h30m`."
+    },
+    "componentRef": {
+      "type": "string",
+      "minLength": 3,
+      "maxLength": 512,
+      "pattern": "^[a-z][a-z0-9+.-]*://[^\\s]+$",
+      "description": "Reference to a registered actor or runner, e.g. `actor://company/planner@sha256:...` or `runner://headspace/docker@sha256:...`. The compiler resolves it to an immutable digest; authoring may leave it unpinned."
+    },
+    "pointer": {
+      "type": "string",
+      "format": "json-pointer",
+      "description": "JSON Pointer into run, node, or ledger data (PRD §11.2). Direct data movement uses pointers, never a template language."
+    },
+    "cel": {
+      "type": "string",
+      "minLength": 1,
+      "description": "A CEL expression (PRD §11.2). Compiled and bounded by the compiler; not evaluated here."
+    },
+    "schemaSource": {
+      "type": "object",
+      "description": "A JSON Schema Draft 2020-12 contract, either referenced by path/URI or inlined.",
+      "minProperties": 1,
+      "additionalProperties": false,
+      "properties": {
+        "schemaRef": {
+          "type": "string",
+          "minLength": 1
+        },
+        "schema": {
+          "type": "object"
+        },
+        "digest": {
+          "type": "string",
+          "pattern": "^sha256:[0-9a-f]{64}$",
+          "description": "Set by the compiler once the referenced schema is bundled and content-addressed."
+        }
+      }
+    },
+    "metadata": {
+      "type": "object",
+      "required": [
+        "name",
+        "version",
+        "ownerRef"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "name": {
+          "$ref": "#/$defs/name"
+        },
+        "version": {
+          "$ref": "#/$defs/semver"
+        },
+        "ownerRef": {
+          "$ref": "#/$defs/ownerRef"
+        },
+        "description": {
+          "type": "string"
+        },
+        "labels": {
+          "type": "object",
+          "additionalProperties": {
+            "type": "string"
+          }
+        }
+      }
+    },
+    "spec": {
+      "type": "object",
+      "required": [
+        "entry",
+        "contract",
+        "nodes",
+        "edges"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "entry": {
+          "$ref": "#/$defs/name",
+          "description": "Name of the node a run starts at. That the name exists in `nodes` is a graph-level check performed by the compiler."
+        },
+        "contract": {
+          "type": "object",
+          "required": [
+            "input",
+            "output"
+          ],
+          "additionalProperties": false,
+          "properties": {
+            "input": {
+              "$ref": "#/$defs/schemaSource"
+            },
+            "output": {
+              "$ref": "#/$defs/schemaSource"
+            }
+          }
+        },
+        "limits": {
+          "type": "object",
+          "description": "Execution limits. Optional at authoring time; the compiler expands defaults so the normalized JSON always carries bounds.",
+          "additionalProperties": false,
+          "properties": {
+            "maxDuration": {
+              "$ref": "#/$defs/duration"
+            },
+            "maxTransitions": {
+              "type": "integer",
+              "minimum": 1
+            },
+            "maxVisitsPerNode": {
+              "type": "integer",
+              "minimum": 1
+            },
+            "maxParallelTokens": {
+              "type": "integer",
+              "minimum": 1
+            }
+          }
+        },
+        "ledger": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "schemaVersion": {
+              "type": "string",
+              "pattern": "^nodes\\.culture\\.dev/ledger/v[0-9A-Za-z]+$"
+            },
+            "maxRecordsPerNode": {
+              "type": "integer",
+              "minimum": 0
+            },
+            "maxPayloadBytes": {
+              "type": "integer",
+              "minimum": 0
+            },
+            "requireProvenance": {
+              "type": "boolean"
+            }
+          }
+        },
+        "nodes": {
+          "type": "object",
+          "minProperties": 1,
+          "propertyNames": {
+            "$ref": "#/$defs/name"
+          },
+          "additionalProperties": {
+            "$ref": "#/$defs/node"
+          }
+        },
+        "edges": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/edge"
+          },
+          "description": "Transitions keyed by domain outcome. May be empty only for a single-node workflow; the compiler decides reachability."
+        },
+        "presentation": {
+          "type": "object",
+          "description": "Presentation metadata never changes runtime semantics (PRD §9.1)."
+        }
+      }
+    },
+    "node": {
+      "type": "object",
+      "required": [
+        "kind",
+        "ownerRef"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "kind": {
+          "type": "string",
+          "description": "MVP node kinds (PRD §9.2). `action.container`, `transform.wasm`, `parallel`, `join`, `foreach`, `subworkflow`, and `event` are named in the PRD as later work and are deliberately absent from this enum.",
+          "enum": [
+            "agent",
+            "code",
+            "action.http",
+            "decision",
+            "approval",
+            "wait",
+            "end"
+          ]
+        },
+        "ownerRef": {
+          "$ref": "#/$defs/ownerRef"
+        },
+        "uses": {
+          "$ref": "#/$defs/componentRef"
+        },
+        "contract": {
+          "$ref": "#/$defs/nodeContract"
+        },
+        "input": {
+          "$ref": "#/$defs/inputBinding"
+        },
+        "output": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "from": {
+              "$ref": "#/$defs/pointer"
+            }
+          },
+          "required": [
+            "from"
+          ]
+        },
+        "operation": {
+          "$ref": "#/$defs/codeOperation"
+        },
+        "ledger": {
+          "$ref": "#/$defs/ledgerDelta"
+        },
+        "acceptance": {
+          "$ref": "#/$defs/acceptance"
+        },
+        "policy": {
+          "$ref": "#/$defs/nodePolicy"
+        },
+        "decisionSchemaRef": {
+          "type": "string",
+          "minLength": 1
+        },
+        "approverRef": {
+          "$ref": "#/$defs/ownerRef"
+        },
+        "deadline": {
+          "$ref": "#/$defs/duration"
+        },
+        "select": {
+          "type": "array",
+          "description": "Decision-node output ports, each guarded by a CEL predicate (PRD §9.2, §11.2).",
+          "items": {
+            "type": "object",
+            "required": [
+              "outcome",
+              "when"
+            ],
+            "additionalProperties": false,
+            "properties": {
+              "outcome": {
+                "$ref": "#/$defs/outcomeName"
+              },
+              "when": {
+                "$ref": "#/$defs/cel"
+              }
+            }
+          }
+        },
+        "until": {
+          "type": "object",
+          "description": "Wait-node resume condition: a durable time or an external signal (PRD §9.2).",
+          "minProperties": 1,
+          "additionalProperties": false,
+          "properties": {
+            "duration": {
+              "$ref": "#/$defs/duration"
+            },
+            "timestamp": {
+              "type": "string",
+              "format": "date-time"
+            },
+            "signal": {
+              "type": "string",
+              "minLength": 1
+            }
+          }
+        },
+        "presentation": {
+          "type": "object",
+          "description": "Node presentation metadata; never changes runtime semantics."
+        },
+        "pre_run": {
+          "$comment": "DECLARED BUT UNVALIDATED. The pre-run/post-run code-hook contract is specified by a later task (plan task t14): a pre-run operation executes through the runner boundary before agent dispatch, and its failure fails the attempt without ever invoking the agent. Until that contract exists this keyword accepts any value so authoring can begin — acceptance here is NOT a contract, and validation will tighten additively.",
+          "description": "Code operation executed through the runner boundary before the agent is dispatched. Shape not yet specified."
+        },
+        "post_run": {
+          "$comment": "DECLARED BUT UNVALIDATED. See pre_run. A post-run check failure maps to a declared domain outcome or an assurance rejection, never to silence. Shape is specified by a later task (plan task t14).",
+          "description": "Code operation executed through the runner boundary after the agent returns. Shape not yet specified."
+        }
+      },
+      "allOf": [
+        {
+          "$comment": "Kind-specific minimums. Only requirements the PRD states outright are enforced; everything else is left to the compiler so authoring stays open.",
+          "if": {
+            "properties": {
+              "kind": {
+                "const": "agent"
+              }
+            },
+            "required": [
+              "kind"
+            ]
+          },
+          "then": {
+            "required": [
+              "uses"
+            ]
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "kind": {
+                "const": "code"
+              }
+            },
+            "required": [
+              "kind"
+            ]
+          },
+          "then": {
+            "required": [
+              "uses",
+              "operation"
+            ]
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "kind": {
+                "const": "approval"
+              }
+            },
+            "required": [
+              "kind"
+            ]
+          },
+          "then": {
+            "required": [
+              "approverRef"
+            ]
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "kind": {
+                "const": "end"
+              }
+            },
+            "required": [
+              "kind"
+            ]
+          },
+          "then": {
+            "required": [
+              "output"
+            ]
+          }
+        }
+      ]
+    },
+    "nodeContract": {
+      "type": "object",
+      "description": "Node contract (PRD §9.3): input schema, one output schema per domain outcome, and an error schema. JSON Schema is a validation language, not a decidable subtyping system — runtime validation stays mandatory even when the compiler proves edge compatibility.",
+      "minProperties": 1,
+      "additionalProperties": false,
+      "properties": {
+        "input": {
+          "$ref": "#/$defs/schemaSource"
+        },
+        "outcomes": {
+          "type": "object",
+          "minProperties": 1,
+          "propertyNames": {
+            "$ref": "#/$defs/outcomeName"
+          },
+          "additionalProperties": {
+            "$ref": "#/$defs/schemaSource"
+          }
+        },
+        "error": {
+          "$ref": "#/$defs/schemaSource"
+        },
+        "maxInlinePayloadBytes": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "artifactTypes": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        }
+      }
+    },
+    "inputBinding": {
+      "type": "object",
+      "description": "Either a whole-value move (`from`) or named field bindings, each a JSON Pointer (PRD §11.2).",
+      "additionalProperties": false,
+      "minProperties": 1,
+      "properties": {
+        "from": {
+          "$ref": "#/$defs/pointer"
+        },
+        "bindings": {
+          "type": "object",
+          "minProperties": 1,
+          "additionalProperties": {
+            "$ref": "#/$defs/pointer"
+          }
+        }
+      }
+    },
+    "codeOperation": {
+      "type": "object",
+      "description": "Authoring shape of a code node's operation. The compiler lowers this to the runner-agnostic operation contract in ../runner/operation.schema.json. A code node describes an operation; a runner executes it — no shell, script, or Docker socket ever runs in a control-plane process (PRD §9.2).",
+      "required": [
+        "image",
+        "argv"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "workspaceRef": {
+          "type": "string",
+          "minLength": 1
+        },
+        "image": {
+          "type": "string",
+          "minLength": 1
+        },
+        "argv": {
+          "type": "array",
+          "minItems": 1,
+          "items": {
+            "type": "string"
+          },
+          "description": "An argument array, never a shell string."
+        },
+        "workingDirectory": {
+          "type": "string"
+        },
+        "environmentRefs": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "network": {
+          "$ref": "#/$defs/networkMode"
+        },
+        "allowedOutputPaths": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "requiresShell": {
+          "type": "boolean",
+          "description": "Declared explicitly when a shell is genuinely required, so policy can reject it."
+        }
+      }
+    },
+    "networkMode": {
+      "type": "string",
+      "description": "`none` is the safe default (PRD §13.7).",
+      "enum": [
+        "none",
+        "egress-allowlist",
+        "full"
+      ]
+    },
+    "ledgerDelta": {
+      "type": "object",
+      "description": "The node's ledger delta contract (PRD §10.7): the projection it may read, and the record types it may propose or observe. Authority is still enforced by the ledger runtime at append time — declaring `observe` does not grant an agent the right to issue observed evidence.",
+      "additionalProperties": false,
+      "properties": {
+        "read": {
+          "type": "array",
+          "uniqueItems": true,
+          "items": {
+            "$ref": "#/$defs/projectionName"
+          }
+        },
+        "propose": {
+          "type": "array",
+          "uniqueItems": true,
+          "items": {
+            "$ref": "#/$defs/recordTypeName"
+          }
+        },
+        "observe": {
+          "type": "array",
+          "uniqueItems": true,
+          "items": {
+            "$ref": "#/$defs/recordTypeName"
+          }
+        },
+        "maxRecords": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "requireHumanReview": {
+          "type": "boolean"
+        }
+      }
+    },
+    "projectionName": {
+      "type": "string",
+      "description": "Standard ledger projections (PRD §10.9). Domain projections may be registered later; this enum is intentionally closed for now so typos fail loudly.",
+      "enum": [
+        "current_scope",
+        "confirmed_claims",
+        "open_assumptions",
+        "open_questions",
+        "ready_tasks",
+        "active_tasks",
+        "verification_queue",
+        "decision_history",
+        "evidence",
+        "delivery_summary"
+      ]
+    },
+    "recordTypeName": {
+      "type": "string",
+      "enum": [
+        "announcement",
+        "claim",
+        "assumption",
+        "question",
+        "task",
+        "decision",
+        "success_signal",
+        "evidence",
+        "result",
+        "review"
+      ]
+    },
+    "acceptance": {
+      "type": "object",
+      "description": "Mechanical acceptance checks (PRD §10.10). Check payloads stay open until the check registry lands with the compiler; only `kind` is required.",
+      "required": [
+        "requires"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "requires": {
+          "type": "array",
+          "minItems": 1,
+          "items": {
+            "type": "object",
+            "required": [
+              "kind"
+            ],
+            "properties": {
+              "kind": {
+                "type": "string",
+                "minLength": 1
+              }
+            }
+          }
+        }
+      }
+    },
+    "nodePolicy": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "timeout": {
+          "$ref": "#/$defs/duration"
+        },
+        "retry": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "maxAttempts": {
+              "type": "integer",
+              "minimum": 1
+            },
+            "backoff": {
+              "type": "string",
+              "enum": [
+                "none",
+                "fixed",
+                "linear",
+                "exponential"
+              ]
+            }
+          }
+        },
+        "dataClassification": {
+          "type": "string"
+        },
+        "policySet": {
+          "type": "string"
+        },
+        "escalationContact": {
+          "type": "string"
+        }
+      }
+    },
+    "edge": {
+      "type": "object",
+      "description": "A transition from a node's declared domain outcome to another node. `changes_required` is an outcome that follows an edge, never an engine failure (PRD §3.4).",
+      "required": [
+        "from",
+        "to"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "from": {
+          "type": "string",
+          "pattern": "^[a-z0-9][a-z0-9-]*\\.[a-z][a-z0-9_]*$",
+          "description": "`<node>.<outcome>`, e.g. `verify.changes_required`."
+        },
+        "to": {
+          "$ref": "#/$defs/name"
+        },
+        "when": {
+          "$ref": "#/$defs/cel",
+          "description": "Optional CEL guard on the transition."
+        }
+      }
+    }
+  }
+}

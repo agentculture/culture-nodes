@@ -1,0 +1,40 @@
+{
+  "apiVersion": "nodes.culture.dev/v1alpha1",
+  "kind": "Workflow",
+  "metadata": {
+    "name": "minimal",
+    "version": "0.1.0",
+    "ownerRef": "team/platform-ai",
+    "description": "INVALID FIXTURE: 'container' is not an MVP node kind (PRD 9.2 lists action.container as later work), so /spec/nodes/build/kind must be rejected rather than silently accepted as an extension point."
+  },
+  "spec": {
+    "entry": "build",
+    "contract": {
+      "input": {
+        "schemaRef": "./contracts/change-request.schema.json"
+      },
+      "output": {
+        "schemaRef": "./contracts/delivery-result.schema.json"
+      }
+    },
+    "nodes": {
+      "build": {
+        "kind": "container",
+        "ownerRef": "team/developer-experience"
+      },
+      "finish": {
+        "kind": "end",
+        "ownerRef": "team/platform-ai",
+        "output": {
+          "from": "/nodes/build/output"
+        }
+      }
+    },
+    "edges": [
+      {
+        "from": "build.completed",
+        "to": "finish"
+      }
+    ]
+  }
+}

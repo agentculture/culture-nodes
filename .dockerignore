@@ -1,0 +1,46 @@
+# Only cmd/, internal/, and go.mod are needed to build the nodes binary.
+# Everything else here is excluded so it never enters the build context.
+
+.git
+.github
+
+# devague / eidetic / claude tooling — not part of the runtime image
+.devague
+.eidetic
+.claude
+
+# Python mesh-agent surface and its tooling — unrelated to the Go binary
+culture_nodes
+tests
+.venv
+venv
+__pycache__
+*.pyc
+.pytest_cache
+.mypy_cache
+.ruff_cache
+uv.lock
+
+# Web UI — has its own build, not needed to build the Go binary
+web/node_modules
+web/dist
+web/build
+
+# Sibling worktrees created alongside this checkout
+../worktrees
+../.worktrees.culture-nodes
+
+# Docs, schemas, migrations, deploy manifests — not build inputs
+docs
+schemas
+migrations
+deploy
+api
+
+# Local build artifacts and editor/OS cruft
+*.log
+.DS_Store
+.idea
+.vscode
+bin/
+dist/

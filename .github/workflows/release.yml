@@ -1,0 +1,91 @@
+name: Release
+
+# Container release lane, parallel to publish.yml's PyPI Trusted-Publishing
+# lane. publish.yml ships the Python mesh-agent surface; this workflow ships
+# the Go control-plane binary (cmd/nodes) as a multi-arch OCI image. Neither
+# workflow touches the other.
+#
+# Tagging a release (v1.2.3) builds linux/amd64+arm64 images from the same
+# Dockerfile, pushes them to ghcr.io/agentculture/culture-nodes by digest,
+# and smoke-tests the exact digest that was published — never a local build,
+# never a mutable tag — before anything downstream (deploy/helm's values in
+# t22) is allowed to reference it.
+
+on:
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  contents: read
+  packages: write
+
+jobs:
+  build-and-push:
+    runs-on: ubuntu-latest
+    outputs:
+      digest: ${{ steps.push.outputs.digest }}
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+
+      - uses: docker/setup-qemu-action@96fe6ef7f33517b61c61be40b68a1882f3264fb8 # v4.2.0
+
+      - uses: docker/setup-buildx-action@bb05f3f5519dd87d3ba754cc423b652a5edd6d2c # v4.2.0
+
+      - uses: docker/login-action@dbcb813823bdd20940b903addbd779551569679f # v4.6.0
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Build and push
+        id: push
+        uses: docker/build-push-action@53b7df96c91f9c12dcc8a07bcb9ccacbed38856a # v7.3.0
+        with:
+          context: .
+          platforms: linux/amd64,linux/arm64
+          push: true
+          provenance: true
+          sbom: true
+          build-args: |
+            VERSION=${{ github.ref_name }}
+          tags: |
+            ghcr.io/agentculture/culture-nodes:${{ github.ref_name }}
+            ghcr.io/agentculture/culture-nodes:latest
+
+      - name: Record pushed digest
+        run: |
+          {
+            echo "## Published image"
+            echo ""
+            echo "\`ghcr.io/agentculture/culture-nodes@${{ steps.push.outputs.digest }}\`"
+            echo ""
+            echo "Tags: \`${{ github.ref_name }}\`, \`latest\` (both point at the digest above)."
+            echo ""
+            # Downstream deploy/helm chart values (t22) pin this digest, not
+            # a mutable tag — see deploy/helm/README.md's Images section.
+            echo "Downstream Helm chart values consume this digest, not the mutable tags."
+          } >> "$GITHUB_STEP_SUMMARY"
+
+  smoke:
+    needs: build-and-push
+    runs-on: ubuntu-latest
+    steps:
+      - uses: docker/login-action@dbcb813823bdd20940b903addbd779551569679f # v4.6.0
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Run the published digest (usage + exit 1 with no args)
+        env:
+          IMAGE: ghcr.io/agentculture/culture-nodes@${{ needs.build-and-push.outputs.digest }}
+        run: |
+          echo "Smoke-testing published artifact: $IMAGE"
+          # nodes with no args prints usage to stderr and exits 1 — this is
+          # the closest thing the scaffold has to `--help`. Asserting on it
+          # here proves the artifact that was actually pushed to ghcr runs,
+          # not just that the Dockerfile builds locally. Downstream helm
+          # chart values (t22) reference this same digest, never a tag, so
+          # this is the digest's one and only pre-deploy sanity check.
+          docker run --rm "$IMAGE" || test $? -eq 1

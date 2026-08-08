@@ -16,6 +16,9 @@ Numbered SQL migrations for the authoritative PostgreSQL store (prd-spec
   trigger), `ledger_reviews`, `ledger_projection_versions`.
 - `0004_observability.sql` — `artifacts`, `events`, `outbox`,
   `idempotency_keys`.
+- `0005_ledger_origin_actor_revision.sql` — expand-only: adds
+  `ledger_records.origin_actor_revision`, the one prd-spec §10.3 envelope
+  field `0003` had no column for.
 
 ## Policy
 

@@ -1,0 +1,79 @@
+# The smallest workflow that can be waiting on an asynchronous actor: one
+# agent node that answers late, and an end node that turns its output into the
+# run result.
+#
+# It exists to give the callback-ingest tests a real run — a real pinned
+# definition, a real work item, a real fencing token — rather than
+# hand-written rows. The whole point of those tests is that a callback commits
+# through the same fenced path a synchronous completion does, and a fixture
+# that faked any part of that path would prove nothing.
+apiVersion: nodes.culture.dev/v1alpha1
+kind: Workflow
+
+metadata:
+  name: actors-async-slice
+  version: 1.0.0
+  ownerRef: team/platform-ai
+
+spec:
+  entry: work
+
+  contract:
+    input:
+      schema:
+        type: object
+        required: [subject]
+        properties:
+          subject:
+            type: string
+    output:
+      schema:
+        type: object
+        required: [summary]
+        properties:
+          summary:
+            type: string
+
+  limits:
+    maxDuration: 1h
+    maxTransitions: 8
+    maxVisitsPerNode: 4
+    maxParallelTokens: 1
+
+  ledger:
+    schemaVersion: nodes.culture.dev/ledger/v1alpha1
+    maxRecordsPerNode: 10
+
+  nodes:
+    work:
+      kind: agent
+      ownerRef: team/platform-ai
+      uses: actor://company/long-runner@sha256:aaaaaa
+      input:
+        from: /run/input
+      contract:
+        outcomes:
+          completed:
+            schema:
+              type: object
+              required: [summary]
+              properties:
+                summary:
+                  type: string
+      ledger:
+        propose: [claim, result]
+      policy:
+        timeout: 30m
+        retry:
+          maxAttempts: 1
+          backoff: none
+
+    finish:
+      kind: end
+      ownerRef: team/platform-ai
+      output:
+        from: /nodes/work/output
+
+  edges:
+    - from: work.completed
+      to: finish

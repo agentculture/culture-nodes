@@ -28,7 +28,7 @@ var explainCatalog = map[string]string{
 	"scheduler": explainStubMode("scheduler", "run the scheduler process"),
 	"worker":    explainStubMode("worker", "run the worker process"),
 	"all":       explainStubMode("all", "run serve+scheduler+worker in a single process (dev mode)"),
-	"validate":  explainStubMode("validate", "validate a workflow or contract definition"),
+	"validate":  explainValidate,
 	"run":       explainStubMode("run", "start a workflow run"),
 	"inspect":   explainStubMode("inspect", "inspect ledger records for a run"),
 }
@@ -47,10 +47,11 @@ docs/initial-design/.
 - ` + "`nodes overview`" + ` — one-paragraph descriptive snapshot.
 - ` + "`nodes doctor`" + ` — environment/identity checks.
 - ` + "`nodes cli overview`" + ` — describe the CLI surface.
+- ` + "`nodes validate <file>`" + ` — compile a workflow and report diagnostics.
 
 ## Process modes (recognized, not yet implemented)
 
-serve, scheduler, worker, all, validate, run, inspect.
+serve, scheduler, worker, all, run, inspect.
 
 ## Exit-code policy
 

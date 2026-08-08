@@ -3,9 +3,10 @@
 // It wires the agent-first CLI contract from internal/clifmt onto the
 // verb surface: the introspection verbs whoami, learn, explain, overview,
 // doctor, and cli overview, plus the process modes the PRD describes
-// (serve, scheduler, worker, all, validate, run, inspect), which are
-// recognized here but not yet implemented — invoking one reports a
-// structured CliError instead of dispatching to real work.
+// (serve, scheduler, worker, all, run, inspect), which are recognized here
+// but not yet implemented — invoking one reports a structured CliError
+// instead of dispatching to real work — plus validate, which compiles a
+// workflow definition through internal/compiler.
 package main
 
 import (
@@ -38,8 +39,11 @@ Introspection:
 Database:
   migrate            apply pending schema migrations (NODES_DATABASE_URL)
 
+Workflows:
+  validate <file>    compile a workflow definition and report diagnostics
+
 Process modes (recognized, not yet implemented):
-  serve  scheduler  worker  all  validate  run  inspect
+  serve  scheduler  worker  all  run  inspect
 
 Every command supports --json, including parse-time failures. Run
 'nodes learn' for the full contract, or 'nodes explain <path>' for docs
@@ -55,7 +59,7 @@ type handlerFunc func(args []string, jsonMode bool) (int, error)
 
 // processModes are the PRD's process-lifecycle modes: recognized by the
 // CLI, not yet implemented.
-var processModes = []string{"serve", "scheduler", "worker", "all", "validate", "run", "inspect"}
+var processModes = []string{"serve", "scheduler", "worker", "all", "run", "inspect"}
 
 func commands() map[string]handlerFunc {
 	m := map[string]handlerFunc{
@@ -65,6 +69,7 @@ func commands() map[string]handlerFunc {
 		"overview": cmdOverview,
 		"doctor":   cmdDoctor,
 		"cli":      cmdCLI,
+		"validate": cmdValidate,
 		// migrate predates full clifmt wiring: runMigrate owns its own
 		// stream/exit contract (results stdout, error:/hint: stderr).
 		"migrate": func(args []string, _ bool) (int, error) {

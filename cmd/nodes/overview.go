@@ -32,11 +32,11 @@ func emitOverview(subject, summary string, jsonMode bool) (int, error) {
 // agent/binary's identity plus its verb surface.
 func agentOverviewSummary() string {
 	report := newWhoamiReport()
-	verbs := []string{"whoami", "learn", "explain <path>", "overview", "doctor", "cli overview"}
+	verbs := []string{"whoami", "learn", "explain <path>", "overview", "doctor", "cli overview", "validate <file>"}
 	modes := strings.Join(processModes, ", ")
 	return fmt.Sprintf(
 		"nodes is the Culture Nodes control-plane CLI, identified here as nick %q on backend %q "+
-			"(version %s); it currently exposes the introspection verbs %s, and recognizes but does "+
+			"(version %s); it currently exposes the verbs %s, and recognizes but does "+
 			"not yet implement the process-lifecycle modes %s described in docs/initial-design/ — "+
 			"every command accepts --json and follows the stdout-results/stderr-errors contract "+
 			"documented by 'nodes learn'.",

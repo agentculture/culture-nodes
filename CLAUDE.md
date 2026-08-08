@@ -1,28 +1,173 @@
-# CLAUDE.md — seed / bootstrap placeholder
+# CLAUDE.md
 
-> **This is a self-initializing seed, not a finished runtime prompt.**
-> Run `/init` (or describe the agent's domain to your AI assistant) to
-> re-initialize this file into a full runtime prompt, using the description
-> below and the scaffolded repo as context.
+This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
-## Agent
+## What this repo is
 
-This repository hosts the **culture-nodes** agent.
+**culture-nodes** is a workflow front and framework for Culture: it composes
+mesh agents and their verbs into node-based workflows — define a graph of
+nodes, run it across the Culture mesh, and inspect what each node did.
 
-## Description
+The repo currently has two layers, and knowing which one you are touching
+matters:
 
-A workflow front and framework for Culture. Composes mesh agents and their verbs into node-based workflows — define a graph of nodes, run it across the Culture mesh, and inspect what each node did.
+1. **The product design** lives in `docs/initial-design/` and is not yet
+   implemented:
+   - `culture-nodes-prd-spec.md` — the full PRD for **Culture Nodes**, a
+     durable, ledger-native workflow orchestrator for agents, code, services,
+     and people. Brand line: *"Every node has a contract. Every result has
+     evidence."*
+   - `culture-nodes-implementation-issue.md` — the Phase 0/1 implementation
+     issue (contracts + compiler, then a durable vertical slice).
+2. **The mesh-agent scaffold** is the code that exists today — a Python 3.12
+   package (`culture_nodes/`) scaffolded from `culture-agent-template`,
+   carrying an agent-first CLI, a mesh identity, and the vendored skill kit.
+   Several self-description strings (`learn`, the argparse description,
+   `explain`'s root catalog entry) still carry the template's "clonable
+   template" prose — known drift to update as the product takes shape.
 
-## Re-init instruction
+## Design ground rules (from docs/initial-design/)
 
-This file is a seed. To expand it into your full runtime prompt:
+When implementing product features, the PRD is the blueprint. The
+load-bearing decisions to honor (see the PRD for full detail):
 
-1. Open this repo in Claude Code (or your preferred AI assistant).
-2. Run `/init` — the assistant will read the repo, incorporate the description
-   above, and replace this seed with a complete `CLAUDE.md`.
-3. Commit the result.
+- **Vocabulary**: workflow (immutable versioned graph), node, edge, actor,
+  run, token, node run, attempt, contract, work ledger, evidence. Actor
+  identity, graph token, node run, and attempt are *separate* records.
+- **Ledger authority model**: agents may only create `proposed` records;
+  humans `confirm`/`reject`; trusted runners create `observed` evidence only
+  for facts they directly measured; deterministic validators create `derived`.
+  No actor promotes its own proposal. An agent saying "done" is a completion
+  claim, not verified evidence. Records are immutable; corrections append
+  with `supersedes`.
+- **Domain outcome ≠ technical status**: `changes_required` is a domain
+  outcome that follows a graph edge, never an engine failure.
+- **Contracts**: JSON Schema Draft 2020-12; conditions in CEL; JSON is
+  canonical (YAML is authoring sugar); definitions are content-addressed by
+  SHA-256 digest and runs pin an immutable digest.
+- **Runtime**: PostgreSQL is authoritative; SQS (later) is a disposable work
+  signal only; leases + fencing tokens; transactional outbox. Code executes
+  only through the headspace-cli runner boundary — never a shell, script, or
+  Docker socket in the control-plane process.
+- The PRD targets a **Go control plane + React/Vite UI**; today's package is
+  the Python mesh-agent surface. The PRD's §26 lists open Phase-0 questions
+  (e.g. whether the CLI stays standalone `nodes`). Record deviations from the
+  PRD explicitly (ADR / devague deviation record), don't drift silently.
 
-Until you run `/init`, `culture-nodes` satisfies the `steward doctor`
-`prompt-file-present` and `backend-consistency` invariants (a `CLAUDE.md`
-exists and `culture.yaml` declares `backend: claude`) but the prompt is not
-yet tailored to this agent's domain.
+The devague skill chain vendored here (`/scope` → `/think` → `/challenge` →
+`/spec-to-plan` → `/assign-to-workforce`, with `/deviate` and
+`/summarize-delivery` around execution) is the intended lane for turning this
+design into confirmed, planned work.
+
+## Mesh identity
+
+`culture.yaml` declares the agent: `suffix: culture-nodes`,
+`backend: colleague`, pinned Qwen model. The colleague resident's prompt file
+is `AGENTS.colleague.md` — **not** this file; a colleague-backend agent never
+loads CLAUDE.md, so mesh-agent behavior rules belong there. `nodes doctor`
+enforces the backend → prompt-file mapping (`claude` → `CLAUDE.md`,
+`colleague` → `AGENTS.colleague.md`, `acp` → `AGENTS.md`, `gemini` →
+`GEMINI.md`) plus prompt-file-present and skills-present.
+
+## Commands
+
+```bash
+uv sync                                   # install (deps + dev group)
+uv run pytest -n auto                     # full test suite (xdist)
+uv run pytest tests/test_cli.py::test_whoami_text   # single test
+uv run pytest -n auto --cov=culture_nodes --cov-report=term  # with coverage (CI gates ≥60%)
+
+# Lint — mirrors the CI lint job exactly:
+uv run black --check culture_nodes tests
+uv run isort --check-only culture_nodes tests
+uv run flake8 culture_nodes tests
+uv run bandit -c pyproject.toml -r culture_nodes
+markdownlint-cli2 "**/*.md" "#node_modules" "#.local" "#.claude/skills" "#.teken"
+uv run teken cli doctor . --strict        # agent-first CLI rubric gate
+```
+
+The installed CLI command is **`nodes`** (`[project.scripts]` in
+pyproject.toml), even though help text renders the prog as `culture-nodes`:
+
+```bash
+uv run nodes whoami        # identity from culture.yaml
+uv run nodes learn         # self-teaching prompt
+uv run nodes explain <path> # markdown docs for any noun/verb
+uv run nodes overview      # descriptive snapshot
+uv run nodes doctor        # agent-identity invariants
+uv run nodes cli overview  # describe the CLI surface
+```
+
+## CLI architecture
+
+The runtime package has **zero third-party dependencies** (`dependencies = []`);
+`teken` and the test/lint stack are dev-group only. Keep it that way — the
+CLI is cited from teken's `python-cli` reference and must keep passing
+`teken cli doctor . --strict` (the seven-bundle agent-first rubric, gated in CI).
+
+- `culture_nodes/cli/__init__.py` — entry point. `_CliArgumentParser`
+  overrides argparse's `.error()` so even parse-time errors emit the
+  structured `error:` / `hint:` format; because parse errors happen before
+  `args.json` exists, `main()` pre-scans raw argv for `--json` and stashes it
+  on the class (`_json_hint`). `_dispatch()` wraps any non-`CliError`
+  exception so no traceback ever reaches stderr.
+- `culture_nodes/cli/_commands/*.py` — one module per verb/noun group, each
+  exposing `register(subparsers)`. New noun groups follow the same pattern
+  and are registered in `_build_parser()`.
+- `culture_nodes/cli/_output.py` — the stable contract: **results to stdout,
+  errors/diagnostics to stderr, never mixed**; `--json` on every command.
+  Text errors render as `error: <msg>` + `hint: <remediation>` (the `hint:`
+  line is rubric-required).
+- `culture_nodes/cli/_errors.py` — `CliError` with the exit-code policy:
+  `0` success, `1` user error, `2` environment error, `3+` reserved.
+- `culture_nodes/explain/catalog.py` — verbatim-markdown catalog keyed by
+  command-path tuples; `explain` and `overview` read from it. A new verb also
+  needs a catalog entry (tests introspect `known_paths()`).
+
+## CI and PR workflow
+
+- **Every PR bumps the version** — even docs/config-only changes. Use
+  `/version-bump patch|minor|major` (updates `pyproject.toml` + prepends a
+  CHANGELOG entry); the `version-check` job blocks merge otherwise.
+- `tests.yml`: pytest + coverage → SonarCloud scan with
+  `sonar.qualitygate.wait=true` (a red gate fails CI; skipped when
+  `SONAR_TOKEN` is absent, e.g. fork PRs); lint job (black, isort, flake8,
+  bandit, markdownlint, teken rubric); version-check.
+- `publish.yml`: same-repo PRs touching `pyproject.toml` or `culture_nodes/**`
+  publish a `.devN` build to TestPyPI; **a push to main that touches those
+  paths publishes to PyPI** (Trusted Publishing, no tokens).
+- Use the `cicd` skill for the PR lane (delegates to `devex pr`, adds
+  SonarCloud `status`/`await`); `sonarclaude` for ad-hoc quality-gate queries.
+  PR replies via the cicd scripts auto-sign as `- culture-nodes (Claude)`.
+
+## Skills are vendored — cite, don't import
+
+`.claude/skills/` is vendored from guildmaster (and, as tracked divergences,
+directly from devague, colleague, and eidetic-cli). **Never edit vendored
+script bodies.** Provenance, the allowed identifier-only adaptations, and the
+re-sync procedure live in `docs/skill-sources.md`. The `type: command`
+frontmatter on every `SKILL.md` is load-bearing (the culture skill loader
+skips files without it). Tooling prerequisites: `devex` (>=0.21) and `agtag`
+(>=0.1) on PATH; `colleague` optional (only `ask-colleague` needs it).
+
+## Conventions and workflow
+
+- **Memory discipline** (eidetic): `/recall` before non-trivial work to build
+  on prior decisions; `/remember` when a non-obvious decision, constraint, or
+  hard-won fix surfaces. This repo's memory is **in-repo and public** — a
+  plain `/remember` resolves scope from `culture.yaml` and lands the record
+  in `<repo-root>/.eidetic/memory` (committed, mesh-shared); pass
+  `--visibility private` to keep a record in `$HOME` instead.
+- **Ask-colleague reflex**: for a non-trivial committed diff, run
+  `ask-colleague review` before opening the PR; for a fresh read of an
+  unfamiliar area, `ask-colleague explore`. Both are read-only in a throwaway
+  worktree and always safe; side-effecting `write --apply` / `--pr` needs the
+  user's go-ahead.
+- **Worktrees**: hand-created worktrees (workforce lanes, scratch checkouts)
+  live in `../.worktrees.culture-nodes/<name>/` — one repo-named directory
+  beside the checkout, never a shared `../worktrees/`. Scope branch prefixes
+  to the work (plain `agent/*` collides with leftovers from earlier
+  fan-outs). Tear down with `git worktree remove <path>` (`prune` only clears
+  metadata for already-deleted dirs). The vendored `assign-to-workforce`
+  example uses the shared path and `agent/<task-id>` branches — it is cited
+  verbatim and must not be edited; override both when following it.

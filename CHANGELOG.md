@@ -5,6 +5,34 @@ All notable changes to this project will be documented in this file.
 Format follows [Keep a Changelog](https://keepachangelog.com/). This project
 adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.6.2] - 2026-08-08
+
+### Changed
+
+- **`CLAUDE.md` expanded from the scaffold seed into the full runtime prompt**
+  (`/init` with `docs/initial-design/*.md` as context). The new prompt frames
+  the repo's two layers (the unimplemented Culture Nodes product design in
+  `docs/initial-design/` vs the existing mesh-agent scaffold), distills the
+  PRD's load-bearing design ground rules (graph vocabulary, ledger authority
+  model, domain-outcome-vs-technical-status, content-addressed contracts,
+  PostgreSQL-authoritative runtime, headspace code boundary), documents the
+  dev commands mirroring CI, the CLI architecture, the CI/PR workflow, and
+  restores the template conventions the seed had displaced (vendored-skills
+  policy, eidetic memory discipline, ask-colleague reflex, worktree
+  location).
+- **`README.md` reframed from template prose to the culture-nodes project**:
+  adds a Status section linking the initial-design PRD and Phase 0/1
+  implementation issue, drops the obsolete "Make it your own" rename
+  checklist, and keeps the scaffold inventory, quickstart, and CLI table.
+
+### Fixed
+
+- README quickstart and CLI table invoked the CLI as `culture-nodes`, but the
+  installed entry point is `nodes` (`[project.scripts]` in `pyproject.toml`)
+  — `uv run culture-nodes whoami` failed with "Failed to spawn". All
+  invocations now use `uv run nodes …`; `CLAUDE.md` documents the
+  prog-name/entry-point mismatch.
+
 ## [0.6.1] - 2026-07-20
 
 ### Added

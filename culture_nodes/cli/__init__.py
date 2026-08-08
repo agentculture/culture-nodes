@@ -66,12 +66,16 @@ def _build_parser() -> argparse.ArgumentParser:
     from culture_nodes.cli._commands import doctor as _doctor_cmd
     from culture_nodes.cli._commands import explain as _explain_cmd
     from culture_nodes.cli._commands import learn as _learn_cmd
+    from culture_nodes.cli._commands import ledger as _ledger_group
     from culture_nodes.cli._commands import overview as _overview_cmd
+    from culture_nodes.cli._commands import review as _review_group
+    from culture_nodes.cli._commands import run as _run_group
     from culture_nodes.cli._commands import whoami as _whoami_cmd
+    from culture_nodes.cli._commands import workflow as _workflow_group
 
     parser = _CliArgumentParser(
         prog="culture-nodes",
-        description="culture-nodes — a clonable template for AgentCulture mesh agents.",
+        description="culture-nodes — thin CLI front for the Culture Nodes control-plane API.",
     )
     parser.add_argument(
         "--version",
@@ -82,12 +86,20 @@ def _build_parser() -> argparse.ArgumentParser:
     # through _CliArgumentParser too.
     sub = parser.add_subparsers(dest="command", parser_class=_CliArgumentParser)
 
+    # Mesh-agent identity verbs (offline, no API needed).
     _whoami_cmd.register(sub)
     _learn_cmd.register(sub)
     _explain_cmd.register(sub)
     _overview_cmd.register(sub)
     _doctor_cmd.register(sub)
     _cli_group.register(sub)
+    # Product verbs: thin REST clients over api/openapi/openapi.yaml — see
+    # culture_nodes/api_client.py. Zero engine logic lives in this package
+    # (spec decision c28).
+    _workflow_group.register(sub)
+    _run_group.register(sub)
+    _ledger_group.register(sub)
+    _review_group.register(sub)
     # Register your own noun groups here:
     #   from culture_nodes.cli._commands import my_noun as _my_noun_group
     #   _my_noun_group.register(sub)

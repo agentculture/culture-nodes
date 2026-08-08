@@ -14,6 +14,7 @@ import (
 	"github.com/aws/aws-sdk-go-v2/service/sqs"
 	"github.com/aws/aws-sdk-go-v2/service/sqs/types"
 
+	"github.com/agentculture/culture-nodes/internal/awsauth"
 	"github.com/agentculture/culture-nodes/internal/queue"
 )
 
@@ -83,10 +84,12 @@ type Config struct {
 	// defaultVisibilityTimeout.
 	VisibilityTimeout time.Duration
 	// Credentials, when non-nil, overrides the SDK's default credential
-	// chain. Production deployments normally leave this nil (task t17
-	// implements the shared IRSA-ready resolver); this package's own tests
-	// set it to a static, meaningless credential pair pointed at the fake
-	// server, which never validates a signature.
+	// chain for New. Production deployments normally leave this nil and
+	// either accept the SDK's own default chain or use NewDriverFromAuth
+	// instead of New, which resolves credentials through
+	// internal/awsauth.LoadConfig (task t17's shared IRSA-ready resolver);
+	// this package's own tests set it to a static, meaningless credential
+	// pair pointed at the fake server, which never validates a signature.
 	Credentials aws.CredentialsProvider
 	// HTTPClient, when non-nil, overrides the SDK's default HTTP client.
 	// This package's own tests use it to point the SDK at an
@@ -121,9 +124,14 @@ var _ queue.Queue = (*Driver)(nil)
 // New builds a Driver from cfg, resolving AWS credentials and region
 // through the standard SDK config chain (overridden by cfg.Credentials when
 // set) and pointing the client at cfg.Endpoint when non-empty.
+//
+// See NewDriverFromAuth for an alternative constructor that resolves
+// credentials through internal/awsauth.LoadConfig (task t17's shared
+// IRSA-ready resolver) instead of this function's own inline
+// awsconfig.LoadDefaultConfig option list. New is unchanged and remains the
+// default path -- NewDriverFromAuth is additive.
 func New(ctx context.Context, cfg Config) (*Driver, error) {
-	switch {
-	case cfg.QueueURL == "":
+	if cfg.QueueURL == "" {
 		return nil, fmt.Errorf("queue/sqs: New: QueueURL is required")
 	}
 
@@ -148,6 +156,51 @@ func New(ctx context.Context, cfg Config) (*Driver, error) {
 		return nil, fmt.Errorf("queue/sqs: New: load AWS config: %w", err)
 	}
 
+	return newDriver(awsCfg, cfg)
+}
+
+// NewDriverFromAuth builds a Driver the same way New does, except AWS
+// credentials and region are resolved through internal/awsauth.LoadConfig
+// (task t17) rather than this package's own awsconfig.LoadDefaultConfig
+// option list -- giving this driver IRSA support and Source reporting (via
+// authOpts.Logf) for free.
+//
+// cfg.Credentials is ignored on this path: authOpts is the single source of
+// authentication configuration. cfg.Region, if authOpts.Region is empty, is
+// used as authOpts.Region's fallback (and "us-east-1" if both are empty,
+// matching New's own default) -- everything else on cfg (Endpoint,
+// HTTPClient, MaxAttempts, MaxWait, VisibilityTimeout, Logf) applies exactly
+// as it does for New.
+func NewDriverFromAuth(ctx context.Context, authOpts awsauth.Options, cfg Config) (*Driver, error) {
+	if cfg.QueueURL == "" {
+		return nil, fmt.Errorf("queue/sqs: NewDriverFromAuth: QueueURL is required")
+	}
+
+	if authOpts.Region == "" {
+		authOpts.Region = cfg.Region
+	}
+	if authOpts.Region == "" {
+		authOpts.Region = "us-east-1"
+	}
+
+	awsCfg, _, err := awsauth.LoadConfig(ctx, authOpts)
+	if err != nil {
+		return nil, fmt.Errorf("queue/sqs: NewDriverFromAuth: resolve AWS credentials: %w", err)
+	}
+
+	if cfg.HTTPClient != nil {
+		awsCfg.HTTPClient = cfg.HTTPClient
+	}
+	if cfg.MaxAttempts > 0 {
+		awsCfg.RetryMaxAttempts = cfg.MaxAttempts
+	}
+
+	return newDriver(awsCfg, cfg)
+}
+
+// newDriver builds a Driver from an already-resolved aws.Config, shared by
+// New and NewDriverFromAuth.
+func newDriver(awsCfg aws.Config, cfg Config) (*Driver, error) {
 	client := sqs.NewFromConfig(awsCfg, func(o *sqs.Options) {
 		if cfg.Endpoint != "" {
 			endpoint := cfg.Endpoint

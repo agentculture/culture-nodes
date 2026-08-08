@@ -18,6 +18,7 @@ import (
 	lambdatypes "github.com/aws/aws-sdk-go-v2/service/lambda/types"
 	"github.com/aws/smithy-go"
 
+	"github.com/agentculture/culture-nodes/internal/awsauth"
 	"github.com/agentculture/culture-nodes/internal/contracts"
 	"github.com/agentculture/culture-nodes/internal/runners"
 )
@@ -82,9 +83,11 @@ type Config struct {
 	ActorID string
 
 	// Credentials, when non-nil, overrides the SDK's default credential
-	// chain. Production leaves this nil (task t17 implements the shared
-	// IRSA-ready resolver); the tests set static credentials the fake never
-	// validates.
+	// chain for New. Production leaves this nil and either accepts the
+	// SDK's own default chain or uses NewFromAuth instead of New, which
+	// resolves credentials through internal/awsauth.LoadConfig (task t17's
+	// shared IRSA-ready resolver); the tests set static credentials the
+	// fake never validates.
 	Credentials aws.CredentialsProvider
 
 	// HTTPClient, when non-nil, overrides the SDK's HTTP client. The tests
@@ -157,24 +160,13 @@ var _ runners.Runner = (*Adapter)(nil)
 // configuration, verifying each pinned image digest against what the platform
 // reports. A registry entry whose digest does not match the deployed image is
 // a load failure: a pin nobody checked is not a pin.
+//
+// See NewFromAuth for an alternative constructor that resolves credentials
+// through internal/awsauth.LoadConfig (task t17's shared IRSA-ready
+// resolver) instead of this function's own inline
+// awsconfig.LoadDefaultConfig option list. New is unchanged and remains the
+// default path -- NewFromAuth is additive.
 func New(ctx context.Context, cfg Config) (*Adapter, error) {
-	if cfg.Registry == nil {
-		return nil, fmt.Errorf("runners/lambda: New requires a function registry")
-	}
-	if cfg.Registry.Len() == 0 {
-		return nil, fmt.Errorf(
-			"runners/lambda: New requires at least one registered function; " +
-				"an adapter with an empty registry refuses every dispatch, which is a misconfiguration worth failing at startup")
-	}
-
-	revision := cfg.RunnerRevision
-	if revision == "" {
-		revision = DefaultRunnerRevision
-	}
-	if !strings.HasPrefix(revision, contracts.DigestPrefix) || len(revision) != len(contracts.DigestPrefix)+64 {
-		return nil, fmt.Errorf("runners/lambda: runner revision %q is not a sha256 digest", revision)
-	}
-
 	region := cfg.Region
 	if region == "" {
 		region = "us-east-1"
@@ -194,6 +186,67 @@ func New(ctx context.Context, cfg Config) (*Adapter, error) {
 	awsCfg, err := awsconfig.LoadDefaultConfig(ctx, loadOpts...)
 	if err != nil {
 		return nil, fmt.Errorf("runners/lambda: load AWS config: %w", err)
+	}
+
+	return newAdapter(ctx, awsCfg, cfg)
+}
+
+// NewFromAuth builds an Adapter the same way New does, except AWS
+// credentials and region are resolved through internal/awsauth.LoadConfig
+// (task t17) rather than this package's own awsconfig.LoadDefaultConfig
+// option list -- giving this adapter IRSA support and Source reporting (via
+// authOpts.Logf) for free.
+//
+// cfg.Credentials is ignored on this path: authOpts is the single source of
+// authentication configuration. cfg.Region, if authOpts.Region is empty, is
+// used as authOpts.Region's fallback (and "us-east-1" if both are empty,
+// matching New's own default) -- everything else on cfg (Registry,
+// Endpoint, RunnerRevision, ActorID, HTTPClient, MaxAttempts, Clock) applies
+// exactly as it does for New, including the same Load(ctx) call at
+// construction.
+func NewFromAuth(ctx context.Context, authOpts awsauth.Options, cfg Config) (*Adapter, error) {
+	if authOpts.Region == "" {
+		authOpts.Region = cfg.Region
+	}
+	if authOpts.Region == "" {
+		authOpts.Region = "us-east-1"
+	}
+
+	awsCfg, _, err := awsauth.LoadConfig(ctx, authOpts)
+	if err != nil {
+		return nil, fmt.Errorf("runners/lambda: NewFromAuth: resolve AWS credentials: %w", err)
+	}
+
+	if cfg.HTTPClient != nil {
+		awsCfg.HTTPClient = cfg.HTTPClient
+	}
+	if cfg.MaxAttempts > 0 {
+		awsCfg.RetryMaxAttempts = cfg.MaxAttempts
+	}
+
+	return newAdapter(ctx, awsCfg, cfg)
+}
+
+// newAdapter builds and loads an Adapter from an already-resolved
+// aws.Config, shared by New and NewFromAuth. Registry and revision
+// validation happen here (not before awsCfg is resolved) so both
+// constructors refuse the same misconfigurations the same way.
+func newAdapter(ctx context.Context, awsCfg aws.Config, cfg Config) (*Adapter, error) {
+	if cfg.Registry == nil {
+		return nil, fmt.Errorf("runners/lambda: New requires a function registry")
+	}
+	if cfg.Registry.Len() == 0 {
+		return nil, fmt.Errorf(
+			"runners/lambda: New requires at least one registered function; " +
+				"an adapter with an empty registry refuses every dispatch, which is a misconfiguration worth failing at startup")
+	}
+
+	revision := cfg.RunnerRevision
+	if revision == "" {
+		revision = DefaultRunnerRevision
+	}
+	if !strings.HasPrefix(revision, contracts.DigestPrefix) || len(revision) != len(contracts.DigestPrefix)+64 {
+		return nil, fmt.Errorf("runners/lambda: runner revision %q is not a sha256 digest", revision)
 	}
 
 	client := awslambda.NewFromConfig(awsCfg, func(o *awslambda.Options) {

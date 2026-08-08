@@ -79,6 +79,8 @@ func commands() map[string]handlerFunc {
 	for _, name := range processModes {
 		m[name] = stubModeHandler(name)
 	}
+	m["serve"] = cmdServe
+	m["all"] = cmdAll
 	return m
 }
 

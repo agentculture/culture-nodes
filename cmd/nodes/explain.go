@@ -24,10 +24,10 @@ var explainCatalog = map[string]string{
 	"cli":          explainCLI,
 	"cli overview": explainCLI,
 
-	"serve":     explainStubMode("serve", "run the API server"),
+	"serve":     explainServe,
 	"scheduler": explainStubMode("scheduler", "run the scheduler process"),
 	"worker":    explainStubMode("worker", "run the worker process"),
-	"all":       explainStubMode("all", "run serve+scheduler+worker in a single process (dev mode)"),
+	"all":       explainAll,
 	"validate":  explainValidate,
 	"run":       explainStubMode("run", "start a workflow run"),
 	"inspect":   explainStubMode("inspect", "inspect ledger records for a run"),
@@ -140,6 +140,48 @@ describes this agent/binary.
 
     nodes cli overview
     nodes cli overview --json
+`
+
+const explainServe = `# nodes serve
+
+Runs the Culture Nodes control-plane API (api/openapi/openapi.yaml,
+internal/api) over HTTP: workflow publication, run orchestration, the
+append-only work ledger, and review transactions, plus an SSE stream of
+committed run events. Authless by design (spec decision c45) — meant to run
+behind a private network or an authenticating proxy, never exposed directly.
+
+Connects to PostgreSQL (NODES_DATABASE_URL), resolves the single default
+namespace (creating it if absent), and serves until SIGINT/SIGTERM, then
+shuts down gracefully. Does not apply schema migrations itself — run
+'nodes migrate' first.
+
+## Usage
+
+    nodes serve
+    nodes serve --listen :9000 --database-url postgres://...
+
+## Environment
+
+- ` + "`NODES_LISTEN`" + ` — listen address (default ` + "`:8080`" + `)
+- ` + "`NODES_DATABASE_URL`" + ` — PostgreSQL connection URL (required)
+`
+
+const explainAll = `# nodes all
+
+Local-development mode: everything ` + "`nodes serve`" + ` runs, plus the
+scheduler (durable timers, retry availability, lease recovery — PRD §12.7)
+in the same process. Worker wiring lands in a later task; internal/worker
+carries no implementation on this branch, so 'all' here is serve +
+scheduler only — stated here rather than left to be discovered.
+
+## Usage
+
+    nodes all
+    nodes all --listen :9000 --database-url postgres://...
+
+## Environment
+
+Same as ` + "`nodes serve`" + `: ` + "`NODES_LISTEN`" + `, ` + "`NODES_DATABASE_URL`" + `.
 `
 
 func explainStubMode(name, summary string) string {

@@ -33,14 +33,15 @@ func emitOverview(subject, summary string, jsonMode bool) (int, error) {
 func agentOverviewSummary() string {
 	report := newWhoamiReport()
 	verbs := []string{"whoami", "learn", "explain <path>", "overview", "doctor", "cli overview", "validate <file>"}
-	modes := strings.Join(processModes, ", ")
+	stubModes := []string{"scheduler", "worker", "run", "inspect"}
 	return fmt.Sprintf(
 		"nodes is the Culture Nodes control-plane CLI, identified here as nick %q on backend %q "+
-			"(version %s); it currently exposes the verbs %s, and recognizes but does "+
-			"not yet implement the process-lifecycle modes %s described in docs/initial-design/ — "+
-			"every command accepts --json and follows the stdout-results/stderr-errors contract "+
-			"documented by 'nodes learn'.",
-		report.Nick, report.Backend, report.Version, strings.Join(verbs, ", "), modes,
+			"(version %s); it currently exposes the verbs %s, runs the control-plane API via "+
+			"serve and all (api/openapi/openapi.yaml), and recognizes but does not yet implement "+
+			"the process-lifecycle modes %s described in docs/initial-design/ — every command "+
+			"accepts --json and follows the stdout-results/stderr-errors contract documented by "+
+			"'nodes learn'.",
+		report.Nick, report.Backend, report.Version, strings.Join(verbs, ", "), strings.Join(stubModes, ", "),
 	)
 }
 

@@ -1,0 +1,948 @@
+openapi: 3.1.0
+
+info:
+  title: nodes.culture.dev/v1alpha1
+  version: 0.1.0
+  summary: Culture Nodes control-plane API
+  description: >-
+    The Culture Nodes control-plane API (docs/initial-design/culture-nodes-prd-spec.md
+    §12.1, §15.1): workflow publication, run orchestration, the append-only work
+    ledger, and review transactions. group: nodes.culture.dev/v1alpha1.
+
+    Phase 1 runs authless by design (spec decision c45): this API carries no
+    authentication or authorization of its own and is meant to run behind a
+    private network. Every operation is reachable by anyone who can reach the
+    listener. Do not expose this API on a public network without a fronting
+    proxy that adds authentication.
+
+    Every error response, on every operation, uses the Error schema below —
+    the same {code, message, remediation} shape internal/clifmt.CliError
+    renders for the CLI — with the HTTP status line carrying the specific
+    condition.
+  license:
+    name: Apache-2.0
+
+servers:
+  - url: /
+    description: The API is served relative to whatever host and port `nodes serve` binds.
+
+tags:
+  - name: workflows
+    description: Compile, publish, and read immutable workflow versions (PRD §11).
+  - name: runs
+    description: Create and inspect workflow runs — the Run-view payload (PRD §8.6, §8.7).
+  - name: events
+    description: Server-Sent Events stream of committed run events (PRD §15.1).
+  - name: ledger
+    description: The append-only work ledger and its projections (PRD §10).
+  - name: reviews
+    description: Human review transactions over ledger records (PRD §10.8).
+  - name: operations
+    description: Liveness and readiness probes.
+
+paths:
+  /v1alpha1/workflows/validate:
+    post:
+      operationId: validateWorkflow
+      tags: [workflows]
+      summary: Compile a workflow definition and report diagnostics.
+      description: >-
+        Runs the PRD §11.4 validation levels over the submitted source and
+        returns every diagnostic. This never persists anything — a document
+        with error diagnostics is a documented domain outcome (`valid: false`
+        with an empty digest), not an HTTP error, matching the `nodes
+        validate` CLI verb (PRD §3.4: a domain outcome is not a technical
+        failure).
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/WorkflowSource'
+      responses:
+        '200':
+          description: The document was compiled. `valid` reports whether it has any error diagnostic.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/WorkflowValidation'
+        '400':
+          description: The request itself is malformed (missing source, unknown format).
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+
+  /v1alpha1/workflows:
+    post:
+      operationId: publishWorkflow
+      tags: [workflows]
+      summary: Publish a workflow definition as an immutable version.
+      description: >-
+        Compiles the submitted source and, if it compiles cleanly, stores it
+        as an immutable workflow version addressed by its content digest
+        (PRD §11.3). Publishing the same content twice is idempotent: the
+        existing version is returned with `200 OK` rather than a conflict,
+        because a digest is a statement about content, not about who asked
+        first.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/WorkflowSource'
+      responses:
+        '200':
+          description: This content digest was already published; the existing version is returned.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/WorkflowVersion'
+        '201':
+          description: A new immutable workflow version was created.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/WorkflowVersion'
+        '400':
+          description: The request is malformed.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '422':
+          description: >-
+            The document does not compile. Call
+            `POST /v1alpha1/workflows/validate` first for the full diagnostic
+            list; this response's `message` summarizes the error count.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+    get:
+      operationId: listWorkflows
+      tags: [workflows]
+      summary: List published workflow versions.
+      parameters:
+        - name: workflow_key
+          in: query
+          description: Filter to versions of one workflow key.
+          schema:
+            type: string
+        - name: limit
+          in: query
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 500
+            default: 50
+      responses:
+        '200':
+          description: A page of workflow versions, newest first.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/WorkflowVersionList'
+
+  /v1alpha1/workflows/{digest}:
+    get:
+      operationId: getWorkflow
+      tags: [workflows]
+      summary: Fetch one immutable workflow version by content digest.
+      parameters:
+        - $ref: '#/components/parameters/Digest'
+      responses:
+        '200':
+          description: The workflow version.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/WorkflowVersion'
+        '404':
+          description: No workflow version has this digest.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+
+  /v1alpha1/runs:
+    post:
+      operationId: createRun
+      tags: [runs]
+      summary: Create a run of a published workflow.
+      description: >-
+        Pins the run to the given workflow digest's immutable normalized IR
+        (PRD §20.1) and creates the entry token and node run in one
+        transaction (PRD §12.5). The run is claimable the moment this
+        returns.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CreateRunRequest'
+      responses:
+        '201':
+          description: The run was created and is now running.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Run'
+        '400':
+          description: The input does not satisfy the workflow's input contract.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '404':
+          description: No workflow version has the given digest.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+    get:
+      operationId: listRuns
+      tags: [runs]
+      summary: List runs, optionally filtered by state.
+      parameters:
+        - name: state
+          in: query
+          description: Filter to runs currently in this state.
+          schema:
+            $ref: '#/components/schemas/RunState'
+        - name: limit
+          in: query
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 500
+            default: 50
+      responses:
+        '200':
+          description: A page of runs, newest first.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/RunList'
+
+  /v1alpha1/runs/{id}:
+    get:
+      operationId: getRun
+      tags: [runs]
+      summary: Fetch the Run-view payload — run, tokens, node runs, and attempts.
+      description: >-
+        The data behind the PRD §8.6 Run view and §8.7 first visual slice's
+        node-detail panel: everything needed to render a run's current graph
+        position and history without a second round trip per node.
+      parameters:
+        - $ref: '#/components/parameters/RunID'
+      responses:
+        '200':
+          description: The run view.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/RunView'
+        '404':
+          description: No run has this id.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+
+  /v1alpha1/runs/{id}/cancel:
+    post:
+      operationId: cancelRun
+      tags: [runs]
+      summary: Cancel a run.
+      description: >-
+        Consumes every active token, marks every non-terminal node run and
+        ready work item cancelled, and moves the run to `cancelled` — under
+        the same per-run advisory lock the engine's own completion
+        transaction takes (PRD §12.5), so a cancel cannot interleave with a
+        concurrent attempt completion. A node run a worker already holds a
+        lease on finishes that lease's fenced completion path (it will find
+        the node run terminal and no-op); cancellation does not reach into
+        an in-flight attempt.
+      parameters:
+        - $ref: '#/components/parameters/RunID'
+      responses:
+        '200':
+          description: The run is now cancelled.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Run'
+        '404':
+          description: No run has this id.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '409':
+          description: The run has already reached a terminal state.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+
+  /v1alpha1/runs/{id}/events:
+    get:
+      operationId: streamRunEvents
+      tags: [events]
+      summary: Server-Sent Events stream of a run's committed events.
+      description: >-
+        Streams only committed events (PRD §15.1 CloudEvents-compatible
+        envelopes), polling the events table every 500ms for rows newer than
+        the resume point. Resume by per-run sequence: send `Last-Event-ID`
+        (a previously received `id:` field) to resume after a disconnect, or
+        the `from` query parameter for a client that cannot set headers
+        before its first connection. Each frame is
+        `id: <sequence>\nevent: <type>\ndata: <envelope JSON>\n\n`. The
+        stream ends (the connection closes normally) once a terminal run
+        event (`run.completed`, `run.failed`, `run.cancelled`, or
+        `run.bounded`) has been sent, since no further event will ever be
+        appended for this run.
+      parameters:
+        - $ref: '#/components/parameters/RunID'
+        - name: Last-Event-ID
+          in: header
+          description: Resume after this per-run sequence number.
+          schema:
+            type: string
+        - name: from
+          in: query
+          description: Resume after this per-run sequence number, when a Last-Event-ID header cannot be set.
+          schema:
+            type: integer
+            format: int64
+      responses:
+        '200':
+          description: A `text/event-stream` of committed events.
+          content:
+            text/event-stream:
+              schema:
+                type: string
+        '404':
+          description: No run has this id.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+
+  /v1alpha1/runs/{id}/ledger:
+    get:
+      operationId: listLedgerRecords
+      tags: [ledger]
+      summary: List a run's ledger records.
+      description: The PRD §8.6 Ledger view's raw feed — every record, live and superseded, in append order.
+      parameters:
+        - $ref: '#/components/parameters/RunID'
+      responses:
+        '200':
+          description: The run's ledger records and current ledger version.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/LedgerRecords'
+        '404':
+          description: No run has this id.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+
+  /v1alpha1/runs/{id}/ledger/projections/{name}:
+    get:
+      operationId: getLedgerProjection
+      tags: [ledger]
+      summary: Compute one of the PRD §10.9 standard projections over a run's ledger.
+      parameters:
+        - $ref: '#/components/parameters/RunID'
+        - name: name
+          in: path
+          required: true
+          description: >-
+            One of: current_scope, confirmed_claims,
+            open_assumptions_and_questions, ready_tasks, active_tasks,
+            verification_queue, decision_history, evidence_for_subject,
+            delivery_summary.
+          schema:
+            type: string
+        - name: subject
+          in: query
+          description: Required by, and used only by, evidence_for_subject — the reference to project evidence for.
+          schema:
+            type: string
+      responses:
+        '200':
+          description: The projection, self-describing digest included.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Projection'
+        '400':
+          description: name is not a recognized projection.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '404':
+          description: No run has this id.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+
+  /v1alpha1/runs/{id}/reviews:
+    post:
+      operationId: createReview
+      tags: [reviews]
+      summary: Create a review request over a batch of ledger records.
+      description: >-
+        Records the ledger version and content-digest frame checksum the
+        reviewer is looking at (PRD §10.8), so a later commit against a
+        ledger that has since moved is refused rather than silently applied.
+      parameters:
+        - $ref: '#/components/parameters/RunID'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CreateReviewRequest'
+      responses:
+        '201':
+          description: The review request was created.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ReviewRequest'
+        '400':
+          description: The request is malformed.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '404':
+          description: No run has this id, or a named record does not belong to it.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '409':
+          description: The request names a ledger version that is not the run's current one.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+
+  /v1alpha1/reviews/{id}/commit:
+    post:
+      operationId: commitReview
+      tags: [reviews]
+      summary: Commit a review's decisions.
+      description: >-
+        Applies confirm/reject decisions for every record the review named,
+        all in one transaction, or none (PRD §10.8). Refused — with nothing
+        written — when the caller's expected ledger version no longer
+        matches: the ledger moved, a reviewed record was superseded, or the
+        reviewed frame no longer checksums to what was requested.
+      parameters:
+        - name: id
+          in: path
+          required: true
+          description: The review request id.
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CommitReviewRequest'
+      responses:
+        '200':
+          description: The review was committed.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ReviewCommitResult'
+        '400':
+          description: The decision set does not exactly cover the records under review.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '404':
+          description: No review request has this id.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '409':
+          description: >-
+            The review is stale (the ledger moved, the expected version does
+            not match, a target was superseded, or the frame checksum no
+            longer matches) or was already committed.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+
+  /v1alpha1/healthz:
+    get:
+      operationId: healthz
+      tags: [operations]
+      summary: Liveness probe.
+      description: Always `200` once the process is serving requests. Does not touch the database.
+      responses:
+        '200':
+          description: The process is alive.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Health'
+
+  /v1alpha1/readyz:
+    get:
+      operationId: readyz
+      tags: [operations]
+      summary: Readiness probe — pings the database.
+      responses:
+        '200':
+          description: The process is ready to serve traffic.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Health'
+        '503':
+          description: The database is not reachable.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+
+components:
+  parameters:
+    RunID:
+      name: id
+      in: path
+      required: true
+      description: The run id.
+      schema:
+        type: string
+    Digest:
+      name: digest
+      in: path
+      required: true
+      description: The workflow version's content digest.
+      schema:
+        type: string
+
+  schemas:
+    Error:
+      type: object
+      description: >-
+        The stable error shape, every non-2xx response, every operation.
+        Mirrors internal/clifmt.CliError's JSON encoding exactly: `code`
+        follows the same exit-code-style bucket (1 = domain/user error such
+        as not-found or conflict, 2 = environment error such as a database
+        outage), and the HTTP status line carries the specific condition.
+      required: [code, message, remediation]
+      properties:
+        code:
+          type: integer
+          enum: [1, 2]
+        message:
+          type: string
+        remediation:
+          type: string
+
+    Diagnostic:
+      type: object
+      required: [level, path, code, message, hint]
+      properties:
+        level:
+          type: string
+          enum: [error, warning]
+        path:
+          type: string
+          description: A JSON Pointer into the submitted document.
+        code:
+          type: string
+        message:
+          type: string
+        hint:
+          type: string
+
+    WorkflowSource:
+      type: object
+      required: [source]
+      properties:
+        format:
+          type: string
+          enum: [yaml, json]
+          default: yaml
+        source:
+          type: string
+          description: The workflow document, in the given format.
+
+    WorkflowValidation:
+      type: object
+      required: [valid, digest, diagnostics]
+      properties:
+        valid:
+          type: boolean
+        digest:
+          type: string
+          description: The content digest of the normalized IR. Empty when the document has error diagnostics.
+        diagnostics:
+          type: array
+          items:
+            $ref: '#/components/schemas/Diagnostic'
+
+    WorkflowVersion:
+      type: object
+      required:
+        - id
+        - workflow_key
+        - version
+        - source_format
+        - source
+        - normalized_ir
+        - digest
+        - created_at
+      properties:
+        id:
+          type: string
+        workflow_key:
+          type: string
+        version:
+          type: integer
+        source_format:
+          type: string
+          enum: [yaml, json]
+        source:
+          type: string
+        normalized_ir:
+          description: The normalized IR, as a JSON value.
+        digest:
+          type: string
+        created_at:
+          type: string
+          format: date-time
+
+    WorkflowVersionList:
+      type: object
+      required: [items]
+      properties:
+        items:
+          type: array
+          items:
+            $ref: '#/components/schemas/WorkflowVersion'
+
+    RunState:
+      type: string
+      enum: [created, running, waiting, completed, failed, cancelled]
+
+    CreateRunRequest:
+      type: object
+      required: [workflow_digest]
+      properties:
+        workflow_digest:
+          type: string
+        input:
+          description: The run input. Validated against the workflow's input contract.
+
+    Run:
+      type: object
+      required: [id, workflow_digest, state, created_at, updated_at]
+      properties:
+        id:
+          type: string
+        workflow_digest:
+          type: string
+        state:
+          $ref: '#/components/schemas/RunState'
+        input:
+          description: The run input, as submitted.
+        output:
+          description: The run's result. Present only once the run has completed.
+        created_at:
+          type: string
+          format: date-time
+        updated_at:
+          type: string
+          format: date-time
+        completed_at:
+          type: string
+          format: date-time
+
+    RunList:
+      type: object
+      required: [items]
+      properties:
+        items:
+          type: array
+          items:
+            $ref: '#/components/schemas/Run'
+
+    Token:
+      type: object
+      required: [id, node_id, state, created_at]
+      properties:
+        id:
+          type: string
+        node_id:
+          type: string
+        state:
+          type: string
+          enum: [active, consumed]
+        parent_token_id:
+          type: string
+        created_at:
+          type: string
+          format: date-time
+        consumed_at:
+          type: string
+          format: date-time
+
+    Attempt:
+      type: object
+      required: [id, node_run_id, attempt_number, status, started_at]
+      properties:
+        id:
+          type: string
+        node_run_id:
+          type: string
+        attempt_number:
+          type: integer
+        actor_id:
+          type: string
+        status:
+          type: string
+          enum: [succeeded, failed, timed_out, cancelled, policy_denied, contract_rejected]
+        fencing_token:
+          type: integer
+        result:
+          description: The attempt's reported output, as submitted.
+        started_at:
+          type: string
+          format: date-time
+        completed_at:
+          type: string
+          format: date-time
+
+    NodeRun:
+      type: object
+      required: [id, node_id, state, visit_count, created_at]
+      properties:
+        id:
+          type: string
+        token_id:
+          type: string
+        node_id:
+          type: string
+        state:
+          type: string
+          enum: [ready, leased, running, waiting_external, completed, failed, cancelled]
+        outcome:
+          type: string
+        visit_count:
+          type: integer
+        created_at:
+          type: string
+          format: date-time
+        updated_at:
+          type: string
+          format: date-time
+        completed_at:
+          type: string
+          format: date-time
+        attempts:
+          type: array
+          items:
+            $ref: '#/components/schemas/Attempt'
+
+    RunView:
+      type: object
+      required: [run, tokens, node_runs]
+      description: >-
+        The Run-view payload (PRD §8.6 Run, §8.7 first visual slice): the
+        run itself, every token, and every node run with its attempts
+        nested — one round trip for the whole graph position and history.
+      properties:
+        run:
+          $ref: '#/components/schemas/Run'
+        tokens:
+          type: array
+          items:
+            $ref: '#/components/schemas/Token'
+        node_runs:
+          type: array
+          items:
+            $ref: '#/components/schemas/NodeRun'
+
+    LedgerRecord:
+      type: object
+      required:
+        - id
+        - schema_version
+        - record_type
+        - run_id
+        - origin
+        - authority
+        - data
+        - provenance_refs
+        - created_at
+        - content_digest
+      properties:
+        id:
+          type: string
+        schema_version:
+          type: string
+        record_type:
+          type: string
+        run_id:
+          type: string
+        node_run_id:
+          type: string
+        attempt_id:
+          type: string
+        origin:
+          type: object
+          required: [kind, actor_id]
+          properties:
+            kind:
+              type: string
+            actor_id:
+              type: string
+            actor_revision:
+              type: string
+        authority:
+          type: string
+          enum: [proposed, confirmed, observed, derived, rejected, superseded]
+        subject_ref:
+          type: string
+        data:
+          description: The record's typed payload.
+        provenance_refs:
+          type: array
+          items:
+            type: string
+        supersedes:
+          type: string
+        created_at:
+          type: string
+          format: date-time
+        content_digest:
+          type: string
+
+    LedgerRecords:
+      type: object
+      required: [items, ledger_version]
+      properties:
+        items:
+          type: array
+          items:
+            $ref: '#/components/schemas/LedgerRecord'
+        ledger_version:
+          type: integer
+          format: int64
+
+    Projection:
+      type: object
+      required: [kind, subject, items, digest]
+      properties:
+        kind:
+          type: string
+        subject:
+          type: string
+        items:
+          type: array
+          items:
+            $ref: '#/components/schemas/LedgerRecord'
+        summary:
+          description: Populated only by the delivery_summary projection.
+        digest:
+          type: string
+
+    CreateReviewRequest:
+      type: object
+      required: [record_ids, ledger_version]
+      properties:
+        record_ids:
+          type: array
+          items:
+            type: string
+        ledger_version:
+          type: integer
+          format: int64
+          description: The run's ledger version this request was read at.
+        reviewer_actor_id:
+          type: string
+          description: The human actor the review is bound to. Required for the review to ever be committable.
+
+    ReviewRequest:
+      type: object
+      required: [id, run_id, status, ledger_version, frame_checksum, record_ids, created_at]
+      properties:
+        id:
+          type: string
+        run_id:
+          type: string
+        reviewer_actor_id:
+          type: string
+        status:
+          type: string
+          enum: [requested, committed]
+        ledger_version:
+          type: integer
+          format: int64
+        frame_checksum:
+          type: string
+        record_ids:
+          type: array
+          items:
+            type: string
+        created_at:
+          type: string
+          format: date-time
+
+    CommitReviewRequest:
+      type: object
+      required: [decisions, expected_ledger_version]
+      properties:
+        decisions:
+          type: object
+          description: Map of record id to verdict.
+          additionalProperties:
+            type: string
+            enum: [confirm, reject]
+        expected_ledger_version:
+          type: integer
+          format: int64
+          description: The ledger version the caller expects to still hold. A mismatch is refused with 409, nothing written.
+
+    ReviewCommitResult:
+      type: object
+      required: [review_id, records, ledger_version]
+      properties:
+        review_id:
+          type: string
+        records:
+          type: array
+          items:
+            $ref: '#/components/schemas/LedgerRecord'
+        ledger_version:
+          type: integer
+          format: int64
+
+    Health:
+      type: object
+      required: [status]
+      properties:
+        status:
+          type: string
+          enum: [ok]

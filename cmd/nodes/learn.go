@@ -12,9 +12,9 @@ Purpose
 Agent-first entry point for Culture Nodes, the durable ledger-native
 workflow orchestrator described in docs/initial-design/. Today it exposes
 introspection verbs (this command family), compiles workflow definitions
-(validate), and recognizes — but does not yet implement — the
-process-lifecycle modes (serve, scheduler, worker, all, run, inspect);
-those land in later build-plan tasks.
+(validate), runs the control-plane API (serve, all), and recognizes — but
+does not yet implement — the remaining process-lifecycle modes (scheduler,
+worker, run, inspect); those land in later build-plan tasks.
 
 Commands
 --------
@@ -25,7 +25,9 @@ Commands
   nodes doctor               Environment/identity checks.
   nodes cli overview         Describe the CLI surface itself.
   nodes validate <file>      Compile a workflow definition; report diagnostics.
-  nodes serve|scheduler|worker|all|run|inspect
+  nodes serve                Run the control-plane API (api/openapi/openapi.yaml).
+  nodes all                  serve + scheduler, for local development.
+  nodes scheduler|worker|run|inspect
                              Recognized process modes (not implemented yet).
 
 Machine-readable output
@@ -72,11 +74,16 @@ func newLearnPayload() learnPayload {
 		{Path: []string{"cli", "overview"}, Summary: "Describe the CLI surface itself."},
 		{Path: []string{"validate"}, Summary: "Compile a workflow definition and report diagnostics."},
 	}
+	implementedModeSummaries := map[string]string{
+		"serve": "Run the control-plane API (api/openapi/openapi.yaml).",
+		"all":   "serve + scheduler, for local development.",
+	}
 	for _, mode := range processModes {
-		commands = append(commands, learnCommand{
-			Path:    []string{mode},
-			Summary: "Recognized process mode (not implemented yet).",
-		})
+		summary := "Recognized process mode (not implemented yet)."
+		if s, ok := implementedModeSummaries[mode]; ok {
+			summary = s
+		}
+		commands = append(commands, learnCommand{Path: []string{mode}, Summary: summary})
 	}
 	return learnPayload{
 		Tool:     "nodes",

@@ -313,8 +313,12 @@ func TestConformance_DoctorHealthyFromRepoRoot(t *testing.T) {
 }
 
 func TestConformance_StubModeIsCliErrorNotResult(t *testing.T) {
+	// "scheduler" stands in for a still-stubbed process mode; "serve" and
+	// "all" are real as of this task (cmd/nodes/serve.go) and are exercised
+	// by internal/api's own suite and TestConformance_ServeRequiresDatabaseURL
+	// below instead.
 	dir := t.TempDir()
-	r := runNodes(t, dir, "serve")
+	r := runNodes(t, dir, "scheduler")
 
 	assertNeverMixed(t, r)
 	if r.Stdout != "" {
@@ -327,6 +331,65 @@ func TestConformance_StubModeIsCliErrorNotResult(t *testing.T) {
 	if !strings.Contains(r.Stderr, "not implemented yet") {
 		t.Fatalf("stderr = %q, want it to mention 'not implemented yet'", r.Stderr)
 	}
+}
+
+// TestConformance_ServeRequiresDatabaseURL proves `nodes serve` is real
+// (not a stub) without needing an actual PostgreSQL instance for this
+// package's conformance suite: run with NODES_DATABASE_URL scrubbed from
+// the environment, it must fail fast as a genuine CliError (code 2) rather
+// than hang trying to listen, and rather than reporting "not implemented
+// yet" (see TestConformance_StubModeIsCliErrorNotResult, which now covers a
+// mode that still is one). The database-backed path itself — actually
+// serving requests — is internal/api's own suite's job.
+func TestConformance_ServeRequiresDatabaseURL(t *testing.T) {
+	dir := t.TempDir()
+	cmd := exec.Command(binPath, "serve")
+	cmd.Dir = dir
+	cmd.Env = scrubEnv(os.Environ(), "NODES_DATABASE_URL")
+
+	var stdout, stderr bytes.Buffer
+	cmd.Stdout = &stdout
+	cmd.Stderr = &stderr
+	runErr := cmd.Run()
+
+	exitCode := 0
+	if runErr != nil {
+		var exitErr *exec.ExitError
+		if errors.As(runErr, &exitErr) {
+			exitCode = exitErr.ExitCode()
+		} else {
+			t.Fatalf("failed to run nodes serve: %v", runErr)
+		}
+	}
+	r := runResult{Stdout: stdout.String(), Stderr: stderr.String(), ExitCode: exitCode}
+
+	assertNeverMixed(t, r)
+	if r.Stdout != "" {
+		t.Fatalf("stdout = %q, want empty", r.Stdout)
+	}
+	if r.ExitCode != 2 {
+		t.Fatalf("exit code = %d, want 2\nstderr=%s", r.ExitCode, r.Stderr)
+	}
+	assertErrorHintShape(t, r.Stderr)
+	if !strings.Contains(r.Stderr, "no database URL configured") {
+		t.Fatalf("stderr = %q, want it to mention the missing database URL", r.Stderr)
+	}
+	if strings.Contains(r.Stderr, "not implemented yet") {
+		t.Fatalf("stderr = %q, serve is implemented now — this should not be the stub error", r.Stderr)
+	}
+}
+
+// scrubEnv returns env with every entry named key removed.
+func scrubEnv(env []string, key string) []string {
+	prefix := key + "="
+	out := make([]string, 0, len(env))
+	for _, kv := range env {
+		if strings.HasPrefix(kv, prefix) {
+			continue
+		}
+		out = append(out, kv)
+	}
+	return out
 }
 
 func TestConformance_ExplainUnknownPathListsKnownPaths(t *testing.T) {

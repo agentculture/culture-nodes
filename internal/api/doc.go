@@ -21,7 +21,7 @@
 // exactly its operations, and internal/api's own test suite parses that
 // file (via sigs.k8s.io/yaml) and sweeps every documented path and method
 // against the live mux, so the spec and the code cannot drift silently
-// (repo CLAUDE.md's "record deviations explicitly" ground rule, applied to
+// (the repo's "record deviations explicitly" ground rule, applied to
 // the API surface itself).
 //
 // # Error shape

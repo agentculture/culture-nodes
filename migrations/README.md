@@ -24,6 +24,8 @@ Numbered SQL migrations for the authoritative PostgreSQL store (prd-spec
 - `0007_ledger_origin_actor_revision.sql` — expand-only: adds
   `ledger_records.origin_actor_revision`, the one prd-spec §10.3 envelope
   field `0003` had no column for.
+- `0008_run_output.sql` — expand-only: adds `runs.output`, the workflow
+  result a completed run produces, which `0002` had no column for.
 
 ## Policy
 

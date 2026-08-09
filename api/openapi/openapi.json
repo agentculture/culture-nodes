@@ -523,6 +523,78 @@
         ],
         "type": "object"
       },
+      "NodeRunList": {
+        "properties": {
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/NodeRunListItem"
+            },
+            "type": "array"
+          },
+          "next_cursor": {
+            "description": "Opaque keyset pagination cursor. Present only when a further page exists; pass it back as the `cursor` query parameter to fetch it.",
+            "type": "string"
+          }
+        },
+        "required": [
+          "items"
+        ],
+        "type": "object"
+      },
+      "NodeRunListItem": {
+        "description": "One row of GET /v1alpha1/node-runs (task t11) — the same node_runs row NodeRun above documents, listed across every run in the namespace rather than nested under one, with `run_id` added (the parent run is not implied by a URL path here) and `actor_id` added (the most recent attempt's actor or runner reference; empty until the node run has been dispatched at least once).",
+        "properties": {
+          "actor_id": {
+            "description": "The actor or runner reference (attempts.actor_id) of this node run's most recently dispatched attempt.",
+            "type": "string"
+          },
+          "completed_at": {
+            "format": "date-time",
+            "type": "string"
+          },
+          "created_at": {
+            "format": "date-time",
+            "type": "string"
+          },
+          "id": {
+            "type": "string"
+          },
+          "node_id": {
+            "type": "string"
+          },
+          "outcome": {
+            "type": "string"
+          },
+          "run_id": {
+            "type": "string"
+          },
+          "state": {
+            "enum": [
+              "ready",
+              "leased",
+              "running",
+              "waiting_external",
+              "completed",
+              "failed",
+              "cancelled"
+            ],
+            "type": "string"
+          },
+          "updated_at": {
+            "format": "date-time",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "run_id",
+          "node_id",
+          "state",
+          "created_at",
+          "updated_at"
+        ],
+        "type": "object"
+      },
       "Projection": {
         "properties": {
           "digest": {
@@ -1051,6 +1123,76 @@
         ]
       }
     },
+    "/v1alpha1/node-runs": {
+      "get": {
+        "description": "The cross-run \"jobs timeline\" listing (task t11): every node run in this namespace, not scoped to one run — unlike the `node_runs` nested in GET /v1alpha1/runs/{id}'s Run-view payload — newest-first by `updated_at`, using `node_runs_namespace_updated_at_idx` (migrations/0010) for the namespace scope, the `updated_since`/`updated_until` range, and the sort in one index walk.\n\nPagination is a keyset cursor (`cursor`/`next_cursor`), not OFFSET: `updated_at` changes on every node run's state transition — including rows outside the caller's current page — so an OFFSET-based page would silently skip or repeat rows as items elsewhere in the namespace move past the offset boundary between two requests. A cursor anchored to `(updated_at, id)` of the last row already served has no such failure mode and reuses the same index walk a first page already does. Pass `next_cursor` from a response back as `cursor` to fetch the next page; its absence means there is no further page.",
+        "operationId": "listNodeRuns",
+        "parameters": [
+          {
+            "description": "Only node runs updated at or after this instant (RFC3339).",
+            "in": "query",
+            "name": "updated_since",
+            "schema": {
+              "format": "date-time",
+              "type": "string"
+            }
+          },
+          {
+            "description": "Only node runs updated at or before this instant (RFC3339).",
+            "in": "query",
+            "name": "updated_until",
+            "schema": {
+              "format": "date-time",
+              "type": "string"
+            }
+          },
+          {
+            "description": "Opaque keyset cursor from a previous response's `next_cursor`. Omit for the first page.",
+            "in": "query",
+            "name": "cursor",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "limit",
+            "schema": {
+              "default": 50,
+              "maximum": 500,
+              "minimum": 1,
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/NodeRunList"
+                }
+              }
+            },
+            "description": "A page of node runs, newest first by updated_at."
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "description": "updated_since, updated_until, or cursor is malformed."
+          }
+        },
+        "summary": "List node runs across every run, newest first by updated_at.",
+        "tags": [
+          "node-runs"
+        ]
+      }
+    },
     "/v1alpha1/readyz": {
       "get": {
         "operationId": "readyz",
@@ -1157,6 +1299,7 @@
     },
     "/v1alpha1/runs": {
       "get": {
+        "description": "Newest first by `sort` (task t11). `updated_since`/`updated_until` filter on `updated_at`, using `runs_namespace_updated_at_idx` (migrations/0010) when `sort` is (or defaults to) `updated_at`.",
         "operationId": "listRuns",
         "parameters": [
           {
@@ -1165,6 +1308,36 @@
             "name": "state",
             "schema": {
               "$ref": "#/components/schemas/RunState"
+            }
+          },
+          {
+            "description": "Only runs updated at or after this instant (RFC3339). When set and `sort` is omitted, `sort` defaults to `updated_at` rather than the endpoint's own default of `created_at`.",
+            "in": "query",
+            "name": "updated_since",
+            "schema": {
+              "format": "date-time",
+              "type": "string"
+            }
+          },
+          {
+            "description": "Only runs updated at or before this instant (RFC3339). When set and `sort` is omitted, `sort` defaults to `updated_at` rather than the endpoint's own default of `created_at`.",
+            "in": "query",
+            "name": "updated_until",
+            "schema": {
+              "format": "date-time",
+              "type": "string"
+            }
+          },
+          {
+            "description": "Sort column: `created_at` (the endpoint's own default) or `updated_at`. Always descending — newest first, like every list in this API. Defaults to `updated_at` instead when either `updated_since` or `updated_until` is set and `sort` itself is omitted.",
+            "in": "query",
+            "name": "sort",
+            "schema": {
+              "enum": [
+                "created_at",
+                "updated_at"
+              ],
+              "type": "string"
             }
           },
           {
@@ -1188,9 +1361,19 @@
               }
             },
             "description": "A page of runs, newest first."
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "description": "updated_since, updated_until, or sort is malformed."
           }
         },
-        "summary": "List runs, optionally filtered by state.",
+        "summary": "List runs, optionally filtered by state and/or an updated_at window.",
         "tags": [
           "runs"
         ]
@@ -1762,6 +1945,10 @@
     {
       "description": "Create and inspect workflow runs — the Run-view payload (PRD §8.6, §8.7).",
       "name": "runs"
+    },
+    {
+      "description": "Cross-run node run listings — the \"jobs timeline\" (self-hosted phase-2 cycle, task t11), distinct from the tokens/node_runs nested under one run's Run-view payload above.",
+      "name": "node-runs"
     },
     {
       "description": "Server-Sent Events stream of committed run events (PRD §15.1).",

@@ -129,6 +129,40 @@ type RunViewOut struct {
 	NodeRuns []NodeRunOut `json:"node_runs"`
 }
 
+// NodeRunListItemOut is one row of GET /v1alpha1/node-runs — the cross-run
+// "jobs timeline" listing (task t11) — as documented in
+// components.schemas.NodeRunListItem. It is the same node_runs row NodeRun
+// (above) documents, listed across every run in the namespace rather than
+// nested under one: NodeID and State carry forward NodeRunOut's own
+// translation of this row's underlying node_runs.node_key/status columns
+// (see this file's header comment), with RunID added (the parent run is not
+// implied by a URL path here, unlike GET /v1alpha1/runs/{id}) and ActorID
+// added (the most recent attempt's actor/runner reference — see
+// queries.go's latestAttemptActorIDs; empty until the node run has been
+// dispatched at least once, the same optional reference AttemptOut.ActorID
+// already is).
+type NodeRunListItemOut struct {
+	ID          string     `json:"id"`
+	RunID       string     `json:"run_id"`
+	NodeID      string     `json:"node_id"`
+	ActorID     string     `json:"actor_id,omitempty"`
+	State       string     `json:"state"`
+	Outcome     string     `json:"outcome,omitempty"`
+	CreatedAt   time.Time  `json:"created_at"`
+	UpdatedAt   time.Time  `json:"updated_at"`
+	CompletedAt *time.Time `json:"completed_at,omitempty"`
+}
+
+// NodeRunListOut is components.schemas.NodeRunList: a page of
+// NodeRunListItemOut plus the opaque keyset cursor for the next page (see
+// queries.go's listNodeRunsAcrossRuns for why this endpoint paginates by
+// cursor rather than offset). NextCursor is empty — and omitted — once the
+// caller has reached the last page.
+type NodeRunListOut struct {
+	Items      []NodeRunListItemOut `json:"items"`
+	NextCursor string               `json:"next_cursor,omitempty"`
+}
+
 // LedgerRecordsOut is components.schemas.LedgerRecords.
 type LedgerRecordsOut struct {
 	Items         []ledger.Record `json:"items"`

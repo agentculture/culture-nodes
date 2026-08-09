@@ -2,9 +2,11 @@ package api
 
 import (
 	"context"
+	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/jackc/pgx/v5"
@@ -134,15 +136,69 @@ func (r runRow) out() RunOut {
 	return out
 }
 
-// listRuns returns runs newest first, optionally filtered to one state.
-func (s *Server) listRuns(ctx context.Context, state string, limit int) ([]RunOut, error) {
-	rows, err := s.Store.Pool().Query(ctx, `
-		SELECT r.id, wv.content_digest, r.status, r.input, r.output, r.created_at, r.updated_at, r.completed_at
-		FROM runs r JOIN workflow_versions wv ON wv.id = r.workflow_version_id
-		WHERE r.namespace_id = $1 AND ($2 = '' OR r.status = $2)
-		ORDER BY r.created_at DESC, r.id DESC
-		LIMIT $3`,
-		s.NamespaceID, state, limit)
+// sortCreatedAt and sortUpdatedAt are the two values GET /v1alpha1/runs'
+// "sort" query parameter accepts (see parseRunSort in runs.go). Always
+// descending — every list in this API is newest-first; there is no
+// ascending option anywhere in this surface, and this task does not add one.
+const (
+	sortCreatedAt = "created_at"
+	sortUpdatedAt = "updated_at"
+)
+
+// listRunsParams bundles GET /v1alpha1/runs' query parameters (task t11
+// adds UpdatedSince, UpdatedUntil, and Sort to the pre-existing State and
+// Limit). Bundled rather than positional: two bare *time.Time parameters
+// next to each other invites a since/until swap at the call site that the
+// compiler cannot catch, and a struct's field names make each argument
+// self-documenting at handleListRuns' single call site.
+type listRunsParams struct {
+	State        string
+	Limit        int
+	UpdatedSince *time.Time
+	UpdatedUntil *time.Time
+	// Sort is sortCreatedAt or sortUpdatedAt, always descending; see
+	// parseRunSort in runs.go for how the default is chosen and validated
+	// before this is called.
+	Sort string
+}
+
+// listRuns returns runs newest first by p.Sort, optionally filtered to one
+// state and/or an updated_at window. The two branches below are separate,
+// fully literal query strings — not one query built with a dynamically
+// interpolated ORDER BY — so each is exactly the query
+// internal/store/postgres/updated_at_index_test.go's
+// TestRunsUpdatedAtSortedListingQueryUsesIndexScan EXPLAINs: proof that
+// query plan uses runs_namespace_updated_at_idx (migrations/0010) stays
+// proof about the literal query this function actually runs, not a
+// simplified stand-in.
+func (s *Server) listRuns(ctx context.Context, p listRunsParams) ([]RunOut, error) {
+	var (
+		rows pgx.Rows
+		err  error
+	)
+	if p.Sort == sortUpdatedAt {
+		rows, err = s.Store.Pool().Query(ctx, `
+			SELECT r.id, wv.content_digest, r.status, r.input, r.output, r.created_at, r.updated_at, r.completed_at
+			FROM runs r JOIN workflow_versions wv ON wv.id = r.workflow_version_id
+			WHERE r.namespace_id = $1
+			  AND ($2 = '' OR r.status = $2)
+			  AND ($3::timestamptz IS NULL OR r.updated_at >= $3)
+			  AND ($4::timestamptz IS NULL OR r.updated_at <= $4)
+			ORDER BY r.updated_at DESC, r.id DESC
+			LIMIT $5`,
+			s.NamespaceID, p.State, p.UpdatedSince, p.UpdatedUntil, p.Limit)
+	} else {
+		rows, err = s.Store.Pool().Query(ctx, `
+			SELECT r.id, wv.content_digest, r.status, r.input, r.output, r.created_at, r.updated_at, r.completed_at
+			FROM runs r JOIN workflow_versions wv ON wv.id = r.workflow_version_id
+			WHERE r.namespace_id = $1
+			  AND ($2 = '' OR r.status = $2)
+			  AND ($3::timestamptz IS NULL OR r.updated_at >= $3)
+			  AND ($4::timestamptz IS NULL OR r.updated_at <= $4)
+			ORDER BY r.created_at DESC, r.id DESC
+			LIMIT $5`,
+			s.NamespaceID, p.State, p.UpdatedSince, p.UpdatedUntil, p.Limit)
+	}
 	if err != nil {
 		return nil, fmt.Errorf("api: list runs: %w", err)
 	}
@@ -285,6 +341,233 @@ func (s *Server) runNodeRuns(ctx context.Context, runID string) ([]NodeRunOut, e
 		out[idx].Attempts = append(out[idx].Attempts, a)
 	}
 	return out, attemptRows.Err()
+}
+
+// nodeRunCursor is the decoded form of GET /v1alpha1/node-runs' opaque
+// "cursor" query parameter: the (updated_at, id) of the last row the caller
+// already has, in this listing's own sort order (updated_at DESC, id DESC).
+// See listNodeRunsAcrossRuns' doc comment for why this endpoint paginates by
+// keyset cursor rather than OFFSET.
+type nodeRunCursor struct {
+	UpdatedAt time.Time
+	ID        string
+}
+
+// nodeRunCursorSeparator joins encodeNodeRunCursor's two fields before
+// base64-encoding. A pipe never appears in a ULID (store.NewULID's
+// alphabet) or in time.RFC3339Nano's output, so a single SplitN(..., 2) in
+// decodeNodeRunCursor is an unambiguous inverse.
+const nodeRunCursorSeparator = "|"
+
+// encodeNodeRunCursor renders c as the opaque token GET /v1alpha1/node-runs'
+// response carries in next_cursor for a caller to round-trip back as
+// "cursor". Nanosecond-precision RFC3339 preserves exactly the instant
+// Postgres returned — the cursor is compared against updated_at with a
+// strict inequality/equality pair in listNodeRunsAcrossRuns' query, not a
+// tolerant range, so truncating precision here could skip or repeat the
+// boundary row.
+func encodeNodeRunCursor(c nodeRunCursor) string {
+	raw := c.UpdatedAt.UTC().Format(time.RFC3339Nano) + nodeRunCursorSeparator + c.ID
+	return base64.RawURLEncoding.EncodeToString([]byte(raw))
+}
+
+// decodeNodeRunCursor is encodeNodeRunCursor's inverse. handleListNodeRuns
+// renders any returned error as 400: a cursor a client did not just receive
+// from this endpoint's own next_cursor is refused rather than silently
+// treated as "no cursor" (which would silently restart pagination from the
+// first page instead of reporting the caller's mistake).
+func decodeNodeRunCursor(s string) (nodeRunCursor, error) {
+	raw, err := base64.RawURLEncoding.DecodeString(s)
+	if err != nil {
+		return nodeRunCursor{}, fmt.Errorf("not valid base64: %w", err)
+	}
+	parts := strings.SplitN(string(raw), nodeRunCursorSeparator, 2)
+	if len(parts) != 2 || parts[1] == "" {
+		return nodeRunCursor{}, fmt.Errorf("does not decode to <updated_at>%s<id>", nodeRunCursorSeparator)
+	}
+	t, err := time.Parse(time.RFC3339Nano, parts[0])
+	if err != nil {
+		return nodeRunCursor{}, fmt.Errorf("updated_at component: %w", err)
+	}
+	return nodeRunCursor{UpdatedAt: t, ID: parts[1]}, nil
+}
+
+// nodeRunListItemRow is one row of the cross-run node_runs listing before
+// its actor_id is attached (see latestAttemptActorIDs below) and it is
+// rendered as NodeRunListItemOut.
+type nodeRunListItemRow struct {
+	ID          string
+	RunID       string
+	NodeKey     string
+	State       string
+	Outcome     string
+	CreatedAt   time.Time
+	UpdatedAt   time.Time
+	CompletedAt time.Time
+}
+
+func (r nodeRunListItemRow) out(actorID string) NodeRunListItemOut {
+	out := NodeRunListItemOut{
+		ID:        r.ID,
+		RunID:     r.RunID,
+		NodeID:    r.NodeKey,
+		ActorID:   actorID,
+		State:     r.State,
+		Outcome:   r.Outcome,
+		CreatedAt: r.CreatedAt,
+		UpdatedAt: r.UpdatedAt,
+	}
+	if !r.CompletedAt.IsZero() {
+		completedAt := r.CompletedAt
+		out.CompletedAt = &completedAt
+	}
+	return out
+}
+
+// listNodeRunsAcrossRuns is GET /v1alpha1/node-runs' query (task t11): every
+// node run in this namespace — not scoped to one run, unlike runNodeRuns
+// above — newest-first by updated_at, filtered to an optional
+// [updatedSince, updatedUntil] window and paged by an optional keyset
+// cursor. It uses node_runs_namespace_updated_at_idx (migrations/0010) for
+// the namespace scope, the updated_at range, and the ORDER BY in one index
+// walk — see internal/store/postgres/updated_at_index_test.go's
+// TestNodeRunsCrossRunListingQueryUsesIndexScan, which EXPLAINs this exact
+// query text for both a first page and a cursor-engaged later page.
+//
+// Pagination is a keyset cursor, not OFFSET: node_runs.updated_at changes on
+// every state transition of any node run in the namespace, including ones
+// outside the caller's current page, so an OFFSET N silently skips or
+// repeats rows as items elsewhere in the table move past the offset
+// boundary between two page requests — exactly the client-visible
+// correctness failure a "jobs timeline" that is read while runs are still
+// progressing would hit constantly. A keyset cursor anchored to
+// (updated_at, id) of the last row already served has no such failure mode:
+// "give me what comes after this exact row, in this exact order" stays
+// correct no matter what else in the table changes concurrently, and it
+// reuses the identical index walk a first page already does rather than a
+// second, more expensive plan (no COUNT, no OFFSET-scan-and-discard).
+//
+// It fetches one row beyond limit to detect whether a further page exists
+// (returning a non-empty nextCursor exactly when it does) without a second
+// round trip — the same page-boundary technique keyset pagination
+// implementations conventionally use.
+func (s *Server) listNodeRunsAcrossRuns(ctx context.Context, updatedSince, updatedUntil *time.Time, cursor *nodeRunCursor, limit int) ([]NodeRunListItemOut, string, error) {
+	var cursorUpdatedAt *time.Time
+	var cursorID string
+	if cursor != nil {
+		cursorUpdatedAt = &cursor.UpdatedAt
+		cursorID = cursor.ID
+	}
+
+	rows, err := s.Store.Pool().Query(ctx, `
+		SELECT nr.id, nr.run_id, nr.node_key, nr.status, nr.outcome, nr.created_at, nr.updated_at, nr.completed_at
+		FROM node_runs nr
+		WHERE nr.namespace_id = $1
+		  AND ($2::timestamptz IS NULL OR nr.updated_at >= $2)
+		  AND ($3::timestamptz IS NULL OR nr.updated_at <= $3)
+		  AND ($4::timestamptz IS NULL OR nr.updated_at < $4 OR (nr.updated_at = $4 AND nr.id < $5))
+		ORDER BY nr.updated_at DESC, nr.id DESC
+		LIMIT $6`,
+		s.NamespaceID, updatedSince, updatedUntil, cursorUpdatedAt, cursorID, limit+1)
+	if err != nil {
+		return nil, "", fmt.Errorf("api: list node runs: %w", err)
+	}
+
+	var scanned []nodeRunListItemRow
+	for rows.Next() {
+		var (
+			r           nodeRunListItemRow
+			outcome     pgtype.Text
+			createdAt   pgtype.Timestamptz
+			updatedAt   pgtype.Timestamptz
+			completedAt pgtype.Timestamptz
+		)
+		if err := rows.Scan(&r.ID, &r.RunID, &r.NodeKey, &r.State, &outcome, &createdAt, &updatedAt, &completedAt); err != nil {
+			rows.Close()
+			return nil, "", fmt.Errorf("api: list node runs: scan: %w", err)
+		}
+		r.Outcome = textOrEmpty(outcome)
+		r.CreatedAt = tsOrZero(createdAt)
+		r.UpdatedAt = tsOrZero(updatedAt)
+		r.CompletedAt = tsOrZero(completedAt)
+		scanned = append(scanned, r)
+	}
+	rows.Close()
+	if err := rows.Err(); err != nil {
+		return nil, "", fmt.Errorf("api: list node runs: %w", err)
+	}
+
+	var nextCursor string
+	if len(scanned) > limit {
+		last := scanned[limit-1]
+		nextCursor = encodeNodeRunCursor(nodeRunCursor{UpdatedAt: last.UpdatedAt, ID: last.ID})
+		scanned = scanned[:limit]
+	}
+
+	ids := make([]string, len(scanned))
+	for i, r := range scanned {
+		ids[i] = r.ID
+	}
+	actorByNodeRun, err := s.latestAttemptActorIDs(ctx, ids)
+	if err != nil {
+		return nil, "", err
+	}
+
+	out := make([]NodeRunListItemOut, len(scanned))
+	for i, r := range scanned {
+		out[i] = r.out(actorByNodeRun[r.ID])
+	}
+	return out, nextCursor, nil
+}
+
+// latestAttemptActorIDs returns, for each of nodeRunIDs that has at least
+// one attempt, the actor_id of its highest-numbered (most recent) attempt —
+// the "actor/runner reference" listNodeRunsAcrossRuns reports per row (this
+// is the identical attempts.actor_id column AttemptOut.ActorID already
+// exposes, including for code nodes: internal/worker's runner dispatch
+// paths (code.go, runnerasync.go) record their own runner actor there via
+// codeRunnerActorID(), so this one column already answers both "which actor"
+// and "which runner" without a second, dispatch-kind-specific lookup). A
+// node run with no attempts yet (still 'ready', never dispatched) is simply
+// absent from the returned map; callers treat that as an empty actor_id, the
+// same optional reference AttemptOut.ActorID already is elsewhere in this
+// package.
+//
+// This is a second, small query — bounded by the page's own limit, so at
+// most a few hundred ids per call — rather than a LATERAL join folded into
+// listNodeRunsAcrossRuns' primary query: keeping that query's shape
+// identical to the one TestNodeRunsCrossRunListingQueryUsesIndexScan
+// EXPLAINs means that proof stays proof about the query this method actually
+// runs. It is the same two-query split runNodeRuns above already uses for
+// node runs plus their attempts, one level up.
+func (s *Server) latestAttemptActorIDs(ctx context.Context, nodeRunIDs []string) (map[string]string, error) {
+	if len(nodeRunIDs) == 0 {
+		return map[string]string{}, nil
+	}
+
+	rows, err := s.Store.Pool().Query(ctx, `
+		SELECT a.node_run_id, a.actor_id
+		FROM attempts a
+		WHERE a.node_run_id = ANY($1)
+		ORDER BY a.node_run_id, a.attempt_number`, nodeRunIDs)
+	if err != nil {
+		return nil, fmt.Errorf("api: list node runs: latest attempt actor ids: %w", err)
+	}
+	defer rows.Close()
+
+	out := make(map[string]string)
+	for rows.Next() {
+		var nodeRunID string
+		var actorID pgtype.Text
+		if err := rows.Scan(&nodeRunID, &actorID); err != nil {
+			return nil, fmt.Errorf("api: list node runs: latest attempt actor ids: scan: %w", err)
+		}
+		// Ascending attempt_number: each row for the same node_run_id
+		// overwrites the last, so the final value per key is the
+		// highest-numbered (most recent) attempt's actor.
+		out[nodeRunID] = textOrEmpty(actorID)
+	}
+	return out, rows.Err()
 }
 
 // listHumanTasks returns human tasks newest first, optionally filtered to

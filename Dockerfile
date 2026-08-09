@@ -30,6 +30,8 @@ RUN go mod download
 COPY webassets_stub.go webassets_embed.go ./
 COPY cmd ./cmd
 COPY internal ./internal
+# migrations and schemas are go:embed'd by internal/store/postgres and
+# internal/contracts respectively — without them the build fails.
 COPY schemas ./schemas
 COPY migrations ./migrations
 COPY --from=webbuild /src/web/dist ./web/dist

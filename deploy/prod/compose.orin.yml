@@ -27,6 +27,9 @@ services:
       NODES_ARTIFACT_S3_SECRET_KEY: ${MINIO_ROOT_PASSWORD:?}
       NODES_ARTIFACT_S3_BUCKET: ${NODES_ARTIFACT_S3_BUCKET:-nodes-artifacts}
       NODES_ARTIFACT_S3_USE_TLS: "false"
+      NODES_RUNNER_SERVICES_FILE: ${NODES_RUNNER_SERVICES_FILE:-}
+    volumes:
+      - ~/.culture-nodes/runners:/etc/nodes-runners:ro
     extra_hosts:
       # Containers do not inherit the host's /etc/hosts; deploy.sh resolves
       # thor's address from orin (getent hosts thor) and writes THOR_IP.

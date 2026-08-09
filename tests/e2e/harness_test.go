@@ -531,8 +531,8 @@ func (s *stack) errors() []error {
 // runnerRevisionOf reports a revision to pin on the operation. The scripted
 // runner has none of its own; the real bridge does.
 func runnerRevisionOf(r runners.Runner) string {
-	type revisioned interface{ RunnerRevision() string }
-	if rv, ok := r.(revisioned); ok {
+	type runnerRevisioner interface{ RunnerRevision() string }
+	if rv, ok := r.(runnerRevisioner); ok {
 		return rv.RunnerRevision()
 	}
 	return "sha256:" + strings.Repeat("e", 64)

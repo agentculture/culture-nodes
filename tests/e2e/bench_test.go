@@ -96,25 +96,7 @@ func BenchmarkTransitions(b *testing.B) {
 	}
 	ctx := context.Background()
 
-	ns, err := testStore.CreateNamespace(ctx, "bench-transitions-"+randomSuffix(), "Benchmark Namespace")
-	if err != nil {
-		b.Fatalf("CreateNamespace: %v", err)
-	}
-	eng, err := postgres.NewEngine(testStore, ns.ID)
-	if err != nil {
-		b.Fatalf("NewEngine: %v", err)
-	}
-
-	compiled, diags, err := compiler.Compile([]byte(loopWorkflowSource), compiler.FormatYAML)
-	if err != nil {
-		b.Fatalf("compile: %v", err)
-	}
-	for _, d := range diags {
-		if d.Level == compiler.LevelError {
-			b.Fatalf("compile: %s %s: %s", d.Code, d.Path, d.Message)
-		}
-	}
-
+	eng, compiled := setUpTransitionsBenchmarkEngine(b, ctx)
 	if _, err := eng.CreateRun(ctx, compiled, json.RawMessage(`{"subject":"bench"}`)); err != nil {
 		b.Fatalf("CreateRun: %v", err)
 	}
@@ -154,6 +136,40 @@ func BenchmarkTransitions(b *testing.B) {
 	}
 }
 
+// setUpTransitionsBenchmarkEngine creates a fresh namespace and engine and
+// compiles the loop workflow, failing the benchmark on any setup error —
+// including a compile diagnostic at error level.
+func setUpTransitionsBenchmarkEngine(b *testing.B, ctx context.Context) (*engine.Engine, *compiler.CompiledWorkflow) {
+	b.Helper()
+	ns, err := testStore.CreateNamespace(ctx, "bench-transitions-"+randomSuffix(), "Benchmark Namespace")
+	if err != nil {
+		b.Fatalf("CreateNamespace: %v", err)
+	}
+	eng, err := postgres.NewEngine(testStore, ns.ID)
+	if err != nil {
+		b.Fatalf("NewEngine: %v", err)
+	}
+
+	compiled, diags, err := compiler.Compile([]byte(loopWorkflowSource), compiler.FormatYAML)
+	if err != nil {
+		b.Fatalf("compile: %v", err)
+	}
+	requireNoCompileErrors(b, diags)
+
+	return eng, compiled
+}
+
+// requireNoCompileErrors fails the benchmark on the first error-level
+// compile diagnostic.
+func requireNoCompileErrors(b *testing.B, diags []compiler.Diagnostic) {
+	b.Helper()
+	for _, d := range diags {
+		if d.Level == compiler.LevelError {
+			b.Fatalf("compile: %s %s: %s", d.Code, d.Path, d.Message)
+		}
+	}
+}
+
 // randomSuffix keeps benchmark namespaces from colliding across runs.
 func randomSuffix() string {
 	return time.Now().UTC().Format("20060102150405.000000000")
@@ -180,63 +196,9 @@ func BenchmarkLedgerProjection(b *testing.B) {
 	}
 	ctx := context.Background()
 
-	corpus := defaultLedgerCorpusSize
-	if raw := os.Getenv("NODES_BENCH_LEDGER_RECORDS"); raw != "" {
-		parsed, err := strconv.Atoi(raw)
-		if err != nil || parsed <= 0 {
-			b.Fatalf("NODES_BENCH_LEDGER_RECORDS=%q is not a positive integer", raw)
-		}
-		corpus = parsed
-	}
-
-	ns, err := testStore.CreateNamespace(ctx, "bench-ledger-"+randomSuffix(), "Benchmark Namespace")
-	if err != nil {
-		b.Fatalf("CreateNamespace: %v", err)
-	}
-	eng, err := postgres.NewEngine(testStore, ns.ID)
-	if err != nil {
-		b.Fatalf("NewEngine: %v", err)
-	}
-	led, err := postgres.NewLedger(testStore, ns.ID)
-	if err != nil {
-		b.Fatalf("NewLedger: %v", err)
-	}
-
-	compiled, _, err := compiler.Compile([]byte(loopWorkflowSource), compiler.FormatYAML)
-	if err != nil || compiled == nil {
-		b.Fatalf("compile: %v", err)
-	}
-	run, err := eng.CreateRun(ctx, compiled, json.RawMessage(`{"subject":"bench"}`))
-	if err != nil {
-		b.Fatalf("CreateRun: %v", err)
-	}
-
-	actorID := "actor_bench_" + randomSuffix()
-	if _, err := testStore.Pool().Exec(ctx, `
-		INSERT INTO actors (id, namespace_id, actor_key, revision, kind, protocol)
-		VALUES ($1, $2, $1, 1, 'agent', 'http')`, actorID, ns.ID); err != nil {
-		b.Fatalf("register bench actor: %v", err)
-	}
-
-	appendStart := time.Now()
-	for i := 0; i < corpus; i++ {
-		payload, _ := json.Marshal(map[string]any{
-			"title":           "benchmark task",
-			"status":          "completed",
-			"assurance_state": "unverified",
-			"n":               i,
-		})
-		if _, err := led.Append(ctx, ledger.Record{
-			RecordType: ledger.RecordTask,
-			RunID:      run.ID,
-			Origin:     ledger.Origin{Kind: ledger.OriginAgent, ActorID: actorID},
-			Authority:  ledger.AuthorityProposed,
-			Data:       payload,
-		}); err != nil {
-			b.Fatalf("append record %d: %v", i, err)
-		}
-	}
-	appendElapsed := time.Since(appendStart)
+	corpus := resolveLedgerCorpusSize(b)
+	led, runID, actorID := setUpLedgerProjectionBenchmark(b, ctx)
+	appendElapsed := appendLedgerCorpus(b, ctx, led, runID, actorID, corpus)
 
 	b.ReportAllocs()
 	b.ResetTimer()
@@ -244,7 +206,7 @@ func BenchmarkLedgerProjection(b *testing.B) {
 
 	var digest string
 	for i := 0; i < b.N; i++ {
-		projection, projErr := led.ProjectRun(ctx, run.ID, ledger.KindDeliverySummary, "")
+		projection, projErr := led.ProjectRun(ctx, runID, ledger.KindDeliverySummary, "")
 		if projErr != nil {
 			b.Fatalf("ProjectRun: %v", projErr)
 		}
@@ -264,4 +226,81 @@ func BenchmarkLedgerProjection(b *testing.B) {
 	if appendElapsed > 0 {
 		b.ReportMetric(float64(corpus)/appendElapsed.Seconds(), "appends/sec")
 	}
+}
+
+// resolveLedgerCorpusSize returns defaultLedgerCorpusSize, or the value of
+// NODES_BENCH_LEDGER_RECORDS when it is set to a positive integer.
+func resolveLedgerCorpusSize(b *testing.B) int {
+	b.Helper()
+	raw := os.Getenv("NODES_BENCH_LEDGER_RECORDS")
+	if raw == "" {
+		return defaultLedgerCorpusSize
+	}
+	parsed, err := strconv.Atoi(raw)
+	if err != nil || parsed <= 0 {
+		b.Fatalf("NODES_BENCH_LEDGER_RECORDS=%q is not a positive integer", raw)
+	}
+	return parsed
+}
+
+// setUpLedgerProjectionBenchmark creates a fresh namespace, engine, and
+// ledger, compiles the loop workflow, creates one run, and registers the
+// actor the appended records are attributed to.
+func setUpLedgerProjectionBenchmark(b *testing.B, ctx context.Context) (led *ledger.Ledger, runID, actorID string) {
+	b.Helper()
+	ns, err := testStore.CreateNamespace(ctx, "bench-ledger-"+randomSuffix(), "Benchmark Namespace")
+	if err != nil {
+		b.Fatalf("CreateNamespace: %v", err)
+	}
+	eng, err := postgres.NewEngine(testStore, ns.ID)
+	if err != nil {
+		b.Fatalf("NewEngine: %v", err)
+	}
+	led, err = postgres.NewLedger(testStore, ns.ID)
+	if err != nil {
+		b.Fatalf("NewLedger: %v", err)
+	}
+
+	compiled, _, err := compiler.Compile([]byte(loopWorkflowSource), compiler.FormatYAML)
+	if err != nil || compiled == nil {
+		b.Fatalf("compile: %v", err)
+	}
+	run, err := eng.CreateRun(ctx, compiled, json.RawMessage(`{"subject":"bench"}`))
+	if err != nil {
+		b.Fatalf("CreateRun: %v", err)
+	}
+
+	actorID = "actor_bench_" + randomSuffix()
+	if _, err := testStore.Pool().Exec(ctx, `
+		INSERT INTO actors (id, namespace_id, actor_key, revision, kind, protocol)
+		VALUES ($1, $2, $1, 1, 'agent', 'http')`, actorID, ns.ID); err != nil {
+		b.Fatalf("register bench actor: %v", err)
+	}
+
+	return led, run.ID, actorID
+}
+
+// appendLedgerCorpus appends corpus proposed task records to the run's
+// ledger and returns how long that took.
+func appendLedgerCorpus(b *testing.B, ctx context.Context, led *ledger.Ledger, runID, actorID string, corpus int) time.Duration {
+	b.Helper()
+	appendStart := time.Now()
+	for i := 0; i < corpus; i++ {
+		payload, _ := json.Marshal(map[string]any{
+			"title":           "benchmark task",
+			"status":          "completed",
+			"assurance_state": "unverified",
+			"n":               i,
+		})
+		if _, err := led.Append(ctx, ledger.Record{
+			RecordType: ledger.RecordTask,
+			RunID:      runID,
+			Origin:     ledger.Origin{Kind: ledger.OriginAgent, ActorID: actorID},
+			Authority:  ledger.AuthorityProposed,
+			Data:       payload,
+		}); err != nil {
+			b.Fatalf("append record %d: %v", i, err)
+		}
+	}
+	return time.Since(appendStart)
 }

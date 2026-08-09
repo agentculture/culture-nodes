@@ -46,18 +46,11 @@ func TestFailedTestSuiteLoopsToBuildAsADomainOutcome(t *testing.T) {
 	ns := pgtest.MustNamespace(t, s, "e2e-failloop")
 
 	runner := &failThenPassRunner{inner: &scriptedRunner{}}
-	agentIDs := map[string]string{}
-	agents := newDeliveryAgents(t, agentIDs)
+	agents, runnerID := setupDeliveryAgentsAndActors(t, s, ns.ID)
 	// The verifier passes on sight here: this test is about the `test.failed`
 	// edge, and a second loop through verify would only blur which edge the
 	// assertions are counting.
 	agents.verifyRequestsChanges = false
-	registered, runnerID := registerActors(t, s, ns.ID, agents.server.URL)
-	agents.mu.Lock()
-	for node, id := range registered {
-		agentIDs[node] = id
-	}
-	agents.mu.Unlock()
 
 	stack := startStack(t, stackConfig{
 		namespaceID:   ns.ID,
@@ -88,6 +81,32 @@ func TestFailedTestSuiteLoopsToBuildAsADomainOutcome(t *testing.T) {
 
 	// The failing suite was a domain answer, recorded on a technically
 	// SUCCEEDED attempt, and never retried.
+	assertFailedTestOutcome(t, view)
+
+	// build ran twice: once before the failing suite, once after the loop.
+	if got := agents.callCount("build"); got != 2 {
+		t.Errorf("build was invoked %d times, want 2", got)
+	}
+	// verify ran once: the loop went back to build BEFORE reaching verify.
+	if got := agents.callCount("verify"); got != 1 {
+		t.Errorf("verify was invoked %d times, want 1: a failing suite must not reach the verifier", got)
+	}
+
+	assertFailedTestEdgeTransitions(t, sseDone)
+
+	// No attempt in the whole run failed technically: the loop is domain
+	// routing from end to end.
+	assertAllAttemptsSucceededTechnically(t, view)
+
+	// A failing run is measured too: both executions left observed evidence.
+	assertObservedEvidenceCount(t, stack, ns.ID, runID)
+}
+
+// assertFailedTestOutcome checks the failing suite was a domain answer: the
+// `test` node reported `failed` exactly once, recorded on a single,
+// technically SUCCEEDED attempt that was never retried.
+func assertFailedTestOutcome(t *testing.T, view runView) {
+	t.Helper()
 	testRuns := nodeRunsFor(view, "test")
 	if len(testRuns) != 2 {
 		t.Fatalf("the code node ran %d times, want 2 (one failing, one passing)", len(testRuns))
@@ -110,16 +129,12 @@ func TestFailedTestSuiteLoopsToBuildAsADomainOutcome(t *testing.T) {
 	if failed != 1 {
 		t.Errorf("the code node reported `failed` %d times, want exactly 1", failed)
 	}
+}
 
-	// build ran twice: once before the failing suite, once after the loop.
-	if got := agents.callCount("build"); got != 2 {
-		t.Errorf("build was invoked %d times, want 2", got)
-	}
-	// verify ran once: the loop went back to build BEFORE reaching verify.
-	if got := agents.callCount("verify"); got != 1 {
-		t.Errorf("verify was invoked %d times, want 1: a failing suite must not reach the verifier", got)
-	}
-
+// assertFailedTestEdgeTransitions checks the test.failed/test.passed edges
+// were each walked exactly once.
+func assertFailedTestEdgeTransitions(t *testing.T, sseDone <-chan sseResult) {
+	t.Helper()
 	events, err := drainSSE(t, sseDone)
 	if err != nil {
 		t.Fatalf("SSE stream: %v", err)
@@ -130,9 +145,12 @@ func TestFailedTestSuiteLoopsToBuildAsADomainOutcome(t *testing.T) {
 	if got := countEdgeTransitions(events, "test.passed"); got != 1 {
 		t.Errorf("the test.passed edge was walked %d times, want exactly 1", got)
 	}
+}
 
-	// No attempt in the whole run failed technically: the loop is domain
-	// routing from end to end.
+// assertAllAttemptsSucceededTechnically checks no attempt in the whole run
+// failed technically: the loop is domain routing from end to end.
+func assertAllAttemptsSucceededTechnically(t *testing.T, view runView) {
+	t.Helper()
 	for _, nr := range view.NodeRuns {
 		for _, attempt := range nr.Attempts {
 			if attempt.Status != string(engine.StatusSucceeded) {
@@ -141,9 +159,13 @@ func TestFailedTestSuiteLoopsToBuildAsADomainOutcome(t *testing.T) {
 			}
 		}
 	}
+}
 
-	// A failing run is measured too: both executions left observed evidence.
-	led := ledgerFor(t, stack.db, ns.ID)
+// assertObservedEvidenceCount checks both code-node executions — the
+// failing one included — left observed evidence.
+func assertObservedEvidenceCount(t *testing.T, s *stack, namespaceID, runID string) {
+	t.Helper()
+	led := ledgerFor(t, s.db, namespaceID)
 	records, err := led.Records(context.Background(), runID)
 	if err != nil {
 		t.Fatalf("read ledger: %v", err)

@@ -108,6 +108,13 @@ type Tx interface {
 	UpdateNodeRun(ctx context.Context, nodeRunID string, state NodeRunState, outcome string) error
 	NodeRun(ctx context.Context, nodeRunID string) (NodeRun, error)
 
+	// InsertHumanTask records an approval node's human task (PRD §9.9). It is
+	// what an approval-kind dispatch writes *instead of* EnqueueWork — see
+	// humantask.go's dispatchNode — so the node run it belongs to never gets
+	// a work_items row: nothing to lease, nothing to hold open while the run
+	// waits on a human.
+	InsertHumanTask(ctx context.Context, task HumanTask) (id string, err error)
+
 	InsertAttempt(ctx context.Context, attempt Attempt) error
 	// NextAttemptNumber is one past the highest attempt number recorded for a
 	// node run. Attempt numbering is derived rather than carried by the

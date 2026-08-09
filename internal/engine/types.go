@@ -93,9 +93,18 @@ const (
 	NodeRunLeased          NodeRunState = "leased"
 	NodeRunRunning         NodeRunState = "running"
 	NodeRunWaitingExternal NodeRunState = "waiting_external"
-	NodeRunCompleted       NodeRunState = "completed"
-	NodeRunFailed          NodeRunState = "failed"
-	NodeRunCancelled       NodeRunState = "cancelled"
+	// NodeRunWaitingHuman is a node run parked on a human_tasks row (PRD
+	// §9.9): an approval node's dispatch writes that row *instead of*
+	// EnqueueWork, so this node run never had a work item to lease in the
+	// first place. It parallels waiting_external's "paused, not terminal"
+	// shape without sharing its machinery — no actor invocation, no
+	// callback, no lease to release, because none was ever taken. See
+	// internal/engine/humantask.go for the dispatch decision and the seam
+	// this leaves for resolving the task later.
+	NodeRunWaitingHuman NodeRunState = "waiting_human"
+	NodeRunCompleted    NodeRunState = "completed"
+	NodeRunFailed       NodeRunState = "failed"
+	NodeRunCancelled    NodeRunState = "cancelled"
 )
 
 // Terminal reports whether the node run has reached a state it never leaves.
@@ -182,6 +191,38 @@ type Attempt struct {
 	Result       json.RawMessage
 	StartedAt    time.Time
 	CompletedAt  time.Time
+}
+
+// HumanTaskStatusPending is the status a human task is created with
+// (human_tasks.status). Nothing in this task moves it out of pending — that
+// belongs to whoever resolves the task (t7/t8).
+const HumanTaskStatusPending = "pending"
+
+// HumanTask is one human_tasks row (PRD §9.9,
+// migrations/0002_runtime_execution.sql): the durable record an approval
+// node's dispatch writes instead of an attempt. Request carries everything
+// PRD §9.9 says a human task must contain that is not already one of this
+// row's own columns — see humanTaskRequest in humantask.go for its shape.
+//
+// AssignedOwnerID is left empty by the engine on purpose. ApproverRef (the
+// requested role or group, e.g. "team/platform-ai-approvers") is a
+// free-form reference the workflow author wrote, not a foreign key the
+// compiler resolves against the owners table (PRD §9.4's ownerRef pattern,
+// which approverRef reuses) — turning a role into one concrete assignable
+// owner is an assignment policy this task does not implement. Request
+// carries ApproverRef for whoever builds that surface to resolve.
+type HumanTask struct {
+	ID              string
+	NamespaceID     string
+	RunID           string
+	NodeRunID       string
+	Kind            string
+	AssignedOwnerID string
+	Status          string
+	Request         json.RawMessage
+	Response        json.RawMessage
+	CreatedAt       time.Time
+	ResolvedAt      time.Time
 }
 
 // CompletionRequest is one worker's report that a dispatched attempt is over
@@ -308,6 +349,11 @@ type CompletionResult struct {
 	// empty when the run ended or retried.
 	NextNodeID    string
 	NextNodeRunID string
+	// NextHumanTaskID is set instead of a claimable work item when
+	// NextNodeID's kind is approval (PRD §9.9): the node run named by
+	// NextNodeRunID is parked in NodeRunWaitingHuman and this is the
+	// human_tasks row that pause is waiting on, not an attempt in progress.
+	NextHumanTaskID string
 	// EdgeFrom is the "<node>.<outcome>" the followed edge originated from.
 	EdgeFrom string
 

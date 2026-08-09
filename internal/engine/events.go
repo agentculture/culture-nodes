@@ -39,6 +39,11 @@ const (
 	// looping" is an operational answer, and finding it inside a generic
 	// failure event would mean parsing a message to learn it.
 	TypeRunBounded = "dev.culture.nodes.run.bounded"
+	// TypeHumanTaskCreated records an approval node's dispatch (PRD §9.9). It
+	// is emitted instead of node-run.ready: unlike that event, this one names
+	// no claimable work, and a consumer that treated it as one would be
+	// signaling a work item that was never created.
+	TypeHumanTaskCreated = "dev.culture.nodes.human-task.created"
 )
 
 // event builds an EventInput, encoding data into the payload. Encoding cannot

@@ -10,6 +10,7 @@ import { setAgentState } from "./agent-state/store";
 import Header from "./components/Header";
 import LedgerView from "./routes/LedgerView";
 import RunView from "./routes/RunView";
+import RunsBoard from "./routes/RunsBoard";
 import RunsList from "./routes/RunsList";
 
 /** Keeps agent-state's `route` in step with the router. */
@@ -33,6 +34,7 @@ export function App() {
         <Routes>
           <Route path="/" element={<Navigate to="/runs" replace />} />
           <Route path="/runs" element={<RunsList />} />
+          <Route path="/board" element={<RunsBoard />} />
           <Route path="/runs/:id" element={<RunView />} />
           <Route path="/runs/:id/ledger" element={<LedgerView />} />
           <Route

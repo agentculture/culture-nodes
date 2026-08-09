@@ -11,6 +11,14 @@ timeline, its ledger, and enough node detail to check what actually happened.
 ## What it renders
 
 - **`/runs`** — the run list.
+- **`/board`** — the runs board: every run as a card, grouped into columns by
+  its own `Run.state` (`created`, `running`, `waiting`, `completed`,
+  `failed`, `cancelled` — openapi.yaml's `RunState` enum, not a paraphrase of
+  it). `GET /v1alpha1/runs?sort=updated_at` (task t11), newest-updated first
+  within each column. A run paused at an approval node reports
+  `state: "waiting"` like any other external wait and lands in that same
+  column — the list endpoint carries no node-run detail to tell the two
+  apart, so the board does not invent one.
 - **`/runs/:id`** — the Run view. A React Flow canvas laid out by ELK
   (`elkjs`, layered) from the workflow IR the run is *pinned* to (fetched by
   digest, never "latest"), overlaid with live execution state from
@@ -71,8 +79,9 @@ is showing:
 including finishing it badly; a load error renders alongside, it does not
 keep the page pretending to load. Assertable elements carry stable ids or
 `data-` attributes (`#run-state-chip`, `#event-timeline`, `#ledger-table`,
-`#node-detail-panel`, `[data-node-id]`), because webglass selectors are
-`tag` / `#id` / `.class` / `[attr]` only and must match exactly one element.
+`#node-detail-panel`, `[data-node-id]`, `[data-column-state]` /
+`[data-run-id]` on the board), because webglass selectors are `tag` / `#id` /
+`.class` / `[attr]` only and must match exactly one element.
 
 ## Commands
 

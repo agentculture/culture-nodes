@@ -57,6 +57,9 @@ def _read_input(spec: str | None) -> object:
         ) from None
 
 
+_RUN_ID_HELP = "The run id."
+
+
 def cmd_run_create(args: argparse.Namespace) -> int:
     body: dict[str, object] = {"workflow_digest": args.workflow}
     input_value = _read_input(args.input)
@@ -91,13 +94,13 @@ def cmd_run_list(args: argparse.Namespace) -> int:
         items = (resp.payload or {}).get("items") or []
         if not items:
             emit_result("no runs", json_mode=False)
-            return 0
-        lines = [
-            f"{item.get('id', '')}  {item.get('state', '')}  "
-            f"{item.get('workflow_digest', '')}  {item.get('created_at', '')}"
-            for item in items
-        ]
-        emit_result("\n".join(lines), json_mode=False)
+        else:
+            lines = [
+                f"{item.get('id', '')}  {item.get('state', '')}  "
+                f"{item.get('workflow_digest', '')}  {item.get('created_at', '')}"
+                for item in items
+            ]
+            emit_result("\n".join(lines), json_mode=False)
     return 0
 
 
@@ -209,7 +212,7 @@ def cmd_run_events(args: argparse.Namespace) -> int:
             _emit_event_frame(frame, json_mode=json_mode)
             if frame["event"] in _TERMINAL_RUN_EVENTS:
                 break
-    except (TimeoutError, OSError) as err:
+    except OSError as err:
         raise CliError(
             code=EXIT_ENV_ERROR,
             message=f"the nodes API event stream for run {args.id} was interrupted: {err}",
@@ -256,19 +259,19 @@ def register(sub: argparse._SubParsersAction) -> None:
     getp = noun_sub.add_parser(
         "get", help="Fetch the Run-view payload: run, tokens, node runs, attempts."
     )
-    getp.add_argument("id", help="The run id.")
+    getp.add_argument("id", help=_RUN_ID_HELP)
     getp.add_argument("--json", action="store_true", help=JSON_FLAG_HELP)
     add_api_url_argument(getp)
     getp.set_defaults(func=cmd_run_get)
 
     cancel = noun_sub.add_parser("cancel", help="Cancel a run.")
-    cancel.add_argument("id", help="The run id.")
+    cancel.add_argument("id", help=_RUN_ID_HELP)
     cancel.add_argument("--json", action="store_true", help=JSON_FLAG_HELP)
     add_api_url_argument(cancel)
     cancel.set_defaults(func=cmd_run_cancel)
 
     events = noun_sub.add_parser("events", help="Stream a run's committed events (SSE).")
-    events.add_argument("id", help="The run id.")
+    events.add_argument("id", help=_RUN_ID_HELP)
     events.add_argument(
         "--follow",
         action="store_true",

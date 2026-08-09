@@ -116,13 +116,13 @@ def cmd_workflow_list(args: argparse.Namespace) -> int:
         items = (resp.payload or {}).get("items") or []
         if not items:
             emit_result("no published workflows", json_mode=False)
-            return 0
-        lines = [
-            f"{item.get('digest', '')}  {item.get('workflow_key', '')}  "
-            f"v{item.get('version', '')}  {item.get('created_at', '')}"
-            for item in items
-        ]
-        emit_result("\n".join(lines), json_mode=False)
+        else:
+            lines = [
+                f"{item.get('digest', '')}  {item.get('workflow_key', '')}  "
+                f"v{item.get('version', '')}  {item.get('created_at', '')}"
+                for item in items
+            ]
+            emit_result("\n".join(lines), json_mode=False)
     return 0
 
 

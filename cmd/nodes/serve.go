@@ -10,6 +10,7 @@ import (
 	"syscall"
 	"time"
 
+	culturenodes "github.com/agentculture/culture-nodes"
 	"github.com/agentculture/culture-nodes/internal/api"
 	"github.com/agentculture/culture-nodes/internal/clifmt"
 	"github.com/agentculture/culture-nodes/internal/scheduler"
@@ -40,11 +41,9 @@ func cmdServe(args []string, jsonMode bool) (int, error) {
 	return runServeMode(args, "serve", false)
 }
 
-// cmdAll implements `nodes all`: serve plus the scheduler, for local
-// development (PRD §12.1). Worker wiring is task t12's; internal/worker
-// carries only its package doc on this branch (no implementation to start),
-// so `all` here is serve + scheduler only. This is not a silent gap: it is
-// stated in the CLI's own diagnostic output and in `nodes explain all`.
+// cmdAll implements `nodes all`: serve plus the scheduler plus a worker in
+// one process, for local development (PRD §12.1). Production still scales
+// each role independently via its own mode.
 func cmdAll(args []string, jsonMode bool) (int, error) {
 	return runServeMode(args, "all", true)
 }
@@ -103,7 +102,11 @@ func runServeMode(args []string, verb string, withScheduler bool) (int, error) {
 		return 0, envError("resolving the default namespace", err, "verify the schema is migrated: run 'nodes migrate' first")
 	}
 
-	srv, err := api.NewServer(db, namespaceID)
+	var opts []api.Option
+	if assets, ok := culturenodes.WebAssets(); ok {
+		opts = append(opts, api.WithWebAssets(assets))
+	}
+	srv, err := api.NewServer(db, namespaceID, opts...)
 	if err != nil {
 		return 0, envError("building the API server", err, "this is an environment fault; file a bug if it persists")
 	}
@@ -118,14 +121,27 @@ func runServeMode(args []string, verb string, withScheduler bool) (int, error) {
 	}()
 
 	var schedulerErrs chan error
+	var workerErrs chan error
 	if withScheduler {
 		schedulerErrs = make(chan error, 1)
 		sched := scheduler.New(db, scheduler.Options{})
 		go func() {
 			clifmt.EmitDiagnostic(fmt.Sprintf("nodes %s: scheduler running as %s", verb, sched.OwnerID()))
-			// worker wiring is t12's -- see this function's doc comment.
 			if err := sched.Run(ctx); err != nil && ctx.Err() == nil {
 				schedulerErrs <- err
+			}
+		}()
+
+		wk, buildErr := buildWorker(db, namespaceID)
+		if buildErr != nil {
+			stop()
+			return 0, buildErr
+		}
+		workerErrs = make(chan error, 1)
+		go func() {
+			clifmt.EmitDiagnostic(fmt.Sprintf("nodes %s: worker running", verb))
+			if err := wk.Run(ctx); err != nil && ctx.Err() == nil {
+				workerErrs <- err
 			}
 		}()
 	}
@@ -139,6 +155,9 @@ func runServeMode(args []string, verb string, withScheduler bool) (int, error) {
 	case err := <-schedulerErrs:
 		stop()
 		return 0, envError("running the scheduler", err, "inspect the database connection and try again")
+	case err := <-workerErrs:
+		stop()
+		return 0, envError("running the worker", err, "inspect the database connection and try again")
 	}
 
 	shutdownCtx, cancelShutdown := context.WithTimeout(context.Background(), shutdownTimeout)

@@ -258,3 +258,54 @@ only dispatch to actors that answer synchronously.
 
 Stops cleanly on SIGINT or SIGTERM.
 `
+
+// buildWorker wires a Worker with default options for `nodes all`'s
+// in-process dev worker, mirroring cmdWorker's own wiring (engine, DB
+// registry, optional callback signer) without its flag surface.
+func buildWorker(db *postgres.Store, namespace string) (*worker.Worker, *clifmt.CliError) {
+	eng, err := postgres.NewEngine(db, namespace)
+	if err != nil {
+		return nil, &clifmt.CliError{
+			Code:        clifmt.ExitEnvError,
+			Message:     fmt.Sprintf("building the engine: %v", err),
+			Remediation: "run 'nodes migrate' and verify the namespace exists",
+		}
+	}
+	registry, err := worker.NewDBRegistry(db, namespace)
+	if err != nil {
+		return nil, &clifmt.CliError{
+			Code:        clifmt.ExitEnvError,
+			Message:     fmt.Sprintf("building the actor registry: %v", err),
+			Remediation: "verify the namespace exists and the actors table is populated",
+		}
+	}
+	signer, callbackBase, err := callbackConfig()
+	if err != nil {
+		var ce *clifmt.CliError
+		if !errors.As(err, &ce) {
+			ce = &clifmt.CliError{
+				Code:        clifmt.ExitEnvError,
+				Message:     err.Error(),
+				Remediation: "check the NODES_CALLBACK_* environment variables",
+			}
+		}
+		return nil, ce
+	}
+	wk, err := worker.New(db, eng, worker.Options{
+		NamespaceID:     namespace,
+		Registry:        registry,
+		Signer:          signer,
+		CallbackBaseURL: callbackBase,
+		OnError: func(err error) {
+			clifmt.EmitDiagnostic(err.Error())
+		},
+	})
+	if err != nil {
+		return nil, &clifmt.CliError{
+			Code:        clifmt.ExitEnvError,
+			Message:     fmt.Sprintf("building the worker: %v", err),
+			Remediation: "this is an environment fault; file a bug if it persists",
+		}
+	}
+	return wk, nil
+}

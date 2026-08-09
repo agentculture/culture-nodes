@@ -1,5 +1,6 @@
-# Only cmd/, internal/, and go.mod are needed to build the nodes binary.
-# Everything else here is excluded so it never enters the build context.
+# Build inputs: go.mod/go.sum, root webassets*.go, cmd/, internal/,
+# schemas/, migrations/, and web/ (sources only — the webbuild stage runs
+# npm ci itself). Everything else is excluded from the build context.
 
 .git
 .github
@@ -21,7 +22,7 @@ __pycache__
 .ruff_cache
 uv.lock
 
-# Web UI — has its own build, not needed to build the Go binary
+# Web UI dependencies/output — the webbuild stage runs npm ci itself
 web/node_modules
 web/dist
 web/build
@@ -30,10 +31,9 @@ web/build
 ../worktrees
 ../.worktrees.culture-nodes
 
-# Docs, schemas, migrations, deploy manifests — not build inputs
+# Docs and deploy manifests — not build inputs (schemas/ and migrations/
+# ARE build inputs: both are go:embed'd into the binary)
 docs
-schemas
-migrations
 deploy
 api
 

@@ -1,7 +1,9 @@
 package api
 
 import (
+	"io/fs"
 	"net/http"
+	"strings"
 	"time"
 
 	"github.com/agentculture/culture-nodes/internal/engine"
@@ -33,6 +35,7 @@ type Server struct {
 	engineStore *postgres.EngineStore
 
 	pollInterval time.Duration
+	webAssets    fs.FS
 }
 
 // Option configures a Server.
@@ -45,6 +48,18 @@ func WithPollInterval(d time.Duration) Option {
 		if d > 0 {
 			s.pollInterval = d
 		}
+	}
+}
+
+// WithWebAssets mounts an embedded SPA build (the repo root's
+// WebAssets(), present only in -tags embedweb binaries) on every
+// non-/v1alpha1 path, with an index.html fallback for client-side routes.
+// Without it the mux serves the API alone, which is what the contract
+// tests exercise: their undocumented-route 404 sweep is only meaningful
+// when no SPA catch-all is mounted (prd-spec §19.1).
+func WithWebAssets(assets fs.FS) Option {
+	return func(s *Server) {
+		s.webAssets = assets
 	}
 }
 
@@ -111,5 +126,29 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("GET /v1alpha1/healthz", s.wrap(s.handleHealthz))
 	mux.HandleFunc("GET /v1alpha1/readyz", s.wrap(s.handleReadyz))
 
+	if s.webAssets != nil {
+		mux.Handle("GET /", spaHandler(s.webAssets))
+	}
+
 	return mux
+}
+
+// spaHandler serves the embedded web build: real files as-is, everything
+// else (client-side routes like /runs/abc) falls back to index.html. It
+// never shadows /v1alpha1 — the mux's more-specific API patterns win.
+func spaHandler(assets fs.FS) http.Handler {
+	fileServer := http.FileServerFS(assets)
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		p := strings.TrimPrefix(r.URL.Path, "/")
+		if p == "" {
+			p = "index.html"
+		}
+		if _, err := fs.Stat(assets, p); err != nil {
+			r2 := r.Clone(r.Context())
+			r2.URL.Path = "/"
+			fileServer.ServeHTTP(w, r2)
+			return
+		}
+		fileServer.ServeHTTP(w, r)
+	})
 }

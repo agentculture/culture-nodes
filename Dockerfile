@@ -15,11 +15,17 @@ ARG VERSION=dev
 WORKDIR /src
 
 # Cache module downloads separately from source changes.
-COPY go.mod ./
+COPY go.mod go.sum ./
 RUN go mod download
 
 COPY cmd ./cmd
 COPY internal ./internal
+# migrations and schemas are go:embed'd by internal/store/postgres and
+# internal/contracts respectively (the binary carries its own migrations
+# and JSON Schema definitions) -- without them the build fails with
+# "no required module provides package .../migrations|schemas".
+COPY migrations ./migrations
+COPY schemas ./schemas
 
 RUN CGO_ENABLED=0 go build \
     -trimpath \

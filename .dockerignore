@@ -1,5 +1,6 @@
-# Only cmd/, internal/, and go.mod are needed to build the nodes binary.
-# Everything else here is excluded so it never enters the build context.
+# Only cmd/, internal/, migrations/, schemas/, go.mod, and go.sum are
+# needed to build the nodes binary. Everything else here is excluded so it
+# never enters the build context.
 
 .git
 .github
@@ -30,10 +31,11 @@ web/build
 ../worktrees
 ../.worktrees.culture-nodes
 
-# Docs, schemas, migrations, deploy manifests — not build inputs
+# Docs and deploy manifests — not build inputs. schemas/ and migrations/
+# are NOT listed here: both are go:embed'd by internal/contracts and
+# internal/store/postgres respectively, so the binary carries its own
+# schema definitions and migrations and needs them in the build context.
 docs
-schemas
-migrations
 deploy
 api
 

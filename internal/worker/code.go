@@ -253,6 +253,23 @@ func (w *Worker) dispatchCode(
 		return w.failAttempt(ctx, claimed, engine.StatusFailed, "configuration", err.Error())
 	}
 
+	// Placement is a registry fact (api/runner-protocol). When this node's
+	// identity is a runner SERVICE the operation goes over the wire and the
+	// work item parks — see runnerasync.go for why holding this lease for the
+	// operation's duration would be the wrong cost model. The workflow
+	// definition says nothing about which of the two happened, which is the
+	// whole point.
+	if identity, registryName, ok := w.resolveRunnerService(d.WorkflowKey, node); ok {
+		return w.dispatchRunnerService(ctx, claimed, d, node, dc, identity, registryName, operation)
+	}
+	if w.opts.CodeRunner == nil {
+		return w.failAttempt(ctx, claimed, engine.StatusFailed, "configuration",
+			fmt.Sprintf("node %q is a code node and this worker has a runner registry but no identity registered "+
+				"for %q (nor for %q), and no in-process code runner to fall back on; "+
+				"register the node's execution identity before a run can dispatch it",
+				node.ID, runners.NodeKey(d.WorkflowKey, node.ID), node.Uses))
+	}
+
 	var (
 		res     runners.Result
 		execErr error

@@ -24,6 +24,14 @@
 //     acceptance, then status sampling — so a ten-minute operation costs the
 //     runtime no held lease, connection, or goroutine. A completion callback
 //     is strictly optional and never authoritative.
+//   - ProtocolClient is the caller half of that contract: submit an operation,
+//     read an operation's status, resolve the bearer from the registry's
+//     secret reference through a SecretResolver at call time. It has no
+//     synchronous path at all — a 200 carrying a result is refused as a
+//     contract failure — which is what keeps "no lease is held for the
+//     duration of an operation" an invariant rather than a convention. Every
+//     refusal it makes is a *DispatchError; it never synthesises a Result it
+//     was not given.
 //   - FunctionRegistry is the registry-pinned dispatch allowlist (spec claim
 //     c41): an adapter resolves the operation's declared identity here, and a
 //     name that was never registered is refused before any call leaves the

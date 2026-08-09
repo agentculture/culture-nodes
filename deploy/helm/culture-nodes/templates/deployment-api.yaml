@@ -1,0 +1,78 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "culture-nodes.fullname" . }}-api
+  labels:
+    {{- include "culture-nodes.labels" . | nindent 4 }}
+    app.kubernetes.io/component: api
+spec:
+  replicas: {{ .Values.api.replicas }}
+  selector:
+    matchLabels:
+      {{- include "culture-nodes.selectorLabels" . | nindent 6 }}
+      app.kubernetes.io/component: api
+  template:
+    metadata:
+      labels:
+        {{- include "culture-nodes.selectorLabels" . | nindent 8 }}
+        app.kubernetes.io/component: api
+    spec:
+      {{- with .Values.image.pullSecrets }}
+      imagePullSecrets:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      terminationGracePeriodSeconds: {{ .Values.terminationGracePeriodSeconds }}
+      containers:
+        - name: api
+          image: {{ include "culture-nodes.image" . }}
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          # The mode argument: cmd/nodes/main.go dispatches `serve` to the
+          # API server alone (no in-process scheduler — that is `all`,
+          # which this chart never uses, each role being its own
+          # Deployment here).
+          args: ["serve"]
+          ports:
+            - name: http
+              containerPort: {{ .Values.api.service.port }}
+          env:
+            - name: NODES_LISTEN
+              value: ":{{ .Values.api.service.port }}"
+            - name: NODES_DATABASE_URL
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "culture-nodes.fullname" . }}-db
+                  key: NODES_DATABASE_URL
+            {{- if .Values.callback.enabled }}
+            - name: NODES_CALLBACK_TOKEN_SECRET
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "culture-nodes.fullname" . }}-callback
+                  key: NODES_CALLBACK_TOKEN_SECRET
+            {{- end }}
+            {{- range .Values.api.extraEnv }}
+            - name: {{ .name }}
+              value: {{ .value | quote }}
+            {{- end }}
+          # Real HTTP probes: api serves internal/api/health.go's two
+          # documented endpoints. healthz never touches the database
+          # (pure liveness); readyz pings it (PRD-aligned readiness).
+          livenessProbe:
+            httpGet:
+              path: /v1alpha1/healthz
+              port: http
+            initialDelaySeconds: 5
+            periodSeconds: 10
+            timeoutSeconds: 3
+            failureThreshold: 3
+          readinessProbe:
+            httpGet:
+              path: /v1alpha1/readyz
+              port: http
+            initialDelaySeconds: 5
+            periodSeconds: 10
+            timeoutSeconds: 3
+            failureThreshold: 3
+          resources:
+            {{- toYaml .Values.api.resources | nindent 12 }}
+          securityContext:
+            {{- toYaml .Values.containerSecurityContext | nindent 12 }}

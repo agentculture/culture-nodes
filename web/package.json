@@ -1,0 +1,41 @@
+{
+  "name": "culture-nodes-web",
+  "private": true,
+  "version": "0.0.0",
+  "type": "module",
+  "description": "Culture Nodes web front — read-only Run and Ledger views (PRD §8).",
+  "license": "Apache-2.0",
+  "scripts": {
+    "dev": "vite",
+    "build": "tsc -b && vite build",
+    "preview": "vite preview",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "test:e2e": "playwright test",
+    "typecheck": "tsc -b --force"
+  },
+  "dependencies": {
+    "@fontsource-variable/albert-sans": "^5.3.0",
+    "@fontsource-variable/fraunces": "^5.3.0",
+    "@xyflow/react": "^12.11.2",
+    "elkjs": "^0.9.3",
+    "react": "^18.3.1",
+    "react-dom": "^18.3.1",
+    "react-router-dom": "^7.18.2"
+  },
+  "devDependencies": {
+    "@playwright/test": "^1.62.1",
+    "@testing-library/dom": "^10.4.1",
+    "@testing-library/jest-dom": "^6.9.1",
+    "@testing-library/react": "^16.3.2",
+    "@testing-library/user-event": "^14.6.3",
+    "@types/node": "^22.20.1",
+    "@types/react": "^18.3.31",
+    "@types/react-dom": "^18.3.7",
+    "@vitejs/plugin-react": "^4.7.0",
+    "jsdom": "^25.0.1",
+    "typescript": "~5.6.3",
+    "vite": "^6.4.3",
+    "vitest": "^3.2.7"
+  }
+}

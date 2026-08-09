@@ -1,0 +1,1150 @@
+{
+  "slug": "culture-nodes-app-design",
+  "title": "culture-nodes app design",
+  "schema_version": 5,
+  "status": "exported",
+  "created": "2026-08-08T17:10:22Z",
+  "updated": "2026-08-08T20:22:56Z",
+  "claims": [
+    {
+      "id": "c1",
+      "kind": "announcement",
+      "text": "Culture Nodes ships as an agent-first, agent-native workflow app: a Go control plane implementing the PRD's durable graph runtime, a react-flow web UI carrying the agentculture.org design system, and a Python agent-first CLI \u2014 with full CLI/API/Web parity, Docker-native packaging that deploys cleanly to k8s, AWS-backed SQS signaling over authoritative Postgres, and agent actors reachable through claude-agent-sdk, claude-agent-api, or colleague adapters behind the provider-neutral actor protocol",
+      "origin": "user",
+      "status": "confirmed",
+      "honesty_conditions": [
+        {
+          "id": "h1",
+          "text": "The shipped slice demonstrates all fronts against one API: a run created from the CLI is visible live in the web Run view, and no capability exists in one front that is absent from the API",
+          "status": "confirmed",
+          "instruction": ""
+        }
+      ],
+      "hard_questions": [],
+      "links": [],
+      "instruction": "Build in the prd-spec \u00a718 layout: one Go binary (serve/scheduler/worker/all/validate), one OpenAPI 3.1 surface, embedded web assets, thin Python CLI front, compose + helm packaging; verify against the Phase-1 acceptance checklist",
+      "revisions": []
+    },
+    {
+      "id": "c2",
+      "kind": "requirement",
+      "text": "The app implements the PRD's decided stack unchanged: Go control plane, TypeScript/React/Vite/React Flow web UI, PostgreSQL authoritative with SQS as a disposable work signal, JSON Schema 2020-12 contracts, CEL conditions, content-addressed immutable workflow versions (prd-spec.md \u00a71 stack table, \u00a726 Decided)",
+      "origin": "llm",
+      "status": "confirmed",
+      "honesty_conditions": [
+        {
+          "id": "h2",
+          "text": "go.mod and package.json match the PRD stack table (pgx, sqlc, CEL-Go, JSON Schema 2020-12 validator, React Flow, Vite, TanStack Query, ELK.js); any substitution lands as an ADR before merge",
+          "status": "confirmed",
+          "instruction": ""
+        }
+      ],
+      "hard_questions": [],
+      "links": [],
+      "instruction": "",
+      "revisions": []
+    },
+    {
+      "id": "c3",
+      "kind": "boundary",
+      "text": "The engine stays provider-neutral \u2014 no provider-specific agent type in core (prd-spec.md \u00a79.5); claude-agent-sdk, claude-agent-api, and colleague support land as external actor adapters implementing the HTTP/JSON actor protocol POST /v1/invocations (\u00a713), never as engine branches",
+      "origin": "llm",
+      "status": "confirmed",
+      "honesty_conditions": [
+        {
+          "id": "h3",
+          "text": "A CI check greps internal/engine, internal/api, internal/compiler for provider names (colleague, claude, codex, qwen, openai) and fails on any hit; only adapter/telemetry packages may name providers",
+          "status": "confirmed",
+          "instruction": ""
+        }
+      ],
+      "hard_questions": [],
+      "links": [],
+      "instruction": "",
+      "revisions": []
+    },
+    {
+      "id": "c4",
+      "kind": "boundary",
+      "text": "No arbitrary code in the control plane: code nodes execute only through the headspace-cli runner adapter as a separate deployment and security boundary; no Docker socket in any nodes container (prd-spec.md \u00a713.7, \u00a716.4; implementation-issue acceptance criteria)",
+      "origin": "llm",
+      "status": "confirmed",
+      "honesty_conditions": [
+        {
+          "id": "h4",
+          "text": "No control-plane container mounts a Docker socket and no control-plane process executes repository code: verified by inspecting compose/helm manifests in a test and by the runner adapter being the only exec/invoke path",
+          "status": "confirmed",
+          "instruction": ""
+        }
+      ],
+      "hard_questions": [],
+      "links": [],
+      "instruction": "",
+      "revisions": []
+    },
+    {
+      "id": "c5",
+      "kind": "requirement",
+      "text": "The ledger authority model is enforced on every surface (API, CLI, web): agents create proposed records only, humans confirm/reject, trusted runners observe measured facts, validators derive; task execution status stays separate from assurance state (prd-spec.md \u00a710.4, \u00a710.6)",
+      "origin": "llm",
+      "status": "confirmed",
+      "honesty_conditions": [
+        {
+          "id": "h5",
+          "text": "Property tests prove an agent-origin record never reaches confirmed without an authorized review, process-reported text never becomes observed evidence, and superseded records never reappear in projections (prd-spec \u00a722)",
+          "status": "confirmed",
+          "instruction": ""
+        }
+      ],
+      "hard_questions": [],
+      "links": [],
+      "instruction": "",
+      "revisions": []
+    },
+    {
+      "id": "c6",
+      "kind": "requirement",
+      "text": "API-first parity: every capability ships as an OpenAPI 3.1 REST endpoint first; the thin Python CLI front and the react-flow web front are both clients of the same API, so CLI/Web/API parity holds by construction (prd-spec \u00a71 stack table; user requirement: anything the CLI can do, web and API can do)",
+      "origin": "llm",
+      "status": "confirmed",
+      "honesty_conditions": [
+        {
+          "id": "h6",
+          "text": "Every CLI verb and web action maps to a documented OpenAPI operation; a parity test enumerates CLI verbs and fails if any calls internal functions instead of the public API",
+          "status": "confirmed",
+          "instruction": ""
+        }
+      ],
+      "hard_questions": [],
+      "links": [],
+      "instruction": "",
+      "revisions": [
+        {
+          "text": "API-first parity: every capability ships as an OpenAPI 3.1 REST endpoint first; the Python CLI and the react-flow web UI are both thin clients of the same API, so CLI/Web/API parity holds by construction (prd-spec.md \u00a71 stack table; user requirement: anything the CLI can do, web and API can do)",
+          "kind": "requirement",
+          "reason": ""
+        },
+        {
+          "text": "API-first parity: every capability ships as an OpenAPI 3.1 REST endpoint first; the Go nodes CLI and the react-flow web UI are both thin clients of the same API, so CLI/Web/API parity holds by construction (prd-spec \u00a71 stack table; user requirement: anything the CLI can do, web and API can do)",
+          "kind": "requirement",
+          "reason": ""
+        }
+      ]
+    },
+    {
+      "id": "c7",
+      "kind": "requirement",
+      "text": "Docker-native packaging: docker compose starts the complete local system (nodes all + PostgreSQL + separately-isolated headspace runner, UI embedded in the Go binary), and a first-class Helm chart makes k8s deploy easy; Kubernetes is supported but never a runtime dependency (prd-spec.md \u00a719.1, \u00a718 deploy/, \u00a717.6 non-goals)",
+      "origin": "llm",
+      "status": "confirmed",
+      "honesty_conditions": [
+        {
+          "id": "h7",
+          "text": "docker compose up starts the complete local system, and helm install onto a kind cluster passes a CI smoke test (API healthy, run executes, UI serves)",
+          "status": "confirmed",
+          "instruction": ""
+        }
+      ],
+      "hard_questions": [],
+      "links": [],
+      "instruction": "",
+      "revisions": []
+    },
+    {
+      "id": "c8",
+      "kind": "assumption",
+      "text": "Postgres SKIP LOCKED is the only queue for local and k8s profiles; SQS is the Phase-2 AWS driver behind the narrow queue abstraction (publish/receive/ack/delay, fenced Postgres claim on every signal); no sibling repo demonstrates SQS-as-work-signal \u2014 bedrock-budgeteer uses SQS only as per-Lambda DLQs \u2014 so the driver is built from the PRD contract alone (prd-spec.md \u00a712.3, \u00a723; bedrock-budgeteer app/app/constructs/core_processing.py:70-93)",
+      "origin": "llm",
+      "status": "confirmed",
+      "honesty_conditions": [],
+      "hard_questions": [],
+      "links": [],
+      "instruction": "",
+      "revisions": []
+    },
+    {
+      "id": "c9",
+      "kind": "requirement",
+      "text": "The web UI reuses agentculture.org's design system by extracting its tokens and graph components into one pinned web/src/culture-design boundary, with the exact source revision recorded in an ADR and visual regression fixtures \u2014 never copied by eye from the public site (prd-spec.md \u00a78.1, \u00a717.4; user: keep org design, feel, and assets)",
+      "origin": "llm",
+      "status": "confirmed",
+      "honesty_conditions": [
+        {
+          "id": "h8",
+          "text": "web/src/culture-design contains tokens extracted from a named org revision recorded in an ADR; visual regression fixtures compare rendered components against that pinned revision",
+          "status": "confirmed",
+          "instruction": ""
+        }
+      ],
+      "hard_questions": [],
+      "links": [],
+      "instruction": "",
+      "revisions": []
+    },
+    {
+      "id": "c10",
+      "kind": "requirement",
+      "text": "The UI is progressive-detail with no prose walls: distant zoom shows topology/failures/ownership, close zoom shows contracts/ledger/evidence; first slice is the read-only live Run view plus Ledger view with list/timeline alternatives, full keyboard support and reduced motion (prd-spec.md \u00a78.5-8.8; user: clean design, no long texts)",
+      "origin": "llm",
+      "status": "confirmed",
+      "honesty_conditions": [
+        {
+          "id": "h9",
+          "text": "The Run view keeps smooth pan/zoom on the 500-node reference graph, each zoom band shows only its declared fields, and automated accessibility checks plus keyboard-only traversal pass (prd-spec \u00a721.4)",
+          "status": "confirmed",
+          "instruction": ""
+        }
+      ],
+      "hard_questions": [],
+      "links": [],
+      "instruction": "",
+      "revisions": []
+    },
+    {
+      "id": "c11",
+      "kind": "requirement",
+      "text": "When the headspace runner attaches (local profile or later phases), the Go worker dispatches to headspace-cli by subprocess only: create/put/run/export/destroy with --json --provider docker, branching on the frozen additive 0-8 exit-code band; secrets pass as --env NAME with values in the child environment never argv; cancellation is a separate-process headspace stop --apply because run holds the workspace flock (headspace-cli docs/specs/2026-07-28-honest-failure-taxonomy.md, headspace/api.py, README consumer classes, core/workspace.py lock notes)",
+      "origin": "llm",
+      "status": "confirmed",
+      "honesty_conditions": [
+        {
+          "id": "h10",
+          "text": "Headspace adapter integration tests drive the real CLI as a subprocess, asserting on real exit codes and --json payloads, including the run/stop split via a second process",
+          "status": "confirmed",
+          "instruction": ""
+        }
+      ],
+      "hard_questions": [],
+      "links": [],
+      "instruction": "",
+      "revisions": [
+        {
+          "text": "The Go worker dispatches code nodes to headspace-cli by subprocess only: create/put/run/export/destroy with --json --provider docker, branching on the frozen additive 0-8 exit-code band; secrets pass as --env NAME with values in the child environment never argv; cancellation is a separate-process headspace stop --apply because run holds the workspace flock (headspace-cli docs/specs/2026-07-28-honest-failure-taxonomy.md, headspace/api.py, README consumer classes, core/workspace.py lock notes)",
+          "kind": "requirement",
+          "reason": ""
+        }
+      ]
+    },
+    {
+      "id": "c12",
+      "kind": "assumption",
+      "text": "The PRD \u00a713.7 runner contract exceeds headspace-cli 0.11.0's shipped surface: per-operation image digests vs digest-pinned profiles (only python3.12 registered), snapshot/diff observations, a machine-readable result schema, and detached runs do not exist today \u2014 the internal/runners/headspace adapter bridges the gap, declares unmet observations honestly instead of fabricating them, and hand-mirrors Go structs from headspace/core/result.py whose status and exit vocabularies are frozen append-only (headspace/core/result.py:112-130,346-399; headspace/core/profiles.py)",
+      "origin": "llm",
+      "status": "confirmed",
+      "honesty_conditions": [],
+      "hard_questions": [],
+      "links": [],
+      "instruction": "",
+      "revisions": []
+    },
+    {
+      "id": "c13",
+      "kind": "requirement",
+      "text": "Both fronts carry the family's agent-first CLI contract: the thin Python nodes CLI front (already teken-gated in this repo) keeps it natively, and the Go binary's ops/validate verbs cite the same conventions into Go \u2014 results to stdout / errors to stderr never mixed, code+message+remediation errors with error:/hint: text shape, exit 0/1/2, --json on every verb including parse-time errors, whoami/learn/explain/overview/doctor self-description (devague/cli/_output.py+_errors.py, headspace/cli, ec2bedrock/cli as cited sources)",
+      "origin": "llm",
+      "status": "confirmed",
+      "honesty_conditions": [
+        {
+          "id": "h11",
+          "text": "The Python front keeps passing teken cli doctor --strict; the Go CLI passes an equivalent conformance test asserting stdout/stderr split, code+message+remediation error shape, exit 0/1/2, and --json on every verb",
+          "status": "confirmed",
+          "instruction": ""
+        }
+      ],
+      "hard_questions": [],
+      "links": [],
+      "instruction": "",
+      "revisions": [
+        {
+          "text": "Both product CLIs (Python nodes and the Go binary's ops verbs) carry the family's agent-first contract: results to stdout / errors to stderr never mixed, structured code+message+remediation errors with an error:/hint: text shape, exit policy 0 success / 1 user / 2 environment, --json on every verb including argparse-prescan, whoami/learn/explain/overview/doctor self-description, gated by teken cli doctor --strict (devague/cli/_output.py+_errors.py, headspace/cli, ec2bedrock/cli \u2014 identical pattern across the family; this repo already ships it)",
+          "kind": "requirement",
+          "reason": ""
+        },
+        {
+          "text": "The Go product CLI carries the family's agent-first contract, cited into Go from the proven Python implementations: results to stdout / errors to stderr never mixed, structured code+message+remediation errors with an error:/hint: text shape, exit policy 0 success / 1 user / 2 environment, --json on every verb including parse-time errors, whoami/learn/explain/overview/doctor self-description (devague/cli/_output.py+_errors.py, headspace/cli, ec2bedrock/cli as cited sources); the repo's existing Python package remains mesh-agent scaffolding, not a product surface",
+          "kind": "requirement",
+          "reason": ""
+        }
+      ]
+    },
+    {
+      "id": "c14",
+      "kind": "boundary",
+      "text": "Devague integration is consume-only: Culture Nodes imports devague plan waves --json and deliverables --json as design-time artifacts and maps proposed/confirmed claim semantics to ledger authority, but never re-implements framing or convergence, and never writes runtime state into devague outside the sanctioned deviate/summary lanes (devague CLAUDE.md issue-20 rule, devague/plan.py dependency_waves 342-377; prd-spec \u00a79.11 conformance-adapter rule)",
+      "origin": "llm",
+      "status": "confirmed",
+      "honesty_conditions": [
+        {
+          "id": "h12",
+          "text": "Devague integration is fixture-based: plan waves --json fixtures round-trip to identical ledger projections and digests; no devague code is imported into Go packages",
+          "status": "confirmed",
+          "instruction": ""
+        }
+      ],
+      "hard_questions": [],
+      "links": [],
+      "instruction": "",
+      "revisions": []
+    },
+    {
+      "id": "c15",
+      "kind": "requirement",
+      "text": "The colleague actor adapter is a reference bridge that runs on the system hosting colleague \u2014 outside the culture-nodes deployment \u2014 implementing the PRD actor protocol over colleague's only sanctioned integration surface: subprocess colleague work --json / --background, task_id capture, flight feed.jsonl polling, cooperative flight stop (never SIGKILL), and a three-way ok/error/incomplete mapping where incomplete is never success; pinned to colleague docs/contract.md contract v1 \u2014 colleague opens no socket by design (colleague/contract.py, background.py, flight.py, AGENTS.colleague.md no-daemon rule)",
+      "origin": "llm",
+      "status": "confirmed",
+      "honesty_conditions": [
+        {
+          "id": "h13",
+          "text": "The colleague reference bridge passes the actor conformance suite (auth, idempotency, sync, async accept, heartbeat, cancel, duplicate callbacks) while driving colleague's mock engine, and a test proves incomplete maps to a non-success outcome",
+          "status": "confirmed",
+          "instruction": ""
+        }
+      ],
+      "hard_questions": [],
+      "links": [],
+      "instruction": "",
+      "revisions": [
+        {
+          "text": "The colleague actor adapter is a bridge process implementing the PRD actor protocol over colleague's only sanctioned integration surface: subprocess colleague work --json / --background, task_id capture, flight feed.jsonl polling, cooperative flight stop (never SIGKILL), and a three-way ok/error/incomplete mapping where incomplete is never success; pinned to colleague docs/contract.md contract v1 \u2014 colleague opens no socket by design (colleague/contract.py, background.py, flight.py, AGENTS.colleague.md no-daemon rule)",
+          "kind": "requirement",
+          "reason": ""
+        }
+      ]
+    },
+    {
+      "id": "c16",
+      "kind": "assumption",
+      "text": "claude-agent-sdk and claude-agent-api attach as a second adapter pair behind the same provider-neutral actor protocol \u2014 adapter services speaking POST /v1/invocations that drive SDK sessions or the hosted API, running wherever the agent is hosted, never inside culture-nodes \u2014 and the engine never learns provider names; their concrete surfaces were not explored in this scoping pass, only the PRD boundary was (prd-spec \u00a79.5, \u00a713)",
+      "origin": "llm",
+      "status": "confirmed",
+      "honesty_conditions": [],
+      "hard_questions": [],
+      "links": [],
+      "instruction": "",
+      "revisions": [
+        {
+          "text": "claude-agent-sdk and claude-agent-api land as a second adapter pair behind the same provider-neutral actor protocol (an adapter service speaking POST /v1/invocations that drives SDK sessions or the hosted API); the engine never learns provider names \u2014 their concrete surfaces were not explored in this scoping pass, only the PRD boundary was (prd-spec \u00a79.5, \u00a713)",
+          "kind": "assumption",
+          "reason": ""
+        }
+      ]
+    },
+    {
+      "id": "c17",
+      "kind": "requirement",
+      "text": "Go AWS code stays in AWS-specific packages with the engine core free of AWS SDK types (prd-spec \u00a717.3); credential resolution follows the standard chain including AssumeRole and IRSA web-identity modeled on open-bedrock-server get_aws_session (config_loader.py:285-360), and AWS errors map to actionable environment-errors modeled on ec2-cli's build_client/aws_call split (ec2/aws/client.py)",
+      "origin": "llm",
+      "status": "confirmed",
+      "honesty_conditions": [
+        {
+          "id": "h14",
+          "text": "A CI lint (depguard-style) forbids AWS SDK imports outside internal/queue/sqs, internal/artifacts/s3, internal/runners/lambda; the reference deploy authenticates via IRSA with no long-lived keys",
+          "status": "confirmed",
+          "instruction": ""
+        }
+      ],
+      "hard_questions": [],
+      "links": [],
+      "instruction": "",
+      "revisions": []
+    },
+    {
+      "id": "c18",
+      "kind": "requirement",
+      "text": "Delivery follows the committed Phase 0 / Phase 1 milestones: contracts + compiler + nodes validate first, then the durable vertical slice (intake-plan-build-test-verify with the changes_required loop, headspace evidence, read-only Run + Ledger views, docker compose) \u2014 the app design does not invent a different phasing (culture-nodes-implementation-issue.md Milestones 0/1 + acceptance criteria)",
+      "origin": "llm",
+      "status": "confirmed",
+      "honesty_conditions": [
+        {
+          "id": "h15",
+          "text": "Milestone 0 exit criteria (deterministic compile, precise diagnostics on deliberate errors, devague fixture round-trip to identical digest) are demonstrated in CI before Milestone 1 work merges",
+          "status": "confirmed",
+          "instruction": ""
+        }
+      ],
+      "hard_questions": [],
+      "links": [],
+      "instruction": "",
+      "revisions": []
+    },
+    {
+      "id": "c19",
+      "kind": "boundary",
+      "text": "Product work must not break the existing mesh-agent scaffold: the Python package keeps zero runtime dependencies and keeps passing teken cli doctor --strict, and the mesh identity (culture.yaml colleague backend, AGENTS.colleague.md prompt file, vendored skills) stays intact at repo root through any restructure (repo CLAUDE.md: CLI architecture + mesh identity sections)",
+      "origin": "llm",
+      "status": "confirmed",
+      "honesty_conditions": [
+        {
+          "id": "h16",
+          "text": "Repo CI keeps running teken cli doctor --strict and the zero-runtime-dependency check on the Python package after the restructure; culture.yaml and AGENTS.colleague.md remain at repo root",
+          "status": "confirmed",
+          "instruction": ""
+        }
+      ],
+      "hard_questions": [],
+      "links": [],
+      "instruction": "",
+      "revisions": []
+    },
+    {
+      "id": "c20",
+      "kind": "requirement",
+      "text": "The design source for the UI is the org repo itself, not a shared package (none exists): extract site-astro/src/styles/global.css (523 lines of framework-agnostic custom properties \u2014 colors, Fraunces/Albert Sans type scale, spacing rails, motion), port Mark.astro to a React SVG component, adopt the terminal 7-color categorical palette for node kinds, and preserve the site's load-bearing dashed=proposed / solid=confirmed edge convention which maps directly onto ledger authority; pin the exact org revision in an ADR; dark mode follows prefers-color-scheme as the site does \u2014 no toggle exists today (org/site-astro/src/styles/global.css, components/Mark.astro, CliRuntimeStackDiagram.astro; answers prd-spec \u00a726 Q2)",
+      "origin": "llm",
+      "status": "confirmed",
+      "honesty_conditions": [
+        {
+          "id": "h17",
+          "text": "The extracted global.css tokens byte-match the pinned org revision except for documented deviations; the mark, the terminal 7-color node palette, and dashed=proposed/solid=confirmed edges appear in the component library with source references",
+          "status": "confirmed",
+          "instruction": ""
+        }
+      ],
+      "hard_questions": [],
+      "links": [],
+      "instruction": "",
+      "revisions": []
+    },
+    {
+      "id": "c21",
+      "kind": "requirement",
+      "text": "The web UI is webglass-testable by construction: it publishes a machine-readable agent-state JSON script element mirroring graph/run/selection state, uses stable ids and data-attributes on assertable elements (webglass selectors are tag/#id/.class/[attr] only), is fully keyboard-operable (also a prd-spec \u00a78.8 requirement), and CI declares the dev server in a webglass policy profile; mouse-drag canvas interactions are tested with Playwright directly since webglass has no click/drag (webglass-cli docs/ci-recipe.md, docs/examples/ci-recipe-app/index.html, webglass/policy.py, extraction.py selector subset)",
+      "origin": "llm",
+      "status": "confirmed",
+      "honesty_conditions": [
+        {
+          "id": "h18",
+          "text": "CI includes a webglass job: policy profile with declared_targets, page open on the built UI, extract of the agent-state JSON node asserting graph/run state, console-lens empty-error check; keyboard-only operation is covered by a Playwright test",
+          "status": "confirmed",
+          "instruction": ""
+        }
+      ],
+      "hard_questions": [],
+      "links": [],
+      "instruction": "",
+      "revisions": []
+    },
+    {
+      "id": "c22",
+      "kind": "requirement",
+      "text": "Multiple identical instances run safely in parallel: when deployed as more than one pod with the same config, workers must not compete on resources, double-work, or miss work \u2014 realized through atomic Postgres SKIP LOCKED claims, leases with expiry, monotonic fencing tokens, attempt idempotency keys, the transactional outbox, and a single-active-lease-holder scheduler with standbys (user requirement; mechanics: prd-spec \u00a712.3-12.5, \u00a719.3, \u00a720.4 recovery matrix, \u00a721.2 duplicate-delivery benchmark)",
+      "origin": "user",
+      "status": "confirmed",
+      "honesty_conditions": [
+        {
+          "id": "h19",
+          "text": "Fault-injection tests run two workers against one Postgres: duplicate signals never double-commit a transition, a killed worker's lease is reclaimed within expiry plus five seconds, and a stale fencing token can never commit (prd-spec \u00a721.2 gates)",
+          "status": "confirmed",
+          "instruction": ""
+        }
+      ],
+      "hard_questions": [],
+      "links": [],
+      "instruction": "Implement work_items claiming with SELECT ... FOR UPDATE SKIP LOCKED, lease owner+expiry, monotonic fencing token verified inside every completion transaction; ship the two-worker kill/duplicate test in tests/fault from Milestone 1",
+      "revisions": []
+    },
+    {
+      "id": "c23",
+      "kind": "requirement",
+      "text": "Deployment is Docker-native and Kubernetes-native: every process ships as a container, docker compose is the local profile, and a first-class Helm chart with liveness/readiness probes, graceful shutdown, env/Secret-ref configuration, and stateless horizontally-scalable pods is the primary production packaging \u2014 this deliberately reweights prd-spec \u00a719.2's ECS/Fargate-first ordering to k8s-first and is recorded as an explicit PRD deviation (user requirement, stated twice; prd-spec \u00a718 deploy/helm, \u00a719)",
+      "origin": "user",
+      "status": "confirmed",
+      "honesty_conditions": [
+        {
+          "id": "h20",
+          "text": "The helm chart deploys api/scheduler/worker with replicas=2 workers on a kind cluster in CI and the multi-pod safety tests pass in that topology; liveness/readiness probes and graceful drain are exercised",
+          "status": "confirmed",
+          "instruction": ""
+        }
+      ],
+      "hard_questions": [],
+      "links": [],
+      "instruction": "Ship deploy/helm with per-role Deployments of the one image, probes, preStop drain, PodDisruptionBudget, Secret-ref config, and HPA-compatible metrics; keep deploy/compose as the local profile",
+      "revisions": []
+    },
+    {
+      "id": "c24",
+      "kind": "boundary",
+      "text": "Agent runtimes are never hosted inside culture-nodes: colleague, claude-agent-sdk, and claude-agent-api actors are held by external systems and only triggered remotely \u2014 webhook/HTTP actor protocol, claude -p on a remote host, or any external channel \u2014 and never executed within culture-nodes pods; culture-nodes ships the actor-protocol contract and conformance kit (and may ship reference adapters), but those adapters run on the system hosting the agent (user clarification; aligns with prd-spec \u00a72 agents-remain-independently-hosted, \u00a75 goal 4, \u00a79.5)",
+      "origin": "user",
+      "status": "confirmed",
+      "honesty_conditions": [
+        {
+          "id": "h21",
+          "text": "The control-plane binary links no agent SDK; agent invocation exists only as the actor-protocol HTTP client; the reference deployment runs every agent adapter as a separate container or machine",
+          "status": "confirmed",
+          "instruction": ""
+        }
+      ],
+      "hard_questions": [],
+      "links": [],
+      "instruction": "Implement internal/actors as protocol client only (sync 200 / async 202 + fenced idempotent callbacks); publish the conformance kit so external adapters can self-verify; ship reference adapter images separately from the control-plane image",
+      "revisions": []
+    },
+    {
+      "id": "c25",
+      "kind": "requirement",
+      "text": "Code nodes execute on AWS Lambda for now: the first code-runner adapter targets Lambda container-image functions pinned by ECR digest, with workspace/artifacts in and out via S3 and network scoped by VPC config, behind the same runner boundary \u2014 typed operation in, structured result plus runner-observed evidence out (request id, function version + image digest, duration, billed memory, exit status) \u2014 a deliberate deviation from prd-spec \u00a713.7's headspace-first ordering; headspace-cli remains the reference runner pattern and a local/later adapter, and Lambda's unobservables (workspace snapshot/diff completeness) are declared honestly, never fabricated (user instruction; prd-spec \u00a719.2 already allows a non-Docker adapter implementing the same operation+evidence contract)",
+      "origin": "user",
+      "status": "confirmed",
+      "honesty_conditions": [
+        {
+          "id": "h22",
+          "text": "The Lambda adapter passes the runner conformance suite: digest-pinned function image, evidence carries request id + function/image digests + duration + billed memory + exit; every field the runner cannot observe is marked incomplete, never fabricated",
+          "status": "confirmed",
+          "instruction": ""
+        }
+      ],
+      "hard_questions": [],
+      "links": [],
+      "instruction": "Implement internal/runners/lambda invoking container-image functions pinned by ECR digest, workspace in/out via S3 artifact refs, timeout mapped below the 15-minute Lambda cap, and evidence mapping with explicit completeness flags",
+      "revisions": []
+    },
+    {
+      "id": "c26",
+      "kind": "requirement",
+      "text": "The deployment is minimal: the control plane is one Go binary (serve/scheduler/worker/all modes) plus PostgreSQL and nothing else; code execution always lives in an external solution behind the runner seam \u2014 AWS Lambda in the cloud, or a locally-exported way to call headspace-cli for dev \u2014 and culture-nodes never runs code itself (user instruction; prd-spec \u00a712.1 one-binary, \u00a713.7/\u00a716.4 runner boundary)",
+      "origin": "user",
+      "status": "confirmed",
+      "honesty_conditions": [
+        {
+          "id": "h23",
+          "text": "The production helm chart contains exactly the control-plane Deployments plus the Postgres dependency; adding any other service to the chart requires an ADR",
+          "status": "confirmed",
+          "instruction": ""
+        }
+      ],
+      "hard_questions": [],
+      "links": [],
+      "instruction": "Keep the deployable set to one Go image (api/scheduler/worker modes) + Postgres; document that code runners and agent hosts are external systems reached over the network",
+      "revisions": []
+    },
+    {
+      "id": "c27",
+      "kind": "decision",
+      "text": "The solution is Go only \u2014 no Python/Go mish-mash in the product: the Go nodes binary owns the product CLI including validate/run/inspect (resolving prd-spec \u00a726 Q1 as standalone nodes, in Go), and the agent-first CLI logic proven in the Python family (stdout/stderr split, code+message+remediation errors, exit 0/1/2, --json with argparse-prescan equivalent, whoami/learn/explain/overview/doctor) is cited/copied into Go source, owning the copy per the cite-dont-import philosophy (user instruction; devague/headspace/ec2bedrock CLI conventions as the cited sources)",
+      "origin": "user",
+      "status": "confirmed",
+      "honesty_conditions": [],
+      "hard_questions": [],
+      "links": [],
+      "instruction": "",
+      "revisions": []
+    },
+    {
+      "id": "c28",
+      "kind": "decision",
+      "text": "Refining the Go-only decision: all solution logic is Go; Python survives strictly as a thin CLI front over the REST API \u2014 zero engine logic, this repo's existing agent-first nodes CLI becomes that front \u2014 and React Flow is strictly the web front (dashboard, actions); both fronts are views over the same OpenAPI surface, which is how CLI/Web/API parity holds (user instruction: python is only a CLI front, react-flows only a web front)",
+      "origin": "user",
+      "status": "confirmed",
+      "honesty_conditions": [],
+      "hard_questions": [],
+      "links": [],
+      "instruction": "",
+      "revisions": []
+    },
+    {
+      "id": "c29",
+      "kind": "boundary",
+      "text": "PostgreSQL is the only database; a second store (MongoDB) is permitted only where a workload proves Postgres unfit \u2014 e.g. embeddings/vector search \u2014 and is never added by default (user instruction; pgvector remains the first option to evaluate before any second store)",
+      "origin": "user",
+      "status": "confirmed",
+      "honesty_conditions": [
+        {
+          "id": "h24",
+          "text": "The codebase carries exactly one database driver (pgx); any second store lands only with an ADR that documents why Postgres (including pgvector for embeddings) is unfit",
+          "status": "confirmed",
+          "instruction": ""
+        }
+      ],
+      "hard_questions": [],
+      "links": [],
+      "instruction": "Use pgx + sqlc-generated queries for all persistence; if embeddings arrive, evaluate pgvector first and record the outcome in an ADR before considering MongoDB",
+      "revisions": []
+    },
+    {
+      "id": "c30",
+      "kind": "requirement",
+      "text": "In AWS, SQS is the queue: the work-signal driver over authoritative PostgreSQL, per the PRD's queue abstraction \u2014 publish/receive/ack/delay with a fenced Postgres claim on every signal (user instruction; prd-spec \u00a712.3)",
+      "origin": "user",
+      "status": "confirmed",
+      "honesty_conditions": [
+        {
+          "id": "h25",
+          "text": "Chaos tests prove duplicate, reordered, and dropped SQS deliveries never corrupt authoritative Postgres state \u2014 every receive performs a fenced claim and the outbox republishes lost signals",
+          "status": "confirmed",
+          "instruction": ""
+        }
+      ],
+      "hard_questions": [],
+      "links": [],
+      "instruction": "Implement the queue.Driver interface with a Postgres driver first and an SQS driver (publish/receive/ack/delay of work references only); wire the transactional outbox as the sole publisher",
+      "revisions": []
+    },
+    {
+      "id": "c31",
+      "kind": "boundary",
+      "text": "From culture-nodes' perspective every agent backend \u2014 colleague, claude code (claude-agent-sdk / claude-agent-api), codex, or any other \u2014 runs on a different machine or in another container, always external to culture-nodes: another docker, a remote host, anything outside the culture-nodes deployment; culture-nodes only reaches them through the actor protocol (user clarification, broadening c24 to name codex and the different-machine expectation)",
+      "origin": "user",
+      "status": "confirmed",
+      "honesty_conditions": [
+        {
+          "id": "h26",
+          "text": "No code path executes an agent inside culture-nodes pods; actor endpoints are network addresses with auth, and the reference deployment demonstrates an adapter on a separate host or container",
+          "status": "confirmed",
+          "instruction": ""
+        }
+      ],
+      "hard_questions": [],
+      "links": [],
+      "instruction": "",
+      "revisions": []
+    },
+    {
+      "id": "c32",
+      "kind": "audience",
+      "text": "Workflow authors and operators (humans, via the web dashboard and CLI), the mesh agents that author, run, and inspect workflows agent-first, and platform engineers who deploy and scale it on k8s/AWS",
+      "origin": "llm",
+      "status": "confirmed",
+      "honesty_conditions": [
+        {
+          "id": "h27",
+          "text": "Each named audience has a working surface in the Phase-1 slice: the web Run/Ledger views for operators, the agent-first CLI and API for mesh agents, and the helm/compose profiles for platform engineers",
+          "status": "confirmed",
+          "instruction": ""
+        }
+      ],
+      "hard_questions": [],
+      "links": [],
+      "instruction": "",
+      "revisions": []
+    },
+    {
+      "id": "c33",
+      "kind": "after_state",
+      "text": "A workflow authored as YAML compiles to a content-addressed digest and runs durably across identical replicas: agents are triggered on their own machines through the actor protocol, code executes on AWS Lambda, every claim lands in the work ledger with explicit authority and evidence, and humans watch and act through the org-styled react-flow dashboard or the thin Python CLI \u2014 with nothing possible in one front that is missing from the others",
+      "origin": "llm",
+      "status": "confirmed",
+      "honesty_conditions": [
+        {
+          "id": "h28",
+          "text": "Every clause of the after-state maps to at least one acceptance criterion in the implementation issue checklist; any clause without a covering criterion is flagged at plan time, not assumed",
+          "status": "confirmed",
+          "instruction": ""
+        }
+      ],
+      "hard_questions": [],
+      "links": [],
+      "instruction": "",
+      "revisions": []
+    },
+    {
+      "id": "c34",
+      "kind": "before_state",
+      "text": "Today the repo holds a PRD and a mesh-agent scaffold \u2014 no runtime, no API, no UI; agent work across the mesh is orchestrated ad hoc through skills and chat, with no durable contracts, no evidence trail, and no multi-instance safety",
+      "origin": "llm",
+      "status": "confirmed",
+      "honesty_conditions": [
+        {
+          "id": "h29",
+          "text": "Accurate today by inspection: the repo contains only docs/initial-design and the Python mesh-agent scaffold \u2014 no runtime, API, or UI code exists",
+          "status": "confirmed",
+          "instruction": ""
+        }
+      ],
+      "hard_questions": [],
+      "links": [],
+      "instruction": "",
+      "revisions": []
+    },
+    {
+      "id": "c35",
+      "kind": "why_it_matters",
+      "text": "Agent work becomes reviewable and mechanically verifiable instead of trusted prose: placement, permissions, inputs, claims, and evidence are explicit records, so multi-agent delivery can scale beyond one operator's attention without trusting any agent's own completion claim",
+      "origin": "llm",
+      "status": "confirmed",
+      "honesty_conditions": [
+        {
+          "id": "h30",
+          "text": "The trust story is enforced, not narrated: ledger authority property tests prove agents cannot self-confirm and container output cannot grant itself observed authority",
+          "status": "confirmed",
+          "instruction": ""
+        }
+      ],
+      "hard_questions": [],
+      "links": [],
+      "instruction": "",
+      "revisions": []
+    },
+    {
+      "id": "c36",
+      "kind": "success_signal",
+      "text": "The Phase-1 slice proves the product: intake\u2192plan\u2192build\u2192test\u2192verify runs end to end with the changes_required loop following a graph edge, the run survives process restart and runs safely at two worker replicas, test evidence is runner-observed from the external code runner, an agent completion claim stays unverified until acceptance checks pass, and the live Run view renders it all in the pinned org design system (implementation-issue acceptance checklist as the mechanical gate)",
+      "origin": "llm",
+      "status": "confirmed",
+      "honesty_conditions": [
+        {
+          "id": "h31",
+          "text": "The implementation-issue acceptance checklist is the mechanical gate: every box is demonstrated by a test, benchmark, or recorded artifact \u2014 a checked box without evidence is a defect",
+          "status": "confirmed",
+          "instruction": ""
+        }
+      ],
+      "hard_questions": [],
+      "links": [],
+      "instruction": "",
+      "revisions": []
+    },
+    {
+      "id": "c37",
+      "kind": "requirement",
+      "text": "Agent steps have controllable code hooks: a node can declare pre-run and post-run code operations that the engine executes through the code-runner boundary (Lambda now) around the agent attempt \u2014 pre-run to prepare/guard inputs, post-run to validate/collect/derive evidence from what the agent produced \u2014 while the agent's own execution stays external and untouched; hook results are recorded as runner operations with observed evidence like any code node (user requirement; generalizes prd-spec \u00a710.10 mechanical acceptance and the \u00a713.7 runner boundary)",
+      "origin": "user",
+      "status": "confirmed",
+      "honesty_conditions": [
+        {
+          "id": "h32",
+          "text": "Hooks execute through the same runner boundary with the same evidence rules as code nodes; a pre-run hook failure fails the attempt before agent dispatch (technical failure, retryable per policy); a post-run check failure maps to a declared domain outcome or assurance rejection, never a silent pass; no hook ever executes inside a culture-nodes pod",
+          "status": "confirmed",
+          "instruction": ""
+        }
+      ],
+      "hard_questions": [],
+      "links": [],
+      "instruction": "",
+      "revisions": []
+    },
+    {
+      "id": "c38",
+      "kind": "requirement",
+      "text": "Artifact storage is pod-agnostic from Phase 1: because multi-pod safety moved to Phase 1 (q4), per-pod filesystem artifact storage is never correct at replicas>1 \u2014 either the S3-compatible store (MinIO in compose) moves up alongside it, or Phase-1 artifacts live in Postgres with enforced size caps (challenge finding: hidden dependency between resolved q4 and prd-spec \u00a723's S3-in-Phase-2 ordering)",
+      "origin": "llm",
+      "status": "confirmed",
+      "honesty_conditions": [
+        {
+          "id": "h33",
+          "text": "At replicas=2, an artifact written during a run handled by pod A is readable by pod B in an integration test; no code path stores artifacts on pod-local filesystem",
+          "status": "confirmed",
+          "instruction": ""
+        }
+      ],
+      "hard_questions": [],
+      "links": [],
+      "instruction": "",
+      "revisions": []
+    },
+    {
+      "id": "c39",
+      "kind": "requirement",
+      "text": "Postgres schema migrations follow expand-contract with N-1 binary compatibility: helm upgrades apply migrations via a job/init container before new pods roll, and version N-1 binaries keep working against schema N so k8s rolling updates never require downtime or break in-flight pods (challenge finding: migration lens over c23's rolling-update topology; migrations are a c19 escalation signal)",
+      "origin": "llm",
+      "status": "confirmed",
+      "honesty_conditions": [
+        {
+          "id": "h34",
+          "text": "CI runs the N-1 binary against a schema-N database in a compatibility test; helm upgrade applies migrations before new pods receive traffic, verified on a kind cluster",
+          "status": "confirmed",
+          "instruction": ""
+        }
+      ],
+      "hard_questions": [],
+      "links": [],
+      "instruction": "",
+      "revisions": []
+    },
+    {
+      "id": "c40",
+      "kind": "requirement",
+      "text": "nodes validate enforces the code runner's hard limits at compile time: a code node whose timeout exceeds the runner's cap (Lambda: 15 minutes) or whose declared payloads exceed runner limits (Lambda: 6MB sync request/response) is rejected with a precise diagnostic naming the limit, and oversized results always route through S3 artifact references \u2014 limits are discovered at validation, never at runtime (challenge finding: failure-mode lens over c25; AWS Lambda documented quotas)",
+      "origin": "llm",
+      "status": "confirmed",
+      "honesty_conditions": [
+        {
+          "id": "h35",
+          "text": "A validation test submits a code node with a 20-minute timeout and an inline payload above the runner limit and receives precise diagnostics naming the cap and the limit; no such operation reaches dispatch",
+          "status": "confirmed",
+          "instruction": ""
+        }
+      ],
+      "hard_questions": [],
+      "links": [],
+      "instruction": "",
+      "revisions": []
+    },
+    {
+      "id": "c41",
+      "kind": "requirement",
+      "text": "Code-node dispatch is IAM-scoped and registry-pinned: policy pins the allowed Lambda function identities (ARN + image digest) per node, and the worker's IAM role may invoke only registered functions \u2014 the control plane can never invoke arbitrary Lambdas (challenge finding: security lens over c25/c26; mirrors prd-spec \u00a79.10 pinning and \u00a716.2 policy constraints)",
+      "origin": "llm",
+      "status": "confirmed",
+      "honesty_conditions": [
+        {
+          "id": "h36",
+          "text": "An integration test proves dispatch to an unregistered function identity is refused, and the reference deploy's worker IAM policy enumerates registered function ARNs only \u2014 no wildcard invoke",
+          "status": "confirmed",
+          "instruction": ""
+        }
+      ],
+      "hard_questions": [],
+      "links": [],
+      "instruction": "",
+      "revisions": []
+    },
+    {
+      "id": "c42",
+      "kind": "requirement",
+      "text": "The actor callback surface is reachable from agent-hosting machines: the k8s profile exposes the callback/API endpoint through an Ingress/LoadBalancer, callback tokens are short-lived and attempt-scoped, and expired or foreign tokens are rejected \u2014 external agents (c31) cannot complete the async protocol without it (challenge finding: adjacent-systems lens over c24/c31 \u00d7 prd-spec \u00a713.1 callback contract)",
+      "origin": "llm",
+      "status": "confirmed",
+      "honesty_conditions": [
+        {
+          "id": "h37",
+          "text": "An actor on an external network completes the full async flow (202, heartbeat, completion callback) against the k8s profile through the Ingress using an attempt-scoped token; an expired or foreign token is rejected with a structured error",
+          "status": "confirmed",
+          "instruction": ""
+        }
+      ],
+      "hard_questions": [],
+      "links": [],
+      "instruction": "",
+      "revisions": []
+    },
+    {
+      "id": "c43",
+      "kind": "requirement",
+      "text": "A container release lane exists alongside PyPI: versioned multi-arch control-plane images are published by digest to a registry (ghcr) on release, helm values reference them by digest, and compose uses the same images; the existing PyPI Trusted-Publishing lane keeps shipping the Python front (challenge finding: adjacent-systems lens over publish.yml \u00d7 c23 \u2014 helm needs an image supply that does not exist today)",
+      "origin": "llm",
+      "status": "confirmed",
+      "honesty_conditions": [
+        {
+          "id": "h38",
+          "text": "A tagged release publishes multi-arch images by digest; helm values pin those digests; docker compose pulls the same images \u2014 verified by the CI smoke tests consuming published artifacts, not local builds",
+          "status": "confirmed",
+          "instruction": ""
+        }
+      ],
+      "hard_questions": [],
+      "links": [],
+      "instruction": "",
+      "revisions": []
+    },
+    {
+      "id": "c44",
+      "kind": "assumption",
+      "text": "Phase-1 actor registration is static and config-declared: actor identities, endpoints, and auth material are seeded from configuration/API by an operator until OIDC/workload identity lands in Phase 2 \u2014 there is no self-registration (challenge finding: overlooked-actors lens; prd-spec \u00a716.1 phases auth to Phase 2 while actors exist from Phase 1)",
+      "origin": "llm",
+      "status": "confirmed",
+      "honesty_conditions": [],
+      "hard_questions": [],
+      "links": [],
+      "instruction": "",
+      "revisions": []
+    },
+    {
+      "id": "c45",
+      "kind": "decision",
+      "text": "Phase-1 auth posture: the first deployable slice runs authless behind a private network (private cluster/VPC), guarded only by attempt-scoped callback tokens; the deployment docs must state this trust boundary plainly, and OIDC lands in Phase 2 as the PRD phases it (user decision resolving q5)",
+      "origin": "user",
+      "status": "confirmed",
+      "honesty_conditions": [],
+      "hard_questions": [],
+      "links": [],
+      "instruction": "",
+      "revisions": []
+    }
+  ],
+  "open_vagueness": [
+    {
+      "id": "v1",
+      "text": "headspace runner topology on k8s is undecided: headspace-cli requires a real Docker engine (docker provider only; fake is in-process), the PRD explicitly refuses Docker-in-Fargate claims, so a k8s-native profile needs dedicated runner nodes, DinD/sysbox, or a future non-Docker provider behind headspace's Provider seam \u2014 blocking for the k8s-native runner story (headspace/providers/docker.py, providers/base.py; prd-spec \u00a719.2)",
+      "kind": "unknown_blocking",
+      "claim_id": null,
+      "resolved": true,
+      "resolution": "Resolved by the user's Lambda-first decision (c25/c26): the k8s profile needs no Docker engine for code nodes \u2014 code executes on AWS Lambda (or a locally-exported headspace-cli bridge in dev), so headspace-on-k8s runner topology is deferred to whenever the headspace adapter returns as a local/later option behind the same runner seam",
+      "resolution_claim_id": null
+    },
+    {
+      "id": "v2",
+      "text": "prd-spec \u00a726 Q3-Q5 stay open: whether the ledger schema moves to the workledger project after Devague round-trip conformance, whether ownership resolves from repo file or Culture identity, and which OIDC provider the reference deploy demonstrates \u2014 integration detail, not architecture",
+      "kind": "unknown_nonblocking",
+      "claim_id": null,
+      "resolved": false,
+      "resolution": "",
+      "resolution_claim_id": null
+    },
+    {
+      "id": "v3",
+      "text": "claude-agent-sdk and claude-agent-api concrete surfaces were not read in this pass (no local repo explored); their adapter design is pinned only to the PRD actor-protocol boundary until a dedicated exploration",
+      "kind": "unknown_nonblocking",
+      "claim_id": null,
+      "resolved": false,
+      "resolution": "",
+      "resolution_claim_id": null
+    },
+    {
+      "id": "v4",
+      "text": "local-profile code runner under Lambda-first: docker compose local dev needs either the headspace runner, a Lambda-compatible local emulator, or accepting cloud-only code nodes during development \u2014 undecided",
+      "kind": "unknown_nonblocking",
+      "claim_id": null,
+      "resolved": false,
+      "resolution": "",
+      "resolution_claim_id": null
+    },
+    {
+      "id": "v5",
+      "text": "Phase-1 observability floor is undecided: which metrics, probes, and log surfaces ship in the first slice (full OTel is Phase 2) \u2014 probes are covered by c23, the rest is plan detail",
+      "kind": "unknown_nonblocking",
+      "claim_id": null,
+      "resolved": false,
+      "resolution": "",
+      "resolution_claim_id": null
+    },
+    {
+      "id": "v6",
+      "text": "Cost containment before Phase 4: per-run cost/token budget enforcement is PRD Phase 4, so until then engine loop/visit/time bounds are the only containment for Lambda and agent spend \u2014 accepted as residual risk for early phases",
+      "kind": "unknown_nonblocking",
+      "claim_id": null,
+      "resolved": false,
+      "resolution": "",
+      "resolution_claim_id": null
+    }
+  ],
+  "scope_entries": [
+    {
+      "id": "s1",
+      "surface": "docs/initial-design/culture-nodes-prd-spec.md \u00a71+\u00a726 (decisions)",
+      "finding": "the core stack is already decided, not open for redesign: Go control plane, React/Vite/React Flow UI, Postgres authoritative, SQS as signal only, JSON Schema 2020-12, CEL, content-addressed versions \u2014 the app design implements the PRD",
+      "seeds": [
+        "c2"
+      ]
+    },
+    {
+      "id": "s2",
+      "surface": "prd-spec \u00a79.5 + \u00a713 (actors + protocol)",
+      "finding": "the engine is provider-neutral with an HTTP/JSON actor protocol (sync 200 / async 202 + callbacks, idempotency keys); claude-agent-sdk, claude-agent-api, and colleague all attach as external adapters, never engine branches",
+      "seeds": [
+        "c3",
+        "c16"
+      ]
+    },
+    {
+      "id": "s3",
+      "surface": "prd-spec \u00a713.7 + \u00a716.4 (runner boundary)",
+      "finding": "code executes only through the headspace-cli runner adapter as a separate deployment; no Docker socket, no in-process scripts in any control-plane container",
+      "seeds": [
+        "c4"
+      ]
+    },
+    {
+      "id": "s4",
+      "surface": "prd-spec \u00a710 (work ledger)",
+      "finding": "the ledger authority model (proposed/confirmed/observed/derived, execution vs assurance) is a runtime rule every surface must enforce, and its dashed-vs-solid rendering maps onto the org site's edge convention",
+      "seeds": [
+        "c5"
+      ]
+    },
+    {
+      "id": "s5",
+      "surface": "prd-spec \u00a712 + \u00a719-21 (runtime, deploy, reliability)",
+      "finding": "leases, fencing tokens, SKIP LOCKED claims, transactional outbox, and the recovery matrix are exactly the multi-pod-safety machinery the user requires; deployment ordering reweights to k8s-first per user instruction, recorded as a PRD deviation",
+      "seeds": [
+        "c7",
+        "c8",
+        "c22",
+        "c23"
+      ]
+    },
+    {
+      "id": "s6",
+      "surface": "prd-spec \u00a78 (UX)",
+      "finding": "progressive detail, read-only Run+Ledger first slice, keyboard + reduced-motion are PRD requirements matching the user's clean-design/no-prose ask; the design source must be extracted and revision-pinned, never copied by eye",
+      "seeds": [
+        "c9",
+        "c10"
+      ]
+    },
+    {
+      "id": "s7",
+      "surface": "docs/initial-design/culture-nodes-implementation-issue.md",
+      "finding": "Milestones 0/1 and the acceptance checklist already define the buildable slice \u2014 contracts+compiler, then the durable vertical slice with the changes_required loop and headspace evidence",
+      "seeds": [
+        "c18"
+      ]
+    },
+    {
+      "id": "s8",
+      "surface": "../headspace-cli (cli surface, core/result.py, failure-taxonomy spec)",
+      "finding": "subprocess is the only integration \u2014 no daemon, HTTP, or queue; frozen additive 0-8 exit band and nine-section result package; PRD \u00a713.7's operation contract exceeds the shipped surface (profiles not per-op images, no snapshot flags, no schema artifact), so the Go adapter bridges and declares gaps honestly",
+      "seeds": [
+        "c11",
+        "c12"
+      ]
+    },
+    {
+      "id": "s9",
+      "surface": "../devague (plan.py, cli/_output.py+_errors.py, CLAUDE.md issue-20)",
+      "finding": "plan waves --json is a ready-made design-time import (wave layering + per-task instruction/acceptance/covers); the CLI stays deterministic and non-orchestrating, so Culture Nodes consumes exports and never pushes runtime state back except deviate/summary; its error/output/exit conventions are the family standard to mirror",
+      "seeds": [
+        "c13",
+        "c14"
+      ]
+    },
+    {
+      "id": "s10",
+      "surface": "../colleague (contract.py, flight.py, background.py, resident/, AGENTS.colleague.md)",
+      "finding": "drift-tested contract v1: work --json/--background subprocess dispatch, flight feed/control files for monitor+steer, three-way ok/error/incomplete exit mapping, no socket ever \u2014 the actor adapter must be a bridge process, and AGENTS.colleague.md + --role/--mode is the whole per-node behavior seam",
+      "seeds": [
+        "c15"
+      ]
+    },
+    {
+      "id": "s11",
+      "surface": "../ec2bedrock-cli + ../ec2-cli + ../open-bedrock-server + ../bedrock-budgeteer",
+      "finding": "ec2bedrock-cli makes zero AWS calls by design \u2014 the real models are ec2-cli (single client factory, lazy boto3, name-based error mapping, aws_call env-error split, review-then-apply teardown) and open-bedrock-server's credential chain (role ARN, IRSA, profile, keys, ambient); bedrock-budgeteer shows naming/tagging but uses SQS only as DLQs, so SQS-as-work-signal has no local precedent",
+      "seeds": [
+        "c17",
+        "c8"
+      ]
+    },
+    {
+      "id": "s12",
+      "surface": "../org (site-astro: global.css, Mark.astro, diagrams, navigation)",
+      "finding": "Astro 7 static site; the entire design system is one framework-agnostic custom-property file plus fontsource fonts \u2014 no shared package exists, so extraction from a pinned org revision is the path; terminal 7-color palette fits node kinds; dashed=proposed/solid=confirmed edge semantics are load-bearing sitewide; Apache-2.0 code grant, trademark not covered",
+      "seeds": [
+        "c20",
+        "c9"
+      ]
+    },
+    {
+      "id": "s13",
+      "surface": "../webglass-cli (docs/ci-recipe.md, policy.py, extraction.py)",
+      "finding": "webglass is a guarded evidence plane, not a test framework: apps become testable by publishing an agent-state JSON node, stable ids/data-attrs, keyboard operability, and a declared-targets policy profile; no click/drag exists, so canvas gestures need Playwright directly",
+      "seeds": [
+        "c21"
+      ]
+    },
+    {
+      "id": "s14",
+      "surface": "repo root (CLAUDE.md, culture.yaml, culture_nodes/)",
+      "finding": "today's package is the zero-dependency teken-gated mesh-agent scaffold with a colleague-backend identity; product work must not break it, and where the Go monorepo lands relative to it is a pending user decision",
+      "seeds": [
+        "c19"
+      ]
+    },
+    {
+      "id": "s15",
+      "surface": "user clarifications (mid-scope)",
+      "finding": "multi-pod parallel safety and docker/k8s-native packaging are confirmed requirements; agent runtimes are trigger-only externals \u2014 another system holds colleague / claude-agent-sdk / claude-agent-api and culture-nodes invokes them remotely, so actor adapters are part of the hosting system, not the culture-nodes deployment",
+      "seeds": [
+        "c22",
+        "c23",
+        "c24"
+      ]
+    },
+    {
+      "id": "s16",
+      "surface": "user clarification (code runner)",
+      "finding": "code run uses AWS Lambda for now \u2014 resolves the k8s runner-topology blocker for the first slice (no Docker engine needed in the k8s profile) and defers the headspace Docker adapter to local/later; Lambda runner limits (15-minute cap, stateless workspace via S3) become contract constraints to declare",
+      "seeds": [
+        "c25"
+      ]
+    },
+    {
+      "id": "s17",
+      "surface": "user clarifications (language + deployment minimalism)",
+      "finding": "the product is Go-only end to end \u2014 CLI included \u2014 with Python-family CLI logic cited/copied into Go; deployment is minimal (one Go binary + Postgres) with all code execution external (Lambda now, a local headspace-cli bridge for dev); this resolves q1 and simplifies q2",
+      "seeds": [
+        "c26",
+        "c27"
+      ]
+    },
+    {
+      "id": "s18",
+      "surface": "user clarifications (fronts, storage, queue)",
+      "finding": "python is a thin CLI front and react-flow a thin web front over one Go-owned API; Postgres is the only db unless proven unfit (embeddings may justify a second store later); SQS confirmed as the AWS queue signal",
+      "seeds": [
+        "c28",
+        "c29",
+        "c30"
+      ]
+    },
+    {
+      "id": "s19",
+      "surface": "user clarification (external agent machines)",
+      "finding": "agent backends including codex run on different machines/containers external to culture-nodes \u2014 the actor boundary is a network boundary, not a co-located process boundary",
+      "seeds": [
+        "c31"
+      ]
+    },
+    {
+      "id": "s20",
+      "surface": "challenge pass / hooks (user finding): agent-node lifecycle",
+      "finding": "the user surfaced a missing dimension \u2014 engine-controlled pre/post-run code around external agent steps; landed as a first-class requirement with failure semantics (pre-run failure blocks dispatch; post-run failure is a domain outcome, never silent)",
+      "seeds": [
+        "c37"
+      ]
+    },
+    {
+      "id": "s21",
+      "surface": "challenge pass / hidden-dependency lens: resolved q4 x prd-spec \u00a723 phasing",
+      "finding": "moving multi-pod safety to Phase 1 silently invalidated Phase-2 artifact phasing \u2014 filesystem artifacts break at replicas>1; artifact storage must be pod-agnostic from Phase 1",
+      "seeds": [
+        "c38"
+      ]
+    },
+    {
+      "id": "s22",
+      "surface": "challenge pass / migration lens: c23 rolling updates x Postgres schema",
+      "finding": "k8s-first rolling updates need an explicit migration policy: expand-contract, migrate-before-rollout, N-1 binary compatibility \u2014 absent from the spec until now",
+      "seeds": [
+        "c39"
+      ]
+    },
+    {
+      "id": "s23",
+      "surface": "challenge pass / failure-mode lens: AWS Lambda hard quotas x c25",
+      "finding": "Lambda's 15-minute and 6MB limits must be compile-time validation rules, not runtime surprises; the PRD's own example test node timeout (15m) sits exactly at the cap",
+      "seeds": [
+        "c40"
+      ]
+    },
+    {
+      "id": "s24",
+      "surface": "challenge pass / security lens: Lambda IAM + callback ingress",
+      "finding": "two privilege boundaries were unstated: the worker must only invoke registry-pinned functions (no wildcard IAM), and external agents need a reachable, token-guarded callback ingress in the k8s profile",
+      "seeds": [
+        "c41",
+        "c42"
+      ]
+    },
+    {
+      "id": "s25",
+      "surface": "challenge pass / adjacent-systems lens: publish.yml x helm image supply",
+      "finding": "the repo's only release lane today is PyPI; helm and compose need published multi-arch container images by digest \u2014 a container release lane is a real missing deliverable",
+      "seeds": [
+        "c43"
+      ]
+    },
+    {
+      "id": "s26",
+      "surface": "challenge pass / overlooked-actors lens: Phase-1 actor registration",
+      "finding": "actors exist from Phase 1 but auth is phased to Phase 2; static config-declared registration is the honest interim assumption, and the Phase-1 auth posture needs a user decision (q5)",
+      "seeds": [
+        "c44"
+      ]
+    },
+    {
+      "id": "s27",
+      "surface": "challenge pass / concurrency lens: c22 machinery",
+      "finding": "clean pass \u2014 leases, fencing, SKIP LOCKED, outbox, and the two-worker fault tests already cover the claiming path; residual concurrency risk lives in the recorded parks, none new found",
+      "seeds": []
+    },
+    {
+      "id": "s28",
+      "surface": "challenge pass / unexamined surfaces",
+      "finding": "not read this pass: the culture mesh repos (culture, agentirc, culture-core) whose identity/trust model may later inform actor registration, and the claude-agent-sdk / claude-agent-api concrete surfaces (already parked v3) \u2014 findings there would land in a future pass, and no claim in this spec cites them",
+      "seeds": []
+    }
+  ],
+  "lapses": []
+}

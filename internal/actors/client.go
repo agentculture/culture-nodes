@@ -1,0 +1,437 @@
+package actors
+
+import (
+	"bytes"
+	"context"
+	"encoding/json"
+	"errors"
+	"fmt"
+	"io"
+	"net/http"
+	"strings"
+	"time"
+)
+
+// Endpoint is a resolved actor: where to POST and what credential to present.
+//
+// It carries no provider, model, or vendor field, and it never will — §9.5
+// puts those in telemetry metadata reported *by* the adapter, not in the
+// dispatch path. What the control plane needs to invoke an actor is a URL and
+// a credential.
+type Endpoint struct {
+	// URL is the actor's base URL. InvocationPath is appended to it, so
+	// "https://actor.example" and "https://actor.example/" both invoke
+	// https://actor.example/v1/invocations.
+	//
+	// A URL that already ends in InvocationPath is used as-is, so an operator
+	// who registered the full invocation URL is not punished for it.
+	URL string
+	// AuthToken is the scoped workload token §13.1 sends as a bearer
+	// credential. Empty means the endpoint is unauthenticated, which is
+	// legitimate only for a local or in-cluster actor.
+	AuthToken string
+	// Header carries any additional static headers the endpoint requires.
+	// Protocol headers (Idempotency-Key, Authorization, Content-Type) are set
+	// by the client and win over anything here.
+	Header http.Header
+}
+
+// invocationURL is the full URL for a §13.1 invocation.
+func (e Endpoint) invocationURL() string {
+	base := strings.TrimRight(e.URL, "/")
+	if strings.HasSuffix(base, InvocationPath) {
+		return base
+	}
+	return base + InvocationPath
+}
+
+// cancelURL is the full URL for a §13.6 cancellation of one invocation.
+func (e Endpoint) cancelURL(invocationID string) string {
+	return e.invocationURL() + "/" + invocationID + "/cancel"
+}
+
+// Client defaults. They are named constants rather than literals because a
+// deployment tuning dispatch behaviour should be changing something with a
+// name, not a number found by grep.
+const (
+	// DefaultTimeout bounds one HTTP request, not one invocation: a
+	// long-running actor is expected to answer 202 quickly and report the
+	// rest through callbacks (§12.6), so an invocation POST that takes
+	// minutes is a malfunction, not a long job.
+	DefaultTimeout = 60 * time.Second
+	// DefaultMaxRequests is how many HTTP requests one Invoke may spend,
+	// including retries of retryable classes. The default of 3 is small on
+	// purpose: the engine's per-node retry policy is the real retry budget,
+	// and this layer only exists to ride out a single unlucky hop.
+	DefaultMaxRequests = 3
+	// DefaultRetryBackoff is the first delay between retries; each retry
+	// doubles it, capped at DefaultRetryBackoffMax.
+	DefaultRetryBackoff = 250 * time.Millisecond
+	// DefaultRetryBackoffMax caps the exponential growth.
+	DefaultRetryBackoffMax = 5 * time.Second
+	// maxResponseBytes bounds a response body the client will read. A
+	// runaway actor must not be able to exhaust a worker's memory.
+	maxResponseBytes = 8 << 20 // 8 MiB
+)
+
+// Option configures a Client.
+type Option func(*Client)
+
+// WithHTTPClient replaces the underlying HTTP client.
+func WithHTTPClient(hc *http.Client) Option {
+	return func(c *Client) {
+		if hc != nil {
+			c.http = hc
+		}
+	}
+}
+
+// WithMaxRequests bounds how many HTTP requests one Invoke may spend. One
+// means no transport-level retry at all.
+func WithMaxRequests(n int) Option {
+	return func(c *Client) {
+		if n > 0 {
+			c.maxRequests = n
+		}
+	}
+}
+
+// WithRetryBackoff sets the first retry delay and the cap on its exponential
+// growth.
+func WithRetryBackoff(base, max time.Duration) Option {
+	return func(c *Client) {
+		if base >= 0 {
+			c.retryBase = base
+		}
+		if max >= 0 {
+			c.retryMax = max
+		}
+	}
+}
+
+// WithUserAgent sets the User-Agent header sent to actors.
+func WithUserAgent(ua string) Option {
+	return func(c *Client) {
+		if ua != "" {
+			c.userAgent = ua
+		}
+	}
+}
+
+// WithSleep replaces the retry sleep, so a test can prove the backoff without
+// waiting for it.
+func WithSleep(sleep func(context.Context, time.Duration) error) Option {
+	return func(c *Client) {
+		if sleep != nil {
+			c.sleep = sleep
+		}
+	}
+}
+
+// Client speaks PRD §13 to actor endpoints. It is safe for concurrent use.
+type Client struct {
+	http        *http.Client
+	maxRequests int
+	retryBase   time.Duration
+	retryMax    time.Duration
+	userAgent   string
+	sleep       func(context.Context, time.Duration) error
+	now         func() time.Time
+}
+
+// NewClient returns a client with the documented defaults.
+func NewClient(opts ...Option) *Client {
+	c := &Client{
+		http:        &http.Client{Timeout: DefaultTimeout},
+		maxRequests: DefaultMaxRequests,
+		retryBase:   DefaultRetryBackoff,
+		retryMax:    DefaultRetryBackoffMax,
+		userAgent:   "culture-nodes/actor-protocol " + ProtocolVersion,
+		sleep:       sleepCtx,
+		now:         func() time.Time { return time.Now().UTC() },
+	}
+	for _, opt := range opts {
+		if opt != nil {
+			opt(c)
+		}
+	}
+	return c
+}
+
+// Invoke performs one PRD §13.1 invocation.
+//
+// The response is §13.2's synchronous result (HTTP 200) or §13.3's
+// asynchronous acceptance (HTTP 202); anything else is an *InvocationError
+// carrying a §13.5 class.
+//
+// Every request carries the attempt id as the Idempotency-Key, which is what
+// makes the retry loop below safe: a retryable class means the same key may
+// be presented again, and §20.3 obliges the actor to return the result it
+// already produced rather than start the work twice. Non-retryable classes
+// return on the first response.
+func (c *Client) Invoke(ctx context.Context, endpoint Endpoint, req InvocationRequest) (InvocationResponse, error) {
+	if err := validateInvocation(endpoint, req); err != nil {
+		return InvocationResponse{}, err
+	}
+	if req.ProtocolVersion == "" {
+		req.ProtocolVersion = ProtocolVersion
+	}
+	// §13.1 shows both as arrays. Encoding them as null would make an actor
+	// that iterates the field without a nil check fail on a technicality.
+	if req.ArtifactRefs == nil {
+		req.ArtifactRefs = []string{}
+	}
+	if req.ContextRefs == nil {
+		req.ContextRefs = []string{}
+	}
+	if len(req.Input) == 0 {
+		req.Input = json.RawMessage(`{}`)
+	}
+
+	body, err := json.Marshal(req)
+	if err != nil {
+		return InvocationResponse{}, &InvocationError{
+			Class: ClassContract, Op: "invoke", Requests: 0,
+			Message: "invocation body could not be encoded", Err: err,
+		}
+	}
+
+	url := endpoint.invocationURL()
+	var lastErr *InvocationError
+
+	for request := 1; request <= c.maxRequests; request++ {
+		resp, invErr := c.invokeOnce(ctx, url, endpoint, req, body)
+		if invErr == nil {
+			resp.Requests = request
+			return resp, nil
+		}
+		invErr.Requests = request
+		lastErr = invErr
+
+		if !invErr.Retryable() || request == c.maxRequests {
+			break
+		}
+		if err := c.sleep(ctx, c.backoff(request, invErr.RetryAfter)); err != nil {
+			// The caller's context ended while waiting to retry. Report that
+			// as what it is rather than as the actor's last failure.
+			lastErr = &InvocationError{
+				Class: classifyTransport(ctx, err), Op: "invoke", Requests: request,
+				Message: "invocation abandoned while waiting to retry", Err: err,
+			}
+			break
+		}
+	}
+
+	return InvocationResponse{}, lastErr
+}
+
+// invokeOnce performs exactly one HTTP request and classifies its outcome.
+func (c *Client) invokeOnce(ctx context.Context, url string, endpoint Endpoint, req InvocationRequest, body []byte) (InvocationResponse, *InvocationError) {
+	httpReq, err := http.NewRequestWithContext(ctx, http.MethodPost, url, bytes.NewReader(body))
+	if err != nil {
+		return InvocationResponse{}, &InvocationError{
+			Class: ClassContract, Op: "invoke",
+			Message: fmt.Sprintf("endpoint URL %q is not usable", url), Err: err,
+		}
+	}
+	c.applyHeaders(httpReq, endpoint)
+	httpReq.Header.Set("Content-Type", "application/json")
+	httpReq.Header.Set("Accept", "application/json")
+	httpReq.Header.Set(IdempotencyKeyHeader, req.AttemptID)
+
+	resp, err := c.http.Do(httpReq)
+	if err != nil {
+		return InvocationResponse{}, &InvocationError{
+			Class: classifyTransport(ctx, err), Op: "invoke",
+			Message: "invocation request did not complete", Err: err,
+		}
+	}
+	defer func() {
+		_, _ = io.Copy(io.Discard, io.LimitReader(resp.Body, maxResponseBytes))
+		_ = resp.Body.Close()
+	}()
+
+	payload, readErr := io.ReadAll(io.LimitReader(resp.Body, maxResponseBytes))
+	if readErr != nil {
+		return InvocationResponse{}, &InvocationError{
+			Class: classifyTransport(ctx, readErr), Op: "invoke", StatusCode: resp.StatusCode,
+			Message: "invocation response body could not be read", Err: readErr,
+		}
+	}
+
+	switch resp.StatusCode {
+	case http.StatusOK:
+		var result InvocationResult
+		if err := json.Unmarshal(payload, &result); err != nil {
+			return InvocationResponse{}, &InvocationError{
+				Class: ClassContract, Op: "invoke", StatusCode: resp.StatusCode,
+				Message: "200 response is not a §13.2 result body",
+				Body:    capture(payload), Err: err,
+			}
+		}
+		if result.Outcome == "" {
+			return InvocationResponse{}, &InvocationError{
+				Class: ClassContract, Op: "invoke", StatusCode: resp.StatusCode,
+				Message: "200 response declares no domain outcome",
+				Body:    capture(payload),
+			}
+		}
+		return InvocationResponse{Result: &result, StatusCode: resp.StatusCode}, nil
+
+	case http.StatusAccepted:
+		var accepted AsyncAccepted
+		if err := json.Unmarshal(payload, &accepted); err != nil {
+			return InvocationResponse{}, &InvocationError{
+				Class: ClassContract, Op: "invoke", StatusCode: resp.StatusCode,
+				Message: "202 response is not a §13.3 acceptance body",
+				Body:    capture(payload), Err: err,
+			}
+		}
+		if accepted.InvocationID == "" {
+			// Without an invocation id there is nothing to cancel and nothing
+			// to correlate an operator's question against, so §13.3's field
+			// is treated as required rather than advisory.
+			return InvocationResponse{}, &InvocationError{
+				Class: ClassContract, Op: "invoke", StatusCode: resp.StatusCode,
+				Message: "202 response declares no invocation_id",
+				Body:    capture(payload),
+			}
+		}
+		return InvocationResponse{Async: true, Accepted: &accepted, StatusCode: resp.StatusCode}, nil
+	}
+
+	return InvocationResponse{}, &InvocationError{
+		Class:      classifyStatus(resp.StatusCode),
+		Op:         "invoke",
+		StatusCode: resp.StatusCode,
+		Message:    fmt.Sprintf("actor answered %s", http.StatusText(resp.StatusCode)),
+		Body:       capture(payload),
+		RetryAfter: parseRetryAfter(resp.Header.Get("Retry-After"), c.now()),
+	}
+}
+
+// Cancel asks an actor to stop an in-flight invocation (PRD §13.6).
+//
+// It is best-effort by design. §13.6 is explicit that "workflow state does not
+// depend on an external process acknowledging cancellation" — Culture Nodes
+// has already recorded the cancellation durably by the time this is called,
+// so a refusal, a 404, or an unreachable actor changes nothing about the run.
+// The error is returned for logging and telemetry, not as a gate.
+func (c *Client) Cancel(ctx context.Context, endpoint Endpoint, invocationID, reason string) error {
+	if invocationID == "" {
+		return &InvocationError{Class: ClassContract, Op: "cancel", Message: "invocation id is required"}
+	}
+	body, err := json.Marshal(CancelRequest{InvocationID: invocationID, Reason: reason})
+	if err != nil {
+		return &InvocationError{Class: ClassContract, Op: "cancel", Message: "cancel body could not be encoded", Err: err}
+	}
+
+	httpReq, err := http.NewRequestWithContext(ctx, http.MethodPost, endpoint.cancelURL(invocationID), bytes.NewReader(body))
+	if err != nil {
+		return &InvocationError{Class: ClassContract, Op: "cancel", Message: "endpoint URL is not usable", Err: err}
+	}
+	c.applyHeaders(httpReq, endpoint)
+	httpReq.Header.Set("Content-Type", "application/json")
+	httpReq.Header.Set(IdempotencyKeyHeader, "cancel:"+invocationID)
+
+	resp, err := c.http.Do(httpReq)
+	if err != nil {
+		return &InvocationError{
+			Class: classifyTransport(ctx, err), Op: "cancel", Requests: 1,
+			Message: "cancellation request did not complete", Err: err,
+		}
+	}
+	defer func() {
+		_, _ = io.Copy(io.Discard, io.LimitReader(resp.Body, maxResponseBytes))
+		_ = resp.Body.Close()
+	}()
+
+	if resp.StatusCode >= 200 && resp.StatusCode < 300 {
+		return nil
+	}
+	payload, _ := io.ReadAll(io.LimitReader(resp.Body, maxResponseBytes))
+	return &InvocationError{
+		Class: classifyStatus(resp.StatusCode), Op: "cancel", StatusCode: resp.StatusCode, Requests: 1,
+		Message: fmt.Sprintf("actor answered %s to cancellation", http.StatusText(resp.StatusCode)),
+		Body:    capture(payload),
+	}
+}
+
+func (c *Client) applyHeaders(req *http.Request, endpoint Endpoint) {
+	for name, values := range endpoint.Header {
+		for _, v := range values {
+			req.Header.Add(name, v)
+		}
+	}
+	if endpoint.AuthToken != "" {
+		req.Header.Set("Authorization", "Bearer "+endpoint.AuthToken)
+	}
+	req.Header.Set("User-Agent", c.userAgent)
+}
+
+// backoff is the delay before request number request+1. An actor's own
+// Retry-After always wins over the client's schedule: it is the only party
+// that knows when it will be ready.
+func (c *Client) backoff(request int, retryAfter time.Duration) time.Duration {
+	if retryAfter > 0 {
+		if c.retryMax > 0 && retryAfter > c.retryMax {
+			return c.retryMax
+		}
+		return retryAfter
+	}
+	if c.retryBase <= 0 {
+		return 0
+	}
+	delay := c.retryBase << (request - 1)
+	if c.retryMax > 0 && delay > c.retryMax {
+		return c.retryMax
+	}
+	return delay
+}
+
+func validateInvocation(endpoint Endpoint, req InvocationRequest) error {
+	fail := func(detail string) error {
+		return &InvocationError{Class: ClassContract, Op: "invoke", Message: detail}
+	}
+	switch {
+	case strings.TrimSpace(endpoint.URL) == "":
+		return fail("endpoint URL is required")
+	case req.AttemptID == "":
+		// The attempt id is the Idempotency-Key. Sending an invocation
+		// without one would make a retry indistinguishable from a second
+		// dispatch, which is the one thing §20.3 exists to prevent.
+		return fail("attempt id is required: it is the Idempotency-Key")
+	case req.RunID == "":
+		return fail("run id is required")
+	case req.NodeRunID == "":
+		return fail("node run id is required")
+	case req.Node.ID == "":
+		return fail("node id is required")
+	}
+	return nil
+}
+
+func capture(body []byte) string {
+	if len(body) <= maxCapturedBodyBytes {
+		return string(body)
+	}
+	return string(body[:maxCapturedBodyBytes]) + "…"
+}
+
+// sleepCtx waits for d, or returns the context's error if it ends first.
+func sleepCtx(ctx context.Context, d time.Duration) error {
+	if d <= 0 {
+		return ctx.Err()
+	}
+	timer := time.NewTimer(d)
+	defer timer.Stop()
+	select {
+	case <-timer.C:
+		return nil
+	case <-ctx.Done():
+		return ctx.Err()
+	}
+}
+
+// compile-time proof the sentinel matching in errors.go actually works.
+var _ = errors.Is(&InvocationError{}, ErrInvocation)

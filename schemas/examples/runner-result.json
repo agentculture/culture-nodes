@@ -1,0 +1,65 @@
+{
+  "operation_id": "op_01JAV3QK2M0000000000000011",
+  "state": "completed",
+  "exit": {
+    "code": 0,
+    "signal": null
+  },
+  "timing": {
+    "started_at": "2026-08-08T15:00:00Z",
+    "finished_at": "2026-08-08T15:01:12Z",
+    "duration_ms": 72000
+  },
+  "environment": {
+    "runner_revision": "sha256:26951e7ab41e0d560d84c11d196fb79378c4f4f5986392115bb7ca48009e1677",
+    "image_digest": "sha256:0604fdb7edd7a8eacbcbdebdf7aad00db03650efd7f927f4b16f6cd0e0c3747e",
+    "input_digest": "sha256:104c92af170b72888c5be5b64aa08aff686010ae232cd101b8c1c61f7eff0636",
+    "policy_digest": "sha256:ca7acf0a841461bfd3e8d38fa0a80f7c7131dcc59c95d225f5c0987bfad35973"
+  },
+  "changes": {
+    "complete": true,
+    "paths": [
+      "src/app/handler.py",
+      "tests/test_handler.py"
+    ],
+    "snapshot_digest": "sha256:5dd56775f07de42fc3a1c051c9d710a087701df7e156813ac95face100a8f9b9",
+    "diff_artifact_ref": "artifact://diff/op_01JAV3QK2M0000000000000011",
+    "truncated": false
+  },
+  "artifacts": {
+    "stdout_ref": "artifact://logs/stdout",
+    "stderr_ref": "artifact://logs/stderr",
+    "output_workspace_ref": "artifact://workspace/output"
+  },
+  "resource_usage": {
+    "max_memory_mib": 412.5,
+    "cpu_seconds": 61.2
+  },
+  "observations": {
+    "exit_status": {
+      "measured": true,
+      "complete": true,
+      "method": "runner_wait_status",
+      "scope": "Exit code and signal of the process the runner started."
+    },
+    "changed_paths": {
+      "measured": true,
+      "complete": true,
+      "method": "workspace_snapshot_diff",
+      "scope": "Whole copy-on-write workspace, compared before and after."
+    },
+    "logs": {
+      "measured": true,
+      "complete": true,
+      "method": "stream_capture_to_artifact",
+      "scope": "Bytes written to stdout and stderr. Not a claim about the truth of anything printed."
+    },
+    "resource_usage": {
+      "measured": true,
+      "complete": false,
+      "method": "cgroup_peak_sample",
+      "scope": "Peak sampled values.",
+      "note": "Sampling interval can miss short-lived spikes, so the measurement is partial."
+    }
+  }
+}

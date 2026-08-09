@@ -5,6 +5,32 @@ All notable changes to this project will be documented in this file.
 Format follows [Keep a Changelog](https://keepachangelog.com/). This project
 adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.7.0] - 2026-08-09
+
+### Added
+
+- Go control plane (`cmd/nodes`): compiler + `nodes validate` (normalized IR, CEL, precise diagnostics), durable engine with the PRD's §12.5 completion transaction and bounded loops, SKIP LOCKED work claiming with leases and fencing tokens, append-only work ledger with producer-authority enforcement, deterministic projections and atomic stale-guarded reviews, transactional outbox + CloudEvents envelopes, queue abstraction with Postgres and SQS drivers (chaos-tested), scheduler with single-active advisory-lock lease and standby takeover, worker with actor-protocol dispatch, async callbacks and fenced idempotent ingest
+- Actor protocol: HTTP/JSON invocation client (sync 200 / async 202 + callbacks, attempt-scoped HMAC tokens, §13.5 error classification) plus a runnable actor conformance kit (`tests/conformance`)
+- Runner boundary: registry-pinned IAM-scoped AWS Lambda adapter with honest per-field evidence completeness, and a headspace-cli subprocess bridge for local dev (real-Docker tested); pre-run/post-run code hooks around agent attempts (spec c37/h32)
+- Pod-agnostic artifact store (S3/MinIO + Postgres small-blob router), Postgres schema with expand-contract migrations and an N-1 compatibility harness
+- OpenAPI 3.1 REST API with SSE run events, CLI/Web parity harness, and the embedded web SPA (`-tags embedweb`)
+- React Flow web front: Run + Ledger read-only views carrying the agentculture.org design system (pinned org revision, dashed=proposed/solid=confirmed edges), full keyboard nav, reduced motion, webglass-testable #agent-state node
+- Python CLI product verbs as thin API clients (workflow/run/ledger/review noun groups), zero engine logic, byte-exact --json passthrough
+- colleague reference bridge (`adapters/colleague`): actor protocol over `colleague work` subprocess, contract v1, conformance-kit-proven
+- devague conformance adapter: plan-waves/deliverables fixtures map to deterministic ledger projections
+- Deployment: Docker multi-stage image (distroless, SPA embedded), docker compose local profile, Helm chart with migration Job, probes, PDB and callback Ingress (kind-smoked at worker replicas=2), ghcr multi-arch release lane
+- Phase-1 vertical-slice e2e (delivery-loop reference workflow) with restart survival, live headspace runner variant, recorded benchmarks (docs/benchmarks.md) and the acceptance-evidence ledger (docs/acceptance.md)
+
+### Changed
+
+- Repo restructured into the PRD §18 Go-rooted monorepo; the Python package narrows to the thin CLI front over the REST API; mesh-agent identity files stay at root
+- AWS SDK isolation enforced by lint (aws-sdk only in queue/sqs, artifacts/s3, runners/lambda, awsauth); credentials resolve via the standard chain incl. IRSA (`internal/awsauth`)
+- CI: go.yml triggers on schemas/ and migrations/ (go:embed inputs); new web.yml, deploy.yml (kind smoke), release.yml workflows
+
+### Fixed
+
+- Worker-recovery fault test made deterministic: measures h19's reclaim bound directly, survivor starts post-kill, namespace-scoped accounting
+
 ## [0.6.2] - 2026-08-08
 
 ### Changed

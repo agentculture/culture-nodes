@@ -1,0 +1,506 @@
+package worker
+
+import (
+	"context"
+	"encoding/json"
+	"errors"
+	"fmt"
+	"time"
+
+	"github.com/agentculture/culture-nodes/internal/actors"
+	"github.com/agentculture/culture-nodes/internal/engine"
+	"github.com/agentculture/culture-nodes/internal/ledger"
+	"github.com/agentculture/culture-nodes/internal/runners"
+	idstore "github.com/agentculture/culture-nodes/internal/store"
+	"github.com/agentculture/culture-nodes/internal/store/postgres"
+)
+
+// Defaults. Each is a named constant because a deployment tuning the worker
+// should be changing something with a name.
+const (
+	// DefaultClaimBatch is how many work items one tick claims. It is small
+	// on purpose: a batch is processed before the next claim, so a large
+	// batch behind one slow synchronous actor is latency nobody asked for.
+	DefaultClaimBatch = 4
+	// DefaultLeaseDuration is how long a claim is held before it can be
+	// reclaimed. It only has to outlive one heartbeat interval, because a
+	// live worker keeps extending it.
+	DefaultLeaseDuration = 60 * time.Second
+	// DefaultHeartbeatInterval is how often a synchronous dispatch extends
+	// its lease. A third of the lease leaves room for two missed beats.
+	DefaultHeartbeatInterval = 20 * time.Second
+	// DefaultPollInterval is how long an idle worker waits before claiming
+	// again. PostgreSQL is authoritative and the queue is a disposable signal
+	// (§12.3), so polling is the correctness-bearing path and a signal, when
+	// there is one, is only an optimisation.
+	DefaultPollInterval = time.Second
+	// DefaultNodeTimeout bounds a dispatch whose node declares no timeout.
+	DefaultNodeTimeout = 10 * time.Minute
+	// attemptIDPrefix echoes §13.1's "att_01J…" shape.
+	attemptIDPrefix = "att_"
+)
+
+// Options configures a Worker. Every field has a documented default except
+// the ones a worker cannot invent for itself.
+type Options struct {
+	// WorkerID identifies this worker in work_items.lease_owner and in every
+	// completion's fencing tuple. Defaults to a fresh ULID prefixed
+	// "worker-".
+	WorkerID string
+	// NamespaceID scopes the callback store and the actor registry.
+	// Required.
+	NamespaceID string
+
+	// ClaimBatch, LeaseDuration, HeartbeatInterval, PollInterval pace the
+	// loop; see the Default* constants.
+	ClaimBatch        int
+	LeaseDuration     time.Duration
+	HeartbeatInterval time.Duration
+	PollInterval      time.Duration
+	// DefaultTimeout bounds a dispatch for a node with no declared timeout.
+	DefaultTimeout time.Duration
+
+	// Registry resolves a node's `uses` reference to an endpoint. Required
+	// for agent and action.http nodes.
+	Registry Registry
+	// Client speaks §13 to actors. Defaults to actors.NewClient().
+	Client *actors.Client
+	// Signer mints the attempt-scoped callback tokens §13.1 carries.
+	// Required for asynchronous actors; a worker without one can still
+	// dispatch, but any actor that answers 202 will be told it cannot be
+	// accepted, because a callback nobody can authenticate is not a callback.
+	Signer *actors.TokenSigner
+	// CallbackBaseURL is the control plane's externally reachable base URL,
+	// from which §13.1's callback.url is built. Required alongside Signer.
+	CallbackBaseURL string
+
+	// Runner, Human, and Waiter are the seams for code, approval, and wait
+	// nodes. A nil seam makes its kind a diagnosed failure rather than a
+	// silent success (see seams.go).
+	Runner RunnerDispatcher
+	Human  HumanDispatcher
+	Waiter WaitDispatcher
+
+	// CodeRunner is the internal/runners seam a `code` node's own operation
+	// executes through (see code.go). It is the low-level runners.Runner
+	// interface — the same one HookRunner takes — so the headspace bridge and
+	// the Lambda adapter plug in unchanged.
+	//
+	// It is a second, lower-level door to the same kind: when Runner
+	// (RunnerDispatcher) is also configured, Runner wins, because a
+	// deployment that registered the higher-level seam has already said how
+	// it wants code dispatched and this option must not silently override
+	// that. With neither configured a code node is a diagnosed failure, as it
+	// has always been.
+	CodeRunner runners.Runner
+	// CodeRunnerName is the logical runner name stamped on every code
+	// operation's `runner` field — "headspace", "lambda". An adapter checks
+	// it and refuses an operation addressed to a different runner, so it must
+	// be the name the configured CodeRunner registers under. Required
+	// alongside CodeRunner.
+	CodeRunnerName string
+	// CodeRunnerActorID is the registered actor identity the runner's
+	// observed evidence is attributed to, and it is deliberately NOT the same
+	// field as CodeRunnerName: a runner name is a dispatch address ("which
+	// adapter executes this"), an actor id is a producer identity ("who is
+	// answerable for this observation", PRD §9.5's "identity is not
+	// execution"). A deployment running two headspace workers under separate
+	// identities has one name and two actor ids. Empty falls back to
+	// CodeRunnerName, which is right for a single-runner deployment that
+	// registered its actor under that name.
+	CodeRunnerActorID string
+	// CodeRunnerRevision pins the runner revision stamped on the operation
+	// and recorded on the evidence record's origin. An adapter that pins its
+	// own contract revision (internal/runners/headspace) refuses an operation
+	// whose revision does not match, so this is not decorative.
+	CodeRunnerRevision string
+	// CodeOutcomes maps a code node's declared outcomes onto its exit-status
+	// ports. Nil uses ConventionalCodeOutcomes; see code.go for why this is a
+	// convention with an override rather than a schema field.
+	CodeOutcomes CodeOutcomeResolver
+
+	// HookRunner is the internal/runners seam pre_run/post_run code hooks on
+	// an agent node execute through (task t14, spec claim c37). It is
+	// deliberately the low-level runners.Runner interface, not the
+	// higher-level RunnerDispatcher above: a hook is not a `code` node, and
+	// nothing about the seam that will one day dispatch a whole `code` node
+	// needs to be true of the much smaller thing a hook does — run one typed
+	// operation, report one Result. A node that declares a hook when no
+	// HookRunner is configured fails the attempt with a "configuration"
+	// diagnostic, exactly like an agent node with no Registry.
+	HookRunner runners.Runner
+	// HookRunnerName is the logical runner name stamped on every hook
+	// operation's `runner` field (e.g. "lambda") and, doubling as the
+	// producer identity, on the observed evidence a hook's execution
+	// appends to the ledger. Required alongside HookRunner.
+	HookRunnerName string
+	// HookRunnerRevision pins the runner revision stamped on every hook
+	// operation. Optional: a deployment that has not adopted revision
+	// pinning for its hook runner leaves this empty.
+	HookRunnerRevision string
+
+	// Now and NewID are the clock and the identifier factory.
+	Now   func() time.Time
+	NewID func() string
+	// OnError observes a per-item dispatch failure the loop swallowed. It is
+	// observability only: a failed dispatch never stops the loop, because the
+	// work item's lease will expire and another worker will retry it.
+	OnError func(error)
+}
+
+// Worker claims ready work and dispatches it. It is safe for concurrent use;
+// a process may run several, and several processes may run one each.
+type Worker struct {
+	db        *postgres.Store
+	engine    *engine.Engine
+	callbacks *postgres.CallbackStore
+	ledger    *ledger.Ledger
+	opts      Options
+	specs     *specCache
+	decisions *decisionCache
+}
+
+// New returns a worker over db and eng.
+func New(db *postgres.Store, eng *engine.Engine, opts Options) (*Worker, error) {
+	switch {
+	case db == nil:
+		return nil, errors.New("worker: New requires a store")
+	case eng == nil:
+		return nil, errors.New("worker: New requires an engine")
+	case opts.NamespaceID == "":
+		return nil, errors.New("worker: New requires a namespace id")
+	}
+
+	if opts.WorkerID == "" {
+		opts.WorkerID = "worker-" + idstore.NewULID()
+	}
+	if opts.ClaimBatch <= 0 {
+		opts.ClaimBatch = DefaultClaimBatch
+	}
+	if opts.LeaseDuration <= 0 {
+		opts.LeaseDuration = DefaultLeaseDuration
+	}
+	if opts.HeartbeatInterval <= 0 {
+		opts.HeartbeatInterval = DefaultHeartbeatInterval
+	}
+	if opts.PollInterval <= 0 {
+		opts.PollInterval = DefaultPollInterval
+	}
+	if opts.DefaultTimeout <= 0 {
+		opts.DefaultTimeout = DefaultNodeTimeout
+	}
+	if opts.Client == nil {
+		opts.Client = actors.NewClient()
+	}
+	if opts.Now == nil {
+		opts.Now = func() time.Time { return time.Now().UTC() }
+	}
+	if opts.NewID == nil {
+		opts.NewID = idstore.NewULID
+	}
+
+	callbacks, err := postgres.NewCallbackStore(db, opts.NamespaceID)
+	if err != nil {
+		return nil, err
+	}
+	runtime, err := postgres.NewLedger(db, opts.NamespaceID)
+	if err != nil {
+		return nil, fmt.Errorf("worker: build ledger runtime: %w", err)
+	}
+	decisions, err := newDecisionCache()
+	if err != nil {
+		return nil, err
+	}
+
+	return &Worker{
+		db:        db,
+		engine:    eng,
+		callbacks: callbacks,
+		ledger:    runtime,
+		opts:      opts,
+		specs:     newSpecCache(),
+		decisions: decisions,
+	}, nil
+}
+
+// ID reports the identifier this worker leases work under.
+func (w *Worker) ID() string { return w.opts.WorkerID }
+
+// Run claims and dispatches work until ctx is done.
+//
+// It returns ctx.Err() on shutdown and never returns for any other reason: a
+// worker that stopped because one dispatch failed would take a whole
+// deployment's capacity down over one bad node. Per-item failures are
+// reported through Options.OnError and left to the lease to recover, which is
+// the §20.4 recovery path for a worker that dies mid-dispatch anyway.
+func (w *Worker) Run(ctx context.Context) error {
+	for {
+		if err := ctx.Err(); err != nil {
+			return err
+		}
+
+		dispatched, err := w.Tick(ctx)
+		if err != nil {
+			if ctxErr := ctx.Err(); ctxErr != nil {
+				return ctxErr
+			}
+			w.report(err)
+		}
+		// A tick that found work claims again immediately: a backlog should
+		// drain at the speed of dispatch, not at the speed of the poll.
+		if dispatched > 0 {
+			continue
+		}
+		if !sleepCtx(ctx, w.opts.PollInterval) {
+			return ctx.Err()
+		}
+	}
+}
+
+// Tick claims one batch and dispatches it, returning how many items it
+// handled. It is exported so a test can drive exactly one pass, and so an
+// operator tool can do a single unit of work without starting a loop.
+func (w *Worker) Tick(ctx context.Context) (int, error) {
+	claimed, err := w.db.ClaimWork(ctx, w.opts.NamespaceID, w.opts.WorkerID, w.opts.LeaseDuration, w.opts.ClaimBatch)
+	if err != nil {
+		return 0, fmt.Errorf("worker: claim: %w", err)
+	}
+	for i := range claimed {
+		if err := w.dispatch(ctx, claimed[i]); err != nil {
+			w.report(fmt.Errorf("worker: dispatch work %s (node run %s): %w",
+				claimed[i].ID, claimed[i].NodeRunID, err))
+		}
+	}
+	return len(claimed), nil
+}
+
+func (w *Worker) report(err error) {
+	if err != nil && w.opts.OnError != nil {
+		w.opts.OnError(err)
+	}
+}
+
+// dispatch executes one claimed work item.
+//
+// Every path through it ends in exactly one of three things: a committed
+// completion, a parked (waiting_external) work item, or a returned error that
+// leaves the lease to expire. There is no fourth outcome where the item is
+// silently dropped while still leased — that would strand the run until the
+// lease expired with nothing recorded about why.
+func (w *Worker) dispatch(ctx context.Context, claimed postgres.ClaimedWork) error {
+	d, err := w.db.LoadDispatch(ctx, claimed.NodeRunID)
+	if err != nil {
+		return err
+	}
+	spec, err := w.specs.get(d.WorkflowDigest, d.NormalizedIR)
+	if err != nil {
+		return err
+	}
+	node, ok := spec.Nodes[d.NodeID]
+	if !ok {
+		return w.failAttempt(ctx, claimed, engine.StatusFailed, "definition",
+			fmt.Sprintf("node run %s names node %q, which the pinned definition %s does not declare",
+				d.NodeRunID, d.NodeID, d.WorkflowDigest))
+	}
+
+	input, err := resolveNodeInput(ctx, w.sources(d), node.Input)
+	if err != nil {
+		// An unresolvable binding is a real refusal to dispatch, not a
+		// transport hiccup: the actor would be handed data the definition did
+		// not ask for. It is recorded as contract_rejected because a declared
+		// contract — the input binding — was not satisfiable.
+		return w.failAttempt(ctx, claimed, engine.StatusContractRejected, string(actors.ClassContract),
+			fmt.Sprintf("node %q input binding did not resolve: %v", node.ID, err))
+	}
+
+	dc := DispatchContext{
+		RunID:     d.RunID,
+		NodeRunID: d.NodeRunID,
+		TokenID:   d.TokenID,
+		NodeID:    d.NodeID,
+		AttemptID: attemptIDPrefix + w.opts.NewID(),
+		Attempt:   int(claimed.Attempt),
+		Input:     input,
+		Deadline:  w.deadlineFor(node),
+	}
+
+	switch node.Kind {
+	case kindAgent, kindActionHTTP:
+		return w.dispatchActor(ctx, claimed, d, spec, node, dc)
+	case kindDecision:
+		return w.dispatchDecision(ctx, claimed, d, spec, node, dc)
+	case kindCode:
+		if w.opts.Runner == nil && w.opts.CodeRunner != nil {
+			return w.dispatchCode(ctx, claimed, d, node, dc)
+		}
+		return w.dispatchSeam(ctx, claimed, d, node, dc, "code", "runner", func() (SeamResult, error) {
+			if w.opts.Runner == nil {
+				return SeamResult{}, errNoSeam
+			}
+			return w.opts.Runner.DispatchCode(ctx, dc, node.Uses, node.Operation)
+		})
+	case kindApproval:
+		return w.dispatchSeam(ctx, claimed, d, node, dc, "approval", "human-task", func() (SeamResult, error) {
+			if w.opts.Human == nil {
+				return SeamResult{}, errNoSeam
+			}
+			return w.opts.Human.DispatchApproval(ctx, dc, node.ApproverRef, node.Deadline)
+		})
+	case kindWait:
+		return w.dispatchSeam(ctx, claimed, d, node, dc, "wait", "timer", func() (SeamResult, error) {
+			if w.opts.Waiter == nil {
+				return SeamResult{}, errNoSeam
+			}
+			return w.opts.Waiter.DispatchWait(ctx, dc, node.Until)
+		})
+	case kindEnd:
+		// An end node produces the workflow result inside the engine's own
+		// transition transaction and is never enqueued. Reaching one here
+		// means something enqueued work that should not exist, so it is a
+		// definition-level failure rather than something to paper over.
+		return w.failAttempt(ctx, claimed, engine.StatusFailed, "definition",
+			fmt.Sprintf("node %q is an end node; end nodes are completed by the engine and never dispatched", node.ID))
+	default:
+		return w.failAttempt(ctx, claimed, engine.StatusFailed, "definition",
+			fmt.Sprintf("node %q declares kind %q, which this worker cannot dispatch", node.ID, node.Kind))
+	}
+}
+
+// Node kinds, mirroring internal/compiler's vocabulary. They are declared
+// again here rather than imported because the compiler's constants are part
+// of its authoring surface, and the worker's dependency should be on the IR's
+// values, not on that package.
+const (
+	kindAgent      = "agent"
+	kindCode       = "code"
+	kindActionHTTP = "action.http"
+	kindDecision   = "decision"
+	kindApproval   = "approval"
+	kindWait       = "wait"
+	kindEnd        = "end"
+)
+
+// errNoSeam marks a kind whose dispatcher is not registered.
+var errNoSeam = errors.New("no dispatcher registered")
+
+func (w *Worker) sources(d postgres.Dispatch) bindingSources {
+	return bindingSources{
+		RunID:    d.RunID,
+		RunInput: d.RunInput,
+		NodeOutput: func(ctx context.Context, nodeID string) (json.RawMessage, error) {
+			return w.db.NodeOutput(ctx, d.RunID, nodeID)
+		},
+		Projection: func(ctx context.Context, kind ledger.ProjectionKind, subject string) (ledger.Projection, error) {
+			return w.ledger.ProjectRun(ctx, d.RunID, kind, subject)
+		},
+	}
+}
+
+func (w *Worker) deadlineFor(node *nodeSpec) time.Time {
+	timeout := node.Timeout
+	if timeout <= 0 {
+		timeout = w.opts.DefaultTimeout
+	}
+	if timeout <= 0 {
+		return time.Time{}
+	}
+	return w.opts.Now().Add(timeout)
+}
+
+// complete fills the fencing tuple from the claim and commits through the
+// engine. The tuple is taken from the claim rather than from anything the
+// caller passes, so no dispatch path can accidentally complete under a
+// different attempt than the one it was leased for.
+func (w *Worker) complete(ctx context.Context, claimed postgres.ClaimedWork, req engine.CompletionRequest) (engine.CompletionResult, error) {
+	req.WorkID = claimed.ID
+	req.WorkerID = w.opts.WorkerID
+	req.FencingToken = claimed.FencingToken
+	req.Attempt = int(claimed.Attempt)
+	return w.engine.CompleteAttempt(ctx, req)
+}
+
+// failAttempt records a technical failure with a machine-readable diagnostic.
+//
+// engine.CompletionRequest has no diagnostic field, and the engine stores
+// Output on the attempt row whatever the status is, so the diagnostic goes in
+// the output. That is deliberate: an attempt that failed with no recorded
+// reason is the single most expensive thing to debug in a durable system, and
+// the attempts table is where an operator is already looking.
+func (w *Worker) failAttempt(ctx context.Context, claimed postgres.ClaimedWork, status engine.TechStatus, class, detail string) error {
+	_, err := w.completeTechnicalFailure(ctx, claimed, status, class, detail, nil)
+	return err
+}
+
+// completeTechnicalFailure is failAttempt's twin for a caller that needs the
+// committed CompletionResult afterward (task t14's hook bookkeeping: a
+// runner_operations row and a hook's own ledger evidence are both keyed to
+// the attempt id this call commits) and that may need to carry a ledger
+// delta failAttempt never takes — e.g. the agent's own proposed records when
+// a post-run hook's verdict could not be trusted, so a technical failure
+// still records what the agent itself claimed.
+//
+// The returned CompletionResult is the zero value when the completion turned
+// out stale (isStale(err)): nothing was committed here, so there is nothing
+// for a caller to key follow-up writes to, and the error is nil — a stale
+// completion is not a worker malfunction (see isStale).
+func (w *Worker) completeTechnicalFailure(
+	ctx context.Context, claimed postgres.ClaimedWork, status engine.TechStatus, class, detail string, delta []ledger.Record,
+) (engine.CompletionResult, error) {
+	result, err := w.complete(ctx, claimed, engine.CompletionRequest{
+		TechStatus:  status,
+		Output:      diagnosticOutput(class, detail),
+		LedgerDelta: delta,
+	})
+	if err != nil {
+		if isStale(err) {
+			return engine.CompletionResult{}, nil
+		}
+		return engine.CompletionResult{}, err
+	}
+	return result, nil
+}
+
+// diagnosticOutput is the fixed shape a failed attempt's output takes.
+func diagnosticOutput(class, detail string) json.RawMessage {
+	payload := struct {
+		Error struct {
+			Class  string `json:"class"`
+			Detail string `json:"detail"`
+		} `json:"error"`
+	}{}
+	payload.Error.Class = class
+	payload.Error.Detail = detail
+	encoded, err := json.Marshal(payload)
+	if err != nil {
+		return json.RawMessage(`{"error":{"class":"execution"}}`)
+	}
+	return encoded
+}
+
+// isStale reports whether an error means this worker no longer holds the
+// claim it was completing under.
+//
+// A stale completion is not a worker malfunction — §12.4 designs for it — so
+// the loop treats it as a handled outcome. Nothing was written (the whole
+// §12.5 transaction rolled back), and whoever holds the claim now is
+// responsible for the item.
+func isStale(err error) bool {
+	return errors.Is(err, engine.ErrStaleClaim) ||
+		errors.Is(err, engine.ErrTerminalNodeRun) ||
+		errors.Is(err, engine.ErrTerminalRun)
+}
+
+// sleepCtx sleeps for d or until ctx is done, reporting whether d elapsed.
+func sleepCtx(ctx context.Context, d time.Duration) bool {
+	if d <= 0 {
+		return ctx.Err() == nil
+	}
+	timer := time.NewTimer(d)
+	defer timer.Stop()
+	select {
+	case <-timer.C:
+		return true
+	case <-ctx.Done():
+		return false
+	}
+}

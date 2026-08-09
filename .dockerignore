@@ -1,0 +1,46 @@
+# Build inputs: go.mod/go.sum, root webassets*.go, cmd/, internal/,
+# schemas/, migrations/, and web/ (sources only — the webbuild stage runs
+# npm ci itself). Everything else is excluded from the build context.
+
+.git
+.github
+
+# devague / eidetic / claude tooling — not part of the runtime image
+.devague
+.eidetic
+.claude
+
+# Python mesh-agent surface and its tooling — unrelated to the Go binary
+culture_nodes
+tests
+.venv
+venv
+__pycache__
+*.pyc
+.pytest_cache
+.mypy_cache
+.ruff_cache
+uv.lock
+
+# Web UI dependencies/output — the webbuild stage runs npm ci itself
+web/node_modules
+web/dist
+web/build
+
+# Sibling worktrees created alongside this checkout
+../worktrees
+../.worktrees.culture-nodes
+
+# Docs and deploy manifests — not build inputs (schemas/ and migrations/
+# ARE build inputs: both are go:embed'd into the binary)
+docs
+deploy
+api
+
+# Local build artifacts and editor/OS cruft
+*.log
+.DS_Store
+.idea
+.vscode
+bin/
+dist/

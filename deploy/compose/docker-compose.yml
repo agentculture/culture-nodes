@@ -1,0 +1,196 @@
+# Culture Nodes — local development profile (PRD §19.1, task t23).
+#
+# `docker compose up --build` from this directory brings up the complete
+# local system: PostgreSQL (the authoritative store), MinIO (S3-compatible
+# artifact storage), the control-plane image built once and run under three
+# separate commands (migrate/serve/scheduler/worker — one role per
+# container, mirroring the per-role topology deploy/helm (t22) uses in a
+# cluster), and — behind the optional `agents` profile — the colleague
+# reference bridge as an example EXTERNAL agent host.
+#
+# What is deliberately absent: a Docker socket anywhere. No service here
+# mounts /var/run/docker.sock, and no control-plane container (migrate,
+# api, scheduler, worker) executes repository code or shells out to Docker
+# — see README.md's "The code-runner boundary" section and CLAUDE.md's
+# "Runtime" ground rule (spec claim c4). tests/deploy/compose_test.go
+# enforces this as a manifest test, not just a doc promise.
+#
+# See .env.example for every variable this file reads and README.md for
+# the quickstart, the code-runner boundary, and the `agents` profile.
+
+services:
+  postgres:
+    image: postgres:17-alpine
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-nodes}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?set it in .env (cp .env.example .env)}
+      POSTGRES_DB: ${POSTGRES_DB:-nodes}
+    ports:
+      - "${POSTGRES_PORT:-5432}:5432"
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-nodes} -d ${POSTGRES_DB:-nodes}"]
+      interval: 2s
+      timeout: 5s
+      retries: 30
+    restart: unless-stopped
+
+  minio:
+    image: minio/minio:latest
+    command: server /data --console-address ":9001"
+    environment:
+      MINIO_ROOT_USER: ${MINIO_ROOT_USER:-nodesroot}
+      MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD:?set it in .env (cp .env.example .env)}
+    ports:
+      - "${MINIO_API_PORT:-9000}:9000"
+      - "${MINIO_CONSOLE_PORT:-9001}:9001"
+    volumes:
+      - miniodata:/data
+    healthcheck:
+      # The minio/minio image ships curl (unlike the distroless nodes
+      # image below) — see README.md's "Why api/scheduler/worker have no
+      # container healthcheck" for the contrast.
+      test: ["CMD", "curl", "-f", "http://localhost:9000/minio/health/live"]
+      interval: 2s
+      timeout: 5s
+      retries: 30
+    restart: unless-stopped
+
+  # One-shot: apply every pending migration, then exit. api/scheduler/worker
+  # depend on this completing successfully so no role process ever races a
+  # schema change against its own queries (docs/adr/0002-migration-policy.md).
+  migrate:
+    build:
+      context: ../..
+      dockerfile: Dockerfile
+    image: culture-nodes:local
+    command: ["migrate"]
+    environment:
+      NODES_DATABASE_URL: postgres://${POSTGRES_USER:-nodes}:${POSTGRES_PASSWORD:?set it in .env (cp .env.example .env)}@postgres:5432/${POSTGRES_DB:-nodes}?sslmode=disable
+    depends_on:
+      postgres:
+        condition: service_healthy
+    restart: "no"
+
+  # The API server (`nodes serve`): workflows, runs, ledger, reviews, SSE —
+  # everything api/openapi/openapi.yaml documents. No UI is embedded in
+  # this image yet (a later task embeds the built web/ assets into the
+  # binary) — run `npm run dev` in web/ against this API meanwhile, see
+  # README.md.
+  #
+  # No container healthcheck: the nodes image is distroless (no shell, no
+  # curl/wget — `docker run --entrypoint sh gcr.io/distroless/static-
+  # debian12:nonroot` fails with "executable file not found in $PATH"), so
+  # there is no in-container binary a `CMD`/`CMD-SHELL` healthcheck could
+  # run, and adding a shell or an HTTP-probe binary to the runtime image
+  # just to satisfy a healthcheck would reopen the exact attack surface
+  # the distroless base exists to close. depends_on + migrate's own
+  # completion gate is the ordering guarantee this profile makes;
+  # readiness after that point is `GET /v1alpha1/readyz` (see
+  # deploy/compose/smoke.sh, which polls it from outside the container).
+  api:
+    build:
+      context: ../..
+      dockerfile: Dockerfile
+    image: culture-nodes:local
+    command: ["serve"]
+    environment:
+      NODES_DATABASE_URL: postgres://${POSTGRES_USER:-nodes}:${POSTGRES_PASSWORD:?set it in .env (cp .env.example .env)}@postgres:5432/${POSTGRES_DB:-nodes}?sslmode=disable
+      NODES_LISTEN: ":8080"
+    ports:
+      - "${NODES_API_PORT:-8080}:8080"
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+      postgres:
+        condition: service_healthy
+    restart: unless-stopped
+
+  # The scheduler (`nodes scheduler`): durable timers + expired-lease sweep
+  # (PRD §12.7, §20.4). Namespace-agnostic — every namespace's due timers
+  # are claimed by whichever scheduler instance holds the single advisory
+  # lock, so unlike worker below it needs no NODES_NAMESPACE_ID.
+  scheduler:
+    build:
+      context: ../..
+      dockerfile: Dockerfile
+    image: culture-nodes:local
+    command: ["scheduler"]
+    environment:
+      NODES_DATABASE_URL: postgres://${POSTGRES_USER:-nodes}:${POSTGRES_PASSWORD:?set it in .env (cp .env.example .env)}@postgres:5432/${POSTGRES_DB:-nodes}?sslmode=disable
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+      postgres:
+        condition: service_healthy
+    restart: unless-stopped
+
+  # The worker (`nodes worker`): claims ready work and dispatches it to an
+  # actor. NODES_NAMESPACE_ID is a placeholder — `nodes serve` creates the
+  # "default" namespace with a fresh random id on its first boot and there
+  # is no discovery endpoint yet (PRD §26 open question), so a real
+  # deployment sets this once the id is known. In this profile the worker
+  # runs and idles harmlessly against a namespace id that (most likely)
+  # will not match: see README.md's "The code-runner boundary" for what
+  # that does and does not prove, and why it is an honest limitation of
+  # `docker compose up` rather than a bug.
+  #
+  # NODES_ARTIFACT_S3_* are staged for the artifact-store wiring, not yet
+  # consumed by cmd/nodes/worker.go (internal/artifacts/s3 exists as a
+  # driver; nothing in cmd/nodes constructs it yet). They are here so the
+  # full local system — including the object store a code node's
+  # artifacts will land in once that wiring lands — starts with one
+  # command, and so the env surface does not have to be invented again
+  # later.
+  worker:
+    build:
+      context: ../..
+      dockerfile: Dockerfile
+    image: culture-nodes:local
+    command: ["worker"]
+    environment:
+      NODES_DATABASE_URL: postgres://${POSTGRES_USER:-nodes}:${POSTGRES_PASSWORD:?set it in .env (cp .env.example .env)}@postgres:5432/${POSTGRES_DB:-nodes}?sslmode=disable
+      NODES_NAMESPACE_ID: ${NODES_NAMESPACE_ID:-default}
+      NODES_ARTIFACT_S3_ENDPOINT: minio:9000
+      NODES_ARTIFACT_S3_ACCESS_KEY: ${MINIO_ROOT_USER:-nodesroot}
+      NODES_ARTIFACT_S3_SECRET_KEY: ${MINIO_ROOT_PASSWORD:?set it in .env (cp .env.example .env)}
+      NODES_ARTIFACT_S3_BUCKET: ${NODES_ARTIFACT_S3_BUCKET:-nodes-artifacts}
+      NODES_ARTIFACT_S3_USE_TLS: "false"
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+      postgres:
+        condition: service_healthy
+      minio:
+        condition: service_healthy
+    restart: unless-stopped
+
+  # EXAMPLE external agent host, behind `--profile agents` — never started
+  # by a plain `docker compose up`. Ships as its OWN image (adapters/
+  # colleague/Dockerfile), never folded into the control-plane binary,
+  # demonstrating locally what production runs on a SEPARATE machine (PRD
+  # spec claims c24/c31): the control plane reaches it over the network
+  # like any other actor, and it in turn shells out to `colleague` on its
+  # own host/container — never the reverse, and never through anything the
+  # control-plane containers can reach into. See README.md's
+  # "colleague-bridge (agents profile)" section for how to register it as
+  # an actor and drive a real run through it.
+  colleague-bridge:
+    build:
+      context: ../../adapters/colleague
+      dockerfile: Dockerfile
+    image: culture-nodes-colleague-bridge:local
+    profiles: ["agents"]
+    environment:
+      COLLEAGUE_BRIDGE_HOST: "0.0.0.0"
+      COLLEAGUE_BRIDGE_PORT: "8085"
+      COLLEAGUE_BRIDGE_REPO_ALLOWLIST: ${COLLEAGUE_BRIDGE_REPO_ALLOWLIST:-}
+      COLLEAGUE_ENGINE: ${COLLEAGUE_ENGINE:-mock}
+    ports:
+      - "${COLLEAGUE_BRIDGE_PORT:-8085}:8085"
+    restart: unless-stopped
+
+volumes:
+  pgdata: {}
+  miniodata: {}

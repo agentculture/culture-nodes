@@ -1,0 +1,49 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://nodes.culture.dev/schemas/ledger/result.schema.json",
+  "title": "Ledger record: result",
+  "description": "A node or task result linked to claims and evidence (PRD §10.2). `outcome` is a domain outcome that follows a graph edge — `changes_required` and its peers are outcomes, never engine failures (PRD §3.4).",
+  "allOf": [
+    {
+      "$ref": "envelope.schema.json"
+    }
+  ],
+  "required": [
+    "record_type"
+  ],
+  "properties": {
+    "record_type": {
+      "const": "result"
+    },
+    "data": {
+      "type": "object",
+      "$comment": "Phase 0: payload shape is deliberately loose. Named properties are optional and documentary; a later task pins the payload contract per record type.",
+      "properties": {
+        "outcome": {
+          "type": "string",
+          "minLength": 1,
+          "description": "The declared domain outcome of the node or task, e.g. `completed`, `passed`, `changes_required`."
+        },
+        "output": {},
+        "claim_refs": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "evidence_refs": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "artifact_refs": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        }
+      }
+    }
+  }
+}

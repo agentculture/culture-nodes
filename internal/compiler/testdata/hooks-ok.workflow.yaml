@@ -1,0 +1,70 @@
+apiVersion: nodes.culture.dev/v1alpha1
+kind: Workflow
+
+metadata:
+  name: hooks-ok
+  version: 1.0.0
+  ownerRef: team/platform-ai
+
+spec:
+  entry: work
+
+  contract:
+    input:
+      schemaRef: ./contracts/in.schema.json
+    output:
+      schemaRef: ./contracts/out.schema.json
+
+  nodes:
+    work:
+      kind: agent
+      ownerRef: team/platform-ai
+      uses: actor://company/worker@sha256:aaaaaa
+      contract:
+        outcomes:
+          completed:
+            schemaRef: ./contracts/start.schema.json
+          changes_required:
+            schemaRef: ./contracts/start.schema.json
+      input:
+        from: /run/input
+      pre_run:
+        operation:
+          image: registry.example/guard@sha256:111111
+          argv: [guard]
+      post_run:
+        operation:
+          image: registry.example/verify@sha256:222222
+          argv: [verify]
+        on_failure:
+          outcome: changes_required
+
+    guarded:
+      kind: agent
+      ownerRef: team/platform-ai
+      uses: actor://company/reviewer@sha256:bbbbbb
+      contract:
+        outcomes:
+          completed:
+            schemaRef: ./contracts/start.schema.json
+      input:
+        from: /nodes/work/output
+      post_run:
+        operation:
+          image: registry.example/assure@sha256:333333
+          argv: [assure]
+        on_failure: reject_assurance
+
+    finish:
+      kind: end
+      ownerRef: team/platform-ai
+      output:
+        from: /nodes/guarded/output
+
+  edges:
+    - from: work.completed
+      to: guarded
+    - from: work.changes_required
+      to: finish
+    - from: guarded.completed
+      to: finish

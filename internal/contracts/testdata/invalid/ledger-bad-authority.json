@@ -1,0 +1,21 @@
+{
+  "id": "ledger_fixture_bad_authority",
+  "schema_version": "nodes.culture.dev/ledger/v1alpha1",
+  "record_type": "claim",
+  "run_id": "run_fixture",
+  "node_run_id": null,
+  "attempt_id": null,
+  "origin": {
+    "kind": "agent",
+    "actor_id": "actor_developer"
+  },
+  "authority": "self_confirmed",
+  "subject_ref": null,
+  "data": {
+    "statement": "INVALID FIXTURE: `self_confirmed` is not a core authority value (PRD §10.4). An invented authority is exactly how an actor would try to promote its own proposal, so /authority must be rejected."
+  },
+  "provenance_refs": [],
+  "supersedes": null,
+  "created_at": "2026-08-08T15:00:00Z",
+  "content_digest": "sha256:8ac6e4bb9b54d3fe7cb1823694feeb21852a7c258e702df107f264ccf62a1ffd"
+}

@@ -1,0 +1,29 @@
+apiVersion: v2
+name: culture-nodes
+description: >-
+  Culture Nodes control plane — the api/scheduler/worker Deployments of one
+  image plus PostgreSQL (PRD §19). Phase 1 runs authless behind a private
+  network; see README.md and this chart's NOTES.txt for the trust boundary.
+type: application
+
+# version is this chart's own release cadence; appVersion tracks the image
+# tag it defaults to (values.yaml's image.tag falls back to .Chart.AppVersion
+# — see _helpers.tpl's culture-nodes.image). They are bumped independently:
+# a chart-only change (a new value, a template fix) bumps version; a new
+# `nodes` binary release bumps appVersion. cmd/nodes/main.go's own
+# placeholder version ("0.1.0-dev") is mirrored here until release.yml cuts
+# its first real v* tag — see deploy/helm/README.md's Images section for how
+# the two are meant to converge.
+version: 0.1.0
+appVersion: "0.1.0-dev"
+
+keywords:
+  - culture-nodes
+  - workflow-orchestrator
+  - agent-mesh
+home: https://github.com/agentculture/culture-nodes
+sources:
+  - https://github.com/agentculture/culture-nodes
+maintainers:
+  - name: AgentCulture
+    url: https://github.com/agentculture

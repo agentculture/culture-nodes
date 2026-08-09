@@ -1,0 +1,4 @@
+{
+  "request": "add retry backoff to the queue consumer",
+  "repository": "agentculture/culture-nodes"
+}

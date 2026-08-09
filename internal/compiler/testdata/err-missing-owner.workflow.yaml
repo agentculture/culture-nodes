@@ -1,0 +1,36 @@
+apiVersion: nodes.culture.dev/v1alpha1
+kind: Workflow
+
+metadata:
+  name: missing-owner
+  version: 1.0.0
+
+spec:
+  entry: start
+
+  contract:
+    input:
+      schemaRef: ./contracts/in.schema.json
+    output:
+      schemaRef: ./contracts/out.schema.json
+
+  nodes:
+    start:
+      kind: agent
+      uses: actor://company/start@sha256:aaaaaa
+      contract:
+        outcomes:
+          completed:
+            schemaRef: ./contracts/start.schema.json
+      input:
+        from: /run/input
+
+    finish:
+      kind: end
+      ownerRef: team/platform-ai
+      output:
+        from: /nodes/start/output
+
+  edges:
+    - from: start.completed
+      to: finish

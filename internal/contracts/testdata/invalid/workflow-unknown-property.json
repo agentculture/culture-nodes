@@ -1,0 +1,41 @@
+{
+  "apiVersion": "nodes.culture.dev/v1alpha1",
+  "kind": "Workflow",
+  "metadata": {
+    "name": "minimal",
+    "version": "0.1.0",
+    "ownerRef": "team/platform-ai",
+    "description": "INVALID FIXTURE: the build node spells the owner as owner_ref. A misspelled key must be named at /spec/nodes/build/owner_ref, not quietly ignored - an unknown key is how ownership silently disappears."
+  },
+  "spec": {
+    "entry": "build",
+    "contract": {
+      "input": {
+        "schemaRef": "./contracts/change-request.schema.json"
+      },
+      "output": {
+        "schemaRef": "./contracts/delivery-result.schema.json"
+      }
+    },
+    "nodes": {
+      "build": {
+        "kind": "agent",
+        "owner_ref": "team/developer-experience",
+        "uses": "actor://company/developer@sha256:333333"
+      },
+      "finish": {
+        "kind": "end",
+        "ownerRef": "team/platform-ai",
+        "output": {
+          "from": "/nodes/build/output"
+        }
+      }
+    },
+    "edges": [
+      {
+        "from": "build.completed",
+        "to": "finish"
+      }
+    ]
+  }
+}

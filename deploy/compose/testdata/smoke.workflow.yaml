@@ -1,0 +1,81 @@
+# The fixture deploy/compose/smoke.sh validates, publishes, and runs
+# against the docker compose stack it just brought up.
+#
+# One agent node plus an end node -- the same minimal shape as
+# internal/actors/testdata/async.workflow.yaml, copied here rather than
+# read from that directory so this fixture has no path dependency on the
+# Go module's internal test layout. `uses` names an actor reference that
+# does not resolve to anything reachable inside the compose network on
+# purpose: the smoke test proves the engine, the database, and the queue
+# work end to end inside the containers, not that a real agent backend is
+# wired up (see deploy/compose/README.md's "code-runner boundary" section).
+apiVersion: nodes.culture.dev/v1alpha1
+kind: Workflow
+
+metadata:
+  name: compose-smoke
+  version: 1.0.0
+  ownerRef: team/platform-ai
+
+spec:
+  entry: work
+
+  contract:
+    input:
+      schema:
+        type: object
+        required: [subject]
+        properties:
+          subject:
+            type: string
+    output:
+      schema:
+        type: object
+        required: [summary]
+        properties:
+          summary:
+            type: string
+
+  limits:
+    maxDuration: 1h
+    maxTransitions: 8
+    maxVisitsPerNode: 4
+    maxParallelTokens: 1
+
+  ledger:
+    schemaVersion: nodes.culture.dev/ledger/v1alpha1
+    maxRecordsPerNode: 10
+
+  nodes:
+    work:
+      kind: agent
+      ownerRef: team/platform-ai
+      uses: actor://company/smoke-test@sha256:aaaaaa
+      input:
+        from: /run/input
+      contract:
+        outcomes:
+          completed:
+            schema:
+              type: object
+              required: [summary]
+              properties:
+                summary:
+                  type: string
+      ledger:
+        propose: [claim, result]
+      policy:
+        timeout: 2m
+        retry:
+          maxAttempts: 1
+          backoff: none
+
+    finish:
+      kind: end
+      ownerRef: team/platform-ai
+      output:
+        from: /nodes/work/output
+
+  edges:
+    - from: work.completed
+      to: finish

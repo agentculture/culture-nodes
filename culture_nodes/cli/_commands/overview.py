@@ -22,6 +22,7 @@ _ARTIFACTS = [
     ".claude/skills/ — the canonical guildmaster skill kit (cite-don't-import)",
     "docs/skill-sources.md — skill provenance ledger",
     "pyproject.toml + .github/workflows/ — buildable, deployable package baseline",
+    "api/openapi/openapi.yaml — the REST API this package is a thin client for",
 ]
 
 _VERBS = [
@@ -29,7 +30,11 @@ _VERBS = [
     "learn — structured self-teaching prompt",
     "explain <path> — markdown docs for a topic",
     "overview — this descriptive snapshot",
-    "doctor — check the agent-identity invariants",
+    "doctor — check the agent-identity and API-reachability invariants",
+    "workflow validate|publish|list|get — thin client over the workflows API",
+    "run create|list|get|cancel|events — thin client over the runs API",
+    "ledger records|projection — thin client over the ledger read API",
+    "review create|commit — thin client over the review transactions API",
 ]
 
 
@@ -64,6 +69,8 @@ def cli_sections() -> list[dict[str, object]]:
                 "every command supports --json",
                 "results to stdout, errors/diagnostics to stderr (never mixed)",
                 "exit codes: 0 success, 1 user error, 2 environment error, 3+ reserved",
+                "product verbs resolve the API base URL: --api-url, then NODES_API_URL, "
+                "then http://127.0.0.1:8080",
             ],
         },
     ]

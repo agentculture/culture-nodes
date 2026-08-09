@@ -1,0 +1,160 @@
+name: Web
+
+on:
+  pull_request:
+    branches: [main]
+    paths:
+      - "web/**"
+      - ".github/workflows/web.yml"
+  push:
+    branches: [main]
+    paths:
+      - "web/**"
+      - ".github/workflows/web.yml"
+
+# Every action is pinned by commit SHA. actions/checkout, actions/setup-node
+# and astral-sh/setup-uv reuse the exact pins tests.yml and go.yml already
+# carry, so the repo pins one revision of each action rather than drifting a
+# second one in on a new workflow.
+jobs:
+  build-and-test:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    defaults:
+      run:
+        working-directory: web
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: '20'
+          cache: npm
+          cache-dependency-path: web/package-lock.json
+
+      - run: npm ci
+
+      - name: build
+        run: npm run build
+
+      - name: vitest
+        run: npm test
+
+      - name: install the pinned Chromium Playwright drives
+        run: npx playwright install --with-deps chromium
+
+      - name: playwright (keyboard walk, reduced motion, mocked API)
+        run: npm run test:e2e
+
+      - name: upload the Playwright report on failure
+        if: failure()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: playwright-report
+          path: web/playwright-report
+          if-no-files-found: ignore
+
+  # The webglass arm: prove the built bundle is observable by an agent through
+  # the CLI alone — that #agent-state says "ready", and that the page threw
+  # nothing. Follows /home/spark/git/webglass-cli/docs/ci-recipe.md, including
+  # its AppArmor sysctl step for ubuntu-24.04-class runners.
+  webglass:
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: read
+    defaults:
+      run:
+        working-directory: web
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: '20'
+          cache: npm
+          cache-dependency-path: web/package-lock.json
+
+      - run: npm ci
+
+      - run: npm run build
+
+      - uses: astral-sh/setup-uv@38f3f104447c67c051c4a08e39b64a148898af3a # v4
+
+      - run: uv python install 3.12
+
+      # An explicit venv path, not `uv run`: the repo root carries its own
+      # pyproject.toml, and `uv run` from web/ would discover that project
+      # instead of this venv.
+      - name: install webglass-cli
+        run: |
+          uv venv .venv
+          uv pip install --python .venv/bin/python webglass-cli
+
+      - name: provision Chromium
+        run: .venv/bin/playwright install --with-deps chromium
+
+      - name: allow unprivileged user namespaces (Chromium sandbox)
+        # ubuntu-24.04 runners restrict unprivileged user-namespace creation
+        # via AppArmor, which makes a *sandboxed* Chromium launch abort with
+        # "No usable sandbox!". webglass refuses to fall back to --no-sandbox
+        # on its own, so the runner restores a genuinely usable sandbox here.
+        # (webglass-cli docs/ci-recipe.md, risk r4.)
+        run: sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0
+
+      - name: write the policy profile declaring the app under test
+        # Loopback targets are denied by default. Reaching the preview server
+        # requires this explicit, scoped allow — data the policy core
+        # evaluates, never a flag that widens policy.
+        run: |
+          cat > webglass-profile.json <<'JSON'
+          {"name": "local-app", "declared_targets": ["127.0.0.1:4173"]}
+          JSON
+
+      - name: start vite preview
+        run: |
+          nohup npm run preview -- --port 4173 --strictPort > preview.log 2>&1 &
+          echo $! > preview.pid
+          for _ in $(seq 1 40); do
+            curl -sf http://127.0.0.1:4173/ > /dev/null && break
+            sleep 0.5
+          done
+          curl -sf -o /dev/null http://127.0.0.1:4173/
+
+      - name: page extract '#agent-state'
+        run: |
+          .venv/bin/webglass page extract \
+            --url http://127.0.0.1:4173 \
+            --selector '#agent-state' \
+            --policy-profile webglass-profile.json --json | tee webglass-extract.json
+          jq -e '.content.untrusted.matches | length == 1' webglass-extract.json
+          jq -e '.content.untrusted.matches[0].text | fromjson | .status == "ready"' \
+            webglass-extract.json
+
+      - name: page inspect --lens console
+        # page_errors is the assertion: zero uncaught exceptions on load.
+        # console_messages is deliberately NOT asserted empty — no control
+        # plane runs in this job, so the run list's fetch legitimately logs a
+        # 404, and the app renders its error notice instead of throwing.
+        run: |
+          .venv/bin/webglass page inspect \
+            --url http://127.0.0.1:4173 \
+            --lens console \
+            --policy-profile webglass-profile.json --json | tee webglass-console.json
+          jq -e '.lifecycle_state == "succeeded"' webglass-console.json
+          jq -e '.content.untrusted.page_errors | length == 0' webglass-console.json
+
+      - name: stop vite preview
+        if: always()
+        run: kill "$(cat preview.pid)" 2>/dev/null || true
+
+      - name: upload the webglass evidence
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: webglass-evidence
+          path: |
+            web/webglass-extract.json
+            web/webglass-console.json
+            web/preview.log
+          if-no-files-found: ignore

@@ -1,0 +1,56 @@
+apiVersion: nodes.culture.dev/v1alpha1
+kind: Workflow
+
+metadata:
+  name: over-cap-code
+  version: 1.0.0
+  ownerRef: team/platform-ai
+
+spec:
+  entry: start
+
+  contract:
+    input:
+      schemaRef: ./contracts/in.schema.json
+    output:
+      schemaRef: ./contracts/out.schema.json
+
+  nodes:
+    start:
+      kind: agent
+      ownerRef: team/platform-ai
+      uses: actor://company/start@sha256:aaaaaa
+      contract:
+        outcomes:
+          completed:
+            schemaRef: ./contracts/start.schema.json
+      input:
+        from: /run/input
+
+    build:
+      kind: code
+      ownerRef: team/developer-experience
+      uses: runner://headspace/docker@sha256:555555
+      operation:
+        image: registry.example/python-test@sha256:666666
+        argv: [python, -m, pytest, -q]
+        network: none
+      contract:
+        outcomes:
+          passed:
+            schemaRef: ./contracts/test-result.schema.json
+        maxInlinePayloadBytes: 8388608
+      policy:
+        timeout: 20m
+
+    finish:
+      kind: end
+      ownerRef: team/platform-ai
+      output:
+        from: /nodes/build/output
+
+  edges:
+    - from: start.completed
+      to: build
+    - from: build.passed
+      to: finish

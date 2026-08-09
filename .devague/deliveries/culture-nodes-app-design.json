@@ -1,0 +1,22 @@
+{
+  "plan_slug": "culture-nodes-app-design",
+  "schema_version": 1,
+  "created": "2026-08-08T23:08:49Z",
+  "updated": "2026-08-08T23:08:49Z",
+  "deviations": [
+    {
+      "id": "d1",
+      "what": "t19 shipped without the approval/human-task surface: the plan's t19 entry lists approvals among the documented OpenAPI operations, but the engine (t9) does not yet create human_tasks rows for approval nodes and the worker (t12) dispatches approval kinds through a not-yet-registered HumanDispatcher seam \u2014 so the API landed runs/ledger/reviews/SSE without approval endpoints rather than inventing endpoints over missing engine support",
+      "task_ref": "t19",
+      "reason": "engine human-task support was an undeclared prerequisite the plan's task split missed; shipping honest scope beat shipping stub endpoints",
+      "affects": [
+        "t9",
+        "t12",
+        "t27"
+      ],
+      "origin": "llm",
+      "status": "proposed",
+      "classification": "needs-follow-up"
+    }
+  ]
+}

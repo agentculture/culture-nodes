@@ -12,32 +12,50 @@ from __future__ import annotations
 _ROOT = """\
 # culture-nodes
 
-A clonable template for AgentCulture mesh agents. It carries an agent-first CLI
-(cited from the teken `python-cli` reference), a mesh identity (`culture.yaml` +
-`CLAUDE.md`), the canonical guildmaster skill kit under `.claude/skills/`, and a
-buildable/deployable package baseline. Clone it, rename the package, edit
-`culture.yaml`, and you have a new agent.
+The Python side of Culture Nodes: a mesh-agent identity (`culture.yaml` +
+`AGENTS.colleague.md`), the agent-first CLI contract (cited from the teken
+`python-cli` reference), and a thin REST client over the Culture Nodes
+control-plane API (`api/openapi/openapi.yaml`). No workflow-engine logic
+lives in this package (spec decision c28) — every product verb sends one
+HTTP request to the Go control-plane binary (`nodes serve`) and renders the
+response.
 
-## Verbs
+## Identity verbs
 
 - `culture-nodes whoami` — identity probe from `culture.yaml`.
 - `culture-nodes learn` — structured self-teaching prompt.
 - `culture-nodes explain <path>` — markdown docs for any noun/verb.
 - `culture-nodes overview` — descriptive snapshot of the agent.
-- `culture-nodes doctor` — check the agent-identity invariants.
+- `culture-nodes doctor` — check the agent-identity and API-reachability invariants.
 - `culture-nodes cli overview` — describe the CLI surface.
+
+## Product verbs (thin API clients)
+
+- `culture-nodes workflow validate|publish|list|get`
+- `culture-nodes run create|list|get|cancel|events`
+- `culture-nodes ledger records|projection`
+- `culture-nodes review create|commit`
+
+## API configuration
+
+Every product verb resolves the API base URL as: `--api-url` flag, then the
+`NODES_API_URL` environment variable, then `http://127.0.0.1:8080`.
 
 ## Exit-code policy
 
 - `0` success
-- `1` user-input error
-- `2` environment / setup error
+- `1` user-input error (also: `workflow validate` reporting an invalid document)
+- `2` environment / setup error (also: the API is unreachable)
 - `3+` reserved
 
 ## See also
 
 - `culture-nodes explain whoami`
 - `culture-nodes explain doctor`
+- `culture-nodes explain workflow`
+- `culture-nodes explain run`
+- `culture-nodes explain ledger`
+- `culture-nodes explain review`
 """
 
 _WHOAMI = """\
@@ -94,13 +112,18 @@ _DOCTOR = """\
 # culture-nodes doctor
 
 Checks the agent-identity invariants `steward doctor` verifies:
-prompt-file-present and backend-consistency (`colleague` → `AGENTS.colleague.md`), plus a
-skills-present check. Exits 1 when unhealthy.
+prompt-file-present and backend-consistency (`colleague` → `AGENTS.colleague.md`), a
+skills-present check, and a `nodes_api_reachable` check (`GET /v1alpha1/healthz`
+against the resolved API URL). Only `error`-severity checks (prompt-file-present,
+backend-consistency) can flip the exit code to 1 — `nodes_api_reachable` and
+`skills-present` are `warning`/`info` and never fail `doctor` on their own,
+since the identity verbs work with no API running at all.
 
 ## Usage
 
     culture-nodes doctor
     culture-nodes doctor --json
+    culture-nodes doctor --api-url http://localhost:9090
 """
 
 _CLI = """\
@@ -115,6 +138,104 @@ itself (distinct from the global `overview`, which describes the agent).
     culture-nodes cli overview --json
 """
 
+_WORKFLOW = """\
+# culture-nodes workflow
+
+Thin REST client over the workflows API (`api/openapi/openapi.yaml`,
+`workflows` tag): validate, publish, list, get. No engine logic lives here —
+every verb sends one HTTP request to the Culture Nodes control-plane API
+(the Go `nodes serve` binary) and renders the response.
+
+## Usage
+
+    culture-nodes workflow validate <file.yaml|file.json>
+    culture-nodes workflow publish <file.yaml|file.json>
+    culture-nodes workflow list [--workflow-key KEY] [--limit N]
+    culture-nodes workflow get <digest>
+
+Every subcommand accepts `--json` (byte-exact passthrough of the API's JSON
+response) and `--api-url` (default: `$NODES_API_URL`, else
+`http://127.0.0.1:8080`).
+
+## validate
+
+Compiles the file server-side and reports every diagnostic. A document with
+error diagnostics is a domain outcome (`valid: false`), not a technical
+failure: diagnostics print to stdout with exit `1`, never an `error:`/
+`hint:` stderr message.
+
+## publish
+
+Compiles and stores the document as an immutable version addressed by its
+content digest. Publishing identical content twice is idempotent (HTTP 200
+with the existing version) rather than an error.
+"""
+
+_RUN = """\
+# culture-nodes run
+
+Thin REST client over the runs API (`api/openapi/openapi.yaml`,
+`runs`/`events` tags): create, list, get, cancel, events. No engine logic
+lives here — every verb is one HTTP call to the Culture Nodes control-plane
+API.
+
+## Usage
+
+    culture-nodes run create --workflow <digest> [--input <file>|--input -]
+    culture-nodes run list [--state STATE] [--limit N]
+    culture-nodes run get <id>
+    culture-nodes run cancel <id>
+    culture-nodes run events <id> [--follow]
+
+## events
+
+Streams the run's committed events over Server-Sent Events. The API
+(`internal/api/events.go`) closes the connection once a terminal run event
+(`run.completed`, `run.failed`, `run.cancelled`, `run.bounded`) has been
+sent, so `events` always follows until the stream ends — `--follow` is
+accepted for symmetry with `tail -f` but is a no-op today. `--json` prints
+one JSON object per event (`{id, event, data}`), one per line; text mode
+prints one compact line per event.
+"""
+
+_LEDGER = """\
+# culture-nodes ledger
+
+Thin REST client over the ledger read API (`api/openapi/openapi.yaml`,
+`ledger` tag): records, projection. No engine or projection logic lives
+here — the PRD §10.9 standard projections are computed server-side.
+
+## Usage
+
+    culture-nodes ledger records <run-id>
+    culture-nodes ledger projection <run-id> <name> [--subject SUBJECT]
+
+`<name>` is one of: `current_scope`, `confirmed_claims`,
+`open_assumptions_and_questions`, `ready_tasks`, `active_tasks`,
+`verification_queue`, `decision_history`, `evidence_for_subject`,
+`delivery_summary`. `--subject` is required by, and used only by,
+`evidence_for_subject`.
+"""
+
+_REVIEW = """\
+# culture-nodes review
+
+Thin REST client over the human review transactions API
+(`api/openapi/openapi.yaml`, `reviews` tag): create, commit. No ledger
+authority logic lives here — confirm/reject decisions are applied
+server-side, all-or-nothing, under the PRD §10.8 review protocol.
+
+## Usage
+
+    culture-nodes review create <run-id> --records id1,id2 --ledger-version N
+    culture-nodes review commit <review-id> --confirm id1 --reject id2 --ledger-version N
+
+`commit` refuses (HTTP 409, exit `1`) when the ledger has moved since the
+review was created, a target record was superseded, or the review was
+already committed — the API's own remediation names the fix (re-read the
+current ledger version and submit a new review request).
+"""
+
 
 ENTRIES: dict[tuple[str, ...], str] = {
     (): _ROOT,
@@ -127,4 +248,21 @@ ENTRIES: dict[tuple[str, ...], str] = {
     ("doctor",): _DOCTOR,
     ("cli",): _CLI,
     ("cli", "overview"): _CLI,
+    ("workflow",): _WORKFLOW,
+    ("workflow", "validate"): _WORKFLOW,
+    ("workflow", "publish"): _WORKFLOW,
+    ("workflow", "list"): _WORKFLOW,
+    ("workflow", "get"): _WORKFLOW,
+    ("run",): _RUN,
+    ("run", "create"): _RUN,
+    ("run", "list"): _RUN,
+    ("run", "get"): _RUN,
+    ("run", "cancel"): _RUN,
+    ("run", "events"): _RUN,
+    ("ledger",): _LEDGER,
+    ("ledger", "records"): _LEDGER,
+    ("ledger", "projection"): _LEDGER,
+    ("review",): _REVIEW,
+    ("review", "create"): _REVIEW,
+    ("review", "commit"): _REVIEW,
 }

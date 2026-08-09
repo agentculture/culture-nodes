@@ -1,0 +1,35 @@
+{
+  "operation_id": "op_fixture_unpinned_image",
+  "runner": "headspace",
+  "runner_revision": "sha256:26951e7ab41e0d560d84c11d196fb79378c4f4f5986392115bb7ca48009e1677",
+  "execution": {
+    "kind": "container",
+    "image_ref": "registry.example/test-runner:latest",
+    "image_digest": "latest"
+  },
+  "command": {
+    "argv": [
+      "python",
+      "-m",
+      "pytest",
+      "-q"
+    ],
+    "working_directory": "/workspace"
+  },
+  "policy": {
+    "timeout_seconds": 900,
+    "network": "none",
+    "allowed_output_paths": [
+      "/workspace"
+    ]
+  },
+  "evidence": {
+    "snapshot_before": false,
+    "snapshot_after": false,
+    "capture_exit": true,
+    "capture_logs": true
+  },
+  "context": {
+    "run_id": "run_fixture"
+  }
+}

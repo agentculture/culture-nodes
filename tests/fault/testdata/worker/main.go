@@ -1,0 +1,252 @@
+// Command worker is a throwaway fault-test fixture, not a culture-nodes
+// product binary. It lives under testdata/ specifically so Go's tooling
+// leaves it out of `go build ./...`, `go vet ./...`, and `go test ./...`
+// package discovery (testdata directories are always skipped by "...").
+// tests/fault/claiming_fault_test.go `go build`s this package into a real
+// OS binary and `exec`s two or more copies of it against one ephemeral
+// Postgres, so internal/store/postgres's SKIP LOCKED claim and
+// fencing-token guard (see claiming.go) can be proven under actual
+// process-level concurrency -- including a real SIGKILL -- rather than
+// simulated with goroutines inside a single test binary.
+//
+// The worker repeatedly: reclaims expired leases, claims a batch of ready
+// work, "does the work" (a configurable sleep), records an effective
+// completion in a test-only results table, then marks the work item
+// completed. It exits cleanly once it has seen no claimable/reclaimable
+// work for WORKER_IDLE_TIMEOUT_MS.
+//
+// Required env vars:
+//
+//	WORKER_DB_URL             postgres connection string
+//	WORKER_ID                 lease_owner / results.completed_by value
+//	WORKER_LEASE_SECONDS      lease duration passed to ClaimWork (float)
+//	WORKER_LIMIT              ClaimWork batch size
+//	WORKER_WORK_MS            time to "work" between claim and complete
+//	WORKER_IDLE_TIMEOUT_MS    exit after this long with nothing to do
+//
+// Optional env vars:
+//
+//	WORKER_CLAIMED_FLAG_FILE  touched (created) the first time this worker
+//	                          claims a non-empty batch, so the parent test
+//	                          can synchronize a SIGKILL to "after claim,
+//	                          before completion" without a race.
+package main
+
+import (
+	"context"
+	"errors"
+	"fmt"
+	"os"
+	"strconv"
+	"time"
+
+	"github.com/jackc/pgx/v5/pgconn"
+
+	"github.com/agentculture/culture-nodes/internal/store/postgres"
+)
+
+func main() {
+	if err := run(); err != nil {
+		fmt.Fprintf(os.Stderr, "worker: %v\n", err)
+		os.Exit(1)
+	}
+}
+
+func run() error {
+	cfg, err := loadConfig()
+	if err != nil {
+		return err
+	}
+
+	ctx := context.Background()
+	s, err := postgres.Connect(ctx, cfg.dbURL)
+	if err != nil {
+		return fmt.Errorf("connect: %w", err)
+	}
+	defer s.Close()
+
+	return pollLoop(ctx, s, cfg)
+}
+
+// workerCfg is the env-supplied configuration for one worker process.
+type workerCfg struct {
+	dbURL, workerID, namespaceID string
+	leaseDuration                time.Duration
+	limit                        int
+	workDuration                 time.Duration
+	idleTimeout                  time.Duration
+	flagFile                     string
+}
+
+// loadConfig reads every WORKER_* env var, converting durations up front so
+// the poll loop deals only in typed values.
+func loadConfig() (workerCfg, error) {
+	var cfg workerCfg
+	var err error
+	if cfg.dbURL, err = requireEnv("WORKER_DB_URL"); err != nil {
+		return cfg, err
+	}
+	if cfg.workerID, err = requireEnv("WORKER_ID"); err != nil {
+		return cfg, err
+	}
+	if cfg.namespaceID, err = requireEnv("WORKER_NAMESPACE_ID"); err != nil {
+		return cfg, err
+	}
+	leaseSeconds, err := requireEnvFloat("WORKER_LEASE_SECONDS")
+	if err != nil {
+		return cfg, err
+	}
+	if cfg.limit, err = requireEnvInt("WORKER_LIMIT"); err != nil {
+		return cfg, err
+	}
+	workMS, err := requireEnvInt("WORKER_WORK_MS")
+	if err != nil {
+		return cfg, err
+	}
+	idleTimeoutMS, err := requireEnvInt("WORKER_IDLE_TIMEOUT_MS")
+	if err != nil {
+		return cfg, err
+	}
+	cfg.leaseDuration = time.Duration(leaseSeconds * float64(time.Second))
+	cfg.workDuration = time.Duration(workMS) * time.Millisecond
+	cfg.idleTimeout = time.Duration(idleTimeoutMS) * time.Millisecond
+	cfg.flagFile = os.Getenv("WORKER_CLAIMED_FLAG_FILE")
+	return cfg, nil
+}
+
+// pollLoop is the worker's whole life: claim a batch, mark progress, write
+// the coordination flag once, complete each item — until the idle timeout.
+func pollLoop(ctx context.Context, s *postgres.Store, cfg workerCfg) error {
+	lastProgress := time.Now()
+	flagWritten := false
+
+	for {
+		if time.Since(lastProgress) > cfg.idleTimeout {
+			fmt.Printf("worker %s: idle timeout after %s, exiting\n", cfg.workerID, cfg.idleTimeout)
+			return nil
+		}
+
+		items, err := claimBatch(ctx, s, cfg.namespaceID, cfg.workerID, cfg.leaseDuration, cfg.limit)
+		if err != nil {
+			return err
+		}
+		if len(items) == 0 {
+			time.Sleep(75 * time.Millisecond)
+			continue
+		}
+		lastProgress = time.Now()
+
+		flagWritten, err = writeClaimedFlagOnce(cfg.flagFile, len(items), flagWritten)
+		if err != nil {
+			return err
+		}
+
+		for _, item := range items {
+			if err := completeItem(ctx, s, cfg.workerID, item, cfg.workDuration); err != nil {
+				return err
+			}
+		}
+	}
+}
+
+// claimBatch reclaims any expired leases, then claims up to limit ready work
+// items -- the two calls the worker makes at the top of every poll.
+func claimBatch(ctx context.Context, s *postgres.Store, namespaceID, workerID string, leaseDuration time.Duration, limit int) ([]postgres.ClaimedWork, error) {
+	if _, err := s.ReclaimExpired(ctx); err != nil {
+		return nil, fmt.Errorf("ReclaimExpired: %w", err)
+	}
+	items, err := s.ClaimWork(ctx, namespaceID, workerID, leaseDuration, limit)
+	if err != nil {
+		return nil, fmt.Errorf("ClaimWork: %w", err)
+	}
+	return items, nil
+}
+
+// writeClaimedFlagOnce touches flagFile the first time a non-empty batch is
+// claimed, so the parent test can synchronize a SIGKILL to "after claim,
+// before completion" without a race. It is a no-op once alreadyWritten is
+// true or when no flag file was configured, and returns whether the flag is
+// now written.
+func writeClaimedFlagOnce(flagFile string, itemCount int, alreadyWritten bool) (bool, error) {
+	if flagFile == "" || alreadyWritten {
+		return alreadyWritten, nil
+	}
+	if err := os.WriteFile(flagFile, []byte(strconv.Itoa(itemCount)+"\n"), 0o644); err != nil {
+		return alreadyWritten, fmt.Errorf("write claimed flag file: %w", err)
+	}
+	return true, nil
+}
+
+// completeItem "does the work" for one claimed item (a configurable sleep),
+// records its effective completion in the test-only results table, then
+// marks it technically complete.
+func completeItem(ctx context.Context, s *postgres.Store, workerID string, item postgres.ClaimedWork, workDuration time.Duration) error {
+	time.Sleep(workDuration)
+
+	if _, err := s.Pool().Exec(ctx,
+		`INSERT INTO test_work_results (work_id, node_run_id, attempt, completed_by) VALUES ($1, $2, $3, $4)`,
+		item.ID, item.NodeRunID, item.Attempt, workerID,
+	); err != nil && !isUniqueViolation(err) {
+		return fmt.Errorf("insert result for %s: %w", item.ID, err)
+	}
+	// A unique violation here means this is either a re-delivery
+	// of a work_id already recorded (should not happen -- work_id
+	// is this claim's own primary key) or, for the duplicate
+	// signal scenario, a second work item for the same
+	// (node_run_id, attempt) whose sibling already recorded the
+	// effective completion first. Either way, this worker still
+	// performed and must still record its OWN technical
+	// completion of the work item it was leased -- domain outcome
+	// (the results row) and technical status (work_items.state)
+	// are deliberately not the same thing.
+
+	if err := s.CompleteWork(ctx, item.ID, workerID, item.FencingToken, int(item.Attempt)); err != nil {
+		if errors.Is(err, postgres.ErrStaleClaim) {
+			// Expected under contention: e.g. this worker was
+			// reclaimed out from under itself. Not fatal.
+			fmt.Printf("worker %s: stale claim completing %s (expected under contention)\n", workerID, item.ID)
+			return nil
+		}
+		return fmt.Errorf("CompleteWork %s: %w", item.ID, err)
+	}
+	fmt.Printf("worker %s: completed %s (node_run=%s attempt=%d fencing_token=%d)\n",
+		workerID, item.ID, item.NodeRunID, item.Attempt, item.FencingToken)
+	return nil
+}
+
+func isUniqueViolation(err error) bool {
+	var pgErr *pgconn.PgError
+	return errors.As(err, &pgErr) && pgErr.Code == "23505"
+}
+
+func requireEnv(name string) (string, error) {
+	v := os.Getenv(name)
+	if v == "" {
+		return "", fmt.Errorf("%s is required", name)
+	}
+	return v, nil
+}
+
+func requireEnvInt(name string) (int, error) {
+	v, err := requireEnv(name)
+	if err != nil {
+		return 0, err
+	}
+	n, err := strconv.Atoi(v)
+	if err != nil {
+		return 0, fmt.Errorf("%s: %w", name, err)
+	}
+	return n, nil
+}
+
+func requireEnvFloat(name string) (float64, error) {
+	v, err := requireEnv(name)
+	if err != nil {
+		return 0, err
+	}
+	f, err := strconv.ParseFloat(v, 64)
+	if err != nil {
+		return 0, fmt.Errorf("%s: %w", name, err)
+	}
+	return f, nil
+}

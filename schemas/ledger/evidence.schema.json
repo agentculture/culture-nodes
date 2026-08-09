@@ -1,0 +1,70 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://nodes.culture.dev/schemas/ledger/evidence.schema.json",
+  "title": "Ledger record: evidence",
+  "description": "An attributable observation with declared coverage (PRD §10.2, §10.5). Evidence is scoped: an empty field, a missing observation, or an incomplete scope stays explicit. Raw process output does not prove that a process's claims are true — a runner observes the exit code, while text printed by the process remains process-reported content.",
+  "allOf": [
+    {
+      "$ref": "envelope.schema.json"
+    }
+  ],
+  "required": [
+    "record_type"
+  ],
+  "properties": {
+    "record_type": {
+      "const": "evidence"
+    },
+    "data": {
+      "type": "object",
+      "$comment": "Phase 0: payload shape is deliberately loose — properties are optional and no additionalProperties bound is set. The property names come from the PRD §10.5 evidence anatomy.",
+      "properties": {
+        "producer_id": {
+          "type": "string"
+        },
+        "producer_revision": {
+          "type": "string"
+        },
+        "collection_method": {
+          "type": "string",
+          "description": "How the observation was made, e.g. `runner_exit_status`, `workspace_snapshot_diff`, `report_artifact_parse`."
+        },
+        "input_digest": {
+          "type": "string"
+        },
+        "environment_digest": {
+          "type": "string"
+        },
+        "operation_digest": {
+          "type": "string"
+        },
+        "observed_at": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "covered_scope": {
+          "type": "string",
+          "description": "What the observation actually covers — never widened to imply coverage that was not measured."
+        },
+        "completeness": {
+          "type": "string",
+          "enum": [
+            "complete",
+            "partial",
+            "unknown"
+          ],
+          "description": "`partial` and `unknown` are first-class answers; omitting the field is not a way to imply `complete`."
+        },
+        "artifact_refs": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "measurements": {
+          "type": "object"
+        }
+      }
+    }
+  }
+}

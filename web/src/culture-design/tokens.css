@@ -1,0 +1,538 @@
+/*
+ * culture-design/tokens.css
+ *
+ * Source repo:    agentculture/org (checked out locally at /home/spark/git/org)
+ * Source path:    site-astro/src/styles/global.css
+ * Pinned commit:  b4d939ba0aa354a5ae53065319a773e0013de698
+ * Extracted:      task t5 (culture-nodes web design layer)
+ * Re-pin:         see docs/adr/0001-culture-design-source.md
+ *
+ * This is a VERBATIM copy of the pinned file — framework-agnostic CSS
+ * custom properties, so any bundler (or none) can consume it. Do not
+ * hand-edit the copied section below; re-run the extraction against a new
+ * pin instead. scripts/check-culture-design.mjs asserts everything from
+ * the next line to end-of-file is byte-identical to the pinned org source.
+ * ---- verbatim copy of site-astro/src/styles/global.css follows ----
+ */
+/*
+ * AgentCulture — "First light over the mesh"
+ *
+ * One scene at two hours: the light theme is ten minutes after sunrise,
+ * the dark theme is the hour before it. Same sky, same mesh, different light.
+ * Everything moves at breathing pace; nothing snaps.
+ *
+ * Contrast: every text/background pair below is verified >= 4.5:1 (WCAG AA)
+ * in both themes, including hero text on the strongest gradient stop.
+ *
+ * Reduced motion: every `animation` and `transition` in the whole site
+ * (including component-scoped styles) is disabled by the kill switch at the
+ * bottom of this file, and every entrance-hidden state is additionally gated
+ * behind (prefers-reduced-motion: no-preference) + html.js, so the site is
+ * complete and static without motion or JavaScript.
+ */
+
+/* ---------- tokens ---------- */
+
+:root {
+  color-scheme: light dark;
+
+  /* dawn, ten minutes after sunrise */
+  --bg: #f4f5fb;            /* pale periwinkle sky-paper */
+  --surface: #ffffff;       /* lifted cloud-white */
+  --ink: #232a4d;           /* deep indigo, never black */
+  --ink-soft: #4d546f;      /* slate of the fading night */
+  --accent: #0b655c;        /* deep aurora teal — interactive */
+  --accent-strong: #0c5a53; /* filled-control teal */
+  --on-accent: #ffffff;
+  --line: rgba(35, 42, 77, 0.14);
+  --line-soft: rgba(35, 42, 77, 0.08);
+
+  /* sky washes (decorative only — never carry text alone) */
+  --sky-upper: rgba(198, 210, 248, 0.55); /* periwinkle zenith */
+  --sky-horizon: rgba(255, 205, 166, 0.5); /* apricot sun-line */
+  --sky-mist: rgba(167, 216, 205, 0.35);  /* teal morning mist */
+  --sky-glow: rgba(255, 178, 125, 0.5);   /* the breathing sun-glow */
+
+  /* the mesh */
+  --mesh-node: #0b655c;
+  --mesh-thread: rgba(35, 42, 77, 0.32);
+  --mesh-halo: rgba(255, 170, 110, 0.55);
+  --mesh-halo-alt: rgba(122, 158, 245, 0.5);
+
+  --shadow: 0 4px 24px rgba(35, 42, 77, 0.07), 0 1px 4px rgba(35, 42, 77, 0.05);
+  --shadow-lift: 0 14px 40px rgba(35, 42, 77, 0.12), 0 2px 8px rgba(35, 42, 77, 0.06);
+
+  /* type */
+  --font-display: "Fraunces Variable", "Iowan Old Style", Georgia, serif;
+  --font-body: "Albert Sans Variable", -apple-system, "Segoe UI", system-ui, sans-serif;
+  --font-mono: ui-monospace, "SF Mono", SFMono-Regular, Menlo, Consolas, monospace;
+
+  /* shared type roles — enforced by the design-system contract */
+  --ac-type-page-title: clamp(2.4rem, 6vw, 3.6rem);
+  --ac-type-section-title: clamp(1.6rem, 3vw, 2.1rem);
+  --ac-type-card-title: 1.25rem;
+  --ac-type-component-title: 1.15rem;
+  --ac-type-lede: clamp(1.15rem, 2.2vw, 1.35rem);
+  --ac-type-body: 1.0625rem;
+  --ac-type-ui: 0.92rem;
+  --ac-type-meta: 0.75rem;
+  --ac-type-micro: 0.6875rem;
+  --ac-type-terminal: 0.8125rem;
+
+  --ac-leading-display: 1.1;
+  --ac-leading-heading: 1.14;
+  --ac-leading-ui: 1.25;
+  --ac-leading-card: 1.55;
+  --ac-leading-lede: 1.6;
+  --ac-leading-prose: 1.7;
+
+  --ac-tracking-display: -0.015em;
+  --ac-tracking-heading: -0.01em;
+  --ac-tracking-flat: 0;
+  --ac-tracking-caps: 0.12em;
+
+  /* horizontal roles. Page/shell widths include their fluid inset. The wide
+     rail tops out at 74rem so its usable content remains 68rem at full size. */
+  --ac-page-gutter: clamp(1.25rem, 5vw, 3rem);
+  --ac-rail-page: 58rem;
+  --ac-rail-wide: 74rem;
+  --ac-rail-deck: 68rem;
+  --ac-measure-heading: 44rem;
+  --ac-measure-prose: 42rem;
+
+  /* motion */
+  --ease-out: cubic-bezier(0.22, 1, 0.36, 1);   /* long, settling */
+  --ease-gentle: cubic-bezier(0.45, 0, 0.25, 1); /* breathing */
+
+  /* rhythm */
+  --section-pad: clamp(4.5rem, 10vh, 8rem);
+  --ac-space-diagram-before: clamp(4.5rem, 6vw, 5.5rem);
+  --ac-space-diagram-after: clamp(5.5rem, 7vw, 6.5rem);
+  --ac-sticky-header-offset: 7.5rem;
+  --radius: 1.25rem;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    /* the hour before dawn */
+    --bg: #0b0f20;            /* deep night indigo */
+    --surface: #161b36;       /* a shade nearer morning */
+    --ink: #e9ecf8;           /* starlight */
+    --ink-soft: #a9b0cf;      /* moonlit slate */
+    --accent: #7fdcc9;        /* aurora teal, bright against night */
+    --accent-strong: #7fdcc9;
+    --on-accent: #0b0f20;
+    --line: rgba(233, 236, 248, 0.14);
+    --line-soft: rgba(233, 236, 248, 0.07);
+
+    --sky-upper: rgba(64, 92, 181, 0.25);   /* night blue zenith */
+    --sky-horizon: rgba(255, 159, 102, 0.1); /* first hint of sun */
+    --sky-mist: rgba(88, 214, 181, 0.14);   /* the aurora itself */
+    --sky-glow: rgba(96, 226, 189, 0.14);
+
+    --mesh-node: #7fdcc9;
+    --mesh-thread: rgba(233, 236, 248, 0.28);
+    --mesh-halo: rgba(96, 226, 189, 0.4);
+    --mesh-halo-alt: rgba(255, 170, 120, 0.28);
+
+    --shadow: 0 4px 24px rgba(2, 4, 12, 0.5), 0 1px 4px rgba(2, 4, 12, 0.4);
+    --shadow-lift: 0 14px 40px rgba(2, 4, 12, 0.6), 0 2px 8px rgba(2, 4, 12, 0.4);
+  }
+}
+
+/* ---------- base ---------- */
+
+*,
+*::before,
+*::after {
+  box-sizing: border-box;
+}
+
+html {
+  background: var(--bg);
+  scroll-behavior: smooth;
+  overflow-x: clip;
+  -webkit-text-size-adjust: 100%;
+}
+
+body {
+  margin: 0;
+  overflow-x: clip;
+  min-height: 100dvh;
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  color: var(--ink);
+  background: transparent;
+  font-family: var(--font-body);
+  font-size: var(--ac-type-body);
+  line-height: var(--ac-leading-prose);
+  font-weight: 400;
+  text-rendering: optimizeLegibility;
+  -webkit-font-smoothing: antialiased;
+}
+
+/* The high sky belongs to the page, not to a section: every page opens
+   under the same dawn and scrolls up out of it into plain air. The sun
+   itself — the horizon glow — appears only in the home hero. */
+body::before {
+  content: "";
+  position: absolute;
+  inset: 0 0 auto 0;
+  height: min(100%, 115vh, 60rem);
+  z-index: -1;
+  pointer-events: none;
+  background:
+    radial-gradient(95% 70% at 12% -12%, var(--sky-upper), transparent 58%),
+    radial-gradient(85% 62% at 88% -6%, var(--sky-mist), transparent 60%);
+}
+
+main {
+  display: block;
+  flex: 1 0 auto;
+}
+
+h1,
+h2,
+h3 {
+  font-family: var(--font-display);
+  font-optical-sizing: auto;
+  font-variation-settings: "SOFT" 75, "WONK" 0;
+  font-weight: 440;
+  line-height: var(--ac-leading-heading);
+  letter-spacing: var(--ac-tracking-heading);
+  color: var(--ink);
+  margin: 0 0 0.6em;
+  text-wrap: balance;
+}
+
+h1 {
+  font-size: var(--ac-type-page-title);
+  font-weight: 400;
+  line-height: var(--ac-leading-display);
+  letter-spacing: var(--ac-tracking-display);
+}
+
+h2 {
+  font-size: var(--ac-type-section-title);
+}
+
+h3 {
+  font-size: var(--ac-type-component-title);
+  font-weight: 500;
+}
+
+p {
+  margin: 0 0 1.1em;
+  text-wrap: pretty;
+}
+
+p:last-child {
+  margin-bottom: 0;
+}
+
+ul,
+ol {
+  margin: 0;
+  padding: 0;
+}
+
+a {
+  color: var(--accent);
+  text-decoration: underline;
+  text-decoration-color: color-mix(in srgb, var(--accent) 40%, transparent);
+  text-decoration-thickness: 1px;
+  text-underline-offset: 0.2em;
+}
+
+a:hover {
+  text-decoration-color: var(--accent);
+}
+
+.primary-cta {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.4rem;
+  min-height: 2.75rem;
+  padding: 0.55rem 1rem;
+  border-radius: 999px;
+  background: var(--accent-strong);
+  color: var(--on-accent);
+  box-shadow: var(--shadow);
+  font-size: var(--ac-type-ui);
+  font-weight: 620;
+  line-height: 1;
+  text-decoration: none;
+}
+
+.primary-cta:hover {
+  color: var(--on-accent);
+  box-shadow: var(--shadow-lift);
+  text-decoration: none;
+}
+
+.primary-cta:focus-visible {
+  outline: 2px solid var(--on-accent);
+  outline-offset: -4px;
+  box-shadow: 0 0 0 3px var(--bg), 0 0 0 5px var(--accent), var(--shadow-lift);
+}
+
+::selection {
+  background: color-mix(in srgb, var(--accent) 22%, var(--bg));
+}
+
+code,
+.repo {
+  font-family: var(--font-mono);
+  font-size: 0.82em;
+  letter-spacing: var(--ac-tracking-flat);
+}
+
+.inline-code-chip {
+  display: inline-block;
+  max-width: 100%;
+  padding: 0.1em 0.45em;
+  border-radius: 0.25rem;
+  background: var(--line-soft);
+  color: var(--ink-soft);
+  font-family: var(--font-mono);
+  line-height: var(--ac-leading-card);
+  letter-spacing: var(--ac-tracking-flat);
+  overflow-wrap: anywhere;
+  white-space: normal;
+}
+
+svg {
+  display: block;
+}
+
+.sr-only {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+  border: 0;
+}
+
+/* ---------- focus ---------- */
+
+:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 3px;
+  border-radius: 3px;
+}
+
+.skip-link {
+  position: absolute;
+  top: 0.75rem;
+  left: 0.75rem;
+  z-index: 100;
+  padding: 0.6rem 1.1rem;
+  background: var(--surface);
+  color: var(--ink);
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  box-shadow: var(--shadow);
+  text-decoration: none;
+  font-weight: 500;
+  transform: translateY(-300%);
+}
+
+.skip-link:focus-visible {
+  transform: none;
+}
+
+/* ---------- layout primitives ---------- */
+
+.container {
+  width: min(100% - 3rem, 68rem);
+  margin-inline: auto;
+}
+
+/* New rails are assigned deliberately. `.container` remains the compatibility
+   primitive until every authored wrapper has an explicit role. */
+.page-rail,
+.shell-rail,
+.wide-rail {
+  width: 100%;
+  margin-inline: auto;
+  padding-inline: var(--ac-page-gutter);
+}
+
+.page-rail,
+.shell-rail {
+  max-width: var(--ac-rail-page);
+}
+
+.wide-rail {
+  max-width: var(--ac-rail-wide);
+}
+
+.page-content-inset {
+  width: 100%;
+  max-width: calc(var(--ac-rail-page) - (2 * var(--ac-page-gutter)));
+  margin-inline: auto;
+}
+
+.deck-content-rail {
+  width: min(100% - 3rem, var(--ac-rail-deck));
+  max-width: none;
+  margin-inline: auto;
+  padding-inline: 0;
+}
+
+:where(.page-rail, .wide-rail) > h2,
+.heading-measure {
+  max-width: var(--ac-measure-heading);
+  text-wrap: wrap;
+}
+
+.prose {
+  max-width: var(--ac-measure-prose);
+}
+
+.section {
+  padding-block: var(--section-pad);
+}
+
+.lede {
+  font-size: var(--ac-type-lede);
+  line-height: var(--ac-leading-lede);
+  font-weight: 420;
+}
+
+.muted {
+  color: var(--ink-soft);
+}
+
+.eyebrow {
+  display: block;
+  font-size: var(--ac-type-meta);
+  font-weight: 640;
+  line-height: var(--ac-leading-ui);
+  letter-spacing: var(--ac-tracking-caps);
+  text-transform: uppercase;
+  color: var(--accent);
+  margin-bottom: 1.1rem;
+}
+
+/* ---------- cards ---------- */
+
+.card {
+  display: block;
+  background: var(--surface);
+  border: 1px solid var(--line-soft);
+  border-radius: var(--radius);
+  box-shadow: var(--shadow);
+  padding: 1.9rem 2rem;
+  color: var(--ink);
+  text-decoration: none;
+}
+
+a.card:hover {
+  border-color: color-mix(in srgb, var(--accent) 40%, var(--line-soft));
+  box-shadow: var(--shadow-lift);
+}
+
+:target {
+  scroll-margin-block-start: var(--ac-sticky-header-offset);
+}
+
+/* ---------- reveal system ----------
+   Hidden states apply ONLY when (a) JS is running (html.js) and (b) the
+   visitor allows motion. Otherwise everything renders composed and still. */
+
+@media (prefers-reduced-motion: no-preference) {
+  html.js [data-reveal] {
+    opacity: 0;
+    transform: translateY(1.4rem);
+    transition:
+      opacity 0.9s var(--ease-out),
+      transform 0.9s var(--ease-out);
+    transition-delay: var(--reveal-delay, 0s);
+  }
+
+  html.js [data-reveal].is-visible {
+    opacity: 1;
+    transform: none;
+  }
+
+  a.card {
+    transition:
+      transform 0.4s var(--ease-gentle),
+      box-shadow 0.4s var(--ease-gentle),
+      border-color 0.4s var(--ease-gentle);
+  }
+
+  a.card:hover {
+    transform: translateY(-4px);
+  }
+
+  .primary-cta {
+    transition:
+      transform 0.25s var(--ease-out),
+      box-shadow 0.25s var(--ease-out);
+  }
+
+  .primary-cta:hover {
+    transform: translateY(-2px);
+  }
+
+  /* gentle cross-fade between pages — CSS-only, zero JS */
+  @view-transition {
+    navigation: auto;
+  }
+}
+
+/* shared breathing keyframes for mesh nodes and halos */
+@keyframes node-breathe {
+  from {
+    transform: scale(1);
+    opacity: 0.78;
+  }
+
+  to {
+    transform: scale(1.09);
+    opacity: 1;
+  }
+}
+
+@keyframes halo-breathe {
+  from {
+    transform: scale(1);
+    opacity: 0.5;
+  }
+
+  to {
+    transform: scale(1.14);
+    opacity: 0.95;
+  }
+}
+
+/* ---------- reduced-motion kill switch ----------
+   Belt and braces: even transitions declared in component-scoped styles
+   are silenced, and view transitions fall back to instant navigation. */
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation: none !important;
+    transition: none !important;
+  }
+
+  ::view-transition-group(*),
+  ::view-transition-old(*),
+  ::view-transition-new(*) {
+    animation: none !important;
+  }
+
+  html {
+    scroll-behavior: auto;
+  }
+}

@@ -1,0 +1,1440 @@
+{
+  "components": {
+    "parameters": {
+      "Digest": {
+        "description": "The workflow version's content digest.",
+        "in": "path",
+        "name": "digest",
+        "required": true,
+        "schema": {
+          "type": "string"
+        }
+      },
+      "RunID": {
+        "description": "The run id.",
+        "in": "path",
+        "name": "id",
+        "required": true,
+        "schema": {
+          "type": "string"
+        }
+      }
+    },
+    "schemas": {
+      "Attempt": {
+        "properties": {
+          "actor_id": {
+            "type": "string"
+          },
+          "attempt_number": {
+            "type": "integer"
+          },
+          "completed_at": {
+            "format": "date-time",
+            "type": "string"
+          },
+          "fencing_token": {
+            "type": "integer"
+          },
+          "id": {
+            "type": "string"
+          },
+          "node_run_id": {
+            "type": "string"
+          },
+          "result": {
+            "description": "The attempt's reported output, as submitted."
+          },
+          "started_at": {
+            "format": "date-time",
+            "type": "string"
+          },
+          "status": {
+            "enum": [
+              "succeeded",
+              "failed",
+              "timed_out",
+              "cancelled",
+              "policy_denied",
+              "contract_rejected"
+            ],
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "node_run_id",
+          "attempt_number",
+          "status",
+          "started_at"
+        ],
+        "type": "object"
+      },
+      "CommitReviewRequest": {
+        "properties": {
+          "decisions": {
+            "additionalProperties": {
+              "enum": [
+                "confirm",
+                "reject"
+              ],
+              "type": "string"
+            },
+            "description": "Map of record id to verdict.",
+            "type": "object"
+          },
+          "expected_ledger_version": {
+            "description": "The ledger version the caller expects to still hold. A mismatch is refused with 409, nothing written.",
+            "format": "int64",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "decisions",
+          "expected_ledger_version"
+        ],
+        "type": "object"
+      },
+      "CreateReviewRequest": {
+        "properties": {
+          "ledger_version": {
+            "description": "The run's ledger version this request was read at.",
+            "format": "int64",
+            "type": "integer"
+          },
+          "record_ids": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          },
+          "reviewer_actor_id": {
+            "description": "The human actor the review is bound to. Required for the review to ever be committable.",
+            "type": "string"
+          }
+        },
+        "required": [
+          "record_ids",
+          "ledger_version"
+        ],
+        "type": "object"
+      },
+      "CreateRunRequest": {
+        "properties": {
+          "input": {
+            "description": "The run input. Validated against the workflow's input contract."
+          },
+          "workflow_digest": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "workflow_digest"
+        ],
+        "type": "object"
+      },
+      "Diagnostic": {
+        "properties": {
+          "code": {
+            "type": "string"
+          },
+          "hint": {
+            "type": "string"
+          },
+          "level": {
+            "enum": [
+              "error",
+              "warning"
+            ],
+            "type": "string"
+          },
+          "message": {
+            "type": "string"
+          },
+          "path": {
+            "description": "A JSON Pointer into the submitted document.",
+            "type": "string"
+          }
+        },
+        "required": [
+          "level",
+          "path",
+          "code",
+          "message",
+          "hint"
+        ],
+        "type": "object"
+      },
+      "Error": {
+        "description": "The stable error shape, every non-2xx response, every operation. Mirrors internal/clifmt.CliError's JSON encoding exactly: `code` follows the same exit-code-style bucket (1 = domain/user error such as not-found or conflict, 2 = environment error such as a database outage), and the HTTP status line carries the specific condition.",
+        "properties": {
+          "code": {
+            "enum": [
+              1,
+              2
+            ],
+            "type": "integer"
+          },
+          "message": {
+            "type": "string"
+          },
+          "remediation": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "code",
+          "message",
+          "remediation"
+        ],
+        "type": "object"
+      },
+      "Health": {
+        "properties": {
+          "status": {
+            "enum": [
+              "ok"
+            ],
+            "type": "string"
+          }
+        },
+        "required": [
+          "status"
+        ],
+        "type": "object"
+      },
+      "LedgerRecord": {
+        "properties": {
+          "attempt_id": {
+            "type": "string"
+          },
+          "authority": {
+            "enum": [
+              "proposed",
+              "confirmed",
+              "observed",
+              "derived",
+              "rejected",
+              "superseded"
+            ],
+            "type": "string"
+          },
+          "content_digest": {
+            "type": "string"
+          },
+          "created_at": {
+            "format": "date-time",
+            "type": "string"
+          },
+          "data": {
+            "description": "The record's typed payload."
+          },
+          "id": {
+            "type": "string"
+          },
+          "node_run_id": {
+            "type": "string"
+          },
+          "origin": {
+            "properties": {
+              "actor_id": {
+                "type": "string"
+              },
+              "actor_revision": {
+                "type": "string"
+              },
+              "kind": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "kind",
+              "actor_id"
+            ],
+            "type": "object"
+          },
+          "provenance_refs": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          },
+          "record_type": {
+            "type": "string"
+          },
+          "run_id": {
+            "type": "string"
+          },
+          "schema_version": {
+            "type": "string"
+          },
+          "subject_ref": {
+            "type": "string"
+          },
+          "supersedes": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "schema_version",
+          "record_type",
+          "run_id",
+          "origin",
+          "authority",
+          "data",
+          "provenance_refs",
+          "created_at",
+          "content_digest"
+        ],
+        "type": "object"
+      },
+      "LedgerRecords": {
+        "properties": {
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/LedgerRecord"
+            },
+            "type": "array"
+          },
+          "ledger_version": {
+            "format": "int64",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "items",
+          "ledger_version"
+        ],
+        "type": "object"
+      },
+      "NodeRun": {
+        "properties": {
+          "attempts": {
+            "items": {
+              "$ref": "#/components/schemas/Attempt"
+            },
+            "type": "array"
+          },
+          "completed_at": {
+            "format": "date-time",
+            "type": "string"
+          },
+          "created_at": {
+            "format": "date-time",
+            "type": "string"
+          },
+          "id": {
+            "type": "string"
+          },
+          "node_id": {
+            "type": "string"
+          },
+          "outcome": {
+            "type": "string"
+          },
+          "state": {
+            "enum": [
+              "ready",
+              "leased",
+              "running",
+              "waiting_external",
+              "completed",
+              "failed",
+              "cancelled"
+            ],
+            "type": "string"
+          },
+          "token_id": {
+            "type": "string"
+          },
+          "updated_at": {
+            "format": "date-time",
+            "type": "string"
+          },
+          "visit_count": {
+            "type": "integer"
+          }
+        },
+        "required": [
+          "id",
+          "node_id",
+          "state",
+          "visit_count",
+          "created_at"
+        ],
+        "type": "object"
+      },
+      "Projection": {
+        "properties": {
+          "digest": {
+            "type": "string"
+          },
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/LedgerRecord"
+            },
+            "type": "array"
+          },
+          "kind": {
+            "type": "string"
+          },
+          "subject": {
+            "type": "string"
+          },
+          "summary": {
+            "description": "Populated only by the delivery_summary projection."
+          }
+        },
+        "required": [
+          "kind",
+          "subject",
+          "items",
+          "digest"
+        ],
+        "type": "object"
+      },
+      "ReviewCommitResult": {
+        "properties": {
+          "ledger_version": {
+            "format": "int64",
+            "type": "integer"
+          },
+          "records": {
+            "items": {
+              "$ref": "#/components/schemas/LedgerRecord"
+            },
+            "type": "array"
+          },
+          "review_id": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "review_id",
+          "records",
+          "ledger_version"
+        ],
+        "type": "object"
+      },
+      "ReviewRequest": {
+        "properties": {
+          "created_at": {
+            "format": "date-time",
+            "type": "string"
+          },
+          "frame_checksum": {
+            "type": "string"
+          },
+          "id": {
+            "type": "string"
+          },
+          "ledger_version": {
+            "format": "int64",
+            "type": "integer"
+          },
+          "record_ids": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          },
+          "reviewer_actor_id": {
+            "type": "string"
+          },
+          "run_id": {
+            "type": "string"
+          },
+          "status": {
+            "enum": [
+              "requested",
+              "committed"
+            ],
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "run_id",
+          "status",
+          "ledger_version",
+          "frame_checksum",
+          "record_ids",
+          "created_at"
+        ],
+        "type": "object"
+      },
+      "Run": {
+        "properties": {
+          "completed_at": {
+            "format": "date-time",
+            "type": "string"
+          },
+          "created_at": {
+            "format": "date-time",
+            "type": "string"
+          },
+          "id": {
+            "type": "string"
+          },
+          "input": {
+            "description": "The run input, as submitted."
+          },
+          "output": {
+            "description": "The run's result. Present only once the run has completed."
+          },
+          "state": {
+            "$ref": "#/components/schemas/RunState"
+          },
+          "updated_at": {
+            "format": "date-time",
+            "type": "string"
+          },
+          "workflow_digest": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "workflow_digest",
+          "state",
+          "created_at",
+          "updated_at"
+        ],
+        "type": "object"
+      },
+      "RunList": {
+        "properties": {
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/Run"
+            },
+            "type": "array"
+          }
+        },
+        "required": [
+          "items"
+        ],
+        "type": "object"
+      },
+      "RunState": {
+        "enum": [
+          "created",
+          "running",
+          "waiting",
+          "completed",
+          "failed",
+          "cancelled"
+        ],
+        "type": "string"
+      },
+      "RunView": {
+        "description": "The Run-view payload (PRD §8.6 Run, §8.7 first visual slice): the run itself, every token, and every node run with its attempts nested — one round trip for the whole graph position and history.",
+        "properties": {
+          "node_runs": {
+            "items": {
+              "$ref": "#/components/schemas/NodeRun"
+            },
+            "type": "array"
+          },
+          "run": {
+            "$ref": "#/components/schemas/Run"
+          },
+          "tokens": {
+            "items": {
+              "$ref": "#/components/schemas/Token"
+            },
+            "type": "array"
+          }
+        },
+        "required": [
+          "run",
+          "tokens",
+          "node_runs"
+        ],
+        "type": "object"
+      },
+      "Token": {
+        "properties": {
+          "consumed_at": {
+            "format": "date-time",
+            "type": "string"
+          },
+          "created_at": {
+            "format": "date-time",
+            "type": "string"
+          },
+          "id": {
+            "type": "string"
+          },
+          "node_id": {
+            "type": "string"
+          },
+          "parent_token_id": {
+            "type": "string"
+          },
+          "state": {
+            "enum": [
+              "active",
+              "consumed"
+            ],
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "node_id",
+          "state",
+          "created_at"
+        ],
+        "type": "object"
+      },
+      "WorkflowSource": {
+        "properties": {
+          "format": {
+            "default": "yaml",
+            "enum": [
+              "yaml",
+              "json"
+            ],
+            "type": "string"
+          },
+          "source": {
+            "description": "The workflow document, in the given format.",
+            "type": "string"
+          }
+        },
+        "required": [
+          "source"
+        ],
+        "type": "object"
+      },
+      "WorkflowValidation": {
+        "properties": {
+          "diagnostics": {
+            "items": {
+              "$ref": "#/components/schemas/Diagnostic"
+            },
+            "type": "array"
+          },
+          "digest": {
+            "description": "The content digest of the normalized IR. Empty when the document has error diagnostics.",
+            "type": "string"
+          },
+          "valid": {
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "valid",
+          "digest",
+          "diagnostics"
+        ],
+        "type": "object"
+      },
+      "WorkflowVersion": {
+        "properties": {
+          "created_at": {
+            "format": "date-time",
+            "type": "string"
+          },
+          "digest": {
+            "type": "string"
+          },
+          "id": {
+            "type": "string"
+          },
+          "normalized_ir": {
+            "description": "The normalized IR, as a JSON value."
+          },
+          "source": {
+            "type": "string"
+          },
+          "source_format": {
+            "enum": [
+              "yaml",
+              "json"
+            ],
+            "type": "string"
+          },
+          "version": {
+            "type": "integer"
+          },
+          "workflow_key": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "workflow_key",
+          "version",
+          "source_format",
+          "source",
+          "normalized_ir",
+          "digest",
+          "created_at"
+        ],
+        "type": "object"
+      },
+      "WorkflowVersionList": {
+        "properties": {
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/WorkflowVersion"
+            },
+            "type": "array"
+          }
+        },
+        "required": [
+          "items"
+        ],
+        "type": "object"
+      }
+    }
+  },
+  "info": {
+    "description": "The Culture Nodes control-plane API (docs/initial-design/culture-nodes-prd-spec.md §12.1, §15.1): workflow publication, run orchestration, the append-only work ledger, and review transactions. group: nodes.culture.dev/v1alpha1.\nPhase 1 runs authless by design (spec decision c45): this API carries no authentication or authorization of its own and is meant to run behind a private network. Every operation is reachable by anyone who can reach the listener. Do not expose this API on a public network without a fronting proxy that adds authentication.\nEvery error response, on every operation, uses the Error schema below — the same {code, message, remediation} shape internal/clifmt.CliError renders for the CLI — with the HTTP status line carrying the specific condition.",
+    "license": {
+      "name": "Apache-2.0"
+    },
+    "summary": "Culture Nodes control-plane API",
+    "title": "nodes.culture.dev/v1alpha1",
+    "version": "0.1.0"
+  },
+  "openapi": "3.1.0",
+  "paths": {
+    "/v1alpha1/healthz": {
+      "get": {
+        "description": "Always `200` once the process is serving requests. Does not touch the database.",
+        "operationId": "healthz",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Health"
+                }
+              }
+            },
+            "description": "The process is alive."
+          }
+        },
+        "summary": "Liveness probe.",
+        "tags": [
+          "operations"
+        ]
+      }
+    },
+    "/v1alpha1/readyz": {
+      "get": {
+        "operationId": "readyz",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Health"
+                }
+              }
+            },
+            "description": "The process is ready to serve traffic."
+          },
+          "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "description": "The database is not reachable."
+          }
+        },
+        "summary": "Readiness probe — pings the database.",
+        "tags": [
+          "operations"
+        ]
+      }
+    },
+    "/v1alpha1/reviews/{id}/commit": {
+      "post": {
+        "description": "Applies confirm/reject decisions for every record the review named, all in one transaction, or none (PRD §10.8). Refused — with nothing written — when the caller's expected ledger version no longer matches: the ledger moved, a reviewed record was superseded, or the reviewed frame no longer checksums to what was requested.",
+        "operationId": "commitReview",
+        "parameters": [
+          {
+            "description": "The review request id.",
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CommitReviewRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ReviewCommitResult"
+                }
+              }
+            },
+            "description": "The review was committed."
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "description": "The decision set does not exactly cover the records under review."
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "description": "No review request has this id."
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "description": "The review is stale (the ledger moved, the expected version does not match, a target was superseded, or the frame checksum no longer matches) or was already committed."
+          }
+        },
+        "summary": "Commit a review's decisions.",
+        "tags": [
+          "reviews"
+        ]
+      }
+    },
+    "/v1alpha1/runs": {
+      "get": {
+        "operationId": "listRuns",
+        "parameters": [
+          {
+            "description": "Filter to runs currently in this state.",
+            "in": "query",
+            "name": "state",
+            "schema": {
+              "$ref": "#/components/schemas/RunState"
+            }
+          },
+          {
+            "in": "query",
+            "name": "limit",
+            "schema": {
+              "default": 50,
+              "maximum": 500,
+              "minimum": 1,
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RunList"
+                }
+              }
+            },
+            "description": "A page of runs, newest first."
+          }
+        },
+        "summary": "List runs, optionally filtered by state.",
+        "tags": [
+          "runs"
+        ]
+      },
+      "post": {
+        "description": "Pins the run to the given workflow digest's immutable normalized IR (PRD §20.1) and creates the entry token and node run in one transaction (PRD §12.5). The run is claimable the moment this returns.",
+        "operationId": "createRun",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CreateRunRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Run"
+                }
+              }
+            },
+            "description": "The run was created and is now running."
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "description": "The input does not satisfy the workflow's input contract."
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "description": "No workflow version has the given digest."
+          }
+        },
+        "summary": "Create a run of a published workflow.",
+        "tags": [
+          "runs"
+        ]
+      }
+    },
+    "/v1alpha1/runs/{id}": {
+      "get": {
+        "description": "The data behind the PRD §8.6 Run view and §8.7 first visual slice's node-detail panel: everything needed to render a run's current graph position and history without a second round trip per node.",
+        "operationId": "getRun",
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/RunID"
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RunView"
+                }
+              }
+            },
+            "description": "The run view."
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "description": "No run has this id."
+          }
+        },
+        "summary": "Fetch the Run-view payload — run, tokens, node runs, and attempts.",
+        "tags": [
+          "runs"
+        ]
+      }
+    },
+    "/v1alpha1/runs/{id}/cancel": {
+      "post": {
+        "description": "Consumes every active token, marks every non-terminal node run and ready work item cancelled, and moves the run to `cancelled` — under the same per-run advisory lock the engine's own completion transaction takes (PRD §12.5), so a cancel cannot interleave with a concurrent attempt completion. A node run a worker already holds a lease on finishes that lease's fenced completion path (it will find the node run terminal and no-op); cancellation does not reach into an in-flight attempt.",
+        "operationId": "cancelRun",
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/RunID"
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Run"
+                }
+              }
+            },
+            "description": "The run is now cancelled."
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "description": "No run has this id."
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "description": "The run has already reached a terminal state."
+          }
+        },
+        "summary": "Cancel a run.",
+        "tags": [
+          "runs"
+        ]
+      }
+    },
+    "/v1alpha1/runs/{id}/events": {
+      "get": {
+        "description": "Streams only committed events (PRD §15.1 CloudEvents-compatible envelopes), polling the events table every 500ms for rows newer than the resume point. Resume by per-run sequence: send `Last-Event-ID` (a previously received `id:` field) to resume after a disconnect, or the `from` query parameter for a client that cannot set headers before its first connection. Each frame is `id: \u003csequence\u003e\\nevent: \u003ctype\u003e\\ndata: \u003cenvelope JSON\u003e\\n\\n`. The stream ends (the connection closes normally) once a terminal run event (`run.completed`, `run.failed`, `run.cancelled`, or `run.bounded`) has been sent, since no further event will ever be appended for this run.",
+        "operationId": "streamRunEvents",
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/RunID"
+          },
+          {
+            "description": "Resume after this per-run sequence number.",
+            "in": "header",
+            "name": "Last-Event-ID",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "description": "Resume after this per-run sequence number, when a Last-Event-ID header cannot be set.",
+            "in": "query",
+            "name": "from",
+            "schema": {
+              "format": "int64",
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "text/event-stream": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            },
+            "description": "A `text/event-stream` of committed events."
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "description": "No run has this id."
+          }
+        },
+        "summary": "Server-Sent Events stream of a run's committed events.",
+        "tags": [
+          "events"
+        ]
+      }
+    },
+    "/v1alpha1/runs/{id}/ledger": {
+      "get": {
+        "description": "The PRD §8.6 Ledger view's raw feed — every record, live and superseded, in append order.",
+        "operationId": "listLedgerRecords",
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/RunID"
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/LedgerRecords"
+                }
+              }
+            },
+            "description": "The run's ledger records and current ledger version."
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "description": "No run has this id."
+          }
+        },
+        "summary": "List a run's ledger records.",
+        "tags": [
+          "ledger"
+        ]
+      }
+    },
+    "/v1alpha1/runs/{id}/ledger/projections/{name}": {
+      "get": {
+        "operationId": "getLedgerProjection",
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/RunID"
+          },
+          {
+            "description": "One of: current_scope, confirmed_claims, open_assumptions_and_questions, ready_tasks, active_tasks, verification_queue, decision_history, evidence_for_subject, delivery_summary.",
+            "in": "path",
+            "name": "name",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "description": "Required by, and used only by, evidence_for_subject — the reference to project evidence for.",
+            "in": "query",
+            "name": "subject",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Projection"
+                }
+              }
+            },
+            "description": "The projection, self-describing digest included."
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "description": "name is not a recognized projection."
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "description": "No run has this id."
+          }
+        },
+        "summary": "Compute one of the PRD §10.9 standard projections over a run's ledger.",
+        "tags": [
+          "ledger"
+        ]
+      }
+    },
+    "/v1alpha1/runs/{id}/reviews": {
+      "post": {
+        "description": "Records the ledger version and content-digest frame checksum the reviewer is looking at (PRD §10.8), so a later commit against a ledger that has since moved is refused rather than silently applied.",
+        "operationId": "createReview",
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/RunID"
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CreateReviewRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ReviewRequest"
+                }
+              }
+            },
+            "description": "The review request was created."
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "description": "The request is malformed."
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "description": "No run has this id, or a named record does not belong to it."
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "description": "The request names a ledger version that is not the run's current one."
+          }
+        },
+        "summary": "Create a review request over a batch of ledger records.",
+        "tags": [
+          "reviews"
+        ]
+      }
+    },
+    "/v1alpha1/workflows": {
+      "get": {
+        "operationId": "listWorkflows",
+        "parameters": [
+          {
+            "description": "Filter to versions of one workflow key.",
+            "in": "query",
+            "name": "workflow_key",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "limit",
+            "schema": {
+              "default": 50,
+              "maximum": 500,
+              "minimum": 1,
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/WorkflowVersionList"
+                }
+              }
+            },
+            "description": "A page of workflow versions, newest first."
+          }
+        },
+        "summary": "List published workflow versions.",
+        "tags": [
+          "workflows"
+        ]
+      },
+      "post": {
+        "description": "Compiles the submitted source and, if it compiles cleanly, stores it as an immutable workflow version addressed by its content digest (PRD §11.3). Publishing the same content twice is idempotent: the existing version is returned with `200 OK` rather than a conflict, because a digest is a statement about content, not about who asked first.",
+        "operationId": "publishWorkflow",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/WorkflowSource"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/WorkflowVersion"
+                }
+              }
+            },
+            "description": "This content digest was already published; the existing version is returned."
+          },
+          "201": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/WorkflowVersion"
+                }
+              }
+            },
+            "description": "A new immutable workflow version was created."
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "description": "The request is malformed."
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "description": "The document does not compile. Call `POST /v1alpha1/workflows/validate` first for the full diagnostic list; this response's `message` summarizes the error count."
+          }
+        },
+        "summary": "Publish a workflow definition as an immutable version.",
+        "tags": [
+          "workflows"
+        ]
+      }
+    },
+    "/v1alpha1/workflows/validate": {
+      "post": {
+        "description": "Runs the PRD §11.4 validation levels over the submitted source and returns every diagnostic. This never persists anything — a document with error diagnostics is a documented domain outcome (`valid: false` with an empty digest), not an HTTP error, matching the `nodes validate` CLI verb (PRD §3.4: a domain outcome is not a technical failure).",
+        "operationId": "validateWorkflow",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/WorkflowSource"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/WorkflowValidation"
+                }
+              }
+            },
+            "description": "The document was compiled. `valid` reports whether it has any error diagnostic."
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "description": "The request itself is malformed (missing source, unknown format)."
+          }
+        },
+        "summary": "Compile a workflow definition and report diagnostics.",
+        "tags": [
+          "workflows"
+        ]
+      }
+    },
+    "/v1alpha1/workflows/{digest}": {
+      "get": {
+        "operationId": "getWorkflow",
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/Digest"
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/WorkflowVersion"
+                }
+              }
+            },
+            "description": "The workflow version."
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "description": "No workflow version has this digest."
+          }
+        },
+        "summary": "Fetch one immutable workflow version by content digest.",
+        "tags": [
+          "workflows"
+        ]
+      }
+    }
+  },
+  "servers": [
+    {
+      "description": "The API is served relative to whatever host and port `nodes serve` binds.",
+      "url": "/"
+    }
+  ],
+  "tags": [
+    {
+      "description": "Compile, publish, and read immutable workflow versions (PRD §11).",
+      "name": "workflows"
+    },
+    {
+      "description": "Create and inspect workflow runs — the Run-view payload (PRD §8.6, §8.7).",
+      "name": "runs"
+    },
+    {
+      "description": "Server-Sent Events stream of committed run events (PRD §15.1).",
+      "name": "events"
+    },
+    {
+      "description": "The append-only work ledger and its projections (PRD §10).",
+      "name": "ledger"
+    },
+    {
+      "description": "Human review transactions over ledger records (PRD §10.8).",
+      "name": "reviews"
+    },
+    {
+      "description": "Liveness and readiness probes.",
+      "name": "operations"
+    }
+  ]
+}

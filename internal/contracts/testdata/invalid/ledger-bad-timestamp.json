@@ -1,0 +1,21 @@
+{
+  "id": "ledger_fixture_bad_timestamp",
+  "schema_version": "nodes.culture.dev/ledger/v1alpha1",
+  "record_type": "claim",
+  "run_id": "run_fixture",
+  "node_run_id": null,
+  "attempt_id": null,
+  "origin": {
+    "kind": "agent",
+    "actor_id": "actor_developer"
+  },
+  "authority": "proposed",
+  "subject_ref": null,
+  "data": {
+    "statement": "INVALID FIXTURE: `created_at` is prose, not RFC 3339. Format assertions are switched on deliberately — an unparseable timestamp on an immutable record would make the ledger's ordering a guess, so /created_at must be rejected."
+  },
+  "provenance_refs": [],
+  "supersedes": null,
+  "created_at": "yesterday afternoon",
+  "content_digest": "sha256:8ac6e4bb9b54d3fe7cb1823694feeb21852a7c258e702df107f264ccf62a1ffd"
+}

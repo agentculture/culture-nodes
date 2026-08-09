@@ -1,0 +1,66 @@
+{
+  "apiVersion": "nodes.culture.dev/v1alpha1",
+  "kind": "Workflow",
+  "metadata": {
+    "name": "minimal",
+    "version": "0.1.0",
+    "ownerRef": "team/platform-ai"
+  },
+  "spec": {
+    "entry": "build",
+    "contract": {
+      "input": {
+        "schemaRef": "./contracts/change-request.schema.json"
+      },
+      "output": {
+        "schemaRef": "./contracts/delivery-result.schema.json"
+      }
+    },
+    "nodes": {
+      "build": {
+        "kind": "agent",
+        "ownerRef": "team/developer-experience",
+        "uses": "actor://company/developer@sha256:333333",
+        "contract": {
+          "outcomes": {
+            "completed": {
+              "schemaRef": "./contracts/change-set.schema.json"
+            }
+          }
+        },
+        "input": {
+          "from": "/run/input"
+        },
+        "ledger": {
+          "read": [
+            "current_scope"
+          ],
+          "propose": [
+            "claim",
+            "result"
+          ]
+        },
+        "policy": {
+          "timeout": "15m",
+          "retry": {
+            "maxAttempts": 2,
+            "backoff": "exponential"
+          }
+        }
+      },
+      "finish": {
+        "kind": "end",
+        "ownerRef": "team/platform-ai",
+        "output": {
+          "from": "/nodes/build/output"
+        }
+      }
+    },
+    "edges": [
+      {
+        "from": "build.completed",
+        "to": "finish"
+      }
+    ]
+  }
+}

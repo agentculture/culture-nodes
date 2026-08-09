@@ -1,0 +1,35 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://nodes.culture.dev/schemas/ledger/announcement.schema.json",
+  "title": "Ledger record: announcement",
+  "description": "A concise goal, scope, or intended outcome (PRD §10.2).",
+  "allOf": [
+    {
+      "$ref": "envelope.schema.json"
+    }
+  ],
+  "required": [
+    "record_type"
+  ],
+  "properties": {
+    "record_type": {
+      "const": "announcement"
+    },
+    "data": {
+      "type": "object",
+      "$comment": "Phase 0: payload shape is deliberately loose. Named properties are optional and documentary; a later task pins the payload contract per record type.",
+      "properties": {
+        "headline": {
+          "type": "string",
+          "minLength": 1
+        },
+        "body": {
+          "type": "string"
+        },
+        "scope": {
+          "type": "string"
+        }
+      }
+    }
+  }
+}

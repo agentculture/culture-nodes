@@ -1,0 +1,246 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://nodes.culture.dev/schemas/runner/operation.schema.json",
+  "title": "Runner operation",
+  "description": "A typed code-execution operation submitted to a runner (PRD §13.7), kept runner-neutral so both the headspace Docker runner and a Lambda container-image function adapter map onto the same document. The control plane never executes code: it describes an operation, and a runner executes it behind an enforced policy boundary. A wrapper that checks policy and then hands an unrestricted shell to another process does not satisfy that boundary.",
+  "type": "object",
+  "required": [
+    "operation_id",
+    "runner",
+    "runner_revision",
+    "execution",
+    "command",
+    "policy",
+    "evidence"
+  ],
+  "additionalProperties": false,
+  "properties": {
+    "operation_id": {
+      "$ref": "#/$defs/identifier",
+      "description": "Caller-assigned operation identity, also the idempotency key for dispatch."
+    },
+    "runner": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 64,
+      "pattern": "^[a-z][a-z0-9_-]*$",
+      "description": "Logical runner name, e.g. `headspace` or `lambda`. The engine does not branch on this value; adapters register under it."
+    },
+    "runner_revision": {
+      "$ref": "#/$defs/digest",
+      "description": "Pinned revision of the runner the caller expects. Part of the replay manifest."
+    },
+    "workspace": {
+      "type": "object",
+      "description": "Immutable input workspace. Absent when the operation genuinely has no workspace — absence is explicit, never an empty stand-in.",
+      "required": [
+        "source_ref",
+        "source_digest",
+        "write_mode"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "source_ref": {
+          "type": "string",
+          "minLength": 1,
+          "description": "Artifact reference for the input workspace, e.g. `artifact://workspace/input`."
+        },
+        "source_digest": {
+          "$ref": "#/$defs/digest"
+        },
+        "write_mode": {
+          "type": "string",
+          "enum": [
+            "read-only",
+            "copy-on-write"
+          ],
+          "description": "`copy-on-write` is the safe default; inputs stay immutable either way."
+        }
+      }
+    },
+    "execution": {
+      "type": "object",
+      "description": "The pinned execution environment. `container` covers an OCI image run by an isolating runner; `function` covers a managed function backed by a container image. Both are pinned by image digest — an unpinned tag is not an execution environment.",
+      "required": [
+        "kind",
+        "image_digest"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "kind": {
+          "type": "string",
+          "enum": [
+            "container",
+            "function"
+          ]
+        },
+        "image_ref": {
+          "type": "string",
+          "minLength": 1,
+          "description": "Registry reference or registered function identity. Dispatch to an identity absent from the runner's registry is refused by the adapter, not by this schema."
+        },
+        "image_digest": {
+          "$ref": "#/$defs/digest"
+        },
+        "user": {
+          "type": "string",
+          "minLength": 1,
+          "description": "Non-root execution identity, e.g. `65532:65532`, when the runner can set one."
+        },
+        "read_only_root": {
+          "type": "boolean",
+          "description": "Read-only root filesystem. Safe default is true."
+        }
+      }
+    },
+    "command": {
+      "type": "object",
+      "description": "What to execute inside the pinned image. The command is an argument array, never a shell string.",
+      "required": [
+        "argv"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "argv": {
+          "type": "array",
+          "minItems": 1,
+          "items": {
+            "type": "string"
+          }
+        },
+        "working_directory": {
+          "type": "string",
+          "minLength": 1
+        },
+        "environment_refs": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "uniqueItems": true,
+          "description": "Named references to individually granted environment values. No implicit environment is inherited and secrets are absent unless granted."
+        },
+        "requires_shell": {
+          "type": "boolean",
+          "description": "Declared explicitly when a shell is genuinely required, so policy can reject the operation instead of discovering the shell at runtime."
+        }
+      }
+    },
+    "policy": {
+      "type": "object",
+      "description": "Limits enforced inside dispatch to the runner. Fields a given runner cannot enforce must be rejected by that adapter rather than silently ignored.",
+      "required": [
+        "timeout_seconds",
+        "network",
+        "allowed_output_paths"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "timeout_seconds": {
+          "type": "integer",
+          "minimum": 1,
+          "description": "Wall-clock bound. An adapter whose platform caps duration below this value rejects the operation at validate time, naming the cap."
+        },
+        "cpu": {
+          "type": "number",
+          "exclusiveMinimum": 0,
+          "description": "CPU units. Omitted when the runner derives CPU from memory rather than accepting it."
+        },
+        "memory_mib": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "pids": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "disk_mib": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "network": {
+          "type": "string",
+          "enum": [
+            "none",
+            "egress-allowlist",
+            "full"
+          ],
+          "description": "`none` is the safe default."
+        },
+        "egress_allowlist": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "uniqueItems": true,
+          "description": "Required to be meaningful only when `network` is `egress-allowlist`."
+        },
+        "allowed_output_paths": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "minLength": 1
+          },
+          "uniqueItems": true,
+          "description": "Explicitly allowed output paths. An empty array means no writable output is permitted, and says so."
+        }
+      }
+    },
+    "evidence": {
+      "type": "object",
+      "description": "What the caller asks the runner to observe. A runner that cannot honour a request must say so in the result's observations rather than fabricate the observation.",
+      "required": [
+        "snapshot_before",
+        "snapshot_after",
+        "capture_exit",
+        "capture_logs"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "snapshot_before": {
+          "type": "boolean"
+        },
+        "snapshot_after": {
+          "type": "boolean"
+        },
+        "capture_exit": {
+          "type": "boolean"
+        },
+        "capture_logs": {
+          "type": "boolean"
+        },
+        "capture_resource_usage": {
+          "type": "boolean"
+        }
+      }
+    },
+    "context": {
+      "type": "object",
+      "description": "Optional correlation back to the graph: run, node run, and attempt. The runner treats these as opaque.",
+      "additionalProperties": false,
+      "properties": {
+        "run_id": {
+          "$ref": "#/$defs/identifier"
+        },
+        "node_run_id": {
+          "$ref": "#/$defs/identifier"
+        },
+        "attempt_id": {
+          "$ref": "#/$defs/identifier"
+        }
+      }
+    }
+  },
+  "$defs": {
+    "identifier": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 128,
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9_.:@/+-]*$"
+    },
+    "digest": {
+      "type": "string",
+      "pattern": "^sha256:[0-9a-f]{64}$"
+    }
+  }
+}

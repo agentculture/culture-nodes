@@ -12,7 +12,7 @@ suite. It is not installed as part of a culture-nodes deployment.
 
 ## Deployment model
 
-```
+```text
    Culture Nodes control plane                 Agent host (this bridge)
    ┌─────────────────────────┐   HTTPS POST    ┌──────────────────────────┐
    │ engine dispatches an     │ ───────────────▶│ colleague-bridge          │

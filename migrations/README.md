@@ -44,4 +44,3 @@ compatibility promise, and the k8s Job migrate-before-rollout pattern.
    shape — see the ADR.
 3. Run `nodes migrate` against a scratch database and add/extend a Go test
    in `internal/store/postgres` covering the new shape.
-

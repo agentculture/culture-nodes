@@ -2,22 +2,34 @@
 #
 # This is PRD §11.1's authoring example, made executable: intake → plan →
 # build → test → verify, with `test.failed` and `verify.changes_required` both
-# looping back to build. It is the workflow tests/e2e/slice_test.go drives end
-# to end against a real PostgreSQL, a real engine, a real worker, and a real
-# runner, and it is the workflow `nodes validate` is expected to compile with
-# zero diagnostics.
+# looping back to build and `verify.blocked` routing to a human-review
+# approval node. It is the workflow tests/e2e/slice_test.go and
+# tests/e2e/humanreview_test.go drive end to end against a real PostgreSQL, a
+# real engine, a real worker, and a real runner, and it is the workflow
+# `nodes validate` is expected to compile with zero diagnostics.
+#
+# The human-review branch was absent from this file for one cycle. While the
+# human-task surface was deferred (deviation d1, github issue #3) a run
+# reaching an approval node would have failed with a `not_implemented`
+# diagnostic, so `verify` declared only `passed` and `changes_required` and
+# this comment's first recorded difference read "NO APPROVAL NODE". That
+# surface shipped — the engine parks an approval node's token by writing a
+# human_tasks row and never enqueuing work, the decision endpoint resumes it
+# under human authority, and the worker provably never observes approval work
+# — so `blocked`, the `human-review` node, and its two decision edges are
+# restored here as §11.1 authored them, and tests/e2e/humanreview_test.go
+# walks the branch end to end.
 #
 # Three deliberate differences from the PRD's §11.1 listing, each recorded
 # rather than quietly absorbed:
 #
-#  1. NO APPROVAL NODE. §11.1 routes `verify.blocked` to a `human-review`
-#     approval node. The approval / human-task surface is DEFERRED — deviation
-#     d1, github issue #3 — and internal/worker has no HumanDispatcher wired
-#     in this build, so an approval node here would fail every run that
-#     reached it with a `not_implemented` diagnostic. Rather than ship a
-#     reference workflow with an unreachable-by-design dead end, `verify`
-#     declares only `passed` and `changes_required`. Restoring `blocked` and
-#     the approval node is the first thing to do when d1 lifts.
+#  1. The `human-review` node binds `/nodes/verify/output` as its input, which
+#     §11.1's listing leaves off. PRD §9.9 requires a human task to carry
+#     "exact context and artifact references", and an approver handed a task
+#     with no pointer to the blocker they are ruling on has been given a
+#     decision without its subject. The binding is carried into the task as a
+#     reference, not resolved into a payload (see internal/engine's
+#     humanTaskContext), so this adds context without adding engine work.
 #
 #  2. The `verify` node binds `/ledger/projections/evidence` where §11.1 binds
 #     `/nodes/test/evidence`. The per-node evidence surface is not resolvable
@@ -242,6 +254,15 @@ spec:
               properties:
                 verdict:
                   type: string
+          # A blocker is a third domain answer, and the only one the verifier
+          # is not entitled to act on alone: it routes to a person.
+          blocked:
+            schema:
+              type: object
+              required: [verdict]
+              properties:
+                verdict:
+                  type: string
       ledger:
         read: [current_scope, active_tasks, verification_queue]
         propose: [claim, result, question]
@@ -249,6 +270,26 @@ spec:
         timeout: 20m
         retry:
           maxAttempts: 2
+
+    # The approval node (PRD §9.9). A token arriving here creates a human task
+    # — decision schema, approver group, deadline, context references, audit
+    # identity, allowed outcomes — and the run PAUSES: no work item is
+    # enqueued for it, so no worker can claim it and no lease or transaction is
+    # held while it waits. It resumes only when a person answers through
+    # POST /v1alpha1/human-tasks/{id}/decision, and the outcome they select
+    # routes the edge: `approved` sends the work back to build, `rejected`
+    # ends the run. `expired` is the third implied port (PRD §9.2) and, as in
+    # §11.1's own listing, is left unrouted: a decision nobody made has no
+    # edge to follow, and a run that reaches it stops with a diagnostic rather
+    # than picking a branch on the approver's behalf.
+    human-review:
+      kind: approval
+      ownerRef: team/platform-ai
+      decisionSchemaRef: ./contracts/review-decision.schema.json
+      approverRef: group/platform-ai-approvers
+      deadline: 24h
+      input:
+        from: /nodes/verify/output
 
     finish:
       kind: end
@@ -279,3 +320,14 @@ spec:
 
     - from: verify.changes_required
       to: build
+
+    # A blocker is a domain answer too — it just is not the verifier's to
+    # resolve. The token parks on the approval node until a person decides.
+    - from: verify.blocked
+      to: human-review
+
+    - from: human-review.approved
+      to: build
+
+    - from: human-review.rejected
+      to: finish

@@ -1,0 +1,32 @@
+{
+  "plan_slug": "self-hosted-phase-2-cycle",
+  "schema_version": 1,
+  "created": "2026-08-09T07:29:36Z",
+  "updated": "2026-08-09T08:30:49Z",
+  "deviations": [
+    {
+      "id": "d1",
+      "what": "t8's planned acceptance assumed approval work items reach the worker and route through a registered HumanDispatcher; t6 shipped engine-side parking instead \u2014 approval nodes insert node_runs directly as waiting_human and never enqueue a work item, so no approval work item can ever reach the worker. t8 re-scopes to: prove the no-work-item invariant, make the now-vestigial HumanDispatcher seam honest (refuse loudly or remove, documented), and keep worker behavior explicit for unexpected human-kind items",
+      "task_ref": "t8",
+      "reason": "t6's design is closer to PRD \u00a79.9 ('pauses without holding a worker') than the plan's seam assumption; stub-routing work items that never exist would be dishonest",
+      "affects": [
+        "t8"
+      ],
+      "origin": "llm",
+      "status": "proposed",
+      "classification": "acceptable"
+    },
+    {
+      "id": "d2",
+      "what": "t19's runner-service placement: the plan's acceptance lists runner-service among thor's compose services; it deploys instead as a host process under a systemd user unit (nodes-runner.service) on both machines, because the code-execution boundary needs the host's Docker and headspace toolchain while the control-plane compose stack stays deliberately socketless (tests/deploy manifest discipline)",
+      "task_ref": "t19",
+      "reason": "baking docker.sock + headspace into a container image would breach the socketless control-plane rule the repo enforces by test; a host unit keeps the boundary honest",
+      "affects": [
+        "t19"
+      ],
+      "origin": "llm",
+      "status": "proposed",
+      "classification": "acceptable"
+    }
+  ]
+}

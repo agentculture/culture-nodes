@@ -5,8 +5,10 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"net"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"strings"
 	"sync"
 	"time"
@@ -46,6 +48,14 @@ type ReferenceActor struct {
 	// redelivered. §13.4 presupposes redelivery; a bound stops a permanently
 	// refusing receiver from being retried forever.
 	callbackRetries int
+
+	// allowCallback validates a parsed callback URL before any request is
+	// made to it. Posting to the invocation's callback.url IS the §13.4
+	// protocol, but an actor should still refuse plainly hostile targets;
+	// the reference fixture allows loopback only, which is where every kit
+	// receiver lives. Real actors substitute their deployment's egress
+	// policy here (prd-spec §16.5's spirit, applied actor-side).
+	allowCallback func(*url.URL) bool
 }
 
 type recordedResponse struct {
@@ -62,6 +72,7 @@ func NewReferenceActor(authToken string) *ReferenceActor {
 		responses:       make(map[string]recordedResponse),
 		cancelled:       make(map[string]bool),
 		callbackRetries: 5,
+		allowCallback:   loopbackOnly,
 	}
 	a.server = httptest.NewServer(http.HandlerFunc(a.serve))
 	return a
@@ -266,8 +277,19 @@ func (a *ReferenceActor) postEvent(req actors.InvocationRequest, ev actors.Callb
 	if err != nil {
 		return
 	}
+	// Validate the caller-supplied callback URL before any request is made
+	// to it (S5144): scheme http/https and the fixture's loopback-only
+	// allowlist. The validated *url.URL — not the raw string — is what the
+	// request is built from.
+	target, err := url.Parse(req.Callback.URL)
+	if err != nil || (target.Scheme != "http" && target.Scheme != "https") {
+		return
+	}
+	if a.allowCallback != nil && !a.allowCallback(target) {
+		return
+	}
 	for attempt := 0; attempt <= a.callbackRetries; attempt++ {
-		httpReq, err := http.NewRequest(http.MethodPost, req.Callback.URL, bytes.NewReader(body))
+		httpReq, err := http.NewRequest(http.MethodPost, target.String(), bytes.NewReader(body))
 		if err != nil {
 			return
 		}
@@ -297,4 +319,16 @@ func writeJSON(w http.ResponseWriter, status int, body any) {
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(status)
 	_ = json.NewEncoder(w).Encode(body)
+}
+
+// loopbackOnly is the reference fixture's callback allowlist: kit receivers
+// always live on 127.0.0.1/::1, and a test fixture has no business posting
+// anywhere else.
+func loopbackOnly(u *url.URL) bool {
+	host := u.Hostname()
+	if host == "localhost" {
+		return true
+	}
+	ip := net.ParseIP(host)
+	return ip != nil && ip.IsLoopback()
 }

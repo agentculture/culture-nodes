@@ -1,0 +1,66 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "culture-nodes.fullname" . }}-scheduler
+  labels:
+    {{- include "culture-nodes.labels" . | nindent 4 }}
+    app.kubernetes.io/component: scheduler
+spec:
+  replicas: {{ .Values.scheduler.replicas }}
+  selector:
+    matchLabels:
+      {{- include "culture-nodes.selectorLabels" . | nindent 6 }}
+      app.kubernetes.io/component: scheduler
+  template:
+    metadata:
+      labels:
+        {{- include "culture-nodes.selectorLabels" . | nindent 8 }}
+        app.kubernetes.io/component: scheduler
+    spec:
+      {{- with .Values.image.pullSecrets }}
+      imagePullSecrets:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      terminationGracePeriodSeconds: {{ .Values.terminationGracePeriodSeconds }}
+      containers:
+        - name: scheduler
+          image: {{ include "culture-nodes.image" . }}
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          args: ["scheduler"]
+          # No liveness or readiness probe here, deliberately.
+          #
+          # cmd/nodes/scheduler.go serves no HTTP (and no other port) at
+          # all, and the base image is distroless -- there is no shell to
+          # exec an `ls`-style command probe with either, and a TCP probe
+          # would only prove the process is scheduled, not that its
+          # single-active-lock loop (internal/scheduler's package doc) is
+          # doing anything. Faking a probe here (e.g. always-succeeding
+          # exec, or a TCP check on a port nothing listens on) would be
+          # worse than no probe: it would tell Kubernetes this container is
+          # healthy when the honest answer is "we cannot tell from outside
+          # the process." Instead:
+          #   - every scheduler.replicas instance runs the identical loop
+          #     and contends for the same Postgres advisory lock; a hung
+          #     or wedged active instance is superseded by a standby the
+          #     moment its DB session drops (internal/scheduler's own
+          #     failover story), not by a kubelet-triggered restart;
+          #   - restartPolicy (Always, the only value a Deployment's pod
+          #     template accepts) restarts the container itself if the
+          #     process actually exits or crashes.
+          # See scheduler.replicas in values.yaml for why more than one
+          # replica is a supported HA topology here, not redundancy for
+          # its own sake.
+          env:
+            - name: NODES_DATABASE_URL
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "culture-nodes.fullname" . }}-db
+                  key: NODES_DATABASE_URL
+            - name: NODES_SCHEDULER_ID
+              valueFrom:
+                fieldRef:
+                  fieldPath: metadata.name
+          resources:
+            {{- toYaml .Values.scheduler.resources | nindent 12 }}
+          securityContext:
+            {{- toYaml .Values.containerSecurityContext | nindent 12 }}

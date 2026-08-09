@@ -1,9 +1,11 @@
 package api
 
 import (
+	"fmt"
 	"net/http"
 	"time"
 
+	"github.com/agentculture/culture-nodes/internal/actors"
 	"github.com/agentculture/culture-nodes/internal/engine"
 	"github.com/agentculture/culture-nodes/internal/ledger"
 	"github.com/agentculture/culture-nodes/internal/store/postgres"
@@ -32,6 +34,22 @@ type Server struct {
 	// directly rather than only through Engine.
 	engineStore *postgres.EngineStore
 
+	// callbackStore backs the actor callback ingest route (see
+	// callbackRoutePattern below). It is built unconditionally in
+	// NewServer -- constructing it never fails once namespaceID has
+	// already been validated by the lookups above -- so callbackSigner is
+	// the only thing that decides whether the route is actually mounted.
+	callbackStore *postgres.CallbackStore
+	// callbackSigner verifies the attempt-scoped bearer token a callback
+	// presents (internal/actors/token.go). Nil means this installation
+	// offers no callback endpoint at all, and Handler leaves the route
+	// unmounted (404) rather than mounting it to always answer 500 —
+	// cmd/nodes/worker.go's callbackConfig applies the identical rule on
+	// the dispatch side, and both must read the same
+	// NODES_CALLBACK_TOKEN_SECRET for a token minted by a worker to verify
+	// here.
+	callbackSigner *actors.TokenSigner
+
 	pollInterval time.Duration
 }
 
@@ -44,6 +62,19 @@ func WithPollInterval(d time.Duration) Option {
 	return func(s *Server) {
 		if d > 0 {
 			s.pollInterval = d
+		}
+	}
+}
+
+// WithCallbackSigner mounts the actor callback ingest route, verifying
+// every token it receives against signer. Omitting this option (or passing
+// a nil signer) leaves the route unmounted: a deployment that never
+// dispatches to asynchronous actors has nothing to verify a callback token
+// against, and mounting the route anyway would only ever answer 500.
+func WithCallbackSigner(signer *actors.TokenSigner) Option {
+	return func(s *Server) {
+		if signer != nil {
+			s.callbackSigner = signer
 		}
 	}
 }
@@ -65,14 +96,19 @@ func NewServer(store *postgres.Store, namespaceID string, opts ...Option) (*Serv
 	if err != nil {
 		return nil, err
 	}
+	callbackStore, err := postgres.NewCallbackStore(store, namespaceID)
+	if err != nil {
+		return nil, err
+	}
 
 	s := &Server{
-		Store:        store,
-		Engine:       eng,
-		Ledger:       led,
-		NamespaceID:  namespaceID,
-		engineStore:  engineStore,
-		pollInterval: defaultEventPollInterval,
+		Store:         store,
+		Engine:        eng,
+		Ledger:        led,
+		NamespaceID:   namespaceID,
+		engineStore:   engineStore,
+		callbackStore: callbackStore,
+		pollInterval:  defaultEventPollInterval,
 	}
 	for _, opt := range opts {
 		if opt != nil {
@@ -111,5 +147,30 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("GET /v1alpha1/healthz", s.wrap(s.handleHealthz))
 	mux.HandleFunc("GET /v1alpha1/readyz", s.wrap(s.handleReadyz))
 
+	// The actor callback surface (PRD §13.1's callback.url, §13.4's event
+	// ingest) is not part of the nodes.culture.dev/v1alpha1 group above: it
+	// is the runner-agnostic wire contract internal/actors/protocol.go
+	// fixes (CallbackEventsPathFormat), unversioned, which is what every
+	// worker-minted callback.url already points at
+	// (internal/worker/dispatch.go's callbackURL) — mounting it under
+	// /v1alpha1 instead would silently break every real actor. It is
+	// mounted only when this Server was built WithCallbackSigner; see that
+	// option's doc for why an unconfigured installation leaves it absent
+	// rather than mounted-but-always-failing.
+	if s.callbackSigner != nil {
+		mux.Handle("POST "+callbackRoutePattern, actors.NewCallbackHandler(actors.CallbackDeps{
+			Store:  s.callbackStore,
+			Engine: s.Engine,
+			Signer: s.callbackSigner,
+		}))
+	}
+
 	return mux
 }
+
+// callbackRoutePattern is the http.ServeMux pattern for the callback route,
+// derived from actors.CallbackEventsPathFormat rather than hand-typed so
+// the mux pattern and the URL every worker actually builds can never drift
+// apart. Go's {id} wildcard matches one path segment, exactly what "%s"
+// stands for in that format string.
+var callbackRoutePattern = fmt.Sprintf(actors.CallbackEventsPathFormat, "{id}")

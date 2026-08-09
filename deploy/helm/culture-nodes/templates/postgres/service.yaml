@@ -1,0 +1,22 @@
+{{- if .Values.postgresql.enabled -}}
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "culture-nodes.fullname" . }}-postgres
+  labels:
+    {{- include "culture-nodes.labels" . | nindent 4 }}
+    app.kubernetes.io/component: postgres
+  annotations:
+    # See ../secret-database.yaml's comment: same tier ("-5"), same reason (the migration Job, weight "0", needs Postgres reachable before it runs).
+    "helm.sh/hook": pre-install,pre-upgrade
+    "helm.sh/hook-weight": "-5"
+spec:
+  clusterIP: None
+  selector:
+    {{- include "culture-nodes.selectorLabels" . | nindent 4 }}
+    app.kubernetes.io/component: postgres
+  ports:
+    - name: postgres
+      port: 5432
+      targetPort: postgres
+{{- end -}}

@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/agentculture/culture-nodes/internal/actors"
+	"github.com/agentculture/culture-nodes/internal/api"
 	"github.com/agentculture/culture-nodes/internal/clifmt"
 	"github.com/agentculture/culture-nodes/internal/store/postgres"
 	"github.com/agentculture/culture-nodes/internal/worker"
@@ -32,6 +33,7 @@ import (
 const (
 	envDatabaseURL      = "NODES_DATABASE_URL"
 	envNamespace        = "NODES_NAMESPACE_ID"
+	envNamespaceSlug    = "NODES_NAMESPACE_SLUG"
 	envCallbackBaseURL  = "NODES_CALLBACK_BASE_URL"
 	envCallbackSecret   = "NODES_CALLBACK_TOKEN_SECRET"
 	envWorkerIdentifier = "NODES_WORKER_ID"
@@ -40,7 +42,8 @@ const (
 func cmdWorker(args []string, jsonMode bool) (int, error) {
 	fs := newFlagSet("worker")
 	databaseURL := fs.String("database-url", "", "PostgreSQL connection URL (defaults to "+envDatabaseURL+")")
-	namespaceID := fs.String("namespace", "", "namespace this worker serves (defaults to "+envNamespace+")")
+	namespaceID := fs.String("namespace", "", "namespace this worker serves, by id (defaults to "+envNamespace+")")
+	namespaceSlug := fs.String("namespace-slug", "", "namespace this worker serves, by slug: resolved (and created if absent) the same way 'nodes serve' resolves its own namespace -- ignored when --namespace/"+envNamespace+" is set (defaults to "+envNamespaceSlug+")")
 	batch := fs.Int("batch", worker.DefaultClaimBatch, "how many work items one claim pass takes")
 	pollInterval := fs.Duration("poll-interval", worker.DefaultPollInterval, "how long an idle worker waits before claiming again")
 	leaseDuration := fs.Duration("lease", worker.DefaultLeaseDuration, "how long a claim is held before it can be reclaimed")
@@ -56,12 +59,25 @@ func cmdWorker(args []string, jsonMode bool) (int, error) {
 			Remediation: "set " + envDatabaseURL + " or pass --database-url postgres://...",
 		}
 	}
+	// A worker's namespace can be named directly by id, or by slug -- the
+	// latter resolved (and created if this is the first process to ask)
+	// through the identical idempotent lookup cmd/nodes/serve.go's
+	// EnsureNamespace call uses. This exists because a namespace id is a
+	// database-generated ULID (internal/store/postgres.Store.CreateNamespace),
+	// not something a Helm chart's values.yaml can pin ahead of time: a
+	// worker Deployment names the same namespace slug the api Deployment
+	// serves ("default" in deploy/helm's values), and whichever process
+	// asks first creates the row; every process after that gets the same id
+	// back. See EnsureNamespace's own doc comment for the idempotency
+	// argument.
 	namespace := firstNonEmpty(*namespaceID, os.Getenv(envNamespace))
-	if namespace == "" {
+	slug := firstNonEmpty(*namespaceSlug, os.Getenv(envNamespaceSlug))
+	if namespace == "" && slug == "" {
 		return 0, &clifmt.CliError{
-			Code:        clifmt.ExitUserError,
-			Message:     "no namespace configured",
-			Remediation: "set " + envNamespace + " or pass --namespace <id>",
+			Code:    clifmt.ExitUserError,
+			Message: "no namespace configured",
+			Remediation: "set " + envNamespace + " (or --namespace) to a namespace id, or " +
+				envNamespaceSlug + " (or --namespace-slug) to a slug to resolve/create",
 		}
 	}
 
@@ -77,6 +93,17 @@ func cmdWorker(args []string, jsonMode bool) (int, error) {
 		}
 	}
 	defer db.Close()
+
+	if namespace == "" {
+		namespace, err = api.EnsureNamespace(ctx, db, slug, slug)
+		if err != nil {
+			return 0, &clifmt.CliError{
+				Code:        clifmt.ExitEnvError,
+				Message:     fmt.Sprintf("resolving namespace slug %q: %v", slug, err),
+				Remediation: "run 'nodes migrate' and verify the database is reachable",
+			}
+		}
+	}
 
 	eng, err := postgres.NewEngine(db, namespace)
 	if err != nil {
@@ -167,9 +194,34 @@ func cmdWorker(args []string, jsonMode bool) (int, error) {
 // not.
 func callbackConfig() (*actors.TokenSigner, string, error) {
 	base := os.Getenv(envCallbackBaseURL)
+	signer, err := callbackSignerFromEnv()
+	if err != nil {
+		return nil, "", err
+	}
+	if signer == nil {
+		return nil, base, nil
+	}
+	if base == "" {
+		return nil, "", &clifmt.CliError{
+			Code:        clifmt.ExitUserError,
+			Message:     "a callback token secret is set but no callback base URL is",
+			Remediation: "set " + envCallbackBaseURL + " to this installation's externally reachable base URL",
+		}
+	}
+	return signer, base, nil
+}
+
+// callbackSignerFromEnv builds the attempt-scoped token signer from
+// NODES_CALLBACK_TOKEN_SECRET alone -- the half of callbackConfig that does
+// not depend on a callback base URL, and therefore the part cmd/nodes/serve.go
+// shares: the API process verifies callback tokens but never mints a
+// callback.url itself, so it has no use for envCallbackBaseURL. Returns a
+// nil signer, nil error when the secret is unset -- not an error, for the
+// same reason callbackConfig's doc comment gives.
+func callbackSignerFromEnv() (*actors.TokenSigner, error) {
 	raw := os.Getenv(envCallbackSecret)
 	if raw == "" {
-		return nil, base, nil
+		return nil, nil
 	}
 
 	secret := []byte(raw)
@@ -181,20 +233,13 @@ func callbackConfig() (*actors.TokenSigner, string, error) {
 
 	signer, err := actors.NewTokenSigner(secret)
 	if err != nil {
-		return nil, "", &clifmt.CliError{
+		return nil, &clifmt.CliError{
 			Code:        clifmt.ExitUserError,
 			Message:     fmt.Sprintf("callback token secret is unusable: %v", err),
 			Remediation: fmt.Sprintf("set %s to at least %d bytes of random data", envCallbackSecret, actors.MinTokenSecretBytes),
 		}
 	}
-	if base == "" {
-		return nil, "", &clifmt.CliError{
-			Code:        clifmt.ExitUserError,
-			Message:     "a callback token secret is set but no callback base URL is",
-			Remediation: "set " + envCallbackBaseURL + " to this installation's externally reachable base URL",
-		}
-	}
-	return signer, base, nil
+	return signer, nil
 }
 
 // shutdownContext returns a context cancelled on SIGINT or SIGTERM, so a
@@ -242,17 +287,26 @@ only use actors that answer synchronously.
 ## Configuration
 
     NODES_DATABASE_URL           PostgreSQL connection URL (required)
-    NODES_NAMESPACE_ID           namespace this worker serves (required)
+    NODES_NAMESPACE_ID           namespace this worker serves, by id
+    NODES_NAMESPACE_SLUG         namespace this worker serves, by slug
     NODES_CALLBACK_BASE_URL      externally reachable base URL for callbacks
     NODES_CALLBACK_TOKEN_SECRET  HMAC secret for attempt-scoped tokens
     NODES_WORKER_ID              lease owner identity (defaults to a ULID)
+
+Exactly one of NODES_NAMESPACE_ID or NODES_NAMESPACE_SLUG is required. A
+slug is resolved to an id (creating the namespace if this is the first
+process to ask) through the same idempotent lookup 'nodes serve' uses for
+its own namespace -- a namespace id is a database-generated ULID nothing
+outside the database can predict ahead of time, so a deployment that starts
+its api and worker processes independently (a Helm chart's separate
+Deployments, for instance) names them by the same slug, not the same id.
 
 Without a callback secret and base URL the worker still runs, but it can
 only dispatch to actors that answer synchronously.
 
 ## Usage
 
-    nodes worker
+    nodes worker --namespace-slug default
     nodes worker --namespace ns_01J --batch 8 --poll-interval 500ms
     nodes worker --json
 

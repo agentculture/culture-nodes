@@ -103,7 +103,17 @@ func runServeMode(args []string, verb string, withScheduler bool) (int, error) {
 		return 0, envError("resolving the default namespace", err, "verify the schema is migrated: run 'nodes migrate' first")
 	}
 
-	srv, err := api.NewServer(db, namespaceID)
+	// A callback token secret is optional here for the same reason it is
+	// optional on the worker side (cmd/nodes/worker.go's callbackConfig): a
+	// deployment that only dispatches to synchronous actors never sees a
+	// callback, so nothing needs verifying. When it IS set, it must be the
+	// same secret the worker signs with -- see WithCallbackSigner's doc.
+	callbackSigner, err := callbackSignerFromEnv()
+	if err != nil {
+		return 0, err
+	}
+
+	srv, err := api.NewServer(db, namespaceID, api.WithCallbackSigner(callbackSigner))
 	if err != nil {
 		return 0, envError("building the API server", err, "this is an environment fault; file a bug if it persists")
 	}

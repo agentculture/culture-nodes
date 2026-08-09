@@ -1,0 +1,19 @@
+# The api Service is the callback surface for any actor reachable from
+# inside the cluster (spec claim c42): it is always here regardless of
+# ingress.enabled, which only controls whether an actor OUTSIDE the cluster
+# can reach the same route through templates/ingress.yaml.
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "culture-nodes.fullname" . }}-api
+  labels:
+    {{- include "culture-nodes.labels" . | nindent 4 }}
+    app.kubernetes.io/component: api
+spec:
+  selector:
+    {{- include "culture-nodes.selectorLabels" . | nindent 4 }}
+    app.kubernetes.io/component: api
+  ports:
+    - name: http
+      port: {{ .Values.api.service.port }}
+      targetPort: http

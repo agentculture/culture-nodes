@@ -1,0 +1,51 @@
+Culture Nodes control plane — release "{{ .Release.Name }}" in namespace "{{ .Release.Namespace }}"
+Image: {{ include "culture-nodes.image" . }}
+
+################################################################################
+#  WARNING — Phase 1 trust boundary                                          #
+#                                                                             #
+#  Phase 1 runs AUTHLESS behind a private network: anyone with network      #
+#  reach has full control. Deploy only on a private cluster/VPC.            #
+#  OIDC lands in Phase 2.                                                    #
+################################################################################
+
+This applies to every operation this chart exposes, including the actor
+callback route (POST /v1/attempts/{id}/events) — its only protection is a
+short-lived, attempt-scoped bearer token, not network identity or a
+username/password. See README.md for the same statement with more context.
+
+{{- if .Values.ingress.enabled }}
+
+The API — and the actor callback surface above — is reachable at:
+
+  http{{ if .Values.ingress.tls.enabled }}s{{ end }}://{{ .Values.ingress.host }}
+
+The WARNING above applies here too: this Ingress puts nothing in front of
+the API beyond the attempt-scoped callback token. Do not point
+{{ .Values.ingress.host }} at a network you do not trust.
+{{- else }}
+
+No Ingress is enabled (ingress.enabled=false). The api Service is always the
+callback surface for actors reachable from inside the cluster; reach it from
+outside for testing with:
+
+  kubectl -n {{ .Release.Namespace }} port-forward svc/{{ include "culture-nodes.fullname" . }}-api {{ .Values.api.service.port }}:{{ .Values.api.service.port }}
+
+or, in-cluster:
+
+  http://{{ include "culture-nodes.fullname" . }}-api.{{ .Release.Namespace }}.svc.cluster.local:{{ .Values.api.service.port }}
+{{- end }}
+
+Check rollout status:
+
+  kubectl -n {{ .Release.Namespace }} get pods -l app.kubernetes.io/instance={{ .Release.Name }}
+
+Roles deployed by this release:
+  api        {{ .Values.api.replicas }} replica(s) — serves nodes.culture.dev/v1alpha1 and (if callback.enabled) the actor callback route
+  scheduler  {{ .Values.scheduler.replicas }} replica(s) — single-active via a Postgres advisory lock; extras are warm standbys, not extra throughput
+  worker     {{ .Values.worker.replicas }} replica(s) — multi-pod safe by design (leases + fencing tokens); this is the supported default, not a ceiling
+{{- if .Values.postgresql.enabled }}
+  postgres   1 replica (in-chart StatefulSet) — for production, set postgresql.enabled=false and postgresql.external.url instead
+{{- else }}
+  postgres   external ({{ .Values.postgresql.external.url | default "postgresql.external.url" }})
+{{- end }}

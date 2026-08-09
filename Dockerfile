@@ -14,12 +14,23 @@ ARG VERSION=dev
 
 WORKDIR /src
 
-# Cache module downloads separately from source changes.
-COPY go.mod ./
+# Cache module downloads separately from source changes. go.sum must come
+# along with go.mod -- `go mod download` in readonly mode (the default since
+# Go 1.16) fails without it, and a missing go.sum here previously made this
+# build fail before it ever reached `go build`.
+COPY go.mod go.sum ./
 RUN go mod download
 
 COPY cmd ./cmd
 COPY internal ./internal
+# schemas/ and migrations/ are go:embed'd by internal/contracts and
+# internal/store/postgres respectively (see their embed.go /
+# migrations.go doc comments) -- the binary carries its own schemas and
+# migrations, so both directories are build inputs, not deploy-time
+# assets. Without them `go build ./cmd/nodes` fails to resolve those two
+# packages entirely.
+COPY schemas ./schemas
+COPY migrations ./migrations
 
 RUN CGO_ENABLED=0 go build \
     -trimpath \

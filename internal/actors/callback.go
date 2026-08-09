@@ -20,7 +20,9 @@ import (
 //  2. Load the durable invocation. Between the 202 and this event no process
 //     held anything in memory (§12.6), so this row is the only thing that
 //     knows which work item, lease owner, fencing token, and attempt the
-//     dispatch used.
+//     dispatch used. A verified token whose row is not there YET (see
+//     lookupInvocation) is retried briefly before it is treated as evidence
+//     the attempt never existed.
 //  3. Deduplicate by (attempt, event id). Delivery is at-least-once (§20.1),
 //     so a repeat is expected traffic, not an error.
 //  4. Enforce the monotonic sequence. A reordered or replayed-out-of-band
@@ -159,10 +161,28 @@ type CallbackDeps struct {
 	ResumeLease time.Duration
 	// Now is the clock, defaulting to time.Now().UTC().
 	Now func() time.Time
+	// InvocationLookupRetries bounds how many times step 2 re-reads
+	// Store.Invocation for a just-verified attempt before concluding
+	// ErrUnknownAttempt is the honest answer. See lookupInvocation's doc for
+	// why a verified token warrants a retry at all. Defaults to
+	// DefaultInvocationLookupRetries.
+	InvocationLookupRetries int
+	// InvocationLookupDelay is the pause between those re-reads. Defaults to
+	// DefaultInvocationLookupDelay.
+	InvocationLookupDelay time.Duration
 }
 
 // DefaultResumeLease is the lease taken while a terminal callback commits.
 const DefaultResumeLease = time.Minute
+
+// DefaultInvocationLookupRetries and DefaultInvocationLookupDelay bound
+// lookupInvocation's total wait to 200ms — long enough to survive one
+// racing StartAsyncWait commit, short enough that a genuinely unknown
+// attempt is still reported promptly.
+const (
+	DefaultInvocationLookupRetries = 8
+	DefaultInvocationLookupDelay   = 25 * time.Millisecond
+)
 
 func (d CallbackDeps) now() time.Time {
 	if d.Now != nil {
@@ -176,6 +196,66 @@ func (d CallbackDeps) resumeLease() time.Duration {
 		return d.ResumeLease
 	}
 	return DefaultResumeLease
+}
+
+func (d CallbackDeps) invocationLookupRetries() int {
+	if d.InvocationLookupRetries > 0 {
+		return d.InvocationLookupRetries
+	}
+	return DefaultInvocationLookupRetries
+}
+
+func (d CallbackDeps) invocationLookupDelay() time.Duration {
+	if d.InvocationLookupDelay > 0 {
+		return d.InvocationLookupDelay
+	}
+	return DefaultInvocationLookupDelay
+}
+
+// lookupInvocation is step 2: load the durable invocation record a
+// dispatch's park (postgres.StartAsyncWait) wrote.
+//
+// A token that verifies (step 1) can only have been minted by a worker that
+// was actively dispatching this exact attempt — internal/worker/dispatch.go
+// mints it before invoking the actor — so a lookup that finds nothing YET is
+// not proof the attempt never existed; it may simply be racing that same
+// worker's own not-yet-committed park write. A synchronous actor never
+// triggers this (no invocation row is ever expected for one). An
+// asynchronous one that reports back near-instantly can: §13.3 lets an actor
+// answer 202 and call back moments later, and an actor with negligible real
+// work behind its acceptance (a mock backend, for instance) can win that
+// race often enough to matter — see docs/deliveries/2026-08-08-culture-
+// nodes-app-design.md's "run.output observed null for the live smoke's
+// end-node binding", which this retry is the fix for: without it, the first
+// (and, for an actor that treats 404 as permanent, only) callback attempt is
+// refused, the work item is left parked in waiting_external forever, and the
+// run's output never resolves.
+//
+// Retrying briefly closes that race without weakening ErrUnknownAttempt's
+// meaning: an attempt whose token was never minted by this deployment's
+// signer never reaches here (step 1 already refused it), and an attempt
+// that genuinely has no invocation record even after the wait still, in the
+// end, reports exactly that.
+func (d CallbackDeps) lookupInvocation(ctx context.Context, attemptID string) (PendingInvocation, error) {
+	attempts := d.invocationLookupRetries()
+	delay := d.invocationLookupDelay()
+
+	var (
+		inv PendingInvocation
+		err error
+	)
+	for attempt := 1; attempt <= attempts; attempt++ {
+		inv, err = d.Store.Invocation(ctx, attemptID)
+		if err == nil || !errors.Is(err, ErrUnknownAttempt) || attempt == attempts {
+			return inv, err
+		}
+		select {
+		case <-ctx.Done():
+			return PendingInvocation{}, ctx.Err()
+		case <-time.After(delay):
+		}
+	}
+	return inv, err
 }
 
 // CallbackDisposition is what an ingested event did.
@@ -242,7 +322,7 @@ func HandleCallback(ctx context.Context, deps CallbackDeps, attemptToken string,
 	}
 
 	// ---- 2. the durable invocation ----
-	inv, err := deps.Store.Invocation(ctx, attemptID)
+	inv, err := deps.lookupInvocation(ctx, attemptID)
 	if err != nil {
 		return CallbackResult{AttemptID: attemptID}, err
 	}

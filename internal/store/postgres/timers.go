@@ -50,8 +50,13 @@ const (
 	TimerKindRetry TimerKind = "retry"
 	// TimerKindDeadline fires when an async actor invocation
 	// (prd-spec §12.6) or a human task exceeds its durable deadline.
-	// Effect: append a deadline-expired outbox event; this is a domain
-	// outcome for the engine to react to, not itself a state mutation.
+	// Effect: append a deadline-expired outbox event, and -- for an async
+	// actor invocation still waiting_external -- fail its attempt through
+	// the engine's own §12.5 completion transaction (internal/scheduler's
+	// failWaitingExternal). A human task's deadline has no actor_invocations
+	// row to find yet (the human-task surface is not wired: see
+	// internal/worker/doc.go's "kinds that are not wired yet"), so today
+	// this effect is a harmless no-op for that case, not a state mutation.
 	TimerKindDeadline TimerKind = "deadline"
 	// TimerKindLeaseRecovery is a durable, timer-driven trigger for
 	// Store.ReclaimExpired, in addition to the scheduler's own standing

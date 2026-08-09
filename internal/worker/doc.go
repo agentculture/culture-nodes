@@ -47,13 +47,18 @@
 //
 // # Kinds this worker does not execute directly
 //
-// `code` and `wait` nodes need machinery later tasks own — a runner boundary
-// (§13.7) and durable wait semantics (§12.7) respectively — and each has a
-// pending extension point in seams.go, RunnerDispatcher and WaitDispatcher.
-// When no seam is registered, the attempt fails with a diagnostic that names
-// the missing capability rather than silently succeeding or silently
-// hanging. A node kind that cannot be executed is an honest failure, not an
-// outcome.
+// `code` nodes execute through the runner boundary (§13.7), which has two
+// forms: an in-process Runner (Options.CodeRunner — the Lambda and
+// headspace-bridge adapters) executed under a heartbeated lease, and the
+// asynchronous runner-service path (runnerasync.go) taken when the registry
+// resolves the node to a ServiceIdentity — dispatch, park as
+// waiting_external, and commit on a later authenticated status sample.
+// `wait` nodes still need durable wait semantics (§12.7) a later task owns,
+// with the pending WaitDispatcher extension point in seams.go. In every
+// unconfigured case the attempt fails with a diagnostic that names the
+// missing capability (seamRemedy) rather than silently succeeding or
+// silently hanging. A node kind that cannot be executed is an honest
+// failure, not an outcome.
 //
 // `approval` nodes are not in that category, even though a HumanDispatcher
 // seam exists in seams.go too. The human-task surface (§9.9) is not

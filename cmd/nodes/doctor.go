@@ -3,7 +3,7 @@ package main
 import (
 	"fmt"
 	"os"
-	"os/exec"
+	"runtime"
 	"strings"
 	"text/tabwriter"
 
@@ -27,29 +27,16 @@ const (
 	doctorStatusFail = "fail"
 )
 
-// checkGoBinary verifies a `go` binary is on PATH and reports its version —
-// an environment check, since building/testing this module needs it.
+// checkGoBinary reports the Go runtime this binary was compiled with. It
+// deliberately spawns no subprocess: doctor is a diagnostic verb in a
+// control-plane binary whose ground rule is that nothing in it executes
+// external programs — and the toolchain that built this binary is a more
+// truthful fact about it than whatever `go` happens to be on PATH.
 func checkGoBinary() doctorCheck {
-	goPath, err := exec.LookPath("go")
-	if err != nil {
-		return doctorCheck{
-			Check:  "go_binary_version",
-			Status: doctorStatusFail,
-			Detail: "go not found on PATH",
-		}
-	}
-	out, err := exec.Command(goPath, "version").Output()
-	if err != nil {
-		return doctorCheck{
-			Check:  "go_binary_version",
-			Status: doctorStatusFail,
-			Detail: fmt.Sprintf("'go version' failed: %v", err),
-		}
-	}
 	return doctorCheck{
-		Check:  "go_binary_version",
+		Check:  "go_runtime_version",
 		Status: doctorStatusOK,
-		Detail: strings.TrimSpace(string(out)),
+		Detail: runtime.Version() + " (compiled in; no toolchain probe)",
 	}
 }
 

@@ -3,19 +3,20 @@ package main
 import (
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 )
 
-func TestCheckGoBinaryFindsGoOnPATH(t *testing.T) {
-	// The whole test suite runs under `go test`, so a `go` binary must be
-	// resolvable on PATH — this check should always be ok in CI/dev.
+func TestCheckGoBinaryReportsCompiledRuntime(t *testing.T) {
+	// The check spawns no subprocess (the control-plane no-external-exec
+	// rule): it reports the runtime this binary was compiled with.
 	check := checkGoBinary()
 	if check.Status != doctorStatusOK {
-		t.Fatalf("checkGoBinary() = %+v, want status %q (go must be on PATH to run `go test`)", check, doctorStatusOK)
+		t.Fatalf("checkGoBinary() = %+v, want status %q", check, doctorStatusOK)
 	}
-	if !strings.Contains(check.Detail, "go version") {
-		t.Fatalf("Detail %q does not look like `go version` output", check.Detail)
+	if !strings.Contains(check.Detail, runtime.Version()) {
+		t.Fatalf("Detail %q does not carry runtime.Version() %q", check.Detail, runtime.Version())
 	}
 }
 

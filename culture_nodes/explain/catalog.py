@@ -99,8 +99,9 @@ _OVERVIEW = """\
 # culture-nodes overview
 
 Read-only descriptive snapshot of the agent: identity (from `culture.yaml`), the
-verb surface, and the sibling-pattern artifacts the template carries. Accepts an
-ignored `target` so a stray path never hard-fails.
+verb surface, and the artifacts this repo carries (mesh identity files, the
+vendored skill kit, the API this package fronts). Accepts an ignored `target`
+so a stray path never hard-fails.
 
 ## Usage
 

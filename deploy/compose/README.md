@@ -32,9 +32,14 @@ Once it is up:
   `POSTGRES_PASSWORD`/`POSTGRES_DB`) if you want to inspect the schema
   directly.
 
-**UI**: no web UI is embedded in the image yet — embedding the built
-`web/` assets into the Go binary is a later task. Meanwhile, point a
-locally-run Vite dev server at this API:
+**UI**: `http://localhost:8080` also serves the web UI — the Dockerfile
+builds `web/` (Vite) and embeds it into the `nodes` binary (`-tags
+embedweb`), so there is no separate frontend container. It renders the Runs
+list, the Run view, and the Ledger view against the same `/v1alpha1` API the
+CLI uses; see the root [`README.md`](../../README.md#see-it-running) for
+what each looks like. If you are iterating on `web/` itself and want hot
+reload instead of rebuilding the image on every change, point a
+locally-run Vite dev server at this same API:
 
 ```bash
 cd web
@@ -78,8 +83,9 @@ doc promise.
 container, and none is going to** (spec claim c4, honesty condition h4).
 `migrate`, `api`, `scheduler`, and `worker` never shell out, never touch
 `/var/run/docker.sock`, and never execute repository code directly — the
-only code-execution path the product allows is through the headspace-cli
-runner boundary, and that boundary is a *separate process on the host*,
+only code-execution path the product allows is through the runner
+boundary (the headspace-cli bridge, AWS Lambda, or a runner-protocol
+service — options below), and that boundary is always a *separate process*,
 never something a container in this file reaches into.
 
 Concretely, for local dev, a `code` node has two honest options today:
@@ -107,6 +113,30 @@ Concretely, for local dev, a `code` node has two honest options today:
    happens in the cloud even during local development — no local
    runner needed at all.
 
+3. **A [runner-protocol](../../api/runner-protocol/README.md) service —
+   `cmd/nodes-runner`, or your own.** Run the reference runner service
+   (which wraps the same headspace bridge as option 1, but behind the HTTP
+   contract and as its own process, with mandatory bearer auth) on any
+   machine that can reach this compose stack's Postgres and that this
+   `worker` can reach over the network:
+
+   ```bash
+   NODES_RUNNER_SECRET=replace-me \
+   NODES_RUNNER_STATE_DIR=/var/lib/nodes-runner \
+   NODES_RUNNER_HEADSPACE_PROVIDER=docker \
+   NODES_RUNNER_HEADSPACE_PROFILES=sha256:<pinned-digest>=python3.12 \
+     go run ./cmd/nodes-runner --listen :8090
+   ```
+
+   Then register a `ServiceIdentity` for it (endpoint + the same pinned
+   digest + a `secret_ref`) in `internal/runners.FunctionRegistry` — see the
+   protocol doc's "How a node reaches a runner" section. This is the same
+   contract a **hand-rolled runner in any language** implements to become a
+   valid execution target: nothing about it is specific to headspace or to
+   this reference binary. `tests/runnerconformance` is the acceptance bar —
+   an implementation that passes it unmodified is a conformant runner,
+   whether it is `cmd/nodes-runner` or something you wrote yourself.
+
 What this compose file's `worker` service does NOT do: it does not run
 `code` nodes. It has no Docker socket and no `headspace` binary — by
 design, not by omission. It still claims and dispatches `agent`/
@@ -129,9 +159,10 @@ and cleanly marks the attempt failed (`policy_denied`, not retried). Either
 outcome proves the same thing: the engine, the database, and the queue
 work end to end inside these containers. Making a full run *complete*
 locally needs a real actor listening somewhere the worker can reach —
-`colleague-bridge` below, your own actor implementation, or a workflow
-whose actors point at `http://host.docker.internal:<port>` for something
-running on your host.
+`colleague-bridge` below, [your own actor
+implementation](../../api/actor-protocol/README.md), or a workflow whose
+actors point at `http://host.docker.internal:<port>` for something running
+on your host.
 
 ### Why `api`, `scheduler`, and `worker` have no container healthcheck
 
@@ -175,6 +206,14 @@ point `NODES_NAMESPACE_ID`/a workflow's `uses:` at it accordingly. See
 `repo_allowlist` requirement (empty by default — the bridge refuses every
 invocation until you set `COLLEAGUE_BRIDGE_REPO_ALLOWLIST` and mount the
 repo it names), and the colleague contract v1 pin.
+
+`colleague-bridge` is the one adapter this compose file wires a profile
+for; its two siblings — [`adapters/claude-code`](../../adapters/claude-code/README.md)
+(headless `claude -p`) and [`adapters/codex`](../../adapters/codex/README.md)
+(headless `codex exec`) — follow the identical actor-protocol shape and are
+run the same way (their own README's "Running it" section), just not yet
+wired into this particular manifest. Any of the three, or a fourth you write
+yourself, is registered the same way: a base URL in the `actors` table.
 
 ## Images
 

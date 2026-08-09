@@ -75,7 +75,7 @@ def _build_parser() -> argparse.ArgumentParser:
 
     parser = _CliArgumentParser(
         prog="culture-nodes",
-        description="culture-nodes — thin CLI front for the Culture Nodes control-plane API.",
+        description="culture-nodes — Python front + mesh agent for the Culture Nodes orchestrator.",
     )
     parser.add_argument(
         "--version",

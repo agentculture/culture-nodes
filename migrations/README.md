@@ -26,6 +26,14 @@ Numbered SQL migrations for the authoritative PostgreSQL store (prd-spec
   field `0003` had no column for.
 - `0008_run_output.sql` — expand-only: adds `runs.output`, the workflow
   result a completed run produces, which `0002` had no column for.
+- `0009_actor_invocations.sql` — `actor_invocations` (durable async
+  invocation tracking) plus the `(state, updated_at)` partial index over
+  the `waiting_external` hot set.
+- `0010_run_updated_at_indexes.sql` — expand-only: adds
+  `runs_namespace_updated_at_idx (namespace_id, updated_at)` and
+  `node_runs_namespace_updated_at_idx (namespace_id, updated_at)`, serving
+  the `updated_since`/`updated_until` run listing and the cross-run
+  node-runs listing (tasks t4/t11/t15).
 
 ## Policy
 

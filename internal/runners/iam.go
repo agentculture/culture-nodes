@@ -81,6 +81,16 @@ func RenderWorkerIAMPolicy(registry *FunctionRegistry, opts IAMOptions) (IAMPoli
 	}
 	arns := registry.ARNs()
 	if len(arns) == 0 {
+		// A registry can be non-empty and still render nothing: runner-service
+		// identities are reached over api/runner-protocol with a registered
+		// credential, not through IAM. Saying "empty" in that case would send
+		// an operator looking for registrations that are already there.
+		if services := len(registry.Endpoints()); services > 0 {
+			return IAMPolicy{}, fmt.Errorf(
+				"runners: cannot render a worker IAM policy from a registry holding only runner-service "+
+					"identities (%d registered); a runner service is reached over api/runner-protocol with its "+
+					"registered secret, and grants no AWS access to enumerate", services)
+		}
 		return IAMPolicy{}, fmt.Errorf(
 			"runners: cannot render a worker IAM policy from an empty registry; " +
 				"register the code-runner functions first — an empty Resource list is not a policy and a wildcard is not a fix")

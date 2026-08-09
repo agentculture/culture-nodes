@@ -1,0 +1,101 @@
+name: Adapter / claude-code
+
+# Tests adapters/claude-code — the claude-code-bridge reference actor
+# adapter (task t12). This is a NEW, dedicated workflow: adapters/claude-code
+# is its own uv project (its own pyproject.toml + uv.lock), separate from the
+# root culture-nodes package tests.yml already covers, and its conformance
+# check needs the Go toolchain go.yml already sets up but scoped to this
+# adapter's own bridge process rather than the culture-nodes control plane.
+#
+# Every step here runs against the FAKE claude CLI
+# (adapters/claude-code/tests/fake_claude.py) — never a real, billed,
+# network-dependent `claude` install. See that script's docstring and
+# adapters/claude-code/README.md's "Tests" section for why: unlike
+# colleague's own COLLEAGUE_ENGINE=mock, the real claude CLI has no offline
+# mock mode.
+
+on:
+  pull_request:
+    branches: [main]
+    paths:
+      - "adapters/claude-code/**"
+      - "tests/conformance/**"
+      - "internal/actors/**"
+      - "go.mod"
+      - "go.sum"
+      - ".github/workflows/adapter-claude-code.yml"
+  push:
+    branches: [main]
+    paths:
+      - "adapters/claude-code/**"
+      - "tests/conformance/**"
+      - "internal/actors/**"
+      - "go.mod"
+      - "go.sum"
+      - ".github/workflows/adapter-claude-code.yml"
+
+defaults:
+  run:
+    working-directory: adapters/claude-code
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+
+      - uses: astral-sh/setup-uv@38f3f104447c67c051c4a08e39b64a148898af3a # v4
+
+      - run: uv python install 3.12
+
+      - run: uv sync
+
+      - run: uv run pytest -v
+
+  lint:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+
+      - uses: astral-sh/setup-uv@38f3f104447c67c051c4a08e39b64a148898af3a # v4
+
+      - run: uv python install 3.12
+
+      - run: uv sync
+
+      - name: black --check
+        run: uv run black --check src tests
+
+      - name: isort --check
+        run: uv run isort --check-only src tests
+
+      - name: flake8
+        run: uv run flake8 src tests
+
+  conformance:
+    # The acceptance check for this whole package (task t12, criterion #1):
+    # the PRD §13 conformance kit, run against a live claude-code-bridge
+    # instance dispatching to the fake claude subprocess. Needs the repo's Go
+    # toolchain (tests/conformance is a Go module rooted at the repo top, not
+    # something adapters/claude-code can `go test` on its own), so this job
+    # does not inherit the `defaults.run.working-directory` above for the
+    # `go test` step itself — the script cd's into the repo root internally.
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+
+      - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5
+        with:
+          go-version-file: go.mod
+
+      - uses: astral-sh/setup-uv@38f3f104447c67c051c4a08e39b64a148898af3a # v4
+
+      - run: uv python install 3.12
+
+      - run: ./scripts/run_conformance_kit.sh

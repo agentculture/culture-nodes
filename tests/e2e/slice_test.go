@@ -41,49 +41,105 @@ func TestPhase1VerticalSlice(t *testing.T) {
 	ns := pgtest.MustNamespace(t, s, "e2e-slice")
 
 	runner := &scriptedRunner{}
-	agentIDs, runnerID := map[string]string{}, ""
+	agents, runnerID := setupDeliveryAgentsAndActors(t, s, ns.ID)
 
-	// The agents server must exist before the actors rows can name its URL,
-	// and the rows must name the actor ids the agents stamp on their records
-	// — so the map is filled in after both exist and the agents read it under
-	// their own lock at request time.
+	first, runID, digest, buildsBeforeRestart := publishAndStartRun(t, s, ns.ID, agents, runner, runnerID)
+
+	second, sseDone := restartStack(t, first, ns.ID, agents, runner, runnerID, runID)
+	defer second.stop()
+
+	view := second.waitForTerminal(t, runID, 90*time.Second)
+	if failures := agents.scriptFailures(); len(failures) > 0 {
+		t.Fatalf("the scripted agents refused an invocation: %v", failures)
+	}
+
+	// ---- 1. The run completed against the pinned digest ----
+	assertRunCompleted(t, second, view, digest)
+
+	// ---- 6. Restart survival ----
+	assertRestartSurvival(t, agents, buildsBeforeRestart)
+
+	// ---- 2. changes_required is a DOMAIN outcome, walked exactly once ----
+	assertChangesRequiredOnce(t, view)
+
+	// The edge itself was followed, once, and its event says so.
+	events, sse := drainSSE(t, sseDone)
+	if sse != nil {
+		t.Fatalf("SSE stream: %v", sse)
+	}
+	assertEdgeTransitions(t, events)
+	// No attempt anywhere in the run failed technically. The loop is domain
+	// routing from end to end.
+	assertNoTechnicalFailures(t, view)
+
+	// ---- 3 & 4. Ledger honesty: runner-observed evidence, agent-origin
+	// records stay proposed, and the projections agree ----
+	assertLedgerHonesty(t, second, ns.ID, runID, runnerID)
+
+	// ---- 5. Every committed transition emitted an event ----
+	assertEventDensity(t, second, ns.ID, runID, events)
+
+	// ---- 7. The Run view carries what the web front renders ----
+	assertRunViewContract(t, second, runID, view, digest)
+
+	// The code node genuinely went through the runner boundary: two typed,
+	// digest-pinned operations, no shell.
+	assertRunnerOperations(t, runner)
+}
+
+// setupDeliveryAgentsAndActors brings up the scripted agents server and
+// registers the actors rows the reference workflow's `uses` references
+// resolve against. The agents server must exist before the actors rows can
+// name its URL, and the rows must name the actor ids the agents stamp on
+// their records — so the map is filled in after both exist and the agents
+// read it under their own lock at request time.
+func setupDeliveryAgentsAndActors(t *testing.T, db *postgres.Store, namespaceID string) (*deliveryAgents, string) {
+	t.Helper()
+
+	agentIDs := map[string]string{}
 	agents := newDeliveryAgents(t, agentIDs)
-	registered, rid := registerActors(t, s, ns.ID, agents.server.URL)
-	runnerID = rid
+	registered, runnerID := registerActors(t, db, namespaceID, agents.server.URL)
 	agents.mu.Lock()
 	for node, id := range registered {
 		agentIDs[node] = id
 	}
 	agents.mu.Unlock()
 
-	// ---- Phase 1: publish, start, and run as far as build's first pass ----
+	return agents, runnerID
+}
 
-	// The first incarnation's worker stops itself the moment build's first
-	// pass has committed — checked between dispatches, so the restart point
-	// is exact and the `test` node is guaranteed not to have been claimed.
+// publishAndStartRun runs Phase 1: it starts the first incarnation of the
+// control plane with a stop predicate that halts the worker the moment
+// build's first pass has committed — checked between dispatches, so the
+// restart point is exact and the `test` node is guaranteed not to have been
+// claimed — publishes the reference workflow, creates a run, and waits for
+// the worker to reach its stop point. It then asserts the pre-restart
+// invariants captured while the first incarnation is still alive, so the
+// post-restart assertions can prove the run genuinely continued rather than
+// started over.
+func publishAndStartRun(t *testing.T, db *postgres.Store, namespaceID string, agents *deliveryAgents, runner *scriptedRunner, runnerID string) (first *stack, runID, digest string, buildsBeforeRestart int) {
+	t.Helper()
+
 	var runIDHolder atomic.Value
-	first := startStack(t, stackConfig{
-		namespaceID:   ns.ID,
+	first = startStack(t, stackConfig{
+		namespaceID:   namespaceID,
 		agentsURL:     agents.server.URL,
 		runner:        runner,
 		runnerName:    headspace.RunnerName,
 		runnerActorID: runnerID,
 		stopAfter: func() bool {
 			id, _ := runIDHolder.Load().(string)
-			return id != "" && countCompletedNodeRuns(s, id, "build") >= 1
+			return id != "" && countCompletedNodeRuns(db, id, "build") >= 1
 		},
 	})
 
-	digest := first.publishWorkflow(t)
-	runID := first.createRun(t, digest, json.RawMessage(`{"request":"add a /healthz endpoint","repository":"example/service"}`))
+	digest = first.publishWorkflow(t)
+	runID = first.createRun(t, digest, json.RawMessage(`{"request":"add a /healthz endpoint","repository":"example/service"}`))
 	runIDHolder.Store(runID)
 
 	first.awaitWorkerStoppedOrDump(t, runID, 60*time.Second)
 
-	// State captured while the first incarnation is still alive, so the
-	// post-restart assertions can prove the run genuinely continued rather
-	// than started over.
-	buildsBeforeRestart := agents.callCount("build")
+	buildsBeforeRestart = agents.callCount("build")
 	if buildsBeforeRestart != 1 {
 		t.Fatalf("build was invoked %d times before the restart, want exactly 1", buildsBeforeRestart)
 	}
@@ -93,39 +149,44 @@ func TestPhase1VerticalSlice(t *testing.T) {
 	if state := runState(t, first.db, runID); state != engine.RunRunning {
 		t.Fatalf("run state before the restart = %s, want running", state)
 	}
+	return first, runID, digest, buildsBeforeRestart
+}
 
-	// ---- The restart: nothing survives but PostgreSQL ----
+// restartStack is the restart itself: nothing survives but PostgreSQL. It
+// tears the first incarnation down, brings up a second one against the same
+// namespace, and attaches an SSE consumer to the NEW server from sequence
+// 0 — including every event the previous, now-dead incarnation committed,
+// which is what a client that missed a whole process incarnation does. It
+// does not wait for the run to finish; the caller observes that through the
+// returned stack and channel.
+func restartStack(t *testing.T, first *stack, namespaceID string, agents *deliveryAgents, runner *scriptedRunner, runnerID, runID string) (*stack, <-chan sseResult) {
+	t.Helper()
 
 	first.stop()
 
 	second := startStack(t, stackConfig{
-		namespaceID:   ns.ID,
+		namespaceID:   namespaceID,
 		agentsURL:     agents.server.URL,
 		runner:        runner,
 		runnerName:    headspace.RunnerName,
 		runnerActorID: runnerID,
 	})
-	defer second.stop()
 
-	// The SSE consumer attaches to the NEW server and asks for the run's
-	// events from sequence 0 — including every event the previous, now-dead
-	// incarnation committed.
 	sseDone := make(chan sseResult, 1)
 	go func() {
 		events, err := streamRunEvents(t, second.server.URL, runID, 90*time.Second)
 		sseDone <- sseResult{events: events, err: err}
 	}()
 
-	view := second.waitForTerminal(t, runID, 90*time.Second)
+	return second, sseDone
+}
 
-	if failures := agents.scriptFailures(); len(failures) > 0 {
-		t.Fatalf("the scripted agents refused an invocation: %v", failures)
-	}
-
-	// ---- 1. The run completed against the pinned digest ----
-
+// assertRunCompleted checks assertion 1: the run completed against the
+// pinned digest and its output carries the verifier's passing verdict.
+func assertRunCompleted(t *testing.T, s *stack, view runView, digest string) {
+	t.Helper()
 	if view.Run.State != string(engine.RunCompleted) {
-		t.Fatalf("run state = %s, want completed (worker errors: %v)", view.Run.State, second.errors())
+		t.Fatalf("run state = %s, want completed (worker errors: %v)", view.Run.State, s.errors())
 	}
 	if view.Run.WorkflowDigest != digest {
 		t.Errorf("run pinned digest %q, want the published %q", view.Run.WorkflowDigest, digest)
@@ -133,9 +194,12 @@ func TestPhase1VerticalSlice(t *testing.T) {
 	if !bytes.Contains(view.Run.Output, []byte(`"passed"`)) {
 		t.Errorf("run output = %s, want the verifier's passing verdict", view.Run.Output)
 	}
+}
 
-	// ---- 6. Restart survival ----
-
+// assertRestartSurvival checks assertion 6: the restart resumed the run
+// rather than restarting it, and the restart point really was build pass 1.
+func assertRestartSurvival(t *testing.T, agents *deliveryAgents, buildsBeforeRestart int) {
+	t.Helper()
 	if got := agents.callCount("build"); got != 2 {
 		t.Errorf("build was invoked %d times, want exactly 2 (one loop iteration)", got)
 	}
@@ -148,9 +212,14 @@ func TestPhase1VerticalSlice(t *testing.T) {
 	if buildsBeforeRestart != 1 {
 		t.Errorf("build ran %d times before the restart; the restart point is meant to be build pass 1", buildsBeforeRestart)
 	}
+}
 
-	// ---- 2. changes_required is a DOMAIN outcome, walked exactly once ----
-
+// assertChangesRequiredOnce checks assertion 2: verify.changes_required was
+// walked exactly once, and the node run and attempt that produced it are
+// shaped the way a domain outcome must be — completed, one attempt,
+// technically succeeded.
+func assertChangesRequiredOnce(t *testing.T, view runView) {
+	t.Helper()
 	verifyRuns := nodeRunsFor(view, "verify")
 	if len(verifyRuns) != 2 {
 		t.Fatalf("verify ran %d times, want 2", len(verifyRuns))
@@ -175,12 +244,12 @@ func TestPhase1VerticalSlice(t *testing.T) {
 	if changesRequired != 1 {
 		t.Errorf("verify returned changes_required %d times, want exactly 1", changesRequired)
 	}
+}
 
-	// The edge itself was followed, once, and its event says so.
-	events, sse := drainSSE(t, sseDone)
-	if sse != nil {
-		t.Fatalf("SSE stream: %v", sse)
-	}
+// assertEdgeTransitions checks the edge-transition counts that go with
+// assertion 2: the loop edges were each walked the expected number of times.
+func assertEdgeTransitions(t *testing.T, events []sseEvent) {
+	t.Helper()
 	if got := countEdgeTransitions(events, "verify.changes_required"); got != 1 {
 		t.Errorf("the verify.changes_required edge was walked %d times, want exactly 1", got)
 	}
@@ -190,8 +259,12 @@ func TestPhase1VerticalSlice(t *testing.T) {
 	if got := countEdgeTransitions(events, "test.passed"); got != 2 {
 		t.Errorf("the test.passed edge was walked %d times, want 2", got)
 	}
-	// No attempt anywhere in the run failed technically. The loop is domain
-	// routing from end to end.
+}
+
+// assertNoTechnicalFailures checks that no attempt anywhere in the run
+// failed technically: the loop is domain routing from end to end.
+func assertNoTechnicalFailures(t *testing.T, view runView) {
+	t.Helper()
 	for _, nr := range view.NodeRuns {
 		for _, attempt := range nr.Attempts {
 			if attempt.Status != string(engine.StatusSucceeded) {
@@ -200,49 +273,82 @@ func TestPhase1VerticalSlice(t *testing.T) {
 			}
 		}
 	}
+}
 
-	// ---- 3. Runner-observed evidence ----
+// assertLedgerHonesty checks assertions 3 and 4: the code node's evidence
+// carries runner authority and observed origin, agent-origin records never
+// escape `proposed`, and the confirmed_claims / delivery_summary
+// projections agree with both.
+func assertLedgerHonesty(t *testing.T, s *stack, namespaceID, runID, runnerID string) {
+	t.Helper()
 
-	led := ledgerFor(t, second.db, ns.ID)
+	led := ledgerFor(t, s.db, namespaceID)
 	records, err := led.Records(context.Background(), runID)
 	if err != nil {
 		t.Fatalf("read ledger: %v", err)
 	}
 
-	var evidence []ledger.Record
+	assertRunnerObservedEvidence(t, records, runnerID)
+	assertAgentRecordsStayProposed(t, records)
+	assertConfirmedClaimsProjection(t, led, runID)
+	assertDeliverySummaryProjection(t, led, runID)
+}
+
+// filterRecords returns the subset of records whose RecordType is
+// recordType.
+func filterRecords(records []ledger.Record, recordType ledger.RecordType) []ledger.Record {
+	var out []ledger.Record
 	for _, rec := range records {
-		if rec.RecordType == ledger.RecordEvidence {
-			evidence = append(evidence, rec)
+		if rec.RecordType == recordType {
+			out = append(out, rec)
 		}
 	}
+	return out
+}
+
+// assertRunnerObservedEvidence checks the `test` code node appended
+// runner-observed evidence — authority observed, origin runner — through
+// the ledger's own authority matrix.
+func assertRunnerObservedEvidence(t *testing.T, records []ledger.Record, runnerID string) {
+	t.Helper()
+	evidence := filterRecords(records, ledger.RecordEvidence)
 	if len(evidence) != 2 {
 		t.Fatalf("run has %d evidence records, want 2 (one per code-node run)", len(evidence))
 	}
 	for _, rec := range evidence {
-		if rec.Authority != ledger.AuthorityObserved {
-			t.Errorf("evidence %s authority = %q, want observed", rec.ID, rec.Authority)
-		}
-		if rec.Origin.Kind != ledger.OriginRunner {
-			t.Errorf("evidence %s origin kind = %q, want runner", rec.ID, rec.Origin.Kind)
-		}
-		if rec.Origin.ActorID != runnerID {
-			t.Errorf("evidence %s actor = %q, want the registered runner %q", rec.ID, rec.Origin.ActorID, runnerID)
-		}
-		data, decodeErr := rec.DataMap()
-		if decodeErr != nil {
-			t.Fatalf("decode evidence payload: %v", decodeErr)
-		}
-		if _, ok := data["covered_scope"]; !ok {
-			t.Errorf("evidence %s declares no covered_scope; scoped evidence is the point (PRD §10.5)", rec.ID)
-		}
-		measurements, _ := data["measurements"].(map[string]any)
-		if _, ok := measurements["exit_code"]; !ok {
-			t.Errorf("evidence %s carries no measured exit_code: %s", rec.ID, rec.Data)
-		}
+		assertEvidenceRecord(t, rec, runnerID)
 	}
+}
 
-	// ---- 4. Agent-origin records stay proposed ----
+func assertEvidenceRecord(t *testing.T, rec ledger.Record, runnerID string) {
+	t.Helper()
+	if rec.Authority != ledger.AuthorityObserved {
+		t.Errorf("evidence %s authority = %q, want observed", rec.ID, rec.Authority)
+	}
+	if rec.Origin.Kind != ledger.OriginRunner {
+		t.Errorf("evidence %s origin kind = %q, want runner", rec.ID, rec.Origin.Kind)
+	}
+	if rec.Origin.ActorID != runnerID {
+		t.Errorf("evidence %s actor = %q, want the registered runner %q", rec.ID, rec.Origin.ActorID, runnerID)
+	}
+	data, decodeErr := rec.DataMap()
+	if decodeErr != nil {
+		t.Fatalf("decode evidence payload: %v", decodeErr)
+	}
+	if _, ok := data["covered_scope"]; !ok {
+		t.Errorf("evidence %s declares no covered_scope; scoped evidence is the point (PRD §10.5)", rec.ID)
+	}
+	measurements, _ := data["measurements"].(map[string]any)
+	if _, ok := measurements["exit_code"]; !ok {
+		t.Errorf("evidence %s carries no measured exit_code: %s", rec.ID, rec.Data)
+	}
+}
 
+// assertAgentRecordsStayProposed checks build's completion claim (and every
+// other agent-origin record) stayed `proposed`: no agent-origin record in
+// the run ever reached confirmed.
+func assertAgentRecordsStayProposed(t *testing.T, records []ledger.Record) {
+	t.Helper()
 	var claims, agentRecords int
 	for _, rec := range records {
 		if rec.Origin.Kind != ledger.OriginAgent {
@@ -263,7 +369,10 @@ func TestPhase1VerticalSlice(t *testing.T) {
 	if claims < 3 {
 		t.Errorf("run has %d agent claims, want at least 3 (intake's, and build's two completion claims)", claims)
 	}
+}
 
+func assertConfirmedClaimsProjection(t *testing.T, led *ledger.Ledger, runID string) {
+	t.Helper()
 	confirmed, err := led.ProjectRun(context.Background(), runID, ledger.KindConfirmedClaims, "")
 	if err != nil {
 		t.Fatalf("project confirmed_claims: %v", err)
@@ -272,7 +381,10 @@ func TestPhase1VerticalSlice(t *testing.T) {
 		t.Errorf("confirmed_claims projects %d items; nothing in this run was ever confirmed by a human review",
 			len(confirmed.Items))
 	}
+}
 
+func assertDeliverySummaryProjection(t *testing.T, led *ledger.Ledger, runID string) {
+	t.Helper()
 	summary, err := led.ProjectRun(context.Background(), runID, ledger.KindDeliverySummary, "")
 	if err != nil {
 		t.Fatalf("project delivery_summary: %v", err)
@@ -293,12 +405,16 @@ func TestPhase1VerticalSlice(t *testing.T) {
 	if summary.Summary.EvidenceRecords != 2 {
 		t.Errorf("delivery_summary evidence_records = %d, want 2", summary.Summary.EvidenceRecords)
 	}
+}
 
-	// ---- 5. Every committed transition emitted an event ----
-
+// assertEventDensity checks assertion 5: every committed transition emitted
+// an event, with per-run monotonic sequence numbers and no gaps, and the
+// events table agrees with what the SSE stream delivered.
+func assertEventDensity(t *testing.T, s *stack, namespaceID, runID string, events []sseEvent) {
+	t.Helper()
 	assertMonotonicSequences(t, events)
 
-	dbSequences := eventSequences(t, second.db, ns.ID, runID)
+	dbSequences := eventSequences(t, s.db, namespaceID, runID)
 	if len(dbSequences) != len(events) {
 		t.Errorf("the events table holds %d rows for this run but the SSE stream delivered %d",
 			len(dbSequences), len(events))
@@ -331,13 +447,12 @@ func TestPhase1VerticalSlice(t *testing.T) {
 	if !hasEventType(events, engine.TypeLedgerAppended) {
 		t.Error("no ledger.record-appended event")
 	}
+}
 
-	// ---- 7. The Run view carries what the web front renders ----
-
-	assertRunViewContract(t, second, runID, view, digest)
-
-	// The code node genuinely went through the runner boundary: two typed,
-	// digest-pinned operations, no shell.
+// assertRunnerOperations checks the code node genuinely went through the
+// runner boundary: two typed, digest-pinned operations, no shell.
+func assertRunnerOperations(t *testing.T, runner *scriptedRunner) {
+	t.Helper()
 	ops := runner.operations()
 	if len(ops) != 2 {
 		t.Fatalf("the runner executed %d operations, want 2", len(ops))
@@ -361,6 +476,16 @@ func TestPhase1VerticalSlice(t *testing.T) {
 func assertRunViewContract(t *testing.T, s *stack, runID string, view runView, digest string) {
 	t.Helper()
 
+	assertRunViewShape(t, view, runID)
+	assertRunViewNodeRuns(t, view)
+	assertWorkflowVersionPayload(t, s, digest)
+	assertLedgerEndpointPayload(t, s, runID)
+}
+
+// assertRunViewShape checks the top-level Run-view fields the Run page reads
+// directly.
+func assertRunViewShape(t *testing.T, view runView, runID string) {
+	t.Helper()
 	if view.Run.ID != runID {
 		t.Errorf("run view id = %q, want %q", view.Run.ID, runID)
 	}
@@ -370,33 +495,47 @@ func assertRunViewContract(t *testing.T, s *stack, runID string, view runView, d
 	if len(view.Tokens) == 0 {
 		t.Error("run view carries no tokens; the graph draws the control path from them")
 	}
+}
 
-	// Every node the run touched, with a state, and every attempt under it.
+// assertRunViewNodeRuns checks every node the run touched is present, with a
+// state and every attempt under it, and that the reference workflow's whole
+// node set is represented.
+func assertRunViewNodeRuns(t *testing.T, view runView) {
+	t.Helper()
 	seen := map[string]bool{}
 	for _, nr := range view.NodeRuns {
 		seen[nr.NodeID] = true
-		if nr.State == "" {
-			t.Errorf("node run %s has no state", nr.ID)
-		}
-		if nr.VisitCount < 1 {
-			t.Errorf("node run %s has visit_count %d", nr.ID, nr.VisitCount)
-		}
-		for _, attempt := range nr.Attempts {
-			if attempt.ID == "" || attempt.AttemptNumber < 1 || attempt.Status == "" {
-				t.Errorf("node %s carries an incomplete attempt: %+v", nr.NodeID, attempt)
-			}
-			if attempt.FencingToken <= 0 {
-				t.Errorf("node %s attempt %d records no fencing token", nr.NodeID, attempt.AttemptNumber)
-			}
-		}
+		assertNodeRunShape(t, nr)
 	}
 	for _, node := range []string{"intake", "plan", "build", "test", "verify", "finish"} {
 		if !seen[node] {
 			t.Errorf("the run view omits node %q, which the graph must render", node)
 		}
 	}
+}
 
-	// The IR the graph is drawn from, fetched by the digest the run pins.
+func assertNodeRunShape(t *testing.T, nr nodeRunView) {
+	t.Helper()
+	if nr.State == "" {
+		t.Errorf("node run %s has no state", nr.ID)
+	}
+	if nr.VisitCount < 1 {
+		t.Errorf("node run %s has visit_count %d", nr.ID, nr.VisitCount)
+	}
+	for _, attempt := range nr.Attempts {
+		if attempt.ID == "" || attempt.AttemptNumber < 1 || attempt.Status == "" {
+			t.Errorf("node %s carries an incomplete attempt: %+v", nr.NodeID, attempt)
+		}
+		if attempt.FencingToken <= 0 {
+			t.Errorf("node %s attempt %d records no fencing token", nr.NodeID, attempt.AttemptNumber)
+		}
+	}
+}
+
+// assertWorkflowVersionPayload checks the IR the graph is drawn from,
+// fetched by the digest the run pins.
+func assertWorkflowVersionPayload(t *testing.T, s *stack, digest string) {
+	t.Helper()
 	var version struct {
 		Digest       string          `json:"digest"`
 		NormalizedIR json.RawMessage `json:"normalized_ir"`
@@ -423,8 +562,11 @@ func assertRunViewContract(t *testing.T, s *stack, runID string, view runView, d
 	if len(ir.Spec.Edges) != 7 {
 		t.Errorf("the IR declares %d edges, want 7", len(ir.Spec.Edges))
 	}
+}
 
-	// The Ledger view's own endpoint.
+// assertLedgerEndpointPayload checks the Ledger view's own endpoint.
+func assertLedgerEndpointPayload(t *testing.T, s *stack, runID string) {
+	t.Helper()
 	var ledgerOut struct {
 		Items         []ledger.Record `json:"items"`
 		LedgerVersion int64           `json:"ledger_version"`

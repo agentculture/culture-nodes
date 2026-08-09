@@ -59,6 +59,22 @@ func requireRealHeadspace(t *testing.T) {
 	}
 }
 
+// newHeadspaceBridge builds the real headspace-cli Docker bridge, pinned to
+// resolve the reference workflow's image digest to headspace's own
+// python3.12 profile.
+func newHeadspaceBridge(t *testing.T) *headspace.Bridge {
+	t.Helper()
+	bridge, err := headspace.New(headspace.BridgeConfig{
+		Profile:     map[string]string{referenceImageDigest: headspace.DefaultProfilePython312},
+		Provider:    "docker",
+		StopTimeout: 30 * time.Second,
+	})
+	if err != nil {
+		t.Fatalf("headspace.New: %v", err)
+	}
+	return bridge
+}
+
 // TestPhase1VerticalSliceWithRealHeadspaceRunner runs the reference workflow
 // end to end with the code node dispatched to the real Docker boundary, and
 // asserts the evidence in the ledger carries headspace's OWN provenance
@@ -69,23 +85,8 @@ func TestPhase1VerticalSliceWithRealHeadspaceRunner(t *testing.T) {
 	s := pgtest.RequireStore(t, testStore)
 	ns := pgtest.MustNamespace(t, s, "e2e-live")
 
-	bridge, err := headspace.New(headspace.BridgeConfig{
-		Profile:     map[string]string{referenceImageDigest: headspace.DefaultProfilePython312},
-		Provider:    "docker",
-		StopTimeout: 30 * time.Second,
-	})
-	if err != nil {
-		t.Fatalf("headspace.New: %v", err)
-	}
-
-	agentIDs := map[string]string{}
-	agents := newDeliveryAgents(t, agentIDs)
-	registered, runnerID := registerActors(t, s, ns.ID, agents.server.URL)
-	agents.mu.Lock()
-	for node, id := range registered {
-		agentIDs[node] = id
-	}
-	agents.mu.Unlock()
+	bridge := newHeadspaceBridge(t)
+	agents, runnerID := setupDeliveryAgentsAndActors(t, s, ns.ID)
 
 	stack := startStack(t, stackConfig{
 		namespaceID:   ns.ID,
@@ -118,77 +119,15 @@ func TestPhase1VerticalSliceWithRealHeadspaceRunner(t *testing.T) {
 	if got := agents.callCount("build"); got != 2 {
 		t.Errorf("build was invoked %d times, want 2", got)
 	}
-	testRuns := nodeRunsFor(view, "test")
-	if len(testRuns) != 2 {
-		t.Fatalf("the code node ran %d times, want 2", len(testRuns))
-	}
-	for _, nr := range testRuns {
-		if nr.Outcome != "passed" {
-			t.Errorf("code node outcome = %q, want passed (the container exited 0)", nr.Outcome)
-		}
-	}
+	assertLiveTestRuns(t, view)
 
 	// ---- The evidence carries headspace's own measurements ----
-
 	led := ledgerFor(t, stack.db, ns.ID)
 	records, err := led.Records(context.Background(), runID)
 	if err != nil {
 		t.Fatalf("read ledger: %v", err)
 	}
-	var evidence []ledger.Record
-	for _, rec := range records {
-		if rec.RecordType == ledger.RecordEvidence {
-			evidence = append(evidence, rec)
-		}
-	}
-	if len(evidence) != 2 {
-		t.Fatalf("run has %d evidence records, want 2", len(evidence))
-	}
-	for _, rec := range evidence {
-		if rec.Authority != ledger.AuthorityObserved || rec.Origin.Kind != ledger.OriginRunner {
-			t.Errorf("evidence %s is %s/%s, want observed/runner", rec.ID, rec.Authority, rec.Origin.Kind)
-		}
-		if rec.Origin.ActorRevision != bridge.RunnerRevision() {
-			t.Errorf("evidence %s pins runner revision %q, want the deployed bridge's %q",
-				rec.ID, rec.Origin.ActorRevision, bridge.RunnerRevision())
-		}
-		data, decodeErr := rec.DataMap()
-		if decodeErr != nil {
-			t.Fatalf("decode evidence: %v", decodeErr)
-		}
-		// The image digest headspace itself resolved and ran — not the one
-		// this test asked for. They agree because the pin held.
-		if got, _ := data["environment_digest"].(string); got != referenceImageDigest {
-			t.Errorf("evidence environment_digest = %q, want headspace's resolved %q", got, referenceImageDigest)
-		}
-		measurements, _ := data["measurements"].(map[string]any)
-		if measurements == nil {
-			t.Fatalf("evidence %s carries no measurements: %s", rec.ID, rec.Data)
-		}
-		if code, ok := measurements["exit_code"].(float64); !ok || code != 0 {
-			t.Errorf("evidence measurements exit_code = %v, want a measured 0", measurements["exit_code"])
-		}
-		// headspace's own job id, lifted into the evidence because the
-		// bridge declares it measured under the canonical key. This is the
-		// workspace-side identity that ties the ledger record back to the
-		// container that produced it.
-		requestID, ok := measurements["platform_request_id"].(string)
-		if !ok || requestID == "" {
-			t.Errorf("evidence %s carries no measured platform_request_id: %s", rec.ID, rec.Data)
-		}
-		// The runner declares no `duration` observation of its own, so
-		// duration_ms is CORRECTLY absent: an unmeasured field must not
-		// appear in observed evidence (PRD §10.5).
-		if _, present := measurements["duration_ms"]; present {
-			t.Errorf("evidence %s claims a duration the runner never declared measured: %s", rec.ID, rec.Data)
-		}
-		// A real container run: peak memory is a figure the provider
-		// measured, so it IS admitted.
-		if _, present := measurements["max_memory_mib"]; !present {
-			t.Errorf("evidence %s carries no measured memory figure: %s", rec.ID, rec.Data)
-		}
-		t.Logf("live evidence %s payload: %s", rec.ID, rec.Data)
-	}
+	assertLiveEvidence(t, records, bridge)
 
 	// ---- The stored runner operation carries the full provenance ----
 	//
@@ -198,36 +137,7 @@ func TestPhase1VerticalSliceWithRealHeadspaceRunner(t *testing.T) {
 	// row alongside the request that produced them, which is the replay
 	// manifest PRD §13.7 asks for.
 	results := storedRunnerResults(t, stack, runID)
-	if len(results) != 2 {
-		t.Fatalf("runner_operations holds %d code rows for this run, want 2", len(results))
-	}
-	for _, res := range results {
-		if res.Environment.ImageDigest != referenceImageDigest {
-			t.Errorf("stored result image digest = %q, want %q", res.Environment.ImageDigest, referenceImageDigest)
-		}
-		if res.Environment.PlatformRequestID == "" {
-			t.Error("stored result carries no platform request id (headspace's job id)")
-		}
-		if res.Environment.RunnerRevision != bridge.RunnerRevision() {
-			t.Errorf("stored result runner revision = %q, want %q", res.Environment.RunnerRevision, bridge.RunnerRevision())
-		}
-		workspace, ok := res.Observations.Get("workspace_id")
-		if !ok || !workspace.Measured {
-			t.Errorf("stored result declares no measured workspace_id observation: %+v", res.Observations.Additional)
-		}
-		if workspace.Scope == "" {
-			t.Error("the workspace_id observation states no scope")
-		}
-		job, ok := res.Observations.Get("job_id")
-		if !ok || !job.Measured {
-			t.Error("stored result declares no measured job_id observation")
-		}
-		if !res.Observations.ExitStatus.Measured {
-			t.Error("stored result does not declare the exit status measured; a real container wait status IS measured")
-		}
-		t.Logf("live runner provenance: image=%s job=%s workspace_scope=%q",
-			res.Environment.ImageDigest, res.Environment.PlatformRequestID, workspace.Scope)
-	}
+	assertStoredRunnerResults(t, results, bridge)
 
 	// ---- PRD §21.2's headspace conformance property ----
 	//
@@ -235,6 +145,131 @@ func TestPhase1VerticalSliceWithRealHeadspaceRunner(t *testing.T) {
 	// The two results must therefore agree on everything except the
 	// identities and timings that are per-execution by definition: same
 	// policy digest, same image digest, same result-envelope structure.
+	assertConformance(t, results)
+}
+
+// assertLiveTestRuns checks the code node ran exactly twice and both passed
+// (the container exited 0).
+func assertLiveTestRuns(t *testing.T, view runView) {
+	t.Helper()
+	testRuns := nodeRunsFor(view, "test")
+	if len(testRuns) != 2 {
+		t.Fatalf("the code node ran %d times, want 2", len(testRuns))
+	}
+	for _, nr := range testRuns {
+		if nr.Outcome != "passed" {
+			t.Errorf("code node outcome = %q, want passed (the container exited 0)", nr.Outcome)
+		}
+	}
+}
+
+// assertLiveEvidence checks the run's evidence records carry headspace's own
+// provenance rather than anything the test supplied.
+func assertLiveEvidence(t *testing.T, records []ledger.Record, bridge *headspace.Bridge) {
+	t.Helper()
+	evidence := filterRecords(records, ledger.RecordEvidence)
+	if len(evidence) != 2 {
+		t.Fatalf("run has %d evidence records, want 2", len(evidence))
+	}
+	for _, rec := range evidence {
+		assertLiveEvidenceRecord(t, rec, bridge)
+		t.Logf("live evidence %s payload: %s", rec.ID, rec.Data)
+	}
+}
+
+func assertLiveEvidenceRecord(t *testing.T, rec ledger.Record, bridge *headspace.Bridge) {
+	t.Helper()
+	if rec.Authority != ledger.AuthorityObserved || rec.Origin.Kind != ledger.OriginRunner {
+		t.Errorf("evidence %s is %s/%s, want observed/runner", rec.ID, rec.Authority, rec.Origin.Kind)
+	}
+	if rec.Origin.ActorRevision != bridge.RunnerRevision() {
+		t.Errorf("evidence %s pins runner revision %q, want the deployed bridge's %q",
+			rec.ID, rec.Origin.ActorRevision, bridge.RunnerRevision())
+	}
+	data, decodeErr := rec.DataMap()
+	if decodeErr != nil {
+		t.Fatalf("decode evidence: %v", decodeErr)
+	}
+	// The image digest headspace itself resolved and ran — not the one
+	// this test asked for. They agree because the pin held.
+	if got, _ := data["environment_digest"].(string); got != referenceImageDigest {
+		t.Errorf("evidence environment_digest = %q, want headspace's resolved %q", got, referenceImageDigest)
+	}
+	measurements, _ := data["measurements"].(map[string]any)
+	if measurements == nil {
+		t.Fatalf("evidence %s carries no measurements: %s", rec.ID, rec.Data)
+	}
+	if code, ok := measurements["exit_code"].(float64); !ok || code != 0 {
+		t.Errorf("evidence measurements exit_code = %v, want a measured 0", measurements["exit_code"])
+	}
+	// headspace's own job id, lifted into the evidence because the
+	// bridge declares it measured under the canonical key. This is the
+	// workspace-side identity that ties the ledger record back to the
+	// container that produced it.
+	requestID, ok := measurements["platform_request_id"].(string)
+	if !ok || requestID == "" {
+		t.Errorf("evidence %s carries no measured platform_request_id: %s", rec.ID, rec.Data)
+	}
+	// The runner declares no `duration` observation of its own, so
+	// duration_ms is CORRECTLY absent: an unmeasured field must not
+	// appear in observed evidence (PRD §10.5).
+	if _, present := measurements["duration_ms"]; present {
+		t.Errorf("evidence %s claims a duration the runner never declared measured: %s", rec.ID, rec.Data)
+	}
+	// A real container run: peak memory is a figure the provider
+	// measured, so it IS admitted.
+	if _, present := measurements["max_memory_mib"]; !present {
+		t.Errorf("evidence %s carries no measured memory figure: %s", rec.ID, rec.Data)
+	}
+}
+
+// assertStoredRunnerResults checks the runner_operations rows this run
+// produced carry the full replay provenance PRD §13.7 asks for.
+func assertStoredRunnerResults(t *testing.T, results []runners.Result, bridge *headspace.Bridge) {
+	t.Helper()
+	if len(results) != 2 {
+		t.Fatalf("runner_operations holds %d code rows for this run, want 2", len(results))
+	}
+	for _, res := range results {
+		assertStoredRunnerResult(t, res, bridge)
+	}
+}
+
+func assertStoredRunnerResult(t *testing.T, res runners.Result, bridge *headspace.Bridge) {
+	t.Helper()
+	if res.Environment.ImageDigest != referenceImageDigest {
+		t.Errorf("stored result image digest = %q, want %q", res.Environment.ImageDigest, referenceImageDigest)
+	}
+	if res.Environment.PlatformRequestID == "" {
+		t.Error("stored result carries no platform request id (headspace's job id)")
+	}
+	if res.Environment.RunnerRevision != bridge.RunnerRevision() {
+		t.Errorf("stored result runner revision = %q, want %q", res.Environment.RunnerRevision, bridge.RunnerRevision())
+	}
+	workspace, ok := res.Observations.Get("workspace_id")
+	if !ok || !workspace.Measured {
+		t.Errorf("stored result declares no measured workspace_id observation: %+v", res.Observations.Additional)
+	}
+	if workspace.Scope == "" {
+		t.Error("the workspace_id observation states no scope")
+	}
+	job, ok := res.Observations.Get("job_id")
+	if !ok || !job.Measured {
+		t.Error("stored result declares no measured job_id observation")
+	}
+	if !res.Observations.ExitStatus.Measured {
+		t.Error("stored result does not declare the exit status measured; a real container wait status IS measured")
+	}
+	t.Logf("live runner provenance: image=%s job=%s workspace_scope=%q",
+		res.Environment.ImageDigest, res.Environment.PlatformRequestID, workspace.Scope)
+}
+
+// assertConformance checks PRD §21.2's headspace conformance property: two
+// runs of one operation with identical input, image, and policy agree on
+// everything except the identities and timings that are per-execution by
+// definition.
+func assertConformance(t *testing.T, results []runners.Result) {
+	t.Helper()
 	if results[0].Environment.PolicyDigest != results[1].Environment.PolicyDigest {
 		t.Errorf("two runs of one operation reported different policy digests: %s vs %s",
 			results[0].Environment.PolicyDigest, results[1].Environment.PolicyDigest)

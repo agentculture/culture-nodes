@@ -155,6 +155,24 @@ func byKind(manifests []manifest, kind string) []manifest {
 	return out
 }
 
+// containersOf returns a Deployment or Job manifest's pod containers, or nil
+// if m is neither kind or the path is absent. Both this chart's Deployments
+// and its migration Job put their containers at the same
+// spec.template.spec.containers path.
+func containersOf(m manifest) []any {
+	switch m.kind() {
+	case "Deployment", "Job":
+	default:
+		return nil
+	}
+	raw, ok := getPath(m, "spec", "template", "spec", "containers")
+	if !ok {
+		return nil
+	}
+	containers, _ := raw.([]any)
+	return containers
+}
+
 // TestNoDockerSocketAnywhere renders the chart with every optional surface
 // turned on (ingress, in-chart Postgres) and greps the raw text for any
 // reference to docker.sock -- the bluntest, most reliable way to prove no
@@ -187,49 +205,67 @@ func TestNoDockerSocketAnywhere(t *testing.T) {
 // Deployments (api, scheduler, worker) plus, when postgresql.enabled, one
 // Postgres StatefulSet -- never more, never fewer.
 func TestExpectedWorkloadSet(t *testing.T) {
-	t.Run("postgresql_enabled_default", func(t *testing.T) {
-		manifests := helmTemplate(t)
+	t.Run("postgresql_enabled_default", assertWorkloadSetWithInChartPostgres)
+	t.Run("postgresql_disabled_external", assertWorkloadSetWithExternalPostgres)
+}
 
-		deployments := byKind(manifests, "Deployment")
-		gotComponents := make(map[string]bool)
-		for _, d := range deployments {
-			gotComponents[d.component()] = true
-		}
-		wantComponents := []string{"api", "scheduler", "worker"}
-		if len(deployments) != len(wantComponents) {
-			t.Fatalf("got %d Deployments, want %d (one each for %v); components seen: %v",
-				len(deployments), len(wantComponents), wantComponents, gotComponents)
-		}
-		for _, want := range wantComponents {
-			if !gotComponents[want] {
-				t.Errorf("no Deployment with app.kubernetes.io/component=%s", want)
-			}
-		}
+// assertWorkloadSetWithInChartPostgres is the postgresql_enabled_default
+// subtest: the control-plane Deployments plus exactly one Postgres
+// StatefulSet.
+func assertWorkloadSetWithInChartPostgres(t *testing.T) {
+	t.Helper()
+	manifests := helmTemplate(t)
 
-		statefulSets := byKind(manifests, "StatefulSet")
-		if len(statefulSets) != 1 {
-			t.Fatalf("got %d StatefulSets with postgresql.enabled (default), want exactly 1 (postgres)", len(statefulSets))
-		}
-		if got := statefulSets[0].component(); got != "postgres" {
-			t.Errorf("the StatefulSet's component label = %q, want %q", got, "postgres")
-		}
-	})
+	assertControlPlaneDeployments(t, manifests)
 
-	t.Run("postgresql_disabled_external", func(t *testing.T) {
-		manifests := helmTemplate(t,
-			"--set", "postgresql.enabled=false",
-			"--set", "postgresql.external.url=postgres://user:pass@external-host:5432/nodes",
-		)
+	statefulSets := byKind(manifests, "StatefulSet")
+	if len(statefulSets) != 1 {
+		t.Fatalf("got %d StatefulSets with postgresql.enabled (default), want exactly 1 (postgres)", len(statefulSets))
+	}
+	if got := statefulSets[0].component(); got != "postgres" {
+		t.Errorf("the StatefulSet's component label = %q, want %q", got, "postgres")
+	}
+}
 
-		deployments := byKind(manifests, "Deployment")
-		if len(deployments) != 3 {
-			t.Fatalf("got %d Deployments with postgresql.enabled=false, want 3 (postgresql.enabled must not change the control-plane workload set)", len(deployments))
+// assertControlPlaneDeployments checks the chart renders exactly one
+// Deployment each for api, scheduler, and worker.
+func assertControlPlaneDeployments(t *testing.T, manifests []manifest) {
+	t.Helper()
+	deployments := byKind(manifests, "Deployment")
+	gotComponents := make(map[string]bool)
+	for _, d := range deployments {
+		gotComponents[d.component()] = true
+	}
+	wantComponents := []string{"api", "scheduler", "worker"}
+	if len(deployments) != len(wantComponents) {
+		t.Fatalf("got %d Deployments, want %d (one each for %v); components seen: %v",
+			len(deployments), len(wantComponents), wantComponents, gotComponents)
+	}
+	for _, want := range wantComponents {
+		if !gotComponents[want] {
+			t.Errorf("no Deployment with app.kubernetes.io/component=%s", want)
 		}
+	}
+}
 
-		if statefulSets := byKind(manifests, "StatefulSet"); len(statefulSets) != 0 {
-			t.Fatalf("got %d StatefulSets with postgresql.enabled=false, want 0 (no in-chart postgres)", len(statefulSets))
-		}
-	})
+// assertWorkloadSetWithExternalPostgres is the postgresql_disabled_external
+// subtest: postgresql.enabled=false must not change the control-plane
+// workload set, and must render no in-chart postgres StatefulSet.
+func assertWorkloadSetWithExternalPostgres(t *testing.T) {
+	t.Helper()
+	manifests := helmTemplate(t,
+		"--set", "postgresql.enabled=false",
+		"--set", "postgresql.external.url=postgres://user:pass@external-host:5432/nodes",
+	)
+
+	deployments := byKind(manifests, "Deployment")
+	if len(deployments) != 3 {
+		t.Fatalf("got %d Deployments with postgresql.enabled=false, want 3 (postgresql.enabled must not change the control-plane workload set)", len(deployments))
+	}
+
+	if statefulSets := byKind(manifests, "StatefulSet"); len(statefulSets) != 0 {
+		t.Fatalf("got %d StatefulSets with postgresql.enabled=false, want 0 (no in-chart postgres)", len(statefulSets))
+	}
 }
 
 // TestWorkerReplicasDefaultToTwo proves worker.replicas defaults to 2 --
@@ -346,33 +382,28 @@ func TestImageDigestWinsOverTag(t *testing.T) {
 		if m.component() == "postgres" {
 			continue // the postgres:17 container is not this chart's image.
 		}
-		var containerPaths [][]string
-		switch m.kind() {
-		case "Deployment":
-			containerPaths = [][]string{{"spec", "template", "spec", "containers"}}
-		case "Job":
-			containerPaths = [][]string{{"spec", "template", "spec", "containers"}}
-		default:
-			continue
-		}
-		for _, path := range containerPaths {
-			raw, ok := getPath(m, path...)
-			if !ok {
-				continue
-			}
-			for _, c := range raw.([]any) {
-				container := c.(map[string]any)
-				image, _ := container["image"].(string)
-				if image != wantImage {
-					t.Errorf("%s %q container %q image = %q, want %q", m.kind(), m.name(), container["name"], image, wantImage)
-				}
-				checked++
-			}
-		}
+		checked += assertContainersUseImage(t, m, wantImage)
 	}
 	if checked != 4 {
 		t.Fatalf("checked %d containers, want exactly 4 (api, scheduler, worker, migrate)", checked)
 	}
+}
+
+// assertContainersUseImage checks every container in m's pod spec (when m is
+// a Deployment or Job) references wantImage, and returns how many it
+// checked.
+func assertContainersUseImage(t *testing.T, m manifest, wantImage string) int {
+	t.Helper()
+	checked := 0
+	for _, c := range containersOf(m) {
+		container := c.(map[string]any)
+		image, _ := container["image"].(string)
+		if image != wantImage {
+			t.Errorf("%s %q container %q image = %q, want %q", m.kind(), m.name(), container["name"], image, wantImage)
+		}
+		checked++
+	}
+	return checked
 }
 
 // TestContainerSecurityContextHasNumericRunAsUser is a regression test for
@@ -393,35 +424,35 @@ func TestContainerSecurityContextHasNumericRunAsUser(t *testing.T) {
 		if m.component() == "postgres" {
 			continue // not this chart's image; not in scope of the bug above.
 		}
-		var containers []any
-		switch m.kind() {
-		case "Deployment", "Job":
-			raw, ok := getPath(m, "spec", "template", "spec", "containers")
-			if !ok {
-				continue
+		for _, c := range containersOf(m) {
+			if assertContainerHasNumericRunAsUser(t, m, c.(map[string]any)) {
+				checked++
 			}
-			containers = raw.([]any)
-		default:
-			continue
-		}
-		for _, c := range containers {
-			container := c.(map[string]any)
-			sc, _ := container["securityContext"].(map[string]any)
-			if sc == nil {
-				t.Errorf("%s %q container %q has no securityContext", m.kind(), m.name(), container["name"])
-				continue
-			}
-			runAsNonRoot, _ := sc["runAsNonRoot"].(bool)
-			_, hasRunAsUser := sc["runAsUser"]
-			if runAsNonRoot && !hasRunAsUser {
-				t.Errorf("%s %q container %q sets runAsNonRoot without runAsUser -- fails admission against a distroless:nonroot image (named, not numeric, USER)", m.kind(), m.name(), container["name"])
-			}
-			checked++
 		}
 	}
 	if checked != 4 {
 		t.Fatalf("checked %d containers, want exactly 4 (api, scheduler, worker, migrate)", checked)
 	}
+}
+
+// assertContainerHasNumericRunAsUser checks container declares a
+// securityContext and, when runAsNonRoot is set, a numeric runAsUser
+// alongside it. It reports whether the container had a securityContext to
+// check at all -- callers use that to keep their own "containers checked"
+// count exactly as it was before this helper existed.
+func assertContainerHasNumericRunAsUser(t *testing.T, m manifest, container map[string]any) bool {
+	t.Helper()
+	sc, _ := container["securityContext"].(map[string]any)
+	if sc == nil {
+		t.Errorf("%s %q container %q has no securityContext", m.kind(), m.name(), container["name"])
+		return false
+	}
+	runAsNonRoot, _ := sc["runAsNonRoot"].(bool)
+	_, hasRunAsUser := sc["runAsUser"]
+	if runAsNonRoot && !hasRunAsUser {
+		t.Errorf("%s %q container %q sets runAsNonRoot without runAsUser -- fails admission against a distroless:nonroot image (named, not numeric, USER)", m.kind(), m.name(), container["name"])
+	}
+	return true
 }
 
 // TestPostgresPasswordMatchesDatabaseURL is a regression test for a second

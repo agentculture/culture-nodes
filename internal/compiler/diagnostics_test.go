@@ -117,6 +117,28 @@ func TestDeliberateErrorFixtures(t *testing.T) {
 				{LevelError, "/spec/nodes/start/ledger/observe", CodeLedgerObserveNotPermitted},
 			},
 		},
+		{
+			// Task t14, spec claim c37: pre_run/post_run run around an
+			// agent's own actor dispatch, so a code node declaring either is
+			// refused — one diagnostic per hook, each naming the node's
+			// actual kind.
+			name: "pre_run/post_run declared on a non-agent node",
+			file: "err-hook-not-agent.workflow.yaml",
+			want: []wantDiag{
+				{LevelError, "/spec/nodes/build/post_run", CodeHookKindNotAgent},
+				{LevelError, "/spec/nodes/build/pre_run", CodeHookKindNotAgent},
+			},
+		},
+		{
+			// Honesty condition h32: a post-run failure must route to an
+			// outcome the node actually declares, never to one it never
+			// promised.
+			name: "post_run.on_failure names an undeclared outcome",
+			file: "err-hook-outcome-undeclared.workflow.yaml",
+			want: []wantDiag{
+				{LevelError, "/spec/nodes/work/post_run/on_failure/outcome", CodeHookOutcomeUndeclared},
+			},
+		},
 	}
 
 	for _, tc := range cases {

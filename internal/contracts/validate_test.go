@@ -57,6 +57,18 @@ func contains(haystack []string, needle string) bool {
 	return false
 }
 
+// hasPrefix reports whether any string in haystack starts with prefix, so a
+// test can assert "a violation was reported somewhere under this node's
+// keyword" without pinning the exact sub-pointer a schema library chooses.
+func hasPrefix(haystack []string, prefix string) bool {
+	for _, s := range haystack {
+		if strings.HasPrefix(s, prefix) {
+			return true
+		}
+	}
+	return false
+}
+
 // TestEmbeddedExamplesValidate keeps the shipped reference documents honest:
 // the PRD §11.1 authoring example, and one document per contract family.
 func TestEmbeddedExamplesValidate(t *testing.T) {
@@ -241,25 +253,82 @@ func TestValidateAcceptsGoValues(t *testing.T) {
 	}
 }
 
-// TestNodeHooksAreDeclaredButUnvalidated pins the current, deliberate state of
-// pre_run/post_run: the keywords exist so authoring can begin, and they accept
-// anything because their contract is not specified yet. When the hook contract
-// lands this test should fail and be replaced — that failure is the signal, not
-// a regression.
-func TestNodeHooksAreDeclaredButUnvalidated(t *testing.T) {
+// TestNodeHooksAreNowValidated supersedes the earlier pinned-permissiveness
+// test (task t14): pre_run/post_run are no longer unvalidated stubs. Both
+// hooks reuse the code node's own operation shape via $ref, and post_run
+// additionally requires on_failure — a post-run check failure must route to a
+// declared outcome or an explicit assurance rejection, never to silence
+// (honesty condition h32). The old fixture's junk shapes — an object with an
+// unknown "shape" key, and a bare string — now fail, each with a JSON Pointer
+// naming exactly where.
+func TestNodeHooksAreNowValidated(t *testing.T) {
 	v := newValidator(t)
-	var doc map[string]any
-	if err := json.Unmarshal(fixture(t, "valid", "workflow-minimal.json"), &doc); err != nil {
-		t.Fatalf("decode fixture: %v", err)
-	}
-	spec := doc["spec"].(map[string]any)
-	node := spec["nodes"].(map[string]any)["build"].(map[string]any)
-	node["pre_run"] = map[string]any{"shape": []any{1, "not specified", nil}}
-	node["post_run"] = "not even an object"
 
-	if err := v.Validate(contracts.SchemaWorkflow, doc); err != nil {
-		t.Errorf("pre_run/post_run are unvalidated stubs and should be accepted: %v", err)
+	loadNode := func(t *testing.T) (doc map[string]any, node map[string]any) {
+		t.Helper()
+		if err := json.Unmarshal(fixture(t, "valid", "workflow-minimal.json"), &doc); err != nil {
+			t.Fatalf("decode fixture: %v", err)
+		}
+		spec := doc["spec"].(map[string]any)
+		node = spec["nodes"].(map[string]any)["build"].(map[string]any)
+		return doc, node
 	}
+
+	t.Run("junk shapes are now rejected with a pointer", func(t *testing.T) {
+		doc, node := loadNode(t)
+		node["pre_run"] = map[string]any{"shape": []any{1, "not specified", nil}}
+		node["post_run"] = "not even an object"
+
+		err := v.Validate(contracts.SchemaWorkflow, doc)
+		if err == nil {
+			t.Fatal("expected the tightened pre_run/post_run schema to reject junk shapes")
+		}
+		var ve *contracts.ValidationError
+		if !errors.As(err, &ve) {
+			t.Fatalf("error is not a *contracts.ValidationError: %T", err)
+		}
+		var pointers []string
+		for _, violation := range ve.Violations {
+			pointers = append(pointers, violation.Pointer)
+		}
+		if !hasPrefix(pointers, "/spec/nodes/build/pre_run") {
+			t.Errorf("no violation under /spec/nodes/build/pre_run; got %v", pointers)
+		}
+		if !hasPrefix(pointers, "/spec/nodes/build/post_run") {
+			t.Errorf("no violation under /spec/nodes/build/post_run; got %v", pointers)
+		}
+	})
+
+	t.Run("post_run without on_failure is rejected", func(t *testing.T) {
+		doc, node := loadNode(t)
+		node["post_run"] = map[string]any{
+			"operation": map[string]any{"image": "repo/hook@sha256:" + strings.Repeat("a", 64), "argv": []any{"true"}},
+		}
+		if err := v.Validate(contracts.SchemaWorkflow, doc); err == nil {
+			t.Fatal("expected post_run without on_failure to be rejected: a post-run failure must map to a declared outcome or an assurance rejection, never silence")
+		}
+	})
+
+	t.Run("a well-formed hook pair validates", func(t *testing.T) {
+		doc, node := loadNode(t)
+		node["pre_run"] = map[string]any{
+			"operation": map[string]any{"image": "repo/guard@sha256:" + strings.Repeat("a", 64), "argv": []any{"check"}},
+		}
+		node["post_run"] = map[string]any{
+			"operation":  map[string]any{"image": "repo/verify@sha256:" + strings.Repeat("b", 64), "argv": []any{"verify"}},
+			"on_failure": map[string]any{"outcome": "completed"},
+		}
+		if err := v.Validate(contracts.SchemaWorkflow, doc); err != nil {
+			t.Errorf("well-formed pre_run/post_run should validate: %v", err)
+		}
+
+		// The other on_failure shape — the reject_assurance sentinel — also
+		// validates.
+		node["post_run"].(map[string]any)["on_failure"] = "reject_assurance"
+		if err := v.Validate(contracts.SchemaWorkflow, doc); err != nil {
+			t.Errorf("on_failure: reject_assurance should validate: %v", err)
+		}
+	})
 }
 
 func TestValidateUnknownSchema(t *testing.T) {

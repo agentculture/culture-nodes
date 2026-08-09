@@ -1,0 +1,97 @@
+# The pre_run/post_run hook slice the worker's hooks_test.go drives (task
+# t14, spec claim c37). One agent node declares both hooks: pre_run gates
+# whether the agent is ever invoked, and post_run's on_failure names the
+# `changes_required` outcome this node's own contract already declares, so a
+# failing check routes to a genuinely different edge (`revise`) than the
+# agent's own `completed` (`finish`) — proving the routing actually happened,
+# not just that the outcome got recorded.
+#
+# `ledger` declares only `propose`: an agent node can never declare `observe`
+# (internal/compiler's checkLedgerDelta — only a code node dispatches through
+# the boundary that earns that authority), and a hook's own evidence does not
+# need it either — the worker appends hook evidence directly through the
+# ledger rather than through this node's declared delta (see
+# internal/worker/hooks.go's package doc).
+apiVersion: nodes.culture.dev/v1alpha1
+kind: Workflow
+
+metadata:
+  name: worker-hooks-slice
+  version: 1.0.0
+  ownerRef: team/platform-ai
+
+spec:
+  entry: work
+
+  contract:
+    input:
+      schema:
+        type: object
+        required: [subject]
+        properties:
+          subject:
+            type: string
+    output:
+      schema:
+        type: object
+
+  limits:
+    maxDuration: 1h
+    maxTransitions: 8
+    maxVisitsPerNode: 4
+    maxParallelTokens: 1
+
+  ledger:
+    schemaVersion: nodes.culture.dev/ledger/v1alpha1
+    maxRecordsPerNode: 10
+
+  nodes:
+    work:
+      kind: agent
+      ownerRef: team/platform-ai
+      uses: actor://company/hookworker@sha256:cccccc
+      input:
+        from: /run/input
+      contract:
+        outcomes:
+          completed:
+            schema:
+              type: object
+          changes_required:
+            schema:
+              type: object
+      ledger:
+        propose: [claim, result]
+      policy:
+        timeout: 2m
+        retry:
+          maxAttempts: 2
+          backoff: none
+      pre_run:
+        operation:
+          image: registry.example/guard@sha256:1111111111111111111111111111111111111111111111111111111111111111
+          argv: [guard]
+      post_run:
+        operation:
+          image: registry.example/verify@sha256:2222222222222222222222222222222222222222222222222222222222222222
+          argv: [verify]
+        on_failure:
+          outcome: changes_required
+
+    finish:
+      kind: end
+      ownerRef: team/platform-ai
+      output:
+        from: /nodes/work/output
+
+    revise:
+      kind: end
+      ownerRef: team/platform-ai
+      output:
+        from: /nodes/work/output
+
+  edges:
+    - from: work.completed
+      to: finish
+    - from: work.changes_required
+      to: revise

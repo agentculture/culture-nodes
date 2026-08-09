@@ -328,12 +328,10 @@
           "description": "Node presentation metadata; never changes runtime semantics."
         },
         "pre_run": {
-          "$comment": "DECLARED BUT UNVALIDATED. The pre-run/post-run code-hook contract is specified by a later task (plan task t14): a pre-run operation executes through the runner boundary before agent dispatch, and its failure fails the attempt without ever invoking the agent. Until that contract exists this keyword accepts any value so authoring can begin — acceptance here is NOT a contract, and validation will tighten additively.",
-          "description": "Code operation executed through the runner boundary before the agent is dispatched. Shape not yet specified."
+          "$ref": "#/$defs/preRunHook"
         },
         "post_run": {
-          "$comment": "DECLARED BUT UNVALIDATED. See pre_run. A post-run check failure maps to a declared domain outcome or an assurance rejection, never to silence. Shape is specified by a later task (plan task t14).",
-          "description": "Code operation executed through the runner boundary after the agent returns. Shape not yet specified."
+          "$ref": "#/$defs/postRunHook"
         }
       },
       "allOf": [
@@ -517,6 +515,56 @@
         "none",
         "egress-allowlist",
         "full"
+      ]
+    },
+    "preRunHook": {
+      "type": "object",
+      "description": "A code operation the engine/worker executes through the runner boundary BEFORE an agent node's actor is dispatched (plan task t14, spec claim c37). The operation is the same authoring shape a code node declares (PRD §9.2, §13.7): no shell, script, or Docker socket ever runs in a control-plane process. Failure semantics (honesty condition h32) are fixed, not authored: a pre-run hook that fails fails the attempt before agent dispatch as a technical failure, retryable per the node's own retry policy, and the agent is never invoked.",
+      "required": [
+        "operation"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "operation": {
+          "$ref": "#/$defs/codeOperation"
+        }
+      }
+    },
+    "postRunHook": {
+      "type": "object",
+      "description": "A code operation the engine/worker executes through the runner boundary AFTER an agent node's actor returns (plan task t14, spec claim c37). `on_failure` is required: a post-run check failure must map to a declared domain outcome of the node or to an assurance rejection, never to silence (honesty condition h32).",
+      "required": [
+        "operation",
+        "on_failure"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "operation": {
+          "$ref": "#/$defs/codeOperation"
+        },
+        "on_failure": {
+          "$ref": "#/$defs/hookOnFailure"
+        }
+      }
+    },
+    "hookOnFailure": {
+      "description": "What a failing post-run hook (an operation that ran and exited nonzero) routes to: a domain outcome the node declares, so a workflow can steer a failed check down its own edge, or an explicit assurance rejection recorded against the agent's result while the agent's own domain outcome still stands.",
+      "oneOf": [
+        {
+          "type": "object",
+          "required": [
+            "outcome"
+          ],
+          "additionalProperties": false,
+          "properties": {
+            "outcome": {
+              "$ref": "#/$defs/outcomeName"
+            }
+          }
+        },
+        {
+          "const": "reject_assurance"
+        }
       ]
     },
     "ledgerDelta": {

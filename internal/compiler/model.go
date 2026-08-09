@@ -1,6 +1,9 @@
 package compiler
 
-import "encoding/json"
+import (
+	"encoding/json"
+	"fmt"
+)
 
 // The types below mirror schemas/workflow/workflow.schema.json. They are the
 // authoring shape *and*, after normalization, the IR shape: normalization
@@ -92,11 +95,14 @@ type node struct {
 
 	Presentation map[string]any `json:"presentation,omitempty"`
 
-	// PreRun/PostRun are declared but unvalidated in the t2 schema; the
-	// compiler carries them through the IR untouched so authoring can begin
-	// before task t14 specifies their contract.
-	PreRun  json.RawMessage `json:"pre_run,omitempty"`
-	PostRun json.RawMessage `json:"post_run,omitempty"`
+	// PreRun/PostRun are the t14 code-hook contract (spec claim c37): a
+	// pre-run operation runs through the runner boundary before an agent
+	// node's actor is dispatched, and a post-run operation runs after the
+	// actor returns. checkNodeHooks enforces that only agent nodes declare
+	// either. The compiler carries them into the IR unchanged, exactly as it
+	// does the node's own operation.
+	PreRun  *preRunHook  `json:"pre_run,omitempty"`
+	PostRun *postRunHook `json:"post_run,omitempty"`
 
 	// Outcomes is IR-only: the resolved set of domain outcomes this node can
 	// produce, sorted. The engine reads it instead of re-deriving the union of
@@ -130,6 +136,70 @@ type codeOperation struct {
 	Network            string   `json:"network,omitempty"`
 	AllowedOutputPaths []string `json:"allowedOutputPaths,omitempty"`
 	RequiresShell      *bool    `json:"requiresShell,omitempty"`
+}
+
+// preRunHook mirrors schemas/workflow/workflow.schema.json's #/$defs/preRunHook.
+type preRunHook struct {
+	Operation codeOperation `json:"operation"`
+}
+
+// postRunHook mirrors #/$defs/postRunHook.
+type postRunHook struct {
+	Operation codeOperation `json:"operation"`
+	OnFailure hookOnFailure `json:"on_failure"`
+}
+
+// hookOnFailureRejectAssurance is the sentinel string #/$defs/hookOnFailure's
+// oneOf admits alongside an {"outcome": "..."} object.
+const hookOnFailureRejectAssurance = "reject_assurance"
+
+// hookOnFailure is a post-run hook's declared failure routing (PRD-adjacent
+// honesty condition h32): either a domain outcome the node declares, so a
+// workflow can steer a failed check down its own edge, or the
+// reject_assurance sentinel, which records a derived assurance rejection
+// while the agent's own domain outcome still stands. It mirrors the schema's
+// oneOf(object|const) shape by hand — via custom (Un)MarshalJSON — so the IR
+// carries exactly what was authored, never a third, inferred state.
+type hookOnFailure struct {
+	// Outcome is set when the author wrote {"outcome": "..."}.
+	Outcome string `json:"-"`
+	// RejectAssurance is true when the author wrote the "reject_assurance"
+	// sentinel.
+	RejectAssurance bool `json:"-"`
+}
+
+// MarshalJSON renders the sentinel string or the {"outcome": ...} object,
+// matching whichever the author wrote.
+func (h hookOnFailure) MarshalJSON() ([]byte, error) {
+	if h.RejectAssurance {
+		return json.Marshal(hookOnFailureRejectAssurance)
+	}
+	return json.Marshal(struct {
+		Outcome string `json:"outcome"`
+	}{Outcome: h.Outcome})
+}
+
+// UnmarshalJSON accepts exactly the two shapes the schema's oneOf admits. Any
+// other string is a decode error rather than a silently-accepted third state
+// — the schema level already reports the same document as invalid, with a
+// pointer, so this is a second, independent no.
+func (h *hookOnFailure) UnmarshalJSON(data []byte) error {
+	var sentinel string
+	if err := json.Unmarshal(data, &sentinel); err == nil {
+		if sentinel != hookOnFailureRejectAssurance {
+			return fmt.Errorf("on_failure %q is not the %q sentinel", sentinel, hookOnFailureRejectAssurance)
+		}
+		*h = hookOnFailure{RejectAssurance: true}
+		return nil
+	}
+	var obj struct {
+		Outcome string `json:"outcome"`
+	}
+	if err := json.Unmarshal(data, &obj); err != nil {
+		return fmt.Errorf("on_failure is neither the %q sentinel nor an object with an outcome: %w", hookOnFailureRejectAssurance, err)
+	}
+	*h = hookOnFailure{Outcome: obj.Outcome}
+	return nil
 }
 
 type ledgerDelta struct {

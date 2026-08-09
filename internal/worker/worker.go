@@ -10,6 +10,7 @@ import (
 	"github.com/agentculture/culture-nodes/internal/actors"
 	"github.com/agentculture/culture-nodes/internal/engine"
 	"github.com/agentculture/culture-nodes/internal/ledger"
+	"github.com/agentculture/culture-nodes/internal/runners"
 	idstore "github.com/agentculture/culture-nodes/internal/store"
 	"github.com/agentculture/culture-nodes/internal/store/postgres"
 )
@@ -79,6 +80,26 @@ type Options struct {
 	Runner RunnerDispatcher
 	Human  HumanDispatcher
 	Waiter WaitDispatcher
+
+	// HookRunner is the internal/runners seam pre_run/post_run code hooks on
+	// an agent node execute through (task t14, spec claim c37). It is
+	// deliberately the low-level runners.Runner interface, not the
+	// higher-level RunnerDispatcher above: a hook is not a `code` node, and
+	// nothing about the seam that will one day dispatch a whole `code` node
+	// needs to be true of the much smaller thing a hook does — run one typed
+	// operation, report one Result. A node that declares a hook when no
+	// HookRunner is configured fails the attempt with a "configuration"
+	// diagnostic, exactly like an agent node with no Registry.
+	HookRunner runners.Runner
+	// HookRunnerName is the logical runner name stamped on every hook
+	// operation's `runner` field (e.g. "lambda") and, doubling as the
+	// producer identity, on the observed evidence a hook's execution
+	// appends to the ledger. Required alongside HookRunner.
+	HookRunnerName string
+	// HookRunnerRevision pins the runner revision stamped on every hook
+	// operation. Optional: a deployment that has not adopted revision
+	// pinning for its hook runner leaves this empty.
+	HookRunnerRevision string
 
 	// Now and NewID are the clock and the identifier factory.
 	Now   func() time.Time
@@ -365,14 +386,37 @@ func (w *Worker) complete(ctx context.Context, claimed postgres.ClaimedWork, req
 // reason is the single most expensive thing to debug in a durable system, and
 // the attempts table is where an operator is already looking.
 func (w *Worker) failAttempt(ctx context.Context, claimed postgres.ClaimedWork, status engine.TechStatus, class, detail string) error {
-	_, err := w.complete(ctx, claimed, engine.CompletionRequest{
-		TechStatus: status,
-		Output:     diagnosticOutput(class, detail),
+	_, err := w.completeTechnicalFailure(ctx, claimed, status, class, detail, nil)
+	return err
+}
+
+// completeTechnicalFailure is failAttempt's twin for a caller that needs the
+// committed CompletionResult afterward (task t14's hook bookkeeping: a
+// runner_operations row and a hook's own ledger evidence are both keyed to
+// the attempt id this call commits) and that may need to carry a ledger
+// delta failAttempt never takes — e.g. the agent's own proposed records when
+// a post-run hook's verdict could not be trusted, so a technical failure
+// still records what the agent itself claimed.
+//
+// The returned CompletionResult is the zero value when the completion turned
+// out stale (isStale(err)): nothing was committed here, so there is nothing
+// for a caller to key follow-up writes to, and the error is nil — a stale
+// completion is not a worker malfunction (see isStale).
+func (w *Worker) completeTechnicalFailure(
+	ctx context.Context, claimed postgres.ClaimedWork, status engine.TechStatus, class, detail string, delta []ledger.Record,
+) (engine.CompletionResult, error) {
+	result, err := w.complete(ctx, claimed, engine.CompletionRequest{
+		TechStatus:  status,
+		Output:      diagnosticOutput(class, detail),
+		LedgerDelta: delta,
 	})
-	if err != nil && !isStale(err) {
-		return err
+	if err != nil {
+		if isStale(err) {
+			return engine.CompletionResult{}, nil
+		}
+		return engine.CompletionResult{}, err
 	}
-	return nil
+	return result, nil
 }
 
 // diagnosticOutput is the fixed shape a failed attempt's output takes.

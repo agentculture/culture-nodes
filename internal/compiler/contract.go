@@ -43,6 +43,7 @@ func (c *compilation) checkContracts() {
 		c.checkNodeOutcomes(base, id, n)
 		c.checkNodeSchemas(base, n)
 		c.checkNodeBindings(base, n)
+		c.checkNodeHooks(base, id, n)
 
 		for j, port := range n.Select {
 			if port.When != "" {
@@ -82,6 +83,48 @@ func (c *compilation) checkNodeOutcomes(base, id string, n *node) {
 				fmt.Sprintf("wait node %q declares no resume condition", id),
 				"add an until block with a duration, timestamp, or signal (PRD §9.2)")
 		}
+	}
+}
+
+// checkNodeHooks is part of the §11.4 contract level (task t14, spec claim
+// c37): pre_run/post_run run around an agent node's own actor dispatch, so
+// they are declared only on agent nodes, and a post-run hook's on_failure
+// names either the reject_assurance sentinel or an outcome the node itself
+// declares — routing a check failure to an outcome the node never promised
+// would be exactly the silent gap honesty condition h32 forbids.
+func (c *compilation) checkNodeHooks(base, id string, n *node) {
+	if n.PreRun == nil && n.PostRun == nil {
+		return
+	}
+	if n.Kind != KindAgent {
+		if n.PreRun != nil {
+			c.add(LevelError, base+"/pre_run", CodeHookKindNotAgent,
+				fmt.Sprintf("node %q declares pre_run but is kind %q; pre-run/post-run hooks run around an agent's own actor dispatch and are only meaningful on an agent node", id, n.Kind),
+				"remove pre_run, or change the node's kind to agent")
+		}
+		if n.PostRun != nil {
+			c.add(LevelError, base+"/post_run", CodeHookKindNotAgent,
+				fmt.Sprintf("node %q declares post_run but is kind %q; pre-run/post-run hooks run around an agent's own actor dispatch and are only meaningful on an agent node", id, n.Kind),
+				"remove post_run, or change the node's kind to agent")
+		}
+		return
+	}
+
+	if n.PostRun == nil {
+		return
+	}
+	onFailure := n.PostRun.OnFailure
+	if onFailure.RejectAssurance || onFailure.Outcome == "" {
+		// An empty, non-sentinel outcome only reaches here when the document
+		// decoded despite a schema violation (on_failure is required, and
+		// its object shape requires a non-empty outcome) — the structure
+		// level already reported that with its own pointer.
+		return
+	}
+	if !contains(declaredOutcomes(n), onFailure.Outcome) {
+		c.add(LevelError, base+"/post_run/on_failure/outcome", CodeHookOutcomeUndeclared,
+			fmt.Sprintf("node %q post_run.on_failure names outcome %q, which the node does not declare", id, onFailure.Outcome),
+			fmt.Sprintf("declare it under the node's contract.outcomes, or route to one of: %s", strings.Join(declaredOutcomes(n), ", ")))
 	}
 }
 

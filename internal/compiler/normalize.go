@@ -44,6 +44,7 @@ func (c *compilation) normalize() (*IR, error) {
 		n.Outcomes = declaredOutcomes(n)
 		expandNodePolicy(n)
 		expandOperation(n)
+		expandHookOperations(n)
 		if err := stampNodeSchemaDigests(n); err != nil {
 			return nil, err
 		}
@@ -141,22 +142,43 @@ func expandNodePolicy(n *node) {
 	}
 }
 
-// expandOperation applies the PRD §13.7 safe defaults to a code operation.
+// expandOperation applies the PRD §13.7 safe defaults to a code node's own
+// operation.
 func expandOperation(n *node) {
 	if n.Operation == nil {
 		return
 	}
-	if n.Operation.Network == "" {
-		n.Operation.Network = DefaultNetwork
+	expandOperationValue(n.Operation)
+}
+
+// expandHookOperations applies the same §13.7 safe defaults to a node's
+// pre_run/post_run hook operations (task t14), so the IR always carries
+// explicit values for the worker to dispatch against rather than leaving it
+// to infer defaults at dispatch time.
+func expandHookOperations(n *node) {
+	if n.PreRun != nil {
+		expandOperationValue(&n.PreRun.Operation)
 	}
-	if n.Operation.WorkingDirectory == "" {
-		n.Operation.WorkingDirectory = DefaultWorkingDirectory
+	if n.PostRun != nil {
+		expandOperationValue(&n.PostRun.Operation)
 	}
-	if len(n.Operation.AllowedOutputPaths) == 0 {
-		n.Operation.AllowedOutputPaths = []string{DefaultAllowedOutputPath}
+}
+
+// expandOperationValue is the shared default-expansion logic for any declared
+// code operation, whether it is a code node's own operation or a
+// pre_run/post_run hook's.
+func expandOperationValue(op *codeOperation) {
+	if op.Network == "" {
+		op.Network = DefaultNetwork
 	}
-	if n.Operation.RequiresShell == nil {
-		n.Operation.RequiresShell = boolPtr(false)
+	if op.WorkingDirectory == "" {
+		op.WorkingDirectory = DefaultWorkingDirectory
+	}
+	if len(op.AllowedOutputPaths) == 0 {
+		op.AllowedOutputPaths = []string{DefaultAllowedOutputPath}
+	}
+	if op.RequiresShell == nil {
+		op.RequiresShell = boolPtr(false)
 	}
 }
 

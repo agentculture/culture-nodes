@@ -39,6 +39,7 @@ func (c *compilation) checkPolicy() {
 
 		c.checkOperation(base, id, n)
 		c.checkRunnerCaps(base, id, n)
+		c.checkHookOperations(base, id, n)
 	}
 }
 
@@ -72,18 +73,46 @@ func (c *compilation) checkRetry(base, id string, retry *retryPolicy) {
 }
 
 func (c *compilation) checkOperation(base, id string, n *node) {
-	if n.Operation == nil {
+	c.checkOperationPolicy(base+"/operation", id, "operation", n.Operation)
+}
+
+// checkOperationPolicy applies the image-pin and requires-shell safe-default
+// checks any declared code operation gets. It is shared between a code node's
+// own operation and a pre_run/post_run hook's operation (task t14): both
+// execute through the same runner boundary (PRD §13.7), so the same
+// safe-default checks apply to both — "hook operations validate like
+// code-node operations".
+func (c *compilation) checkOperationPolicy(path, id, subject string, op *codeOperation) {
+	if op == nil {
 		return
 	}
-	if n.Operation.Image != "" && !strings.Contains(n.Operation.Image, digestPin) {
-		c.add(LevelWarning, base+"/operation/image", CodePolicyImageUnpinned,
-			fmt.Sprintf("node %q runs image %q, which is not pinned to a digest", id, n.Operation.Image),
+	if op.Image != "" && !strings.Contains(op.Image, digestPin) {
+		c.add(LevelWarning, path+"/image", CodePolicyImageUnpinned,
+			fmt.Sprintf("node %q %s runs image %q, which is not pinned to a digest", id, subject, op.Image),
 			"pin the image as registry/name@sha256:<digest> (PRD §13.7 safe defaults)")
 	}
-	if n.Operation.RequiresShell != nil && *n.Operation.RequiresShell {
-		c.add(LevelWarning, base+"/operation/requiresShell", CodePolicyShellRequested,
-			fmt.Sprintf("node %q declares that it requires a shell", id),
+	if op.RequiresShell != nil && *op.RequiresShell {
+		c.add(LevelWarning, path+"/requiresShell", CodePolicyShellRequested,
+			fmt.Sprintf("node %q %s declares that it requires a shell", id, subject),
 			"prefer an argv array; the declaration is honoured so policy can reject it, and a policy set may (PRD §13.7)")
+	}
+}
+
+// checkHookOperations applies the same operation-shape policy checks to a
+// node's pre_run/post_run hook operations. Unlike a code node's own
+// operation, a hook has no policy block of its own in this schema slice
+// (task t14 reuses the code node's operation shape verbatim, and adds no
+// per-hook timeout or payload override) — so there is no author-declared
+// hook timeout or payload bound to check against the runner's caps, and only
+// the image-pin/requires-shell checks apply here. Whether the node is a kind
+// that may legally declare a hook at all is checkNodeHooks's job (§11.4
+// contract level), not this one's.
+func (c *compilation) checkHookOperations(base, id string, n *node) {
+	if n.PreRun != nil {
+		c.checkOperationPolicy(base+"/pre_run/operation", id, "pre_run hook", &n.PreRun.Operation)
+	}
+	if n.PostRun != nil {
+		c.checkOperationPolicy(base+"/post_run/operation", id, "post_run hook", &n.PostRun.Operation)
 	}
 }
 

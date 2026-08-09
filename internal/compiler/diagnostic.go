@@ -78,6 +78,10 @@ const (
 	CodePolicyImageUnpinned     = "policy.image_unpinned"
 	CodePolicyShellRequested    = "policy.shell_requested"
 
+	// Hooks (task t14, spec claim c37).
+	CodeHookKindNotAgent      = "hook.kind_not_agent"
+	CodeHookOutcomeUndeclared = "hook.on_failure_outcome_undeclared"
+
 	// Owners.
 	CodeOwnersUnresolved = "owners.unresolved"
 )

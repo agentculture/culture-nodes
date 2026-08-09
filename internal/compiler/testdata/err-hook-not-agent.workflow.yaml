@@ -1,0 +1,49 @@
+apiVersion: nodes.culture.dev/v1alpha1
+kind: Workflow
+
+metadata:
+  name: hook-not-agent
+  version: 1.0.0
+  ownerRef: team/platform-ai
+
+spec:
+  entry: build
+
+  contract:
+    input:
+      schemaRef: ./contracts/in.schema.json
+    output:
+      schemaRef: ./contracts/out.schema.json
+
+  nodes:
+    build:
+      kind: code
+      ownerRef: team/developer-experience
+      uses: runner://headspace/docker@sha256:555555
+      operation:
+        image: registry.example/python-test@sha256:666666
+        argv: [python, -m, pytest, -q]
+      contract:
+        outcomes:
+          passed:
+            schemaRef: ./contracts/test-result.schema.json
+      pre_run:
+        operation:
+          image: registry.example/guard@sha256:777777
+          argv: [guard]
+      post_run:
+        operation:
+          image: registry.example/verify@sha256:888888
+          argv: [verify]
+        on_failure:
+          outcome: passed
+
+    finish:
+      kind: end
+      ownerRef: team/platform-ai
+      output:
+        from: /nodes/build/output
+
+  edges:
+    - from: build.passed
+      to: finish

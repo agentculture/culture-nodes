@@ -1,0 +1,72 @@
+# The post_run reject_assurance slice (task t14, spec claim c37, honesty
+# condition h32's second clause): the agent's own domain outcome must still
+# stand when post_run's on_failure is reject_assurance — only a derived
+# record disputing it is appended, never a silent pass and never a routing
+# change the agent itself did not earn.
+apiVersion: nodes.culture.dev/v1alpha1
+kind: Workflow
+
+metadata:
+  name: worker-hooks-reject-assurance
+  version: 1.0.0
+  ownerRef: team/platform-ai
+
+spec:
+  entry: work
+
+  contract:
+    input:
+      schema:
+        type: object
+        required: [subject]
+        properties:
+          subject:
+            type: string
+    output:
+      schema:
+        type: object
+
+  limits:
+    maxDuration: 1h
+    maxTransitions: 8
+    maxVisitsPerNode: 4
+    maxParallelTokens: 1
+
+  ledger:
+    schemaVersion: nodes.culture.dev/ledger/v1alpha1
+    maxRecordsPerNode: 10
+
+  nodes:
+    work:
+      kind: agent
+      ownerRef: team/platform-ai
+      uses: actor://company/hookworker@sha256:cccccc
+      input:
+        from: /run/input
+      contract:
+        outcomes:
+          completed:
+            schema:
+              type: object
+      ledger:
+        propose: [claim, result]
+      policy:
+        timeout: 2m
+        retry:
+          maxAttempts: 1
+          backoff: none
+      post_run:
+        operation:
+          image: registry.example/verify@sha256:3333333333333333333333333333333333333333333333333333333333333333
+          argv: [verify]
+        on_failure: reject_assurance
+
+    finish:
+      kind: end
+      ownerRef: team/platform-ai
+      output:
+        from: /nodes/work/output
+
+  edges:
+    - from: work.completed
+      to: finish

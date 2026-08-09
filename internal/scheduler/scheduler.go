@@ -536,9 +536,9 @@ func (sch *Scheduler) applyEffect(ctx context.Context, tx pgx.Tx, t postgres.Tim
 // sweep (see tick) are what eventually recover it, exactly as they would
 // for any other worker that went dark mid-dispatch.
 func (sch *Scheduler) failWaitingExternal(ctx context.Context, t postgres.Timer) error {
-	inv, ok, err := sch.db.InvocationByDeadlineTimer(ctx, t.ID)
+	inv, closeWait, ok, err := sch.waitForDeadlineTimer(ctx, t)
 	if err != nil {
-		return fmt.Errorf("load invocation for deadline timer %s: %w", t.ID, err)
+		return err
 	}
 	if !ok || inv.State != actors.InvocationWaiting {
 		return nil
@@ -582,10 +582,60 @@ func (sch *Scheduler) failWaitingExternal(ctx context.Context, t postgres.Timer)
 		return fmt.Errorf("fail attempt %s on deadline: %w", inv.AttemptID, err)
 	}
 
-	if err := cs.CloseInvocation(ctx, inv.AttemptID, actors.InvocationCompleted); err != nil {
-		return fmt.Errorf("close invocation %s: %w", inv.AttemptID, err)
+	if err := closeWait(ctx, cs); err != nil {
+		return fmt.Errorf("close wait record for attempt %s: %w", inv.AttemptID, err)
 	}
 	return nil
+}
+
+// waitForDeadlineTimer resolves which durable async record a fired deadline
+// timer belongs to, and returns the matching way to retire it.
+//
+// A deadline timer names a timer, not an attempt, and there are two kinds of
+// waiting_external record it may have been scheduled by: an asynchronous ACTOR
+// invocation (0009's actor_invocations, resumed by an inbound §13.4 callback)
+// and a parked RUNNER operation (0011's runner_invocations, resumed by an
+// outbound status sample). Everything after this lookup is identical for both
+// — resume under the recorded fencing tuple, complete through the engine's own
+// §12.5 transaction, retire the record — which is exactly why the difference
+// is confined to this one function instead of a second copy of
+// failWaitingExternal. There is one waiting_external timeout rule in this
+// system, and this keeps it that way.
+//
+// The actor table is consulted first only because it is the older and more
+// common case; the two are disjoint (a timer id appears in at most one), so
+// the order is a cost decision, not a correctness one.
+func (sch *Scheduler) waitForDeadlineTimer(
+	ctx context.Context, t postgres.Timer,
+) (actors.PendingInvocation, func(context.Context, *postgres.CallbackStore) error, bool, error) {
+	inv, ok, err := sch.db.InvocationByDeadlineTimer(ctx, t.ID)
+	if err != nil {
+		return actors.PendingInvocation{}, nil, false, fmt.Errorf("load invocation for deadline timer %s: %w", t.ID, err)
+	}
+	if ok {
+		return inv, func(ctx context.Context, cs *postgres.CallbackStore) error {
+			return cs.CloseInvocation(ctx, inv.AttemptID, actors.InvocationCompleted)
+		}, true, nil
+	}
+
+	inv, ok, err = sch.db.RunnerOperationByDeadlineTimer(ctx, t.ID)
+	if err != nil {
+		return actors.PendingInvocation{}, nil, false, fmt.Errorf("load runner operation for deadline timer %s: %w", t.ID, err)
+	}
+	if ok {
+		namespaceID := t.NamespaceID
+		if namespaceID == "" {
+			namespaceID = inv.NamespaceID
+		}
+		return inv, func(ctx context.Context, _ *postgres.CallbackStore) error {
+			return sch.db.CloseRunnerOperation(ctx, namespaceID, inv.AttemptID, postgres.RunnerOperationCompleted)
+		}, true, nil
+	}
+
+	// A deadline timer that belongs to neither is "nothing to fail" rather
+	// than a fault: a hand-built timer in a test, or one whose record some
+	// other path already removed.
+	return actors.PendingInvocation{}, nil, false, nil
 }
 
 // engineFor returns the cached §12.5 engine for namespaceID, building and

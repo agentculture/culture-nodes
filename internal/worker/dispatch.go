@@ -410,10 +410,18 @@ func (w *Worker) dispatchSeam(
 	})
 
 	if errors.Is(seamErr, errNoSeam) {
+		// The diagnostic names what is actually missing, per kind. It used to
+		// say all three seams "land in later build-plan tasks", which has
+		// stopped being true one kind at a time: `code` now has two
+		// implementations of its own (code.go's in-process runner and
+		// runnerasync.go's runner protocol), and `approval` is served
+		// engine-side, so a node reaching this branch for either is a
+		// CONFIGURATION gap rather than an unbuilt feature. Saying "not yet
+		// implemented" for something that is implemented but unconfigured
+		// sends an operator to the build plan instead of to their own config.
 		return w.failAttempt(ctx, claimed, engine.StatusFailed, "not_implemented",
-			fmt.Sprintf("node %q is a %s node and this worker has no %s dispatcher registered; "+
-				"runner, human-task, and timer dispatch land in later build-plan tasks",
-				dc.NodeID, kind, capability))
+			fmt.Sprintf("node %q is a %s node and this worker has no %s dispatcher registered; %s",
+				dc.NodeID, kind, capability, seamRemedy(kind)))
 	}
 	if seamErr != nil {
 		return w.failAttempt(ctx, claimed, engine.StatusFailed, kind,
@@ -454,6 +462,24 @@ func (w *Worker) dispatchSeam(
 		return err
 	}
 	return nil
+}
+
+// seamRemedy names the configuration a missing seam actually needs, so the
+// diagnostic points at the knob rather than at the roadmap.
+func seamRemedy(kind string) string {
+	switch kind {
+	case kindCode:
+		return "configure Options.CodeRunner for an in-process runner, or Options.RunnerService with a " +
+			"registered runner-service identity for this node (api/runner-protocol), or Options.Runner " +
+			"to take over code dispatch entirely"
+	case kindApproval:
+		return "configure Options.Human; approval nodes are otherwise resolved engine-side and never " +
+			"reach this dispatcher"
+	case kindWait:
+		return "configure Options.Waiter; durable wait dispatch has no default implementation"
+	default:
+		return "no dispatcher is registered for this kind"
+	}
 }
 
 // withHeartbeat runs fn while extending the claim's lease.

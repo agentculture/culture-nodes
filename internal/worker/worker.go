@@ -123,6 +123,17 @@ type Options struct {
 	// convention with an override rather than a schema field.
 	CodeOutcomes CodeOutcomeResolver
 
+	// RunnerService configures dispatch to registered runner SERVICES over
+	// api/runner-protocol (see runnerasync.go). It is the placement-aware
+	// half of code-node dispatch: the same `code` node runs through
+	// CodeRunner when its identity is in-process and over the protocol when
+	// its identity is a runner service, and the workflow definition says
+	// neither.
+	//
+	// The zero value disables the protocol path, which is why adding it
+	// changes nothing for a deployment that has not configured it.
+	RunnerService RunnerServiceOptions
+
 	// HookRunner is the internal/runners seam pre_run/post_run code hooks on
 	// an agent node execute through (task t14, spec claim c37). It is
 	// deliberately the low-level runners.Runner interface, not the
@@ -261,9 +272,17 @@ func (w *Worker) Run(ctx context.Context) error {
 	}
 }
 
-// Tick claims one batch and dispatches it, returning how many items it
-// handled. It is exported so a test can drive exactly one pass, and so an
-// operator tool can do a single unit of work without starting a loop.
+// Tick claims one batch, dispatches it, and samples any parked runner
+// operations that have come due. It is exported so a test can drive exactly
+// one pass, and so an operator tool can do a single unit of work without
+// starting a loop.
+//
+// The returned count is how many work ITEMS were dispatched, deliberately not
+// counting sampled operations: Run uses it to decide whether to claim again
+// immediately, and a sampler that found something is not a backlog to drain.
+// A sampling failure is reported rather than returned for the same reason a
+// per-item dispatch failure is — every parked operation has a deadline timer
+// behind it, so a pass that could not sample is a delay, not a loss.
 func (w *Worker) Tick(ctx context.Context) (int, error) {
 	claimed, err := w.db.ClaimWork(ctx, w.opts.NamespaceID, w.opts.WorkerID, w.opts.LeaseDuration, w.opts.ClaimBatch)
 	if err != nil {
@@ -274,6 +293,9 @@ func (w *Worker) Tick(ctx context.Context) (int, error) {
 			w.report(fmt.Errorf("worker: dispatch work %s (node run %s): %w",
 				claimed[i].ID, claimed[i].NodeRunID, err))
 		}
+	}
+	if _, err := w.SampleRunnerOperations(ctx); err != nil {
+		w.report(err)
 	}
 	return len(claimed), nil
 }
@@ -334,7 +356,13 @@ func (w *Worker) dispatch(ctx context.Context, claimed postgres.ClaimedWork) err
 	case kindDecision:
 		return w.dispatchDecision(ctx, claimed, d, spec, node, dc)
 	case kindCode:
-		if w.opts.Runner == nil && w.opts.CodeRunner != nil {
+		// dispatchCode owns both code paths — the in-process CodeRunner and
+		// the asynchronous runner protocol — because which one a node takes is
+		// a REGISTRY fact it resolves, not a routing decision the dispatcher
+		// can make from the node alone. Options.Runner (the higher-level seam)
+		// still wins when a deployment registered one: it has already said how
+		// it wants code dispatched.
+		if w.opts.Runner == nil && (w.opts.CodeRunner != nil || w.runnerServiceConfigured()) {
 			return w.dispatchCode(ctx, claimed, d, node, dc)
 		}
 		return w.dispatchSeam(ctx, claimed, d, node, dc, "code", "runner", func() (SeamResult, error) {

@@ -374,6 +374,16 @@ paths:
           description: Required by, and used only by, evidence_for_subject — the reference to project evidence for.
           schema:
             type: string
+        - name: format
+          in: query
+          description: >-
+            json (the default) or markdown. markdown renders the identical
+            projection through the deterministic Markdown reflection PRD
+            §10.9 describes — a second rendering of the same read, never a
+            separately maintained copy, and never authoritative.
+          schema:
+            type: string
+            enum: [json, markdown]
       responses:
         '200':
           description: The projection, self-describing digest included.
@@ -381,8 +391,11 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/Projection'
+            text/markdown:
+              schema:
+                type: string
         '400':
-          description: name is not a recognized projection.
+          description: name is not a recognized projection, or format is not json or markdown.
           content:
             application/json:
               schema:

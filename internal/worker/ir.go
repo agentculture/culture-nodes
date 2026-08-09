@@ -73,6 +73,20 @@ type nodeSpec struct {
 	// does not re-check kind here — it only interprets what compiled.
 	PreRun  *hookSpec
 	PostRun *postRunHookSpec
+	// Acceptance is the node's declared mechanical acceptance checks (PRD
+	// §10.10), nil when it declares none. internal/compiler validates it
+	// only by kind (internal/compiler/ledger.go's checkAcceptance); the
+	// worker is what mechanically evaluates it, for a code node's own
+	// dispatch (internal/worker/acceptance.go).
+	Acceptance *acceptanceSpec
+}
+
+// acceptanceSpec is the worker's decoded view of a node's acceptance block —
+// the requires array verbatim, exactly as internal/compiler's own acceptance
+// struct carries it (model.go), since the schema leaves each requirement's
+// payload open beyond its "kind" field.
+type acceptanceSpec struct {
+	Requires []map[string]any `json:"requires"`
 }
 
 // hookSpec is the worker's decoded view of a pre_run hook.
@@ -180,6 +194,7 @@ type irNode struct {
 		Operation codeOperationSpec `json:"operation"`
 		OnFailure hookOnFailureSpec `json:"on_failure"`
 	} `json:"post_run"`
+	Acceptance *acceptanceSpec `json:"acceptance"`
 }
 
 // loadWorkflowSpec decodes a normalized IR document into the worker's view.
@@ -217,6 +232,7 @@ func decodeNode(id string, raw *irNode) (*nodeSpec, error) {
 		Operation:   raw.Operation,
 		ApproverRef: raw.ApproverRef,
 		Until:       raw.Until,
+		Acceptance:  raw.Acceptance,
 	}
 	if raw.PreRun != nil {
 		node.PreRun = &hookSpec{Operation: raw.PreRun.Operation}

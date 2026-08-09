@@ -1,0 +1,76 @@
+# code.workflow.yaml's other half again: a code node that declares NO
+# acceptance block at all. Mechanical acceptance evaluation (task t17,
+# docs/acceptance.md criterion 14) must be opt-in per node — a node that
+# never authored `acceptance.requires` gets no derived verdict appended,
+# because there is nothing declared to evaluate.
+apiVersion: nodes.culture.dev/v1alpha1
+kind: Workflow
+
+metadata:
+  name: worker-code-no-acceptance-slice
+  version: 1.0.0
+  ownerRef: team/platform-ai
+
+spec:
+  entry: test
+
+  contract:
+    input:
+      schema:
+        type: object
+    output:
+      schema:
+        type: object
+
+  limits:
+    maxDuration: 1h
+    maxTransitions: 8
+    maxVisitsPerNode: 3
+    maxParallelTokens: 1
+
+  ledger:
+    schemaVersion: nodes.culture.dev/ledger/v1alpha1
+    maxRecordsPerNode: 10
+
+  nodes:
+    test:
+      kind: code
+      ownerRef: team/developer-experience
+      uses: runner://headspace/docker@sha256:5555555555555555555555555555555555555555555555555555555555555555
+      operation:
+        image: python:3.12-slim@sha256:57cd7c3a7a273101a6485ba99423ee568157882804b1124b4dd04266317710de
+        argv: [python3, -c, "raise SystemExit(0)"]
+        network: none
+        allowedOutputPaths: []
+      contract:
+        outcomes:
+          passed:
+            schema:
+              type: object
+          failed:
+            schema:
+              type: object
+      ledger:
+        observe: [evidence]
+      policy:
+        timeout: 5m
+        retry:
+          maxAttempts: 1
+
+    finish:
+      kind: end
+      ownerRef: team/platform-ai
+      output:
+        from: /nodes/test/output
+
+    giveup:
+      kind: end
+      ownerRef: team/platform-ai
+      output:
+        from: /nodes/test/output
+
+  edges:
+    - from: test.passed
+      to: finish
+    - from: test.failed
+      to: giveup

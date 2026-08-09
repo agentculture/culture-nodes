@@ -1118,6 +1118,18 @@
             "schema": {
               "type": "string"
             }
+          },
+          {
+            "description": "json (the default) or markdown. markdown renders the identical projection through the deterministic Markdown reflection PRD §10.9 describes — a second rendering of the same read, never a separately maintained copy, and never authoritative.",
+            "in": "query",
+            "name": "format",
+            "schema": {
+              "enum": [
+                "json",
+                "markdown"
+              ],
+              "type": "string"
+            }
           }
         ],
         "responses": {
@@ -1126,6 +1138,11 @@
               "application/json": {
                 "schema": {
                   "$ref": "#/components/schemas/Projection"
+                }
+              },
+              "text/markdown": {
+                "schema": {
+                  "type": "string"
                 }
               }
             },
@@ -1139,7 +1156,7 @@
                 }
               }
             },
-            "description": "name is not a recognized projection."
+            "description": "name is not a recognized projection, or format is not json or markdown."
           },
           "404": {
             "content": {

@@ -176,6 +176,17 @@ func (h *codeHarness) evidenceRecords(runID string) []ledger.Record {
 	return out
 }
 
+func (h *codeHarness) reviewRecords(runID string) []ledger.Record {
+	h.t.Helper()
+	var out []ledger.Record
+	for _, rec := range h.records(runID) {
+		if rec.RecordType == ledger.RecordReview {
+			out = append(out, rec)
+		}
+	}
+	return out
+}
+
 type attemptRow struct {
 	Status string
 	Result []byte
@@ -319,6 +330,42 @@ func TestCodeNodeExitZeroRoutesTheSuccessOutcomeAndAppendsObservedEvidence(t *te
 	if recorded != 1 {
 		t.Errorf("runner_operations rows for the code node = %d, want 1", recorded)
 	}
+
+	// docs/acceptance.md criterion 14: the node's own acceptance.requires
+	// (code.workflow.yaml declares process_exit equals 0) is mechanically
+	// evaluated against the same Result the evidence above was built from,
+	// and the verdict lands as a derived, validator-origin ledger record —
+	// never silently unevaluated, and never folded into the node's own
+	// routed outcome.
+	reviews := h.reviewRecords(run.ID)
+	if len(reviews) != 1 {
+		t.Fatalf("run has %d review records, want exactly one mechanical acceptance verdict", len(reviews))
+	}
+	verdict := reviews[0]
+	if verdict.Authority != ledger.AuthorityDerived {
+		t.Errorf("acceptance verdict authority = %q, want derived (a mechanical computation, not a human decision)", verdict.Authority)
+	}
+	if verdict.Origin.Kind != ledger.OriginValidator {
+		t.Errorf("acceptance verdict origin kind = %q, want validator", verdict.Origin.Kind)
+	}
+	if verdict.SubjectRef.String() != got.ID {
+		t.Errorf("acceptance verdict subject_ref = %q, want the evidence record %q it verified", verdict.SubjectRef.String(), got.ID)
+	}
+	vdata, err := verdict.DataMap()
+	if err != nil {
+		t.Fatalf("decode acceptance verdict payload: %v", err)
+	}
+	if vdata["verdict"] != "confirm" {
+		t.Errorf("acceptance verdict payload = %v, want verdict=confirm for a matching exit code", vdata)
+	}
+	checks, _ := vdata["checks"].([]any)
+	if len(checks) != 1 {
+		t.Fatalf("acceptance verdict checks = %v, want exactly one (process_exit)", vdata["checks"])
+	}
+	check, _ := checks[0].(map[string]any)
+	if check["kind"] != "process_exit" || check["passed"] != true || check["evaluated"] != true {
+		t.Errorf("acceptance verdict's process_exit check = %v, want kind=process_exit passed=true evaluated=true", check)
+	}
 }
 
 // Exit nonzero with a declared failure outcome: PRD §3.4's headline. A test
@@ -360,8 +407,64 @@ func TestCodeNodeNonzeroExitIsADomainOutcomeWhenTheNodeDeclaresOne(t *testing.T)
 	}
 
 	// The observed evidence still lands: a failing run is measured too.
-	if got := len(h.evidenceRecords(run.ID)); got != 1 {
+	evidence := h.evidenceRecords(run.ID)
+	if got := len(evidence); got != 1 {
 		t.Errorf("evidence records = %d, want 1 even for a failing run", got)
+	}
+
+	// The node's own domain outcome (`failed`, a real answer PRD §3.4 says
+	// to route rather than retry) and the mechanical acceptance verdict are
+	// two separate facts: process_exit required 0, the operation measured
+	// 1, so acceptance rejects even though the run itself completed
+	// normally down the workflow's own failed edge.
+	reviews := h.reviewRecords(run.ID)
+	if len(reviews) != 1 {
+		t.Fatalf("run has %d review records, want exactly one mechanical acceptance verdict", len(reviews))
+	}
+	verdict := reviews[0]
+	if verdict.Authority != ledger.AuthorityDerived {
+		t.Errorf("acceptance verdict authority = %q, want derived", verdict.Authority)
+	}
+	if len(evidence) == 1 && verdict.SubjectRef.String() != evidence[0].ID {
+		t.Errorf("acceptance verdict subject_ref = %q, want the evidence record %q it verified", verdict.SubjectRef.String(), evidence[0].ID)
+	}
+	vdata, err := verdict.DataMap()
+	if err != nil {
+		t.Fatalf("decode acceptance verdict payload: %v", err)
+	}
+	if vdata["verdict"] != "reject" {
+		t.Errorf("acceptance verdict payload = %v, want verdict=reject for a mismatching exit code", vdata)
+	}
+	checks, _ := vdata["checks"].([]any)
+	if len(checks) != 1 {
+		t.Fatalf("acceptance verdict checks = %v, want exactly one (process_exit)", vdata["checks"])
+	}
+	check, _ := checks[0].(map[string]any)
+	if check["kind"] != "process_exit" || check["passed"] != false || check["evaluated"] != true {
+		t.Errorf("acceptance verdict's process_exit check = %v, want kind=process_exit passed=false evaluated=true", check)
+	}
+}
+
+// A code node that declares no acceptance block at all gets no mechanical
+// verdict appended — evaluation is opt-in per node, never a blanket review
+// record for every code dispatch regardless of what the node's author
+// actually asked to be checked.
+func TestCodeNodeWithNoAcceptanceBlockAppendsNoVerdict(t *testing.T) {
+	h := newCodeHarness(t, func(op runners.Operation, _ int) (runners.Result, error) {
+		return codeRunResult(op, 0), nil
+	})
+
+	run := h.createRun("code-no-acceptance.workflow.yaml", `{"subject":"widget"}`)
+	h.runUntil(20*time.Second, func() bool { return h.run(run.ID).State.Terminal() })
+
+	if state := h.run(run.ID).State; state != engine.RunCompleted {
+		t.Fatalf("run state = %s, want completed (worker errors: %v)", state, h.workerErrors())
+	}
+	if got := len(h.evidenceRecords(run.ID)); got != 1 {
+		t.Fatalf("evidence records = %d, want 1", got)
+	}
+	if got := h.reviewRecords(run.ID); len(got) != 0 {
+		t.Errorf("review records = %+v, want none: this node declares no acceptance.requires", got)
 	}
 }
 

@@ -449,3 +449,48 @@ func TestExecute_Cancellation_UsesSeparateStopProcess(t *testing.T) {
 }
 
 func intPtr(n int) *int { return &n }
+
+// The working-directory boundary (task t27). headspace-cli's run verb has no
+// working-directory flag, but every job it runs starts in
+// headspace.JobWorkingDirectory — which is also the directory
+// internal/compiler stamps on every code operation by default. Refusing that
+// value would make the compiler's own §13.7 safe default undispatchable to
+// the only real runner in the build; refusing any OTHER value is still
+// mandatory, because this bridge cannot make it true.
+func TestExecute_WorkingDirectory(t *testing.T) {
+	t.Run("the directory headspace already runs in is accepted", func(t *testing.T) {
+		b := newTestBridge(t, nil)
+		op := baseOperation(t, b, []string{"true"})
+		op.Command.WorkingDirectory = headspace.JobWorkingDirectory
+
+		result, err := b.Execute(context.Background(), op)
+		if err != nil {
+			t.Fatalf("Execute: %v", err)
+		}
+		if result.State != runners.StateCompleted {
+			t.Fatalf("State = %s, want completed", result.State)
+		}
+	})
+
+	t.Run("any other directory is refused before a subprocess runs", func(t *testing.T) {
+		record := recordFile(t)
+		b := newTestBridge(t, nil)
+		op := baseOperation(t, b, []string{"true"})
+		op.Command.WorkingDirectory = "/somewhere/else"
+
+		_, err := b.Execute(context.Background(), op)
+		var dispatchErr *runners.DispatchError
+		if !errors.As(err, &dispatchErr) {
+			t.Fatalf("Execute error = %v, want a *runners.DispatchError", err)
+		}
+		if dispatchErr.Kind != runners.ErrorRejectedInput {
+			t.Errorf("refusal kind = %q, want rejected_input", dispatchErr.Kind)
+		}
+		if !strings.Contains(dispatchErr.Detail, headspace.JobWorkingDirectory) {
+			t.Errorf("refusal %q does not name the directory headspace does run in", dispatchErr.Detail)
+		}
+		if verbs := readRecord(t, record); len(verbs) != 0 {
+			t.Errorf("the refusal launched %d subprocesses: %v", len(verbs), verbs)
+		}
+	})
+}

@@ -32,6 +32,23 @@ var DefaultRunnerRevision = contracts.Digest([]byte(AdapterRevisionSeed))
 // currently-valid profile rather than an abstract "check the docs".
 const DefaultProfilePython312 = "python3.12"
 
+// JobWorkingDirectory is the directory headspace-cli starts every job in.
+//
+// headspace-cli's `run` verb has no working-directory flag, so this bridge
+// cannot honour an arbitrary one — but it does not have to refuse the one it
+// already provides. The value was verified live against headspace-cli 0.11.0
+// (`headspace run <ws> python3 -c "import os;print(os.getcwd())"` prints
+// "/workspace"), and it is the same path internal/compiler stamps on every
+// code operation as DefaultWorkingDirectory (PRD §13.7's safe defaults). An
+// operation asking for exactly this directory is asking for what happens
+// anyway; anything else is still refused, because "silently ran somewhere
+// else" is the failure mode this whole boundary exists to prevent.
+//
+// It is declared here rather than imported from internal/compiler on
+// purpose: this is a fact about headspace-cli, not about the compiler, and
+// the two agreeing is a property worth being able to lose noisily.
+const JobWorkingDirectory = "/workspace"
+
 // defaultStopTimeout bounds how long `headspace stop --apply` (see
 // requestStop) or a `destroy` cleanup call is allowed to run before this
 // bridge gives up waiting on it.
@@ -260,10 +277,11 @@ func (b *Bridge) validate(op runners.Operation) (profile string, envValues map[s
 		return "", nil, reject(runners.ErrorRejectedInput, runners.ErrUnsupportedOperation,
 			"operation declares no command argv")
 	}
-	if op.Command.WorkingDirectory != "" {
+	if op.Command.WorkingDirectory != "" && op.Command.WorkingDirectory != JobWorkingDirectory {
 		return "", nil, reject(runners.ErrorRejectedInput, runners.ErrUnsupportedOperation,
-			fmt.Sprintf("operation sets working_directory %q; headspace-cli's run verb has no flag to set one",
-				op.Command.WorkingDirectory))
+			fmt.Sprintf("operation sets working_directory %q; headspace-cli's run verb has no flag to set one, "+
+				"and every job it runs starts in %s",
+				op.Command.WorkingDirectory, JobWorkingDirectory))
 	}
 
 	if perr := checkPolicy(op.Policy, reject); perr != nil {

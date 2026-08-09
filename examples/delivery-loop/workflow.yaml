@@ -1,0 +1,281 @@
+# Culture Nodes reference workflow — the delivery loop.
+#
+# This is PRD §11.1's authoring example, made executable: intake → plan →
+# build → test → verify, with `test.failed` and `verify.changes_required` both
+# looping back to build. It is the workflow tests/e2e/slice_test.go drives end
+# to end against a real PostgreSQL, a real engine, a real worker, and a real
+# runner, and it is the workflow `nodes validate` is expected to compile with
+# zero diagnostics.
+#
+# Three deliberate differences from the PRD's §11.1 listing, each recorded
+# rather than quietly absorbed:
+#
+#  1. NO APPROVAL NODE. §11.1 routes `verify.blocked` to a `human-review`
+#     approval node. The approval / human-task surface is DEFERRED — deviation
+#     d1, github issue #3 — and internal/worker has no HumanDispatcher wired
+#     in this build, so an approval node here would fail every run that
+#     reached it with a `not_implemented` diagnostic. Rather than ship a
+#     reference workflow with an unreachable-by-design dead end, `verify`
+#     declares only `passed` and `changes_required`. Restoring `blocked` and
+#     the approval node is the first thing to do when d1 lifts.
+#
+#  2. The `verify` node binds `/ledger/projections/evidence` where §11.1 binds
+#     `/nodes/test/evidence`. The per-node evidence surface is not resolvable
+#     by internal/worker's binding resolver (see its doc comment); the ledger
+#     projection is, and it selects exactly the run's evidence records —
+#     including the runner-observed record the `test` node just appended.
+#
+#  3. Contracts are inline JSON Schema rather than `schemaRef` files. A
+#     schemaRef is left unresolved by the compiler (resolving one needs a
+#     source root, PRD §11.4), so an inline schema is the version that
+#     actually gets enforced at runtime — which is the point of a reference.
+#
+# The `test` node is a real code node: its operation is a pinned, digest-
+# addressed image and an argv array, dispatched through the runner boundary
+# (PRD §13.7). The default e2e run executes it through a scripted fake Runner;
+# the `e2elive` variant executes this same operation through the real
+# headspace-cli Docker bridge.
+apiVersion: nodes.culture.dev/v1alpha1
+kind: Workflow
+
+metadata:
+  name: delivery-loop
+  version: 1.0.0
+  ownerRef: team/platform-ai
+
+spec:
+  entry: intake
+
+  contract:
+    input:
+      schema:
+        type: object
+        required: [request]
+        additionalProperties: false
+        properties:
+          request:
+            type: string
+            minLength: 1
+          repository:
+            type: string
+    output:
+      schema:
+        type: object
+        required: [verdict]
+        properties:
+          verdict:
+            type: string
+
+  # PRD §9.7: every loop is bounded by the engine, not by an agent deciding
+  # when to stop. maxVisitsPerNode is 4 so `build` can legitimately be revisited
+  # by both loop edges (test.failed and verify.changes_required) before the
+  # bound stops the run.
+  limits:
+    maxDuration: 2h
+    maxTransitions: 32
+    maxVisitsPerNode: 4
+    maxParallelTokens: 1
+
+  ledger:
+    schemaVersion: nodes.culture.dev/ledger/v1alpha1
+    maxRecordsPerNode: 100
+
+  nodes:
+    # Intake proposes scope, claims, assumptions, and questions. Everything it
+    # writes is `proposed`: an agent may not confirm its own work (PRD §10.4).
+    intake:
+      kind: agent
+      ownerRef: team/platform-ai
+      uses: actor://company/intake@sha256:1111111111111111111111111111111111111111111111111111111111111111
+      input:
+        from: /run/input
+      contract:
+        input:
+          schema:
+            type: object
+            required: [request]
+        outcomes:
+          completed:
+            schema:
+              type: object
+              required: [scope]
+              properties:
+                scope:
+                  type: string
+      ledger:
+        read: [current_scope]
+        propose: [announcement, claim, assumption, question]
+      policy:
+        timeout: 5m
+        retry:
+          maxAttempts: 2
+          backoff: exponential
+
+    # Plan proposes tasks and the mechanical success signals that will decide
+    # whether they are done.
+    plan:
+      kind: agent
+      ownerRef: team/architecture
+      uses: actor://company/planner@sha256:2222222222222222222222222222222222222222222222222222222222222222
+      input:
+        from: /nodes/intake/output
+      contract:
+        input:
+          schema:
+            type: object
+            required: [scope]
+        outcomes:
+          completed:
+            schema:
+              type: object
+              required: [tasks]
+              properties:
+                tasks:
+                  type: array
+                  items:
+                    type: object
+      ledger:
+        read: [current_scope, confirmed_claims, open_assumptions]
+        propose: [task, decision, success_signal]
+      policy:
+        timeout: 15m
+        retry:
+          maxAttempts: 2
+
+    # Build claims a task and proposes a result. On the second pass it reads
+    # the verification queue, which is how it learns what the verifier asked
+    # for — the loop carries state through the ledger, not through a variable.
+    build:
+      kind: agent
+      ownerRef: team/developer-experience
+      uses: actor://company/developer@sha256:3333333333333333333333333333333333333333333333333333333333333333
+      input:
+        bindings:
+          request: /run/input
+          readyTasks: /ledger/projections/ready_tasks
+          priorVerification: /ledger/projections/verification_queue
+      contract:
+        outcomes:
+          completed:
+            schema:
+              type: object
+              required: [changeSet]
+              properties:
+                changeSet:
+                  type: object
+      ledger:
+        read: [current_scope, confirmed_claims, ready_tasks, decision_history]
+        propose: [claim, result]
+      policy:
+        timeout: 45m
+        retry:
+          maxAttempts: 2
+
+    # The code node. Exit 0 routes `passed`; a nonzero exit routes `failed` —
+    # a DOMAIN outcome that follows the loop edge back to build, never an
+    # engine failure (PRD §3.4). `ledger.observe: [evidence]` is what lets the
+    # runner's own measured observations be appended with `observed` authority
+    # inside the same transaction as the transition they justify; only a code
+    # node may declare it (PRD §10.4).
+    test:
+      kind: code
+      ownerRef: team/developer-experience
+      uses: runner://headspace/docker@sha256:5555555555555555555555555555555555555555555555555555555555555555
+      operation:
+        image: python:3.12-slim@sha256:57cd7c3a7a273101a6485ba99423ee568157882804b1124b4dd04266317710de
+        argv: [python3, -c, "import sys; print('delivery-loop test suite'); sys.exit(0)"]
+        network: none
+        allowedOutputPaths: []
+      contract:
+        outcomes:
+          passed:
+            schema:
+              type: object
+              required: [operation_id, state]
+              properties:
+                state:
+                  type: string
+          failed:
+            schema:
+              type: object
+              required: [operation_id, state]
+              properties:
+                state:
+                  type: string
+      ledger:
+        read: [active_tasks]
+        observe: [evidence]
+      acceptance:
+        requires:
+          - kind: process_exit
+            equals: 0
+      policy:
+        timeout: 15m
+        retry:
+          maxAttempts: 1
+
+    # Verify reads the change set and the run's evidence and returns a domain
+    # verdict. `changes_required` is an answer, not a fault: it follows an edge
+    # back to build with the verifier's own record left in the ledger.
+    verify:
+      kind: agent
+      ownerRef: team/quality-platform
+      uses: actor://company/verifier@sha256:4444444444444444444444444444444444444444444444444444444444444444
+      input:
+        bindings:
+          changeSet: /nodes/build/output
+          testEvidence: /ledger/projections/evidence
+          queue: /ledger/projections/verification_queue
+      contract:
+        outcomes:
+          passed:
+            schema:
+              type: object
+              required: [verdict]
+              properties:
+                verdict:
+                  type: string
+          changes_required:
+            schema:
+              type: object
+              required: [verdict]
+              properties:
+                verdict:
+                  type: string
+      ledger:
+        read: [current_scope, active_tasks, verification_queue]
+        propose: [claim, result, question]
+      policy:
+        timeout: 20m
+        retry:
+          maxAttempts: 2
+
+    finish:
+      kind: end
+      ownerRef: team/platform-ai
+      output:
+        from: /nodes/verify/output
+
+  edges:
+    - from: intake.completed
+      to: plan
+
+    - from: plan.completed
+      to: build
+
+    - from: build.completed
+      to: test
+
+    - from: test.passed
+      to: verify
+
+    # A failing test suite is a domain answer that loops, bounded by
+    # spec.limits.maxVisitsPerNode.
+    - from: test.failed
+      to: build
+
+    - from: verify.passed
+      to: finish
+
+    - from: verify.changes_required
+      to: build

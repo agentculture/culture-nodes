@@ -407,22 +407,39 @@ func (w *Worker) recordHookOperations(ctx context.Context, namespaceID, attemptI
 }
 
 func (w *Worker) recordHookOperation(ctx context.Context, namespaceID, attemptID, kind string, run hookRun) {
-	if run.operation.OperationID == "" {
-		// The hook never reached a real operation to dispatch (no
-		// HookRunner configured, no HookRunnerName, an unpinned image) —
-		// a local configuration refusal, not a runner operation. The
-		// diagnostic on the attempt's own output already names it.
+	w.recordRunnerOperation(ctx, namespaceID, attemptID, kind, run.operation, run.result, run.dispatchErr)
+}
+
+// recordRunnerOperation stores one runner_operations row for any dispatch
+// through the runner boundary — a pre_run/post_run hook (kind "pre_run" /
+// "post_run") or a code node's own operation (kind "code", see code.go).
+//
+// It is shared rather than duplicated because the row means the same thing in
+// both cases: this exact typed operation was sent to a runner, under this
+// policy digest, and this is what came back. attemptID keys it to the attempt
+// the completion committed; an empty one means nothing committed and there is
+// nothing to key a row to.
+func (w *Worker) recordRunnerOperation(
+	ctx context.Context, namespaceID, attemptID, kind string,
+	operation runners.Operation, result *runners.Result, dispatchErr error,
+) {
+	if attemptID == "" || operation.OperationID == "" {
+		// Either the completion turned out stale (nothing committed), or the
+		// dispatch never reached a real operation at all (no runner
+		// configured, no runner name, an unpinned image) — a local
+		// configuration refusal, not a runner operation. The diagnostic on
+		// the attempt's own output already names it.
 		return
 	}
 
-	request, err := json.Marshal(run.operation)
+	request, err := json.Marshal(operation)
 	if err != nil {
-		w.report(fmt.Errorf("worker: encode %s hook operation for runner_operations: %w", kind, err))
+		w.report(fmt.Errorf("worker: encode %s operation for runner_operations: %w", kind, err))
 		return
 	}
-	policyDigest, err := contracts.DigestValue(run.operation)
+	policyDigest, err := contracts.DigestValue(operation)
 	if err != nil {
-		w.report(fmt.Errorf("worker: digest %s hook operation for runner_operations: %w", kind, err))
+		w.report(fmt.Errorf("worker: digest %s operation for runner_operations: %w", kind, err))
 		return
 	}
 
@@ -435,23 +452,23 @@ func (w *Worker) recordHookOperation(ctx context.Context, namespaceID, attemptID
 		Request:       request,
 	}
 	switch {
-	case run.dispatchErr != nil:
+	case dispatchErr != nil:
 		in.Status = "dispatch_failed"
-	case run.result != nil:
-		result, err := json.Marshal(run.result)
+	case result != nil:
+		encoded, err := json.Marshal(result)
 		if err != nil {
-			w.report(fmt.Errorf("worker: encode %s hook result for runner_operations: %w", kind, err))
+			w.report(fmt.Errorf("worker: encode %s result for runner_operations: %w", kind, err))
 			return
 		}
-		in.Result = result
-		in.Status = string(run.result.State)
-		in.CompletedAt = run.result.Timing.FinishedAt
+		in.Result = encoded
+		in.Status = string(result.State)
+		in.CompletedAt = result.Timing.FinishedAt
 	default:
 		in.Status = "unknown"
 	}
 
 	if _, err := w.db.InsertRunnerOperation(ctx, in); err != nil {
-		w.report(fmt.Errorf("worker: record %s hook operation for attempt %s: %w", kind, attemptID, err))
+		w.report(fmt.Errorf("worker: record %s operation for attempt %s: %w", kind, attemptID, err))
 	}
 }
 

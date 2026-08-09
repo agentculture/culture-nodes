@@ -41,11 +41,12 @@ ssh "$HOST" 'umask 077; mkdir -p ~/.culture-nodes/bin ~/.culture-nodes/runner-st
 { echo "NODES_RUNNER_LISTEN=:17070"
   echo "NODES_RUNNER_SECRET_FILE=$HOME/.culture-nodes/runner.secret"
   echo "NODES_RUNNER_STATE_DIR=$HOME/.culture-nodes/runner-state"
-  echo "NODES_RUNNER_HEADSPACE_PROFILES=default"
+  echo "NODES_RUNNER_HEADSPACE_PROFILES=sha256:57cd7c3a7a273101a6485ba99423ee568157882804b1124b4dd04266317710de=python3.12"
   echo "NODES_RUNNER_HEADSPACE_BIN=$HOME/.local/bin/headspace"
 } > ~/.culture-nodes/runner.env'
 ssh "$HOST" "loginctl enable-linger \$(id -un) 2>/dev/null || true"
-ssh "$HOST" "export XDG_RUNTIME_DIR=/run/user/\$(id -u); mkdir -p ~/.config/systemd/user && cp $REMOTE_DIR/deploy/prod/nodes-runner.service ~/.config/systemd/user/ && systemctl --user daemon-reload && systemctl --user enable --now nodes-runner && sleep 1 && systemctl --user is-active nodes-runner"
+ssh "$HOST" "export XDG_RUNTIME_DIR=/run/user/\$(id -u); mkdir -p ~/.config/systemd/user && cp $REMOTE_DIR/deploy/prod/nodes-runner.service ~/.config/systemd/user/ && systemctl --user daemon-reload && systemctl --user restart nodes-runner && systemctl --user enable nodes-runner"
+ssh "$HOST" 'export XDG_RUNTIME_DIR=/run/user/$(id -u); for i in $(seq 1 15); do st=$(systemctl --user is-active nodes-runner || true); [ "$st" = active ] && { echo "runner: active"; exit 0; }; sleep 2; done; echo "runner failed to become active:"; systemctl --user --no-pager -n 10 status nodes-runner; exit 1'
 
 case "$HOST" in
   thor*)

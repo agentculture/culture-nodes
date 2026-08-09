@@ -232,6 +232,24 @@ func (f *FileStore) writeAtomic(path string, raw []byte) error {
 	if err := os.Rename(tmpName, path); err != nil {
 		return fmt.Errorf("runnerservice: install the status record %s: %w", path, err)
 	}
+	// Fsync the directory too. A rename is only durable once the directory
+	// entry itself has reached the disk, and this store's whole reason to
+	// exist is that a status survives the process — which for a power loss
+	// means surviving the page cache as well.
+	return syncDir(f.dir)
+}
+
+// syncDir fsyncs a directory so a rename into it is durable. A filesystem
+// that refuses the operation (some do) is not an error: the record is already
+// written and renamed, and failing the Put would turn a weaker durability
+// guarantee into a lost status, which is strictly worse.
+func syncDir(dir string) error {
+	handle, err := os.Open(dir) //nolint:gosec // dir is this store's own configured directory
+	if err != nil {
+		return nil
+	}
+	defer func() { _ = handle.Close() }()
+	_ = handle.Sync()
 	return nil
 }
 

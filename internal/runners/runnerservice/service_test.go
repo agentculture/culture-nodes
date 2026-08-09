@@ -532,6 +532,30 @@ func TestCancellationStopsAnInFlightOperation(t *testing.T) {
 	}
 }
 
+// Cancelling something already finished is accepted and changes nothing: the
+// request was valid, there was simply nothing left to stop. The runtime's own
+// cancellation is durable before this call is ever made.
+func TestCancellingAFinishedOperationIsAcceptedAndChangesNothing(t *testing.T) {
+	h := newHarness(t, completingRunner(), nil)
+	op := testOperation("op-cancel-late-1")
+	h.execute(t, op, testSecret)
+	before := h.waitTerminal(t, op.OperationID)
+
+	code, body := h.request(t, http.MethodPost, runners.OperationsPath+"/"+op.OperationID+"/cancel", testSecret, nil, nil)
+	if code != http.StatusAccepted && code != http.StatusNoContent {
+		t.Fatalf("cancelling a finished operation answered %d, want 202/204: %s", code, body)
+	}
+
+	_, statusBody := h.status(t, op.OperationID, testSecret)
+	var after runners.OperationStatus
+	if err := json.Unmarshal(statusBody, &after); err != nil {
+		t.Fatalf("decode status: %v", err)
+	}
+	if after.State != before.State {
+		t.Fatalf("cancelling a finished operation changed its state from %s to %s", before.State, after.State)
+	}
+}
+
 func TestCancellingAnUnknownOperationIs404(t *testing.T) {
 	h := newHarness(t, completingRunner(), nil)
 	code, _ := h.request(t, http.MethodPost, runners.OperationsPath+"/op-nope/cancel", testSecret, nil, nil)

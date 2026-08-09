@@ -111,7 +111,6 @@ type Service struct {
 	callbacks map[string]callbackTarget
 
 	closeOnce sync.Once
-	sweeperUp chan struct{}
 }
 
 // New validates cfg, recovers any status left behind by a previous process,
@@ -159,7 +158,6 @@ func New(cfg Config) (*Service, error) {
 		inflight:        map[string]context.CancelFunc{},
 		cancelled:       map[string]bool{},
 		callbacks:       map[string]callbackTarget{},
-		sweeperUp:       make(chan struct{}),
 	}
 	if svc.now == nil {
 		svc.now = time.Now
@@ -441,10 +439,16 @@ func (s *Service) handleCancel(w http.ResponseWriter, r *http.Request) {
 	}
 
 	s.mu.Lock()
-	// Recorded even for an operation still queued, so a worker that has not
-	// picked it up yet refuses to start it rather than racing the cancel.
-	s.cancelled[operationID] = true
-	cancel := s.inflight[operationID]
+	// Recorded only while there is something to stop, and only for an
+	// operation still queued or running — a worker that has not picked it up
+	// yet then refuses to start it rather than racing the cancel. Recording
+	// it for an already-terminal operation would leave an entry nothing ever
+	// clears, since the commit that clears it has already happened.
+	var cancel context.CancelFunc
+	if !record.State.Terminal() {
+		s.cancelled[operationID] = true
+		cancel = s.inflight[operationID]
+	}
 	s.mu.Unlock()
 	if cancel != nil {
 		cancel()
@@ -635,7 +639,6 @@ func (s *Service) sweeper() {
 	}
 	ticker := time.NewTicker(interval)
 	defer ticker.Stop()
-	close(s.sweeperUp)
 	for {
 		select {
 		case <-s.rootCtx.Done():

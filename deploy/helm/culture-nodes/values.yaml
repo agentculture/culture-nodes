@@ -1,0 +1,209 @@
+# culture-nodes chart values.
+#
+# ------------------------------------------------------------------------
+# Phase-1 trust boundary — read this before deploying anywhere real
+# ------------------------------------------------------------------------
+# The control plane this chart deploys is AUTHLESS by design (spec decision
+# c45, internal/api's own package doc's "Authless by design" section):
+# every operation on the api Deployment, including the actor callback
+# route, is reachable by anyone who can reach the Service or Ingress this
+# chart creates. There is no username/password, no API key, no mTLS here.
+# Deploy this chart only on a private cluster/VPC, or behind an
+# authenticating proxy you add yourself. OIDC lands in Phase 2. See
+# NOTES.txt (printed after every install/upgrade) and README.md for the
+# same statement in the two other places an operator is likely to look.
+
+# -- nameOverride / fullnameOverride follow the usual Helm convention: leave
+# empty to derive names from the chart name and release name.
+nameOverride: ""
+fullnameOverride: ""
+
+image:
+  # repository/tag/digest resolve to one image reference, shared by every
+  # role Deployment and the migration Job below — api, scheduler, and worker
+  # are one binary (cmd/nodes) run in three modes (`serve`, `scheduler`,
+  # `worker`), never three images.
+  repository: ghcr.io/agentculture/culture-nodes
+  # tag falls back to .Chart.AppVersion when empty (see Chart.yaml's own
+  # comment on the two version fields). Ignored when digest is set.
+  tag: ""
+  # digest, e.g. "sha256:<64 hex chars>", WINS over tag when set. Production
+  # deployments should always pin this — it is the exact artifact
+  # .github/workflows/release.yml's smoke job already verified, never a
+  # mutable tag that could be repointed after the fact. See
+  # deploy/helm/README.md's Images section.
+  digest: ""
+  pullPolicy: IfNotPresent
+  # pullSecrets: a list of {name: <secret>} for a private registry.
+  pullSecrets: []
+
+# A container-level securityContext applied to every role's container (api,
+# scheduler, worker) and the migration Job -- distroless:nonroot (this
+# repo's Dockerfile) already runs as a non-root UID and ships no shell, so
+# none of this changes runtime behavior; it just tells Kubernetes to enforce
+# what is already true rather than trust it implicitly.
+#
+# runAsUser/runAsGroup are set explicitly, as the numeric UID/GID
+# (65532:65532) gcr.io/distroless/static-debian12:nonroot's "nonroot" user
+# resolves to -- NOT left to runAsNonRoot alone. The Dockerfile's `USER
+# nonroot` is a *named* user, and the kubelet cannot verify a named user is
+# non-root from the image metadata alone; runAsNonRoot: true without an
+# explicit numeric runAsUser fails every pod at admission with
+# "container has runAsNonRoot and image has non-numeric user (nonroot),
+# cannot verify user is non-root" -- this chart hit exactly that error on
+# its first real `helm install` against a live kind cluster (caught only
+# there: `helm template`/`helm lint` render the securityContext as
+# syntactically valid YAML either way and cannot catch an admission-time
+# failure).
+containerSecurityContext:
+  runAsNonRoot: true
+  runAsUser: 65532
+  runAsGroup: 65532
+  readOnlyRootFilesystem: true
+  allowPrivilegeEscalation: false
+  capabilities:
+    drop: ["ALL"]
+
+# terminationGracePeriodSeconds applies to every role Deployment. There is no
+# preStop hook anywhere in this chart -- distroless:nonroot has no shell to
+# exec one in -- so the drain story is entirely the binary's own SIGTERM
+# handling:
+#   - api (cmd/nodes/serve.go): signal.NotifyContext + http.Server.Shutdown,
+#     bounded by its own 15s internal shutdownTimeout.
+#   - scheduler (cmd/nodes/scheduler.go) / worker (cmd/nodes/worker.go):
+#     signal.NotifyContext cancels the run loop's context; each returns once
+#     its current unit of work (a tick, a claim/dispatch pass) finishes.
+# 30s is comfortably longer than the api's own 15s ceiling and gives
+# scheduler/worker room to finish one in-flight unit before Kubernetes would
+# ever escalate to SIGKILL.
+terminationGracePeriodSeconds: 30
+
+api:
+  replicas: 1
+  service:
+    port: 8080
+  resources:
+    requests:
+      cpu: 100m
+      memory: 128Mi
+    limits:
+      memory: 256Mi
+  # extraEnv: additional plain (non-secret) env vars, [{name, value}, ...].
+  extraEnv: []
+
+scheduler:
+  # replicas: every instance runs the identical loop and contends for one
+  # Postgres advisory lock (internal/scheduler's package doc); exactly one
+  # is ever active. Extra replicas are warm standbys that take over
+  # automatically when the active instance's session ends -- so this is a
+  # high-availability knob, not a throughput one, and there is no "which one
+  # is active" configuration to get wrong.
+  replicas: 1
+  resources:
+    requests:
+      cpu: 50m
+      memory: 64Mi
+    limits:
+      memory: 128Mi
+
+worker:
+  # replicas: 2 is the DEFAULT, not a maximum. Multi-pod safety is built
+  # into the claiming path itself -- leases with fencing tokens
+  # (internal/store/postgres/claiming.go's §12.4 invariants, proven under
+  # real process-level concurrency by tests/fault) -- so running more than
+  # one worker is the normal, supported way to get throughput and
+  # availability, never a race condition to avoid.
+  replicas: 2
+  resources:
+    requests:
+      cpu: 100m
+      memory: 128Mi
+    limits:
+      memory: 256Mi
+  podDisruptionBudget:
+    enabled: true
+    minAvailable: 1
+
+# callback: the attempt-scoped bearer-token secret an asynchronous actor
+# presents back to the api Deployment's callback route (POST
+# /v1/attempts/{id}/events -- internal/actors/protocol.go's
+# CallbackEventsPathFormat, mounted by internal/api/server.go's
+# WithCallbackSigner). The SAME secret must reach both api (which verifies)
+# and worker (which mints), which is why one Secret object backs both
+# Deployments rather than two independently-generated ones.
+callback:
+  # enabled: false means neither Deployment gets NODES_CALLBACK_TOKEN_SECRET
+  # at all, so the callback route stays unmounted (404) and the worker can
+  # only dispatch to actors that answer synchronously. See
+  # internal/api/server.go's WithCallbackSigner doc for why an unconfigured
+  # installation leaves the route absent rather than mounted-but-refusing.
+  enabled: true
+  # tokenSecret: raw or base64 bytes, >=16 required by
+  # actors.MinTokenSecretBytes (32+ recommended). Leave empty to generate
+  # one at install time (stable across `helm upgrade` via the chart's
+  # lookup-then-generate helper, culture-nodes.callbackTokenSecret) --
+  # pin an explicit value for a reproducible/offline `helm template` render.
+  tokenSecret: ""
+  # baseURL: the externally-reachable base URL actors are told to POST
+  # callbacks to (NODES_CALLBACK_BASE_URL). Leave empty to derive one
+  # automatically: the Ingress host when ingress.enabled, otherwise the api
+  # Service's in-cluster DNS name (correct for actors running inside the
+  # same cluster; set this explicitly for actors reached only through the
+  # Ingress).
+  baseURL: ""
+
+# postgresql: enabled (default) renders a small, self-contained
+# postgres:17 StatefulSet + Service -- deliberately NOT a Bitnami subchart
+# dependency, so this chart stays free of an external chart repository and
+# a much larger values surface than a kind-cluster CI smoke or a small
+# production install needs. Set enabled: false and postgresql.external.url
+# to bring your own (RDS, Cloud SQL, a shared cluster, ...).
+postgresql:
+  enabled: true
+  image:
+    repository: postgres
+    tag: "17"
+  auth:
+    username: nodes
+    # password: leave empty to generate one at install time (same
+    # lookup-then-generate pattern as callback.tokenSecret, via
+    # culture-nodes.postgresPassword) -- pin an explicit value for a
+    # reproducible/offline `helm template` render.
+    password: ""
+    database: nodes
+  persistence:
+    enabled: true
+    size: 5Gi
+    storageClassName: ""
+  resources:
+    requests:
+      cpu: 100m
+      memory: 256Mi
+    limits:
+      memory: 512Mi
+  # external.url: postgres://user:pass@host:5432/db?sslmode=... — read only
+  # when postgresql.enabled is false. Wired to every Deployment (and the
+  # migration Job) the same way the in-chart Postgres is: through a Secret
+  # this chart creates and each pod reads via env.valueFrom.secretKeyRef
+  # (NODES_DATABASE_URL) — see templates/secret-database.yaml and
+  # _helpers.tpl's culture-nodes.databaseURL. The chart never puts a
+  # database URL directly on a Deployment spec in plaintext.
+  external:
+    url: ""
+
+ingress:
+  # enabled: false by default. The api Service (templates/service-api.yaml)
+  # is always the callback surface for in-cluster actors regardless of this
+  # setting; Ingress is what makes it reachable from OUTSIDE the cluster
+  # (spec claim c42, honesty condition h37) — e.g. an actor running as its
+  # own service elsewhere. A real Ingress round trip needs an ingress
+  # controller installed in the cluster (deploy/helm/ci-smoke.sh installs
+  # ingress-nginx for the kind-cluster CI smoke); this chart only renders
+  # the Ingress resource, it does not install a controller.
+  enabled: false
+  className: ""
+  host: ""
+  annotations: {}
+  tls:
+    enabled: false
+    secretName: ""

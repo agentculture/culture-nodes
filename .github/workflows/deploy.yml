@@ -1,0 +1,143 @@
+name: Deploy
+
+# The kind-cluster CI lane for deploy/helm/culture-nodes (task t22): build
+# the control-plane image, install the chart on a real kind cluster with
+# worker.replicas=2, and run the same smoke suite a local developer runs
+# (deploy/helm/ci-smoke.sh, shared verbatim -- see that script's own doc
+# comment for why nothing here duplicates its checks inline). Separate from
+# go.yml (which already covers `go build`/`go vet`/`go test ./...` on any
+# **.go change, including everything under cmd/**) and from release.yml
+# (which publishes real multi-arch images by digest on a tag) -- this
+# workflow never publishes anything, it only proves the chart + image
+# combination actually comes up and answers.
+#
+# kind and helm are pinned by exact version with a sha256 checksum verified
+# before either binary is trusted, the same discipline actions are pinned
+# by commit SHA below (copied from go.yml's own actions/checkout pin).
+
+on:
+  pull_request:
+    branches: [main]
+    paths:
+      - "deploy/**"
+      - "Dockerfile"
+      - "cmd/**"
+      - ".github/workflows/deploy.yml"
+  push:
+    branches: [main]
+    paths:
+      - "deploy/**"
+      - "Dockerfile"
+      - "cmd/**"
+      - ".github/workflows/deploy.yml"
+
+jobs:
+  kind-smoke:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    env:
+      CLUSTER_NAME: nodes-ci
+      RELEASE_NAME: nodes
+      IMAGE_TAG: kindtest
+      KIND_VERSION: v0.32.0
+      KIND_SHA256_LINUX_AMD64: 50030de23cf40a18505f20426f6a8506bedf13c6e509244bd1fa9463721b0f54
+      HELM_VERSION: v4.2.3
+      HELM_SHA256_LINUX_AMD64: e9b88b4ee95b18c706839c28d3a0220e5bc470e9cd9262410c90793c45ff8b7c
+      KUBECTL_VERSION: v1.36.3
+      KUBECTL_SHA256_LINUX_AMD64: ebbd080e7c2e275093b55915722043257eb24004363e20acb3c4d71919f88336
+      INGRESS_NGINX_MANIFEST: https://raw.githubusercontent.com/kubernetes/ingress-nginx/controller-v1.14.0/deploy/static/provider/kind/deploy.yaml
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+
+      - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5
+        with:
+          go-version-file: go.mod
+
+      - name: Install kind (pinned, sha256-verified)
+        run: |
+          curl -fLo kind "https://github.com/kubernetes-sigs/kind/releases/download/${KIND_VERSION}/kind-linux-amd64"
+          echo "${KIND_SHA256_LINUX_AMD64}  kind" | sha256sum -c -
+          chmod +x kind
+          sudo mv kind /usr/local/bin/kind
+          kind version
+
+      - name: Install helm (pinned, sha256-verified)
+        run: |
+          curl -fLo helm.tar.gz "https://get.helm.sh/helm-${HELM_VERSION}-linux-amd64.tar.gz"
+          echo "${HELM_SHA256_LINUX_AMD64}  helm.tar.gz" | sha256sum -c -
+          tar xzf helm.tar.gz linux-amd64/helm
+          chmod +x linux-amd64/helm
+          sudo mv linux-amd64/helm /usr/local/bin/helm
+          helm version
+
+      - name: Install kubectl (pinned, sha256-verified)
+        run: |
+          curl -fLo kubectl "https://dl.k8s.io/release/${KUBECTL_VERSION}/bin/linux/amd64/kubectl"
+          echo "${KUBECTL_SHA256_LINUX_AMD64}  kubectl" | sha256sum -c -
+          chmod +x kubectl
+          sudo mv kubectl /usr/local/bin/kubectl
+          kubectl version --client
+
+      - name: helm lint
+        run: helm lint deploy/helm/culture-nodes
+
+      - name: Manifest tests (helm template, no cluster needed)
+        run: go test ./tests/deploy/...
+
+      - name: Create kind cluster
+        run: kind create cluster --name "$CLUSTER_NAME" --wait 120s
+
+      - name: Build the control-plane image
+        run: docker build -t "culture-nodes:${IMAGE_TAG}" .
+
+      - name: Load the image into kind
+        run: kind load docker-image "culture-nodes:${IMAGE_TAG}" --name "$CLUSTER_NAME"
+
+      - name: helm install (worker.replicas=2, in-chart Postgres)
+        run: |
+          helm install "$RELEASE_NAME" deploy/helm/culture-nodes \
+            --set image.repository=culture-nodes --set image.tag="$IMAGE_TAG" \
+            --set worker.replicas=2 \
+            --wait --timeout 5m
+
+      - name: kubectl get pods (post-install)
+        run: kubectl get pods -o wide
+
+      - name: Smoke test (deploy/helm/ci-smoke.sh, shared with local runs)
+        run: |
+          RELEASE="$RELEASE_NAME" WORKER_REPLICAS=2 bash deploy/helm/ci-smoke.sh
+
+      - name: Install ingress-nginx (for the h37 callback-through-Ingress check)
+        run: |
+          kubectl apply -f "$INGRESS_NGINX_MANIFEST"
+          kubectl wait --namespace ingress-nginx \
+            --for=condition=ready pod \
+            --selector=app.kubernetes.io/component=controller \
+            --timeout=180s
+
+      - name: helm upgrade (enable Ingress)
+        run: |
+          helm upgrade "$RELEASE_NAME" deploy/helm/culture-nodes \
+            --set image.repository=culture-nodes --set image.tag="$IMAGE_TAG" \
+            --set worker.replicas=2 \
+            --set ingress.enabled=true --set ingress.className=nginx --set ingress.host=nodes.kind.test \
+            --wait --timeout 5m
+
+      - name: Smoke test with the Ingress round trip (h37)
+        run: |
+          RELEASE="$RELEASE_NAME" WORKER_REPLICAS=2 \
+            SMOKE_INGRESS=1 INGRESS_HOST=nodes.kind.test KIND_NODE="${CLUSTER_NAME}-control-plane" \
+            bash deploy/helm/ci-smoke.sh
+
+      - name: kubectl get pods assert (final)
+        if: always()
+        run: |
+          kubectl get pods -o wide
+          not_running=$(kubectl get pods -o json | jq '[.items[] | select(.status.phase != "Running")] | length')
+          echo "pods not Running: $not_running"
+          test "$not_running" = "0"
+
+      - name: Teardown
+        if: always()
+        run: kind delete cluster --name "$CLUSTER_NAME" || true

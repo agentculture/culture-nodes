@@ -23,7 +23,8 @@ ARG VERSION=dev
 
 WORKDIR /src
 
-# Cache module downloads separately from source changes.
+# Cache module downloads separately from source changes. go.sum must come
+# along with go.mod -- `go mod download` in readonly mode fails without it.
 COPY go.mod go.sum ./
 RUN go mod download
 

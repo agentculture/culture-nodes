@@ -1,0 +1,57 @@
+# Applies every pending migration (migrations/*.sql, embedded into the
+# binary — migrations/migrations.go) via `nodes migrate`
+# (docs/adr/0002-migration-policy.md) before any new-revision api/scheduler/
+# worker pod can receive traffic or claim work. Both hooks are declared
+# (not just pre-install) so `helm upgrade` re-runs it exactly like a first
+# `helm install` does; hook-delete-policy removes the previous run's Job
+# before the new one starts, since a Job's pod template is immutable and a
+# fixed name would otherwise collide on the second install/upgrade.
+#
+# Weight "0" runs this after templates/postgres/*.yaml and
+# secret-database.yaml (weight "-5"): those exist by the time this Job is
+# created, but Helm does not itself wait for a freshly-created StatefulSet's
+# pod to become Ready before moving to the next hook-weight tier — only
+# Job/Pod-kind hooks get that treatment. backoffLimit and
+# activeDeadlineSeconds below are this Job's own safety net for that
+# remaining window: `nodes migrate` (cmd/nodes/migrate.go) fails fast on an
+# unreachable database rather than retrying internally, so the Job
+# controller's exponential backoff between pod restarts is what actually
+# absorbs a Postgres container that is still starting.
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: {{ include "culture-nodes.fullname" . }}-migrate
+  labels:
+    {{- include "culture-nodes.labels" . | nindent 4 }}
+    app.kubernetes.io/component: migrate
+  annotations:
+    "helm.sh/hook": pre-install,pre-upgrade
+    "helm.sh/hook-weight": "0"
+    "helm.sh/hook-delete-policy": before-hook-creation,hook-succeeded
+spec:
+  backoffLimit: 6
+  activeDeadlineSeconds: 240
+  template:
+    metadata:
+      labels:
+        {{- include "culture-nodes.selectorLabels" . | nindent 8 }}
+        app.kubernetes.io/component: migrate
+    spec:
+      restartPolicy: Never
+      {{- with .Values.image.pullSecrets }}
+      imagePullSecrets:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      containers:
+        - name: migrate
+          image: {{ include "culture-nodes.image" . }}
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          args: ["migrate"]
+          env:
+            - name: NODES_DATABASE_URL
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "culture-nodes.fullname" . }}-db
+                  key: NODES_DATABASE_URL
+          securityContext:
+            {{- toYaml .Values.containerSecurityContext | nindent 12 }}

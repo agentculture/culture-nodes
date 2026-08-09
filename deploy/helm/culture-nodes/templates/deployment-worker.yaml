@@ -1,0 +1,74 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "culture-nodes.fullname" . }}-worker
+  labels:
+    {{- include "culture-nodes.labels" . | nindent 4 }}
+    app.kubernetes.io/component: worker
+spec:
+  replicas: {{ .Values.worker.replicas }}
+  selector:
+    matchLabels:
+      {{- include "culture-nodes.selectorLabels" . | nindent 6 }}
+      app.kubernetes.io/component: worker
+  template:
+    metadata:
+      labels:
+        {{- include "culture-nodes.selectorLabels" . | nindent 8 }}
+        app.kubernetes.io/component: worker
+    spec:
+      {{- with .Values.image.pullSecrets }}
+      imagePullSecrets:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      terminationGracePeriodSeconds: {{ .Values.terminationGracePeriodSeconds }}
+      containers:
+        - name: worker
+          image: {{ include "culture-nodes.image" . }}
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          args: ["worker"]
+          # No liveness/readiness probe -- same reasoning as
+          # deployment-scheduler.yaml: cmd/nodes/worker.go serves no HTTP,
+          # the image has no shell for an exec probe, and a fake probe
+          # would claim certainty this Deployment does not have. Worker
+          # safety under multiple replicas (worker.replicas default 2,
+          # values.yaml) and under a killed/wedged pod comes from the
+          # lease + fencing-token claiming path
+          # (internal/store/postgres/claiming.go), proven under real
+          # process kills by tests/fault, not from a liveness probe
+          # restarting it. restartPolicy (Always) still restarts the
+          # container if the process itself exits or crashes.
+          env:
+            - name: NODES_DATABASE_URL
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "culture-nodes.fullname" . }}-db
+                  key: NODES_DATABASE_URL
+            # NODES_NAMESPACE_SLUG, not NODES_NAMESPACE_ID: a namespace id
+            # is a database-generated ULID nothing outside the database can
+            # predict ahead of a Helm install (see cmd/nodes/worker.go's
+            # namespace-slug doc comment). Every worker pod and the api
+            # Deployment (cmd/nodes/serve.go's defaultNamespaceSlug) name
+            # the identical "default" slug; whichever process asks first
+            # creates the row, every process after that resolves the same
+            # id (internal/api.EnsureNamespace's idempotency, exercised
+            # concurrently by internal/api/namespace_test.go).
+            - name: NODES_NAMESPACE_SLUG
+              value: "default"
+            - name: NODES_WORKER_ID
+              valueFrom:
+                fieldRef:
+                  fieldPath: metadata.name
+            {{- if .Values.callback.enabled }}
+            - name: NODES_CALLBACK_TOKEN_SECRET
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "culture-nodes.fullname" . }}-callback
+                  key: NODES_CALLBACK_TOKEN_SECRET
+            - name: NODES_CALLBACK_BASE_URL
+              value: {{ include "culture-nodes.callbackBaseURL" . | quote }}
+            {{- end }}
+          resources:
+            {{- toYaml .Values.worker.resources | nindent 12 }}
+          securityContext:
+            {{- toYaml .Values.containerSecurityContext | nindent 12 }}

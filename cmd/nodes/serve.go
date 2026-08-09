@@ -106,6 +106,18 @@ func runServeMode(args []string, verb string, withScheduler bool) (int, error) {
 	if assets, ok := culturenodes.WebAssets(); ok {
 		opts = append(opts, api.WithWebAssets(assets))
 	}
+
+	// A callback token secret is optional here for the same reason it is
+	// optional on the worker side (cmd/nodes/worker.go's callbackConfig): a
+	// deployment that only dispatches to synchronous actors never sees a
+	// callback, so nothing needs verifying. When it IS set, it must be the
+	// same secret the worker signs with -- see WithCallbackSigner's doc.
+	callbackSigner, err := callbackSignerFromEnv()
+	if err != nil {
+		return 0, err
+	}
+	opts = append(opts, api.WithCallbackSigner(callbackSigner))
+
 	srv, err := api.NewServer(db, namespaceID, opts...)
 	if err != nil {
 		return 0, envError("building the API server", err, "this is an environment fault; file a bug if it persists")

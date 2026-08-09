@@ -151,69 +151,112 @@ func TestHumanReviewBranchParksThenResumesBuildOnAnApprovedDecision(t *testing.T
 
 	// ---- the run parks on the approval node ----
 	task := stack.awaitPendingHumanTask(t, runID, 60*time.Second)
-	assertHumanTaskRequest(t, task, digest)
-	assertPauseHoldsNoLease(t, stack, runID, task.NodeRunID)
-
-	// The verifier spoke once and the build has NOT been re-entered: the run
-	// is genuinely waiting on the person, not racing ahead of them.
-	if got := agents.callCount("verify"); got != 1 {
-		t.Fatalf("verify was invoked %d times before the decision, want 1", got)
-	}
-	if got := agents.callCount("build"); got != 1 {
-		t.Fatalf("build was invoked %d times before the decision, want 1: the run must wait for the decision", got)
-	}
+	assertParkedBeforeDecision(t, stack, runID, task, digest, agents)
 
 	// ---- the decision travels the real wire ----
-	// Unauthenticated first: the endpoint that writes human authority into a
-	// ledger is the one place this API is not open (PRD spec decision c45's
-	// carve-out), and a deployment that did not enforce it here would let
-	// anything resume the run.
 	body := decideRequest{
 		Outcome:               "approved",
 		DeciderActorID:        decider,
 		Response:              json.RawMessage(`{"note":"the blocker is a known flake; proceed with the fix"}`),
 		ExpectedLedgerVersion: stack.ledgerVersion(t, runID),
 	}
-	if status := stack.decide(t, task.ID, "", body, nil); status != http.StatusUnauthorized {
+	result := submitApprovedDecision(t, stack, task, body)
+	assertApprovedDecisionResult(t, result, task.NodeRunID)
+
+	// ---- the run resumes and finishes ----
+	view := stack.waitForTerminal(t, runID, 90*time.Second)
+	assertRunCompletedWithOutput(t, stack, view, agents, []byte(`"passed"`),
+		"the verifier's later passing verdict")
+
+	// build really was re-entered by the decision, and the second pass saw
+	// what the verifier had said (the agents' own script refuses otherwise).
+	assertBuildResumedAfterApproval(t, stack, view, agents, task, decider)
+	assertApprovedRunEvents(t, sseDone, view, task.ID)
+
+	assertHumanAuthorityInLedger(t, stack, ns.ID, runID, task.ID, decider, "approved")
+}
+
+// assertParkedBeforeDecision checks the run genuinely parked on the approval
+// node before any decision arrived: the task's request shape and audit trail
+// are correct, the pause holds no lease, and the verifier spoke once while
+// build has NOT been re-entered — the run is waiting on the person, not
+// racing ahead of them.
+func assertParkedBeforeDecision(t *testing.T, s *stack, runID string, task humanTaskOut, digest string, agents *deliveryAgents) {
+	t.Helper()
+	assertHumanTaskRequest(t, task, digest)
+	assertPauseHoldsNoLease(t, s, runID, task.NodeRunID)
+
+	if got := agents.callCount("verify"); got != 1 {
+		t.Fatalf("verify was invoked %d times before the decision, want 1", got)
+	}
+	if got := agents.callCount("build"); got != 1 {
+		t.Fatalf("build was invoked %d times before the decision, want 1: the run must wait for the decision", got)
+	}
+}
+
+// submitApprovedDecision exercises PRD spec decision c45's auth carve-out —
+// the endpoint that writes human authority into a ledger is the one place
+// this API is not open, so an unauthenticated decision must be refused and
+// change nothing — before submitting the same body with the real bearer
+// token, and returns the authenticated response for the caller to assert on.
+func submitApprovedDecision(t *testing.T, s *stack, task humanTaskOut, body decideRequest) decisionResult {
+	t.Helper()
+	if status := s.decide(t, task.ID, "", body, nil); status != http.StatusUnauthorized {
 		t.Fatalf("unauthenticated decision returned %d, want 401", status)
 	}
-	if refused := stack.humanTask(t, task.ID); refused.Status != "pending" {
+	if refused := s.humanTask(t, task.ID); refused.Status != "pending" {
 		t.Fatalf("task status = %q after a refused decision, want pending", refused.Status)
 	}
 
 	var result decisionResult
-	if status := stack.decide(t, task.ID, decisionAuthSecret, body, &result); status != http.StatusOK {
+	if status := s.decide(t, task.ID, decisionAuthSecret, body, &result); status != http.StatusOK {
 		t.Fatalf("authenticated decision returned %d, want 200", status)
 	}
+	return result
+}
+
+// assertApprovedDecisionResult checks the approved decision's own response:
+// the selected outcome routed the edge, in the very same transaction that
+// recorded the decision — `human-review.approved` goes back to build.
+func assertApprovedDecisionResult(t *testing.T, result decisionResult, wantNodeRunID string) {
+	t.Helper()
 	if result.Outcome != "approved" {
 		t.Errorf("decision outcome = %q, want approved", result.Outcome)
 	}
-	if result.NodeRunID != task.NodeRunID {
-		t.Errorf("decision resolved node run %q, want the parked %q", result.NodeRunID, task.NodeRunID)
+	if result.NodeRunID != wantNodeRunID {
+		t.Errorf("decision resolved node run %q, want the parked %q", result.NodeRunID, wantNodeRunID)
 	}
-	// The selected outcome routed the edge, in the very same transaction that
-	// recorded the decision: `human-review.approved` goes back to build.
 	if result.NextNodeID != "build" {
 		t.Fatalf("the approved decision routed to %q, want build (edge human-review.approved)", result.NextNodeID)
 	}
 	if result.RunState != string(engine.RunRunning) {
 		t.Errorf("run state after the decision = %q, want running", result.RunState)
 	}
+}
 
-	// ---- the run resumes and finishes ----
-	view := stack.waitForTerminal(t, runID, 90*time.Second)
+// assertRunCompletedWithOutput checks the run finished cleanly and its
+// output carries wantSubstr, describing what that substring proves via
+// wantDesc when it does not.
+func assertRunCompletedWithOutput(t *testing.T, s *stack, view runView, agents *deliveryAgents, wantSubstr []byte, wantDesc string) {
+	t.Helper()
 	if failures := agents.scriptFailures(); len(failures) > 0 {
 		t.Fatalf("the scripted agents refused an invocation: %v", failures)
 	}
 	if view.Run.State != string(engine.RunCompleted) {
-		t.Fatalf("run state = %s, want completed (worker errors: %v)", view.Run.State, stack.errors())
+		t.Fatalf("run state = %s, want completed (worker errors: %v)", view.Run.State, s.errors())
 	}
-	if !bytes.Contains(view.Run.Output, []byte(`"passed"`)) {
-		t.Errorf("run output = %s, want the verifier's later passing verdict", view.Run.Output)
+	if !bytes.Contains(view.Run.Output, wantSubstr) {
+		t.Errorf("run output = %s, want %s", view.Run.Output, wantDesc)
 	}
+}
 
-	// build really was re-entered by the decision, and the second pass saw
-	// what the verifier had said (the agents' own script refuses otherwise).
+// assertBuildResumedAfterApproval checks the resumed branch: build and
+// verify each ran a second time, the approval node's own node run reads
+// completed/approved, the task now reads decided, and — the invariant the
+// whole park model rests on — no work_items row was ever created for the
+// approval node, not before the decision and not after it.
+func assertBuildResumedAfterApproval(t *testing.T, s *stack, view runView, agents *deliveryAgents, task humanTaskOut, decider string) {
+	t.Helper()
 	if got := agents.callCount("build"); got != 2 {
 		t.Errorf("build was invoked %d times, want 2 (the decision resumed it)", got)
 	}
@@ -222,23 +265,26 @@ func TestHumanReviewBranchParksThenResumesBuildOnAnApprovedDecision(t *testing.T
 	}
 
 	assertApprovalNodeRun(t, view, "approved")
-	assertDecidedHumanTask(t, stack, task.ID, "approved", decider)
+	assertDecidedHumanTask(t, s, task.ID, "approved", decider)
 	// Not one work item, ever: not before the decision, not after it.
-	if got := countWorkItems(t, stack, task.NodeRunID); got != 0 {
+	if got := countWorkItems(t, s, task.NodeRunID); got != 0 {
 		t.Errorf("%d work_items rows exist for the approval node run after the decision, want 0", got)
 	}
+}
 
+// assertApprovedRunEvents drains the run's SSE stream and checks it tells
+// the approved branch's story: the edges each walked once, the human-task
+// lifecycle events present, and — the whole branch being domain routing —
+// nothing that looks like a technical failure.
+func assertApprovedRunEvents(t *testing.T, sseDone <-chan sseResult, view runView, taskID string) {
+	t.Helper()
 	events, err := drainSSE(t, sseDone)
 	if err != nil {
 		t.Fatalf("SSE stream: %v", err)
 	}
 	assertHumanReviewEdges(t, events, "human-review.approved")
-	assertHumanTaskEvents(t, events, task.ID, "approved")
-	// The whole branch is domain routing: a run that waited a person out is
-	// not a run that failed at anything.
+	assertHumanTaskEvents(t, events, taskID, "approved")
 	assertNoTechnicalFailures(t, view)
-
-	assertHumanAuthorityInLedger(t, stack, ns.ID, runID, task.ID, decider, "approved")
 }
 
 // TestHumanReviewRejectedDecisionRoutesItsOwnEdge is the other half of "the
@@ -352,6 +398,21 @@ func TestHumanReviewRejectedDecisionRoutesItsOwnEdge(t *testing.T) {
 // names the edge that produced it.
 func assertHumanTaskRequest(t *testing.T, task humanTaskOut, digest string) {
 	t.Helper()
+	assertPendingTaskShape(t, task)
+
+	var payload humanTaskRequestPayload
+	if err := json.Unmarshal(task.Request, &payload); err != nil {
+		t.Fatalf("decode human task request: %v (%s)", err, task.Request)
+	}
+	assertDecisionPolicy(t, payload)
+	assertRequestContextAndAudit(t, payload, digest)
+}
+
+// assertPendingTaskShape checks the task record itself, before its request
+// payload is even decoded: an approval kind, pending status, a node run to
+// join back to the paused run, and no response/resolved_at yet.
+func assertPendingTaskShape(t *testing.T, task humanTaskOut) {
+	t.Helper()
 	if task.Kind != "approval" {
 		t.Errorf("human task kind = %q, want approval", task.Kind)
 	}
@@ -364,11 +425,12 @@ func assertHumanTaskRequest(t *testing.T, task humanTaskOut, digest string) {
 	if task.ResolvedAt != nil || len(task.Response) != 0 {
 		t.Errorf("a pending task already carries a response/resolved_at: %+v", task)
 	}
+}
 
-	var payload humanTaskRequestPayload
-	if err := json.Unmarshal(task.Request, &payload); err != nil {
-		t.Fatalf("decode human task request: %v (%s)", err, task.Request)
-	}
+// assertDecisionPolicy checks the decision schema, approver, deadline, and
+// allowed outcomes PRD §9.9 asks an approval node's task to declare.
+func assertDecisionPolicy(t *testing.T, payload humanTaskRequestPayload) {
+	t.Helper()
 	if payload.DecisionSchemaRef != "./contracts/review-decision.schema.json" {
 		t.Errorf("decision_schema_ref = %q", payload.DecisionSchemaRef)
 	}
@@ -389,6 +451,13 @@ func assertHumanTaskRequest(t *testing.T, task humanTaskOut, digest string) {
 			t.Errorf("allowed_outcomes contains %q, which the approval node's ports do not include", outcome)
 		}
 	}
+}
+
+// assertRequestContextAndAudit checks the task points the approver at the
+// verifier's exact output, and that the audit trail names the edge that
+// produced the task.
+func assertRequestContextAndAudit(t *testing.T, payload humanTaskRequestPayload, digest string) {
+	t.Helper()
 	// "Exact context and artifact references": the approver is pointed at the
 	// verifier's own blocked output, as a reference, not handed a payload the
 	// engine assembled.
@@ -562,33 +631,13 @@ func assertHumanTaskEvents(t *testing.T, events []sseEvent, taskID, outcome stri
 
 	var created, decided int
 	for _, ev := range events {
-		var envelope struct {
-			Data struct {
-				HumanTaskID string `json:"human_task_id"`
-				NodeID      string `json:"node_id"`
-				Outcome     string `json:"outcome"`
-			} `json:"data"`
-		}
+		var envelope humanTaskEventEnvelope
 		if err := json.Unmarshal(ev.Data, &envelope); err != nil {
 			continue
 		}
-		switch ev.Type {
-		case engine.TypeHumanTaskCreated:
-			if envelope.Data.HumanTaskID == taskID {
-				created++
-			}
-		case engine.TypeHumanTaskDecided:
-			if envelope.Data.HumanTaskID == taskID {
-				decided++
-				if envelope.Data.Outcome != outcome {
-					t.Errorf("human-task.decided event outcome = %q, want %q", envelope.Data.Outcome, outcome)
-				}
-			}
-		case engine.TypeNodeRunReady:
-			if envelope.Data.NodeID == "human-review" {
-				t.Error("a node-run.ready event names the approval node; no claimable work ever existed for it")
-			}
-		}
+		c, d := countHumanTaskEvent(t, ev, envelope, taskID, outcome)
+		created += c
+		decided += d
 	}
 	if created != 1 {
 		t.Errorf("%d human-task.created events for task %s, want 1", created, taskID)
@@ -596,6 +645,44 @@ func assertHumanTaskEvents(t *testing.T, events []sseEvent, taskID, outcome stri
 	if decided != 1 {
 		t.Errorf("%d human-task.decided events for task %s, want 1", decided, taskID)
 	}
+}
+
+// humanTaskEventEnvelope is the subset of an SSE event's data field
+// assertHumanTaskEvents reads: enough to tell which human task an event
+// names, and — for a decided event — what outcome it carries.
+type humanTaskEventEnvelope struct {
+	Data struct {
+		HumanTaskID string `json:"human_task_id"`
+		NodeID      string `json:"node_id"`
+		Outcome     string `json:"outcome"`
+	} `json:"data"`
+}
+
+// countHumanTaskEvent classifies one already-decoded event against taskID,
+// returning (1,0) for a matching created event, (0,1) for a matching decided
+// event (after checking its outcome), and (0,0) for anything else. A
+// node-run.ready event naming the approval node fails the test outright: no
+// claimable work ever existed for it.
+func countHumanTaskEvent(t *testing.T, ev sseEvent, envelope humanTaskEventEnvelope, taskID, outcome string) (created, decided int) {
+	t.Helper()
+	switch ev.Type {
+	case engine.TypeHumanTaskCreated:
+		if envelope.Data.HumanTaskID == taskID {
+			return 1, 0
+		}
+	case engine.TypeHumanTaskDecided:
+		if envelope.Data.HumanTaskID == taskID {
+			if envelope.Data.Outcome != outcome {
+				t.Errorf("human-task.decided event outcome = %q, want %q", envelope.Data.Outcome, outcome)
+			}
+			return 0, 1
+		}
+	case engine.TypeNodeRunReady:
+		if envelope.Data.NodeID == "human-review" {
+			t.Error("a node-run.ready event names the approval node; no claimable work ever existed for it")
+		}
+	}
+	return 0, 0
 }
 
 // assertHumanAuthorityInLedger is the ledger half of the acceptance criterion:

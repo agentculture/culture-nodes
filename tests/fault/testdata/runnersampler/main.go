@@ -193,28 +193,17 @@ func pollLoop(ctx context.Context, s *postgres.Store, wk *worker.Worker, cfg con
 			return nil
 		}
 
-		dispatched, err := wk.Tick(ctx)
-		if err != nil {
-			return fmt.Errorf("Tick: %w", err)
-		}
-		sampled, err := wk.SampleRunnerOperations(ctx)
-		if err != nil {
-			return fmt.Errorf("SampleRunnerOperations: %w", err)
-		}
-		if dispatched > 0 || sampled > 0 {
-			lastProgress = time.Now()
-		}
-
-		parked, err := parkedCount(ctx, s, cfg.namespaceID)
+		progressed, parked, err := pollStep(ctx, s, wk, cfg.namespaceID)
 		if err != nil {
 			return err
 		}
-		if parked > 0 && !flagWritten && cfg.flagFile != "" {
-			if err := os.WriteFile(cfg.flagFile, []byte(strconv.Itoa(parked)+"\n"), 0o644); err != nil {
-				return fmt.Errorf("write parked flag file: %w", err)
-			}
-			flagWritten = true
-			fmt.Printf("worker %s: parked %d runner operation(s)\n", cfg.workerID, parked)
+		if progressed {
+			lastProgress = time.Now()
+		}
+
+		flagWritten, err = markParkedIfNeeded(cfg, parked, flagWritten)
+		if err != nil {
+			return err
 		}
 		if parked > 0 && cfg.hangAfterPark {
 			// Block forever: this process is now "mid-operation" and the
@@ -227,6 +216,39 @@ func pollLoop(ctx context.Context, s *postgres.Store, wk *worker.Worker, cfg con
 
 		time.Sleep(cfg.poll)
 	}
+}
+
+// pollStep runs one Tick and one sampler pass, and reports whether either
+// made progress, plus the current parked-operation count.
+func pollStep(ctx context.Context, s *postgres.Store, wk *worker.Worker, namespaceID string) (progressed bool, parked int, err error) {
+	dispatched, err := wk.Tick(ctx)
+	if err != nil {
+		return false, 0, fmt.Errorf("Tick: %w", err)
+	}
+	sampled, err := wk.SampleRunnerOperations(ctx)
+	if err != nil {
+		return false, 0, fmt.Errorf("SampleRunnerOperations: %w", err)
+	}
+	parked, err = parkedCount(ctx, s, namespaceID)
+	if err != nil {
+		return false, 0, err
+	}
+	return dispatched > 0 || sampled > 0, parked, nil
+}
+
+// markParkedIfNeeded writes cfg.flagFile the first time an operation has
+// parked, so the parent test can land its SIGKILL at a precisely known
+// point. It is a no-op once flagWritten is already true, and when no flag
+// file was configured at all.
+func markParkedIfNeeded(cfg config, parked int, flagWritten bool) (bool, error) {
+	if parked == 0 || flagWritten || cfg.flagFile == "" {
+		return flagWritten, nil
+	}
+	if err := os.WriteFile(cfg.flagFile, []byte(strconv.Itoa(parked)+"\n"), 0o644); err != nil {
+		return flagWritten, fmt.Errorf("write parked flag file: %w", err)
+	}
+	fmt.Printf("worker %s: parked %d runner operation(s)\n", cfg.workerID, parked)
+	return true, nil
 }
 
 func parkedCount(ctx context.Context, s *postgres.Store, namespaceID string) (int, error) {

@@ -26,6 +26,20 @@ import (
 	"sigs.k8s.io/yaml"
 )
 
+// openapiParam is one query/path/etc. parameter entry as
+// api/openapi/openapi.yaml declares it inline on an operation.
+type openapiParam struct {
+	Name string `json:"name"`
+	In   string `json:"in"`
+}
+
+// openapiOperation is one path+method entry's operationId and its inline
+// (non-$ref) parameters.
+type openapiOperation struct {
+	OperationID string         `json:"operationId"`
+	Parameters  []openapiParam `json:"parameters"`
+}
+
 // openapiDoc captures the path+method+operationId+parameters inventory from
 // api/openapi/openapi.yaml — see internal/api/contract_test.go for the
 // sibling test that walks the same file against the live mux. Parameters is
@@ -33,13 +47,7 @@ import (
 // see operationQueryParams below — since every query parameter this harness
 // checks today is declared inline rather than via components/parameters.
 type openapiDoc struct {
-	Paths map[string]map[string]struct {
-		OperationID string `json:"operationId"`
-		Parameters  []struct {
-			Name string `json:"name"`
-			In   string `json:"in"`
-		} `json:"parameters"`
-	} `json:"paths"`
+	Paths map[string]map[string]openapiOperation `json:"paths"`
 }
 
 // loadOpenAPIDoc parses api/openapi/openapi.yaml (sigs.k8s.io/yaml, already
@@ -77,22 +85,29 @@ func operationQueryParams(doc openapiDoc) map[string]map[string]bool {
 	params := make(map[string]map[string]bool)
 	for _, methods := range doc.Paths {
 		for _, op := range methods {
-			if op.OperationID == "" {
-				continue
-			}
-			set := params[op.OperationID]
-			if set == nil {
-				set = make(map[string]bool)
-				params[op.OperationID] = set
-			}
-			for _, p := range op.Parameters {
-				if p.In == "query" {
-					set[p.Name] = true
-				}
-			}
+			addOperationQueryParams(params, op)
 		}
 	}
 	return params
+}
+
+// addOperationQueryParams records op's inline query-parameter names into
+// params, creating the per-operation set on first use. A blank OperationID
+// (an undocumented path/method) contributes nothing.
+func addOperationQueryParams(params map[string]map[string]bool, op openapiOperation) {
+	if op.OperationID == "" {
+		return
+	}
+	set := params[op.OperationID]
+	if set == nil {
+		set = make(map[string]bool)
+		params[op.OperationID] = set
+	}
+	for _, p := range op.Parameters {
+		if p.In == "query" {
+			set[p.Name] = true
+		}
+	}
 }
 
 // loadOperationIDs parses api/openapi/openapi.yaml and returns the set of

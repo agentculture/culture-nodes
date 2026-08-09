@@ -270,6 +270,17 @@ func buildObservations(pkg *resultPackage) runners.Observations {
 		"The workspace id headspace-cli minted for this operation: "+pkg.Provenance.WorkspaceID+".")
 	obs.Additional["job_id"] = measuredProvenance(pkg.Provenance.JobID,
 		"The job id headspace-cli assigned to this run: "+pkg.Provenance.JobID+".")
+	// The same measured fact under the canonical, runner-neutral key
+	// internal/runners' evidence builder reads (BuildCompletion looks for
+	// "platform_request_id" to decide whether Environment.PlatformRequestID
+	// may enter an observed evidence record). buildEnvironment already sets
+	// that field FROM the job id; declaring it only as "job_id" meant a fact
+	// headspace genuinely measured was silently dropped from every evidence
+	// record it produced. Both keys are kept: "job_id" is what headspace-cli
+	// calls it, and a reader looking for headspace's own vocabulary should
+	// still find it.
+	obs.Additional["platform_request_id"] = measuredProvenance(pkg.Provenance.JobID,
+		"The platform execution identity for this operation, which for headspace-cli is the job id: "+pkg.Provenance.JobID+".")
 	obs.Additional["image_digest"] = measuredProvenance(pkg.Provenance.ImageDigest,
 		"The digest-pinned image headspace-cli's profile registry resolved and ran: "+pkg.Provenance.ImageDigest+".")
 	obs.Additional["policy_summary"] = measuredProvenance(pkg.Provenance.PolicySummary,

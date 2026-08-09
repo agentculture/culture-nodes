@@ -81,6 +81,44 @@ type Options struct {
 	Human  HumanDispatcher
 	Waiter WaitDispatcher
 
+	// CodeRunner is the internal/runners seam a `code` node's own operation
+	// executes through (see code.go). It is the low-level runners.Runner
+	// interface — the same one HookRunner takes — so the headspace bridge and
+	// the Lambda adapter plug in unchanged.
+	//
+	// It is a second, lower-level door to the same kind: when Runner
+	// (RunnerDispatcher) is also configured, Runner wins, because a
+	// deployment that registered the higher-level seam has already said how
+	// it wants code dispatched and this option must not silently override
+	// that. With neither configured a code node is a diagnosed failure, as it
+	// has always been.
+	CodeRunner runners.Runner
+	// CodeRunnerName is the logical runner name stamped on every code
+	// operation's `runner` field — "headspace", "lambda". An adapter checks
+	// it and refuses an operation addressed to a different runner, so it must
+	// be the name the configured CodeRunner registers under. Required
+	// alongside CodeRunner.
+	CodeRunnerName string
+	// CodeRunnerActorID is the registered actor identity the runner's
+	// observed evidence is attributed to, and it is deliberately NOT the same
+	// field as CodeRunnerName: a runner name is a dispatch address ("which
+	// adapter executes this"), an actor id is a producer identity ("who is
+	// answerable for this observation", PRD §9.5's "identity is not
+	// execution"). A deployment running two headspace workers under separate
+	// identities has one name and two actor ids. Empty falls back to
+	// CodeRunnerName, which is right for a single-runner deployment that
+	// registered its actor under that name.
+	CodeRunnerActorID string
+	// CodeRunnerRevision pins the runner revision stamped on the operation
+	// and recorded on the evidence record's origin. An adapter that pins its
+	// own contract revision (internal/runners/headspace) refuses an operation
+	// whose revision does not match, so this is not decorative.
+	CodeRunnerRevision string
+	// CodeOutcomes maps a code node's declared outcomes onto its exit-status
+	// ports. Nil uses ConventionalCodeOutcomes; see code.go for why this is a
+	// convention with an override rather than a schema field.
+	CodeOutcomes CodeOutcomeResolver
+
 	// HookRunner is the internal/runners seam pre_run/post_run code hooks on
 	// an agent node execute through (task t14, spec claim c37). It is
 	// deliberately the low-level runners.Runner interface, not the
@@ -292,6 +330,9 @@ func (w *Worker) dispatch(ctx context.Context, claimed postgres.ClaimedWork) err
 	case kindDecision:
 		return w.dispatchDecision(ctx, claimed, d, spec, node, dc)
 	case kindCode:
+		if w.opts.Runner == nil && w.opts.CodeRunner != nil {
+			return w.dispatchCode(ctx, claimed, d, node, dc)
+		}
 		return w.dispatchSeam(ctx, claimed, d, node, dc, "code", "runner", func() (SeamResult, error) {
 			if w.opts.Runner == nil {
 				return SeamResult{}, errNoSeam

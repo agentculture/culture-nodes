@@ -1,0 +1,73 @@
+# A code node whose declared outcomes name neither a success nor a failure
+# the worker's outcome convention recognises. The worker must REFUSE it with
+# a diagnostic rather than guess which of `green`/`red` means "exited zero":
+# guessing is how a test suite that failed ends up routed down the happy edge.
+apiVersion: nodes.culture.dev/v1alpha1
+kind: Workflow
+
+metadata:
+  name: worker-code-unmappable-slice
+  version: 1.0.0
+  ownerRef: team/platform-ai
+
+spec:
+  entry: test
+
+  contract:
+    input:
+      schema:
+        type: object
+    output:
+      schema:
+        type: object
+
+  limits:
+    maxDuration: 1h
+    maxTransitions: 8
+    maxVisitsPerNode: 3
+    maxParallelTokens: 1
+
+  ledger:
+    schemaVersion: nodes.culture.dev/ledger/v1alpha1
+    maxRecordsPerNode: 10
+
+  nodes:
+    test:
+      kind: code
+      ownerRef: team/developer-experience
+      uses: runner://headspace/docker@sha256:5555555555555555555555555555555555555555555555555555555555555555
+      operation:
+        image: python:3.12-slim@sha256:57cd7c3a7a273101a6485ba99423ee568157882804b1124b4dd04266317710de
+        argv: [python3, -c, "raise SystemExit(0)"]
+        network: none
+        allowedOutputPaths: []
+      contract:
+        outcomes:
+          green:
+            schema:
+              type: object
+          red:
+            schema:
+              type: object
+      policy:
+        timeout: 5m
+        retry:
+          maxAttempts: 1
+
+    finish:
+      kind: end
+      ownerRef: team/platform-ai
+      output:
+        from: /nodes/test/output
+
+    stop:
+      kind: end
+      ownerRef: team/platform-ai
+      output:
+        from: /nodes/test/output
+
+  edges:
+    - from: test.green
+      to: finish
+    - from: test.red
+      to: stop

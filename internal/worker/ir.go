@@ -3,6 +3,7 @@ package worker
 import (
 	"encoding/json"
 	"fmt"
+	"sort"
 	"sync"
 	"time"
 
@@ -44,6 +45,12 @@ type nodeSpec struct {
 	// contract digest, and a digest an actor can verify has to be over
 	// something the actor also sees.
 	ContractDigest string
+	// Outcomes are the domain outcomes the node's contract declares, sorted.
+	// The engine keeps its own resolved set (engine.Node.Outcomes, which also
+	// folds in decision ports and kind-implied ports); this is the narrower
+	// authored list, and it is here because a code node's exit status has to
+	// be mapped onto one of them before dispatch (see code.go).
+	Outcomes []string
 	// Input is the node's declared input binding (§11.2), nil when it
 	// declares none.
 	Input *inputBinding
@@ -240,8 +247,24 @@ func decodeNode(id string, raw *irNode) (*nodeSpec, error) {
 			return nil, fmt.Errorf("contract digest: %w", err)
 		}
 		node.ContractDigest = digest
+		node.Outcomes = declaredOutcomes(raw.Contract)
 	}
 	return node, nil
+}
+
+// declaredOutcomes reads the outcome names out of a node's contract block,
+// sorted so a diagnostic that lists them reads the same way every time.
+func declaredOutcomes(contract map[string]any) []string {
+	outcomes, ok := contract["outcomes"].(map[string]any)
+	if !ok {
+		return nil
+	}
+	names := make([]string, 0, len(outcomes))
+	for name := range outcomes {
+		names = append(names, name)
+	}
+	sort.Strings(names)
+	return names
 }
 
 // specCache memoizes decoded definitions by content digest. A digest

@@ -180,6 +180,206 @@ workspace creation and destruction. It is not a §21.2 target — none is
 stated for runner latency — but it is the number to watch if code-node
 dispatch ever feels slow.
 
+## Phase 2 — 2026-08-09: concurrent runner operations (task t18)
+
+Same host as above, same day, same untuned `postgres:17-alpine` container.
+This section measures the asynchronous runner-dispatch path
+(`internal/worker/runnerasync.go`, task t9) under concurrent load, and it is
+the first section in this file whose numbers come from a *load* harness rather
+than a microbenchmark: `tests/load/`.
+
+### The claim under test
+
+Spec requirements **c17/h12**: with many concurrent in-flight runner
+operations, the worker's memory stays bounded — no per-operation goroutine and
+no per-operation held connection — and the status-sampling load scales with
+runners × interval rather than with how long an operation runs.
+
+t9 built the path that way deliberately (park, no goroutine between samples,
+claim-is-reschedule). What follows is the measurement, not the assumption.
+
+### What was measured, precisely
+
+The worker runs as its own OS process (`tests/load/testdata/loadworker`), so
+every figure below is that process alone — not a test binary that also hosts
+the stub service and the connection pool that seeded the runs. Once per loop
+iteration, immediately after the iteration's work and outside its timing, the
+process records:
+
+- `VmRSS`, `VmHWM` and `Threads` from `/proc/self/status` — real resident
+  memory, its high-water mark, and OS threads;
+- `runtime.NumGoroutine()`;
+- `runtime.MemStats` (`HeapAlloc`, `HeapInuse`, `HeapSys`, `Sys`, `NumGC`);
+- the wall time of the `SampleRunnerOperations` pass it just ran, and how many
+  operations that pass sampled.
+
+**No GC is ever forced.** `heap_alloc` and `rss_kb` are what the process
+actually held, not what it could have been squeezed down to.
+
+Real in this harness: the worker, PostgreSQL, the engine, the compiler, the
+runner-protocol client, and a real HTTP hop. Stubbed: the runner service
+itself — an in-test HTTP server speaking `api/runner-protocol` (202 +
+`Acceptance`, `accepted` → `running` until a configurable completion time,
+bearer auth on *every* request including status reads). It is not headspace:
+holding a hundred operations in flight for a controlled length of time is a
+property of the stub's clock, not of a container runtime.
+
+Every measurement is a **comparison against a control fleet** of 10 operations
+run through the same binary on the same host minutes apart. "Goroutines did
+not scale with in-flight operations" is a statement about a slope, and a slope
+needs two points.
+
+### How to reproduce
+
+```bash
+# The 100-operation case and the duration-independence case (~45 s).
+go test ./tests/load/ -v -count=1
+
+# The 1,000-operation case, opt-in (~105 s).
+NODES_LOAD_1000=1 go test ./tests/load/ -run Thousand -v -count=1 -timeout 30m
+```
+
+Both need PostgreSQL: `NODES_TEST_DATABASE_URL`, or Docker able to run
+`postgres:17-alpine`. Absent either, the tests skip rather than fail.
+
+### 5. Worker memory at 100 and at 1,000 in-flight operations
+
+The 1,000 case was **run, not extrapolated.**
+
+At a 1-second sampling interval (100-operation fleet, `SampleBatch` 256,
+`ClaimBatch` 32, 8-second observation window):
+
+| Measure | 10 in flight | 100 in flight |
+| --- | --- | --- |
+| Goroutines (median / max) | 6 / 6 | **6 / 6** |
+| OS threads (median / max) | 16 / 16 | 16 / 16 |
+| RSS median / peak / HWM (KiB) | 25,280 / 25,308 / 25,352 | 26,272 / 26,300 / 26,848 |
+| `heap_alloc` median (KiB) | 3,750 | 3,890 |
+| Dispatch wall (all parked) | 151 ms | 1.16 s |
+| Release wall (all committed) | 406 ms | 2.43 s |
+
+At the runner protocol's own `DefaultPollInterval` of 5 seconds
+(1,000-operation fleet, `SampleBatch` 2048, `ClaimBatch` 64, 30-second
+observation window):
+
+| Measure | 10 in flight | 1,000 in flight |
+| --- | --- | --- |
+| Goroutines (median / max) | 6 / 6 | **6 / 6** |
+| OS threads (median / max) | 16 / 16 | 19 / 19 |
+| RSS median / peak / HWM (KiB) | 26,116 / 26,164 / 26,164 | 27,560 / 28,096 / 28,096 |
+| `heap_alloc` median (KiB) | 3,964 | 4,408 |
+| Seed / dispatch / release wall | 139 ms / 152 ms / 507 ms | 4.45 s / 9.44 s / 19.24 s |
+
+| Derived | 10 → 100 | 10 → 1,000 |
+| --- | --- | --- |
+| Goroutine delta | **0** | **0** |
+| Marginal RSS per additional in-flight operation | 11.0 KiB | **1.5 KiB** |
+| High-water RSS against §21.1's 64 MiB worker budget | 26.2 MiB | **27.4 MiB** |
+
+**Verdict: bounded.** Three things say so, in descending order of how much
+they discriminate:
+
+1. **Goroutines do not move at all.** Six at ten operations, six at a hundred,
+   six at a thousand. A design that held one goroutine per in-flight operation
+   would show 990 more in the last column. This is the assertion that
+   distinguishes the two designs, and it is the one `tests/load` fails on if
+   the parked path ever grows a per-operation goroutine.
+2. **The marginal RSS cost falls as the fleet grows** — 11.0 KiB per operation
+   from 10→100, 1.5 KiB per operation from 10→1,000. A genuinely per-operation
+   retained structure would hold that slope constant or raise it. What this
+   sub-linearity says is that the ~1.4 MiB difference is the allocator's
+   working set for one sampling *pass* (bounded by `SampleBatch`, transient),
+   not state retained per parked operation. Median `heap_alloc` moving 3,964 →
+   4,408 KiB across a hundredfold increase in in-flight work is the same fact
+   from the heap's side.
+3. **High-water RSS is 27.4 MiB against a 64 MiB budget** with a thousand
+   operations in flight — below the 30.1 MiB `nodes all` idle figure in §3,
+   though that comparison is loose, since `nodes all` also carries the API and
+   the scheduler in the same process.
+
+The fleets are proven real rather than parked-forever artefacts: at every size,
+the runner accepted exactly one dispatch per operation (**no re-sends**), the
+peak parked count equalled the fleet size, and when the stub released them all
+1,000 committed through `engine.CompleteAttempt`, producing exactly 1,000
+`attempts` rows — one per operation, no retries.
+
+### 6. Status-sampling load
+
+Sampling load is bracketed between two bounds the design actually promises,
+and both were asserted, not eyeballed.
+
+| Fleet | Interval | Measured reads/s | Ceiling (ops/interval) | Effective per-operation period | Sampler duty cycle | Cost per operation-sample |
+| --- | --- | --- | --- | --- | --- | --- |
+| 10 in flight | 1 s | 8.75 | 10.00 | 1.143 s | 0.021 | 2.43 ms |
+| 100 in flight | 1 s | 82.2 | 100.0 | 1.216 s | 0.167 | 2.03 ms |
+| 10 in flight | 5 s | 1.87 | 2.00 | 5.357 s | 0.007 | 3.67 ms |
+| 1,000 in flight | 5 s | 189.8 | 200.0 | 5.269 s | 0.374 | 1.97 ms |
+
+The **ceiling**, ops/interval, is a contract property rather than a
+performance one: claiming a row is what reschedules it (`next_poll_at = now +
+interval`, in the same statement that returns it), so no matter how fast the
+worker's loop spins, a runner can never be sampled faster than the interval it
+was configured with. The measured rate sits *below* the ceiling in every case
+and never above it — the protocol document's "sampling faster than a runner
+asked for is load it said it did not want", measured.
+
+The gap between measured and ceiling is fully explained and is not slippage:
+an operation's next due time is stamped when *its own* status read returns, so
+its period is the interval plus its position in the pass plus whatever the
+loop was sleeping. All three terms are configuration; none is a function of
+the work. At 1,000 operations that shows as a 5.269 s effective period against
+a 5 s interval — a 5% overshoot from a 2.1 ms/op pass and a 250 ms loop.
+
+**Derived capacity, not measured:** at ~2.0 ms per operation-sample, one
+worker's sampler saturates when in-flight operations × 2.0 ms approaches the
+interval — roughly **2,500 operations at the 5-second default**, roughly 500 at
+a 1-second interval. The 1,000-operation fleet ran at a 37% duty cycle, which
+is consistent with that bound and is the number to watch. Sharding across
+workers is unaffected by any of this: `FOR UPDATE SKIP LOCKED` hands disjoint
+sets to concurrent samplers.
+
+### 7. Sampling cost is independent of operation duration
+
+A controlled pair. Two fleets identical in every respect — 50 operations, 1-second
+interval, same batch, same host, same PostgreSQL — except that one fleet's
+operations finish after 30 seconds and the other's after 300. Neither fleet's
+operations finish *during* the observation window, so what is compared is the
+steady-state cost of waiting on work of two very different lengths.
+
+| Measure | 30 s operations | 300 s operations | Ratio |
+| --- | --- | --- | --- |
+| Status reads/s | 46.00 | 46.00 | **1.00** |
+| Effective per-operation period | 1.087 s | 1.087 s | 1.00 |
+| Cost per operation-sample | 2.166 ms | 2.081 ms | 0.96 |
+| Sampler duty cycle | 0.0996 | 0.0957 | 0.96 |
+| Goroutines (median) | 6 | 6 | 1.00 |
+| RSS median (KiB) | 26,048 | 25,796 | 0.99 |
+
+**Verdict: independent.** A tenfold change in operation duration moved the
+sampling rate by 0.00% and the per-sample cost by 4% — the latter being
+ordinary wall-clock noise on a shared box, in the wrong direction for a
+duration effect (the *longer* operations sampled marginally *cheaper*). A
+design whose cost tracked duration would have to show a roughly tenfold
+difference somewhere in this table. The test bounds the observed ratios at a
+factor of two, which is loose for wall-clock work and still an order of
+magnitude away from what a duration-dependent design would produce.
+
+### What this section does not say
+
+- These are **single runs**, not distributions. Nothing here is averaged over
+  repeated executions, and the host was shared and loaded throughout.
+- The runner service is a **stub**. Per-sample cost includes a real HTTP round
+  trip and a real `UPDATE`, but to a localhost server with no work to do; a
+  runner across a network adds latency to the *pass*, which raises the duty
+  cycle and lowers the capacity bound derived above.
+- The capacity figure (~2,500 operations per worker at the default interval)
+  is **derived arithmetic from the per-sample cost**, not a fleet that was run.
+- Only the **runner** async path is measured. The actor async path
+  (`internal/actors`, callback-driven) parks the same way and is expected to
+  behave the same way, but was not loaded.
+- Nothing here is gated. As with the rest of this file, no CI job fails on
+  these numbers.
+
 ## What is not measured here
 
 Named so the absence is deliberate rather than assumed:
@@ -194,7 +394,9 @@ Named so the absence is deliberate rather than assumed:
   asserts a deadline of lease expiry + 5 s; the *timing distribution* is not
   recorded.
 - **1,000 concurrent waiting external invocations without one goroutine per
-  wait** — the design property holds by construction (a parked invocation
-  holds no goroutine at all; `TestWorkerParksAsyncInvocationAndCompletesFromCallback`
-  proves the item is released), but the 1,000-wait load has not been run.
+  wait** — measured for the *runner* half in §5 above (1,000 parked runner
+  operations, goroutine delta zero). The *actor* half is still design-only: a
+  parked actor invocation holds no goroutine either, and
+  `TestWorkerParksAsyncInvocationAndCompletesFromCallback` proves the item is
+  released, but that path has not been loaded.
 - **UI performance on a 500-node graph** (§21.4) — not measured.

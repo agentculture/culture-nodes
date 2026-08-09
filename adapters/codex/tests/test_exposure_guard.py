@@ -1,7 +1,6 @@
 """The unauthenticated-exposure startup guard (qodo PR #11 finding 4)."""
 
 import pytest
-
 from codex_bridge import server as server_mod
 from codex_bridge.config import Config
 

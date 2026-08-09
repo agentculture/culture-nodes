@@ -5,7 +5,6 @@ fix to one bridge's shared protocol surface lands in every bridge.
 """
 
 import pytest
-
 from colleague_bridge import server as server_mod
 from colleague_bridge.config import Config
 

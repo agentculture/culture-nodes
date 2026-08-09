@@ -85,28 +85,7 @@ func TestAWSSDKImportsAreIsolated(t *testing.T) {
 		if d.IsDir() {
 			return skipDirDecision(rel, d.Name())
 		}
-
-		if !strings.HasSuffix(path, ".go") || strings.HasSuffix(path, "_test.go") {
-			return nil
-		}
-		scanned++
-
-		dir := filepath.ToSlash(filepath.Dir(rel))
-		if sanctionedAWSPackageDirs[dir] {
-			return nil
-		}
-
-		awsImports, checkErr := awsSDKImportsIn(fset, path, rel)
-		if checkErr != nil {
-			return checkErr
-		}
-		for _, importPath := range awsImports {
-			violations++
-			t.Errorf("%s: imports %s, but only %s may import the AWS SDK directly (spec claim c17) -- "+
-				"route through internal/awsauth and one of the sanctioned drivers/adapters instead",
-				rel, importPath, sortedSanctionedDirs())
-		}
-		return nil
+		return checkGoFileForAWSImports(t, fset, path, rel, &scanned, &violations)
 	})
 	if walkErr != nil {
 		t.Fatalf("walk %s: %v", repoRoot, walkErr)
@@ -117,6 +96,34 @@ func TestAWSSDKImportsAreIsolated(t *testing.T) {
 	}
 	t.Logf("scanned %d non-test .go files outside %s for %q imports, found %d violation(s)",
 		scanned, sortedSanctionedDirs(), awsSDKModulePrefix, violations)
+}
+
+// checkGoFileForAWSImports applies the isolation rule to one regular file:
+// non-test .go files outside the sanctioned package dirs must not import the
+// AWS SDK. It bumps scanned/violations through the caller's counters.
+func checkGoFileForAWSImports(t *testing.T, fset *token.FileSet, path, rel string, scanned, violations *int) error {
+	t.Helper()
+	if !strings.HasSuffix(path, ".go") || strings.HasSuffix(path, "_test.go") {
+		return nil
+	}
+	*scanned++
+
+	dir := filepath.ToSlash(filepath.Dir(rel))
+	if sanctionedAWSPackageDirs[dir] {
+		return nil
+	}
+
+	awsImports, checkErr := awsSDKImportsIn(fset, path, rel)
+	if checkErr != nil {
+		return checkErr
+	}
+	for _, importPath := range awsImports {
+		*violations++
+		t.Errorf("%s: imports %s, but only %s may import the AWS SDK directly (spec claim c17) -- "+
+			"route through internal/awsauth and one of the sanctioned drivers/adapters instead",
+			rel, importPath, sortedSanctionedDirs())
+	}
+	return nil
 }
 
 // TestSanctionedPackagesActuallyExist proves sanctionedAWSPackageDirs is not

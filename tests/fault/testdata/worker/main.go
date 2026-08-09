@@ -53,57 +53,80 @@ func main() {
 }
 
 func run() error {
-	dbURL, err := requireEnv("WORKER_DB_URL")
+	cfg, err := loadConfig()
 	if err != nil {
 		return err
 	}
-	workerID, err := requireEnv("WORKER_ID")
-	if err != nil {
-		return err
-	}
-	namespaceID, err := requireEnv("WORKER_NAMESPACE_ID")
-	if err != nil {
-		return err
-	}
-	leaseSeconds, err := requireEnvFloat("WORKER_LEASE_SECONDS")
-	if err != nil {
-		return err
-	}
-	limit, err := requireEnvInt("WORKER_LIMIT")
-	if err != nil {
-		return err
-	}
-	workMS, err := requireEnvInt("WORKER_WORK_MS")
-	if err != nil {
-		return err
-	}
-	idleTimeoutMS, err := requireEnvInt("WORKER_IDLE_TIMEOUT_MS")
-	if err != nil {
-		return err
-	}
-	flagFile := os.Getenv("WORKER_CLAIMED_FLAG_FILE")
 
 	ctx := context.Background()
-	s, err := postgres.Connect(ctx, dbURL)
+	s, err := postgres.Connect(ctx, cfg.dbURL)
 	if err != nil {
 		return fmt.Errorf("connect: %w", err)
 	}
 	defer s.Close()
 
-	leaseDuration := time.Duration(leaseSeconds * float64(time.Second))
-	workDuration := time.Duration(workMS) * time.Millisecond
-	idleTimeout := time.Duration(idleTimeoutMS) * time.Millisecond
+	return pollLoop(ctx, s, cfg)
+}
 
+// workerCfg is the env-supplied configuration for one worker process.
+type workerCfg struct {
+	dbURL, workerID, namespaceID string
+	leaseDuration                time.Duration
+	limit                        int
+	workDuration                 time.Duration
+	idleTimeout                  time.Duration
+	flagFile                     string
+}
+
+// loadConfig reads every WORKER_* env var, converting durations up front so
+// the poll loop deals only in typed values.
+func loadConfig() (workerCfg, error) {
+	var cfg workerCfg
+	var err error
+	if cfg.dbURL, err = requireEnv("WORKER_DB_URL"); err != nil {
+		return cfg, err
+	}
+	if cfg.workerID, err = requireEnv("WORKER_ID"); err != nil {
+		return cfg, err
+	}
+	if cfg.namespaceID, err = requireEnv("WORKER_NAMESPACE_ID"); err != nil {
+		return cfg, err
+	}
+	leaseSeconds, err := requireEnvFloat("WORKER_LEASE_SECONDS")
+	if err != nil {
+		return cfg, err
+	}
+	if cfg.limit, err = requireEnvInt("WORKER_LIMIT"); err != nil {
+		return cfg, err
+	}
+	workMS, err := requireEnvInt("WORKER_WORK_MS")
+	if err != nil {
+		return cfg, err
+	}
+	idleTimeoutMS, err := requireEnvInt("WORKER_IDLE_TIMEOUT_MS")
+	if err != nil {
+		return cfg, err
+	}
+	cfg.leaseDuration = time.Duration(leaseSeconds * float64(time.Second))
+	cfg.workDuration = time.Duration(workMS) * time.Millisecond
+	cfg.idleTimeout = time.Duration(idleTimeoutMS) * time.Millisecond
+	cfg.flagFile = os.Getenv("WORKER_CLAIMED_FLAG_FILE")
+	return cfg, nil
+}
+
+// pollLoop is the worker's whole life: claim a batch, mark progress, write
+// the coordination flag once, complete each item — until the idle timeout.
+func pollLoop(ctx context.Context, s *postgres.Store, cfg workerCfg) error {
 	lastProgress := time.Now()
 	flagWritten := false
 
 	for {
-		if time.Since(lastProgress) > idleTimeout {
-			fmt.Printf("worker %s: idle timeout after %s, exiting\n", workerID, idleTimeout)
+		if time.Since(lastProgress) > cfg.idleTimeout {
+			fmt.Printf("worker %s: idle timeout after %s, exiting\n", cfg.workerID, cfg.idleTimeout)
 			return nil
 		}
 
-		items, err := claimBatch(ctx, s, namespaceID, workerID, leaseDuration, limit)
+		items, err := claimBatch(ctx, s, cfg.namespaceID, cfg.workerID, cfg.leaseDuration, cfg.limit)
 		if err != nil {
 			return err
 		}
@@ -113,13 +136,13 @@ func run() error {
 		}
 		lastProgress = time.Now()
 
-		flagWritten, err = writeClaimedFlagOnce(flagFile, len(items), flagWritten)
+		flagWritten, err = writeClaimedFlagOnce(cfg.flagFile, len(items), flagWritten)
 		if err != nil {
 			return err
 		}
 
 		for _, item := range items {
-			if err := completeItem(ctx, s, workerID, item, workDuration); err != nil {
+			if err := completeItem(ctx, s, cfg.workerID, item, cfg.workDuration); err != nil {
 				return err
 			}
 		}

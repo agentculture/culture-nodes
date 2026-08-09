@@ -1,0 +1,97 @@
+/**
+ * The agent-state store — the machine-readable mirror of what this page is
+ * currently showing.
+ *
+ * A UI that only says what it is doing in pixels is untestable by an agent.
+ * This store is serialized into a single
+ * `<script type="application/json" id="agent-state">` node, which an agent
+ * (or the webglass CI job in .github/workflows/web.yml) reads with one
+ * selector-scoped extract instead of scraping the DOM:
+ *
+ *     webglass page extract --selector '#agent-state' --json \
+ *       | jq -r '.content.untrusted.matches[0].text' | jq .status
+ *
+ * webglass selectors are tag / #id / .class / [attr] only, so every
+ * assertable element in this app carries a stable `id` or a `data-` attribute
+ * that matches exactly one element.
+ */
+
+export type AgentStatus = "loading" | "ready";
+
+export interface AgentRunState {
+  id: string;
+  state: string;
+  /** nodeId -> execution state, exactly as the canvas renders it. */
+  node_states: Record<string, string>;
+  /** The node whose detail panel is open, or null. */
+  selected: string | null;
+}
+
+export interface AgentState {
+  status: AgentStatus;
+  route: string;
+  run: AgentRunState | null;
+}
+
+const INITIAL: AgentState = { status: "loading", route: "/", run: null };
+
+let current: AgentState = INITIAL;
+const listeners = new Set<() => void>();
+
+export function getAgentState(): AgentState {
+  return current;
+}
+
+export function subscribeAgentState(listener: () => void): () => void {
+  listeners.add(listener);
+  return () => {
+    listeners.delete(listener);
+  };
+}
+
+function shallowEqualRun(
+  a: AgentRunState | null,
+  b: AgentRunState | null,
+): boolean {
+  if (a === b) return true;
+  if (!a || !b) return false;
+  if (a.id !== b.id || a.state !== b.state || a.selected !== b.selected) {
+    return false;
+  }
+  const aKeys = Object.keys(a.node_states);
+  const bKeys = Object.keys(b.node_states);
+  if (aKeys.length !== bKeys.length) return false;
+  return aKeys.every((key) => a.node_states[key] === b.node_states[key]);
+}
+
+/**
+ * Merge a patch into the agent state. No-ops when nothing actually changed,
+ * so a re-render storm cannot make the `<script>` node churn.
+ */
+export function setAgentState(patch: Partial<AgentState>): void {
+  const next: AgentState = { ...current, ...patch };
+  if (
+    next.status === current.status &&
+    next.route === current.route &&
+    shallowEqualRun(next.run, current.run)
+  ) {
+    return;
+  }
+  current = next;
+  for (const listener of listeners) listener();
+}
+
+/** Test seam: drop back to the initial state. */
+export function resetAgentState(): void {
+  current = INITIAL;
+  for (const listener of listeners) listener();
+}
+
+/**
+ * Serialize for embedding inside a `<script>` element. `<` is escaped so a
+ * value containing `</script>` cannot close the element early — the state is
+ * built from API data, and API data is never trusted to be inert markup.
+ */
+export function serializeAgentState(state: AgentState): string {
+  return JSON.stringify(state, null, 2).replace(/</g, "\\u003c");
+}

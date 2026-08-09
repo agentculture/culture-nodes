@@ -15,16 +15,13 @@
 // follow prefers-color-scheme exactly as tokens.css defines it — there is
 // no toggle upstream (see docs/adr/0001-culture-design-source.md).
 //
-// NOTE: this file is syntactically valid TSX but is NOT compiled as part
-// of task t5 — there is no node_modules / React / @types/react in this
-// repo yet (see README.md in this directory). Compilation lands with the
-// web app / Vite build-out task. Because @types/react isn't available,
-// this declares the minimal local shape it needs instead of importing
-// React's types, and returns `any` rather than `JSX.Element` so it does
-// not depend on a global JSX namespace that isn't declared anywhere yet.
+// The placeholder `type FC<P> = (props: P) => any` this file carried under
+// task t5 is gone: @types/react is on the dependency tree as of the web
+// build-out, so the component is typed against React's own `FC` and
+// type-checked by `tsc -b`. Geometry (viewBox, path, circle radii and
+// positions) is unchanged from the Astro source.
 
-/** Minimal stand-in for React.FC until @types/react is on the dep tree. */
-type FC<P> = (props: P) => any;
+import type { FC } from "react";
 
 export interface MarkProps {
   /** Rendered width/height in px. Astro source default: 26. */

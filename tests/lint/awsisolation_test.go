@@ -83,26 +83,7 @@ func TestAWSSDKImportsAreIsolated(t *testing.T) {
 		rel = filepath.ToSlash(rel)
 
 		if d.IsDir() {
-			switch {
-			case rel == ".":
-				return nil
-			case strings.HasPrefix(d.Name(), "."):
-				// .git (a file in a worktree, but a directory in a primary
-				// checkout), .github, .claude, .devague, .eidetic: tooling
-				// and metadata, never Go source this lint is about.
-				return filepath.SkipDir
-			case rel == "web":
-				// The React/Vite UI (PRD's Go control plane + React/Vite UI
-				// split) -- no Go source lives here.
-				return filepath.SkipDir
-			case rel == "tests/lint":
-				// This test's own package. Excluded per task t17's brief so
-				// the isolation lint does not have to reason about its own
-				// directory (a future fixture file here proving the lint
-				// fires would otherwise need special-casing below instead).
-				return filepath.SkipDir
-			}
-			return nil
+			return skipDirDecision(rel, d.Name())
 		}
 
 		if !strings.HasSuffix(path, ".go") || strings.HasSuffix(path, "_test.go") {
@@ -115,22 +96,15 @@ func TestAWSSDKImportsAreIsolated(t *testing.T) {
 			return nil
 		}
 
-		f, parseErr := parser.ParseFile(fset, path, nil, parser.ImportsOnly)
-		if parseErr != nil {
-			return fmt.Errorf("parse %s: %w", rel, parseErr)
+		awsImports, checkErr := awsSDKImportsIn(fset, path, rel)
+		if checkErr != nil {
+			return checkErr
 		}
-
-		for _, imp := range f.Imports {
-			importPath, unquoteErr := strconv.Unquote(imp.Path.Value)
-			if unquoteErr != nil {
-				return fmt.Errorf("%s: unquote import %s: %w", rel, imp.Path.Value, unquoteErr)
-			}
-			if importPath == awsSDKModulePrefix || strings.HasPrefix(importPath, awsSDKModulePrefix+"/") {
-				violations++
-				t.Errorf("%s: imports %s, but only %s may import the AWS SDK directly (spec claim c17) -- "+
-					"route through internal/awsauth and one of the sanctioned drivers/adapters instead",
-					rel, importPath, sortedSanctionedDirs())
-			}
+		for _, importPath := range awsImports {
+			violations++
+			t.Errorf("%s: imports %s, but only %s may import the AWS SDK directly (spec claim c17) -- "+
+				"route through internal/awsauth and one of the sanctioned drivers/adapters instead",
+				rel, importPath, sortedSanctionedDirs())
 		}
 		return nil
 	})
@@ -163,6 +137,56 @@ func TestSanctionedPackagesActuallyExist(t *testing.T) {
 			t.Errorf("sanctioned AWS package dir %q is not a directory", dir)
 		}
 	}
+}
+
+// skipDirDecision reports how filepath.WalkDir should handle the directory
+// at rel (repo-relative, forward-slash) named name: skip it entirely
+// (a dotfile/dir, the web/ UI tree, or this test's own package) or descend
+// into it.
+func skipDirDecision(rel, name string) error {
+	switch {
+	case rel == ".":
+		return nil
+	case strings.HasPrefix(name, "."):
+		// .git (a file in a worktree, but a directory in a primary
+		// checkout), .github, .claude, .devague, .eidetic: tooling
+		// and metadata, never Go source this lint is about.
+		return filepath.SkipDir
+	case rel == "web":
+		// The React/Vite UI (PRD's Go control plane + React/Vite UI
+		// split) -- no Go source lives here.
+		return filepath.SkipDir
+	case rel == "tests/lint":
+		// This test's own package. Excluded per task t17's brief so
+		// the isolation lint does not have to reason about its own
+		// directory (a future fixture file here proving the lint
+		// fires would otherwise need special-casing below instead).
+		return filepath.SkipDir
+	}
+	return nil
+}
+
+// awsSDKImportsIn parses the non-test .go file at path (rel is its
+// repo-relative, forward-slash path, used only for error messages) and
+// returns every import path it declares that is the AWS SDK for Go v2 or a
+// package under it.
+func awsSDKImportsIn(fset *token.FileSet, path, rel string) ([]string, error) {
+	f, parseErr := parser.ParseFile(fset, path, nil, parser.ImportsOnly)
+	if parseErr != nil {
+		return nil, fmt.Errorf("parse %s: %w", rel, parseErr)
+	}
+
+	var found []string
+	for _, imp := range f.Imports {
+		importPath, unquoteErr := strconv.Unquote(imp.Path.Value)
+		if unquoteErr != nil {
+			return nil, fmt.Errorf("%s: unquote import %s: %w", rel, imp.Path.Value, unquoteErr)
+		}
+		if importPath == awsSDKModulePrefix || strings.HasPrefix(importPath, awsSDKModulePrefix+"/") {
+			found = append(found, importPath)
+		}
+	}
+	return found, nil
 }
 
 // repoRoot locates the repository root from this test file's own path

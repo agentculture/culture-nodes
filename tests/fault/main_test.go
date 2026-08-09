@@ -246,27 +246,40 @@ type workerHandle struct {
 	out *strings.Builder
 }
 
+// workerConfig configures one exec'd copy of testdata/worker. See that
+// package's doc comment for what each field becomes as an environment
+// variable.
+type workerConfig struct {
+	namespaceID     string
+	workerID        string
+	leaseSeconds    float64
+	limit           int
+	workMS          int
+	idleTimeoutMS   int
+	claimedFlagFile string
+}
+
 // startWorker execs one copy of the compiled worker binary as a real,
 // separate OS process against the shared ephemeral Postgres, configured
 // entirely through environment variables (see testdata/worker/main.go's
 // doc comment). It registers a t.Cleanup that force-kills the process if
 // the test ends before the worker has, so a failing test never leaks a
 // runaway worker process.
-func startWorker(t *testing.T, namespaceID, workerID string, leaseSeconds float64, limit, workMS, idleTimeoutMS int, claimedFlagFile string) *workerHandle {
+func startWorker(t *testing.T, cfg workerConfig) *workerHandle {
 	t.Helper()
 
 	cmd := exec.Command(workerBinPath)
 	cmd.Env = append(os.Environ(),
 		"WORKER_DB_URL="+testDBURL,
-		"WORKER_ID="+workerID,
-		"WORKER_NAMESPACE_ID="+namespaceID,
-		fmt.Sprintf("WORKER_LEASE_SECONDS=%f", leaseSeconds),
-		fmt.Sprintf("WORKER_LIMIT=%d", limit),
-		fmt.Sprintf("WORKER_WORK_MS=%d", workMS),
-		fmt.Sprintf("WORKER_IDLE_TIMEOUT_MS=%d", idleTimeoutMS),
+		"WORKER_ID="+cfg.workerID,
+		"WORKER_NAMESPACE_ID="+cfg.namespaceID,
+		fmt.Sprintf("WORKER_LEASE_SECONDS=%f", cfg.leaseSeconds),
+		fmt.Sprintf("WORKER_LIMIT=%d", cfg.limit),
+		fmt.Sprintf("WORKER_WORK_MS=%d", cfg.workMS),
+		fmt.Sprintf("WORKER_IDLE_TIMEOUT_MS=%d", cfg.idleTimeoutMS),
 	)
-	if claimedFlagFile != "" {
-		cmd.Env = append(cmd.Env, "WORKER_CLAIMED_FLAG_FILE="+claimedFlagFile)
+	if cfg.claimedFlagFile != "" {
+		cmd.Env = append(cmd.Env, "WORKER_CLAIMED_FLAG_FILE="+cfg.claimedFlagFile)
 	}
 
 	var out strings.Builder
@@ -274,10 +287,10 @@ func startWorker(t *testing.T, namespaceID, workerID string, leaseSeconds float6
 	cmd.Stderr = &out
 
 	if err := cmd.Start(); err != nil {
-		t.Fatalf("start worker %s: %v", workerID, err)
+		t.Fatalf("start worker %s: %v", cfg.workerID, err)
 	}
 
-	h := &workerHandle{cmd: cmd, id: workerID, out: &out}
+	h := &workerHandle{cmd: cmd, id: cfg.workerID, out: &out}
 	t.Cleanup(func() {
 		if h.cmd.Process != nil {
 			_ = h.cmd.Process.Kill()

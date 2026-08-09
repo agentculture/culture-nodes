@@ -103,13 +103,9 @@ func run() error {
 			return nil
 		}
 
-		if _, err := s.ReclaimExpired(ctx); err != nil {
-			return fmt.Errorf("ReclaimExpired: %w", err)
-		}
-
-		items, err := s.ClaimWork(ctx, namespaceID, workerID, leaseDuration, limit)
+		items, err := claimBatch(ctx, s, namespaceID, workerID, leaseDuration, limit)
 		if err != nil {
-			return fmt.Errorf("ClaimWork: %w", err)
+			return err
 		}
 		if len(items) == 0 {
 			time.Sleep(75 * time.Millisecond)
@@ -117,46 +113,82 @@ func run() error {
 		}
 		lastProgress = time.Now()
 
-		if flagFile != "" && !flagWritten {
-			if werr := os.WriteFile(flagFile, []byte(strconv.Itoa(len(items))+"\n"), 0o644); werr != nil {
-				return fmt.Errorf("write claimed flag file: %w", werr)
-			}
-			flagWritten = true
+		flagWritten, err = writeClaimedFlagOnce(flagFile, len(items), flagWritten)
+		if err != nil {
+			return err
 		}
 
 		for _, item := range items {
-			time.Sleep(workDuration)
-
-			if _, err := s.Pool().Exec(ctx,
-				`INSERT INTO test_work_results (work_id, node_run_id, attempt, completed_by) VALUES ($1, $2, $3, $4)`,
-				item.ID, item.NodeRunID, item.Attempt, workerID,
-			); err != nil && !isUniqueViolation(err) {
-				return fmt.Errorf("insert result for %s: %w", item.ID, err)
+			if err := completeItem(ctx, s, workerID, item, workDuration); err != nil {
+				return err
 			}
-			// A unique violation here means this is either a re-delivery
-			// of a work_id already recorded (should not happen -- work_id
-			// is this claim's own primary key) or, for the duplicate
-			// signal scenario, a second work item for the same
-			// (node_run_id, attempt) whose sibling already recorded the
-			// effective completion first. Either way, this worker still
-			// performed and must still record its OWN technical
-			// completion of the work item it was leased -- domain outcome
-			// (the results row) and technical status (work_items.state)
-			// are deliberately not the same thing.
-
-			if err := s.CompleteWork(ctx, item.ID, workerID, item.FencingToken, int(item.Attempt)); err != nil {
-				if errors.Is(err, postgres.ErrStaleClaim) {
-					// Expected under contention: e.g. this worker was
-					// reclaimed out from under itself. Not fatal.
-					fmt.Printf("worker %s: stale claim completing %s (expected under contention)\n", workerID, item.ID)
-					continue
-				}
-				return fmt.Errorf("CompleteWork %s: %w", item.ID, err)
-			}
-			fmt.Printf("worker %s: completed %s (node_run=%s attempt=%d fencing_token=%d)\n",
-				workerID, item.ID, item.NodeRunID, item.Attempt, item.FencingToken)
 		}
 	}
+}
+
+// claimBatch reclaims any expired leases, then claims up to limit ready work
+// items -- the two calls the worker makes at the top of every poll.
+func claimBatch(ctx context.Context, s *postgres.Store, namespaceID, workerID string, leaseDuration time.Duration, limit int) ([]postgres.ClaimedWork, error) {
+	if _, err := s.ReclaimExpired(ctx); err != nil {
+		return nil, fmt.Errorf("ReclaimExpired: %w", err)
+	}
+	items, err := s.ClaimWork(ctx, namespaceID, workerID, leaseDuration, limit)
+	if err != nil {
+		return nil, fmt.Errorf("ClaimWork: %w", err)
+	}
+	return items, nil
+}
+
+// writeClaimedFlagOnce touches flagFile the first time a non-empty batch is
+// claimed, so the parent test can synchronize a SIGKILL to "after claim,
+// before completion" without a race. It is a no-op once alreadyWritten is
+// true or when no flag file was configured, and returns whether the flag is
+// now written.
+func writeClaimedFlagOnce(flagFile string, itemCount int, alreadyWritten bool) (bool, error) {
+	if flagFile == "" || alreadyWritten {
+		return alreadyWritten, nil
+	}
+	if err := os.WriteFile(flagFile, []byte(strconv.Itoa(itemCount)+"\n"), 0o644); err != nil {
+		return alreadyWritten, fmt.Errorf("write claimed flag file: %w", err)
+	}
+	return true, nil
+}
+
+// completeItem "does the work" for one claimed item (a configurable sleep),
+// records its effective completion in the test-only results table, then
+// marks it technically complete.
+func completeItem(ctx context.Context, s *postgres.Store, workerID string, item postgres.ClaimedWork, workDuration time.Duration) error {
+	time.Sleep(workDuration)
+
+	if _, err := s.Pool().Exec(ctx,
+		`INSERT INTO test_work_results (work_id, node_run_id, attempt, completed_by) VALUES ($1, $2, $3, $4)`,
+		item.ID, item.NodeRunID, item.Attempt, workerID,
+	); err != nil && !isUniqueViolation(err) {
+		return fmt.Errorf("insert result for %s: %w", item.ID, err)
+	}
+	// A unique violation here means this is either a re-delivery
+	// of a work_id already recorded (should not happen -- work_id
+	// is this claim's own primary key) or, for the duplicate
+	// signal scenario, a second work item for the same
+	// (node_run_id, attempt) whose sibling already recorded the
+	// effective completion first. Either way, this worker still
+	// performed and must still record its OWN technical
+	// completion of the work item it was leased -- domain outcome
+	// (the results row) and technical status (work_items.state)
+	// are deliberately not the same thing.
+
+	if err := s.CompleteWork(ctx, item.ID, workerID, item.FencingToken, int(item.Attempt)); err != nil {
+		if errors.Is(err, postgres.ErrStaleClaim) {
+			// Expected under contention: e.g. this worker was
+			// reclaimed out from under itself. Not fatal.
+			fmt.Printf("worker %s: stale claim completing %s (expected under contention)\n", workerID, item.ID)
+			return nil
+		}
+		return fmt.Errorf("CompleteWork %s: %w", item.ID, err)
+	}
+	fmt.Printf("worker %s: completed %s (node_run=%s attempt=%d fencing_token=%d)\n",
+		workerID, item.ID, item.NodeRunID, item.Attempt, item.FencingToken)
+	return nil
 }
 
 func isUniqueViolation(err error) bool {

@@ -227,7 +227,7 @@ slug: `self-hosted-phase-2-cycle` · status: `exported` · from frame: `self-hos
 
 ### t26 — Integration gate: version bump, lanes check, delivery summary before PR
 
-- instruction: Order matters: /version-bump, vendored-skills diff check, friction filed as issues/deviations/ADRs, then /summarize-delivery writes docs/deliveries/<date>-self-hosted-phase-2-cycle.md citing t23's run ledger, and only then the cicd lane opens the PR.
+- instruction: Order matters: /version-bump, vendored-skills diff check, friction filed as issues/deviations/ADRs, then /summarize-delivery writes docs/deliveries/(dated file named after the cycle) citing t23's run ledger, and only then the cicd lane opens the PR.
 - depends on: t1, t3, t13, t16, t17, t18, t20, t22, t23, t24, t25
 - covers: c12, h10, c21, h15
 - acceptance:

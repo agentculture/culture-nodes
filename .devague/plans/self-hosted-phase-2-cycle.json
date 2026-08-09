@@ -5,7 +5,7 @@
   "schema_version": 4,
   "status": "exported",
   "created": "2026-08-09T06:38:55Z",
-  "updated": "2026-08-09T06:46:37Z",
+  "updated": "2026-08-09T07:14:13Z",
   "targets": [
     {
       "id": "c1",
@@ -764,7 +764,7 @@
         "c21",
         "h15"
       ],
-      "instruction": "Order matters: /version-bump, vendored-skills diff check, friction filed as issues/deviations/ADRs, then /summarize-delivery writes docs/deliveries/<date>-self-hosted-phase-2-cycle.md citing t23's run ledger, and only then the cicd lane opens the PR."
+      "instruction": "Order matters: /version-bump, vendored-skills diff check, friction filed as issues/deviations/ADRs, then /summarize-delivery writes docs/deliveries/(dated file named after the cycle) citing t23's run ledger, and only then the cicd lane opens the PR."
     }
   ],
   "risks": [

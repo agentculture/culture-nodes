@@ -238,36 +238,88 @@ func NewCallbackStore(s *Store, namespaceID string) (*CallbackStore, error) {
 	return &CallbackStore{store: s, namespaceID: namespaceID}, nil
 }
 
+// invocationColumns is the column list both Invocation and
+// InvocationByDeadlineTimer select -- the same row shape reached by two
+// different keys (attempt_id, the protocol identity; deadline_timer_id, the
+// reverse link a fired deadline timer names).
+const invocationColumns = `attempt_id, namespace_id, run_id, node_run_id, token_id, node_key, work_id,
+       worker_id, fencing_token, attempt, actor_ref, invocation_id, state, last_sequence`
+
 const selectInvocationSQL = `
-SELECT attempt_id, namespace_id, run_id, node_run_id, token_id, node_key, work_id,
-       worker_id, fencing_token, attempt, actor_ref, invocation_id, state, last_sequence
+SELECT ` + invocationColumns + `
 FROM actor_invocations
 WHERE attempt_id = $1 AND namespace_id = $2
 `
 
-// Invocation loads one in-flight invocation.
-func (cs *CallbackStore) Invocation(ctx context.Context, attemptID string) (actors.PendingInvocation, error) {
+// invocationRowScanner is satisfied by pgx.Row, matching timers.go's own
+// timerRowScanner pattern.
+type invocationRowScanner interface {
+	Scan(dest ...any) error
+}
+
+// scanPendingInvocation scans one invocationColumns row into an
+// actors.PendingInvocation, shared by every query that selects that column
+// list.
+func scanPendingInvocation(row invocationRowScanner) (actors.PendingInvocation, error) {
 	var (
 		inv                             actors.PendingInvocation
 		tokenID, actorRef, invocationID pgtype.Text
 		attempt                         int32
 	)
-	err := cs.store.pool.QueryRow(ctx, selectInvocationSQL, attemptID, cs.namespaceID).Scan(
+	if err := row.Scan(
 		&inv.AttemptID, &inv.NamespaceID, &inv.RunID, &inv.NodeRunID, &tokenID, &inv.NodeID,
 		&inv.WorkID, &inv.WorkerID, &inv.FencingToken, &attempt, &actorRef, &invocationID,
 		&inv.State, &inv.LastSequence,
-	)
-	if err != nil {
-		if isNoRows(err) {
-			return actors.PendingInvocation{}, fmt.Errorf("postgres: invocation %s: %w", attemptID, actors.ErrUnknownAttempt)
-		}
-		return actors.PendingInvocation{}, fmt.Errorf("postgres: Invocation: %w", err)
+	); err != nil {
+		return actors.PendingInvocation{}, err
 	}
 	inv.TokenID = textOrEmpty(tokenID)
 	inv.ActorRef = textOrEmpty(actorRef)
 	inv.InvocationID = textOrEmpty(invocationID)
 	inv.Attempt = int(attempt)
 	return inv, nil
+}
+
+// Invocation loads one in-flight invocation.
+func (cs *CallbackStore) Invocation(ctx context.Context, attemptID string) (actors.PendingInvocation, error) {
+	inv, err := scanPendingInvocation(cs.store.pool.QueryRow(ctx, selectInvocationSQL, attemptID, cs.namespaceID))
+	if err != nil {
+		if isNoRows(err) {
+			return actors.PendingInvocation{}, fmt.Errorf("postgres: invocation %s: %w", attemptID, actors.ErrUnknownAttempt)
+		}
+		return actors.PendingInvocation{}, fmt.Errorf("postgres: Invocation: %w", err)
+	}
+	return inv, nil
+}
+
+const selectInvocationByDeadlineTimerSQL = `
+SELECT ` + invocationColumns + `
+FROM actor_invocations
+WHERE deadline_timer_id = $1
+`
+
+// InvocationByDeadlineTimer loads the invocation a deadline timer belongs
+// to, keyed by the deadline_timer_id StartAsyncWait stamped on it when the
+// timer was scheduled -- the reverse of Invocation's own attempt_id lookup,
+// which is what a fired TimerKindDeadline row has instead (it names a
+// timer, not a protocol attempt id).
+//
+// It reports (zero, false, nil) rather than an error when no invocation
+// names this timer: a deadline timer that was never StartAsyncWait's own
+// (a hand-built test fixture, for instance) is a legitimate case for the
+// caller to treat as "nothing to fail", not a fault.
+func (s *Store) InvocationByDeadlineTimer(ctx context.Context, timerID string) (actors.PendingInvocation, bool, error) {
+	if timerID == "" {
+		return actors.PendingInvocation{}, false, fmt.Errorf("postgres: InvocationByDeadlineTimer: timerID is required")
+	}
+	inv, err := scanPendingInvocation(s.pool.QueryRow(ctx, selectInvocationByDeadlineTimerSQL, timerID))
+	if err != nil {
+		if isNoRows(err) {
+			return actors.PendingInvocation{}, false, nil
+		}
+		return actors.PendingInvocation{}, false, fmt.Errorf("postgres: InvocationByDeadlineTimer: %w", err)
+	}
+	return inv, true, nil
 }
 
 // callbackScope namespaces one attempt's event ids inside idempotency_keys,

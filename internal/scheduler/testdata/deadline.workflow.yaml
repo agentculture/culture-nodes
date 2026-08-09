@@ -1,0 +1,85 @@
+# A workflow whose entry node is an async-capable agent with a `timed_out`
+# edge (PRD §3.4: a technical status may still originate an edge), used by
+# TestSchedulerFiresDeadlineTimerFailsWaitingExternalAttempt to prove a
+# scheduler-fired deadline timer routes the same way a worker-reported
+# timeout does. Deliberately the same shape as
+# internal/engine/testdata/technical-route.workflow.yaml (duplicated rather
+# than shared -- see mustNodeRun's own doc comment in scheduler_test.go for
+# why a fixture in one package's testdata cannot be imported by another).
+apiVersion: nodes.culture.dev/v1alpha1
+kind: Workflow
+
+metadata:
+  name: scheduler-deadline
+  version: 1.0.0
+  ownerRef: team/platform-ai
+
+spec:
+  entry: build
+
+  contract:
+    input:
+      schema:
+        type: object
+    output:
+      schema:
+        type: object
+
+  limits:
+    maxDuration: 1h
+    maxTransitions: 8
+    maxVisitsPerNode: 4
+    maxParallelTokens: 1
+
+  nodes:
+    build:
+      kind: agent
+      ownerRef: team/platform-ai
+      uses: actor://company/builder@sha256:111111
+      input:
+        from: /run/input
+      contract:
+        outcomes:
+          completed:
+            schema:
+              type: object
+      policy:
+        timeout: 1m
+        retry:
+          maxAttempts: 1
+          backoff: none
+
+    repair:
+      kind: agent
+      ownerRef: team/platform-ai
+      uses: actor://company/repair@sha256:222222
+      contract:
+        outcomes:
+          completed:
+            schema:
+              type: object
+              required: [repaired]
+              properties:
+                repaired:
+                  type: boolean
+      policy:
+        timeout: 1m
+        retry:
+          maxAttempts: 1
+          backoff: none
+
+    finish:
+      kind: end
+      ownerRef: team/platform-ai
+      output:
+        from: /nodes/repair/output
+
+  edges:
+    - from: build.completed
+      to: finish
+
+    - from: build.timed_out
+      to: repair
+
+    - from: repair.completed
+      to: finish

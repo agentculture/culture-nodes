@@ -556,11 +556,17 @@ func assertWorkflowVersionPayload(t *testing.T, s *stack, digest string) {
 	if err := json.Unmarshal(version.NormalizedIR, &ir); err != nil {
 		t.Fatalf("decode normalized IR: %v", err)
 	}
-	if len(ir.Spec.Nodes) != 6 {
-		t.Errorf("the IR declares %d nodes, want 6", len(ir.Spec.Nodes))
+	// intake, plan, build, test, verify, human-review, finish — and the ten
+	// edges PRD §11.1 declares between them, including the human-review
+	// branch tests/e2e/humanreview_test.go drives. This run never reaches
+	// that branch (its verifier never reports `blocked`), which is the point
+	// of asserting the shape here: the graph the front end draws is the whole
+	// definition, not only the path this run walked.
+	if len(ir.Spec.Nodes) != 7 {
+		t.Errorf("the IR declares %d nodes, want 7", len(ir.Spec.Nodes))
 	}
-	if len(ir.Spec.Edges) != 7 {
-		t.Errorf("the IR declares %d edges, want 7", len(ir.Spec.Edges))
+	if len(ir.Spec.Edges) != 10 {
+		t.Errorf("the IR declares %d edges, want 10", len(ir.Spec.Edges))
 	}
 }
 

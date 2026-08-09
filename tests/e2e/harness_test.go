@@ -53,6 +53,17 @@ const codeRunnerActorKey = "headspace/docker"
 // signer cannot dispatch to an agent at all.
 const callbackSecret = "0123456789abcdef0123456789abcdef"
 
+// decisionAuthSecret is the bearer secret every stack in this package
+// configures for POST /v1alpha1/human-tasks/{id}/decision. That one endpoint
+// is the exception to the phase-1 authless API (PRD spec decision c45): it
+// writes human authority into a run's ledger and resumes the run on whoever
+// presents the token, so a deployment that leaves it unconfigured refuses
+// every decision. A real deployment reads this from
+// NODES_HUMAN_DECISION_TOKEN_SECRET (cmd/nodes/serve.go); a test stack is a
+// deployment too, so it configures one rather than testing a posture nobody
+// ships.
+const decisionAuthSecret = "e2e-only-human-decision-secret-0123456789abcdef"
+
 // -----------------------------------------------------------------------
 // The scripted agents
 // -----------------------------------------------------------------------
@@ -82,6 +93,12 @@ type deliveryAgents struct {
 	// exercise a different loop (see failedtest_test.go, which drives the
 	// `test.failed` edge instead and needs the verifier to pass on sight).
 	verifyRequestsChanges bool
+	// verifyBlocksFirst makes the verifier's FIRST answer `blocked`, which
+	// routes to the human-review approval node instead of looping
+	// (humanreview_test.go). It wins over verifyRequestsChanges when both are
+	// set: a verifier that is blocked has not got as far as asking for
+	// changes.
+	verifyBlocksFirst bool
 
 	mu       sync.Mutex
 	actorIDs map[string]string // node id -> registered actors.id
@@ -135,6 +152,25 @@ type invocationState struct {
 	call        int
 	verifyCalls int
 	actorID     string
+}
+
+// verifyVerdict is the verdict the verifier returns on its call-th
+// invocation. It is a pure function of the two script flags and the call
+// number, so any other branch of the script can ask what the verifier said
+// last without the answer having to be threaded back through shared state —
+// which is what lets the asynchronous harness (asyncoutput_test.go) delegate
+// to script through a throwaway instance. Both flags are set before the
+// agents' server begins serving and never mutated afterwards, so reading them
+// on a request goroutine needs no lock.
+func (a *deliveryAgents) verifyVerdict(call int) string {
+	switch {
+	case call == 1 && a.verifyBlocksFirst:
+		return "blocked"
+	case call == 1 && a.verifyRequestsChanges:
+		return "changes_required"
+	default:
+		return "passed"
+	}
 }
 
 // script is the scripted judgement, one branch per node.
@@ -193,15 +229,21 @@ func (a *deliveryAgents) script(req actors.InvocationRequest, st invocationState
 
 	case "build":
 		// Once the verifier has spoken, a later build pass must be able to
-		// SEE what it asked for: the input binding hands build the
-		// verification queue, and the loop carries its state through the
-		// ledger rather than through a variable. Re-entry via `test.failed`
-		// happens before the verifier ever runs, so the check is conditioned
-		// on the verifier having produced something to find.
-		if st.verifyCalls > 0 && !bytes.Contains(req.Input, []byte("changes_required")) {
-			return actors.InvocationResult{}, fmt.Errorf(
-				"build pass %d ran after %d verification(s) but did not receive one in its input: %s",
-				call, st.verifyCalls, req.Input)
+		// SEE what it said: the input binding hands build the verification
+		// queue, and the loop carries its state through the ledger rather
+		// than through a variable. Re-entry via `test.failed` happens before
+		// the verifier ever runs, so the check is conditioned on the verifier
+		// having produced something to find. Which verdict it was does not
+		// matter — build must see whichever one sent it back here, whether
+		// that was `changes_required` directly or `blocked` by way of an
+		// approved human review.
+		if st.verifyCalls > 0 {
+			verdict := a.verifyVerdict(st.verifyCalls)
+			if !bytes.Contains(req.Input, []byte(verdict)) {
+				return actors.InvocationResult{}, fmt.Errorf(
+					"build pass %d ran after %d verification(s) but did not receive the %q verdict in its input: %s",
+					call, st.verifyCalls, verdict, req.Input)
+			}
 		}
 		output := fmt.Sprintf(`{"changeSet":{"pass":%d,"files":["healthz.py"]}}`, call)
 		return actors.InvocationResult{
@@ -223,7 +265,25 @@ func (a *deliveryAgents) script(req actors.InvocationRequest, st invocationState
 		}, nil
 
 	case "verify":
-		if call == 1 && a.verifyRequestsChanges {
+		switch a.verifyVerdict(call) {
+		case "blocked":
+			// A blocker is neither a pass nor a change request: it is the
+			// verifier saying the decision is not its to make. The edge takes
+			// it to the human-review approval node (PRD §11.1).
+			return actors.InvocationResult{
+				Outcome: "blocked",
+				Output:  json.RawMessage(`{"verdict":"blocked","note":"the failing dependency is outside this change's scope"}`),
+				LedgerDelta: &actors.LedgerDelta{Records: []ledger.Record{
+					propose(ledger.RecordResult, map[string]any{
+						"summary": "verification pass 1: blocked",
+						"verdict": "blocked",
+					}),
+					propose(ledger.RecordQuestion, map[string]any{
+						"question": "Should the pinned dependency be bumped as part of this change?",
+					}),
+				}},
+			}, nil
+		case "changes_required":
 			return actors.InvocationResult{
 				Outcome: "changes_required",
 				Output:  json.RawMessage(`{"verdict":"changes_required","note":"the endpoint returns no body"}`),
@@ -397,7 +457,8 @@ func startStack(t *testing.T, cfg stackConfig) *stack {
 
 	srv, err := api.NewServer(db, cfg.namespaceID,
 		api.WithPollInterval(50*time.Millisecond),
-		api.WithCallbackSigner(signer))
+		api.WithCallbackSigner(signer),
+		api.WithDecisionAuthSecret(decisionAuthSecret))
 	if err != nil {
 		db.Close()
 		t.Fatalf("api.NewServer: %v", err)

@@ -112,15 +112,15 @@ to the real headspace-cli Docker bridge.
 
 ## The first reference workflow, against §"First reference workflow"
 
-The implementation issue's mermaid diagram has one node this build does not
-have.
+Every node and edge in the implementation issue's mermaid diagram is now
+built and driven end to end.
 
 | Element | Verdict | Note |
 | --- | --- | --- |
 | `I → P → B → T → V → F` | **met** | `examples/delivery-loop/workflow.yaml`, run end to end |
 | `T --> B` on `failed` | **met** | `TestFailedTestSuiteLoopsToBuildAsADomainOutcome` |
 | `V --> B` on `changes required` | **met** | `TestPhase1VerticalSlice` |
-| `V --> H` on `blocked` (Human review), `H → B` | **NOT MET** | **Deviation d1, github issue #3.** The approval / human-task surface is deferred: `internal/engine` creates no human-task rows and `internal/worker` registers no `HumanDispatcher`, so an approval node fails an attempt with a `not_implemented` diagnostic (`TestUnwiredKindsFailWithADiagnosticRatherThanSucceeding`). Rather than ship a reference workflow with a dead end, `verify` declares only `passed` and `changes_required`; the fixture's own header comment records this. Restoring `blocked` + the approval node is the first thing to do when d1 lifts. |
+| `V --> H` on `blocked` (Human review), `H → B` | **met** (was NOT MET under deviation d1, github issue #3) | `examples/delivery-loop/workflow.yaml` carries §11.1's `human-review` approval node again, and `tests/e2e/humanreview_test.go` walks the whole branch: `verify.blocked` → `human-review` → a bearer-authenticated `POST /v1alpha1/human-tasks/{id}/decision` → `human-review.approved` back to build (and, on a second run, `human-review.rejected` to `finish`). The pause is proved leaseless — zero `work_items` rows for the approval node run and a free advisory lock, re-checked after a settle window with a real worker polling throughout — and the decision lands as a human-origin `decision` record confirmed by a human-origin `review` record. d1 lifted with the phase-2 human-task surface (engine parking, decision endpoint, worker no-work-item invariant). |
 
 Expected-behavior prose from the same section:
 

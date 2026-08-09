@@ -31,6 +31,11 @@ tags:
     description: Compile, publish, and read immutable workflow versions (PRD §11).
   - name: runs
     description: Create and inspect workflow runs — the Run-view payload (PRD §8.6, §8.7).
+  - name: node-runs
+    description: >-
+      Cross-run node run listings — the "jobs timeline" (self-hosted
+      phase-2 cycle, task t11), distinct from the tokens/node_runs nested
+      under one run's Run-view payload above.
   - name: events
     description: Server-Sent Events stream of committed run events (PRD §15.1).
   - name: ledger
@@ -209,13 +214,46 @@ paths:
     get:
       operationId: listRuns
       tags: [runs]
-      summary: List runs, optionally filtered by state.
+      summary: List runs, optionally filtered by state and/or an updated_at window.
+      description: >-
+        Newest first by `sort` (task t11). `updated_since`/`updated_until`
+        filter on `updated_at`, using `runs_namespace_updated_at_idx`
+        (migrations/0010) when `sort` is (or defaults to) `updated_at`.
       parameters:
         - name: state
           in: query
           description: Filter to runs currently in this state.
           schema:
             $ref: '#/components/schemas/RunState'
+        - name: updated_since
+          in: query
+          description: >-
+            Only runs updated at or after this instant (RFC3339). When set
+            and `sort` is omitted, `sort` defaults to `updated_at` rather
+            than the endpoint's own default of `created_at`.
+          schema:
+            type: string
+            format: date-time
+        - name: updated_until
+          in: query
+          description: >-
+            Only runs updated at or before this instant (RFC3339). When set
+            and `sort` is omitted, `sort` defaults to `updated_at` rather
+            than the endpoint's own default of `created_at`.
+          schema:
+            type: string
+            format: date-time
+        - name: sort
+          in: query
+          description: >-
+            Sort column: `created_at` (the endpoint's own default) or
+            `updated_at`. Always descending — newest first, like every list
+            in this API. Defaults to `updated_at` instead when either
+            `updated_since` or `updated_until` is set and `sort` itself is
+            omitted.
+          schema:
+            type: string
+            enum: [created_at, updated_at]
         - name: limit
           in: query
           schema:
@@ -230,6 +268,77 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/RunList'
+        '400':
+          description: updated_since, updated_until, or sort is malformed.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+
+  /v1alpha1/node-runs:
+    get:
+      operationId: listNodeRuns
+      tags: [node-runs]
+      summary: List node runs across every run, newest first by updated_at.
+      description: >-
+        The cross-run "jobs timeline" listing (task t11): every node run in
+        this namespace, not scoped to one run — unlike the `node_runs`
+        nested in GET /v1alpha1/runs/{id}'s Run-view payload — newest-first
+        by `updated_at`, using `node_runs_namespace_updated_at_idx`
+        (migrations/0010) for the namespace scope, the
+        `updated_since`/`updated_until` range, and the sort in one index
+        walk.
+
+
+        Pagination is a keyset cursor (`cursor`/`next_cursor`), not OFFSET:
+        `updated_at` changes on every node run's state transition — including
+        rows outside the caller's current page — so an OFFSET-based page
+        would silently skip or repeat rows as items elsewhere in the
+        namespace move past the offset boundary between two requests. A
+        cursor anchored to `(updated_at, id)` of the last row already served
+        has no such failure mode and reuses the same index walk a first page
+        already does. Pass `next_cursor` from a response back as `cursor` to
+        fetch the next page; its absence means there is no further page.
+      parameters:
+        - name: updated_since
+          in: query
+          description: Only node runs updated at or after this instant (RFC3339).
+          schema:
+            type: string
+            format: date-time
+        - name: updated_until
+          in: query
+          description: Only node runs updated at or before this instant (RFC3339).
+          schema:
+            type: string
+            format: date-time
+        - name: cursor
+          in: query
+          description: >-
+            Opaque keyset cursor from a previous response's `next_cursor`.
+            Omit for the first page.
+          schema:
+            type: string
+        - name: limit
+          in: query
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 500
+            default: 50
+      responses:
+        '200':
+          description: A page of node runs, newest first by updated_at.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/NodeRunList'
+        '400':
+          description: updated_since, updated_until, or cursor is malformed.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
 
   /v1alpha1/runs/{id}:
     get:
@@ -910,6 +1019,58 @@ components:
           type: array
           items:
             $ref: '#/components/schemas/Attempt'
+
+    NodeRunListItem:
+      type: object
+      description: >-
+        One row of GET /v1alpha1/node-runs (task t11) — the same node_runs
+        row NodeRun above documents, listed across every run in the
+        namespace rather than nested under one, with `run_id` added (the
+        parent run is not implied by a URL path here) and `actor_id` added
+        (the most recent attempt's actor or runner reference; empty until
+        the node run has been dispatched at least once).
+      required: [id, run_id, node_id, state, created_at, updated_at]
+      properties:
+        id:
+          type: string
+        run_id:
+          type: string
+        node_id:
+          type: string
+        actor_id:
+          type: string
+          description: >-
+            The actor or runner reference (attempts.actor_id) of this node
+            run's most recently dispatched attempt.
+        state:
+          type: string
+          enum: [ready, leased, running, waiting_external, completed, failed, cancelled]
+        outcome:
+          type: string
+        created_at:
+          type: string
+          format: date-time
+        updated_at:
+          type: string
+          format: date-time
+        completed_at:
+          type: string
+          format: date-time
+
+    NodeRunList:
+      type: object
+      required: [items]
+      properties:
+        items:
+          type: array
+          items:
+            $ref: '#/components/schemas/NodeRunListItem'
+        next_cursor:
+          type: string
+          description: >-
+            Opaque keyset pagination cursor. Present only when a further
+            page exists; pass it back as the `cursor` query parameter to
+            fetch it.
 
     RunView:
       type: object

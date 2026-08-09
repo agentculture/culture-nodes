@@ -462,6 +462,42 @@ func (eq engineQueries) NodeRun(ctx context.Context, nodeRunID string) (engine.N
 	return nodeRun, nil
 }
 
+const insertHumanTaskSQL = `
+INSERT INTO human_tasks (id, namespace_id, run_id, node_run_id, kind, assigned_owner_id, status, request, created_at)
+VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+`
+
+// InsertHumanTask records an approval node's human task (PRD §9.9). It is
+// the write an approval-kind dispatch makes *instead of* EnqueueWork — see
+// internal/engine/humantask.go — so no work_items row is ever created for
+// task.NodeRunID.
+func (eq engineQueries) InsertHumanTask(ctx context.Context, task engine.HumanTask) (string, error) {
+	switch {
+	case task.RunID == "":
+		return "", errors.New("postgres: engine: InsertHumanTask requires a run id")
+	case task.NodeRunID == "":
+		return "", errors.New("postgres: engine: InsertHumanTask requires a node run id")
+	case task.Kind == "":
+		return "", errors.New("postgres: engine: InsertHumanTask requires a kind")
+	}
+	id := task.ID
+	if id == "" {
+		id = store.NewULID()
+	}
+	status := task.Status
+	if status == "" {
+		status = engine.HumanTaskStatusPending
+	}
+	_, err := eq.q.Exec(ctx, insertHumanTaskSQL,
+		id, eq.namespaceID, task.RunID, task.NodeRunID, task.Kind,
+		textOrNull(task.AssignedOwnerID), status, jsonOrEmptyObject(task.Request), tsOrNow(task.CreatedAt),
+	)
+	if err != nil {
+		return "", fmt.Errorf("postgres: engine: InsertHumanTask: %w", err)
+	}
+	return id, nil
+}
+
 const insertAttemptSQL = `
 INSERT INTO attempts (
 	id, namespace_id, node_run_id, attempt_number, actor_id, status, fencing_token,

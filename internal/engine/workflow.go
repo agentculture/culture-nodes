@@ -103,12 +103,29 @@ type Node struct {
 	// surface), which is how a workflow says what its result is.
 	OutputFrom string
 
+	// InputFrom and InputBindings are a node's own input binding (PRD §11.2),
+	// carried for every kind even though only an approval node's dispatch
+	// reads it today: it becomes that node's human task "context and
+	// artifact references" (PRD §9.9) rather than an actor payload, because
+	// the engine still does not resolve bindings into dispatch payloads (see
+	// this package's doc comment) — it records the reference, not the value.
+	InputFrom     string
+	InputBindings map[string]string
+
 	Propose    []string
 	Observe    []string
 	MaxRecords int
 
 	Timeout time.Duration
 	Retry   RetryPolicy
+
+	// DecisionSchemaRef, ApproverRef, and Deadline are an approval node's
+	// PRD §9.9 fields: the schema the human decision must satisfy, the
+	// requested approver role or group, and how long the pause may run
+	// before it is overdue. Empty/zero for every other kind.
+	DecisionSchemaRef string
+	ApproverRef       string
+	Deadline          time.Duration
 }
 
 // declaresOutcome reports whether name is an outcome this node can produce.
@@ -274,6 +291,10 @@ type irNode struct {
 	Contract *struct {
 		Outcomes map[string]*irSchemaSource `json:"outcomes"`
 	} `json:"contract"`
+	Input *struct {
+		From     string            `json:"from"`
+		Bindings map[string]string `json:"bindings"`
+	} `json:"input"`
 	Output *struct {
 		From string `json:"from"`
 	} `json:"output"`
@@ -289,6 +310,14 @@ type irNode struct {
 			Backoff     string `json:"backoff"`
 		} `json:"retry"`
 	} `json:"policy"`
+
+	// DecisionSchemaRef, ApproverRef, and Deadline mirror the authoring
+	// document's approval-node fields (schemas/workflow/workflow.schema.json,
+	// PRD §9.9) straight into the IR — normalization resolves defaults
+	// (e.g. the deadline) but does not rename or restructure them.
+	DecisionSchemaRef string `json:"decisionSchemaRef"`
+	ApproverRef       string `json:"approverRef"`
+	Deadline          string `json:"deadline"`
 }
 
 func decodeNode(id string, raw *irNode) (*Node, error) {
@@ -296,17 +325,35 @@ func decodeNode(id string, raw *irNode) (*Node, error) {
 		return nil, fmt.Errorf("node body is null")
 	}
 	node := &Node{
-		ID:       id,
-		Kind:     raw.Kind,
-		OwnerRef: raw.OwnerRef,
-		Outcomes: append([]string(nil), raw.Outcomes...),
+		ID:                id,
+		Kind:              raw.Kind,
+		OwnerRef:          raw.OwnerRef,
+		Outcomes:          append([]string(nil), raw.Outcomes...),
+		DecisionSchemaRef: raw.DecisionSchemaRef,
+		ApproverRef:       raw.ApproverRef,
 		// A node with no retry policy gets one attempt. The compiler expands
 		// the policy for every kind that dispatches work, so this default
 		// only ever applies to kinds that do not.
 		Retry: RetryPolicy{MaxAttempts: 1, Backoff: "none"},
 	}
+	if raw.Input != nil {
+		node.InputFrom = raw.Input.From
+		if len(raw.Input.Bindings) > 0 {
+			node.InputBindings = make(map[string]string, len(raw.Input.Bindings))
+			for k, v := range raw.Input.Bindings {
+				node.InputBindings[k] = v
+			}
+		}
+	}
 	if raw.Output != nil {
 		node.OutputFrom = raw.Output.From
+	}
+	if raw.Deadline != "" {
+		deadline, err := time.ParseDuration(raw.Deadline)
+		if err != nil {
+			return nil, fmt.Errorf("deadline %q is not a duration: %w", raw.Deadline, err)
+		}
+		node.Deadline = deadline
 	}
 	if raw.Ledger != nil {
 		node.Propose = append([]string(nil), raw.Ledger.Propose...)

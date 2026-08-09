@@ -1,0 +1,88 @@
+# A three-node slice exercising an approval node: intake -> review -> finish,
+# where review is `kind: approval` and its two outgoing edges are the human
+# decision (review.approved, review.rejected). It exists to prove the
+# engine's approval-dispatch seam (PRD §9.9, task t6): the token arriving at
+# review must produce a human_tasks row and a paused node run, never a
+# work_items row.
+apiVersion: nodes.culture.dev/v1alpha1
+kind: Workflow
+
+metadata:
+  name: engine-approval-slice
+  version: 1.0.0
+  ownerRef: team/platform-ai
+
+spec:
+  entry: intake
+
+  contract:
+    input:
+      schema:
+        type: object
+        required: [subject]
+        properties:
+          subject:
+            type: string
+    output:
+      schema:
+        type: object
+
+  limits:
+    maxDuration: 1h
+    maxTransitions: 32
+    maxVisitsPerNode: 8
+    maxParallelTokens: 1
+
+  ledger:
+    schemaVersion: nodes.culture.dev/ledger/v1alpha1
+    maxRecordsPerNode: 10
+    requireProvenance: true
+
+  nodes:
+    intake:
+      kind: agent
+      ownerRef: team/platform-ai
+      uses: actor://company/intake@sha256:111111
+      input:
+        from: /run/input
+      contract:
+        outcomes:
+          completed:
+            schema:
+              type: object
+              required: [scope]
+              properties:
+                scope:
+                  type: string
+      ledger:
+        propose: [announcement, claim]
+      policy:
+        timeout: 5m
+        retry:
+          maxAttempts: 1
+          backoff: none
+
+    review:
+      kind: approval
+      ownerRef: team/platform-ai
+      decisionSchemaRef: ./contracts/review-decision.schema.json
+      approverRef: group/platform-ai-approvers
+      deadline: 2h
+      input:
+        from: /nodes/intake/output
+
+    finish:
+      kind: end
+      ownerRef: team/platform-ai
+      output:
+        from: /nodes/intake/output
+
+  edges:
+    - from: intake.completed
+      to: review
+
+    - from: review.approved
+      to: finish
+
+    - from: review.rejected
+      to: finish

@@ -13,7 +13,7 @@ import argparse
 
 from culture_nodes.api_client import API_PREFIX, add_api_url_argument, client_from_args
 from culture_nodes.cli._errors import EXIT_USER_ERROR, CliError
-from culture_nodes.cli._output import emit_json_passthrough, emit_result
+from culture_nodes.cli._output import JSON_FLAG_HELP, emit_json_passthrough, emit_result
 
 
 def _split_ids(raw: str | None) -> list[str]:
@@ -38,15 +38,15 @@ def cmd_review_create(args: argparse.Namespace) -> int:
     json_mode = bool(getattr(args, "json", False))
     if json_mode:
         emit_json_passthrough(resp.raw)
-        return 0
-    payload = resp.payload or {}
-    text = (
-        f"id: {payload.get('id', '')}\n"
-        f"status: {payload.get('status', '')}\n"
-        f"ledger_version: {payload.get('ledger_version', '')}\n"
-        f"records: {len(payload.get('record_ids') or [])}"
-    )
-    emit_result(text, json_mode=False)
+    else:
+        payload = resp.payload or {}
+        text = (
+            f"id: {payload.get('id', '')}\n"
+            f"status: {payload.get('status', '')}\n"
+            f"ledger_version: {payload.get('ledger_version', '')}\n"
+            f"records: {len(payload.get('record_ids') or [])}"
+        )
+        emit_result(text, json_mode=False)
     return 0
 
 
@@ -59,7 +59,7 @@ def cmd_review_commit(args: argparse.Namespace) -> int:
             message="review commit needs at least one of --confirm or --reject",
             remediation="pass --confirm id1,id2 and/or --reject id3,id4",
         )
-    decisions: dict[str, str] = {rid: "confirm" for rid in confirm_ids}
+    decisions: dict[str, str] = dict.fromkeys(confirm_ids, "confirm")
     overlap = [rid for rid in reject_ids if rid in decisions]
     if overlap:
         raise CliError(
@@ -67,7 +67,7 @@ def cmd_review_commit(args: argparse.Namespace) -> int:
             message=f"record id(s) named in both --confirm and --reject: {', '.join(overlap)}",
             remediation="each record id must get exactly one verdict",
         )
-    decisions.update({rid: "reject" for rid in reject_ids})
+    decisions.update(dict.fromkeys(reject_ids, "reject"))
 
     body = {"decisions": decisions, "expected_ledger_version": args.ledger_version}
     client = client_from_args(args)
@@ -78,14 +78,14 @@ def cmd_review_commit(args: argparse.Namespace) -> int:
     json_mode = bool(getattr(args, "json", False))
     if json_mode:
         emit_json_passthrough(resp.raw)
-        return 0
-    payload = resp.payload or {}
-    text = (
-        f"review_id: {payload.get('review_id', '')}\n"
-        f"ledger_version: {payload.get('ledger_version', '')}\n"
-        f"records: {len(payload.get('records') or [])}"
-    )
-    emit_result(text, json_mode=False)
+    else:
+        payload = resp.payload or {}
+        text = (
+            f"review_id: {payload.get('review_id', '')}\n"
+            f"ledger_version: {payload.get('ledger_version', '')}\n"
+            f"records: {len(payload.get('records') or [])}"
+        )
+        emit_result(text, json_mode=False)
     return 0
 
 
@@ -101,7 +101,7 @@ def register(sub: argparse._SubParsersAction) -> None:
     p = sub.add_parser(
         "review", help="Thin client for the human review transactions API (create/commit)."
     )
-    p.add_argument("--json", action="store_true", help="Emit structured JSON.")
+    p.add_argument("--json", action="store_true", help=JSON_FLAG_HELP)
     p.set_defaults(func=_bare_noun, json=False)
     noun_sub = p.add_subparsers(dest="review_command", parser_class=type(p))
 
@@ -125,7 +125,7 @@ def register(sub: argparse._SubParsersAction) -> None:
         default=None,
         help="The human actor this review is bound to.",
     )
-    create.add_argument("--json", action="store_true", help="Emit structured JSON.")
+    create.add_argument("--json", action="store_true", help=JSON_FLAG_HELP)
     add_api_url_argument(create)
     create.set_defaults(func=cmd_review_create)
 
@@ -144,6 +144,6 @@ def register(sub: argparse._SubParsersAction) -> None:
         required=True,
         help="The ledger version the caller expects to still hold.",
     )
-    commit.add_argument("--json", action="store_true", help="Emit structured JSON.")
+    commit.add_argument("--json", action="store_true", help=JSON_FLAG_HELP)
     add_api_url_argument(commit)
     commit.set_defaults(func=cmd_review_commit)

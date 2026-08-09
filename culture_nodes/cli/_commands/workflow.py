@@ -14,7 +14,7 @@ from pathlib import Path
 
 from culture_nodes.api_client import API_PREFIX, add_api_url_argument, client_from_args
 from culture_nodes.cli._errors import EXIT_ENV_ERROR, CliError
-from culture_nodes.cli._output import emit_json_passthrough, emit_result
+from culture_nodes.cli._output import JSON_FLAG_HELP, emit_json_passthrough, emit_result
 
 
 def _read_workflow_source(path: str) -> tuple[str, str]:
@@ -88,17 +88,17 @@ def cmd_workflow_publish(args: argparse.Namespace) -> int:
     json_mode = bool(getattr(args, "json", False))
     if json_mode:
         emit_json_passthrough(resp.raw)
-        return 0
-    payload = resp.payload or {}
-    status_word = "new" if resp.status == 201 else "already published"
-    text = (
-        f"published: {status_word}\n"
-        f"workflow_key: {payload.get('workflow_key', '')}\n"
-        f"version: {payload.get('version', '')}\n"
-        f"digest: {payload.get('digest', '')}\n"
-        f"created_at: {payload.get('created_at', '')}"
-    )
-    emit_result(text, json_mode=False)
+    else:
+        payload = resp.payload or {}
+        status_word = "new" if resp.status == 201 else "already published"
+        text = (
+            f"published: {status_word}\n"
+            f"workflow_key: {payload.get('workflow_key', '')}\n"
+            f"version: {payload.get('version', '')}\n"
+            f"digest: {payload.get('digest', '')}\n"
+            f"created_at: {payload.get('created_at', '')}"
+        )
+        emit_result(text, json_mode=False)
     return 0
 
 
@@ -112,17 +112,17 @@ def cmd_workflow_list(args: argparse.Namespace) -> int:
     json_mode = bool(getattr(args, "json", False))
     if json_mode:
         emit_json_passthrough(resp.raw)
-        return 0
-    items = (resp.payload or {}).get("items") or []
-    if not items:
-        emit_result("no published workflows", json_mode=False)
-        return 0
-    lines = [
-        f"{item.get('digest', '')}  {item.get('workflow_key', '')}  "
-        f"v{item.get('version', '')}  {item.get('created_at', '')}"
-        for item in items
-    ]
-    emit_result("\n".join(lines), json_mode=False)
+    else:
+        items = (resp.payload or {}).get("items") or []
+        if not items:
+            emit_result("no published workflows", json_mode=False)
+            return 0
+        lines = [
+            f"{item.get('digest', '')}  {item.get('workflow_key', '')}  "
+            f"v{item.get('version', '')}  {item.get('created_at', '')}"
+            for item in items
+        ]
+        emit_result("\n".join(lines), json_mode=False)
     return 0
 
 
@@ -132,16 +132,16 @@ def cmd_workflow_get(args: argparse.Namespace) -> int:
     json_mode = bool(getattr(args, "json", False))
     if json_mode:
         emit_json_passthrough(resp.raw)
-        return 0
-    payload = resp.payload or {}
-    text = (
-        f"digest: {payload.get('digest', '')}\n"
-        f"workflow_key: {payload.get('workflow_key', '')}\n"
-        f"version: {payload.get('version', '')}\n"
-        f"source_format: {payload.get('source_format', '')}\n"
-        f"created_at: {payload.get('created_at', '')}"
-    )
-    emit_result(text, json_mode=False)
+    else:
+        payload = resp.payload or {}
+        text = (
+            f"digest: {payload.get('digest', '')}\n"
+            f"workflow_key: {payload.get('workflow_key', '')}\n"
+            f"version: {payload.get('version', '')}\n"
+            f"source_format: {payload.get('source_format', '')}\n"
+            f"created_at: {payload.get('created_at', '')}"
+        )
+        emit_result(text, json_mode=False)
     return 0
 
 
@@ -158,7 +158,7 @@ def register(sub: argparse._SubParsersAction) -> None:
     p = sub.add_parser(
         "workflow", help="Thin client for the workflows API (validate/publish/list/get)."
     )
-    p.add_argument("--json", action="store_true", help="Emit structured JSON.")
+    p.add_argument("--json", action="store_true", help=JSON_FLAG_HELP)
     p.set_defaults(func=_bare_noun, json=False)
     noun_sub = p.add_subparsers(dest="workflow_command", parser_class=type(p))
 
@@ -166,7 +166,7 @@ def register(sub: argparse._SubParsersAction) -> None:
         "validate", help="Compile a workflow definition and report diagnostics."
     )
     validate.add_argument("file", help="Path to a workflow definition (.yaml or .json).")
-    validate.add_argument("--json", action="store_true", help="Emit structured JSON.")
+    validate.add_argument("--json", action="store_true", help=JSON_FLAG_HELP)
     add_api_url_argument(validate)
     validate.set_defaults(func=cmd_workflow_validate)
 
@@ -174,7 +174,7 @@ def register(sub: argparse._SubParsersAction) -> None:
         "publish", help="Publish a workflow definition as an immutable version."
     )
     publish.add_argument("file", help="Path to a workflow definition (.yaml or .json).")
-    publish.add_argument("--json", action="store_true", help="Emit structured JSON.")
+    publish.add_argument("--json", action="store_true", help=JSON_FLAG_HELP)
     add_api_url_argument(publish)
     publish.set_defaults(func=cmd_workflow_publish)
 
@@ -188,12 +188,12 @@ def register(sub: argparse._SubParsersAction) -> None:
     listp.add_argument(
         "--limit", type=int, default=None, help="Max items to return (server default 50, max 500)."
     )
-    listp.add_argument("--json", action="store_true", help="Emit structured JSON.")
+    listp.add_argument("--json", action="store_true", help=JSON_FLAG_HELP)
     add_api_url_argument(listp)
     listp.set_defaults(func=cmd_workflow_list)
 
     getp = noun_sub.add_parser("get", help="Fetch one workflow version by content digest.")
     getp.add_argument("digest", help="The workflow version's content digest.")
-    getp.add_argument("--json", action="store_true", help="Emit structured JSON.")
+    getp.add_argument("--json", action="store_true", help=JSON_FLAG_HELP)
     add_api_url_argument(getp)
     getp.set_defaults(func=cmd_workflow_get)

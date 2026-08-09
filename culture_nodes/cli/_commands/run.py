@@ -14,7 +14,7 @@ from pathlib import Path
 
 from culture_nodes.api_client import API_PREFIX, add_api_url_argument, client_from_args
 from culture_nodes.cli._errors import EXIT_ENV_ERROR, EXIT_USER_ERROR, CliError
-from culture_nodes.cli._output import emit_json_passthrough, emit_result
+from culture_nodes.cli._output import JSON_FLAG_HELP, emit_json_passthrough, emit_result
 
 #: Run-level SSE event types after which the API closes the stream
 #: (internal/api/events.go's terminalRunEventTypes) — the client mirrors
@@ -67,15 +67,15 @@ def cmd_run_create(args: argparse.Namespace) -> int:
     json_mode = bool(getattr(args, "json", False))
     if json_mode:
         emit_json_passthrough(resp.raw)
-        return 0
-    payload = resp.payload or {}
-    text = (
-        f"id: {payload.get('id', '')}\n"
-        f"workflow_digest: {payload.get('workflow_digest', '')}\n"
-        f"state: {payload.get('state', '')}\n"
-        f"created_at: {payload.get('created_at', '')}"
-    )
-    emit_result(text, json_mode=False)
+    else:
+        payload = resp.payload or {}
+        text = (
+            f"id: {payload.get('id', '')}\n"
+            f"workflow_digest: {payload.get('workflow_digest', '')}\n"
+            f"state: {payload.get('state', '')}\n"
+            f"created_at: {payload.get('created_at', '')}"
+        )
+        emit_result(text, json_mode=False)
     return 0
 
 
@@ -87,17 +87,17 @@ def cmd_run_list(args: argparse.Namespace) -> int:
     json_mode = bool(getattr(args, "json", False))
     if json_mode:
         emit_json_passthrough(resp.raw)
-        return 0
-    items = (resp.payload or {}).get("items") or []
-    if not items:
-        emit_result("no runs", json_mode=False)
-        return 0
-    lines = [
-        f"{item.get('id', '')}  {item.get('state', '')}  "
-        f"{item.get('workflow_digest', '')}  {item.get('created_at', '')}"
-        for item in items
-    ]
-    emit_result("\n".join(lines), json_mode=False)
+    else:
+        items = (resp.payload or {}).get("items") or []
+        if not items:
+            emit_result("no runs", json_mode=False)
+            return 0
+        lines = [
+            f"{item.get('id', '')}  {item.get('state', '')}  "
+            f"{item.get('workflow_digest', '')}  {item.get('created_at', '')}"
+            for item in items
+        ]
+        emit_result("\n".join(lines), json_mode=False)
     return 0
 
 
@@ -107,24 +107,24 @@ def cmd_run_get(args: argparse.Namespace) -> int:
     json_mode = bool(getattr(args, "json", False))
     if json_mode:
         emit_json_passthrough(resp.raw)
-        return 0
-    payload = resp.payload or {}
-    run = payload.get("run") or {}
-    tokens = payload.get("tokens") or []
-    node_runs = payload.get("node_runs") or []
-    lines = [
-        f"id: {run.get('id', '')}",
-        f"state: {run.get('state', '')}",
-        f"workflow_digest: {run.get('workflow_digest', '')}",
-        f"tokens: {len(tokens)}",
-        f"node_runs: {len(node_runs)}",
-    ]
-    for nr in node_runs:
-        lines.append(
-            f"  - {nr.get('node_id', '')}: {nr.get('state', '')} "
-            f"(visit {nr.get('visit_count', '')})"
-        )
-    emit_result("\n".join(lines), json_mode=False)
+    else:
+        payload = resp.payload or {}
+        run = payload.get("run") or {}
+        tokens = payload.get("tokens") or []
+        node_runs = payload.get("node_runs") or []
+        lines = [
+            f"id: {run.get('id', '')}",
+            f"state: {run.get('state', '')}",
+            f"workflow_digest: {run.get('workflow_digest', '')}",
+            f"tokens: {len(tokens)}",
+            f"node_runs: {len(node_runs)}",
+        ]
+        for nr in node_runs:
+            lines.append(
+                f"  - {nr.get('node_id', '')}: {nr.get('state', '')} "
+                f"(visit {nr.get('visit_count', '')})"
+            )
+        emit_result("\n".join(lines), json_mode=False)
     return 0
 
 
@@ -134,11 +134,11 @@ def cmd_run_cancel(args: argparse.Namespace) -> int:
     json_mode = bool(getattr(args, "json", False))
     if json_mode:
         emit_json_passthrough(resp.raw)
-        return 0
-    payload = resp.payload or {}
-    emit_result(
-        f"run {payload.get('id', args.id)} is now {payload.get('state', '')}", json_mode=False
-    )
+    else:
+        payload = resp.payload or {}
+        emit_result(
+            f"run {payload.get('id', args.id)} is now {payload.get('state', '')}", json_mode=False
+        )
     return 0
 
 
@@ -231,7 +231,7 @@ def _bare_noun(args: argparse.Namespace) -> int:
 
 def register(sub: argparse._SubParsersAction) -> None:
     p = sub.add_parser("run", help="Thin client for the runs API (create/list/get/cancel/events).")
-    p.add_argument("--json", action="store_true", help="Emit structured JSON.")
+    p.add_argument("--json", action="store_true", help=JSON_FLAG_HELP)
     p.set_defaults(func=_bare_noun, json=False)
     noun_sub = p.add_subparsers(dest="run_command", parser_class=type(p))
 
@@ -242,14 +242,14 @@ def register(sub: argparse._SubParsersAction) -> None:
     create.add_argument(
         "--input", dest="input", default=None, help="Path to a JSON input file, or '-' for stdin."
     )
-    create.add_argument("--json", action="store_true", help="Emit structured JSON.")
+    create.add_argument("--json", action="store_true", help=JSON_FLAG_HELP)
     add_api_url_argument(create)
     create.set_defaults(func=cmd_run_create)
 
     listp = noun_sub.add_parser("list", help="List runs, optionally filtered by state.")
     listp.add_argument("--state", dest="state", default=None, help="Filter to runs in this state.")
     listp.add_argument("--limit", type=int, default=None, help="Max items to return.")
-    listp.add_argument("--json", action="store_true", help="Emit structured JSON.")
+    listp.add_argument("--json", action="store_true", help=JSON_FLAG_HELP)
     add_api_url_argument(listp)
     listp.set_defaults(func=cmd_run_list)
 
@@ -257,13 +257,13 @@ def register(sub: argparse._SubParsersAction) -> None:
         "get", help="Fetch the Run-view payload: run, tokens, node runs, attempts."
     )
     getp.add_argument("id", help="The run id.")
-    getp.add_argument("--json", action="store_true", help="Emit structured JSON.")
+    getp.add_argument("--json", action="store_true", help=JSON_FLAG_HELP)
     add_api_url_argument(getp)
     getp.set_defaults(func=cmd_run_get)
 
     cancel = noun_sub.add_parser("cancel", help="Cancel a run.")
     cancel.add_argument("id", help="The run id.")
-    cancel.add_argument("--json", action="store_true", help="Emit structured JSON.")
+    cancel.add_argument("--json", action="store_true", help=JSON_FLAG_HELP)
     add_api_url_argument(cancel)
     cancel.set_defaults(func=cmd_run_cancel)
 
@@ -277,6 +277,6 @@ def register(sub: argparse._SubParsersAction) -> None:
             "terminal run event closes the connection, so this is a no-op today."
         ),
     )
-    events.add_argument("--json", action="store_true", help="Emit structured JSON.")
+    events.add_argument("--json", action="store_true", help=JSON_FLAG_HELP)
     add_api_url_argument(events)
     events.set_defaults(func=cmd_run_events)

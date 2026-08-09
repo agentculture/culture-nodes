@@ -11,7 +11,7 @@ from __future__ import annotations
 import argparse
 
 from culture_nodes.api_client import API_PREFIX, add_api_url_argument, client_from_args
-from culture_nodes.cli._output import emit_json_passthrough, emit_result
+from culture_nodes.cli._output import JSON_FLAG_HELP, emit_json_passthrough, emit_result
 
 
 def cmd_ledger_records(args: argparse.Namespace) -> int:
@@ -20,16 +20,16 @@ def cmd_ledger_records(args: argparse.Namespace) -> int:
     json_mode = bool(getattr(args, "json", False))
     if json_mode:
         emit_json_passthrough(resp.raw)
-        return 0
-    payload = resp.payload or {}
-    items = payload.get("items") or []
-    lines = [f"ledger_version: {payload.get('ledger_version', '')}", f"records: {len(items)}"]
-    for rec in items:
-        lines.append(
-            f"  - {rec.get('id', '')}  {rec.get('record_type', '')}  "
-            f"{rec.get('authority', '')}  {rec.get('created_at', '')}"
-        )
-    emit_result("\n".join(lines), json_mode=False)
+    else:
+        payload = resp.payload or {}
+        items = payload.get("items") or []
+        lines = [f"ledger_version: {payload.get('ledger_version', '')}", f"records: {len(items)}"]
+        for rec in items:
+            lines.append(
+                f"  - {rec.get('id', '')}  {rec.get('record_type', '')}  "
+                f"{rec.get('authority', '')}  {rec.get('created_at', '')}"
+            )
+        emit_result("\n".join(lines), json_mode=False)
     return 0
 
 
@@ -43,16 +43,16 @@ def cmd_ledger_projection(args: argparse.Namespace) -> int:
     json_mode = bool(getattr(args, "json", False))
     if json_mode:
         emit_json_passthrough(resp.raw)
-        return 0
-    payload = resp.payload or {}
-    items = payload.get("items") or []
-    lines = [
-        f"kind: {payload.get('kind', '')}",
-        f"subject: {payload.get('subject', '')}",
-        f"digest: {payload.get('digest', '')}",
-        f"items: {len(items)}",
-    ]
-    emit_result("\n".join(lines), json_mode=False)
+    else:
+        payload = resp.payload or {}
+        items = payload.get("items") or []
+        lines = [
+            f"kind: {payload.get('kind', '')}",
+            f"subject: {payload.get('subject', '')}",
+            f"digest: {payload.get('digest', '')}",
+            f"items: {len(items)}",
+        ]
+        emit_result("\n".join(lines), json_mode=False)
     return 0
 
 
@@ -66,13 +66,13 @@ def _bare_noun(args: argparse.Namespace) -> int:
 
 def register(sub: argparse._SubParsersAction) -> None:
     p = sub.add_parser("ledger", help="Thin client for the ledger read API (records/projections).")
-    p.add_argument("--json", action="store_true", help="Emit structured JSON.")
+    p.add_argument("--json", action="store_true", help=JSON_FLAG_HELP)
     p.set_defaults(func=_bare_noun, json=False)
     noun_sub = p.add_subparsers(dest="ledger_command", parser_class=type(p))
 
     records = noun_sub.add_parser("records", help="List a run's ledger records.")
     records.add_argument("run_id", help="The run id.")
-    records.add_argument("--json", action="store_true", help="Emit structured JSON.")
+    records.add_argument("--json", action="store_true", help=JSON_FLAG_HELP)
     add_api_url_argument(records)
     records.set_defaults(func=cmd_ledger_records)
 
@@ -86,6 +86,6 @@ def register(sub: argparse._SubParsersAction) -> None:
     projection.add_argument(
         "--subject", dest="subject", default=None, help="Required by evidence_for_subject."
     )
-    projection.add_argument("--json", action="store_true", help="Emit structured JSON.")
+    projection.add_argument("--json", action="store_true", help=JSON_FLAG_HELP)
     add_api_url_argument(projection)
     projection.set_defaults(func=cmd_ledger_projection)

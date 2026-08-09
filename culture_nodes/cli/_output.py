@@ -69,3 +69,7 @@ def emit_json_passthrough(raw: bytes, *, stream: TextIO | None = None) -> None:
     s.write(text)
     if not text.endswith("\n"):
         s.write("\n")
+
+
+# Shared --json flag help text (S1192: one definition, many parsers).
+JSON_FLAG_HELP = "Emit structured JSON."

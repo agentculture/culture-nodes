@@ -39,12 +39,65 @@ _PROMPT_FILE = {
 }
 
 
-def _diagnose(base_url: str) -> dict[str, object]:
+def _identity_checks(cfg) -> list[dict[str, object]]:
+    """The culture.yaml-derived checks (backend/prompt-file/skills), split out
+    of _diagnose to keep each function's branching readable (S3776)."""
     checks: list[dict[str, object]] = []
+    root = cfg.parent
+    fields = read_agent_fields()
+    backend = fields["backend"]
 
+    # 1. backend-consistency: the prompt file for the declared backend exists.
+    expected = _PROMPT_FILE.get(backend)
+    if expected is None:
+        checks.append(
+            {
+                "id": "backend_consistency",
+                "passed": False,
+                "severity": "error",
+                "message": f"unknown backend '{backend}' in culture.yaml",
+                "remediation": f"set backend to one of: {', '.join(sorted(_PROMPT_FILE))}",
+            }
+        )
+    else:
+        present = (root / expected).is_file()
+        checks.append(
+            {
+                "id": "prompt_file_present",
+                "passed": present,
+                "severity": "error",
+                "message": (
+                    f"backend '{backend}' requires {expected} — "
+                    + ("present" if present else "missing")
+                ),
+                "remediation": "" if present else f"create {expected} at the repo root",
+            }
+        )
+
+    # 2. skills-present: the vendored skill kit is on disk.
+    skills_dir = root / ".claude" / "skills"
+    has_skills = skills_dir.is_dir() and any(skills_dir.iterdir())
+    checks.append(
+        {
+            "id": "skills_present",
+            "passed": has_skills,
+            "severity": "warning",
+            "message": (
+                ".claude/skills/ vendored" if has_skills else ".claude/skills/ missing or empty"
+            ),
+            "remediation": (
+                "" if has_skills else "vendor the skill kit (see docs/skill-sources.md)"
+            ),
+        }
+    )
+
+    return checks
+
+
+def _diagnose(base_url: str) -> dict[str, object]:
     cfg = find_culture_yaml()
     if cfg is None:
-        checks.append(
+        checks: list[dict[str, object]] = [
             {
                 "id": "source_checkout",
                 "passed": True,
@@ -52,55 +105,9 @@ def _diagnose(base_url: str) -> dict[str, object]:
                 "message": "no culture.yaml found alongside the package; identity checks skipped",
                 "remediation": "",
             }
-        )
+        ]
     else:
-        root = cfg.parent
-        fields = read_agent_fields()
-        backend = fields["backend"]
-
-        # 1. backend-consistency: the prompt file for the declared backend exists.
-        expected = _PROMPT_FILE.get(backend)
-        if expected is None:
-            checks.append(
-                {
-                    "id": "backend_consistency",
-                    "passed": False,
-                    "severity": "error",
-                    "message": f"unknown backend '{backend}' in culture.yaml",
-                    "remediation": f"set backend to one of: {', '.join(sorted(_PROMPT_FILE))}",
-                }
-            )
-        else:
-            present = (root / expected).is_file()
-            checks.append(
-                {
-                    "id": "prompt_file_present",
-                    "passed": present,
-                    "severity": "error",
-                    "message": (
-                        f"backend '{backend}' requires {expected} — "
-                        + ("present" if present else "missing")
-                    ),
-                    "remediation": "" if present else f"create {expected} at the repo root",
-                }
-            )
-
-        # 2. skills-present: the vendored skill kit is on disk.
-        skills_dir = root / ".claude" / "skills"
-        has_skills = skills_dir.is_dir() and any(skills_dir.iterdir())
-        checks.append(
-            {
-                "id": "skills_present",
-                "passed": has_skills,
-                "severity": "warning",
-                "message": (
-                    ".claude/skills/ vendored" if has_skills else ".claude/skills/ missing or empty"
-                ),
-                "remediation": (
-                    "" if has_skills else "vendor the skill kit (see docs/skill-sources.md)"
-                ),
-            }
-        )
+        checks = _identity_checks(cfg)
 
     # 3. nodes_api_reachable: warn (never fail) when the API is unreachable —
     # this CLI is a thin client, not the API server, and identity verbs work

@@ -5,6 +5,29 @@ All notable changes to this project will be documented in this file.
 Format follows [Keep a Changelog](https://keepachangelog.com/). This project
 adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.8.0] - 2026-08-09
+
+### Added
+
+- Approval/human-task surface end to end: engine writes human_tasks and parks approval nodes leaselessly, API adds human-tasks list/get + POST decision (human-authority review commit), e2e walks the human-review branch (closes #3, deviation d1)
+- Runner-service protocol: async-only wire contract over the runner schemas (polling authoritative, resultless optional callbacks), ServiceIdentity registry form, worker park/sample/commit dispatch under fencing, reference nodes-runner service wrapping headspace with durable status and mandatory auth, runner conformance kit
+- claude-code and codex actor adapters (contract-v1 bridges, conformance-kit verified; incomplete-never-success)
+- Operations web surface: runs board (cards on state columns), cross-run jobs timeline with server-side time-range filter; GET /v1alpha1/runs time params + GET /v1alpha1/node-runs (keyset cursor)
+- Python CLI: human-tasks and node-runs verbs, run-list time filters; three-front parity harness
+- Production deployment profiles for the thor+orin pair: compose per machine, argv-only ssh deploys, secret install over stdin, scheduled pg_dump backups + restore runbook, runner-registry file (NODES_RUNNER_SERVICES_FILE) and code-runner identity envs
+- self-hosting-loop example workflow; deterministic Markdown rendering for ledger projections (?format=markdown); mechanical acceptance evaluation for process_exit/workspace_diff; load proof at 100/1000 concurrent runner operations
+
+### Changed
+
+- waiting_external deadline timers now fail attempts and route timed_out edges
+- examples/delivery-loop regains its approval node (d1 lifted); worker docs describe engine-side human parking
+- docs/acceptance.md: 42 met / 6 partial / 0 not met
+
+### Fixed
+
+- park-vs-callback race that left run.output null (bounded invocation-lookup retry)
+- runs/node_runs gained (namespace_id, updated_at) indexes for the time-windowed listings
+
 ## [0.7.0] - 2026-08-09
 
 ### Added

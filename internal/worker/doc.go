@@ -45,13 +45,36 @@
 // §13, and the difference between them is the contract they satisfy, not the
 // transport. internal/actors/neutrality_test.go enforces this by grep.
 //
-// # Kinds that are not wired yet
+// # Kinds this worker does not execute directly
 //
-// `code`, `approval`, and `wait` nodes need a runner boundary (§13.7), a
-// human task surface (§9.9), and durable wait semantics (§12.7) that later
-// tasks own. Each has a registered seam here — RunnerDispatcher,
-// HumanDispatcher, WaitDispatcher — and, when no seam is registered, the
-// attempt fails with a diagnostic that names the missing capability rather
-// than silently succeeding or silently hanging. A node kind that cannot be
-// executed is an honest failure, not an outcome.
+// `code` and `wait` nodes need machinery later tasks own — a runner boundary
+// (§13.7) and durable wait semantics (§12.7) respectively — and each has a
+// pending extension point in seams.go, RunnerDispatcher and WaitDispatcher.
+// When no seam is registered, the attempt fails with a diagnostic that names
+// the missing capability rather than silently succeeding or silently
+// hanging. A node kind that cannot be executed is an honest failure, not an
+// outcome.
+//
+// `approval` nodes are not in that category, even though a HumanDispatcher
+// seam exists in seams.go too. The human-task surface (§9.9) is not
+// unimplemented worker-side machinery waiting on a later task — task t6
+// implemented it, entirely inside the engine (internal/engine/humantask.go):
+// dispatching an approval node writes a human_tasks row and parks the node
+// run leaselessly, in the same transaction that creates it, and never calls
+// EnqueueWork. No work item is ever created for an approval node run, so
+// this worker's claim loop never sees one to dispatch — not "fails to
+// handle it", but structurally has nothing to claim. A human answers through
+// the human-tasks decision API, against that row, never through this
+// package.
+//
+// HumanDispatcher survives as a defensive guard, not a real seam: if the
+// invariant above were ever violated, the worker's ordinary "no seam
+// registered" handling refuses the item with a diagnosed technical failure
+// naming the missing "human-task" capability — recorded on the attempt,
+// never silently dropped, never treated as an implicit approval — exactly
+// like an unimplemented code or wait seam. See seams.go's HumanDispatcher
+// doc comment for why the interface is kept rather than removed, and
+// internal/worker/approval_invariant_test.go for the proof of both halves:
+// no work item is ever enqueued for approval, and one manufactured
+// out-of-band is refused rather than processed.
 package worker

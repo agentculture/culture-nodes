@@ -76,7 +76,11 @@ type Options struct {
 
 	// Runner, Human, and Waiter are the seams for code, approval, and wait
 	// nodes. A nil seam makes its kind a diagnosed failure rather than a
-	// silent success (see seams.go).
+	// silent success (see seams.go). Human is expected to stay nil in every
+	// real deployment: an approval node never produces a work item for this
+	// worker to dispatch in the first place (task t6's engine-side park,
+	// internal/engine/humantask.go), so there is nothing legitimate for a
+	// HumanDispatcher to do — see HumanDispatcher's doc comment in seams.go.
 	Runner RunnerDispatcher
 	Human  HumanDispatcher
 	Waiter WaitDispatcher

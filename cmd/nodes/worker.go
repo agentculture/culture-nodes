@@ -129,6 +129,10 @@ func cmdWorker(args []string, jsonMode bool) (int, error) {
 	if err != nil {
 		return 0, err
 	}
+	runnerSvc, cliErr := runnerServiceConfig()
+	if cliErr != nil {
+		return 0, cliErr
+	}
 
 	wk, err := worker.New(db, eng, worker.Options{
 		WorkerID:        os.Getenv(envWorkerIdentifier),
@@ -139,6 +143,7 @@ func cmdWorker(args []string, jsonMode bool) (int, error) {
 		Registry:        registry,
 		Signer:          signer,
 		CallbackBaseURL: callbackBase,
+		RunnerService:   runnerSvc,
 		OnError: func(err error) {
 			// Diagnostics go to stderr; the stdout stream stays clean for
 			// results, per the CLI's output contract.
@@ -345,11 +350,16 @@ func buildWorker(db *postgres.Store, namespace string) (*worker.Worker, *clifmt.
 		}
 		return nil, ce
 	}
+	runnerSvc, cliErr := runnerServiceConfig()
+	if cliErr != nil {
+		return nil, cliErr
+	}
 	wk, err := worker.New(db, eng, worker.Options{
 		NamespaceID:     namespace,
 		Registry:        registry,
 		Signer:          signer,
 		CallbackBaseURL: callbackBase,
+		RunnerService:   runnerSvc,
 		OnError: func(err error) {
 			clifmt.EmitDiagnostic(err.Error())
 		},

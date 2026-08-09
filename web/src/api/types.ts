@@ -89,6 +89,32 @@ export interface NodeRun {
   attempts?: Attempt[];
 }
 
+/**
+ * One row of `GET /v1alpha1/node-runs` (task t11) — the cross-run "jobs
+ * timeline" listing. The same `node_runs` row `NodeRun` above documents,
+ * but listed across every run in the namespace rather than nested under
+ * one: `run_id` is added because the parent run is no longer implied by a
+ * URL path, and `actor_id` is the most recent attempt's actor/runner
+ * reference (empty until the node run has been dispatched at least once).
+ */
+export interface NodeRunListItem {
+  id: string;
+  run_id: string;
+  node_id: string;
+  actor_id?: string;
+  state: NodeRunState;
+  outcome?: string;
+  created_at: string;
+  updated_at: string;
+  completed_at?: string;
+}
+
+export interface NodeRunList {
+  items: NodeRunListItem[];
+  /** Present only when a further page exists; pass back as `cursor`. */
+  next_cursor?: string;
+}
+
 export interface RunView {
   run: Run;
   tokens: Token[];

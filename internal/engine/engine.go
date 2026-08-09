@@ -222,13 +222,14 @@ func (e *Engine) CreateRun(ctx context.Context, cw *compiler.CompiledWorkflow, i
 			return err
 		}
 
+		entryNode := wf.Nodes[wf.Entry]
 		nodeRun := NodeRun{
 			ID:          e.newID(),
 			NamespaceID: run.NamespaceID,
 			RunID:       run.ID,
 			TokenID:     token.ID,
 			NodeID:      wf.Entry,
-			State:       NodeRunReady,
+			State:       dispatchState(entryNode.Kind),
 			VisitCount:  1,
 			CreatedAt:   now,
 			UpdatedAt:   now,
@@ -237,7 +238,10 @@ func (e *Engine) CreateRun(ctx context.Context, cw *compiler.CompiledWorkflow, i
 			return err
 		}
 
-		workID, err := tx.EnqueueWork(ctx, nodeRun.ID, time.Time{})
+		// The entry node has no producing edge — dispatchNode's
+		// edgeFromNode/edgeFromOutcome are empty, matching what a human task
+		// created here has to say about what put the run there.
+		workID, humanTaskID, err := e.dispatchNode(ctx, tx, entryNode, run, nodeRun, "", "", now)
 		if err != nil {
 			return err
 		}
@@ -249,6 +253,21 @@ func (e *Engine) CreateRun(ctx context.Context, cw *compiler.CompiledWorkflow, i
 			"workflow_key":        wf.Name,
 			"entry":               wf.Entry,
 		})); err != nil {
+			return err
+		}
+
+		// See complete.go's advance for why an approval node's entry emits
+		// human-task.created instead of node-run.ready: there is no
+		// claimable work item for a consumer of that event to find.
+		if humanTaskID != "" {
+			_, err = tx.AppendEvent(ctx, run.ID, event(TypeHumanTaskCreated, map[string]any{
+				"run_id":        run.ID,
+				"node_run_id":   nodeRun.ID,
+				"node_id":       nodeRun.NodeID,
+				"token_id":      token.ID,
+				"human_task_id": humanTaskID,
+				"visit":         nodeRun.VisitCount,
+			}))
 			return err
 		}
 		_, err = tx.AppendEvent(ctx, run.ID, event(TypeNodeRunReady, map[string]any{

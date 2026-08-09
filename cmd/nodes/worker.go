@@ -37,6 +37,20 @@ const (
 	envCallbackBaseURL  = "NODES_CALLBACK_BASE_URL"
 	envCallbackSecret   = "NODES_CALLBACK_TOKEN_SECRET"
 	envWorkerIdentifier = "NODES_WORKER_ID"
+	// envCodeRunnerName is the logical runner name stamped on every code
+	// operation this worker builds (worker.Options.CodeRunnerName). Any code
+	// dispatch — in-process adapter or runner service alike — refuses without
+	// one: an operation that names no runner is one no adapter will accept.
+	envCodeRunnerName = "NODES_CODE_RUNNER_NAME"
+	// envCodeRunnerRevision pins the runner build revision stamped on every
+	// code operation (worker.Options.CodeRunnerRevision); the runner service
+	// validates the operation document against it.
+	envCodeRunnerRevision = "NODES_CODE_RUNNER_REVISION"
+	// envCodeRunnerActorID names the REGISTERED actors-table row the runner's
+	// observed evidence is attributed to (worker.Options.CodeRunnerActorID).
+	// The actor-identity contract makes registration a deployment
+	// prerequisite: attempts.actor_id is a foreign key.
+	envCodeRunnerActorID = "NODES_CODE_RUNNER_ACTOR_ID"
 )
 
 func cmdWorker(args []string, jsonMode bool) (int, error) {
@@ -129,16 +143,24 @@ func cmdWorker(args []string, jsonMode bool) (int, error) {
 	if err != nil {
 		return 0, err
 	}
+	runnerSvc, cliErr := runnerServiceConfig()
+	if cliErr != nil {
+		return 0, cliErr
+	}
 
 	wk, err := worker.New(db, eng, worker.Options{
-		WorkerID:        os.Getenv(envWorkerIdentifier),
-		NamespaceID:     namespace,
-		ClaimBatch:      *batch,
-		LeaseDuration:   *leaseDuration,
-		PollInterval:    *pollInterval,
-		Registry:        registry,
-		Signer:          signer,
-		CallbackBaseURL: callbackBase,
+		WorkerID:           os.Getenv(envWorkerIdentifier),
+		NamespaceID:        namespace,
+		ClaimBatch:         *batch,
+		LeaseDuration:      *leaseDuration,
+		PollInterval:       *pollInterval,
+		Registry:           registry,
+		Signer:             signer,
+		CallbackBaseURL:    callbackBase,
+		RunnerService:      runnerSvc,
+		CodeRunnerName:     os.Getenv(envCodeRunnerName),
+		CodeRunnerRevision: os.Getenv(envCodeRunnerRevision),
+		CodeRunnerActorID:  os.Getenv(envCodeRunnerActorID),
 		OnError: func(err error) {
 			// Diagnostics go to stderr; the stdout stream stays clean for
 			// results, per the CLI's output contract.
@@ -345,11 +367,19 @@ func buildWorker(db *postgres.Store, namespace string) (*worker.Worker, *clifmt.
 		}
 		return nil, ce
 	}
+	runnerSvc, cliErr := runnerServiceConfig()
+	if cliErr != nil {
+		return nil, cliErr
+	}
 	wk, err := worker.New(db, eng, worker.Options{
-		NamespaceID:     namespace,
-		Registry:        registry,
-		Signer:          signer,
-		CallbackBaseURL: callbackBase,
+		NamespaceID:        namespace,
+		Registry:           registry,
+		Signer:             signer,
+		CallbackBaseURL:    callbackBase,
+		RunnerService:      runnerSvc,
+		CodeRunnerName:     os.Getenv(envCodeRunnerName),
+		CodeRunnerRevision: os.Getenv(envCodeRunnerRevision),
+		CodeRunnerActorID:  os.Getenv(envCodeRunnerActorID),
 		OnError: func(err error) {
 			clifmt.EmitDiagnostic(err.Error())
 		},

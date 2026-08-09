@@ -230,13 +230,19 @@ class ApiClient:
         *,
         query: dict[str, Any] | None = None,
         json_body: Any = None,
+        headers: dict[str, str] | None = None,
     ) -> ApiResponse:
         """Issue one request and return its status, raw bytes, and parsed JSON.
+
+        ``headers`` are sent verbatim (e.g. ``Authorization: Bearer ...`` for
+        ``POST /v1alpha1/human-tasks/{id}/decision`` — the one operation in
+        this API that is not authless, per spec decision c45). This client
+        never logs or otherwise surfaces header values.
 
         Raises :class:`CliError` for a non-2xx response (mapped from the
         API's own error body), a connection failure, or a timeout.
         """
-        req = self._build_request(method, path, query, json_body, None)
+        req = self._build_request(method, path, query, json_body, headers)
         try:
             with self._open(req, self.timeout) as resp:
                 raw = resp.read()

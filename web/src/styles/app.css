@@ -55,6 +55,24 @@
   letter-spacing: var(--ac-tracking-heading);
 }
 
+.app-header__nav {
+  display: inline-flex;
+  gap: 1rem;
+  font-size: var(--ac-type-ui);
+}
+
+.app-header__nav a {
+  color: var(--ink-soft);
+  text-decoration: none;
+}
+
+.app-header__nav a:hover,
+.app-header__nav a.is-active {
+  color: var(--accent);
+  text-decoration: underline;
+  text-underline-offset: 0.2em;
+}
+
 .app-header__tagline {
   margin: 0;
   color: var(--ink-soft);
@@ -148,7 +166,8 @@
 .run-state-chip,
 .node-card__badge,
 .node-card__visits,
-.stream-status {
+.stream-status,
+.run-card__badge {
   display: inline-flex;
   align-items: center;
   gap: 0.3rem;
@@ -171,7 +190,8 @@
   color: color-mix(in srgb, var(--nodes-ok) 55%, var(--ink));
 }
 
-.status-chip--active {
+.status-chip--active,
+.status-chip--running {
   border-color: color-mix(in srgb, var(--accent) 60%, var(--line));
   color: var(--accent);
 }
@@ -188,7 +208,8 @@
   color: color-mix(in srgb, var(--nodes-danger) 55%, var(--ink));
 }
 
-.status-chip--ready {
+.status-chip--ready,
+.status-chip--created {
   border-style: dashed;
 }
 
@@ -375,7 +396,8 @@
   text-align: left;
 }
 
-.node-card__rail {
+.node-card__rail,
+.run-card__rail {
   position: absolute;
   inset: 0 auto 0 0;
   width: 4px;
@@ -383,13 +405,15 @@
   border-radius: var(--nodes-card-radius) 0 0 var(--nodes-card-radius);
 }
 
-.node-card__head {
+.node-card__head,
+.run-card__head {
   display: flex;
   align-items: center;
   gap: 0.45rem;
 }
 
-.node-card__dot {
+.node-card__dot,
+.run-card__dot {
   width: 0.55rem;
   height: 0.55rem;
   border-radius: 999px;
@@ -408,7 +432,8 @@
   white-space: nowrap;
 }
 
-.node-card__meta {
+.node-card__meta,
+.run-card__meta {
   display: flex;
   gap: 0.5rem;
   font-size: var(--ac-type-micro);
@@ -422,7 +447,8 @@
   white-space: nowrap;
 }
 
-.node-card__status {
+.node-card__status,
+.run-card__status {
   display: flex;
   flex-wrap: wrap;
   gap: 0.35rem;
@@ -434,7 +460,8 @@
   color: color-mix(in srgb, var(--nodes-warn) 55%, var(--ink));
 }
 
-.node-card__badge--live {
+.node-card__badge--live,
+.run-card__badge--live {
   border-color: var(--accent-strong);
   color: var(--accent);
 }
@@ -508,12 +535,83 @@
   outline-offset: 2px;
 }
 
-/* The pulse is the *only* purely-animated signal on the canvas, and it is
-   never the only carrier of its meaning: the state chip says "running" and,
-   with motion reduced, NodeCard renders an explicit "attempt in flight"
-   badge in the pulse's place. */
+/* ---------- run card (runs board, PRD §8.6 Operations) ---------- */
+
+/* Same frame as .node-card: surface, --line, --nodes-card-radius, --shadow —
+   the board's card is a sibling of the canvas's, not a new aesthetic. It is
+   an <a> rather than a role="button" div because the whole card's job is
+   "go to this run's view", which an anchor already does on click *and* on
+   Enter, in the tab order, for free. */
+.run-card {
+  position: relative;
+  box-sizing: border-box;
+  display: block;
+  overflow: hidden;
+  padding: 0.65rem 0.8rem 0.65rem 0.95rem;
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: var(--nodes-card-radius);
+  box-shadow: var(--shadow);
+  color: var(--ink);
+  text-decoration: none;
+}
+
+.run-card:hover {
+  border-color: color-mix(in srgb, var(--accent) 40%, var(--line));
+}
+
+.run-card__id {
+  font-family: var(--font-mono);
+  font-size: var(--ac-type-ui);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.run-card__workflow {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.run-card__updated {
+  font-size: var(--ac-type-micro);
+  color: var(--ink-soft);
+}
+
+/* --- run-state overlays, the Run.state equivalent of the node-card ones --- */
+
+.run-card--created {
+  border-style: dashed;
+  border-color: color-mix(in srgb, var(--nodes-idle) 55%, var(--line));
+}
+
+.run-card--running {
+  border-color: var(--accent-strong);
+}
+
+.run-card--waiting {
+  border-color: color-mix(in srgb, var(--nodes-warn) 60%, var(--line));
+}
+
+.run-card--completed {
+  border-color: color-mix(in srgb, var(--nodes-ok) 55%, var(--line));
+}
+
+.run-card--failed,
+.run-card--cancelled {
+  border-color: color-mix(in srgb, var(--nodes-danger) 65%, var(--line));
+  border-width: 2px;
+}
+
+/* The pulse is the *only* purely-animated signal on the canvas or the board,
+   and it is never the only carrier of its meaning: the state chip already
+   says "running" and, with motion reduced, the card renders an explicit
+   "updating live" badge in the pulse's place — same rule as NodeCard's
+   in-flight attempt, same keyframe, reused rather than redeclared. */
 @media (prefers-reduced-motion: no-preference) {
-  .node-card.is-pulse {
+  .node-card.is-pulse,
+  .run-card.is-pulse {
     animation: node-attempt-pulse 1.8s var(--ease-gentle) infinite alternate;
   }
 }
@@ -723,4 +821,149 @@ button.timeline__node {
   border-radius: 0.6rem;
   background: var(--surface);
   color: var(--ink);
+}
+
+/* ---------- runs board ---------- */
+
+/* Columns scroll sideways in their own box on a narrow viewport rather than
+   the page itself gaining horizontal scroll — the same "wide content stays
+   in its own overflow-x box" rule .detail-panel__scroll follows above. */
+.runs-board__columns {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--nodes-gap);
+  overflow-x: auto;
+  padding-bottom: 0.5rem;
+}
+
+.runs-board__column {
+  flex: 1 1 15rem;
+  min-width: 15rem;
+  background: color-mix(in srgb, var(--surface) 55%, transparent);
+  border: 1px solid var(--line-soft);
+  border-radius: var(--radius);
+  padding: 0.85rem;
+}
+
+.runs-board__column-head {
+  display: flex;
+  align-items: baseline;
+  gap: 0.5rem;
+  margin: 0 0 0.75rem;
+}
+
+.runs-board__count {
+  font-family: var(--font-mono);
+  font-size: var(--ac-type-meta);
+  font-weight: 400;
+  color: var(--ink-soft);
+}
+
+.runs-board__cards {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 0.6rem;
+}
+
+.runs-board__column-empty {
+  font-size: var(--ac-type-meta);
+  margin: 0;
+}
+
+/* ---------- jobs timeline (task t15) ---------- */
+
+.time-range-filter {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.6rem 1rem;
+  margin: 1.1rem 0 1.5rem;
+}
+
+/* Same segmented-button frame as .view-toggle (RunView's graph/timeline
+   switch) — a preset picker is the same shape of control, not a new one. */
+.time-range-filter__presets {
+  display: inline-flex;
+  gap: 0;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  overflow: hidden;
+  background: var(--surface);
+}
+
+.time-range-filter__presets button {
+  font: inherit;
+  font-size: var(--ac-type-meta);
+  padding: 0.35rem 1rem;
+  border: 0;
+  background: transparent;
+  color: var(--ink-soft);
+  cursor: pointer;
+}
+
+.time-range-filter__presets button[aria-pressed="true"] {
+  background: var(--accent-strong);
+  color: var(--on-accent);
+}
+
+.time-range-filter__clear {
+  font-size: var(--ac-type-meta);
+}
+
+.time-range-filter__custom {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.5rem;
+  font-size: var(--ac-type-meta);
+  width: 100%;
+}
+
+.time-range-filter__custom label {
+  color: var(--ink-soft);
+}
+
+.time-range-filter__custom input {
+  font: inherit;
+  font-size: var(--ac-type-meta);
+  padding: 0.3rem 0.5rem;
+  border: 1px solid var(--line);
+  border-radius: 0.5rem;
+  background: var(--surface);
+  color: var(--ink);
+}
+
+.time-range-filter__custom button {
+  font: inherit;
+  font-size: var(--ac-type-meta);
+  padding: 0.3rem 0.9rem;
+  border: 1px solid var(--accent-strong);
+  border-radius: 999px;
+  background: var(--accent-strong);
+  color: var(--on-accent);
+  cursor: pointer;
+}
+
+.jobs-timeline__load-more {
+  font: inherit;
+  font-size: var(--ac-type-ui);
+  margin-top: 1rem;
+  padding: 0.4rem 1.1rem;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  background: var(--surface);
+  color: var(--ink);
+  cursor: pointer;
+}
+
+.jobs-timeline__load-more:hover {
+  border-color: color-mix(in srgb, var(--accent) 40%, var(--line));
+}
+
+.jobs-timeline__load-more:disabled {
+  opacity: 0.6;
+  cursor: default;
 }

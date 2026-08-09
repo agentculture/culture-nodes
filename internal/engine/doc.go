@@ -54,8 +54,14 @@
 //
 // The engine does not build actor invocation payloads: it enqueues work
 // referencing a node run, and resolving a node's input bindings into a
-// dispatch is the actor-protocol task's job. It does not create human tasks
-// or timers, so approval and wait nodes are dispatched as ordinary work in
-// this slice. Asynchronous actors (§12.6's waiting_external) have a node-run
-// state reserved and no transition into it yet.
+// dispatch is the actor-protocol task's job. It does not create timers, so a
+// wait node is still dispatched as ordinary work in this slice — §12.7's
+// durable wait semantics are a later task. An approval node is the
+// exception: its dispatch writes a human_tasks row instead of enqueuing
+// work, and no attempt, actor, or worker is involved in that pause at all
+// (§9.9; see humantask.go). Asynchronous actors (§12.6's waiting_external)
+// have a node-run state reserved and no transition into it yet — that
+// pause, unlike an approval's, starts from an in-flight attempt a worker
+// already claimed, so it belongs to the worker/actor-callback path rather
+// than to node-run dispatch.
 package engine

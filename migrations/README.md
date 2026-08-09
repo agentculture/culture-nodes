@@ -26,6 +26,23 @@ Numbered SQL migrations for the authoritative PostgreSQL store (prd-spec
   field `0003` had no column for.
 - `0008_run_output.sql` — expand-only: adds `runs.output`, the workflow
   result a completed run produces, which `0002` had no column for.
+- `0009_actor_invocations.sql` — `actor_invocations` (durable async
+  invocation tracking) plus the `(state, updated_at)` partial index over
+  the `waiting_external` hot set.
+- `0010_run_updated_at_indexes.sql` — expand-only: adds
+  `runs_namespace_updated_at_idx (namespace_id, updated_at)` and
+  `node_runs_namespace_updated_at_idx (namespace_id, updated_at)`, serving
+  the `updated_since`/`updated_until` run listing and the cross-run
+  node-runs listing (tasks t4/t11/t15).
+- `0011_runner_invocations.sql` — expand-only: adds `runner_invocations`
+  (durable tracking for runner-protocol operations parked as
+  `waiting_external`, task t9) plus the `(namespace_id, next_poll_at)`
+  partial index the status sampler claims due operations on and the
+  `deadline_timer_id` reverse-lookup index the scheduler's deadline effect
+  uses. It is `0009`'s `actor_invocations` for the outbound-sampling
+  boundary, and is deliberately distinct from `0002`'s `runner_operations`:
+  the two are opposite halves of one life cycle — in-flight tracking while
+  no outcome is known, versus the recorded operation and result once one is.
 
 ## Policy
 

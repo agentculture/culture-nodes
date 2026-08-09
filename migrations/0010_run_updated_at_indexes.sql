@@ -1,0 +1,42 @@
+-- Listing/filtering indexes for runs.updated_at and node_runs.updated_at
+-- (task t4, self-hosted-phase-2-cycle): the operations views land in t11
+-- (GET /v1alpha1/runs `updated_since`/`updated_until` + explicit
+-- `updated_at` sort) and t15 (a cross-run node_runs "jobs timeline"
+-- listing), both filtering a time window on `updated_at` and sorting
+-- newest-first. Expand-contract policy (docs/adr/0002-migration-policy.md):
+-- this migration only adds indexes. Nothing here is ever dropped or
+-- renamed in place, and because it adds no column/table/constraint, a
+-- binary that predates this migration is unaffected -- it simply never
+-- looks the new indexes up by name, and the planner is free to start using
+-- them for existing queries without any application-code change.
+--
+-- Index shape, and why: internal/api/queries.go's listRuns (~line 138) and
+-- runNodeRuns (~line 208) both already filter with `namespace_id = $1`
+-- first -- namespace_id is the tenant boundary every table in this schema
+-- carries from 0001 onward, and every existing index on both tables
+-- (runs_namespace_id_idx, runs_namespace_status_idx,
+-- node_runs_namespace_id_idx, node_runs_run_status_idx) leads with either
+-- namespace_id or run_id for the same reason. The t11/t15 time-window
+-- queries add `updated_at >= $n AND updated_at <= $n` plus
+-- `ORDER BY updated_at DESC` (explicit sort, replacing today's
+-- `created_at`) on top of that namespace scope, so `(namespace_id,
+-- updated_at)` is the shape that serves the equality prefix, the range
+-- filter, and the sort in one index -- Postgres can walk the index in
+-- `updated_at` order within the namespace and stop at LIMIT without a
+-- separate sort step.
+--
+-- This is deliberately NOT `(status, updated_at)` the way 0009's
+-- actor_invocations_waiting_idx is: that index is a partial index over one
+-- hot status ('waiting_external') because "what is currently blocked" is a
+-- query over a narrow, known-small slice of the table. runs and node_runs
+-- have no equivalent narrow hot set here -- the board (t14) and jobs
+-- timeline (t15) views read every status, and listRuns' status filter is
+-- optional (`$2 = '' OR r.status = $2`), so a `status` column leading or
+-- following in the index would only pay off on the filtered call and would
+-- not give the unfiltered call (the common case for a time-window listing)
+-- a usable sort order. `status` stays low-cardinality (five values) and
+-- unindexed-for-this-purpose; the existing `(namespace_id, status)` /
+-- `(run_id, status)` indexes already serve status-scoped lookups.
+CREATE INDEX runs_namespace_updated_at_idx ON runs (namespace_id, updated_at);
+
+CREATE INDEX node_runs_namespace_updated_at_idx ON node_runs (namespace_id, updated_at);

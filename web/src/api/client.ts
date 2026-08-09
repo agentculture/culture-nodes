@@ -1,7 +1,9 @@
 import type {
   LedgerRecords,
+  NodeRunList,
   Projection,
   RunList,
+  RunState,
   RunView,
   WorkflowVersion,
 } from "./types";
@@ -70,11 +72,64 @@ async function getJson<T>(path: string, signal?: AbortSignal): Promise<T> {
   }
 }
 
-export const listRuns = (signal?: AbortSignal) =>
-  getJson<RunList>("/runs", signal);
+/** GET /v1alpha1/runs query parameters (task t11). */
+export interface ListRunsParams {
+  state?: RunState;
+  /** RFC3339. Only runs updated at or after this instant. */
+  updated_since?: string;
+  /** RFC3339. Only runs updated at or before this instant. */
+  updated_until?: string;
+  /** Defaults to `created_at`, or `updated_at` once either bound is set. */
+  sort?: "created_at" | "updated_at";
+  limit?: number;
+}
+
+function toQueryString(
+  params: Record<string, string | number | undefined> | undefined,
+): string {
+  if (!params) return "";
+  const search = new URLSearchParams();
+  for (const [key, value] of Object.entries(params)) {
+    if (value === undefined) continue;
+    search.set(key, String(value));
+  }
+  const query = search.toString();
+  return query ? `?${query}` : "";
+}
+
+export const listRuns = (signal?: AbortSignal, params?: ListRunsParams) =>
+  getJson<RunList>(
+    `/runs${toQueryString(params as Record<string, string | number | undefined> | undefined)}`,
+    signal,
+  );
 
 export const getRun = (id: string, signal?: AbortSignal) =>
   getJson<RunView>(`/runs/${encodeURIComponent(id)}`, signal);
+
+/**
+ * GET /v1alpha1/node-runs query parameters (task t11): the cross-run "jobs
+ * timeline" listing, keyset-paginated by `cursor`/`next_cursor` rather than
+ * an offset (see openapi.yaml's listNodeRuns for why — `updated_at` moves
+ * under an OFFSET page as other rows in the namespace transition).
+ */
+export interface ListNodeRunsParams {
+  /** RFC3339. Only node runs updated at or after this instant. */
+  updated_since?: string;
+  /** RFC3339. Only node runs updated at or before this instant. */
+  updated_until?: string;
+  /** An opaque `next_cursor` from a previous page; omit for the first page. */
+  cursor?: string;
+  limit?: number;
+}
+
+export const listNodeRuns = (
+  signal?: AbortSignal,
+  params?: ListNodeRunsParams,
+) =>
+  getJson<NodeRunList>(
+    `/node-runs${toQueryString(params as Record<string, string | number | undefined> | undefined)}`,
+    signal,
+  );
 
 export const getWorkflow = (digest: string, signal?: AbortSignal) =>
   getJson<WorkflowVersion>(

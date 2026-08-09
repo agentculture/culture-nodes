@@ -8,14 +8,24 @@ import (
 	"github.com/agentculture/culture-nodes/internal/engine"
 )
 
-// The dispatch seams for node kinds this slice does not execute yet.
+// The dispatch seams for node kinds this worker does not execute directly.
 //
-// Three of PRD §9.2's MVP kinds need machinery that belongs to other tasks: a
-// `code` node needs the headspace-cli runner boundary (§13.7), an `approval`
-// node needs the human-task surface (§9.9), and a `wait` node needs durable
-// wait semantics on top of §12.7's timers. Each is declared here as an
-// interface the worker will use if one is registered, and each is a hard,
-// diagnosed failure when none is.
+// `code` and `wait` are genuinely pending: a `code` node needs the
+// headspace-cli runner boundary (§13.7) and a `wait` node needs durable wait
+// semantics on top of §12.7's timers, and RunnerDispatcher / WaitDispatcher
+// are the extension points those later tasks fill in. Each is declared here
+// as an interface the worker will use if one is registered, and each is a
+// hard, diagnosed failure when none is.
+//
+// `approval` is different, and HumanDispatcher's own doc comment below says
+// why: task t6 gave approval nodes a different mechanism entirely (an
+// engine-side park, PRD §9.9), one that never produces a work item for this
+// package to dispatch in the first place. HumanDispatcher is not a pending
+// extension point — it is a defensive guard against that invariant ever
+// breaking. See internal/worker/doc.go's "Kinds this worker does not execute
+// directly" section for the full picture, and
+// .devague/deliveries/culture-nodes-app-design.json's deviation d1 for how
+// this task's scope changed once t6 landed.
 //
 // Why interfaces now rather than when the implementations land: the branch in
 // the dispatcher has to exist either way, and a branch that says "not yet"
@@ -30,7 +40,9 @@ import (
 // some placeholder outcome: a workflow whose approval node auto-approved
 // because nobody had implemented approval yet would be the worst possible
 // failure mode for a system whose whole premise is that claims must be
-// earned.
+// earned. For `approval` specifically this is not a temporary state to
+// outgrow — it is the permanent, correct behaviour for a work item that
+// should never exist (see internal/worker/approval_invariant_test.go).
 
 // DispatchContext is what every seam receives: the identity of the attempt
 // being dispatched and the payload its bindings resolved to.
@@ -90,13 +102,51 @@ type RunnerDispatcher interface {
 	DispatchCode(ctx context.Context, dc DispatchContext, runnerRef string, operation json.RawMessage) (SeamResult, error)
 }
 
-// HumanDispatcher creates the human task an `approval` node needs (§9.9).
+// HumanDispatcher is a vestigial seam kept only as a defensive guard, not an
+// extension point anyone should implement.
 //
-// An approval is almost always asynchronous — a human is not going to answer
-// inside a lease — so an implementation is expected to return Async with a
-// task reference and a deadline.
+// This interface was written for a design the codebase no longer has: an
+// `approval` node's human task created from inside a worker dispatch, the
+// way a `code` or `wait` node's eventual seam still will be. Task t6 shipped
+// something categorically different (PRD §9.9, internal/engine/humantask.go)
+// — dispatching an approval node inserts a human_tasks row directly, in the
+// same transaction that creates the node run, and never calls EnqueueWork.
+// No work item is ever created for an approval node run, in any code path,
+// so the worker's claim loop can never observe one to hand to this
+// interface. A human answers through the human-tasks decision API against
+// that row, not through anything in this package.
+//
+// HumanDispatcher therefore has no legitimate implementation to register.
+// Options.Human is expected to stay nil in every real deployment, and the
+// worker's existing "no seam registered" path (dispatchSeam's errNoSeam
+// branch, in dispatch.go) is what makes that safe: a `kind: approval` work
+// item that reaches the worker despite the invariant above — a bug, a bad
+// migration, a future regression — is refused with a diagnosed technical
+// failure naming the missing "human-task" capability, exactly like an
+// unimplemented `code` or `wait` seam, rather than silently dropped or
+// treated as an implicit approval. internal/worker/approval_invariant_test.go
+// proves both halves of this: that dispatching an approval node never
+// produces a work item, and that one manufactured out-of-band is refused,
+// not processed. See seams.go's package doc and doc.go for how this fits
+// with RunnerDispatcher and WaitDispatcher, which remain real, pending
+// extension points.
+//
+// The interface and its plumbing in dispatch.go/worker.go are left in place
+// rather than deleted: removing them would touch dispatch.go and worker.go's
+// Options/dispatch switch, which this task (t8, deviation d1) scopes away
+// from a sibling task's concurrent changes to those same files. Kept, the
+// seam is inert and honestly documented; a caller who registers one anyway
+// is opting out of the engine-side design on purpose, and DispatchApproval
+// would need to know that to behave correctly — which is precisely why
+// nothing in this codebase does.
 type HumanDispatcher interface {
-	// DispatchApproval creates a human task for the node.
+	// DispatchApproval would create a human task for the node. No production
+	// path in this codebase ever calls it, because no approval work item
+	// ever exists to trigger the call — see the interface doc above. The one
+	// place it IS exercised, worker_test.go's TestRegisteredSeamIsUsed, does
+	// so against a work item it manufactures for the purpose, to prove the
+	// mechanism still functions as a mechanism — not to exercise anything a
+	// real deployment does.
 	DispatchApproval(ctx context.Context, dc DispatchContext, approverRef string, deadline time.Duration) (SeamResult, error)
 }
 

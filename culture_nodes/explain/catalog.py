@@ -33,13 +33,17 @@ response.
 
 - `culture-nodes workflow validate|publish|list|get`
 - `culture-nodes run create|list|get|cancel|events`
+- `culture-nodes node-runs list`
 - `culture-nodes ledger records|projection`
 - `culture-nodes review create|commit`
+- `culture-nodes human-tasks list|get|decide`
 
 ## API configuration
 
 Every product verb resolves the API base URL as: `--api-url` flag, then the
 `NODES_API_URL` environment variable, then `http://127.0.0.1:8080`.
+`human-tasks decide` additionally resolves a bearer token: `--token`, then
+the `NODES_HUMAN_DECISION_TOKEN` environment variable — never logged.
 
 ## Exit-code policy
 
@@ -54,8 +58,10 @@ Every product verb resolves the API base URL as: `--api-url` flag, then the
 - `culture-nodes explain doctor`
 - `culture-nodes explain workflow`
 - `culture-nodes explain run`
+- `culture-nodes explain node-runs`
 - `culture-nodes explain ledger`
 - `culture-nodes explain review`
+- `culture-nodes explain human-tasks`
 """
 
 _WHOAMI = """\
@@ -99,8 +105,9 @@ _OVERVIEW = """\
 # culture-nodes overview
 
 Read-only descriptive snapshot of the agent: identity (from `culture.yaml`), the
-verb surface, and the sibling-pattern artifacts the template carries. Accepts an
-ignored `target` so a stray path never hard-fails.
+verb surface, and the artifacts this repo carries (mesh identity files, the
+vendored skill kit, the API this package fronts). Accepts an ignored `target`
+so a stray path never hard-fails.
 
 ## Usage
 
@@ -182,10 +189,17 @@ API.
 ## Usage
 
     culture-nodes run create --workflow <digest> [--input <file>|--input -]
-    culture-nodes run list [--state STATE] [--limit N]
+    culture-nodes run list [--state STATE] [--updated-since RFC3339] \\
+        [--updated-until RFC3339] [--sort created_at|updated_at] [--limit N]
     culture-nodes run get <id>
     culture-nodes run cancel <id>
     culture-nodes run events <id> [--follow]
+
+## list
+
+Newest first by `--sort` (default `created_at`). `--updated-since` /
+`--updated-until` filter on `updated_at`; when either is set and `--sort` is
+omitted, the API defaults `sort` to `updated_at` instead of `created_at`.
 
 ## events
 
@@ -217,6 +231,25 @@ here — the PRD §10.9 standard projections are computed server-side.
 `evidence_for_subject`.
 """
 
+_NODE_RUNS = """\
+# culture-nodes node-runs
+
+Thin REST client over the cross-run node-runs listing
+(`api/openapi/openapi.yaml`, `node-runs` tag) — the "jobs timeline" (task
+t11): every node run in the namespace, newest first by `updated_at`, unlike
+the `node_runs` nested under one run's Run-view payload
+(`culture-nodes run get`). No engine logic lives here.
+
+## Usage
+
+    culture-nodes node-runs list [--updated-since RFC3339] [--updated-until RFC3339] \\
+        [--cursor CURSOR] [--limit N]
+
+Pagination is a keyset cursor, not an offset: pass a response's
+`next_cursor` back as `--cursor` to fetch the next page. Its absence in the
+response means there is no further page.
+"""
+
 _REVIEW = """\
 # culture-nodes review
 
@@ -234,6 +267,37 @@ server-side, all-or-nothing, under the PRD §10.8 review protocol.
 review was created, a target record was superseded, or the review was
 already committed — the API's own remediation names the fix (re-read the
 current ledger version and submit a new review request).
+"""
+
+_HUMAN_TASKS = """\
+# culture-nodes human-tasks
+
+Thin REST client over the human tasks API (`api/openapi/openapi.yaml`,
+`human-tasks` tag): list, get, decide. No approval-node logic lives here —
+outcome validation against `allowed_outcomes`, ledger-version guarding, and
+edge routing all happen server-side (PRD §9.9).
+
+## Usage
+
+    culture-nodes human-tasks list [--status pending|decided] [--limit N]
+    culture-nodes human-tasks get <id>
+    culture-nodes human-tasks decide <id> --outcome OUTCOME \\
+        --decider-actor-id ACTOR --expected-ledger-version N \\
+        [--note TEXT] [--record-ids id1,id2] [--token TOKEN]
+
+## decide
+
+Unlike every other verb in this CLI, `decide` requires a bearer token: the
+`NODES_HUMAN_DECISION_TOKEN` environment variable, or `--token`. Neither is
+ever printed, logged, or included in `--json` output. A missing token is a
+structured `error:`/`hint:` failure (exit `1`) naming the env var, never a
+token value. The API itself refuses an unauthenticated or wrongly
+authenticated decision with HTTP 401 before the body is even read; a second
+decision on an already-decided task is refused with 409.
+
+`--note` fills the decision's `response` payload as `{"note": TEXT}`.
+`--record-ids` names other ledger records the decider is confirming
+alongside this decision (ordinarily empty).
 """
 
 
@@ -259,10 +323,16 @@ ENTRIES: dict[tuple[str, ...], str] = {
     ("run", "get"): _RUN,
     ("run", "cancel"): _RUN,
     ("run", "events"): _RUN,
+    ("node-runs",): _NODE_RUNS,
+    ("node-runs", "list"): _NODE_RUNS,
     ("ledger",): _LEDGER,
     ("ledger", "records"): _LEDGER,
     ("ledger", "projection"): _LEDGER,
     ("review",): _REVIEW,
     ("review", "create"): _REVIEW,
     ("review", "commit"): _REVIEW,
+    ("human-tasks",): _HUMAN_TASKS,
+    ("human-tasks", "list"): _HUMAN_TASKS,
+    ("human-tasks", "get"): _HUMAN_TASKS,
+    ("human-tasks", "decide"): _HUMAN_TASKS,
 }

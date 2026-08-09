@@ -65,8 +65,10 @@ def _build_parser() -> argparse.ArgumentParser:
     from culture_nodes.cli._commands import cli as _cli_group
     from culture_nodes.cli._commands import doctor as _doctor_cmd
     from culture_nodes.cli._commands import explain as _explain_cmd
+    from culture_nodes.cli._commands import human_tasks as _human_tasks_group
     from culture_nodes.cli._commands import learn as _learn_cmd
     from culture_nodes.cli._commands import ledger as _ledger_group
+    from culture_nodes.cli._commands import node_runs as _node_runs_group
     from culture_nodes.cli._commands import overview as _overview_cmd
     from culture_nodes.cli._commands import review as _review_group
     from culture_nodes.cli._commands import run as _run_group
@@ -75,7 +77,7 @@ def _build_parser() -> argparse.ArgumentParser:
 
     parser = _CliArgumentParser(
         prog="culture-nodes",
-        description="culture-nodes — thin CLI front for the Culture Nodes control-plane API.",
+        description="culture-nodes — Python front + mesh agent for the Culture Nodes orchestrator.",
     )
     parser.add_argument(
         "--version",
@@ -98,8 +100,10 @@ def _build_parser() -> argparse.ArgumentParser:
     # (spec decision c28).
     _workflow_group.register(sub)
     _run_group.register(sub)
+    _node_runs_group.register(sub)
     _ledger_group.register(sub)
     _review_group.register(sub)
+    _human_tasks_group.register(sub)
     # Register your own noun groups here:
     #   from culture_nodes.cli._commands import my_noun as _my_noun_group
     #   _my_noun_group.register(sub)

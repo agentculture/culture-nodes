@@ -535,7 +535,7 @@ func (c *completion) advance(ctx context.Context, plan transitionPlan, transitio
 		RunID:       c.run.ID,
 		TokenID:     token.ID,
 		NodeID:      plan.NextNodeID,
-		State:       NodeRunReady,
+		State:       dispatchState(next.Kind),
 		VisitCount:  visits[plan.NextNodeID] + 1,
 		CreatedAt:   c.now,
 		UpdatedAt:   c.now,
@@ -577,19 +577,37 @@ func (c *completion) advance(ctx context.Context, plan transitionPlan, transitio
 		return c.completeRun(ctx, nodeRun.NodeID, transitions+1)
 	}
 
-	workID, err := c.tx.EnqueueWork(ctx, nodeRun.ID, time.Time{})
+	workID, humanTaskID, err := c.engine.dispatchNode(ctx, c.tx, next, c.run, nodeRun, plan.Edge.FromNode, plan.Edge.FromOutcome, c.now)
 	if err != nil {
 		return err
 	}
-	if err := c.emit(ctx, TypeNodeRunReady, map[string]any{
-		"run_id":      c.run.ID,
-		"node_run_id": nodeRun.ID,
-		"node_id":     nodeRun.NodeID,
-		"token_id":    token.ID,
-		"work_id":     workID,
-		"visit":       nodeRun.VisitCount,
-	}); err != nil {
-		return err
+
+	// An approval node pauses on a human task (PRD §9.9) rather than ready
+	// work: node-run.ready would claim there is claimable work, and there
+	// is none. See humantask.go's package doc for the seam this leaves.
+	if humanTaskID != "" {
+		c.result.NextHumanTaskID = humanTaskID
+		if err := c.emit(ctx, TypeHumanTaskCreated, map[string]any{
+			"run_id":        c.run.ID,
+			"node_run_id":   nodeRun.ID,
+			"node_id":       nodeRun.NodeID,
+			"token_id":      token.ID,
+			"human_task_id": humanTaskID,
+			"visit":         nodeRun.VisitCount,
+		}); err != nil {
+			return err
+		}
+	} else {
+		if err := c.emit(ctx, TypeNodeRunReady, map[string]any{
+			"run_id":      c.run.ID,
+			"node_run_id": nodeRun.ID,
+			"node_id":     nodeRun.NodeID,
+			"token_id":    token.ID,
+			"work_id":     workID,
+			"visit":       nodeRun.VisitCount,
+		}); err != nil {
+			return err
+		}
 	}
 
 	c.result.RunState = RunRunning

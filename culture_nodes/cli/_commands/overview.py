@@ -1,7 +1,8 @@
 """``culture-nodes overview`` — read-only descriptive snapshot of the agent.
 
 Describes the agent to an agent reader: identity (from culture.yaml), the verb
-surface, and the sibling-pattern artifacts this template carries. The shared
+surface, and the artifacts this repo carries (mesh identity files, the
+vendored skill kit, the control-plane API this package fronts). The shared
 section/render helpers here are reused by the ``cli`` noun's ``overview`` (see
 :mod:`culture_nodes.cli._commands.cli`).
 
@@ -52,7 +53,7 @@ def agent_sections() -> list[dict[str, object]]:
             ],
         },
         {"title": "Verbs", "items": list(_VERBS)},
-        {"title": "Sibling-pattern artifacts", "items": list(_ARTIFACTS)},
+        {"title": "Repo artifacts", "items": list(_ARTIFACTS)},
     ]
 
 

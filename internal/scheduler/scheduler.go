@@ -3,6 +3,7 @@ package scheduler
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"sync"
 	"time"
@@ -10,6 +11,8 @@ import (
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 
+	"github.com/agentculture/culture-nodes/internal/actors"
+	"github.com/agentculture/culture-nodes/internal/engine"
 	idstore "github.com/agentculture/culture-nodes/internal/store"
 	"github.com/agentculture/culture-nodes/internal/store/postgres"
 )
@@ -127,6 +130,13 @@ type Scheduler struct {
 	status   Status
 	lastTick time.Time
 	lastErr  string
+
+	// engineMu and engines cache a §12.5 engine per namespace, so firing
+	// deadline timers across many namespaces does not recompile the
+	// contracts.Validator's embedded schemas on every single timer -- see
+	// engineFor.
+	engineMu sync.Mutex
+	engines  map[string]*engine.Engine
 }
 
 // New returns a Scheduler backed by db. It does nothing until Run is
@@ -464,12 +474,21 @@ func (sch *Scheduler) applyEffect(ctx context.Context, tx pgx.Tx, t postgres.Tim
 		return topicTimerFired, nil
 
 	case postgres.TimerKindDeadline:
-		// The effect *is* the outbox event: prd-spec §12.7 names this
-		// explicitly ("kind deadline -> insert a deadline-expired outbox
-		// event"). There is no state to mutate here -- reacting to a
-		// deadline (e.g. failing the waiting_external attempt, prd-spec
-		// §12.6) is the engine's job downstream of this event, not the
-		// scheduler's.
+		// The effect is prd-spec §12.6's own timeout: fail the
+		// waiting_external attempt this deadline belongs to, through the
+		// engine's own §12.5 completion transaction -- see
+		// failWaitingExternal. That happens through the store's ambient
+		// pool, deliberately NOT through tx, for the identical reason
+		// TimerKindLeaseRecovery's effect is not (see that case, below):
+		// CompleteAttempt opens its own transaction, and this package does
+		// not get to nest one inside tx. The tradeoff is the same one that
+		// case accepts too -- if tx later rolls back (a stale MarkFiredTx
+		// guard, an injected test crash), failWaitingExternal's own commit
+		// stays landed and simply is not retried, because it is guarded to
+		// be a safe no-op on a retry: see its doc comment.
+		if err := sch.failWaitingExternal(ctx, t); err != nil {
+			return "", fmt.Errorf("deadline timer %s: fail waiting_external attempt: %w", t.ID, err)
+		}
 		return topicDeadlineExpired, nil
 
 	case postgres.TimerKindLeaseRecovery:
@@ -489,6 +508,182 @@ func (sch *Scheduler) applyEffect(ctx context.Context, tx pgx.Tx, t postgres.Tim
 	default:
 		return "", fmt.Errorf("timer %s: unknown timer kind %q", t.ID, t.Kind)
 	}
+}
+
+// failWaitingExternal is TimerKindDeadline's effect (prd-spec §12.6): if an
+// asynchronous invocation is still waiting_external when its deadline timer
+// fires, fail its attempt through the engine's own §12.5 completion
+// transaction, the same as a late `failed` callback would.
+//
+// The guard is the whole safety argument, both for this task's "a completed
+// attempt never receives a late deadline failure" requirement and for this
+// method's own safe-to-retry contract: InvocationByDeadlineTimer's state is
+// read fresh on every call, so a timer that gets here again after a partial
+// failure on an earlier attempt (see below), or after some other path
+// already closed the invocation, or after there never was an invocation to
+// begin with (a hand-built timer in a test), all resolve the same way --
+// nothing left to do, return nil, no error.
+//
+// This mirrors internal/actors.commitTerminal's own two-step shape (resume
+// the parked work item, then commit through the engine) and inherits the
+// same accepted edge case that comment lists only implicitly: if
+// ResumeWaitingWork commits but the subsequent CompleteAttempt fails for a
+// genuine infrastructure reason (not ErrStaleClaim), the work item is left
+// leased under the fencing tuple ResumeWaitingWork set. A retry of this
+// method then finds ResumeWaitingWork itself refusing (the item is no
+// longer 'waiting') and returns cleanly rather than looping forever -- the
+// resumed lease's own expiry and this package's standing ReclaimExpired
+// sweep (see tick) are what eventually recover it, exactly as they would
+// for any other worker that went dark mid-dispatch.
+func (sch *Scheduler) failWaitingExternal(ctx context.Context, t postgres.Timer) error {
+	inv, closeWait, ok, err := sch.waitForDeadlineTimer(ctx, t)
+	if err != nil {
+		return err
+	}
+	if !ok || inv.State != actors.InvocationWaiting {
+		return nil
+	}
+
+	cs, err := postgres.NewCallbackStore(sch.db, t.NamespaceID)
+	if err != nil {
+		return fmt.Errorf("build callback store for namespace %s: %w", t.NamespaceID, err)
+	}
+
+	if err := cs.ResumeWaitingWork(ctx, inv, actors.DefaultResumeLease); err != nil {
+		if errors.Is(err, engine.ErrStaleClaim) {
+			// Something else -- a racing callback, an operator
+			// cancellation, a worker's own lease reclaim -- already moved
+			// this attempt on. Nothing to fail.
+			return nil
+		}
+		return fmt.Errorf("resume parked work for attempt %s: %w", inv.AttemptID, err)
+	}
+
+	eng, err := sch.engineFor(t.NamespaceID)
+	if err != nil {
+		return fmt.Errorf("build engine for namespace %s: %w", t.NamespaceID, err)
+	}
+
+	if _, err := eng.CompleteAttempt(ctx, engine.CompletionRequest{
+		WorkID:       inv.WorkID,
+		WorkerID:     inv.WorkerID,
+		FencingToken: inv.FencingToken,
+		Attempt:      inv.Attempt,
+		TechStatus:   engine.StatusTimedOut,
+		Output:       deadlineTimeoutOutput(t),
+	}); err != nil {
+		if errors.Is(err, engine.ErrStaleClaim) || errors.Is(err, engine.ErrTerminalNodeRun) || errors.Is(err, engine.ErrTerminalRun) {
+			// The engine's own fenced guard refused: the resume above won
+			// the race, but something newer committed before this call
+			// reached the engine. Nothing was written -- the whole §12.5
+			// transaction rolled back -- so there is nothing to undo.
+			return nil
+		}
+		return fmt.Errorf("fail attempt %s on deadline: %w", inv.AttemptID, err)
+	}
+
+	if err := closeWait(ctx, cs); err != nil {
+		return fmt.Errorf("close wait record for attempt %s: %w", inv.AttemptID, err)
+	}
+	return nil
+}
+
+// waitForDeadlineTimer resolves which durable async record a fired deadline
+// timer belongs to, and returns the matching way to retire it.
+//
+// A deadline timer names a timer, not an attempt, and there are two kinds of
+// waiting_external record it may have been scheduled by: an asynchronous ACTOR
+// invocation (0009's actor_invocations, resumed by an inbound §13.4 callback)
+// and a parked RUNNER operation (0011's runner_invocations, resumed by an
+// outbound status sample). Everything after this lookup is identical for both
+// — resume under the recorded fencing tuple, complete through the engine's own
+// §12.5 transaction, retire the record — which is exactly why the difference
+// is confined to this one function instead of a second copy of
+// failWaitingExternal. There is one waiting_external timeout rule in this
+// system, and this keeps it that way.
+//
+// The actor table is consulted first only because it is the older and more
+// common case; the two are disjoint (a timer id appears in at most one), so
+// the order is a cost decision, not a correctness one.
+func (sch *Scheduler) waitForDeadlineTimer(
+	ctx context.Context, t postgres.Timer,
+) (actors.PendingInvocation, func(context.Context, *postgres.CallbackStore) error, bool, error) {
+	inv, ok, err := sch.db.InvocationByDeadlineTimer(ctx, t.ID)
+	if err != nil {
+		return actors.PendingInvocation{}, nil, false, fmt.Errorf("load invocation for deadline timer %s: %w", t.ID, err)
+	}
+	if ok {
+		return inv, func(ctx context.Context, cs *postgres.CallbackStore) error {
+			return cs.CloseInvocation(ctx, inv.AttemptID, actors.InvocationCompleted)
+		}, true, nil
+	}
+
+	inv, ok, err = sch.db.RunnerOperationByDeadlineTimer(ctx, t.ID)
+	if err != nil {
+		return actors.PendingInvocation{}, nil, false, fmt.Errorf("load runner operation for deadline timer %s: %w", t.ID, err)
+	}
+	if ok {
+		namespaceID := t.NamespaceID
+		if namespaceID == "" {
+			namespaceID = inv.NamespaceID
+		}
+		return inv, func(ctx context.Context, _ *postgres.CallbackStore) error {
+			return sch.db.CloseRunnerOperation(ctx, namespaceID, inv.AttemptID, postgres.RunnerOperationCompleted)
+		}, true, nil
+	}
+
+	// A deadline timer that belongs to neither is "nothing to fail" rather
+	// than a fault: a hand-built timer in a test, or one whose record some
+	// other path already removed.
+	return actors.PendingInvocation{}, nil, false, nil
+}
+
+// engineFor returns the cached §12.5 engine for namespaceID, building and
+// caching one on first use. Engines are namespace-scoped (postgres.NewEngine
+// binds one namespace's contracts validator and store queries), and a
+// deployment's timers table is not (ClaimDueTimers claims due timers across
+// every namespace in one batch -- see this package's doc comment) -- so a
+// scheduler that has ever fired a deadline timer for more than one
+// namespace ends up holding one engine per namespace it has seen, for as
+// long as this Scheduler runs.
+func (sch *Scheduler) engineFor(namespaceID string) (*engine.Engine, error) {
+	sch.engineMu.Lock()
+	defer sch.engineMu.Unlock()
+
+	if eng, ok := sch.engines[namespaceID]; ok {
+		return eng, nil
+	}
+	eng, err := postgres.NewEngine(sch.db, namespaceID)
+	if err != nil {
+		return nil, err
+	}
+	if sch.engines == nil {
+		sch.engines = make(map[string]*engine.Engine)
+	}
+	sch.engines[namespaceID] = eng
+	return eng, nil
+}
+
+// deadlineTimeoutOutput is the diagnostic body recorded on the attempt a
+// deadline timer fails, mirroring internal/actors' own failureOutput shape
+// (a `failed` callback's error body) so an operator sees the same shape of
+// diagnostic whichever path produced the timeout.
+func deadlineTimeoutOutput(t postgres.Timer) json.RawMessage {
+	payload := struct {
+		Error struct {
+			Class  string `json:"class"`
+			Detail string `json:"detail"`
+		} `json:"error"`
+	}{}
+	payload.Error.Class = string(actors.ClassTimeout)
+	payload.Error.Detail = fmt.Sprintf("waiting_external deadline timer %s expired before a terminal callback arrived", t.ID)
+	encoded, err := json.Marshal(payload)
+	if err != nil {
+		// A struct of plain strings never fails to marshal; see
+		// timerOutboxPayload's identical comment below.
+		return json.RawMessage(`{"error":{"class":"timeout"}}`)
+	}
+	return encoded
 }
 
 // timerOutboxPayload builds the outbox payload for a fired timer: IDs and

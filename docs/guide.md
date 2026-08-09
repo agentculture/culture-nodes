@@ -65,12 +65,61 @@ uv run nodes run events <run-id>           # live SSE stream, one line per commi
 Agent nodes need an actor to talk to: an external process — on another
 machine or container, never inside culture-nodes — speaking the actor
 protocol. Register its endpoint in the `actors` table and the worker
-dispatches to it; `adapters/colleague/` is the working reference (its
-`README.md` covers config, and the actor's `origin.actor_id` must be its
-*registered* actor row id). Code nodes go through the runner boundary —
-AWS Lambda in the cloud, the headspace-cli bridge on a dev host.
+dispatches to it; the actor's `origin.actor_id` must be its *registered*
+actor row id. Code nodes go through the runner boundary: AWS Lambda in the
+cloud, an in-process headspace-cli bridge under a heartbeated lease, or a
+separate runner service reachable over the runner protocol (`cmd/nodes-runner`
+or your own) that the worker dispatches to and polls for completion. See the
+next section for what "register an actor/runner" means concretely, and for
+plugging in something other than the shipped references.
 
-## 3. What you're looking at
+## 3. Bring your own actor or runner
+
+Nothing above requires the reference implementations this repo ships —
+they exist to prove the two contracts against real backends and to give the
+next implementer working code to read, not because they are the only valid
+option. There is no actor/runner *registration* HTTP endpoint yet (PRD §26
+open question), so today "register" means one row in a table:
+
+- **Actor** (`api/actor-protocol/README.md`): insert a row in the `actors`
+  table naming your process's base URL, then point a workflow node's
+  `uses:` at it. `adapters/colleague`, `adapters/claude-code`, and
+  `adapters/codex` are three conformant references (contract-v1 subprocess
+  dispatch over `colleague work`, headless `claude -p`, and `codex exec`
+  respectively — each with its own README covering config); a fourth, in
+  any language, is exactly as valid once it passes `tests/conformance`
+  unmodified.
+- **Runner** (`api/runner-protocol/README.md`): register a `ServiceIdentity`
+  (endpoint + pinned image digest + `secret_ref`) in
+  `internal/runners.FunctionRegistry`. The protocol is deliberately small —
+  `POST /v1/operations` to dispatch, `GET /v1/operations/{id}` to learn the
+  outcome, async-only (a `202` and the connection closes; the runtime learns
+  completion by polling, never by holding a connection open), an optional
+  completion callback that only tightens latency, and mandatory bearer auth
+  with no loopback exemption. `cmd/nodes-runner` (wrapping headspace-cli) is
+  the reference; anything that passes `tests/runnerconformance` unmodified
+  is a conformant replacement, in any language.
+
+Because placement is a registry fact and not a workflow property, moving a
+`code` node's execution from one runner to another — including across
+machines — is a config change, never a workflow edit. See "Beyond one
+machine" below for what that buys in practice.
+
+## 4. Beyond one machine
+
+The placement-unaware property above is what makes a production split
+possible with zero workflow changes. As one example (not a product
+requirement — any machine names, any count, any cloud or bare metal work
+the same way): local dev runs everything on one machine (`spark` in this
+repo's own case); a small production split runs the shared control plane
+and its Postgres on one machine (`thor`), and a second machine (`orin`)
+runs just a worker plus its own runner service, both pointed at `thor`'s
+database. The runner-protocol doc's own worked example is exactly this
+shape (`runner.thor.internal` as an endpoint). Per-machine compose profiles
+for this split are landing later in this repo's own development cycle —
+today's `deploy/compose` ships the single-machine profile from step 1.
+
+## 5. What you're looking at
 
 ![The runs list — one line per run: state, workflow digest, created](assets/runs-list.png)
 
@@ -101,7 +150,45 @@ chip), humans confirm, trusted runners observe what they measured,
 validators derive — so a completion claim that nothing verified stays
 visibly unverified.
 
-## 4. Poke at it from the CLI
+<!-- placeholder: assets/board.png — runs board, cards on state columns — landing this cycle -->
+<!-- placeholder: assets/jobs-timeline.png — cross-run jobs timeline + time-range filter — landing this cycle -->
+
+`/runs` today is the whole operations surface: a **runs board** (cards
+grouped into state columns) and a **jobs timeline** (cross-run node-run
+history with a time-range filter) are landing later this cycle — this
+section grows two more screenshots once they ship.
+
+## 6. Approvals: a human in the loop
+
+An `approval` node pauses a run without ever creating a work item for the
+worker to claim: the engine writes one `human_tasks` row — decision schema,
+approver role/group, deadline, context/artifact refs, allowed outcomes
+(PRD §9.9) — inside the same transaction that creates the node run, and the
+paused run holds no worker lease and no open database transaction while it
+waits. A human answers through the API, never through the worker:
+
+```bash
+curl http://localhost:8080/v1alpha1/human-tasks               # pending + decided
+curl http://localhost:8080/v1alpha1/human-tasks/<id>           # one task's context
+
+curl -X POST http://localhost:8080/v1alpha1/human-tasks/<id>/decision \
+  -H "Authorization: Bearer $NODES_HUMAN_DECISION_TOKEN_SECRET" \
+  -H 'content-type: application/json' \
+  -d '{"outcome": "approved", "decider_actor_id": "ori", "expected_ledger_version": 4}'
+```
+
+Unlike the rest of this authless-behind-a-private-network API, the decision
+endpoint requires a bearer token (`NODES_HUMAN_DECISION_TOKEN_SECRET` on
+`nodes serve`) — a decision writes a human-authority review into the ledger
+and resumes the run, so it is the one write here that must know who is
+making it. The commit is atomic and stale-guarded: a decision against a
+ledger version the run has since moved past is refused. The shipped
+[`examples/delivery-loop`](../examples/delivery-loop) workflow does not
+include an approval node yet (see its header comment) — add one to a
+workflow of your own to exercise this path; the engine, API, and worker
+plumbing above are real and tested independently of that fixture.
+
+## 7. Poke at it from the CLI
 
 Everything the UI renders is the same API the CLI fronts:
 
@@ -115,7 +202,7 @@ uv run nodes review commit <review-id> --confirm id1 --ledger-version N
 
 Add `--json` to any verb for the raw API payload, byte-exact.
 
-## 5. Tear it down
+## 8. Tear it down
 
 ```bash
 docker compose down -v        # compose profile
@@ -128,4 +215,10 @@ helm uninstall nodes          # k8s
 - [`docs/acceptance.md`](acceptance.md) — the Phase-1 checklist mapped to test evidence.
 - [`docs/benchmarks.md`](benchmarks.md) — recorded idle-memory and throughput numbers.
 - [`docs/adr/`](adr/) — the design decisions, including the pinned org design revision and the Lambda IAM model.
-- [`adapters/colleague/README.md`](../adapters/colleague/README.md) — running a real external agent against a workflow.
+- [`api/actor-protocol/README.md`](../api/actor-protocol/README.md) — the full actor-protocol wire contract.
+- [`api/runner-protocol/README.md`](../api/runner-protocol/README.md) — the full runner-protocol wire contract.
+- [`adapters/colleague/README.md`](../adapters/colleague/README.md),
+  [`adapters/claude-code/README.md`](../adapters/claude-code/README.md),
+  [`adapters/codex/README.md`](../adapters/codex/README.md) — running a real
+  external agent against a workflow, one per backend.
+- [`deploy/compose/README.md`](../deploy/compose/README.md) — the local compose profile in full, including the code-runner boundary and the `agents` profile.

@@ -1,0 +1,812 @@
+{
+  "slug": "self-hosted-phase-2-cycle",
+  "title": "self-hosted phase-2 cycle",
+  "frame_slug": "self-hosted-phase-2-cycle",
+  "schema_version": 4,
+  "status": "exported",
+  "created": "2026-08-09T06:38:55Z",
+  "updated": "2026-08-09T07:14:13Z",
+  "targets": [
+    {
+      "id": "c1",
+      "kind": "announcement",
+      "text": "Culture Nodes now runs its own development: the deferred approval surface landed, claude-code is a first-class actor from dev (spark) to production (thor+orin) sharing one Postgres, and operators watch runs through a cards board, a jobs timeline table, and a time-range filter on latest update.",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "h1",
+      "kind": "honesty",
+      "text": "The announcement only holds if all three legs land verifiably: the approval surface (issue #3 closed), claude-code as a conformant actor on both dev and production, and the three operations views live against real runs \u2014 a partial landing re-scopes the announcement rather than shipping it quietly",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "c2",
+      "kind": "requirement",
+      "text": "Approval/human-task surface closes deviation d1 (issue #3): the engine creates human_tasks rows when dispatching approval nodes (table exists since migrations/0002 but nothing writes it), the API adds human-tasks list/get + POST /v1alpha1/human-tasks/{id}/decision, the worker registers a real HumanDispatcher in the seam t12 left unregistered, and the e2e walks the verify.blocked -> human-review branch \u2014 prerequisite for PRD \u00a79.9",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "h2",
+      "kind": "honesty",
+      "text": "An approval node's run pauses without holding a worker lease or a DB transaction, resumes on POST decision, and the decision lands as a human-authority review in the ledger \u2014 proven by an e2e that walks verify.blocked -> human-review -> build, not by endpoint unit tests alone",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "c3",
+      "kind": "requirement",
+      "text": "A claude-code actor adapter (sibling of adapters/colleague) implements the provider-neutral actor protocol over the claude CLI so agent nodes bind to claude-code; it must pass the existing actor conformance kit (tests/conformance), like the colleague bridge did; thor already has /usr/local/bin/claude installed",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "h3",
+      "kind": "honesty",
+      "text": "The claude-code adapter passes the existing actor conformance kit unmodified \u2014 the kit as shipped, not a fork \u2014 and an incomplete or crashed claude session never maps to success (incomplete-never-success, as the colleague bridge proved)",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "c4",
+      "kind": "requirement",
+      "text": "Self-hosting: culture-nodes develops itself \u2014 the repo's own delivery loop (examples/delivery-loop: intake\u2192plan\u2192build\u2192test\u2192verify with the changes_required loop) runs as a real culture-nodes run with claude-code as the agent actor on this machine, exercising internal/devague's conformance mapping of plan/delivery artifacts to ledger projections",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "h4",
+      "kind": "honesty",
+      "text": "The self-hosted run's work is real: the claude-code actor produces an actual committed diff in this repo through the run \u2014 not a demo payload \u2014 and internal/devague projections of the run match the plan artifacts",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "c5",
+      "kind": "requirement",
+      "text": "Web operations surface: a clean cards-on-columns board view, a jobs timeline table, and a time-range filter keyed on each flow run's latest update time; runs already serialize updated_at (internal/api/types.go) but GET /v1alpha1/runs accepts only state+limit, so the filter needs store query + API params + OpenAPI + web UI together",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "h5",
+      "kind": "honesty",
+      "text": "Board columns and timeline rows render only committed state read from the API \u2014 no client-side invention \u2014 and the time-range filter is server-side (store query + API params over runs.updated_at), never a client filter over an unbounded list",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "c6",
+      "kind": "requirement",
+      "text": "CLI/Web/API parity holds for every new surface: human-task endpoints and new run-list params land in api/openapi + the Python thin CLI front (culture_nodes/, a pure API client with byte-exact --json passthrough) + web alike \u2014 'parity by construction' is a standing delivery claim (medium confidence in docs/deliveries) and must not regress",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "h6",
+      "kind": "honesty",
+      "text": "Every new endpoint and query param appears in api/openapi, the Python CLI, and the web in the same release \u2014 the parity harness fails when one surface lags, rather than parity being re-asserted by hand",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "c9",
+      "kind": "boundary",
+      "text": "AWS-facing Phase-2 items stay deferred: no AWS credentials exist on any machine, so the real-SQS lane, real-Lambda awslive verification (risk r1), and ECS/Fargate deployment are out of this cycle; the Postgres queue driver and MinIO remain the production signal/artifact paths; existing SQS/Lambda code stays tested against fakes only",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "h7",
+      "kind": "honesty",
+      "text": "No task in this cycle's plan requires AWS credentials for CI to pass; the awslive tag stays skipped; SQS/Lambda code paths stay compiled and fake-tested so they do not rot into dead code",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "c10",
+      "kind": "boundary",
+      "text": "Phase-2 items already delivered in the phase-0/1 cycle are not redone: leases/fencing (t7), multi-worker safety (kind replicas=2), the SQS driver code (t16), S3/MinIO artifacts (t15), and the fault suites all landed per docs/deliveries; the genuine Phase-2 delta is OpenTelemetry (stub today), workload auth, load/benchmark gates (250/s sustained never demonstrated), and the thor+orin deployment story",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "h8",
+      "kind": "honesty",
+      "text": "The already-delivered list is verified, not trusted: leases/fencing, multi-worker safety, the SQS driver, artifact store, and fault suites are green on main today, re-run as this cycle's baseline before any new work builds on them",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "c11",
+      "kind": "requirement",
+      "text": "Phase-1 delivery remainders beyond approvals land or get explicit ADRs: the two NOT-MET acceptance boxes (Markdown-from-JSON projection rendering; mechanical acceptance.requires evaluation, per docs/acceptance.md), the null run.output observed on the live smoke's end-node binding, and waiting_external deadline timers that today never fail attempts",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "h9",
+      "kind": "honesty",
+      "text": "Each phase-1 remainder lands with a test or an explicit ADR deferral \u2014 none is silently dropped: Markdown-from-JSON projection rendering, mechanical acceptance.requires evaluation, the null run.output end-node binding, and waiting_external deadline timers",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "c12",
+      "kind": "boundary",
+      "text": "Lane boundaries from the build brief (issue #1) hold: no reimplementation of culture (substrate), events-cli (events), or agenda (tasks); vendored .claude/skills script bodies stay untouched per docs/skill-sources.md",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "h10",
+      "kind": "honesty",
+      "text": "No code in this cycle reimplements culture, events-cli, or agenda functionality, and vendored .claude/skills script bodies are byte-identical before and after \u2014 git diff over the vendored paths proves it at PR time",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "c14",
+      "kind": "requirement",
+      "text": "Custom runner support: code nodes can execute on the local machine, on a machine on the network (e.g. thor/orin), and through a custom runner solution that abstracts where execution happens \u2014 the operator picks the target without the workflow changing",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "h11",
+      "kind": "honesty",
+      "text": "A workflow definition is placement-free: moving a code node from one machine to another requires zero workflow changes \u2014 only registry/deployment config differs \u2014 proven by running the same workflow digest against runners on two different machines",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "c17",
+      "kind": "requirement",
+      "text": "The runtime stays lightweight at 100 and 1000 concurrent runners: execution is distributed, the runtime holds no execution in-process and no per-runner open connection, and it tracks runner status by periodic sampling (every x seconds) \u2014 tracking distributed runners is easy; hosting them is what bloats a pod",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "h12",
+      "kind": "honesty",
+      "text": "With 100 concurrent in-flight runner operations the worker/control-plane memory stays bounded \u2014 no per-operation held connection or goroutine that scales with running work \u2014 and status-sampling load scales with runners/interval, not with operation duration; demonstrated at 100 with the 1000 case load-tested or extrapolated with stated method",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "c19",
+      "kind": "audience",
+      "text": "OSS audience: anyone may run Culture Nodes \u2014 hosting it on their own machine or their own cloud, plugging in their own runtimes and harnesses through the runner and actor contracts. The first concrete users are the AgentCulture mesh: Ori as owner/approver, claude-code (dev + production) and codex (test/support) sessions as working agents, and culture-nodes itself as the first workflow author and subject (self-hosting)",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "h13",
+      "kind": "honesty",
+      "text": "The OSS-audience claim is honest only if a stranger can stand the system up without this machine's context: compose up plus the docs suffice to run a workflow with their own runner/actor implementations \u2014 no AgentCulture-mesh prerequisite baked into the product path",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "c20",
+      "kind": "after_state",
+      "text": "A culture-nodes run drives culture-nodes development end to end: the delivery-loop workflow published via the API, a claude-code actor doing the work, thor+orin production workers on thor's shared Postgres, approval nodes pausing runs for human decision, and the operator watching it on a runs board, a cross-run jobs timeline, and a time-filtered runs list",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "h14",
+      "kind": "honesty",
+      "text": "The after-state counts only when it happens on the real production pair \u2014 thor+orin workers on thor's Postgres \u2014 a dev-only demo on spark does not satisfy it",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "c21",
+      "kind": "why_it_matters",
+      "text": "Self-hosting is the credibility test: every PRD promise \u2014 contracts, evidence, approvals, placement-unaware execution \u2014 gets exercised by real daily development work, so gaps surface as our own pain instead of a user's",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "h15",
+      "kind": "honesty",
+      "text": "Self-hosting pain gets recorded, not absorbed: friction found while dogfooding lands as issues, deviations, or ADRs \u2014 otherwise the credibility-test claim is theater",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "c22",
+      "kind": "success_signal",
+      "text": "A real development task of this repo completes as a culture-nodes run: claude-code produced the actual diff, a human approved through the new decision endpoint, the run survived the approval pause without holding a worker, the board/timeline/filter views showed it live, and the ledger holds the proposed claim, observed evidence, and the human review",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "h16",
+      "kind": "honesty",
+      "text": "The success signal is measured off the actual run's ledger \u2014 the run id, its ledger records, and the merged diff are citable in the delivery summary; nothing is reconstructed after the fact",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "c24",
+      "kind": "requirement",
+      "text": "Runner-protocol operations ride the park/resume path, not lease-held Execute: today internal/worker/code.go:254 heartbeats the lease for the operation's whole duration (doc.go says agent nodes instead park as waiting_external and internal/actors.HandleCallback re-leases) \u2014 at 100 concurrent runner ops the lease-holding model contradicts c17, so protocol dispatch parks the work item and resumes on status-sample or callback; the waiting_external deadline-timer fix (c11) becomes a load-bearing prerequisite for runners, not cleanup",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "h17",
+      "kind": "honesty",
+      "text": "A ten-minute runner operation holds no lease and no goroutine between status samples; killing the worker mid-operation strands nothing \u2014 the parked item is picked up by the surviving worker's sampler after lease/park handoff, proven by a fault test",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "c25",
+      "kind": "requirement",
+      "text": "Runner services authenticate their callers: a runner service accepting operations over the network is a remote-code-execution surface, so operations are accepted only from an authenticated control plane (secret-based this cycle per c9's boundary), the registry pins endpoint + digest + secret ref per runner, and an unauthenticated execute/status request is refused \u2014 precedent: t22's Ingress callback 401 and the operation schema's enforced-policy-boundary language",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "h18",
+      "kind": "honesty",
+      "text": "An unauthenticated execute or status request against a runner service is refused with 401/403 \u2014 proven by a conformance-kit auth case run against the reference headspace-wrapped deployment, not asserted from config",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "c26",
+      "kind": "requirement",
+      "text": "thor's Postgres gets a documented, exercised backup/restore path before the first production run is claimed: the ledger is the authoritative evidence store and thor is a single machine \u2014 losing its disk must not mean losing the ledger",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "h19",
+      "kind": "honesty",
+      "text": "A restore drill actually ran: a backup taken from thor's production Postgres, restored on a different machine, reproduces a run's ledger with content digests intact \u2014 recorded as evidence before the after-state (h14) is claimed",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "c30",
+      "kind": "requirement",
+      "text": "A codex actor adapter (adapters/codex) lands this cycle as a third conformant actor-protocol adapter alongside colleague and claude-code \u2014 provider-neutrality proven three-deep, with codex also serving as the second independent mind for testing/support (codex-cli 0.144.6 verified on dev)",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "h20",
+      "kind": "honesty",
+      "text": "The codex adapter passes the same actor conformance kit unmodified, and an incomplete or crashed codex session never maps to success \u2014 the same bar c3 sets for claude-code, no adapter-specific exemptions",
+      "deferred": false,
+      "deferred_reason": ""
+    }
+  ],
+  "tasks": [
+    {
+      "id": "t1",
+      "summary": "Cycle baseline: re-run all suites on main and record results",
+      "origin": "llm",
+      "status": "confirmed",
+      "acceptance_criteria": [
+        "go test ./... green including tests/fault; uv run pytest -n auto green; adapters/colleague suite green; web vitest + Playwright green",
+        "awslive tag confirmed skipped without credentials; fake-backed SQS/Lambda suites confirmed in the default run",
+        "baseline recorded in a dated note under docs/ for the delivery summary to cite"
+      ],
+      "deps": [],
+      "covers": [
+        "c10",
+        "h8",
+        "c9",
+        "h7"
+      ],
+      "instruction": "Run on main before branching. Commands are in CLAUDE.md; record results in a dated note under docs/. For the AWS check: confirm the awslive-tagged tests report skip without NODES_TEST_LAMBDA_ARN and the fake-backed SQS/Lambda suites ran in the default pass."
+    },
+    {
+      "id": "t2",
+      "summary": "waiting_external deadline timers fail attempts",
+      "origin": "llm",
+      "status": "confirmed",
+      "acceptance_criteria": [
+        "an attempt whose waiting_external deadline passes is failed by the scheduler with an appended run event, and the run routes its failure edge (regression test)",
+        "completed attempts never receive a late deadline failure (test)"
+      ],
+      "deps": [],
+      "covers": [
+        "c11",
+        "h9"
+      ],
+      "instruction": "Timers live in internal/scheduler (t11 precedent: durable timers + advisory-lock single-active); the failure path appends through the outbox. Guard on attempt state so a completed attempt never receives a late deadline failure. waiting_external parking semantics are documented in internal/worker/doc.go."
+    },
+    {
+      "id": "t3",
+      "summary": "run.output end-node binding fix",
+      "origin": "llm",
+      "status": "confirmed",
+      "acceptance_criteria": [
+        "the live-smoke scenario reproduces a non-null run.output: end-node output binding populates run output outside e2e fixtures (regression test)"
+      ],
+      "deps": [],
+      "covers": [
+        "c11",
+        "h9"
+      ],
+      "instruction": "Reproduce first: the null run.output was observed on the live compose smoke's end-node binding (delivery follow-ups). The binding path is in internal/engine; migration 0008_run_output holds the column. Write the regression against the non-fixture path."
+    },
+    {
+      "id": "t4",
+      "summary": "Migration 0010: runs.updated_at index + node-runs listing index",
+      "origin": "llm",
+      "status": "confirmed",
+      "acceptance_criteria": [
+        "migration adds the index(es) under expand-contract; the N-1 compatibility harness passes",
+        "EXPLAIN on the updated_since/updated_until filter query shows an index scan, recorded in the task evidence"
+      ],
+      "deps": [],
+      "covers": [
+        "c5"
+      ],
+      "instruction": "New migrations/0010_*.sql following 0009's (state, updated_at) index shape on actor_invocations. Extend the N-1 binary-compatibility harness the way 0005-0008 did. Capture the EXPLAIN output in the task evidence."
+    },
+    {
+      "id": "t5",
+      "summary": "Runner-service wire contract + runner-neutral registry identity",
+      "origin": "llm",
+      "status": "confirmed",
+      "acceptance_criteria": [
+        "the runner protocol is documented: execute/status endpoints reusing schemas/runner operation/result verbatim, async-only semantics (dispatch returns 202, completion via status sampling), completion callback documented as strictly optional",
+        "registry identity accepts endpoint + pinned digest + secret ref alongside the legacy ARN form; ARN-only validation no longer blocks non-Lambda runners (tests)",
+        "the contract states caller authentication is mandatory and the no-shell-wrapper policy language binds implementations"
+      ],
+      "deps": [],
+      "covers": [
+        "c14"
+      ],
+      "instruction": "schemas/runner/*.json are the wire payloads verbatim \u2014 do not fork them. Protocol doc lands beside api/openapi. In internal/runners/registry.go add a second, endpoint+digest+secret-ref identity form; FunctionIdentity stays valid for the legacy Lambda adapter. State auth as mandatory (c25) and async-only semantics with the callback documented optional (c23)."
+    },
+    {
+      "id": "t6",
+      "summary": "Engine: approval nodes create human_tasks and pause leaselessly",
+      "origin": "llm",
+      "status": "confirmed",
+      "acceptance_criteria": [
+        "dispatching an approval node writes a human_tasks row carrying decision schema, approver role, deadline, and context refs (unit test)",
+        "the paused run holds no work_items lease and no open transaction while waiting (test asserts both)"
+      ],
+      "deps": [],
+      "covers": [
+        "c2"
+      ],
+      "instruction": "Engine dispatch of the approval node kind writes human_tasks (table from migrations/0002, fields per PRD \u00a79.9: decision schema, approver role/group, deadline, context refs, allowed outcomes) and parks the token leaselessly \u2014 follow the waiting_external precedent, not the code-node lease-holding path."
+    },
+    {
+      "id": "t7",
+      "summary": "Human-tasks API: list/get/decision endpoints",
+      "origin": "llm",
+      "status": "confirmed",
+      "acceptance_criteria": [
+        "GET /v1alpha1/human-tasks, GET /human-tasks/{id}, POST /human-tasks/{id}/decision are implemented and documented in api/openapi; unauthenticated decision POST is refused",
+        "a decision commits atomically through the review transaction, rejects stale ledger versions, and resumes the run (tests)"
+      ],
+      "deps": [
+        "t6"
+      ],
+      "covers": [
+        "c2"
+      ],
+      "instruction": "internal/api + api/openapi/openapi.json. The decision commits through the existing atomic stale-guarded review transaction in internal/ledger (t8-era). Auth follows the existing API auth model; unauthenticated decision POSTs refused."
+    },
+    {
+      "id": "t8",
+      "summary": "Worker: register a real HumanDispatcher",
+      "origin": "llm",
+      "status": "confirmed",
+      "acceptance_criteria": [
+        "approval work items route through a registered HumanDispatcher that parks without holding the lease instead of erroring (unit test through the t12-era seam)"
+      ],
+      "deps": [
+        "t6"
+      ],
+      "covers": [
+        "c2"
+      ],
+      "instruction": "The HumanDispatcher seam is in internal/worker/seams.go (left unregistered by design in the last cycle \u2014 issue #3). Register a real implementation that parks the item leaselessly; the unit test drives the seam the way the worker dispatch tests do."
+    },
+    {
+      "id": "t9",
+      "summary": "Worker: async runner dispatch \u2014 park/resume + idempotent completion ingest",
+      "origin": "llm",
+      "status": "confirmed",
+      "acceptance_criteria": [
+        "runner-protocol dispatch parks the work item as waiting_external, holding no lease and no goroutine between status samples (test)",
+        "duplicate or racing completion reports (two samples, sample+callback) are harmless under the fencing discipline (test)",
+        "a worker killed mid-operation strands nothing: the surviving worker resumes tracking after handoff, within the stated bound (fault test)"
+      ],
+      "deps": [
+        "t2",
+        "t5"
+      ],
+      "covers": [
+        "c24",
+        "h17"
+      ],
+      "instruction": "New dispatch path beside internal/worker/code.go \u2014 do not extend the lease-holding path. Precedent for resume-under-fencing: internal/actors.HandleCallback. Deadlines ride t2's timers. The fault test follows tests/fault's two-OS-process pattern (kill -9 mid-operation, survivor resumes within the stated bound)."
+    },
+    {
+      "id": "t10",
+      "summary": "Reference runner service: headspace wrapped behind the contract, with auth",
+      "origin": "llm",
+      "status": "confirmed",
+      "acceptance_criteria": [
+        "a runner-service process wraps the headspace bridge behind the protocol, holds per-operation status, and serves it over the status endpoint",
+        "unauthenticated execute/status requests are refused with 401/403 \u2014 proven by a runner conformance-kit auth case against the live service",
+        "the runner conformance kit passes end to end against the wrapped headspace deployment"
+      ],
+      "deps": [
+        "t5"
+      ],
+      "covers": [
+        "c25",
+        "h18",
+        "c14"
+      ],
+      "instruction": "Wrap the existing internal/runners/headspace bridge behind the t5 contract as a separate service process; hold per-operation status like the colleague bridge holds flight state. Auth case goes into a runner conformance kit shaped like tests/conformance. A live test mirrors headspace's live_test.go."
+    },
+    {
+      "id": "t11",
+      "summary": "API: run-list time params + cross-run node-runs endpoint",
+      "origin": "llm",
+      "status": "confirmed",
+      "acceptance_criteria": [
+        "GET /v1alpha1/runs accepts updated_since/updated_until and explicit updated_at sort, documented in api/openapi (tests)",
+        "a cross-run node-runs listing endpoint returns run, node, actor/runner, status, outcome, started, updated with a time window and pagination, using the 0010 index (tests)"
+      ],
+      "deps": [
+        "t4",
+        "t7"
+      ],
+      "covers": [
+        "c5",
+        "h5"
+      ],
+      "instruction": "internal/api/queries.go for the runs filter (uses t4's index) and a new cross-run node-runs query; document in api/openapi/openapi.json. Keep JSON byte-stable \u2014 the Python front passes it through verbatim (t16 parity)."
+    },
+    {
+      "id": "t12",
+      "summary": "claude-code actor adapter (adapters/claude-code)",
+      "origin": "llm",
+      "status": "confirmed",
+      "acceptance_criteria": [
+        "the adapter drives headless claude via contract-v1 subprocess dispatch and passes the actor conformance kit unmodified in CI",
+        "an incomplete or crashed claude session maps to failure, never success (test)",
+        "dispatch below the pinned minimum claude CLI version is refused with an honest DispatchError naming both versions (test)"
+      ],
+      "deps": [],
+      "covers": [
+        "c3",
+        "h3"
+      ],
+      "instruction": "Mirror adapters/colleague's layout (async_runner, callbacks, flightfiles, idempotency, mapping, server, config). Drive headless claude (claude -p) as contract-v1 subprocess dispatch. Min-version gate at startup (fleet runs 2.1.220-2.1.226 today). CI runs the conformance kit like colleague's run_conformance_kit.sh."
+    },
+    {
+      "id": "t13",
+      "summary": "codex actor adapter (adapters/codex)",
+      "origin": "llm",
+      "status": "confirmed",
+      "acceptance_criteria": [
+        "adapters/codex drives headless codex exec via contract-v1 subprocess dispatch and passes the same actor conformance kit unmodified in CI",
+        "an incomplete or crashed codex session maps to failure, never success (test)"
+      ],
+      "deps": [],
+      "covers": [
+        "c30",
+        "h20"
+      ],
+      "instruction": "Same sibling shape as t12, driving headless codex exec (codex-cli 0.144.6 verified on dev). Same conformance kit, no adapter-specific exemptions (h20)."
+    },
+    {
+      "id": "t14",
+      "summary": "Web: runs board \u2014 cards on state columns",
+      "origin": "llm",
+      "status": "confirmed",
+      "acceptance_criteria": [
+        "a board route renders runs as cards grouped into state columns (queued/running/waiting/completed/failed) from API data only; approval-paused runs appear under waiting (vitest + Playwright)",
+        "keyboard navigation and reduced-motion behavior hold on the new route (a11y checks)"
+      ],
+      "deps": [
+        "t11"
+      ],
+      "covers": [
+        "c5",
+        "h5"
+      ],
+      "instruction": "New web/src/routes/BoardView.tsx + route registration in App.tsx. Reuse StatusChip/NodeCard and culture-design tokens; columns are run states; cards navigate to RunView. Render only API data (h5). Follow the existing vitest + Playwright split (web/e2e)."
+    },
+    {
+      "id": "t15",
+      "summary": "Web: jobs timeline table + time-range filter",
+      "origin": "llm",
+      "status": "confirmed",
+      "acceptance_criteria": [
+        "a jobs route renders cross-run node runs newest-first with run/node/actor/status/outcome/started/updated columns from the API (tests)",
+        "the time-range filter drives updated_since/updated_until API params server-side \u2014 never a client-side filter \u2014 and the active range is reflected in the URL (tests)"
+      ],
+      "deps": [
+        "t11",
+        "t14"
+      ],
+      "covers": [
+        "c5",
+        "h5"
+      ],
+      "instruction": "web/src/routes/JobsView.tsx; land after t14 so App.tsx route edits don't collide. Table follows LedgerTable/EventTimeline patterns; the range filter writes updated_since/updated_until into the query and the URL search params \u2014 never filters client-side (h5)."
+    },
+    {
+      "id": "t16",
+      "summary": "Python CLI + parity harness for every new surface",
+      "origin": "llm",
+      "status": "confirmed",
+      "acceptance_criteria": [
+        "the nodes CLI gains human-tasks verbs and the new run-list/node-runs params with byte-exact --json passthrough (tests)",
+        "tests/parity fails if any of the new endpoints/params is missing from openapi, the Python CLI, or the web client layer",
+        "teken cli doctor . --strict stays green"
+      ],
+      "deps": [
+        "t7",
+        "t11"
+      ],
+      "covers": [
+        "c6",
+        "h6"
+      ],
+      "instruction": "New culture_nodes/cli/_commands modules per the register(subparsers) pattern; every new verb needs an explain-catalog entry (tests introspect known_paths()). Extend tests/parity so a missing surface fails. Zero new runtime deps; teken cli doctor . --strict stays green."
+    },
+    {
+      "id": "t17",
+      "summary": "Acceptance not-mets: Markdown projection rendering + mechanical acceptance.requires",
+      "origin": "llm",
+      "status": "confirmed",
+      "acceptance_criteria": [
+        "Markdown summaries render deterministically from JSON projections with tests, or an ADR records the deferral with reasons",
+        "acceptance.requires is evaluated mechanically in the acceptance harness, or an ADR records the deferral; docs/acceptance.md checkboxes change only with evidence"
+      ],
+      "deps": [],
+      "covers": [
+        "c11",
+        "h9"
+      ],
+      "instruction": "Markdown rendering derives from JSON projections deterministically (PRD: Markdown is never authoritative). acceptance.requires evaluation belongs in the acceptance harness. If either is deferred instead, the ADR goes under docs/adr/ with reasons, and docs/acceptance.md stays truthful."
+    },
+    {
+      "id": "t18",
+      "summary": "Load test: 100 concurrent runner operations, bounded worker",
+      "origin": "llm",
+      "status": "confirmed",
+      "acceptance_criteria": [
+        "a harness holds 100 concurrent in-flight operations against a stub runner service; worker RSS stays bounded and is recorded",
+        "status-sampling load is shown independent of operation duration; the 1000 case is tested or extrapolated with the method stated in docs/benchmarks.md"
+      ],
+      "deps": [
+        "t9"
+      ],
+      "covers": [
+        "c17",
+        "h12"
+      ],
+      "instruction": "Stub runner service = in-process HTTP honoring the t5 contract with configurable operation duration. Hold 100 in-flight ops; record worker RSS and sampling cadence; show independence from op duration. Results append to docs/benchmarks.md with the 1000-case method stated."
+    },
+    {
+      "id": "t19",
+      "summary": "Production setup: thor+orin compose profiles + credential authorize flow",
+      "origin": "llm",
+      "status": "confirmed",
+      "acceptance_criteria": [
+        "compose profiles exist for thor (postgres/minio/api/scheduler/worker/runner-service) and orin (worker + runner-service pointing at thor); deploy scripts drive them over ssh thor / ssh orin with argv-only invocations",
+        "secrets reach both machines through an explicit, confirmed authorize step \u2014 never in argv, never typed through the tool (c8 pattern); the mechanism chosen for non-SSH secrets is documented",
+        "both production workers claim work against thor's single Postgres, each worker id visible in work_items (live check)"
+      ],
+      "deps": [
+        "t10"
+      ],
+      "covers": [],
+      "instruction": "Per-machine compose profiles under deploy/compose; deploy scripts use the ssh thor / ssh orin aliases with argv-only invocations (reachy-mini-cli ssh.py precedent). Decide and document the non-SSH secret mechanism (risk r5). Verify both worker ids appear in work_items against thor's DB."
+    },
+    {
+      "id": "t20",
+      "summary": "thor Postgres backup job + restore drill",
+      "origin": "llm",
+      "status": "confirmed",
+      "acceptance_criteria": [
+        "a scheduled backup job ships in thor's compose profile with a written restore runbook",
+        "one restore drill actually ran: a backup from thor's DB restored on another machine reproduces a run's ledger with content digests intact, recorded as evidence"
+      ],
+      "deps": [
+        "t19"
+      ],
+      "covers": [
+        "c26",
+        "h19"
+      ],
+      "instruction": "Backup job as a compose sidecar/cron in thor's profile (pg_dump or WAL-based \u2014 choose and justify in the runbook). The drill restores on a different machine and verifies a run's ledger projections reproduce digest-stable."
+    },
+    {
+      "id": "t21",
+      "summary": "e2e: the human-review branch",
+      "origin": "llm",
+      "status": "confirmed",
+      "acceptance_criteria": [
+        "tests/e2e walks verify.blocked -> human-review -> decision -> build resume; the run holds no lease during the pause; the decision lands as a human-authority review in the ledger",
+        "both existing loop edges still pass alongside the new branch"
+      ],
+      "deps": [
+        "t7",
+        "t8"
+      ],
+      "covers": [
+        "c2",
+        "h2"
+      ],
+      "instruction": "Sibling of tests/e2e/slice_test.go. Restore the approval node the reference workflow omitted citing d1 (examples/delivery-loop). Assert the pause holds no lease and the decision arrives as a human-authority review."
+    },
+    {
+      "id": "t22",
+      "summary": "Placement-free proof: same digest on two machines",
+      "origin": "llm",
+      "status": "confirmed",
+      "acceptance_criteria": [
+        "the same workflow digest runs with its code node executing on spark's runner service and then thor's, with zero workflow-definition changes \u2014 only registry config differs; both ledgers recorded as evidence"
+      ],
+      "deps": [
+        "t10",
+        "t19"
+      ],
+      "covers": [
+        "c14",
+        "h11"
+      ],
+      "instruction": "Registry config points the same workflow digest at spark's runner service, then thor's. No workflow-definition edits allowed between the two runs (h11). Record both run ledgers as the evidence pair."
+    },
+    {
+      "id": "t23",
+      "summary": "Self-hosted run: culture-nodes develops itself on the production pair",
+      "origin": "llm",
+      "status": "confirmed",
+      "acceptance_criteria": [
+        "a dev-loop run published via the API executes on thor+orin with the claude-code actor doing a real repo task; the produced diff goes through the normal PR lane and merges",
+        "the run id, its ledger records, and the merged diff are citable \u2014 the ledger holds the proposed claim, observed evidence, and the human review through the decision endpoint",
+        "the board, jobs timeline, and time filter show the run live while it executes"
+      ],
+      "deps": [
+        "t12",
+        "t14",
+        "t15",
+        "t19",
+        "t21"
+      ],
+      "covers": [
+        "c1",
+        "h1",
+        "c4",
+        "h4",
+        "c20",
+        "h14",
+        "c22",
+        "h16"
+      ],
+      "instruction": "Pick a real open work item from this cycle's follow-ups as the run's task. The claude-code actor produces the diff; the PR goes through the cicd lane; the human decision goes through the t7 endpoint. Runs on thor+orin (h14) with the views watched live. Keep the run id + ledger export with the delivery evidence."
+    },
+    {
+      "id": "t24",
+      "summary": "Docs + README: OSS standup path, runner protocol, operations views",
+      "origin": "llm",
+      "status": "confirmed",
+      "acceptance_criteria": [
+        "a fresh-machine quickstart shows compose up + docs sufficing to publish and run a workflow with a custom runner/actor stub \u2014 no AgentCulture-mesh prerequisite; verified by following the doc verbatim in a clean environment",
+        "README and docs/ describe the runner protocol, the approval surface, and the new views as shipped; stale template self-description strings (learn/explain/argparse prose) are updated"
+      ],
+      "deps": [
+        "t10"
+      ],
+      "covers": [
+        "c19",
+        "h13"
+      ],
+      "instruction": "README reframe + quickstart verified verbatim in a clean container. Update the known template-drift strings (learn, argparse description, explain root catalog \u2014 flagged in CLAUDE.md). Document the runner protocol, approval surface, and views as shipped, with t25's screenshots referenced once they exist."
+    },
+    {
+      "id": "t25",
+      "summary": "Live-testing evidence: screenshots of the operations views against the production run",
+      "origin": "llm",
+      "status": "confirmed",
+      "acceptance_criteria": [
+        "screenshots of the board, jobs timeline (filtered), run view, and ledger view captured against the live self-hosted production run land under docs/assets and are referenced from the docs and the delivery summary"
+      ],
+      "deps": [
+        "t23"
+      ],
+      "covers": [
+        "h1"
+      ],
+      "instruction": "Use Playwright against the live production run for pixel-true captures; name files like the existing docs/assets set. Board, filtered jobs timeline, RunView, LedgerView. Reference them from README/docs and the delivery summary."
+    },
+    {
+      "id": "t26",
+      "summary": "Integration gate: version bump, lanes check, delivery summary before PR",
+      "origin": "llm",
+      "status": "confirmed",
+      "acceptance_criteria": [
+        "the PR carries a version bump; git diff over .claude/skills/ against main is empty; no code reimplements culture/events-cli/agenda",
+        "dogfooding friction found during the cycle is filed as issues, deviations, or ADRs before merge \u2014 none absorbed silently",
+        "the delivery summary is produced via /summarize-delivery and lands in docs/deliveries BEFORE the PR opens via the cicd lane, citing the self-hosted run's ledger as evidence"
+      ],
+      "deps": [
+        "t1",
+        "t3",
+        "t13",
+        "t16",
+        "t17",
+        "t18",
+        "t20",
+        "t22",
+        "t23",
+        "t24",
+        "t25"
+      ],
+      "covers": [
+        "c12",
+        "h10",
+        "c21",
+        "h15"
+      ],
+      "instruction": "Order matters: /version-bump, vendored-skills diff check, friction filed as issues/deviations/ADRs, then /summarize-delivery writes docs/deliveries/(dated file named after the cycle) citing t23's run ledger, and only then the cicd lane opens the PR."
+    }
+  ],
+  "risks": [
+    {
+      "id": "r1",
+      "text": "Real-AWS lane stays deferred: SQS/Lambda/Fargate decisions tracked in issue #7; nothing in this plan may require AWS credentials (c9)",
+      "kind": "follow_up",
+      "task_id": null,
+      "resolved": false,
+      "resolution": ""
+    },
+    {
+      "id": "r2",
+      "text": "Runaway-cost containment for self-hosted claude/codex actors: bounded loops and attempt timeouts are the only brakes until PRD Phase-4 budgets",
+      "kind": "unknown_nonblocking",
+      "task_id": null,
+      "resolved": false,
+      "resolution": ""
+    },
+    {
+      "id": "r3",
+      "text": "Self-hosting recursion: a broken control-plane build deployed by the run that built it bricks the loop \u2014 dev-first staging discipline is process, not enforcement",
+      "kind": "unknown_nonblocking",
+      "task_id": "t23",
+      "resolved": false,
+      "resolution": ""
+    },
+    {
+      "id": "r4",
+      "text": "orin memory headroom (~8 GiB free): hosting claude-code actor sessions there may not fit alongside the worker and runner service \u2014 actor placement may end up thor-only",
+      "kind": "unknown_nonblocking",
+      "task_id": "t19",
+      "resolved": false,
+      "resolution": ""
+    },
+    {
+      "id": "r5",
+      "text": "Non-SSH secret distribution mechanism (DB password, HMAC secrets, ANTHROPIC_API_KEY): OS keyring vs env files vs compose secrets \u2014 decided during t19 design, documented in its acceptance evidence",
+      "kind": "unknown_nonblocking",
+      "task_id": "t19",
+      "resolved": false,
+      "resolution": ""
+    }
+  ]
+}

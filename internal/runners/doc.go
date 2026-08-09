@@ -18,10 +18,28 @@
 //     Go code can build and read those documents without hand-rolling maps.
 //     schema_test.go proves the mirror is lossless in both directions.
 //   - Runner is the one-method seam every adapter implements.
+//   - protocol.go is the runner-service wire contract: the paths, headers and
+//     envelopes of api/runner-protocol, which carries those same schema
+//     documents verbatim over HTTP. Dispatch is asynchronous only — a 202
+//     acceptance, then status sampling — so a ten-minute operation costs the
+//     runtime no held lease, connection, or goroutine. A completion callback
+//     is strictly optional and never authoritative.
+//   - ProtocolClient is the caller half of that contract: submit an operation,
+//     read an operation's status, resolve the bearer from the registry's
+//     secret reference through a SecretResolver at call time. It has no
+//     synchronous path at all — a 200 carrying a result is refused as a
+//     contract failure — which is what keeps "no lease is held for the
+//     duration of an operation" an invariant rather than a convention. Every
+//     refusal it makes is a *DispatchError; it never synthesises a Result it
+//     was not given.
 //   - FunctionRegistry is the registry-pinned dispatch allowlist (spec claim
 //     c41): an adapter resolves the operation's declared identity here, and a
 //     name that was never registered is refused before any call leaves the
-//     process.
+//     process. It holds two identity forms in one namespace — FunctionIdentity
+//     (ARN + pinned digest, the managed-function form) and ServiceIdentity
+//     (endpoint + pinned digest + secret reference, the protocol form) — which
+//     is what makes the runtime placement-unaware: moving a code node to
+//     another machine is a registry change, not a workflow change.
 //   - RenderWorkerIAMPolicy turns that same registry into the worker role's
 //     IAM policy, so "the worker may invoke only registered functions" is one
 //     fact with two renderings rather than two lists that can drift.

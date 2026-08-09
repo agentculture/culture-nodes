@@ -54,12 +54,18 @@ func TestReferenceWorkflowCompilesCleanlyAndDeterministically(t *testing.T) {
 		t.Error("normalized IR differs between compilations of identical source")
 	}
 
-	// Deviation d1 (github issue #3): the approval / human-task surface is
-	// deferred, so the reference workflow must NOT route through an approval
-	// node — a run reaching one would fail with a `not_implemented`
-	// diagnostic. This asserts the fixture's comment is telling the truth.
-	if bytes.Contains(compiled.Normalized, []byte(`"approval"`)) {
-		t.Error("the reference workflow declares an approval node; deviation d1 defers that surface, " +
-			"so a run reaching it would fail rather than wait for a human")
+	// The human-review branch. While the human-task surface was deferred
+	// (deviation d1, github issue #3) this assertion ran the other way round:
+	// the reference workflow had to declare NO approval node, because a run
+	// reaching one would have failed with a `not_implemented` diagnostic
+	// rather than waiting for a human. That surface shipped — the engine
+	// parks the token (t6), the decision endpoint resumes it (t7), the worker
+	// provably never sees approval work (t8) — and
+	// tests/e2e/humanreview_test.go drives the whole branch end to end, so
+	// the reference workflow now carries §11.1's approval node as authored.
+	// This asserts the fixture's comment is telling the truth.
+	if !bytes.Contains(compiled.Normalized, []byte(`"approval"`)) {
+		t.Error("the reference workflow declares no approval node; PRD §11.1 routes verify.blocked to " +
+			"`human-review`, and tests/e2e/humanreview_test.go drives that branch")
 	}
 }

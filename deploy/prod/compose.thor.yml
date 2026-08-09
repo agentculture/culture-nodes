@@ -1,0 +1,167 @@
+# Culture Nodes — production profile, machine "thor" (plan t19).
+#
+# thor hosts the shared authoritative Postgres (frame decision q4), MinIO,
+# and the full control plane; orin (compose.orin.yml) joins as the second
+# worker against the same database. Two machines on one DB imitate the
+# k8s multi-pod topology (spec assumption c7).
+#
+# The code-runner boundary note from deploy/compose/docker-compose.yml
+# holds unchanged here: no service mounts a Docker socket. The runner
+# service (cmd/nodes-runner) is NOT a compose service — it runs as a host
+# process under a systemd user unit (nodes-runner.service), because the
+# code-execution boundary needs the host's Docker and headspace toolchain;
+# see README.md and deviation d2 in the plan.
+#
+# Secrets come from ~/.culture-nodes/prod.env, installed by
+# install-secrets.sh over ssh stdin — never committed, never in argv.
+
+services:
+  postgres:
+    image: postgres:17-alpine@sha256:742f40ea20b9ff2ff31db5458d127452988a2164df9e17441e191f3b72252193
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-nodes}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?install secrets first (install-secrets.sh)}
+      POSTGRES_DB: ${POSTGRES_DB:-nodes}
+    ports:
+      # Bound on all interfaces deliberately: orin's worker connects over
+      # the LAN. The trust boundary is the LAN + password auth; see
+      # README.md "Network trust".
+      - "5432:5432"
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-nodes} -d ${POSTGRES_DB:-nodes}"]
+      interval: 2s
+      timeout: 5s
+      retries: 30
+    restart: unless-stopped
+
+  minio:
+    image: minio/minio:latest@sha256:14cea493d9a34af32f524e538b8346cf79f3321eff8e708c1e2960462bd8936e
+    command: server /data --console-address ":9001"
+    environment:
+      MINIO_ROOT_USER: ${MINIO_ROOT_USER:-nodesroot}
+      MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD:?install secrets first (install-secrets.sh)}
+    ports:
+      - "9000:9000"
+      - "9001:9001"
+    volumes:
+      - miniodata:/data
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:9000/minio/health/live"]
+      interval: 2s
+      timeout: 5s
+      retries: 30
+    restart: unless-stopped
+
+  migrate:
+    image: culture-nodes:prod
+    build:
+      context: ../..
+      dockerfile: Dockerfile
+    command: ["migrate"]
+    environment:
+      NODES_DATABASE_URL: postgres://${POSTGRES_USER:-nodes}:${POSTGRES_PASSWORD:?}@postgres:5432/${POSTGRES_DB:-nodes}?sslmode=disable
+    depends_on:
+      postgres:
+        condition: service_healthy
+    restart: "no"
+
+  api:
+    image: culture-nodes:prod
+    command: ["serve"]
+    environment:
+      NODES_DATABASE_URL: postgres://${POSTGRES_USER:-nodes}:${POSTGRES_PASSWORD:?}@postgres:5432/${POSTGRES_DB:-nodes}?sslmode=disable
+      NODES_LISTEN: ":8080"
+      NODES_HUMAN_DECISION_TOKEN_SECRET: ${NODES_HUMAN_DECISION_TOKEN_SECRET:?install secrets first}
+      NODES_CALLBACK_TOKEN_SECRET: ${NODES_CALLBACK_TOKEN_SECRET:?install secrets first}
+    ports:
+      - "18080:8080"
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+      postgres:
+        condition: service_healthy
+    restart: unless-stopped
+
+  scheduler:
+    image: culture-nodes:prod
+    command: ["scheduler"]
+    environment:
+      NODES_DATABASE_URL: postgres://${POSTGRES_USER:-nodes}:${POSTGRES_PASSWORD:?}@postgres:5432/${POSTGRES_DB:-nodes}?sslmode=disable
+      NODES_SCHEDULER_ID: thor-scheduler-1
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+      postgres:
+        condition: service_healthy
+    restart: unless-stopped
+
+  worker:
+    image: culture-nodes:prod
+    command: ["worker"]
+    environment:
+      NODES_DATABASE_URL: postgres://${POSTGRES_USER:-nodes}:${POSTGRES_PASSWORD:?}@postgres:5432/${POSTGRES_DB:-nodes}?sslmode=disable
+      # Set by deploy.sh after the API's first boot mints the namespace id.
+      NODES_NAMESPACE_ID: ${NODES_NAMESPACE_ID:-default}
+      NODES_WORKER_ID: thor-worker-1
+      NODES_CALLBACK_BASE_URL: ${NODES_CALLBACK_BASE_URL:-http://thor:18080}
+      NODES_CALLBACK_TOKEN_SECRET: ${NODES_CALLBACK_TOKEN_SECRET:?install secrets first}
+      NODES_ARTIFACT_S3_ENDPOINT: minio:9000
+      NODES_ARTIFACT_S3_ACCESS_KEY: ${MINIO_ROOT_USER:-nodesroot}
+      NODES_ARTIFACT_S3_SECRET_KEY: ${MINIO_ROOT_PASSWORD:?}
+      NODES_ARTIFACT_S3_BUCKET: ${NODES_ARTIFACT_S3_BUCKET:-nodes-artifacts}
+      NODES_ARTIFACT_S3_USE_TLS: "false"
+      # Runner-service placement: present only when the operator installed a
+      # registry file (see deploy.sh); an absent file keeps the in-process
+      # CodeRunner path only.
+      NODES_CODE_RUNNER_NAME: headspace
+      NODES_CODE_RUNNER_REVISION: ${NODES_CODE_RUNNER_REVISION:-}
+      NODES_CODE_RUNNER_ACTOR_ID: ${NODES_CODE_RUNNER_ACTOR_ID:-}
+      # Bearer for external actor endpoints whose rows name this env var
+      # (metadata.auth_token_env) — the credential never enters the DB.
+      NODES_ACTOR_CLAUDE_TOKEN: ${NODES_ACTOR_CLAUDE_TOKEN:-}
+      NODES_RUNNER_SERVICES_FILE: ${NODES_RUNNER_SERVICES_FILE:-}
+    volumes:
+      - ~/.culture-nodes/runners:/etc/nodes-runners:ro
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+      postgres:
+        condition: service_healthy
+      minio:
+        condition: service_healthy
+    restart: unless-stopped
+
+  # Scheduled logical backups (plan t20). Every BACKUP_INTERVAL_SECONDS a
+  # full pg_dump lands in ~/.culture-nodes/backups on the host (bind mount),
+  # newest last; the restore runbook is deploy/prod/RESTORE.md and the drill
+  # that proves it is recorded in the phase-2 delivery evidence.
+  backup:
+    image: postgres:17-alpine@sha256:742f40ea20b9ff2ff31db5458d127452988a2164df9e17441e191f3b72252193
+    entrypoint: ["/bin/sh", "-c"]
+    command:
+      - |
+        while true; do
+          ts=$$(date -u +%Y%m%dT%H%M%SZ)
+          pg_dump -h postgres -U $${POSTGRES_USER:-nodes} -d $${POSTGRES_DB:-nodes} -Fc \
+            -f "/backups/nodes-$$ts.dump" && \
+            ln -sf "nodes-$$ts.dump" /backups/latest.dump && \
+            echo "backup $$ts ok"
+          ls -1t /backups/nodes-*.dump 2>/dev/null | tail -n +8 | xargs -r rm -f
+          sleep $${BACKUP_INTERVAL_SECONDS:-21600}
+        done
+    environment:
+      PGPASSWORD: ${POSTGRES_PASSWORD:?}
+      POSTGRES_USER: ${POSTGRES_USER:-nodes}
+      POSTGRES_DB: ${POSTGRES_DB:-nodes}
+    volumes:
+      - ~/.culture-nodes/backups:/backups
+    depends_on:
+      postgres:
+        condition: service_healthy
+    restart: unless-stopped
+
+volumes:
+  pgdata: {}
+  miniodata: {}

@@ -164,3 +164,17 @@ def test_request_round_trip_query_and_body(fake_api) -> None:
     assert resp.status == 201
     assert resp.payload == {"id": "run-1", "state": "running"}
     assert resp.raw == b'{"id": "run-1", "state": "running"}'
+
+
+def test_request_sends_custom_headers(fake_api) -> None:
+    seen = {}
+
+    def handler(h, m, q, b):
+        seen["auth"] = h.headers.get("Authorization")
+        h.send_json(200, {"ok": True})
+
+    fake_api.route("GET", r"/v1alpha1/echo", handler)
+    fake_api.start()
+    client = ApiClient(fake_api.base_url, timeout=5.0)
+    client.request("GET", "/v1alpha1/echo", headers={"Authorization": "Bearer s3cr3t"})
+    assert seen["auth"] == "Bearer s3cr3t"

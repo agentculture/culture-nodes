@@ -495,9 +495,17 @@ func TestWorkerRefusesToDispatchAnUnresolvableBinding(t *testing.T) {
 }
 
 // A kind whose seam is not registered fails with a diagnostic naming the
-// missing capability. It must never quietly succeed — an approval node that
-// auto-approved because nobody implemented approval yet would be the worst
-// possible failure mode for a system whose premise is that claims are earned.
+// missing capability. It must never quietly succeed — a node that
+// auto-succeeded because its executor was unregistered would be the worst
+// possible failure mode for a system whose premise is that claims are
+// earned. This exercises the generic path via the `approval` kind (renaming
+// an already-dispatched node's pinned kind — see
+// TestApprovalWorkItemThatSomehowExistsIsRefusedNotProcessed in
+// approval_invariant_test.go for the same refusal proven against a real
+// approval node's own node run). For `code` and `wait` this diagnostic is a
+// temporary gap later tasks close; for `approval` it is the permanent,
+// correct behaviour, because no approval work item legitimately reaches the
+// worker at all (see seams.go's HumanDispatcher doc comment).
 func TestUnwiredKindsFailWithADiagnosticRatherThanSucceeding(t *testing.T) {
 	h := newHarness(t, func(_ *harness, w http.ResponseWriter, _ actors.InvocationRequest) {
 		writeSyncResult(w, "completed", `{"summary":"x"}`)
@@ -536,8 +544,12 @@ func TestUnwiredKindsFailWithADiagnosticRatherThanSucceeding(t *testing.T) {
 	}
 }
 
-// A registered seam is used instead of the diagnostic, proving the seam is a
-// real extension point rather than a comment.
+// A registered seam is still used instead of the diagnostic when one is
+// configured, proving DispatchApproval is a working mechanism rather than
+// dead code — even though no real deployment should ever register one: an
+// approval node never produces a work item in the first place (see
+// seams.go's HumanDispatcher doc comment), so this test manufactures one, the
+// same way TestUnwiredKindsFailWithADiagnosticRatherThanSucceeding does.
 func TestRegisteredSeamIsUsed(t *testing.T) {
 	h := newHarness(t, func(_ *harness, w http.ResponseWriter, _ actors.InvocationRequest) {
 		writeSyncResult(w, "completed", `{"summary":"x"}`)

@@ -85,7 +85,15 @@ def cmd_run_create(args: argparse.Namespace) -> int:
 def cmd_run_list(args: argparse.Namespace) -> int:
     client = client_from_args(args)
     resp = client.request(
-        "GET", f"{API_PREFIX}/runs", query={"state": args.state, "limit": args.limit}
+        "GET",
+        f"{API_PREFIX}/runs",
+        query={
+            "state": args.state,
+            "updated_since": args.updated_since,
+            "updated_until": args.updated_until,
+            "sort": args.sort,
+            "limit": args.limit,
+        },
     )
     json_mode = bool(getattr(args, "json", False))
     if json_mode:
@@ -249,8 +257,32 @@ def register(sub: argparse._SubParsersAction) -> None:
     add_api_url_argument(create)
     create.set_defaults(func=cmd_run_create)
 
-    listp = noun_sub.add_parser("list", help="List runs, optionally filtered by state.")
+    listp = noun_sub.add_parser(
+        "list", help="List runs, optionally filtered by state and/or an updated_at window."
+    )
     listp.add_argument("--state", dest="state", default=None, help="Filter to runs in this state.")
+    listp.add_argument(
+        "--updated-since",
+        dest="updated_since",
+        default=None,
+        help="Only runs updated at or after this instant (RFC3339).",
+    )
+    listp.add_argument(
+        "--updated-until",
+        dest="updated_until",
+        default=None,
+        help="Only runs updated at or before this instant (RFC3339).",
+    )
+    listp.add_argument(
+        "--sort",
+        dest="sort",
+        default=None,
+        choices=["created_at", "updated_at"],
+        help=(
+            "Sort column (default: created_at, or updated_at when "
+            "--updated-since/--updated-until is set and --sort is omitted)."
+        ),
+    )
     listp.add_argument("--limit", type=int, default=None, help="Max items to return.")
     listp.add_argument("--json", action="store_true", help=JSON_FLAG_HELP)
     add_api_url_argument(listp)

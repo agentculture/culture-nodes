@@ -233,3 +233,7 @@ skills.local.yaml
 .devague/questions/
 
 .devague/reviews/
+
+# accidentally-committed build artifact (removed in phase-2); keep it out
+/nodes
+/test-results/

@@ -1,0 +1,43 @@
+# Culture Nodes — production profile, machine "orin" (plan t19).
+#
+# orin runs ONLY a worker (plus the host-process runner service, see
+# nodes-runner.service): it joins thor's authoritative Postgres over the
+# LAN as the second production worker — two machines, one DB, imitating
+# the k8s multi-pod topology (spec assumption c7). No local Postgres, no
+# MinIO, no API: the control plane lives on thor.
+#
+# Secrets from ~/.culture-nodes/prod.env via install-secrets.sh, and
+# NODES_NAMESPACE_ID is written by deploy.sh once thor's API has minted it.
+
+services:
+  worker:
+    image: culture-nodes:prod
+    build:
+      context: ../..
+      dockerfile: Dockerfile
+    command: ["worker"]
+    environment:
+      NODES_DATABASE_URL: postgres://${POSTGRES_USER:-nodes}:${POSTGRES_PASSWORD:?install secrets first (install-secrets.sh)}@${THOR_HOST:-thor}:5432/${POSTGRES_DB:-nodes}?sslmode=disable
+      NODES_NAMESPACE_ID: ${NODES_NAMESPACE_ID:?deploy.sh writes this after thor's first boot}
+      NODES_WORKER_ID: orin-worker-1
+      NODES_CALLBACK_BASE_URL: ${NODES_CALLBACK_BASE_URL:-http://thor:18080}
+      NODES_CALLBACK_TOKEN_SECRET: ${NODES_CALLBACK_TOKEN_SECRET:?install secrets first}
+      NODES_ARTIFACT_S3_ENDPOINT: ${THOR_HOST:-thor}:9000
+      NODES_ARTIFACT_S3_ACCESS_KEY: ${MINIO_ROOT_USER:-nodesroot}
+      NODES_ARTIFACT_S3_SECRET_KEY: ${MINIO_ROOT_PASSWORD:?}
+      NODES_ARTIFACT_S3_BUCKET: ${NODES_ARTIFACT_S3_BUCKET:-nodes-artifacts}
+      NODES_ARTIFACT_S3_USE_TLS: "false"
+      NODES_CODE_RUNNER_NAME: headspace
+      NODES_CODE_RUNNER_REVISION: ${NODES_CODE_RUNNER_REVISION:-}
+      NODES_CODE_RUNNER_ACTOR_ID: ${NODES_CODE_RUNNER_ACTOR_ID:-}
+      # Bearer for external actor endpoints whose rows name this env var
+      # (metadata.auth_token_env) — the credential never enters the DB.
+      NODES_ACTOR_CLAUDE_TOKEN: ${NODES_ACTOR_CLAUDE_TOKEN:-}
+      NODES_RUNNER_SERVICES_FILE: ${NODES_RUNNER_SERVICES_FILE:-}
+    volumes:
+      - ~/.culture-nodes/runners:/etc/nodes-runners:ro
+    extra_hosts:
+      # Containers do not inherit the host's /etc/hosts; deploy.sh resolves
+      # thor's address from orin (getent hosts thor) and writes THOR_IP.
+      - "thor:${THOR_IP:?deploy.sh resolves and writes this}"
+    restart: unless-stopped

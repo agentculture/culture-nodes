@@ -58,15 +58,66 @@ func (s *Server) handleCreateRun(w http.ResponseWriter, r *http.Request) error {
 	return nil
 }
 
-// handleListRuns is GET /v1alpha1/runs.
+// handleListRuns is GET /v1alpha1/runs. updated_since/updated_until/sort
+// (task t11) filter and order by updated_at, using
+// runs_namespace_updated_at_idx (migrations/0010) — see listRuns in
+// queries.go for the two query shapes and parseRunSort below for how the
+// default sort column is chosen.
 func (s *Server) handleListRuns(w http.ResponseWriter, r *http.Request) error {
-	limit := parseLimit(r, 50, 500)
-	runs, err := s.listRuns(r.Context(), r.URL.Query().Get("state"), limit)
+	updatedSince, err := parseRFC3339(r, "updated_since")
+	if err != nil {
+		return err
+	}
+	updatedUntil, err := parseRFC3339(r, "updated_until")
+	if err != nil {
+		return err
+	}
+	sort, err := parseRunSort(r, updatedSince != nil || updatedUntil != nil)
+	if err != nil {
+		return err
+	}
+
+	runs, err := s.listRuns(r.Context(), listRunsParams{
+		State:        r.URL.Query().Get("state"),
+		Limit:        parseLimit(r, 50, 500),
+		UpdatedSince: updatedSince,
+		UpdatedUntil: updatedUntil,
+		Sort:         sort,
+	})
 	if err != nil {
 		return internalError(err)
 	}
 	writeJSON(w, http.StatusOK, RunListOut{Items: runs})
 	return nil
+}
+
+// parseRunSort reads GET /v1alpha1/runs' "sort" query parameter: sortCreatedAt
+// or sortUpdatedAt, always descending — every list in this API is
+// newest-first, and this task does not add an ascending option anywhere.
+// An explicit value that is neither is refused with 400 — silently falling
+// back the way parseLimit does for an out-of-range page size would mean a
+// caller who mistyped sort gets a page silently ordered differently from
+// what they asked for, with no signal anything was wrong.
+//
+// Omitted (the common case), the default depends on timeWindowed
+// (whether updated_since or updated_until was set): sortUpdatedAt when it
+// is — a time-windowed query over updated_at is naturally read in that same
+// order, and migrations/0010's (namespace_id, updated_at) index makes it the
+// efficient one — and sortCreatedAt otherwise, preserving every pre-t11
+// caller's behavior unchanged.
+func parseRunSort(r *http.Request, timeWindowed bool) (string, error) {
+	raw := r.URL.Query().Get("sort")
+	switch raw {
+	case "":
+		if timeWindowed {
+			return sortUpdatedAt, nil
+		}
+		return sortCreatedAt, nil
+	case sortCreatedAt, sortUpdatedAt:
+		return raw, nil
+	default:
+		return "", badRequest("sort must be created_at or updated_at", "unrecognized sort=%q", raw)
+	}
 }
 
 // handleGetRun is GET /v1alpha1/runs/{id}: the Run-view payload.

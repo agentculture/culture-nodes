@@ -14,6 +14,11 @@ export function Header() {
         <Mark size={28} />
         <span className="app-header__wordmark">Culture Nodes</span>
       </Link>
+      <nav className="app-header__nav" aria-label="Primary">
+        <Link to="/runs">Runs</Link>
+        <Link to="/board">Board</Link>
+        <Link to="/jobs">Jobs</Link>
+      </nav>
       <p className="app-header__tagline">
         Every node has a contract. Every result has evidence.
       </p>

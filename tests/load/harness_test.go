@@ -14,6 +14,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/agentculture/culture-nodes/internal/compiler"
 	"github.com/agentculture/culture-nodes/internal/engine"
 	"github.com/agentculture/culture-nodes/internal/store/postgres"
 )
@@ -320,18 +321,34 @@ func seedRuns(t *testing.T, s *postgres.Store, namespaceID string, ops int) {
 	}
 
 	const seedConcurrency = 8
+	if err := runSeedWorkers(seedWork(ops), seedConcurrency, cw, eng); err != nil {
+		t.Fatalf("seed %d runs: %v", ops, err)
+	}
+}
+
+// seedWork returns a closed, pre-filled channel of the run indices seedRuns
+// hands out to its worker goroutines — pre-filled and closed up front so a
+// worker goroutine's `for range work` simply drains it and exits.
+func seedWork(ops int) chan int {
 	work := make(chan int, ops)
 	for i := 0; i < ops; i++ {
 		work <- i
 	}
 	close(work)
+	return work
+}
 
+// runSeedWorkers fans `work` out across `concurrency` goroutines, each
+// calling eng.CreateRun once per item, and returns the first error any
+// goroutine hit (nil if none did). A goroutine that errors stops claiming
+// further work rather than piling up more failures behind the first one.
+func runSeedWorkers(work <-chan int, concurrency int, cw *compiler.CompiledWorkflow, eng *engine.Engine) error {
 	var (
 		wg      sync.WaitGroup
 		errMu   sync.Mutex
 		firstEr error
 	)
-	for i := 0; i < seedConcurrency; i++ {
+	for i := 0; i < concurrency; i++ {
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
@@ -348,9 +365,7 @@ func seedRuns(t *testing.T, s *postgres.Store, namespaceID string, ops int) {
 		}()
 	}
 	wg.Wait()
-	if firstEr != nil {
-		t.Fatalf("seed %d runs: %v", ops, firstEr)
-	}
+	return firstEr
 }
 
 type loadWorkerEnv struct {

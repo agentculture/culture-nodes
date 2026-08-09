@@ -7,6 +7,7 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"sync"
 	"testing"
 	"time"
@@ -153,6 +154,18 @@ func (a *asyncDeliveryAgents) reportCompletion(req actors.InvocationRequest, res
 		return
 	}
 
+	// The callback URL travels over the wire (it is decoded straight out of
+	// the invocation request §13.1 sent this fake actor), so it is parsed and
+	// scheme-checked before it is ever handed to http.NewRequest rather than
+	// used as a raw, unvalidated string — the worker under test always mints
+	// an http(s) URL (Worker.callbackURL, internal/worker/dispatch.go), so
+	// this rejects nothing a correct worker would ever send.
+	callbackURL, err := parsedCallbackURL(req.Callback.URL)
+	if err != nil {
+		fail("node %s: %v", req.Node.ID, err)
+		return
+	}
+
 	// Deliberately a SINGLE attempt, with no client-side retry: this fake
 	// actor answers 202 and reports completion from its own goroutine as
 	// fast as it can, exactly as a near-instant backend (a mock engine, for
@@ -163,7 +176,7 @@ func (a *asyncDeliveryAgents) reportCompletion(req actors.InvocationRequest, res
 	// permanently stranded the run in waiting_external and left run.output
 	// null forever, which is exactly the failure this test reproduces
 	// without the fix and proves closed with it.
-	httpReq, err := http.NewRequest(http.MethodPost, req.Callback.URL, bytes.NewReader(body))
+	httpReq, err := http.NewRequest(http.MethodPost, callbackURL, bytes.NewReader(body))
 	if err != nil {
 		fail("node %s: build callback request: %v", req.Node.ID, err)
 		return
@@ -181,6 +194,23 @@ func (a *asyncDeliveryAgents) reportCompletion(req actors.InvocationRequest, res
 		b, _ := io.ReadAll(resp.Body)
 		fail("node %s: callback answered %d: %s", req.Node.ID, resp.StatusCode, b)
 	}
+}
+
+// parsedCallbackURL validates rawURL is an absolute http(s) URL and returns
+// its normalized string form, so the value decoded off the wire is never
+// handed to http.NewRequest as raw, unvalidated text.
+func parsedCallbackURL(rawURL string) (string, error) {
+	u, err := url.Parse(rawURL)
+	if err != nil {
+		return "", fmt.Errorf("parse callback URL: %w", err)
+	}
+	if u.Scheme != "http" && u.Scheme != "https" {
+		return "", fmt.Errorf("callback URL %q has scheme %q, want http or https", rawURL, u.Scheme)
+	}
+	if u.Host == "" {
+		return "", fmt.Errorf("callback URL %q has no host", rawURL)
+	}
+	return u.String(), nil
 }
 
 func (a *asyncDeliveryAgents) scriptFailures() []string {

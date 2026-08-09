@@ -273,29 +273,11 @@ func pollLoop(ctx context.Context, s *postgres.Store, wk *worker.Worker, cfg con
 		}
 
 		line := sample{Seq: seq, Phase: phase}
-		switch phase {
-		case phaseDispatch:
-			// Tick claims ready work, dispatches it (POST + park), and runs
-			// its own sampler pass. Timed as a whole; not comparable with an
-			// observe-phase pass and never used as one.
-			start := time.Now()
-			dispatched, err := wk.Tick(ctx)
-			line.TickNS = time.Since(start).Nanoseconds()
-			if err != nil {
-				return fmt.Errorf("Tick: %w", err)
-			}
-			line.Dispatched = dispatched
-		default:
-			// The steady state: one pass over whatever is due, nothing else.
-			start := time.Now()
-			sampled, err := wk.SampleRunnerOperations(ctx)
-			line.PassNS = time.Since(start).Nanoseconds()
-			if err != nil {
-				return fmt.Errorf("SampleRunnerOperations: %w", err)
-			}
-			line.Sampled = sampled
-			total += sampled
+		sampled, err := runPollPhase(ctx, wk, phase, &line)
+		if err != nil {
+			return err
 		}
+		total += sampled
 		line.TotalSampled = total
 
 		parked, err := parkedCount(ctx, s, cfg.namespaceID)
@@ -307,19 +289,7 @@ func pollLoop(ctx context.Context, s *postgres.Store, wk *worker.Worker, cfg con
 			phase = phaseObserve
 		}
 
-		var ms runtime.MemStats
-		runtime.ReadMemStats(&ms)
-		rss, hwm, threads := procStatus()
-		line.UnixMS = time.Now().UnixMilli()
-		line.Goroutines = runtime.NumGoroutine()
-		line.Threads = threads
-		line.HeapAlloc = ms.HeapAlloc
-		line.HeapInuse = ms.HeapInuse
-		line.HeapSys = ms.HeapSys
-		line.Sys = ms.Sys
-		line.NumGC = ms.NumGC
-		line.RSSKB = rss
-		line.HWMKB = hwm
+		recordProcessStats(&line)
 		if err := enc.Encode(line); err != nil {
 			return fmt.Errorf("emit sample: %w", err)
 		}
@@ -330,6 +300,56 @@ func pollLoop(ctx context.Context, s *postgres.Store, wk *worker.Worker, cfg con
 		case <-time.After(cfg.loop):
 		}
 	}
+}
+
+// runPollPhase runs one iteration's worker step for phase, filling line's
+// phase-specific fields, and returns how many operations were sampled this
+// iteration. It is always 0 during the dispatch phase, since sampling there
+// happens inside wk.Tick itself, untimed — see the package doc's "Two
+// phases" for why that pass is never folded into this one's count.
+func runPollPhase(ctx context.Context, wk *worker.Worker, phase string, line *sample) (int, error) {
+	if phase == phaseDispatch {
+		// Tick claims ready work, dispatches it (POST + park), and runs its
+		// own sampler pass. Timed as a whole; not comparable with an
+		// observe-phase pass and never used as one.
+		start := time.Now()
+		dispatched, err := wk.Tick(ctx)
+		line.TickNS = time.Since(start).Nanoseconds()
+		if err != nil {
+			return 0, fmt.Errorf("Tick: %w", err)
+		}
+		line.Dispatched = dispatched
+		return 0, nil
+	}
+
+	// The steady state: one pass over whatever is due, nothing else.
+	start := time.Now()
+	sampled, err := wk.SampleRunnerOperations(ctx)
+	line.PassNS = time.Since(start).Nanoseconds()
+	if err != nil {
+		return 0, fmt.Errorf("SampleRunnerOperations: %w", err)
+	}
+	line.Sampled = sampled
+	return sampled, nil
+}
+
+// recordProcessStats fills line's runtime/process measurement fields. It is
+// always called immediately before the line is encoded and after every timed
+// region above, exactly like pollLoop's single inline block used to.
+func recordProcessStats(line *sample) {
+	var ms runtime.MemStats
+	runtime.ReadMemStats(&ms)
+	rss, hwm, threads := procStatus()
+	line.UnixMS = time.Now().UnixMilli()
+	line.Goroutines = runtime.NumGoroutine()
+	line.Threads = threads
+	line.HeapAlloc = ms.HeapAlloc
+	line.HeapInuse = ms.HeapInuse
+	line.HeapSys = ms.HeapSys
+	line.Sys = ms.Sys
+	line.NumGC = ms.NumGC
+	line.RSSKB = rss
+	line.HWMKB = hwm
 }
 
 func parkedCount(ctx context.Context, s *postgres.Store, namespaceID string) (int, error) {

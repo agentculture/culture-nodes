@@ -1,10 +1,12 @@
 import { describe, expect, it } from "vitest";
 import { RUN_EVENTS, RUN_VIEW } from "../fixtures/run-fixture";
+import type { NodeRunState } from "../api/types";
 import {
   applyEvent,
   executionFromRunView,
   NODE_STATE_ICON,
   NODE_STATE_LABEL,
+  nodeRunStateToExecState,
   shortEventType,
   type RunGraphState,
 } from "./run-state";
@@ -123,5 +125,39 @@ describe("state vocabulary", () => {
     expect(shortEventType("dev.culture.nodes.token.transitioned")).toBe(
       "token.transitioned",
     );
+  });
+});
+
+describe("nodeRunStateToExecState", () => {
+  it("maps every NodeRunState value onto a renderable NodeExecState", () => {
+    const cases: [NodeRunState, string][] = [
+      ["ready", "ready"],
+      ["leased", "active"],
+      ["running", "active"],
+      ["waiting_external", "waiting"],
+      ["completed", "completed"],
+      ["failed", "failed"],
+      ["cancelled", "cancelled"],
+    ];
+    for (const [input, expected] of cases) {
+      expect(nodeRunStateToExecState(input)).toBe(expected);
+    }
+  });
+
+  it("has an icon and label for the result of every mapping (StatusChip never renders blank)", () => {
+    const inputs: NodeRunState[] = [
+      "ready",
+      "leased",
+      "running",
+      "waiting_external",
+      "completed",
+      "failed",
+      "cancelled",
+    ];
+    for (const input of inputs) {
+      const mapped = nodeRunStateToExecState(input);
+      expect(NODE_STATE_LABEL[mapped]).toBeTruthy();
+      expect(NODE_STATE_ICON[mapped]).toBeTruthy();
+    }
   });
 });

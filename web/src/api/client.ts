@@ -1,5 +1,6 @@
 import type {
   LedgerRecords,
+  NodeRunList,
   Projection,
   RunList,
   RunState,
@@ -104,6 +105,31 @@ export const listRuns = (signal?: AbortSignal, params?: ListRunsParams) =>
 
 export const getRun = (id: string, signal?: AbortSignal) =>
   getJson<RunView>(`/runs/${encodeURIComponent(id)}`, signal);
+
+/**
+ * GET /v1alpha1/node-runs query parameters (task t11): the cross-run "jobs
+ * timeline" listing, keyset-paginated by `cursor`/`next_cursor` rather than
+ * an offset (see openapi.yaml's listNodeRuns for why — `updated_at` moves
+ * under an OFFSET page as other rows in the namespace transition).
+ */
+export interface ListNodeRunsParams {
+  /** RFC3339. Only node runs updated at or after this instant. */
+  updated_since?: string;
+  /** RFC3339. Only node runs updated at or before this instant. */
+  updated_until?: string;
+  /** An opaque `next_cursor` from a previous page; omit for the first page. */
+  cursor?: string;
+  limit?: number;
+}
+
+export const listNodeRuns = (
+  signal?: AbortSignal,
+  params?: ListNodeRunsParams,
+) =>
+  getJson<NodeRunList>(
+    `/node-runs${toQueryString(params as Record<string, string | number | undefined> | undefined)}`,
+    signal,
+  );
 
 export const getWorkflow = (digest: string, signal?: AbortSignal) =>
   getJson<WorkflowVersion>(

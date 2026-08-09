@@ -8,6 +8,7 @@ import {
 import AgentStateScript from "./agent-state/AgentStateScript";
 import { setAgentState } from "./agent-state/store";
 import Header from "./components/Header";
+import JobsTimeline from "./routes/JobsTimeline";
 import LedgerView from "./routes/LedgerView";
 import RunView from "./routes/RunView";
 import RunsBoard from "./routes/RunsBoard";
@@ -35,6 +36,7 @@ export function App() {
           <Route path="/" element={<Navigate to="/runs" replace />} />
           <Route path="/runs" element={<RunsList />} />
           <Route path="/board" element={<RunsBoard />} />
+          <Route path="/jobs" element={<JobsTimeline />} />
           <Route path="/runs/:id" element={<RunView />} />
           <Route path="/runs/:id/ledger" element={<LedgerView />} />
           <Route

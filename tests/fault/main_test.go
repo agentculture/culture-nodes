@@ -379,3 +379,31 @@ func waitForPostgres(ctx context.Context, url string, timeout time.Duration) err
 	}
 	return lastErr
 }
+
+// waitForReclaim polls until at least one work item in the namespace has
+// been claimed a second time (fencing_token >= 2: the victim's claim was 1,
+// so any higher token proves a post-expiry reclaim) or completed, failing at
+// deadline. This is the §20.4 "lease expires; another worker claims" moment
+// itself, as distinct from the reclaimed work then finishing (see
+// waitForCompletedCount's separate liveness bound at its call site).
+func waitForReclaim(t *testing.T, s *postgres.Store, namespaceID string, deadline time.Time) {
+	t.Helper()
+	ctx := context.Background()
+	for {
+		var reclaimed int
+		if err := s.Pool().QueryRow(ctx,
+			`SELECT count(*) FROM work_items
+			  WHERE namespace_id = $1
+			    AND (fencing_token >= 2 OR state = 'completed')`, namespaceID,
+		).Scan(&reclaimed); err != nil {
+			t.Fatalf("count reclaimed work_items: %v", err)
+		}
+		if reclaimed > 0 {
+			return
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("no victim-held work item was reclaimed before the lease-expiry+5s bound (h19/§20.4)")
+		}
+		time.Sleep(50 * time.Millisecond)
+	}
+}

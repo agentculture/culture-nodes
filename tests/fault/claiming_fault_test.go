@@ -89,10 +89,6 @@ func TestFaultKilledWorkerReclaimedBySurvivor(t *testing.T) {
 	// time it takes the test to notice the flag file and kill it, so the
 	// kill is guaranteed to land before any completion.
 	victim := startWorker(t, "fault-victim", leaseSeconds, total, 4000, 8000, flagFile)
-	// The survivor starts at the same time. It will find nothing to claim
-	// at first (the victim already has everything); it keeps polling
-	// (ReclaimExpired, then ClaimWork) until the victim's lease expires.
-	survivor := startWorker(t, "fault-survivor", leaseSeconds, total, 20, 6000, "")
 
 	waitForFlagFile(t, flagFile, 5*time.Second)
 
@@ -101,8 +97,29 @@ func TestFaultKilledWorkerReclaimedBySurvivor(t *testing.T) {
 	}
 	_ = victim.wait(t, 5*time.Second) // a "signal: killed" exit error is expected here
 
-	deadline := time.Duration(leaseSeconds*float64(time.Second)) + 5*time.Second
-	waitForCompletedCount(t, s, ns.ID, total, deadline)
+	// The survivor starts only after the kill. Starting it alongside the
+	// victim looks like a stronger test but is a start-order RACE: nothing
+	// stops the survivor's first poll from winning some or all of the ready
+	// items, in which case the victim claims nothing, never writes its flag
+	// file, and the test fails without exercising recovery at all (observed
+	// under parallel-suite load). §20.4's row is "worker dies before
+	// dispatch -> lease expires; another worker claims" — a post-kill
+	// survivor exercises exactly that path with no special-casing: its own
+	// poll loop (ReclaimExpired, then ClaimWork) does all the recovering.
+	survivor := startWorker(t, "fault-survivor", leaseSeconds, total, 20, 6000, "")
+
+	// The h19/§20.4 bound is about RECLAIM latency: "a killed worker's lease
+	// is reclaimed within expiry plus five seconds". Measure exactly that —
+	// the moment any victim-held item is claimed again (its fencing token
+	// rises past the victim's claim) — against expiry+5s. Completing all the
+	// reclaimed work is a separate LIVENESS assertion with its own generous
+	// bound: on a loaded host (CI runners, parallel Docker suites) the
+	// survivor's work loop can legitimately take longer than the reclaim
+	// bound without violating the spec's recovery promise.
+	killedAt := time.Now()
+	reclaimDeadline := time.Duration(leaseSeconds*float64(time.Second)) + 5*time.Second
+	waitForReclaim(t, s, ns.ID, killedAt.Add(reclaimDeadline))
+	waitForCompletedCount(t, s, ns.ID, total, 30*time.Second)
 
 	// Not part of the timing assertion above (a worker's own idle timeout
 	// is independent of how fast recovery happened) -- just confirms the
@@ -113,8 +130,13 @@ func TestFaultKilledWorkerReclaimedBySurvivor(t *testing.T) {
 	}
 
 	var survivorCompletions int
+	// Scoped to this test's namespace: under `go test -count=N` every
+	// iteration shares the one ephemeral database, so an unscoped count
+	// accumulates prior iterations' completions.
 	if err := s.Pool().QueryRow(context.Background(),
-		`SELECT count(*) FROM test_work_results WHERE completed_by = 'fault-survivor'`,
+		`SELECT count(*) FROM test_work_results r
+		  WHERE r.completed_by = 'fault-survivor'
+		    AND r.node_run_id IN (SELECT id FROM node_runs WHERE namespace_id = $1)`, ns.ID,
 	).Scan(&survivorCompletions); err != nil {
 		t.Fatalf("count survivor completions: %v", err)
 	}

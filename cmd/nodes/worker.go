@@ -37,6 +37,11 @@ const (
 	envCallbackBaseURL  = "NODES_CALLBACK_BASE_URL"
 	envCallbackSecret   = "NODES_CALLBACK_TOKEN_SECRET"
 	envWorkerIdentifier = "NODES_WORKER_ID"
+	// envCodeRunnerName is the logical runner name stamped on every code
+	// operation this worker builds (worker.Options.CodeRunnerName). Any code
+	// dispatch — in-process adapter or runner service alike — refuses without
+	// one: an operation that names no runner is one no adapter will accept.
+	envCodeRunnerName = "NODES_CODE_RUNNER_NAME"
 )
 
 func cmdWorker(args []string, jsonMode bool) (int, error) {
@@ -144,6 +149,7 @@ func cmdWorker(args []string, jsonMode bool) (int, error) {
 		Signer:          signer,
 		CallbackBaseURL: callbackBase,
 		RunnerService:   runnerSvc,
+		CodeRunnerName:  os.Getenv(envCodeRunnerName),
 		OnError: func(err error) {
 			// Diagnostics go to stderr; the stdout stream stays clean for
 			// results, per the CLI's output contract.
@@ -360,6 +366,7 @@ func buildWorker(db *postgres.Store, namespace string) (*worker.Worker, *clifmt.
 		Signer:          signer,
 		CallbackBaseURL: callbackBase,
 		RunnerService:   runnerSvc,
+		CodeRunnerName:  os.Getenv(envCodeRunnerName),
 		OnError: func(err error) {
 			clifmt.EmitDiagnostic(err.Error())
 		},

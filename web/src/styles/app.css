@@ -872,3 +872,98 @@ button.timeline__node {
   font-size: var(--ac-type-meta);
   margin: 0;
 }
+
+/* ---------- jobs timeline (task t15) ---------- */
+
+.time-range-filter {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.6rem 1rem;
+  margin: 1.1rem 0 1.5rem;
+}
+
+/* Same segmented-button frame as .view-toggle (RunView's graph/timeline
+   switch) — a preset picker is the same shape of control, not a new one. */
+.time-range-filter__presets {
+  display: inline-flex;
+  gap: 0;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  overflow: hidden;
+  background: var(--surface);
+}
+
+.time-range-filter__presets button {
+  font: inherit;
+  font-size: var(--ac-type-meta);
+  padding: 0.35rem 1rem;
+  border: 0;
+  background: transparent;
+  color: var(--ink-soft);
+  cursor: pointer;
+}
+
+.time-range-filter__presets button[aria-pressed="true"] {
+  background: var(--accent-strong);
+  color: var(--on-accent);
+}
+
+.time-range-filter__clear {
+  font-size: var(--ac-type-meta);
+}
+
+.time-range-filter__custom {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.5rem;
+  font-size: var(--ac-type-meta);
+  width: 100%;
+}
+
+.time-range-filter__custom label {
+  color: var(--ink-soft);
+}
+
+.time-range-filter__custom input {
+  font: inherit;
+  font-size: var(--ac-type-meta);
+  padding: 0.3rem 0.5rem;
+  border: 1px solid var(--line);
+  border-radius: 0.5rem;
+  background: var(--surface);
+  color: var(--ink);
+}
+
+.time-range-filter__custom button {
+  font: inherit;
+  font-size: var(--ac-type-meta);
+  padding: 0.3rem 0.9rem;
+  border: 1px solid var(--accent-strong);
+  border-radius: 999px;
+  background: var(--accent-strong);
+  color: var(--on-accent);
+  cursor: pointer;
+}
+
+.jobs-timeline__load-more {
+  font: inherit;
+  font-size: var(--ac-type-ui);
+  margin-top: 1rem;
+  padding: 0.4rem 1.1rem;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  background: var(--surface);
+  color: var(--ink);
+  cursor: pointer;
+}
+
+.jobs-timeline__load-more:hover {
+  border-color: color-mix(in srgb, var(--accent) 40%, var(--line));
+}
+
+.jobs-timeline__load-more:disabled {
+  opacity: 0.6;
+  cursor: default;
+}

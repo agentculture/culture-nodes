@@ -1,6 +1,7 @@
 import type {
   Attempt,
   NodeRun,
+  NodeRunState,
   RunEvent,
   RunView,
 } from "../api/types";
@@ -79,6 +80,36 @@ function stateFor(nodeRun: NodeRun, attempts: Attempt[]): NodeExecState {
       const last = attempts[attempts.length - 1];
       return last?.status === "policy_denied" ? "policy_denied" : "failed";
     }
+    default:
+      return "idle";
+  }
+}
+
+/**
+ * Map a `NodeRunListItem`'s raw `NodeRunState` (the cross-run `GET
+ * /v1alpha1/node-runs` listing, task t11/t15) onto the same `NodeExecState`
+ * vocabulary `StatusChip` already renders everywhere else. Unlike `stateFor`
+ * above, a list item carries no attempts, so a `failed` row cannot be split
+ * into `failed` vs `policy_denied` here — that distinction needs an
+ * attempt's status, which this flat listing does not nest. Every other
+ * value maps straight across; `leased` and `running` both read as `active`,
+ * exactly as `stateFor` treats them.
+ */
+export function nodeRunStateToExecState(state: NodeRunState): NodeExecState {
+  switch (state) {
+    case "ready":
+      return "ready";
+    case "leased":
+    case "running":
+      return "active";
+    case "waiting_external":
+      return "waiting";
+    case "completed":
+      return "completed";
+    case "failed":
+      return "failed";
+    case "cancelled":
+      return "cancelled";
     default:
       return "idle";
   }

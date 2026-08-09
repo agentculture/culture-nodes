@@ -17,6 +17,7 @@ export function Header() {
       <nav className="app-header__nav" aria-label="Primary">
         <Link to="/runs">Runs</Link>
         <Link to="/board">Board</Link>
+        <Link to="/jobs">Jobs</Link>
       </nav>
       <p className="app-header__tagline">
         Every node has a contract. Every result has evidence.

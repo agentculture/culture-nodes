@@ -90,9 +90,11 @@ type Config struct {
 	CancelAfter        time.Duration
 }
 
-func (c Config) timeout() time.Duration        { return orDefault(c.Timeout, DefaultTimeout) }
-func (c Config) terminalWait() time.Duration   { return orDefault(c.TerminalWait, DefaultTerminalWait) }
-func (c Config) retentionDelay() time.Duration { return orDefault(c.RetentionReadDelay, DefaultRetentionReadDelay) }
+func (c Config) timeout() time.Duration      { return orDefault(c.Timeout, DefaultTimeout) }
+func (c Config) terminalWait() time.Duration { return orDefault(c.TerminalWait, DefaultTerminalWait) }
+func (c Config) retentionDelay() time.Duration {
+	return orDefault(c.RetentionReadDelay, DefaultRetentionReadDelay)
+}
 func (c Config) cancelAfter() time.Duration    { return orDefault(c.CancelAfter, DefaultCancelAfter) }
 func (c Config) configuredPoll() time.Duration { return orDefault(c.PollInterval, DefaultPollInterval) }
 

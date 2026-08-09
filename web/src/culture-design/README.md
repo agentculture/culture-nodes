@@ -19,17 +19,11 @@ extraction rationale, the license note, and the re-pin procedure.
 
 ## Compilation status
 
-This directory currently has **no build tooling** — there is no
-`node_modules`, no `package.json`, no TypeScript/React toolchain wired up
-in this repo yet. `mark.tsx` is syntactically valid TSX but is **not**
-type-checked or compiled as part of this task. Compilation lands with the
-web app / Vite build-out task, which will add the dependency tree
-(`react`, `@types/react`, a bundler config) that this file is written to
-be consumed by.
-
-`tokens.css`, `palette.ts`, and `edges.ts` are plain CSS/TS with no
-framework dependency and can already be consumed by any bundler once one
-exists.
+This directory is compiled. The web app at `web/` (Vite + React 18 +
+TypeScript) imports every file here, so `mark.tsx` is type-checked by
+`tsc -b` and bundled by `vite build`; its earlier placeholder `FC` shim is
+gone in favour of React's own type. `tokens.css` is imported once, globally,
+from `src/main.tsx`.
 
 ## Verification
 

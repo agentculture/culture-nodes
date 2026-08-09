@@ -1,0 +1,726 @@
+/* Culture Nodes app styles.
+ *
+ * Every colour, radius, shadow, face and easing here resolves to a custom
+ * property from culture-design/tokens.css (PRD §8.1: "Culture Nodes must not
+ * invent a sibling aesthetic"). The only literal hexes are the four terminal
+ * palette swatches re-declared as run-state tokens below, and each is copied
+ * from culture-design/palette.ts, which is itself pinned to the org repo.
+ */
+
+:root {
+  /* Run-state accents, from TERMINAL_PALETTE in culture-design/palette.ts.
+     tokens.css has no danger/warning role of its own — the org site never
+     needed one — so these three roles borrow the pinned categorical hues
+     rather than inventing new colour. */
+  --nodes-danger: #f2789a; /* palette.pink */
+  --nodes-warn: #f2b774; /* palette.amber */
+  --nodes-ok: #9fd6a3; /* palette.green */
+  --nodes-idle: #a9b0cf; /* palette.neutral */
+
+  --nodes-card-radius: 0.85rem;
+  --nodes-gap: 1rem;
+}
+
+/* ---------- header ---------- */
+
+.app-header {
+  position: sticky;
+  top: 0;
+  z-index: 20;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 0.4rem 1.25rem;
+  padding: 0.8rem var(--ac-page-gutter);
+  border-bottom: 1px solid var(--line);
+  background: color-mix(in srgb, var(--bg) 82%, transparent);
+  backdrop-filter: blur(12px) saturate(140%);
+  -webkit-backdrop-filter: blur(12px) saturate(140%);
+}
+
+.app-header__brand {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.6rem;
+  text-decoration: none;
+  color: var(--ink);
+}
+
+.app-header__wordmark {
+  font-family: var(--font-display);
+  font-optical-sizing: auto;
+  font-variation-settings: "SOFT" 75, "WONK" 0;
+  font-weight: 440;
+  font-size: var(--ac-type-card-title);
+  letter-spacing: var(--ac-tracking-heading);
+}
+
+.app-header__tagline {
+  margin: 0;
+  color: var(--ink-soft);
+  font-size: var(--ac-type-meta);
+  letter-spacing: var(--ac-tracking-flat);
+}
+
+/* ---------- generic bits ---------- */
+
+.container,
+.wide-rail {
+  padding-block: 1.75rem 3rem;
+}
+
+.link-button {
+  background: none;
+  border: 0;
+  padding: 0;
+  font: inherit;
+  color: var(--accent);
+  cursor: pointer;
+  text-decoration: underline;
+  text-underline-offset: 0.2em;
+}
+
+.error-notice {
+  border: 1px solid color-mix(in srgb, var(--nodes-danger) 55%, var(--line));
+  border-left-width: 4px;
+  border-radius: var(--nodes-card-radius);
+  background: var(--surface);
+  padding: 0.9rem 1.1rem;
+  margin-bottom: 1.25rem;
+}
+
+.error-notice p {
+  margin: 0;
+  font-size: var(--ac-type-ui);
+}
+
+.error-notice__icon {
+  color: var(--nodes-danger);
+  margin-right: 0.4rem;
+}
+
+.error-notice__hint {
+  color: var(--ink-soft);
+}
+
+/* ---------- tables ---------- */
+
+.ledger-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: var(--ac-type-ui);
+  line-height: var(--ac-leading-ui);
+}
+
+.ledger-table caption {
+  text-align: left;
+  color: var(--ink-soft);
+  font-size: var(--ac-type-meta);
+  padding-bottom: 0.5rem;
+}
+
+.ledger-table th,
+.ledger-table td {
+  text-align: left;
+  padding: 0.55rem 0.7rem;
+  border-bottom: 1px solid var(--line-soft);
+  vertical-align: top;
+}
+
+.ledger-table thead th {
+  font-size: var(--ac-type-meta);
+  letter-spacing: var(--ac-tracking-caps);
+  text-transform: uppercase;
+  color: var(--ink-soft);
+  font-weight: 640;
+  border-bottom-color: var(--line);
+}
+
+.ledger-table code {
+  font-family: var(--font-mono);
+  font-size: var(--ac-type-terminal);
+}
+
+/* ---------- status + authority chips ---------- */
+
+.status-chip,
+.authority-chip,
+.run-state-chip,
+.node-card__badge,
+.node-card__visits,
+.stream-status {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.3rem;
+  border-radius: 999px;
+  padding: 0.1rem 0.55rem;
+  font-size: var(--ac-type-micro);
+  line-height: 1.7;
+  letter-spacing: var(--ac-tracking-flat);
+  white-space: nowrap;
+}
+
+.status-chip {
+  border: 1px solid var(--line);
+  background: color-mix(in srgb, var(--surface) 70%, transparent);
+  color: var(--ink-soft);
+}
+
+.status-chip--completed {
+  border-color: color-mix(in srgb, var(--nodes-ok) 65%, var(--line));
+  color: color-mix(in srgb, var(--nodes-ok) 55%, var(--ink));
+}
+
+.status-chip--active {
+  border-color: color-mix(in srgb, var(--accent) 60%, var(--line));
+  color: var(--accent);
+}
+
+.status-chip--waiting {
+  border-color: color-mix(in srgb, var(--nodes-warn) 65%, var(--line));
+  color: color-mix(in srgb, var(--nodes-warn) 55%, var(--ink));
+}
+
+.status-chip--failed,
+.status-chip--policy_denied,
+.status-chip--cancelled {
+  border-color: color-mix(in srgb, var(--nodes-danger) 65%, var(--line));
+  color: color-mix(in srgb, var(--nodes-danger) 55%, var(--ink));
+}
+
+.status-chip--ready {
+  border-style: dashed;
+}
+
+.authority-chip {
+  border: 1px solid var(--ink-soft);
+  color: var(--ink-soft);
+  background: transparent;
+}
+
+.authority-chip--confirmed,
+.authority-chip--observed,
+.authority-chip--derived {
+  border-color: var(--accent-strong);
+  color: var(--accent);
+}
+
+.authority-chip--rejected {
+  border-color: color-mix(in srgb, var(--nodes-danger) 70%, var(--line));
+  color: color-mix(in srgb, var(--nodes-danger) 55%, var(--ink));
+}
+
+.run-state-chip {
+  border: 1px solid var(--accent-strong);
+  color: var(--accent);
+  font-size: var(--ac-type-meta);
+  padding: 0.15rem 0.7rem;
+}
+
+.stream-status {
+  border: 1px dashed var(--line);
+  color: var(--ink-soft);
+}
+
+/* ---------- run view ---------- */
+
+.run-view__head {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 1rem;
+  align-items: flex-start;
+  justify-content: space-between;
+}
+
+.run-view__title {
+  font-size: var(--ac-type-section-title);
+  margin-bottom: 0.2rem;
+}
+
+.run-view__id {
+  font-family: var(--font-mono);
+  font-size: var(--ac-type-ui);
+  color: var(--ink-soft);
+}
+
+.run-view__sub {
+  font-size: var(--ac-type-meta);
+  margin-bottom: 0;
+}
+
+.run-view__state {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.6rem;
+}
+
+.view-toggle {
+  display: inline-flex;
+  gap: 0;
+  margin: 1.1rem 0;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  overflow: hidden;
+  background: var(--surface);
+}
+
+.view-toggle button {
+  font: inherit;
+  font-size: var(--ac-type-meta);
+  padding: 0.35rem 1rem;
+  border: 0;
+  background: transparent;
+  color: var(--ink-soft);
+  cursor: pointer;
+}
+
+.view-toggle button[aria-pressed="true"] {
+  background: var(--accent-strong);
+  color: var(--on-accent);
+}
+
+.run-view__body {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  gap: var(--nodes-gap);
+  align-items: start;
+}
+
+@media (min-width: 68rem) {
+  .run-view__body:has(.detail-panel) {
+    grid-template-columns: minmax(0, 1fr) 22rem;
+  }
+}
+
+.run-canvas {
+  height: min(62vh, 34rem);
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  background: var(--surface);
+  box-shadow: var(--shadow);
+  overflow: hidden;
+}
+
+.run-view__timeline {
+  margin-top: 1.5rem;
+}
+
+.run-view__timeline h2,
+.node-list h2 {
+  font-size: var(--ac-type-component-title);
+}
+
+/* React Flow's own chrome, retinted to the design layer. */
+.react-flow__controls-button {
+  background: var(--surface);
+  border-bottom: 1px solid var(--line-soft);
+  fill: var(--ink);
+}
+
+.react-flow__edge-text {
+  font-family: var(--font-body);
+  font-size: 10px;
+  fill: var(--ink-soft);
+}
+
+.react-flow__edge-textbg {
+  fill: var(--surface);
+}
+
+/* Handles are edge anchors only — this canvas is read-only, nothing connects. */
+.react-flow__handle {
+  opacity: 0;
+  pointer-events: none;
+}
+
+.flow-edge .react-flow__edge-path {
+  stroke-linecap: round;
+}
+
+.flow-edge.is-loop .react-flow__edge-path {
+  stroke-linecap: butt;
+}
+
+/* A walked loop edge is the one edge that must not read as "just another
+   line": PRD §8.7 calls out the verify -> build return path explicitly. */
+.flow-edge.is-loop.is-walked .react-flow__edge-path {
+  stroke-width: 3;
+}
+
+.flow-edge.is-loop.is-walked .react-flow__edge-text {
+  fill: var(--accent);
+  font-weight: 640;
+}
+
+/* ---------- node card ---------- */
+
+.node-card {
+  position: relative;
+  box-sizing: border-box;
+  /* Matches NODE_WIDTH / NODE_HEIGHT in hooks/useElkLayout.ts. */
+  width: 224px;
+  height: 128px;
+  display: flex;
+  flex-direction: column;
+  gap: 0.3rem;
+  overflow: hidden;
+  padding: 0.65rem 0.8rem 0.65rem 0.95rem;
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: var(--nodes-card-radius);
+  box-shadow: var(--shadow);
+  color: var(--ink);
+  cursor: pointer;
+  text-align: left;
+}
+
+.node-card__rail {
+  position: absolute;
+  inset: 0 auto 0 0;
+  width: 4px;
+  background: var(--node-accent, var(--nodes-idle));
+  border-radius: var(--nodes-card-radius) 0 0 var(--nodes-card-radius);
+}
+
+.node-card__head {
+  display: flex;
+  align-items: center;
+  gap: 0.45rem;
+}
+
+.node-card__dot {
+  width: 0.55rem;
+  height: 0.55rem;
+  border-radius: 999px;
+  background: var(--node-accent, var(--nodes-idle));
+  flex: none;
+}
+
+.node-card__name {
+  font-family: var(--font-display);
+  font-optical-sizing: auto;
+  font-weight: 500;
+  font-size: var(--ac-type-ui);
+  letter-spacing: var(--ac-tracking-heading);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.node-card__meta {
+  display: flex;
+  gap: 0.5rem;
+  font-size: var(--ac-type-micro);
+  color: var(--ink-soft);
+  overflow: hidden;
+}
+
+.node-card__owner {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.node-card__status {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.35rem;
+  align-items: center;
+}
+
+.node-card__badge {
+  border: 1px solid var(--nodes-warn);
+  color: color-mix(in srgb, var(--nodes-warn) 55%, var(--ink));
+}
+
+.node-card__badge--live {
+  border-color: var(--accent-strong);
+  color: var(--accent);
+}
+
+.node-card__visits {
+  border: 1px solid var(--line);
+  color: var(--ink-soft);
+}
+
+.node-card__detail {
+  margin: 0.15rem 0 0;
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  gap: 0 0.5rem;
+  font-size: var(--ac-type-micro);
+  color: var(--ink-soft);
+}
+
+.node-card__detail > div {
+  display: contents;
+}
+
+.node-card__detail dt {
+  letter-spacing: var(--ac-tracking-caps);
+  text-transform: uppercase;
+}
+
+.node-card__detail dd {
+  margin: 0;
+  font-family: var(--font-mono);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--ink);
+}
+
+/* --- execution-state overlays (PRD §8.4) --- */
+
+.node-card--idle {
+  opacity: 0.72;
+  border-style: dotted;
+}
+
+.node-card--ready {
+  border-style: dashed;
+  border-color: color-mix(in srgb, var(--accent) 45%, var(--line));
+}
+
+.node-card--completed {
+  border-style: solid;
+  border-color: color-mix(in srgb, var(--nodes-ok) 55%, var(--line));
+}
+
+.node-card--active {
+  border-color: var(--accent-strong);
+}
+
+.node-card--waiting {
+  border-color: color-mix(in srgb, var(--nodes-warn) 60%, var(--line));
+}
+
+.node-card--failed,
+.node-card--policy_denied,
+.node-card--cancelled {
+  border-color: color-mix(in srgb, var(--nodes-danger) 65%, var(--line));
+  border-width: 2px;
+}
+
+.node-card.is-selected {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
+/* The pulse is the *only* purely-animated signal on the canvas, and it is
+   never the only carrier of its meaning: the state chip says "running" and,
+   with motion reduced, NodeCard renders an explicit "attempt in flight"
+   badge in the pulse's place. */
+@media (prefers-reduced-motion: no-preference) {
+  .node-card.is-pulse {
+    animation: node-attempt-pulse 1.8s var(--ease-gentle) infinite alternate;
+  }
+}
+
+@keyframes node-attempt-pulse {
+  from {
+    box-shadow: var(--shadow);
+    border-color: var(--accent-strong);
+  }
+
+  to {
+    box-shadow:
+      var(--shadow),
+      0 0 0 5px color-mix(in srgb, var(--accent) 22%, transparent);
+    border-color: var(--accent);
+  }
+}
+
+/* ---------- timeline ---------- */
+
+.timeline {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  border-top: 1px solid var(--line-soft);
+  font-size: var(--ac-type-ui);
+}
+
+.timeline__item {
+  display: grid;
+  grid-template-columns: 3rem 12rem minmax(0, 1fr) 9rem;
+  gap: 0.5rem;
+  align-items: baseline;
+  padding: 0.35rem 0.4rem;
+  border-bottom: 1px solid var(--line-soft);
+}
+
+.timeline__item.is-selected {
+  background: color-mix(in srgb, var(--accent) 8%, transparent);
+}
+
+.timeline__seq,
+.timeline__time {
+  font-family: var(--font-mono);
+  font-size: var(--ac-type-terminal);
+  color: var(--ink-soft);
+}
+
+.timeline__type {
+  font-family: var(--font-mono);
+  font-size: var(--ac-type-terminal);
+}
+
+.timeline__node {
+  font-family: var(--font-mono);
+  font-size: var(--ac-type-terminal);
+  justify-self: start;
+}
+
+button.timeline__node {
+  background: none;
+  border: 0;
+  padding: 0;
+  color: var(--accent);
+  cursor: pointer;
+  text-decoration: underline;
+  text-underline-offset: 0.2em;
+}
+
+@media (max-width: 48rem) {
+  .timeline__item {
+    grid-template-columns: 3rem minmax(0, 1fr);
+  }
+}
+
+/* ---------- node detail panel ---------- */
+
+.detail-panel {
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  box-shadow: var(--shadow-lift);
+  padding: 1.1rem 1.25rem 1.5rem;
+  font-size: var(--ac-type-ui);
+  line-height: var(--ac-leading-ui);
+  max-height: min(78vh, 46rem);
+  overflow-y: auto;
+  position: sticky;
+  top: 5.5rem;
+}
+
+.detail-panel__head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 0.75rem;
+}
+
+.detail-panel__title {
+  font-size: var(--ac-type-component-title);
+  margin: 0;
+  font-family: var(--font-mono);
+}
+
+.detail-panel__close {
+  font: inherit;
+  font-size: var(--ac-type-meta);
+  padding: 0.25rem 0.75rem;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  background: transparent;
+  color: var(--ink-soft);
+  cursor: pointer;
+}
+
+.detail-panel h3 {
+  font-size: var(--ac-type-meta);
+  letter-spacing: var(--ac-tracking-caps);
+  text-transform: uppercase;
+  color: var(--ink-soft);
+  margin: 1.25rem 0 0.5rem;
+}
+
+.detail-panel__facts {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  gap: 0.25rem 0.75rem;
+  margin: 0.75rem 0 0;
+  font-size: var(--ac-type-meta);
+}
+
+.detail-panel__facts > div {
+  display: contents;
+}
+
+.detail-panel__facts dt {
+  color: var(--ink-soft);
+  letter-spacing: var(--ac-tracking-caps);
+  text-transform: uppercase;
+}
+
+.detail-panel__facts dd {
+  margin: 0;
+  overflow-wrap: anywhere;
+}
+
+/* A wide table inside a narrow panel scrolls in its own box; the panel body
+   never scrolls sideways. */
+.detail-panel__scroll {
+  overflow-x: auto;
+}
+
+.detail-panel__attempts {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: var(--ac-type-meta);
+  white-space: nowrap;
+}
+
+.detail-panel__attempts th,
+.detail-panel__attempts td {
+  text-align: left;
+  padding: 0.3rem 0.4rem;
+  border-bottom: 1px solid var(--line-soft);
+}
+
+.detail-panel__ledger,
+.detail-panel__evidence {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 0.4rem;
+  font-size: var(--ac-type-meta);
+}
+
+.detail-panel__ledger li,
+.detail-panel__evidence li {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.4rem;
+}
+
+.detail-panel__digest,
+.detail-panel__provenance {
+  font-family: var(--font-mono);
+  color: var(--ink-soft);
+}
+
+/* ---------- ledger view ---------- */
+
+.ledger-view__projection {
+  display: flex;
+  align-items: center;
+  gap: 0.6rem;
+  margin: 1.25rem 0;
+  font-size: var(--ac-type-ui);
+}
+
+.ledger-view__projection select {
+  font: inherit;
+  font-size: var(--ac-type-ui);
+  padding: 0.35rem 0.6rem;
+  border: 1px solid var(--line);
+  border-radius: 0.6rem;
+  background: var(--surface);
+  color: var(--ink);
+}

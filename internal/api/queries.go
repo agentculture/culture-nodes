@@ -287,6 +287,53 @@ func (s *Server) runNodeRuns(ctx context.Context, runID string) ([]NodeRunOut, e
 	return out, attemptRows.Err()
 }
 
+// listHumanTasks returns human tasks newest first, optionally filtered to
+// one status ("pending" or "decided"), scoped to this server's namespace —
+// the same shape listRuns and listWorkflowVersions use above.
+func (s *Server) listHumanTasks(ctx context.Context, status string, limit int) ([]HumanTaskOut, error) {
+	rows, err := s.Store.Pool().Query(ctx, `
+		SELECT id, run_id, node_run_id, kind, assigned_owner_id, status, request, response, created_at, resolved_at
+		FROM human_tasks
+		WHERE namespace_id = $1 AND ($2 = '' OR status = $2)
+		ORDER BY created_at DESC, id DESC
+		LIMIT $3`,
+		s.NamespaceID, status, limit)
+	if err != nil {
+		return nil, fmt.Errorf("api: list human tasks: %w", err)
+	}
+	defer rows.Close()
+
+	out := make([]HumanTaskOut, 0)
+	for rows.Next() {
+		var (
+			t               HumanTaskOut
+			nodeRunID       pgtype.Text
+			assignedOwnerID pgtype.Text
+			request         []byte
+			response        []byte
+			createdAt       pgtype.Timestamptz
+			resolvedAt      pgtype.Timestamptz
+		)
+		if err := rows.Scan(
+			&t.ID, &t.RunID, &nodeRunID, &t.Kind, &assignedOwnerID, &t.Status,
+			&request, &response, &createdAt, &resolvedAt,
+		); err != nil {
+			return nil, fmt.Errorf("api: list human tasks: scan: %w", err)
+		}
+		t.NodeRunID = textOrEmpty(nodeRunID)
+		t.AssignedOwnerID = textOrEmpty(assignedOwnerID)
+		t.Request = json.RawMessage(request)
+		t.Response = nonNullJSON(json.RawMessage(response))
+		t.CreatedAt = tsOrZero(createdAt)
+		if resolvedAt.Valid {
+			resolved := resolvedAt.Time
+			t.ResolvedAt = &resolved
+		}
+		out = append(out, t)
+	}
+	return out, rows.Err()
+}
+
 // isNoRowsErr reports whether err is pgx's "no rows in result set"
 // sentinel, mirroring internal/store/postgres's own isNoRows helper (that
 // one is unexported, so this package needs its own copy).

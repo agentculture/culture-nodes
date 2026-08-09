@@ -10,6 +10,15 @@
           "type": "string"
         }
       },
+      "HumanTaskID": {
+        "description": "The human task id.",
+        "in": "path",
+        "name": "id",
+        "required": true,
+        "schema": {
+          "type": "string"
+        }
+      },
       "RunID": {
         "description": "The run id.",
         "in": "path",
@@ -133,6 +142,39 @@
         ],
         "type": "object"
       },
+      "DecideHumanTaskRequest": {
+        "properties": {
+          "decider_actor_id": {
+            "description": "The human actor this decision is attributed to. Recorded as the ledger decision record's origin and the confirming review's reviewer_actor_id.",
+            "type": "string"
+          },
+          "expected_ledger_version": {
+            "description": "The run's ledger version the decider last read. A mismatch is refused with 409, nothing written.",
+            "format": "int64",
+            "type": "integer"
+          },
+          "outcome": {
+            "description": "The domain outcome selected. Must be one of the task's allowed_outcomes.",
+            "type": "string"
+          },
+          "record_ids": {
+            "description": "Other ledger records the decider is confirming alongside this decision (e.g. records the task's context_refs pointed at). Ordinarily empty.",
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          },
+          "response": {
+            "description": "The decision payload — notes, the decision schema's filled-in fields, whatever the presenting surface collected. Also the CEL \"output\" activation for a guarded edge leaving this node."
+          }
+        },
+        "required": [
+          "outcome",
+          "decider_actor_id",
+          "expected_ledger_version"
+        ],
+        "type": "object"
+      },
       "Diagnostic": {
         "properties": {
           "code": {
@@ -200,6 +242,122 @@
         },
         "required": [
           "status"
+        ],
+        "type": "object"
+      },
+      "HumanTask": {
+        "description": "One human_tasks row (PRD §9.9): what an approval node's dispatch wrote instead of enqueuing work. `request` carries every field the PRD says the task must contain that is not already one of this object's own properties — decision_schema_ref, approver_ref, deadline, allowed_outcomes, context_refs, audit — exactly as the engine stored it, so a reader sees precisely what the human was shown.",
+        "properties": {
+          "assigned_owner_id": {
+            "type": "string"
+          },
+          "created_at": {
+            "format": "date-time",
+            "type": "string"
+          },
+          "id": {
+            "type": "string"
+          },
+          "kind": {
+            "type": "string"
+          },
+          "node_run_id": {
+            "description": "The paused node run this task belongs to.",
+            "type": "string"
+          },
+          "request": {
+            "description": "The PRD §9.9 task payload (decision_schema_ref, approver_ref, deadline, allowed_outcomes, context_refs, audit).",
+            "type": "object"
+          },
+          "resolved_at": {
+            "format": "date-time",
+            "type": "string"
+          },
+          "response": {
+            "description": "Set once the task is decided — outcome, decider_actor_id, response, decided_at.",
+            "type": "object"
+          },
+          "run_id": {
+            "type": "string"
+          },
+          "status": {
+            "enum": [
+              "pending",
+              "decided"
+            ],
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "run_id",
+          "kind",
+          "status",
+          "request",
+          "created_at"
+        ],
+        "type": "object"
+      },
+      "HumanTaskDecisionResult": {
+        "properties": {
+          "human_task_id": {
+            "type": "string"
+          },
+          "ledger_records": {
+            "description": "The proposed decision record and the confirming review record the review transaction appended.",
+            "items": {
+              "$ref": "#/components/schemas/LedgerRecord"
+            },
+            "type": "array"
+          },
+          "next_human_task_id": {
+            "description": "Set instead of a claimable work item when the routed edge itself reaches another approval node.",
+            "type": "string"
+          },
+          "next_node_id": {
+            "type": "string"
+          },
+          "next_node_run_id": {
+            "type": "string"
+          },
+          "node_run_id": {
+            "description": "The node run the decision resolved.",
+            "type": "string"
+          },
+          "outcome": {
+            "type": "string"
+          },
+          "run_id": {
+            "type": "string"
+          },
+          "run_output": {
+            "description": "Set only when the routed edge ended the run."
+          },
+          "run_state": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "human_task_id",
+          "run_id",
+          "node_run_id",
+          "outcome",
+          "ledger_records",
+          "run_state"
+        ],
+        "type": "object"
+      },
+      "HumanTaskList": {
+        "properties": {
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/HumanTask"
+            },
+            "type": "array"
+          }
+        },
+        "required": [
+          "items"
         ],
         "type": "object"
       },
@@ -690,6 +848,13 @@
         ],
         "type": "object"
       }
+    },
+    "securitySchemes": {
+      "decisionBearerAuth": {
+        "description": "The shared secret configured as NODES_HUMAN_DECISION_TOKEN_SECRET. Used only by POST /v1alpha1/human-tasks/{id}/decision — every other operation in this API is authless by phase-1 design (spec decision c45).",
+        "scheme": "bearer",
+        "type": "http"
+      }
     }
   },
   "info": {
@@ -722,6 +887,167 @@
         "summary": "Liveness probe.",
         "tags": [
           "operations"
+        ]
+      }
+    },
+    "/v1alpha1/human-tasks": {
+      "get": {
+        "operationId": "listHumanTasks",
+        "parameters": [
+          {
+            "description": "Filter to \"pending\" or \"decided\". Omitted returns every status.",
+            "in": "query",
+            "name": "status",
+            "schema": {
+              "enum": [
+                "pending",
+                "decided"
+              ],
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "limit",
+            "schema": {
+              "default": 50,
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HumanTaskList"
+                }
+              }
+            },
+            "description": "The matching human tasks."
+          }
+        },
+        "summary": "List human tasks, newest first.",
+        "tags": [
+          "human-tasks"
+        ]
+      }
+    },
+    "/v1alpha1/human-tasks/{id}": {
+      "get": {
+        "operationId": "getHumanTask",
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/HumanTaskID"
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HumanTask"
+                }
+              }
+            },
+            "description": "The human task."
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "description": "No human task has this id."
+          }
+        },
+        "summary": "Get one human task.",
+        "tags": [
+          "human-tasks"
+        ]
+      }
+    },
+    "/v1alpha1/human-tasks/{id}/decision": {
+      "post": {
+        "description": "Validates outcome against the task's own allowed_outcomes (PRD §9.9), records the decision as a human-authority review through the same atomic, ledger-version-guarded review transaction PRD §10.8's review commit uses, transitions the waiting_human node run, and routes the edge the outcome selects — all in one transaction, or none of it. A task decides exactly once: a second decision on an already-decided task is refused with 409 rather than resuming the run again.\nUnlike every other operation in this API — authless by phase-1 design, spec decision c45 — this one requires a bearer token (`Authorization: Bearer \u003ctoken\u003e`) matching the server's configured decision secret (`NODES_HUMAN_DECISION_TOKEN_SECRET`): a decision here writes human authority into the run's ledger on whoever's behalf presents the token. An unauthenticated or wrongly authenticated request is refused with 401 before the body is even read.",
+        "operationId": "decideHumanTask",
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/HumanTaskID"
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/DecideHumanTaskRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HumanTaskDecisionResult"
+                }
+              }
+            },
+            "description": "The decision was committed and the run resumed (or ended, if the routed edge reached an end node)."
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "description": "The request is malformed, or outcome is not one of the task's allowed_outcomes."
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "description": "No bearer token was presented, it does not match the configured secret, or no secret is configured at all."
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "description": "No human task has this id."
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "description": "The task is already decided, or expected_ledger_version no longer matches the run's current ledger version."
+          }
+        },
+        "security": [
+          {
+            "decisionBearerAuth": []
+          }
+        ],
+        "summary": "Commit a decision on a paused human task, resuming the run.",
+        "tags": [
+          "human-tasks"
         ]
       }
     },
@@ -1448,6 +1774,10 @@
     {
       "description": "Human review transactions over ledger records (PRD §10.8).",
       "name": "reviews"
+    },
+    {
+      "description": "The paused-on-a-human side of an approval node (PRD §9.9): list and inspect human_tasks rows, and commit the decision that resumes the run. Unlike every other operation in this API, the decision endpoint is not authless — see its own description.",
+      "name": "human-tasks"
     },
     {
       "description": "Liveness and readiness probes.",

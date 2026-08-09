@@ -140,6 +140,14 @@ func TestUndocumentedErrorsMatchTheDocumentedShape(t *testing.T) {
 		{"getLedgerProjection_unknown_run", http.MethodGet, "/v1alpha1/runs/does-not-exist/ledger/projections/current_scope"},
 		{"createReview_unknown_run", http.MethodPost, "/v1alpha1/runs/does-not-exist/reviews"},
 		{"commitReview_unknown", http.MethodPost, "/v1alpha1/reviews/does-not-exist/commit"},
+		{"getHumanTask_unknown", http.MethodGet, "/v1alpha1/human-tasks/does-not-exist"},
+		// decideHumanTask: this fixture (newFixture) configures no decision
+		// auth secret, so every decision is refused with 401 before the
+		// (also-empty) body would even be read — the "unauthenticated
+		// decision POST is refused" contract check t7's acceptance criteria
+		// asks for, exercised here rather than only in humantasks_test.go so
+		// it is part of this file's cross-operation sweep too.
+		{"decideHumanTask_unauthenticated", http.MethodPost, "/v1alpha1/human-tasks/does-not-exist/decision"},
 		{"createRun_empty_body", http.MethodPost, "/v1alpha1/runs"},
 		{"publishWorkflow_empty_body", http.MethodPost, "/v1alpha1/workflows"},
 		{"validateWorkflow_empty_body", http.MethodPost, "/v1alpha1/workflows/validate"},

@@ -310,6 +310,19 @@ func (s *suite) checkAsyncFlow(t *testing.T) {
 		s.receiver.RefuseNextTerminal(req.AttemptID, 1)
 	}
 
+	resp := s.invokeAsync(t, ctx, req)
+	terminal, events := s.waitForTerminal(t, req)
+	s.assertCallbackDiscipline(t, events, resp.Accepted)
+	s.assertTerminalPayload(t, terminal)
+
+	if s.cfg.ExpectCallbackRetry {
+		s.assertTerminalRedelivered(t, req.AttemptID, events)
+	}
+}
+
+// invokeAsync sends req and checks the §13.3 acceptance shape.
+func (s *suite) invokeAsync(t *testing.T, ctx context.Context, req actors.InvocationRequest) actors.InvocationResponse {
+	t.Helper()
 	resp, err := s.client.Invoke(ctx, s.endpoint, req)
 	if err != nil {
 		t.Fatalf("asynchronous invocation failed: %v", err)
@@ -324,16 +337,25 @@ func (s *suite) checkAsyncFlow(t *testing.T) {
 	if resp.Accepted.HeartbeatAfterSeconds < 0 {
 		t.Errorf("heartbeat_after_seconds = %d, want zero or positive", resp.Accepted.HeartbeatAfterSeconds)
 	}
+	return resp
+}
 
+// waitForTerminal waits for req's terminal callback and returns it along
+// with every event the receiver recorded for the attempt.
+func (s *suite) waitForTerminal(t *testing.T, req actors.InvocationRequest) (actors.CallbackEvent, []actors.CallbackEvent) {
+	t.Helper()
 	terminal, ok := s.receiver.WaitForTerminal(req.AttemptID, s.cfg.callbackWait())
 	if !ok {
 		t.Fatalf("no terminal callback arrived within %s; events seen: %v",
 			s.cfg.callbackWait(), kindsOf(s.receiver.Events(req.AttemptID)))
 	}
+	return terminal, s.receiver.Events(req.AttemptID)
+}
 
-	events := s.receiver.Events(req.AttemptID)
-	s.assertCallbackDiscipline(t, events, resp.Accepted)
-
+// assertTerminalPayload checks the §13.2/§13.5 shape of whichever terminal
+// event arrived.
+func (s *suite) assertTerminalPayload(t *testing.T, terminal actors.CallbackEvent) {
+	t.Helper()
 	switch terminal.Kind {
 	case actors.EventCompleted:
 		var payload actors.CompletedPayload
@@ -354,21 +376,24 @@ func (s *suite) checkAsyncFlow(t *testing.T) {
 			t.Errorf("failed event declares class %q, which is not one of §13.5's classes", payload.Class)
 		}
 	}
+}
 
-	if s.cfg.ExpectCallbackRetry {
-		if refused := s.receiver.RefusedDeliveries(req.AttemptID); refused == 0 {
-			t.Error("the receiver never refused a delivery; the retry check proved nothing")
+// assertTerminalRedelivered checks that a refused terminal delivery was
+// retried, per §13.4's idempotent redelivery.
+func (s *suite) assertTerminalRedelivered(t *testing.T, attemptID string, events []actors.CallbackEvent) {
+	t.Helper()
+	if s.receiver.RefusedDeliveries(attemptID) == 0 {
+		t.Error("the receiver never refused a delivery; the retry check proved nothing")
+	}
+	terminalDeliveries := 0
+	for _, ev := range events {
+		if ev.Kind.Terminal() {
+			terminalDeliveries++
 		}
-		terminalDeliveries := 0
-		for _, ev := range events {
-			if ev.Kind.Terminal() {
-				terminalDeliveries++
-			}
-		}
-		if terminalDeliveries < 2 {
-			t.Errorf("the terminal event was delivered %d time(s) after a 503; §13.4's idempotent redelivery "+
-				"presupposes the actor retries a refused delivery", terminalDeliveries)
-		}
+	}
+	if terminalDeliveries < 2 {
+		t.Errorf("the terminal event was delivered %d time(s) after a 503; §13.4's idempotent redelivery "+
+			"presupposes the actor retries a refused delivery", terminalDeliveries)
 	}
 }
 
@@ -387,41 +412,55 @@ func (s *suite) assertCallbackDiscipline(t *testing.T, events []actors.CallbackE
 	sawNonTerminal := false
 
 	for i, ev := range events {
-		if ev.EventID == "" {
-			t.Errorf("event %d carries no event_id; a redelivery would then be indistinguishable from a new event", i)
-		}
-		if ev.Sequence <= 0 {
-			t.Errorf("event %d (%s) carries sequence %d, want a positive value", i, ev.Kind, ev.Sequence)
-		}
-		if !ev.Kind.Valid() {
-			t.Errorf("event %d declares kind %q, which is not one of §13.4's kinds", i, ev.Kind)
-		}
-		if !ev.Kind.Terminal() {
+		nonTerminal, newHighest := assertCallbackEvent(t, i, ev, seen, highest)
+		if nonTerminal {
 			sawNonTerminal = true
 		}
-
-		if previous, repeat := seen[ev.EventID]; repeat {
-			if previous.Sequence != ev.Sequence || !equalJSON(previous.Payload, ev.Payload) {
-				t.Errorf("event id %q was reused for a different event; §13.4 requires a stable id per event\n first: seq %d %s\nsecond: seq %d %s",
-					ev.EventID, previous.Sequence, previous.Payload, ev.Sequence, ev.Payload)
-			}
-			continue // a redelivery does not have to advance the sequence
-		}
-		seen[ev.EventID] = ev
-
-		if ev.Sequence <= highest {
-			t.Errorf("event %d (%s) carries sequence %d, which does not advance past %d; §13.4 requires a monotonically increasing sequence",
-				i, ev.Kind, ev.Sequence, highest)
-		}
-		if ev.Sequence > highest {
-			highest = ev.Sequence
-		}
+		highest = newHighest
 	}
 
 	if accepted != nil && accepted.HeartbeatAfterSeconds > 0 && !sawNonTerminal {
 		t.Errorf("the actor declared heartbeat_after_seconds=%d but sent no accepted/heartbeat/progress event; "+
 			"a declared heartbeat interval is a promise about liveness", accepted.HeartbeatAfterSeconds)
 	}
+}
+
+// assertCallbackEvent checks one callback event's §13.4 shape (a non-empty
+// id, a positive sequence, a valid kind) and its relationship to the events
+// seen so far: a repeated id must be a redelivery of the same event (same
+// sequence, same payload), and a fresh id's sequence must advance past
+// highest. It records ev under its id in seen and returns whether ev is
+// non-terminal and the new high-water sequence.
+func assertCallbackEvent(t *testing.T, i int, ev actors.CallbackEvent, seen map[string]actors.CallbackEvent, highest int64) (nonTerminal bool, newHighest int64) {
+	t.Helper()
+	if ev.EventID == "" {
+		t.Errorf("event %d carries no event_id; a redelivery would then be indistinguishable from a new event", i)
+	}
+	if ev.Sequence <= 0 {
+		t.Errorf("event %d (%s) carries sequence %d, want a positive value", i, ev.Kind, ev.Sequence)
+	}
+	if !ev.Kind.Valid() {
+		t.Errorf("event %d declares kind %q, which is not one of §13.4's kinds", i, ev.Kind)
+	}
+	nonTerminal = !ev.Kind.Terminal()
+
+	if previous, repeat := seen[ev.EventID]; repeat {
+		if previous.Sequence != ev.Sequence || !equalJSON(previous.Payload, ev.Payload) {
+			t.Errorf("event id %q was reused for a different event; §13.4 requires a stable id per event\n first: seq %d %s\nsecond: seq %d %s",
+				ev.EventID, previous.Sequence, previous.Payload, ev.Sequence, ev.Payload)
+		}
+		return nonTerminal, highest // a redelivery does not have to advance the sequence
+	}
+	seen[ev.EventID] = ev
+
+	if ev.Sequence <= highest {
+		t.Errorf("event %d (%s) carries sequence %d, which does not advance past %d; §13.4 requires a monotonically increasing sequence",
+			i, ev.Kind, ev.Sequence, highest)
+	}
+	if ev.Sequence > highest {
+		highest = ev.Sequence
+	}
+	return nonTerminal, highest
 }
 
 // §13.6: cancellation is durable in Culture Nodes and best-effort at the

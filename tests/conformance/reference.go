@@ -277,42 +277,64 @@ func (a *ReferenceActor) postEvent(req actors.InvocationRequest, ev actors.Callb
 	if err != nil {
 		return
 	}
-	// Validate the caller-supplied callback URL before any request is made
-	// to it (S5144): scheme http/https and the fixture's loopback-only
-	// allowlist. The validated *url.URL — not the raw string — is what the
-	// request is built from.
-	target, err := url.Parse(req.Callback.URL)
-	if err != nil || (target.Scheme != "http" && target.Scheme != "https") {
+	target, ok := a.validatedCallbackTarget(req.Callback.URL)
+	if !ok {
 		return
+	}
+	a.deliverWithRetries(target, req.Callback.Token, body)
+}
+
+// validatedCallbackTarget parses and validates the caller-supplied callback
+// URL before any request is made to it (S5144): scheme http/https and the
+// fixture's loopback-only allowlist. The validated *url.URL — not the raw
+// string — is what the request is built from.
+func (a *ReferenceActor) validatedCallbackTarget(rawURL string) (*url.URL, bool) {
+	target, err := url.Parse(rawURL)
+	if err != nil || (target.Scheme != "http" && target.Scheme != "https") {
+		return nil, false
 	}
 	if a.allowCallback != nil && !a.allowCallback(target) {
-		return
+		return nil, false
 	}
-	for attempt := 0; attempt <= a.callbackRetries; attempt++ {
-		httpReq, err := http.NewRequest(http.MethodPost, target.String(), bytes.NewReader(body))
-		if err != nil {
-			return
-		}
-		httpReq.Header.Set("Content-Type", "application/json")
-		httpReq.Header.Set("Authorization", "Bearer "+req.Callback.Token)
+	return target, true
+}
 
-		resp, err := a.client.Do(httpReq)
-		if err == nil {
-			status := resp.StatusCode
-			_, _ = io.Copy(io.Discard, resp.Body)
-			_ = resp.Body.Close()
-			if status >= 200 && status < 300 {
-				return
-			}
-			if status == http.StatusUnauthorized || status == http.StatusNotFound {
-				// The credential or the attempt is gone. Retrying cannot fix
-				// either, and hammering the control plane would be worse than
-				// giving up.
-				return
-			}
+// deliverWithRetries posts body to target, retrying on a non-2xx answer with
+// the same event id and sequence — which is exactly what makes a receiver's
+// deduplication meaningful.
+func (a *ReferenceActor) deliverWithRetries(target *url.URL, token string, body []byte) {
+	for attempt := 0; attempt <= a.callbackRetries; attempt++ {
+		if a.deliverOnce(target, token, body) {
+			return
 		}
 		time.Sleep(time.Duration(attempt+1) * 25 * time.Millisecond)
 	}
+}
+
+// deliverOnce makes a single delivery attempt and reports whether delivery
+// is done — either because it succeeded, or because the failure is one
+// retrying cannot fix (a malformed request, or a 401/404 telling us the
+// credential or the attempt is gone; hammering the control plane in that
+// case would be worse than giving up).
+func (a *ReferenceActor) deliverOnce(target *url.URL, token string, body []byte) bool {
+	httpReq, err := http.NewRequest(http.MethodPost, target.String(), bytes.NewReader(body))
+	if err != nil {
+		return true
+	}
+	httpReq.Header.Set("Content-Type", "application/json")
+	httpReq.Header.Set("Authorization", "Bearer "+token)
+
+	resp, err := a.client.Do(httpReq)
+	if err != nil {
+		return false
+	}
+	status := resp.StatusCode
+	_, _ = io.Copy(io.Discard, resp.Body)
+	_ = resp.Body.Close()
+	if status >= 200 && status < 300 {
+		return true
+	}
+	return status == http.StatusUnauthorized || status == http.StatusNotFound
 }
 
 func writeJSON(w http.ResponseWriter, status int, body any) {

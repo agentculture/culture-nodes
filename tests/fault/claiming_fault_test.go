@@ -29,8 +29,8 @@ func TestFaultTwoWorkersNoDoubleCommit(t *testing.T) {
 		mustEnqueue(t, s, ns.ID, mustNodeRun(t, s, ns.ID, runID))
 	}
 
-	workerA := startWorker(t, ns.ID, "fault-worker-a-"+store.NewULID(), 5.0, 5, 20, 3000, "")
-	workerB := startWorker(t, ns.ID, "fault-worker-b-"+store.NewULID(), 5.0, 5, 20, 3000, "")
+	workerA := startWorker(t, workerConfig{namespaceID: ns.ID, workerID: "fault-worker-a-" + store.NewULID(), leaseSeconds: 5.0, limit: 5, workMS: 20, idleTimeoutMS: 3000})
+	workerB := startWorker(t, workerConfig{namespaceID: ns.ID, workerID: "fault-worker-b-" + store.NewULID(), leaseSeconds: 5.0, limit: 5, workMS: 20, idleTimeoutMS: 3000})
 
 	if err := workerA.wait(t, 30*time.Second); err != nil {
 		t.Fatalf("worker A: %v\n--- worker A output ---\n%s", err, workerA.out.String())
@@ -88,7 +88,7 @@ func TestFaultKilledWorkerReclaimedBySurvivor(t *testing.T) {
 	// claimed item for 4s before it would complete -- far longer than the
 	// time it takes the test to notice the flag file and kill it, so the
 	// kill is guaranteed to land before any completion.
-	victim := startWorker(t, ns.ID, "fault-victim", leaseSeconds, total, 4000, 8000, flagFile)
+	victim := startWorker(t, workerConfig{namespaceID: ns.ID, workerID: "fault-victim", leaseSeconds: leaseSeconds, limit: total, workMS: 4000, idleTimeoutMS: 8000, claimedFlagFile: flagFile})
 
 	waitForFlagFile(t, flagFile, 5*time.Second)
 
@@ -106,7 +106,7 @@ func TestFaultKilledWorkerReclaimedBySurvivor(t *testing.T) {
 	// dispatch -> lease expires; another worker claims" — a post-kill
 	// survivor exercises exactly that path with no special-casing: its own
 	// poll loop (ReclaimExpired, then ClaimWork) does all the recovering.
-	survivor := startWorker(t, ns.ID, "fault-survivor", leaseSeconds, total, 20, 6000, "")
+	survivor := startWorker(t, workerConfig{namespaceID: ns.ID, workerID: "fault-survivor", leaseSeconds: leaseSeconds, limit: total, workMS: 20, idleTimeoutMS: 6000})
 
 	// The h19/§20.4 bound is about RECLAIM latency: "a killed worker's lease
 	// is reclaimed within expiry plus five seconds". Measure exactly that —
@@ -171,8 +171,8 @@ func TestFaultDuplicateSignalExactlyOneEffectiveCompletion(t *testing.T) {
 	mustEnqueue(t, s, ns.ID, nodeRunID)
 	mustEnqueue(t, s, ns.ID, nodeRunID)
 
-	workerA := startWorker(t, ns.ID, "fault-dup-a-"+store.NewULID(), 5.0, 2, 20, 3000, "")
-	workerB := startWorker(t, ns.ID, "fault-dup-b-"+store.NewULID(), 5.0, 2, 20, 3000, "")
+	workerA := startWorker(t, workerConfig{namespaceID: ns.ID, workerID: "fault-dup-a-" + store.NewULID(), leaseSeconds: 5.0, limit: 2, workMS: 20, idleTimeoutMS: 3000})
+	workerB := startWorker(t, workerConfig{namespaceID: ns.ID, workerID: "fault-dup-b-" + store.NewULID(), leaseSeconds: 5.0, limit: 2, workMS: 20, idleTimeoutMS: 3000})
 
 	if err := workerA.wait(t, 30*time.Second); err != nil {
 		t.Fatalf("worker A: %v\n--- worker A output ---\n%s", err, workerA.out.String())

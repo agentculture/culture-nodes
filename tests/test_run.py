@@ -5,6 +5,8 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
+import pytest
+
 from culture_nodes.cli import main
 
 # --- create ------------------------------------------------------------------
@@ -192,6 +194,46 @@ def test_run_list_text_and_query(fake_api, capsys) -> None:
     assert "run-1" in out
     assert "completed" in out
     assert seen["query"] == {"state": ["completed"]}
+
+
+def test_run_list_time_window_and_sort_query(fake_api, capsys) -> None:
+    seen = {}
+
+    def handler(h, m, q, b):
+        seen["query"] = q
+        h.send_json(200, {"items": []})
+
+    fake_api.route("GET", r"/v1alpha1/runs", handler)
+    fake_api.start()
+    rc = main(
+        [
+            "run",
+            "list",
+            "--updated-since",
+            "2026-01-01T00:00:00Z",
+            "--updated-until",
+            "2026-01-02T00:00:00Z",
+            "--sort",
+            "updated_at",
+            "--api-url",
+            fake_api.base_url,
+        ]
+    )
+    assert rc == 0
+    assert seen["query"] == {
+        "updated_since": ["2026-01-01T00:00:00Z"],
+        "updated_until": ["2026-01-02T00:00:00Z"],
+        "sort": ["updated_at"],
+    }
+
+
+def test_run_list_sort_rejects_unknown_value(capsys) -> None:
+    with pytest.raises(SystemExit) as exc:
+        main(["run", "list", "--sort", "bogus"])
+    assert exc.value.code == 1
+    err = capsys.readouterr().err
+    assert err.startswith("error:")
+    assert "hint:" in err
 
 
 def test_run_get_text(fake_api, capsys) -> None:

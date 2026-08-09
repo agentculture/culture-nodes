@@ -1,7 +1,8 @@
 # Build Plan — culture-nodes app design
 
-<!-- markdownlint-disable MD033 -- devague-generated reflection; task briefs
-legitimately contain angle-bracket placeholders like <msg> and <path> -->
+<!-- markdownlint-disable MD033 -->
+<!-- devague-generated reflection; task briefs legitimately contain
+angle-bracket placeholders rendered as inline HTML -->
 
 slug: `culture-nodes-app-design` · status: `exported` · from frame: `culture-nodes-app-design`
 

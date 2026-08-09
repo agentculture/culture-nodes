@@ -27,13 +27,20 @@ func newAPIError(status, code int, message, remediation string) *apiError {
 	return &apiError{Status: status, Body: &clifmt.CliError{Code: code, Message: message, Remediation: remediation}}
 }
 
-// badRequest, notFound, conflict, unprocessable, and unavailable build the
-// user/domain-error bucket (clifmt.ExitUserError) at their respective HTTP
-// statuses. internalError builds the environment-error bucket
-// (clifmt.ExitEnvError) at 500 for a failure the caller did nothing to
+// badRequest, notFound, conflict, unprocessable, unavailable, and
+// unauthorized build the user/domain-error bucket (clifmt.ExitUserError) at
+// their respective HTTP statuses. internalError builds the environment-error
+// bucket (clifmt.ExitEnvError) at 500 for a failure the caller did nothing to
 // cause.
 func badRequest(remediation, format string, args ...any) *apiError {
 	return newAPIError(http.StatusBadRequest, clifmt.ExitUserError, fmt.Sprintf(format, args...), remediation)
+}
+
+// unauthorized builds a 401 — used only by the human-task decision endpoint
+// (see (*Server).requireDecisionAuth): every other operation in this API is
+// authless by phase-1 design (PRD spec decision c45).
+func unauthorized(remediation, format string, args ...any) *apiError {
+	return newAPIError(http.StatusUnauthorized, clifmt.ExitUserError, fmt.Sprintf(format, args...), remediation)
 }
 
 func notFound(remediation, format string, args ...any) *apiError {
@@ -88,6 +95,12 @@ func classify(err error) *apiError {
 
 	case errors.Is(err, postgres.ErrDuplicateDigest):
 		return conflict("fetch the existing version instead of publishing again", "%v", err)
+
+	case errors.Is(err, engine.ErrHumanTaskAlreadyDecided):
+		return conflict("re-read the task; it has already been decided and accepts no further decision", "%v", err)
+
+	case errors.Is(err, engine.ErrOutcomeNotAllowed):
+		return badRequest("choose one of the task's allowed_outcomes", "%v", err)
 	}
 
 	var reviewTargetErr *ledger.ReviewTargetError

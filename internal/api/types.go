@@ -173,6 +173,83 @@ type ReviewCommitResultOut struct {
 	LedgerVersion int64           `json:"ledger_version"`
 }
 
+// HumanTaskOut is one human_tasks row, as documented in
+// components.schemas.HumanTask. Request is the PRD §9.9 payload t6's
+// dispatch stored (decision schema, approver ref, deadline, allowed
+// outcomes, context refs, audit) — carried verbatim, never re-derived,
+// because it is a record of what the human was actually shown.
+type HumanTaskOut struct {
+	ID              string          `json:"id"`
+	RunID           string          `json:"run_id"`
+	NodeRunID       string          `json:"node_run_id,omitempty"`
+	Kind            string          `json:"kind"`
+	AssignedOwnerID string          `json:"assigned_owner_id,omitempty"`
+	Status          string          `json:"status"`
+	Request         json.RawMessage `json:"request"`
+	Response        json.RawMessage `json:"response,omitempty"`
+	CreatedAt       time.Time       `json:"created_at"`
+	ResolvedAt      *time.Time      `json:"resolved_at,omitempty"`
+}
+
+func humanTaskOut(t engine.HumanTask) HumanTaskOut {
+	out := HumanTaskOut{
+		ID:              t.ID,
+		RunID:           t.RunID,
+		NodeRunID:       t.NodeRunID,
+		Kind:            t.Kind,
+		AssignedOwnerID: t.AssignedOwnerID,
+		Status:          t.Status,
+		Request:         t.Request,
+		Response:        nonNullJSON(t.Response),
+		CreatedAt:       t.CreatedAt,
+	}
+	if !t.ResolvedAt.IsZero() {
+		resolvedAt := t.ResolvedAt
+		out.ResolvedAt = &resolvedAt
+	}
+	return out
+}
+
+// HumanTaskListOut is components.schemas.HumanTaskList.
+type HumanTaskListOut struct {
+	Items []HumanTaskOut `json:"items"`
+}
+
+// HumanTaskDecisionResultOut is components.schemas.HumanTaskDecisionResult:
+// what committing a decision did, mirroring engine.CompletionResult's shape
+// the way ReviewCommitResultOut mirrors ledger.ReviewResult.
+type HumanTaskDecisionResultOut struct {
+	HumanTaskID     string          `json:"human_task_id"`
+	RunID           string          `json:"run_id"`
+	NodeRunID       string          `json:"node_run_id"`
+	Outcome         string          `json:"outcome"`
+	LedgerRecords   []ledger.Record `json:"ledger_records"`
+	NextNodeID      string          `json:"next_node_id,omitempty"`
+	NextNodeRunID   string          `json:"next_node_run_id,omitempty"`
+	NextHumanTaskID string          `json:"next_human_task_id,omitempty"`
+	RunState        string          `json:"run_state"`
+	RunOutput       json.RawMessage `json:"run_output,omitempty"`
+}
+
+func humanTaskDecisionResultOut(humanTaskID string, result engine.CompletionResult) HumanTaskDecisionResultOut {
+	records := result.LedgerRecords
+	if records == nil {
+		records = []ledger.Record{}
+	}
+	return HumanTaskDecisionResultOut{
+		HumanTaskID:     humanTaskID,
+		RunID:           result.RunID,
+		NodeRunID:       result.NodeRunID,
+		Outcome:         result.Outcome,
+		LedgerRecords:   records,
+		NextNodeID:      result.NextNodeID,
+		NextNodeRunID:   result.NextNodeRunID,
+		NextHumanTaskID: result.NextHumanTaskID,
+		RunState:        string(result.RunState),
+		RunOutput:       nonNullJSON(result.RunOutput),
+	}
+}
+
 // HealthOut is components.schemas.Health.
 type HealthOut struct {
 	Status string `json:"status"`

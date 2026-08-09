@@ -11,6 +11,7 @@ import (
 	"time"
 
 	culturenodes "github.com/agentculture/culture-nodes"
+	"github.com/agentculture/culture-nodes/internal/actors"
 	"github.com/agentculture/culture-nodes/internal/api"
 	"github.com/agentculture/culture-nodes/internal/clifmt"
 	"github.com/agentculture/culture-nodes/internal/scheduler"
@@ -26,6 +27,22 @@ const defaultListenAddr = ":8080"
 // namespace as a deployment boundary every row carries, so this is a
 // startup convenience, not a multi-tenancy story this binary tells yet.
 const defaultNamespaceSlug = "default"
+
+// envDecisionAuthSecret is the bearer secret POST
+// /v1alpha1/human-tasks/{id}/decision requires (api.WithDecisionAuthSecret).
+// Unset is not an error at startup — the same "missing is not an error,
+// present-and-weak is" rule cmd/nodes/worker.go's callbackSignerFromEnv
+// follows for its own secret — it just means every human-task decision is
+// refused with 401 until an operator sets it (see
+// (*api.Server).requireDecisionAuth's doc comment for why this one endpoint
+// departs from the rest of this authless-by-design API, PRD spec decision
+// c45).
+const envDecisionAuthSecret = "NODES_HUMAN_DECISION_TOKEN_SECRET"
+
+// minDecisionAuthSecretBytes mirrors actors.MinTokenSecretBytes: a secret
+// short enough to guess is not meaningfully different from no secret at
+// all, so it is refused at startup rather than accepted and quietly weak.
+const minDecisionAuthSecretBytes = actors.MinTokenSecretBytes
 
 // connectTimeout and shutdownTimeout bound the two edges of a serve
 // process's lifecycle that must not hang forever: connecting to a database
@@ -118,6 +135,12 @@ func runServeMode(args []string, verb string, withScheduler bool) (int, error) {
 	}
 	opts = append(opts, api.WithCallbackSigner(callbackSigner))
 
+	decisionAuthSecret, err := decisionAuthSecretFromEnv()
+	if err != nil {
+		return 0, err
+	}
+	opts = append(opts, api.WithDecisionAuthSecret(decisionAuthSecret))
+
 	srv, err := api.NewServer(db, namespaceID, opts...)
 	if err != nil {
 		return 0, envError("building the API server", err, "this is an environment fault; file a bug if it persists")
@@ -180,6 +203,26 @@ func runServeMode(args []string, verb string, withScheduler bool) (int, error) {
 
 	clifmt.EmitDiagnostic(fmt.Sprintf("nodes %s: shut down cleanly", verb))
 	return clifmt.ExitSuccess, nil
+}
+
+// decisionAuthSecretFromEnv reads the human-task decision bearer secret from
+// NODES_HUMAN_DECISION_TOKEN_SECRET. An unset secret is not an error — it
+// just means every decision is refused with 401 (see
+// api.WithDecisionAuthSecret) — but a secret that is present and shorter
+// than minDecisionAuthSecretBytes looks configured and is not, so that is.
+func decisionAuthSecretFromEnv() (string, error) {
+	secret := os.Getenv(envDecisionAuthSecret)
+	if secret == "" {
+		return "", nil
+	}
+	if len(secret) < minDecisionAuthSecretBytes {
+		return "", &clifmt.CliError{
+			Code:        clifmt.ExitUserError,
+			Message:     fmt.Sprintf("%s is set but only %d bytes long", envDecisionAuthSecret, len(secret)),
+			Remediation: fmt.Sprintf("set %s to at least %d bytes of random data", envDecisionAuthSecret, minDecisionAuthSecretBytes),
+		}
+	}
+	return secret, nil
 }
 
 // envError builds a CliError in the environment-error bucket for a

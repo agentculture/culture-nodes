@@ -93,3 +93,67 @@ type WorkflowError struct {
 func (e *WorkflowError) Error() string {
 	return fmt.Sprintf("engine: workflow %s cannot be executed: %s", e.Digest, e.Detail)
 }
+
+// HumanTaskAlreadyDecidedError is returned by DecideHumanTask when the named
+// task's status is no longer pending — either an earlier decision already
+// resumed the run, or a racing decision won the atomic status flip
+// (MarkHumanTaskDecided) first. Either way nothing is written: a human task
+// decides exactly once, and a second decision on it is refused rather than
+// resuming the run a second time.
+type HumanTaskAlreadyDecidedError struct {
+	HumanTaskID string
+	// Status is the task's current status ("decided" — pending is the only
+	// status this error is never raised for).
+	Status string
+}
+
+func (e *HumanTaskAlreadyDecidedError) Error() string {
+	return fmt.Sprintf("engine: human task %s is already %s and accepts no further decision", e.HumanTaskID, e.Status)
+}
+
+// Is lets callers match with errors.Is(err, ErrHumanTaskAlreadyDecided).
+func (e *HumanTaskAlreadyDecidedError) Is(target error) bool {
+	return target == ErrHumanTaskAlreadyDecided
+}
+
+// ErrHumanTaskAlreadyDecided is the sentinel every HumanTaskAlreadyDecidedError matches.
+var ErrHumanTaskAlreadyDecided = errors.New("engine: human task is already decided")
+
+// OutcomeNotAllowedError is returned by DecideHumanTask when the decision's
+// outcome is not one of the task's allowed_outcomes (PRD §9.9) — the set the
+// human was actually shown, taken from human_tasks.request rather than
+// re-derived from the live node, so a decision is judged against what was
+// presented, not against a possibly-different read of the definition.
+type OutcomeNotAllowedError struct {
+	HumanTaskID string
+	Outcome     string
+	Allowed     []string
+}
+
+func (e *OutcomeNotAllowedError) Error() string {
+	return fmt.Sprintf("engine: human task %s: outcome %q is not one of the task's allowed outcomes %v",
+		e.HumanTaskID, e.Outcome, e.Allowed)
+}
+
+// Is lets callers match with errors.Is(err, ErrOutcomeNotAllowed).
+func (e *OutcomeNotAllowedError) Is(target error) bool { return target == ErrOutcomeNotAllowed }
+
+// ErrOutcomeNotAllowed is the sentinel every OutcomeNotAllowedError matches.
+var ErrOutcomeNotAllowed = errors.New("engine: outcome not allowed")
+
+// HumanTaskNotWaitingError is returned by DecideHumanTask on the defensive
+// path where a task is still pending but the node run it names is not
+// NodeRunWaitingHuman. It should not be reachable through normal use — a
+// pending task's node run is put in that state by the same dispatch that
+// wrote the task and nothing else moves it except this decision — so seeing
+// it means the two rows have drifted apart.
+type HumanTaskNotWaitingError struct {
+	HumanTaskID string
+	NodeRunID   string
+	State       NodeRunState
+}
+
+func (e *HumanTaskNotWaitingError) Error() string {
+	return fmt.Sprintf("engine: human task %s names node run %s, which is %s rather than %s",
+		e.HumanTaskID, e.NodeRunID, e.State, NodeRunWaitingHuman)
+}

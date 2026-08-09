@@ -44,6 +44,10 @@ const (
 	// no claimable work, and a consumer that treated it as one would be
 	// signaling a work item that was never created.
 	TypeHumanTaskCreated = "dev.culture.nodes.human-task.created"
+	// TypeHumanTaskDecided records DecideHumanTask resolving a paused human
+	// task: who decided, what outcome, and which review recorded it as
+	// human authority in the ledger (PRD §9.9, §10.8).
+	TypeHumanTaskDecided = "dev.culture.nodes.human-task.decided"
 )
 
 // event builds an EventInput, encoding data into the payload. Encoding cannot

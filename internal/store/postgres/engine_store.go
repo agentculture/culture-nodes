@@ -498,6 +498,63 @@ func (eq engineQueries) InsertHumanTask(ctx context.Context, task engine.HumanTa
 	return id, nil
 }
 
+const selectHumanTaskSQL = `
+SELECT id, namespace_id, run_id, node_run_id, kind, assigned_owner_id, status, request, response, created_at, resolved_at
+FROM human_tasks WHERE id = $1 AND namespace_id = $2
+`
+
+// GetHumanTask returns one human_tasks row, or engine.ErrNotFound.
+func (eq engineQueries) GetHumanTask(ctx context.Context, id string) (engine.HumanTask, error) {
+	var (
+		task            engine.HumanTask
+		nodeRunID       pgtype.Text
+		assignedOwnerID pgtype.Text
+		status          string
+		request         []byte
+		response        []byte
+		createdAt       pgtype.Timestamptz
+		resolvedAt      pgtype.Timestamptz
+	)
+	err := eq.q.QueryRow(ctx, selectHumanTaskSQL, id, eq.namespaceID).Scan(
+		&task.ID, &task.NamespaceID, &task.RunID, &nodeRunID, &task.Kind,
+		&assignedOwnerID, &status, &request, &response, &createdAt, &resolvedAt,
+	)
+	if err != nil {
+		if isNoRows(err) {
+			return engine.HumanTask{}, fmt.Errorf("postgres: engine: human task %s: %w", id, engine.ErrNotFound)
+		}
+		return engine.HumanTask{}, fmt.Errorf("postgres: engine: GetHumanTask: %w", err)
+	}
+	task.NodeRunID = textOrEmpty(nodeRunID)
+	task.AssignedOwnerID = textOrEmpty(assignedOwnerID)
+	task.Status = status
+	task.Request = json.RawMessage(request)
+	task.Response = json.RawMessage(response)
+	task.CreatedAt = tsValue(createdAt)
+	task.ResolvedAt = tsValue(resolvedAt)
+	return task, nil
+}
+
+const markHumanTaskDecidedSQL = `
+UPDATE human_tasks SET status = $2, response = $3, resolved_at = $4
+WHERE id = $1 AND namespace_id = $5 AND status = $6
+`
+
+// MarkHumanTaskDecided flips a human task from pending to decided, in the
+// same status-guarded-WHERE-clause pattern ledger.MarkReviewCommitted uses:
+// the status is part of the update's own WHERE, so two concurrent decisions
+// cannot both report success.
+func (eq engineQueries) MarkHumanTaskDecided(ctx context.Context, id string, response json.RawMessage, resolvedAt time.Time) (bool, error) {
+	tag, err := eq.q.Exec(ctx, markHumanTaskDecidedSQL,
+		id, engine.HumanTaskStatusDecided, []byte(jsonOrEmptyObject(response)), tsOrNow(resolvedAt),
+		eq.namespaceID, engine.HumanTaskStatusPending,
+	)
+	if err != nil {
+		return false, fmt.Errorf("postgres: engine: MarkHumanTaskDecided: %w", err)
+	}
+	return tag.RowsAffected() == 1, nil
+}
+
 const insertAttemptSQL = `
 INSERT INTO attempts (
 	id, namespace_id, node_run_id, attempt_number, actor_id, status, fencing_token,

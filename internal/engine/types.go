@@ -194,9 +194,13 @@ type Attempt struct {
 }
 
 // HumanTaskStatusPending is the status a human task is created with
-// (human_tasks.status). Nothing in this task moves it out of pending — that
-// belongs to whoever resolves the task (t7/t8).
+// (human_tasks.status).
 const HumanTaskStatusPending = "pending"
+
+// HumanTaskStatusDecided is the status DecideHumanTask moves a task to. It
+// is terminal: MarkHumanTaskDecided's WHERE clause only ever flips
+// pending -> decided, so a task cannot be decided twice.
+const HumanTaskStatusDecided = "decided"
 
 // HumanTask is one human_tasks row (PRD §9.9,
 // migrations/0002_runtime_execution.sql): the durable record an approval

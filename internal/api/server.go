@@ -52,6 +52,18 @@ type Server struct {
 	// here.
 	callbackSigner *actors.TokenSigner
 
+	// decisionAuthSecret gates POST /v1alpha1/human-tasks/{id}/decision (see
+	// (*Server).requireDecisionAuth in humantasks.go). Every other operation
+	// in this API is authless by phase-1 design (PRD spec decision c45,
+	// stated plainly in api/openapi/openapi.yaml's description) — this is a
+	// narrow, deliberate tightening for the one endpoint that writes
+	// human-authority review records into the ledger on whoever presents the
+	// bearer token, not a general auth story for the rest of the surface.
+	// Nil means no secret is configured, and every decision is refused with
+	// 401 rather than left open by default (the same posture
+	// WithCallbackSigner uses for the callback route).
+	decisionAuthSecret []byte
+
 	pollInterval time.Duration
 	webAssets    fs.FS
 }
@@ -90,6 +102,19 @@ func WithCallbackSigner(signer *actors.TokenSigner) Option {
 	return func(s *Server) {
 		if signer != nil {
 			s.callbackSigner = signer
+		}
+	}
+}
+
+// WithDecisionAuthSecret configures the bearer secret POST
+// /v1alpha1/human-tasks/{id}/decision requires (see requireDecisionAuth in
+// humantasks.go). Omitting it (or passing "") leaves every decision refused
+// with 401 rather than mounted-but-authless — a deployment with no
+// configured secret has nothing to authenticate a decider against.
+func WithDecisionAuthSecret(secret string) Option {
+	return func(s *Server) {
+		if secret != "" {
+			s.decisionAuthSecret = []byte(secret)
 		}
 	}
 }
@@ -158,6 +183,10 @@ func (s *Server) Handler() http.Handler {
 
 	mux.HandleFunc("POST /v1alpha1/runs/{id}/reviews", s.wrap(s.handleCreateReview))
 	mux.HandleFunc("POST /v1alpha1/reviews/{id}/commit", s.wrap(s.handleCommitReview))
+
+	mux.HandleFunc("GET /v1alpha1/human-tasks", s.wrap(s.handleListHumanTasks))
+	mux.HandleFunc("GET /v1alpha1/human-tasks/{id}", s.wrap(s.handleGetHumanTask))
+	mux.HandleFunc("POST /v1alpha1/human-tasks/{id}/decision", s.wrap(s.handleDecideHumanTask))
 
 	mux.HandleFunc("GET /v1alpha1/healthz", s.wrap(s.handleHealthz))
 	mux.HandleFunc("GET /v1alpha1/readyz", s.wrap(s.handleReadyz))

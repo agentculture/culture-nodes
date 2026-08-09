@@ -338,8 +338,11 @@ Two consequences worth stating out loud:
 
 ## Conformance checklist
 
-What a runner-conformance kit (the code-execution sibling of
-`tests/conformance`) checks against a live service:
+`tests/runnerconformance` is that kit — the code-execution sibling of
+`tests/conformance` — and `internal/runners/runnerservice` is the reference
+implementation it runs against, both over a fake runner and over the real
+headspace-cli bridge that `cmd/nodes-runner` deploys. What it checks against a
+live service:
 
 | Check | Why it matters |
 | --- | --- |

@@ -187,6 +187,10 @@ services:
       COLLEAGUE_BRIDGE_PORT: "8085"
       COLLEAGUE_BRIDGE_REPO_ALLOWLIST: ${COLLEAGUE_BRIDGE_REPO_ALLOWLIST:-}
       COLLEAGUE_ENGINE: ${COLLEAGUE_ENGINE:-mock}
+      # The bridge refuses non-loopback binds without an auth token (qodo
+      # PR #11 finding 4); this local, network-isolated dev profile opts in
+      # explicitly rather than silently.
+      COLLEAGUE_BRIDGE_ALLOW_UNAUTHENTICATED: "1"
     ports:
       - "${COLLEAGUE_BRIDGE_PORT:-8085}:8085"
     restart: unless-stopped

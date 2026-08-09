@@ -1,6 +1,7 @@
 package api
 
 import (
+	"crypto/sha256"
 	"crypto/subtle"
 	"encoding/json"
 	"net/http"
@@ -104,14 +105,18 @@ func (s *Server) requireDecisionAuth(r *http.Request) error {
 			"human-task decisions require a configured bearer secret and none is configured")
 	}
 
-	const prefix = "Bearer "
+	const prefix = "bearer "
 	header := r.Header.Get("Authorization")
-	if !strings.HasPrefix(header, prefix) {
+	if len(header) < len(prefix) || !strings.EqualFold(header[:len(prefix)], prefix) {
 		return unauthorized("send Authorization: Bearer <token>", "missing or malformed Authorization header")
 	}
 
-	presented := strings.TrimPrefix(header, prefix)
-	if subtle.ConstantTimeCompare([]byte(presented), s.decisionAuthSecret) != 1 {
+	// Compare digests, not the raw values: ConstantTimeCompare returns early
+	// on length mismatch, which would leak the secret's length. Hashing both
+	// sides first makes the comparison genuinely fixed-cost.
+	presented := sha256.Sum256([]byte(header[len(prefix):]))
+	expected := sha256.Sum256(s.decisionAuthSecret)
+	if subtle.ConstantTimeCompare(presented[:], expected[:]) != 1 {
 		return unauthorized("the bearer token is not valid for this deployment", "authorization failed")
 	}
 	return nil

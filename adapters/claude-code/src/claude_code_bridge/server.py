@@ -18,8 +18,10 @@ Routes:
 
 from __future__ import annotations
 
+import hmac
 import json
 import logging
+import os
 import re
 import threading
 from datetime import datetime, timezone
@@ -151,7 +153,7 @@ class Handler(BaseHTTPRequestHandler):
             return True
         header = self.headers.get("Authorization", "")
         presented = header[len("Bearer ") :] if header.startswith("Bearer ") else ""
-        if presented == token:
+        if hmac.compare_digest(presented, token):
             return True
         self._drain_body()
         self._write_json(
@@ -446,7 +448,32 @@ class Handler(BaseHTTPRequestHandler):
         )
 
 
+_LOOPBACK_HOSTS = frozenset({"127.0.0.1", "localhost", "::1"})
+
+
+def _refuse_unauthenticated_exposure(cfg: Config) -> None:
+    """A bridge endpoint executes work on this machine: binding it beyond
+    loopback with no auth token would be an unauthenticated remote-execution
+    surface. Refuse at startup unless the operator opts in explicitly
+    (CLAUDE_CODE_BRIDGE_ALLOW_UNAUTHENTICATED=1) — never by accident."""
+    if cfg.auth_token or cfg.host in _LOOPBACK_HOSTS:
+        return
+    if os.environ.get("CLAUDE_CODE_BRIDGE_ALLOW_UNAUTHENTICATED") == "1":
+        logger.warning(
+            "serving on %s WITHOUT authentication " "(CLAUDE_CODE_BRIDGE_ALLOW_UNAUTHENTICATED=1)",
+            cfg.host,
+        )
+        return
+    raise SystemExit(
+        f"refusing to bind {cfg.host} without an auth token: set "
+        "CLAUDE_CODE_BRIDGE_AUTH_TOKEN, bind to loopback, or set "
+        "CLAUDE_CODE_BRIDGE_ALLOW_UNAUTHENTICATED=1 to accept an "
+        "unauthenticated non-loopback endpoint deliberately"
+    )
+
+
 def make_server(cfg: Config) -> BridgeHTTPServer:
+    _refuse_unauthenticated_exposure(cfg)
     bridge = Bridge(cfg)
     return BridgeHTTPServer((cfg.host, cfg.port), Handler, bridge)
 

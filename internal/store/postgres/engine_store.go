@@ -240,8 +240,11 @@ func (eq engineQueries) WorkItem(ctx context.Context, workID string) (engine.Wor
 		ref     engine.WorkItemRef
 		attempt int32
 	)
+	// Scoped by namespace as well as primary key: completion-critical
+	// lookups must never resolve another namespace's row even when handed a
+	// cross-namespace id (the engine is constructed for one namespace).
 	err := eq.q.QueryRow(ctx,
-		`SELECT id, node_run_id, state, attempt FROM work_items WHERE id = $1`, workID,
+		`SELECT id, node_run_id, state, attempt FROM work_items WHERE id = $1 AND namespace_id = $2`, workID, eq.namespaceID,
 	).Scan(&ref.ID, &ref.NodeRunID, &ref.State, &attempt)
 	if err != nil {
 		if isNoRows(err) {
@@ -311,7 +314,7 @@ SELECT r.id, r.namespace_id, r.workflow_version_id, wv.content_digest, r.status,
        r.input, r.output, r.created_at, r.updated_at, r.completed_at
 FROM runs AS r
 JOIN workflow_versions AS wv ON wv.id = r.workflow_version_id
-WHERE r.id = $1
+WHERE r.id = $1 AND r.namespace_id = $2
 `
 
 // Run returns one run, including the content digest of the definition it
@@ -327,7 +330,7 @@ func (eq engineQueries) Run(ctx context.Context, runID string) (engine.Run, erro
 		updatedAt   pgtype.Timestamptz
 		completedAt pgtype.Timestamptz
 	)
-	err := eq.q.QueryRow(ctx, selectRunSQL, runID).Scan(
+	err := eq.q.QueryRow(ctx, selectRunSQL, runID, eq.namespaceID).Scan(
 		&run.ID, &run.NamespaceID, &run.WorkflowVersionID, &run.WorkflowDigest, &status,
 		&input, &output, &createdAt, &updatedAt, &completedAt,
 	)

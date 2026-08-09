@@ -61,6 +61,10 @@ func run() error {
 	if err != nil {
 		return err
 	}
+	namespaceID, err := requireEnv("WORKER_NAMESPACE_ID")
+	if err != nil {
+		return err
+	}
 	leaseSeconds, err := requireEnvFloat("WORKER_LEASE_SECONDS")
 	if err != nil {
 		return err
@@ -103,7 +107,7 @@ func run() error {
 			return fmt.Errorf("ReclaimExpired: %w", err)
 		}
 
-		items, err := s.ClaimWork(ctx, workerID, leaseDuration, limit)
+		items, err := s.ClaimWork(ctx, namespaceID, workerID, leaseDuration, limit)
 		if err != nil {
 			return fmt.Errorf("ClaimWork: %w", err)
 		}

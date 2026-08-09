@@ -128,7 +128,7 @@ func (f *fixture) claim(workerID, nodeRunID string) storepg.ClaimedWork {
 	f.t.Helper()
 
 	for attempt := 0; attempt < 20; attempt++ {
-		claimed, err := f.store.ClaimWork(f.ctx, workerID, testLease, 20)
+		claimed, err := f.store.ClaimWork(f.ctx, f.ns.ID, workerID, testLease, 20)
 		if err != nil {
 			f.t.Fatalf("ClaimWork: %v", err)
 		}

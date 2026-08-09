@@ -252,13 +252,14 @@ type workerHandle struct {
 // doc comment). It registers a t.Cleanup that force-kills the process if
 // the test ends before the worker has, so a failing test never leaks a
 // runaway worker process.
-func startWorker(t *testing.T, workerID string, leaseSeconds float64, limit, workMS, idleTimeoutMS int, claimedFlagFile string) *workerHandle {
+func startWorker(t *testing.T, namespaceID, workerID string, leaseSeconds float64, limit, workMS, idleTimeoutMS int, claimedFlagFile string) *workerHandle {
 	t.Helper()
 
 	cmd := exec.Command(workerBinPath)
 	cmd.Env = append(os.Environ(),
 		"WORKER_DB_URL="+testDBURL,
 		"WORKER_ID="+workerID,
+		"WORKER_NAMESPACE_ID="+namespaceID,
 		fmt.Sprintf("WORKER_LEASE_SECONDS=%f", leaseSeconds),
 		fmt.Sprintf("WORKER_LIMIT=%d", limit),
 		fmt.Sprintf("WORKER_WORK_MS=%d", workMS),

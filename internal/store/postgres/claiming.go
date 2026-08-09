@@ -170,7 +170,7 @@ SET state            = 'leased',
 FROM (
     SELECT id
     FROM work_items
-    WHERE state = 'ready' AND available_at <= now()
+    WHERE namespace_id = $4 AND state = 'ready' AND available_at <= now()
     ORDER BY available_at, id
     FOR UPDATE SKIP LOCKED
     LIMIT $3
@@ -185,8 +185,10 @@ RETURNING w.id, w.namespace_id, w.node_run_id, w.state, w.state_version,
 // workerID, leasing each for leaseDuration. It returns the rows it won --
 // possibly fewer than limit, possibly zero when nothing is claimable right
 // now -- never an error merely because there was nothing to claim.
-func (s *Store) ClaimWork(ctx context.Context, workerID string, leaseDuration time.Duration, limit int) ([]ClaimedWork, error) {
+func (s *Store) ClaimWork(ctx context.Context, namespaceID, workerID string, leaseDuration time.Duration, limit int) ([]ClaimedWork, error) {
 	switch {
+	case namespaceID == "":
+		return nil, fmt.Errorf("postgres: ClaimWork: namespaceID is required (claiming is namespace-scoped: a worker serves one namespace and must never lease another's work)")
 	case workerID == "":
 		return nil, fmt.Errorf("postgres: ClaimWork: workerID is required")
 	case leaseDuration <= 0:
@@ -195,7 +197,7 @@ func (s *Store) ClaimWork(ctx context.Context, workerID string, leaseDuration ti
 		return nil, fmt.Errorf("postgres: ClaimWork: limit must be positive")
 	}
 
-	rows, err := s.pool.Query(ctx, claimWorkSQL, workerID, leaseDuration.Seconds(), int64(limit))
+	rows, err := s.pool.Query(ctx, claimWorkSQL, workerID, leaseDuration.Seconds(), int64(limit), namespaceID)
 	if err != nil {
 		return nil, fmt.Errorf("postgres: ClaimWork: %w", err)
 	}

@@ -130,12 +130,12 @@ func (f *asyncFixture) readyNodeRun(runID string) string {
 }
 
 // claim wins the work item for nodeRunID through the real claiming path,
-// handing back anything else it happened to claim (ClaimWork is namespace-
-// wide, so a parallel test's item must not be left leased).
+// handing back anything else it happened to claim within the fixture's
+// namespace (a parallel test's item must not be left leased).
 func (f *asyncFixture) claim(workerID, nodeRunID string) storepg.ClaimedWork {
 	f.t.Helper()
 	for attempt := 0; attempt < 20; attempt++ {
-		claimed, err := f.store.ClaimWork(f.ctx, workerID, testLease, 20)
+		claimed, err := f.store.ClaimWork(f.ctx, f.ns.ID, workerID, testLease, 20)
 		if err != nil {
 			f.t.Fatalf("ClaimWork: %v", err)
 		}
@@ -274,7 +274,7 @@ func TestStartAsyncWaitReleasesTheClaimWithoutCompletingIt(t *testing.T) {
 
 	// A parked item is invisible to a claimant: this is what "releases worker
 	// capacity" has to mean operationally.
-	claimed, err := f.store.ClaimWork(f.ctx, "other-worker", testLease, 10)
+	claimed, err := f.store.ClaimWork(f.ctx, f.ns.ID, "other-worker", testLease, 10)
 	if err != nil {
 		t.Fatalf("ClaimWork: %v", err)
 	}

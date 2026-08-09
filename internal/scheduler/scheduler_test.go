@@ -263,7 +263,7 @@ func TestSchedulerFiresLeaseRecoveryTimerReclaimsExpiredLease(t *testing.T) {
 	if err := s.EnqueueWork(ctx, postgres.WorkItem{NamespaceID: ns.ID, NodeRunID: nodeRunID}); err != nil {
 		t.Fatalf("EnqueueWork: %v", err)
 	}
-	claimed, err := s.ClaimWork(ctx, "dead-worker", time.Minute, 1)
+	claimed, err := s.ClaimWork(ctx, ns.ID, "dead-worker", time.Minute, 1)
 	if err != nil {
 		t.Fatalf("ClaimWork: %v", err)
 	}

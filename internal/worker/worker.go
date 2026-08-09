@@ -261,7 +261,7 @@ func (w *Worker) Run(ctx context.Context) error {
 // handled. It is exported so a test can drive exactly one pass, and so an
 // operator tool can do a single unit of work without starting a loop.
 func (w *Worker) Tick(ctx context.Context) (int, error) {
-	claimed, err := w.db.ClaimWork(ctx, w.opts.WorkerID, w.opts.LeaseDuration, w.opts.ClaimBatch)
+	claimed, err := w.db.ClaimWork(ctx, w.opts.NamespaceID, w.opts.WorkerID, w.opts.LeaseDuration, w.opts.ClaimBatch)
 	if err != nil {
 		return 0, fmt.Errorf("worker: claim: %w", err)
 	}

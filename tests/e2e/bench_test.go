@@ -96,7 +96,7 @@ func BenchmarkTransitions(b *testing.B) {
 	}
 	ctx := context.Background()
 
-	eng, compiled := setUpTransitionsBenchmarkEngine(b, ctx)
+	eng, compiled, nsID := setUpTransitionsBenchmarkEngine(b, ctx)
 	if _, err := eng.CreateRun(ctx, compiled, json.RawMessage(`{"subject":"bench"}`)); err != nil {
 		b.Fatalf("CreateRun: %v", err)
 	}
@@ -109,7 +109,7 @@ func BenchmarkTransitions(b *testing.B) {
 	start := time.Now()
 
 	for i := 0; i < b.N; i++ {
-		claimed, claimErr := testStore.ClaimWork(ctx, workerID, time.Minute, 1)
+		claimed, claimErr := testStore.ClaimWork(ctx, nsID, workerID, time.Minute, 1)
 		if claimErr != nil {
 			b.Fatalf("ClaimWork: %v", claimErr)
 		}
@@ -139,7 +139,7 @@ func BenchmarkTransitions(b *testing.B) {
 // setUpTransitionsBenchmarkEngine creates a fresh namespace and engine and
 // compiles the loop workflow, failing the benchmark on any setup error —
 // including a compile diagnostic at error level.
-func setUpTransitionsBenchmarkEngine(b *testing.B, ctx context.Context) (*engine.Engine, *compiler.CompiledWorkflow) {
+func setUpTransitionsBenchmarkEngine(b *testing.B, ctx context.Context) (*engine.Engine, *compiler.CompiledWorkflow, string) {
 	b.Helper()
 	ns, err := testStore.CreateNamespace(ctx, "bench-transitions-"+randomSuffix(), "Benchmark Namespace")
 	if err != nil {
@@ -156,7 +156,7 @@ func setUpTransitionsBenchmarkEngine(b *testing.B, ctx context.Context) (*engine
 	}
 	requireNoCompileErrors(b, diags)
 
-	return eng, compiled
+	return eng, compiled, ns.ID
 }
 
 // requireNoCompileErrors fails the benchmark on the first error-level

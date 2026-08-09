@@ -102,7 +102,7 @@ func TestEnqueueWorkAndClaimWorkRoundTrip(t *testing.T) {
 	nodeRunID := mustNodeRun(t, s, ns.ID)
 	mustEnqueued(t, s, ns.ID, nodeRunID)
 
-	claimed, err := s.ClaimWork(ctx, "worker-1", time.Minute, 10)
+	claimed, err := s.ClaimWork(ctx, ns.ID, "worker-1", time.Minute, 10)
 	if err != nil {
 		t.Fatalf("ClaimWork: %v", err)
 	}
@@ -134,7 +134,7 @@ func TestEnqueueWorkAndClaimWorkRoundTrip(t *testing.T) {
 	}
 
 	// The row is no longer ready, so a second claim must return nothing.
-	again, err := s.ClaimWork(ctx, "worker-2", time.Minute, 10)
+	again, err := s.ClaimWork(ctx, ns.ID, "worker-2", time.Minute, 10)
 	if err != nil {
 		t.Fatalf("ClaimWork (second): %v", err)
 	}
@@ -158,7 +158,7 @@ func TestClaimWorkRespectsAvailableAt(t *testing.T) {
 		t.Fatalf("EnqueueWork: %v", err)
 	}
 
-	claimed, err := s.ClaimWork(ctx, "worker-1", time.Minute, 10)
+	claimed, err := s.ClaimWork(ctx, ns.ID, "worker-1", time.Minute, 10)
 	if err != nil {
 		t.Fatalf("ClaimWork: %v", err)
 	}
@@ -177,7 +177,7 @@ func TestClaimWorkRespectsLimit(t *testing.T) {
 		mustEnqueued(t, s, ns.ID, mustNodeRun(t, s, ns.ID))
 	}
 
-	first, err := s.ClaimWork(ctx, "worker-1", time.Minute, 3)
+	first, err := s.ClaimWork(ctx, ns.ID, "worker-1", time.Minute, 3)
 	if err != nil {
 		t.Fatalf("ClaimWork (first): %v", err)
 	}
@@ -185,7 +185,7 @@ func TestClaimWorkRespectsLimit(t *testing.T) {
 		t.Fatalf("ClaimWork (first) returned %d items, want 3 (the limit)", len(first))
 	}
 
-	rest, err := s.ClaimWork(ctx, "worker-2", time.Minute, 10)
+	rest, err := s.ClaimWork(ctx, ns.ID, "worker-2", time.Minute, 10)
 	if err != nil {
 		t.Fatalf("ClaimWork (rest): %v", err)
 	}
@@ -218,7 +218,7 @@ func TestClaimWorkIsExclusiveUnderConcurrency(t *testing.T) {
 		wg.Add(1)
 		go func(i int) {
 			defer wg.Done()
-			claimed, err := s.ClaimWork(ctx, "racer", time.Minute, 1)
+			claimed, err := s.ClaimWork(ctx, ns.ID, "racer", time.Minute, 1)
 			results[i] = claimed
 			errs[i] = err
 		}(i)
@@ -257,7 +257,7 @@ func TestReclaimExpiredThenClaimGetsHigherFencingToken(t *testing.T) {
 	nodeRunID := mustNodeRun(t, s, ns.ID)
 	mustEnqueued(t, s, ns.ID, nodeRunID)
 
-	first, err := s.ClaimWork(ctx, "worker-dead", time.Minute, 10)
+	first, err := s.ClaimWork(ctx, ns.ID, "worker-dead", time.Minute, 10)
 	if err != nil {
 		t.Fatalf("ClaimWork (first): %v", err)
 	}
@@ -298,7 +298,7 @@ func TestReclaimExpiredThenClaimGetsHigherFencingToken(t *testing.T) {
 		t.Fatalf("ReclaimExpired (second call) reclaimed %d rows, want 0", n)
 	}
 
-	second, err := s.ClaimWork(ctx, "worker-survivor", time.Minute, 10)
+	second, err := s.ClaimWork(ctx, ns.ID, "worker-survivor", time.Minute, 10)
 	if err != nil {
 		t.Fatalf("ClaimWork (second, after reclaim): %v", err)
 	}
@@ -330,7 +330,7 @@ func TestCompleteWorkStaleTokenRejected(t *testing.T) {
 	nodeRunID := mustNodeRun(t, s, ns.ID)
 	mustEnqueued(t, s, ns.ID, nodeRunID)
 
-	stale, err := s.ClaimWork(ctx, "worker-slow", time.Minute, 10)
+	stale, err := s.ClaimWork(ctx, ns.ID, "worker-slow", time.Minute, 10)
 	if err != nil {
 		t.Fatalf("ClaimWork (stale claimant): %v", err)
 	}
@@ -346,7 +346,7 @@ func TestCompleteWorkStaleTokenRejected(t *testing.T) {
 		t.Fatalf("ReclaimExpired: %v", err)
 	}
 
-	fresh, err := s.ClaimWork(ctx, "worker-fast", time.Minute, 10)
+	fresh, err := s.ClaimWork(ctx, ns.ID, "worker-fast", time.Minute, 10)
 	if err != nil {
 		t.Fatalf("ClaimWork (fresh claimant): %v", err)
 	}
@@ -379,7 +379,7 @@ func TestCompleteWorkSucceedsAndTransitionsState(t *testing.T) {
 	nodeRunID := mustNodeRun(t, s, ns.ID)
 	mustEnqueued(t, s, ns.ID, nodeRunID)
 
-	claimed, err := s.ClaimWork(ctx, "worker-1", time.Minute, 10)
+	claimed, err := s.ClaimWork(ctx, ns.ID, "worker-1", time.Minute, 10)
 	if err != nil {
 		t.Fatalf("ClaimWork: %v", err)
 	}
@@ -423,7 +423,7 @@ func TestExtendLeaseWrongOwnerRejected(t *testing.T) {
 	nodeRunID := mustNodeRun(t, s, ns.ID)
 	mustEnqueued(t, s, ns.ID, nodeRunID)
 
-	claimed, err := s.ClaimWork(ctx, "worker-owner", time.Minute, 10)
+	claimed, err := s.ClaimWork(ctx, ns.ID, "worker-owner", time.Minute, 10)
 	if err != nil {
 		t.Fatalf("ClaimWork: %v", err)
 	}
@@ -463,7 +463,7 @@ func TestExtendLeaseStaleTokenRejected(t *testing.T) {
 	nodeRunID := mustNodeRun(t, s, ns.ID)
 	mustEnqueued(t, s, ns.ID, nodeRunID)
 
-	first, err := s.ClaimWork(ctx, "worker-slow", time.Minute, 10)
+	first, err := s.ClaimWork(ctx, ns.ID, "worker-slow", time.Minute, 10)
 	if err != nil {
 		t.Fatalf("ClaimWork (first): %v", err)
 	}
@@ -474,7 +474,7 @@ func TestExtendLeaseStaleTokenRejected(t *testing.T) {
 	if _, err := s.ReclaimExpired(ctx); err != nil {
 		t.Fatalf("ReclaimExpired: %v", err)
 	}
-	if _, err := s.ClaimWork(ctx, "worker-fast", time.Minute, 10); err != nil {
+	if _, err := s.ClaimWork(ctx, ns.ID, "worker-fast", time.Minute, 10); err != nil {
 		t.Fatalf("ClaimWork (second): %v", err)
 	}
 
@@ -492,7 +492,7 @@ func TestReclaimExpiredIgnoresActiveLeases(t *testing.T) {
 	nodeRunID := mustNodeRun(t, s, ns.ID)
 	mustEnqueued(t, s, ns.ID, nodeRunID)
 
-	if _, err := s.ClaimWork(ctx, "worker-1", time.Hour, 10); err != nil {
+	if _, err := s.ClaimWork(ctx, ns.ID, "worker-1", time.Hour, 10); err != nil {
 		t.Fatalf("ClaimWork: %v", err)
 	}
 
@@ -523,14 +523,18 @@ func TestEnqueueWorkRequiresNamespaceAndNodeRun(t *testing.T) {
 func TestClaimWorkRejectsInvalidArguments(t *testing.T) {
 	s := requireStore(t)
 	ctx := context.Background()
+	ns := mustNamespace(t, s, "test-claim-invalid-args")
 
-	if _, err := s.ClaimWork(ctx, "", time.Minute, 10); err == nil {
+	if _, err := s.ClaimWork(ctx, "", "worker-1", time.Minute, 10); err == nil {
+		t.Fatal("ClaimWork with empty namespaceID succeeded, want an error")
+	}
+	if _, err := s.ClaimWork(ctx, ns.ID, "", time.Minute, 10); err == nil {
 		t.Fatal("ClaimWork with empty workerID succeeded, want an error")
 	}
-	if _, err := s.ClaimWork(ctx, "worker-1", 0, 10); err == nil {
+	if _, err := s.ClaimWork(ctx, ns.ID, "worker-1", 0, 10); err == nil {
 		t.Fatal("ClaimWork with zero leaseDuration succeeded, want an error")
 	}
-	if _, err := s.ClaimWork(ctx, "worker-1", time.Minute, 0); err == nil {
+	if _, err := s.ClaimWork(ctx, ns.ID, "worker-1", time.Minute, 0); err == nil {
 		t.Fatal("ClaimWork with zero limit succeeded, want an error")
 	}
 }

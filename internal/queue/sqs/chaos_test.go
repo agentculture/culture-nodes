@@ -82,7 +82,7 @@ func TestChaosDuplicateDeliveryClaimedExactlyOnce(t *testing.T) {
 			// doc) -- the consumer always performs a real Postgres claim
 			// against work_items regardless of which ref the signal
 			// named.
-			claimed, err := s.ClaimWork(ctx, workerID, 30*time.Second, 1)
+			claimed, err := s.ClaimWork(ctx, ns.ID, workerID, 30*time.Second, 1)
 			if err != nil {
 				t.Fatalf("ClaimWork: %v", err)
 			}

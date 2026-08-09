@@ -277,7 +277,7 @@ func TestEngineCompleteWorkReportsBothStaleSentinels(t *testing.T) {
 	}
 	var claimed postgres.ClaimedWork
 	for attempt := 0; attempt < 10 && claimed.ID == ""; attempt++ {
-		items, err := s.ClaimWork(ctx, "engine-store-worker", time.Minute, 20)
+		items, err := s.ClaimWork(ctx, ns.ID, "engine-store-worker", time.Minute, 20)
 		if err != nil {
 			t.Fatalf("ClaimWork: %v", err)
 		}

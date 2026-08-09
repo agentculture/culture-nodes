@@ -1,0 +1,25 @@
+# systemd user unit for the Culture Nodes runner service (plan t19, d2).
+#
+# Installed by deploy.sh to ~/.config/systemd/user/nodes-runner.service on
+# each production machine. Runs cmd/nodes-runner as a HOST process — the
+# one component allowed to reach Docker and the headspace CLI — while the
+# control-plane compose stack stays socketless.
+#
+#   systemctl --user daemon-reload
+#   systemctl --user enable --now nodes-runner
+#   journalctl --user -u nodes-runner -f
+
+[Unit]
+Description=Culture Nodes runner service (headspace-backed, runner protocol)
+After=network-online.target docker.service
+
+[Service]
+# deploy.sh installs the binary and the env file; the secret file keeps the
+# bearer out of the environment listing entirely.
+EnvironmentFile=%h/.culture-nodes/runner.env
+ExecStart=%h/.culture-nodes/bin/nodes-runner
+Restart=on-failure
+RestartSec=5
+
+[Install]
+WantedBy=default.target

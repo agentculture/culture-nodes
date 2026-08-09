@@ -13,7 +13,8 @@ from culture_nodes.api_client import DEFAULT_API_URL, ENV_API_URL
 from culture_nodes.cli._output import emit_result
 
 _TEXT = """\
-culture-nodes — a thin CLI front for the Culture Nodes control-plane API.
+culture-nodes — Python front + mesh agent for the Culture Nodes workflow
+orchestrator.
 
 Purpose
 -------
@@ -71,7 +72,7 @@ def _as_json_payload() -> dict[str, object]:
     return {
         "tool": "culture-nodes",
         "version": __version__,
-        "purpose": "Thin CLI front for the Culture Nodes control-plane REST API.",
+        "purpose": "Python front + mesh agent for the Culture Nodes workflow orchestrator.",
         "commands": [
             {"path": ["whoami"], "summary": "Identity probe from culture.yaml."},
             {"path": ["learn"], "summary": "Self-teaching prompt."},

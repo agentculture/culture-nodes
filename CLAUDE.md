@@ -22,9 +22,14 @@ matters:
 2. **The mesh-agent scaffold** is the code that exists today — a Python 3.12
    package (`culture_nodes/`) scaffolded from `culture-agent-template`,
    carrying an agent-first CLI, a mesh identity, and the vendored skill kit.
-   Several self-description strings (`learn`, the argparse description,
-   `explain`'s root catalog entry) still carry the template's "clonable
-   template" prose — known drift to update as the product takes shape.
+   The self-description strings this note used to flag (`learn`, the
+   argparse description, `explain`'s root catalog entry) were updated to
+   describe the shipped product rather than the template it was scaffolded
+   from — first partly during the Phase-0/1 build, and the remaining
+   drift (`overview`'s command/catalog text, `whoami`'s module docstring)
+   during task t24 of the phase-2 cycle. If a self-description string
+   anywhere in `culture_nodes/` still reads like generic clonable-template
+   prose, that is new drift worth fixing, not this note's old one.
 
 ## Design ground rules (from docs/initial-design/)
 

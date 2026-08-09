@@ -1,0 +1,76 @@
+name: Adapter — codex
+
+# Dedicated to adapters/codex ONLY — a NEW workflow file, deliberately not
+# folded into tests.yml, so this adapter's CI cannot collide with a sibling
+# adapter's own dedicated workflow file at merge time. Mirrors tests.yml's
+# job shapes (test / lint) scoped to this package.
+#
+# The pytest job needs no real `codex` CLI: the unit suites drive
+# codex_cli/mapping/async_runner/server entirely through fakes (see
+# adapters/codex/README.md "Tests"). test_integration_bridge.py shells out
+# to a REAL, authenticated codex and skips (never fails) when one is not on
+# PATH — which is always true on a GitHub-hosted runner, so it skips
+# cleanly here rather than needing to be excluded.
+
+on:
+  pull_request:
+    branches: [main]
+    paths:
+      - "adapters/codex/**"
+      - ".github/workflows/adapter-codex.yml"
+  push:
+    branches: [main]
+    paths:
+      - "adapters/codex/**"
+      - ".github/workflows/adapter-codex.yml"
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+
+      - uses: astral-sh/setup-uv@38f3f104447c67c051c4a08e39b64a148898af3a # v4
+
+      - run: uv python install 3.12
+
+      - name: uv sync
+        working-directory: adapters/codex
+        run: uv sync
+
+      - name: pytest
+        working-directory: adapters/codex
+        run: uv run pytest -v
+
+  lint:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+
+      - uses: astral-sh/setup-uv@38f3f104447c67c051c4a08e39b64a148898af3a # v4
+
+      - run: uv python install 3.12
+
+      # adapters/colleague has no dedicated lint config or dev-toolchain of
+      # its own; this job follows that same minimal footprint by reusing
+      # the ROOT project's black/isort/flake8/bandit config and dev group
+      # (uv sync at repo root) against adapters/codex's own source, exactly
+      # the way tests.yml's own `lint` job runs the same tools against
+      # culture_nodes.
+      - run: uv sync
+
+      - name: black --check
+        run: uv run black --check adapters/codex/src adapters/codex/tests
+
+      - name: isort --check
+        run: uv run isort --check-only adapters/codex/src adapters/codex/tests
+
+      - name: flake8
+        run: uv run flake8 adapters/codex/src adapters/codex/tests
+
+      - name: bandit
+        run: uv run bandit -c pyproject.toml -r adapters/codex/src

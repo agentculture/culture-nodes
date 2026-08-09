@@ -46,6 +46,11 @@ const (
 	// code operation (worker.Options.CodeRunnerRevision); the runner service
 	// validates the operation document against it.
 	envCodeRunnerRevision = "NODES_CODE_RUNNER_REVISION"
+	// envCodeRunnerActorID names the REGISTERED actors-table row the runner's
+	// observed evidence is attributed to (worker.Options.CodeRunnerActorID).
+	// The actor-identity contract makes registration a deployment
+	// prerequisite: attempts.actor_id is a foreign key.
+	envCodeRunnerActorID = "NODES_CODE_RUNNER_ACTOR_ID"
 )
 
 func cmdWorker(args []string, jsonMode bool) (int, error) {
@@ -155,6 +160,7 @@ func cmdWorker(args []string, jsonMode bool) (int, error) {
 		RunnerService:      runnerSvc,
 		CodeRunnerName:     os.Getenv(envCodeRunnerName),
 		CodeRunnerRevision: os.Getenv(envCodeRunnerRevision),
+		CodeRunnerActorID:  os.Getenv(envCodeRunnerActorID),
 		OnError: func(err error) {
 			// Diagnostics go to stderr; the stdout stream stays clean for
 			// results, per the CLI's output contract.
@@ -373,6 +379,7 @@ func buildWorker(db *postgres.Store, namespace string) (*worker.Worker, *clifmt.
 		RunnerService:      runnerSvc,
 		CodeRunnerName:     os.Getenv(envCodeRunnerName),
 		CodeRunnerRevision: os.Getenv(envCodeRunnerRevision),
+		CodeRunnerActorID:  os.Getenv(envCodeRunnerActorID),
 		OnError: func(err error) {
 			clifmt.EmitDiagnostic(err.Error())
 		},

@@ -117,6 +117,7 @@ services:
       # CodeRunner path only.
       NODES_CODE_RUNNER_NAME: headspace
       NODES_CODE_RUNNER_REVISION: ${NODES_CODE_RUNNER_REVISION:-}
+      NODES_CODE_RUNNER_ACTOR_ID: ${NODES_CODE_RUNNER_ACTOR_ID:-}
       NODES_RUNNER_SERVICES_FILE: ${NODES_RUNNER_SERVICES_FILE:-}
     volumes:
       - ~/.culture-nodes/runners:/etc/nodes-runners:ro

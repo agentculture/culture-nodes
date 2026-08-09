@@ -60,6 +60,71 @@ type nodeSpec struct {
 	ApproverRef string
 	// Until is a wait node's resume condition, carried verbatim.
 	Until json.RawMessage
+	// PreRun/PostRun are the node's declared code hooks (task t14, spec claim
+	// c37), nil when the node declares neither. The compiler's checkNodeHooks
+	// already refused any node but an agent from declaring one, so the worker
+	// does not re-check kind here — it only interprets what compiled.
+	PreRun  *hookSpec
+	PostRun *postRunHookSpec
+}
+
+// hookSpec is the worker's decoded view of a pre_run hook.
+type hookSpec struct {
+	Operation codeOperationSpec
+}
+
+// postRunHookSpec is the worker's decoded view of a post_run hook.
+type postRunHookSpec struct {
+	Operation codeOperationSpec
+	OnFailure hookOnFailureSpec
+}
+
+// hookOnFailureSpec is a post-run hook's declared failure routing: either a
+// domain outcome the node declares, or the reject_assurance sentinel. See
+// internal/compiler's identically-shaped hookOnFailure for why this is a
+// hand-written (Un)MarshalJSON pair rather than a plain struct: the schema's
+// oneOf(object|const) shape has to survive the decode without a third,
+// inferred state.
+type hookOnFailureSpec struct {
+	Outcome         string
+	RejectAssurance bool
+}
+
+const hookOnFailureRejectAssurance = "reject_assurance"
+
+// UnmarshalJSON accepts exactly the two shapes the schema's oneOf admits.
+func (h *hookOnFailureSpec) UnmarshalJSON(data []byte) error {
+	var sentinel string
+	if err := json.Unmarshal(data, &sentinel); err == nil {
+		if sentinel != hookOnFailureRejectAssurance {
+			return fmt.Errorf("on_failure %q is not the %q sentinel", sentinel, hookOnFailureRejectAssurance)
+		}
+		*h = hookOnFailureSpec{RejectAssurance: true}
+		return nil
+	}
+	var obj struct {
+		Outcome string `json:"outcome"`
+	}
+	if err := json.Unmarshal(data, &obj); err != nil {
+		return fmt.Errorf("on_failure is neither the %q sentinel nor an object with an outcome: %w", hookOnFailureRejectAssurance, err)
+	}
+	*h = hookOnFailureSpec{Outcome: obj.Outcome}
+	return nil
+}
+
+// codeOperationSpec is the worker's decoded view of a code operation — a code
+// node's own, or a pre_run/post_run hook's (they share one authoring shape,
+// schemas/workflow/workflow.schema.json's #/$defs/codeOperation). It carries
+// exactly what buildHookOperation needs to construct a runners.Operation.
+type codeOperationSpec struct {
+	WorkspaceRef       string   `json:"workspaceRef,omitempty"`
+	Image              string   `json:"image"`
+	Argv               []string `json:"argv"`
+	WorkingDirectory   string   `json:"workingDirectory,omitempty"`
+	EnvironmentRefs    []string `json:"environmentRefs,omitempty"`
+	Network            string   `json:"network,omitempty"`
+	AllowedOutputPaths []string `json:"allowedOutputPaths,omitempty"`
+	RequiresShell      bool     `json:"requiresShell,omitempty"`
 }
 
 type inputBinding struct {
@@ -101,6 +166,13 @@ type irNode struct {
 	Policy      *struct {
 		Timeout string `json:"timeout"`
 	} `json:"policy"`
+	PreRun *struct {
+		Operation codeOperationSpec `json:"operation"`
+	} `json:"pre_run"`
+	PostRun *struct {
+		Operation codeOperationSpec `json:"operation"`
+		OnFailure hookOnFailureSpec `json:"on_failure"`
+	} `json:"post_run"`
 }
 
 // loadWorkflowSpec decodes a normalized IR document into the worker's view.
@@ -138,6 +210,12 @@ func decodeNode(id string, raw *irNode) (*nodeSpec, error) {
 		Operation:   raw.Operation,
 		ApproverRef: raw.ApproverRef,
 		Until:       raw.Until,
+	}
+	if raw.PreRun != nil {
+		node.PreRun = &hookSpec{Operation: raw.PreRun.Operation}
+	}
+	if raw.PostRun != nil {
+		node.PostRun = &postRunHookSpec{Operation: raw.PostRun.Operation, OnFailure: raw.PostRun.OnFailure}
 	}
 	if raw.Policy != nil && raw.Policy.Timeout != "" {
 		timeout, err := time.ParseDuration(raw.Policy.Timeout)

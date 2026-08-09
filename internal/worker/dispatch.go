@@ -33,6 +33,24 @@ func (w *Worker) dispatchActor(
 		return w.failAttempt(ctx, claimed, engine.StatusFailed, "configuration",
 			"this worker has no actor registry configured, so it cannot resolve an endpoint to invoke")
 	}
+
+	// Task t14, spec claim c37, honesty condition h32: a pre-run hook
+	// executes through the runner boundary BEFORE the actor is dispatched.
+	// Its failure fails the attempt as a technical failure and the agent is
+	// never invoked — this is the one branch in this function that can
+	// return without ever reaching the actor.
+	var preRun *hookRun
+	if node.PreRun != nil {
+		proceed, run, err := w.runPreRunHook(ctx, claimed, d, node, dc)
+		if err != nil {
+			return err
+		}
+		if !proceed {
+			return nil
+		}
+		preRun = run
+	}
+
 	endpoint, err := w.opts.Registry.Resolve(ctx, node.Uses)
 	if err != nil {
 		// An unresolvable actor is a policy/configuration refusal, not a
@@ -90,11 +108,16 @@ func (w *Worker) dispatchActor(
 	})
 
 	if invokeErr != nil {
-		return w.completeFromInvocationError(ctx, claimed, node, invokeErr)
+		return w.completeFromInvocationError(ctx, claimed, d, node, dc, invokeErr, preRun)
 	}
 
 	if !response.Async {
-		return w.completeFromResult(ctx, claimed, response.Result)
+		return w.completeFromResult(ctx, claimed, d, node, dc, response.Result, preRun)
+	}
+	if node.PostRun != nil {
+		// See hooks.go's package doc for why async+post_run is refused here
+		// rather than run against a callback-delivered result.
+		return w.refuseAsyncPostRun(ctx, claimed, d, node, dc, preRun)
 	}
 	return w.park(ctx, claimed, d, node, dc, response.Accepted)
 }
@@ -147,20 +170,86 @@ func (w *Worker) callbackURL(attemptID string) string {
 	return base + fmt.Sprintf(actors.CallbackEventsPathFormat, attemptID)
 }
 
-// completeFromResult commits a §13.2 synchronous result.
-func (w *Worker) completeFromResult(ctx context.Context, claimed postgres.ClaimedWork, result *actors.InvocationResult) error {
+// completeFromResult commits a §13.2 synchronous result, running the node's
+// post_run hook first when it declares one (task t14, spec claim c37).
+//
+// preRun is the already-executed pre_run hook, nil when the node declares
+// none; its evidence is appended after whatever completion this call
+// ultimately reports, exactly like the post_run hook's own evidence (see
+// appendHookEvidence for why neither is folded into the completion's own
+// ledger delta).
+func (w *Worker) completeFromResult(
+	ctx context.Context, claimed postgres.ClaimedWork, d postgres.Dispatch, node *nodeSpec, dc DispatchContext,
+	result *actors.InvocationResult, preRun *hookRun,
+) error {
 	if result == nil {
 		return w.failAttempt(ctx, claimed, engine.StatusContractRejected, string(actors.ClassContract),
 			"actor answered 200 with no result body")
 	}
-	_, err := w.complete(ctx, claimed, engine.CompletionRequest{
+
+	agentDelta := append([]ledger.Record(nil), result.Records()...)
+
+	var postRun *hookRun
+	outcome, output := result.Outcome, result.Output
+	rejectAssurance := false
+
+	if node.PostRun != nil {
+		post := w.runPostRunHook(ctx, node, dc)
+		postRun = &post.run
+
+		if !post.trustworthy {
+			// The hook itself could not be trusted to report a verdict at
+			// all: an attempt-level technical failure, not a domain answer
+			// — silently keeping the agent's own outcome here would be
+			// exactly the unenforced-check gap h32 forbids. The agent's own
+			// proposed records still ride along; only the routing changes.
+			completion, err := w.completeTechnicalFailure(ctx, claimed, engine.StatusFailed, hookKindPostRun, post.detail, agentDelta)
+			if err != nil {
+				return err
+			}
+			w.appendHookEvidence(ctx, completion, preRun)
+			w.appendHookEvidence(ctx, completion, postRun)
+			w.recordHookOperations(ctx, d.NamespaceID, completion.AttemptID, preRun, postRun)
+			return nil
+		}
+
+		if !post.passed {
+			if node.PostRun.OnFailure.RejectAssurance {
+				// The agent's own outcome still stands; a derived rejection
+				// is appended after the completion commits (see
+				// appendAssuranceRejection).
+				rejectAssurance = true
+			} else {
+				// A declared outcome: complete with THAT domain outcome
+				// instead of the agent's own — the check ran and told us
+				// this node's real answer, not the agent's.
+				outcome = node.PostRun.OnFailure.Outcome
+			}
+		}
+	}
+
+	completion, err := w.complete(ctx, claimed, engine.CompletionRequest{
 		TechStatus:  engine.StatusSucceeded,
-		Outcome:     result.Outcome,
-		Output:      result.Output,
-		LedgerDelta: append([]ledger.Record(nil), result.Records()...),
+		Outcome:     outcome,
+		Output:      output,
+		LedgerDelta: agentDelta,
 	})
-	if err != nil && !isStale(err) {
+	if err != nil {
+		if isStale(err) {
+			return nil
+		}
 		return err
+	}
+
+	w.appendHookEvidence(ctx, completion, preRun)
+	postEvidence, postEvidenceOK := w.appendHookEvidence(ctx, completion, postRun)
+	w.recordHookOperations(ctx, d.NamespaceID, completion.AttemptID, preRun, postRun)
+	if rejectAssurance {
+		subject := ""
+		if postEvidenceOK {
+			subject = postEvidence.ID
+		}
+		w.appendAssuranceRejection(ctx, dc, completion, postRun, subject)
 	}
 	return nil
 }
@@ -171,13 +260,27 @@ func (w *Worker) completeFromResult(ctx context.Context, claimed postgres.Claime
 // a technical status, because the mapping is lossy on purpose — three classes
 // share `failed` — and an operator asking "was it the network or the actor"
 // needs the class, not the status.
-func (w *Worker) completeFromInvocationError(ctx context.Context, claimed postgres.ClaimedWork, node *nodeSpec, invokeErr error) error {
+//
+// preRun is threaded through here too: a pre_run hook that passed still
+// measured something even though the subsequent invocation itself failed
+// technically, and that evidence is not dropped just because the actor never
+// answered.
+func (w *Worker) completeFromInvocationError(
+	ctx context.Context, claimed postgres.ClaimedWork, d postgres.Dispatch, node *nodeSpec, dc DispatchContext,
+	invokeErr error, preRun *hookRun,
+) error {
 	class, ok := actors.ClassOf(invokeErr)
 	if !ok {
 		class = actors.ClassExecution
 	}
-	return w.failAttempt(ctx, claimed, actors.TechStatusFor(class), string(class),
-		fmt.Sprintf("node %q invocation failed: %v", node.ID, invokeErr))
+	completion, err := w.completeTechnicalFailure(ctx, claimed, actors.TechStatusFor(class), string(class),
+		fmt.Sprintf("node %q invocation failed: %v", node.ID, invokeErr), nil)
+	if err != nil {
+		return err
+	}
+	w.appendHookEvidence(ctx, completion, preRun)
+	w.recordHookOperations(ctx, d.NamespaceID, completion.AttemptID, preRun, nil)
+	return nil
 }
 
 // park is §12.6: an asynchronous acceptance releases worker capacity.

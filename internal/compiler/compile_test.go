@@ -363,6 +363,91 @@ func TestFormatForPath(t *testing.T) {
 	}
 }
 
+// TestValidHooksCarryIntoTheNormalizedIR is the "valid hooks in IR"
+// acceptance case for task t14: a workflow whose agent nodes declare
+// pre_run/post_run compiles clean, and both hook shapes — an outcome-routed
+// on_failure and the reject_assurance sentinel — survive normalization with
+// their operation defaults expanded exactly like a code node's own
+// operation.
+func TestValidHooksCarryIntoTheNormalizedIR(t *testing.T) {
+	compiled, diags := compileFixture(t, "hooks-ok.workflow.yaml", FormatYAML)
+	if compiled == nil {
+		t.Fatalf("hooks-ok fixture did not compile: %s", renderDiagnostics(diags))
+	}
+	if len(diags) != 0 {
+		t.Errorf("hooks-ok fixture produced diagnostics, want none: %s", renderDiagnostics(diags))
+	}
+
+	var ir map[string]any
+	if err := json.Unmarshal(compiled.Normalized, &ir); err != nil {
+		t.Fatalf("normalized IR is not valid JSON: %v", err)
+	}
+	nodes := ir["spec"].(map[string]any)["nodes"].(map[string]any)
+
+	work, ok := nodes["work"].(map[string]any)
+	if !ok {
+		t.Fatal("normalized IR has no node \"work\"")
+	}
+	preRun, ok := work["pre_run"].(map[string]any)
+	if !ok {
+		t.Fatal("node work carries no pre_run in the normalized IR")
+	}
+	preOp, ok := preRun["operation"].(map[string]any)
+	if !ok {
+		t.Fatal("pre_run carries no operation")
+	}
+	if preOp["image"] != "registry.example/guard@sha256:111111" {
+		t.Errorf("pre_run.operation.image = %v, want the authored image", preOp["image"])
+	}
+	// The same PRD §13.7 safe defaults a code node's own operation gets.
+	if preOp["network"] != DefaultNetwork {
+		t.Errorf("pre_run.operation.network = %v, want the expanded default %q", preOp["network"], DefaultNetwork)
+	}
+	if preOp["workingDirectory"] != DefaultWorkingDirectory {
+		t.Errorf("pre_run.operation.workingDirectory = %v, want %q", preOp["workingDirectory"], DefaultWorkingDirectory)
+	}
+	if preOp["requiresShell"] != false {
+		t.Errorf("pre_run.operation.requiresShell = %v, want false", preOp["requiresShell"])
+	}
+
+	postRun, ok := work["post_run"].(map[string]any)
+	if !ok {
+		t.Fatal("node work carries no post_run in the normalized IR")
+	}
+	onFailure, ok := postRun["on_failure"].(map[string]any)
+	if !ok {
+		t.Fatal("node work post_run.on_failure did not survive normalization as an object")
+	}
+	if onFailure["outcome"] != "changes_required" {
+		t.Errorf("post_run.on_failure.outcome = %v, want changes_required", onFailure["outcome"])
+	}
+
+	guarded, ok := nodes["guarded"].(map[string]any)
+	if !ok {
+		t.Fatal("normalized IR has no node \"guarded\"")
+	}
+	guardedPostRun, ok := guarded["post_run"].(map[string]any)
+	if !ok {
+		t.Fatal("node guarded carries no post_run in the normalized IR")
+	}
+	if guardedPostRun["on_failure"] != "reject_assurance" {
+		t.Errorf("guarded post_run.on_failure = %v, want the reject_assurance sentinel", guardedPostRun["on_failure"])
+	}
+
+	// A node that declares neither hook carries neither key — pre_run/post_run
+	// are additive, not a shape every node grows.
+	finish, ok := nodes["finish"].(map[string]any)
+	if !ok {
+		t.Fatal("normalized IR has no node \"finish\"")
+	}
+	if _, ok := finish["pre_run"]; ok {
+		t.Error("node finish carries a pre_run it never declared")
+	}
+	if _, ok := finish["post_run"]; ok {
+		t.Error("node finish carries a post_run it never declared")
+	}
+}
+
 func TestResolveOwnerFallsBackToWorkflowMetadata(t *testing.T) {
 	if got := resolveOwner("", "team/platform-ai"); got != "team/platform-ai" {
 		t.Errorf("resolveOwner(\"\", metadata) = %q, want the metadata default", got)

@@ -28,6 +28,12 @@
   - honesty: After cancelRun commits, zero work items of that run are in a leasable state, and every pending invocation received a best-effort actors Cancel (SIGTERM at the bridge) — verified by test asserting item states + a recorded cancel-request event per invocation
 - Defense in depth independent of cancel: the work-item claim/reclaim path refuses to lease an item whose run is already terminal (runs.status join), so no future terminal-run path can leak a dispatching zombie — the cancel fix alone would not have covered a run that reached 'failed' with an in-flight item (also measured live: re-dispatches continued after the smoke run failed)
   - honesty: The claim/reclaim SQL refuses items whose run status is terminal regardless of how the run got there — covered for cancelled AND failed runs (the second live incident's shape)
+- Cancel propagation needs the API service to reach bridges: cancelRun runs in the api container, which today carries NO actor token envs (compose.thor.yml grants `NODES_ACTOR_`\* to the worker service only — probed live) — the api service env gains both codex token vars (and future actor tokens), and the api process reuses the worker's DBRegistry resolution to build authenticated Cancel calls
+  - honesty: A live cancel of a run with an in-flight codex session results in the bridge logging the cancel and the session terminating early — proving the api container's tokens and registry wiring actually work, not just compile
+- The API gains a logging facility: internal/api/server.go contains zero log calls today (probed — prod-api-1 logs only its startup line), so c2's 'one server log line per terminal-commit failure' requires introducing a logger to the API/callback path, not just adding one call
+  - honesty: Every 5xx the API returns carries a corresponding log line with the error chain — verified for the callback path by test and for the live deployment by inspecting prod-api-1 logs during the acceptance check
+- Budget exhaustion also best-effort Cancels the in-flight invocation (same actors.Client.Cancel lane as cancelRun) — parking the node while a session still runs would otherwise let it finish into a discarded late callback, spending quota on a result nobody can use
+  - honesty: The budget-exhaustion test asserts a Cancel was issued for the pending invocation alongside the parking completion
 
 ## Honesty conditions
 
@@ -41,6 +47,8 @@
 - Each after-state clause maps to at least one success-signal regression test — no clause ships untested
 - The budget applies to actor dispatch generically — the same path a future Lambda-backed actor or runner-service dispatch retries through — not a codex-specific patch
 - The four success-signal scenarios exist as named tests that fail on pre-fix code — verified by running them against a pre-fix checkout at review time
+- The regression test for the failed-commit incident asserts the work item's state sequence explicitly (waiting -> leased-by-resume -> not looping after the fix), proving the mechanism, not just the outcome
+- A store test proves a 'waiting' item's attempt counter is unchanged across ReclaimExpired sweeps and lease-duration passage while waiting — only a genuine re-claim increments it
 
 ## Success signals
 
@@ -55,6 +63,7 @@
 ## Assumptions
 
 - Store-level tests for these paths follow the existing pgtest pattern (internal/store/postgres testmain) and need a live Postgres; issue #9's namespace cross-contamination applies, so new suites must be namespace-scoped like the better existing ones
+- `work_items`.attempt increments only on genuine claim/dispatch (the claim SQL), never while an item sits healthily in 'waiting' — ReclaimExpired touches only expired 'leased' rows — so budget-3 cannot kill a healthy long-running session that heartbeats through its callbacks
 
 ## Scope exploration
 
@@ -70,7 +79,21 @@
   - seeds: `c2`, `c3`, `c4`, `c5`, `c6`
 - `s6` — `internal/queue/sqs + tests/conformance`: SQS driver is fake-tested and deferred (#7) — explicitly fenced out; the actor-protocol conformance kit pins the wire contract the fixes must not move
   - seeds: `c7`, `c9`
+- `s7` — `challenge pass / adjacent-systems lens: internal/worker/runnerasync.go + store runnerasync (runner protocol ingest)`: the runner protocol's callback ingest is a separate path where polling is authoritative (phase-2 d-decision) — a failed runner-callback commit is recovered by the poll loop, so the actor-side ratchet trap has no direct twin; verify during implementation, recorded here as examined-with-caveat
+- `s8` — `challenge pass / failure-mode lens: internal/store/postgres/claiming.go ReclaimExpired + commitTerminal resume ordering`: resume-before-complete plus lease expiry is the exact loop motor: ReclaimExpired flips only expired 'leased' rows, and the failed commit leaves the item exactly there — seeded c16 and grounds c4's budget placement in the claim path
+  - seeds: `c16`, `c20`
+- `s9` — `challenge pass / operations lens: compose.thor.yml api service env (probed live)`: api container has no actor token envs — cancel propagation from cancelRun cannot authenticate to bridges without the compose change; seeded c17
+  - seeds: `c17`
+- `s10` — `challenge pass / observability lens: internal/api/server.go logging`: zero log statements exist in the API server — the invisible-failure problem is broader than the callback path; c18 introduces the facility
+  - seeds: `c18`
+- `s11` — `challenge pass / lifecycle lens: budget exhaustion vs in-flight sessions`: parking at budget while a session runs would discard its eventual result as late — seeded the symmetric best-effort Cancel (c19)
+  - seeds: `c19`
+
+## Decisions
+
+- The zombie re-dispatch cadence is mechanically explained: commitTerminal resumes the work item (ResumeWaitingWork re-leases it) BEFORE CompleteAttempt; on commit failure the item stays leased-but-incomplete, the 1m lease expires, ReclaimExpired (claiming.go) flips it ready, and the loop repeats — the c3/c4 fixes must account for this exact sequence (e.g. failed commit un-resumes or the budget catches the reclaim)
 
 ## Open parks
 
 - [unknown_nonblocking] the 180s attempt timeout observed in run 01KZS5TJE0ZR7JZEARKCM96KHS (zero callbacks ingested for the node's own attempt while the zombie item competed) is not fully explained — deadlineFor uses node.Timeout (15m in that workflow) or DefaultTimeout; diagnosing needs #16's observability landed first, then a reproduction
+- [unknown_nonblocking] whether the runner-protocol path needs an equivalent retry budget (runner operations are compute, not billed per-invocation like agent sessions) — decide when the runner path is next touched, not in this cycle

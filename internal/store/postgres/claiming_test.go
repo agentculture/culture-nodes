@@ -7,6 +7,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/agentculture/culture-nodes/internal/engine"
 	"github.com/agentculture/culture-nodes/internal/store"
 	"github.com/agentculture/culture-nodes/internal/store/postgres"
 )
@@ -65,6 +66,43 @@ func mustNodeRunForRun(t *testing.T, s *postgres.Store, namespaceID, runID strin
 		t.Fatalf("mustNodeRunForRun: insert node_run: %v", err)
 	}
 	return nodeRunID
+}
+
+// mustRunAndNodeRun is mustNodeRun for a test that also needs the run id --
+// the terminal-run guard tests, which have to move runs.status underneath an
+// existing work item.
+func mustRunAndNodeRun(t *testing.T, s *postgres.Store, namespaceID string) (runID, nodeRunID string) {
+	t.Helper()
+	nodeRunID = mustNodeRun(t, s, namespaceID)
+	if err := s.Pool().QueryRow(context.Background(),
+		`SELECT run_id FROM node_runs WHERE id = $1`, nodeRunID,
+	).Scan(&runID); err != nil {
+		t.Fatalf("mustRunAndNodeRun: read run id: %v", err)
+	}
+	return runID, nodeRunID
+}
+
+// setRunStatus moves a run into an arbitrary status, standing in for whatever
+// really put it there (a cancel from the API, a failed completion from the
+// engine). The guard under test reads runs.status and must not care which.
+func setRunStatus(t *testing.T, s *postgres.Store, runID, status string) {
+	t.Helper()
+	if _, err := s.Pool().Exec(context.Background(),
+		`UPDATE runs SET status = $2, updated_at = now() WHERE id = $1`, runID, status,
+	); err != nil {
+		t.Fatalf("setRunStatus(%s): %v", status, err)
+	}
+}
+
+// workItemState reads one work item's current state and attempt counter.
+func workItemState(t *testing.T, s *postgres.Store, workID string) (state string, attempt int32) {
+	t.Helper()
+	if err := s.Pool().QueryRow(context.Background(),
+		`SELECT state, attempt FROM work_items WHERE id = $1`, workID,
+	).Scan(&state, &attempt); err != nil {
+		t.Fatalf("read work item %s: %v", workID, err)
+	}
+	return state, attempt
 }
 
 // mustEnqueued enqueues one ready work item for nodeRunID. It does not
@@ -517,6 +555,236 @@ func TestEnqueueWorkRequiresNamespaceAndNodeRun(t *testing.T) {
 	}
 	if err := s.EnqueueWork(ctx, postgres.WorkItem{NamespaceID: ns.ID}); err == nil {
 		t.Fatal("EnqueueWork with empty NodeRunID succeeded, want an error")
+	}
+}
+
+// TestClaimWorkRefusesItemsOfTerminalRuns proves the terminal-run guard on
+// the claim path (spec claim c6, honesty condition h6): a work item whose run
+// has already reached a state it never leaves is not claimable, no matter how
+// it got there. Both live 2026-08-11 incident shapes are covered -- a run
+// CANCELLED out from under an in-flight item (issue #19) and a run that
+// reached FAILED with an item still around (the second shape) -- plus
+// `completed` for symmetry, because "terminal" is a property of the state,
+// not of the story that produced it.
+//
+// Each status subtest ends by putting the run back to 'running' and claiming
+// successfully, so a passing refusal can never be an accident of a fixture
+// that was unclaimable for some unrelated reason.
+func TestClaimWorkRefusesItemsOfTerminalRuns(t *testing.T) {
+	s := requireStore(t)
+	ctx := context.Background()
+
+	for _, status := range []string{"cancelled", "failed", "completed"} {
+		t.Run(status, func(t *testing.T) {
+			ns := mustNamespace(t, s, "test-claim-terminal-run-"+status)
+			runID, nodeRunID := mustRunAndNodeRun(t, s, ns.ID)
+			mustEnqueued(t, s, ns.ID, nodeRunID)
+
+			setRunStatus(t, s, runID, status)
+
+			claimed, err := s.ClaimWork(ctx, ns.ID, "worker-1", time.Minute, 10)
+			if err != nil {
+				t.Fatalf("ClaimWork: %v", err)
+			}
+			if len(claimed) != 0 {
+				t.Fatalf("ClaimWork returned %d items for a %s run, want 0: a terminal run must never dispatch again",
+					len(claimed), status)
+			}
+
+			// Control: the same row is claimable while the run is running, so
+			// the refusal above is the run status and nothing else.
+			setRunStatus(t, s, runID, "running")
+			claimed, err = s.ClaimWork(ctx, ns.ID, "worker-1", time.Minute, 10)
+			if err != nil {
+				t.Fatalf("ClaimWork (control, running run): %v", err)
+			}
+			if len(claimed) != 1 {
+				t.Fatalf("ClaimWork (control, running run) returned %d items, want 1", len(claimed))
+			}
+		})
+	}
+}
+
+// TestReclaimExpiredRefusesItemsOfTerminalRuns proves the same guard on the
+// other half of the loop motor (spec claim c16): the 2026-08-11 zombie
+// cycled because an expired lease on a cancelled run's item was swept back to
+// 'ready' every minute. ReclaimExpired must leave such a row alone.
+//
+// The assertion is on the row's own state rather than on ReclaimExpired's
+// returned count: the sweep is namespace-wide, so another test's expired row
+// could legitimately be counted in the same call.
+func TestReclaimExpiredRefusesItemsOfTerminalRuns(t *testing.T) {
+	s := requireStore(t)
+	ctx := context.Background()
+
+	for _, status := range []string{"cancelled", "failed"} {
+		t.Run(status, func(t *testing.T) {
+			ns := mustNamespace(t, s, "test-reclaim-terminal-run-"+status)
+			runID, nodeRunID := mustRunAndNodeRun(t, s, ns.ID)
+			mustEnqueued(t, s, ns.ID, nodeRunID)
+
+			claimed, err := s.ClaimWork(ctx, ns.ID, "worker-doomed", time.Minute, 10)
+			if err != nil {
+				t.Fatalf("ClaimWork: %v", err)
+			}
+			if len(claimed) != 1 {
+				t.Fatalf("ClaimWork returned %d items, want 1", len(claimed))
+			}
+			workID := claimed[0].ID
+
+			backdateLeaseExpiry(t, s, workID)
+			setRunStatus(t, s, runID, status)
+
+			if _, err := s.ReclaimExpired(ctx); err != nil {
+				t.Fatalf("ReclaimExpired: %v", err)
+			}
+			if state, _ := workItemState(t, s, workID); state != "leased" {
+				t.Fatalf("work item state after ReclaimExpired on a %s run = %q, want it left %q "+
+					"(reclaiming it would put a terminal run's work back in the dispatch loop)", status, state, "leased")
+			}
+
+			// Control: the identical expired row IS reclaimed once its run is
+			// no longer terminal.
+			setRunStatus(t, s, runID, "running")
+			if _, err := s.ReclaimExpired(ctx); err != nil {
+				t.Fatalf("ReclaimExpired (control, running run): %v", err)
+			}
+			if state, _ := workItemState(t, s, workID); state != "ready" {
+				t.Fatalf("work item state after ReclaimExpired on a running run = %q, want %q", state, "ready")
+			}
+		})
+	}
+}
+
+// TestWaitingWorkAccruesNoAttempts proves spec assumption c20 (honesty
+// condition h20), the assumption the dispatch budget rests on: a healthy
+// long-running actor's parked item must not burn budget merely by waiting.
+// work_items.attempt is incremented by exactly one statement -- claimWorkSQL
+// -- so a 'waiting' row's counter survives repeated ReclaimExpired sweeps and
+// an expired lease timestamp, and only a genuine re-claim moves it.
+func TestWaitingWorkAccruesNoAttempts(t *testing.T) {
+	s := requireStore(t)
+	ctx := context.Background()
+
+	ns := mustNamespace(t, s, "test-waiting-accrues-nothing")
+	nodeRunID := mustNodeRun(t, s, ns.ID)
+	mustEnqueued(t, s, ns.ID, nodeRunID)
+
+	claimed, err := s.ClaimWork(ctx, ns.ID, "worker-1", time.Minute, 10)
+	if err != nil {
+		t.Fatalf("ClaimWork: %v", err)
+	}
+	if len(claimed) != 1 {
+		t.Fatalf("ClaimWork returned %d items, want 1", len(claimed))
+	}
+	workID := claimed[0].ID
+	if claimed[0].Attempt != 1 {
+		t.Fatalf("Attempt after first claim = %d, want 1", claimed[0].Attempt)
+	}
+
+	// Park it exactly as async.go's parkWorkSQL does when an actor answers
+	// 202, then leave a stale (already expired) lease timestamp behind it --
+	// the harshest version of "lease-duration passage" a waiting row could
+	// ever see.
+	if _, err := s.Pool().Exec(ctx, `
+		UPDATE work_items
+		SET state            = 'waiting',
+		    lease_owner      = NULL,
+		    lease_expires_at = now() - interval '1 hour',
+		    state_version    = state_version + 1,
+		    updated_at       = now()
+		WHERE id = $1
+	`, workID); err != nil {
+		t.Fatalf("park work item: %v", err)
+	}
+
+	for i := 0; i < 3; i++ {
+		if _, err := s.ReclaimExpired(ctx); err != nil {
+			t.Fatalf("ReclaimExpired (sweep %d): %v", i+1, err)
+		}
+		state, attempt := workItemState(t, s, workID)
+		if state != "waiting" {
+			t.Fatalf("state after sweep %d = %q, want %q (a waiting item is invisible to the sweep)", i+1, state, "waiting")
+		}
+		if attempt != 1 {
+			t.Fatalf("attempt after sweep %d = %d, want 1: waiting must accrue nothing", i+1, attempt)
+		}
+	}
+
+	// A claim -- and only a claim -- moves the counter.
+	if _, err := s.Pool().Exec(ctx,
+		`UPDATE work_items SET state = 'ready', lease_expires_at = NULL, available_at = now() WHERE id = $1`, workID,
+	); err != nil {
+		t.Fatalf("resume work item to ready: %v", err)
+	}
+	again, err := s.ClaimWork(ctx, ns.ID, "worker-2", time.Minute, 10)
+	if err != nil {
+		t.Fatalf("ClaimWork (after waiting): %v", err)
+	}
+	if len(again) != 1 || again[0].ID != workID {
+		t.Fatalf("ClaimWork (after waiting) returned %v, want the resumed item %s", again, workID)
+	}
+	if again[0].Attempt != 2 {
+		t.Fatalf("Attempt after re-claim = %d, want 2 (exactly one increment, from the claim itself)", again[0].Attempt)
+	}
+}
+
+// TestTerminalRunStatusesMatchTheEngineVocabulary keeps the SQL guard's
+// notion of "terminal" tied to the engine's. The guard is a data-plane
+// filter, so a run state added to engine.RunState without being classified
+// here would silently keep dispatching.
+func TestTerminalRunStatusesMatchTheEngineVocabulary(t *testing.T) {
+	guarded := map[string]bool{}
+	for _, status := range postgres.TerminalRunStatuses() {
+		guarded[status] = true
+	}
+
+	// Every state the engine declares, checked both ways.
+	for _, state := range []engine.RunState{
+		engine.RunCreated, engine.RunRunning, engine.RunWaiting,
+		engine.RunCompleted, engine.RunFailed, engine.RunCancelled,
+	} {
+		if got, want := guarded[string(state)], state.Terminal(); got != want {
+			t.Errorf("run state %q: guarded as terminal = %v, engine.RunState.Terminal() = %v", state, got, want)
+		}
+	}
+	if len(guarded) != len(postgres.TerminalRunStatuses()) {
+		t.Errorf("TerminalRunStatuses() contains duplicates: %v", postgres.TerminalRunStatuses())
+	}
+}
+
+// TestPendingInvocationForWorkReportsAbsenceRatherThanFailing covers the
+// lookup's two non-happy branches. Its positive path is exercised end to end
+// by internal/worker's budget-exhaustion tests, which cancel a real parked
+// invocation through it; what matters here is that a work item with nothing
+// in flight is an ordinary "no", not an error a best-effort caller has to
+// distinguish from a real database failure.
+func TestPendingInvocationForWorkReportsAbsenceRatherThanFailing(t *testing.T) {
+	s := requireStore(t)
+	ctx := context.Background()
+
+	ns := mustNamespace(t, s, "test-pending-invocation-absent")
+	nodeRunID := mustNodeRun(t, s, ns.ID)
+	mustEnqueued(t, s, ns.ID, nodeRunID)
+
+	claimed, err := s.ClaimWork(ctx, ns.ID, "worker-1", time.Minute, 10)
+	if err != nil {
+		t.Fatalf("ClaimWork: %v", err)
+	}
+	if len(claimed) != 1 {
+		t.Fatalf("ClaimWork returned %d items, want 1", len(claimed))
+	}
+
+	inv, ok, err := s.PendingInvocationForWork(ctx, claimed[0].ID)
+	if err != nil {
+		t.Fatalf("PendingInvocationForWork: %v", err)
+	}
+	if ok {
+		t.Fatalf("PendingInvocationForWork found %+v, want none: this item never parked on an actor", inv)
+	}
+
+	if _, _, err := s.PendingInvocationForWork(ctx, ""); err == nil {
+		t.Fatal("PendingInvocationForWork with an empty work id succeeded, want an error")
 	}
 }
 

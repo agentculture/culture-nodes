@@ -1,0 +1,390 @@
+{
+  "slug": "engine-hardening-dispatch-safety",
+  "title": "engine-hardening-dispatch-safety",
+  "frame_slug": "engine-hardening-dispatch-safety",
+  "schema_version": 4,
+  "status": "exported",
+  "created": "2026-08-11T21:02:35Z",
+  "updated": "2026-08-11T21:06:52Z",
+  "targets": [
+    {
+      "id": "c1",
+      "kind": "announcement",
+      "text": "Actor dispatch is safe to leave unattended: terminal-commit failures are visible in events and logs, a failed commit never permanently consumes the callback sequence, actor re-dispatch has a bounded retry budget that parks the node as failed with a recorded cause, and run cancellation reaps waiting and leased work items so a cancelled run can never dispatch again",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "h1",
+      "kind": "honesty",
+      "text": "Both live incident shapes are reproduced as failing tests before the fixes and pass after \u2014 the FK-driven commit failure commits on redelivery, and the cancelled-run zombie can no longer lease",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "c2",
+      "kind": "requirement",
+      "text": "Terminal-commit errors become observable: when commitTerminal returns a non-refusal error (internal/actors/callback.go \u2014 ResumeWaitingWork, Engine.CompleteAttempt, CloseInvocation error returns), the failure is recorded as an event on the attempt/node-run aggregate via deps.record AND logged server-side \u2014 today the error rides only the HTTP response to the bridge and prod-api-1 logs nothing (measured live, issue #16)",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "h2",
+      "kind": "honesty",
+      "text": "A commitTerminal error leaves exactly one recorded event on the attempt's aggregate (kind naming the failed commit and the error class) and one server log line \u2014 verified by unit test asserting deps.record and by grepping the API container log in the live check",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "c3",
+      "kind": "requirement",
+      "text": "A failed terminal commit never permanently consumes the sequence: handleClaimed advances the ratchet (AdvanceCallbackSequence) BEFORE terminal processing, and the error path releases only the event-id claim \u2014 the same-id/same-sequence redelivery \u00a713.4 mandates is then rejected out-of-order forever (measured live: every retry of evt_8 refused against last=8). Fix by advancing after successful terminal processing, or accepting an equal sequence for an event id whose claim was released",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "h3",
+      "kind": "honesty",
+      "text": "After a terminal commit fails, redelivering the SAME event id and sequence commits successfully once the underlying cause is fixed \u2014 no operator surgery, no new invocation; the \u00a713.4 monotonic-sequence contract for accepted streams is unchanged (conformance kit green)",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "c4",
+      "kind": "requirement",
+      "text": "Actor re-dispatch gets a bounded retry budget: work_items.attempt already counts dispatches (reached 22 live) but nothing caps it \u2014 the claim/reclaim path and worker dispatch must park the node run as failed with a recorded cause once the budget is exhausted, instead of looping a billable session per lease cycle (issue #16)",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "h4",
+      "kind": "honesty",
+      "text": "The 4th dispatch attempt of a node run never happens: the item parks after 3 with technical status failed and the exhaustion cause in the attempt result; a workflow with a failure edge routes it, one without ends the run failed \u2014 never a hang",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "c5",
+      "kind": "requirement",
+      "text": "Run cancellation reaps waiting and leased work items: internal/api/runs.go cancelRun cancels only 'ready' rows by design, documenting the assumption that a leased item's completion no-ops \u2014 but the late/superseded path releases the item back to retry instead of completing it, so a cancelled run's actor node re-dispatched every ~80s until a manual UPDATE (measured live, issue #19); cancelRun already holds the run advisory lock, so extending its UPDATE to waiting/leased rows is race-safe",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "h5",
+      "kind": "honesty",
+      "text": "After cancelRun commits, zero work items of that run are in a leasable state, and every pending invocation received a best-effort actors Cancel (SIGTERM at the bridge) \u2014 verified by test asserting item states + a recorded cancel-request event per invocation",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "c6",
+      "kind": "requirement",
+      "text": "Defense in depth independent of cancel: the work-item claim/reclaim path refuses to lease an item whose run is already terminal (runs.status join), so no future terminal-run path can leak a dispatching zombie \u2014 the cancel fix alone would not have covered a run that reached 'failed' with an in-flight item (also measured live: re-dispatches continued after the smoke run failed)",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "h6",
+      "kind": "honesty",
+      "text": "The claim/reclaim SQL refuses items whose run status is terminal regardless of how the run got there \u2014 covered for cancelled AND failed runs (the second live incident's shape)",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "c7",
+      "kind": "boundary",
+      "text": "The actor protocol wire contract is unchanged: bridges (adapters/*) are not modified, callback event shapes/sequencing rules the bridges implement stay as \u00a713.4 specifies, and the tests/conformance kit must stay green unmodified \u2014 the fixes are engine-side ingest/scheduling semantics only",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "h8",
+      "kind": "honesty",
+      "text": "adapters/** and tests/conformance are byte-unchanged; the conformance kit runs green against an unmodified bridge after the engine changes",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "c8",
+      "kind": "boundary",
+      "text": "The ledger authority model and append-only records are untouched: no UPDATE/DELETE paths are added to actors, ledger_records, or attempts; parking an exhausted node run flows through the existing engine completion/transition vocabulary (technical status, not a new state)",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "h9",
+      "kind": "honesty",
+      "text": "No new UPDATE/DELETE statements touch actors, ledger_records, or attempts; retry-budget parking flows through the existing CompleteAttempt/transition vocabulary",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "c9",
+      "kind": "boundary",
+      "text": "The SQS queue driver (internal/queue/sqs, fake-tested, deferred AWS lane #7) is out of scope: claim-semantics changes land in the postgres driver/store path production uses; if the claim contract itself changes shape, the SQS driver gets a tracked follow-up on #7, not a silent parallel edit",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "h7",
+      "kind": "honesty",
+      "text": "internal/queue/sqs is byte-unchanged this cycle; if the claim contract changes shape, a follow-up lands on issue #7 naming the divergence",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "c11",
+      "kind": "audience",
+      "text": "The operator delegating billable agent work, both production workers, and anyone reading the events/ledger surface to understand why a node is not progressing",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "h11",
+      "kind": "honesty",
+      "text": "The failure surfaces land where each audience already looks: events (UI/API consumers), server logs (operator), attempt result records (ledger readers)",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "c12",
+      "kind": "before_state",
+      "text": "Measured 2026-08-11: a deterministic terminal-commit error is invisible (no log, no event), permanently blocks its attempt via the pre-advanced sequence ratchet, and the work item re-dispatches a fresh billable session every ~80s without bound; run cancellation leaves waiting/leased items dispatching (attempt 22 observed); ~25 sessions were burned across two incidents before manual DB surgery",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "h12",
+      "kind": "honesty",
+      "text": "The before-state is the recorded 2026-08-11 forensics (issues #16/#19 and delivery doc evidence), not reconstruction",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "c13",
+      "kind": "after_state",
+      "text": "A terminal-commit failure is visible within one event and one log line, its redelivered terminal callback can still commit once the cause clears, a node run stops after 3 dispatch attempts parking as failed with a recorded cause, cancelling a run reaps its work items and SIGTERMs in-flight sessions, and no work item of a terminal run can ever be leased again",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "h13",
+      "kind": "honesty",
+      "text": "Each after-state clause maps to at least one success-signal regression test \u2014 no clause ships untested",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "c14",
+      "kind": "why_it_matters",
+      "text": "Every delegation surface (codex quota today, AWS Lambda credits next) sits on this dispatch loop \u2014 until failures are bounded and visible, any config mistake converts directly into unbounded spend, which is the single biggest blocker to leaving the system unattended",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "h14",
+      "kind": "honesty",
+      "text": "The budget applies to actor dispatch generically \u2014 the same path a future Lambda-backed actor or runner-service dispatch retries through \u2014 not a codex-specific patch",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "c15",
+      "kind": "success_signal",
+      "text": "Regression tests reproduce both live incidents and pass: (1) a terminal commit that fails once commits successfully on redelivery after the cause clears, emitting a recorded failure event; (2) a node run whose dispatches fail 3 times parks as failed with the exhaustion cause in its attempt record; (3) cancelRun on a run with waiting+leased items leaves zero leasable items and issues actor Cancel for pending invocations; (4) the claim path refuses items of terminal runs",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "h15",
+      "kind": "honesty",
+      "text": "The four success-signal scenarios exist as named tests that fail on pre-fix code \u2014 verified by running them against a pre-fix checkout at review time",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "c17",
+      "kind": "requirement",
+      "text": "Cancel propagation needs the API service to reach bridges: cancelRun runs in the api container, which today carries NO actor token envs (compose.thor.yml grants NODES_ACTOR_* to the worker service only \u2014 probed live) \u2014 the api service env gains both codex token vars (and future actor tokens), and the api process reuses the worker's DBRegistry resolution to build authenticated Cancel calls",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "h17",
+      "kind": "honesty",
+      "text": "A live cancel of a run with an in-flight codex session results in the bridge logging the cancel and the session terminating early \u2014 proving the api container's tokens and registry wiring actually work, not just compile",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "c18",
+      "kind": "requirement",
+      "text": "The API gains a logging facility: internal/api/server.go contains zero log calls today (probed \u2014 prod-api-1 logs only its startup line), so c2's 'one server log line per terminal-commit failure' requires introducing a logger to the API/callback path, not just adding one call",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "h18",
+      "kind": "honesty",
+      "text": "Every 5xx the API returns carries a corresponding log line with the error chain \u2014 verified for the callback path by test and for the live deployment by inspecting prod-api-1 logs during the acceptance check",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "c19",
+      "kind": "requirement",
+      "text": "Budget exhaustion also best-effort Cancels the in-flight invocation (same actors.Client.Cancel lane as cancelRun) \u2014 parking the node while a session still runs would otherwise let it finish into a discarded late callback, spending quota on a result nobody can use",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "h19",
+      "kind": "honesty",
+      "text": "The budget-exhaustion test asserts a Cancel was issued for the pending invocation alongside the parking completion",
+      "deferred": false,
+      "deferred_reason": ""
+    }
+  ],
+  "tasks": [
+    {
+      "id": "t1",
+      "summary": "Ratchet fix + terminal-commit failure event (internal/actors/callback.go + store async.go)",
+      "origin": "llm",
+      "status": "confirmed",
+      "acceptance_criteria": [
+        "A pgtest regression reproduces incident 1 red-first: terminal commit fails once (injected store error), the same-id/same-sequence redelivery is today rejected out-of-order \u2014 and commits successfully after the fix (h3); the test asserts the work-item state sequence (waiting -> resumed-leased -> reclaim loop) pre-fix per c16",
+        "commitTerminal's error paths record a failure event on the attempt aggregate via deps.record naming the error class before returning (the event half of c2)",
+        "adapters/** and tests/conformance are byte-unchanged; conformance kit passes against an unmodified bridge (h8)"
+      ],
+      "deps": [],
+      "covers": [
+        "c3",
+        "h3",
+        "c7",
+        "h8"
+      ],
+      "instruction": "Files: internal/actors/callback.go, internal/store/postgres/async.go (+ their test files). Study handleClaimed's step-4 ordering and callback.go's error-release path first; choose advance-after-terminal-processing OR accept-equal-sequence-for-released-claim (both contract-safe; record the choice + why in the commit message per plan risk r3). The pgtest harness auto-starts docker postgres (internal/store/postgres/testmain_test.go); namespace-scope every new fixture (issue #9). Red-first: reproduce incident 1 exactly (see docs/deliveries/2026-08-11-codex-bridges-thor-orin.md evidence + issue #16)."
+    },
+    {
+      "id": "t2",
+      "summary": "API logging facility + 5xx visibility (internal/api server/middleware only \u2014 do NOT touch runs.go)",
+      "origin": "llm",
+      "status": "confirmed",
+      "acceptance_criteria": [
+        "internal/api gains a structured logger (log/slog) wired through Server; every 5xx response path logs the error chain; the callback ingest path logs terminal-commit failures with attempt id (h2's log half, h18)",
+        "A handler test captures log output and asserts both the failure event and the log line exist for a failed terminal commit (h2)"
+      ],
+      "deps": [],
+      "covers": [
+        "c2",
+        "h2",
+        "c18",
+        "h18"
+      ],
+      "instruction": "Files: internal/api/server.go + middleware/new files under internal/api; FORBIDDEN: internal/api/runs.go (t4 owns it this wave). Introduce log/slog with a Server-level logger (constructor option, default slog.Default), a response-writing wrapper that logs every 5xx with the unwrapped error chain, and explicit terminal-commit failure logging in the actor callback ingest handler. Handler test: inject a failing engine, capture slog output, assert event+line."
+    },
+    {
+      "id": "t3",
+      "summary": "Retry budget 3 + terminal-run lease guard + exhaustion Cancel (store claiming.go + worker)",
+      "origin": "llm",
+      "status": "confirmed",
+      "acceptance_criteria": [
+        "The 4th dispatch attempt of a node run never happens: claim/park logic completes the item as technical status failed with the exhaustion cause in the attempt result, flowing through the existing CompleteAttempt vocabulary \u2014 no new UPDATE/DELETE on actors/ledger_records/attempts (h4, h9)",
+        "Claim and reclaim SQL refuse items whose run status is terminal, covered by pgtest for cancelled AND failed runs (h6)",
+        "Budget exhaustion issues a best-effort actors.Client.Cancel for the pending invocation, asserted by test (h19); a store test proves a 'waiting' item's attempt counter is unchanged across ReclaimExpired sweeps (c20's honesty)",
+        "The budget applies to actor dispatch generically, not codex-specifically (h14)"
+      ],
+      "deps": [],
+      "covers": [
+        "c4",
+        "h4",
+        "c6",
+        "h6",
+        "c8",
+        "h9",
+        "c19",
+        "h19",
+        "c14",
+        "h14"
+      ],
+      "instruction": "Files: internal/store/postgres/claiming.go (+test), internal/worker dispatch/complete (+test). Budget constant 3 (name it, document the q1 decision). Terminal-run guard: join runs.status in claimWorkSQL AND reclaimExpiredSQL. Parking: when a claim would be attempt 4, complete via the engine path with status failed and the exhaustion cause in the result JSON. Exhaustion Cancel: reuse the worker's actors client. Waiting-accrues-nothing test per c20."
+    },
+    {
+      "id": "t4",
+      "summary": "Cancel reap + propagation (internal/api/runs.go + both prod compose files \u2014 do NOT touch server/middleware)",
+      "origin": "llm",
+      "status": "confirmed",
+      "acceptance_criteria": [
+        "cancelRun's work_items UPDATE extends to waiting and leased rows under the existing run advisory lock; after commit, zero items of the run are leasable (h5)",
+        "Post-commit, cancelRun best-effort invokes actors.Client.Cancel per pending invocation via the DBRegistry resolution the worker uses, recording a cancel-request event per invocation (h5); compose.thor.yml and compose.orin.yml api services gain the NODES_ACTOR_* token envs (c17)"
+      ],
+      "deps": [],
+      "covers": [
+        "c5",
+        "h5",
+        "c17",
+        "h17"
+      ],
+      "instruction": "Files: internal/api/runs.go (+test), deploy/prod/compose.thor.yml, deploy/prod/compose.orin.yml; FORBIDDEN: internal/api/server.go and middleware (t2 owns them this wave). Extend cancelRun's work_items UPDATE to states ('ready','waiting','leased'); after tx commit, resolve pending invocations (actor_invocations by run), build endpoints via worker.DBRegistry (importable), call actors Client.Cancel best-effort, record one cancel-request event each; failures log, never fail the cancel. Compose: add the three NODES_ACTOR_* env lines to the api service env blocks mirroring the worker's."
+    },
+    {
+      "id": "t5",
+      "summary": "Live acceptance on thor+orin (ops): forced-failure park, live cancel SIGTERM, log visibility, pre-fix red proof",
+      "origin": "llm",
+      "status": "confirmed",
+      "acceptance_criteria": [
+        "Deployed to both hosts; a forced deterministic failure (unregistered actor id in a scratch namespace or equivalent) parks at attempt 3 with the cause visible in UI/events \u2014 no loop (h1, h13, h15's scenarios 2 and 4 live)",
+        "A live cancel of a run with an in-flight codex session shows the bridge logging the cancel and the session terminating early (h17); prod-api-1 logs carry the failure lines during the check (h18 live); the four success-signal regression tests are shown failing on a pre-fix checkout (h15)",
+        "git diff proves internal/queue/sqs is byte-unchanged (h7); the before-state citations hold (h12); each after-state clause maps to a named test (h13); failure surfaces land where each audience looks (h11)"
+      ],
+      "deps": [
+        "t1",
+        "t2",
+        "t3",
+        "t4"
+      ],
+      "covers": [
+        "c1",
+        "h1",
+        "c9",
+        "h7",
+        "c11",
+        "h11",
+        "c12",
+        "h12",
+        "c13",
+        "h13",
+        "c15",
+        "h15"
+      ],
+      "instruction": "Ops task (main agent): deploy branch to thor+orin (deploy.sh), run the forced-failure scenario in a scratch namespace against a deliberately unregistered actor key, capture UI/events/logs evidence, run the live cancel-SIGTERM check against a real (billable, single) codex session with user awareness, verify pre-fix red by running the four named regression tests on the parent commit, and record all evidence for the delivery summary."
+    }
+  ],
+  "risks": [
+    {
+      "id": "r1",
+      "text": "store-level regression tests need the pgtest harness (ephemeral docker postgres) \u2014 slower than unit suites and subject to issue #9's namespace-contamination if written carelessly; new suites must be namespace-scoped",
+      "kind": "unknown_nonblocking",
+      "task_id": null,
+      "resolved": false,
+      "resolution": ""
+    },
+    {
+      "id": "r2",
+      "text": "t2 and t4 both live in internal/api (different files: server/middleware vs runs.go) \u2014 same-wave merge risk is low but real; their briefs forbid touching each other's files",
+      "kind": "unknown_nonblocking",
+      "task_id": null,
+      "resolved": false,
+      "resolution": ""
+    },
+    {
+      "id": "r3",
+      "text": "the ratchet fix choice (advance-after-processing vs accept-equal-for-released-id) is left to t1's agent against the real code; both are contract-safe per the spec, but the choice must be recorded in the commit message",
+      "kind": "unknown_nonblocking",
+      "task_id": null,
+      "resolved": false,
+      "resolution": ""
+    }
+  ]
+}

@@ -1,0 +1,21 @@
+{
+  "plan_slug": "engine-hardening-dispatch-safety",
+  "schema_version": 1,
+  "created": "2026-08-11T21:27:37Z",
+  "updated": "2026-08-11T21:29:32Z",
+  "deviations": [
+    {
+      "id": "d1",
+      "what": "the dispatch budget bounds one WORK ITEM's re-lease cycle at 3, not one node run's total dispatches: an engine-level workflow retry policy enqueues a fresh work item with a fresh budget, so a node run's total dispatches are bounded by 3 x its declared maxAttempts \u2014 both finite, composing deliberately",
+      "task_ref": "t3",
+      "reason": "completing an attempt requires holding the claim's fencing tuple, so the check must live on claimed work; and engine retries are deliberate, workflow-declared policy \u2014 capping them under the same budget would silently shrink a contract the workflow author wrote. The runaway incident was work-item-level (attempt 22 on one item), which this bound kills exactly",
+      "affects": [
+        "h4",
+        "c4"
+      ],
+      "origin": "llm",
+      "status": "approved",
+      "classification": "acceptable"
+    }
+  ]
+}

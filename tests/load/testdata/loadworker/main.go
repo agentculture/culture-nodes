@@ -39,8 +39,8 @@
 // and outside its timing:
 //
 //	{"seq":41,"phase":"observe","unix_ms":...,"pass_ns":183492011,"sampled":100,
-//	 "total_sampled":300,"parked":100,"goroutines":11,"heap_alloc":6291456,
-//	 "rss_kb":31240,"hwm_kb":31240,"threads":9, ...}
+//	 "total_sampled":300,"parked":100,"db_ops":1407,"goroutines":11,
+//	 "heap_alloc":6291456,"rss_kb":31240,"hwm_kb":31240,"threads":9, ...}
 //
 // runtime.ReadMemStats and the /proc/self/status read both happen after the
 // timed region, so neither inflates pass_ns. No GC is ever forced: heap_alloc
@@ -112,6 +112,12 @@ type sample struct {
 	PassNS       int64  `json:"pass_ns"`
 	TotalSampled int    `json:"total_sampled"`
 	Parked       int    `json:"parked"`
+	// DBOps is the pgx pool's cumulative acquire count: one per statement
+	// this process has sent to PostgreSQL outside a transaction, one per
+	// transaction it has opened. Differenced across the observation window it
+	// gives the database work per sample -- a COUNT, which unlike a wall-clock
+	// cost does not move when the host underneath gets slower.
+	DBOps int64 `json:"db_ops"`
 
 	Goroutines int    `json:"goroutines"`
 	Threads    int    `json:"threads"`
@@ -289,7 +295,7 @@ func pollLoop(ctx context.Context, s *postgres.Store, wk *worker.Worker, cfg con
 			phase = phaseObserve
 		}
 
-		recordProcessStats(&line)
+		recordProcessStats(&line, s)
 		if err := enc.Encode(line); err != nil {
 			return fmt.Errorf("emit sample: %w", err)
 		}
@@ -336,7 +342,8 @@ func runPollPhase(ctx context.Context, wk *worker.Worker, phase string, line *sa
 // recordProcessStats fills line's runtime/process measurement fields. It is
 // always called immediately before the line is encoded and after every timed
 // region above, exactly like pollLoop's single inline block used to.
-func recordProcessStats(line *sample) {
+func recordProcessStats(line *sample, s *postgres.Store) {
+	line.DBOps = s.Pool().Stat().AcquireCount()
 	var ms runtime.MemStats
 	runtime.ReadMemStats(&ms)
 	rss, hwm, threads := procStatus()

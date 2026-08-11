@@ -57,6 +57,14 @@ const (
 	// is the shape that would matter — a cost that tracked operation duration
 	// would show a factor of ten here, because the durations differ by ten.
 	durationRatioTolerance = 2.0
+	// maxDBOpsPerSample bounds the database operations one status sample may
+	// cost. The sampler's design says what it should be: one reschedule write
+	// for the sample itself, plus this fixture's per-pass claim and
+	// parked-count read amortised over the operations that pass sampled. Four
+	// is loose enough that a pass which found only one operation due still
+	// fits, and far below what a per-sample transaction-per-operation design
+	// would show.
+	maxDBOpsPerSample = 4.0
 )
 
 // c17/h12, the memory half: a worker holding 100 concurrent in-flight runner
@@ -160,11 +168,17 @@ func TestLoadThousandConcurrentRunnerOperationsBoundedWorker(t *testing.T) {
 // observation window, so what is compared is the steady-state cost of waiting
 // on work of two very different lengths.
 //
+// The one respect in which the fleets are NOT identical is WHEN they were
+// measured: they run one after the other, tens of seconds apart. So the things
+// compared across them have to be quantities that do not move on their own in
+// that gap — counts of work, not wall-clock latencies of it. assertSampleWork
+// says what that means and what happened when it was ignored.
+//
 // If sampling cost tracked duration in any way, a tenfold difference in
 // duration would have to show up somewhere in a tenfold-ish shape. The
 // assertions bound the observed difference at a factor of two, which is loose
-// for wall-clock measurements and still an order of magnitude away from what a
-// duration-dependent design would produce.
+// and still an order of magnitude away from what a duration-dependent design
+// would produce.
 func TestLoadSamplingCostIsIndependentOfOperationDuration(t *testing.T) {
 	s := requireStore(t)
 
@@ -215,24 +229,82 @@ func TestLoadSamplingCostIsIndependentOfOperationDuration(t *testing.T) {
 			long.statusRate, short.statusRate, rateRatio)
 	}
 
-	costRatio := ratio(float64(long.perOpSampleNS), float64(short.perOpSampleNS))
-	if costRatio < 1/durationRatioTolerance || costRatio > durationRatioTolerance {
-		t.Errorf("per-operation sample cost: %s at 300s operations vs %s at 30s operations (ratio %.2f); "+
-			"the cost of one sample must not depend on how long the operation runs",
-			time.Duration(long.perOpSampleNS), time.Duration(short.perOpSampleNS), costRatio)
-	}
+	// What one sample COSTS is asserted as work, not as wall-clock time: the
+	// database operations it takes and the status read it makes. See the
+	// note above assertSampleWork for why the wall-clock cost is reported
+	// rather than compared.
+	assertSampleWork(t, short)
+	assertSampleWork(t, long)
 
-	dutyRatio := ratio(long.dutyCycle, short.dutyCycle)
-	if dutyRatio < 1/durationRatioTolerance || dutyRatio > durationRatioTolerance {
-		t.Errorf("sampler duty cycle: %.4f at 300s operations vs %.4f at 30s operations (ratio %.2f)",
-			long.dutyCycle, short.dutyCycle, dutyRatio)
+	workRatio := ratio(long.dbOpsPerSample, short.dbOpsPerSample)
+	if workRatio < 1/durationRatioTolerance || workRatio > durationRatioTolerance {
+		t.Errorf("database work per sample: %.2f operations at 300s operations vs %.2f at 30s operations "+
+			"(ratio %.2f); the cost of one sample must not depend on how long the operation runs",
+			long.dbOpsPerSample, short.dbOpsPerSample, workRatio)
 	}
 
 	t.Logf("duration independence: 30s vs 300s operations — status rate %.2f/s vs %.2f/s (ratio %.2f), "+
-		"per-sample cost %s vs %s (ratio %.2f), duty cycle %.4f vs %.4f (ratio %.2f)",
+		"database work per sample %.2f vs %.2f operations (ratio %.2f), status reads per sample %.2f vs %.2f; "+
+		"observed wall-clock cost %s vs %s per sample, duty cycle %.4f vs %.4f (reported, not compared)",
 		short.statusRate, long.statusRate, rateRatio,
-		time.Duration(short.perOpSampleNS), time.Duration(long.perOpSampleNS), costRatio,
-		short.dutyCycle, long.dutyCycle, dutyRatio)
+		short.dbOpsPerSample, long.dbOpsPerSample, workRatio,
+		readsPerSample(short), readsPerSample(long),
+		time.Duration(short.perOpSampleNS), time.Duration(long.perOpSampleNS),
+		short.dutyCycle, long.dutyCycle)
+}
+
+// readsPerSample is how many status reads the runner served per operation this
+// fleet sampled. One sample is one read, by construction of the sampler; this
+// is how that is checked rather than assumed.
+func readsPerSample(f fleetResult) float64 {
+	if f.sampledTotal == 0 {
+		return 0
+	}
+	return float64(f.statusReads) / float64(f.sampledTotal)
+}
+
+// assertSampleWork bounds what one sample costs, in the two currencies a
+// control plane actually spends: requests to somebody else's runner, and
+// database operations of its own.
+//
+// It is deliberately NOT a wall-clock assertion, and that is the one thing
+// worth being explicit about. `perOpSampleNS` is a LATENCY measurement of a
+// fixed amount of work — claim a due row, read one status, write the next poll
+// time — so it says what the host charged, not what the design cost. Comparing
+// it between the two fleets was tried and is not sound: the fleets are measured
+// tens of seconds apart on shared infrastructure, and on CI two fleets that
+// performed provably identical work (350 samples each, 43.74/s vs 43.87/s, same
+// goroutines, same RSS) reported 874µs and 2.774ms per sample — a ratio of 3.17
+// with nothing whatsoever different about the sampling. Normalising it against
+// a control probe measured in the same window was tried too, and the probe's
+// own latency proved noisier than the quantity it was meant to steady.
+//
+// The counts below have no such freedom. A sample that did more work when its
+// operation ran longer would have to do it in more statements or more requests,
+// and both are counted here exactly. Wall-clock cost stays in the report and in
+// the log line, where a human comparing runs can see it, which is the right
+// place for a number that describes the machine it was measured on.
+func assertSampleWork(t *testing.T, f fleetResult) {
+	t.Helper()
+
+	// Exactly one authenticated status read per sample. More would mean the
+	// sampler retried or double-read; fewer would mean it counted samples it
+	// did not make.
+	if reads := readsPerSample(f); reads < 0.9 || reads > 1.1 {
+		t.Errorf("fleet %s: %.2f status reads per operation sampled (%d reads, %d sampled), want one per sample",
+			f.cfg.name, reads, f.statusReads, f.sampledTotal)
+	}
+
+	// And a small, bounded number of database operations. The sampler's own
+	// shape says what to expect: one claim per pass, one reschedule per
+	// sampled operation, plus this fixture's own parked-count read per pass —
+	// so a little over one per sample, and never a number that grows with
+	// anything.
+	if f.dbOpsPerSample <= 0 || f.dbOpsPerSample > maxDBOpsPerSample {
+		t.Errorf("fleet %s: %.2f database operations per sample (%d over the window, %d sampled), "+
+			"want a bounded handful",
+			f.cfg.name, f.dbOpsPerSample, f.dbOpsInWindow, f.sampledTotal)
+	}
 }
 
 // The stub's authentication is not decorative: it refuses an unauthenticated

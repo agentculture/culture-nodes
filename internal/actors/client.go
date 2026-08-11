@@ -142,7 +142,18 @@ type Client struct {
 // NewClient returns a client with the documented defaults.
 func NewClient(opts ...Option) *Client {
 	c := &Client{
-		http:        &http.Client{Timeout: DefaultTimeout},
+		// Keep-alive is deliberately off: several actor bridges are
+		// single-threaded HTTP servers, and a kept-alive dispatch
+		// connection parks such a server's only thread reading the next
+		// request on that socket — starving every other caller (measured
+		// live 2026-08-12: run cancellation could not reach a bridge while
+		// a dispatch connection sat idle-open; the bridge never even
+		// accepted the cancel). One connection per request costs a TCP
+		// handshake on a LAN and buys every request a fair turn.
+		http: &http.Client{
+			Timeout:   DefaultTimeout,
+			Transport: &http.Transport{DisableKeepAlives: true},
+		},
 		maxRequests: DefaultMaxRequests,
 		retryBase:   DefaultRetryBackoff,
 		retryMax:    DefaultRetryBackoffMax,

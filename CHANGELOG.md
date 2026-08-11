@@ -5,6 +5,24 @@ All notable changes to this project will be documented in this file.
 Format follows [Keep a Changelog](https://keepachangelog.com/). This project
 adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.10.0] - 2026-08-12
+
+### Added
+
+- Callback compensation chain (issues #16): a failed terminal commit rolls back the sequence mark, reparks the resumed work item, records a TypeCallbackCommitFailed event, and the same-id redelivery commits once the cause clears — the incident-1 permanent-block loop is dead
+- Dispatch retry budget: an actor work item parks as failed with a recorded cause after 3 dispatch attempts (deviation d1: per work item, composing with workflow-declared retries), issuing a best-effort actor Cancel on exhaustion
+- Terminal-run lease guard: claim and reclaim SQL refuse work items of cancelled/failed/completed runs (issue #19's second loop shape)
+- Run cancellation reaps ready+waiting+leased work items and propagates best-effort actor Cancel per pending invocation with a recorded cancel-requested event; api containers carry actor tokens (compose)
+- internal/api structured logging (slog): every 5xx logs its error chain; callback terminal-commit failures log with attempt id
+
+### Changed
+
+- actors client disables HTTP keep-alive — kept-alive dispatch connections starved single-threaded bridges (measured live; bridge threading tracked as #21); cancel propagation timeout 30s
+
+### Fixed
+
+- Compensation failures (release/rollback) are recorded instead of swallowed; cancel propagation logs outcomes (review findings)
+
 ## [0.9.0] - 2026-08-11
 
 ### Added

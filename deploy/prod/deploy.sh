@@ -6,10 +6,12 @@
 #
 # Ships the working tree's HEAD as a git archive over ssh (no push, no
 # registry), builds the image on the target (both machines are aarch64 —
-# native builds), installs the runner binary + systemd user unit, and
-# starts the stack. All ssh invocations are argv-only; secrets never ride
-# in argv (install-secrets.sh puts them in ~/.culture-nodes/prod.env
-# first — run it once before the first deploy).
+# native builds), installs the runner binary + systemd user unit, installs
+# the codex actor bridge (host-resident, beside the containerized worker),
+# and starts the stack. All ssh invocations are argv-only; secrets never
+# ride in argv (install-secrets.sh puts them in ~/.culture-nodes/prod.env
+# and ~/.culture-nodes/codex-bridge.env first — run it once before the
+# first deploy).
 set -euo pipefail
 
 HOST=${1:?usage: deploy.sh <thor|orin>}
@@ -47,6 +49,98 @@ ssh "$HOST" 'umask 077; mkdir -p ~/.culture-nodes/bin ~/.culture-nodes/runner-st
 ssh "$HOST" "loginctl enable-linger \$(id -un) 2>/dev/null || true"
 ssh "$HOST" "export XDG_RUNTIME_DIR=/run/user/\$(id -u); mkdir -p ~/.config/systemd/user && cp $REMOTE_DIR/deploy/prod/nodes-runner.service ~/.config/systemd/user/ && systemctl --user daemon-reload && systemctl --user restart nodes-runner && systemctl --user enable nodes-runner"
 ssh "$HOST" 'export XDG_RUNTIME_DIR=/run/user/$(id -u); for i in $(seq 1 15); do st=$(systemctl --user is-active nodes-runner || true); [ "$st" = active ] && { echo "runner: active"; exit 0; }; sleep 2; done; echo "runner failed to become active:"; systemctl --user --no-pager -n 10 status nodes-runner; exit 1'
+
+# --- codex actor bridge lane (plan t3) ------------------------------------
+# Both thor and orin run their own managed codex actor (company/codex-thor,
+# company/codex-orin), so this lane is host-agnostic and runs once per
+# deploy for whichever host was named — it deliberately lives outside the
+# case below rather than being duplicated into each branch.
+#
+# The checkout-provisioning step below WARNS rather than fails: see the
+# comment on that step.
+CODEX_AGENT_CHECKOUT_REMOTE='repo=$HOME/git/culture-nodes-agent
+if [ ! -d "$repo/.git" ]; then
+  mkdir -p "$HOME/git" || exit 3
+  git clone https://github.com/agentculture/culture-nodes "$repo" || exit 3
+  echo "agent checkout: cloned $repo"
+  exit 0
+fi
+if [ -n "$(git -C "$repo" status --porcelain)" ]; then
+  echo "agent checkout $repo has uncommitted changes — refusing to touch it (harvest the diff, then reset, per the runbook)" >&2
+  exit 3
+fi
+upstream=$(git -C "$repo" rev-parse --abbrev-ref --symbolic-full-name @{u} 2>/dev/null || echo origin/main)
+git -C "$repo" fetch "${upstream%%/*}" || { echo "agent checkout $repo: git fetch ${upstream%%/*} failed — leaving it untouched" >&2; exit 3; }
+git -C "$repo" merge --ff-only "$upstream" || { echo "agent checkout $repo has diverged from $upstream — refusing to touch it (no rebase, no reset)" >&2; exit 3; }
+echo "agent checkout: fast-forwarded $repo to $upstream"'
+
+deploy_codex_bridge() { # host — runs identically on thor and orin
+  local host=$1
+  local remote_home
+
+  # install-secrets.sh owns the bridge bearer token exactly as it owns
+  # prod.env; deploy.sh only consumes it. Fail early with the same kind of
+  # "run the other script first" message prod.env's absence produces.
+  ssh "$host" 'test -f ~/.culture-nodes/codex-bridge.env' \
+    || { echo "~/.culture-nodes/codex-bridge.env missing on $host — run deploy/prod/install-secrets.sh first" >&2; exit 1; }
+
+  say "installing the codex-bridge uv tool on $host (archive-independent)"
+  # `uv tool install` — NOT --editable, and not `uv run --project` — builds
+  # the package and COPIES it into its own tool venv under ~/.local/share/uv,
+  # so ~/.local/bin/codex-bridge keeps serving after the next deploy's
+  # `rm -rf $REMOTE_DIR` deletes the tree it was installed from (c21/h19).
+  # An editable install would keep pointing at the archive and break there.
+  ssh "$host" "bash -lc 'command -v uv >/dev/null || curl -LsSf https://astral.sh/uv/install.sh | sh; \$HOME/.local/bin/uv tool install --force ./$REMOTE_DIR/adapters/codex || uv tool install --force ./$REMOTE_DIR/adapters/codex'"
+
+  say "installing the nodes query CLI on $host (PyPI culture-nodes)"
+  # Deviation d1: the host-side query CLI is the PYTHON `nodes` CLI from
+  # PyPI, not the Go cmd/nodes binary — cmd/nodes has no query verbs, so
+  # there is nothing to build or scp here.
+  ssh "$host" "bash -lc 'command -v uv >/dev/null || curl -LsSf https://astral.sh/uv/install.sh | sh; \$HOME/.local/bin/uv tool install --force culture-nodes || uv tool install --force culture-nodes'"
+
+  say "provisioning the codex agent checkout on $host (~/git/culture-nodes-agent)"
+  # Warn, don't fail: a dirty checkout is an EXPECTED operator state — write
+  # sessions leave diffs the operator harvests and then resets (harvest/reset
+  # runbook). Refusing to touch such a checkout must not block the bridge
+  # deploy itself, so a refusal here is reported and the lane continues.
+  ssh "$host" "$CODEX_AGENT_CHECKOUT_REMOTE" \
+    || say "WARNING: agent checkout on $host left untouched (reason above) — continuing deploy"
+
+  say "installing codex preflight + bridge config on $host"
+  ssh "$host" "umask 077; mkdir -p ~/.culture-nodes/bin ~/.culture-nodes/codex-bridge-state && cp $REMOTE_DIR/deploy/prod/codex-preflight.sh ~/.culture-nodes/bin/codex-preflight.sh && chmod +x ~/.culture-nodes/bin/codex-preflight.sh"
+  # Same generate-absolute-paths-at-install-time technique runner.env uses:
+  # the substitution runs on the TARGET, so __HOME__ becomes that host's own
+  # $HOME. (The bridge config is JSON, not a systemd unit — %h would mean
+  # nothing inside it.)
+  ssh "$host" "sed \"s|__HOME__|\$HOME|g\" $REMOTE_DIR/deploy/prod/codex-bridge.json.template > ~/.culture-nodes/codex-bridge.json"
+
+  say "running the non-billable codex preflight on $host"
+  # The unit runs this as ExecStartPre anyway; running it once here fails
+  # fast at deploy time instead of only at unit start. SKIP_CODEX_PREFLIGHT=1
+  # downgrades it to a warning for bootstrap ordering (e.g. codex not logged
+  # in yet on a brand-new host).
+  if ! ssh "$host" '~/.culture-nodes/bin/codex-preflight.sh ~/.culture-nodes/codex-bridge.json'; then
+    if [ "${SKIP_CODEX_PREFLIGHT:-0}" = "1" ]; then
+      say "WARNING: codex preflight failed on $host but SKIP_CODEX_PREFLIGHT=1 — installing the unit anyway"
+    else
+      echo "codex preflight failed on $host — fix the reported condition, or re-run with SKIP_CODEX_PREFLIGHT=1 to install anyway" >&2
+      exit 1
+    fi
+  fi
+
+  say "installing codex-bridge systemd user unit on $host"
+  ssh "$host" "loginctl enable-linger \$(id -un) 2>/dev/null || true"
+  ssh "$host" "export XDG_RUNTIME_DIR=/run/user/\$(id -u); mkdir -p ~/.config/systemd/user && cp $REMOTE_DIR/deploy/prod/codex-bridge.service ~/.config/systemd/user/ && systemctl --user daemon-reload && systemctl --user restart codex-bridge && systemctl --user enable codex-bridge"
+  ssh "$host" 'export XDG_RUNTIME_DIR=/run/user/$(id -u); for i in $(seq 1 15); do st=$(systemctl --user is-active codex-bridge || true); [ "$st" = active ] && { echo "codex-bridge: active"; exit 0; }; sleep 2; done; echo "codex-bridge failed to become active:"; systemctl --user --no-pager -n 10 status codex-bridge; exit 1'
+
+  remote_home=$(ssh "$host" 'printf %s "$HOME"' || true)
+  # h17: ~/.local/bin is only on PATH in a *login* shell on orin, so the
+  # success line prints the absolute path an operator (or a codex session
+  # running under a non-login shell) can invoke unconditionally.
+  say "codex-bridge active on $host — query CLI at ${remote_home:-\$HOME}/.local/bin/nodes (use the absolute path; ~/.local/bin is on PATH in login shells only)"
+}
+
+deploy_codex_bridge "$HOST"
 
 case "$HOST" in
   thor*)

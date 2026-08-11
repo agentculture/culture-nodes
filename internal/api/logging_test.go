@@ -162,6 +162,12 @@ func (f *fakeCallbackStore) AdvanceCallbackSequence(ctx context.Context, attempt
 func (f *fakeCallbackStore) TouchInvocation(ctx context.Context, attemptID, invocationID string, at time.Time) error {
 	return nil
 }
+func (f *fakeCallbackStore) RollbackCallbackSequence(ctx context.Context, attemptID string, from, to int64) error {
+	return nil
+}
+func (f *fakeCallbackStore) ReparkResumedWork(ctx context.Context, inv actors.PendingInvocation) error {
+	return nil
+}
 func (f *fakeCallbackStore) CloseInvocation(ctx context.Context, attemptID, state string) error {
 	return nil
 }

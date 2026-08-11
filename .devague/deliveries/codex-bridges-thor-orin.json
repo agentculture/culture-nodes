@@ -1,0 +1,23 @@
+{
+  "plan_slug": "codex-bridges-thor-orin",
+  "schema_version": 1,
+  "created": "2026-08-11T18:57:49Z",
+  "updated": "2026-08-11T19:01:59Z",
+  "deviations": [
+    {
+      "id": "d1",
+      "what": "t3 ships the Python nodes CLI (uv tool install culture-nodes, the REST client with run/node-runs/ledger/human-tasks verbs) as the host query surface, instead of building+scp'ing the Go cmd/nodes binary \u2014 the Go binary has no query verbs at all (run/inspect are stubbed 'not implemented yet'; its real verbs are serve/scheduler/worker/validate/migrate, none needed on hosts)",
+      "task_ref": "t3",
+      "reason": "t7's verification of cmd/nodes (main.go commands map + modes.go) measured that the plan's assumption behind c19/h17 \u2014 'the installed nodes binary lists runs, node runs, ledger, human tasks' \u2014 is unsatisfiable by the Go binary; the query surface actually shipped in this repo is the Python culture_nodes CLI, published to PyPI, installable host-side with the uv already present from the headspace lane",
+      "affects": [
+        "h17",
+        "c19",
+        "t11",
+        "t9"
+      ],
+      "origin": "llm",
+      "status": "approved",
+      "classification": "acceptable"
+    }
+  ]
+}

@@ -42,7 +42,7 @@ const TypeActorCancelRequested = "dev.culture.nodes.actor.cancel-requested"
 // cancellation best-effort by design; a hung or slow actor endpoint must not
 // hold POST /v1alpha1/runs/{id}/cancel's response hostage waiting on it, so
 // every invocation gets its own short, independent budget.
-// Measured live 2026-08-12: the codex bridge answers an idle cancel in
+// Measured live 2026-08-12: a production actor bridge answers an idle cancel in
 // ~2.2s (single-threaded stdlib HTTPServer) and exceeded 10s mid-session,
 // timing out the propagation. 30s absorbs that without holding the
 // (already-committed) cancel response hostage — propagation runs

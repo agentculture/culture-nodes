@@ -114,6 +114,27 @@ deploy_codex_bridge() { # host — runs identically on thor and orin
   # nothing inside it.)
   ssh "$host" "sed \"s|__HOME__|\$HOME|g\" $REMOTE_DIR/deploy/prod/codex-bridge.json.template > ~/.culture-nodes/codex-bridge.json"
 
+  # The bridge stamps its actor_id as origin_actor_id on every proposed
+  # ledger claim, and ledger_records.origin_actor_id is a FOREIGN KEY into
+  # actors(id) — an unregistered id makes every terminal commit roll back
+  # (caught live: the default "codex-bridge" id looped the first smoke run).
+  # Resolve the registered row id from thor's DB the same way the namespace
+  # id is resolved; before first registration there is no row yet, so warn
+  # and leave the default — register-actor.sh + a re-deploy completes it.
+  ACTOR_ID=$(ssh thor "cd $REMOTE_DIR/deploy/prod 2>/dev/null && docker compose --env-file ~/.culture-nodes/prod.env -f compose.thor.yml exec -T postgres psql -U nodes -d nodes -Atc \"SELECT id FROM actors WHERE actor_key = 'company/codex-${host}' ORDER BY revision DESC LIMIT 1\"" 2>/dev/null || true)
+  if [ -n "$ACTOR_ID" ]; then
+    ssh "$host" "python3 - <<PYEOF
+import json
+p = __import__('os').path.expanduser('~/.culture-nodes/codex-bridge.json')
+cfg = json.load(open(p))
+cfg['actor_id'] = '$ACTOR_ID'
+json.dump(cfg, open(p, 'w'), indent=2)
+PYEOF"
+    say "bridge actor_id on $host set to registered row $ACTOR_ID"
+  else
+    say "WARNING: no registered actor row for company/codex-$host yet — bridge keeps its default actor_id; ledger commits will fail until you run register-actor.sh and re-deploy"
+  fi
+
   say "running the non-billable codex preflight on $host"
   # The unit runs this as ExecStartPre anyway; running it once here fails
   # fast at deploy time instead of only at unit start. SKIP_CODEX_PREFLIGHT=1

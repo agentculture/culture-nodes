@@ -187,9 +187,11 @@ ssh orin 'systemctl --user status codex-bridge'
    checkout is load-bearing, not cosmetic.
 3. Installs the unit, env file, and config; `daemon-reload`s, restarts,
    enables — mirroring the runner block above.
-4. Builds the Go `nodes` CLI locally and ships it to each host (scp) —
-   neither host has a Go toolchain (c19, h17), the same
-   build-locally-then-scp fallback `deploy.sh` already uses for
+4. Installs the Python `nodes` query CLI on each host from PyPI
+   (`uv tool install culture-nodes` -> `~/.local/bin/nodes`) — the Go
+   binary has no query verbs (deviation d1), and neither host has a Go
+   toolchain (c19, h17); contrast the build-locally-then-scp fallback
+   `deploy.sh` still uses for
    `cmd/nodes-runner`.
 
 `register-actor.sh` is idempotent and append-only: it reads the latest
@@ -206,8 +208,8 @@ per invocation with **no concurrency cap**
 a change under `adapters/codex/src`, which this cycle's zero-src-change
 rule puts out of scope (c23) — so **workflow placement is the only
 containment that exists today**. Orin has roughly 8 GiB RAM free and is
-already tight running its own worker (per this repo's
-machines-dev-prod-topology memory) — treat orin as the binding constraint.
+already tight running its own worker (measured at the phase-2 rollout) —
+treat orin as the binding constraint.
 Prefer thor for heavy or concurrent codex placements; avoid stacking
 concurrent codex sessions on orin. This is a documented, parked plan risk
 (h21), not a solved problem — no concurrency-cap code lands this cycle.
@@ -269,7 +271,7 @@ worker resolves both actors, so each needs the refreshed `prod.env`.
 | issue #14 checkbox | frame claim(s) |
 | --- | --- |
 | `codex-bridge` enabled, active, survives restart on both hosts | c3, h3, c21, h19 |
-| Both hosts pass preflight on authenticated `~/.local/bin/codex` 0.147.0; thor's stale binary can't be selected accidentally | c5, h5, c7 |
+| Both hosts pass preflight on the authenticated explicit `~/.local/bin/codex` (0.147.0 at rollout; the preflight records the measured version rather than pinning one) | c5, h5, c7 |
 | Thor + orin workers reach and authenticate to both bridge endpoints | c4, h4, c20, h18 |
 | Thor Postgres carries append-only registrations for both actors, each naming only its own token env | c4, c8, h7 |
 | A workflow run completes one node per host and writes two `proposed` ledger claims to the correct actor ids | c1, h1, c18, h8 |

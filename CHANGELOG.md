@@ -5,6 +5,16 @@ All notable changes to this project will be documented in this file.
 Format follows [Keep a Changelog](https://keepachangelog.com/). This project
 adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.11.0] - 2026-08-12
+
+### Added
+
+- nodes-operator skill: drive the production control plane from any operator (Claude, colleague, codex sessions, humans) — status/runs/ledger/tasks/cancel/validate/publish verbs plus `assign <actor> "instruction"` which renders a single-node workflow, publishes it, creates the run, and watches it to terminal; billable verbs are guarded behind --yes
+
+### Changed
+
+- AGENTS.md and deploy/prod/README.md corrected for post-d1 drift found by a codex actor auditing them THROUGH the new skill: the Python nodes CLI (not a Go binary) is what deploys ship, dangling section/memory references removed, version claim reworded to measured-not-pinned
+
 ## [0.9.0] - 2026-08-11
 
 ### Added

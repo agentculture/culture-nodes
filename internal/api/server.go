@@ -3,6 +3,7 @@ package api
 import (
 	"fmt"
 	"io/fs"
+	"log/slog"
 	"net/http"
 	"strings"
 	"time"
@@ -66,6 +67,14 @@ type Server struct {
 
 	pollInterval time.Duration
 	webAssets    fs.FS
+
+	// log is where every 5xx response ((*Server).writeAPIError, see
+	// errors.go) and every terminal-commit callback failure
+	// (logCallbackFailures, see logging.go) is logged — see the package
+	// doc's "Logging" section. Set unconditionally in NewServer, so a
+	// Server built through it never has a nil logger; WithLogger replaces
+	// it.
+	log *slog.Logger
 }
 
 // Option configures a Server.
@@ -119,6 +128,19 @@ func WithDecisionAuthSecret(secret string) Option {
 	}
 }
 
+// WithLogger replaces the *slog.Logger every 5xx response and every
+// terminal-commit callback failure is logged through (see the package doc's
+// "Logging" section). Omitting it (or passing nil) leaves the default,
+// slog.Default() — the same sensible-default-with-explicit-override shape
+// WithPollInterval and the other options here use.
+func WithLogger(logger *slog.Logger) Option {
+	return func(s *Server) {
+		if logger != nil {
+			s.log = logger
+		}
+	}
+}
+
 // NewServer builds a Server over store, scoped to namespaceID. It
 // constructs its own Engine and Ledger runtimes bound to the same store and
 // namespace, matching internal/store/postgres.NewEngine/NewLedger's own
@@ -149,6 +171,7 @@ func NewServer(store *postgres.Store, namespaceID string, opts ...Option) (*Serv
 		engineStore:   engineStore,
 		callbackStore: callbackStore,
 		pollInterval:  defaultEventPollInterval,
+		log:           slog.Default(),
 	}
 	for _, opt := range opts {
 		if opt != nil {
@@ -204,11 +227,11 @@ func (s *Server) Handler() http.Handler {
 	// option's doc for why an unconfigured installation leaves it absent
 	// rather than mounted-but-always-failing.
 	if s.callbackSigner != nil {
-		mux.Handle("POST "+callbackRoutePattern, actors.NewCallbackHandler(actors.CallbackDeps{
+		mux.Handle("POST "+callbackRoutePattern, s.logCallbackFailures(actors.NewCallbackHandler(actors.CallbackDeps{
 			Store:  s.callbackStore,
 			Engine: s.Engine,
 			Signer: s.callbackSigner,
-		}))
+		})))
 	}
 
 	if s.webAssets != nil {

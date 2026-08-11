@@ -35,6 +35,30 @@
 // responses, are the resource itself: results and errors are never
 // interleaved in one body, mirroring the CLI's stdout/stderr discipline.
 //
+// # Logging
+//
+// Server carries a *log/slog.Logger (the log field; WithLogger replaces it,
+// defaulting to slog.Default()). Two paths log at Error level, both added
+// to close the invisibility half of issue #16 — prod-api-1 answered every
+// failed terminal-commit callback with a 5xx and logged nothing about it:
+//
+//   - Every 5xx response, however a handler produced it, logs one line
+//     carrying the request's method, path, and err's full unwrapped chain.
+//     (*Server).writeAPIError (errors.go) is the single funnel this passes
+//     through — (*Server).wrap's handlerFunc results and
+//     handleStreamRunEvents' two pre-stream failures (events.go) all call
+//     it, so the hook lives in one place rather than in every handler.
+//   - The actor callback ingest route additionally logs a terminal-commit
+//     failure with the attempt id, via logCallbackFailures (logging.go)
+//     wrapping actors.NewCallbackHandler in Handler — that route answers
+//     its own response body directly (§13.1's wire contract, not this
+//     package's Error shape) rather than through a handlerFunc, so it does
+//     not pass through writeAPIError and needed its own hook.
+//
+// A 4xx is a domain or user outcome (not found, a conflict, a malformed
+// request) rather than a failure this process needs paged on, so neither
+// path logs one.
+//
 // # Single namespace
 //
 // Server is bound to one namespace at construction (matching

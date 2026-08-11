@@ -190,11 +190,17 @@ if [[ ! -w "$STATE_DIR" ]]; then
 fi
 
 # --- 6. non-loopback host requires auth_token -------------------------------
+# The bridge's config loader applies CODEX_BRIDGE_AUTH_TOKEN as an env
+# override on top of the file (adapters/codex config.py precedence), and the
+# unit's EnvironmentFile delivers exactly that variable to every Exec* step —
+# so a token present in the environment satisfies this check the same way a
+# config-file token would. The committed config template deliberately carries
+# no auth_token key; the env var is the expected path.
 case "$HOST" in
   127.*|localhost|::1|"") ;; # loopback (or unset, which defaults to loopback) — no token required
   *)
-    if [[ -z "$AUTH_TOKEN" ]]; then
-      echo "preflight: host is non-loopback ($HOST) but auth_token is not set" >&2
+    if [[ -z "$AUTH_TOKEN" && -z "${CODEX_BRIDGE_AUTH_TOKEN:-}" ]]; then
+      echo "preflight: host is non-loopback ($HOST) but auth_token is not set (config or CODEX_BRIDGE_AUTH_TOKEN)" >&2
       exit 1
     fi
     ;;

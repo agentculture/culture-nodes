@@ -119,7 +119,10 @@ deploy_codex_bridge() { # host — runs identically on thor and orin
   # fast at deploy time instead of only at unit start. SKIP_CODEX_PREFLIGHT=1
   # downgrades it to a warning for bootstrap ordering (e.g. codex not logged
   # in yet on a brand-new host).
-  if ! ssh "$host" '~/.culture-nodes/bin/codex-preflight.sh ~/.culture-nodes/codex-bridge.json'; then
+  # Source the bridge env first — the unit's EnvironmentFile delivers
+  # CODEX_BRIDGE_AUTH_TOKEN to ExecStartPre, so the deploy-time run must see
+  # the same variable or its non-loopback auth check would falsely fail.
+  if ! ssh "$host" 'set -a; . ~/.culture-nodes/codex-bridge.env; set +a; ~/.culture-nodes/bin/codex-preflight.sh ~/.culture-nodes/codex-bridge.json'; then
     if [ "${SKIP_CODEX_PREFLIGHT:-0}" = "1" ]; then
       say "WARNING: codex preflight failed on $host but SKIP_CODEX_PREFLIGHT=1 — installing the unit anyway"
     else

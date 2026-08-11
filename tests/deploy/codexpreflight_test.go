@@ -356,8 +356,26 @@ func TestPreflightRefusesNonLoopbackHostWithoutAuthToken(t *testing.T) {
 	cfg.AuthToken = ""
 	configPath := writeConfig(t, dir, cfg)
 
-	_, stderr, err := runPreflight(t, configPath)
+	_, stderr, err := runPreflight(t, configPath, "CODEX_BRIDGE_AUTH_TOKEN=")
 	requireFailure(t, err, stderr, "auth_token is not set")
+}
+
+// TestPreflightAcceptsAuthTokenFromEnvironment mirrors the bridge's own
+// config precedence: CODEX_BRIDGE_AUTH_TOKEN overrides the file, and the
+// unit's EnvironmentFile delivers it to ExecStartPre — so a token present
+// only in the environment must satisfy the non-loopback check. The
+// committed config template deliberately carries no auth_token key.
+func TestPreflightAcceptsAuthTokenFromEnvironment(t *testing.T) {
+	dir := t.TempDir()
+	cfg := baseConfig(t, dir)
+	cfg.Host = "0.0.0.0"
+	cfg.AuthToken = ""
+	configPath := writeConfig(t, dir, cfg)
+
+	_, stderr, err := runPreflight(t, configPath, "CODEX_BRIDGE_AUTH_TOKEN=env-token")
+	if err != nil {
+		t.Fatalf("preflight refused a non-loopback host with CODEX_BRIDGE_AUTH_TOKEN set: %v\nstderr: %s", err, stderr)
+	}
 }
 
 // TestPreflightAllowsNonLoopbackHostWithAuthToken is the positive half of

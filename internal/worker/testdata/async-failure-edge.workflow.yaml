@@ -48,7 +48,7 @@ spec:
     work:
       kind: agent
       ownerRef: team/platform-ai
-      uses: actor://company/long-runner@sha256:bbbbbb
+      uses: actor://company/long-runner@sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb
       input:
         from: /run/input
       contract:
@@ -71,7 +71,7 @@ spec:
     repair:
       kind: agent
       ownerRef: team/platform-ai
-      uses: actor://company/analyzer@sha256:aaaaaa
+      uses: actor://company/analyzer@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
       input:
         from: /run/input
       contract:

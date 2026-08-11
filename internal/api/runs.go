@@ -273,7 +273,12 @@ func (s *Server) cancelRun(ctx context.Context, runID string) (engine.Run, error
 	// PROPAGATE (issue #19): the run is now durably cancelled regardless of
 	// what happens below — propagateCancelToActors is entirely best-effort
 	// and never returns an error for cancelRun to surface.
-	s.propagateCancelToActors(ctx, runID)
+	// Detached from the request context deliberately: the run is already
+	// durably cancelled, so a client that disconnects the instant it gets
+	// its response must not abort the propagation or its evidence events
+	// mid-flight (PR #22 review). Still synchronous — moving this behind
+	// the response entirely is the recorded outbox follow-up.
+	s.propagateCancelToActors(context.WithoutCancel(ctx), runID)
 
 	updated, err := s.engineStore.Run(ctx, runID)
 	if err != nil {

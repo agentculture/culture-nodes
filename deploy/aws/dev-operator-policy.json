@@ -10,7 +10,6 @@
         "sqs:GetQueueAttributes",
         "sqs:SetQueueAttributes",
         "sqs:GetQueueUrl",
-        "sqs:ListQueues",
         "sqs:SendMessage",
         "sqs:ReceiveMessage",
         "sqs:DeleteMessage",
@@ -68,8 +67,7 @@
         "lambda:GetFunction",
         "lambda:GetFunctionConfiguration",
         "lambda:InvokeFunction",
-        "lambda:DeleteFunction",
-        "lambda:ListFunctions"
+        "lambda:DeleteFunction"
       ],
       "Resource": "arn:aws:lambda:*:*:function:culture-nodes-*"
     },
@@ -94,13 +92,27 @@
       "Action": "iam:PassRole",
       "Resource": "arn:aws:iam::*:role/culture-nodes-*",
       "Condition": {
-        "StringEquals": { "iam:PassedToService": "lambda.amazonaws.com" }
+        "StringEquals": {
+          "iam:PassedToService": "lambda.amazonaws.com"
+        }
       }
     },
     {
       "Sid": "ReadOwnIdentity",
       "Effect": "Allow",
-      "Action": ["sts:GetCallerIdentity"],
+      "Action": [
+        "sts:GetCallerIdentity"
+      ],
+      "Resource": "*"
+    },
+    {
+      "Sid": "AccountLevelListings",
+      "Effect": "Allow",
+      "Action": [
+        "sqs:ListQueues",
+        "lambda:ListFunctions",
+        "s3:ListAllMyBuckets"
+      ],
       "Resource": "*"
     }
   ]

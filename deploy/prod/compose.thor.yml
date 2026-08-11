@@ -75,6 +75,14 @@ services:
       NODES_LISTEN: ":8080"
       NODES_HUMAN_DECISION_TOKEN_SECRET: ${NODES_HUMAN_DECISION_TOKEN_SECRET:?install secrets first}
       NODES_CALLBACK_TOKEN_SECRET: ${NODES_CALLBACK_TOKEN_SECRET:?install secrets first}
+      # Bearer for external actor endpoints whose rows name this env var
+      # (metadata.auth_token_env) — needed here too (task t4, issue #19):
+      # POST .../cancel propagates a run cancellation to the actor directly
+      # from the api service, the same credential the worker service
+      # authenticates dispatch with.
+      NODES_ACTOR_CLAUDE_TOKEN: ${NODES_ACTOR_CLAUDE_TOKEN:-}
+      NODES_ACTOR_CODEX_THOR_TOKEN: ${NODES_ACTOR_CODEX_THOR_TOKEN:-}
+      NODES_ACTOR_CODEX_ORIN_TOKEN: ${NODES_ACTOR_CODEX_ORIN_TOKEN:-}
     ports:
       - "18080:8080"
     depends_on:

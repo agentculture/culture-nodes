@@ -66,12 +66,12 @@ verb="${1:-}"; [ -n "$verb" ] || usage; shift || true
 case "$verb" in
 status)
   api_get /v1alpha1/healthz; echo
-  api_get /v1alpha1/runs | py '
+  api_get "/v1alpha1/runs?limit=200" | py '
 import json,sys
 runs=json.load(sys.stdin); runs=runs if isinstance(runs,list) else runs.get("runs",runs.get("items",[]))
 from collections import Counter
 c=Counter(r.get("state","?") for r in runs)
-print("runs:", dict(c))'
+print("runs (newest 200):", dict(c))'
   ;;
 workflows)
   api_get /v1alpha1/workflows | py '
@@ -81,7 +81,8 @@ for w in items: print(w.get("workflow_key",w.get("key","?")), w.get("digest","")
   ;;
 runs)
   n="${1:-10}"
-  api_get /v1alpha1/runs | py "
+  [[ "$n" =~ ^[1-9][0-9]{0,3}$ ]] || { echo "nodes-op: runs takes a positive integer (got '$n')" >&2; exit 1; }
+  api_get "/v1alpha1/runs?limit=$n" | py "
 import json,sys
 runs=json.load(sys.stdin); runs=runs if isinstance(runs,list) else runs.get('runs',runs.get('items',[]))
 for r in runs[:$n]: print(r['id'], r.get('state','?'), r.get('created_at',''))"
@@ -189,8 +190,10 @@ assign)
   esac
   need_yes
   wf=$(mktemp); trap 'rm -f "$wf" "$wf.json"' EXIT
+  [[ "$outcome" =~ ^[a-z][a-z0-9_]*$ ]] || { echo "nodes-op: --outcome must match the workflow schema outcomeName pattern ^[a-z][a-z0-9_]*$ (got '$outcome')" >&2; exit 1; }
   sed -e "s|__NAME__|assign-$actor|" -e "s|__ACTOR_REF__|$ref|" \
       -e "s|__TIMEOUT__|$timeout|" -e "s|__MAX_ATTEMPTS__|$retries|" \
+      -e "s|__OUTCOME__|$outcome|" \
       "$TEMPLATE" > "$wf"
   digest=$("$0" publish "$wf")
   [ -n "$digest" ] || { echo "nodes-op: publish returned no digest" >&2; exit 1; }

@@ -65,7 +65,7 @@ spec:
             type: object
             required: [instruction, repo]
         outcomes:
-          completed:
+          __OUTCOME__:
             schema:
               type: object
               required: [summary]
@@ -90,5 +90,5 @@ spec:
         from: /nodes/task/output
 
   edges:
-    - from: task.completed
+    - from: task.__OUTCOME__
       to: finish

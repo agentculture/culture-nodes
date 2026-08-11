@@ -1,0 +1,44 @@
+# systemd user unit for the Codex actor bridge (codex-bridges-thor-orin plan, t2).
+#
+# Installed by deploy.sh's bridge lane (t3) to
+# ~/.config/systemd/user/codex-bridge.service on each host that runs a
+# managed codex actor (thor: company/codex-thor, orin: company/codex-orin).
+# Mirrors nodes-runner.service's conventions: %h resolves fine in every
+# directive position used below (ExecStartPre=, ExecStart=, EnvironmentFile=
+# are all unit-file directive VALUES, which systemd specifiers do expand —
+# see deploy/prod/nodes-runner.service, whose EnvironmentFile=%h/... and
+# ExecStart=%h/... already rely on exactly this). The %h-does-not-expand
+# caveat deploy.sh's comment calls out applies only to the *contents* of an
+# EnvironmentFile once systemd reads it as plain KEY=VALUE lines with no
+# specifier substitution — which is why codex-bridge.env itself (like
+# runner.env before it) must be generated with a literal, already-expanded
+# $HOME by the install-time shell, never written with a literal "%h" inside
+# it. The bridge's JSON config (codex-bridge.json.template) is not a
+# systemd unit at all, so %h has no meaning there either; it carries
+# __HOME__ placeholders that the deploy lane (t3) substitutes at install
+# time, the same generate-absolute-paths-at-install approach runner.env
+# already uses.
+#
+# The preflight (t1, deploy/prod/codex-preflight.sh) runs zero billable
+# codex invocations and refuses startup — distinct exit message per failure
+# class — before the bridge process itself ever starts.
+#
+#   systemctl --user daemon-reload
+#   systemctl --user enable --now codex-bridge
+#   journalctl --user -u codex-bridge -f
+
+[Unit]
+Description=Codex actor bridge (non-billable preflight gated, runner protocol)
+After=network-online.target
+
+[Service]
+# deploy.sh's bridge lane installs the preflight script, the bridge config,
+# and this env file (secret token only — never the config JSON).
+ExecStartPre=%h/.culture-nodes/bin/codex-preflight.sh %h/.culture-nodes/codex-bridge.json
+EnvironmentFile=%h/.culture-nodes/codex-bridge.env
+ExecStart=%h/.local/bin/codex-bridge --config %h/.culture-nodes/codex-bridge.json
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=default.target

@@ -1,0 +1,14 @@
+{
+  "codex_bin": "__HOME__/.local/bin/codex",
+  "codex_env": {
+    "CODEX_HOME": "__HOME__/.codex"
+  },
+  "host": "0.0.0.0",
+  "port": 8086,
+  "always_async": true,
+  "default_sandbox": "read-only",
+  "state_dir": "__HOME__/.culture-nodes/codex-bridge-state",
+  "repo_allowlist": [
+    "__HOME__/git/culture-nodes-agent"
+  ]
+}

@@ -301,12 +301,7 @@ func TestFaultKilledWorkerParkedRunnerOperationResumedBySurvivor(t *testing.T) {
 			dispatches)
 	}
 
-	var opState, workerID string
-	if err := s.Pool().QueryRow(ctx,
-		`SELECT state, worker_id FROM runner_invocations WHERE namespace_id = $1`, ns.ID,
-	).Scan(&opState, &workerID); err != nil {
-		t.Fatalf("read runner operation: %v", err)
-	}
+	opState, workerID := waitForRetiredRunnerOperation(t, s, ns.ID, 15*time.Second, survivor)
 	if opState != postgres.RunnerOperationCompleted {
 		t.Fatalf("runner operation state = %q, want %q\n--- survivor ---\n%s",
 			opState, postgres.RunnerOperationCompleted, survivor.out.String())
@@ -374,6 +369,54 @@ func waitForStatusSamples(t *testing.T, service *faultRunnerService, want int, t
 	_, statuses := service.counts()
 	t.Fatalf("the surviving worker made %d status samples in %s, want at least %d: it never resumed tracking the "+
 		"parked operation\n--- survivor ---\n%s", statuses, timeout, want, h.out.String())
+}
+
+// waitForRetiredRunnerOperation returns the operation row's state and recorded
+// worker id once that row has left 'waiting_external', and fails if it never
+// does.
+//
+// It waits rather than reading once because retiring the row is deliberately
+// NOT part of the completion's transaction. commitRunnerTerminal
+// (internal/worker/runnerasync.go) re-leases the parked item, commits the
+// attempt through the engine's own §12.5 transaction, and only then retires
+// the operation with a statement of its own — the actor path's
+// CloseInvocation sits in exactly the same place, which is why
+// internal/actors names a `close_invocation` stage that can fail AFTER
+// workflow state has already moved.
+//
+// So there is a real window, one round trip wide, in which the run already
+// reads `completed` and the operation row still reads `waiting_external`, and
+// the run-status poll above returns the instant the engine's commit becomes
+// visible — i.e. at the START of that window. Reading the row immediately
+// afterwards lands inside it whenever the poll happens to catch the commit
+// early; measured here, forcing that (polling the run status every 1ms
+// instead of every 50ms) reproduces it 8 times out of 8.
+//
+// Waiting costs the assertion nothing. The caller still requires the state to
+// be `completed` specifically, so an operation retired as `superseded` —
+// committed by some other path — or never retired at all still fails, and the
+// recovery BOUND is asserted where it belongs, on the run reaching
+// `completed` (waitForRunState).
+func waitForRetiredRunnerOperation(
+	t *testing.T, s *postgres.Store, namespaceID string, timeout time.Duration, h *workerHandle,
+) (state, workerID string) {
+	t.Helper()
+	deadline := time.Now().Add(timeout)
+	for {
+		if err := s.Pool().QueryRow(context.Background(),
+			`SELECT state, worker_id FROM runner_invocations WHERE namespace_id = $1`, namespaceID,
+		).Scan(&state, &workerID); err != nil {
+			t.Fatalf("read runner operation: %v", err)
+		}
+		if state != postgres.RunnerOperationWaiting {
+			return state, workerID
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("runner operation is still %q after %s: the surviving worker never retired it"+
+				"\n--- survivor ---\n%s", state, timeout, h.out.String())
+		}
+		time.Sleep(25 * time.Millisecond)
+	}
 }
 
 // waitForRunState polls the run's status against a hard deadline, which is

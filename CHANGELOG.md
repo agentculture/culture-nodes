@@ -22,6 +22,8 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 ### Fixed
 
 - Compensation failures (release/rollback) are recorded instead of swallowed; cancel propagation logs outcomes (review findings)
+- tests/fault: the killed-worker runner-operation test no longer reads the operation row inside the window between the engine's completion transaction and the separate statement that retires the row — it waits for the row to leave `waiting_external` and still requires it to settle on `completed` (reproduced 8/8 by tightening the run-status poll; passes 8/8 after)
+- tests/load: sampling-cost duration-independence is asserted on work counts — status reads per sample and database operations per sample — instead of on wall-clock cost compared between two fleets measured tens of seconds apart, which on CI differed by a factor of 3.17 while both fleets performed provably identical work; wall-clock cost and duty cycle are still measured, reported, and documented in docs/benchmarks.md
 
 ## [0.9.0] - 2026-08-11
 

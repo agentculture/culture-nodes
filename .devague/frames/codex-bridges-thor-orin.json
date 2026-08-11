@@ -4,7 +4,7 @@
   "schema_version": 5,
   "status": "exported",
   "created": "2026-08-11T18:00:09Z",
-  "updated": "2026-08-11T18:08:48Z",
+  "updated": "2026-08-11T18:23:09Z",
   "claims": [
     {
       "id": "c1",
@@ -333,12 +333,146 @@
       "links": [],
       "instruction": "",
       "revisions": []
+    },
+    {
+      "id": "c19",
+      "kind": "requirement",
+      "text": "Deploy must install the Go 'nodes' CLI binary onto both hosts (build locally + scp, the same fallback deploy.sh already uses for nodes-runner) \u2014 probed 2026-08-11: neither thor nor orin has Go, and h13's 'codex sessions query runs/ledger/tasks with the supported CLI' is impossible without the binary",
+      "origin": "llm",
+      "status": "confirmed",
+      "honesty_conditions": [
+        {
+          "id": "h17",
+          "text": "From a fresh non-login shell on each host, the installed nodes binary lists runs, node runs, ledger records, and pending human tasks against http://thor:18080 \u2014 no Go toolchain present on the host",
+          "status": "confirmed",
+          "instruction": ""
+        }
+      ],
+      "hard_questions": [],
+      "links": [],
+      "instruction": "",
+      "revisions": []
+    },
+    {
+      "id": "c20",
+      "kind": "requirement",
+      "text": "Codex actor endpoint_refs must be numeric LAN IPs reachable from both workers' containers \u2014 compose containers don't inherit /etc/hosts (deploy.sh already resolves THOR_IP for orin), and the existing claude rows are registered by IP (192.168.1.157), never hostname",
+      "origin": "llm",
+      "status": "confirmed",
+      "honesty_conditions": [
+        {
+          "id": "h18",
+          "text": "Each worker container successfully POSTs an invocation to BOTH registered endpoint IPs; a hostname-based endpoint_ref demonstrably fails resolution from inside the container",
+          "status": "confirmed",
+          "instruction": ""
+        }
+      ],
+      "hard_questions": [],
+      "links": [],
+      "instruction": "",
+      "revisions": []
+    },
+    {
+      "id": "c21",
+      "kind": "requirement",
+      "text": "The bridge install must be independent of the culture-nodes-prod archive lifecycle: deploy.sh rm -rf's that tree on every deploy, so the bridge runs as a persistent uv tool install into ~/.local (re-installed + unit restarted by the deploy lane), never via uv run --project against the archive",
+      "origin": "llm",
+      "status": "confirmed",
+      "honesty_conditions": [
+        {
+          "id": "h19",
+          "text": "After a full re-deploy (which deletes and recreates culture-nodes-prod), both bridges are still active and pass a subsequent invocation \u2014 proving no runtime dependency on the archive tree",
+          "status": "confirmed",
+          "instruction": ""
+        }
+      ],
+      "hard_questions": [],
+      "links": [],
+      "instruction": "",
+      "revisions": []
+    },
+    {
+      "id": "c22",
+      "kind": "requirement",
+      "text": "Every workflow node placed on a codex actor declares a node timeout: the engine routes timeouts as domain outcomes (internal/engine/transition.go), and a declared timeout is what turns a bridge restart mid-session into a routed outcome instead of a hung run \u2014 the smoke workflow must carry one",
+      "origin": "llm",
+      "status": "confirmed",
+      "honesty_conditions": [
+        {
+          "id": "h20",
+          "text": "The smoke workflow YAML declares a timeout on both codex nodes, and the engine's timeout-routing path is cited (with its existing test) as the recovery story for a bridge restart mid-session",
+          "status": "confirmed",
+          "instruction": ""
+        }
+      ],
+      "hard_questions": [],
+      "links": [],
+      "instruction": "",
+      "revisions": []
+    },
+    {
+      "id": "c23",
+      "kind": "boundary",
+      "text": "Bridge concurrency stays unbounded by design this cycle: the async runner spawns one thread + codex subprocess per invocation with no cap (adapters/codex/src/codex_bridge/async_runner.py), and adding a cap would violate the zero-src-change rule (h2) \u2014 concurrency containment is workflow/placement discipline, with orin's 8 GiB the binding constraint",
+      "origin": "llm",
+      "status": "confirmed",
+      "honesty_conditions": [
+        {
+          "id": "h21",
+          "text": "The unbounded-concurrency stance is documented where operators read it (deploy/prod/README), the orin RAM risk is parked as first-class plan risk, and no concurrency-cap code lands under adapters/codex/src",
+          "status": "confirmed",
+          "instruction": ""
+        }
+      ],
+      "hard_questions": [],
+      "links": [],
+      "instruction": "",
+      "revisions": []
+    },
+    {
+      "id": "c24",
+      "kind": "assumption",
+      "text": "thor and orin LAN IPs are stable enough for append-only IP-based endpoint registration; an IP change is handled as a new actor revision, not an edit",
+      "origin": "llm",
+      "status": "confirmed",
+      "honesty_conditions": [],
+      "hard_questions": [],
+      "links": [],
+      "instruction": "",
+      "revisions": []
     }
   ],
   "open_vagueness": [
     {
       "id": "v1",
       "text": "orin has ~8 GiB RAM free and is already tight for agent sessions (machines-dev-prod-topology memory); whether concurrent codex exec sessions fit beside the worker is measurable only at runtime",
+      "kind": "unknown_nonblocking",
+      "claim_id": null,
+      "resolved": false,
+      "resolution": "",
+      "resolution_claim_id": null
+    },
+    {
+      "id": "v2",
+      "text": "codex ChatGPT auth can expire while the unit stays active \u2014 preflight re-checks only on restart; mid-life expiry surfaces as invocation failures until an operator re-runs codex login (runbook item, no automation this cycle)",
+      "kind": "unknown_nonblocking",
+      "claim_id": null,
+      "resolved": false,
+      "resolution": "",
+      "resolution_claim_id": null
+    },
+    {
+      "id": "v3",
+      "text": "the standalone codex install self-updates via the 'current' symlink \u2014 the measured-at-start version can drift under a long-running bridge, and an update could even require re-auth",
+      "kind": "unknown_nonblocking",
+      "claim_id": null,
+      "resolved": false,
+      "resolution": "",
+      "resolution_claim_id": null
+    },
+    {
+      "id": "v4",
+      "text": "no cost guardrails exist on codex dispatch (cost enforcement is PRD Phase 4; #12 item 3 is observation-only) \u2014 a runaway workflow burns ChatGPT quota unmetered",
       "kind": "unknown_nonblocking",
       "claim_id": null,
       "resolved": false,
@@ -424,6 +558,58 @@
       "seeds": [
         "c8"
       ]
+    },
+    {
+      "id": "s10",
+      "surface": "challenge pass / adjacent-systems lens: host toolchains (ssh probe 2026-08-11)",
+      "finding": "no Go on thor or orin \u2014 the nodes CLI cannot be built remotely; deploy must ship the binary",
+      "seeds": [
+        "c19"
+      ]
+    },
+    {
+      "id": "s11",
+      "surface": "challenge pass / adjacent-systems lens: internal/worker/dispatch.go + compose callback config",
+      "finding": "callbacks post to NODES_CALLBACK_BASE_URL (http://thor:18080) which host-resident bridges reach directly \u2014 clean; but endpoint_refs resolve from inside worker containers, which lack /etc/hosts, so IP registration is mandatory",
+      "seeds": [
+        "c20"
+      ]
+    },
+    {
+      "id": "s12",
+      "surface": "challenge pass / lifecycle lens: deploy/prod/deploy.sh archive lifecycle",
+      "finding": "rm -rf culture-nodes-prod on every deploy would yank a bridge running from that tree \u2014 install must be archive-independent",
+      "seeds": [
+        "c21"
+      ]
+    },
+    {
+      "id": "s13",
+      "surface": "challenge pass / failure-mode lens: internal/engine/transition.go timeout routing",
+      "finding": "engine routes declared timeouts as domain outcomes; an undeclared timeout leaves a lost in-flight attempt hanging \u2014 node timeouts are the recovery story for bridge restarts",
+      "seeds": [
+        "c22"
+      ]
+    },
+    {
+      "id": "s14",
+      "surface": "challenge pass / concurrency lens: adapters/codex server.py + async_runner.py",
+      "finding": "GET /healthz exists; async runner is thread-per-invocation with no cap \u2014 unbounded concurrent codex subprocesses; orin's 8 GiB is the binding constraint",
+      "seeds": [
+        "c23"
+      ]
+    },
+    {
+      "id": "s15",
+      "surface": "challenge pass / security lens: token + transport surfaces",
+      "finding": "clean pass: LAN-no-TLS matches the standing boundary (issue #6 parked), tokens ride mode-0600 files and env names only; port 8086 measured free on both hosts; residual risk is the LAN trust boundary itself, unchanged",
+      "seeds": []
+    },
+    {
+      "id": "s16",
+      "surface": "challenge pass / operations lens: workspace-write vs h6 dirty-checkout refusal",
+      "finding": "real write sessions will dirty the agent checkout and block subsequent deploys by design \u2014 surfaced as q3 for a policy decision, not silently resolved",
+      "seeds": []
     }
   ],
   "lapses": []

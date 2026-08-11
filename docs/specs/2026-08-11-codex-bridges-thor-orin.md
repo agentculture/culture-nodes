@@ -30,6 +30,14 @@
   - honesty: codex exec runs inside ~/git/culture-nodes-agent with no --skip-git-repo-check; deploy.sh fast-forwards a clean checkout and refuses (with a clear message, leaving it untouched) when the checkout is dirty or diverged
 - An idempotent registration helper appends actor rows only when endpoint/identity metadata changed, reusing an identical latest row — actors are append-only raw SQL today (four claude rows at 192.168.1.157:8086-8089 all via `NODES_ACTOR_CLAUDE_TOKEN`); broader registration API/CLI stays issue #8
   - honesty: Running the registration helper twice with unchanged endpoint+metadata leaves the actors table row-count unchanged; a changed endpoint appends a new revision row; no code path ever UPDATEs or DELETEs an actor row
+- Deploy must install the Go 'nodes' CLI binary onto both hosts (build locally + scp, the same fallback deploy.sh already uses for nodes-runner) — probed 2026-08-11: neither thor nor orin has Go, and h13's 'codex sessions query runs/ledger/tasks with the supported CLI' is impossible without the binary
+  - honesty: From a fresh non-login shell on each host, the installed nodes binary lists runs, node runs, ledger records, and pending human tasks against <http://thor:18080> — no Go toolchain present on the host
+- Codex actor `endpoint_refs` must be numeric LAN IPs reachable from both workers' containers — compose containers don't inherit /etc/hosts (deploy.sh already resolves `THOR_IP` for orin), and the existing claude rows are registered by IP (192.168.1.157), never hostname
+  - honesty: Each worker container successfully POSTs an invocation to BOTH registered endpoint IPs; a hostname-based `endpoint_ref` demonstrably fails resolution from inside the container
+- The bridge install must be independent of the culture-nodes-prod archive lifecycle: deploy.sh rm -rf's that tree on every deploy, so the bridge runs as a persistent uv tool install into ~/.local (re-installed + unit restarted by the deploy lane), never via uv run --project against the archive
+  - honesty: After a full re-deploy (which deletes and recreates culture-nodes-prod), both bridges are still active and pass a subsequent invocation — proving no runtime dependency on the archive tree
+- Every workflow node placed on a codex actor declares a node timeout: the engine routes timeouts as domain outcomes (internal/engine/transition.go), and a declared timeout is what turns a bridge restart mid-session into a routed outcome instead of a hung run — the smoke workflow must carry one
+  - honesty: The smoke workflow YAML declares a timeout on both codex nodes, and the engine's timeout-routing path is cited (with its existing test) as the recovery story for a bridge restart mid-session
 
 ## Honesty conditions
 
@@ -43,6 +51,7 @@
 - The before-state facts are the 2026-08-11 measured probes recorded in scope entries s1-s9, not assumptions carried from the issue text (two of which were already stale)
 - Capacity is demonstrated, not asserted: at least one real workflow node completes on each codex actor during acceptance
 - The smoke nodes are read-only (sandbox read-only) so a smoke run can never mutate the agent checkout, and the run goes through the normal engine dispatch path — no bypass endpoint
+- The unbounded-concurrency stance is documented where operators read it (deploy/prod/README), the orin RAM risk is parked as first-class plan risk, and no concurrency-cap code lands under adapters/codex/src
 
 ## Success signals
 
@@ -54,6 +63,7 @@
 - No active-active or failover claim across the two codex actors: internal/worker/registry.go resolves exactly one newest-revision endpoint per `actor_key`, so an unavailable host fails its explicitly selected actor honestly
 - Token material stays out of Postgres, argv, logs, and committed files: actor rows name env vars only (metadata.`auth_token_env`), secrets ride ssh stdin into mode-0600 files per install-secrets.sh discipline
 - The two-node smoke workflow is live-only and billable (codex has no offline mock engine, unlike colleague's `COLLEAGUE_ENGINE`=mock) — it is a manual verification lane, never a CI step; CI keeps running the adapter's fake-based unit suite only
+- Bridge concurrency stays unbounded by design this cycle: the async runner spawns one thread + codex subprocess per invocation with no cap (adapters/codex/src/`codex_bridge`/`async_runner.py`), and adding a cap would violate the zero-src-change rule (h2) — concurrency containment is workflow/placement discipline, with orin's 8 GiB the binding constraint
 
 ## Non-goals
 
@@ -62,6 +72,7 @@
 ## Assumptions
 
 - The stale /usr/local/bin/codex 0.55.0 the issue flags on thor no longer exists (ls fails, probed 2026-08-11) — the concern is moot, but preflight still asserts the explicit ~/.local/bin path so ambient PATH can never select a wrong binary again
+- thor and orin LAN IPs are stable enough for append-only IP-based endpoint registration; an IP change is handled as a new actor revision, not an edit
 
 ## Scope exploration
 
@@ -82,7 +93,22 @@
 - `s8` — `spark local state (ss -tlnp + ps, 2026-08-11)`: no listeners on 8085-8089 and no bridge processes — the four registered claude actors are dark; the issue's 'existing Claude setup is healthy' (verified 2026-08-09) is stale, which is itself evidence that ad-hoc bridge processes without systemd management do not survive
 - `s9` — `issues #8, #10, #12 (gh, 2026-08-11)`: \#8 owns broader actor/runner registration tooling (this cycle adds only a minimal idempotent helper); #10 owns claude-bridge production follow-ups incl. always-async default; #12 item 3 already expects codex usage mapping for cost visibility — no overlap conflicts
   - seeds: `c8`
+- `s10` — `challenge pass / adjacent-systems lens: host toolchains (ssh probe 2026-08-11)`: no Go on thor or orin — the nodes CLI cannot be built remotely; deploy must ship the binary
+  - seeds: `c19`
+- `s11` — `challenge pass / adjacent-systems lens: internal/worker/dispatch.go + compose callback config`: callbacks post to `NODES_CALLBACK_BASE_URL` (<http://thor:18080>) which host-resident bridges reach directly — clean; but `endpoint_refs` resolve from inside worker containers, which lack /etc/hosts, so IP registration is mandatory
+  - seeds: `c20`
+- `s12` — `challenge pass / lifecycle lens: deploy/prod/deploy.sh archive lifecycle`: rm -rf culture-nodes-prod on every deploy would yank a bridge running from that tree — install must be archive-independent
+  - seeds: `c21`
+- `s13` — `challenge pass / failure-mode lens: internal/engine/transition.go timeout routing`: engine routes declared timeouts as domain outcomes; an undeclared timeout leaves a lost in-flight attempt hanging — node timeouts are the recovery story for bridge restarts
+  - seeds: `c22`
+- `s14` — `challenge pass / concurrency lens: adapters/codex server.py + async_runner.py`: GET /healthz exists; async runner is thread-per-invocation with no cap — unbounded concurrent codex subprocesses; orin's 8 GiB is the binding constraint
+  - seeds: `c23`
+- `s15` — `challenge pass / security lens: token + transport surfaces`: clean pass: LAN-no-TLS matches the standing boundary (issue #6 parked), tokens ride mode-0600 files and env names only; port 8086 measured free on both hosts; residual risk is the LAN trust boundary itself, unchanged
+- `s16` — `challenge pass / operations lens: workspace-write vs h6 dirty-checkout refusal`: real write sessions will dirty the agent checkout and block subsequent deploys by design — surfaced as q3 for a policy decision, not silently resolved
 
 ## Open parks
 
 - [unknown_nonblocking] orin has ~8 GiB RAM free and is already tight for agent sessions (machines-dev-prod-topology memory); whether concurrent codex exec sessions fit beside the worker is measurable only at runtime
+- [unknown_nonblocking] codex ChatGPT auth can expire while the unit stays active — preflight re-checks only on restart; mid-life expiry surfaces as invocation failures until an operator re-runs codex login (runbook item, no automation this cycle)
+- [unknown_nonblocking] the standalone codex install self-updates via the 'current' symlink — the measured-at-start version can drift under a long-running bridge, and an update could even require re-auth
+- [unknown_nonblocking] no cost guardrails exist on codex dispatch (cost enforcement is PRD Phase 4; #12 item 3 is observation-only) — a runaway workflow burns ChatGPT quota unmetered

@@ -167,7 +167,7 @@ Extends the one-time setup above with a bridge lane:
 # verify:
 ssh thor 'systemctl --user status codex-bridge'
 ssh orin 'systemctl --user status codex-bridge'
-./examples/codex-smoke-pair/run.sh   # manual, billable, live-only — never CI
+./examples/codex-smoke-pair/run-smoke.sh   # manual, billable, live-only — never CI
 ```
 
 `deploy.sh`'s bridge lane does four things per host:

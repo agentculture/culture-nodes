@@ -59,6 +59,10 @@ func (f *fakeCallbackStore) AdvanceCallbackSequence(_ context.Context, _ string,
 	return true, nil
 }
 
+func (f *fakeCallbackStore) RollbackCallbackSequence(_ context.Context, _ string, _, _ int64) error {
+	return nil
+}
+
 func (f *fakeCallbackStore) TouchInvocation(_ context.Context, _, _ string, _ time.Time) error {
 	return nil
 }
@@ -66,6 +70,10 @@ func (f *fakeCallbackStore) TouchInvocation(_ context.Context, _, _ string, _ ti
 func (f *fakeCallbackStore) CloseInvocation(_ context.Context, _, _ string) error { return nil }
 
 func (f *fakeCallbackStore) ResumeWaitingWork(_ context.Context, _ actors.PendingInvocation, _ time.Duration) error {
+	return nil
+}
+
+func (f *fakeCallbackStore) ReparkResumedWork(_ context.Context, _ actors.PendingInvocation) error {
 	return nil
 }
 

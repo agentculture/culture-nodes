@@ -376,6 +376,27 @@ func (cs *CallbackStore) AdvanceCallbackSequence(ctx context.Context, attemptID 
 	return tag.RowsAffected() > 0, nil
 }
 
+// RollbackCallbackSequence lowers the high-water mark back to previous, and
+// only while it still equals sequence.
+//
+// The equality guard is what makes an undo safe here: it fires exactly when
+// this delivery's own advance is still the newest one, and no-ops when
+// anything else has moved the mark since. A no-op is the correct outcome in
+// that case — a later event's mark outranks the compensation of an earlier
+// one, and the event whose processing failed is protected by its released
+// event-id claim, not by the mark.
+func (cs *CallbackStore) RollbackCallbackSequence(ctx context.Context, attemptID string, sequence, previous int64) error {
+	_, err := cs.store.pool.Exec(ctx, `
+		UPDATE actor_invocations
+		SET last_sequence = $4, updated_at = now()
+		WHERE attempt_id = $1 AND namespace_id = $2 AND last_sequence = $3
+	`, attemptID, cs.namespaceID, sequence, previous)
+	if err != nil {
+		return fmt.Errorf("postgres: RollbackCallbackSequence: %w", err)
+	}
+	return nil
+}
+
 // TouchInvocation records liveness, and fills in an invocation id the actor
 // supplied late. An empty invocationID leaves the recorded one alone: an
 // actor sending a heartbeat is not retracting the id it gave at acceptance.
@@ -460,6 +481,61 @@ func (cs *CallbackStore) ResumeWaitingWork(ctx context.Context, inv actors.Pendi
 	}
 	if err := tx.Commit(ctx); err != nil {
 		return fmt.Errorf("postgres: ResumeWaitingWork: commit: %w", err)
+	}
+	return nil
+}
+
+const reparkResumedWorkSQL = `
+UPDATE work_items
+SET state            = 'waiting',
+    lease_owner      = NULL,
+    lease_expires_at = NULL,
+    state_version    = state_version + 1,
+    updated_at       = now()
+WHERE id = $1
+  AND state = 'leased'
+  AND lease_owner = $2
+  AND fencing_token = $3
+  AND attempt = $4
+`
+
+// ReparkResumedWork is ResumeWaitingWork's inverse: the work item goes back to
+// 'waiting' under the same fencing tuple, and its node run back to
+// waiting_external, when the completion it was resumed for did not commit.
+//
+// It is the same statement as StartAsyncWait's parkWorkSQL, and deliberately
+// so: the row must land in exactly the state the dispatch's park left it in,
+// or the redelivery's own ResumeWaitingWork (state = 'waiting', no owner, same
+// fencing tuple) will not match and a recoverable failure becomes a permanent
+// one.
+//
+// Zero rows matched is success, not a fault. The only ways to get there are
+// the engine having completed the item after all (the CloseInvocation-failed
+// path never calls this, but a redelivery race can) or a newer claimant owning
+// it — and in both, "leave it alone" is what an undo owes.
+func (cs *CallbackStore) ReparkResumedWork(ctx context.Context, inv actors.PendingInvocation) error {
+	tx, err := cs.store.pool.Begin(ctx)
+	if err != nil {
+		return fmt.Errorf("postgres: ReparkResumedWork: begin: %w", err)
+	}
+	defer func() { _ = tx.Rollback(ctx) }() // no-op once Commit has succeeded
+
+	tag, err := tx.Exec(ctx, reparkResumedWorkSQL,
+		inv.WorkID, inv.WorkerID, inv.FencingToken, int32(inv.Attempt))
+	if err != nil {
+		return fmt.Errorf("postgres: ReparkResumedWork: %w", err)
+	}
+	if tag.RowsAffected() == 0 {
+		return nil
+	}
+	if _, err := tx.Exec(ctx,
+		`UPDATE node_runs SET status = 'waiting_external', updated_at = now() WHERE id = $1 AND status = 'running'`,
+		inv.NodeRunID,
+	); err != nil {
+		return fmt.Errorf("postgres: ReparkResumedWork: mark node run waiting: %w", err)
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return fmt.Errorf("postgres: ReparkResumedWork: commit: %w", err)
 	}
 	return nil
 }

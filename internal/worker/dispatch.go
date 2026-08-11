@@ -29,6 +29,15 @@ func (w *Worker) dispatchActor(
 	node *nodeSpec,
 	dc DispatchContext,
 ) error {
+	// The dispatch budget is checked before anything else this function can
+	// do — before the registry lookup, before a pre_run hook, and certainly
+	// before the actor is invoked — because everything below this line costs
+	// something outside the control plane. See budget.go for why the check
+	// lives on claimed work rather than in the claim SQL.
+	if budgetExhausted(claimed) {
+		return w.parkExhausted(ctx, claimed, node, dc)
+	}
+
 	if w.opts.Registry == nil {
 		return w.failAttempt(ctx, claimed, engine.StatusFailed, "configuration",
 			"this worker has no actor registry configured, so it cannot resolve an endpoint to invoke")

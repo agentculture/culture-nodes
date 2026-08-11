@@ -9,6 +9,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -43,6 +44,7 @@ type harness struct {
 
 	mu       sync.Mutex
 	requests []actors.InvocationRequest
+	cancels  []actors.CancelRequest
 	errs     []error
 }
 
@@ -80,6 +82,23 @@ func newHarness(t *testing.T, actorHandler func(h *harness, w http.ResponseWrite
 	t.Cleanup(h.callbackServer.Close)
 
 	h.actorServer = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		// §13.6 cancellation shares the actor's base URL with §13.1
+		// invocation, so the one test server answers both. Cancels are
+		// recorded separately: a cancel is not an invocation, and a test
+		// counting dispatches must not see one.
+		if strings.HasSuffix(r.URL.Path, "/cancel") {
+			var cancel actors.CancelRequest
+			if err := json.NewDecoder(r.Body).Decode(&cancel); err != nil {
+				w.WriteHeader(http.StatusBadRequest)
+				return
+			}
+			h.mu.Lock()
+			h.cancels = append(h.cancels, cancel)
+			h.mu.Unlock()
+			w.WriteHeader(http.StatusAccepted)
+			return
+		}
+
 		var req actors.InvocationRequest
 		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 			w.WriteHeader(http.StatusBadRequest)
@@ -178,6 +197,13 @@ func (h *harness) invocations() []actors.InvocationRequest {
 	h.mu.Lock()
 	defer h.mu.Unlock()
 	return append([]actors.InvocationRequest(nil), h.requests...)
+}
+
+// cancellations are the §13.6 cancel requests the actor received.
+func (h *harness) cancellations() []actors.CancelRequest {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	return append([]actors.CancelRequest(nil), h.cancels...)
 }
 
 func (h *harness) run(runID string) engine.Run {

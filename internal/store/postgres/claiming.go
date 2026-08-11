@@ -8,6 +8,8 @@ import (
 
 	"github.com/jackc/pgx/v5/pgtype"
 
+	"github.com/agentculture/culture-nodes/internal/actors"
+	"github.com/agentculture/culture-nodes/internal/engine"
 	"github.com/agentculture/culture-nodes/internal/store"
 )
 
@@ -60,6 +62,27 @@ import (
 //     already bumped fencing_token/attempt out from under it, or the row is
 //     no longer even in 'leased' state.
 //
+//  5. No work of a TERMINAL run is ever handed out again. Both statements
+//     that can put a row back into circulation -- ClaimWork and
+//     ReclaimExpired -- join through node_runs to runs and refuse a row whose
+//     run status is one of TerminalRunStatuses(). This is defense in depth
+//     underneath whoever made the run terminal: a cancel that reaps its own
+//     work items is still the primary mechanism, but a run that reaches
+//     `failed` or `completed` with an item still in flight is covered by the
+//     same guard, without anyone having remembered to reap it. It is enforced
+//     in SQL rather than in the worker because the claim is where "this work
+//     is now someone's to dispatch" is decided, and a guard applied one layer
+//     later would already have leased (and, for a billable actor, already be
+//     paying for) the work it refuses. Measured live 2026-08-11 (issues
+//     #16/#19): a cancelled run's item re-leased 22 times, each a fresh
+//     billable session, and re-dispatches continued after a *different* run
+//     had reached `failed`.
+//
+//     The complementary bound -- how many times one item may be dispatched
+//     before the worker gives up -- is deliberately NOT here. See
+//     internal/worker/budget.go for why that half cannot be a claim-time
+//     refusal.
+//
 // Test-to-recovery-matrix mapping (§20.4). Each test below (claiming_test.go
 // unless noted) is written to prove one row of the recovery matrix, not just
 // to exercise a method:
@@ -93,6 +116,24 @@ import (
 //     but a UNIQUE(node_run_id, attempt) guard on the results table
 //     admits only one effective completion -- domain outcome is not the
 //     same thing as technical status (repo CLAUDE.md ground rule).
+
+// TerminalRunStatuses are the runs.status values a run never leaves. They
+// mirror engine.RunState.Terminal() exactly (claiming_test.go's
+// TestTerminalRunStatusesMatchTheEngineVocabulary pins the two together), and
+// they are the guard both the claim and the reclaim path apply: work bound to
+// a run in any of these statuses is not claimable and not reclaimable, so no
+// terminal run can ever dispatch again.
+//
+// It returns a fresh slice on every call because it is passed straight to
+// PostgreSQL as a text[] bind parameter, and a shared package-level slice
+// would be a mutable global in the middle of the claim path.
+func TerminalRunStatuses() []string {
+	return []string{
+		string(engine.RunCompleted),
+		string(engine.RunFailed),
+		string(engine.RunCancelled),
+	}
+}
 
 // WorkItem is the input to Store.EnqueueWork: a unit of ready work bound to
 // a node run. AvailableAt defaults to now() when zero.
@@ -158,6 +199,13 @@ func (s *Store) EnqueueWork(ctx context.Context, in WorkItem) error {
 // caller's owner, a fresh lease expiry, and an incremented fencing token
 // and attempt -- all in the one statement, so "picked" and "won" cannot
 // diverge.
+//
+// The join to node_runs and runs is the terminal-run guard (invariant 5): a
+// row whose run has already reached a terminal status is not claimable, and
+// the filter lives inside the same subquery as the lock so the guard cannot
+// be raced past. `FOR UPDATE OF w2` locks only the work_items rows -- the
+// runs row is read, never locked, so this claim never contends with the
+// engine's own writes to a live run.
 const claimWorkSQL = `
 UPDATE work_items AS w
 SET state            = 'leased',
@@ -168,11 +216,14 @@ SET state            = 'leased',
     state_version    = w.state_version + 1,
     updated_at       = now()
 FROM (
-    SELECT id
-    FROM work_items
-    WHERE namespace_id = $4 AND state = 'ready' AND available_at <= now()
-    ORDER BY available_at, id
-    FOR UPDATE SKIP LOCKED
+    SELECT w2.id
+    FROM work_items AS w2
+    JOIN node_runs AS nr ON nr.id = w2.node_run_id
+    JOIN runs AS r ON r.id = nr.run_id
+    WHERE w2.namespace_id = $4 AND w2.state = 'ready' AND w2.available_at <= now()
+      AND r.status <> ALL ($5::text[])
+    ORDER BY w2.available_at, w2.id
+    FOR UPDATE OF w2 SKIP LOCKED
     LIMIT $3
 ) AS claimable
 WHERE w.id = claimable.id
@@ -197,7 +248,8 @@ func (s *Store) ClaimWork(ctx context.Context, namespaceID, workerID string, lea
 		return nil, fmt.Errorf("postgres: ClaimWork: limit must be positive")
 	}
 
-	rows, err := s.pool.Query(ctx, claimWorkSQL, workerID, leaseDuration.Seconds(), int64(limit), namespaceID)
+	rows, err := s.pool.Query(ctx, claimWorkSQL,
+		workerID, leaseDuration.Seconds(), int64(limit), namespaceID, TerminalRunStatuses())
 	if err != nil {
 		return nil, fmt.Errorf("postgres: ClaimWork: %w", err)
 	}
@@ -246,21 +298,39 @@ func (s *Store) ClaimWork(ctx context.Context, namespaceID, workerID string, lea
 // to 'ready', available immediately, with the lease cleared. It
 // deliberately leaves fencing_token untouched -- see the invariant-3 doc
 // comment above the package-level block at the top of this file.
+//
+// The EXISTS clause is the terminal-run guard (invariant 5). Without it this
+// statement is the motor of the 2026-08-11 zombie loop: an item whose
+// dispatch never committed sits 'leased' until its lease expires, and this
+// sweep hands it straight back to the claim path -- forever, even after the
+// run it belongs to was cancelled or failed. An expired lease on a terminal
+// run's item is deliberately left where it is rather than reclaimed: nothing
+// may dispatch it again, so returning it to 'ready' would only re-arm the
+// loop. Reaping those rows into a final state belongs to whoever made the run
+// terminal (see internal/api's run cancellation), not to a periodic sweep.
 const reclaimExpiredSQL = `
-UPDATE work_items
+UPDATE work_items AS w
 SET state            = 'ready',
     lease_owner      = NULL,
     lease_expires_at = NULL,
     available_at     = now(),
     state_version    = state_version + 1,
     updated_at       = now()
-WHERE state = 'leased'
-  AND lease_expires_at IS NOT NULL
-  AND lease_expires_at <= now()
+WHERE w.state = 'leased'
+  AND w.lease_expires_at IS NOT NULL
+  AND w.lease_expires_at <= now()
+  AND EXISTS (
+      SELECT 1
+      FROM node_runs AS nr
+      JOIN runs AS r ON r.id = nr.run_id
+      WHERE nr.id = w.node_run_id
+        AND r.status <> ALL ($1::text[])
+  )
 `
 
-// ReclaimExpired flips every work item whose lease has expired back to
-// 'ready' (available immediately) and returns how many rows it reclaimed.
+// ReclaimExpired flips every work item whose lease has expired -- and whose
+// run is not already terminal (invariant 5) -- back to 'ready' (available
+// immediately), and returns how many rows it reclaimed.
 // It is safe to call concurrently and repeatedly (e.g. from every worker's
 // poll loop, or a dedicated scheduler): PostgreSQL's normal row-level
 // locking on UPDATE means two concurrent callers racing over the same
@@ -268,11 +338,50 @@ WHERE state = 'leased'
 // re-evaluated against the first caller's already-committed change once its
 // row lock is released, so it simply no longer matches.
 func (s *Store) ReclaimExpired(ctx context.Context) (int, error) {
-	tag, err := s.pool.Exec(ctx, reclaimExpiredSQL)
+	tag, err := s.pool.Exec(ctx, reclaimExpiredSQL, TerminalRunStatuses())
 	if err != nil {
 		return 0, fmt.Errorf("postgres: ReclaimExpired: %w", err)
 	}
 	return int(tag.RowsAffected()), nil
+}
+
+// selectPendingInvocationForWorkSQL finds the asynchronous invocation a work
+// item is still waiting on. There is at most one at a time -- StartAsyncWait
+// writes the row while it parks the item, and every path that resolves the
+// wait closes it -- but the ordering makes the "newest" one explicit rather
+// than relying on that being true after a partial failure.
+const selectPendingInvocationForWorkSQL = `
+SELECT ` + invocationColumns + `
+FROM actor_invocations
+WHERE work_id = $1 AND state = 'waiting_external'
+ORDER BY created_at DESC
+LIMIT 1
+`
+
+// PendingInvocationForWork returns the invocation still in flight for a work
+// item, reporting (zero, false, nil) when there is none.
+//
+// It is keyed by work id rather than by attempt id -- the key
+// CallbackStore.Invocation uses -- because its caller has the opposite thing
+// in hand: a worker holding a claim knows which work item it leased, not
+// which protocol attempt an earlier dispatch of that item minted. That is
+// exactly the position the dispatch-budget path is in when it has to cancel a
+// session it did not start (internal/worker/budget.go).
+//
+// Absence is not an error: an item whose dispatch never reached an actor, or
+// whose invocation has already been closed, simply has nothing in flight.
+func (s *Store) PendingInvocationForWork(ctx context.Context, workID string) (actors.PendingInvocation, bool, error) {
+	if workID == "" {
+		return actors.PendingInvocation{}, false, fmt.Errorf("postgres: PendingInvocationForWork: workID is required")
+	}
+	inv, err := scanPendingInvocation(s.pool.QueryRow(ctx, selectPendingInvocationForWorkSQL, workID))
+	if err != nil {
+		if isNoRows(err) {
+			return actors.PendingInvocation{}, false, nil
+		}
+		return actors.PendingInvocation{}, false, fmt.Errorf("postgres: PendingInvocationForWork: %w", err)
+	}
+	return inv, true, nil
 }
 
 // completeWorkSQL guards the completion write with the full lease tuple:

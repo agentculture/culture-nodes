@@ -5,6 +5,26 @@ All notable changes to this project will be documented in this file.
 Format follows [Keep a Changelog](https://keepachangelog.com/). This project
 adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.9.0] - 2026-08-11
+
+### Added
+
+- Codex actor bridges deployed as managed systemd user services on thor and orin (issue #14): non-billable preflight (deploy/prod/codex-preflight.sh) gating startup via ExecStartPre, per-host config template, archive-independent uv-tool install lane in deploy.sh, and the Python nodes CLI shipped to both hosts (deviation d1)
+- deploy/prod/register-actor.sh: idempotent, INSERT-only, IPv4-only actor registration helper; deploy.sh resolves each bridge's registered actor row id into its config (ledger origin FK)
+- install-secrets.sh codex-bridge token lane: per-host bridge tokens plus both NODES_ACTOR_CODEX_*_TOKEN worker envs over ssh stdin, with keep-existing re-run semantics
+- examples/codex-smoke-pair: two-node live smoke workflow (read-only, node timeouts, CONFIRM_BILLABLE gate) with offline compile test; AGENTS.md guidance for codex sessions; codex-bridge operator section + runbooks in deploy/prod/README.md
+- tests/deploy: fake-executable and manifest tests for preflight, unit/config definitions, secrets discipline, registration idempotency, and the deploy lane (60+ new assertions)
+
+### Changed
+
+- compose.thor.yml / compose.orin.yml worker env blocks carry both codex actor token envs
+- install-secrets.sh is safely re-runnable on a provisioned pair: keep-existing refusals continue to later lanes, runner secrets are guarded with mirror consistency, FORCE now propagates to the remote guards
+
+### Fixed
+
+- codex-preflight accepts CODEX_BRIDGE_AUTH_TOKEN from the environment (the unit's EnvironmentFile path) instead of falsely refusing a non-loopback bind
+- deploy.sh stamps the registered actors.id into the bridge config so proposed ledger claims satisfy the origin_actor_id foreign key (first live smoke looped on this)
+
 ## [0.8.0] - 2026-08-09
 
 ### Added

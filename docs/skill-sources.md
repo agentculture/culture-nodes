@@ -178,3 +178,13 @@ devex / agtag READMEs).
   reachable backend — a local vLLM by default, overridable via `--engine` /
   `--model` / `--base-url` or `COLLEAGUE_*` env (the legacy `CONVERTIBLE_*` names
   still work as a deprecated fallback).
+
+## First-party: nodes-operator
+
+`nodes-operator` is **authored in this repo** (2026-08-12), not vendored:
+the operator surface for driving the production control plane — inspect,
+author/publish workflows, and assign billable work to registered actors via
+`scripts/nodes-op.sh` + `templates/assign.workflow.yaml`. Any operator
+(Claude, the colleague backend, codex sessions, humans) may use it; steward
+may broadcast it to the mesh, and downstream repos copy it (cite, don't
+import). Maintained here; not subject to the re-sync procedure above.

@@ -13,7 +13,8 @@ production host (thor/orin), not a local dev clone.
   harvested by the human operator afterward; leave changes uncommitted in
   the working tree.
 - A result you report ("done", "tests pass", "fixed") is a **completion
-  claim**, not verified evidence — see "Ledger trust model" below. State
+  claim**, not verified evidence — see the ledger authority rules under
+  "Repository invariants" below. State
   what you did and how you checked it; let the operator confirm.
 
 ## Control-plane access
@@ -44,10 +45,11 @@ uv run nodes human-tasks get <task-id>
 (`NODES_HUMAN_DECISION_TOKEN` or `--token`) — that's the operator's call,
 not a session's.
 
-Note: `~/.culture-nodes/bin/nodes` on this host is a **different** binary —
-the Go control-plane server (`nodes serve` / `scheduler` / `worker`). It
-does not expose list/get verbs for runs, node runs, ledger, or human
-tasks; use the `uv run nodes ...` client above for those.
+Note: the Go control-plane binary (`nodes serve` / `scheduler` /
+`worker`) runs inside the compose containers, not on the host PATH. The
+host-installed `~/.local/bin/nodes` is the Python query client (uv tool);
+it is the one with list/get verbs for runs, node runs, ledger, and human
+tasks.
 
 ## Repository invariants
 

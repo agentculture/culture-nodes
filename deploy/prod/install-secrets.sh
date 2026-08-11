@@ -36,6 +36,7 @@ install_env() { # host, content-producing function
   # exit 3 is the keep-existing refusal — a re-run on a provisioned host
   # must continue to the later lanes (codex tokens), not abort here.
   if [ "$rc" -eq 3 ]; then echo "kept existing prod.env on $host"; return 0; fi
+  [ "$rc" -eq 0 ] && echo "installed ~/.culture-nodes/prod.env on $host"
   return "$rc"
 }
 
@@ -50,11 +51,9 @@ NODES_CALLBACK_BASE_URL=http://thor:18080"
 
 install_env "$THOR" "$common
 NODES_RUNNER_SECRET=${NODES_RUNNER_SECRET_THOR}"
-echo "installed ~/.culture-nodes/prod.env on $THOR"
 
 install_env "$ORIN" "$common
 NODES_RUNNER_SECRET=${NODES_RUNNER_SECRET_ORIN}"
-echo "installed ~/.culture-nodes/prod.env on $ORIN"
 
 # The runner bearer secrets also land as single-purpose files for
 # NODES_RUNNER_SECRET_FILE and for the operator's registry entries on the

@@ -74,3 +74,16 @@ Conventions the rest of the tooling assumes:
   by accident);
 - rotation: `FORCE=1 ./bootstrap-operator.sh` mints a fresh key into the
   profile (delete the old one in IAM afterwards; users cap at two keys).
+
+### Updating the policy
+
+The committed `dev-operator-policy.json` is the source of truth; the live
+policy is just its latest applied version. After any change to the JSON,
+a human with admin credentials re-applies it with:
+
+```bash
+./deploy/aws/bootstrap-operator.sh update-policy
+```
+
+(idempotent; prunes the oldest non-default version when IAM's 5-version
+cap is hit — git history is the rollback store, not IAM versions).

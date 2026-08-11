@@ -3,6 +3,7 @@
 # operator identity for culture-nodes automation.
 #
 #   ./deploy/aws/bootstrap-operator.sh [profile-name]   # default: culture-nodes
+#   ./deploy/aws/bootstrap-operator.sh update-policy     # re-apply dev-operator-policy.json
 #
 # Run this yourself with admin (or root, first-time-only) credentials
 # active. It creates the culture-nodes-dev IAM user, attaches the
@@ -18,7 +19,8 @@
 # succeeds, stop using root for CLI work.
 set -euo pipefail
 
-PROFILE="${1:-culture-nodes}"
+MODE="${1:-bootstrap}"
+if [ "$MODE" = "update-policy" ]; then PROFILE="${2:-culture-nodes}"; else PROFILE="${1:-culture-nodes}"; fi
 USER_NAME="culture-nodes-dev"
 POLICY_NAME="culture-nodes-dev-operator"
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -27,6 +29,23 @@ REGION="${AWS_REGION:-$(aws configure get region 2>/dev/null || echo us-east-1)}
 
 echo "==> bootstrap identity: $(aws sts get-caller-identity --query Arn --output text)"
 ACCOUNT=$(aws sts get-caller-identity --query Account --output text)
+
+if [ "$MODE" = "update-policy" ]; then
+  # Re-apply the committed JSON as the default policy version. IAM caps a
+  # policy at 5 versions, so the oldest non-default is pruned first when
+  # the cap is hit — versions are an edit trail here, not a rollback store
+  # (the JSON in git is the rollback store).
+  POLICY_ARN="arn:aws:iam::${ACCOUNT}:policy/${POLICY_NAME}"
+  COUNT=$(aws iam list-policy-versions --policy-arn "$POLICY_ARN"     --query 'length(Versions)' --output text)
+  if [ "$COUNT" -ge 5 ]; then
+    OLDEST=$(aws iam list-policy-versions --policy-arn "$POLICY_ARN"       --query 'Versions[?IsDefaultVersion==`false`] | sort_by(@, &CreateDate)[0].VersionId' --output text)
+    aws iam delete-policy-version --policy-arn "$POLICY_ARN" --version-id "$OLDEST"
+    echo "==> pruned oldest non-default version $OLDEST (5-version cap)"
+  fi
+  NEWV=$(aws iam create-policy-version --policy-arn "$POLICY_ARN"     --policy-document "file://$POLICY_FILE" --set-as-default     --query 'PolicyVersion.VersionId' --output text)
+  echo "==> $POLICY_NAME now at version $NEWV (default), from $POLICY_FILE"
+  exit 0
+fi
 
 if aws iam get-user --user-name "$USER_NAME" >/dev/null 2>&1; then
   echo "==> user $USER_NAME already exists (kept)"

@@ -8,7 +8,7 @@ slug: `codex-bridges-thor-orin` · status: `exported` · from frame: `codex-brid
 
 ### t1 — Non-billable codex preflight script (deploy/prod/codex-preflight.sh) + fake-based tests
 
-- instruction: New files only: deploy/prod/codex-preflight.sh + a test under tests/deploy/. Bash, no third-party deps. Checks in order: explicit codex binary exists+executable at the path given by the bridge config, 'codex --version' parses, 'codex login status' reports authenticated, every `repo_allowlist` path is a git checkout (git -C <p> rev-parse), state dir writable, and refuse non-loopback bind without `auth_token`. Distinct exit message per failure. Never invoke codex beyond --version/login status (non-billable). Mirror the fake-executable test technique from adapters/codex/tests/`test_codex_cli.py` (TestRunSyncAgainstAFakeExecutable).
+- instruction: New files only: deploy/prod/codex-preflight.sh + a test under tests/deploy/. Bash, no third-party deps. Checks in order: explicit codex binary exists+executable at the path given by the bridge config, 'codex --version' parses, 'codex login status' reports authenticated, every `repo_allowlist` path is a git checkout (`git -C <path> rev-parse`), state dir writable, and refuse non-loopback bind without `auth_token`. Distinct exit message per failure. Never invoke codex beyond --version/login status (non-billable). Mirror the fake-executable test technique from adapters/codex/tests/`test_codex_cli.py` (TestRunSyncAgainstAFakeExecutable).
 - covers: c5, h5
 - acceptance:
   - Refuses startup with a distinct message per failure class — missing/wrong binary at the explicit configured path, unauthenticated 'codex login status', an allowlist entry that is not a git checkout, an unwritable state dir, a non-loopback bind without `auth_token` — each exercised in tests via fake codex executables
@@ -67,7 +67,7 @@ slug: `codex-bridges-thor-orin` · status: `exported` · from frame: `codex-brid
 
 ### t8 — Two-node smoke workflow + dispatch script (manual, billable, live-only)
 
-- instruction: New files only under examples/ (e.g. examples/codex-smoke-pair/): workflow YAML with two read-only codex nodes — one placed on company/codex-thor, one on company/codex-orin (use the <workflow>/<node> placement or uses references per node), each with sandbox read-only in input and an explicit node timeout (c22) — plus a dispatch script that creates the run via <http://thor:18080>, polls to completion, and prints the two proposed ledger claims with their actor ids. Script header states it is billable and live-only; verify no .github/workflows file references it (h12).
+- instruction: New files only under examples/ (e.g. examples/codex-smoke-pair/): workflow YAML with two read-only codex nodes — one placed on company/codex-thor, one on company/codex-orin (use the `<workflow>/<node>` placement or uses references per node), each with sandbox read-only in input and an explicit node timeout (c22) — plus a dispatch script that creates the run via <http://thor:18080>, polls to completion, and prints the two proposed ledger claims with their actor ids. Script header states it is billable and live-only; verify no .github/workflows file references it (h12).
 - covers: c18, h8, c13, h12, c22, h20
 - acceptance:
   - Workflow YAML validates through the compiler; both codex nodes declare read-only sandbox (h8) and an explicit node timeout (h20/c22)

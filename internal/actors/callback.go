@@ -33,13 +33,36 @@ import (
 //     and the engine's own fenced guard refuse, and the completion becomes a
 //     late diagnostic — §13.4's "completion after cancellation or attempt
 //     replacement is recorded as a late diagnostic event but cannot commit
-//     workflow state".
+//     workflow state". A re-lease that is not followed by a committed
+//     completion — refused or failed — is parked again before returning, so
+//     the item is never left leased to work nobody is doing.
 //
 // Steps 3–5 are separate commits rather than one transaction, because step 5
 // is the engine's own §12.5 transaction and this package does not get to open
-// it. The consequence is stated and handled rather than hidden: if step 5
-// fails with an infrastructure error, ReleaseEvent gives the event id back so
-// the actor's redelivery is processed rather than silently dropped.
+// it. The consequence is stated and handled rather than hidden: a delivery
+// that fails part-way gives back everything it took, in the reverse order it
+// took it — the work item's resumed lease, then the sequence mark, then the
+// event-id claim.
+//
+// All three compensations are required, and the live 2026-08-11 incident
+// (issue #16) is what each one costs when it is missing. A terminal commit
+// that failed used to keep the sequence mark, so the same-id/same-sequence
+// redelivery §13.4 mandates was refused as out-of-order forever; and it used
+// to keep the resumed lease, so the work item expired into ReclaimExpired and
+// re-dispatched a fresh billable session every lease cycle. The claim is
+// released LAST because it is the gate: while it is held, no redelivery can
+// start reprocessing an event whose mark and lease are still being returned.
+//
+// The mark therefore records what this ingest PROCESSED, not what it saw.
+// That is what keeps §13.4's monotonic rule intact while making failure
+// recoverable: an event that changed nothing leaves nothing behind, and a
+// genuinely reordered event — a different event id at a sequence that was
+// processed — is still refused.
+//
+// The single asymmetric case is a failure AFTER the engine committed (only
+// CloseInvocation can be there): workflow state moved, so the lease is not
+// given back and the redelivery the released claim invites lands as a late
+// diagnostic. See commitTerminal.
 
 // Diagnostic event types this package appends. They are recorded against the
 // run aggregate, like every other engine event, so a run's audit trail
@@ -62,6 +85,14 @@ const (
 	// TypeCallbackRejected records an event this ingest could not act on at
 	// all: an unusable payload for a terminal kind.
 	TypeCallbackRejected = "dev.culture.nodes.actor.callback-rejected"
+	// TypeCallbackCommitFailed records a terminal event whose commit failed
+	// for an infrastructure reason rather than a §13.4 refusal; its `stage`
+	// field says how far the commit got, and so whether the engine's own
+	// transaction was reached at all. It exists because the live 2026-08-11
+	// incident (issue #16) proved the alternative: the error rode the HTTP
+	// response back to the bridge and nowhere else, so a run that could not
+	// progress carried no recorded reason anywhere an operator looks.
+	TypeCallbackCommitFailed = "dev.culture.nodes.actor.callback-commit-failed"
 )
 
 // PendingInvocation is the durable record of an in-flight asynchronous
@@ -119,6 +150,13 @@ type CallbackStore interface {
 	// sequence, reporting false when sequence did not exceed it. It must be
 	// a single atomic compare-and-set.
 	AdvanceCallbackSequence(ctx context.Context, attemptID string, sequence int64) (advanced bool, err error)
+	// RollbackCallbackSequence lowers the high-water mark from sequence back
+	// to previous, and only while it still equals sequence — the compensation
+	// for an advance whose event was then not processed. Lowering the mark
+	// cannot resurrect an already-ingested event: the event-id claim, not the
+	// mark, is this ingest's idempotency authority, and every processed event
+	// still holds one.
+	RollbackCallbackSequence(ctx context.Context, attemptID string, sequence, previous int64) error
 
 	// TouchInvocation records liveness for a non-terminal event.
 	TouchInvocation(ctx context.Context, attemptID string, invocationID string, at time.Time) error
@@ -130,6 +168,16 @@ type CallbackStore interface {
 	// can match. It returns an error matching engine.ErrStaleClaim when the
 	// item is no longer parked under that tuple.
 	ResumeWaitingWork(ctx context.Context, inv PendingInvocation, lease time.Duration) error
+	// ReparkResumedWork undoes ResumeWaitingWork: the work item returns to
+	// parked, keeping the same fencing tuple, when the completion it was
+	// resumed for did not commit. Without it a failed commit leaves an item
+	// leased with nobody working it, and its lease expiry is a re-dispatch
+	// signal (issue #16's billable loop).
+	//
+	// It reports no error when the row is no longer leased under inv's tuple:
+	// this is a compensation, not a claim, and "the engine completed it after
+	// all" is a legitimate outcome to find.
+	ReparkResumedWork(ctx context.Context, inv PendingInvocation) error
 
 	// AppendRunEvent appends one diagnostic event to a run's audit log.
 	AppendRunEvent(ctx context.Context, namespaceID, runID, eventType string, data map[string]any) error
@@ -340,9 +388,11 @@ func HandleCallback(ctx context.Context, deps CallbackDeps, attemptToken string,
 
 	result, err := handleClaimed(ctx, deps, inv, ev)
 	if err != nil {
-		// The claim was taken but the event was not processed. Give it back,
-		// so the actor's redelivery is not mistaken for a duplicate of work
-		// that never happened. A failure to release is not worth masking the
+		// The claim was taken but the event was not processed. Give it back
+		// last, after handleClaimed has already returned the mark and the
+		// lease, so the actor's redelivery is neither mistaken for a duplicate
+		// of work that never happened nor let in while the compensations are
+		// still running. A failure to release is not worth masking the
 		// original error with.
 		_ = deps.Store.ReleaseCallbackEvent(ctx, inv, ev.EventID)
 		return CallbackResult{AttemptID: attemptID}, err
@@ -364,6 +414,23 @@ func handleClaimed(ctx context.Context, deps CallbackDeps, inv PendingInvocation
 		return CallbackResult{AttemptID: inv.AttemptID, Disposition: DispositionOutOfOrder, Diagnostic: diagnostic}, nil
 	}
 
+	result, err := processAdvanced(ctx, deps, inv, ev)
+	if err != nil {
+		// The mark was raised for an event this ingest did not process, so it
+		// is lowered again — otherwise the redelivery of THIS event carries a
+		// sequence the ratchet has already consumed and is refused forever.
+		// Conditional on the mark still being ours, so a concurrent delivery
+		// that legitimately moved it on is left alone.
+		_ = deps.Store.RollbackCallbackSequence(ctx, inv.AttemptID, ev.Sequence, inv.LastSequence)
+		return CallbackResult{}, err
+	}
+	return result, nil
+}
+
+// processAdvanced is everything a delivery does once it owns both the event-id
+// claim and the sequence mark. Every error return from here is compensated by
+// its caller.
+func processAdvanced(ctx context.Context, deps CallbackDeps, inv PendingInvocation, ev CallbackEvent) (CallbackResult, error) {
 	if !ev.Kind.Terminal() {
 		invocationID := ""
 		if ev.Kind == EventAccepted {
@@ -411,11 +478,22 @@ func commitTerminal(ctx context.Context, deps CallbackDeps, inv PendingInvocatio
 				fmt.Sprintf("attempt %s is no longer parked under fencing token %d attempt %d; the work was reclaimed, cancelled, or already completed",
 					inv.AttemptID, inv.FencingToken, inv.Attempt))
 		}
+		// Nothing to repark: the item was never resumed.
+		deps.commitFailed(ctx, inv, ev, StageResume, err)
 		return CallbackResult{}, err
 	}
 
 	completion, err := deps.Engine.CompleteAttempt(ctx, req)
 	if err != nil {
+		// The item is leased to a completion that did not happen, and no
+		// worker is working it. Park it again whatever the reason. After an
+		// infrastructure failure that is exactly where the redelivery expects
+		// to find it; after a refusal the node run or run is already terminal,
+		// so the item is a leftover for cancellation to reap and parking it
+		// only stops it being dispatched again. Leaving it leased is what
+		// turned one bad actor_id into a billable session per lease cycle
+		// (issue #16).
+		deps.repark(ctx, inv)
 		if errors.Is(err, engine.ErrStaleClaim) ||
 			errors.Is(err, engine.ErrTerminalNodeRun) || errors.Is(err, engine.ErrTerminalRun) {
 			// The engine's own fenced guard refused. This is the same
@@ -425,10 +503,16 @@ func commitTerminal(ctx context.Context, deps CallbackDeps, inv PendingInvocatio
 			return deps.late(ctx, inv, ev,
 				fmt.Sprintf("engine refused the late completion of attempt %s: %v", inv.AttemptID, err))
 		}
+		deps.commitFailed(ctx, inv, ev, StageComplete, err)
 		return CallbackResult{}, err
 	}
 
 	if err := deps.Store.CloseInvocation(ctx, inv.AttemptID, InvocationCompleted); err != nil {
+		// Deliberately no repark: the §12.5 transaction committed, the work
+		// item is completed, and only the invocation row's own bookkeeping is
+		// behind. The redelivery this error invites lands as a late
+		// diagnostic, which is the truthful record of it.
+		deps.commitFailed(ctx, inv, ev, StageClose, err)
 		return CallbackResult{}, err
 	}
 	return CallbackResult{
@@ -449,11 +533,52 @@ func (d CallbackDeps) late(ctx context.Context, inv PendingInvocation, ev Callba
 	return CallbackResult{AttemptID: inv.AttemptID, Disposition: DispositionLate, Diagnostic: diagnostic}, nil
 }
 
+// The stages of step 5, named on a TypeCallbackCommitFailed event so an
+// operator reading it knows how far the commit got — in particular whether
+// the engine was reached at all, which decides whether the run's own state
+// could have moved.
+const (
+	// StageResume is a failure to re-lease the parked work item.
+	StageResume = "resume_waiting_work"
+	// StageComplete is a failure inside the engine's §12.5 transaction, which
+	// therefore rolled back entirely.
+	StageComplete = "complete_attempt"
+	// StageClose is a failure to retire the invocation row AFTER the engine
+	// committed: workflow state moved, bookkeeping did not.
+	StageClose = "close_invocation"
+)
+
+// commitFailed records why a terminal event did not commit. It is recorded
+// for infrastructure failures only: a §13.4 refusal is not a failure and gets
+// TypeCallbackLate instead.
+func (d CallbackDeps) commitFailed(ctx context.Context, inv PendingInvocation, ev CallbackEvent, stage string, cause error) {
+	d.recordDetail(ctx, inv, TypeCallbackCommitFailed, ev,
+		fmt.Sprintf("terminal event %s for attempt %s failed at %s: %v", ev.EventID, inv.AttemptID, stage, cause),
+		map[string]any{"stage": stage, "error": cause.Error()})
+}
+
+// repark returns a resumed work item to the parked state, best-effort. A
+// failed compensation must not replace the original cause in what the actor
+// and the audit log are told.
+func (d CallbackDeps) repark(ctx context.Context, inv PendingInvocation) {
+	_ = d.Store.ReparkResumedWork(ctx, inv)
+}
+
 // record appends a diagnostic event, best-effort. A failure to write an audit
 // line must not turn a correctly-handled callback into an error the actor
 // will retry forever; the returned dispositions already tell the caller what
 // happened.
 func (d CallbackDeps) record(ctx context.Context, inv PendingInvocation, eventType string, ev CallbackEvent, diagnostic string) {
+	d.recordDetail(ctx, inv, eventType, ev, diagnostic, nil)
+}
+
+// recordDetail is record with event-type-specific fields merged in. They are
+// merged rather than nested so a consumer reading events does not need to know
+// which type carries a sub-object.
+func (d CallbackDeps) recordDetail(
+	ctx context.Context, inv PendingInvocation, eventType string, ev CallbackEvent,
+	diagnostic string, extra map[string]any,
+) {
 	data := map[string]any{
 		"run_id":      inv.RunID,
 		"node_run_id": inv.NodeRunID,
@@ -468,6 +593,9 @@ func (d CallbackDeps) record(ctx context.Context, inv PendingInvocation, eventTy
 	}
 	if diagnostic != "" {
 		data["detail"] = diagnostic
+	}
+	for k, v := range extra {
+		data[k] = v
 	}
 	_ = d.Store.AppendRunEvent(ctx, inv.NamespaceID, inv.RunID, eventType, data)
 }

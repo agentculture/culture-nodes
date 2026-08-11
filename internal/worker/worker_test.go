@@ -112,8 +112,8 @@ func newHarness(t *testing.T, actorHandler func(h *harness, w http.ResponseWrite
 	t.Cleanup(h.actorServer.Close)
 
 	registry := worker.StaticRegistry{
-		"actor://company/analyzer@sha256:aaaaaa": {URL: h.actorServer.URL},
-		"actor://company/long-runner@sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb": {URL: h.actorServer.URL},
+		"actor://company/analyzer":    {URL: h.actorServer.URL},
+		"actor://company/long-runner": {URL: h.actorServer.URL},
 	}
 	wk, err := worker.New(s, eng, worker.Options{
 		WorkerID:          "worker-" + t.Name(),

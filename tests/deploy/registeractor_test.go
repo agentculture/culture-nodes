@@ -225,6 +225,88 @@ func TestRegisterActorRefusesHostnameBeforeAnySQL(t *testing.T) {
 	}
 }
 
+// TestRegisterActorRefusesSchemelessEndpoint covers the PR #20 review
+// finding: an endpoint like "192.168.1.5:8086" parses as IPv4 but would be
+// persisted scheme-less and then fail when the worker builds HTTP requests
+// from it. The script must require an explicit http(s):// scheme, refusing
+// before any SQL runs (same nonexistent-PSQL_CMD technique as the hostname
+// case).
+func TestRegisterActorRefusesSchemelessEndpoint(t *testing.T) {
+	env := []string{
+		"PSQL_CMD=/nonexistent/should-not-run/psql",
+		"ACTOR_KEY=company/codex-thor",
+		"ENDPOINT_URL=192.168.1.5:8086",
+		"AUTH_TOKEN_ENV=CODEX_THOR_TOKEN",
+	}
+	output, exitCode := runRegisterActor(t, env)
+
+	if exitCode != 1 {
+		t.Errorf("exit code = %d, want 1; output: %s", exitCode, output)
+	}
+	if !strings.Contains(output, "http:// or https://") {
+		t.Errorf("output does not name the explicit-scheme rule; output: %s", output)
+	}
+	if strings.Contains(output, "No such file or directory") || strings.Contains(output, "not found") {
+		t.Errorf("output suggests PSQL_CMD was invoked before refusal; output: %s", output)
+	}
+}
+
+// TestRegisterActorRefusesSQLMetacharacters covers the PR #20 review
+// finding on SQL interpolation: every value that reaches a SQL string is
+// confined to a strict allowlist, so inputs carrying quotes or statement
+// metacharacters are refused before any Postgres access -- allowlist
+// validation as the shell-native equivalent of parameterization.
+func TestRegisterActorRefusesSQLMetacharacters(t *testing.T) {
+	cases := []struct {
+		name string
+		env  []string
+		want string
+	}{
+		{
+			name: "quote in actor key",
+			env: []string{
+				"ACTOR_KEY=company/x'; DROP TABLE actors; --",
+				"ENDPOINT_URL=http://192.168.1.5:8086",
+				"AUTH_TOKEN_ENV=CODEX_THOR_TOKEN",
+			},
+			want: "refusing actor key",
+		},
+		{
+			name: "metacharacters in auth token env name",
+			env: []string{
+				"ACTOR_KEY=company/codex-thor",
+				"ENDPOINT_URL=http://192.168.1.5:8086",
+				"AUTH_TOKEN_ENV=X'); DELETE FROM actors; --",
+			},
+			want: "refusing auth token env name",
+		},
+		{
+			name: "quote smuggled into endpoint path",
+			env: []string{
+				"ACTOR_KEY=company/codex-thor",
+				"ENDPOINT_URL=http://192.168.1.5:8086/x',''); --",
+				"AUTH_TOKEN_ENV=CODEX_THOR_TOKEN",
+			},
+			want: "refusing endpoint",
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			env := append([]string{"PSQL_CMD=/nonexistent/should-not-run/psql"}, tc.env...)
+			output, exitCode := runRegisterActor(t, env)
+			if exitCode != 1 {
+				t.Errorf("exit code = %d, want 1; output: %s", exitCode, output)
+			}
+			if !strings.Contains(output, tc.want) {
+				t.Errorf("output does not carry %q; output: %s", tc.want, output)
+			}
+			if strings.Contains(output, "No such file or directory") || strings.Contains(output, "not found") {
+				t.Errorf("output suggests PSQL_CMD was invoked before refusal; output: %s", output)
+			}
+		})
+	}
+}
+
 // TestRegisterActorUnchangedRowIssuesNoInsert is task t6's second
 // behavioral case: when the newest revision's endpoint_ref and
 // metadata.auth_token_env already match what was asked for, the script

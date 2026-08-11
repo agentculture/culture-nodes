@@ -54,6 +54,26 @@ if [ -z "$ACTOR_KEY" ] || [ -z "$ENDPOINT_URL" ]; then
   exit 1
 fi
 
+# --- Input validation (strict allowlists) --------------------------------
+#
+# These values are interpolated into SQL below, so each is confined to a
+# character class that cannot contain a quote, backslash, or statement
+# metacharacter -- allowlist validation is the shell-native equivalent of
+# parameterization here, and it doubles as a schema sanity check (PR #20
+# review). Refusals happen before any Postgres access.
+if [[ ! "$ACTOR_KEY" =~ ^[a-z0-9][a-z0-9._/-]*$ ]]; then
+  echo "register-actor: refusing actor key '$ACTOR_KEY': keys are lowercase [a-z0-9._/-] paths like company/codex-thor" >&2
+  exit 1
+fi
+if [ -n "$AUTH_TOKEN_ENV" ] && [[ ! "$AUTH_TOKEN_ENV" =~ ^[A-Za-z_][A-Za-z0-9_]*$ ]]; then
+  echo "register-actor: refusing auth token env name '$AUTH_TOKEN_ENV': must be a valid environment variable name" >&2
+  exit 1
+fi
+if [[ ! "$ENDPOINT_URL" =~ ^https?://[A-Za-z0-9:/._-]+$ ]]; then
+  echo "register-actor: refusing endpoint '$ENDPOINT_URL': must be an explicit http:// or https:// URL (a scheme-less endpoint would be persisted and then fail when the worker builds requests from it)" >&2
+  exit 1
+fi
+
 # --- IP-only refusal --------------------------------------------------
 #
 # Worker containers do not inherit the host's /etc/hosts (deploy/prod's
@@ -94,6 +114,12 @@ if [ -z "$NAMESPACE_ID" ]; then
 fi
 if [ -z "$NAMESPACE_ID" ]; then
   echo "register-actor: no namespace row found (seed a namespace first, or set NODES_NAMESPACE_ID)" >&2
+  exit 1
+fi
+# Same allowlist rationale as above -- this value is interpolated into SQL,
+# whether it came from the environment or the namespace lookup.
+if [[ ! "$NAMESPACE_ID" =~ ^[A-Za-z0-9_-]+$ ]]; then
+  echo "register-actor: refusing namespace id '$NAMESPACE_ID': not a plain identifier" >&2
   exit 1
 fi
 

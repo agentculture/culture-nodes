@@ -33,6 +33,8 @@ services:
       # Bearer for external actor endpoints whose rows name this env var
       # (metadata.auth_token_env) — the credential never enters the DB.
       NODES_ACTOR_CLAUDE_TOKEN: ${NODES_ACTOR_CLAUDE_TOKEN:-}
+      NODES_ACTOR_CODEX_THOR_TOKEN: ${NODES_ACTOR_CODEX_THOR_TOKEN:-}
+      NODES_ACTOR_CODEX_ORIN_TOKEN: ${NODES_ACTOR_CODEX_ORIN_TOKEN:-}
       NODES_RUNNER_SERVICES_FILE: ${NODES_RUNNER_SERVICES_FILE:-}
     volumes:
       - ~/.culture-nodes/runners:/etc/nodes-runners:ro

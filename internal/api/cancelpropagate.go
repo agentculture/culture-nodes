@@ -42,7 +42,12 @@ const TypeActorCancelRequested = "dev.culture.nodes.actor.cancel-requested"
 // cancellation best-effort by design; a hung or slow actor endpoint must not
 // hold POST /v1alpha1/runs/{id}/cancel's response hostage waiting on it, so
 // every invocation gets its own short, independent budget.
-const cancelPropagateTimeout = 10 * time.Second
+// Measured live 2026-08-12: the codex bridge answers an idle cancel in
+// ~2.2s (single-threaded stdlib HTTPServer) and exceeded 10s mid-session,
+// timing out the propagation. 30s absorbs that without holding the
+// (already-committed) cancel response hostage — propagation runs
+// post-commit and best-effort either way.
+const cancelPropagateTimeout = 30 * time.Second
 
 // cancelActorClient is the actors.Client every propagateCancelToActors call
 // uses. A package-level default rather than a Server field: server.go (task

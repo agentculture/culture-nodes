@@ -349,20 +349,33 @@ steady-state cost of waiting on work of two very different lengths.
 | Measure | 30 s operations | 300 s operations | Ratio |
 | --- | --- | --- | --- |
 | Status reads/s | 46.00 | 46.00 | **1.00** |
+| Status reads per sample | 1.00 | 1.00 | **1.00** |
+| Database operations per sample | 1.14 | 1.14 | **1.00** |
 | Effective per-operation period | 1.087 s | 1.087 s | 1.00 |
-| Cost per operation-sample | 2.166 ms | 2.081 ms | 0.96 |
-| Sampler duty cycle | 0.0996 | 0.0957 | 0.96 |
 | Goroutines (median) | 6 | 6 | 1.00 |
-| RSS median (KiB) | 26,048 | 25,796 | 0.99 |
+| RSS median (KiB) | 26,476 | 26,244 | 0.99 |
+| Cost per operation-sample *(reported)* | 2.113 ms | 2.203 ms | 1.04 |
+| Sampler duty cycle *(reported)* | 0.0972 | 0.1013 | 1.04 |
 
 **Verdict: independent.** A tenfold change in operation duration moved the
-sampling rate by 0.00% and the per-sample cost by 4% — the latter being
-ordinary wall-clock noise on a shared box, in the wrong direction for a
-duration effect (the *longer* operations sampled marginally *cheaper*). A
-design whose cost tracked duration would have to show a roughly tenfold
-difference somewhere in this table. The test bounds the observed ratios at a
-factor of two, which is loose for wall-clock work and still an order of
-magnitude away from what a duration-dependent design would produce.
+sampling rate by 0.00%, the status reads per sample by 0.00%, and the database
+operations per sample by 0.00%. A design whose cost tracked duration would have
+to spend those extra cycles in more requests or more statements, and both are
+counted exactly here.
+
+The last two rows are *reported, not asserted*, and the distinction is
+load-bearing. A per-sample cost in milliseconds is a latency measurement of a
+fixed amount of work, so it describes the host rather than the design, and the
+two fleets are measured tens of seconds apart. On a CI runner two fleets that
+performed provably identical work — 350 samples each, 43.74/s against 43.87/s,
+same goroutines, same RSS — reported 874 µs and 2.774 ms per sample, a ratio of
+3.17 with nothing different about the sampling at all. Comparing those numbers
+across fleets therefore tests the afternoon, not the runtime; normalising them
+against a control probe measured in the same window was tried and abandoned
+when the probe's own latency proved noisier than the quantity it was meant to
+steady. The counts above carry the claim instead, bounded at a factor of two —
+an order of magnitude away from what a duration-dependent design would
+produce.
 
 ### What this section does not say
 

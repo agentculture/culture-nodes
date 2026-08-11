@@ -36,6 +36,9 @@ const (
 	DefaultPollInterval = time.Second
 	// DefaultNodeTimeout bounds a dispatch whose node declares no timeout.
 	DefaultNodeTimeout = 10 * time.Minute
+	// MaxDispatchAttempts is how many times one work item may be dispatched
+	// to an actor before the worker stops trying. See budget.go.
+	MaxDispatchAttempts = 3
 	// attemptIDPrefix echoes §13.1's "att_01J…" shape.
 	attemptIDPrefix = "att_"
 )

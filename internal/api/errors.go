@@ -136,10 +136,27 @@ func writeJSON(w http.ResponseWriter, status int, v any) {
 // not (or does not wrap) an *apiError is treated as an unclassified
 // environment failure — never a raw Go error string leaking to a caller
 // without a remediation.
-func writeAPIError(w http.ResponseWriter, err error) {
+//
+// It is also the one place every JSON error response passes through — both
+// (*Server).wrap's handlerFunc results and handleStreamRunEvents' own two
+// pre-stream failures (events.go) call it directly — so it is the central
+// funnel this package's "give internal/api a logging facility" task hooks:
+// a 5xx response logs one Error-level line carrying err's full unwrapped
+// chain plus the request's method and path (see the package doc's
+// "Logging" section). A 4xx is a domain/user outcome, not a failure this
+// process needs paged on, so it is never logged here.
+func (s *Server) writeAPIError(w http.ResponseWriter, r *http.Request, err error) {
 	var ae *apiError
 	if !errors.As(err, &ae) {
 		ae = internalError(err)
+	}
+	if ae.Status >= http.StatusInternalServerError {
+		s.log.Error("api: request failed",
+			"method", r.Method,
+			"path", r.URL.Path,
+			"status", ae.Status,
+			"error", ae.Error(),
+		)
 	}
 	writeJSON(w, ae.Status, ae.Body)
 }
@@ -156,7 +173,7 @@ type handlerFunc func(w http.ResponseWriter, r *http.Request) error
 func (s *Server) wrap(h handlerFunc) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		if err := h(w, r); err != nil {
-			writeAPIError(w, err)
+			s.writeAPIError(w, r, err)
 		}
 	}
 }

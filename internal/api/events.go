@@ -81,13 +81,13 @@ func (s *Server) handleStreamRunEvents(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 
 	if _, err := s.engineStore.Run(ctx, id); err != nil {
-		writeAPIError(w, classify(err))
+		s.writeAPIError(w, r, classify(err))
 		return
 	}
 
 	flusher, ok := w.(http.Flusher)
 	if !ok {
-		writeAPIError(w, internalError(errors.New("response writer does not support flushing")))
+		s.writeAPIError(w, r, internalError(errors.New("response writer does not support flushing")))
 		return
 	}
 

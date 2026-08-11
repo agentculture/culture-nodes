@@ -95,14 +95,21 @@ type fleetResult struct {
 	maxSysKB                     int64
 
 	// Steady-state sampling measurements, over the same window.
-	windowWall     time.Duration
-	passes         int
-	sampledTotal   int
-	passNSTotal    int64
-	medPassNS      int64
-	p95PassNS      int64
-	perOpSampleNS  int64
-	dutyCycle      float64
+	windowWall    time.Duration
+	passes        int
+	sampledTotal  int
+	passNSTotal   int64
+	medPassNS     int64
+	p95PassNS     int64
+	perOpSampleNS int64
+	dutyCycle     float64
+	// dbOpsPerSample is the database work one sample costs: statements (and
+	// transactions) the worker process sent over the observation window,
+	// divided by the operations it sampled in it. It is a count rather than a
+	// duration, which is what makes it comparable between two fleets measured
+	// at different times -- see the sampling-cost test.
+	dbOpsInWindow  int64
+	dbOpsPerSample float64
 	statusReads    int
 	statusRate     float64
 	expectedRate   float64
@@ -130,6 +137,7 @@ type sample struct {
 	PassNS       int64  `json:"pass_ns"`
 	TotalSampled int    `json:"total_sampled"`
 	Parked       int    `json:"parked"`
+	DBOps        int64  `json:"db_ops"`
 	Goroutines   int    `json:"goroutines"`
 	Threads      int    `json:"threads"`
 	HeapAlloc    uint64 `json:"heap_alloc"`
@@ -257,6 +265,14 @@ func summarise(res *fleetResult, all, window []sample) {
 	res.medRSSKB, res.maxRSSKB = medianInt64(rss), maxInt64s(rss)
 	res.medHeapAllocKB, res.maxHeapAllocKB = medianInt64(heap), maxInt64s(heap)
 	res.medPassNS, res.p95PassNS = medianInt64(passes), percentileInt64(passes, 0.95)
+
+	// Database work over the window, differenced between its first and last
+	// samples. Both endpoints are read after their own iteration's timed
+	// region, so the difference covers exactly the passes summed above.
+	res.dbOpsInWindow = window[len(window)-1].DBOps - window[0].DBOps
+	if res.sampledTotal > 0 {
+		res.dbOpsPerSample = float64(res.dbOpsInWindow) / float64(res.sampledTotal)
+	}
 	if res.sampledTotal > 0 {
 		res.perOpSampleNS = res.passNSTotal / int64(res.sampledTotal)
 	}
@@ -288,6 +304,7 @@ func (r fleetResult) report(t *testing.T) {
   observation window             : %s over %d passes, %d operations sampled
   sample pass ns (median / p95)  : %d / %d
   per-operation sample cost      : %s          sampler duty cycle: %.4f
+  database work per sample       : %.2f operations (%d over the window)
   status reads in window         : %d (%.2f/s measured, ceiling %.2f/s = ops/interval)
   effective per-operation period : %s (configured interval %s)
   per-operation reads (min/max)  : %d / %d
@@ -301,6 +318,7 @@ func (r fleetResult) report(t *testing.T) {
 		r.windowWall.Round(time.Millisecond), r.passes, r.sampledTotal,
 		r.medPassNS, r.p95PassNS,
 		time.Duration(r.perOpSampleNS), r.dutyCycle,
+		r.dbOpsPerSample, r.dbOpsInWindow,
 		r.statusReads, r.statusRate, r.expectedRate,
 		r.effectivePeriod().Round(time.Millisecond), r.cfg.poll,
 		r.minPerOpReads, r.maxPerOpReads,

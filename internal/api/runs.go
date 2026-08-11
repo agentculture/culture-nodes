@@ -152,11 +152,14 @@ func (s *Server) handleCancelRun(w http.ResponseWriter, r *http.Request) error {
 }
 
 // cancelRun consumes every active token, marks every non-terminal node run
-// and ready work item cancelled, and moves the run to cancelled, all in one
-// transaction under the run's advisory lock — the same
+// and every leasable work item cancelled, and moves the run to cancelled,
+// all in one transaction under the run's advisory lock — the same
 // ledger.RunLockKey(runID) the engine's own §12.5 completion transaction
 // takes before it touches a run, so a cancel cannot interleave with a
-// concurrent attempt completion of the same run.
+// concurrent attempt completion of the same run. After that transaction
+// commits, it best-effort propagates the cancellation to any actor an
+// asynchronous node run was still waiting on (see cancelpropagate.go,
+// issue #19).
 //
 // internal/engine has no CancelRun method (only a worker-reported
 // TechStatus of "cancelled" flowing through CompleteAttempt for the one
@@ -170,12 +173,27 @@ func (s *Server) handleCancelRun(w http.ResponseWriter, r *http.Request) error {
 // so a cancelled run still leaves exactly the same kind of durable trail a
 // worker-driven completion would.
 //
-// A node run a worker already holds a lease on is left alone here: its
-// work_items row stays 'leased' (only 'ready' rows are cancelled), so the
-// worker's eventual CompleteAttempt still runs the fenced completion path
-// and finds the node run already terminal — a documented, tested outcome
-// (engine.TerminalNodeRunError) rather than a write this method would have
-// to race against.
+// Every leasable work_items row is cancelled here — 'ready', 'waiting' (an
+// asynchronous actor invocation parked mid-flight, §12.6), and 'leased' (a
+// worker actively holding it) alike. Earlier, only 'ready' rows were
+// cancelled, on the theory that a 'leased' or 'waiting' row was a no-op to
+// touch since nothing reclaims it anyway; that held for a completion arriving
+// after cancellation (the engine's own fenced guard already refuses it) but
+// not for RE-DISPATCH: a 'waiting' row left alone is exactly the row a fired
+// deadline timer returns to 'ready' and a live worker then claims and
+// dispatches all over again for a run that is supposed to be dead (issue
+// #19). Cancelling it here removes it from every state ClaimWork,
+// ReclaimExpired, or the deadline-timer effect would otherwise act on. This
+// is race-safe against a worker completing the SAME row concurrently: this
+// UPDATE runs inside the run's advisory-lock transaction, and
+// Store.CompleteWork's/Store.ResumeWaitingWork's own fenced UPDATEs require
+// `state = 'leased'`/`state = 'waiting'` respectively — once this commits
+// with the row at 'cancelled', either the worker's completion already landed
+// first (this UPDATE simply finds nothing to touch, since a completed row
+// is no longer 'leased' either) or it lands after and matches zero rows,
+// which the worker's engine.ErrStaleClaim / engine.TerminalNodeRunError
+// handling already treats as a documented, tested no-op rather than an
+// error it needs new handling for.
 func (s *Server) cancelRun(ctx context.Context, runID string) (engine.Run, error) {
 	tx, err := s.Store.Pool().Begin(ctx)
 	if err != nil {
@@ -217,7 +235,7 @@ func (s *Server) cancelRun(ctx context.Context, runID string) (engine.Run, error
 	}
 	if _, err := tx.Exec(ctx, `
 		UPDATE work_items SET state = 'cancelled', updated_at = now()
-		WHERE state = 'ready' AND node_run_id IN (SELECT id FROM node_runs WHERE run_id = $1)`, runID,
+		WHERE state IN ('ready', 'waiting', 'leased') AND node_run_id IN (SELECT id FROM node_runs WHERE run_id = $1)`, runID,
 	); err != nil {
 		return engine.Run{}, internalError(fmt.Errorf("cancel run: cancel work items: %w", err))
 	}
@@ -251,6 +269,16 @@ func (s *Server) cancelRun(ctx context.Context, runID string) (engine.Run, error
 	if err := tx.Commit(ctx); err != nil {
 		return engine.Run{}, internalError(fmt.Errorf("cancel run: commit: %w", err))
 	}
+
+	// PROPAGATE (issue #19): the run is now durably cancelled regardless of
+	// what happens below — propagateCancelToActors is entirely best-effort
+	// and never returns an error for cancelRun to surface.
+	// Detached from the request context deliberately: the run is already
+	// durably cancelled, so a client that disconnects the instant it gets
+	// its response must not abort the propagation or its evidence events
+	// mid-flight (PR #22 review). Still synchronous — moving this behind
+	// the response entirely is the recorded outbox follow-up.
+	s.propagateCancelToActors(context.WithoutCancel(ctx), runID)
 
 	updated, err := s.engineStore.Run(ctx, runID)
 	if err != nil {

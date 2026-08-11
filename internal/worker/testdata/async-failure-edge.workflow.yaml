@@ -1,0 +1,118 @@
+# async.workflow.yaml's routed twin: the same asynchronous agent node, plus
+# an edge from its *technical* `failed` status to a repair node.
+#
+# It exists for the dispatch-budget tests. When a work item's re-dispatch
+# budget is exhausted the worker completes the attempt as technically failed
+# (never a fabricated domain outcome), and PRD §3.4's "the engine's own
+# statuses also route" then decides what happens next: a workflow that
+# declares an edge from `failed` keeps its token moving, and one that does not
+# ends the run failed. async.workflow.yaml is the second half of that pair.
+apiVersion: nodes.culture.dev/v1alpha1
+kind: Workflow
+
+metadata:
+  name: worker-async-failure-edge-slice
+  version: 1.0.0
+  ownerRef: team/platform-ai
+
+spec:
+  entry: work
+
+  contract:
+    input:
+      schema:
+        type: object
+        required: [subject]
+        properties:
+          subject:
+            type: string
+    output:
+      schema:
+        type: object
+        required: [summary]
+        properties:
+          summary:
+            type: string
+
+  limits:
+    maxDuration: 1h
+    maxTransitions: 8
+    maxVisitsPerNode: 4
+    maxParallelTokens: 1
+
+  ledger:
+    schemaVersion: nodes.culture.dev/ledger/v1alpha1
+    maxRecordsPerNode: 10
+
+  nodes:
+    work:
+      kind: agent
+      ownerRef: team/platform-ai
+      uses: actor://company/long-runner@sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb
+      input:
+        from: /run/input
+      contract:
+        outcomes:
+          completed:
+            schema:
+              type: object
+              required: [summary]
+              properties:
+                summary:
+                  type: string
+      ledger:
+        propose: [claim, result]
+      policy:
+        timeout: 30m
+        retry:
+          maxAttempts: 1
+          backoff: none
+
+    repair:
+      kind: agent
+      ownerRef: team/platform-ai
+      uses: actor://company/analyzer@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
+      input:
+        from: /run/input
+      contract:
+        outcomes:
+          completed:
+            schema:
+              type: object
+              required: [summary]
+              properties:
+                summary:
+                  type: string
+      ledger:
+        propose: [claim, result]
+      policy:
+        timeout: 2m
+        retry:
+          maxAttempts: 1
+          backoff: none
+
+    # Two end nodes, because the two paths produce the run result from
+    # different nodes: an end node's output binding names one node, and a
+    # binding to a node that never ran is a contract failure, not an empty
+    # result.
+    done:
+      kind: end
+      ownerRef: team/platform-ai
+      output:
+        from: /nodes/work/output
+
+    finish:
+      kind: end
+      ownerRef: team/platform-ai
+      output:
+        from: /nodes/repair/output
+
+  edges:
+    - from: work.completed
+      to: done
+
+    - from: work.failed
+      to: repair
+
+    - from: repair.completed
+      to: finish

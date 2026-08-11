@@ -55,7 +55,10 @@ var codexTokenVars = []string{"CODEX_BRIDGE_TOKEN_THOR", "CODEX_BRIDGE_TOKEN_ORI
 // remoteBlockPattern captures the single-quoted remote command string of
 // an `ssh "$host" '...'`-shaped invocation, used by several tests below to
 // inspect what actually runs on the remote side.
-var remoteBlockPattern = regexp.MustCompile(`ssh\s+"\$\w+"\s+'([^']*)'`)
+// An optional double-quoted prefix ("FORCE=${FORCE:-0}; ") may precede the
+// single-quoted block — that is how the local FORCE value reaches the
+// remote guard, since ssh forwards no environment variables.
+var remoteBlockPattern = regexp.MustCompile(`ssh\s+"\$\w+"\s+(?:"[^"]*"\s*)?'([^']*)'`)
 
 // TestCodexSecretsTokensNeverRideSSHArgv is the core discipline check:
 // scan every physical line of the script, and for any line that invokes
@@ -150,15 +153,19 @@ func TestCodexSecretsActorTokensReachBothHostsProdEnv(t *testing.T) {
 		}
 	}
 
-	// The install_actor_codex_tokens (or equivalent) call must run against
-	// both $THOR and $ORIN, not just one host.
-	callsThor := regexp.MustCompile(`\binstall_actor_codex_tokens\s+"\$THOR"`)
-	callsOrin := regexp.MustCompile(`\binstall_actor_codex_tokens\s+"\$ORIN"`)
-	if !callsThor.MatchString(script) {
-		t.Error("no install_actor_codex_tokens call against \"$THOR\" found")
+	// The prod.env update helper must iterate BOTH hosts for every key it
+	// installs — either worker may dispatch either host's codex actor.
+	loop := regexp.MustCompile(`for\s+host\s+in\s+"\$THOR"\s+"\$ORIN"`)
+	if !loop.MatchString(script) {
+		t.Error(`update_actor_token_line does not loop over both "$THOR" and "$ORIN"`)
 	}
-	if !callsOrin.MatchString(script) {
-		t.Error("no install_actor_codex_tokens call against \"$ORIN\" found")
+	// And each fresh bridge token must feed exactly that helper — a kept
+	// (exit-3) token never reaches prod.env with a regenerated value.
+	for _, key := range []string{"NODES_ACTOR_CODEX_THOR_TOKEN", "NODES_ACTOR_CODEX_ORIN_TOKEN"} {
+		call := regexp.MustCompile(`update_actor_token_line\s+` + key)
+		if !call.MatchString(script) {
+			t.Errorf("no update_actor_token_line call for %s found", key)
+		}
 	}
 }
 

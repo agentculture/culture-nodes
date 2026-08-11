@@ -1,0 +1,168 @@
+# The codex-bridges-thor-orin two-node smoke workflow (issue #14, task t8).
+#
+# Proves BOTH registered codex actors — company/codex-thor and
+# company/codex-orin — can complete a real, read-only node through the
+# normal engine dispatch path (create run -> engine claims node -> worker
+# dispatches to the actor's endpoint -> proposed ledger claim), not a
+# bypass endpoint. Each node's instruction only asks codex to report the
+# repo HEAD commit and confirm it can read README.md — no write happens,
+# and `sandbox: read-only` in each node's input makes that a bridge-level
+# guarantee, not just a polite prompt (adapters/codex/README.md's
+# "Invocation input fields" table: `sandbox` is passed straight to
+# `codex exec --sandbox`).
+#
+# Sequential, not parallel, and that is a schema fact, not a choice made for
+# convenience: docs/initial-design/culture-nodes-implementation-issue.md
+# lists "parallel, join, foreach, or subworkflow execution" under things
+# explicitly NOT in scope yet, and spec.entry names exactly one starting
+# node — there is no fan-out node kind this schema can express today. So
+# codex-thor runs first (it is spec.entry), and its `completed` outcome
+# edges into codex-orin; codex-orin's `completed` outcome edges into
+# `finish`. Both nodes still each get their own proposed ledger claim
+# attributed to their own actor, which is what the acceptance criterion
+# (issue #14 h1) actually requires — it does not require wall-clock overlap.
+#
+# Digest pinning: `uses: actor://company/codex-thor@sha256:...` follows the
+# SAME convention examples/self-hosting-loop/workflow.yaml uses for its own
+# agent nodes, not the code-node image-pinning convention in
+# examples/placement-proof/workflow.yaml. internal/worker/registry.go's own
+# comment is explicit about why: an actor reference "names an identity and
+# pins a revision" and resolution looks the identity up in the actors table
+# (StaticRegistry/DBRegistry both resolve by the "company/x" key with the
+# "@sha256:..." suffix stripped) — unlike a code node's `image:` digest,
+# which pins real, fetchable content, an actor's digest suffix is a revision
+# marker only. There is therefore nothing to "resolve at publish time" for
+# an actor reference the way there is for a container image; the 64-hex-
+# character placeholders below are exactly as arbitrary as
+# self-hosting-loop's own (`1111...`, `2222...`, etc.), just distinguished
+# per node here.
+apiVersion: nodes.culture.dev/v1alpha1
+kind: Workflow
+
+metadata:
+  name: codex-smoke-pair
+  version: 1.0.0
+  ownerRef: team/platform-ai
+
+spec:
+  entry: codex-thor
+
+  contract:
+    input:
+      schema:
+        type: object
+        required: [instruction, sandbox, success_outcome, thor_repo, orin_repo]
+        properties:
+          instruction:
+            type: string
+          sandbox:
+            type: string
+          success_outcome:
+            type: string
+          thor_repo:
+            type: string
+          orin_repo:
+            type: string
+    output:
+      schema:
+        type: object
+
+  limits:
+    maxDuration: 1h
+    maxTransitions: 8
+    maxVisitsPerNode: 2
+    maxParallelTokens: 1
+
+  ledger:
+    schemaVersion: nodes.culture.dev/ledger/v1alpha1
+    maxRecordsPerNode: 10
+
+  nodes:
+    # Entry node. Placed on company/codex-thor by `uses`, per
+    # internal/worker/registry.go's actor-key resolution.
+    codex-thor:
+      kind: agent
+      ownerRef: team/platform-ai
+      uses: actor://company/codex-thor@sha256:1111111111111111111111111111111111111111111111111111111111111a
+      input:
+        bindings:
+          instruction: /run/input/instruction
+          repo: /run/input/thor_repo
+          sandbox: /run/input/sandbox
+          success_outcome: /run/input/success_outcome
+      contract:
+        input:
+          schema:
+            type: object
+            required: [instruction, repo]
+        outcomes:
+          completed:
+            schema:
+              type: object
+              required: [summary]
+              properties:
+                summary:
+                  type: string
+      ledger:
+        propose: [claim]
+      policy:
+        # Explicit node timeout (PRD/plan c22, h20): generous because a real
+        # codex exec turn over a small read-only prompt is normally
+        # seconds, but ChatGPT-auth codex sessions have observed
+        # multi-minute cold starts (adapters/codex/README.md's grounding
+        # section). 15m gives real headroom without leaving a hung bridge
+        # restart unbounded — internal/engine/transition.go routes an
+        # expired timeout as a domain outcome, so this bound is also the
+        # node's recovery story, not just a budget.
+        timeout: 15m
+        retry:
+          # maxAttempts: 1 is deliberate for a billable, live-only smoke
+          # run: a retry here would silently double the real codex spend
+          # this workflow incurs. A failed attempt should be investigated,
+          # not auto-retried.
+          maxAttempts: 1
+          backoff: none
+
+    # Second hop of the chain. Placed on company/codex-orin.
+    codex-orin:
+      kind: agent
+      ownerRef: team/platform-ai
+      uses: actor://company/codex-orin@sha256:2222222222222222222222222222222222222222222222222222222222222b
+      input:
+        bindings:
+          instruction: /run/input/instruction
+          repo: /run/input/orin_repo
+          sandbox: /run/input/sandbox
+          success_outcome: /run/input/success_outcome
+      contract:
+        input:
+          schema:
+            type: object
+            required: [instruction, repo]
+        outcomes:
+          completed:
+            schema:
+              type: object
+              required: [summary]
+              properties:
+                summary:
+                  type: string
+      ledger:
+        propose: [claim]
+      policy:
+        timeout: 15m
+        retry:
+          maxAttempts: 1
+          backoff: none
+
+    finish:
+      kind: end
+      ownerRef: team/platform-ai
+      output:
+        from: /nodes/codex-orin/output
+
+  edges:
+    - from: codex-thor.completed
+      to: codex-orin
+    - from: codex-orin.completed
+      to: finish

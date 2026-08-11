@@ -102,6 +102,9 @@ func (s *Server) propagateCancelToActors(ctx context.Context, runID string) {
 	if err != nil {
 		// Nothing to iterate and nowhere to record against: the run-level
 		// event log has no invocation identity to attach this failure to.
+		// The operator still deserves the line.
+		s.log.Error("cancel propagation: loading pending invocations failed",
+			"run_id", runID, "error", err)
 		return
 	}
 	if len(invocations) == 0 {
@@ -112,7 +115,9 @@ func (s *Server) propagateCancelToActors(ctx context.Context, runID string) {
 	if err != nil {
 		// Same reasoning: a registry construction failure here means a
 		// misconfigured server, not a per-invocation condition worth its own
-		// event.
+		// event. Logged for the operator.
+		s.log.Error("cancel propagation: registry construction failed",
+			"run_id", runID, "error", err)
 		return
 	}
 
@@ -140,9 +145,9 @@ func (s *Server) cancelOneInvocation(ctx context.Context, runID string, registry
 			outcome, detail = "failed", fmt.Sprintf("resolve actor %q: %v", inv.ActorRef, err)
 			break
 		}
-		cancelCtx, cancel := context.WithTimeout(ctx, cancelPropagateTimeout)
+		cancelCtx, cancelTimeout := context.WithTimeout(ctx, cancelPropagateTimeout)
 		cancelErr := cancelActorClient.Cancel(cancelCtx, endpoint, inv.InvocationID, fmt.Sprintf("run %s cancelled", runID))
-		cancel()
+		cancelTimeout()
 		if cancelErr != nil {
 			outcome, detail = "failed", cancelErr.Error()
 		} else {
@@ -150,6 +155,14 @@ func (s *Server) cancelOneInvocation(ctx context.Context, runID string, registry
 		}
 	}
 
+	if outcome == "failed" {
+		s.log.Error("cancel propagation: actor Cancel failed",
+			"run_id", runID, "invocation_id", inv.InvocationID,
+			"actor_ref", inv.ActorRef, "detail", detail)
+	} else {
+		s.log.Info("cancel propagation", "run_id", runID,
+			"invocation_id", inv.InvocationID, "outcome", outcome)
+	}
 	s.recordCancelPropagation(ctx, runID, inv, outcome, detail)
 }
 

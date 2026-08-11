@@ -392,9 +392,15 @@ func HandleCallback(ctx context.Context, deps CallbackDeps, attemptToken string,
 		// last, after handleClaimed has already returned the mark and the
 		// lease, so the actor's redelivery is neither mistaken for a duplicate
 		// of work that never happened nor let in while the compensations are
-		// still running. A failure to release is not worth masking the
-		// original error with.
-		_ = deps.Store.ReleaseCallbackEvent(ctx, inv, ev.EventID)
+		// still running. A failed release must not mask the original error,
+		// but it must not vanish either — an unreleased claim turns the
+		// redelivery into a permanent duplicate, so the failure is recorded
+		// where the out-of-order and duplicate diagnostics already live.
+		if relErr := deps.Store.ReleaseCallbackEvent(ctx, inv, ev.EventID); relErr != nil {
+			deps.record(ctx, inv, TypeCallbackCommitFailed, ev, fmt.Sprintf(
+				"compensation failed: event-id claim for %s was not released (%v); its redelivery will be refused as a duplicate until the claim is cleared",
+				ev.EventID, relErr))
+		}
 		return CallbackResult{AttemptID: attemptID}, err
 	}
 	return result, nil
@@ -420,8 +426,15 @@ func handleClaimed(ctx context.Context, deps CallbackDeps, inv PendingInvocation
 		// is lowered again — otherwise the redelivery of THIS event carries a
 		// sequence the ratchet has already consumed and is refused forever.
 		// Conditional on the mark still being ours, so a concurrent delivery
-		// that legitimately moved it on is left alone.
-		_ = deps.Store.RollbackCallbackSequence(ctx, inv.AttemptID, ev.Sequence, inv.LastSequence)
+		// that legitimately moved it on is left alone. A failed rollback is
+		// exactly the permanent-block bug this compensation exists to
+		// prevent, so it is recorded rather than swallowed (without masking
+		// the original error).
+		if rbErr := deps.Store.RollbackCallbackSequence(ctx, inv.AttemptID, ev.Sequence, inv.LastSequence); rbErr != nil {
+			deps.record(ctx, inv, TypeCallbackCommitFailed, ev, fmt.Sprintf(
+				"compensation failed: sequence mark %d was not rolled back to %d (%v); this event's redelivery will be refused out-of-order until the mark is corrected",
+				ev.Sequence, inv.LastSequence, rbErr))
+		}
 		return CallbackResult{}, err
 	}
 	return result, nil

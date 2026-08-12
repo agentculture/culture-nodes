@@ -21,6 +21,7 @@
 - cost visibility is aggregation + exposure, not new measurement: all three bridges (claude-code, codex, colleague mapping.py) already map backend usage into the §13.2 Usage block (input/output tokens, cost/currency pointers, internal/actors/protocol.go); aggregate attempt -> node run -> run, expose on run detail + node-runs listing, render in RunView, NodeDetailPanel, and the jobs timeline (PRD §8.6 lists cost/usage among close-zoom view fields)
   - instruction: aggregate usage attempt->node-run->run in the store layer, expose on run detail + node-runs listing, render in RunView/NodeDetailPanel/jobs timeline; test the no-usage-reported rendering path
   - honesty: a run's rendered cost equals the sum of its attempts' §13.2 usage, and attempts that reported no usage render as 'not reported' — never silently as zero
+  - honesty: a run's cost includes every attempt — failed, retried, and cancelled included: money spent is money spent, and hiding failed-attempt burn would misstate exactly the retry-burn signal #28's aggregates need
 - run name/description: createRunRequest today is exactly {`workflow_digest`, input} (internal/api/runs.go) — add optional display name/description at POST /v1alpha1/runs, carry it through list/board/jobs/run views, add CLI parity (nodes run create --name), and derive a truncated hint from the run input when absent
   - instruction: add optional name/description to CreateRunRequest + runOut + list queries, nodes run create --name, and the input-derived fallback hint; update openapi.yaml (parity gate)
   - honesty: name/description are optional and additive — a run created without them still lists with a usable hint derived from its input, and existing clients keep working unchanged
@@ -63,6 +64,27 @@
 - the live-mesh visual's quality bar is STUNNING — a signature, futuristic, alive-feeling showpiece (wholesome, not clinical): the MeshIsland reference sets the floor (breathing motion, traffic pulses), not the ceiling; this view is a deliberate design investment, the product's face, and acceptance is the operator's wow on the real screen — while still honoring prefers-reduced-motion with a dignified static frame
   - instruction: treat the mesh view as a design investment: motion design pass (breathing, pulses, glow), palette from culture-design tokens, review with the operator on the wide display before calling it done
   - honesty: the bar is the operator's judgment on the real screen: the view reads as alive, futuristic, and wholesome — MeshIsland is the floor, not the ceiling — and the reduced-motion frame still looks intentional
+- cost persistence comes FIRST: the §13.2 Usage block the bridges emit is dropped at the completion seam today — no Usage consumer exists in engine/worker/actors non-test code, `actor_invocations` has no usage column, and a live probe of thor prod found 0 of 25 attempts carrying usage in result — so the cost family starts with persisting usage per attempt at completion (expand-only migration), and every pre-existing attempt renders 'not reported' (h2)
+  - instruction: persist the §13.2 Usage block at the completion seam (sync and callback paths) via an expand-only migration; then aggregate per c3
+  - honesty: after the persistence change, re-running the thor probe shows new attempts carrying the usage their bridge reported (`with_usage` > 0), while historical attempts render 'not reported' — no backfill, no fabricated zeros
+- the live-mesh view needs a fleet-wide event source: GET /v1alpha1/runs/{id}/events is per-run only (pollEvents filters WHERE `run_id`), so the mesh view requires either a new cross-run events stream endpoint or coarse polling of the runs list — plus the c19 actors API for its actor nodes; 'composing existing SSE' as scoped was optimistic
+  - instruction: add a cross-run events surface (or server-side fan-in endpoint) scoped to active runs; mesh nodes come from the c19 actors API
+  - honesty: the mesh view's pulses come from committed events across all displayed runs without opening one SSE connection per run — the data source is a deliberate new surface, not an N+1 hack
+- cost figures are token-first and never estimated: Usage.Cost/Currency are nullable by §13.2 design ('an actor that does not price its work says so with null'), codex/colleague report tokens only and the bridges never estimate — so stats and run views total tokens always, show currency cost only where actors reported it, and the control plane derives no prices from token counts this cycle (a pricing table is a possible follow-up issue)
+  - instruction: stats tab and run views: token totals as the primary figure, currency cost as a secondary figure where present; 'not reported' otherwise
+  - honesty: no code path in the control plane or web derives a currency amount from token counts — currency renders only when an actor reported it, token totals render always
+- every new view (workflows, statistics, mesh, authoring) extends the agent-state store and carries stable ids/data-attributes — the machine-readable #agent-state node is how agents and the webglass CI job assert what the page shows; a view that exists only in pixels breaks the repo's agent-operable-UI contract and h19
+  - instruction: extend AgentState with route-specific fields for workflows/stats/mesh/authoring; every assertable element carries a stable id or data-attribute
+  - honesty: the webglass CI job (or an e2e test) asserts each new view through the #agent-state node — a view unregistered in agent-state fails CI, not review
+- no actor grades its own run: the grade record names the graded actor AND the grading origin, and the API refuses a grade whose grading actor equals the evaluated actor — the self-promotion rule (§10.4 'no actor promotes its own proposal') extended to opinion records; grade corrections append with supersedes like every ledger record
+  - instruction: enforce in the grade append path beside the existing §10.4 authority checks; test both the agent-grades-agent allowed path and the self-grade refusal
+  - honesty: an API-level test proves a grade whose grading actor equals the evaluated actor is refused with a structured error
+- every schema change in this family is expand-only per ADR 0002: nullable name/category columns on runs, a nullable usage column (or sibling table) for attempts, and the grade record type introduced additively — each migration tolerates the N-1 binary still running during the thor/orin rolling deploy window
+  - instruction: runs.name/runs.category nullable columns, attempt usage as nullable column or sibling table, grade record type added to the schema registry additively
+  - honesty: every migration in this family is reviewed against the ADR 0002 checklist: nullable or default-bearing additions only, and the N-1 binary keeps running against the expanded schema
+- OTel spans and metrics carry identifiers, states, and durations — run/node/attempt ids, outcome kinds, queue depths — never run input, instruction text, or ledger payload content; observability must not become a second, unaudited copy of the work ledger
+  - instruction: instrument engine transitions, dispatch, and callbacks with the allowlist; no attribute takes run input, instruction text, or ledger record data
+  - honesty: span and metric attributes are drawn from an explicit allowlist of ids, enum states, counts, and durations — a reviewer can read the allowlist; payload content has no path in
 
 ## Honesty conditions
 
@@ -74,6 +96,7 @@
 - the before-state pains are cited from operating evidence (issues #12/#13/#28, run 01KZJYNC884FJHZ46XA4TW0MMF) — none is invented to pad the story
 - the brand-line claim is honored in the product: what the UI shows as evidence is measured or observed provenance, never a completion claim restyled
 - the success signal is exercised end-to-end on production (thor), not simulated in a fixture
+- the authoring-slice ADR names the unauthenticated write surface and the LAN-bound acceptance explicitly — the exposure is a recorded decision, not an accident
 
 ## Success signals
 
@@ -83,6 +106,8 @@
 
 - the full graphical/canvas workflow editor stays out — PRD Phase 3 'Authoring and reuse' owns it; the paste-validate-preview-publish slice needs an ADR recording the deviation-in-timing against PRD §8.6 Design view / Phase-3 scope, per issue #12 item 6
 - every new API surface lands in api/openapi/openapi.yaml and maps from all three fronts — tests/parity/`parity_test.go` enumerates Go CLI verbs, Python CLI verbs, and web-client operations and asserts each maps to a documented operation; new endpoints (name/category params, stats, actors, workflows-view queries) that skip the spec fail parity visibly
+- the in-UI authoring slice adds one-click publish + run-creation to a control plane that has NO authentication today (issue #6 open) — the slice ships without adding auth, which is acceptable only while the API stays LAN-bound on the thor/orin network; issue #6 is the explicit gate before any wider exposure, and the ADR for the authoring slice must say so
+  - instruction: write the exposure section into the same ADR that records the Phase-3 timing deviation; #6 is cited as the gate
 
 ## Non-goals
 
@@ -96,6 +121,7 @@
 - attempts persist actor results as opaque JSONB (Result \[\]byte in internal/store/postgres/sqlcgen/models.go) — usage aggregation needs SQL JSON extraction over that column or a migration extracting usage into queryable columns; no schema change has been decided yet
 - the async `post_run` gap blocks #13 item 2 for the real fleet: worker refuses `post_run` on agent nodes whose actor answers async (refuseAsyncPostRun — the callback path has no IR/runner awareness), and the production claude/codex bridges run `ALWAYS_ASYNC` — so hook-snapshot evidence cannot cover production attempts without extending hook execution into the callback path, a cross-cutting change hooks.go explicitly documents as past-slice
 - per-actor aggregates imply introducing the actors API family first: api/openapi/openapi.yaml has NO /v1alpha1/actors paths at all — actors are registered via raw DB rows (issue #8) and even nodes-op's 'actors' verb resorts to ssh+psql on thor; GET /v1alpha1/actors/{id}/stats (runs by outcome, claims proposed/confirmed/rejected, attempts per completion, duration percentiles, usage/cost) is bigger than a stats endpoint — it stands up actor read surface where none exists
+- statistics over live-updating runs are eventually-consistent snapshots: the stats tab reads committed rows at query time with no transactional freeze, which is honest for an observation surface — a number can be stale by one refresh, never wrong about what was committed
 
 ## Scope exploration
 
@@ -143,13 +169,36 @@
   - seeds: `c23`
 - `s22` — `internal/telemetry/doc.go + issue #5 + /home/spark/git/culture/pyproject.toml otel deps`: telemetry is a stub with a parked-until-production trigger that has since fired; culture's OTel dependency set is the in-house prior art to mirror in Go
   - seeds: `c24`
+- `s23` — `challenge pass / adjacent-systems lens: engine CompleteAttempt seam + thor prod attempts table (probe: 25 total, 25 with result, 0 with usage, 0 with cost)`: bridges measure usage but persistence discards it — c3's 'only aggregation is missing' was wrong; a persistence step precedes aggregation
+  - seeds: `c33`
+- `s24` — `challenge pass / adjacent-systems lens: internal/api/events.go pollEvents (per-run WHERE clause)`: no fleet-wide event stream exists; the mesh view's data source is a new API surface, dependent on the actors API family
+  - seeds: `c34`
+- `s25` — `challenge pass / unstated-assumptions lens: internal/actors/protocol.go Usage (nullable Cost/Currency) + codex mapping.py 'never estimates'`: most fleet attempts will carry tokens without currency; 'cost total/average' must define its unit honestly or the stats tab misleads
+  - seeds: `c35`
+- `s26` — `challenge pass / adjacent-systems lens: web/src/agent-state/store.ts + .github/workflows/web.yml webglass job`: agent-state registration is a hidden per-view dependency the spec never named
+  - seeds: `c36`
+- `s27` — `challenge pass / security lens: internal/api/server.go (no authn middleware) + issue #6`: authoring widens the write surface of an unauthenticated API; recorded as a boundary with #6 as the exposure gate rather than silently inherited
+  - seeds: `c37`
+- `s28` — `challenge pass / overlooked-actors lens: internal/ledger/authority.go origin rules + envelope supersedes`: the frame's grading claims never addressed self-grading; the authority model has the analog rule to extend
+  - seeds: `c38`
+- `s29` — `challenge pass / migration lens: docs/adr/0002-migration-policy.md expand-contract + N-1 rule`: three schema touches (runs, attempts, ledger record set) all fit the expand shape; none needs a contract migration this cycle
+  - seeds: `c39`
+- `s30` — `challenge pass / observability lens: internal/telemetry stub + PRD §10 ledger-authority model`: span-content hygiene was unstated; the ledger is the audited record, telemetry must stay metadata-only
+  - seeds: `c40`
+- `s31` — `challenge pass / concurrency lens: two workers + scheduler writing one Postgres while stats read it`: snapshot semantics suffice for observation-only stats; no locking or materialized rollup needed this cycle
+  - seeds: `c41`
+- `s32` — `challenge pass / reversibility lens: migrations/ + ADR 0002 rollback posture`: clean pass: every planned change is additive, so binary rollback to N-1 tolerates the expanded schema; no downgrade migration needed
+- `s33` — `challenge pass / lifecycle lens: compiler owners.go ownerRef requirement vs UI publish`: clean pass: workflow ownership comes from the YAML itself (err-missing-owner is a compile diagnostic), so UI publishing introduces no ownerless path
+- `s34` — `challenge pass / distributed-state lens: thor/orin one-at-a-time deploy vs new record type`: workers consume work items, not ledger grade records — a grade written while orin still runs N-1 is never read by the old binary; residual risk bounded by ADR 0002 expand rule
 
 ## Decisions
 
 - q2 decided: async agent attempts carry bridge-measured workspace facts this cycle; hook-observed evidence is sync-only; callback-path hook execution is a recorded follow-up, not silent scope
 - q3 decided: grade is a new first-class ledger `record_type`, not a review extension — truth-of-a-claim and quality-of-work remain different statements
+- q4 decided: retag allowed (category PATCH surface), rename immutable at creation this cycle
 
 ## Open parks
 
 - [unknown_nonblocking] how the three issues split into delivery slices (quick web-only wins vs API+store cost family vs evidence layers vs actors/grading family) is a plan-stage call, not a frame blocker
+- [unknown_nonblocking] fleet-wide event stream load: a mesh view polling events for many runs could get heavy — containment (active-runs scoping, coarse poll interval, server-side fan-in) is a plan-stage design risk, not a spec change
 - [follow_up] extend `post_run` hook execution to async-answering agents via the callback path (cross-cutting per hooks.go) — file as its own issue when the evidence family lands

@@ -4,7 +4,7 @@
   "schema_version": 5,
   "status": "exported",
   "created": "2026-08-12T18:29:34Z",
-  "updated": "2026-08-12T19:06:34Z",
+  "updated": "2026-08-12T19:20:36Z",
   "claims": [
     {
       "id": "c1",
@@ -47,6 +47,12 @@
         {
           "id": "h2",
           "text": "a run's rendered cost equals the sum of its attempts' \u00a713.2 usage, and attempts that reported no usage render as 'not reported' \u2014 never silently as zero",
+          "status": "confirmed",
+          "instruction": ""
+        },
+        {
+          "id": "h24",
+          "text": "a run's cost includes every attempt \u2014 failed, retried, and cancelled included: money spent is money spent, and hiding failed-attempt burn would misstate exactly the retry-burn signal #28's aggregates need",
           "status": "confirmed",
           "instruction": ""
         }
@@ -550,6 +556,182 @@
       "links": [],
       "instruction": "",
       "revisions": []
+    },
+    {
+      "id": "c33",
+      "kind": "requirement",
+      "text": "cost persistence comes FIRST: the \u00a713.2 Usage block the bridges emit is dropped at the completion seam today \u2014 no Usage consumer exists in engine/worker/actors non-test code, actor_invocations has no usage column, and a live probe of thor prod found 0 of 25 attempts carrying usage in result \u2014 so the cost family starts with persisting usage per attempt at completion (expand-only migration), and every pre-existing attempt renders 'not reported' (h2)",
+      "origin": "llm",
+      "status": "confirmed",
+      "honesty_conditions": [
+        {
+          "id": "h25",
+          "text": "after the persistence change, re-running the thor probe shows new attempts carrying the usage their bridge reported (with_usage > 0), while historical attempts render 'not reported' \u2014 no backfill, no fabricated zeros",
+          "status": "confirmed",
+          "instruction": ""
+        }
+      ],
+      "hard_questions": [],
+      "links": [],
+      "instruction": "persist the \u00a713.2 Usage block at the completion seam (sync and callback paths) via an expand-only migration; then aggregate per c3",
+      "revisions": []
+    },
+    {
+      "id": "c34",
+      "kind": "requirement",
+      "text": "the live-mesh view needs a fleet-wide event source: GET /v1alpha1/runs/{id}/events is per-run only (pollEvents filters WHERE run_id), so the mesh view requires either a new cross-run events stream endpoint or coarse polling of the runs list \u2014 plus the c19 actors API for its actor nodes; 'composing existing SSE' as scoped was optimistic",
+      "origin": "llm",
+      "status": "confirmed",
+      "honesty_conditions": [
+        {
+          "id": "h26",
+          "text": "the mesh view's pulses come from committed events across all displayed runs without opening one SSE connection per run \u2014 the data source is a deliberate new surface, not an N+1 hack",
+          "status": "confirmed",
+          "instruction": ""
+        }
+      ],
+      "hard_questions": [],
+      "links": [],
+      "instruction": "add a cross-run events surface (or server-side fan-in endpoint) scoped to active runs; mesh nodes come from the c19 actors API",
+      "revisions": []
+    },
+    {
+      "id": "c35",
+      "kind": "requirement",
+      "text": "cost figures are token-first and never estimated: Usage.Cost/Currency are nullable by \u00a713.2 design ('an actor that does not price its work says so with null'), codex/colleague report tokens only and the bridges never estimate \u2014 so stats and run views total tokens always, show currency cost only where actors reported it, and the control plane derives no prices from token counts this cycle (a pricing table is a possible follow-up issue)",
+      "origin": "llm",
+      "status": "confirmed",
+      "honesty_conditions": [
+        {
+          "id": "h27",
+          "text": "no code path in the control plane or web derives a currency amount from token counts \u2014 currency renders only when an actor reported it, token totals render always",
+          "status": "confirmed",
+          "instruction": ""
+        }
+      ],
+      "hard_questions": [],
+      "links": [],
+      "instruction": "stats tab and run views: token totals as the primary figure, currency cost as a secondary figure where present; 'not reported' otherwise",
+      "revisions": []
+    },
+    {
+      "id": "c36",
+      "kind": "requirement",
+      "text": "every new view (workflows, statistics, mesh, authoring) extends the agent-state store and carries stable ids/data-attributes \u2014 the machine-readable #agent-state node is how agents and the webglass CI job assert what the page shows; a view that exists only in pixels breaks the repo's agent-operable-UI contract and h19",
+      "origin": "llm",
+      "status": "confirmed",
+      "honesty_conditions": [
+        {
+          "id": "h28",
+          "text": "the webglass CI job (or an e2e test) asserts each new view through the #agent-state node \u2014 a view unregistered in agent-state fails CI, not review",
+          "status": "confirmed",
+          "instruction": ""
+        }
+      ],
+      "hard_questions": [],
+      "links": [],
+      "instruction": "extend AgentState with route-specific fields for workflows/stats/mesh/authoring; every assertable element carries a stable id or data-attribute",
+      "revisions": []
+    },
+    {
+      "id": "c37",
+      "kind": "boundary",
+      "text": "the in-UI authoring slice adds one-click publish + run-creation to a control plane that has NO authentication today (issue #6 open) \u2014 the slice ships without adding auth, which is acceptable only while the API stays LAN-bound on the thor/orin network; issue #6 is the explicit gate before any wider exposure, and the ADR for the authoring slice must say so",
+      "origin": "llm",
+      "status": "confirmed",
+      "honesty_conditions": [
+        {
+          "id": "h29",
+          "text": "the authoring-slice ADR names the unauthenticated write surface and the LAN-bound acceptance explicitly \u2014 the exposure is a recorded decision, not an accident",
+          "status": "confirmed",
+          "instruction": ""
+        }
+      ],
+      "hard_questions": [],
+      "links": [],
+      "instruction": "write the exposure section into the same ADR that records the Phase-3 timing deviation; #6 is cited as the gate",
+      "revisions": []
+    },
+    {
+      "id": "c38",
+      "kind": "requirement",
+      "text": "no actor grades its own run: the grade record names the graded actor AND the grading origin, and the API refuses a grade whose grading actor equals the evaluated actor \u2014 the self-promotion rule (\u00a710.4 'no actor promotes its own proposal') extended to opinion records; grade corrections append with supersedes like every ledger record",
+      "origin": "llm",
+      "status": "confirmed",
+      "honesty_conditions": [
+        {
+          "id": "h30",
+          "text": "an API-level test proves a grade whose grading actor equals the evaluated actor is refused with a structured error",
+          "status": "confirmed",
+          "instruction": ""
+        }
+      ],
+      "hard_questions": [],
+      "links": [],
+      "instruction": "enforce in the grade append path beside the existing \u00a710.4 authority checks; test both the agent-grades-agent allowed path and the self-grade refusal",
+      "revisions": []
+    },
+    {
+      "id": "c39",
+      "kind": "requirement",
+      "text": "every schema change in this family is expand-only per ADR 0002: nullable name/category columns on runs, a nullable usage column (or sibling table) for attempts, and the grade record type introduced additively \u2014 each migration tolerates the N-1 binary still running during the thor/orin rolling deploy window",
+      "origin": "llm",
+      "status": "confirmed",
+      "honesty_conditions": [
+        {
+          "id": "h31",
+          "text": "every migration in this family is reviewed against the ADR 0002 checklist: nullable or default-bearing additions only, and the N-1 binary keeps running against the expanded schema",
+          "status": "confirmed",
+          "instruction": ""
+        }
+      ],
+      "hard_questions": [],
+      "links": [],
+      "instruction": "runs.name/runs.category nullable columns, attempt usage as nullable column or sibling table, grade record type added to the schema registry additively",
+      "revisions": []
+    },
+    {
+      "id": "c40",
+      "kind": "requirement",
+      "text": "OTel spans and metrics carry identifiers, states, and durations \u2014 run/node/attempt ids, outcome kinds, queue depths \u2014 never run input, instruction text, or ledger payload content; observability must not become a second, unaudited copy of the work ledger",
+      "origin": "llm",
+      "status": "confirmed",
+      "honesty_conditions": [
+        {
+          "id": "h32",
+          "text": "span and metric attributes are drawn from an explicit allowlist of ids, enum states, counts, and durations \u2014 a reviewer can read the allowlist; payload content has no path in",
+          "status": "confirmed",
+          "instruction": ""
+        }
+      ],
+      "hard_questions": [],
+      "links": [],
+      "instruction": "instrument engine transitions, dispatch, and callbacks with the allowlist; no attribute takes run input, instruction text, or ledger record data",
+      "revisions": []
+    },
+    {
+      "id": "c41",
+      "kind": "assumption",
+      "text": "statistics over live-updating runs are eventually-consistent snapshots: the stats tab reads committed rows at query time with no transactional freeze, which is honest for an observation surface \u2014 a number can be stale by one refresh, never wrong about what was committed",
+      "origin": "llm",
+      "status": "confirmed",
+      "honesty_conditions": [],
+      "hard_questions": [],
+      "links": [],
+      "instruction": "",
+      "revisions": []
+    },
+    {
+      "id": "c42",
+      "kind": "decision",
+      "text": "q4 decided: retag allowed (category PATCH surface), rename immutable at creation this cycle",
+      "origin": "user",
+      "status": "confirmed",
+      "honesty_conditions": [],
+      "hard_questions": [],
+      "links": [],
+      "instruction": "",
+      "revisions": []
     }
   ],
   "open_vagueness": [
@@ -566,6 +748,15 @@
       "id": "v2",
       "text": "extend post_run hook execution to async-answering agents via the callback path (cross-cutting per hooks.go) \u2014 file as its own issue when the evidence family lands",
       "kind": "follow_up",
+      "claim_id": null,
+      "resolved": false,
+      "resolution": "",
+      "resolution_claim_id": null
+    },
+    {
+      "id": "v3",
+      "text": "fleet-wide event stream load: a mesh view polling events for many runs could get heavy \u2014 containment (active-runs scoping, coarse poll interval, server-side fan-in) is a plan-stage design risk, not a spec change",
+      "kind": "unknown_nonblocking",
       "claim_id": null,
       "resolved": false,
       "resolution": "",
@@ -748,6 +939,96 @@
       "seeds": [
         "c24"
       ]
+    },
+    {
+      "id": "s23",
+      "surface": "challenge pass / adjacent-systems lens: engine CompleteAttempt seam + thor prod attempts table (probe: 25 total, 25 with result, 0 with usage, 0 with cost)",
+      "finding": "bridges measure usage but persistence discards it \u2014 c3's 'only aggregation is missing' was wrong; a persistence step precedes aggregation",
+      "seeds": [
+        "c33"
+      ]
+    },
+    {
+      "id": "s24",
+      "surface": "challenge pass / adjacent-systems lens: internal/api/events.go pollEvents (per-run WHERE clause)",
+      "finding": "no fleet-wide event stream exists; the mesh view's data source is a new API surface, dependent on the actors API family",
+      "seeds": [
+        "c34"
+      ]
+    },
+    {
+      "id": "s25",
+      "surface": "challenge pass / unstated-assumptions lens: internal/actors/protocol.go Usage (nullable Cost/Currency) + codex mapping.py 'never estimates'",
+      "finding": "most fleet attempts will carry tokens without currency; 'cost total/average' must define its unit honestly or the stats tab misleads",
+      "seeds": [
+        "c35"
+      ]
+    },
+    {
+      "id": "s26",
+      "surface": "challenge pass / adjacent-systems lens: web/src/agent-state/store.ts + .github/workflows/web.yml webglass job",
+      "finding": "agent-state registration is a hidden per-view dependency the spec never named",
+      "seeds": [
+        "c36"
+      ]
+    },
+    {
+      "id": "s27",
+      "surface": "challenge pass / security lens: internal/api/server.go (no authn middleware) + issue #6",
+      "finding": "authoring widens the write surface of an unauthenticated API; recorded as a boundary with #6 as the exposure gate rather than silently inherited",
+      "seeds": [
+        "c37"
+      ]
+    },
+    {
+      "id": "s28",
+      "surface": "challenge pass / overlooked-actors lens: internal/ledger/authority.go origin rules + envelope supersedes",
+      "finding": "the frame's grading claims never addressed self-grading; the authority model has the analog rule to extend",
+      "seeds": [
+        "c38"
+      ]
+    },
+    {
+      "id": "s29",
+      "surface": "challenge pass / migration lens: docs/adr/0002-migration-policy.md expand-contract + N-1 rule",
+      "finding": "three schema touches (runs, attempts, ledger record set) all fit the expand shape; none needs a contract migration this cycle",
+      "seeds": [
+        "c39"
+      ]
+    },
+    {
+      "id": "s30",
+      "surface": "challenge pass / observability lens: internal/telemetry stub + PRD \u00a710 ledger-authority model",
+      "finding": "span-content hygiene was unstated; the ledger is the audited record, telemetry must stay metadata-only",
+      "seeds": [
+        "c40"
+      ]
+    },
+    {
+      "id": "s31",
+      "surface": "challenge pass / concurrency lens: two workers + scheduler writing one Postgres while stats read it",
+      "finding": "snapshot semantics suffice for observation-only stats; no locking or materialized rollup needed this cycle",
+      "seeds": [
+        "c41"
+      ]
+    },
+    {
+      "id": "s32",
+      "surface": "challenge pass / reversibility lens: migrations/ + ADR 0002 rollback posture",
+      "finding": "clean pass: every planned change is additive, so binary rollback to N-1 tolerates the expanded schema; no downgrade migration needed",
+      "seeds": []
+    },
+    {
+      "id": "s33",
+      "surface": "challenge pass / lifecycle lens: compiler owners.go ownerRef requirement vs UI publish",
+      "finding": "clean pass: workflow ownership comes from the YAML itself (err-missing-owner is a compile diagnostic), so UI publishing introduces no ownerless path",
+      "seeds": []
+    },
+    {
+      "id": "s34",
+      "surface": "challenge pass / distributed-state lens: thor/orin one-at-a-time deploy vs new record type",
+      "finding": "workers consume work items, not ledger grade records \u2014 a grade written while orin still runs N-1 is never read by the old binary; residual risk bounded by ADR 0002 expand rule",
+      "seeds": []
     }
   ],
   "lapses": []

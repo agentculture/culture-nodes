@@ -74,11 +74,41 @@ export interface AgentAuthoringState {
   digest: string | null;
 }
 
+/**
+ * The Statistics view's machine-readable mirror (task t6, honesty condition
+ * h9): the totals AND the denominator — how many runs are in the window,
+ * how many reported usage, how many are excluded — so an agent reading
+ * `#agent-state` gets the same honesty guarantee a human reading the page
+ * gets, without scraping table text. Optional and absent from every other
+ * view's state (undefined keys are dropped by `JSON.stringify`, so this
+ * adds nothing to the `#agent-state` payload anywhere else — same
+ * convention as `authoring`).
+ */
+export interface AgentStatisticsState {
+  total_runs: number;
+  reported_runs: number;
+  excluded_runs: number;
+  total_input_tokens: number;
+  total_output_tokens: number;
+  avg_input_tokens: number | null;
+  median_input_tokens: number | null;
+  avg_output_tokens: number | null;
+  median_output_tokens: number | null;
+  /** `null` when no single currency covers every cost-reporting run (or
+   * none reported a cost at all) — never a currency this view invented. */
+  cost_currency: string | null;
+  avg_cost: number | null;
+  median_cost: number | null;
+  /** Number of category rows in the breakdown, including the uncategorized bucket when it has any runs. */
+  category_count: number;
+}
+
 export interface AgentState {
   status: AgentStatus;
   route: string;
   run: AgentRunState | null;
   authoring?: AgentAuthoringState | null;
+  statistics?: AgentStatisticsState | null;
 }
 
 const INITIAL: AgentState = { status: "loading", route: "/", run: null };
@@ -149,6 +179,29 @@ function shallowEqualAuthoring(
   );
 }
 
+function shallowEqualStatistics(
+  a: AgentStatisticsState | null | undefined,
+  b: AgentStatisticsState | null | undefined,
+): boolean {
+  if (a === b) return true;
+  if (!a || !b) return false;
+  return (
+    a.total_runs === b.total_runs &&
+    a.reported_runs === b.reported_runs &&
+    a.excluded_runs === b.excluded_runs &&
+    a.total_input_tokens === b.total_input_tokens &&
+    a.total_output_tokens === b.total_output_tokens &&
+    a.avg_input_tokens === b.avg_input_tokens &&
+    a.median_input_tokens === b.median_input_tokens &&
+    a.avg_output_tokens === b.avg_output_tokens &&
+    a.median_output_tokens === b.median_output_tokens &&
+    a.cost_currency === b.cost_currency &&
+    a.avg_cost === b.avg_cost &&
+    a.median_cost === b.median_cost &&
+    a.category_count === b.category_count
+  );
+}
+
 /**
  * Merge a patch into the agent state. No-ops when nothing actually changed,
  * so a re-render storm cannot make the `<script>` node churn.
@@ -159,7 +212,8 @@ export function setAgentState(patch: Partial<AgentState>): void {
     next.status === current.status &&
     next.route === current.route &&
     shallowEqualRun(next.run, current.run) &&
-    shallowEqualAuthoring(next.authoring, current.authoring)
+    shallowEqualAuthoring(next.authoring, current.authoring) &&
+    shallowEqualStatistics(next.statistics, current.statistics)
   ) {
     return;
   }

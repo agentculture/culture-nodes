@@ -14,6 +14,7 @@ import LedgerView from "./routes/LedgerView";
 import RunView from "./routes/RunView";
 import RunsBoard from "./routes/RunsBoard";
 import RunsList from "./routes/RunsList";
+import Statistics from "./routes/Statistics";
 import Workflows from "./routes/Workflows";
 
 /** Keeps agent-state's `route` in step with the router. */
@@ -39,6 +40,7 @@ export function App() {
           <Route path="/runs" element={<RunsList />} />
           <Route path="/board" element={<RunsBoard />} />
           <Route path="/jobs" element={<JobsTimeline />} />
+          <Route path="/stats" element={<Statistics />} />
           <Route path="/workflows" element={<Workflows />} />
           <Route path="/workflows/new" element={<AuthorWorkflow />} />
           <Route path="/runs/:id" element={<RunView />} />

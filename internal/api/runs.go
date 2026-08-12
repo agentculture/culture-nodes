@@ -54,7 +54,11 @@ func (s *Server) handleCreateRun(w http.ResponseWriter, r *http.Request) error {
 	if err != nil {
 		return classify(err)
 	}
-	writeJSON(w, http.StatusCreated, runOut(run))
+	usage, err := s.engineStore.RunUsage(ctx, run.ID)
+	if err != nil {
+		return internalError(err)
+	}
+	writeJSON(w, http.StatusCreated, runOut(run, usage))
 	return nil
 }
 
@@ -137,7 +141,11 @@ func (s *Server) handleGetRun(w http.ResponseWriter, r *http.Request) error {
 	if err != nil {
 		return internalError(err)
 	}
-	writeJSON(w, http.StatusOK, RunViewOut{Run: runOut(run), Tokens: tokens, NodeRuns: nodeRuns})
+	usage, err := s.engineStore.RunUsage(ctx, id)
+	if err != nil {
+		return internalError(err)
+	}
+	writeJSON(w, http.StatusOK, RunViewOut{Run: runOut(run, usage), Tokens: tokens, NodeRuns: nodeRuns})
 	return nil
 }
 
@@ -147,7 +155,11 @@ func (s *Server) handleCancelRun(w http.ResponseWriter, r *http.Request) error {
 	if err != nil {
 		return err
 	}
-	writeJSON(w, http.StatusOK, runOut(run))
+	usage, err := s.engineStore.RunUsage(r.Context(), run.ID)
+	if err != nil {
+		return internalError(err)
+	}
+	writeJSON(w, http.StatusOK, runOut(run, usage))
 	return nil
 }
 

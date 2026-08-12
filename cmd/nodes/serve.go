@@ -16,6 +16,7 @@ import (
 	"github.com/agentculture/culture-nodes/internal/clifmt"
 	"github.com/agentculture/culture-nodes/internal/scheduler"
 	"github.com/agentculture/culture-nodes/internal/store/postgres"
+	"github.com/agentculture/culture-nodes/internal/telemetry"
 )
 
 // defaultListenAddr is NODES_LISTEN's default (PRD §12.1's `nodes serve`).
@@ -101,6 +102,25 @@ func runServeMode(args []string, verb string, withScheduler bool) (int, error) {
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 
+	// task t19: env-gated (OTEL_EXPORTER_OTLP_ENDPOINT), so a deployment
+	// that has not configured a collector gets telemetry.NoOp() here --
+	// no exporter, no goroutine, no dial. Built once and threaded through
+	// the API server (engine completion + callback ingest) and, for `nodes
+	// all`, the in-process worker below, so every seam a request touches
+	// shares one Provider and one graceful shutdown.
+	telemetryProvider, err := telemetry.New(ctx)
+	if err != nil {
+		return 0, envError("building telemetry", err,
+			"verify OTEL_EXPORTER_OTLP_ENDPOINT and any other OTEL_EXPORTER_OTLP_* variables, or unset them to disable export")
+	}
+	defer func() {
+		flushCtx, cancelFlush := context.WithTimeout(context.Background(), shutdownTimeout)
+		defer cancelFlush()
+		if err := telemetryProvider.Shutdown(flushCtx); err != nil {
+			clifmt.EmitDiagnostic(fmt.Sprintf("nodes %s: telemetry shutdown: %v", verb, err))
+		}
+	}()
+
 	connectCtx, cancelConnect := context.WithTimeout(ctx, connectTimeout)
 	db, err := postgres.Connect(connectCtx, url)
 	cancelConnect()
@@ -123,6 +143,7 @@ func runServeMode(args []string, verb string, withScheduler bool) (int, error) {
 	if assets, ok := culturenodes.WebAssets(); ok {
 		opts = append(opts, api.WithWebAssets(assets))
 	}
+	opts = append(opts, api.WithTelemetry(telemetryProvider))
 
 	// A callback token secret is optional here for the same reason it is
 	// optional on the worker side (cmd/nodes/worker.go's callbackConfig): a
@@ -159,7 +180,7 @@ func runServeMode(args []string, verb string, withScheduler bool) (int, error) {
 	var workerErrs chan error
 	if withScheduler {
 		schedulerErrs = make(chan error, 1)
-		sched := scheduler.New(db, scheduler.Options{})
+		sched := scheduler.New(db, scheduler.Options{Telemetry: telemetryProvider})
 		go func() {
 			clifmt.EmitDiagnostic(fmt.Sprintf("nodes %s: scheduler running as %s", verb, sched.OwnerID()))
 			if err := sched.Run(ctx); err != nil && ctx.Err() == nil {
@@ -167,7 +188,7 @@ func runServeMode(args []string, verb string, withScheduler bool) (int, error) {
 			}
 		}()
 
-		wk, buildErr := buildWorker(db, namespaceID)
+		wk, buildErr := buildWorker(db, namespaceID, telemetryProvider)
 		if buildErr != nil {
 			stop()
 			return 0, buildErr

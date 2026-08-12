@@ -12,6 +12,7 @@ import (
 	"github.com/agentculture/culture-nodes/internal/engine"
 	"github.com/agentculture/culture-nodes/internal/ledger"
 	"github.com/agentculture/culture-nodes/internal/store/postgres"
+	"github.com/agentculture/culture-nodes/internal/telemetry"
 )
 
 // defaultEventPollInterval is how often the SSE handler polls the events
@@ -67,6 +68,11 @@ type Server struct {
 
 	pollInterval time.Duration
 	webAssets    fs.FS
+
+	// telemetry instruments the engine's completion transaction (wired into
+	// Engine at construction, below) and the actor callback ingest route
+	// (wired into its CallbackDeps in Handler). See WithTelemetry.
+	telemetry *telemetry.Provider
 
 	// log is where every 5xx response ((*Server).writeAPIError, see
 	// errors.go) and every terminal-commit callback failure
@@ -128,6 +134,19 @@ func WithDecisionAuthSecret(secret string) Option {
 	}
 }
 
+// WithTelemetry instruments the engine's §12.5 completion transaction and
+// the actor callback ingest route (task t19) through p. Omitting this
+// option (or passing nil) leaves both uninstrumented — p's zero value, a
+// nil *telemetry.Provider, is a safe no-op — matching every other Option
+// here that has a sensible do-nothing default.
+func WithTelemetry(p *telemetry.Provider) Option {
+	return func(s *Server) {
+		if p != nil {
+			s.telemetry = p
+		}
+	}
+}
+
 // WithLogger replaces the *slog.Logger every 5xx response and every
 // terminal-commit callback failure is logged through (see the package doc's
 // "Logging" section). Omitting it (or passing nil) leaves the default,
@@ -177,6 +196,19 @@ func NewServer(store *postgres.Store, namespaceID string, opts ...Option) (*Serv
 		if opt != nil {
 			opt(s)
 		}
+	}
+
+	// A telemetry Provider set by WithTelemetry above arrives after Engine
+	// was already built, so the engine handed to instrumented callers is
+	// rebuilt over the same store/namespace with the option wired in. This
+	// never fails once the first postgres.NewEngine call above already
+	// succeeded for the identical (store, namespaceID) pair.
+	if s.telemetry != nil {
+		eng, err := postgres.NewEngine(store, namespaceID, engine.WithTelemetry(s.telemetry))
+		if err != nil {
+			return nil, err
+		}
+		s.Engine = eng
 	}
 	return s, nil
 }
@@ -228,9 +260,10 @@ func (s *Server) Handler() http.Handler {
 	// rather than mounted-but-always-failing.
 	if s.callbackSigner != nil {
 		mux.Handle("POST "+callbackRoutePattern, s.logCallbackFailures(actors.NewCallbackHandler(actors.CallbackDeps{
-			Store:  s.callbackStore,
-			Engine: s.Engine,
-			Signer: s.callbackSigner,
+			Store:     s.callbackStore,
+			Engine:    s.Engine,
+			Signer:    s.callbackSigner,
+			Telemetry: s.telemetry,
 		})))
 	}
 

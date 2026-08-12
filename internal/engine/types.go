@@ -191,6 +191,25 @@ type Attempt struct {
 	Result       json.RawMessage
 	StartedAt    time.Time
 	CompletedAt  time.Time
+	// Usage is the §13.2 telemetry block this attempt reported, nil when it
+	// reported none. See CompletionRequest.Usage for why it is never
+	// fabricated.
+	Usage *Usage
+}
+
+// Usage is the §13.2 telemetry block as the engine persists it. It mirrors
+// internal/actors.Usage field-for-field but is declared independently here:
+// the engine cannot import internal/actors, because actors already imports
+// engine (for the Completer interface and CompletionRequest that its
+// callback commit path uses), and the reverse import would cycle. Cost and
+// Currency stay pointers for the reason actors.Usage's do: an actor that
+// does not price its work says so with null, not with a zero that reads as
+// "free".
+type Usage struct {
+	InputTokens  int64
+	OutputTokens int64
+	Cost         *float64
+	Currency     *string
 }
 
 // HumanTaskStatusPending is the status a human task is created with
@@ -272,6 +291,13 @@ type CompletionRequest struct {
 	// completing on behalf of an unregistered actor still gets its attempt
 	// recorded.
 	ActorID string
+
+	// Usage is the §13.2 telemetry block the actor reported, nil when it
+	// reported none. It rides straight onto the recorded attempt row
+	// (recordAttempt) with no derivation and no fabricated zero — the same
+	// null Cost/Currency semantics a Usage block arrived with are preserved
+	// into storage.
+	Usage *Usage
 }
 
 // RejectionKind names which contract refused a completion.

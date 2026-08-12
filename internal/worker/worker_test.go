@@ -322,6 +322,79 @@ func TestWorkerDrivesASynchronousRunToCompletion(t *testing.T) {
 	}
 }
 
+// The synchronous completion path (completeFromResult) persists whatever
+// §13.2 Usage block the actor's InvocationResult carried, on the attempt row
+// it commits — task t1's sync-path half of the completion seam. Before t1
+// this block was decoded off the wire (internal/actors/client.go) and then
+// silently dropped: no non-test code consumed it.
+func TestWorkerPersistsSynchronousUsage(t *testing.T) {
+	h := newHarness(t, func(_ *harness, w http.ResponseWriter, _ actors.InvocationRequest) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = fmt.Fprint(w, `{
+			"outcome": "completed",
+			"output": {"score": 0.5, "summary": "ok"},
+			"ledger_delta": {"records": []},
+			"usage": {"input_tokens": 120, "output_tokens": 340, "cost": 0.0021, "currency": "USD"}
+		}`)
+	})
+
+	run := h.createRun("sync.workflow.yaml", `{"subject":"widget"}`)
+	h.runUntil(20*time.Second, func() bool { return h.run(run.ID).State.Terminal() })
+
+	if state := h.run(run.ID).State; state != engine.RunCompleted {
+		t.Fatalf("run state = %s, want completed (worker errors: %v)", state, h.workerErrors())
+	}
+
+	var (
+		inputTokens, outputTokens int64
+		cost                      float64
+		currency                  string
+	)
+	if err := h.store.Pool().QueryRow(h.ctx, `
+		SELECT a.usage_input_tokens, a.usage_output_tokens, a.usage_cost, a.usage_currency
+		FROM attempts AS a JOIN node_runs AS nr ON nr.id = a.node_run_id
+		WHERE nr.run_id = $1 AND nr.node_key = 'analyze'
+	`, run.ID).Scan(&inputTokens, &outputTokens, &cost, &currency); err != nil {
+		t.Fatalf("read attempt usage: %v", err)
+	}
+	if inputTokens != 120 || outputTokens != 340 {
+		t.Errorf("tokens = %d/%d, want 120/340", inputTokens, outputTokens)
+	}
+	if cost != 0.0021 {
+		t.Errorf("cost = %v, want 0.0021", cost)
+	}
+	if currency != "USD" {
+		t.Errorf("currency = %q, want USD", currency)
+	}
+}
+
+// A synchronous result that carries no Usage block leaves the attempt's
+// usage columns NULL — the plain writeSyncResult fixture every other
+// synchronous test already uses, made an explicit assertion here rather
+// than an incidental one (no fabricated zero, task t1 acceptance).
+func TestWorkerWithoutUsageLeavesAttemptUsageNull(t *testing.T) {
+	h := newHarness(t, func(_ *harness, w http.ResponseWriter, req actors.InvocationRequest) {
+		writeSyncResult(w, "completed", `{"score":0.91,"summary":"looks good"}`)
+	})
+
+	run := h.createRun("sync.workflow.yaml", `{"subject":"widget"}`)
+	h.runUntil(20*time.Second, func() bool { return h.run(run.ID).State.Terminal() })
+
+	var (
+		inputTokens, outputTokens, cost, currency any
+	)
+	if err := h.store.Pool().QueryRow(h.ctx, `
+		SELECT a.usage_input_tokens, a.usage_output_tokens, a.usage_cost, a.usage_currency
+		FROM attempts AS a JOIN node_runs AS nr ON nr.id = a.node_run_id
+		WHERE nr.run_id = $1 AND nr.node_key = 'analyze'
+	`, run.ID).Scan(&inputTokens, &outputTokens, &cost, &currency); err != nil {
+		t.Fatalf("read attempt usage: %v", err)
+	}
+	if inputTokens != nil || outputTokens != nil || cost != nil || currency != nil {
+		t.Errorf("usage columns = (%v, %v, %v, %v), want all NULL", inputTokens, outputTokens, cost, currency)
+	}
+}
+
 // §12.6: an asynchronous acceptance releases worker capacity. The work item
 // must be parked — not leased — while the actor works, and the run must
 // complete from the callback alone.

@@ -276,6 +276,7 @@ func (c *completion) recordAttempt(ctx context.Context) error {
 		Result:       jsonOrNull(c.req.Output),
 		StartedAt:    c.now,
 		CompletedAt:  c.now,
+		Usage:        c.req.Usage,
 	}); err != nil {
 		return err
 	}

@@ -654,6 +654,7 @@ func completionFor(inv PendingInvocation, ev CallbackEvent) (engine.CompletionRe
 		if payload.LedgerDelta != nil {
 			req.LedgerDelta = append([]ledger.Record(nil), payload.LedgerDelta.Records...)
 		}
+		req.Usage = payload.Usage.ToEngine()
 		return req, ""
 
 	case EventFailed:

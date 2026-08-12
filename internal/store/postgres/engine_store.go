@@ -558,23 +558,43 @@ func (eq engineQueries) MarkHumanTaskDecided(ctx context.Context, id string, res
 const insertAttemptSQL = `
 INSERT INTO attempts (
 	id, namespace_id, node_run_id, attempt_number, actor_id, status, fencing_token,
-	result, started_at, completed_at
+	result, started_at, completed_at,
+	usage_input_tokens, usage_output_tokens, usage_cost, usage_currency
 )
-VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
+VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14)
 `
 
 // InsertAttempt records one dispatch attempt's result. The
 // attempts(node_run_id, attempt_number) unique constraint means a duplicate
 // completion is a constraint violation rather than a second silent row.
+//
+// The four usage_* columns (migrations/0012_attempt_usage.sql) are written
+// straight from attempt.Usage with no derivation: a nil Usage leaves all
+// four NULL, and a non-nil one preserves Cost/Currency's own independent
+// nullability rather than coercing an unpriced attempt's cost to 0 — see
+// engine.Usage's doc comment for why 0 would be a lie ("free") that null
+// is not.
 func (eq engineQueries) InsertAttempt(ctx context.Context, attempt engine.Attempt) error {
 	var result any
 	if len(attempt.Result) > 0 {
 		result = []byte(attempt.Result)
 	}
+	var (
+		inputTokens, outputTokens pgtype.Int8
+		cost                      pgtype.Float8
+		currency                  pgtype.Text
+	)
+	if attempt.Usage != nil {
+		inputTokens = int8FromPtr(&attempt.Usage.InputTokens)
+		outputTokens = int8FromPtr(&attempt.Usage.OutputTokens)
+		cost = float8FromPtr(attempt.Usage.Cost)
+		currency = textPtrFromNullable(attempt.Usage.Currency)
+	}
 	_, err := eq.q.Exec(ctx, insertAttemptSQL,
 		attempt.ID, eq.namespaceID, attempt.NodeRunID, int32(attempt.Number),
 		textOrNull(attempt.ActorID), string(attempt.Status), attempt.FencingToken,
 		result, tsOrNow(attempt.StartedAt), tsOrNow(attempt.CompletedAt),
+		inputTokens, outputTokens, cost, currency,
 	)
 	if err != nil {
 		return fmt.Errorf("postgres: engine: InsertAttempt: %w", err)
@@ -599,7 +619,8 @@ func (eq engineQueries) NextAttemptNumber(ctx context.Context, nodeRunID string)
 func (eq engineQueries) Attempts(ctx context.Context, nodeRunID string) ([]engine.Attempt, error) {
 	rows, err := eq.q.Query(ctx, `
 		SELECT id, namespace_id, node_run_id, attempt_number, actor_id, status,
-		       fencing_token, result, started_at, completed_at
+		       fencing_token, result, started_at, completed_at,
+		       usage_input_tokens, usage_output_tokens, usage_cost, usage_currency
 		FROM attempts
 		WHERE node_run_id = $1
 		ORDER BY attempt_number
@@ -612,18 +633,23 @@ func (eq engineQueries) Attempts(ctx context.Context, nodeRunID string) ([]engin
 	var attempts []engine.Attempt
 	for rows.Next() {
 		var (
-			attempt      engine.Attempt
-			number       int32
-			actorID      pgtype.Text
-			status       string
-			fencingToken pgtype.Int8
-			result       []byte
-			startedAt    pgtype.Timestamptz
-			completedAt  pgtype.Timestamptz
+			attempt           engine.Attempt
+			number            int32
+			actorID           pgtype.Text
+			status            string
+			fencingToken      pgtype.Int8
+			result            []byte
+			startedAt         pgtype.Timestamptz
+			completedAt       pgtype.Timestamptz
+			usageInputTokens  pgtype.Int8
+			usageOutputTokens pgtype.Int8
+			usageCost         pgtype.Float8
+			usageCurrency     pgtype.Text
 		)
 		if err := rows.Scan(
 			&attempt.ID, &attempt.NamespaceID, &attempt.NodeRunID, &number, &actorID,
 			&status, &fencingToken, &result, &startedAt, &completedAt,
+			&usageInputTokens, &usageOutputTokens, &usageCost, &usageCurrency,
 		); err != nil {
 			return nil, fmt.Errorf("postgres: engine: Attempts: scan: %w", err)
 		}
@@ -636,12 +662,38 @@ func (eq engineQueries) Attempts(ctx context.Context, nodeRunID string) ([]engin
 		attempt.Result = json.RawMessage(result)
 		attempt.StartedAt = tsValue(startedAt)
 		attempt.CompletedAt = tsValue(completedAt)
+		// usage_input_tokens is what "this attempt reported usage at all"
+		// means (migrations/0012's doc comment): the engine always writes
+		// both token columns together whenever attempt.Usage was non-nil, so
+		// either one is an equally valid presence check, and Cost/Currency
+		// keep their own independent nullability regardless.
+		if usageInputTokens.Valid {
+			attempt.Usage = &engine.Usage{
+				InputTokens:  usageInputTokens.Int64,
+				OutputTokens: int8PtrValueOrZero(usageOutputTokens),
+				Cost:         float8PtrFromPg(usageCost),
+				Currency:     textPtrFromPg(usageCurrency),
+			}
+		}
 		attempts = append(attempts, attempt)
 	}
 	if err := rows.Err(); err != nil {
 		return nil, fmt.Errorf("postgres: engine: Attempts: %w", err)
 	}
 	return attempts, nil
+}
+
+// int8PtrValueOrZero reads a pgtype.Int8 that migrations/0012's
+// usage_output_tokens column is expected to carry whenever
+// usage_input_tokens is non-NULL (InsertAttempt always writes both
+// together). A NULL here despite that invariant is read as 0 rather than
+// panicking or silently vanishing a field engine.Usage declares as a plain
+// int64.
+func int8PtrValueOrZero(v pgtype.Int8) int64 {
+	if !v.Valid {
+		return 0
+	}
+	return v.Int64
 }
 
 // TransitionCount is how many transitions the run has taken. Every transition

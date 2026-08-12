@@ -1,0 +1,896 @@
+{
+  "slug": "operate-through-the-ui",
+  "title": "operate-through-the-ui",
+  "frame_slug": "operate-through-the-ui",
+  "schema_version": 4,
+  "status": "exported",
+  "created": "2026-08-12T19:22:38Z",
+  "updated": "2026-08-12T19:58:37Z",
+  "targets": [
+    {
+      "id": "c1",
+      "kind": "announcement",
+      "text": "Operating culture-nodes happens through the UI: every run shows its name, purpose, and cost; every agent attempt carries measured workspace evidence an approver reviews in-page; workflows are visible, validated, and publishable from the browser; and completed work is graded per actor so the ledger answers which actor is better at what",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "h1",
+      "kind": "honesty",
+      "text": "every headline capability is verifiable on the live thor UI by the operator \u2014 run cost visible, evidence reviewable in-page, workflows publishable from the browser, grades recorded per actor",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "c3",
+      "kind": "requirement",
+      "text": "cost visibility is aggregation + exposure, not new measurement: all three bridges (claude-code, codex, colleague mapping.py) already map backend usage into the \u00a713.2 Usage block (input/output tokens, cost/currency pointers, internal/actors/protocol.go); aggregate attempt -> node run -> run, expose on run detail + node-runs listing, render in RunView, NodeDetailPanel, and the jobs timeline (PRD \u00a78.6 lists cost/usage among close-zoom view fields)",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "h2",
+      "kind": "honesty",
+      "text": "a run's rendered cost equals the sum of its attempts' \u00a713.2 usage, and attempts that reported no usage render as 'not reported' \u2014 never silently as zero",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "h24",
+      "kind": "honesty",
+      "text": "a run's cost includes every attempt \u2014 failed, retried, and cancelled included: money spent is money spent, and hiding failed-attempt burn would misstate exactly the retry-burn signal #28's aggregates need",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "c6",
+      "kind": "requirement",
+      "text": "run name/description: createRunRequest today is exactly {workflow_digest, input} (internal/api/runs.go) \u2014 add optional display name/description at POST /v1alpha1/runs, carry it through list/board/jobs/run views, add CLI parity (nodes run create --name), and derive a truncated hint from the run input when absent",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "h3",
+      "kind": "honesty",
+      "text": "name/description are optional and additive \u2014 a run created without them still lists with a usable hint derived from its input, and existing clients keep working unchanged",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "c7",
+      "kind": "requirement",
+      "text": "workflows view is web-only work: the API family is already complete (validate/publish/list/get in internal/api/workflows.go, paths in api/openapi/openapi.yaml) but web/src/App.tsx routes only runs/board/jobs/run-detail/ledger \u2014 add a /workflows route listing published workflows, versions/digests, owner, and recent runs",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "h4",
+      "kind": "honesty",
+      "text": "the workflows view is read-only composition over the existing endpoints \u2014 shipping it requires zero API change",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "c8",
+      "kind": "requirement",
+      "text": "in-UI authoring first slice: paste/upload workflow YAML -> POST /v1alpha1/workflows/validate (already returns compiler diagnostics via workflowValidationOut) -> render diagnostics -> publish, plus a read-only graph preview reusing the existing graph components (web/src/domain/graph.ts, WorkflowNode, useElkLayout)",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "h5",
+      "kind": "honesty",
+      "text": "publishing from the UI produces the same content digest as publishing the same YAML via CLI, and invalid YAML renders the compiler diagnostics without publishing anything",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "c9",
+      "kind": "boundary",
+      "text": "the full graphical/canvas workflow editor stays out \u2014 PRD Phase 3 'Authoring and reuse' owns it; the paste-validate-preview-publish slice needs an ADR recording the deviation-in-timing against PRD \u00a78.6 Design view / Phase-3 scope, per issue #12 item 6",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "h17",
+      "kind": "honesty",
+      "text": "no canvas/drag editing ships this cycle, and the ADR recording the early authoring slice against PRD Phase-3 scope is merged before the slice itself",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "c10",
+      "kind": "requirement",
+      "text": "bridge-measured workspace facts on ALL THREE bridges (all-backends rule): today claude-code's mapping.py hardcodes changed_files: [] (honestly documented); the bridge subprocess measures HEAD before/after, git status --porcelain, changed-file list, diffstat, new branch \u2014 attached to the actor result as measured-by-process fields clearly distinguished from model-claimed content, still proposed authority",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "h6",
+      "kind": "honesty",
+      "text": "measured fields are populated by the bridge process from git itself (HEAD before/after, status, diffstat) \u2014 never copied from model output \u2014 and are rendered distinctly from model-claimed content; all three bridges ship it or it's a bug (all-backends rule)",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "c11",
+      "kind": "requirement",
+      "text": "render the evidence: NodeDetailPanel already filters and renders observed evidence records from the ledger delta ('No observed evidence is attached' empty state) \u2014 changed files, diffstat, and per-attempt cost slot into that existing section plus the run view, so the approver reviews the diff in the ship-review pause instead of ssh-ing to the workspace",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "h7",
+      "kind": "honesty",
+      "text": "an approver in the ship-review pause reads changed files, diffstat, and per-attempt cost in NodeDetailPanel without ssh-ing to the workspace",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "c12",
+      "kind": "requirement",
+      "text": "the runs board must actually fill a wide screen in live operation \u2014 the operator reports the board still renders narrow despite v0.11.1's full-width CSS (.view-rail max-width:none, .runs-board__column flex:1 1 15rem); acceptance is verified on the real wide display, not in the stylesheet",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "h8",
+      "kind": "honesty",
+      "text": "verified on the operator's real wide display against the deployed thor build \u2014 not in the stylesheet",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "c13",
+      "kind": "requirement",
+      "text": "a Statistics view tab in the web UI: aggregate job/run cost as total and average (and mean/median) over the listed window \u2014 consumes the same attempt->node-run->run usage aggregation as run-detail cost (c3) and slots beside runs/board/jobs in the header nav",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "h9",
+      "kind": "honesty",
+      "text": "the stats tab states its denominator: totals/averages are computed over exactly the window and run-set the view lists, and runs with no reported usage are counted and shown as excluded rather than folded in as zero",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "c15",
+      "kind": "requirement",
+      "text": "observed workspace-diff evidence via the hook seam: a standard post_run code hook snapshots the workspace (changed files, diff digest, artifact refs) and the worker appends it as observed evidence through the runner boundary \u2014 the machinery exists (internal/worker/hooks.go buildHookEvidence/appendHookEvidence, per-observation measured/complete flags)",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "h10",
+      "kind": "honesty",
+      "text": "hook-produced workspace evidence lands as observed authority appended by the worker through the runner boundary \u2014 never folded into the agent's own ledger delta, which can never carry observe",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "c17",
+      "kind": "requirement",
+      "text": "independent LLM review step: a review-node workflow pattern where a DIFFERENT backend reviews the change-set (codex reviewing claude or vice versa \u2014 ask-colleague's diversity principle as a node); input = measured diff from the evidence layers + task instruction, output = structured review claim landing proposed like any agent claim \u2014 \u00a710.4 stands, only the human confirms (issue #13 item 3 notes today's self-hosting-loop verify node reviews through the same backend that built)",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "h11",
+      "kind": "honesty",
+      "text": "the reviewing backend is provably different from the building backend, its input is the measured diff (not the builder's self-report), and its verdict lands proposed per \u00a710.4 \u2014 the review step never auto-confirms anything",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "c18",
+      "kind": "requirement",
+      "text": "grading records: a first-class evaluation (rating + rationale) of a completed run/attempt recorded against the evaluated actor, flowing through the normal authority model \u2014 an agent-authored grade lands proposed and a human confirms; a human grading directly is human-authority; a grade is an opinion record and must never be conflated with observed/derived evidence (issue #28 item 1 honesty constraint)",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "h12",
+      "kind": "honesty",
+      "text": "a grade is an opinion record: it never lands as observed/derived, an agent-authored grade lands proposed, only a human confirms \u2014 and a grade is never conflated with claim confirm/reject",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "c20",
+      "kind": "requirement",
+      "text": "task categories: an optional flat tag at assignment (nodes-op assign --category review|audit|explore|implement|docs) carried onto the run \u2014 the same createRunRequest change as the run name (c6), deliberately a cheap-to-change tag and not a taxonomy, so per-actor aggregates can slice better-at-WHAT (issue #28 item 3)",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "h13",
+      "kind": "honesty",
+      "text": "category is an optional flat tag: absent category never blocks run creation, the tag is cheap to change, and aggregates slice uncategorized as its own bucket",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "c21",
+      "kind": "boundary",
+      "text": "every new API surface lands in api/openapi/openapi.yaml and maps from all three fronts \u2014 tests/parity/parity_test.go enumerates Go CLI verbs, Python CLI verbs, and web-client operations and asserts each maps to a documented operation; new endpoints (name/category params, stats, actors, workflows-view queries) that skip the spec fail parity visibly",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "h18",
+      "kind": "honesty",
+      "text": "tests/parity passes on every PR in this family \u2014 any new endpoint, parameter, or verb missing from openapi.yaml or a CLI front fails CI visibly",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "c23",
+      "kind": "requirement",
+      "text": "a live-mesh overview view in the UX: nodes, lines, and pulses traveling between them, in the spirit of culture.dev's MeshIsland (katvan site-astro/src/components/MeshIsland.svelte \u2014 Canvas 2D breathing graph, message particles along edges, prefers-reduced-motion renders one static frame) \u2014 for culture-nodes the graph is live topology (actors, runs, control plane) rather than build-time JSON, feeding off run events",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "h14",
+      "kind": "honesty",
+      "text": "the mesh view renders live control-plane state (registered actors, runs, dispatch traffic) \u2014 not canned data \u2014 pulses correspond to real events, and prefers-reduced-motion gets a dignified static frame",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "c24",
+      "kind": "requirement",
+      "text": "OpenTelemetry beyond the stub (issue #5): traces and metrics for engine transitions, runner dispatch, and actor callbacks \u2014 internal/telemetry is a doc-comment-only stub today; prior art is ../culture, which carries opentelemetry api/sdk/otlp-grpc-exporter deps; the Go control plane takes the go.opentelemetry.io dependency family (the zero-third-party-deps rule binds the PYTHON package, not the Go module); issue #5's own becomes-worthwhile trigger \u2014 two workers against one Postgres on thor+orin \u2014 is the live topology now",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "h15",
+      "kind": "honesty",
+      "text": "traces and metrics for engine transitions, runner dispatch, and actor callbacks export via OTLP when a collector is configured \u2014 and the control plane runs unchanged when none is",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "c25",
+      "kind": "requirement",
+      "text": "the live-mesh visual's quality bar is STUNNING \u2014 a signature, futuristic, alive-feeling showpiece (wholesome, not clinical): the MeshIsland reference sets the floor (breathing motion, traffic pulses), not the ceiling; this view is a deliberate design investment, the product's face, and acceptance is the operator's wow on the real screen \u2014 while still honoring prefers-reduced-motion with a dignified static frame",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "h16",
+      "kind": "honesty",
+      "text": "the bar is the operator's judgment on the real screen: the view reads as alive, futuristic, and wholesome \u2014 MeshIsland is the floor, not the ceiling \u2014 and the reduced-motion frame still looks intentional",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "c26",
+      "kind": "audience",
+      "text": "the human operator running the thor/orin fleet day-to-day (Ori), plus every mesh operator driving culture-nodes through nodes-operator \u2014 and the approvers who decide ship-review pauses from the evidence on screen",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "h19",
+      "kind": "honesty",
+      "text": "every delivered surface is usable by a human in the browser AND by an agent operator through the API/CLI \u2014 neither audience is served a degraded half",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "c27",
+      "kind": "after_state",
+      "text": "the operator runs the fleet from the browser: every run shows a name, its cost, and measured evidence of what each node actually changed; workflows are listed, validated, and published in-UI; a stats tab totals job cost; a living mesh view shows the fleet breathing; completed work is graded per actor and the ledger answers which actor is better at what; engine internals are observable via OTel traces",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "h20",
+      "kind": "honesty",
+      "text": "each after-state capability is demonstrated on the live thor UI with a real run before its issue checkbox is ticked",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "c28",
+      "kind": "before_state",
+      "text": "operating today means run ids with no names, cost invisible anywhere, changed_files always empty so approvers ssh to the workspace to read diffs out-of-band, no workflows view, authoring only via CLI, no per-actor quality picture beyond ad-hoc /remember notes, and a telemetry stub",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "h21",
+      "kind": "honesty",
+      "text": "the before-state pains are cited from operating evidence (issues #12/#13/#28, run 01KZJYNC884FJHZ46XA4TW0MMF) \u2014 none is invented to pad the story",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "c29",
+      "kind": "why_it_matters",
+      "text": "the product's brand line is 'every node has a contract, every result has evidence' \u2014 but the operating surface can't show the evidence, the cost, or the actor comparison; closing that gap is what makes dogfooding through nodes-operator honest rather than ceremonial",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "h22",
+      "kind": "honesty",
+      "text": "the brand-line claim is honored in the product: what the UI shows as evidence is measured or observed provenance, never a completion claim restyled",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "c30",
+      "kind": "success_signal",
+      "text": "a ship-review approval decided entirely in-page (diff, cost, and evidence read in the UI, no ssh), plus one assigned run graded per actor through the API \u2014 both on the live thor UI",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "h23",
+      "kind": "honesty",
+      "text": "the success signal is exercised end-to-end on production (thor), not simulated in a fixture",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "c33",
+      "kind": "requirement",
+      "text": "cost persistence comes FIRST: the \u00a713.2 Usage block the bridges emit is dropped at the completion seam today \u2014 no Usage consumer exists in engine/worker/actors non-test code, actor_invocations has no usage column, and a live probe of thor prod found 0 of 25 attempts carrying usage in result \u2014 so the cost family starts with persisting usage per attempt at completion (expand-only migration), and every pre-existing attempt renders 'not reported' (h2)",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "h25",
+      "kind": "honesty",
+      "text": "after the persistence change, re-running the thor probe shows new attempts carrying the usage their bridge reported (with_usage > 0), while historical attempts render 'not reported' \u2014 no backfill, no fabricated zeros",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "c34",
+      "kind": "requirement",
+      "text": "the live-mesh view needs a fleet-wide event source: GET /v1alpha1/runs/{id}/events is per-run only (pollEvents filters WHERE run_id), so the mesh view requires either a new cross-run events stream endpoint or coarse polling of the runs list \u2014 plus the c19 actors API for its actor nodes; 'composing existing SSE' as scoped was optimistic",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "h26",
+      "kind": "honesty",
+      "text": "the mesh view's pulses come from committed events across all displayed runs without opening one SSE connection per run \u2014 the data source is a deliberate new surface, not an N+1 hack",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "c35",
+      "kind": "requirement",
+      "text": "cost figures are token-first and never estimated: Usage.Cost/Currency are nullable by \u00a713.2 design ('an actor that does not price its work says so with null'), codex/colleague report tokens only and the bridges never estimate \u2014 so stats and run views total tokens always, show currency cost only where actors reported it, and the control plane derives no prices from token counts this cycle (a pricing table is a possible follow-up issue)",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "h27",
+      "kind": "honesty",
+      "text": "no code path in the control plane or web derives a currency amount from token counts \u2014 currency renders only when an actor reported it, token totals render always",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "c36",
+      "kind": "requirement",
+      "text": "every new view (workflows, statistics, mesh, authoring) extends the agent-state store and carries stable ids/data-attributes \u2014 the machine-readable #agent-state node is how agents and the webglass CI job assert what the page shows; a view that exists only in pixels breaks the repo's agent-operable-UI contract and h19",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "h28",
+      "kind": "honesty",
+      "text": "the webglass CI job (or an e2e test) asserts each new view through the #agent-state node \u2014 a view unregistered in agent-state fails CI, not review",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "c37",
+      "kind": "boundary",
+      "text": "the in-UI authoring slice adds one-click publish + run-creation to a control plane that has NO authentication today (issue #6 open) \u2014 the slice ships without adding auth, which is acceptable only while the API stays LAN-bound on the thor/orin network; issue #6 is the explicit gate before any wider exposure, and the ADR for the authoring slice must say so",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "h29",
+      "kind": "honesty",
+      "text": "the authoring-slice ADR names the unauthenticated write surface and the LAN-bound acceptance explicitly \u2014 the exposure is a recorded decision, not an accident",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "c38",
+      "kind": "requirement",
+      "text": "no actor grades its own run: the grade record names the graded actor AND the grading origin, and the API refuses a grade whose grading actor equals the evaluated actor \u2014 the self-promotion rule (\u00a710.4 'no actor promotes its own proposal') extended to opinion records; grade corrections append with supersedes like every ledger record",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "h30",
+      "kind": "honesty",
+      "text": "an API-level test proves a grade whose grading actor equals the evaluated actor is refused with a structured error",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "c39",
+      "kind": "requirement",
+      "text": "every schema change in this family is expand-only per ADR 0002: nullable name/category columns on runs, a nullable usage column (or sibling table) for attempts, and the grade record type introduced additively \u2014 each migration tolerates the N-1 binary still running during the thor/orin rolling deploy window",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "h31",
+      "kind": "honesty",
+      "text": "every migration in this family is reviewed against the ADR 0002 checklist: nullable or default-bearing additions only, and the N-1 binary keeps running against the expanded schema",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "c40",
+      "kind": "requirement",
+      "text": "OTel spans and metrics carry identifiers, states, and durations \u2014 run/node/attempt ids, outcome kinds, queue depths \u2014 never run input, instruction text, or ledger payload content; observability must not become a second, unaudited copy of the work ledger",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "h32",
+      "kind": "honesty",
+      "text": "span and metric attributes are drawn from an explicit allowlist of ids, enum states, counts, and durations \u2014 a reviewer can read the allowlist; payload content has no path in",
+      "deferred": false,
+      "deferred_reason": ""
+    }
+  ],
+  "tasks": [
+    {
+      "id": "t1",
+      "summary": "Persist \u00a713.2 usage at the completion seam (sync + async callback paths) with an expand-only migration",
+      "origin": "llm",
+      "status": "confirmed",
+      "acceptance_criteria": [
+        "an expand-only migration adds nullable per-attempt usage storage; the N-1 binary runs against the migrated schema (migrate test)",
+        "both completion paths (worker sync, actors callback) persist the Usage block the bridge reported; a new run's attempts show with_usage>0 via the thor probe query; historical attempts stay null \u2014 no backfill, no fabricated zeros"
+      ],
+      "deps": [],
+      "covers": [
+        "c33",
+        "h25",
+        "c39",
+        "h31"
+      ],
+      "instruction": "seam: engine CompleteAttempt (internal/engine/complete.go) + actors callback commit (internal/actors/callback.go); InvocationResult.Usage is internal/actors/protocol.go \u00a713.2; add migration NNNN nullable (or sibling table) per ADR 0002; verify with the thor probe query from frame s23"
+    },
+    {
+      "id": "t2",
+      "summary": "Aggregate usage attempt\u2192node-run\u2192run in the store and expose it on run detail + node-runs listing",
+      "origin": "llm",
+      "status": "confirmed",
+      "acceptance_criteria": [
+        "run detail and node-runs listing carry usage rollups; a run's total equals the sum of ALL its attempts including failed/retried/cancelled (retry-burn test)",
+        "attempts that reported no usage are excluded from sums and surfaced as a not-reported count \u2014 never folded in as zero",
+        "openapi.yaml documents the new fields and tests/parity stays green"
+      ],
+      "deps": [
+        "t1"
+      ],
+      "covers": [
+        "c3",
+        "h2",
+        "h24"
+      ],
+      "instruction": "store rollup in internal/store/postgres (queries.sql + sqlc regen); expose via internal/api/runs.go runOut + noderuns.go; document in api/openapi/openapi.yaml; retry-burn = include failed attempts (h24)"
+    },
+    {
+      "id": "t3",
+      "summary": "Run metadata API: optional name/description/category on CreateRunRequest, category PATCH, derived name hint",
+      "origin": "llm",
+      "status": "confirmed",
+      "acceptance_criteria": [
+        "CreateRunRequest accepts optional name/description/category (nullable expand migration); existing clients keep working unchanged (contract test)",
+        "a run created without a name lists with a truncated hint derived from its input; category is retaggable via PATCH, name immutable (q4 decision)",
+        "openapi.yaml documents fields + PATCH; parity green"
+      ],
+      "deps": [
+        "t2"
+      ],
+      "covers": [
+        "c6",
+        "h3",
+        "c20",
+        "h13"
+      ],
+      "instruction": "internal/api/runs.go createRunRequest {workflow_digest,input} today; add nullable runs columns via expand migration; PATCH /v1alpha1/runs/{id} category only (q4: name immutable); hint = truncated request/instruction field from input"
+    },
+    {
+      "id": "t4",
+      "summary": "CLI fronts: nodes run create --name/--category, usage/cost in run + node-runs output, nodes-op assign --category, explain catalog entries",
+      "origin": "llm",
+      "status": "confirmed",
+      "acceptance_criteria": [
+        "Python nodes CLI creates runs with --name/--category and renders usage in run/node-runs views; explain catalog gains entries (introspection tests pass); zero third-party deps kept",
+        "nodes-op assign carries --category onto the run; tests/parity maps every new verb/param to a documented operation"
+      ],
+      "deps": [
+        "t2",
+        "t3"
+      ],
+      "covers": [
+        "c21",
+        "h18"
+      ],
+      "instruction": "Python front: culture_nodes/cli/_commands/run.py + node_runs.py + explain/catalog.py (introspection tests enforce catalog); operator skill: .claude/skills/nodes-operator/scripts/nodes-op.sh assign; keep dependencies = [] (teken rubric gate)"
+    },
+    {
+      "id": "t5",
+      "summary": "Web: render run names, derived hints, and token-first cost across RunsList/Board/Jobs/RunView/NodeDetailPanel",
+      "origin": "llm",
+      "status": "confirmed",
+      "acceptance_criteria": [
+        "run cost renders token totals as the primary figure, currency only where an actor reported it, and an explicit 'not reported' state \u2014 no code path derives currency from tokens (grep-guard or unit test)",
+        "names/hints appear in list, board, jobs, and run views; agent-state carries the new fields"
+      ],
+      "deps": [
+        "t2",
+        "t3"
+      ],
+      "covers": [
+        "c35",
+        "h27"
+      ],
+      "instruction": "web/src/components/RunCard,JobsTable,NodeDetailPanel + routes/RunsList,RunsBoard,JobsTimeline,RunView; tokens primary, currency secondary (c35); extend web/src/agent-state/store.ts"
+    },
+    {
+      "id": "t6",
+      "summary": "Web: Statistics tab \u2014 jobs cost total, average, median over the listed window",
+      "origin": "llm",
+      "status": "confirmed",
+      "acceptance_criteria": [
+        "totals/average/median are computed over exactly the run-set the view lists; runs with no reported usage are counted and shown as excluded, stating the denominator",
+        "the view registers in the agent-state node with stable ids and a webglass/e2e assertion covers it"
+      ],
+      "deps": [
+        "t2",
+        "t5"
+      ],
+      "covers": [
+        "c13",
+        "h9",
+        "c36",
+        "h28"
+      ],
+      "instruction": "new route web/src/routes + header nav link (components/Header.tsx); consume t2 aggregation (client-side fold over listed runs is acceptable per frame s12); denominator statement per h9"
+    },
+    {
+      "id": "t7",
+      "summary": "ADR: authoring slice \u2014 Phase-3 timing deviation + unauthenticated LAN-bound exposure (#6 as gate)",
+      "origin": "llm",
+      "status": "confirmed",
+      "acceptance_criteria": [
+        "the ADR merges BEFORE the authoring slice ships and records both the PRD \u00a78.6/Phase-3 timing deviation and the unauthenticated write-surface acceptance (LAN-bound, #6 gates wider exposure)"
+      ],
+      "deps": [],
+      "covers": [
+        "c9",
+        "h17",
+        "c37",
+        "h29"
+      ],
+      "instruction": "docs/adr/0007-*.md; record BOTH the PRD \u00a78.6/Phase-3 timing deviation and the unauthenticated LAN-bound write surface with issue #6 as the exposure gate (frame c37/h29)"
+    },
+    {
+      "id": "t8",
+      "summary": "Web: Workflows view \u2014 published workflows, versions/digests, owner, recent runs",
+      "origin": "llm",
+      "status": "confirmed",
+      "acceptance_criteria": [
+        "a /workflows route lists published workflows with versions/digests/owner and each workflow's recent runs, using only existing endpoints (zero API change proven by parity inventory diff)",
+        "agent-state registration + e2e coverage against the fixture API"
+      ],
+      "deps": [],
+      "covers": [
+        "c7",
+        "h4"
+      ],
+      "instruction": "web-only: GET /v1alpha1/workflows + /workflows/{digest} exist (internal/api/workflows.go); route + App.tsx + agent-state; recent-runs via runs list filtered by workflow digest"
+    },
+    {
+      "id": "t9",
+      "summary": "Web: authoring slice \u2014 paste/upload YAML \u2192 validate \u2192 diagnostics \u2192 read-only graph preview \u2192 publish",
+      "origin": "llm",
+      "status": "confirmed",
+      "acceptance_criteria": [
+        "invalid YAML renders the compiler diagnostics verbatim and publishes nothing; valid YAML publishes a digest byte-identical to a CLI publish of the same source (e2e proves both)",
+        "a read-only graph preview (existing graph components) renders before publish; agent-state registration included"
+      ],
+      "deps": [
+        "t7",
+        "t8"
+      ],
+      "covers": [
+        "c8",
+        "h5"
+      ],
+      "instruction": "POST /v1alpha1/workflows/validate returns workflowValidationOut diagnostics; graph preview reuses web/src/domain/graph.ts + hooks/useElkLayout + WorkflowNode; digest-identity e2e vs CLI publish"
+    },
+    {
+      "id": "t10",
+      "summary": "Bridges: measured workspace facts (HEAD before/after, status, changed files, diffstat, branch) in claude-code, codex, AND colleague",
+      "origin": "llm",
+      "status": "confirmed",
+      "acceptance_criteria": [
+        "each bridge populates the measured fields from git itself around the session; a unit test proves they are process-measured, never copied from model output",
+        "measured-by-bridge fields are structurally distinct from model-claimed content in the result mapping; all three bridges ship it (all-backends rule) and each conformance kit asserts it"
+      ],
+      "deps": [],
+      "covers": [
+        "c10",
+        "h6"
+      ],
+      "instruction": "adapters/{claude-code,codex,colleague}/src/*/mapping.py currently hardcode changed_files:[]; measure via git in the bridge subprocess around the session (HEAD before/after, status --porcelain, diffstat, branch); run each adapter's conformance kit"
+    },
+    {
+      "id": "t11",
+      "summary": "Web: render measured evidence \u2014 changed files, diffstat, per-attempt cost \u2014 in NodeDetailPanel and the run view",
+      "origin": "llm",
+      "status": "confirmed",
+      "acceptance_criteria": [
+        "with a fixture carrying measured fields, the approver reads changed files + diffstat + attempt cost in the ship-review pause entirely in-page (e2e); the empty state still renders honestly when no measured facts exist"
+      ],
+      "deps": [
+        "t10",
+        "t5"
+      ],
+      "covers": [
+        "c11",
+        "h7"
+      ],
+      "instruction": "web/src/components/NodeDetailPanel.tsx evidence section (currently renders 'No observed evidence'); fixtures in web/src/fixtures; pair with run view evidence section"
+    },
+    {
+      "id": "t12",
+      "summary": "Standard post_run workspace-snapshot hook producing observed evidence for sync actors",
+      "origin": "llm",
+      "status": "confirmed",
+      "acceptance_criteria": [
+        "the hook snapshots changed files, diff digest, and artifact refs through the runner boundary; the worker appends it as observed evidence \u2014 a test proves it never rides the agent's own ledger delta",
+        "async agent nodes declaring post_run are still refused exactly as today (regression test on refuseAsyncPostRun)"
+      ],
+      "deps": [],
+      "covers": [
+        "c15",
+        "h10"
+      ],
+      "instruction": "internal/worker/hooks.go buildHookEvidence/appendHookEvidence is the seam; ship the snapshot as a standard headspace-run operation; keep refuseAsyncPostRun intact (q2 decision: async = bridge-measured only)"
+    },
+    {
+      "id": "t13",
+      "summary": "Independent LLM review node pattern + example workflow (different backend reviews the measured diff)",
+      "origin": "llm",
+      "status": "confirmed",
+      "acceptance_criteria": [
+        "the example workflow dispatches the review to a backend different from the builder; its input binds the measured diff + task instruction, not the builder's summary",
+        "the review's structured claim (findings, verdict) lands proposed \u2014 a test proves \u00a710.4 holds and nothing auto-confirms"
+      ],
+      "deps": [
+        "t10"
+      ],
+      "covers": [
+        "c17",
+        "h11"
+      ],
+      "instruction": "examples/ + docs; prior art: examples/self-hosting-loop/workflow.yaml verify node (same-backend today); bind measured diff fields from t10 into the review node input contract"
+    },
+    {
+      "id": "t14",
+      "summary": "Ledger: grade record type \u2014 schema, authority rules, self-grade refusal, supersedes",
+      "origin": "llm",
+      "status": "confirmed",
+      "acceptance_criteria": [
+        "grade lands additively in the schema registry (record.schema.json dispatch + contracts validate); agent-origin grades land proposed, human grades land human-authority, and grades are never observed/derived (authority tests)",
+        "a grade whose grading actor equals the evaluated actor is refused with a structured error (API-level test); corrections append with supersedes"
+      ],
+      "deps": [],
+      "covers": [
+        "c18",
+        "h12",
+        "c38",
+        "h30"
+      ],
+      "instruction": "schemas/ledger/record.schema.json if/then dispatch + new grade.schema.json + schemas/embed.go; authority rules internal/ledger/authority.go; self-grade refusal beside \u00a710.4 checks; migrations only if a table is needed (prefer ledger records)"
+    },
+    {
+      "id": "t15",
+      "summary": "Actors API family: GET /v1alpha1/actors, /actors/{id}, /actors/{id}/stats with per-category slices",
+      "origin": "llm",
+      "status": "confirmed",
+      "acceptance_criteria": [
+        "the actors read surface exists (list + detail); stats aggregates runs by outcome, claims proposed/confirmed/rejected, attempts per completion, duration percentiles, and usage/cost \u2014 sliced per category with uncategorized as its own bucket",
+        "openapi.yaml + parity green; a CLI verb reads the same surface (replacing nodes-op's ssh+psql actors verb)"
+      ],
+      "deps": [
+        "t3",
+        "t14"
+      ],
+      "covers": [
+        "c1"
+      ],
+      "instruction": "new internal/api/actors.go + openapi paths; stats SQL over runs/attempts/ledger + t2 usage rollup; replaces nodes-op.sh actors ssh+psql verb; CLI verb in culture_nodes/cli/_commands"
+    },
+    {
+      "id": "t16",
+      "summary": "Grade API + operator verb: POST grade, nodes-op grade <run-id> --rating N --notes",
+      "origin": "llm",
+      "status": "confirmed",
+      "acceptance_criteria": [
+        "an operator grades a completed run against its actor through the public API; the grade flows through the normal authority model end-to-end (agent proposes, human confirms \u2014 integration test)",
+        "nodes-op grade works from any operator shell; openapi + parity green"
+      ],
+      "deps": [
+        "t14",
+        "t15"
+      ],
+      "covers": [
+        "c18",
+        "h12"
+      ],
+      "instruction": "grade endpoint under /v1alpha1 (runs/{id}/grades or actors-scoped \u2014 pick in ADR-lite comment); nodes-op.sh grade verb; integration test: agent proposes via bridge path, human confirms via review surface"
+    },
+    {
+      "id": "t17",
+      "summary": "Cross-run events surface scoped to active runs (the mesh view's data source)",
+      "origin": "llm",
+      "status": "confirmed",
+      "acceptance_criteria": [
+        "one endpoint serves committed events across all displayed/active runs \u2014 a test proves the mesh consumer needs no per-run SSE fan-out",
+        "scoping and poll cadence are load-bounded by design (active-runs filter, coarse interval documented); openapi + parity green"
+      ],
+      "deps": [
+        "t16"
+      ],
+      "covers": [
+        "c34",
+        "h26"
+      ],
+      "instruction": "extend internal/api/events.go: cross-run poll over the same events table WHERE run_id IN (active); SSE or long-poll; risk r1 containment (active-runs scope, coarse cadence) documented in the handler comment"
+    },
+    {
+      "id": "t18",
+      "summary": "Web: live-mesh overview \u2014 actors and runs as a breathing graph, pulses from real committed events",
+      "origin": "llm",
+      "status": "confirmed",
+      "acceptance_criteria": [
+        "nodes come from the actors API and live runs, edges from dispatch paths, particles correspond one-to-one to committed events (no canned data \u2014 e2e against fixture events)",
+        "prefers-reduced-motion renders a dignified static frame; agent-state registration + stable ids",
+        "the stunning bar: a dedicated motion/design pass (culture-design palette, breathing, glow) reviewed by the operator on the real wide display before the task closes"
+      ],
+      "deps": [
+        "t17",
+        "t15"
+      ],
+      "covers": [
+        "c23",
+        "h14",
+        "c25",
+        "h16",
+        "c36",
+        "h28"
+      ],
+      "instruction": "reference: /home/spark/git/katvan/site-astro/src/components/MeshIsland.svelte (canvas idiom, reduced-motion single frame); palette from web/src/culture-design/tokens.css; nodes=t15 actors + active runs, pulses=t17 events; operator design review gate before close (h16)"
+    },
+    {
+      "id": "t19",
+      "summary": "OpenTelemetry: instrument engine transitions, runner dispatch, actor callbacks behind env-gated OTLP export",
+      "origin": "llm",
+      "status": "confirmed",
+      "acceptance_criteria": [
+        "go.opentelemetry.io instrumentation emits traces/metrics for the three seams; with no collector configured the control plane runs unchanged (test with exporter unset)",
+        "span/metric attributes come from an explicit reviewable allowlist \u2014 ids, enum states, counts, durations; no attribute carries run input, instruction text, or ledger payloads (allowlist test)"
+      ],
+      "deps": [],
+      "covers": [
+        "c24",
+        "h15",
+        "c40",
+        "h32"
+      ],
+      "instruction": "internal/telemetry package; go.opentelemetry.io/otel + otlptracegrpc; wrap engine transition commit, worker dispatch, actors callback; attribute allowlist as a named const reviewed in PR; exporter env-gated (no collector = no-op)"
+    },
+    {
+      "id": "t20",
+      "summary": "Closeout: deploy to thor, verify every headline live, exercise the success signal, tick issue checkboxes",
+      "origin": "llm",
+      "status": "confirmed",
+      "acceptance_criteria": [
+        "each headline capability is demonstrated on the live thor UI with real runs (not fixtures) before its issue checkbox is ticked: cost visible, evidence in-page, workflows publishable, grades recorded",
+        "the success signal runs on production: one ship-review approval decided entirely in-page (diff, cost, evidence \u2014 no ssh) AND one assigned run graded per actor through the API",
+        "the board fills the operator's real wide display (h8) \u2014 verified by the operator, and the before/after narrative in the delivery summary cites the operating evidence it came from"
+      ],
+      "deps": [
+        "t4",
+        "t6",
+        "t9",
+        "t11",
+        "t12",
+        "t13",
+        "t16",
+        "t18",
+        "t19"
+      ],
+      "covers": [
+        "c1",
+        "h1",
+        "c12",
+        "h8",
+        "c26",
+        "h19",
+        "c27",
+        "h20",
+        "c28",
+        "h21",
+        "c29",
+        "h22",
+        "c30",
+        "h23"
+      ],
+      "instruction": "deploy/prod/deploy.sh thor (watch issue #17 scp pitfall); verify per h1/h8/h20/h23 on http://192.168.1.146:18080 with real runs; tick #12/#13/#28/#5 checkboxes only after live demo; then /summarize-delivery"
+    }
+  ],
+  "risks": [
+    {
+      "id": "r1",
+      "text": "fleet-wide event stream load: active-runs scoping + coarse poll cadence are the containment; if real traffic outgrows them, server-side fan-in needs a design pass",
+      "kind": "unknown_nonblocking",
+      "task_id": "t17",
+      "resolved": false,
+      "resolution": ""
+    },
+    {
+      "id": "r2",
+      "text": "extending post_run hook evidence to async-answering agents via the callback path \u2014 recorded follow-up (frame park), its own issue when the evidence family lands",
+      "kind": "follow_up",
+      "task_id": null,
+      "resolved": false,
+      "resolution": ""
+    },
+    {
+      "id": "r3",
+      "text": "cost LIMIT option (capping spend) deferred to its own issue per the operator's decision (frame c14)",
+      "kind": "follow_up",
+      "task_id": null,
+      "resolved": false,
+      "resolution": ""
+    },
+    {
+      "id": "r4",
+      "text": "a pricing table for deriving currency from tokens is a possible follow-up \u2014 this cycle never estimates prices (c35)",
+      "kind": "follow_up",
+      "task_id": null,
+      "resolved": false,
+      "resolution": ""
+    },
+    {
+      "id": "r5",
+      "text": "codex fleet is analysis-only until #18 (bwrap): dogfooding assignments during this plan route reviews/audits to codex-thor/orin, shell/write tasks stay local",
+      "kind": "unknown_nonblocking",
+      "task_id": null,
+      "resolved": false,
+      "resolution": ""
+    },
+    {
+      "id": "r6",
+      "text": "openapi.yaml + tests/parity inventory is a shared merge surface across t2/t3/t15/t16/t17 \u2014 sequenced by explicit deps rather than parallel merges",
+      "kind": "unknown_nonblocking",
+      "task_id": null,
+      "resolved": false,
+      "resolution": ""
+    }
+  ]
+}

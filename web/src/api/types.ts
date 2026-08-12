@@ -137,6 +137,34 @@ export interface WorkflowVersionList {
   items: WorkflowVersion[];
 }
 
+/**
+ * The request body `POST /v1alpha1/workflows/validate` and
+ * `POST /v1alpha1/workflows` both take (task t9): the workflow document, in
+ * either format, exactly as authored. `format` defaults to `yaml` server-side
+ * when omitted, matching openapi.yaml's `WorkflowSource.format`.
+ */
+export interface WorkflowSource {
+  format?: "yaml" | "json";
+  source: string;
+}
+
+/** One compiler diagnostic — a JSON Pointer into the submitted document. */
+export interface Diagnostic {
+  level: "error" | "warning";
+  path: string;
+  code: string;
+  message: string;
+  hint: string;
+}
+
+/** `POST /v1alpha1/workflows/validate` response (task t9). */
+export interface WorkflowValidation {
+  valid: boolean;
+  /** The normalized IR's content digest. Empty when there is any error diagnostic. */
+  digest: string;
+  diagnostics: Diagnostic[];
+}
+
 /** The subset of the normalized IR the Run view renders (PRD §11.3). */
 export interface WorkflowIR {
   apiVersion?: string;

@@ -27,10 +27,27 @@ export interface AgentRunState {
   selected: string | null;
 }
 
+/**
+ * The authoring view's machine-readable mirror (task t9): which step the
+ * paste/upload -> validate -> preview -> publish flow is on, right now.
+ * Optional and absent from every other view's state (undefined keys are
+ * dropped by `JSON.stringify`, so this adds nothing to the `#agent-state`
+ * payload anywhere else).
+ */
+export interface AgentAuthoringState {
+  step: "editing" | "validating" | "invalid" | "valid" | "publishing" | "published";
+  /** `null` before the current source has ever been validated. */
+  valid: boolean | null;
+  diagnostics_count: number;
+  /** The published version's content digest, once publish succeeds. */
+  digest: string | null;
+}
+
 export interface AgentState {
   status: AgentStatus;
   route: string;
   run: AgentRunState | null;
+  authoring?: AgentAuthoringState | null;
 }
 
 const INITIAL: AgentState = { status: "loading", route: "/", run: null };
@@ -64,6 +81,20 @@ function shallowEqualRun(
   return aKeys.every((key) => a.node_states[key] === b.node_states[key]);
 }
 
+function shallowEqualAuthoring(
+  a: AgentAuthoringState | null | undefined,
+  b: AgentAuthoringState | null | undefined,
+): boolean {
+  if (a === b) return true;
+  if (!a || !b) return false;
+  return (
+    a.step === b.step &&
+    a.valid === b.valid &&
+    a.diagnostics_count === b.diagnostics_count &&
+    a.digest === b.digest
+  );
+}
+
 /**
  * Merge a patch into the agent state. No-ops when nothing actually changed,
  * so a re-render storm cannot make the `<script>` node churn.
@@ -73,7 +104,8 @@ export function setAgentState(patch: Partial<AgentState>): void {
   if (
     next.status === current.status &&
     next.route === current.route &&
-    shallowEqualRun(next.run, current.run)
+    shallowEqualRun(next.run, current.run) &&
+    shallowEqualAuthoring(next.authoring, current.authoring)
   ) {
     return;
   }

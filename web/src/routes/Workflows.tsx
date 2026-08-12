@@ -73,11 +73,22 @@ export function Workflows() {
 
   return (
     <section className="view-rail workflows-view">
-      <h1>Workflows</h1>
-      <p className="muted">
-        Every published workflow, its versions and digests, and its most
-        recent runs.
-      </p>
+      <div className="workflows-view__head">
+        <div>
+          <h1>Workflows</h1>
+          <p className="muted">
+            Every published workflow, its versions and digests, and its most
+            recent runs.
+          </p>
+        </div>
+        <Link
+          to="/workflows/new"
+          id="new-workflow-link"
+          className="author-workflow__button author-workflow__button--primary"
+        >
+          New workflow
+        </Link>
+      </div>
 
       {error ? <ErrorNotice error={error} /> : null}
       {groups === null ? (

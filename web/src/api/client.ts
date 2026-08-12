@@ -5,6 +5,8 @@ import type {
   RunList,
   RunState,
   RunView,
+  WorkflowSource,
+  WorkflowValidation,
   WorkflowVersion,
   WorkflowVersionList,
 } from "./types";
@@ -132,11 +134,89 @@ export const listNodeRuns = (
     signal,
   );
 
+async function postJson<T>(
+  path: string,
+  body: unknown,
+  signal?: AbortSignal,
+): Promise<T> {
+  let response: Response;
+  try {
+    response = await fetch(`${API_ROOT}${path}`, {
+      method: "POST",
+      signal,
+      headers: {
+        accept: "application/json",
+        "content-type": "application/json",
+      },
+      body: JSON.stringify(body),
+    });
+  } catch (cause) {
+    throw new ApiError(
+      0,
+      `cannot reach the control plane at ${API_ROOT}`,
+      "start the API (`nodes serve`) or point NODES_API at a running one",
+    );
+  }
+
+  const text = await response.text();
+  if (!response.ok) {
+    let message = `${response.status} ${response.statusText}`;
+    let remediation = "check the submitted document and try again";
+    try {
+      const parsed = JSON.parse(text) as {
+        message?: string;
+        remediation?: string;
+      };
+      if (parsed.message) message = parsed.message;
+      if (parsed.remediation) remediation = parsed.remediation;
+    } catch {
+      /* a non-JSON error body stays as the status line */
+    }
+    throw new ApiError(response.status, message, remediation);
+  }
+
+  try {
+    return JSON.parse(text) as T;
+  } catch {
+    throw new ApiError(
+      response.status,
+      `${path} did not return JSON`,
+      "the request probably hit the dev server's SPA fallback — check the API proxy",
+    );
+  }
+}
+
 export const getWorkflow = (digest: string, signal?: AbortSignal) =>
   getJson<WorkflowVersion>(
     `/workflows/${encodeURIComponent(digest)}`,
     signal,
   );
+
+/**
+ * `POST /v1alpha1/workflows/validate` (task t9): compiles `source` and
+ * returns every diagnostic. A document with error diagnostics is a
+ * documented domain outcome (`valid: false`, HTTP 200) — never a technical
+ * failure (PRD §3.4) — so this never throws for invalid *content*; it only
+ * throws (via `ApiError`) when the request itself is malformed or the
+ * control plane cannot be reached.
+ */
+export const validateWorkflow = (
+  source: WorkflowSource,
+  signal?: AbortSignal,
+) => postJson<WorkflowValidation>("/workflows/validate", source, signal);
+
+/**
+ * `POST /v1alpha1/workflows` (task t9): publishes `source` as an immutable
+ * workflow version, exactly as submitted — the caller must pass the operator's
+ * source bytes unmodified so the resulting digest is byte-identical to
+ * publishing the same document via `nodes workflow publish`. Idempotent:
+ * republishing the same content returns the existing version (HTTP 200)
+ * rather than a conflict.
+ */
+export const publishWorkflow = (
+  source: WorkflowSource,
+  signal?: AbortSignal,
+) => postJson<WorkflowVersion>("/workflows", source, signal);
 
 /** GET /v1alpha1/workflows query parameters (task t8). */
 export interface ListWorkflowsParams {

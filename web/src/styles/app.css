@@ -1116,3 +1116,207 @@ button.timeline__node {
   color: var(--ink-soft);
   font-size: var(--ac-type-meta);
 }
+
+.workflows-view__head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 1rem;
+}
+
+/* ---------- authoring slice (task t9, ADR 0007) ---------- */
+
+.author-workflow__button {
+  display: inline-flex;
+  align-items: center;
+  font: inherit;
+  font-size: var(--ac-type-ui);
+  padding: 0.4rem 1.1rem;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  background: var(--surface);
+  color: var(--ink);
+  cursor: pointer;
+  text-decoration: none;
+}
+
+.author-workflow__button:hover {
+  border-color: color-mix(in srgb, var(--accent) 40%, var(--line));
+}
+
+.author-workflow__button:disabled {
+  opacity: 0.55;
+  cursor: default;
+}
+
+.author-workflow__button--primary {
+  border-color: var(--accent-strong);
+  background: var(--accent-strong);
+  color: var(--on-accent);
+}
+
+.author-workflow__button--primary:disabled {
+  background: var(--accent-strong);
+  color: var(--on-accent);
+}
+
+.author-workflow__source {
+  margin: 1.25rem 0;
+}
+
+.author-workflow__source-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.6rem 1rem;
+  margin-bottom: 0.5rem;
+}
+
+.author-workflow__source-head > label {
+  font-size: var(--ac-type-meta);
+  letter-spacing: var(--ac-tracking-caps);
+  text-transform: uppercase;
+  color: var(--ink-soft);
+  font-weight: 640;
+}
+
+.author-workflow__source-controls {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  font-size: var(--ac-type-meta);
+}
+
+.author-workflow__source-controls select {
+  font: inherit;
+  font-size: var(--ac-type-ui);
+  padding: 0.3rem 0.6rem;
+  border: 1px solid var(--line);
+  border-radius: 0.6rem;
+  background: var(--surface);
+  color: var(--ink);
+}
+
+.author-workflow__upload {
+  font: inherit;
+  font-size: var(--ac-type-ui);
+  padding: 0.3rem 0.9rem;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  background: var(--surface);
+  color: var(--ink);
+  cursor: pointer;
+}
+
+.author-workflow__upload:hover {
+  border-color: color-mix(in srgb, var(--accent) 40%, var(--line));
+}
+
+/* Visually hidden but still keyboard/AT reachable via its <label>. */
+#workflow-file-input {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+  border: 0;
+}
+
+.author-workflow__textarea {
+  display: block;
+  width: 100%;
+  min-height: 16rem;
+  font-family: var(--font-mono);
+  font-size: var(--ac-type-ui);
+  line-height: 1.5;
+  padding: 0.85rem 1rem;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  background: var(--surface);
+  color: var(--ink);
+  resize: vertical;
+}
+
+.author-workflow__textarea:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 1px;
+}
+
+.author-workflow__actions {
+  display: flex;
+  gap: 0.6rem;
+  margin-top: 0.75rem;
+}
+
+.author-workflow__diagnostics,
+.author-workflow__preview,
+.author-workflow__published {
+  margin: 1.5rem 0;
+}
+
+.author-workflow__diagnostics h2,
+.author-workflow__preview h2,
+.author-workflow__published h2 {
+  font-size: var(--ac-type-component-title);
+}
+
+.author-workflow__diagnostics-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 0.6rem;
+}
+
+.author-workflow__diagnostic {
+  display: grid;
+  grid-template-columns: auto 1fr;
+  gap: 0.2rem 0.75rem;
+  padding: 0.6rem 0.85rem;
+  border: 1px solid var(--line-soft);
+  border-left-width: 3px;
+  border-radius: 0.6rem;
+  background: color-mix(in srgb, var(--surface) 55%, transparent);
+}
+
+.author-workflow__diagnostic--error {
+  border-left-color: var(--nodes-danger);
+}
+
+.author-workflow__diagnostic--warning {
+  border-left-color: var(--nodes-warn);
+}
+
+.author-workflow__diagnostic-level {
+  grid-column: 1;
+  font-size: var(--ac-type-meta);
+  text-transform: uppercase;
+  letter-spacing: var(--ac-tracking-caps);
+  font-weight: 640;
+  color: var(--ink-soft);
+}
+
+.author-workflow__diagnostic-path {
+  grid-column: 2;
+  font-family: var(--font-mono);
+  font-size: var(--ac-type-ui);
+}
+
+.author-workflow__diagnostic-message,
+.author-workflow__diagnostic-hint {
+  grid-column: 1 / -1;
+  margin: 0;
+  font-size: var(--ac-type-ui);
+}
+
+.author-workflow__digest code {
+  font-family: var(--font-mono);
+  font-size: var(--ac-type-meta);
+  word-break: break-all;
+}

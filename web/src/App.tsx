@@ -8,6 +8,7 @@ import {
 import AgentStateScript from "./agent-state/AgentStateScript";
 import { setAgentState } from "./agent-state/store";
 import Header from "./components/Header";
+import AuthorWorkflow from "./routes/AuthorWorkflow";
 import JobsTimeline from "./routes/JobsTimeline";
 import LedgerView from "./routes/LedgerView";
 import RunView from "./routes/RunView";
@@ -39,6 +40,7 @@ export function App() {
           <Route path="/board" element={<RunsBoard />} />
           <Route path="/jobs" element={<JobsTimeline />} />
           <Route path="/workflows" element={<Workflows />} />
+          <Route path="/workflows/new" element={<AuthorWorkflow />} />
           <Route path="/runs/:id" element={<RunView />} />
           <Route path="/runs/:id/ledger" element={<LedgerView />} />
           <Route

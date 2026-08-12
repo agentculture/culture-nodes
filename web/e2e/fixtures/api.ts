@@ -19,11 +19,19 @@ import {
   WORKFLOW_VERSIONS,
   WORKFLOWS_RUNS,
 } from "../../src/fixtures/workflows-fixture";
+import {
+  INVALID_VALIDATION,
+  INVALID_YAML_SOURCE,
+  PUBLISHED_VERSION,
+  VALID_VALIDATION,
+} from "../../src/fixtures/authoring-fixture";
 
 export { RUN_ID, WORKFLOW_DIGEST };
 export { BOARD_RUNS };
 export { JOB_RUNS_CURSOR, JOB_RUNS_PAGE_1, JOB_RUNS_PAGE_2 };
 export { WORKFLOW_VERSIONS, WORKFLOWS_RUNS };
+export { INVALID_YAML_SOURCE, PUBLISHED_VERSION };
+export { VALID_YAML_SOURCE } from "../../src/fixtures/authoring-fixture";
 
 const json = (body: unknown) => ({
   status: 200,
@@ -313,6 +321,78 @@ export async function mockWorkflowsApi(page: Page): Promise<void> {
   });
 }
 
+/**
+ * Serve the authoring slice's endpoints (task t9): `POST
+ * /v1alpha1/workflows/validate` and `POST /v1alpha1/workflows`, plus the
+ * Workflows list endpoints (`GET /v1alpha1/workflows`, `GET
+ * /v1alpha1/runs?sort=updated_at`) so a spec can reach `/workflows/new` the
+ * way an operator actually would: via the "New workflow" link on `/workflows`
+ * (task t8's view), rather than a direct `page.goto`.
+ *
+ * Validate/publish decide their response by inspecting the request body's
+ * `source` — whichever of INVALID_YAML_SOURCE/anything-else was actually
+ * POSTed — the same "the fixture answers what the client actually sent"
+ * discipline every other mock* here follows. Publish echoes the exact
+ * `source` string it received back onto the returned WorkflowVersion, which
+ * is what lets a spec assert digest-identity/byte-fidelity end to end: the
+ * response's `source` field only ever holds what the client actually sent
+ * over the wire, never a value the fixture invented.
+ */
+export async function mockAuthoringApi(page: Page): Promise<void> {
+  await page.route("**/v1alpha1/**", async (route) => {
+    const request = route.request();
+    const url = new URL(request.url());
+    const path = decodeURIComponent(url.pathname);
+    const method = request.method();
+
+    if (path === "/v1alpha1/workflows/validate" && method === "POST") {
+      const body = request.postDataJSON() as { source: string };
+      await route.fulfill(
+        json(body.source.includes("does-not-exist") ? INVALID_VALIDATION : VALID_VALIDATION),
+      );
+      return;
+    }
+    if (path === "/v1alpha1/workflows" && method === "POST") {
+      const body = request.postDataJSON() as {
+        source: string;
+        format?: string;
+      };
+      await route.fulfill({
+        status: 201,
+        contentType: "application/json",
+        body: JSON.stringify({ ...PUBLISHED_VERSION, source: body.source }),
+      });
+      return;
+    }
+    if (path === "/v1alpha1/workflows" && method === "GET") {
+      await route.fulfill(json({ items: WORKFLOW_VERSIONS }));
+      return;
+    }
+    if (path === "/v1alpha1/runs" && method === "GET") {
+      await route.fulfill(json({ items: WORKFLOWS_RUNS }));
+      return;
+    }
+    const runId = path.replace("/v1alpha1/runs/", "");
+    const workflowsRun = WORKFLOWS_RUNS.find((run) => run.id === runId);
+    if (workflowsRun && path === `/v1alpha1/runs/${runId}`) {
+      await route.fulfill(
+        json({ run: workflowsRun, tokens: [], node_runs: [] }),
+      );
+      return;
+    }
+
+    await route.fulfill({
+      status: 404,
+      contentType: "application/json",
+      body: JSON.stringify({
+        code: 1,
+        message: `no fixture route for ${method} ${path}`,
+        remediation: "add it to e2e/fixtures/api.ts",
+      }),
+    });
+  });
+}
+
 /** The parsed contents of the page's `#agent-state` node. */
 export async function readAgentState(page: Page): Promise<{
   status: string;
@@ -322,6 +402,12 @@ export async function readAgentState(page: Page): Promise<{
     state: string;
     node_states: Record<string, string>;
     selected: string | null;
+  } | null;
+  authoring?: {
+    step: string;
+    valid: boolean | null;
+    diagnostics_count: number;
+    digest: string | null;
   } | null;
 }> {
   const text = await page.locator("#agent-state").textContent();

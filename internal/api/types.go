@@ -68,13 +68,33 @@ type RunOut struct {
 	UpdatedAt      time.Time       `json:"updated_at"`
 	CompletedAt    *time.Time      `json:"completed_at,omitempty"`
 	Usage          *UsageOut       `json:"usage,omitempty"`
+	// Name, Description, and Category are task t3's optional run metadata
+	// (migrations/0013): Name and Description are operator-given at
+	// creation only (POST /v1alpha1/runs), never changed afterward.
+	// Category alone is retaggable via PATCH /v1alpha1/runs/{id} (frame
+	// decision q4) — see runMetadata's doc comment in queries.go.
+	Name        string `json:"name,omitempty"`
+	Description string `json:"description,omitempty"`
+	Category    string `json:"category,omitempty"`
+	// DisplayHint is a truncated, best-effort guess at what this run is
+	// about, derived at read time from a request/instruction/task-ish
+	// string field in the run's own input (deriveDisplayHint in runs.go) —
+	// never persisted, and never rendered when Name is set. A UI must read
+	// Name (operator-given) and DisplayHint (a guess) as distinct fields
+	// so it never presents a derived hint as if an operator had actually
+	// named the run.
+	DisplayHint string `json:"display_hint,omitempty"`
 }
 
-// runOut renders r with usage, the run-level §13.2 rollup task t2 adds
-// (postgres.EngineStore.RunUsage) — every call site fetches it fresh
-// rather than this function reaching into the database itself, keeping
-// runOut a pure function the way it always has been.
-func runOut(r engine.Run, usage postgres.UsageRollup) RunOut {
+// runOut renders r with usage (the run-level §13.2 rollup task t2 adds,
+// postgres.EngineStore.RunUsage) and meta (task t3's name/description/
+// category, queries.go's runMetadataByID) — every call site fetches both
+// fresh rather than this function reaching into the database itself,
+// keeping runOut a pure function the way it always has been. DisplayHint
+// is derived here, from r.Input, only when meta.Name is empty — see
+// RunOut's doc comment above for why a UI must be able to tell the two
+// apart.
+func runOut(r engine.Run, usage postgres.UsageRollup, meta runMetadata) RunOut {
 	out := RunOut{
 		ID:             r.ID,
 		WorkflowDigest: r.WorkflowDigest,
@@ -84,6 +104,12 @@ func runOut(r engine.Run, usage postgres.UsageRollup) RunOut {
 		CreatedAt:      r.CreatedAt,
 		UpdatedAt:      r.UpdatedAt,
 		Usage:          usageOut(usage),
+		Name:           meta.Name,
+		Description:    meta.Description,
+		Category:       meta.Category,
+	}
+	if meta.Name == "" {
+		out.DisplayHint = deriveDisplayHint(r.Input)
 	}
 	if !r.CompletedAt.IsZero() {
 		completedAt := r.CompletedAt

@@ -1,0 +1,33 @@
+-- 0013_run_metadata.sql
+--
+-- Expand-only: adds nullable `runs.name`, `runs.description`, and
+-- `runs.category` (task t3). All three are nullable with no default -- a
+-- run created before this shipped, or created afterward without them, has
+-- all three NULL, not an empty-string placeholder.
+--
+-- Authority and mutability (frame decision q4, docs/specs/2026-08-12-
+-- operate-through-the-ui.md): name and description are operator-given at
+-- creation only -- internal/api/runs.go's handleCreateRun is the only
+-- writer of either column, and nothing in this codebase updates them
+-- afterward. category is deliberately retaggable: PATCH
+-- /v1alpha1/runs/{id} (internal/api/runs.go's handlePatchRun) may update it
+-- alone, refusing any attempt to also patch name or description with a
+-- structured error -- a cheap-to-change flat tag, not a taxonomy (PRD
+-- frame c6), so per-actor aggregates (issue #28) can slice runs by
+-- category even after the fact.
+--
+-- These columns carry no FOREIGN KEY, CHECK, or enum constraint: name and
+-- description are free-form operator text, and category is an open tag
+-- rather than a fixed vocabulary -- validating it against a closed set
+-- would turn "cheap to change" into a migration every time the set needs a
+-- new value.
+--
+-- N-1 compatibility (docs/adr/0002-migration-policy.md): a binary built
+-- before this migration existed still inserts and reads runs with its own
+-- fixed column list (internal/store/postgres/engine_store.go's
+-- insertRunSQL/selectRunSQL name every column explicitly, never a bare
+-- `INSERT INTO runs ...` or `SELECT * FROM runs`), so three new nullable
+-- columns with no default change nothing it does.
+ALTER TABLE runs ADD COLUMN name TEXT;
+ALTER TABLE runs ADD COLUMN description TEXT;
+ALTER TABLE runs ADD COLUMN category TEXT;

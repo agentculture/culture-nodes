@@ -107,7 +107,12 @@ func (s *Server) listWorkflowVersions(ctx context.Context, workflowKey string, l
 	return out, rows.Err()
 }
 
-// runRow is one runs row joined to its pinned workflow digest.
+// runRow is one runs row joined to its pinned workflow digest, including
+// task t3's name/description/category (migrations/0013) — listRuns' own
+// SELECT reads them straight off the same row, unlike runOut's other call
+// sites (createRun/getRun/cancelRun), which fetch them separately via
+// runMetadataByID because they build a RunOut from an engine.Run rather
+// than from this file's own runRow.
 type runRow struct {
 	ID             string
 	WorkflowDigest string
@@ -117,8 +122,16 @@ type runRow struct {
 	CreatedAt      time.Time
 	UpdatedAt      time.Time
 	CompletedAt    time.Time
+	Name           string
+	Description    string
+	Category       string
 }
 
+// out renders r as a RunOut. Usage stays unset here (see RunOut's doc
+// comment on Usage — listRuns never computes a per-row rollup), but
+// name/description/category and the input-derived DisplayHint render the
+// same way runOut's other call sites do, since this listing already reads
+// them off the same row at no extra query cost.
 func (r runRow) out() RunOut {
 	out := RunOut{
 		ID:             r.ID,
@@ -128,6 +141,12 @@ func (r runRow) out() RunOut {
 		Output:         nonNullJSON(r.Output),
 		CreatedAt:      r.CreatedAt,
 		UpdatedAt:      r.UpdatedAt,
+		Name:           r.Name,
+		Description:    r.Description,
+		Category:       r.Category,
+	}
+	if r.Name == "" {
+		out.DisplayHint = deriveDisplayHint(r.Input)
 	}
 	if !r.CompletedAt.IsZero() {
 		completedAt := r.CompletedAt
@@ -178,7 +197,8 @@ func (s *Server) listRuns(ctx context.Context, p listRunsParams) ([]RunOut, erro
 	)
 	if p.Sort == sortUpdatedAt {
 		rows, err = s.Store.Pool().Query(ctx, `
-			SELECT r.id, wv.content_digest, r.status, r.input, r.output, r.created_at, r.updated_at, r.completed_at
+			SELECT r.id, wv.content_digest, r.status, r.input, r.output, r.created_at, r.updated_at, r.completed_at,
+			       r.name, r.description, r.category
 			FROM runs r JOIN workflow_versions wv ON wv.id = r.workflow_version_id
 			WHERE r.namespace_id = $1
 			  AND ($2 = '' OR r.status = $2)
@@ -189,7 +209,8 @@ func (s *Server) listRuns(ctx context.Context, p listRunsParams) ([]RunOut, erro
 			s.NamespaceID, p.State, p.UpdatedSince, p.UpdatedUntil, p.Limit)
 	} else {
 		rows, err = s.Store.Pool().Query(ctx, `
-			SELECT r.id, wv.content_digest, r.status, r.input, r.output, r.created_at, r.updated_at, r.completed_at
+			SELECT r.id, wv.content_digest, r.status, r.input, r.output, r.created_at, r.updated_at, r.completed_at,
+			       r.name, r.description, r.category
 			FROM runs r JOIN workflow_versions wv ON wv.id = r.workflow_version_id
 			WHERE r.namespace_id = $1
 			  AND ($2 = '' OR r.status = $2)
@@ -207,14 +228,18 @@ func (s *Server) listRuns(ctx context.Context, p listRunsParams) ([]RunOut, erro
 	out := make([]RunOut, 0)
 	for rows.Next() {
 		var (
-			r           runRow
-			input       []byte
-			output      []byte
-			createdAt   pgtype.Timestamptz
-			updatedAt   pgtype.Timestamptz
-			completedAt pgtype.Timestamptz
+			r                           runRow
+			input                       []byte
+			output                      []byte
+			createdAt                   pgtype.Timestamptz
+			updatedAt                   pgtype.Timestamptz
+			completedAt                 pgtype.Timestamptz
+			name, description, category pgtype.Text
 		)
-		if err := rows.Scan(&r.ID, &r.WorkflowDigest, &r.Status, &input, &output, &createdAt, &updatedAt, &completedAt); err != nil {
+		if err := rows.Scan(
+			&r.ID, &r.WorkflowDigest, &r.Status, &input, &output, &createdAt, &updatedAt, &completedAt,
+			&name, &description, &category,
+		); err != nil {
 			return nil, fmt.Errorf("api: list runs: scan: %w", err)
 		}
 		r.Input = json.RawMessage(input)
@@ -222,6 +247,9 @@ func (s *Server) listRuns(ctx context.Context, p listRunsParams) ([]RunOut, erro
 		r.CreatedAt = tsOrZero(createdAt)
 		r.UpdatedAt = tsOrZero(updatedAt)
 		r.CompletedAt = tsOrZero(completedAt)
+		r.Name = textOrEmpty(name)
+		r.Description = textOrEmpty(description)
+		r.Category = textOrEmpty(category)
 		out = append(out, r.out())
 	}
 	return out, rows.Err()
@@ -341,6 +369,88 @@ func (s *Server) runNodeRuns(ctx context.Context, runID string) ([]NodeRunOut, e
 		out[idx].Attempts = append(out[idx].Attempts, a)
 	}
 	return out, attemptRows.Err()
+}
+
+// runMetadata is task t3's optional run name/description/category triple
+// (migrations/0013). It is read and written directly against the `runs`
+// table through (*postgres.Store).Pool() rather than threaded through
+// engine.Run/postgres.EngineStore: the engine's own state machine never
+// reads or branches on these fields, so growing its Store interface for a
+// need only this package's HTTP surface has would widen that boundary for
+// nothing — the same "escape hatch" reasoning this file's header comment
+// already gives for the run/token/node-run/attempt reads above.
+type runMetadata struct {
+	Name        string
+	Description string
+	Category    string
+}
+
+// runMetadataByID reads one run's name/description/category, returning
+// postgres.ErrNotFound when no run with this id exists in this server's
+// namespace — the same sentinel workflowVersionByDigest returns above, so
+// callers can classify() it the same way.
+func (s *Server) runMetadataByID(ctx context.Context, runID string) (runMetadata, error) {
+	var name, description, category pgtype.Text
+	err := s.Store.Pool().QueryRow(ctx,
+		`SELECT name, description, category FROM runs WHERE id = $1 AND namespace_id = $2`,
+		runID, s.NamespaceID,
+	).Scan(&name, &description, &category)
+	if err != nil {
+		if isNoRowsErr(err) {
+			return runMetadata{}, postgres.ErrNotFound
+		}
+		return runMetadata{}, fmt.Errorf("api: run %s: metadata: %w", runID, err)
+	}
+	return runMetadata{Name: textOrEmpty(name), Description: textOrEmpty(description), Category: textOrEmpty(category)}, nil
+}
+
+// setRunMetadata records name/description/category on an already-created
+// run — handleCreateRun's only caller, immediately after
+// (*engine.Engine).CreateRun commits the run row itself (see runs.go for
+// why this cannot fold into that one transaction: engine.Run/InsertRun
+// carry no metadata columns, by the same boundary runMetadata's doc
+// comment above explains). A blank name/description/category writes SQL
+// NULL (NULLIF), matching migrations/0013's "absent, not an empty-string
+// placeholder" contract; when all three are blank (every pre-t3 caller,
+// and the common case even after t3), this skips the UPDATE entirely, so
+// an existing client sending only {workflow_digest, input} pays no extra
+// round trip.
+func (s *Server) setRunMetadata(ctx context.Context, runID, name, description, category string) error {
+	if name == "" && description == "" && category == "" {
+		return nil
+	}
+	_, err := s.Store.Pool().Exec(ctx,
+		`UPDATE runs SET name = NULLIF($2, ''), description = NULLIF($3, ''), category = NULLIF($4, '') WHERE id = $1`,
+		runID, name, description, category,
+	)
+	if err != nil {
+		return fmt.Errorf("api: run %s: set metadata: %w", runID, err)
+	}
+	return nil
+}
+
+// setRunCategory retags an existing run's category alone — POST-creation,
+// through PATCH /v1alpha1/runs/{id} (handlePatchRun) — per frame decision
+// q4: category is the one field of runMetadata retaggable after creation;
+// name and description are immutable once set (enforced by handlePatchRun
+// refusing either key in the request body before this is ever called). An
+// empty category clears the tag (NULLIF), the same "absent, not empty
+// string" contract setRunMetadata above uses. Returns postgres.ErrNotFound
+// when no run with this id exists in this server's namespace, so
+// handlePatchRun can classify() it into the documented 404 the same way
+// every other run lookup in this package does.
+func (s *Server) setRunCategory(ctx context.Context, runID, category string) error {
+	tag, err := s.Store.Pool().Exec(ctx,
+		`UPDATE runs SET category = NULLIF($2, ''), updated_at = now() WHERE id = $1 AND namespace_id = $3`,
+		runID, category, s.NamespaceID,
+	)
+	if err != nil {
+		return fmt.Errorf("api: run %s: set category: %w", runID, err)
+	}
+	if tag.RowsAffected() == 0 {
+		return postgres.ErrNotFound
+	}
+	return nil
 }
 
 // nodeRunCursor is the decoded form of GET /v1alpha1/node-runs' opaque

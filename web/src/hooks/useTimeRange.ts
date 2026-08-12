@@ -11,10 +11,22 @@ import type { TimeRangeValue } from "../components/TimeRangeFilter";
  * `updated_since`/`updated_until`; nothing here (or in the views) filters
  * an already-fetched list client-side.
  */
+/**
+ * A URL param is only a bound if it parses as a timestamp. Empty strings
+ * (`?since=`) and non-RFC3339 noise are treated as absent rather than
+ * forwarded to the API — the filter UI already renders unparseable values
+ * as blank inputs, so passing them through would send the server state the
+ * user cannot see (review finding on #27).
+ */
+function validTimestamp(value: string | null): string | undefined {
+  if (!value) return undefined;
+  return Number.isNaN(new Date(value).getTime()) ? undefined : value;
+}
+
 export function useTimeRange() {
   const [searchParams, setSearchParams] = useSearchParams();
-  const since = searchParams.get("since") ?? undefined;
-  const until = searchParams.get("until") ?? undefined;
+  const since = validTimestamp(searchParams.get("since"));
+  const until = validTimestamp(searchParams.get("until"));
 
   const applyRange = useCallback(
     (range: TimeRangeValue) => {

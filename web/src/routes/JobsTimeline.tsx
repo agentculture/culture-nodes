@@ -37,6 +37,9 @@ export function JobsTimeline() {
     setAgentState({ status: "loading" });
     setError(null);
     setNextCursor(undefined);
+    // Same reset idiom as RunsList/RunsBoard: never render the previous
+    // range's rows while the new range is loading.
+    setItems(null);
     listNodeRuns(controller.signal, {
       updated_since: since,
       updated_until: until,

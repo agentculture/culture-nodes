@@ -27,6 +27,10 @@ export function RunsList() {
     const controller = new AbortController();
     setAgentState({ status: "loading", run: null });
     setError(null);
+    // A range change must not keep rendering the previous range's rows
+    // while the new request is in flight — the loading state is gated on
+    // runs === null, so reset it (review finding on #27).
+    setRuns(null);
     listRuns(controller.signal, {
       sort: "updated_at",
       updated_since: since,

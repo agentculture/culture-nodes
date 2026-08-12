@@ -38,6 +38,9 @@ export function RunsBoard() {
     const controller = new AbortController();
     setAgentState({ status: "loading", run: null });
     setError(null);
+    // See RunsList: a range change resets to the loading state instead of
+    // rendering the previous range's columns while the new fetch runs.
+    setRuns(null);
     listRuns(controller.signal, {
       sort: "updated_at",
       updated_since: since,

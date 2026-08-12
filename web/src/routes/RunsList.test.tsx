@@ -97,6 +97,34 @@ describe("RunsList data + table", () => {
 });
 
 describe("RunsList time-range filter (server-side, issue #23)", () => {
+  it("treats empty or unparseable since/until URL params as absent instead of forwarding them", async () => {
+    mockListRuns.mockResolvedValue({ items: BOARD_RUNS });
+    renderList(["/runs?since=&until=not-a-timestamp"]);
+    await screen.findByRole("table");
+
+    const [, params] = mockListRuns.mock.calls[0];
+    expect(params).toEqual({
+      sort: "updated_at",
+      updated_since: undefined,
+      updated_until: undefined,
+    });
+  });
+
+  it("returns to the loading state on a range change instead of showing the previous range's rows", async () => {
+    mockListRuns.mockResolvedValueOnce({ items: BOARD_RUNS });
+    const user = userEvent.setup();
+    renderList();
+    await screen.findByRole("table");
+
+    mockListRuns.mockReturnValue(new Promise(() => {})); // never resolves
+    await user.click(screen.getByRole("button", { name: "Last hour" }));
+
+    await waitFor(() =>
+      expect(screen.queryByRole("table")).not.toBeInTheDocument(),
+    );
+    expect(screen.getByText("Loading runs…")).toBeInTheDocument();
+  });
+
   it("loads an already-bookmarked since/until straight from the URL on first render", async () => {
     mockListRuns.mockResolvedValue({ items: BOARD_RUNS });
     renderList([

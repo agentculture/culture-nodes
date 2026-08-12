@@ -42,7 +42,7 @@ from http.server import BaseHTTPRequestHandler, HTTPServer
 from pathlib import Path
 from typing import Any
 
-from codex_bridge import codex_cli, mapping
+from codex_bridge import codex_cli, mapping, workspace
 from codex_bridge.async_runner import AsyncRunner
 from codex_bridge.config import Config
 from codex_bridge.idempotency import IdempotencyStore
@@ -373,6 +373,10 @@ class Handler(BaseHTTPRequestHandler):
         sandbox: str | None,
     ) -> None:
         cfg = self.bridge.cfg
+        # t10: capture the workspace's starting point as close as possible
+        # to the moment codex is actually spawned, so head_before/status
+        # bracket the session rather than the whole request-handling ladder.
+        handle = workspace.begin(repo)
         result = codex_cli.run_sync(cfg, instruction, repo, model=model, sandbox=sandbox)
         response = mapping.sync_response(
             result.task_result,
@@ -381,6 +385,7 @@ class Handler(BaseHTTPRequestHandler):
             actor_id=cfg.actor_id,
             created_at=_now_iso(),
             timed_out=result.timed_out,
+            workspace_measured=workspace.measure(handle),
         )
         # A real dispatch happened (codex was actually invoked) — durably
         # remember the outcome so a redelivered attempt replays it instead

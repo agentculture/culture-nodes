@@ -29,7 +29,7 @@ from http.server import BaseHTTPRequestHandler, HTTPServer
 from pathlib import Path
 from typing import Any
 
-from claude_code_bridge import claude_cli, mapping
+from claude_code_bridge import claude_cli, mapping, workspace
 from claude_code_bridge.async_runner import AsyncRunner
 from claude_code_bridge.config import Config
 from claude_code_bridge.idempotency import IdempotencyStore
@@ -351,6 +351,10 @@ class Handler(BaseHTTPRequestHandler):
         model: str | None,
     ) -> None:
         cfg = self.bridge.cfg
+        # t10: capture the workspace's starting point as close as possible
+        # to the moment claude is actually spawned, so head_before/status
+        # bracket the session rather than the whole request-handling ladder.
+        handle = workspace.begin(repo)
         try:
             result = claude_cli.run_sync(
                 cfg, instruction, repo, role=role, max_steps=max_steps, model=model
@@ -372,6 +376,7 @@ class Handler(BaseHTTPRequestHandler):
             actor_id=cfg.actor_id,
             created_at=_now_iso(),
             timed_out=result.timed_out,
+            workspace_measured=workspace.measure(handle),
         )
         # A real dispatch happened (claude was actually invoked) — durably
         # remember the outcome so a redelivered attempt replays it instead of
@@ -410,6 +415,9 @@ class Handler(BaseHTTPRequestHandler):
             )
             return
 
+        # t10: same bracketing as the sync path, captured right before the
+        # detached claude subprocess is spawned.
+        handle = workspace.begin(repo)
         try:
             start = claude_cli.spawn_background(
                 cfg, instruction, repo, role=role, max_steps=max_steps, model=model
@@ -445,6 +453,7 @@ class Handler(BaseHTTPRequestHandler):
             callback_url=callback_url,
             callback_token=callback_token,
             heartbeat_after_seconds=cfg.heartbeat_after_seconds,
+            workspace_handle=handle,
         )
 
 

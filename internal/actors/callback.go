@@ -111,6 +111,11 @@ type PendingInvocation struct {
 	FencingToken int64
 	Attempt      int
 	ActorRef     string
+	// ActorID is the resolved actors-table row id captured at dispatch
+	// (actor_invocations.actor_id, migration 0015) — committed into
+	// attempts.actor_id so per-actor stats attribute async work. Empty on
+	// rows parked by pre-0015 binaries: those complete unattributed.
+	ActorID      string
 	InvocationID string
 	State        string
 	LastSequence int64
@@ -655,7 +660,7 @@ func completionFor(inv PendingInvocation, ev CallbackEvent) (engine.CompletionRe
 		WorkerID:     inv.WorkerID,
 		FencingToken: inv.FencingToken,
 		Attempt:      inv.Attempt,
-		ActorID:      "",
+		ActorID:      inv.ActorID,
 	}
 
 	switch ev.Kind {

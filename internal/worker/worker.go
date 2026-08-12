@@ -549,3 +549,19 @@ func sleepCtx(ctx context.Context, d time.Duration) bool {
 		return false
 	}
 }
+
+// actorRowID best-effort resolves a node's actor reference to its
+// actors-table row id for attempt attribution. Any miss — a registry
+// without the capability, an unknown ref, a query error — yields "":
+// attribution is worth having, never worth failing a dispatch over.
+func (w *Worker) actorRowID(ctx context.Context, ref string) string {
+	r, ok := w.opts.Registry.(actorRowIDResolver)
+	if !ok {
+		return ""
+	}
+	id, err := r.ActorRowID(ctx, ref)
+	if err != nil {
+		return ""
+	}
+	return id
+}

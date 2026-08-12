@@ -100,13 +100,26 @@ func main() {
 		Timeout: 0,
 	}
 
+	// Capped backoff on consecutive loop errors, reset on any success: a
+	// persistently failing runtime API must not become a hot spin that
+	// burns CPU and floods the log (review finding). The cap stays low
+	// because the platform, not this loop, owns liveness — it kills the
+	// sandbox if the loop is truly wedged.
+	backoff := time.Duration(0)
 	for {
 		if err := handleOne(client, base); err != nil {
 			// A failure to even fetch or answer an invocation is a loop
-			// error, not an invocation result. Log and keep serving; the
-			// runtime kills the sandbox if the loop is truly wedged.
+			// error, not an invocation result. Log, back off, keep serving.
 			log.Printf("runtime loop: %v", err)
+			if backoff < 100*time.Millisecond {
+				backoff = 100 * time.Millisecond
+			} else if backoff *= 2; backoff > 5*time.Second {
+				backoff = 5 * time.Second
+			}
+			time.Sleep(backoff)
+			continue
 		}
+		backoff = 0
 	}
 }
 
@@ -121,6 +134,10 @@ func handleOne(client *http.Client, base string) error {
 	_ = resp.Body.Close()
 	if err != nil {
 		return fmt.Errorf("reading invocation payload: %w", err)
+	}
+	if resp.StatusCode/100 != 2 {
+		return fmt.Errorf("invocation/next: status %d: %s",
+			resp.StatusCode, truncate(payload, 512))
 	}
 	requestID := resp.Header.Get("Lambda-Runtime-Aws-Request-Id")
 	if requestID == "" {
@@ -261,18 +278,45 @@ func postOnce(client *http.Client, url string, encoded []byte) error {
 
 // tailBuffer keeps the last limit bytes written to it. It exists so a
 // failing command's report can carry the end of its output without this
-// process holding an unbounded stream in memory.
+// process holding an unbounded stream in memory — which means the bound
+// must hold for the backing array, not just the slice length: an
+// append-then-reslice implementation would retain capacity proportional to
+// the largest single write ever seen (review finding). The buffer is
+// allocated once at cap=limit and never grows.
 type tailBuffer struct {
 	limit int
 	buf   []byte
 }
 
 func (t *tailBuffer) Write(p []byte) (int, error) {
-	t.buf = append(t.buf, p...)
-	if len(t.buf) > t.limit {
-		t.buf = t.buf[len(t.buf)-t.limit:]
+	n := len(p)
+	if t.limit <= 0 || n == 0 {
+		return n, nil
 	}
-	return len(p), nil
+	if t.buf == nil {
+		t.buf = make([]byte, 0, t.limit)
+	}
+	if n >= t.limit {
+		// The write alone fills the window: keep exactly its last limit
+		// bytes, never materialising the rest.
+		t.buf = t.buf[:t.limit]
+		copy(t.buf, p[n-t.limit:])
+		return n, nil
+	}
+	if overflow := len(t.buf) + n - t.limit; overflow > 0 {
+		copy(t.buf, t.buf[overflow:])
+		t.buf = t.buf[:len(t.buf)-overflow]
+	}
+	t.buf = append(t.buf, p...)
+	return n, nil
 }
 
 func (t *tailBuffer) String() string { return string(t.buf) }
+
+// truncate bounds an error-message body snippet.
+func truncate(b []byte, limit int) string {
+	if len(b) <= limit {
+		return string(b)
+	}
+	return string(b[:limit]) + "…"
+}

@@ -13,6 +13,7 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - Live `awslive` suite for the SQS driver (`internal/queue/sqs/awslive_test.go`): publish/receive/ack round-trip and delay-withholds-redelivery proven against the real `culture-nodes-awslive` queue
 - ADR 0006 records the #7/#25 decisions: SQS stays the optional cloud-profile signal driver, the Lambda adapter stays first-class in-worker (refold trigger: first real cloud target), the awslive lane is manual like the codex smoke (CI never runs it), ECS/Fargate stays deferred, credential chain unchanged
 - deploy/aws/README.md: the live-lane arming recipe and the standing-resource (re)creation runbook (queue, ECR repo, function, exec + worker roles)
+
 ## [0.11.1] - 2026-08-12
 
 ### Added

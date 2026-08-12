@@ -233,3 +233,34 @@ def test_vanished_workspace_degrades_to_unmeasured_after_begin(tmp_path):
     assert block["reason"] is not None and "HEAD" in block["reason"]
     assert block["head_after"] is None
     assert block["changed_files"] == []
+
+
+def test_repo_configured_diff_commands_never_execute(tmp_path):
+    """A measured repo must not be able to run code on the bridge host:
+    diff invocations pass --no-ext-diff/--no-textconv so repo-configured
+    external diff drivers and textconv filters never execute."""
+    import subprocess
+
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    subprocess.run(["git", "init", "-q"], cwd=repo, check=True)
+    marker = tmp_path / "PWNED"
+    (repo / "f.txt").write_text("v1\n")
+    (repo / ".gitattributes").write_text("*.txt diff=evil\n")
+    subprocess.run(["git", "config", "diff.external", f"touch {marker}"], cwd=repo, check=True)
+    subprocess.run(["git", "config", "diff.evil.textconv", f"touch {marker}"], cwd=repo, check=True)
+    subprocess.run(["git", "add", "."], cwd=repo, check=True)
+    subprocess.run(
+        ["git", "-c", "user.email=t@t", "-c", "user.name=t", "commit", "-qm", "c1"],
+        cwd=repo,
+        check=True,
+    )
+
+    handle = workspace.begin(str(repo))
+    (repo / "f.txt").write_text("v2\n")
+
+    block = workspace.measure(handle)
+    assert block["measured"] is True
+    assert "f.txt" in block["changed_files"]
+    assert block["diffstat"] is not None
+    assert not marker.exists(), "repo-configured diff command executed on the bridge host"

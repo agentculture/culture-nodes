@@ -269,15 +269,19 @@ func (eq engineQueries) EnqueueWork(ctx context.Context, nodeRunID string, avail
 }
 
 const insertRunSQL = `
-INSERT INTO runs (id, namespace_id, workflow_version_id, status, input, created_at, updated_at)
-VALUES ($1, $2, $3, $4, $5, $6, $6)
+INSERT INTO runs (id, namespace_id, workflow_version_id, status, input, created_at, updated_at,
+                  name, description, category)
+VALUES ($1, $2, $3, $4, $5, $6, $6, NULLIF($7, ''), NULLIF($8, ''), NULLIF($9, ''))
 `
 
-// InsertRun records a new run.
+// InsertRun records a new run. Metadata rides the same INSERT so POST
+// /v1alpha1/runs has no post-commit failure window (empty string -> NULL,
+// matching migrations/0013's nullable columns).
 func (eq engineQueries) InsertRun(ctx context.Context, run engine.Run) error {
 	_, err := eq.q.Exec(ctx, insertRunSQL,
 		run.ID, eq.namespaceID, run.WorkflowVersionID, string(run.State),
 		jsonOrEmptyObject(run.Input), tsOrNow(run.CreatedAt),
+		run.Name, run.Description, run.Category,
 	)
 	if err != nil {
 		return fmt.Errorf("postgres: engine: InsertRun: %w", err)

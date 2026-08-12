@@ -2,8 +2,10 @@ package postgres_test
 
 import (
 	"context"
+	"encoding/json"
 	"testing"
 
+	"github.com/agentculture/culture-nodes/internal/engine"
 	"github.com/agentculture/culture-nodes/internal/store"
 	"github.com/agentculture/culture-nodes/internal/store/postgres"
 )
@@ -82,5 +84,60 @@ func TestInsertRunWithoutMetadataLeavesColumnsNull(t *testing.T) {
 	}
 	if name != nil || description != nil || category != nil {
 		t.Errorf("runs metadata = (%v, %v, %v), want all NULL", name, description, category)
+	}
+}
+
+// TestInsertRunPersistsMetadataAtomically proves engine InsertRun writes
+// name/description/category inside the run INSERT itself (the qodo PR-35
+// atomicity fix): metadata set on engine.Run lands in the columns, empty
+// strings land NULL — no post-commit UPDATE involved.
+func TestInsertRunPersistsMetadataAtomically(t *testing.T) {
+	s := requireStore(t)
+	ctx := context.Background()
+	ns := mustNamespace(t, s, "run-metadata-atomic")
+	es, err := postgres.NewEngineStore(s, ns.ID)
+	if err != nil {
+		t.Fatalf("NewEngineStore: %v", err)
+	}
+
+	runID := store.NewULID()
+	err = es.InTx(ctx, func(ctx context.Context, tx engine.Tx) error {
+		versionID, err := tx.EnsureWorkflowVersion(ctx, engine.WorkflowVersionInput{
+			WorkflowKey:   "run-metadata-atomic-fixture",
+			SourceFormat:  "yaml",
+			Source:        "kind: Workflow\n",
+			NormalizedIR:  json.RawMessage(`{"spec":{"entry":"a"}}`),
+			ContentDigest: "sha256:" + store.NewULID(),
+		})
+		if err != nil {
+			return err
+		}
+		return tx.InsertRun(ctx, engine.Run{
+			ID:                runID,
+			WorkflowVersionID: versionID,
+			State:             engine.RunRunning,
+			Name:              "audit thor docs",
+			Description:       "",
+			Category:          "review",
+		})
+	})
+	if err != nil {
+		t.Fatalf("InTx: %v", err)
+	}
+
+	var name, description, category any
+	if err := s.Pool().QueryRow(ctx,
+		`SELECT name, description, category FROM runs WHERE id = $1`, runID,
+	).Scan(&name, &description, &category); err != nil {
+		t.Fatalf("read run row: %v", err)
+	}
+	if name != "audit thor docs" {
+		t.Fatalf("name = %v, want given name", name)
+	}
+	if description != nil {
+		t.Fatalf("description = %v, want NULL for empty string", description)
+	}
+	if category != "review" {
+		t.Fatalf("category = %v, want review", category)
 	}
 }

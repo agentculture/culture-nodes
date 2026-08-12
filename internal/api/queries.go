@@ -404,31 +404,6 @@ func (s *Server) runMetadataByID(ctx context.Context, runID string) (runMetadata
 	return runMetadata{Name: textOrEmpty(name), Description: textOrEmpty(description), Category: textOrEmpty(category)}, nil
 }
 
-// setRunMetadata records name/description/category on an already-created
-// run — handleCreateRun's only caller, immediately after
-// (*engine.Engine).CreateRun commits the run row itself (see runs.go for
-// why this cannot fold into that one transaction: engine.Run/InsertRun
-// carry no metadata columns, by the same boundary runMetadata's doc
-// comment above explains). A blank name/description/category writes SQL
-// NULL (NULLIF), matching migrations/0013's "absent, not an empty-string
-// placeholder" contract; when all three are blank (every pre-t3 caller,
-// and the common case even after t3), this skips the UPDATE entirely, so
-// an existing client sending only {workflow_digest, input} pays no extra
-// round trip.
-func (s *Server) setRunMetadata(ctx context.Context, runID, name, description, category string) error {
-	if name == "" && description == "" && category == "" {
-		return nil
-	}
-	_, err := s.Store.Pool().Exec(ctx,
-		`UPDATE runs SET name = NULLIF($2, ''), description = NULLIF($3, ''), category = NULLIF($4, '') WHERE id = $1`,
-		runID, name, description, category,
-	)
-	if err != nil {
-		return fmt.Errorf("api: run %s: set metadata: %w", runID, err)
-	}
-	return nil
-}
-
 // setRunCategory retags an existing run's category alone — POST-creation,
 // through PATCH /v1alpha1/runs/{id} (handlePatchRun) — per frame decision
 // q4: category is the one field of runMetadata retaggable after creation;

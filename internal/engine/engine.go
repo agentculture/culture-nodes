@@ -173,7 +173,7 @@ func (e *Engine) Workflow(digest string, ir []byte) (*Workflow, error) {
 //   - run.created and node-run.ready are appended to the event log and the
 //     outbox, so the queue signal and the audit trail cannot disagree with
 //     the state that produced them.
-func (e *Engine) CreateRun(ctx context.Context, cw *compiler.CompiledWorkflow, input json.RawMessage) (Run, error) {
+func (e *Engine) CreateRun(ctx context.Context, cw *compiler.CompiledWorkflow, input json.RawMessage, opts ...RunOption) (Run, error) {
 	if cw == nil {
 		return Run{}, errors.New("engine: CreateRun requires a compiled workflow")
 	}
@@ -199,6 +199,9 @@ func (e *Engine) CreateRun(ctx context.Context, cw *compiler.CompiledWorkflow, i
 		Input:          jsonOrNull(input),
 		CreatedAt:      now,
 		UpdatedAt:      now,
+	}
+	for _, opt := range opts {
+		opt(&run)
 	}
 
 	err = e.store.InTx(ctx, func(ctx context.Context, tx Tx) error {

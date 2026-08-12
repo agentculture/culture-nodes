@@ -156,8 +156,12 @@ def measure(handle: WorkspaceHandle) -> dict[str, Any]:
             " (workspace vanished or corrupted mid-session)",
         )
     status = _git_stdout(handle.repo, "status", "--porcelain")
-    diffstat = _git_stdout(handle.repo, "diff", "--stat", handle.head_before)
-    names = _git_stdout(handle.repo, "diff", "--name-only", handle.head_before)
+    diffstat = _git_stdout(
+        handle.repo, "diff", "--no-ext-diff", "--no-textconv", "--stat", handle.head_before
+    )
+    names = _git_stdout(
+        handle.repo, "diff", "--no-ext-diff", "--no-textconv", "--name-only", handle.head_before
+    )
 
     changed: list[str] = []
     if names is not None:

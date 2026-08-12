@@ -20,8 +20,8 @@ import (
 // Description, and Category (task t3, migrations/0013) are optional and
 // additive: a body carrying only {workflow_digest, input} — every
 // pre-t3 client — decodes identically to before, with all three as their
-// zero value, and handleCreateRun below skips writing them entirely in
-// that case (see setRunMetadata in queries.go).
+// zero value; empty values persist as SQL NULL inside CreateRun's own
+// transaction (engine.WithRunMetadata + InsertRun's NULLIF).
 type createRunRequest struct {
 	WorkflowDigest string          `json:"workflow_digest"`
 	Input          json.RawMessage `json:"input"`
@@ -60,27 +60,20 @@ func (s *Server) handleCreateRun(w http.ResponseWriter, r *http.Request) error {
 		Digest:     version.ContentDigest,
 	}
 
-	run, err := s.Engine.CreateRun(ctx, cw, req.Input)
+	// Metadata rides CreateRun's own transaction (engine.WithRunMetadata):
+	// once this call returns there is nothing left that can fail, so the
+	// client never sees a 5xx for a run that actually committed (the
+	// unknown-success window a post-commit UPDATE opened — a retry after
+	// that 5xx would have created a duplicate run).
+	run, err := s.Engine.CreateRun(ctx, cw, req.Input,
+		engine.WithRunMetadata(req.Name, req.Description, req.Category))
 	if err != nil {
 		return classify(err)
 	}
-	// Task t3: name/description/category cannot ride inside
-	// Engine.CreateRun's own transaction — engine.Run/InsertRun carry no
-	// metadata columns (see runMetadata's doc comment in queries.go for
-	// why that boundary stays put) — so this is a second statement right
-	// after the run row exists. setRunMetadata no-ops when the request
-	// carried none of the three, so an old {workflow_digest, input}-only
-	// body never pays for it.
-	if err := s.setRunMetadata(ctx, run.ID, req.Name, req.Description, req.Category); err != nil {
-		return internalError(err)
-	}
-	usage, err := s.engineStore.RunUsage(ctx, run.ID)
-	if err != nil {
-		return internalError(err)
-	}
-	// The response reflects exactly what was just written above, with no
-	// extra read: createRunRequest's fields ARE the metadata now
-	// persisted.
+	// A just-created run has zero attempts by construction: its usage
+	// rollup is the deterministic empty value, no DB read needed (and no
+	// post-commit failure point).
+	usage := postgres.UsageRollup{}
 	meta := runMetadata{Name: req.Name, Description: req.Description, Category: req.Category}
 	writeJSON(w, http.StatusCreated, runOut(run, usage, meta))
 	return nil

@@ -74,6 +74,16 @@ const (
 	// RuleInvalidAuthority — the authority value is not one the ledger
 	// recognises at all.
 	RuleInvalidAuthority = "authority_not_recognised"
+	// RuleGradeNeverObservedOrDerived — a grade is an opinion record: it
+	// never carries observed authority (nothing about a rating is directly
+	// measured) or derived authority (a deterministic producer computes
+	// values, it does not hold opinions), regardless of origin.
+	RuleGradeNeverObservedOrDerived = "grade_never_observed_or_derived"
+	// RuleNoSelfGrade — a grade whose grading origin actor equals the
+	// evaluated actor is refused: the self-promotion rule (PRD §10.4 "no
+	// actor promotes its own proposal") extended to opinion records. No
+	// actor grades its own work.
+	RuleNoSelfGrade = "no_self_grade"
 )
 
 // AuthorityError reports that the producer/authority matrix (PRD §10.4)

@@ -64,6 +64,22 @@ func TestAppendEnforcesProducerAuthorityMatrix(t *testing.T) {
 		// `superseded` is read from later records, never written.
 		{"agent declares itself superseded", agentOrigin, ledger.RecordClaim, ledger.AuthoritySuperseded, nil, ledger.RuleSupersededNotAppendable},
 		{"engine declares superseded", engineOrigin, ledger.RecordResult, ledger.AuthoritySuperseded, nil, ledger.RuleSupersededNotAppendable},
+
+		// A grade is an opinion record. Agents propose it like anything
+		// else; a human grading directly lands it confirmed without a
+		// review transaction (see grade_test.go for the dedicated
+		// coverage). No origin may make it observed or derived: a runner
+		// is refused for not being evidence at all (its own rule fires
+		// first), and the deterministic producers -- the one origin whose
+		// ordinary rule would otherwise admit it -- are refused by the
+		// grade-specific rule (see TestGradeNeverObservedOrDerived for the
+		// full per-origin picture).
+		{"agent proposes a grade", agentOrigin, ledger.RecordGrade, ledger.AuthorityProposed, nil, ""},
+		{"agent confirms a grade directly", agentOrigin, ledger.RecordGrade, ledger.AuthorityConfirmed, nil, ledger.RuleAgentProposesOnly},
+		{"human confirms a grade directly", humanOrigin, ledger.RecordGrade, ledger.AuthorityConfirmed, nil, ""},
+		{"runner observes a grade", runnerOrigin, ledger.RecordGrade, ledger.AuthorityObserved, &runnerManifest, ledger.RuleRunnerEvidenceOnly},
+		{"engine derives a grade", engineOrigin, ledger.RecordGrade, ledger.AuthorityDerived, nil, ledger.RuleGradeNeverObservedOrDerived},
+		{"validator derives a grade", validatorOrigin, ledger.RecordGrade, ledger.AuthorityDerived, nil, ledger.RuleGradeNeverObservedOrDerived},
 	}
 
 	for _, tc := range cases {
@@ -80,6 +96,18 @@ func TestAppendEnforcesProducerAuthorityMatrix(t *testing.T) {
 				rec.Data = mustJSON(t, map[string]any{
 					"collection_method": "runner_wait_status",
 					"measurements":      map[string]any{"exit_code": 0},
+				})
+			}
+			if tc.recordType == ledger.RecordGrade {
+				// A schema-valid payload naming an evaluated actor distinct
+				// from every origin fixture, so the matrix cases exercise
+				// the producer/authority rule under test and never trip the
+				// self-grade refusal by accident; TestGradeSelfRefusal
+				// covers that rule directly.
+				rec.Data = mustJSON(t, map[string]any{
+					"rating":             4,
+					"rationale":          "Delivered the change set with clear evidence and no rework.",
+					"evaluated_actor_id": "actor_being_graded",
 				})
 			}
 

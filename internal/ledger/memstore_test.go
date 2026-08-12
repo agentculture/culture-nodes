@@ -273,6 +273,24 @@ func claimRecord(t *testing.T, statement string) ledger.Record {
 	}
 }
 
+// gradeRecord is a grade evaluating evaluatedActorID, authored by origin at
+// authority. Callers own picking an origin/authority combination the
+// producer/authority matrix will actually admit.
+func gradeRecord(t *testing.T, origin ledger.Origin, authority ledger.Authority, evaluatedActorID string, rating int) ledger.Record {
+	t.Helper()
+	return ledger.Record{
+		RecordType: ledger.RecordGrade,
+		RunID:      testRunID,
+		Origin:     origin,
+		Authority:  authority,
+		Data: mustJSON(t, map[string]any{
+			"rating":             rating,
+			"rationale":          "Delivered the change set with clear evidence and no rework.",
+			"evaluated_actor_id": evaluatedActorID,
+		}),
+	}
+}
+
 func taskRecord(t *testing.T, goal, status, assurance string) ledger.Record {
 	t.Helper()
 	payload := map[string]any{"goal": goal, "status": status}

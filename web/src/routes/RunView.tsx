@@ -11,10 +11,12 @@ import {
 } from "@xyflow/react";
 import { setAgentState } from "../agent-state/store";
 import { DASHED, SOLID } from "../culture-design/edges";
+import CategoryChip from "../components/CategoryChip";
 import ErrorNotice from "../components/ErrorNotice";
 import EventTimeline from "../components/EventTimeline";
 import NodeDetailPanel from "../components/NodeDetailPanel";
 import StatusChip from "../components/StatusChip";
+import UsageSummary from "../components/UsageSummary";
 import WorkflowNode, {
   LOOP_SOURCE_HANDLE,
   LOOP_TARGET_HANDLE,
@@ -29,6 +31,7 @@ import {
   idleExecution,
   type RunGraphState,
 } from "../domain/run-state";
+import { mergeUsage, runDisplayName } from "../domain/usage";
 import { useRunData } from "./useRunData";
 
 const NODE_TYPES = { workflow: WorkflowNode };
@@ -39,7 +42,8 @@ type ViewMode = "graph" | "timeline";
 
 function RunViewInner() {
   const { id: runId } = useParams<{ id: string }>();
-  const { view, graph, ledger, loading, error } = useRunData(runId);
+  const { view, graph, ledger, usageByNodeRunId, loading, error } =
+    useRunData(runId);
   const { events, status: streamStatus } = useRunEvents(runId);
   const reducedMotion = useReducedMotion();
 
@@ -177,6 +181,7 @@ function RunViewInner() {
       nodeStates[node.id] = (graphState.nodes[node.id] ?? idleExecution(node.id))
         .state;
     }
+    const usage = view?.run.usage;
     setAgentState({
       status: loading ? "loading" : "ready",
       run: {
@@ -184,6 +189,18 @@ function RunViewInner() {
         state: view?.run.state ?? "unknown",
         node_states: nodeStates,
         selected,
+        name: view?.run.name ?? null,
+        display_hint: view?.run.display_hint ?? null,
+        category: view?.run.category ?? null,
+        usage: usage
+          ? {
+              input_tokens: usage.input_tokens,
+              output_tokens: usage.output_tokens,
+              cost: usage.cost ?? null,
+              currency: usage.currency ?? null,
+              reported: usage.attempts_reported > 0,
+            }
+          : null,
       },
     });
   }, [runId, graph, graphState, view, loading, selected]);
@@ -211,6 +228,22 @@ function RunViewInner() {
 
   const selectedNode = graph?.nodes.find((node) => node.id === selected);
 
+  // Merged across every node run of the selected node (a loop revisits it
+  // more than once) — undefined, not a fabricated Usage, when the
+  // best-effort node-runs join found no matching entries at all (see
+  // useRunData.ts's usageByNodeRunId doc comment).
+  const selectedNodeUsageEntries = selectedNode
+    ? (graphState.nodes[selectedNode.id]?.nodeRuns ?? [])
+        .map((nodeRun) => usageByNodeRunId[nodeRun.id])
+        .filter((usage): usage is NonNullable<typeof usage> => usage !== undefined)
+    : [];
+  const selectedNodeUsage =
+    selectedNodeUsageEntries.length > 0
+      ? mergeUsage(selectedNodeUsageEntries)
+      : undefined;
+
+  const runDisplay = view ? runDisplayName(view.run) : null;
+
   if (error) {
     return (
       <section className="view-rail">
@@ -231,11 +264,34 @@ function RunViewInner() {
             {graph?.name ?? "Run"}{" "}
             <span className="run-view__id">{runId}</span>
           </h1>
+          {view && runDisplay ? (
+            <p className="run-view__run-name" id="run-view-name">
+              <span
+                className={`run-name${runDisplay.derived ? " run-name--derived" : ""}`}
+                data-derived={runDisplay.derived ? "true" : "false"}
+                title={
+                  runDisplay.derived
+                    ? `derived guess, not a given name: "${runDisplay.text}"`
+                    : undefined
+                }
+              >
+                {runDisplay.text}
+              </span>
+              {view.run.category ? (
+                <CategoryChip category={view.run.category} />
+              ) : null}
+            </p>
+          ) : null}
           <p className="run-view__sub muted">
             {graph?.ownerRef ? <>owner {graph.ownerRef} · </> : null}
             workflow digest{" "}
             <code>{view?.run.workflow_digest.slice(0, 24) ?? "—"}…</code>
           </p>
+          {view?.run.usage ? (
+            <p className="run-view__usage">
+              <UsageSummary usage={view.run.usage} id="run-usage-summary" />
+            </p>
+          ) : null}
         </div>
         <div className="run-view__state">
           <span
@@ -387,6 +443,7 @@ function RunViewInner() {
               graphState.nodes[selectedNode.id] ?? idleExecution(selectedNode.id)
             }
             ledger={ledger}
+            usage={selectedNodeUsage}
             onClose={closeDetail}
           />
         ) : null}

@@ -79,6 +79,121 @@ describe("agent-state store", () => {
     unsubscribe();
   });
 
+  it("carries the run's name, category, and usage summary (task t5)", () => {
+    setAgentState({
+      run: {
+        id: "r1",
+        state: "running",
+        node_states: {},
+        selected: null,
+        name: "nightly regression sweep",
+        display_hint: null,
+        category: "ci",
+        usage: {
+          input_tokens: 12300,
+          output_tokens: 4100,
+          cost: 0.42,
+          currency: "USD",
+          reported: true,
+        },
+      },
+    });
+    expect(getAgentState().run).toEqual({
+      id: "r1",
+      state: "running",
+      node_states: {},
+      selected: null,
+      name: "nightly regression sweep",
+      display_hint: null,
+      category: "ci",
+      usage: {
+        input_tokens: 12300,
+        output_tokens: 4100,
+        cost: 0.42,
+        currency: "USD",
+        reported: true,
+      },
+    });
+  });
+
+  it("notifies when only the usage summary changes, not just node_states", () => {
+    setAgentState({
+      run: {
+        id: "r1",
+        state: "running",
+        node_states: {},
+        selected: null,
+        usage: {
+          input_tokens: 100,
+          output_tokens: 50,
+          cost: null,
+          currency: null,
+          reported: true,
+        },
+      },
+    });
+    let notifications = 0;
+    const unsubscribe = subscribeAgentState(() => {
+      notifications += 1;
+    });
+    setAgentState({
+      run: {
+        id: "r1",
+        state: "running",
+        node_states: {},
+        selected: null,
+        usage: {
+          input_tokens: 200,
+          output_tokens: 50,
+          cost: null,
+          currency: null,
+          reported: true,
+        },
+      },
+    });
+    expect(notifications).toBe(1);
+    unsubscribe();
+  });
+
+  it("distinguishes reported: false from a genuinely reported zero in equality checks", () => {
+    setAgentState({
+      run: {
+        id: "r1",
+        state: "running",
+        node_states: {},
+        selected: null,
+        usage: {
+          input_tokens: 0,
+          output_tokens: 0,
+          cost: null,
+          currency: null,
+          reported: false,
+        },
+      },
+    });
+    let notifications = 0;
+    const unsubscribe = subscribeAgentState(() => {
+      notifications += 1;
+    });
+    setAgentState({
+      run: {
+        id: "r1",
+        state: "running",
+        node_states: {},
+        selected: null,
+        usage: {
+          input_tokens: 0,
+          output_tokens: 0,
+          cost: null,
+          currency: null,
+          reported: true,
+        },
+      },
+    });
+    expect(notifications).toBe(1);
+    unsubscribe();
+  });
+
   it("escapes < so a value can never close the script element early", () => {
     const serialized = serializeAgentState({
       status: "ready",

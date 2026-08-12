@@ -133,4 +133,49 @@ describe("RunCard", () => {
     };
     expect(() => renderCard(minimal)).not.toThrow();
   });
+
+  describe("name, derived hint, and category (task t5)", () => {
+    it("shows the operator-given name, not marked as derived", () => {
+      const { container } = renderCard({ ...RUN, name: "nightly regression sweep" });
+      const name = screen.getByText("nightly regression sweep");
+      expect(name).toBeInTheDocument();
+      expect(name).toHaveAttribute("data-derived", "false");
+      expect(container.querySelector(".run-name--derived")).toBeNull();
+    });
+
+    it("falls back to display_hint, visibly marked as a derived guess", () => {
+      const { container } = renderCard({
+        ...RUN,
+        display_hint: "add the ledger projection endpoint",
+      });
+      const hint = screen.getByText("add the ledger projection endpoint");
+      expect(hint).toHaveAttribute("data-derived", "true");
+      expect(hint.className).toContain("run-name--derived");
+      // The title makes explicit this is a guess, never presented as a given name.
+      expect(hint).toHaveAttribute(
+        "title",
+        expect.stringContaining("derived guess"),
+      );
+      expect(container.querySelector(".run-name:not(.run-name--derived)")).toBeNull();
+    });
+
+    it("renders neither a name row nor a duplicate id when the run has no name or hint", () => {
+      const { container } = renderCard(RUN);
+      expect(container.querySelector(".run-name")).toBeNull();
+      // The id renders exactly once (in .run-card__id), never duplicated as a "name".
+      expect(screen.getAllByText(`${RUN.id.slice(0, 20)}…`)).toHaveLength(1);
+    });
+
+    it("renders the category as a small chip alongside the name", () => {
+      const { container } = renderCard({ ...RUN, name: "nightly sweep", category: "ci" });
+      const chip = container.querySelector(".category-chip");
+      expect(chip).toHaveTextContent("ci");
+      expect(chip).toHaveAttribute("data-category", "ci");
+    });
+
+    it("renders no category chip when the run has none", () => {
+      const { container } = renderCard(RUN);
+      expect(container.querySelector(".category-chip")).toBeNull();
+    });
+  });
 });

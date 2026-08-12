@@ -1,5 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { render, screen, waitFor } from "@testing-library/react";
+import { render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { MemoryRouter, useLocation } from "react-router-dom";
 import RunsList from "./RunsList";
@@ -93,6 +93,58 @@ describe("RunsList data + table", () => {
     expect(
       screen.getByRole("columnheader", { name: "updated" }),
     ).toBeInTheDocument();
+  });
+});
+
+describe("RunsList name, derived hint, and category (task t5)", () => {
+  it("shows the run's given name as the link text, not marked as derived", async () => {
+    mockListRuns.mockResolvedValue({
+      items: [{ ...BOARD_RUNS[0], name: "nightly regression sweep" }],
+    });
+    renderList();
+    const link = await screen.findByRole("link", {
+      name: "nightly regression sweep",
+    });
+    expect(link).toHaveAttribute("href", `/runs/${BOARD_RUNS[0].id}`);
+    expect(screen.queryByText(BOARD_RUNS[0].id)).not.toBeInTheDocument();
+  });
+
+  it("falls back to display_hint, visibly marked as a derived guess", async () => {
+    mockListRuns.mockResolvedValue({
+      items: [
+        {
+          ...BOARD_RUNS[0],
+          display_hint: "add the ledger projection endpoint",
+        },
+      ],
+    });
+    renderList();
+    await screen.findByRole("table");
+    const hint = screen.getByText("add the ledger projection endpoint");
+    expect(hint).toHaveAttribute("data-derived", "true");
+    expect(hint.className).toContain("run-name--derived");
+  });
+
+  it("falls back to the run id when neither name nor hint is given", async () => {
+    mockListRuns.mockResolvedValue({ items: [BOARD_RUNS[0]] });
+    renderList();
+    const link = await screen.findByRole("link", { name: BOARD_RUNS[0].id });
+    expect(link.querySelector(".run-name--derived")).toBeNull();
+  });
+
+  it("renders the category as a chip, and an em dash when the run has none", async () => {
+    mockListRuns.mockResolvedValue({
+      items: [
+        { ...BOARD_RUNS[0], category: "ci" },
+        BOARD_RUNS[1],
+      ],
+    });
+    renderList();
+    await screen.findByRole("table");
+    const chip = screen.getByText("ci");
+    expect(chip.className).toContain("category-chip");
+    const rows = screen.getAllByRole("row");
+    expect(within(rows[2]).getByText("—")).toBeInTheDocument();
   });
 });
 

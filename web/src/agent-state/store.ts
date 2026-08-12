@@ -18,6 +18,23 @@
 
 export type AgentStatus = "loading" | "ready";
 
+/**
+ * The token-first §13.2 usage rollup, mirrored for the machine-readable
+ * state exactly the way UsageSummary.tsx renders it (task t5, honesty
+ * condition h27): `reported: false` means "no attempt reported usage",
+ * distinct from `cost`/`currency` both being `null` (which only means no
+ * cost was reported, alongside real, present token totals). `null` rather
+ * than `undefined` throughout, because `undefined` values are dropped by
+ * `JSON.stringify` and this state is read back out of serialized JSON.
+ */
+export interface AgentUsageSummary {
+  input_tokens: number;
+  output_tokens: number;
+  cost: number | null;
+  currency: string | null;
+  reported: boolean;
+}
+
 export interface AgentRunState {
   id: string;
   state: string;
@@ -25,6 +42,20 @@ export interface AgentRunState {
   node_states: Record<string, string>;
   /** The node whose detail panel is open, or null. */
   selected: string | null;
+  /**
+   * The run's own name/hint/category (task t5), mirroring
+   * api/types.ts's `Run` fields rather than pre-resolving them, so a reader
+   * of `#agent-state` can tell a real operator-given name apart from a
+   * derived `display_hint` the same way the UI visually does (never present
+   * a hint as if it were a given name). Both `null` when the run carries
+   * neither. Optional and omitted by every route that isn't the Run view,
+   * so this adds nothing to `#agent-state` anywhere else (same convention
+   * as `authoring`).
+   */
+  name?: string | null;
+  display_hint?: string | null;
+  category?: string | null;
+  usage?: AgentUsageSummary | null;
 }
 
 /**
@@ -66,13 +97,36 @@ export function subscribeAgentState(listener: () => void): () => void {
   };
 }
 
+function shallowEqualUsage(
+  a: AgentUsageSummary | null | undefined,
+  b: AgentUsageSummary | null | undefined,
+): boolean {
+  if (a === b) return true;
+  if (!a || !b) return false;
+  return (
+    a.input_tokens === b.input_tokens &&
+    a.output_tokens === b.output_tokens &&
+    a.cost === b.cost &&
+    a.currency === b.currency &&
+    a.reported === b.reported
+  );
+}
+
 function shallowEqualRun(
   a: AgentRunState | null,
   b: AgentRunState | null,
 ): boolean {
   if (a === b) return true;
   if (!a || !b) return false;
-  if (a.id !== b.id || a.state !== b.state || a.selected !== b.selected) {
+  if (
+    a.id !== b.id ||
+    a.state !== b.state ||
+    a.selected !== b.selected ||
+    (a.name ?? null) !== (b.name ?? null) ||
+    (a.display_hint ?? null) !== (b.display_hint ?? null) ||
+    (a.category ?? null) !== (b.category ?? null) ||
+    !shallowEqualUsage(a.usage, b.usage)
+  ) {
     return false;
   }
   const aKeys = Object.keys(a.node_states);

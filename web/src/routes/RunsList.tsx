@@ -3,8 +3,10 @@ import { Link } from "react-router-dom";
 import { ApiError, listRuns } from "../api/client";
 import type { Run } from "../api/types";
 import { setAgentState } from "../agent-state/store";
+import CategoryChip from "../components/CategoryChip";
 import ErrorNotice from "../components/ErrorNotice";
 import TimeRangeFilter from "../components/TimeRangeFilter";
+import { runDisplayName } from "../domain/usage";
 import { useTimeRange } from "../hooks/useTimeRange";
 
 /**
@@ -80,6 +82,7 @@ export function RunsList() {
             <thead>
               <tr>
                 <th scope="col">run</th>
+                <th scope="col">category</th>
                 <th scope="col">state</th>
                 <th scope="col">workflow digest</th>
                 <th scope="col">created</th>
@@ -87,25 +90,47 @@ export function RunsList() {
               </tr>
             </thead>
             <tbody>
-              {runs.map((run) => (
-                <tr key={run.id} data-run-id={run.id}>
-                  <th scope="row">
-                    <Link to={`/runs/${run.id}`}>{run.id}</Link>
-                  </th>
-                  <td data-run-state={run.state}>{run.state}</td>
-                  <td>
-                    <code title={run.workflow_digest}>
-                      {run.workflow_digest.slice(0, 20)}…
-                    </code>
-                  </td>
-                  <td>
-                    <time dateTime={run.created_at}>{run.created_at}</time>
-                  </td>
-                  <td>
-                    <time dateTime={run.updated_at}>{run.updated_at}</time>
-                  </td>
-                </tr>
-              ))}
+              {runs.map((run) => {
+                const display = runDisplayName(run);
+                return (
+                  <tr key={run.id} data-run-id={run.id}>
+                    <th scope="row">
+                      <Link to={`/runs/${run.id}`} title={run.id}>
+                        {display.derived ? (
+                          <span
+                            className="run-name run-name--derived"
+                            data-derived="true"
+                            title={`derived guess, not a given name: "${display.text}"`}
+                          >
+                            {display.text}
+                          </span>
+                        ) : (
+                          display.text
+                        )}
+                      </Link>
+                    </th>
+                    <td>
+                      {run.category ? (
+                        <CategoryChip category={run.category} />
+                      ) : (
+                        <span className="muted">—</span>
+                      )}
+                    </td>
+                    <td data-run-state={run.state}>{run.state}</td>
+                    <td>
+                      <code title={run.workflow_digest}>
+                        {run.workflow_digest.slice(0, 20)}…
+                      </code>
+                    </td>
+                    <td>
+                      <time dateTime={run.created_at}>{run.created_at}</time>
+                    </td>
+                    <td>
+                      <time dateTime={run.updated_at}>{run.updated_at}</time>
+                    </td>
+                  </tr>
+                );
+              })}
             </tbody>
           </table>
         </div>

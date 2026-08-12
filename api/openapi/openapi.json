@@ -1460,6 +1460,54 @@
         ]
       }
     },
+    "/v1alpha1/events": {
+      "get": {
+        "description": "The cross-run companion to GET /v1alpha1/runs/{id}/events (task t17): one SSE connection carrying committed events for every run in the namespace, instead of one connection per run — the data source for a live-mesh/board view that must not open one stream per displayed run.\nScope: by default, only events belonging to an ACTIVE (non-terminal) run, plus run-lifecycle events (run.created, run.completed, run.failed, run.cancelled, run.bounded) for any run — so a consumer sees runs appear and finish without being handed a completed run's full internal history it never asked to watch. Pass `runs` to override this default entirely and receive only events for the listed run ids, active or not.\nContainment (risk r1): this handler polls at twice the per-run stream's interval, and each poll reads a bounded window of raw rows (ordered by the events table's own id) before applying the active-run/lifecycle filter — so one poll's cost never grows with how much of the namespace's history is currently terminal. See internal/api/events.go's handleStreamEvents for the full design note, including the documented catch-up behavior under a filtered backlog.\nResume by the events table's own id (a ULID, NOT the per-run `sequence` a single run's stream resumes on — there is no one sequence spanning multiple runs): send `Last-Event-ID` (a previously received `id:` field) to resume after a disconnect, or the `from` query parameter for a client that cannot set headers before its first connection. Each frame is `id: \u003culid\u003e\\nevent: \u003ctype\u003e\\ndata: \u003cenvelope JSON\u003e\\n\\n`. Ordering promise: events are delivered in the order this control-plane process committed them (ULID generation order within one process, internal/store/ulid.go) — not a claim of a causally-ordered, cross-process global sequence.",
+        "operationId": "streamEvents",
+        "parameters": [
+          {
+            "description": "Comma-separated run ids. When present, overrides the default active-runs+lifecycle scope: the stream reports only events for exactly these run ids, active or not.",
+            "in": "query",
+            "name": "runs",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "description": "Resume after this event id (a ULID).",
+            "in": "header",
+            "name": "Last-Event-ID",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "description": "Resume after this event id (a ULID), when a Last-Event-ID header cannot be set.",
+            "in": "query",
+            "name": "from",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "text/event-stream": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            },
+            "description": "A `text/event-stream` of committed events across runs."
+          }
+        },
+        "summary": "Server-Sent Events stream of committed events across runs.",
+        "tags": [
+          "events"
+        ]
+      }
+    },
     "/v1alpha1/healthz": {
       "get": {
         "description": "Always `200` once the process is serving requests. Does not touch the database.",
@@ -2583,7 +2631,7 @@
       "name": "node-runs"
     },
     {
-      "description": "Server-Sent Events stream of committed run events (PRD §15.1).",
+      "description": "Server-Sent Events streams of committed run events (PRD §15.1): one per-run, one cross-run (task t17) fan-in feeding the live-mesh view.",
       "name": "events"
     },
     {

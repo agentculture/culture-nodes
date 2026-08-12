@@ -135,6 +135,26 @@ func TerminalRunStatuses() []string {
 	}
 }
 
+// ActiveRunStatuses are the runs.status values a run holds before it
+// reaches one of TerminalRunStatuses -- the complement within
+// engine.RunState's six-value vocabulary (claiming_test.go's
+// TestTerminalRunStatusesMatchTheEngineVocabulary asserts every state is
+// classified as one or the other, keeping the two lists from drifting
+// apart). Task t17's cross-run event stream (internal/api/events.go's
+// handleStreamEvents) uses it to scope its default view to runs still in
+// flight, the read-side mirror of the write-side guard TerminalRunStatuses
+// serves above.
+//
+// Like TerminalRunStatuses, it returns a fresh slice on every call for the
+// same text[] bind-parameter reason.
+func ActiveRunStatuses() []string {
+	return []string{
+		string(engine.RunCreated),
+		string(engine.RunRunning),
+		string(engine.RunWaiting),
+	}
+}
+
 // WorkItem is the input to Store.EnqueueWork: a unit of ready work bound to
 // a node run. AvailableAt defaults to now() when zero.
 type WorkItem struct {

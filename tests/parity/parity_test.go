@@ -279,6 +279,7 @@ var webClientOperations = []verbMapping{
 	{Verb: "web listLedgerRecords", OperationID: "listLedgerRecords", Note: "web/src/api/client.ts getLedger()."},
 	{Verb: "web getLedgerProjection", OperationID: "getLedgerProjection", Note: "web/src/api/client.ts getProjection()."},
 	{Verb: "web streamRunEvents", OperationID: "streamRunEvents", Note: "web/src/api/client.ts runEventsUrl()."},
+	{Verb: "web streamEvents", OperationID: "streamEvents", Note: "task t17 surface; feeds task t18's live-mesh view, not yet wired into web/src/api/client.ts."},
 	{Verb: "web listNodeRuns", OperationID: "listNodeRuns", Note: "task t16 surface; not yet wired into web/src/api/client.ts."},
 	{Verb: "web listHumanTasks", OperationID: "listHumanTasks", Note: "task t16 surface; not yet wired into web/src/api/client.ts."},
 	{Verb: "web getHumanTask", OperationID: "getHumanTask", Note: "task t16 surface; not yet wired into web/src/api/client.ts."},

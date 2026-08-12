@@ -58,13 +58,34 @@ const messageTailBytes = 1024
 
 // report mirrors the payload contract internal/runners/lambda's
 // interpretPayload reads: a JSON object carrying exit_code and optional
-// signal/message. Kept as a local mirror because the adapter's struct is
-// deliberately unexported — the JSON tags are the contract, not the type.
+// signal/message. Kept as a local mirror, deliberately: sharing a struct
+// with the adapter would make this binary import the adapter's package and
+// so link the AWS SDK into the one process built to carry none of it — the
+// JSON tags are the contract, not the type, and a contract change must
+// touch both sides on purpose.
+//
+// Signal carries os/exec's ProcessState.String() verbatim (e.g. "signal:
+// killed"), not a bare signal name — the adapter stores it as
+// process-reported content without parsing it, so verbatim is honest.
 type report struct {
 	ExitCode *int   `json:"exit_code"`
 	Signal   string `json:"signal,omitempty"`
 	Message  string `json:"message,omitempty"`
 }
+
+// refusalError is a refusal or failure that must answer the invocation via
+// the runtime error endpoint, typed so a policy refusal ("this runner will
+// not do that") never masquerades as a runtime failure ("the argv could not
+// start") in the adapter's error message.
+type refusalError struct {
+	kind string // the errorType the runtime error document carries
+	err  error
+}
+
+func (r *refusalError) Error() string { return r.err.Error() }
+
+func refuse(err error) *refusalError    { return &refusalError{kind: "OperationRefused", err: err} }
+func runnerErr(err error) *refusalError { return &refusalError{kind: "RunnerError", err: err} }
 
 func main() {
 	api := os.Getenv("AWS_LAMBDA_RUNTIME_API")
@@ -109,7 +130,7 @@ func handleOne(client *http.Client, base string) error {
 	rep, refusal := run(payload, deadlineFrom(resp.Header))
 	if refusal != nil {
 		return post(client, base+"/invocation/"+requestID+"/error", invocationError{
-			ErrorType:    "OperationRefused",
+			ErrorType:    refusal.kind,
 			ErrorMessage: refusal.Error(),
 		})
 	}
@@ -128,27 +149,28 @@ func deadlineFrom(h http.Header) time.Time {
 }
 
 // run executes one operation. It returns either a report to POST as the
-// response, or a refusal to POST as an invocation error — never both.
-func run(payload []byte, deadline time.Time) (*report, error) {
+// response, or a typed refusal/failure to POST as an invocation error —
+// never both.
+func run(payload []byte, deadline time.Time) (*report, *refusalError) {
 	var op runners.Operation
 	if err := json.Unmarshal(payload, &op); err != nil {
-		return nil, fmt.Errorf("payload is not a runner operation: %v", err)
+		return nil, refuse(fmt.Errorf("payload is not a runner operation: %v", err))
 	}
 
 	// Refuse what this runner cannot honour. Silence here would be the
 	// exact fabrication the operation schema forbids: an ignored request
 	// looks identical to an honoured one from the caller's side.
 	if op.Workspace != nil {
-		return nil, errors.New("operation carries a workspace; this runner does not materialise workspaces yet and will not pretend it ran against one")
+		return nil, refuse(errors.New("operation carries a workspace; this runner does not materialise workspaces yet and will not pretend it ran against one"))
 	}
 	if len(op.Command.EnvironmentRefs) > 0 {
-		return nil, fmt.Errorf("operation grants %d environment_refs; no environment store is wired to resolve them", len(op.Command.EnvironmentRefs))
+		return nil, refuse(fmt.Errorf("operation grants %d environment_refs; no environment store is wired to resolve them", len(op.Command.EnvironmentRefs)))
 	}
 	if op.Command.RequiresShell != nil && *op.Command.RequiresShell {
-		return nil, errors.New("operation requires a shell; argv execution is the only mode this runner offers")
+		return nil, refuse(errors.New("operation requires a shell; argv execution is the only mode this runner offers"))
 	}
 	if len(op.Command.Argv) == 0 {
-		return nil, errors.New("operation has an empty argv")
+		return nil, refuse(errors.New("operation has an empty argv"))
 	}
 
 	// The effective timeout is the tighter of the operation's policy and
@@ -160,7 +182,7 @@ func run(payload []byte, deadline time.Time) (*report, error) {
 		limit = time.Duration(s) * time.Second
 	}
 	if limit <= 0 {
-		return nil, errors.New("no time remains to run the operation inside this invocation")
+		return nil, runnerErr(errors.New("no time remains to run the operation inside this invocation"))
 	}
 	ctx, cancel := context.WithTimeout(ctx, limit)
 	defer cancel()
@@ -190,8 +212,9 @@ func run(payload []byte, deadline time.Time) (*report, error) {
 			Message:  tail.String(),
 		}, nil
 	default:
-		// The process never started (argv[0] not found, permission, ...).
-		return nil, fmt.Errorf("argv did not start: %v", err)
+		// The process never started (argv[0] not found, permission, ...) —
+		// a runner-side failure, not a policy refusal, and typed as such.
+		return nil, runnerErr(fmt.Errorf("argv did not start: %v", err))
 	}
 }
 
@@ -207,6 +230,23 @@ func post(client *http.Client, url string, body any) error {
 	if err != nil {
 		return fmt.Errorf("marshal response: %w", err)
 	}
+	// One short-backoff retry: an unanswered invocation hangs until the
+	// platform times it out, so a single transient POST failure is worth
+	// one more attempt before surrendering the invocation to that fate.
+	var lastErr error
+	for attempt := 0; attempt < 2; attempt++ {
+		if attempt > 0 {
+			time.Sleep(100 * time.Millisecond)
+		}
+		lastErr = postOnce(client, url, encoded)
+		if lastErr == nil {
+			return nil
+		}
+	}
+	return lastErr
+}
+
+func postOnce(client *http.Client, url string, encoded []byte) error {
 	resp, err := client.Post(url, "application/json", bytes.NewReader(encoded))
 	if err != nil {
 		return fmt.Errorf("POST %s: %w", url, err)

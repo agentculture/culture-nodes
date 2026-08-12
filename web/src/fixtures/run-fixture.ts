@@ -539,11 +539,53 @@ export const LEDGER_RECORDS: LedgerRecord[] = [
     created_at: t(29, 50),
     content_digest: "sha256:5555555555555555555555555555555555555555",
   },
+  /**
+   * The workspace-snapshot evidence record task t12's worker hook appends
+   * (task t11 acceptance): shape matches
+   * internal/worker/hooks_test.go's
+   * TestPostRunWorkspaceSnapshotEvidenceIsAppendedNotAgentDelta exactly —
+   * `changed_paths` (the two measured paths from that test's fake runner),
+   * `snapshot_digest`, and `artifact_refs` (carrying the diff artifact ref),
+   * `authority: "observed"` and `origin.kind: "runner"` (never the agent's
+   * own actor id — the worker appends this as a separate record, not folded
+   * into the agent's proposed ledger delta). Attached to build's first,
+   * completed attempt, where a real post_run hook would have run.
+   *
+   * Deliberately does NOT carry a `diffstat` field: today's buildEvidence
+   * (internal/runners/dispatch.go) never sets one — see domain/evidence.ts's
+   * doc comment for why and where that field could eventually land. This
+   * fixture stays faithful to the real, shipped shape rather than inventing
+   * one.
+   */
+  {
+    id: "lr-006",
+    schema_version: "nodes.culture.dev/ledger/v1alpha1",
+    record_type: "evidence",
+    run_id: RUN_ID,
+    node_run_id: "nr-build-1",
+    attempt_id: "att-build-1",
+    origin: { kind: "runner", actor_id: "runner://headspace/hook-runner" },
+    authority: "observed",
+    subject_ref: "artifact://diff/att-build-1",
+    data: {
+      producer_id: "runner://headspace/hook-runner",
+      collection_method: "workspace_snapshot_diff",
+      observed_at: t(17, 56),
+      covered_scope: "workspace diff between HEAD before and after the attempt",
+      completeness: "complete",
+      changed_paths: ["internal/worker/hooks.go", "internal/runners/dispatch.go"],
+      snapshot_digest: `sha256:${"c".repeat(64)}`,
+      artifact_refs: ["artifact://diff/att-build-1"],
+    },
+    provenance_refs: ["att-build-1"],
+    created_at: t(17, 57),
+    content_digest: "sha256:6666666666666666666666666666666666666666",
+  },
 ];
 
 export const LEDGER: LedgerRecords = {
   items: LEDGER_RECORDS,
-  ledger_version: 5,
+  ledger_version: 6,
 };
 
 /** Serialize the fixture events as an SSE body, exactly as the API frames them. */

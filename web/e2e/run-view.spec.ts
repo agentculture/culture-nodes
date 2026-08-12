@@ -188,6 +188,54 @@ test("node detail shows per-node usage, merged across a looped node's visits, ho
   await expect(verifyUsage).not.toContainText("not reported");
 });
 
+test("the approver reads changed files, snapshot digest, artifact refs, and attempt cost entirely in-page (task t11)", async ({
+  page,
+}) => {
+  await openRun(page);
+
+  // Discoverable before opening the panel: the build node's card carries
+  // the evidence marker (task t11 acceptance #3), both as a stable
+  // attribute (independent of zoom band) and as a visible badge at this
+  // view's default zoom.
+  const buildCard = page.locator('.node-card[data-node-id="build"]');
+  await expect(buildCard).toHaveAttribute("data-node-evidence", "true");
+  await expect(buildCard).toContainText("evidence");
+
+  // A node with no workspace evidence carries the marker as explicitly
+  // false, never an omitted/ambiguous attribute.
+  await expect(
+    page.locator('.node-card[data-node-id="intake"]'),
+  ).toHaveAttribute("data-node-evidence", "false");
+
+  await buildCard.click();
+  const panel = page.locator("#node-detail-panel");
+  await expect(panel).toBeVisible();
+
+  // Changed files, from the worker hook's measured changed_paths.
+  const changedPaths = panel.locator('[data-evidence-changed-paths="true"]');
+  await expect(changedPaths).toContainText("internal/worker/hooks.go");
+  await expect(changedPaths).toContainText("internal/runners/dispatch.go");
+
+  // The snapshot digest, as a mono chip.
+  await expect(
+    panel.locator('[data-evidence-snapshot-digest="true"]'),
+  ).toHaveText(`sha256:${"c".repeat(64)}`);
+
+  // The artifact ref the diff itself lives at.
+  await expect(
+    panel.locator('[data-evidence-artifact-refs="true"]'),
+  ).toContainText("artifact://diff/att-build-1");
+
+  // Per-attempt cost, read from the same panel, in the same pause — task
+  // t2/t5's node-run usage join, now with attempts_reported spelled out
+  // explicitly (task t11 acceptance #2).
+  const usage = panel.locator("#node-detail-usage");
+  await expect(usage).toContainText("5.2k in / 1.8k out");
+  await expect(usage).toContainText("0.52 USD");
+  await expect(usage).toHaveAttribute("data-attempts-reported", "1");
+  await expect(usage).toContainText("1 attempt reported");
+});
+
 test("clicking a node opens its detail", async ({ page }) => {
   await openRun(page);
   await page.locator('.node-card[data-node-id="test"]').click();

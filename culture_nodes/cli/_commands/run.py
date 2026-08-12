@@ -2,7 +2,7 @@
 
 Every verb here is one HTTP call to the Culture Nodes control-plane API
 (``api/openapi/openapi.yaml``, ``runs``/``events`` tags): create, list, get,
-cancel, events. No engine logic lives in this module (spec decision c28).
+cancel, events, retag. No engine logic lives in this module (spec decision c28).
 """
 
 from __future__ import annotations
@@ -14,7 +14,12 @@ from pathlib import Path
 
 from culture_nodes.api_client import API_PREFIX, add_api_url_argument, client_from_args
 from culture_nodes.cli._errors import EXIT_ENV_ERROR, EXIT_USER_ERROR, CliError
-from culture_nodes.cli._output import JSON_FLAG_HELP, emit_json_passthrough, emit_result
+from culture_nodes.cli._output import (
+    JSON_FLAG_HELP,
+    emit_json_passthrough,
+    emit_result,
+    format_usage_lines,
+)
 
 #: Run-level SSE event types after which the API closes the stream
 #: (internal/api/events.go's terminalRunEventTypes) — the client mirrors
@@ -60,11 +65,39 @@ def _read_input(spec: str | None) -> object:
 _RUN_ID_HELP = "The run id."
 
 
+def _format_run_metadata_lines(run: dict[str, object]) -> list[str]:
+    """Render a run's ``name``/``display_hint``/``category`` (task t3), honestly.
+
+    ``name`` is an operator-given display name; when absent, the API may
+    supply ``display_hint`` — a truncated, best-effort GUESS derived at read
+    time from the run's own input, never something an operator actually
+    said. This renders it as ``name: <hint> (derived)`` so it is never
+    mistaken for a real name. ``category`` renders only when present.
+    """
+    lines: list[str] = []
+    name = run.get("name")
+    hint = run.get("display_hint")
+    if name:
+        lines.append(f"name: {name}")
+    elif hint:
+        lines.append(f"name: {hint} (derived)")
+    category = run.get("category")
+    if category:
+        lines.append(f"category: {category}")
+    return lines
+
+
 def cmd_run_create(args: argparse.Namespace) -> int:
     body: dict[str, object] = {"workflow_digest": args.workflow}
     input_value = _read_input(args.input)
     if input_value is not None:
         body["input"] = input_value
+    if args.name is not None:
+        body["name"] = args.name
+    if args.description is not None:
+        body["description"] = args.description
+    if args.category is not None:
+        body["category"] = args.category
     client = client_from_args(args)
     resp = client.request("POST", f"{API_PREFIX}/runs", json_body=body)
     json_mode = bool(getattr(args, "json", False))
@@ -72,13 +105,17 @@ def cmd_run_create(args: argparse.Namespace) -> int:
         emit_json_passthrough(resp.raw)
     else:
         payload = resp.payload or {}
-        text = (
-            f"id: {payload.get('id', '')}\n"
-            f"workflow_digest: {payload.get('workflow_digest', '')}\n"
-            f"state: {payload.get('state', '')}\n"
-            f"created_at: {payload.get('created_at', '')}"
-        )
-        emit_result(text, json_mode=False)
+        lines = [
+            f"id: {payload.get('id', '')}",
+            f"workflow_digest: {payload.get('workflow_digest', '')}",
+            f"state: {payload.get('state', '')}",
+        ]
+        lines.extend(_format_run_metadata_lines(payload))
+        lines.append(f"created_at: {payload.get('created_at', '')}")
+        usage = payload.get("usage")
+        if isinstance(usage, dict):
+            lines.extend(format_usage_lines(usage))
+        emit_result("\n".join(lines), json_mode=False)
     return 0
 
 
@@ -103,11 +140,19 @@ def cmd_run_list(args: argparse.Namespace) -> int:
         if not items:
             emit_result("no runs", json_mode=False)
         else:
-            lines = [
-                f"{item.get('id', '')}  {item.get('state', '')}  "
-                f"{item.get('workflow_digest', '')}  {item.get('created_at', '')}"
-                for item in items
-            ]
+            lines = []
+            for item in items:
+                line = (
+                    f"{item.get('id', '')}  {item.get('state', '')}  "
+                    f"{item.get('workflow_digest', '')}  {item.get('created_at', '')}"
+                )
+                name = item.get("name")
+                hint = item.get("display_hint")
+                if name:
+                    line += f"  {name}"
+                elif hint:
+                    line += f"  {hint} (derived)"
+                lines.append(line)
             emit_result("\n".join(lines), json_mode=False)
     return 0
 
@@ -127,14 +172,42 @@ def cmd_run_get(args: argparse.Namespace) -> int:
             f"id: {run.get('id', '')}",
             f"state: {run.get('state', '')}",
             f"workflow_digest: {run.get('workflow_digest', '')}",
-            f"tokens: {len(tokens)}",
-            f"node_runs: {len(node_runs)}",
         ]
+        lines.extend(_format_run_metadata_lines(run))
+        usage = run.get("usage")
+        if isinstance(usage, dict):
+            lines.extend(format_usage_lines(usage))
+        lines.append(f"tokens: {len(tokens)}")
+        lines.append(f"node_runs: {len(node_runs)}")
         for nr in node_runs:
             lines.append(
                 f"  - {nr.get('node_id', '')}: {nr.get('state', '')} "
                 f"(visit {nr.get('visit_count', '')})"
             )
+        emit_result("\n".join(lines), json_mode=False)
+    return 0
+
+
+def cmd_run_retag(args: argparse.Namespace) -> int:
+    """Retag a run's ``category`` — the only field PATCH /v1alpha1/runs/{id} accepts.
+
+    ``name``/``description`` are immutable once a run is created (frame
+    decision q4); this verb never sends either.
+    """
+    client = client_from_args(args)
+    resp = client.request(
+        "PATCH", f"{API_PREFIX}/runs/{args.id}", json_body={"category": args.category}
+    )
+    json_mode = bool(getattr(args, "json", False))
+    if json_mode:
+        emit_json_passthrough(resp.raw)
+    else:
+        payload = resp.payload or {}
+        lines = [
+            f"id: {payload.get('id', '')}",
+            f"state: {payload.get('state', '')}",
+        ]
+        lines.extend(_format_run_metadata_lines(payload))
         emit_result("\n".join(lines), json_mode=False)
     return 0
 
@@ -233,7 +306,7 @@ def cmd_run_events(args: argparse.Namespace) -> int:
 
 def _bare_noun(args: argparse.Namespace) -> int:
     emit_result(
-        "usage: nodes run {create,list,get,cancel,events} ...\n"
+        "usage: nodes run {create,list,get,cancel,events,retag} ...\n"
         "run 'nodes explain run' for details",
         json_mode=False,
     )
@@ -252,6 +325,24 @@ def register(sub: argparse._SubParsersAction) -> None:
     )
     create.add_argument(
         "--input", dest="input", default=None, help="Path to a JSON input file, or '-' for stdin."
+    )
+    create.add_argument(
+        "--name",
+        dest="name",
+        default=None,
+        help="Optional operator-given display name. Set at creation only — immutable afterward.",
+    )
+    create.add_argument(
+        "--description",
+        dest="description",
+        default=None,
+        help="Optional operator-given free-text description. Immutable afterward, like --name.",
+    )
+    create.add_argument(
+        "--category",
+        dest="category",
+        default=None,
+        help="Optional flat category tag (e.g. review, audit). Retaggable via 'run retag'.",
     )
     create.add_argument("--json", action="store_true", help=JSON_FLAG_HELP)
     add_api_url_argument(create)
@@ -295,6 +386,20 @@ def register(sub: argparse._SubParsersAction) -> None:
     getp.add_argument("--json", action="store_true", help=JSON_FLAG_HELP)
     add_api_url_argument(getp)
     getp.set_defaults(func=cmd_run_get)
+
+    retag = noun_sub.add_parser(
+        "retag", help="Retag a run's category (name/description are immutable)."
+    )
+    retag.add_argument("id", help=_RUN_ID_HELP)
+    retag.add_argument(
+        "--category",
+        dest="category",
+        required=True,
+        help="The run's new category tag. Pass an empty string to clear it.",
+    )
+    retag.add_argument("--json", action="store_true", help=JSON_FLAG_HELP)
+    add_api_url_argument(retag)
+    retag.set_defaults(func=cmd_run_retag)
 
     cancel = noun_sub.add_parser("cancel", help="Cancel a run.")
     cancel.add_argument("id", help=_RUN_ID_HELP)

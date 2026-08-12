@@ -71,5 +71,42 @@ def emit_json_passthrough(raw: bytes, *, stream: TextIO | None = None) -> None:
         s.write("\n")
 
 
+def format_usage_lines(usage: dict[str, Any]) -> list[str]:
+    """Render a §13.2 ``Usage`` rollup honestly, text-mode.
+
+    ``input_tokens``/``output_tokens``/``attempts_reported``/
+    ``attempts_not_reported`` are required fields on the API's ``Usage``
+    schema — present (possibly genuinely zero) whenever a ``usage`` object
+    is present at all, so they always render. ``cost``/``currency``/
+    ``cost_by_currency`` are optional — reported only when at least one
+    attempt in scope actually priced its work — so they render only when
+    present, never synthesized as zero.
+
+    Callers must only invoke this when the ``usage`` key itself is present
+    in a payload (e.g. absent from ``GET /v1alpha1/runs`` list rows, which
+    the API deliberately does not compute per-row) — this function has no
+    way to distinguish "zero usage" from "no usage reported" on its own.
+    """
+    lines = [
+        f"usage.input_tokens: {usage.get('input_tokens', 0)}",
+        f"usage.output_tokens: {usage.get('output_tokens', 0)}",
+    ]
+    cost = usage.get("cost")
+    if cost is not None:
+        currency = usage.get("currency")
+        lines.append(f"usage.cost: {cost} {currency}" if currency else f"usage.cost: {cost}")
+    for entry in usage.get("cost_by_currency") or []:
+        amount = entry.get("cost")
+        currency = entry.get("currency")
+        lines.append(
+            f"usage.cost_by_currency: {amount} {currency}"
+            if currency
+            else f"usage.cost_by_currency: {amount}"
+        )
+    lines.append(f"usage.attempts_reported: {usage.get('attempts_reported', 0)}")
+    lines.append(f"usage.attempts_not_reported: {usage.get('attempts_not_reported', 0)}")
+    return lines
+
+
 # Shared --json flag help text (S1192: one definition, many parsers).
 JSON_FLAG_HELP = "Emit structured JSON."

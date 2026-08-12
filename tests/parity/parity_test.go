@@ -213,6 +213,7 @@ var pythonFrontVerbs = []verbMapping{
 	{Verb: "run get", OperationID: "getRun"},
 	{Verb: "run cancel", OperationID: "cancelRun"},
 	{Verb: "run events", OperationID: "streamRunEvents"},
+	{Verb: "run retag", OperationID: "patchRun", Note: "task t4, cmd/_commands/run.py; category-only PATCH (frame decision q4)."},
 	{Verb: "node-runs list", OperationID: "listNodeRuns", Note: "task t16, cmd/_commands/node_runs.py."},
 	{Verb: "ledger list", OperationID: "listLedgerRecords"},
 	{Verb: "ledger projection", OperationID: "getLedgerProjection"},

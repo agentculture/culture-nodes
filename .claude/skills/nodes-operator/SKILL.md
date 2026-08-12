@@ -43,7 +43,7 @@ same origin). Requires `bash`, `curl`, `python3` (+PyYAML for
 | `ledger <id>` | a run's ledger records (authority, origin actor, data) |
 | `tasks` | pending human tasks |
 | `validate <f.yaml>` / `publish <f.yaml>` | server-side compile check / publish, printing the content digest |
-| `create <digest> <input.json> --yes` | create a run from a published digest |
+| `create <digest> <input.json> [--category C] --yes` | create a run from a published digest |
 | `watch <id>` | poll to terminal, then print outcomes + ledger |
 | `cancel <id>` | cancel: reaps work items, best-effort Cancels in-flight sessions |
 | `assign <actor> "instruction" [opts] --yes` | the headline: one-node workflow → publish → run → watch |
@@ -65,7 +65,8 @@ to terminal. Options: `--sandbox read-only|workspace-write` (default
 read-only), `--timeout` (default 15m — always explicit: a node timeout is
 the recovery story for a bridge restart), `--retries` (default 1 — a
 billable session is investigated, not auto-retried), `--outcome`,
-`--no-watch`.
+`--category` (optional flat tag on the created run, e.g. `review`, `audit`
+— retaggable later via `nodes run retag <id> --category C`), `--no-watch`.
 
 Actors: `codex-thor`, `codex-orin` — each maps to its host's allowlisted
 checkout (`/home/<host>/git/culture-nodes-agent`). New actors: register with

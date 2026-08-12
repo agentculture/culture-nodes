@@ -236,7 +236,8 @@ func TestRunsUpdatedAtSortedListingQueryUsesIndexScan(t *testing.T) {
 	windowEnd := updatedAts[total-1]
 
 	plan := explainText(t, s, ctx, `
-		SELECT r.id, wv.content_digest, r.status, r.input, r.output, r.created_at, r.updated_at, r.completed_at
+		SELECT r.id, wv.content_digest, r.status, r.input, r.output, r.created_at, r.updated_at, r.completed_at,
+		       r.name, r.description, r.category
 		FROM runs r JOIN workflow_versions wv ON wv.id = r.workflow_version_id
 		WHERE r.namespace_id = $1
 		  AND ($2 = '' OR r.status = $2)

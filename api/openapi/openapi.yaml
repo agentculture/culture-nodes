@@ -364,6 +364,45 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/Error'
+    patch:
+      operationId: patchRun
+      tags: [runs]
+      summary: Retag a run's category. name/description are immutable.
+      description: >-
+        The only field this accepts is `category` (frame decision q4):
+        `name` and `description` are set once, at creation (POST
+        /v1alpha1/runs), and cannot be changed afterward — a request body
+        carrying either key is refused with a structured 400 rather than
+        silently ignored.
+      parameters:
+        - $ref: '#/components/parameters/RunID'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/PatchRunRequest'
+      responses:
+        '200':
+          description: The run, with its category updated.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Run'
+        '400':
+          description: >-
+            The request body carried `name` or `description`, omitted
+            `category`, or `category` was not a string.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '404':
+          description: No run has this id.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
 
   /v1alpha1/runs/{id}/cancel:
     post:
@@ -909,6 +948,42 @@ components:
           type: string
         input:
           description: The run input. Validated against the workflow's input contract.
+        name:
+          type: string
+          description: >-
+            Optional operator-given display name (task t3, migrations/0013).
+            Additive: omitting it (every pre-t3 client) behaves exactly as
+            before. Set at creation only — there is no way to change it
+            afterward; see PatchRunRequest.
+        description:
+          type: string
+          description: >-
+            Optional operator-given free-text description (task t3). Set at
+            creation only, like `name` — immutable afterward.
+        category:
+          type: string
+          description: >-
+            Optional flat tag (task t3), e.g. `review`, `audit`, `explore`,
+            `implement`, `docs` — a cheap-to-change label, not a fixed
+            taxonomy, so per-actor aggregates (issue #28) can slice by it.
+            Unlike `name`/`description`, `category` alone is retaggable
+            after creation via PATCH /v1alpha1/runs/{id} (frame decision
+            q4).
+
+    PatchRunRequest:
+      type: object
+      required: [category]
+      description: >-
+        The only body PATCH /v1alpha1/runs/{id} accepts. `name` and
+        `description` are immutable once a run is created (frame decision
+        q4) — a request body carrying either key is refused with a
+        structured 400, not silently ignored.
+      properties:
+        category:
+          type: string
+          description: >-
+            The run's new category tag. An empty string clears it. See
+            CreateRunRequest.category for what this field means.
 
     Run:
       type: object
@@ -940,11 +1015,36 @@ components:
             The run-wide §13.2 usage/cost rollup (task t2), summed over
             every attempt of every node run in this run. Always present on
             GET /v1alpha1/runs/{id} (getRun), POST /v1alpha1/runs
-            (createRun), and POST /v1alpha1/runs/{id}/cancel (cancelRun) —
-            even a freshly created run with zero attempts carries a
-            present-but-empty rollup, never an absent field. NOT computed
-            (and therefore absent) on GET /v1alpha1/runs (listRuns), which
-            would otherwise need one extra query per listed row.
+            (createRun), PATCH /v1alpha1/runs/{id} (patchRun), and POST
+            /v1alpha1/runs/{id}/cancel (cancelRun) — even a freshly created
+            run with zero attempts carries a present-but-empty rollup,
+            never an absent field. NOT computed (and therefore absent) on
+            GET /v1alpha1/runs (listRuns), which would otherwise need one
+            extra query per listed row.
+        name:
+          type: string
+          description: >-
+            Operator-given display name (task t3). Absent when the run was
+            created without one — see `display_hint` for a derived
+            fallback. Immutable after creation.
+        description:
+          type: string
+          description: Operator-given free-text description (task t3). Immutable after creation.
+        category:
+          type: string
+          description: >-
+            The run's flat category tag (task t3), if any. Retaggable via
+            PATCH /v1alpha1/runs/{id} (frame decision q4).
+        display_hint:
+          type: string
+          description: >-
+            A truncated, best-effort guess at what this run is about,
+            derived AT READ TIME from a request/instruction/task-ish
+            top-level string field of the run's own input — never
+            persisted, and present only when `name` is absent. A client
+            MUST treat this as distinct from `name`: it is a guess, not
+            something an operator actually said, and must never be
+            presented to a user as if it were the given name.
 
     Usage:
       type: object

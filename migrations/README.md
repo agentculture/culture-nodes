@@ -49,6 +49,11 @@ Numbered SQL migrations for the authoritative PostgreSQL store (prd-spec
   (`internal/worker/dispatch.go`'s sync path, `internal/actors/callback.go`'s
   async path) now persist. All four are nullable with no default; an
   attempt that reported no usage stays NULL, not a fabricated zero.
+- `0013_run_metadata.sql` — expand-only: adds `runs.name`, `runs.description`,
+  `runs.category` (task t3), all nullable with no default. `name`/
+  `description` are operator-given at creation only (`internal/api/runs.go`'s
+  `handleCreateRun`); `category` alone is retaggable afterward via
+  `PATCH /v1alpha1/runs/{id}` (`handlePatchRun`) per frame decision q4.
 
 ## Policy
 

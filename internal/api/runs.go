@@ -6,6 +6,8 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
+	"sort"
+	"strings"
 
 	"github.com/agentculture/culture-nodes/internal/compiler"
 	"github.com/agentculture/culture-nodes/internal/engine"
@@ -14,10 +16,18 @@ import (
 	"github.com/agentculture/culture-nodes/internal/store/postgres"
 )
 
-// createRunRequest is components.schemas.CreateRunRequest.
+// createRunRequest is components.schemas.CreateRunRequest. Name,
+// Description, and Category (task t3, migrations/0013) are optional and
+// additive: a body carrying only {workflow_digest, input} — every
+// pre-t3 client — decodes identically to before, with all three as their
+// zero value, and handleCreateRun below skips writing them entirely in
+// that case (see setRunMetadata in queries.go).
 type createRunRequest struct {
 	WorkflowDigest string          `json:"workflow_digest"`
 	Input          json.RawMessage `json:"input"`
+	Name           string          `json:"name,omitempty"`
+	Description    string          `json:"description,omitempty"`
+	Category       string          `json:"category,omitempty"`
 }
 
 // handleCreateRun is POST /v1alpha1/runs. It resolves the pinned,
@@ -54,11 +64,25 @@ func (s *Server) handleCreateRun(w http.ResponseWriter, r *http.Request) error {
 	if err != nil {
 		return classify(err)
 	}
+	// Task t3: name/description/category cannot ride inside
+	// Engine.CreateRun's own transaction — engine.Run/InsertRun carry no
+	// metadata columns (see runMetadata's doc comment in queries.go for
+	// why that boundary stays put) — so this is a second statement right
+	// after the run row exists. setRunMetadata no-ops when the request
+	// carried none of the three, so an old {workflow_digest, input}-only
+	// body never pays for it.
+	if err := s.setRunMetadata(ctx, run.ID, req.Name, req.Description, req.Category); err != nil {
+		return internalError(err)
+	}
 	usage, err := s.engineStore.RunUsage(ctx, run.ID)
 	if err != nil {
 		return internalError(err)
 	}
-	writeJSON(w, http.StatusCreated, runOut(run, usage))
+	// The response reflects exactly what was just written above, with no
+	// extra read: createRunRequest's fields ARE the metadata now
+	// persisted.
+	meta := runMetadata{Name: req.Name, Description: req.Description, Category: req.Category}
+	writeJSON(w, http.StatusCreated, runOut(run, usage, meta))
 	return nil
 }
 
@@ -145,7 +169,11 @@ func (s *Server) handleGetRun(w http.ResponseWriter, r *http.Request) error {
 	if err != nil {
 		return internalError(err)
 	}
-	writeJSON(w, http.StatusOK, RunViewOut{Run: runOut(run, usage), Tokens: tokens, NodeRuns: nodeRuns})
+	meta, err := s.runMetadataByID(ctx, id)
+	if err != nil {
+		return internalError(err)
+	}
+	writeJSON(w, http.StatusOK, RunViewOut{Run: runOut(run, usage, meta), Tokens: tokens, NodeRuns: nodeRuns})
 	return nil
 }
 
@@ -159,8 +187,161 @@ func (s *Server) handleCancelRun(w http.ResponseWriter, r *http.Request) error {
 	if err != nil {
 		return internalError(err)
 	}
-	writeJSON(w, http.StatusOK, runOut(run, usage))
+	meta, err := s.runMetadataByID(r.Context(), run.ID)
+	if err != nil {
+		return internalError(err)
+	}
+	writeJSON(w, http.StatusOK, runOut(run, usage, meta))
 	return nil
+}
+
+// handlePatchRun is PATCH /v1alpha1/runs/{id}: retag a run's category —
+// the only field this endpoint accepts. Frame decision q4 (docs/specs/
+// 2026-08-12-operate-through-the-ui.md) makes name and description
+// immutable once a run is created (POST /v1alpha1/runs is their only
+// writer); this handler enforces that by inspecting the raw request body
+// for either key BEFORE decoding a typed struct, since a typed decode with
+// only a Category field would otherwise silently ignore a caller's attempt
+// to also send name/description rather than refusing it with a structured
+// error, the honesty condition this task's acceptance criteria ask for.
+func (s *Server) handlePatchRun(w http.ResponseWriter, r *http.Request) error {
+	id := r.PathValue("id")
+
+	var raw map[string]json.RawMessage
+	if err := json.NewDecoder(r.Body).Decode(&raw); err != nil {
+		return badRequest("send a JSON body matching PatchRunRequest: {category}", "decode request body: %v", err)
+	}
+	if _, ok := raw["name"]; ok {
+		return badRequest(
+			"name is set at run creation only and cannot be changed afterward (frame decision q4) — remove it from the request body",
+			"PATCH /v1alpha1/runs/%s: name is immutable", id)
+	}
+	if _, ok := raw["description"]; ok {
+		return badRequest(
+			"description is set at run creation only and cannot be changed afterward (frame decision q4) — remove it from the request body",
+			"PATCH /v1alpha1/runs/%s: description is immutable", id)
+	}
+	categoryRaw, ok := raw["category"]
+	if !ok {
+		return badRequest("send a JSON body matching PatchRunRequest: {category}", "PATCH /v1alpha1/runs/%s requires category", id)
+	}
+	var category string
+	if err := json.Unmarshal(categoryRaw, &category); err != nil {
+		return badRequest("category must be a JSON string", "decode category: %v", err)
+	}
+
+	ctx := r.Context()
+	if err := s.setRunCategory(ctx, id, category); err != nil {
+		if errors.Is(err, postgres.ErrNotFound) {
+			return notFound("check the run id", "no run with id %s", id)
+		}
+		return internalError(err)
+	}
+
+	run, err := s.engineStore.Run(ctx, id)
+	if err != nil {
+		return classify(err)
+	}
+	usage, err := s.engineStore.RunUsage(ctx, id)
+	if err != nil {
+		return internalError(err)
+	}
+	meta, err := s.runMetadataByID(ctx, id)
+	if err != nil {
+		return internalError(err)
+	}
+	writeJSON(w, http.StatusOK, runOut(run, usage, meta))
+	return nil
+}
+
+// hintCandidateKeys is deriveDisplayHint's priority-ordered list of exact
+// top-level input keys checked first, before it falls back to substring
+// matching — see that function's doc comment. Ordered by how common each
+// shape is across this repo's own examples/ and the nodes-operator skill's
+// assign workflow template, which binds "instruction"; examples/
+// delivery-loop/input.json uses "request".
+var hintCandidateKeys = []string{"instruction", "request", "task", "prompt", "summary"}
+
+// hintCandidateSubstrings is the fallback deriveDisplayHint scans for when
+// none of hintCandidateKeys is present verbatim — covers workflows whose
+// input uses a compound key like "build_instruction" or
+// "review_instruction" (examples/independent-review/input.json), which
+// would otherwise derive no hint at all despite plainly carrying one.
+var hintCandidateSubstrings = []string{"instruction", "request", "task"}
+
+// displayHintMaxLen bounds RunOut.DisplayHint — a "sane length" for a list
+// row or card, not a full task description. Truncation is rune-safe.
+const displayHintMaxLen = 140
+
+// deriveDisplayHint returns a truncated, best-effort hint at what a run is
+// about, read from a request/instruction/task-ish top-level string field
+// of input — RunOut's DisplayHint, computed here at read time (runOut,
+// runRow.out()) and never persisted (see RunOut's doc comment in types.go
+// for why a UI must be able to tell this apart from an operator-given
+// Name). Returns "" when input is not a JSON object, or contains none of
+// the candidate fields, or every candidate field it does contain is blank
+// — deriving nothing is always preferred to guessing wrong.
+func deriveDisplayHint(input json.RawMessage) string {
+	if len(input) == 0 {
+		return ""
+	}
+	var obj map[string]json.RawMessage
+	if err := json.Unmarshal(input, &obj); err != nil {
+		return "" // not a JSON object (an array, a scalar, ...) — nothing to derive from.
+	}
+
+	for _, key := range hintCandidateKeys {
+		if hint := hintFromField(obj, key); hint != "" {
+			return truncateHint(hint)
+		}
+	}
+
+	// Fallback: scan keys in a deterministic (sorted) order for one whose
+	// name contains one of the candidate substrings, so a compound key
+	// like "build_instruction" still yields a hint. Sorted rather than map
+	// iteration order, which Go deliberately randomizes — an unstable hint
+	// across identical requests would be its own small honesty problem.
+	keys := make([]string, 0, len(obj))
+	for k := range obj {
+		keys = append(keys, k)
+	}
+	sort.Strings(keys)
+	for _, k := range keys {
+		for _, sub := range hintCandidateSubstrings {
+			if strings.Contains(k, sub) {
+				if hint := hintFromField(obj, k); hint != "" {
+					return truncateHint(hint)
+				}
+			}
+		}
+	}
+	return ""
+}
+
+// hintFromField reads obj[key] as a JSON string, returning "" if the key
+// is absent, is not a string, or is blank once trimmed.
+func hintFromField(obj map[string]json.RawMessage, key string) string {
+	raw, ok := obj[key]
+	if !ok {
+		return ""
+	}
+	var s string
+	if err := json.Unmarshal(raw, &s); err != nil {
+		return ""
+	}
+	return strings.TrimSpace(s)
+}
+
+// truncateHint bounds s to displayHintMaxLen runes, appending an ellipsis
+// when it does. Rune-based, not byte-based: input is operator-authored
+// free text and may contain multi-byte characters that a byte-slice
+// truncation would split mid-codepoint.
+func truncateHint(s string) string {
+	r := []rune(s)
+	if len(r) <= displayHintMaxLen {
+		return s
+	}
+	return strings.TrimSpace(string(r[:displayHintMaxLen])) + "…"
 }
 
 // cancelRun consumes every active token, marks every non-terminal node run

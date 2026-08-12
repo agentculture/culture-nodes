@@ -1,0 +1,1035 @@
+{
+  "slug": "operate-through-the-ui",
+  "title": "operate-through-the-ui",
+  "schema_version": 5,
+  "status": "exported",
+  "created": "2026-08-12T18:29:34Z",
+  "updated": "2026-08-12T20:10:26Z",
+  "claims": [
+    {
+      "id": "c1",
+      "kind": "announcement",
+      "text": "Operating culture-nodes happens through the UI: every run shows its name, purpose, and cost; every agent attempt carries measured workspace evidence an approver reviews in-page; workflows are visible, validated, and publishable from the browser; and completed work is graded per actor so the ledger answers which actor is better at what",
+      "origin": "user",
+      "status": "confirmed",
+      "honesty_conditions": [
+        {
+          "id": "h1",
+          "text": "every headline capability is verifiable on the live thor UI by the operator \u2014 run cost visible, evidence reviewable in-page, workflows publishable from the browser, grades recorded per actor",
+          "status": "confirmed",
+          "instruction": ""
+        }
+      ],
+      "hard_questions": [],
+      "links": [],
+      "instruction": "after each delivery slice, verify its headline on http://192.168.1.146:18080 with real runs, not fixtures",
+      "revisions": []
+    },
+    {
+      "id": "c2",
+      "kind": "assumption",
+      "text": "issue #12 items 1-2 already shipped in v0.11.1 (PR #27): web/public/favicon.svg carries the ADR-0001 AgentCulture mark and the layout moved to full-width .view-rail with stacked board columns, .table-scroll tables, and a collapsible nav \u2014 the remaining #12 scope is items 3-6 (cost, run names, workflows view, authoring)",
+      "origin": "llm",
+      "status": "confirmed",
+      "honesty_conditions": [],
+      "hard_questions": [],
+      "links": [],
+      "instruction": "",
+      "revisions": []
+    },
+    {
+      "id": "c3",
+      "kind": "requirement",
+      "text": "cost visibility is aggregation + exposure, not new measurement: all three bridges (claude-code, codex, colleague mapping.py) already map backend usage into the \u00a713.2 Usage block (input/output tokens, cost/currency pointers, internal/actors/protocol.go); aggregate attempt -> node run -> run, expose on run detail + node-runs listing, render in RunView, NodeDetailPanel, and the jobs timeline (PRD \u00a78.6 lists cost/usage among close-zoom view fields)",
+      "origin": "llm",
+      "status": "confirmed",
+      "honesty_conditions": [
+        {
+          "id": "h2",
+          "text": "a run's rendered cost equals the sum of its attempts' \u00a713.2 usage, and attempts that reported no usage render as 'not reported' \u2014 never silently as zero",
+          "status": "confirmed",
+          "instruction": ""
+        },
+        {
+          "id": "h24",
+          "text": "a run's cost includes every attempt \u2014 failed, retried, and cancelled included: money spent is money spent, and hiding failed-attempt burn would misstate exactly the retry-burn signal #28's aggregates need",
+          "status": "confirmed",
+          "instruction": ""
+        }
+      ],
+      "hard_questions": [],
+      "links": [],
+      "instruction": "aggregate usage attempt->node-run->run in the store layer, expose on run detail + node-runs listing, render in RunView/NodeDetailPanel/jobs timeline; test the no-usage-reported rendering path",
+      "revisions": []
+    },
+    {
+      "id": "c4",
+      "kind": "assumption",
+      "text": "attempts persist actor results as opaque JSONB (Result []byte in internal/store/postgres/sqlcgen/models.go) \u2014 usage aggregation needs SQL JSON extraction over that column or a migration extracting usage into queryable columns; no schema change has been decided yet",
+      "origin": "llm",
+      "status": "confirmed",
+      "honesty_conditions": [],
+      "hard_questions": [],
+      "links": [],
+      "instruction": "",
+      "revisions": []
+    },
+    {
+      "id": "c5",
+      "kind": "non_goal",
+      "text": "cost enforcement (budgets, limits, refusal on overrun) stays parked \u2014 PRD Phase 4 'Rich execution' owns cost and budget enforcement; this scope observes and renders cost only, exactly as issue #12 item 3 states",
+      "origin": "llm",
+      "status": "confirmed",
+      "honesty_conditions": [],
+      "hard_questions": [],
+      "links": [],
+      "instruction": "",
+      "revisions": []
+    },
+    {
+      "id": "c6",
+      "kind": "requirement",
+      "text": "run name/description: createRunRequest today is exactly {workflow_digest, input} (internal/api/runs.go) \u2014 add optional display name/description at POST /v1alpha1/runs, carry it through list/board/jobs/run views, add CLI parity (nodes run create --name), and derive a truncated hint from the run input when absent",
+      "origin": "llm",
+      "status": "confirmed",
+      "honesty_conditions": [
+        {
+          "id": "h3",
+          "text": "name/description are optional and additive \u2014 a run created without them still lists with a usable hint derived from its input, and existing clients keep working unchanged",
+          "status": "confirmed",
+          "instruction": ""
+        }
+      ],
+      "hard_questions": [],
+      "links": [],
+      "instruction": "add optional name/description to CreateRunRequest + runOut + list queries, nodes run create --name, and the input-derived fallback hint; update openapi.yaml (parity gate)",
+      "revisions": []
+    },
+    {
+      "id": "c7",
+      "kind": "requirement",
+      "text": "workflows view is web-only work: the API family is already complete (validate/publish/list/get in internal/api/workflows.go, paths in api/openapi/openapi.yaml) but web/src/App.tsx routes only runs/board/jobs/run-detail/ledger \u2014 add a /workflows route listing published workflows, versions/digests, owner, and recent runs",
+      "origin": "llm",
+      "status": "confirmed",
+      "honesty_conditions": [
+        {
+          "id": "h4",
+          "text": "the workflows view is read-only composition over the existing endpoints \u2014 shipping it requires zero API change",
+          "status": "confirmed",
+          "instruction": ""
+        }
+      ],
+      "hard_questions": [],
+      "links": [],
+      "instruction": "add /workflows route: published workflows, versions/digests, owner, recent runs per workflow; e2e test against the fixture API",
+      "revisions": []
+    },
+    {
+      "id": "c8",
+      "kind": "requirement",
+      "text": "in-UI authoring first slice: paste/upload workflow YAML -> POST /v1alpha1/workflows/validate (already returns compiler diagnostics via workflowValidationOut) -> render diagnostics -> publish, plus a read-only graph preview reusing the existing graph components (web/src/domain/graph.ts, WorkflowNode, useElkLayout)",
+      "origin": "llm",
+      "status": "confirmed",
+      "honesty_conditions": [
+        {
+          "id": "h5",
+          "text": "publishing from the UI produces the same content digest as publishing the same YAML via CLI, and invalid YAML renders the compiler diagnostics without publishing anything",
+          "status": "confirmed",
+          "instruction": ""
+        }
+      ],
+      "hard_questions": [],
+      "links": [],
+      "instruction": "authoring slice: paste/upload YAML -> POST /workflows/validate -> render diagnostics -> read-only graph preview (existing graph components) -> publish; write the ADR against PRD \u00a78.6/Phase-3 first",
+      "revisions": []
+    },
+    {
+      "id": "c9",
+      "kind": "boundary",
+      "text": "the full graphical/canvas workflow editor stays out \u2014 PRD Phase 3 'Authoring and reuse' owns it; the paste-validate-preview-publish slice needs an ADR recording the deviation-in-timing against PRD \u00a78.6 Design view / Phase-3 scope, per issue #12 item 6",
+      "origin": "llm",
+      "status": "confirmed",
+      "honesty_conditions": [
+        {
+          "id": "h17",
+          "text": "no canvas/drag editing ships this cycle, and the ADR recording the early authoring slice against PRD Phase-3 scope is merged before the slice itself",
+          "status": "confirmed",
+          "instruction": ""
+        }
+      ],
+      "hard_questions": [],
+      "links": [],
+      "instruction": "",
+      "revisions": []
+    },
+    {
+      "id": "c10",
+      "kind": "requirement",
+      "text": "bridge-measured workspace facts on ALL THREE bridges (all-backends rule): today claude-code's mapping.py hardcodes changed_files: [] (honestly documented); the bridge subprocess measures HEAD before/after, git status --porcelain, changed-file list, diffstat, new branch \u2014 attached to the actor result as measured-by-process fields clearly distinguished from model-claimed content, still proposed authority",
+      "origin": "llm",
+      "status": "confirmed",
+      "honesty_conditions": [
+        {
+          "id": "h6",
+          "text": "measured fields are populated by the bridge process from git itself (HEAD before/after, status, diffstat) \u2014 never copied from model output \u2014 and are rendered distinctly from model-claimed content; all three bridges ship it or it's a bug (all-backends rule)",
+          "status": "confirmed",
+          "instruction": ""
+        }
+      ],
+      "hard_questions": [],
+      "links": [],
+      "instruction": "extend the actor-result mapping in claude-code, codex, AND colleague bridges with bridge-measured workspace fields; conformance-kit tests assert the fields exist and are process-measured",
+      "revisions": []
+    },
+    {
+      "id": "c11",
+      "kind": "requirement",
+      "text": "render the evidence: NodeDetailPanel already filters and renders observed evidence records from the ledger delta ('No observed evidence is attached' empty state) \u2014 changed files, diffstat, and per-attempt cost slot into that existing section plus the run view, so the approver reviews the diff in the ship-review pause instead of ssh-ing to the workspace",
+      "origin": "llm",
+      "status": "confirmed",
+      "honesty_conditions": [
+        {
+          "id": "h7",
+          "text": "an approver in the ship-review pause reads changed files, diffstat, and per-attempt cost in NodeDetailPanel without ssh-ing to the workspace",
+          "status": "confirmed",
+          "instruction": ""
+        }
+      ],
+      "hard_questions": [],
+      "links": [],
+      "instruction": "render measured workspace facts + cost in NodeDetailPanel's existing evidence section and the run view; e2e test with a fixture carrying measured fields",
+      "revisions": []
+    },
+    {
+      "id": "c12",
+      "kind": "requirement",
+      "text": "the runs board must actually fill a wide screen in live operation \u2014 the operator reports the board still renders narrow despite v0.11.1's full-width CSS (.view-rail max-width:none, .runs-board__column flex:1 1 15rem); acceptance is verified on the real wide display, not in the stylesheet",
+      "origin": "user",
+      "status": "confirmed",
+      "honesty_conditions": [
+        {
+          "id": "h8",
+          "text": "verified on the operator's real wide display against the deployed thor build \u2014 not in the stylesheet",
+          "status": "confirmed",
+          "instruction": ""
+        }
+      ],
+      "hard_questions": [],
+      "links": [],
+      "instruction": "operator loads /board on the wide screen after the 2026-08-12 redeploy; if still narrow, debug the residual constraint in the served bundle",
+      "revisions": []
+    },
+    {
+      "id": "c13",
+      "kind": "requirement",
+      "text": "a Statistics view tab in the web UI: aggregate job/run cost as total and average (and mean/median) over the listed window \u2014 consumes the same attempt->node-run->run usage aggregation as run-detail cost (c3) and slots beside runs/board/jobs in the header nav",
+      "origin": "user",
+      "status": "confirmed",
+      "honesty_conditions": [
+        {
+          "id": "h9",
+          "text": "the stats tab states its denominator: totals/averages are computed over exactly the window and run-set the view lists, and runs with no reported usage are counted and shown as excluded rather than folded in as zero",
+          "status": "confirmed",
+          "instruction": ""
+        }
+      ],
+      "hard_questions": [],
+      "links": [],
+      "instruction": "add a Statistics tab beside runs/board/jobs: jobs cost total, average and median over the listed window, consuming the c3 aggregation; cost-limit option deferred to a follow-up issue (c14)",
+      "revisions": []
+    },
+    {
+      "id": "c14",
+      "kind": "non_goal",
+      "text": "the cost limit option (capping spend) is deferred to its own follow-up issue \u2014 consistent with the existing enforcement non-goal (c5, PRD Phase 4); this cycle renders statistics only",
+      "origin": "user",
+      "status": "confirmed",
+      "honesty_conditions": [],
+      "hard_questions": [],
+      "links": [],
+      "instruction": "",
+      "revisions": []
+    },
+    {
+      "id": "c15",
+      "kind": "requirement",
+      "text": "observed workspace-diff evidence via the hook seam: a standard post_run code hook snapshots the workspace (changed files, diff digest, artifact refs) and the worker appends it as observed evidence through the runner boundary \u2014 the machinery exists (internal/worker/hooks.go buildHookEvidence/appendHookEvidence, per-observation measured/complete flags)",
+      "origin": "llm",
+      "status": "confirmed",
+      "honesty_conditions": [
+        {
+          "id": "h10",
+          "text": "hook-produced workspace evidence lands as observed authority appended by the worker through the runner boundary \u2014 never folded into the agent's own ledger delta, which can never carry observe",
+          "status": "confirmed",
+          "instruction": ""
+        }
+      ],
+      "hard_questions": [],
+      "links": [],
+      "instruction": "ship a standard post_run workspace-snapshot hook (changed files, diff digest, artifact refs) for sync actors; async coverage per the q2 decision",
+      "revisions": []
+    },
+    {
+      "id": "c16",
+      "kind": "assumption",
+      "text": "the async post_run gap blocks #13 item 2 for the real fleet: worker refuses post_run on agent nodes whose actor answers async (refuseAsyncPostRun \u2014 the callback path has no IR/runner awareness), and the production claude/codex bridges run ALWAYS_ASYNC \u2014 so hook-snapshot evidence cannot cover production attempts without extending hook execution into the callback path, a cross-cutting change hooks.go explicitly documents as past-slice",
+      "origin": "llm",
+      "status": "confirmed",
+      "honesty_conditions": [],
+      "hard_questions": [],
+      "links": [],
+      "instruction": "",
+      "revisions": []
+    },
+    {
+      "id": "c17",
+      "kind": "requirement",
+      "text": "independent LLM review step: a review-node workflow pattern where a DIFFERENT backend reviews the change-set (codex reviewing claude or vice versa \u2014 ask-colleague's diversity principle as a node); input = measured diff from the evidence layers + task instruction, output = structured review claim landing proposed like any agent claim \u2014 \u00a710.4 stands, only the human confirms (issue #13 item 3 notes today's self-hosting-loop verify node reviews through the same backend that built)",
+      "origin": "llm",
+      "status": "confirmed",
+      "honesty_conditions": [
+        {
+          "id": "h11",
+          "text": "the reviewing backend is provably different from the building backend, its input is the measured diff (not the builder's self-report), and its verdict lands proposed per \u00a710.4 \u2014 the review step never auto-confirms anything",
+          "status": "confirmed",
+          "instruction": ""
+        }
+      ],
+      "hard_questions": [],
+      "links": [],
+      "instruction": "add a review-node pattern + example workflow where codex reviews claude's change-set (or vice versa) from the measured diff; structured review claim (findings, verdict) lands proposed",
+      "revisions": []
+    },
+    {
+      "id": "c18",
+      "kind": "requirement",
+      "text": "grading records: a first-class evaluation (rating + rationale) of a completed run/attempt recorded against the evaluated actor, flowing through the normal authority model \u2014 an agent-authored grade lands proposed and a human confirms; a human grading directly is human-authority; a grade is an opinion record and must never be conflated with observed/derived evidence (issue #28 item 1 honesty constraint)",
+      "origin": "llm",
+      "status": "confirmed",
+      "honesty_conditions": [
+        {
+          "id": "h12",
+          "text": "a grade is an opinion record: it never lands as observed/derived, an agent-authored grade lands proposed, only a human confirms \u2014 and a grade is never conflated with claim confirm/reject",
+          "status": "confirmed",
+          "instruction": ""
+        }
+      ],
+      "hard_questions": [],
+      "links": [],
+      "instruction": "add the grade record (shape per q3 decision) + API + `nodes-op grade <run-id> --rating N --notes`, recorded against actor and run through the normal authority model",
+      "revisions": []
+    },
+    {
+      "id": "c19",
+      "kind": "assumption",
+      "text": "per-actor aggregates imply introducing the actors API family first: api/openapi/openapi.yaml has NO /v1alpha1/actors paths at all \u2014 actors are registered via raw DB rows (issue #8) and even nodes-op's 'actors' verb resorts to ssh+psql on thor; GET /v1alpha1/actors/{id}/stats (runs by outcome, claims proposed/confirmed/rejected, attempts per completion, duration percentiles, usage/cost) is bigger than a stats endpoint \u2014 it stands up actor read surface where none exists",
+      "origin": "llm",
+      "status": "confirmed",
+      "honesty_conditions": [],
+      "hard_questions": [],
+      "links": [],
+      "instruction": "",
+      "revisions": []
+    },
+    {
+      "id": "c20",
+      "kind": "requirement",
+      "text": "task categories: an optional flat tag at assignment (nodes-op assign --category review|audit|explore|implement|docs) carried onto the run \u2014 the same createRunRequest change as the run name (c6), deliberately a cheap-to-change tag and not a taxonomy, so per-actor aggregates can slice better-at-WHAT (issue #28 item 3)",
+      "origin": "llm",
+      "status": "confirmed",
+      "honesty_conditions": [
+        {
+          "id": "h13",
+          "text": "category is an optional flat tag: absent category never blocks run creation, the tag is cheap to change, and aggregates slice uncategorized as its own bucket",
+          "status": "confirmed",
+          "instruction": ""
+        }
+      ],
+      "hard_questions": [],
+      "links": [],
+      "instruction": "carry --category on nodes-op assign onto the run via the same CreateRunRequest change as name/description; wire into per-actor aggregates",
+      "revisions": []
+    },
+    {
+      "id": "c21",
+      "kind": "boundary",
+      "text": "every new API surface lands in api/openapi/openapi.yaml and maps from all three fronts \u2014 tests/parity/parity_test.go enumerates Go CLI verbs, Python CLI verbs, and web-client operations and asserts each maps to a documented operation; new endpoints (name/category params, stats, actors, workflows-view queries) that skip the spec fail parity visibly",
+      "origin": "llm",
+      "status": "confirmed",
+      "honesty_conditions": [
+        {
+          "id": "h18",
+          "text": "tests/parity passes on every PR in this family \u2014 any new endpoint, parameter, or verb missing from openapi.yaml or a CLI front fails CI visibly",
+          "status": "confirmed",
+          "instruction": ""
+        }
+      ],
+      "hard_questions": [],
+      "links": [],
+      "instruction": "",
+      "revisions": []
+    },
+    {
+      "id": "c22",
+      "kind": "non_goal",
+      "text": "the AWS lane stays untouched: the Lambda runner, SQS driver, and deploy/aws are runner-side surfaces orthogonal to this UI/evidence/grading scope; production remains the thor/orin compose pair \u2014 AWS access matters to this cycle only if the user decides to host the control plane there, which nothing here requires",
+      "origin": "llm",
+      "status": "confirmed",
+      "honesty_conditions": [],
+      "hard_questions": [],
+      "links": [],
+      "instruction": "",
+      "revisions": []
+    },
+    {
+      "id": "c23",
+      "kind": "requirement",
+      "text": "a live-mesh overview view in the UX: nodes, lines, and pulses traveling between them, in the spirit of culture.dev's MeshIsland (katvan site-astro/src/components/MeshIsland.svelte \u2014 Canvas 2D breathing graph, message particles along edges, prefers-reduced-motion renders one static frame) \u2014 for culture-nodes the graph is live topology (actors, runs, control plane) rather than build-time JSON, feeding off run events",
+      "origin": "user",
+      "status": "confirmed",
+      "honesty_conditions": [
+        {
+          "id": "h14",
+          "text": "the mesh view renders live control-plane state (registered actors, runs, dispatch traffic) \u2014 not canned data \u2014 pulses correspond to real events, and prefers-reduced-motion gets a dignified static frame",
+          "status": "confirmed",
+          "instruction": ""
+        }
+      ],
+      "hard_questions": [],
+      "links": [],
+      "instruction": "new overview route composing the SSE events surface with a canvas mesh in MeshIsland's spirit: nodes=actors/control-plane, edges=dispatch paths, particles=live run/event traffic",
+      "revisions": []
+    },
+    {
+      "id": "c24",
+      "kind": "requirement",
+      "text": "OpenTelemetry beyond the stub (issue #5): traces and metrics for engine transitions, runner dispatch, and actor callbacks \u2014 internal/telemetry is a doc-comment-only stub today; prior art is ../culture, which carries opentelemetry api/sdk/otlp-grpc-exporter deps; the Go control plane takes the go.opentelemetry.io dependency family (the zero-third-party-deps rule binds the PYTHON package, not the Go module); issue #5's own becomes-worthwhile trigger \u2014 two workers against one Postgres on thor+orin \u2014 is the live topology now",
+      "origin": "user",
+      "status": "confirmed",
+      "honesty_conditions": [
+        {
+          "id": "h15",
+          "text": "traces and metrics for engine transitions, runner dispatch, and actor callbacks export via OTLP when a collector is configured \u2014 and the control plane runs unchanged when none is",
+          "status": "confirmed",
+          "instruction": ""
+        }
+      ],
+      "hard_questions": [],
+      "links": [],
+      "instruction": "take the go.opentelemetry.io dependency family in the Go module, instrument engine/dispatch/callback seams behind env-gated OTLP export; mirror culture's dependency discipline",
+      "revisions": []
+    },
+    {
+      "id": "c25",
+      "kind": "requirement",
+      "text": "the live-mesh visual's quality bar is STUNNING \u2014 a signature, futuristic, alive-feeling showpiece (wholesome, not clinical): the MeshIsland reference sets the floor (breathing motion, traffic pulses), not the ceiling; this view is a deliberate design investment, the product's face, and acceptance is the operator's wow on the real screen \u2014 while still honoring prefers-reduced-motion with a dignified static frame",
+      "origin": "user",
+      "status": "confirmed",
+      "honesty_conditions": [
+        {
+          "id": "h16",
+          "text": "the bar is the operator's judgment on the real screen: the view reads as alive, futuristic, and wholesome \u2014 MeshIsland is the floor, not the ceiling \u2014 and the reduced-motion frame still looks intentional",
+          "status": "confirmed",
+          "instruction": ""
+        }
+      ],
+      "hard_questions": [],
+      "links": [],
+      "instruction": "treat the mesh view as a design investment: motion design pass (breathing, pulses, glow), palette from culture-design tokens, review with the operator on the wide display before calling it done",
+      "revisions": []
+    },
+    {
+      "id": "c26",
+      "kind": "audience",
+      "text": "the human operator running the thor/orin fleet day-to-day (Ori), plus every mesh operator driving culture-nodes through nodes-operator \u2014 and the approvers who decide ship-review pauses from the evidence on screen",
+      "origin": "llm",
+      "status": "confirmed",
+      "honesty_conditions": [
+        {
+          "id": "h19",
+          "text": "every delivered surface is usable by a human in the browser AND by an agent operator through the API/CLI \u2014 neither audience is served a degraded half",
+          "status": "confirmed",
+          "instruction": ""
+        }
+      ],
+      "hard_questions": [],
+      "links": [],
+      "instruction": "",
+      "revisions": []
+    },
+    {
+      "id": "c27",
+      "kind": "after_state",
+      "text": "the operator runs the fleet from the browser: every run shows a name, its cost, and measured evidence of what each node actually changed; workflows are listed, validated, and published in-UI; a stats tab totals job cost; a living mesh view shows the fleet breathing; completed work is graded per actor and the ledger answers which actor is better at what; engine internals are observable via OTel traces",
+      "origin": "llm",
+      "status": "confirmed",
+      "honesty_conditions": [
+        {
+          "id": "h20",
+          "text": "each after-state capability is demonstrated on the live thor UI with a real run before its issue checkbox is ticked",
+          "status": "confirmed",
+          "instruction": ""
+        }
+      ],
+      "hard_questions": [],
+      "links": [],
+      "instruction": "",
+      "revisions": []
+    },
+    {
+      "id": "c28",
+      "kind": "before_state",
+      "text": "operating today means run ids with no names, cost invisible anywhere, changed_files always empty so approvers ssh to the workspace to read diffs out-of-band, no workflows view, authoring only via CLI, no per-actor quality picture beyond ad-hoc /remember notes, and a telemetry stub",
+      "origin": "llm",
+      "status": "confirmed",
+      "honesty_conditions": [
+        {
+          "id": "h21",
+          "text": "the before-state pains are cited from operating evidence (issues #12/#13/#28, run 01KZJYNC884FJHZ46XA4TW0MMF) \u2014 none is invented to pad the story",
+          "status": "confirmed",
+          "instruction": ""
+        }
+      ],
+      "hard_questions": [],
+      "links": [],
+      "instruction": "",
+      "revisions": []
+    },
+    {
+      "id": "c29",
+      "kind": "why_it_matters",
+      "text": "the product's brand line is 'every node has a contract, every result has evidence' \u2014 but the operating surface can't show the evidence, the cost, or the actor comparison; closing that gap is what makes dogfooding through nodes-operator honest rather than ceremonial",
+      "origin": "llm",
+      "status": "confirmed",
+      "honesty_conditions": [
+        {
+          "id": "h22",
+          "text": "the brand-line claim is honored in the product: what the UI shows as evidence is measured or observed provenance, never a completion claim restyled",
+          "status": "confirmed",
+          "instruction": ""
+        }
+      ],
+      "hard_questions": [],
+      "links": [],
+      "instruction": "",
+      "revisions": []
+    },
+    {
+      "id": "c30",
+      "kind": "success_signal",
+      "text": "a ship-review approval decided entirely in-page (diff, cost, and evidence read in the UI, no ssh), plus one assigned run graded per actor through the API \u2014 both on the live thor UI",
+      "origin": "llm",
+      "status": "confirmed",
+      "honesty_conditions": [
+        {
+          "id": "h23",
+          "text": "the success signal is exercised end-to-end on production (thor), not simulated in a fixture",
+          "status": "confirmed",
+          "instruction": ""
+        }
+      ],
+      "hard_questions": [],
+      "links": [],
+      "instruction": "",
+      "revisions": []
+    },
+    {
+      "id": "c31",
+      "kind": "decision",
+      "text": "q2 decided: async agent attempts carry bridge-measured workspace facts this cycle; hook-observed evidence is sync-only; callback-path hook execution is a recorded follow-up, not silent scope",
+      "origin": "user",
+      "status": "confirmed",
+      "honesty_conditions": [],
+      "hard_questions": [],
+      "links": [],
+      "instruction": "",
+      "revisions": []
+    },
+    {
+      "id": "c32",
+      "kind": "decision",
+      "text": "q3 decided: grade is a new first-class ledger record_type, not a review extension \u2014 truth-of-a-claim and quality-of-work remain different statements",
+      "origin": "user",
+      "status": "confirmed",
+      "honesty_conditions": [],
+      "hard_questions": [],
+      "links": [],
+      "instruction": "",
+      "revisions": []
+    },
+    {
+      "id": "c33",
+      "kind": "requirement",
+      "text": "cost persistence comes FIRST: the \u00a713.2 Usage block the bridges emit is dropped at the completion seam today \u2014 no Usage consumer exists in engine/worker/actors non-test code, actor_invocations has no usage column, and a live probe of thor prod found 0 of 25 attempts carrying usage in result \u2014 so the cost family starts with persisting usage per attempt at completion (expand-only migration), and every pre-existing attempt renders 'not reported' (h2)",
+      "origin": "llm",
+      "status": "confirmed",
+      "honesty_conditions": [
+        {
+          "id": "h25",
+          "text": "after the persistence change, re-running the thor probe shows new attempts carrying the usage their bridge reported (with_usage > 0), while historical attempts render 'not reported' \u2014 no backfill, no fabricated zeros",
+          "status": "confirmed",
+          "instruction": ""
+        }
+      ],
+      "hard_questions": [],
+      "links": [],
+      "instruction": "persist the \u00a713.2 Usage block at the completion seam (sync and callback paths) via an expand-only migration; then aggregate per c3",
+      "revisions": []
+    },
+    {
+      "id": "c34",
+      "kind": "requirement",
+      "text": "the live-mesh view needs a fleet-wide event source: GET /v1alpha1/runs/{id}/events is per-run only (pollEvents filters WHERE run_id), so the mesh view requires either a new cross-run events stream endpoint or coarse polling of the runs list \u2014 plus the c19 actors API for its actor nodes; 'composing existing SSE' as scoped was optimistic",
+      "origin": "llm",
+      "status": "confirmed",
+      "honesty_conditions": [
+        {
+          "id": "h26",
+          "text": "the mesh view's pulses come from committed events across all displayed runs without opening one SSE connection per run \u2014 the data source is a deliberate new surface, not an N+1 hack",
+          "status": "confirmed",
+          "instruction": ""
+        }
+      ],
+      "hard_questions": [],
+      "links": [],
+      "instruction": "add a cross-run events surface (or server-side fan-in endpoint) scoped to active runs; mesh nodes come from the c19 actors API",
+      "revisions": []
+    },
+    {
+      "id": "c35",
+      "kind": "requirement",
+      "text": "cost figures are token-first and never estimated: Usage.Cost/Currency are nullable by \u00a713.2 design ('an actor that does not price its work says so with null'), codex/colleague report tokens only and the bridges never estimate \u2014 so stats and run views total tokens always, show currency cost only where actors reported it, and the control plane derives no prices from token counts this cycle (a pricing table is a possible follow-up issue)",
+      "origin": "llm",
+      "status": "confirmed",
+      "honesty_conditions": [
+        {
+          "id": "h27",
+          "text": "no code path in the control plane or web derives a currency amount from token counts \u2014 currency renders only when an actor reported it, token totals render always",
+          "status": "confirmed",
+          "instruction": ""
+        }
+      ],
+      "hard_questions": [],
+      "links": [],
+      "instruction": "stats tab and run views: token totals as the primary figure, currency cost as a secondary figure where present; 'not reported' otherwise",
+      "revisions": []
+    },
+    {
+      "id": "c36",
+      "kind": "requirement",
+      "text": "every new view (workflows, statistics, mesh, authoring) extends the agent-state store and carries stable ids/data-attributes \u2014 the machine-readable #agent-state node is how agents and the webglass CI job assert what the page shows; a view that exists only in pixels breaks the repo's agent-operable-UI contract and h19",
+      "origin": "llm",
+      "status": "confirmed",
+      "honesty_conditions": [
+        {
+          "id": "h28",
+          "text": "the webglass CI job (or an e2e test) asserts each new view through the #agent-state node \u2014 a view unregistered in agent-state fails CI, not review",
+          "status": "confirmed",
+          "instruction": ""
+        }
+      ],
+      "hard_questions": [],
+      "links": [],
+      "instruction": "extend AgentState with route-specific fields for workflows/stats/mesh/authoring; every assertable element carries a stable id or data-attribute",
+      "revisions": []
+    },
+    {
+      "id": "c37",
+      "kind": "boundary",
+      "text": "the in-UI authoring slice adds one-click publish + run-creation to a control plane that has NO authentication today (issue #6 open) \u2014 the slice ships without adding auth, which is acceptable only while the API stays LAN-bound on the thor/orin network; issue #6 is the explicit gate before any wider exposure, and the ADR for the authoring slice must say so",
+      "origin": "llm",
+      "status": "confirmed",
+      "honesty_conditions": [
+        {
+          "id": "h29",
+          "text": "the authoring-slice ADR names the unauthenticated write surface and the LAN-bound acceptance explicitly \u2014 the exposure is a recorded decision, not an accident",
+          "status": "confirmed",
+          "instruction": ""
+        }
+      ],
+      "hard_questions": [],
+      "links": [],
+      "instruction": "write the exposure section into the same ADR that records the Phase-3 timing deviation; #6 is cited as the gate",
+      "revisions": []
+    },
+    {
+      "id": "c38",
+      "kind": "requirement",
+      "text": "no actor grades its own run: the grade record names the graded actor AND the grading origin, and the API refuses a grade whose grading actor equals the evaluated actor \u2014 the self-promotion rule (\u00a710.4 'no actor promotes its own proposal') extended to opinion records; grade corrections append with supersedes like every ledger record",
+      "origin": "llm",
+      "status": "confirmed",
+      "honesty_conditions": [
+        {
+          "id": "h30",
+          "text": "an API-level test proves a grade whose grading actor equals the evaluated actor is refused with a structured error",
+          "status": "confirmed",
+          "instruction": ""
+        }
+      ],
+      "hard_questions": [],
+      "links": [],
+      "instruction": "enforce in the grade append path beside the existing \u00a710.4 authority checks; test both the agent-grades-agent allowed path and the self-grade refusal",
+      "revisions": []
+    },
+    {
+      "id": "c39",
+      "kind": "requirement",
+      "text": "every schema change in this family is expand-only per ADR 0002: nullable name/category columns on runs, a nullable usage column (or sibling table) for attempts, and the grade record type introduced additively \u2014 each migration tolerates the N-1 binary still running during the thor/orin rolling deploy window",
+      "origin": "llm",
+      "status": "confirmed",
+      "honesty_conditions": [
+        {
+          "id": "h31",
+          "text": "every migration in this family is reviewed against the ADR 0002 checklist: nullable or default-bearing additions only, and the N-1 binary keeps running against the expanded schema",
+          "status": "confirmed",
+          "instruction": ""
+        }
+      ],
+      "hard_questions": [],
+      "links": [],
+      "instruction": "runs.name/runs.category nullable columns, attempt usage as nullable column or sibling table, grade record type added to the schema registry additively",
+      "revisions": []
+    },
+    {
+      "id": "c40",
+      "kind": "requirement",
+      "text": "OTel spans and metrics carry identifiers, states, and durations \u2014 run/node/attempt ids, outcome kinds, queue depths \u2014 never run input, instruction text, or ledger payload content; observability must not become a second, unaudited copy of the work ledger",
+      "origin": "llm",
+      "status": "confirmed",
+      "honesty_conditions": [
+        {
+          "id": "h32",
+          "text": "span and metric attributes are drawn from an explicit allowlist of ids, enum states, counts, and durations \u2014 a reviewer can read the allowlist; payload content has no path in",
+          "status": "confirmed",
+          "instruction": ""
+        }
+      ],
+      "hard_questions": [],
+      "links": [],
+      "instruction": "instrument engine transitions, dispatch, and callbacks with the allowlist; no attribute takes run input, instruction text, or ledger record data",
+      "revisions": []
+    },
+    {
+      "id": "c41",
+      "kind": "assumption",
+      "text": "statistics over live-updating runs are eventually-consistent snapshots: the stats tab reads committed rows at query time with no transactional freeze, which is honest for an observation surface \u2014 a number can be stale by one refresh, never wrong about what was committed",
+      "origin": "llm",
+      "status": "confirmed",
+      "honesty_conditions": [],
+      "hard_questions": [],
+      "links": [],
+      "instruction": "",
+      "revisions": []
+    },
+    {
+      "id": "c42",
+      "kind": "decision",
+      "text": "q4 decided: retag allowed (category PATCH surface), rename immutable at creation this cycle",
+      "origin": "user",
+      "status": "confirmed",
+      "honesty_conditions": [],
+      "hard_questions": [],
+      "links": [],
+      "instruction": "",
+      "revisions": []
+    }
+  ],
+  "open_vagueness": [
+    {
+      "id": "v1",
+      "text": "how the three issues split into delivery slices (quick web-only wins vs API+store cost family vs evidence layers vs actors/grading family) is a plan-stage call, not a frame blocker",
+      "kind": "unknown_nonblocking",
+      "claim_id": null,
+      "resolved": false,
+      "resolution": "",
+      "resolution_claim_id": null
+    },
+    {
+      "id": "v2",
+      "text": "extend post_run hook execution to async-answering agents via the callback path (cross-cutting per hooks.go) \u2014 file as its own issue when the evidence family lands",
+      "kind": "follow_up",
+      "claim_id": null,
+      "resolved": false,
+      "resolution": "",
+      "resolution_claim_id": null
+    },
+    {
+      "id": "v3",
+      "text": "fleet-wide event stream load: a mesh view polling events for many runs could get heavy \u2014 containment (active-runs scoping, coarse poll interval, server-side fan-in) is a plan-stage design risk, not a spec change",
+      "kind": "unknown_nonblocking",
+      "claim_id": null,
+      "resolved": false,
+      "resolution": "",
+      "resolution_claim_id": null
+    }
+  ],
+  "scope_entries": [
+    {
+      "id": "s1",
+      "surface": "web/ + CHANGELOG.md 0.11.1 + issue #12",
+      "finding": "favicon and full-width/responsive layout landed in v0.11.1; issue #12's open scope is items 3-6",
+      "seeds": [
+        "c2"
+      ]
+    },
+    {
+      "id": "s2",
+      "surface": "adapters/*/src/*/mapping.py + internal/actors/protocol.go + PRD \u00a78.6",
+      "finding": "usage is already measured and mapped to \u00a713.2 on every actor result; only aggregation, API exposure, and rendering are missing",
+      "seeds": [
+        "c3"
+      ]
+    },
+    {
+      "id": "s3",
+      "surface": "internal/store/postgres/sqlcgen/models.go + migrations/",
+      "finding": "attempt results are opaque JSONB; per-run cost rollup requires either json_extract-style queries or an extraction migration",
+      "seeds": [
+        "c4"
+      ]
+    },
+    {
+      "id": "s4",
+      "surface": "PRD roadmap (Phase 4 \u00a7'cost and budget enforcement') + issue #12 item 3",
+      "finding": "observation-only is the deliberate boundary; enforcement is a later PRD phase",
+      "seeds": [
+        "c5"
+      ]
+    },
+    {
+      "id": "s5",
+      "surface": "internal/api/runs.go (createRunRequest/handleCreateRun)",
+      "finding": "run creation accepts only workflow_digest+input; name/description is a straightforward additive field carried into runOut and list queries",
+      "seeds": [
+        "c6"
+      ]
+    },
+    {
+      "id": "s6",
+      "surface": "internal/api/workflows.go + web/src/App.tsx routes",
+      "finding": "GET /v1alpha1/workflows and /workflows/{digest} exist with no web view over them; no API change needed for issue #12 item 5",
+      "seeds": [
+        "c7"
+      ]
+    },
+    {
+      "id": "s7",
+      "surface": "internal/api/workflows.go (handleValidateWorkflow) + web/src/domain/graph.ts + web/src/hooks/useElkLayout.ts",
+      "finding": "validate-then-publish plumbing and graph rendering both exist; the authoring slice is composition, not new engine surface",
+      "seeds": [
+        "c8"
+      ]
+    },
+    {
+      "id": "s8",
+      "surface": "PRD \u00a78.6 'Design' view + Phase 3 roadmap",
+      "finding": "PRD assigns compose-and-validate authoring to Phase 3; shipping a thin slice early is an explicit ADR-recorded decision, not silent drift",
+      "seeds": [
+        "c9"
+      ]
+    },
+    {
+      "id": "s9",
+      "surface": "adapters/claude-code/src/claude_code_bridge/mapping.py (+ codex, colleague siblings)",
+      "finding": "changed_files is always empty by construction; the model's summary is the only account of work \u2014 bridge-side measurement is the cheap first evidence layer (issue #13 item 1)",
+      "seeds": [
+        "c10"
+      ]
+    },
+    {
+      "id": "s10",
+      "surface": "web/src/components/NodeDetailPanel.tsx evidence section",
+      "finding": "the evidence rendering seam exists and is empty today precisely because bridges report no measured facts; #13 item 4 is filling a built slot",
+      "seeds": [
+        "c11"
+      ]
+    },
+    {
+      "id": "s11",
+      "surface": "web/src/styles/app.css (.view-rail + .runs-board__columns) vs live thor UI",
+      "finding": "the shipped CSS looks correct for wide screens, but the operator's live experience contradicts it \u2014 either thor serves a pre-v0.11.1 build or a residual width constraint survives; must be verified against the deployed build",
+      "seeds": [
+        "c12"
+      ]
+    },
+    {
+      "id": "s12",
+      "surface": "web/src/App.tsx routes + internal/api/noderuns.go (no usage exposure today)",
+      "finding": "a stats tab is pure consumption of the c3/c4 aggregation surface; no stats endpoint exists \u2014 either the API grows an aggregate query or the view folds client-side over listed runs",
+      "seeds": [
+        "c13"
+      ]
+    },
+    {
+      "id": "s13",
+      "surface": "internal/worker/hooks.go (t14 hook seam)",
+      "finding": "hook-appended observed evidence is built and tested \u2014 but see the async constraint recorded next; the seam works today only for synchronously-answering actors",
+      "seeds": [
+        "c15"
+      ]
+    },
+    {
+      "id": "s14",
+      "surface": "internal/worker/hooks.go (refuseAsyncPostRun + package doc) + phase2 memory (bridges ALWAYS_ASYNC)",
+      "finding": "post_run and the production bridges are mutually exclusive today; #13 item 2 needs a decision, recorded as a question",
+      "seeds": [
+        "c16"
+      ]
+    },
+    {
+      "id": "s15",
+      "surface": "issue #13 item 3 + examples/self-hosting-loop/workflow.yaml (per the issue's own account)",
+      "finding": "this is a workflow-pattern + example change once evidence layers 1/2 give it honest input; no engine change \u2014 ordering dependency on c10/c15",
+      "seeds": [
+        "c17"
+      ]
+    },
+    {
+      "id": "s16",
+      "surface": "internal/ledger authority model + issue #28 item 1",
+      "finding": "the authority model already expresses exactly the proposed-vs-human split a grade needs; the open shape decision is the record type, recorded as a question",
+      "seeds": [
+        "c18"
+      ]
+    },
+    {
+      "id": "s17",
+      "surface": "api/openapi/openapi.yaml paths + .claude/skills/nodes-operator/scripts/nodes-op.sh actors verb",
+      "finding": "no actors HTTP surface exists; #28 item 2 depends on it and on the c3/c4 usage aggregation",
+      "seeds": [
+        "c19"
+      ]
+    },
+    {
+      "id": "s18",
+      "surface": ".claude/skills/nodes-operator/scripts/nodes-op.sh assign + internal/api/runs.go",
+      "finding": "category rides the same additive run-creation field family as name/description; pairing them in one API change avoids two migrations",
+      "seeds": [
+        "c20"
+      ]
+    },
+    {
+      "id": "s19",
+      "surface": "tests/parity/parity_test.go",
+      "finding": "the parity harness is the drift gate for every surface this scope adds; CLI parity for new verbs is enforced, not optional",
+      "seeds": [
+        "c21"
+      ]
+    },
+    {
+      "id": "s20",
+      "surface": "deploy/aws + ADR 0006 + cmd/nodes-runner-lambda",
+      "finding": "no file in the AWS lane is touched by cost/name/workflows-view/authoring/evidence/grading work",
+      "seeds": [
+        "c22"
+      ]
+    },
+    {
+      "id": "s21",
+      "surface": "/home/spark/git/katvan/site-astro/src/components/MeshIsland.svelte + web/src/hooks/useRunEvents.ts + GET /v1alpha1/runs/{id}/events",
+      "finding": "the reference implementation is a self-contained Svelte canvas island with build-time data; culture-nodes already has an SSE events surface and a run canvas whose pulse is deliberately its only pure animation (app.css) \u2014 a live mesh view is a new route composing those, honoring reduced-motion like the reference",
+      "seeds": [
+        "c23"
+      ]
+    },
+    {
+      "id": "s22",
+      "surface": "internal/telemetry/doc.go + issue #5 + /home/spark/git/culture/pyproject.toml otel deps",
+      "finding": "telemetry is a stub with a parked-until-production trigger that has since fired; culture's OTel dependency set is the in-house prior art to mirror in Go",
+      "seeds": [
+        "c24"
+      ]
+    },
+    {
+      "id": "s23",
+      "surface": "challenge pass / adjacent-systems lens: engine CompleteAttempt seam + thor prod attempts table (probe: 25 total, 25 with result, 0 with usage, 0 with cost)",
+      "finding": "bridges measure usage but persistence discards it \u2014 c3's 'only aggregation is missing' was wrong; a persistence step precedes aggregation",
+      "seeds": [
+        "c33"
+      ]
+    },
+    {
+      "id": "s24",
+      "surface": "challenge pass / adjacent-systems lens: internal/api/events.go pollEvents (per-run WHERE clause)",
+      "finding": "no fleet-wide event stream exists; the mesh view's data source is a new API surface, dependent on the actors API family",
+      "seeds": [
+        "c34"
+      ]
+    },
+    {
+      "id": "s25",
+      "surface": "challenge pass / unstated-assumptions lens: internal/actors/protocol.go Usage (nullable Cost/Currency) + codex mapping.py 'never estimates'",
+      "finding": "most fleet attempts will carry tokens without currency; 'cost total/average' must define its unit honestly or the stats tab misleads",
+      "seeds": [
+        "c35"
+      ]
+    },
+    {
+      "id": "s26",
+      "surface": "challenge pass / adjacent-systems lens: web/src/agent-state/store.ts + .github/workflows/web.yml webglass job",
+      "finding": "agent-state registration is a hidden per-view dependency the spec never named",
+      "seeds": [
+        "c36"
+      ]
+    },
+    {
+      "id": "s27",
+      "surface": "challenge pass / security lens: internal/api/server.go (no authn middleware) + issue #6",
+      "finding": "authoring widens the write surface of an unauthenticated API; recorded as a boundary with #6 as the exposure gate rather than silently inherited",
+      "seeds": [
+        "c37"
+      ]
+    },
+    {
+      "id": "s28",
+      "surface": "challenge pass / overlooked-actors lens: internal/ledger/authority.go origin rules + envelope supersedes",
+      "finding": "the frame's grading claims never addressed self-grading; the authority model has the analog rule to extend",
+      "seeds": [
+        "c38"
+      ]
+    },
+    {
+      "id": "s29",
+      "surface": "challenge pass / migration lens: docs/adr/0002-migration-policy.md expand-contract + N-1 rule",
+      "finding": "three schema touches (runs, attempts, ledger record set) all fit the expand shape; none needs a contract migration this cycle",
+      "seeds": [
+        "c39"
+      ]
+    },
+    {
+      "id": "s30",
+      "surface": "challenge pass / observability lens: internal/telemetry stub + PRD \u00a710 ledger-authority model",
+      "finding": "span-content hygiene was unstated; the ledger is the audited record, telemetry must stay metadata-only",
+      "seeds": [
+        "c40"
+      ]
+    },
+    {
+      "id": "s31",
+      "surface": "challenge pass / concurrency lens: two workers + scheduler writing one Postgres while stats read it",
+      "finding": "snapshot semantics suffice for observation-only stats; no locking or materialized rollup needed this cycle",
+      "seeds": [
+        "c41"
+      ]
+    },
+    {
+      "id": "s32",
+      "surface": "challenge pass / reversibility lens: migrations/ + ADR 0002 rollback posture",
+      "finding": "clean pass: every planned change is additive, so binary rollback to N-1 tolerates the expanded schema; no downgrade migration needed",
+      "seeds": []
+    },
+    {
+      "id": "s33",
+      "surface": "challenge pass / lifecycle lens: compiler owners.go ownerRef requirement vs UI publish",
+      "finding": "clean pass: workflow ownership comes from the YAML itself (err-missing-owner is a compile diagnostic), so UI publishing introduces no ownerless path",
+      "seeds": []
+    },
+    {
+      "id": "s34",
+      "surface": "challenge pass / distributed-state lens: thor/orin one-at-a-time deploy vs new record type",
+      "finding": "workers consume work items, not ledger grade records \u2014 a grade written while orin still runs N-1 is never read by the old binary; residual risk bounded by ADR 0002 expand rule",
+      "seeds": []
+    }
+  ],
+  "lapses": []
+}

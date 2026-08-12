@@ -12,6 +12,7 @@ background dispatch + flight-file tailing, real SIGTERM-based cancellation.
 from __future__ import annotations
 
 import json
+import subprocess
 import time
 import urllib.error
 import urllib.request
@@ -20,6 +21,24 @@ from claude_code_bridge import flightfiles, server
 from claude_code_bridge.config import Config
 
 from ._fakes import FakeCallbackReceiver, fake_claude_path
+
+
+def _git(repo, *args: str) -> None:
+    subprocess.run(["git", *args], cwd=repo, check=True, capture_output=True, text=True)
+
+
+def _git_init_repo(repo) -> None:
+    """A real, committed scratch git repo — used by the t10 workspace-
+    measurement tests below, which need real `git` state to measure against
+    (unlike this file's other tests, whose `repo` fixture is a plain,
+    never-git-initialized directory)."""
+    repo.mkdir(parents=True, exist_ok=True)
+    _git(repo, "init", "-q")
+    _git(repo, "config", "user.email", "it@example.com")
+    _git(repo, "config", "user.name", "integration test")
+    (repo / "README.md").write_text("# scratch\n")
+    _git(repo, "add", "README.md")
+    _git(repo, "commit", "-q", "-m", "init")
 
 
 def _request(base_url, path, *, method="POST", body=None, headers=None):
@@ -318,5 +337,115 @@ def test_version_gate_refuses_a_real_dispatch_against_an_old_fake_binary(tmp_pat
         assert "2.1.100" in response["error"]
         assert "2.1.220" in response["error"]
     finally:
+        srv.shutdown()
+        srv.server_close()
+
+
+def test_sync_dispatch_measures_real_workspace_facts_around_the_session(tmp_path, monkeypatch):
+    """t10, acceptance criterion #1/#2, over a REAL subprocess dispatch:
+    workspace_measured comes from THIS process's own git calls, structurally
+    distinct from claude's own model-claimed output.changed_files."""
+    monkeypatch.setenv("FAKE_CLAUDE_VERSION", "2.1.226")
+    monkeypatch.setenv("FAKE_CLAUDE_RESULT_TEXT", "a short note about t10 (sync workspace)")
+    repo = tmp_path / "repo"
+    _git_init_repo(repo)
+    # fake_claude.py never touches the filesystem itself; writing a file
+    # here stands in for what a real claude session would leave behind, so
+    # the assertions below prove the bridge's OWN git measurement — not
+    # anything claude reported — is what the response reflects.
+    (repo / "note.txt").write_text("left behind by the session\n")
+
+    srv, cfg = _bridge(repo, tmp_path)
+    try:
+        host, port = srv.server_address
+        base = f"http://{host}:{port}"
+        headers = {"Authorization": f"Bearer {cfg.auth_token}", "Idempotency-Key": "att_ws_sync"}
+        body = _invocation_body(
+            repo,
+            instruction="write a short note about t10 (sync workspace)",
+            run_id="run_ws_sync",
+            attempt_id="att_ws_sync",
+            callback_url="http://127.0.0.1:1/unused",
+            callback_token="unused",
+        )
+        status, response = _request(base, server.INVOCATIONS_PATH, body=body, headers=headers)
+        assert status == 200, response
+        wm = response["workspace_measured"]
+        assert wm["measured"] is True
+        assert wm["repo"] == str(repo)
+        assert wm["branch"]
+        assert wm["head_before"] == wm["head_after"]  # no commit happened
+        assert "note.txt" in wm["changed_files"]
+        assert "note.txt" in wm["status_porcelain"]
+        assert response["output"]["changed_files"] == []
+    finally:
+        srv.shutdown()
+        srv.server_close()
+
+
+def test_workspace_measured_degrades_honestly_for_a_non_git_repo(tmp_path, monkeypatch):
+    """t10, acceptance criterion #4: a dispatched repo that is not a git
+    repository degrades honestly — null/absent fields with a reason, never
+    a fabricated measurement."""
+    monkeypatch.setenv("FAKE_CLAUDE_VERSION", "2.1.226")
+    repo = tmp_path / "repo"
+    repo.mkdir()  # deliberately never git-initialized
+    srv, cfg = _bridge(repo, tmp_path)
+    try:
+        host, port = srv.server_address
+        base = f"http://{host}:{port}"
+        headers = {"Authorization": f"Bearer {cfg.auth_token}", "Idempotency-Key": "att_ws_nogit"}
+        body = _invocation_body(
+            repo,
+            instruction="say hello",
+            run_id="run_ws_nogit",
+            attempt_id="att_ws_nogit",
+            callback_url="http://127.0.0.1:1/unused",
+            callback_token="unused",
+        )
+        status, response = _request(base, server.INVOCATIONS_PATH, body=body, headers=headers)
+        assert status == 200, response
+        wm = response["workspace_measured"]
+        assert wm["measured"] is False
+        assert wm["reason"]
+        assert wm["changed_files"] == []
+    finally:
+        srv.shutdown()
+        srv.server_close()
+
+
+def test_async_dispatch_measures_real_workspace_facts_around_the_session(tmp_path, monkeypatch):
+    """The async equivalent of the sync test above: workspace_measured
+    arrives on the terminal `completed` callback event."""
+    monkeypatch.setenv("FAKE_CLAUDE_VERSION", "2.1.226")
+    monkeypatch.setenv("FAKE_CLAUDE_STREAM_DELAY", "0.02")
+    repo = tmp_path / "repo"
+    _git_init_repo(repo)
+    (repo / "note.txt").write_text("left behind by the async session\n")
+    srv, cfg = _bridge(repo, tmp_path)
+    receiver = FakeCallbackReceiver()
+    try:
+        host, port = srv.server_address
+        base = f"http://{host}:{port}"
+        headers = {"Authorization": f"Bearer {cfg.auth_token}", "Idempotency-Key": "att_ws_async"}
+        body = _invocation_body(
+            repo,
+            instruction="write a short note about t10 (async workspace)",
+            run_id="run_ws_async",
+            attempt_id="att_ws_async",
+            callback_url=receiver.url,
+            callback_token="async-ws-token",
+            **{"async": True},
+        )
+        status, accepted = _request(base, server.INVOCATIONS_PATH, body=body, headers=headers)
+        assert status == 202, accepted
+
+        completed_event = receiver.wait_for_kind("completed", timeout=30)
+        assert completed_event is not None
+        wm = completed_event["payload"]["workspace_measured"]
+        assert wm["measured"] is True
+        assert "note.txt" in wm["changed_files"]
+    finally:
+        receiver.close()
         srv.shutdown()
         srv.server_close()

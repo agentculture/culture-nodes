@@ -36,7 +36,7 @@ from http.server import BaseHTTPRequestHandler, HTTPServer
 from pathlib import Path
 from typing import Any
 
-from colleague_bridge import colleague_cli, mapping
+from colleague_bridge import colleague_cli, mapping, workspace
 from colleague_bridge.async_runner import AsyncRunner
 from colleague_bridge.config import Config
 from colleague_bridge.idempotency import IdempotencyStore
@@ -307,6 +307,10 @@ class Handler(BaseHTTPRequestHandler):
         mode: str | None,
     ) -> None:
         cfg = self.bridge.cfg
+        # t10: capture the workspace's starting point as close as possible
+        # to the moment colleague is actually spawned, so head_before/status
+        # bracket the session rather than the whole request-handling ladder.
+        handle = workspace.begin(repo)
         result = colleague_cli.run_sync(cfg, instruction, repo, role=role, max_steps=max_steps, mode=mode)
         response = mapping.sync_response(
             result.task_result,
@@ -315,6 +319,7 @@ class Handler(BaseHTTPRequestHandler):
             actor_id=cfg.actor_id,
             created_at=_now_iso(),
             timed_out=result.timed_out,
+            workspace_measured=workspace.measure(handle),
         )
         # A real dispatch happened (colleague was actually invoked) — durably
         # remember the outcome so a redelivered attempt replays it instead of
@@ -350,6 +355,9 @@ class Handler(BaseHTTPRequestHandler):
             )
             return
 
+        # t10: same bracketing as the sync path, captured right before the
+        # detached colleague subprocess is spawned.
+        handle = workspace.begin(repo)
         try:
             start = colleague_cli.spawn_background(cfg, instruction, repo, role=role, max_steps=max_steps, mode=mode)
         except colleague_cli.BackgroundDispatchError as exc:
@@ -374,6 +382,7 @@ class Handler(BaseHTTPRequestHandler):
             callback_url=callback_url,
             callback_token=callback_token,
             heartbeat_after_seconds=cfg.heartbeat_after_seconds,
+            workspace_handle=handle,
         )
 
 

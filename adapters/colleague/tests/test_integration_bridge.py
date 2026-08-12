@@ -96,6 +96,16 @@ def test_sync_invocation_completes_with_mapped_output(scratch_repo, colleague_bi
         assert response["ledger_delta"]["records"][0]["record_type"] == "claim"
         assert response["usage"]["input_tokens"] >= 0
         assert response["usage"]["output_tokens"] >= 0
+        # t10, over a REAL colleague session: workspace_measured is the
+        # bridge's OWN git measurement of scratch_repo, structurally
+        # distinct from output.changed_files above (which is whatever
+        # colleague itself reported).
+        wm = response["workspace_measured"]
+        assert wm["measured"] is True
+        assert wm["repo"] == str(scratch_repo)
+        assert wm["head_before"]
+        assert wm["head_after"]
+        assert isinstance(wm["changed_files"], list)
     finally:
         srv.shutdown()
         srv.server_close()

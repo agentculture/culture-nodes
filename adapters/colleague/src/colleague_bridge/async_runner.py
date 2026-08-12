@@ -22,7 +22,7 @@ from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from typing import Any
 
-from colleague_bridge import colleague_cli, flightfiles, mapping
+from colleague_bridge import colleague_cli, flightfiles, mapping, workspace
 from colleague_bridge.callbacks import CallbackConfig, CallbackEmitter
 from colleague_bridge.config import Config
 
@@ -50,6 +50,10 @@ class AsyncInvocation:
     repo: str
     pid: int
     ctx: mapping.InvocationContext
+    #: t10: the git snapshot `server.py` captured right before this
+    #: invocation's colleague subprocess was spawned; `_run` measures
+    #: against it once the session ends.
+    workspace_handle: workspace.WorkspaceHandle
     started_at: float = field(default_factory=time.monotonic)
     done: bool = False
     cancel_requested: bool = False
@@ -72,8 +76,15 @@ class AsyncRunner:
         callback_url: str,
         callback_token: str,
         heartbeat_after_seconds: int,
+        workspace_handle: workspace.WorkspaceHandle,
     ) -> None:
-        inv = AsyncInvocation(invocation_id=start.handle_id, repo=repo, pid=start.pid, ctx=ctx)
+        inv = AsyncInvocation(
+            invocation_id=start.handle_id,
+            repo=repo,
+            pid=start.pid,
+            ctx=ctx,
+            workspace_handle=workspace_handle,
+        )
         with self._lock:
             self._invocations[start.handle_id] = inv
 
@@ -123,6 +134,11 @@ class AsyncRunner:
 
         result, detail = self._poll_until_done(inv, emitter, heartbeat_after_seconds)
 
+        # t10: measured AFTER the session ends, against the snapshot taken
+        # right before it started — this is what makes head_before/after
+        # and the diff bracket the actual colleague subprocess's lifetime.
+        measured = workspace.measure(inv.workspace_handle)
+
         timed_out = result is None and not detail.startswith("__pid_gone__")
         ev = mapping.terminal_event(
             result,
@@ -132,6 +148,7 @@ class AsyncRunner:
             created_at=_now_iso(),
             timed_out=timed_out,
             detail="" if timed_out else detail,
+            workspace_measured=measured,
         )
         emitter.send(ev.kind, ev.payload)
         with self._lock:

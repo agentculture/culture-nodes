@@ -45,7 +45,7 @@ from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from typing import Any
 
-from codex_bridge import codex_cli, mapping
+from codex_bridge import codex_cli, mapping, workspace
 from codex_bridge.callbacks import CallbackConfig, CallbackEmitter
 from codex_bridge.config import Config
 
@@ -97,6 +97,10 @@ class AsyncInvocation:
     invocation_id: str
     proc: subprocess.Popen
     ctx: mapping.InvocationContext
+    #: t10: the git snapshot `start()` captured right before this
+    #: invocation's codex subprocess was spawned; `_run` measures against
+    #: it once the session ends.
+    workspace_handle: workspace.WorkspaceHandle
     started_at: float = field(default_factory=time.monotonic)
     done: bool = False
     cancel_requested: bool = False
@@ -126,10 +130,23 @@ class AsyncRunner:
         id immediately. Raises `codex_cli.SpawnError` if the subprocess
         itself could not be started (mirrors colleague-bridge's own
         `BackgroundDispatchError`, for the same 503-mapping purpose in
-        `server.py`)."""
+        `server.py`).
+
+        t10: unlike `claude_code_bridge`/`colleague_bridge` (where
+        `server.py` calls `workspace.begin()` before a two-step
+        spawn-then-register dance), this bridge owns the `codex exec`
+        `Popen` call directly from THIS method (see the module docstring),
+        so the workspace snapshot is captured right here, immediately
+        before it, instead — the same "as close as possible to the actual
+        subprocess spawn" bracketing, just wired at the point this
+        architecture actually spawns the child.
+        """
+        handle = workspace.begin(repo)
         proc = codex_cli.spawn(self._cfg, instruction, repo, model=model, sandbox=sandbox)
         invocation_id = uuid.uuid4().hex
-        inv = AsyncInvocation(invocation_id=invocation_id, proc=proc, ctx=ctx)
+        inv = AsyncInvocation(
+            invocation_id=invocation_id, proc=proc, ctx=ctx, workspace_handle=handle
+        )
         with self._lock:
             self._invocations[invocation_id] = inv
 
@@ -188,6 +205,11 @@ class AsyncRunner:
         stdout_text, timed_out = self._stream_until_done(inv, emitter, heartbeat_after_seconds)
         task_result = codex_cli.parse_session(stdout_text)
 
+        # t10: measured AFTER the session ends, against the snapshot taken
+        # right before it started — this is what makes head_before/after
+        # and the diff bracket the actual codex subprocess's lifetime.
+        measured = workspace.measure(inv.workspace_handle)
+
         ev = mapping.terminal_event(
             task_result,
             inv.ctx,
@@ -195,6 +217,7 @@ class AsyncRunner:
             actor_id=self._cfg.actor_id,
             created_at=_now_iso(),
             timed_out=timed_out,
+            workspace_measured=measured,
         )
         emitter.send(ev.kind, ev.payload)
         with self._lock:

@@ -5,6 +5,21 @@ All notable changes to this project will be documented in this file.
 Format follows [Keep a Changelog](https://keepachangelog.com/). This project
 adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.12.2] - 2026-08-12
+
+### Added
+
+- Converged spec `docs/specs/2026-08-12-operate-through-the-ui.md` (devague
+  /scope → /think over issues #12 items 3–6, #13, #28, #5): run cost
+  aggregation + Statistics tab, run names/categories, workflows view, in-UI
+  authoring slice (ADR-gated against PRD Phase 3), bridge-measured workspace
+  evidence + in-page diff review, independent LLM review node, `grade` as a
+  new ledger record type, per-actor analytics (introduces the actors API),
+  live-mesh overview view, and OpenTelemetry beyond the stub. Decisions
+  recorded: async attempts carry bridge-measured facts this cycle (hook
+  evidence stays sync-only, callback-path extension parked as follow-up);
+  a grade is a first-class record type, never a review extension
+
 ## [0.12.1] - 2026-08-12
 
 ### Added

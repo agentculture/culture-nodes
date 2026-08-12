@@ -27,12 +27,26 @@ import {
   PUBLISHED_VERSION,
   VALID_VALIDATION,
 } from "../../src/fixtures/authoring-fixture";
+import {
+  STATS_CURSOR,
+  STATS_NODE_RUNS_FILTERED,
+  STATS_NODE_RUNS_PAGE_1,
+  STATS_NODE_RUNS_PAGE_2,
+  STATS_RUNS,
+  STATS_RUNS_FILTERED,
+} from "../../src/fixtures/statistics-fixture";
 
 export { RUN_ID, WORKFLOW_DIGEST };
 export { BOARD_RUNS };
 export { JOB_RUNS_CURSOR, JOB_RUNS_NAMED_RUNS, JOB_RUNS_PAGE_1, JOB_RUNS_PAGE_2 };
 export { WORKFLOW_VERSIONS, WORKFLOWS_RUNS };
 export { INVALID_YAML_SOURCE, PUBLISHED_VERSION };
+export {
+  STATS_CURSOR,
+  STATS_NODE_RUNS_PAGE_1,
+  STATS_NODE_RUNS_PAGE_2,
+  STATS_RUNS,
+};
 export { VALID_YAML_SOURCE } from "../../src/fixtures/authoring-fixture";
 
 const json = (body: unknown) => ({
@@ -273,6 +287,59 @@ export async function mockJobsTimelineApi(page: Page): Promise<void> {
 }
 
 /**
+ * Serve the Statistics view's slice of `/v1alpha1` (task t6): `GET
+ * /v1alpha1/node-runs` paginates STATS_NODE_RUNS_PAGE_1 -> STATS_CURSOR ->
+ * STATS_NODE_RUNS_PAGE_2 for an unbounded request (proving the view walks
+ * every page before aggregating), and answers STATS_NODE_RUNS_FILTERED —
+ * a deliberately different, smaller dataset — the moment the request
+ * carries an `updated_since`/`updated_until` bound, so a spec can prove the
+ * time filter genuinely drives a different aggregate rather than the view
+ * silently keeping the unfiltered totals on screen. `GET /v1alpha1/runs`
+ * (the category join, task t5's pattern) mirrors the same bounded/unbounded
+ * split with STATS_RUNS / STATS_RUNS_FILTERED.
+ */
+export async function mockStatisticsApi(page: Page): Promise<void> {
+  await page.route("**/v1alpha1/**", async (route) => {
+    const url = new URL(route.request().url());
+    const path = decodeURIComponent(url.pathname);
+    const bounded =
+      url.searchParams.has("updated_since") ||
+      url.searchParams.has("updated_until");
+
+    if (path === "/v1alpha1/node-runs") {
+      if (bounded) {
+        await route.fulfill(json({ items: STATS_NODE_RUNS_FILTERED }));
+        return;
+      }
+      if (url.searchParams.get("cursor") === STATS_CURSOR) {
+        await route.fulfill(json({ items: STATS_NODE_RUNS_PAGE_2 }));
+        return;
+      }
+      await route.fulfill(
+        json({ items: STATS_NODE_RUNS_PAGE_1, next_cursor: STATS_CURSOR }),
+      );
+      return;
+    }
+    if (path === "/v1alpha1/runs") {
+      await route.fulfill(
+        json({ items: bounded ? STATS_RUNS_FILTERED : STATS_RUNS }),
+      );
+      return;
+    }
+
+    await route.fulfill({
+      status: 404,
+      contentType: "application/json",
+      body: JSON.stringify({
+        code: 1,
+        message: `no fixture route for ${path}`,
+        remediation: "add it to e2e/fixtures/api.ts",
+      }),
+    });
+  });
+}
+
+/**
  * Serve the Workflows view's slice of `/v1alpha1` (task t8): `GET
  * /v1alpha1/workflows` returns WORKFLOW_VERSIONS (two workflow_keys, three
  * versions total) and `GET /v1alpha1/runs?sort=updated_at` returns
@@ -436,6 +503,21 @@ export async function readAgentState(page: Page): Promise<{
     valid: boolean | null;
     diagnostics_count: number;
     digest: string | null;
+  } | null;
+  statistics?: {
+    total_runs: number;
+    reported_runs: number;
+    excluded_runs: number;
+    total_input_tokens: number;
+    total_output_tokens: number;
+    avg_input_tokens: number | null;
+    median_input_tokens: number | null;
+    avg_output_tokens: number | null;
+    median_output_tokens: number | null;
+    cost_currency: string | null;
+    avg_cost: number | null;
+    median_cost: number | null;
+    category_count: number;
   } | null;
 }> {
   const text = await page.locator("#agent-state").textContent();

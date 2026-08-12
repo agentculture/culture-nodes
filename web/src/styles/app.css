@@ -1410,3 +1410,61 @@ button.timeline__node {
   font-size: var(--ac-type-meta);
   word-break: break-all;
 }
+
+/* ---------- statistics view (task t6) ---------- */
+
+/* The denominator statement (honesty condition h9): always present, never a
+   footnote — same body-text weight as the rest of the page, with only the
+   excluded count picked out so it cannot be skimmed past. */
+.statistics-denominator {
+  font-size: var(--ac-type-ui);
+  margin: 1rem 0;
+}
+
+.statistics-denominator__excluded {
+  color: var(--ink);
+  font-weight: 600;
+}
+
+.stat-tiles {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(13rem, 1fr));
+  gap: var(--nodes-gap);
+  margin-bottom: 1.75rem;
+}
+
+/* Same card frame as .workflow-card (surface wash, --line-soft, --radius) —
+   a stat tile is a sibling of the other "one bounded thing among several"
+   cards, not a new aesthetic. */
+.stat-tile {
+  display: flex;
+  flex-direction: column;
+  gap: 0.35rem;
+  background: color-mix(in srgb, var(--surface) 55%, transparent);
+  border: 1px solid var(--line-soft);
+  border-radius: var(--radius);
+  padding: 0.9rem 1.1rem;
+}
+
+.stat-tile__label {
+  font-size: var(--ac-type-meta);
+  letter-spacing: var(--ac-tracking-caps);
+  text-transform: uppercase;
+  color: var(--ink-soft);
+  font-weight: 640;
+}
+
+.stat-tile__value {
+  font-family: var(--font-mono);
+  font-size: var(--ac-type-component-title);
+}
+
+.category-stats-table td,
+.category-stats-table th {
+  white-space: nowrap;
+}
+
+.category-chip--uncategorized {
+  font-style: italic;
+  border-style: dashed;
+}

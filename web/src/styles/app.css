@@ -1538,3 +1538,173 @@ button.timeline__node {
   font-style: italic;
   border-style: dashed;
 }
+
+/* ---------- live-mesh view (task t18) ---------- */
+
+.mesh-view__head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 1rem;
+  flex-wrap: wrap;
+}
+
+/* The honest connection state: live only while the SSE stream is open. */
+.mesh-connection {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.45rem;
+  margin: 0.4rem 0 0;
+  font-family: var(--font-mono);
+  font-size: var(--ac-type-meta);
+  letter-spacing: var(--ac-tracking-caps);
+  text-transform: uppercase;
+  color: var(--ink-soft);
+  white-space: nowrap;
+}
+
+.mesh-connection__dot {
+  width: 0.55rem;
+  height: 0.55rem;
+  border-radius: 999px;
+  background: var(--ink-soft);
+}
+
+.mesh-connection[data-state="live"] {
+  color: var(--accent);
+}
+
+.mesh-connection[data-state="live"] .mesh-connection__dot {
+  background: var(--accent);
+}
+
+@media (prefers-reduced-motion: no-preference) {
+  .mesh-connection[data-state="live"] .mesh-connection__dot {
+    animation: mesh-live-breathe 2.6s var(--ease-gentle) infinite alternate;
+  }
+}
+
+@keyframes mesh-live-breathe {
+  from {
+    opacity: 0.55;
+  }
+
+  to {
+    opacity: 1;
+  }
+}
+
+/* The canvas viewport: the org's fixed dark terminal ground (see
+   culture-design/palette.ts TERMINAL_GROUND — "the ground itself never
+   changes with the theme"), so the terminal palette keeps its contrast in
+   the light theme too. The canvas paints the same ground color itself;
+   this frame supplies the border, radius, and overflow clip. */
+.mesh-canvas {
+  position: relative;
+  margin-top: 1.25rem;
+  background: #10142b;
+  border: 1px solid rgba(233, 236, 248, 0.12);
+  border-radius: var(--radius);
+  overflow: hidden;
+}
+
+.mesh-canvas canvas {
+  display: block;
+  width: 100%;
+}
+
+/* The inspection tooltip rides the canvas coordinate space: transform is
+   set imperatively to the node's drawn position each frame. */
+.mesh-tooltip {
+  position: absolute;
+  top: 0;
+  left: 0;
+  transform: translate(-200%, -200%);
+  translate: -50% 0;
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  padding: 0.3rem 0.65rem;
+  border-radius: 0.5rem;
+  background: rgba(16, 20, 43, 0.92);
+  border: 1px solid rgba(233, 236, 248, 0.18);
+  color: #e9ecf8;
+  font-family: var(--font-mono);
+  font-size: var(--ac-type-terminal);
+  line-height: var(--ac-leading-ui);
+  pointer-events: none;
+  max-width: min(70%, 26rem);
+  white-space: nowrap;
+}
+
+/* The [hidden] attribute must win over the flex display above. */
+.mesh-tooltip[hidden] {
+  display: none;
+}
+
+.mesh-tooltip__label {
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.mesh-tooltip__sub {
+  color: #8790b8;
+}
+
+.mesh-legend {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 0.4rem 1.4rem;
+  list-style: none;
+  margin: 0.9rem 0 0;
+  padding: 0;
+  font-family: var(--font-mono);
+  font-size: var(--ac-type-micro);
+  color: var(--ink-soft);
+}
+
+.mesh-legend li {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.45rem;
+}
+
+.mesh-legend__glyph {
+  width: 0.65rem;
+  height: 0.65rem;
+  border-radius: 999px;
+  border: 1.5px solid currentcolor;
+}
+
+/* Legend swatches quote culture-design/palette.ts's terminal palette —
+   the same hexes the canvas draws (teal/neutral/blue/amber). The word sits
+   beside every swatch, so colour never carries the meaning alone. */
+.mesh-legend__glyph--agent {
+  color: #7fdcc9; /* palette.teal */
+}
+
+.mesh-legend__glyph--human {
+  color: var(--nodes-idle); /* palette.neutral */
+}
+
+.mesh-legend__glyph--runner {
+  color: #7fb3f2; /* palette.blue */
+  border-radius: 2px;
+}
+
+.mesh-legend__glyph--run {
+  color: var(--nodes-warn); /* palette.amber */
+  width: 0.5rem;
+  height: 0.5rem;
+}
+
+.mesh-legend__note {
+  color: var(--ink-soft);
+}
+
+@media (max-width: 48rem) {
+  .mesh-view__head {
+    flex-direction: column;
+  }
+}

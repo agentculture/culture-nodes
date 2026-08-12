@@ -57,6 +57,15 @@ describe("Header collapsible nav", () => {
   });
 });
 
+describe("Header mesh link (task t18)", () => {
+  it("routes to /mesh and marks it active there", () => {
+    renderHeader(["/mesh"]);
+    const mesh = screen.getByRole("link", { name: "Mesh" });
+    expect(mesh).toHaveAttribute("href", "/mesh");
+    expect(mesh).toHaveClass("is-active");
+  });
+});
+
 describe("Header active view marking", () => {
   it("marks the current view's link with is-active and no other", () => {
     renderHeader(["/board"]);

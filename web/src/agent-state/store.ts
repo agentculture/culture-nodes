@@ -103,12 +103,37 @@ export interface AgentStatisticsState {
   category_count: number;
 }
 
+/**
+ * The Mesh view's machine-readable mirror (task t18): a canvas is
+ * untestable by webglass, so every fact the pixels claim is mirrored here —
+ * node/edge counts from the assembled graph, the honest connection state
+ * (`live` only while the SSE stream is actually open), the resume cursor,
+ * and monotonic event/pulse counters so a test can prove a fixture event
+ * produced a visible pulse without reading pixels. Optional and absent
+ * from every other view's state (undefined keys are dropped by
+ * `JSON.stringify` — same convention as `authoring`/`statistics`).
+ */
+export interface AgentMeshState {
+  actor_count: number;
+  run_count: number;
+  edge_count: number;
+  /** `live` | `reconnecting` — never faked (t18 acceptance #2). */
+  connection: string;
+  last_event_id: string | null;
+  /** Every committed event the stream delivered this session. */
+  events_total: number;
+  /** Events that became a travelling particle (pulse + resolution actions). */
+  pulses_total: number;
+  reduced_motion: boolean;
+}
+
 export interface AgentState {
   status: AgentStatus;
   route: string;
   run: AgentRunState | null;
   authoring?: AgentAuthoringState | null;
   statistics?: AgentStatisticsState | null;
+  mesh?: AgentMeshState | null;
 }
 
 const INITIAL: AgentState = { status: "loading", route: "/", run: null };
@@ -202,6 +227,24 @@ function shallowEqualStatistics(
   );
 }
 
+function shallowEqualMesh(
+  a: AgentMeshState | null | undefined,
+  b: AgentMeshState | null | undefined,
+): boolean {
+  if (a === b) return true;
+  if (!a || !b) return false;
+  return (
+    a.actor_count === b.actor_count &&
+    a.run_count === b.run_count &&
+    a.edge_count === b.edge_count &&
+    a.connection === b.connection &&
+    a.last_event_id === b.last_event_id &&
+    a.events_total === b.events_total &&
+    a.pulses_total === b.pulses_total &&
+    a.reduced_motion === b.reduced_motion
+  );
+}
+
 /**
  * Merge a patch into the agent state. No-ops when nothing actually changed,
  * so a re-render storm cannot make the `<script>` node churn.
@@ -213,7 +256,8 @@ export function setAgentState(patch: Partial<AgentState>): void {
     next.route === current.route &&
     shallowEqualRun(next.run, current.run) &&
     shallowEqualAuthoring(next.authoring, current.authoring) &&
-    shallowEqualStatistics(next.statistics, current.statistics)
+    shallowEqualStatistics(next.statistics, current.statistics) &&
+    shallowEqualMesh(next.mesh, current.mesh)
   ) {
     return;
   }

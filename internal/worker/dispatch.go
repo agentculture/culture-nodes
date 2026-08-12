@@ -11,6 +11,7 @@ import (
 	"github.com/agentculture/culture-nodes/internal/engine"
 	"github.com/agentculture/culture-nodes/internal/ledger"
 	"github.com/agentculture/culture-nodes/internal/store/postgres"
+	"github.com/agentculture/culture-nodes/internal/telemetry"
 )
 
 // dispatchActor invokes a §13 actor for an `agent` or `action.http` node.
@@ -28,7 +29,20 @@ func (w *Worker) dispatchActor(
 	spec *workflowSpec,
 	node *nodeSpec,
 	dc DispatchContext,
-) error {
+) (err error) {
+	// Task t19's worker seam: one span and one metric recording per
+	// dispatch attempt, wrapping every path through this function —
+	// budget/registry/pre_run refusals, a synchronous result, an
+	// asynchronous park, and an invocation error alike. node.Uses is the
+	// actor *reference* the node names, recorded as the actor id even on a
+	// path that never resolves an endpoint: which actor a dispatch was
+	// addressed to is exactly the fact worth keeping on a failed dispatch.
+	ctx, op := w.opts.Telemetry.Start(ctx, telemetry.SeamWorkerDispatch,
+		telemetry.RunID(dc.RunID), telemetry.NodeID(dc.NodeID), telemetry.AttemptID(dc.AttemptID),
+		telemetry.ActorID(node.Uses),
+	)
+	defer func() { op.End(ctx, err == nil) }()
+
 	// The dispatch budget is checked before anything else this function can
 	// do — before the registry lookup, before a pre_run hook, and certainly
 	// before the actor is invoked — because everything below this line costs

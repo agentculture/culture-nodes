@@ -13,7 +13,9 @@ import (
 	"github.com/agentculture/culture-nodes/internal/actors"
 	"github.com/agentculture/culture-nodes/internal/api"
 	"github.com/agentculture/culture-nodes/internal/clifmt"
+	"github.com/agentculture/culture-nodes/internal/engine"
 	"github.com/agentculture/culture-nodes/internal/store/postgres"
+	"github.com/agentculture/culture-nodes/internal/telemetry"
 	"github.com/agentculture/culture-nodes/internal/worker"
 )
 
@@ -98,6 +100,27 @@ func cmdWorker(args []string, jsonMode bool) (int, error) {
 	ctx, stop := shutdownContext()
 	defer stop()
 
+	// task t19: env-gated (OTEL_EXPORTER_OTLP_ENDPOINT); telemetry.New
+	// returns a safe no-op Provider when it is unset, so a standalone
+	// `nodes worker` process with no collector configured dispatches
+	// exactly as it did before this instrumentation existed.
+	telemetryProvider, err := telemetry.New(ctx)
+	if err != nil {
+		return 0, &clifmt.CliError{
+			Code:    clifmt.ExitEnvError,
+			Message: fmt.Sprintf("building telemetry: %v", err),
+			Remediation: "verify OTEL_EXPORTER_OTLP_ENDPOINT and any other OTEL_EXPORTER_OTLP_* " +
+				"variables, or unset them to disable export",
+		}
+	}
+	defer func() {
+		flushCtx, cancelFlush := context.WithTimeout(context.Background(), shutdownTimeout)
+		defer cancelFlush()
+		if err := telemetryProvider.Shutdown(flushCtx); err != nil {
+			clifmt.EmitDiagnostic(fmt.Sprintf("nodes worker: telemetry shutdown: %v", err))
+		}
+	}()
+
 	db, err := postgres.Connect(ctx, url)
 	if err != nil {
 		return 0, &clifmt.CliError{
@@ -119,7 +142,7 @@ func cmdWorker(args []string, jsonMode bool) (int, error) {
 		}
 	}
 
-	eng, err := postgres.NewEngine(db, namespace)
+	eng, err := postgres.NewEngine(db, namespace, engine.WithTelemetry(telemetryProvider))
 	if err != nil {
 		return 0, &clifmt.CliError{
 			Code:        clifmt.ExitEnvError,
@@ -161,6 +184,7 @@ func cmdWorker(args []string, jsonMode bool) (int, error) {
 		CodeRunnerName:     os.Getenv(envCodeRunnerName),
 		CodeRunnerRevision: os.Getenv(envCodeRunnerRevision),
 		CodeRunnerActorID:  os.Getenv(envCodeRunnerActorID),
+		Telemetry:          telemetryProvider,
 		OnError: func(err error) {
 			// Diagnostics go to stderr; the stdout stream stays clean for
 			// results, per the CLI's output contract.
@@ -314,6 +338,9 @@ only use actors that answer synchronously.
     NODES_CALLBACK_BASE_URL      externally reachable base URL for callbacks
     NODES_CALLBACK_TOKEN_SECRET  HMAC secret for attempt-scoped tokens
     NODES_WORKER_ID              lease owner identity (defaults to a ULID)
+    OTEL_EXPORTER_OTLP_ENDPOINT  OTLP collector endpoint; unset disables all
+                                  tracing/metrics export (no exporter, no
+                                  goroutine, no dial -- see internal/telemetry)
 
 Exactly one of NODES_NAMESPACE_ID or NODES_NAMESPACE_SLUG is required. A
 slug is resolved to an id (creating the namespace if this is the first
@@ -337,9 +364,13 @@ Stops cleanly on SIGINT or SIGTERM.
 
 // buildWorker wires a Worker with default options for `nodes all`'s
 // in-process dev worker, mirroring cmdWorker's own wiring (engine, DB
-// registry, optional callback signer) without its flag surface.
-func buildWorker(db *postgres.Store, namespace string) (*worker.Worker, *clifmt.CliError) {
-	eng, err := postgres.NewEngine(db, namespace)
+// registry, optional callback signer) without its flag surface. telemetry
+// may be nil (a safe no-op, see internal/telemetry.Provider's doc); when
+// set, it instruments both this worker's dispatch seam and the engine
+// instance it drives, so a node completed by this in-process worker emits
+// the same engine-transition telemetry the API server's own engine would.
+func buildWorker(db *postgres.Store, namespace string, telemetryProvider *telemetry.Provider) (*worker.Worker, *clifmt.CliError) {
+	eng, err := postgres.NewEngine(db, namespace, engine.WithTelemetry(telemetryProvider))
 	if err != nil {
 		return nil, &clifmt.CliError{
 			Code:        clifmt.ExitEnvError,
@@ -380,6 +411,7 @@ func buildWorker(db *postgres.Store, namespace string) (*worker.Worker, *clifmt.
 		CodeRunnerName:     os.Getenv(envCodeRunnerName),
 		CodeRunnerRevision: os.Getenv(envCodeRunnerRevision),
 		CodeRunnerActorID:  os.Getenv(envCodeRunnerActorID),
+		Telemetry:          telemetryProvider,
 		OnError: func(err error) {
 			clifmt.EmitDiagnostic(err.Error())
 		},

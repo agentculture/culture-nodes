@@ -15,6 +15,7 @@ import (
 	"github.com/agentculture/culture-nodes/internal/engine"
 	idstore "github.com/agentculture/culture-nodes/internal/store"
 	"github.com/agentculture/culture-nodes/internal/store/postgres"
+	"github.com/agentculture/culture-nodes/internal/telemetry"
 )
 
 // lockKey names the single, well-known PostgreSQL advisory lock this
@@ -95,6 +96,14 @@ type Options struct {
 	// Hooks injects test-only failure points (see the Hooks doc comment).
 	// The zero value never injects anything.
 	Hooks Hooks
+	// Telemetry instruments the engine's §12.5 completion transaction (task
+	// t19) for the deadline-timeout path (commitTimeout below), the one
+	// place this package itself drives an engine to completion. The zero
+	// value, a nil *telemetry.Provider, is a safe no-op -- see
+	// internal/telemetry.Provider's doc comment -- so a Scheduler built
+	// without this option (every existing caller, every existing test)
+	// behaves exactly as it did before this option existed.
+	Telemetry *telemetry.Provider
 }
 
 func (o Options) tickInterval() time.Duration {
@@ -653,7 +662,7 @@ func (sch *Scheduler) engineFor(namespaceID string) (*engine.Engine, error) {
 	if eng, ok := sch.engines[namespaceID]; ok {
 		return eng, nil
 	}
-	eng, err := postgres.NewEngine(sch.db, namespaceID)
+	eng, err := postgres.NewEngine(sch.db, namespaceID, engine.WithTelemetry(sch.opts.Telemetry))
 	if err != nil {
 		return nil, err
 	}

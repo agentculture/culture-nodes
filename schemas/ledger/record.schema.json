@@ -154,6 +154,21 @@
       "then": {
         "$ref": "review.schema.json"
       }
+    },
+    {
+      "if": {
+        "properties": {
+          "record_type": {
+            "const": "grade"
+          }
+        },
+        "required": [
+          "record_type"
+        ]
+      },
+      "then": {
+        "$ref": "grade.schema.json"
+      }
     }
   ]
 }

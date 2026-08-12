@@ -36,14 +36,22 @@ const (
 	RecordEvidence      RecordType = "evidence"
 	RecordResult        RecordType = "result"
 	RecordReview        RecordType = "review"
+	// RecordGrade is a domain record type registered additively, after the
+	// PRD §10.2 MVP set (issue #28 item 1): a first-class opinion — rating
+	// plus rationale — evaluating a completed run/attempt against the
+	// evaluated actor. It carries the same envelope and follows the same
+	// producer/authority matrix, extended by two grade-specific rules (see
+	// RuleGradeNeverObservedOrDerived and RuleNoSelfGrade in errors.go).
+	RecordGrade RecordType = "grade"
 )
 
-// RecordTypes returns the MVP record types in PRD §10.2 order.
+// RecordTypes returns the registered record types: the PRD §10.2 MVP set in
+// its order, followed by the additively-registered ones.
 func RecordTypes() []RecordType {
 	return []RecordType{
 		RecordAnnouncement, RecordClaim, RecordAssumption, RecordQuestion,
 		RecordTask, RecordDecision, RecordSuccessSignal, RecordEvidence,
-		RecordResult, RecordReview,
+		RecordResult, RecordReview, RecordGrade,
 	}
 }
 

@@ -632,6 +632,250 @@ def test_run_retag_404_unknown_run(fake_api, capsys) -> None:
     assert "no run with id bogus" in captured.err
 
 
+# --- grade -----------------------------------------------------------------
+
+
+def test_run_grade_text(fake_api, capsys) -> None:
+    seen = {}
+
+    def handler(h, m, q, b):
+        seen["body"] = json.loads(b)
+        h.send_json(
+            201,
+            {
+                "id": "ledger_1",
+                "record_type": "grade",
+                "authority": "proposed",
+                "origin": {"kind": "agent", "actor_id": "actor-grader"},
+                "data": {
+                    "rating": 4,
+                    "rationale": "solid",
+                    "evaluated_actor_id": "actor-evaluated",
+                },
+            },
+        )
+
+    fake_api.route("POST", r"/v1alpha1/runs/(?P<id>[^/]+)/grades", handler)
+    fake_api.start()
+    rc = main(
+        [
+            "run",
+            "grade",
+            "run-1",
+            "--rating",
+            "4",
+            "--notes",
+            "solid",
+            "--actor",
+            "actor-evaluated",
+            "--as",
+            "actor-grader",
+            "--api-url",
+            fake_api.base_url,
+        ]
+    )
+    out = capsys.readouterr().out
+    assert rc == 0
+    assert seen["body"] == {
+        "rating": 4,
+        "rationale": "solid",
+        "evaluated_actor_id": "actor-evaluated",
+        "grading_actor_id": "actor-grader",
+    }
+    assert "id: ledger_1" in out
+    assert "authority: proposed" in out
+    assert "origin: agent (actor-grader)" in out
+    assert "rating: 4" in out
+    assert "evaluated_actor_id: actor-evaluated" in out
+
+
+def test_run_grade_optional_fields_included_only_when_given(fake_api) -> None:
+    seen = {}
+
+    def handler(h, m, q, b):
+        seen["body"] = json.loads(b)
+        h.send_json(
+            201,
+            {
+                "id": "ledger_1",
+                "authority": "confirmed",
+                "origin": {"kind": "human", "actor_id": "actor-human"},
+                "data": {
+                    "rating": 5,
+                    "rationale": "clean",
+                    "evaluated_actor_id": "actor-evaluated",
+                },
+            },
+        )
+
+    fake_api.route("POST", r"/v1alpha1/runs/(?P<id>[^/]+)/grades", handler)
+    fake_api.start()
+    rc = main(
+        [
+            "run",
+            "grade",
+            "run-1",
+            "--rating",
+            "5",
+            "--notes",
+            "clean",
+            "--actor",
+            "actor-evaluated",
+            "--as",
+            "actor-human",
+            "--node-run-ref",
+            "nr-1",
+            "--attempt-ref",
+            "att-1",
+            "--category",
+            "review",
+            "--api-url",
+            fake_api.base_url,
+        ]
+    )
+    assert rc == 0
+    assert seen["body"] == {
+        "rating": 5,
+        "rationale": "clean",
+        "evaluated_actor_id": "actor-evaluated",
+        "grading_actor_id": "actor-human",
+        "node_run_ref": "nr-1",
+        "attempt_ref": "att-1",
+        "category": "review",
+    }
+
+
+def test_run_grade_json_passthrough_byte_exact(fake_api, capsys) -> None:
+    payload = {
+        "id": "ledger_1",
+        "authority": "proposed",
+        "origin": {"kind": "agent", "actor_id": "actor-grader"},
+        "data": {"rating": 4, "rationale": "solid", "evaluated_actor_id": "actor-evaluated"},
+    }
+    fake_api.route(
+        "POST",
+        r"/v1alpha1/runs/(?P<id>[^/]+)/grades",
+        lambda h, m, q, b: _write_compact(h, 201, payload),
+    )
+    fake_api.start()
+    rc = main(
+        [
+            "run",
+            "grade",
+            "run-1",
+            "--rating",
+            "4",
+            "--notes",
+            "solid",
+            "--actor",
+            "actor-evaluated",
+            "--as",
+            "actor-grader",
+            "--json",
+            "--api-url",
+            fake_api.base_url,
+        ]
+    )
+    out = capsys.readouterr().out
+    assert rc == 0
+    assert out == json.dumps(payload, separators=(",", ":")) + "\n"
+
+
+def test_run_grade_rating_out_of_bounds_refused_by_argparse(capsys) -> None:
+    with pytest.raises(SystemExit) as exc:
+        main(
+            [
+                "run",
+                "grade",
+                "run-1",
+                "--rating",
+                "6",
+                "--notes",
+                "solid",
+                "--actor",
+                "actor-evaluated",
+                "--as",
+                "actor-grader",
+            ]
+        )
+    assert exc.value.code == 1
+    err = capsys.readouterr().err
+    assert err.startswith("error:")
+    assert "hint:" in err
+
+
+def test_run_grade_400_self_grade_refused(fake_api, capsys) -> None:
+    fake_api.route(
+        "POST",
+        r"/v1alpha1/runs/(?P<id>[^/]+)/grades",
+        lambda h, m, q, b: h.send_json(
+            400,
+            {
+                "code": 1,
+                "message": "ledger: authority refused [no_self_grade]: origin agent (actor-1) ...",
+                "remediation": "the producer named in origin may not write this record's authority",
+            },
+        ),
+    )
+    fake_api.start()
+    rc = main(
+        [
+            "run",
+            "grade",
+            "run-1",
+            "--rating",
+            "3",
+            "--notes",
+            "solid",
+            "--actor",
+            "actor-1",
+            "--as",
+            "actor-1",
+            "--api-url",
+            fake_api.base_url,
+        ]
+    )
+    captured = capsys.readouterr()
+    assert rc == 1
+    assert "no_self_grade" in captured.err
+
+
+def test_run_grade_404_unknown_actor(fake_api, capsys) -> None:
+    fake_api.route(
+        "POST",
+        r"/v1alpha1/runs/(?P<id>[^/]+)/grades",
+        lambda h, m, q, b: h.send_json(
+            404,
+            {
+                "code": 1,
+                "message": "no actor with id does-not-exist",
+                "remediation": "check the id and try again",
+            },
+        ),
+    )
+    fake_api.start()
+    rc = main(
+        [
+            "run",
+            "grade",
+            "run-1",
+            "--rating",
+            "3",
+            "--notes",
+            "solid",
+            "--actor",
+            "does-not-exist",
+            "--as",
+            "actor-grader",
+            "--api-url",
+            fake_api.base_url,
+        ]
+    )
+    captured = capsys.readouterr()
+    assert rc == 1
+    assert "no actor with id does-not-exist" in captured.err
+
+
 def test_run_cancel_text(fake_api, capsys) -> None:
     fake_api.route(
         "POST",
@@ -765,6 +1009,7 @@ def test_run_bare_noun(capsys) -> None:
     out = capsys.readouterr().out
     assert "usage: nodes run" in out
     assert "retag" in out
+    assert "grade" in out
 
 
 def test_run_connection_refused_exit_2(capsys) -> None:

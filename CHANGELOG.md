@@ -5,6 +5,14 @@ All notable changes to this project will be documented in this file.
 Format follows [Keep a Changelog](https://keepachangelog.com/). This project
 adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.12.0] - 2026-08-12
+
+### Added
+
+- AWS lane opened (issue #25, ADR 0006): `cmd/nodes-runner-lambda` — the minimal, honest function side of the runner contract (executes an operation's argv, reports process-reported exit facts, refuses workspaces/environment refs/shell requests it cannot honour) — with `deploy/aws/lambda-runner.Dockerfile` building the `culture-nodes/runner` ECR image
+- Live `awslive` suite for the SQS driver (`internal/queue/sqs/awslive_test.go`): publish/receive/ack round-trip and delay-withholds-redelivery proven against the real `culture-nodes-awslive` queue
+- ADR 0006 records the #7/#25 decisions: SQS stays the optional cloud-profile signal driver, the Lambda adapter stays first-class in-worker (refold trigger: first real cloud target), the awslive lane is manual like the codex smoke (CI never runs it), ECS/Fargate stays deferred, credential chain unchanged
+- deploy/aws/README.md: the live-lane arming recipe and the standing-resource (re)creation runbook (queue, ECR repo, function, exec + worker roles)
 ## [0.11.1] - 2026-08-12
 
 ### Added

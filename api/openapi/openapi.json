@@ -30,6 +30,271 @@
       }
     },
     "schemas": {
+      "Actor": {
+        "description": "One `actors` table row (task t15). Actor identity is append-only: a capability or endpoint change is a new row (a new `revision`), never an update to an existing one. `capabilities` and `metadata` are rendered verbatim — neither column ever holds a credential (`metadata.auth_token_env`, when set, names the environment variable a worker reads a token from, never the token value itself), so there is nothing to redact.",
+        "properties": {
+          "actor_key": {
+            "type": "string"
+          },
+          "capabilities": {
+            "description": "Declared capabilities, as the row's own JSON value."
+          },
+          "created_at": {
+            "format": "date-time",
+            "type": "string"
+          },
+          "endpoint_ref": {
+            "type": "string"
+          },
+          "id": {
+            "type": "string"
+          },
+          "kind": {
+            "type": "string"
+          },
+          "metadata": {
+            "description": "Open metadata, as the row's own JSON value."
+          },
+          "protocol": {
+            "type": "string"
+          },
+          "revision": {
+            "type": "integer"
+          }
+        },
+        "required": [
+          "id",
+          "actor_key",
+          "revision",
+          "kind",
+          "protocol",
+          "created_at"
+        ],
+        "type": "object"
+      },
+      "ActorCategoryBucket": {
+        "allOf": [
+          {
+            "properties": {
+              "category": {
+                "description": "The run category tag (\"\" is the explicit uncategorized bucket — never omitted, always present as a real value).",
+                "type": "string"
+              }
+            },
+            "required": [
+              "category"
+            ],
+            "type": "object"
+          },
+          {
+            "$ref": "#/components/schemas/ActorStatsBucket"
+          }
+        ],
+        "description": "One ActorStats.categories entry — an ActorStatsBucket plus the category tag it summarizes."
+      },
+      "ActorDurationPercentiles": {
+        "description": "p50/p90/p99 (linear interpolation) over this actor's attempt durations (completed_at - started_at, in seconds), computed only over attempts that have actually completed.",
+        "properties": {
+          "count": {
+            "type": "integer"
+          },
+          "p50_seconds": {
+            "type": "number"
+          },
+          "p90_seconds": {
+            "type": "number"
+          },
+          "p99_seconds": {
+            "type": "number"
+          }
+        },
+        "required": [
+          "p50_seconds",
+          "p90_seconds",
+          "p99_seconds",
+          "count"
+        ],
+        "type": "object"
+      },
+      "ActorGradeAgg": {
+        "description": "One grades.proposed/grades.confirmed bucket: how many grade.schema.json records and their mean rating.",
+        "properties": {
+          "count": {
+            "type": "integer"
+          },
+          "mean_rating": {
+            "description": "Absent — never a fabricated 0 — when count is 0: an average of zero opinions is undefined, not zero.",
+            "type": "number"
+          }
+        },
+        "required": [
+          "count"
+        ],
+        "type": "object"
+      },
+      "ActorGrades": {
+        "description": "Proposed (agent-origin opinion) and confirmed (a human's own direct opinion) grade aggregates evaluating this actor, kept as two separate numbers — never blended into one.",
+        "properties": {
+          "confirmed": {
+            "$ref": "#/components/schemas/ActorGradeAgg"
+          },
+          "proposed": {
+            "$ref": "#/components/schemas/ActorGradeAgg"
+          }
+        },
+        "required": [
+          "proposed",
+          "confirmed"
+        ],
+        "type": "object"
+      },
+      "ActorLedgerAuthorityCount": {
+        "description": "How many ledger records this actor originated (`origin.actor_id`) at a given authority — every record_type, not only `claim`; PRD §10.4 uses \"claim\" generically for anything an agent asserts.",
+        "properties": {
+          "authority": {
+            "enum": [
+              "proposed",
+              "confirmed",
+              "observed",
+              "derived",
+              "rejected",
+              "superseded"
+            ],
+            "type": "string"
+          },
+          "count": {
+            "type": "integer"
+          }
+        },
+        "required": [
+          "authority",
+          "count"
+        ],
+        "type": "object"
+      },
+      "ActorList": {
+        "properties": {
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/Actor"
+            },
+            "type": "array"
+          }
+        },
+        "required": [
+          "items"
+        ],
+        "type": "object"
+      },
+      "ActorNodeRunOutcome": {
+        "description": "One node-run participation bucket. `status` is `node_runs.status` (the engine's technical lifecycle state); `outcome` is `node_runs.outcome` (the PRD's domain outcome, e.g. \"changes_required\" — set only on a succeeded transition). The two are reported side by side, never conflated: a domain outcome is not a technical status. `outcome` is absent when the node run has none recorded yet (in progress, failed, cancelled, or contract-rejected).",
+        "properties": {
+          "count": {
+            "type": "integer"
+          },
+          "outcome": {
+            "type": "string"
+          },
+          "status": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "status",
+          "count"
+        ],
+        "type": "object"
+      },
+      "ActorRetryBurn": {
+        "description": "\"Attempts per completion\": how many dispatch attempts this actor made in scope, against how many of the node runs it attempted actually reached `completed`.",
+        "properties": {
+          "attempts": {
+            "type": "integer"
+          },
+          "attempts_per_completion": {
+            "description": "attempts / completed_node_runs. Absent — never a fabricated division — when completed_node_runs is 0.",
+            "type": "number"
+          },
+          "completed_node_runs": {
+            "type": "integer"
+          }
+        },
+        "required": [
+          "attempts",
+          "completed_node_runs"
+        ],
+        "type": "object"
+      },
+      "ActorStats": {
+        "description": "GET /v1alpha1/actors/{id}/stats' payload (task t15). `total` is the all-categories aggregate, computed as its own query scope — never a client-side sum of `categories` (a percentile is not additive across subgroups).",
+        "properties": {
+          "actor_id": {
+            "type": "string"
+          },
+          "categories": {
+            "items": {
+              "$ref": "#/components/schemas/ActorCategoryBucket"
+            },
+            "type": "array"
+          },
+          "total": {
+            "$ref": "#/components/schemas/ActorStatsBucket"
+          }
+        },
+        "required": [
+          "actor_id",
+          "total",
+          "categories"
+        ],
+        "type": "object"
+      },
+      "ActorStatsBucket": {
+        "description": "One stats slice's numbers — either the all-categories `total` or one named `categories` entry (see ActorStats).",
+        "properties": {
+          "claims_by_authority": {
+            "items": {
+              "$ref": "#/components/schemas/ActorLedgerAuthorityCount"
+            },
+            "type": "array"
+          },
+          "duration_percentiles": {
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/ActorDurationPercentiles"
+              }
+            ],
+            "description": "Absent when no attempt in this scope has completed yet."
+          },
+          "grades": {
+            "$ref": "#/components/schemas/ActorGrades"
+          },
+          "retry_burn": {
+            "$ref": "#/components/schemas/ActorRetryBurn"
+          },
+          "runs_by_outcome": {
+            "items": {
+              "$ref": "#/components/schemas/ActorNodeRunOutcome"
+            },
+            "type": "array"
+          },
+          "usage": {
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/Usage"
+              }
+            ],
+            "description": "The §13.2 usage/cost rollup (task t2), scoped to this actor's own attempts."
+          }
+        },
+        "required": [
+          "runs_by_outcome",
+          "claims_by_authority",
+          "retry_burn",
+          "usage",
+          "grades"
+        ],
+        "type": "object"
+      },
       "Attempt": {
         "properties": {
           "actor_id": {
@@ -1048,6 +1313,111 @@
   },
   "openapi": "3.1.0",
   "paths": {
+    "/v1alpha1/actors": {
+      "get": {
+        "description": "Read-only (task t15): every `actors` table row, every revision — an actor_key's identity is append-only, so a capability or endpoint change is a new row, never an update to an existing one. There is no registration endpoint here; registering an actor stays deploy/prod/register-actor.sh (issue #8).",
+        "operationId": "listActors",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ActorList"
+                }
+              }
+            },
+            "description": "Every registered actor row, ordered by actor_key then revision."
+          }
+        },
+        "summary": "List every registered actor row in this namespace.",
+        "tags": [
+          "actors"
+        ]
+      }
+    },
+    "/v1alpha1/actors/{id}": {
+      "get": {
+        "operationId": "getActor",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Actor"
+                }
+              }
+            },
+            "description": "The actor row."
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "description": "No actor with this id."
+          }
+        },
+        "summary": "Fetch one actor row by id.",
+        "tags": [
+          "actors"
+        ]
+      }
+    },
+    "/v1alpha1/actors/{id}/stats": {
+      "get": {
+        "description": "Task t15's aggregate: node-run participation by (status, outcome), ledger records this actor originated by authority, attempts-per- completion (\"retry burn\"), attempt duration percentiles (p50/p90/ p99, seconds), §13.2 usage/cost (task t2's rollup, never summed across differing currencies), and grade.schema.json aggregates (task t14) evaluating this actor, with proposed and confirmed grades reported as separate counts/means, never blended. Every number is sliced by `runs.category` (task t3), with `\"\"` as the explicit uncategorized bucket, plus `total` — computed as its own query scope, not summed client-side from `categories`, since a percentile is not additive across subgroups. Where a scope has no data, the payload says so structurally (an absent list, a null `duration_percentiles`, a null `attempts_per_completion`, a null `mean_rating`) — never a fabricated zero standing in for a measurement that was never taken.",
+        "operationId": "getActorStats",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ActorStats"
+                }
+              }
+            },
+            "description": "The actor's aggregate stats."
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "description": "No actor with this id."
+          }
+        },
+        "summary": "Per-actor aggregate stats, sliced by run category.",
+        "tags": [
+          "actors"
+        ]
+      }
+    },
     "/v1alpha1/healthz": {
       "get": {
         "description": "Always `200` once the process is serving requests. Does not touch the database.",
@@ -2128,6 +2498,10 @@
     {
       "description": "The paused-on-a-human side of an approval node (PRD §9.9): list and inspect human_tasks rows, and commit the decision that resumes the run. Unlike every other operation in this API, the decision endpoint is not authless — see its own description.",
       "name": "human-tasks"
+    },
+    {
+      "description": "Registered actor identities and their aggregate stats (task t15). Read-only — registering an actor stays deploy/prod/register-actor.sh (issue #8).",
+      "name": "actors"
     },
     {
       "description": "Liveness and readiness probes.",

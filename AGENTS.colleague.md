@@ -12,8 +12,14 @@ via finish when done.
 
 Dogfooding: when a scoped task is delegable (reviews, audits, doc checks,
 investigations), assign it through the culture-nodes control plane with the
-nodes-operator skill (`assign codex-thor|codex-orin "instruction" --yes` —
-billable, so only with the operator's intent) rather than doing it inline.
+nodes-operator skill rather than doing it inline — one actor per assign,
+e.g.:
+
+    bash .claude/skills/nodes-operator/scripts/nodes-op.sh \
+      assign codex-thor "audit README against the tree" --yes
+
+(registered actors today: codex-thor, codex-orin; billable, so `--yes`
+only with the operator's intent).
 Afterwards always read the run and its ledger, weigh the proposed claims
 (claims, not evidence), and record a short actor-quality note via the
 remember skill (actor, task kind, verdict, why) — the point is a growing,

@@ -158,9 +158,10 @@ skips files without it). Tooling prerequisites: `devex` (>=0.21) and `agtag`
 ## Conventions and workflow
 
 - **Nodes dogfooding reflex**: when a scoped task is delegable, assign it
-  through the system instead of doing it in-session — `/nodes-operator`
-  `assign codex-thor|codex-orin "instruction" --yes` (billable; confirm
-  intent per the skill's guard). Two goals, both deliberate: the product
+  through the system instead of doing it in-session — invoke the
+  `/nodes-operator` skill and run its `assign <actor> "instruction" --yes`
+  verb with exactly one registered actor (today: `codex-thor` or
+  `codex-orin`; billable — confirm intent per the skill's guard). Two goals, both deliberate: the product
   exercises itself on real work, and every assigned run grows the
   comparative record of **which actor is better at what**. Until the bwrap
   fix lands (#18), sessions on thor/orin are analysis-only — route reviews,

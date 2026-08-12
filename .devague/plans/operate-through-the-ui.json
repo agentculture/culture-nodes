@@ -5,7 +5,7 @@
   "schema_version": 4,
   "status": "exported",
   "created": "2026-08-12T19:22:38Z",
-  "updated": "2026-08-12T19:58:37Z",
+  "updated": "2026-08-12T20:10:26Z",
   "targets": [
     {
       "id": "c1",
@@ -726,7 +726,7 @@
     },
     {
       "id": "t16",
-      "summary": "Grade API + operator verb: POST grade, nodes-op grade <run-id> --rating N --notes",
+      "summary": "Grade API + operator verb: POST grade, `nodes-op grade <run-id> --rating N --notes`",
       "origin": "llm",
       "status": "confirmed",
       "acceptance_criteria": [

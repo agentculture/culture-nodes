@@ -4,7 +4,7 @@
   "schema_version": 5,
   "status": "exported",
   "created": "2026-08-12T18:29:34Z",
-  "updated": "2026-08-12T19:20:36Z",
+  "updated": "2026-08-12T20:10:26Z",
   "claims": [
     {
       "id": "c1",
@@ -316,7 +316,7 @@
       ],
       "hard_questions": [],
       "links": [],
-      "instruction": "add the grade record (shape per q3 decision) + API + nodes-op grade <run-id> --rating N --notes, recorded against actor and run through the normal authority model",
+      "instruction": "add the grade record (shape per q3 decision) + API + `nodes-op grade <run-id> --rating N --notes`, recorded against actor and run through the normal authority model",
       "revisions": []
     },
     {

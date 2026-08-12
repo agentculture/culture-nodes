@@ -135,7 +135,7 @@ slug: `operate-through-the-ui` · status: `exported` · from frame: `operate-thr
   - the actors read surface exists (list + detail); stats aggregates runs by outcome, claims proposed/confirmed/rejected, attempts per completion, duration percentiles, and usage/cost — sliced per category with uncategorized as its own bucket
   - openapi.yaml + parity green; a CLI verb reads the same surface (replacing nodes-op's ssh+psql actors verb)
 
-### t16 — Grade API + operator verb: POST grade, nodes-op grade <run-id> --rating N --notes
+### t16 — Grade API + operator verb: POST grade, `nodes-op grade <run-id> --rating N --notes`
 
 - instruction: grade endpoint under /v1alpha1 (runs/{id}/grades or actors-scoped — pick in ADR-lite comment); nodes-op.sh grade verb; integration test: agent proposes via bridge path, human confirms via review surface
 - depends on: t14, t15

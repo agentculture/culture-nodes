@@ -46,6 +46,7 @@ same origin). Requires `bash`, `curl`, `python3` (+PyYAML for
 | `create <digest> <input.json> [--category C] --yes` | create a run from a published digest |
 | `watch <id>` | poll to terminal, then print outcomes + ledger |
 | `cancel <id>` | cancel: reaps work items, best-effort Cancels in-flight sessions |
+| `grade <run-id> --rating N --notes "..." [--actor ID] [--as ID] [--category C]` | grade a run against an actor (1-5 rating + rationale, issue #28 item 1) |
 | `assign <actor> "instruction" [opts] --yes` | the headline: one-node workflow → publish → run → watch |
 | `actors` | registered actor rows (the one verb needing `ssh thor`) |
 
@@ -72,6 +73,30 @@ Actors: `codex-thor`, `codex-orin` — each maps to its host's allowlisted
 checkout (`/home/<host>/git/culture-nodes-agent`). New actors: register with
 `deploy/prod/register-actor.sh`, then extend the actor table in
 `scripts/nodes-op.sh` (one case line).
+
+## `grade` — record an opinion on a run's actor
+
+```bash
+bash .claude/skills/nodes-operator/scripts/nodes-op.sh grade run_01J... \
+  --rating 4 --notes "read the files it was asked to, correct diagnosis, one stale detail" \
+  --actor codex-thor-actor-id
+```
+
+Appends a `grade` ledger record (`POST /v1alpha1/runs/{id}/grades`) evaluating
+`--actor` on the named run. `--as` (the grading actor) defaults to the first
+registered `kind=human` actor; `--actor` defaults to the run's most recently
+attempted actor when it can be read cheaply off the run itself — both can be
+passed explicitly, and the verb refuses rather than guessing when neither a
+default nor an explicit value is available. The API looks up `--as`'s
+registered kind and decides origin/authority from it: a human actor's grade
+lands `confirmed` immediately; an agent actor's grade lands `proposed` and
+reaches `confirmed` only through the ordinary review surface. No actor may
+grade its own work.
+
+This is the mechanism behind CLAUDE.md's "nodes dogfooding reflex" —
+grade every assigned run against its actor so the comparative record of
+which actor is better at what accrues as first-class ledger evidence, not
+only as an eidetic `/remember` note.
 
 ## What every operator must know
 

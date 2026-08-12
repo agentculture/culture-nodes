@@ -56,18 +56,27 @@ func (f *fixture) url(path string) string {
 	return f.server.URL + path
 }
 
-// insertActor inserts a minimal actor row, matching
+// insertActor inserts a minimal agent-kind actor row, matching
 // internal/engine/harness_test.go's own helper — a ledger record's
 // origin.actor_id must both satisfy the envelope schema's identifier shape
 // and the ledger_records.origin_actor_id foreign key, so tests that append
 // agent-origin records need a real row to point at.
 func (f *fixture) insertActor(key string) string {
 	f.t.Helper()
+	return f.insertActorKind(key, "agent")
+}
+
+// insertActorKind inserts a minimal actor row of the given registered kind
+// ("agent", "human", "runner", ...) — the same shape insertActor uses, with
+// kind as a parameter for tests (task t16's grade tests) that need a
+// human-kind actor to exercise the human-origin/confirmed-authority path.
+func (f *fixture) insertActorKind(key, kind string) string {
+	f.t.Helper()
 	id := store.NewULID()
 	_, err := f.store.Pool().Exec(context.Background(),
 		`INSERT INTO actors (id, namespace_id, actor_key, revision, kind, protocol)
-		 VALUES ($1, $2, $3, 1, 'agent', 'http')`,
-		id, f.nsID, key+"-"+id)
+		 VALUES ($1, $2, $3, 1, $4, 'http')`,
+		id, f.nsID, key+"-"+id, kind)
 	if err != nil {
 		f.t.Fatalf("insert actor: %v", err)
 	}

@@ -7,6 +7,7 @@ import (
 	"net/http"
 
 	"github.com/agentculture/culture-nodes/internal/clifmt"
+	"github.com/agentculture/culture-nodes/internal/contracts"
 	"github.com/agentculture/culture-nodes/internal/engine"
 	"github.com/agentculture/culture-nodes/internal/ledger"
 	"github.com/agentculture/culture-nodes/internal/store/postgres"
@@ -111,6 +112,18 @@ func classify(err error) *apiError {
 	var authorityErr *ledger.AuthorityError
 	if errors.As(err, &authorityErr) {
 		return badRequest("the producer named in origin may not write this record's authority; see PRD §10.4", "%v", err)
+	}
+
+	// A ledger.Append(...) call built from a caller's request (task t16's
+	// grade endpoint is the first API-facing one) can fail record-schema
+	// validation — e.g. a rating outside grade.schema.json's 1-5 bound, or
+	// an empty rationale. That is a malformed request, not an environment
+	// failure: render it as 400 naming the violated schema/pointer, the
+	// same "domain refusal, never a 500" treatment every other classify
+	// case here gives a caller-caused condition.
+	var validationErr *contracts.ValidationError
+	if errors.As(err, &validationErr) {
+		return badRequest("the record payload must satisfy its declared schema", "%v", err)
 	}
 
 	var workflowErr *engine.WorkflowError

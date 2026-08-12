@@ -1,8 +1,9 @@
 """``nodes run`` — thin REST client over the runs API.
 
 Every verb here is one HTTP call to the Culture Nodes control-plane API
-(``api/openapi/openapi.yaml``, ``runs``/``events`` tags): create, list, get,
-cancel, events, retag. No engine logic lives in this module (spec decision c28).
+(``api/openapi/openapi.yaml``, ``runs``/``events``/``grades`` tags): create,
+list, get, cancel, events, retag, grade. No engine logic lives in this module
+(spec decision c28).
 """
 
 from __future__ import annotations
@@ -212,6 +213,49 @@ def cmd_run_retag(args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_run_grade(args: argparse.Namespace) -> int:
+    """Grade a run against an actor: POST /v1alpha1/runs/{id}/grades.
+
+    The grading actor's registered kind (looked up server-side) decides the
+    record's origin and authority: a human ``--as`` actor lands confirmed
+    (the human's own opinion, not a claim someone else must ratify); an
+    agent ``--as`` actor lands proposed, exactly like any other agent-origin
+    record, and reaches confirmed only by later going through ``nodes
+    review create``/``commit`` — no special-casing lives in this module
+    (spec decision c28).
+    """
+    body: dict[str, object] = {
+        "rating": args.rating,
+        "rationale": args.notes,
+        "evaluated_actor_id": args.actor,
+        "grading_actor_id": args.as_actor,
+    }
+    if args.node_run_ref is not None:
+        body["node_run_ref"] = args.node_run_ref
+    if args.attempt_ref is not None:
+        body["attempt_ref"] = args.attempt_ref
+    if args.category is not None:
+        body["category"] = args.category
+    client = client_from_args(args)
+    resp = client.request("POST", f"{API_PREFIX}/runs/{args.id}/grades", json_body=body)
+    json_mode = bool(getattr(args, "json", False))
+    if json_mode:
+        emit_json_passthrough(resp.raw)
+    else:
+        payload = resp.payload or {}
+        data = payload.get("data") or {}
+        origin = payload.get("origin") or {}
+        lines = [
+            f"id: {payload.get('id', '')}",
+            f"authority: {payload.get('authority', '')}",
+            f"origin: {origin.get('kind', '')} ({origin.get('actor_id', '')})",
+            f"rating: {data.get('rating', '')}",
+            f"evaluated_actor_id: {data.get('evaluated_actor_id', '')}",
+        ]
+        emit_result("\n".join(lines), json_mode=False)
+    return 0
+
+
 def cmd_run_cancel(args: argparse.Namespace) -> int:
     client = client_from_args(args)
     resp = client.request("POST", f"{API_PREFIX}/runs/{args.id}/cancel")
@@ -306,7 +350,7 @@ def cmd_run_events(args: argparse.Namespace) -> int:
 
 def _bare_noun(args: argparse.Namespace) -> int:
     emit_result(
-        "usage: nodes run {create,list,get,cancel,events,retag} ...\n"
+        "usage: nodes run {create,list,get,cancel,events,retag,grade} ...\n"
         "run 'nodes explain run' for details",
         json_mode=False,
     )
@@ -400,6 +444,55 @@ def register(sub: argparse._SubParsersAction) -> None:
     retag.add_argument("--json", action="store_true", help=JSON_FLAG_HELP)
     add_api_url_argument(retag)
     retag.set_defaults(func=cmd_run_retag)
+
+    grade = noun_sub.add_parser(
+        "grade", help="Grade a run against an actor: a 1-5 rating plus rationale."
+    )
+    grade.add_argument("id", help=_RUN_ID_HELP)
+    grade.add_argument(
+        "--rating",
+        dest="rating",
+        type=int,
+        choices=[1, 2, 3, 4, 5],
+        required=True,
+        help="Rating 1-5.",
+    )
+    grade.add_argument(
+        "--notes", dest="notes", required=True, help="Free-text rationale for the rating."
+    )
+    grade.add_argument(
+        "--actor",
+        dest="actor",
+        required=True,
+        help="The actor being evaluated (evaluated_actor_id).",
+    )
+    grade.add_argument(
+        "--as",
+        dest="as_actor",
+        required=True,
+        help=(
+            "The grading actor (grading_actor_id). Its registered kind decides the "
+            "record's origin: a human actor lands confirmed, an agent actor lands proposed."
+        ),
+    )
+    grade.add_argument(
+        "--node-run-ref",
+        dest="node_run_ref",
+        default=None,
+        help="Optional: narrow the grade to one node run.",
+    )
+    grade.add_argument(
+        "--attempt-ref",
+        dest="attempt_ref",
+        default=None,
+        help="Optional: narrow the grade to one attempt.",
+    )
+    grade.add_argument(
+        "--category", dest="category", default=None, help="Optional flat category tag on the grade."
+    )
+    grade.add_argument("--json", action="store_true", help=JSON_FLAG_HELP)
+    add_api_url_argument(grade)
+    grade.set_defaults(func=cmd_run_grade)
 
     cancel = noun_sub.add_parser("cancel", help="Cancel a run.")
     cancel.add_argument("id", help=_RUN_ID_HELP)

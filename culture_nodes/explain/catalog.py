@@ -32,7 +32,7 @@ response.
 ## Product verbs (thin API clients)
 
 - `culture-nodes workflow validate|publish|list|get`
-- `culture-nodes run create|list|get|cancel|events|retag`
+- `culture-nodes run create|list|get|cancel|events|retag|grade`
 - `culture-nodes node-runs list`
 - `culture-nodes ledger records|projection`
 - `culture-nodes review create|commit`
@@ -182,9 +182,9 @@ _RUN = """\
 # culture-nodes run
 
 Thin REST client over the runs API (`api/openapi/openapi.yaml`,
-`runs`/`events` tags): create, list, get, cancel, events, retag. No engine
-logic lives here — every verb is one HTTP call to the Culture Nodes
-control-plane API.
+`runs`/`events`/`grades` tags): create, list, get, cancel, events, retag,
+grade. No engine logic lives here — every verb is one HTTP call to the
+Culture Nodes control-plane API.
 
 ## Usage
 
@@ -196,6 +196,8 @@ control-plane API.
     culture-nodes run cancel <id>
     culture-nodes run events <id> [--follow]
     culture-nodes run retag <id> --category TEXT
+    culture-nodes run grade <id> --rating N --notes TEXT --actor EVALUATED_ID --as GRADING_ID \\
+        [--node-run-ref REF] [--attempt-ref REF] [--category TEXT]
 
 ## create
 
@@ -209,6 +211,24 @@ later, via `run retag`.
 The only field PATCH /v1alpha1/runs/{id} accepts is `category` (frame
 decision q4) — `name`/`description` are immutable once a run is created.
 Pass `--category ""` to clear a run's category.
+
+## grade
+
+Records an opinion — a 1-5 `--rating` plus free-text `--notes` (the
+record's `rationale`) — evaluating `--actor` (`evaluated_actor_id`) on this
+run, recorded as `--as` (`grading_actor_id`, issue #28 item 1). The API
+looks up `--as`'s registered actor kind and decides origin/authority from
+it: a human actor's grade lands `confirmed` immediately (it is the human's
+own opinion, not a claim someone else must ratify); an agent actor's grade
+lands `proposed`, exactly like any other agent-origin record, and reaches
+`confirmed` only by later going through `nodes review create`/`commit`
+against it. No actor may grade its own work — `--actor` equal to `--as` is
+refused (HTTP 400, exit `1`) naming the ledger rule. A `--rating` outside
+1-5 is refused by argparse itself before any request is sent.
+`--node-run-ref`/`--attempt-ref` narrow the grade to one node run or
+attempt; `--category` is an optional flat tag carried onto the grade record
+itself (documentary — per-actor stats slice by the graded run's own
+category, not this field).
 
 ## Rendering names, hints, and usage (text mode)
 
@@ -367,6 +387,7 @@ ENTRIES: dict[tuple[str, ...], str] = {
     ("run", "cancel"): _RUN,
     ("run", "events"): _RUN,
     ("run", "retag"): _RUN,
+    ("run", "grade"): _RUN,
     ("node-runs",): _NODE_RUNS,
     ("node-runs", "list"): _NODE_RUNS,
     ("ledger",): _LEDGER,

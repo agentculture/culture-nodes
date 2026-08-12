@@ -42,6 +42,12 @@ tags:
     description: The append-only work ledger and its projections (PRD §10).
   - name: reviews
     description: Human review transactions over ledger records (PRD §10.8).
+  - name: grades
+    description: >-
+      Opinion records — a 1-5 rating plus rationale — evaluating a completed
+      run/attempt against an actor (issue #28 item 1; PRD §10.4 extended).
+      Follows the same producer/authority matrix every other ledger record
+      does; never observed or derived, and never self-graded.
   - name: human-tasks
     description: >-
       The paused-on-a-human side of an approval node (PRD §9.9): list and
@@ -742,6 +748,62 @@ paths:
             The review is stale (the ledger moved, the expected version does
             not match, a target was superseded, or the frame checksum no
             longer matches) or was already committed.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+
+  /v1alpha1/runs/{id}/grades:
+    post:
+      operationId: createGrade
+      tags: [grades]
+      summary: Grade a run against an actor (a 1-5 rating plus rationale).
+      description: >-
+        Appends a grade ledger record (schemas/ledger/grade.schema.json,
+        issue #28 item 1) evaluating `evaluated_actor_id`'s work on this run
+        — optionally narrowed to one node run (`node_run_ref`) or attempt
+        (`attempt_ref`). The grading actor named in `grading_actor_id` is
+        looked up in the actor registry, and its registered `kind` decides
+        both the record's origin and the authority it is written with: a
+        human actor's grade is the human's own opinion, not a claim someone
+        else must ratify, so it lands `confirmed` outside a review
+        transaction; an agent actor's grade lands `proposed`, exactly like
+        any other agent-origin record, and reaches `confirmed` only by later
+        going through the ordinary review surface (POST
+        /v1alpha1/runs/{id}/reviews + POST /v1alpha1/reviews/{id}/commit).
+        No actor may grade its own work — a request where `grading_actor_id`
+        equals `evaluated_actor_id` is refused (PRD §10.4's self-promotion
+        rule, extended to opinion records). A malformed request, a rating
+        outside 1-5, or the authority matrix's refusal all render as 400 in
+        the documented Error shape, never a 500.
+      parameters:
+        - $ref: '#/components/parameters/RunID'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CreateGradeRequest'
+      responses:
+        '201':
+          description: The grade was recorded.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/LedgerRecord'
+        '400':
+          description: >-
+            The request is malformed, the grade payload fails
+            schemas/ledger/grade.schema.json (e.g. rating outside 1-5, an
+            empty rationale), or the ledger authority matrix refused it (e.g.
+            a self-grade, or a grading actor kind with no supported grading
+            origin).
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '404':
+          description: No run has this id, or grading_actor_id/evaluated_actor_id is not a registered actor.
           content:
             application/json:
               schema:
@@ -1518,6 +1580,45 @@ components:
         ledger_version:
           type: integer
           format: int64
+
+    CreateGradeRequest:
+      type: object
+      required: [rating, rationale, evaluated_actor_id, grading_actor_id]
+      properties:
+        rating:
+          type: integer
+          minimum: 1
+          maximum: 5
+          description: The evaluator's opinion score on a fixed 1-5 scale.
+        rationale:
+          type: string
+          minLength: 1
+          description: Free-text justification for the rating.
+        evaluated_actor_id:
+          type: string
+          description: >-
+            The actor being evaluated. Must not equal grading_actor_id — a
+            grade where the two are equal is refused (no actor grades its
+            own work).
+        grading_actor_id:
+          type: string
+          description: >-
+            The actor recording the grade. Its registered actor kind (human
+            or agent) decides the record's origin, and therefore whether it
+            lands confirmed (human) or proposed (agent).
+        node_run_ref:
+          type: string
+          description: Narrows the grade to one node run, when it is not about the whole run.
+        attempt_ref:
+          type: string
+          description: Narrows the grade to one attempt, when it is not about the whole node run.
+        category:
+          type: string
+          description: >-
+            Optional flat tag carried onto the grade record itself
+            (documentary — see grade.schema.json). Per-actor stats
+            (GET /v1alpha1/actors/{id}/stats) slice by the graded run's own
+            category, not this field.
 
     HumanTask:
       type: object

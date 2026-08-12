@@ -246,6 +246,8 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("POST /v1alpha1/runs/{id}/reviews", s.wrap(s.handleCreateReview))
 	mux.HandleFunc("POST /v1alpha1/reviews/{id}/commit", s.wrap(s.handleCommitReview))
 
+	mux.HandleFunc("POST /v1alpha1/runs/{id}/grades", s.wrap(s.handleCreateGrade))
+
 	mux.HandleFunc("GET /v1alpha1/human-tasks", s.wrap(s.handleListHumanTasks))
 	mux.HandleFunc("GET /v1alpha1/human-tasks/{id}", s.wrap(s.handleGetHumanTask))
 	mux.HandleFunc("POST /v1alpha1/human-tasks/{id}/decision", s.wrap(s.handleDecideHumanTask))

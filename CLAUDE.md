@@ -157,6 +157,22 @@ skips files without it). Tooling prerequisites: `devex` (>=0.21) and `agtag`
 
 ## Conventions and workflow
 
+- **Nodes dogfooding reflex**: when a scoped task is delegable, assign it
+  through the system instead of doing it in-session — invoke the
+  `/nodes-operator` skill and run its `assign <actor> "instruction" --yes`
+  verb with exactly one registered actor (today: `codex-thor` or
+  `codex-orin`; billable — confirm intent per the skill's guard). Two goals, both deliberate: the product
+  exercises itself on real work, and every assigned run grows the
+  comparative record of **which actor is better at what**. Until the bwrap
+  fix lands (#18), sessions on thor/orin are analysis-only — route reviews,
+  audits, doc checks, and investigations there; keep shell/write work local.
+  The assessment half is not optional: after every assigned run, read
+  `run <id>` + `ledger <id>`, weigh the proposed claims (completion claims,
+  not evidence — §10.4), decide them through the approval surface where one
+  is reviewable, and `/remember` a short actor-quality note (actor, task
+  kind, verdict, why) so the comparison survives the session. First-class
+  grading records and per-actor analytics are tracked in issue #28 — prefer
+  those surfaces over ad-hoc notes once they exist.
 - **Memory discipline** (eidetic): `/recall` before non-trivial work to build
   on prior decisions; `/remember` when a non-obvious decision, constraint, or
   hard-won fix surfaces. This repo's memory is **in-repo and public** — a

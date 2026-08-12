@@ -41,9 +41,50 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   actor callback (+ scheduler's engine seam) traced/metered behind env-gated
   OTLP export with a structurally enforced attribute allowlist — ids, states,
   counts, durations only (spec t19, closes #5)
+- CLI fronts for the new surfaces: `nodes run create --name/--description/
+  --category`, `run retag`, `run grade`, usage rendering in run/node-runs
+  views, explain-catalog entries, `nodes-op assign --category` + `grade`
+  verbs (spec t4/t16)
+- Web: run names/derived hints/category chips + token-first cost across
+  RunsList/Board/Jobs/RunView/NodeDetailPanel — currency only when reported,
+  'not reported' never rendered as zero (spec t5)
+- Actors API family: `GET /v1alpha1/actors`, `/{id}`, `/{id}/stats` — per-
+  category buckets (uncategorized its own bucket), runs by status+outcome
+  kept separate, retry burn, duration percentiles, usage with honest currency
+  semantics, grades proposed-vs-confirmed never blended (spec t15, #28
+  item 2's API; registration stays #8)
+- Grade API: `POST /v1alpha1/runs/{id}/grades` — origin from the grading
+  actor's registered kind, authority via the ledger rules (agent→proposed,
+  human→confirmed, self-grade refused), plus the review-surface confirm loop
+  proven end-to-end (spec t16, completes #28 item 1)
+- Web: Statistics tab — window cost totals, average and median per run,
+  per-category breakdown, denominator stated with excluded-as-not-reported
+  runs visible (spec t6, the operator's stats ask)
+- Web: measured evidence rendered in the ship-review pause — changed paths,
+  snapshot digest, artifact refs in NodeDetailPanel, evidence markers on the
+  run canvas/table (spec t11, #13 item 4)
+- Cross-run events surface: `GET /v1alpha1/events` — SSE across active runs
+  + run-lifecycle events, bounded polling with documented catch-up, honest
+  ULID-cursor resume semantics, expand-only index migration 0014 (spec t17)
+- Web: the live-mesh overview (`/mesh`) — the control plane breathing at the
+  center, actors orbiting kind-differentiated, active runs as embers, every
+  committed event a particle on its edge, completion rings, honest
+  LIVE/RECONNECTING indicator, prefers-reduced-motion static frame,
+  agent-state mirrored for webglass (spec t18, the cycle's showpiece)
 
 ### Fixed
 
+- POST /v1alpha1/runs unknown-success window: run metadata now rides
+  CreateRun's own transaction (engine.WithRunMetadata) and the create
+  response uses the deterministic empty rollup — no post-commit failure can
+  5xx a run that exists (qodo PR-35 finding)
+- Bridge workspace measurement hardened: `--no-ext-diff --no-textconv` on
+  all diff invocations in all three adapters, with malicious-repo-config
+  tests — a measured repo can no longer execute commands on the bridge host
+  (qodo PR-35 finding); mid-session workspace loss degrades to the honest
+  unmeasured shape (colleague review finding)
+- API error classification: contracts schema-validation failures from ledger
+  appends render as 400s with pointer paths, not 500s (spec t16)
 - colleague adapter: t10 lint leftovers (unused import, long lines)
 
 ## [0.12.2] - 2026-08-12

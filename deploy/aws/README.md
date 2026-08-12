@@ -87,3 +87,96 @@ a human with admin credentials re-applies it with:
 
 (idempotent; prunes the oldest non-default version when IAM's 5-version
 cap is hit — git history is the rollback store, not IAM versions).
+
+## Live test lane (`awslive`)
+
+The manual live lane over the fake-tested AWS code paths (ADR 0006 records
+the decisions; issue #25 opened it). Two build-tagged suites, both skipping
+silently unless armed, both costing real requests when armed:
+
+```bash
+export AWS_PROFILE=culture-nodes AWS_REGION=us-east-1
+
+# SQS driver against the real service:
+NODES_TEST_SQS_QUEUE_URL=$(aws sqs get-queue-url --queue-name culture-nodes-awslive --output text) \
+  go test -tags awslive ./internal/queue/sqs/ -run TestLive -v
+
+# Lambda adapter against the real function:
+NODES_TEST_LAMBDA_ARN=$(aws lambda get-function --function-name culture-nodes-runner \
+    --query Configuration.FunctionArn --output text) \
+NODES_TEST_LAMBDA_IMAGE_DIGEST=$(aws lambda get-function --function-name culture-nodes-runner \
+    --query 'Code.ResolvedImageUri' --output text | sed 's/.*@//') \
+  go test -tags awslive ./internal/runners/lambda/ -run TestLive -v
+```
+
+CI never runs these (ADR 0006 decision 3); they are the codex-smoke idiom
+applied to AWS.
+
+### Standing resources
+
+| Resource | Name | Created by |
+| --- | --- | --- |
+| SQS queue | `culture-nodes-awslive` | `aws sqs create-queue` (below) |
+| ECR repository | `culture-nodes/runner` | `aws ecr create-repository` (below) |
+| Lambda function | `culture-nodes-runner` | `aws lambda create-function` (below) |
+| Execution role | `culture-nodes-lambda-exec` | `aws iam create-role` (below) |
+| Worker role | `culture-nodes-worker` | rendered policy, see below |
+
+All of it sits inside the dev-operator policy's fences, so the scoped
+profile can create, update, and tear all of it down.
+
+### (Re)creating the lane
+
+```bash
+export AWS_PROFILE=culture-nodes AWS_REGION=us-east-1
+ACCOUNT=$(aws sts get-caller-identity --query Account --output text)
+
+# 1. The signal queue.
+aws sqs create-queue --queue-name culture-nodes-awslive
+
+# 2. The runner image (build from the repo root; arch follows the host).
+aws ecr create-repository --repository-name culture-nodes/runner
+aws ecr get-login-password | docker login --username AWS --password-stdin \
+  "$ACCOUNT.dkr.ecr.$AWS_REGION.amazonaws.com"
+docker build -f deploy/aws/lambda-runner.Dockerfile \
+  -t "$ACCOUNT.dkr.ecr.$AWS_REGION.amazonaws.com/culture-nodes/runner:latest" .
+docker push "$ACCOUNT.dkr.ecr.$AWS_REGION.amazonaws.com/culture-nodes/runner:latest"
+
+# 3. Let the Lambda service pull the image. Without this repository policy
+#    CreateFunction fails with "Lambda does not have permission to access
+#    the ECR image" (found live 2026-08-12; ecr:SetRepositoryPolicy joined
+#    the dev-operator policy for it).
+aws ecr set-repository-policy --repository-name culture-nodes/runner --policy-text '{
+  "Version": "2012-10-17",
+  "Statement": [{
+    "Sid": "LambdaPull",
+    "Effect": "Allow",
+    "Principal": {"Service": "lambda.amazonaws.com"},
+    "Action": ["ecr:BatchGetImage", "ecr:GetDownloadUrlForLayer"],
+    "Condition": {"StringLike": {"aws:sourceArn": "arn:aws:lambda:us-east-1:'"$ACCOUNT"':function:culture-nodes-*"}}
+  }]
+}'
+
+# 4. The function's execution role (logs only).
+aws iam create-role --role-name culture-nodes-lambda-exec \
+  --assume-role-policy-document '{"Version":"2012-10-17","Statement":[{"Effect":"Allow","Principal":{"Service":"lambda.amazonaws.com"},"Action":"sts:AssumeRole"}]}'
+aws iam attach-role-policy --role-name culture-nodes-lambda-exec \
+  --policy-arn arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole
+
+# 5. The function, pinned to the pushed digest, matching the build arch.
+DIGEST=$(aws ecr describe-images --repository-name culture-nodes/runner \
+  --image-ids imageTag=latest --query 'imageDetails[0].imageDigest' --output text)
+aws lambda create-function --function-name culture-nodes-runner \
+  --package-type Image \
+  --code ImageUri="$ACCOUNT.dkr.ecr.$AWS_REGION.amazonaws.com/culture-nodes/runner@$DIGEST" \
+  --role "arn:aws:iam::$ACCOUNT:role/culture-nodes-lambda-exec" \
+  --architectures arm64 --timeout 120 --memory-size 512
+
+# 6. The worker role, carrying the policy the registry renders (ADR 0003).
+#    Render it with runners.RenderWorkerIAMPolicy for a registry holding the
+#    function above, then:
+aws iam create-role --role-name culture-nodes-worker \
+  --assume-role-policy-document "{\"Version\":\"2012-10-17\",\"Statement\":[{\"Effect\":\"Allow\",\"Principal\":{\"AWS\":\"arn:aws:iam::$ACCOUNT:root\"},\"Action\":\"sts:AssumeRole\"}]}"
+aws iam put-role-policy --role-name culture-nodes-worker \
+  --policy-name culture-nodes-worker-dispatch --policy-document file://rendered-worker-policy.json
+```

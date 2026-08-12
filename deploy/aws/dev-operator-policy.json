@@ -47,7 +47,10 @@
         "ecr:PutImage",
         "ecr:BatchGetImage",
         "ecr:GetDownloadUrlForLayer",
-        "ecr:DescribeImages"
+        "ecr:DescribeImages",
+        "ecr:GetRepositoryPolicy",
+        "ecr:SetRepositoryPolicy",
+        "ecr:DeleteRepositoryPolicy"
       ],
       "Resource": "arn:aws:ecr:*:*:repository/culture-nodes/*"
     },

@@ -1,0 +1,44 @@
+-- 0014_events_namespace_id_index.sql
+--
+-- Expand-only: adds events_namespace_id_id_idx (namespace_id, id) (task
+-- t17, docs/plans/2026-08-12-operate-through-the-ui.md's risk r1).
+--
+-- Why: task t17 adds GET /v1alpha1/events, a cross-run companion to the
+-- existing per-run GET /v1alpha1/runs/{id}/events stream
+-- (internal/api/events.go's handleStreamEvents). Its poll query is
+--
+--   SELECT ... FROM events
+--   WHERE namespace_id = $1 AND aggregate_type = 'run' AND id > $2
+--   ORDER BY id LIMIT $3
+--
+-- -- a bounded range scan ordered by `id` (the table's ULID primary key,
+-- lexicographically sortable in generation order, see internal/store/
+-- ulid.go), scoped to one namespace. Without this index, PostgreSQL has to
+-- walk the primary key's own (id-only) ordering and filter namespace_id row
+-- by row: fine when a deployment has ever had exactly one namespace, but
+-- every test in this repo shares one PostgreSQL instance across many
+-- short-lived namespaces (internal/api/fixture_test.go's package doc), and
+-- nothing stops a real installation from accumulating old ones either. A
+-- scan ordered purely by global id would have to pass over every other
+-- namespace's interleaved rows before it could fill even one namespace's
+-- LIMIT -- exactly the unbounded-scan shape r1 exists to rule out.
+-- (namespace_id, id) lets the planner do a single indexed range scan that
+-- is bounded by this namespace's own row count between the resume cursor
+-- and LIMIT, never by the table's total size.
+--
+-- This is additive only -- a new index, nothing dropped, renamed, or
+-- constrained -- so a binary that predates this migration (N-1
+-- compatibility, docs/adr/0002-migration-policy.md) is unaffected: it never
+-- looks the index up by name, and the planner is free to start using it for
+-- any query shape that benefits, including this migration's own new
+-- handler and any earlier one that happens to filter on namespace_id and
+-- order/filter on id together.
+--
+-- Not CREATE INDEX CONCURRENTLY: internal/store/postgres.Store.Migrate
+-- wraps every migration file in one transaction (store.go's Migrate), and
+-- PostgreSQL refuses CONCURRENTLY inside a transaction block. Every prior
+-- index migration in this directory (0009, 0010, 0011) accepts the same
+-- brief top-of-rollout lock for the same reason; this one follows suit
+-- rather than being the first to need a bespoke non-transactional apply
+-- path.
+CREATE INDEX events_namespace_id_id_idx ON events (namespace_id, id);

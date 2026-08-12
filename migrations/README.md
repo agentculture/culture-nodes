@@ -54,6 +54,10 @@ Numbered SQL migrations for the authoritative PostgreSQL store (prd-spec
   `description` are operator-given at creation only (`internal/api/runs.go`'s
   `handleCreateRun`); `category` alone is retaggable afterward via
   `PATCH /v1alpha1/runs/{id}` (`handlePatchRun`) per frame decision q4.
+- `0014_events_namespace_id_index.sql` — expand-only: adds
+  `events_namespace_id_id_idx (namespace_id, id)`, serving the cross-run
+  event stream's (task t17, `GET /v1alpha1/events`) bounded, namespace-scoped
+  poll ordered by the events table's own ULID primary key.
 
 ## Policy
 

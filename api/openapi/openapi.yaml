@@ -37,7 +37,9 @@ tags:
       phase-2 cycle, task t11), distinct from the tokens/node_runs nested
       under one run's Run-view payload above.
   - name: events
-    description: Server-Sent Events stream of committed run events (PRD §15.1).
+    description: >-
+      Server-Sent Events streams of committed run events (PRD §15.1): one
+      per-run, one cross-run (task t17) fan-in feeding the live-mesh view.
   - name: ledger
     description: The append-only work ledger and its projections (PRD §10).
   - name: reviews
@@ -579,6 +581,73 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/Error'
+
+  /v1alpha1/events:
+    get:
+      operationId: streamEvents
+      tags: [events]
+      summary: Server-Sent Events stream of committed events across runs.
+      description: >-
+        The cross-run companion to GET /v1alpha1/runs/{id}/events (task
+        t17): one SSE connection carrying committed events for every run in
+        the namespace, instead of one connection per run — the data source
+        for a live-mesh/board view that must not open one stream per
+        displayed run.
+
+        Scope: by default, only events belonging to an ACTIVE (non-terminal)
+        run, plus run-lifecycle events (run.created, run.completed,
+        run.failed, run.cancelled, run.bounded) for any run — so a
+        consumer sees runs appear and finish without being handed a
+        completed run's full internal history it never asked to watch. Pass
+        `runs` to override this default entirely and receive only events for
+        the listed run ids, active or not.
+
+        Containment (risk r1): this handler polls at twice the per-run
+        stream's interval, and each poll reads a bounded window of raw rows
+        (ordered by the events table's own id) before applying the
+        active-run/lifecycle filter — so one poll's cost never grows with
+        how much of the namespace's history is currently terminal. See
+        internal/api/events.go's handleStreamEvents for the full design
+        note, including the documented catch-up behavior under a filtered
+        backlog.
+
+        Resume by the events table's own id (a ULID, NOT the per-run
+        `sequence` a single run's stream resumes on — there is no one
+        sequence spanning multiple runs): send `Last-Event-ID` (a
+        previously received `id:` field) to resume after a disconnect, or
+        the `from` query parameter for a client that cannot set headers
+        before its first connection. Each frame is
+        `id: <ulid>\nevent: <type>\ndata: <envelope JSON>\n\n`. Ordering
+        promise: events are delivered in the order this control-plane
+        process committed them (ULID generation order within one process,
+        internal/store/ulid.go) — not a claim of a causally-ordered,
+        cross-process global sequence.
+      parameters:
+        - name: runs
+          in: query
+          description: >-
+            Comma-separated run ids. When present, overrides the default
+            active-runs+lifecycle scope: the stream reports only events for
+            exactly these run ids, active or not.
+          schema:
+            type: string
+        - name: Last-Event-ID
+          in: header
+          description: Resume after this event id (a ULID).
+          schema:
+            type: string
+        - name: from
+          in: query
+          description: Resume after this event id (a ULID), when a Last-Event-ID header cannot be set.
+          schema:
+            type: string
+      responses:
+        '200':
+          description: A `text/event-stream` of committed events across runs.
+          content:
+            text/event-stream:
+              schema:
+                type: string
 
   /v1alpha1/runs/{id}/ledger:
     get:

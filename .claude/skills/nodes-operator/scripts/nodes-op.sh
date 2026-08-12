@@ -34,13 +34,14 @@ usage: nodes-op.sh <verb> [args]
   cancel <id>                  cancel a run (reaps items, propagates actor Cancel)
   validate <file.yaml>         server-side compile check, prints digest
   publish <file.yaml>          validate + publish, prints digest
-  create <digest> <input.json> create a run (BILLABLE for agent nodes; needs --yes)
+  create <digest> <input.json> [--category C] create a run (BILLABLE for agent nodes; needs --yes)
   watch <id> [timeout-s]       poll a run to terminal, print outcomes + claims
   assign <actor> "<instruction>" [opts]   one-node workflow -> publish -> run -> watch
       opts: --sandbox read-only|workspace-write   (default read-only)
             --timeout DUR                          (default 15m)
             --retries N                            (default 1 — no auto-retry)
             --outcome NAME                         (default completed)
+            --category C                           (optional run category tag)
             --no-watch                             (create and return the run id)
             --yes                                  (required: this bills a session)
   actors                       registered actors (requires `ssh thor`)
@@ -147,12 +148,23 @@ import json,sys; d=json.load(sys.stdin)
 print(d.get("digest",""))'
   ;;
 create)
-  digest="${1:?usage: create <digest> <input.json> [--yes]}"; input="${2:?input json file}"
-  [ "${3:-}" = "--yes" ] && ASSUME_YES=1
+  digest="${1:?usage: create <digest> <input.json> [--category C] [--yes]}"; input="${2:?input json file}"; shift 2 || true
+  category=""
+  while [ $# -gt 0 ]; do
+    case "$1" in
+      --yes) ASSUME_YES=1; shift;;
+      --category) category="$2"; shift 2;;
+      *) echo "nodes-op: unknown create option $1" >&2; exit 1;;
+    esac
+  done
   need_yes
-  body=$(python3 - "$digest" "$input" <<'PYEOF'
+  body=$(python3 - "$digest" "$input" "$category" <<'PYEOF'
 import json, sys
-print(json.dumps({"workflow_digest": sys.argv[1], "input": json.load(open(sys.argv[2]))}))
+digest, input_path, category = sys.argv[1], sys.argv[2], sys.argv[3]
+body = {"workflow_digest": digest, "input": json.load(open(input_path))}
+if category:
+    body["category"] = category
+print(json.dumps(body))
 PYEOF
 )
   api_post /v1alpha1/runs "$body" | py 'import json,sys; d=json.load(sys.stdin); print(d["id"], d.get("state"))'
@@ -171,13 +183,14 @@ watch)
 assign)
   actor="${1:?usage: assign <codex-thor|codex-orin> \"instruction\" [opts]}"; shift
   instruction="${1:?assign needs an instruction}"; shift
-  sandbox=read-only; timeout=15m; retries=1; outcome=completed; watch=1
+  sandbox=read-only; timeout=15m; retries=1; outcome=completed; watch=1; category=""
   while [ $# -gt 0 ]; do
     case "$1" in
       --sandbox) sandbox="$2"; shift 2;;
       --timeout) timeout="$2"; shift 2;;
       --retries) retries="$2"; shift 2;;
       --outcome) outcome="$2"; shift 2;;
+      --category) category="$2"; shift 2;;
       --no-watch) watch=0; shift;;
       --yes) ASSUME_YES=1; shift;;
       *) echo "nodes-op: unknown assign option $1" >&2; exit 1;;
@@ -202,9 +215,13 @@ import json, sys
 print(json.dumps({"instruction": sys.argv[1], "sandbox": sys.argv[2],
                   "success_outcome": sys.argv[3], "repo": sys.argv[4]}))
 PYEOF
-  out=$(NODES_OP_YES=1 "$0" create "$digest" "$wf.json")
+  if [ -n "$category" ]; then
+    out=$(NODES_OP_YES=1 "$0" create "$digest" "$wf.json" --category "$category")
+  else
+    out=$(NODES_OP_YES=1 "$0" create "$digest" "$wf.json")
+  fi
   run_id=$(echo "$out" | awk '{print $1}')
-  echo "assigned: run=$run_id actor=$actor sandbox=$sandbox timeout=$timeout"
+  echo "assigned: run=$run_id actor=$actor sandbox=$sandbox timeout=$timeout${category:+ category=$category}"
   [ "$watch" = "1" ] && "$0" watch "$run_id"
   ;;
 actors)

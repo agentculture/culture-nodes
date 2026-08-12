@@ -37,7 +37,8 @@ Identity commands
 Product commands (thin API clients)
 ------------------------------------
   culture-nodes workflow validate|publish|list|get
-  culture-nodes run create|list|get|cancel|events
+  culture-nodes run create|list|get|cancel|events|retag
+  culture-nodes node-runs list
   culture-nodes ledger records|projection
   culture-nodes review create|commit
 
@@ -98,6 +99,14 @@ def _as_json_payload() -> dict[str, object]:
             {"path": ["run", "get"], "summary": "Fetch the Run-view payload."},
             {"path": ["run", "cancel"], "summary": "Cancel a run."},
             {"path": ["run", "events"], "summary": "Stream a run's committed events (SSE)."},
+            {
+                "path": ["run", "retag"],
+                "summary": "Retag a run's category (name/description immutable).",
+            },
+            {
+                "path": ["node-runs", "list"],
+                "summary": "List node runs across every run (jobs timeline).",
+            },
             {"path": ["ledger", "records"], "summary": "List a run's ledger records."},
             {"path": ["ledger", "projection"], "summary": "Compute a standard ledger projection."},
             {

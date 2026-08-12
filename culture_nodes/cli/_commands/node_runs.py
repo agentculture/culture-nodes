@@ -13,7 +13,12 @@ from __future__ import annotations
 import argparse
 
 from culture_nodes.api_client import API_PREFIX, add_api_url_argument, client_from_args
-from culture_nodes.cli._output import JSON_FLAG_HELP, emit_json_passthrough, emit_result
+from culture_nodes.cli._output import (
+    JSON_FLAG_HELP,
+    emit_json_passthrough,
+    emit_result,
+    format_usage_lines,
+)
 
 
 def cmd_node_runs_list(args: argparse.Namespace) -> int:
@@ -37,11 +42,15 @@ def cmd_node_runs_list(args: argparse.Namespace) -> int:
         if not items:
             emit_result("no node runs", json_mode=False)
         else:
-            lines = [
-                f"{item.get('id', '')}  {item.get('run_id', '')}  {item.get('node_id', '')}  "
-                f"{item.get('state', '')}  {item.get('updated_at', '')}"
-                for item in items
-            ]
+            lines = []
+            for item in items:
+                lines.append(
+                    f"{item.get('id', '')}  {item.get('run_id', '')}  {item.get('node_id', '')}  "
+                    f"{item.get('state', '')}  {item.get('updated_at', '')}"
+                )
+                usage = item.get("usage")
+                if isinstance(usage, dict):
+                    lines.extend(f"  {line}" for line in format_usage_lines(usage))
             next_cursor = payload.get("next_cursor")
             if next_cursor:
                 lines.append(f"next_cursor: {next_cursor}")

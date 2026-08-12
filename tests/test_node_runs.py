@@ -58,6 +58,58 @@ def test_node_runs_list_text_and_query(fake_api, capsys) -> None:
     }
 
 
+def test_node_runs_list_renders_usage_block(fake_api, capsys) -> None:
+    fake_api.route(
+        "GET",
+        r"/v1alpha1/node-runs",
+        lambda h, m, q, b: h.send_json(
+            200,
+            {
+                "items": [
+                    {
+                        "id": "nr-1",
+                        "run_id": "run-1",
+                        "node_id": "intake",
+                        "state": "completed",
+                        "updated_at": "t",
+                        "usage": {
+                            "input_tokens": 500,
+                            "output_tokens": 120,
+                            "cost": 0.05,
+                            "currency": "USD",
+                            "attempts_reported": 1,
+                            "attempts_not_reported": 0,
+                        },
+                    },
+                    {
+                        "id": "nr-2",
+                        "run_id": "run-2",
+                        "node_id": "verify",
+                        "state": "running",
+                        "updated_at": "t",
+                        "usage": {
+                            "input_tokens": 0,
+                            "output_tokens": 0,
+                            "attempts_reported": 0,
+                            "attempts_not_reported": 0,
+                        },
+                    },
+                ]
+            },
+        ),
+    )
+    fake_api.start()
+    rc = main(["node-runs", "list", "--api-url", fake_api.base_url])
+    out = capsys.readouterr().out
+    assert rc == 0
+    assert "usage.input_tokens: 500" in out
+    assert "usage.cost: 0.05 USD" in out
+    assert "usage.attempts_reported: 1" in out
+    # nr-2 reported no usage at all: real zeros render, never a fabricated cost.
+    assert "usage.input_tokens: 0" in out
+    assert "usage.attempts_not_reported: 0" in out
+
+
 def test_node_runs_list_no_items(fake_api, capsys) -> None:
     fake_api.route(
         "GET", r"/v1alpha1/node-runs", lambda h, m, q, b: h.send_json(200, {"items": []})

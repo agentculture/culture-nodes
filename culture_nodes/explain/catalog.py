@@ -32,7 +32,7 @@ response.
 ## Product verbs (thin API clients)
 
 - `culture-nodes workflow validate|publish|list|get`
-- `culture-nodes run create|list|get|cancel|events`
+- `culture-nodes run create|list|get|cancel|events|retag`
 - `culture-nodes node-runs list`
 - `culture-nodes ledger records|projection`
 - `culture-nodes review create|commit`
@@ -182,18 +182,52 @@ _RUN = """\
 # culture-nodes run
 
 Thin REST client over the runs API (`api/openapi/openapi.yaml`,
-`runs`/`events` tags): create, list, get, cancel, events. No engine logic
-lives here — every verb is one HTTP call to the Culture Nodes control-plane
-API.
+`runs`/`events` tags): create, list, get, cancel, events, retag. No engine
+logic lives here — every verb is one HTTP call to the Culture Nodes
+control-plane API.
 
 ## Usage
 
-    culture-nodes run create --workflow <digest> [--input <file>|--input -]
+    culture-nodes run create --workflow <digest> [--input <file>|--input -] \\
+        [--name TEXT] [--description TEXT] [--category TEXT]
     culture-nodes run list [--state STATE] [--updated-since RFC3339] \\
         [--updated-until RFC3339] [--sort created_at|updated_at] [--limit N]
     culture-nodes run get <id>
     culture-nodes run cancel <id>
     culture-nodes run events <id> [--follow]
+    culture-nodes run retag <id> --category TEXT
+
+## create
+
+`--name`/`--description`/`--category` are all optional (task t3). `--name`
+and `--description` are set once, at creation, and immutable afterward —
+there is no verb to change them. `--category` is the one field retaggable
+later, via `run retag`.
+
+## retag
+
+The only field PATCH /v1alpha1/runs/{id} accepts is `category` (frame
+decision q4) — `name`/`description` are immutable once a run is created.
+Pass `--category ""` to clear a run's category.
+
+## Rendering names, hints, and usage (text mode)
+
+`create`, `get`, and `retag` render a run's display name when one was given
+at creation. When no `name` was given, the API may supply `display_hint` — a
+truncated, best-effort GUESS derived at read time from the run's own input,
+never something an operator actually said — rendered as
+`name: <hint> (derived)` so it is never mistaken for a real name. `list`
+renders the same name-or-derived-hint per row.
+
+`create`, `get`, and `retag` also render the run's §13.2 usage/cost rollup
+(task t2) whenever the API includes a `usage` object: token totals and
+attempt-reporting counts (`usage.attempts_reported`/
+`usage.attempts_not_reported`) always render — they are required fields,
+genuinely zero when no attempt reported anything, not fabricated;
+`usage.cost`/`usage.cost_by_currency` render only when at least one attempt
+in scope actually reported a cost. `list` does NOT include usage (the API
+does not compute a per-row rollup for list responses); `node-runs list`
+does (see `culture-nodes explain node-runs`).
 
 ## list
 
@@ -248,6 +282,15 @@ the `node_runs` nested under one run's Run-view payload
 Pagination is a keyset cursor, not an offset: pass a response's
 `next_cursor` back as `--cursor` to fetch the next page. Its absence in the
 response means there is no further page.
+
+## Usage rendering (text mode)
+
+Every row always carries a §13.2 usage/cost rollup (task t2) — even a
+present-but-empty one for a node run with zero attempts — rendered indented
+beneath the row: token totals and attempt-reporting counts always render
+(required fields, honest zeros); `cost`/`cost_by_currency` render only when
+at least one attempt in scope reported a cost. See
+`culture-nodes explain run` for the same rendering on run-level usage.
 """
 
 _REVIEW = """\
@@ -323,6 +366,7 @@ ENTRIES: dict[tuple[str, ...], str] = {
     ("run", "get"): _RUN,
     ("run", "cancel"): _RUN,
     ("run", "events"): _RUN,
+    ("run", "retag"): _RUN,
     ("node-runs",): _NODE_RUNS,
     ("node-runs", "list"): _NODE_RUNS,
     ("ledger",): _LEDGER,

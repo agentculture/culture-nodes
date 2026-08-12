@@ -1,0 +1,127 @@
+# The standard post_run workspace-snapshot pattern (task t12, spec claim
+# c15, honesty condition h10), shown as a stand-alone, runnable example
+# rather than a unit-test fixture.
+#
+# `review` is an ordinary agent node with an ordinary post_run hook — a
+# policy-check operation a team might actually run (here: refusing to ship a
+# change that still contains a TODO marker). There is nothing
+# snapshot-specific about its authoring: the same `pre_run`/`post_run` shape
+# every hook uses (schemas/workflow/workflow.schema.json's #/$defs/
+# codeOperation), pinned to a digest, dispatched through the runner boundary
+# exactly like internal/worker/testdata/hooks.workflow.yaml's own post_run
+# hook.
+#
+# What makes it a "workspace-snapshot" hook is entirely on the worker side,
+# and applies to every hook a workflow declares, not just this one:
+# internal/worker/hooks.go's buildHookOperation asks the runner for a
+# workspace comparison on every hook dispatch (evidence.snapshot_before /
+# snapshot_after), pre_run and post_run alike. A runner that can honour that
+# request reports the changed files, a diff digest, and artifact refs on its
+# Result with observations.changed_paths measured; internal/runners/
+# dispatch.go's buildEvidence then surfaces those straight into the same
+# observed evidence record every other runner-measured fact lands in —
+# never through this node's own `ledger.propose` delta, because an agent
+# node can never declare `observe` at all (internal/compiler/ledger.go's
+# checkLedgerDelta — only a code node's own dispatch earns that authority).
+#
+# Today's shipped runners answer that request honestly rather than
+# fabricating it: headspace-cli 0.11.0 has no snapshot/diff verb
+# (internal/runners/headspace/doc.go says so explicitly) and the Lambda
+# adapter has no workspace to compare at all
+# (internal/runners/lambda/doc.go), so both report
+# observations.changed_paths unmeasured and this example's evidence carries
+# no changed_paths/snapshot_digest/artifact_refs field until a runner that
+# CAN compare workspaces is wired in — at which point this exact workflow,
+# unmodified, starts producing that evidence. internal/worker/hooks_test.go's
+# TestPostRunWorkspaceSnapshotEvidenceIsAppendedNotAgentDelta proves the
+# worker/ledger half of that claim against an in-process fake runner shaped
+# the way a snapshot-capable runner would answer.
+apiVersion: nodes.culture.dev/v1alpha1
+kind: Workflow
+
+metadata:
+  name: workspace-snapshot-hook
+  version: 1.0.0
+  ownerRef: team/platform-ai
+
+spec:
+  entry: review
+
+  contract:
+    input:
+      schema:
+        type: object
+        required: [instruction]
+        properties:
+          instruction:
+            type: string
+    output:
+      schema:
+        type: object
+
+  limits:
+    maxDuration: 1h
+    maxTransitions: 4
+    maxVisitsPerNode: 2
+    maxParallelTokens: 1
+
+  ledger:
+    schemaVersion: nodes.culture.dev/ledger/v1alpha1
+    maxRecordsPerNode: 10
+
+  nodes:
+    review:
+      kind: agent
+      ownerRef: team/platform-ai
+      uses: actor://company/developer@sha256:3333333333333333333333333333333333333333333333333333333333333333
+      input:
+        from: /run/input
+      contract:
+        outcomes:
+          completed:
+            schema:
+              type: object
+              required: [summary]
+              properties:
+                summary:
+                  type: string
+          changes_required:
+            schema:
+              type: object
+              required: [summary]
+      ledger:
+        propose: [claim, result]
+      policy:
+        timeout: 20m
+        retry:
+          maxAttempts: 2
+          backoff: exponential
+      # An ordinary post_run policy check — nothing about ITS authoring is
+      # snapshot-specific (see this file's header). A no-network, read-only
+      # pinned image that refuses a workspace still carrying a TODO marker.
+      post_run:
+        operation:
+          image: registry.example/policy-checks@sha256:6666666666666666666666666666666666666666666666666666666666666666
+          argv: [no-leftover-todos]
+          network: none
+          allowedOutputPaths: []
+        on_failure:
+          outcome: changes_required
+
+    finish:
+      kind: end
+      ownerRef: team/platform-ai
+      output:
+        from: /nodes/review/output
+
+    revise:
+      kind: end
+      ownerRef: team/platform-ai
+      output:
+        from: /nodes/review/output
+
+  edges:
+    - from: review.completed
+      to: finish
+    - from: review.changes_required
+      to: revise

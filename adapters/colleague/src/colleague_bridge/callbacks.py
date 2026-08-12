@@ -46,7 +46,9 @@ class CallbackEmitter:
     stream, not just the accepted subset.
     """
 
-    def __init__(self, callback_url: str, callback_token: str, task_id: str, cfg: CallbackConfig) -> None:
+    def __init__(
+        self, callback_url: str, callback_token: str, task_id: str, cfg: CallbackConfig
+    ) -> None:
         self._url = callback_url
         self._token = callback_token
         self._task_id = task_id
@@ -64,7 +66,9 @@ class CallbackEmitter:
         event_id, sequence = self.next_event_id_and_sequence()
         return self.resend(event_id, sequence, kind, payload)
 
-    def resend(self, event_id: str, sequence: int, kind: str, payload: dict[str, Any] | None) -> bool:
+    def resend(
+        self, event_id: str, sequence: int, kind: str, payload: dict[str, Any] | None
+    ) -> bool:
         """Deliver a specific (event_id, sequence, kind, payload) with retries.
 
         Split from `send` so a caller that must redeliver a KNOWN event
@@ -101,7 +105,9 @@ class CallbackEmitter:
             },
         )
         try:
-            with urllib.request.urlopen(req, timeout=self._cfg.timeout_seconds) as resp:  # noqa: S310
+            with urllib.request.urlopen(
+                req, timeout=self._cfg.timeout_seconds
+            ) as resp:  # noqa: S310
                 status = resp.status
                 resp.read()
                 return status, 200 <= status < 300

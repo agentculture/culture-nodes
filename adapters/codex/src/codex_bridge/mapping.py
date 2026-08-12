@@ -36,7 +36,7 @@ and `colleague_bridge`:
     {
       "measured": bool,
       "repo": str | None,
-      "reason": str | None,       # set iff measured is False
+      "reason": str | None,       # unmeasured reason, or partial-probe note while measured
       "branch": str | None,
       "head_before": str | None,  # git rev-parse HEAD, captured before dispatch
       "head_after": str | None,   # git rev-parse HEAD, captured after

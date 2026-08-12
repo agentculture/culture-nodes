@@ -82,7 +82,9 @@ def test_healthz(bridge_url):
 def test_missing_auth_is_401(bridge_url):
     base, cfg, repo = bridge_url
     status, body = _request(
-        base, server.INVOCATIONS_PATH, body=_invocation_body(str(repo)),
+        base,
+        server.INVOCATIONS_PATH,
+        body=_invocation_body(str(repo)),
         headers={"Idempotency-Key": "att_1"},
     )
     assert status == 401
@@ -92,13 +94,17 @@ def test_missing_auth_is_401(bridge_url):
 def test_wrong_auth_is_401(bridge_url):
     base, cfg, repo = bridge_url
     headers = {"Authorization": "Bearer wrong", "Idempotency-Key": "att_1"}
-    status, _body = _request(base, server.INVOCATIONS_PATH, body=_invocation_body(str(repo)), headers=headers)
+    status, _body = _request(
+        base, server.INVOCATIONS_PATH, body=_invocation_body(str(repo)), headers=headers
+    )
     assert status == 401
 
 
 def test_missing_idempotency_key_is_400(bridge_url):
     base, cfg, repo = bridge_url
-    status, body = _request(base, server.INVOCATIONS_PATH, body=_invocation_body(str(repo)), headers=_auth_header(cfg))
+    status, body = _request(
+        base, server.INVOCATIONS_PATH, body=_invocation_body(str(repo)), headers=_auth_header(cfg)
+    )
     assert status == 400
     assert "Idempotency-Key" in body["error"]
 
@@ -166,7 +172,9 @@ def test_sync_dispatch_maps_ok_result_to_200(bridge_url, monkeypatch):
     monkeypatch.setattr(colleague_cli, "run_sync", fake_run_sync)
 
     headers = {**_auth_header(cfg), "Idempotency-Key": "att_sync_ok"}
-    status, body = _request(base, server.INVOCATIONS_PATH, body=_invocation_body(str(repo)), headers=headers)
+    status, body = _request(
+        base, server.INVOCATIONS_PATH, body=_invocation_body(str(repo)), headers=headers
+    )
     assert status == 200
     assert body["outcome"] == "completed"
     assert body["output"]["summary"] == "did it"
@@ -174,33 +182,55 @@ def test_sync_dispatch_maps_ok_result_to_200(bridge_url, monkeypatch):
     assert body["ledger_delta"]["records"][0]["authority"] == "proposed"
 
 
-def test_sync_dispatch_maps_incomplete_without_declaration_to_execution_failure(bridge_url, monkeypatch):
+def test_sync_dispatch_maps_incomplete_without_declaration_to_execution_failure(
+    bridge_url, monkeypatch
+):
     base, cfg, repo = bridge_url
 
     def fake_run_sync(cfg_, instruction, repo_, *, role, max_steps, mode):
         return colleague_cli.SyncRunResult(
-            exit_code=2, stdout="", stderr="",
-            task_result={"task_id": "abc", "status": "incomplete", "summary": "partial", "changed_files": [], "usage": {}},
+            exit_code=2,
+            stdout="",
+            stderr="",
+            task_result={
+                "task_id": "abc",
+                "status": "incomplete",
+                "summary": "partial",
+                "changed_files": [],
+                "usage": {},
+            },
             timed_out=False,
         )
 
     monkeypatch.setattr(colleague_cli, "run_sync", fake_run_sync)
     headers = {**_auth_header(cfg), "Idempotency-Key": "att_sync_incomplete"}
-    status, body = _request(base, server.INVOCATIONS_PATH, body=_invocation_body(str(repo)), headers=headers)
+    status, body = _request(
+        base, server.INVOCATIONS_PATH, body=_invocation_body(str(repo)), headers=headers
+    )
     assert status != 200
     assert body.get("outcome") != "completed"
     assert body["class"] == "execution"
 
 
-def test_idempotent_replay_returns_the_same_response_without_recalling_colleague(bridge_url, monkeypatch):
+def test_idempotent_replay_returns_the_same_response_without_recalling_colleague(
+    bridge_url, monkeypatch
+):
     base, cfg, repo = bridge_url
     calls = []
 
     def fake_run_sync(cfg_, instruction, repo_, *, role, max_steps, mode):
         calls.append(instruction)
         return colleague_cli.SyncRunResult(
-            exit_code=0, stdout="", stderr="",
-            task_result={"task_id": "abc", "status": "ok", "summary": "did it", "changed_files": [], "usage": {}},
+            exit_code=0,
+            stdout="",
+            stderr="",
+            task_result={
+                "task_id": "abc",
+                "status": "ok",
+                "summary": "did it",
+                "changed_files": [],
+                "usage": {},
+            },
             timed_out=False,
         )
 
@@ -225,8 +255,16 @@ def test_validation_failure_is_not_cached_for_replay(bridge_url, monkeypatch):
 
     def fake_run_sync(cfg_, instruction, repo_, *, role, max_steps, mode):
         return colleague_cli.SyncRunResult(
-            exit_code=0, stdout="", stderr="",
-            task_result={"task_id": "abc", "status": "ok", "summary": "fixed", "changed_files": [], "usage": {}},
+            exit_code=0,
+            stdout="",
+            stderr="",
+            task_result={
+                "task_id": "abc",
+                "status": "ok",
+                "summary": "fixed",
+                "changed_files": [],
+                "usage": {},
+            },
             timed_out=False,
         )
 
@@ -241,14 +279,28 @@ def test_async_dispatch_returns_202_and_delivers_accepted_then_completed(bridge_
     base, cfg, repo = bridge_url
     receiver = FakeCallbackReceiver()
     try:
+
         def fake_spawn_background(cfg_, instruction, repo_, *, role, max_steps, mode):
-            return colleague_cli.BackgroundStart(handle_id="bg123", pid=999999, log_dir=".colleague/background/bg123/", flight="bg123")
+            return colleague_cli.BackgroundStart(
+                handle_id="bg123",
+                pid=999999,
+                log_dir=".colleague/background/bg123/",
+                flight="bg123",
+            )
 
         monkeypatch.setattr(colleague_cli, "spawn_background", fake_spawn_background)
         monkeypatch.setattr(colleague_cli, "is_pid_alive", lambda pid: False)
-        monkeypatch.setattr(colleague_cli, "read_background_result", lambda repo_, handle_id: {
-            "task_id": handle_id, "status": "ok", "summary": "async done", "changed_files": [], "usage": {}
-        })
+        monkeypatch.setattr(
+            colleague_cli,
+            "read_background_result",
+            lambda repo_, handle_id: {
+                "task_id": handle_id,
+                "status": "ok",
+                "summary": "async done",
+                "changed_files": [],
+                "usage": {},
+            },
+        )
 
         payload = _invocation_body(str(repo))
         payload["input"]["async"] = True
@@ -302,7 +354,10 @@ def test_async_dispatch_failure_is_503(bridge_url, monkeypatch):
 def test_cancel_unknown_invocation_still_answers_success(bridge_url):
     base, cfg, repo = bridge_url
     status, body = _request(
-        base, "/v1/invocations/no-such-id/cancel", body={"invocation_id": "no-such-id"}, headers=_auth_header(cfg)
+        base,
+        "/v1/invocations/no-such-id/cancel",
+        body={"invocation_id": "no-such-id"},
+        headers=_auth_header(cfg),
     )
     assert status == 202
     assert body["invocation_id"] == "no-such-id"
@@ -316,13 +371,25 @@ def test_cancel_requires_auth(bridge_url):
 
 def test_delete_alias_for_cancel(bridge_url):
     base, cfg, repo = bridge_url
-    status, body = _request(base, "/v1/invocations/x", method="DELETE", body={"invocation_id": "x"}, headers=_auth_header(cfg))
+    status, body = _request(
+        base,
+        "/v1/invocations/x",
+        method="DELETE",
+        body={"invocation_id": "x"},
+        headers=_auth_header(cfg),
+    )
     assert status == 202
     assert body["invocation_id"] == "x"
 
 
 def test_unauthenticated_bridge_allows_requests_without_a_token(tmp_path):
-    cfg = Config(repo_allowlist=(str(tmp_path),), state_dir=str(tmp_path / "state"), host="127.0.0.1", port=0, auth_token=None)
+    cfg = Config(
+        repo_allowlist=(str(tmp_path),),
+        state_dir=str(tmp_path / "state"),
+        host="127.0.0.1",
+        port=0,
+        auth_token=None,
+    )
     srv, thread = server.start_background(cfg)
     try:
         host, port = srv.server_address

@@ -31,7 +31,9 @@ def _request(base_url, path, *, method="POST", body=None, headers=None):
         return exc.code, json.loads(exc.read().decode("utf-8"))
 
 
-def _invocation_body(repo, *, instruction, run_id, attempt_id, callback_url, callback_token, **input_overrides):
+def _invocation_body(
+    repo, *, instruction, run_id, attempt_id, callback_url, callback_token, **input_overrides
+):
     input_payload = {"instruction": instruction, "repo": str(repo)}
     input_payload.update(input_overrides)
     return {
@@ -72,7 +74,9 @@ def _bridge(scratch_repo, colleague_bin, colleague_env, tmp_path, **overrides):
     return srv, cfg
 
 
-def test_sync_invocation_completes_with_mapped_output(scratch_repo, colleague_bin, colleague_env, tmp_path):
+def test_sync_invocation_completes_with_mapped_output(
+    scratch_repo, colleague_bin, colleague_env, tmp_path
+):
     srv, cfg = _bridge(scratch_repo, colleague_bin, colleague_env, tmp_path)
     try:
         host, port = srv.server_address
@@ -111,7 +115,9 @@ def test_sync_invocation_completes_with_mapped_output(scratch_repo, colleague_bi
         srv.server_close()
 
 
-def test_idempotent_replay_does_not_dispatch_colleague_twice(scratch_repo, colleague_bin, colleague_env, tmp_path):
+def test_idempotent_replay_does_not_dispatch_colleague_twice(
+    scratch_repo, colleague_bin, colleague_env, tmp_path
+):
     srv, cfg = _bridge(scratch_repo, colleague_bin, colleague_env, tmp_path)
     try:
         host, port = srv.server_address
@@ -129,15 +135,19 @@ def test_idempotent_replay_does_not_dispatch_colleague_twice(scratch_repo, colle
         status2, response2 = _request(base, server.INVOCATIONS_PATH, body=body, headers=headers)
         assert status1 == status2 == 200
         # Same task_id in the replayed claim record proves colleague ran once.
-        assert response1["ledger_delta"]["records"][0]["data"]["colleague_task_id"] == \
-            response2["ledger_delta"]["records"][0]["data"]["colleague_task_id"]
+        assert (
+            response1["ledger_delta"]["records"][0]["data"]["colleague_task_id"]
+            == response2["ledger_delta"]["records"][0]["data"]["colleague_task_id"]
+        )
         assert response1 == response2
     finally:
         srv.shutdown()
         srv.server_close()
 
 
-def test_async_invocation_202s_and_delivers_accepted_then_completed(scratch_repo, colleague_bin, colleague_env, tmp_path):
+def test_async_invocation_202s_and_delivers_accepted_then_completed(
+    scratch_repo, colleague_bin, colleague_env, tmp_path
+):
     srv, cfg = _bridge(scratch_repo, colleague_bin, colleague_env, tmp_path)
     receiver = FakeCallbackReceiver()
     try:
@@ -176,7 +186,9 @@ def test_async_invocation_202s_and_delivers_accepted_then_completed(scratch_repo
         srv.server_close()
 
 
-def test_cancellation_writes_the_flight_control_file(scratch_repo, colleague_bin, colleague_env, tmp_path):
+def test_cancellation_writes_the_flight_control_file(
+    scratch_repo, colleague_bin, colleague_env, tmp_path
+):
     srv, cfg = _bridge(scratch_repo, colleague_bin, colleague_env, tmp_path)
     receiver = FakeCallbackReceiver()
     try:
@@ -197,7 +209,8 @@ def test_cancellation_writes_the_flight_control_file(scratch_repo, colleague_bin
         invocation_id = accepted["invocation_id"]
 
         cancel_status, cancel_body = _request(
-            base, f"/v1/invocations/{invocation_id}/cancel",
+            base,
+            f"/v1/invocations/{invocation_id}/cancel",
             body={"invocation_id": invocation_id, "reason": "integration test"},
             headers={"Authorization": f"Bearer {cfg.auth_token}"},
         )
@@ -224,12 +237,17 @@ def test_cancellation_writes_the_flight_control_file(scratch_repo, colleague_bin
         srv.server_close()
 
 
-def test_repo_outside_allowlist_is_refused_before_any_dispatch(scratch_repo, colleague_bin, colleague_env, tmp_path):
+def test_repo_outside_allowlist_is_refused_before_any_dispatch(
+    scratch_repo, colleague_bin, colleague_env, tmp_path
+):
     srv, cfg = _bridge(scratch_repo, colleague_bin, colleague_env, tmp_path)
     try:
         host, port = srv.server_address
         base = f"http://{host}:{port}"
-        headers = {"Authorization": f"Bearer {cfg.auth_token}", "Idempotency-Key": "att_disallowed_it"}
+        headers = {
+            "Authorization": f"Bearer {cfg.auth_token}",
+            "Idempotency-Key": "att_disallowed_it",
+        }
         body = _invocation_body(
             "/etc",
             instruction="this must never run",

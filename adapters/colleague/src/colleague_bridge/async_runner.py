@@ -125,11 +125,16 @@ class AsyncRunner:
             logger.warning("writing cooperative stop for %s failed: %s", invocation_id, exc)
         return True
 
-    def _run(self, inv: AsyncInvocation, emitter: CallbackEmitter, heartbeat_after_seconds: int) -> None:
+    def _run(
+        self, inv: AsyncInvocation, emitter: CallbackEmitter, heartbeat_after_seconds: int
+    ) -> None:
         # 1. accepted, synchronously, before anything else can race a terminal event.
         emitter.send(
             "accepted",
-            {"invocation_id": inv.invocation_id, "heartbeat_after_seconds": heartbeat_after_seconds},
+            {
+                "invocation_id": inv.invocation_id,
+                "heartbeat_after_seconds": heartbeat_after_seconds,
+            },
         )
 
         result, detail = self._poll_until_done(inv, emitter, heartbeat_after_seconds)

@@ -20,7 +20,11 @@ from colleague_bridge.server import serve_forever
 
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(prog="colleague-bridge", description=__doc__)
-    parser.add_argument("--config", default=None, help="Path to a JSON config file (or set COLLEAGUE_BRIDGE_CONFIG).")
+    parser.add_argument(
+        "--config",
+        default=None,
+        help="Path to a JSON config file (or set COLLEAGUE_BRIDGE_CONFIG).",
+    )
     parser.add_argument("--host", default=None, help="Override the bind host.")
     parser.add_argument("--port", type=int, default=None, help="Override the bind port.")
     parser.add_argument("-v", "--verbose", action="store_true", help="Enable debug logging.")

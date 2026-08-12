@@ -29,7 +29,7 @@ bracketing the session) and simply passed through by the
     {
       "measured": bool,
       "repo": str | None,
-      "reason": str | None,       # set iff measured is False
+      "reason": str | None,       # unmeasured reason, or partial-probe note while measured
       "branch": str | None,
       "head_before": str | None,  # git rev-parse HEAD, captured before dispatch
       "head_after": str | None,   # git rev-parse HEAD, captured after
@@ -46,7 +46,7 @@ a real measurement.
 
 from __future__ import annotations
 
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from typing import Any
 
 #: colleague contract v1 status values (docs/contract.md "Exit-code
@@ -104,7 +104,9 @@ class Classification:
     error_class: str | None = None
 
 
-def classify(task_result: dict[str, Any] | None, ctx: InvocationContext, *, default_success_outcome: str) -> Classification:
+def classify(
+    task_result: dict[str, Any] | None, ctx: InvocationContext, *, default_success_outcome: str
+) -> Classification:
     """Decide what *task_result* means, independent of sync vs async.
 
     *task_result* is `None` when the colleague subprocess produced no
@@ -294,7 +296,11 @@ def sync_response(
         body={
             "outcome": classification.outcome,
             "output": output_from_task_result(task_result),
-            "ledger_delta": {"records": [claim_record(task_result, ctx, actor_id=actor_id, created_at=created_at)]},
+            "ledger_delta": {
+                "records": [
+                    claim_record(task_result, ctx, actor_id=actor_id, created_at=created_at)
+                ]
+            },
             "artifact_refs": [],
             "continuation_ref": None,
             "usage": usage_from_task_result(task_result),
@@ -359,7 +365,11 @@ def terminal_event(
         payload={
             "outcome": classification.outcome,
             "output": output_from_task_result(task_result),
-            "ledger_delta": {"records": [claim_record(task_result, ctx, actor_id=actor_id, created_at=created_at)]},
+            "ledger_delta": {
+                "records": [
+                    claim_record(task_result, ctx, actor_id=actor_id, created_at=created_at)
+                ]
+            },
             "artifact_refs": [],
             "usage": usage_from_task_result(task_result),
             "workspace_measured": measured,

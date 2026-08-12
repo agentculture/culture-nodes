@@ -202,3 +202,34 @@ def test_unmeasured_shape_matches_a_degraded_measure(tmp_path):
         "changed_files",
         "diffstat",
     }
+
+
+def test_vanished_workspace_degrades_to_unmeasured_after_begin(tmp_path):
+    """A repo that disappears mid-session must not report measured facts:
+    the post-session HEAD probe is the anchor — when it fails, the block
+    degrades to the honest unmeasured shape with a reason, never
+    `measured: True` with silent nulls."""
+    import shutil
+    import subprocess
+
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    subprocess.run(["git", "init", "-q"], cwd=repo, check=True)
+    (repo / "f.txt").write_text("hello\n")
+    subprocess.run(["git", "add", "."], cwd=repo, check=True)
+    subprocess.run(
+        ["git", "-c", "user.email=t@t", "-c", "user.name=t", "commit", "-qm", "c1"],
+        cwd=repo,
+        check=True,
+    )
+
+    handle = workspace.begin(str(repo))
+    assert handle.available is True
+
+    shutil.rmtree(repo)
+
+    block = workspace.measure(handle)
+    assert block["measured"] is False
+    assert block["reason"] is not None and "HEAD" in block["reason"]
+    assert block["head_after"] is None
+    assert block["changed_files"] == []

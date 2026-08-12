@@ -85,7 +85,9 @@ def decide_async(cfg: Config, *, force_async: bool | None, max_steps: int | None
 
 
 class BridgeHTTPServer(HTTPServer):
-    def __init__(self, address: tuple[str, int], handler_cls: type[BaseHTTPRequestHandler], bridge: Bridge) -> None:
+    def __init__(
+        self, address: tuple[str, int], handler_cls: type[BaseHTTPRequestHandler], bridge: Bridge
+    ) -> None:
         super().__init__(address, handler_cls)
         self.bridge = bridge
 
@@ -128,15 +130,30 @@ class Handler(BaseHTTPRequestHandler):
     def _read_json_body(self) -> dict[str, Any] | None:
         raw = self._read_raw_body()
         if not raw:
-            self._write_json(400, {"error": "request body is required", "class": mapping.CLASS_ACTOR_REJECTED_INPUT})
+            self._write_json(
+                400,
+                {"error": "request body is required", "class": mapping.CLASS_ACTOR_REJECTED_INPUT},
+            )
             return None
         try:
             data = json.loads(raw)
         except ValueError:
-            self._write_json(400, {"error": "request body is not valid JSON", "class": mapping.CLASS_ACTOR_REJECTED_INPUT})
+            self._write_json(
+                400,
+                {
+                    "error": "request body is not valid JSON",
+                    "class": mapping.CLASS_ACTOR_REJECTED_INPUT,
+                },
+            )
             return None
         if not isinstance(data, dict):
-            self._write_json(400, {"error": "request body must be a JSON object", "class": mapping.CLASS_ACTOR_REJECTED_INPUT})
+            self._write_json(
+                400,
+                {
+                    "error": "request body must be a JSON object",
+                    "class": mapping.CLASS_ACTOR_REJECTED_INPUT,
+                },
+            )
             return None
         return data
 
@@ -145,11 +162,13 @@ class Handler(BaseHTTPRequestHandler):
         if not token:
             return True
         header = self.headers.get("Authorization", "")
-        presented = header[len("Bearer "):] if header.startswith("Bearer ") else ""
+        presented = header[len("Bearer ") :] if header.startswith("Bearer ") else ""
         if hmac.compare_digest(presented, token):
             return True
         self._drain_body()
-        self._write_json(401, {"error": "a scoped workload token is required", "class": "auth_or_policy"})
+        self._write_json(
+            401, {"error": "a scoped workload token is required", "class": "auth_or_policy"}
+        )
         return False
 
     # -- HTTP verbs --------------------------------------------------------
@@ -173,7 +192,9 @@ class Handler(BaseHTTPRequestHandler):
             self._write_json(404, {"error": "not found"})
         except Exception:  # noqa: BLE001 - the server must answer, never crash
             logger.exception("unhandled error handling POST %s", self.path)
-            self._write_json(500, {"error": "internal bridge error", "class": mapping.CLASS_EXECUTION})
+            self._write_json(
+                500, {"error": "internal bridge error", "class": mapping.CLASS_EXECUTION}
+            )
 
     def do_DELETE(self) -> None:  # noqa: N802 - stdlib naming
         try:
@@ -185,7 +206,9 @@ class Handler(BaseHTTPRequestHandler):
             self._write_json(404, {"error": "not found"})
         except Exception:  # noqa: BLE001 - the server must answer, never crash
             logger.exception("unhandled error handling DELETE %s", self.path)
-            self._write_json(500, {"error": "internal bridge error", "class": mapping.CLASS_EXECUTION})
+            self._write_json(
+                500, {"error": "internal bridge error", "class": mapping.CLASS_EXECUTION}
+            )
 
     # -- route bodies --------------------------------------------------------
 
@@ -210,7 +233,10 @@ class Handler(BaseHTTPRequestHandler):
             self._drain_body()
             self._write_json(
                 400,
-                {"error": "Idempotency-Key header is required", "class": mapping.CLASS_ACTOR_REJECTED_INPUT},
+                {
+                    "error": "Idempotency-Key header is required",
+                    "class": mapping.CLASS_ACTOR_REJECTED_INPUT,
+                },
             )
             return
 
@@ -228,7 +254,10 @@ class Handler(BaseHTTPRequestHandler):
             self._write_json(
                 400,
                 {
-                    "error": f"protocol_version {body.get('protocol_version')!r} is not supported; this bridge speaks 1.0",
+                    "error": (
+                        f"protocol_version {body.get('protocol_version')!r}"
+                        " is not supported; this bridge speaks 1.0"
+                    ),
                     "class": mapping.CLASS_ACTOR_REJECTED_INPUT,
                 },
             )
@@ -241,18 +270,27 @@ class Handler(BaseHTTPRequestHandler):
         if not isinstance(instruction, str) or not instruction.strip():
             self._write_json(
                 400,
-                {"error": "input.instruction is required and must be a non-empty string", "class": mapping.CLASS_ACTOR_REJECTED_INPUT},
+                {
+                    "error": "input.instruction is required and must be a non-empty string",
+                    "class": mapping.CLASS_ACTOR_REJECTED_INPUT,
+                },
             )
             return
 
         repo = raw_input.get("repo")
         if not isinstance(repo, str) or not repo.strip():
-            self._write_json(400, {"error": "input.repo is required", "class": mapping.CLASS_ACTOR_REJECTED_INPUT})
+            self._write_json(
+                400,
+                {"error": "input.repo is required", "class": mapping.CLASS_ACTOR_REJECTED_INPUT},
+            )
             return
         if not cfg.repo_allowed(repo):
             self._write_json(
                 403,
-                {"error": f"repo {repo!r} is not in this bridge's configured allowlist", "class": "auth_or_policy"},
+                {
+                    "error": f"repo {repo!r} is not in this bridge's configured allowlist",
+                    "class": "auth_or_policy",
+                },
             )
             return
         resolved_repo = str(Path(repo).expanduser().resolve())
@@ -269,13 +307,27 @@ class Handler(BaseHTTPRequestHandler):
             return
 
         max_steps = raw_input.get("max_steps")
-        if max_steps is not None and (isinstance(max_steps, bool) or not isinstance(max_steps, int)):
-            self._write_json(400, {"error": "input.max_steps must be an integer", "class": mapping.CLASS_ACTOR_REJECTED_INPUT})
+        if max_steps is not None and (
+            isinstance(max_steps, bool) or not isinstance(max_steps, int)
+        ):
+            self._write_json(
+                400,
+                {
+                    "error": "input.max_steps must be an integer",
+                    "class": mapping.CLASS_ACTOR_REJECTED_INPUT,
+                },
+            )
             return
 
         force_async = raw_input.get("async")
         if force_async is not None and not isinstance(force_async, bool):
-            self._write_json(400, {"error": "input.async must be a boolean", "class": mapping.CLASS_ACTOR_REJECTED_INPUT})
+            self._write_json(
+                400,
+                {
+                    "error": "input.async must be a boolean",
+                    "class": mapping.CLASS_ACTOR_REJECTED_INPUT,
+                },
+            )
             return
 
         mode = raw_input.get("mode") or None
@@ -291,7 +343,9 @@ class Handler(BaseHTTPRequestHandler):
         )
 
         if decide_async(cfg, force_async=force_async, max_steps=max_steps):
-            self._dispatch_async(idem_key, body, ctx, instruction, resolved_repo, role, max_steps, mode)
+            self._dispatch_async(
+                idem_key, body, ctx, instruction, resolved_repo, role, max_steps, mode
+            )
             return
 
         self._dispatch_sync(idem_key, ctx, instruction, resolved_repo, role, max_steps, mode)
@@ -311,7 +365,9 @@ class Handler(BaseHTTPRequestHandler):
         # to the moment colleague is actually spawned, so head_before/status
         # bracket the session rather than the whole request-handling ladder.
         handle = workspace.begin(repo)
-        result = colleague_cli.run_sync(cfg, instruction, repo, role=role, max_steps=max_steps, mode=mode)
+        result = colleague_cli.run_sync(
+            cfg, instruction, repo, role=role, max_steps=max_steps, mode=mode
+        )
         response = mapping.sync_response(
             result.task_result,
             ctx,
@@ -327,7 +383,9 @@ class Handler(BaseHTTPRequestHandler):
         # validation refusal (400/403/401, above) is deliberately NOT cached:
         # no side effect occurred, so a corrected retry with the same key
         # must be free to proceed.
-        self.bridge.idempotency.put(idem_key, response.status_code, response.body, request_fingerprint=instruction)
+        self.bridge.idempotency.put(
+            idem_key, response.status_code, response.body, request_fingerprint=instruction
+        )
         self._write_json(response.status_code, response.body)
 
     def _dispatch_async(
@@ -359,11 +417,17 @@ class Handler(BaseHTTPRequestHandler):
         # detached colleague subprocess is spawned.
         handle = workspace.begin(repo)
         try:
-            start = colleague_cli.spawn_background(cfg, instruction, repo, role=role, max_steps=max_steps, mode=mode)
+            start = colleague_cli.spawn_background(
+                cfg, instruction, repo, role=role, max_steps=max_steps, mode=mode
+            )
         except colleague_cli.BackgroundDispatchError as exc:
             self._write_json(
                 503,
-                {"error": str(exc), "class": "actor_unavailable", "detail": (exc.stderr or "")[-2000:]},
+                {
+                    "error": str(exc),
+                    "class": "actor_unavailable",
+                    "detail": (exc.stderr or "")[-2000:],
+                },
             )
             return
 
@@ -398,8 +462,7 @@ def _refuse_unauthenticated_exposure(cfg: Config) -> None:
         return
     if os.environ.get("COLLEAGUE_BRIDGE_ALLOW_UNAUTHENTICATED") == "1":
         logger.warning(
-            "serving on %s WITHOUT authentication "
-            "(COLLEAGUE_BRIDGE_ALLOW_UNAUTHENTICATED=1)",
+            "serving on %s WITHOUT authentication " "(COLLEAGUE_BRIDGE_ALLOW_UNAUTHENTICATED=1)",
             cfg.host,
         )
         return
@@ -439,8 +502,10 @@ def start_background(cfg: Config) -> tuple[BridgeHTTPServer, threading.Thread]:
     # fixed delay; harmless in production (it only affects how promptly a
     # shutdown request is noticed, not steady-state request latency).
     thread = threading.Thread(
-        target=server.serve_forever, kwargs={"poll_interval": 0.05},
-        name="colleague-bridge-http", daemon=True,
+        target=server.serve_forever,
+        kwargs={"poll_interval": 0.05},
+        name="colleague-bridge-http",
+        daemon=True,
     )
     thread.start()
     return server, thread

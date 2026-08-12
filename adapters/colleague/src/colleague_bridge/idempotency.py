@@ -72,7 +72,9 @@ class IdempotencyStore:
                 request_fingerprint=str(data.get("request_fingerprint", "")),
             )
 
-    def put(self, key: str, status_code: int, body: dict[str, Any], *, request_fingerprint: str = "") -> None:
+    def put(
+        self, key: str, status_code: int, body: dict[str, Any], *, request_fingerprint: str = ""
+    ) -> None:
         """Record the response for *key*. Overwrites any prior record for the
         same key (a caller that wants "first write wins" should `get` first).
         Written atomically (temp file + rename) so a crash mid-write never
@@ -81,7 +83,11 @@ class IdempotencyStore:
         with self._lock:
             path = self._path(key)
             payload = json.dumps(
-                {"status_code": status_code, "body": body, "request_fingerprint": request_fingerprint}
+                {
+                    "status_code": status_code,
+                    "body": body,
+                    "request_fingerprint": request_fingerprint,
+                }
             )
             tmp = path.with_suffix(".tmp")
             tmp.write_text(payload, encoding="utf-8")

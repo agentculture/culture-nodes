@@ -146,6 +146,15 @@ def measure(handle: WorkspaceHandle) -> dict[str, Any]:
 
     branch = _git_stdout(handle.repo, "rev-parse", "--abbrev-ref", "HEAD")
     head_after = _git_stdout(handle.repo, "rev-parse", "HEAD")
+    if head_after is None:
+        # The anchor probe failed — the workspace vanished or broke
+        # mid-session. Degrade to the unmeasured shape rather than report
+        # measured facts we no longer have an endpoint for.
+        return unmeasured(
+            handle.repo,
+            "HEAD could not be resolved after the session"
+            " (workspace vanished or corrupted mid-session)",
+        )
     status = _git_stdout(handle.repo, "status", "--porcelain")
     diffstat = _git_stdout(handle.repo, "diff", "--stat", handle.head_before)
     names = _git_stdout(handle.repo, "diff", "--name-only", handle.head_before)
@@ -160,13 +169,21 @@ def measure(handle: WorkspaceHandle) -> dict[str, Any]:
                 if untracked and untracked not in changed:
                     changed.append(untracked)
 
+    partial: list[str] = []
+    if status is None:
+        partial.append("git status failed")
+    if diffstat is None:
+        partial.append("diffstat against the starting point failed")
+    if names is None:
+        partial.append("changed-file listing against the starting point failed")
+
     return {
         "measured": True,
         "repo": handle.repo,
-        "reason": None,
+        "reason": "; ".join(partial) if partial else None,
         "branch": branch.strip() if branch is not None else None,
         "head_before": handle.head_before,
-        "head_after": head_after.strip() if head_after is not None else None,
+        "head_after": head_after.strip(),
         "status_porcelain": status if status is not None else None,
         "changed_files": changed,
         "diffstat": diffstat.strip() if diffstat is not None else None,

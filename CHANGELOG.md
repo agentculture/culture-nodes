@@ -64,7 +64,7 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   snapshot digest, artifact refs in NodeDetailPanel, evidence markers on the
   run canvas/table (spec t11, #13 item 4)
 - Cross-run events surface: `GET /v1alpha1/events` — SSE across active runs
-  + run-lifecycle events, bounded polling with documented catch-up, honest
+  plus run-lifecycle events, bounded polling with documented catch-up, honest
   ULID-cursor resume semantics, expand-only index migration 0014 (spec t17)
 - Web: the live-mesh overview (`/mesh`) — the control plane breathing at the
   center, actors orbiting kind-differentiated, active runs as embers, every

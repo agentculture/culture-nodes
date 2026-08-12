@@ -308,6 +308,42 @@
   color: var(--ink-soft);
 }
 
+/* ---------- usage summary (task t5, honesty condition h27) ---------- */
+
+/* Token counts are the primary figure everywhere this renders; cost is
+   secondary, muted text that only appears when the API actually reported
+   one — never derived from the token counts (c35). */
+.usage-summary {
+  display: inline-flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 0.4rem;
+  font-size: var(--ac-type-ui);
+}
+
+.usage-summary--compact {
+  font-size: var(--ac-type-micro);
+  gap: 0.3rem;
+}
+
+.usage-summary__tokens {
+  font-family: var(--font-mono);
+  color: var(--ink);
+}
+
+.usage-summary__cost,
+.usage-summary__partial {
+  color: var(--ink-soft);
+  font-size: var(--ac-type-micro);
+}
+
+/* Not "0 tokens" — a distinct, explicit state for attempts_reported === 0,
+   so absent usage is never mistaken for a reported zero. */
+.usage-summary--not-reported {
+  color: var(--ink-soft);
+  font-style: italic;
+}
+
 /* ---------- run view ---------- */
 
 .run-view__head {
@@ -329,9 +365,20 @@
   color: var(--ink-soft);
 }
 
+.run-view__run-name {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  margin: 0.1rem 0 0.2rem;
+}
+
 .run-view__sub {
   font-size: var(--ac-type-meta);
   margin-bottom: 0;
+}
+
+.run-view__usage {
+  margin: 0.35rem 0 0;
 }
 
 .run-view__state {
@@ -642,6 +689,49 @@
 .run-card__updated {
   font-size: var(--ac-type-micro);
   color: var(--ink-soft);
+}
+
+/* task t5: the run's given name/description or a derived display_hint,
+   shown above the run id once one exists — RunCard, RunsList, JobsTable,
+   and the Run view header all reuse this pair. */
+.run-card__name-row {
+  margin: 0.1rem 0 0.15rem;
+}
+
+.run-name {
+  font-family: var(--font-display);
+  font-optical-sizing: auto;
+  font-weight: 500;
+  font-size: var(--ac-type-ui);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  display: inline-block;
+  max-width: 100%;
+}
+
+/* A display_hint is a derived GUESS, never something an operator actually
+   said (openapi.yaml's Run.display_hint) — muted style + italics, distinct
+   from a given name at a glance, never colour alone (it also carries a
+   `title` attribute and a `data-derived="true"` hook). */
+.run-name--derived {
+  color: var(--ink-soft);
+  font-style: italic;
+  font-weight: 400;
+}
+
+/* task t3/t5: a run's flat category tag, rendered as a small chip wherever
+   the run's name/hint shows. */
+.category-chip {
+  display: inline-flex;
+  align-items: center;
+  border-radius: 999px;
+  border: 1px solid var(--line);
+  padding: 0.05rem 0.5rem;
+  font-size: var(--ac-type-micro);
+  letter-spacing: var(--ac-tracking-flat);
+  color: var(--ink-soft);
+  white-space: nowrap;
 }
 
 /* --- run-state overlays, the Run.state equivalent of the node-card ones --- */

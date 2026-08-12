@@ -1,15 +1,24 @@
 import { useEffect, useRef, type KeyboardEvent } from "react";
-import type { LedgerRecord } from "../api/types";
+import type { LedgerRecord, Usage } from "../api/types";
 import type { GraphNode } from "../domain/graph";
 import { NODE_STATE_LABEL, type NodeExecution } from "../domain/run-state";
 import AuthorityChip from "./AuthorityChip";
 import StatusChip from "./StatusChip";
+import UsageSummary from "./UsageSummary";
 
 export interface NodeDetailPanelProps {
   node: GraphNode;
   execution: NodeExecution;
   ledger: LedgerRecord[];
   onClose: () => void;
+  /**
+   * This node's usage/cost rollup (task t2/t5), merged across every one of
+   * its node runs (a loop revisits a node more than once). `undefined` —
+   * distinct from a `Usage` with `attempts_reported: 0` — means the
+   * best-effort node-runs join (useRunData.ts) found no entry at all for
+   * this node run, an honest "not available" rather than "not reported".
+   */
+  usage?: Usage;
 }
 
 function clockTime(iso: string): string {
@@ -39,6 +48,7 @@ export function NodeDetailPanel({
   execution,
   ledger,
   onClose,
+  usage,
 }: NodeDetailPanelProps) {
   const panelRef = useRef<HTMLElement>(null);
 
@@ -179,6 +189,15 @@ export function NodeDetailPanel({
             </tbody>
           </table>
         </div>
+      )}
+
+      <h3>Usage</h3>
+      {usage ? (
+        <UsageSummary usage={usage} id="node-detail-usage" />
+      ) : (
+        <p className="muted" id="node-detail-usage-unavailable">
+          Usage data is not available for this node run.
+        </p>
       )}
 
       <h3>Ledger delta</h3>

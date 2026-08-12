@@ -19,8 +19,10 @@
 import type {
   LedgerRecord,
   LedgerRecords,
+  NodeRunListItem,
   RunEvent,
   RunView,
+  Usage,
   WorkflowIR,
   WorkflowVersion,
 } from "../api/types";
@@ -132,6 +134,22 @@ export const WORKFLOW_VERSION: WorkflowVersion = {
 const t = (minute: number, second = 0) =>
   `2026-08-09T09:${String(minute).padStart(2, "0")}:${String(second).padStart(2, "0")}Z`;
 
+/**
+ * The run-wide §13.2 usage rollup (task t2/t5): the sum of the five
+ * *completed* attempts' reported usage (intake, plan, build-1, test,
+ * verify) — the sixth, still-`dispatched` attempt (build-2) has not
+ * completed and so is neither reported nor not-reported yet, matching the
+ * NODE_RUN_USAGE per-attempt figures below.
+ */
+export const RUN_USAGE: Usage = {
+  input_tokens: 14900,
+  output_tokens: 4600,
+  cost: 0.93,
+  currency: "USD",
+  attempts_reported: 5,
+  attempts_not_reported: 0,
+};
+
 export const RUN_VIEW: RunView = {
   run: {
     id: RUN_ID,
@@ -140,6 +158,9 @@ export const RUN_VIEW: RunView = {
     input: { title: "add the ledger projection endpoint" },
     created_at: t(0),
     updated_at: t(31),
+    name: "deliver the ledger projection endpoint",
+    category: "delivery",
+    usage: RUN_USAGE,
   },
   tokens: [
     { id: "tok-1", node_id: "intake", state: "consumed", created_at: t(0), consumed_at: t(3) },
@@ -277,6 +298,124 @@ export const RUN_VIEW: RunView = {
     },
   ],
 };
+
+/**
+ * `GET /v1alpha1/node-runs` (task t11/t2), the flat listing useRunData.ts
+ * best-effort joins back onto RUN_VIEW's node runs by id to recover
+ * per-node-run usage (NodeRun, nested under RunView, carries no `usage`
+ * field of its own — see openapi.yaml). One entry per RUN_VIEW.node_runs
+ * row; `nr-build-2` (the still-`dispatched` attempt) is deliberately
+ * `attempts_reported: 0` so the RunView e2e spec can assert the
+ * not-reported state renders honestly, merged alongside `nr-build-1`'s
+ * reported figures, for the "build" node's detail panel.
+ */
+export const NODE_RUN_USAGE_ITEMS: NodeRunListItem[] = [
+  {
+    id: "nr-intake",
+    run_id: RUN_ID,
+    node_id: "intake",
+    actor_id: "actor://company/intake",
+    state: "completed",
+    outcome: "completed",
+    created_at: t(0),
+    updated_at: t(3),
+    completed_at: t(3),
+    usage: {
+      input_tokens: 1200,
+      output_tokens: 300,
+      attempts_reported: 1,
+      attempts_not_reported: 0,
+    },
+  },
+  {
+    id: "nr-plan",
+    run_id: RUN_ID,
+    node_id: "plan",
+    actor_id: "actor://company/planner",
+    state: "completed",
+    outcome: "completed",
+    created_at: t(3),
+    updated_at: t(9),
+    completed_at: t(9),
+    usage: {
+      input_tokens: 3600,
+      output_tokens: 900,
+      attempts_reported: 1,
+      attempts_not_reported: 0,
+    },
+  },
+  {
+    id: "nr-build-1",
+    run_id: RUN_ID,
+    node_id: "build",
+    actor_id: "actor://company/developer",
+    state: "completed",
+    outcome: "completed",
+    created_at: t(9),
+    updated_at: t(18),
+    completed_at: t(18),
+    usage: {
+      input_tokens: 5200,
+      output_tokens: 1800,
+      cost: 0.52,
+      currency: "USD",
+      attempts_reported: 1,
+      attempts_not_reported: 0,
+    },
+  },
+  {
+    id: "nr-test",
+    run_id: RUN_ID,
+    node_id: "test",
+    actor_id: "runner://headspace/docker",
+    state: "completed",
+    outcome: "passed",
+    created_at: t(18),
+    updated_at: t(24),
+    completed_at: t(24),
+    usage: {
+      input_tokens: 800,
+      output_tokens: 200,
+      attempts_reported: 1,
+      attempts_not_reported: 0,
+    },
+  },
+  {
+    id: "nr-verify",
+    run_id: RUN_ID,
+    node_id: "verify",
+    actor_id: "actor://company/verifier",
+    state: "completed",
+    outcome: "changes_required",
+    created_at: t(24),
+    updated_at: t(30),
+    completed_at: t(30),
+    usage: {
+      input_tokens: 4100,
+      output_tokens: 1400,
+      cost: 0.41,
+      currency: "USD",
+      attempts_reported: 1,
+      attempts_not_reported: 0,
+    },
+  },
+  {
+    id: "nr-build-2",
+    run_id: RUN_ID,
+    node_id: "build",
+    actor_id: "actor://company/developer",
+    state: "running",
+    created_at: t(30),
+    updated_at: t(31),
+    // Still in flight: no usage block has been reported yet.
+    usage: {
+      input_tokens: 0,
+      output_tokens: 0,
+      attempts_reported: 0,
+      attempts_not_reported: 1,
+    },
+  },
+];
 
 let sequence = 0;
 function event(

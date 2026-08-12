@@ -1,6 +1,8 @@
 import { Link } from "react-router-dom";
 import type { Run } from "../api/types";
 import { formatRelativeTime, RUN_STATE_ACCENT_VAR } from "../domain/run-board";
+import { runDisplayName } from "../domain/usage";
+import CategoryChip from "./CategoryChip";
 import RunStateChip from "./RunStateChip";
 
 export interface RunCardProps {
@@ -44,6 +46,12 @@ export function RunCard({ run, reducedMotion = false, now }: RunCardProps) {
     .filter(Boolean)
     .join(" ");
   const label = `run ${run.id}, ${run.state}, updated ${relative}`;
+  const display = runDisplayName(run);
+  // Only when name/hint gives something the raw id doesn't already show —
+  // for an unnamed run, `run-card__id` below is the id and nothing here
+  // duplicates it (RunsBoard/RunCard tests assert that shortened id text
+  // renders exactly once).
+  const hasNameOrHint = Boolean(run.name || run.display_hint);
 
   return (
     <Link
@@ -59,7 +67,23 @@ export function RunCard({ run, reducedMotion = false, now }: RunCardProps) {
         <span className="run-card__dot" aria-hidden="true" />
         <span className="run-card__id">{shortRunId(run.id)}</span>
       </div>
+      {hasNameOrHint ? (
+        <div className="run-card__name-row">
+          <span
+            className={`run-name${display.derived ? " run-name--derived" : ""}`}
+            data-derived={display.derived ? "true" : "false"}
+            title={
+              display.derived
+                ? `derived guess, not a given name: "${display.text}"`
+                : display.text
+            }
+          >
+            {display.text}
+          </span>
+        </div>
+      ) : null}
       <div className="run-card__meta">
+        {run.category ? <CategoryChip category={run.category} /> : null}
         <code className="run-card__workflow" title={run.workflow_digest}>
           {shortDigest(run.workflow_digest)}
         </code>

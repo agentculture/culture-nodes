@@ -1,11 +1,12 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { render, screen, waitFor } from "@testing-library/react";
+import { render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { MemoryRouter, useLocation } from "react-router-dom";
 import JobsTimeline from "./JobsTimeline";
-import { ApiError, listNodeRuns } from "../api/client";
+import { ApiError, listNodeRuns, listRuns } from "../api/client";
 import {
   JOB_RUNS_CURSOR,
+  JOB_RUNS_NAMED_RUNS,
   JOB_RUNS_PAGE_1,
   JOB_RUNS_PAGE_2,
 } from "../fixtures/node-runs-fixture";
@@ -13,10 +14,11 @@ import { getAgentState, resetAgentState } from "../agent-state/store";
 
 vi.mock("../api/client", async (importOriginal) => {
   const actual = await importOriginal<typeof import("../api/client")>();
-  return { ...actual, listNodeRuns: vi.fn() };
+  return { ...actual, listNodeRuns: vi.fn(), listRuns: vi.fn() };
 });
 
 const mockListNodeRuns = vi.mocked(listNodeRuns);
+const mockListRuns = vi.mocked(listRuns);
 
 function LocationProbe() {
   const location = useLocation();
@@ -34,12 +36,19 @@ function renderJobs(initialEntries: string[] = ["/jobs"]) {
 
 beforeEach(() => {
   mockListNodeRuns.mockReset();
+  mockListRuns.mockReset();
+  // The name/category lookup (task t5) is a second, best-effort fetch that
+  // most of these tests do not care about — default it to "nothing found"
+  // so every existing assertion (which predates this lookup) keeps seeing
+  // the bare run id it always has.
+  mockListRuns.mockResolvedValue({ items: [] });
   resetAgentState();
 });
 
 describe("JobsTimeline loading/empty/error", () => {
   it("shows a loading state before the first response resolves", () => {
     mockListNodeRuns.mockReturnValue(new Promise(() => {})); // never resolves
+    mockListRuns.mockReturnValue(new Promise(() => {})); // never resolves either
     renderJobs();
     expect(screen.getByText("Loading node runs…")).toBeInTheDocument();
   });
@@ -221,5 +230,55 @@ describe("JobsTimeline load more (cursor pagination)", () => {
     expect(
       screen.queryByRole("button", { name: /Load more/ }),
     ).not.toBeInTheDocument();
+  });
+});
+
+describe("JobsTimeline run name/category lookup (task t5)", () => {
+  it("joins GET /v1alpha1/runs onto rows by run_id and shows the name/category", async () => {
+    mockListNodeRuns.mockResolvedValue({ items: JOB_RUNS_PAGE_1 });
+    mockListRuns.mockResolvedValue({ items: JOB_RUNS_NAMED_RUNS });
+    renderJobs();
+    await screen.findByRole("table");
+
+    const named = JOB_RUNS_NAMED_RUNS[0]; // "nightly regression sweep", category "ci"
+    await waitFor(() => {
+      expect(screen.getByText(named.name!)).toBeInTheDocument();
+    });
+    expect(screen.getByText(named.category!)).toBeInTheDocument();
+  });
+
+  it("still renders the bare run id for rows the lookup found nothing for", async () => {
+    mockListNodeRuns.mockResolvedValue({ items: JOB_RUNS_PAGE_1 });
+    mockListRuns.mockResolvedValue({ items: JOB_RUNS_NAMED_RUNS });
+    renderJobs();
+    await screen.findByRole("table");
+
+    // JOB_RUNS_PAGE_1[0]'s run_id has no matching entry in JOB_RUNS_NAMED_RUNS.
+    const item = JOB_RUNS_PAGE_1[0];
+    expect(screen.getByRole("link", { name: item.run_id })).toBeInTheDocument();
+  });
+
+  it("a failed lookup never blocks or errors the jobs table itself", async () => {
+    mockListNodeRuns.mockResolvedValue({ items: JOB_RUNS_PAGE_1 });
+    mockListRuns.mockRejectedValue(
+      new ApiError(0, "cannot reach the control plane", "start `nodes serve`"),
+    );
+    renderJobs();
+    await screen.findByRole("table");
+    // Every row still renders, falling back to the bare run id.
+    for (const item of JOB_RUNS_PAGE_1) {
+      expect(screen.getByRole("link", { name: item.run_id })).toBeInTheDocument();
+    }
+    expect(screen.queryByText("error:", { exact: false })).not.toBeInTheDocument();
+  });
+
+  it("renders per-node-run token totals in the usage column", async () => {
+    mockListNodeRuns.mockResolvedValue({ items: JOB_RUNS_PAGE_1 });
+    renderJobs();
+    await screen.findByRole("table");
+    const row = screen
+      .getByText(JOB_RUNS_PAGE_1[3].node_id, { selector: "code" })
+      .closest("tr") as HTMLElement;
+    expect(within(row).getByText("12.3k in / 4.1k out")).toBeInTheDocument();
   });
 });

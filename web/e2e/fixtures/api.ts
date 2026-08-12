@@ -2,6 +2,7 @@ import type { Page } from "@playwright/test";
 import type { RunView } from "../../src/api/types";
 import {
   LEDGER,
+  NODE_RUN_USAGE_ITEMS,
   RUN_EVENTS,
   RUN_ID,
   RUN_VIEW,
@@ -12,6 +13,7 @@ import {
 import { BOARD_RUNS } from "../../src/fixtures/runs-board-fixture";
 import {
   JOB_RUNS_CURSOR,
+  JOB_RUNS_NAMED_RUNS,
   JOB_RUNS_PAGE_1,
   JOB_RUNS_PAGE_2,
 } from "../../src/fixtures/node-runs-fixture";
@@ -28,7 +30,7 @@ import {
 
 export { RUN_ID, WORKFLOW_DIGEST };
 export { BOARD_RUNS };
-export { JOB_RUNS_CURSOR, JOB_RUNS_PAGE_1, JOB_RUNS_PAGE_2 };
+export { JOB_RUNS_CURSOR, JOB_RUNS_NAMED_RUNS, JOB_RUNS_PAGE_1, JOB_RUNS_PAGE_2 };
 export { WORKFLOW_VERSIONS, WORKFLOWS_RUNS };
 export { INVALID_YAML_SOURCE, PUBLISHED_VERSION };
 export { VALID_YAML_SOURCE } from "../../src/fixtures/authoring-fixture";
@@ -58,6 +60,12 @@ export async function mockApi(page: Page): Promise<void> {
 
     if (path === "/v1alpha1/runs") {
       await route.fulfill(json({ items: [RUN_VIEW.run] }));
+      return;
+    }
+    if (path === "/v1alpha1/node-runs") {
+      // The best-effort join useRunData.ts uses to recover per-node-run
+      // usage (task t2/t5) — RunView's own node_runs carry no `usage`.
+      await route.fulfill(json({ items: NODE_RUN_USAGE_ITEMS }));
       return;
     }
     if (path === `/v1alpha1/runs/${RUN_ID}`) {
@@ -181,14 +189,20 @@ export async function mockRunsBoardApi(page: Page): Promise<void> {
  * row's own `run_id` resolves through `/v1alpha1/runs/{id}` too (a minimal
  * RunView, no tokens/node runs — the list item fixture carries only what
  * `NodeRunListItem` actually has), so following a row's link doesn't 404.
+ *
+ * `GET /v1alpha1/runs` answers JOB_RUNS_NAMED_RUNS (task t5): JobsTimeline
+ * separately fetches it to join a name/category onto rows whose `run_id`
+ * matches one of those two named/hinted fixture runs — the node-runs
+ * listing itself carries neither.
  */
 export async function mockJobsTimelineApi(page: Page): Promise<void> {
   const allJobs = [...JOB_RUNS_PAGE_1, ...JOB_RUNS_PAGE_2];
+  const namedById = new Map(JOB_RUNS_NAMED_RUNS.map((run) => [run.id, run]));
   const runViewById = new Map<string, RunView>(
     allJobs.map((item) => [
       item.run_id,
       {
-        run: {
+        run: namedById.get(item.run_id) ?? {
           id: item.run_id,
           workflow_digest: WORKFLOW_DIGEST,
           state: "running",
@@ -213,6 +227,10 @@ export async function mockJobsTimelineApi(page: Page): Promise<void> {
       await route.fulfill(
         json({ items: JOB_RUNS_PAGE_1, next_cursor: JOB_RUNS_CURSOR }),
       );
+      return;
+    }
+    if (path === "/v1alpha1/runs") {
+      await route.fulfill(json({ items: JOB_RUNS_NAMED_RUNS }));
       return;
     }
     if (path === `/v1alpha1/workflows/${WORKFLOW_DIGEST}`) {
@@ -402,6 +420,16 @@ export async function readAgentState(page: Page): Promise<{
     state: string;
     node_states: Record<string, string>;
     selected: string | null;
+    name?: string | null;
+    display_hint?: string | null;
+    category?: string | null;
+    usage?: {
+      input_tokens: number;
+      output_tokens: number;
+      cost: number | null;
+      currency: string | null;
+      reported: boolean;
+    } | null;
   } | null;
   authoring?: {
     step: string;

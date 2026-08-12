@@ -11,6 +11,38 @@ export type RunState =
   | "failed"
   | "cancelled";
 
+/**
+ * The §13.2 usage/cost rollup (task t2), summed over every attempt in scope
+ * regardless of technical outcome ("retry burn" — a failed/cancelled attempt
+ * that still burned tokens still counts). `attempts_reported === 0` is a
+ * distinct, honest state from a reported sum that happens to equal zero
+ * (`attempts_reported > 0`, `input_tokens === 0`) — a renderer MUST tell
+ * these apart and never present the former as "0 tokens" (honesty condition
+ * h27's UI half: absent usage is never rendered as a zero).
+ *
+ * `cost`/`currency` are set together only when every cost-reporting attempt
+ * in scope agreed on one currency; `cost_by_currency` is set instead, as a
+ * list, whenever more than one currency was seen. Never derive a currency
+ * that was not reported — that is c35/h27's other half, and applies to every
+ * renderer of this type.
+ */
+export interface Usage {
+  input_tokens: number;
+  output_tokens: number;
+  cost?: number;
+  currency?: string;
+  cost_by_currency?: CurrencyCost[];
+  attempts_reported: number;
+  attempts_not_reported: number;
+}
+
+/** One `Usage.cost_by_currency` entry. */
+export interface CurrencyCost {
+  /** Absent when the summarized attempt(s) reported a cost with no currency at all. */
+  currency?: string;
+  cost: number;
+}
+
 export interface Run {
   id: string;
   workflow_digest: string;
@@ -20,6 +52,29 @@ export interface Run {
   created_at: string;
   updated_at: string;
   completed_at?: string;
+  /**
+   * The run-wide usage/cost rollup (task t2). Always present on
+   * `GET /v1alpha1/runs/{id}`, `POST /v1alpha1/runs`, `PATCH
+   * /v1alpha1/runs/{id}`, and `POST /v1alpha1/runs/{id}/cancel` — even a
+   * freshly created run carries a present-but-empty rollup. Deliberately
+   * NOT computed (and therefore absent here) on `GET /v1alpha1/runs`
+   * (listRuns), which would otherwise need one extra query per listed row.
+   */
+  usage?: Usage;
+  /** Operator-given display name (task t3). Absent when created without one. Immutable. */
+  name?: string;
+  /** Operator-given free-text description (task t3). Immutable. */
+  description?: string;
+  /** The run's flat category tag (task t3), retaggable via PATCH. */
+  category?: string;
+  /**
+   * A truncated, best-effort guess at what this run is about, derived AT
+   * READ TIME from the run's own input — never persisted, and present only
+   * when `name` is absent. This is a guess, not something an operator
+   * actually said: a renderer MUST mark it as derived and never present it
+   * as if it were the given name.
+   */
+  display_hint?: string;
 }
 
 export interface RunList {
@@ -107,6 +162,12 @@ export interface NodeRunListItem {
   created_at: string;
   updated_at: string;
   completed_at?: string;
+  /**
+   * This node run's own usage/cost rollup (task t2), over its own attempts
+   * only. Required — always present, even a present-but-empty rollup for a
+   * node run with zero attempts (openapi.yaml's NodeRunListItem.usage).
+   */
+  usage: Usage;
 }
 
 export interface NodeRunList {

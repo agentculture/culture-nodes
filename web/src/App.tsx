@@ -11,6 +11,7 @@ import Header from "./components/Header";
 import AuthorWorkflow from "./routes/AuthorWorkflow";
 import JobsTimeline from "./routes/JobsTimeline";
 import LedgerView from "./routes/LedgerView";
+import Mesh from "./routes/Mesh";
 import RunView from "./routes/RunView";
 import RunsBoard from "./routes/RunsBoard";
 import RunsList from "./routes/RunsList";
@@ -40,6 +41,7 @@ export function App() {
           <Route path="/runs" element={<RunsList />} />
           <Route path="/board" element={<RunsBoard />} />
           <Route path="/jobs" element={<JobsTimeline />} />
+          <Route path="/mesh" element={<Mesh />} />
           <Route path="/stats" element={<Statistics />} />
           <Route path="/workflows" element={<Workflows />} />
           <Route path="/workflows/new" element={<AuthorWorkflow />} />

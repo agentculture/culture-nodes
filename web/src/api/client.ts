@@ -1,4 +1,5 @@
 import type {
+  ActorList,
   LedgerRecords,
   NodeRunList,
   Projection,
@@ -249,6 +250,24 @@ export const getProjection = (
     `/runs/${encodeURIComponent(runId)}/ledger/projections/${encodeURIComponent(name)}`,
     signal,
   );
+
+/** GET /v1alpha1/actors (task t15): every registered actor row. */
+export const listActors = (signal?: AbortSignal) =>
+  getJson<ActorList>("/actors", signal);
+
+/**
+ * The cross-run SSE endpoint's URL (task t17, `GET /v1alpha1/events`), with
+ * the resume point applied. Unlike the per-run stream the cursor here is
+ * the events table's own ULID primary key, not a per-run sequence — see
+ * internal/api/events.go's handleStreamEvents ordering note. Same
+ * first-connection rule as runEventsUrl: EventSource cannot set a
+ * Last-Event-ID header before its first connect, so the API accepts the
+ * same cursor as `?from=`.
+ */
+export function meshEventsUrl(from?: string): string {
+  const base = `${API_ROOT}/events`;
+  return from ? `${base}?from=${encodeURIComponent(from)}` : base;
+}
 
 /** The SSE endpoint's URL, with the resume point applied. */
 export function runEventsUrl(runId: string, from?: string): string {

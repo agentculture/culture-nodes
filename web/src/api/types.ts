@@ -316,6 +316,32 @@ export interface Projection {
   digest: string;
 }
 
+/**
+ * One `actors` table row (task t15, `GET /v1alpha1/actors`). Identity is
+ * append-only: a capability or endpoint change is a new row with the same
+ * `actor_key` and a higher `revision`, never an update — a consumer showing
+ * "the fleet" collapses rows per actor_key to the newest revision.
+ * `kind` is free text in the schema (today's registrations write "agent");
+ * `capabilities`/`metadata` are the row's own JSON, rendered verbatim
+ * server-side because neither ever carries a credential.
+ */
+export interface Actor {
+  id: string;
+  actor_key: string;
+  revision: number;
+  kind: string;
+  protocol: string;
+  endpoint_ref?: string;
+  capabilities?: Record<string, unknown>;
+  metadata?: Record<string, unknown>;
+  created_at: string;
+}
+
+/** `GET /v1alpha1/actors` (task t15). */
+export interface ActorList {
+  items: Actor[];
+}
+
 /** A CloudEvents-1.0 envelope as emitted by internal/events. */
 export interface EventEnvelope {
   id: string;

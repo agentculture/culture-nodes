@@ -478,6 +478,82 @@ export async function mockAuthoringApi(page: Page): Promise<void> {
   });
 }
 
+import {
+  MESH_ACTORS,
+  MESH_EVENTS,
+  MESH_NODE_RUNS,
+  MESH_RUNS,
+  meshEventsAsSse,
+} from "../../src/fixtures/mesh-fixture";
+
+export {
+  MESH_ACTIVE_RUN_COUNT,
+  MESH_ACTOR_NODE_COUNT,
+  MESH_EVENTS_TOTAL,
+  MESH_LAST_EVENT_ID,
+  MESH_PULSES_TOTAL,
+} from "../../src/fixtures/mesh-fixture";
+
+/**
+ * Serve the Mesh view's slice of `/v1alpha1` (task t18): the actors listing
+ * (5 rows, two of them revisions of the same actor_key), the runs list
+ * (active + terminal), the node-runs rows that attribute runs to actors,
+ * and `GET /v1alpha1/events` — the cross-run SSE stream — replaying
+ * MESH_EVENTS exactly as writeCrossRunSSEEvent frames them, then closing.
+ *
+ * Resume honesty: the events route honours BOTH resume spellings the real
+ * endpoint accepts — the `Last-Event-ID` header a reconnecting EventSource
+ * sends automatically, and the `?from=` parameter the client uses when it
+ * reopens explicitly — replaying only events with id strictly greater than
+ * the cursor. After the body closes the browser reconnects with the last
+ * ULID and receives an empty stream: the honest answer for "nothing newer
+ * yet", and the proof that no event is ever double-counted.
+ */
+export async function mockMeshApi(page: Page): Promise<void> {
+  await page.route("**/v1alpha1/**", async (route) => {
+    const request = route.request();
+    const url = new URL(request.url());
+    const path = decodeURIComponent(url.pathname);
+
+    if (path === "/v1alpha1/actors") {
+      await route.fulfill(json({ items: MESH_ACTORS }));
+      return;
+    }
+    if (path === "/v1alpha1/runs") {
+      await route.fulfill(json({ items: MESH_RUNS }));
+      return;
+    }
+    if (path === "/v1alpha1/node-runs") {
+      await route.fulfill(json({ items: MESH_NODE_RUNS }));
+      return;
+    }
+    if (path === "/v1alpha1/events") {
+      const headers = await request.allHeaders();
+      const from = headers["last-event-id"] ?? url.searchParams.get("from") ?? "";
+      const pending = MESH_EVENTS.filter((event) => event.id > from);
+      await route.fulfill({
+        status: 200,
+        headers: {
+          "content-type": "text/event-stream",
+          "cache-control": "no-cache",
+        },
+        body: meshEventsAsSse(pending),
+      });
+      return;
+    }
+
+    await route.fulfill({
+      status: 404,
+      contentType: "application/json",
+      body: JSON.stringify({
+        code: 1,
+        message: `no fixture route for ${path}`,
+        remediation: "add it to e2e/fixtures/api.ts",
+      }),
+    });
+  });
+}
+
 /** The parsed contents of the page's `#agent-state` node. */
 export async function readAgentState(page: Page): Promise<{
   status: string;
@@ -518,6 +594,16 @@ export async function readAgentState(page: Page): Promise<{
     avg_cost: number | null;
     median_cost: number | null;
     category_count: number;
+  } | null;
+  mesh?: {
+    actor_count: number;
+    run_count: number;
+    edge_count: number;
+    connection: string;
+    last_event_id: string | null;
+    events_total: number;
+    pulses_total: number;
+    reduced_motion: boolean;
   } | null;
 }> {
   const text = await page.locator("#agent-state").textContent();

@@ -4,8 +4,10 @@ import { ApiError, listRuns } from "../api/client";
 import type { Run } from "../api/types";
 import ErrorNotice from "../components/ErrorNotice";
 import RunCard from "../components/RunCard";
+import TimeRangeFilter from "../components/TimeRangeFilter";
 import { groupRunsByState, RUN_STATE_COLUMNS } from "../domain/run-board";
 import { useReducedMotion } from "../hooks/useReducedMotion";
+import { useTimeRange } from "../hooks/useTimeRange";
 
 /**
  * The runs board (PRD §8.6 Operations): every run as a card, grouped into
@@ -16,12 +18,18 @@ import { useReducedMotion } from "../hooks/useReducedMotion";
  * loading/ready), just with the board's own params instead of the run
  * list's defaults.
  *
+ * The time-range filter is the Jobs view's control and state idiom verbatim
+ * (issue #23): `since`/`until` ride the URL search params via useTimeRange
+ * and go to the API as `updated_since`/`updated_until` — server-side
+ * scoping, never a client-side re-slice of an already-fetched list.
+ *
  * A run waiting on an approval node reports `state: "waiting"` exactly like
  * any other external wait — the list endpoint carries no node-run detail —
  * so it appears here under "waiting" with everything else that is, never in
  * a column of its own (see groupRunsByState in domain/run-board.ts).
  */
 export function RunsBoard() {
+  const { since, until, applyRange } = useTimeRange();
   const [runs, setRuns] = useState<Run[] | null>(null);
   const [error, setError] = useState<ApiError | null>(null);
   const reducedMotion = useReducedMotion();
@@ -29,7 +37,15 @@ export function RunsBoard() {
   useEffect(() => {
     const controller = new AbortController();
     setAgentState({ status: "loading", run: null });
-    listRuns(controller.signal, { sort: "updated_at" })
+    setError(null);
+    // See RunsList: a range change resets to the loading state instead of
+    // rendering the previous range's columns while the new fetch runs.
+    setRuns(null);
+    listRuns(controller.signal, {
+      sort: "updated_at",
+      updated_since: since,
+      updated_until: until,
+    })
       .then((list) => {
         if (controller.signal.aborted) return;
         setRuns(list.items);
@@ -48,13 +64,19 @@ export function RunsBoard() {
         setAgentState({ status: "ready", run: null });
       });
     return () => controller.abort();
-  }, []);
+  }, [since, until]);
 
   const grouped = runs ? groupRunsByState(runs) : null;
 
   return (
-    <section className="container runs-board">
+    <section className="view-rail runs-board">
       <h1>Board</h1>
+      <p className="muted">
+        Every run, one column per state, newest first by last update.
+      </p>
+
+      <TimeRangeFilter since={since} until={until} onApply={applyRange} />
+
       {error ? <ErrorNotice error={error} /> : null}
       {runs === null ? (
         <p className="muted" id="runs-board-loading">
@@ -62,7 +84,8 @@ export function RunsBoard() {
         </p>
       ) : runs.length === 0 ? (
         <p className="muted" id="runs-board-empty">
-          No runs yet. Create one with <code>nodes run create</code>.
+          No runs in this range. Create one with <code>nodes run create</code>
+          , or widen the range.
         </p>
       ) : (
         <div className="runs-board__columns" id="runs-board-columns">

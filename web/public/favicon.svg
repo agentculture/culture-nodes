@@ -1,0 +1,23 @@
+<svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 64 64">
+  <!-- AgentCulture: three agents, two threads — the smallest mesh that is
+       still a culture. -->
+  <!-- Copied verbatim from agentculture/org site-astro/public/favicon.svg at
+       the culture-design pinned commit
+       b4d939ba0aa354a5ae53065319a773e0013de698 (see
+       docs/adr/0001-culture-design-source.md) — the same mark
+       web/src/culture-design/mark.tsx ports, self-contained here because a
+       favicon cannot reach tokens.css custom properties. The hexes below are
+       the pin's --mesh-node / --mesh-thread values (light + dark). -->
+  <path class="thread" d="M14 46 Q 24 38 33 21 M33 21 Q 40 36 51 41" stroke-width="3" stroke-linecap="round"/>
+  <circle class="node" cx="14" cy="46" r="5.5"/>
+  <circle class="node" cx="33" cy="21" r="7"/>
+  <circle class="node" cx="51" cy="41" r="5"/>
+  <style>
+    .thread { stroke: #4d546f; }
+    .node { fill: #0b655c; }
+    @media (prefers-color-scheme: dark) {
+      .thread { stroke: #a9b0cf; }
+      .node { fill: #7fdcc9; }
+    }
+  </style>
+</svg>

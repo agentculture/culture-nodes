@@ -361,6 +361,74 @@ func TestCallbackCompletedCommitsTheRun(t *testing.T) {
 	}
 }
 
+// A `completed` callback's §13.2 Usage block is not just decoded off the
+// wire and discarded: it lands on the attempt row this callback commits,
+// the async twin of what a synchronous InvocationResult's Usage does at
+// internal/worker/dispatch.go's completeFromResult (task t1).
+func TestCallbackCompletedPersistsUsage(t *testing.T) {
+	f := newAsyncFixture(t)
+
+	cost := 0.03
+	currency := "USD"
+	payload, _ := json.Marshal(actors.CompletedPayload{
+		Outcome: "completed",
+		Output:  json.RawMessage(`{"summary":"done"}`),
+		Usage: &actors.Usage{
+			InputTokens:  55,
+			OutputTokens: 130,
+			Cost:         &cost,
+			Currency:     &currency,
+		},
+	})
+
+	result := f.handle(actors.CallbackEvent{EventID: "ev-usage", Sequence: 1, Kind: actors.EventCompleted, Payload: payload})
+	if result.Disposition != actors.DispositionCommitted {
+		t.Fatalf("disposition = %s (%s), want committed", result.Disposition, result.Diagnostic)
+	}
+
+	attempts, err := f.engine.Store().Attempts(f.ctx, f.nodeRunID)
+	if err != nil {
+		t.Fatalf("read attempts: %v", err)
+	}
+	if len(attempts) != 1 {
+		t.Fatalf("attempts = %d, want 1", len(attempts))
+	}
+	usage := attempts[0].Usage
+	if usage == nil {
+		t.Fatal("Usage = nil, want the reported §13.2 block persisted on the committed attempt")
+	}
+	if usage.InputTokens != 55 || usage.OutputTokens != 130 {
+		t.Errorf("tokens = %d/%d, want 55/130", usage.InputTokens, usage.OutputTokens)
+	}
+	if usage.Cost == nil || *usage.Cost != cost {
+		t.Errorf("cost = %v, want %v", usage.Cost, cost)
+	}
+	if usage.Currency == nil || *usage.Currency != currency {
+		t.Errorf("currency = %v, want %v", usage.Currency, currency)
+	}
+}
+
+// A `completed` callback that carries no Usage block at all leaves the
+// attempt's usage nil, exactly like completedEvent's plain fixture already
+// exercises for every other callback test — this makes the "no fabricated
+// zero" claim explicit rather than incidental.
+func TestCallbackCompletedWithoutUsageStaysNil(t *testing.T) {
+	f := newAsyncFixture(t)
+
+	result := f.handle(completedEvent("ev-no-usage", 1, "done"))
+	if result.Disposition != actors.DispositionCommitted {
+		t.Fatalf("disposition = %s (%s), want committed", result.Disposition, result.Diagnostic)
+	}
+
+	attempts, err := f.engine.Store().Attempts(f.ctx, f.nodeRunID)
+	if err != nil {
+		t.Fatalf("read attempts: %v", err)
+	}
+	if attempts[0].Usage != nil {
+		t.Errorf("Usage = %+v, want nil for a completed event that reported none", attempts[0].Usage)
+	}
+}
+
 // §13.4: "repeated callbacks are idempotent". A redelivery of the same event
 // id is recorded as a duplicate and changes nothing — including not
 // completing the attempt a second time.

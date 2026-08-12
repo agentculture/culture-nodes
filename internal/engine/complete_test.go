@@ -294,3 +294,104 @@ func contains(values []string, want string) bool {
 	}
 	return false
 }
+
+// A completion that reports a §13.2 Usage block gets it recorded on the
+// attempt row it commits, including the independent nullability of Cost and
+// Currency (task t1 acceptance: "the Usage block the bridge reported" is
+// persisted at the completion seam, not derived or rounded).
+func TestCompleteAttemptPersistsReportedUsage(t *testing.T) {
+	f := newFixture(t, "loop.workflow.yaml")
+	_, workNodeRun := advanceToWork(t, f, "usage")
+
+	cost := 0.0021
+	currency := "USD"
+	result := f.step("worker-a", workNodeRun, engine.CompletionRequest{
+		TechStatus: engine.StatusSucceeded,
+		Outcome:    "completed",
+		Output:     json.RawMessage(`{"revision":1}`),
+		Usage: &engine.Usage{
+			InputTokens:  120,
+			OutputTokens: 340,
+			Cost:         &cost,
+			Currency:     &currency,
+		},
+	})
+	if result.AttemptNumber != 1 {
+		t.Fatalf("attempt number = %d, want 1", result.AttemptNumber)
+	}
+
+	attempts, err := f.engine.Store().Attempts(f.ctx, workNodeRun)
+	if err != nil {
+		t.Fatalf("Attempts: %v", err)
+	}
+	if len(attempts) != 1 {
+		t.Fatalf("recorded %d attempts, want 1", len(attempts))
+	}
+	usage := attempts[0].Usage
+	if usage == nil {
+		t.Fatal("Usage = nil, want the reported §13.2 block")
+	}
+	if usage.InputTokens != 120 || usage.OutputTokens != 340 {
+		t.Errorf("tokens = %d/%d, want 120/340", usage.InputTokens, usage.OutputTokens)
+	}
+	if usage.Cost == nil || *usage.Cost != cost {
+		t.Errorf("cost = %v, want %v", usage.Cost, cost)
+	}
+	if usage.Currency == nil || *usage.Currency != currency {
+		t.Errorf("currency = %v, want %v", usage.Currency, currency)
+	}
+}
+
+// An actor that reports token counts without pricing its work leaves Cost
+// and Currency null while the tokens are still recorded — the "reports
+// usage, does not price it" case §13.2's nullable Cost/Currency exists for.
+func TestCompleteAttemptPersistsUsageWithoutPricing(t *testing.T) {
+	f := newFixture(t, "loop.workflow.yaml")
+	_, workNodeRun := advanceToWork(t, f, "usage-no-price")
+
+	f.step("worker-a", workNodeRun, engine.CompletionRequest{
+		TechStatus: engine.StatusSucceeded,
+		Outcome:    "completed",
+		Output:     json.RawMessage(`{"revision":1}`),
+		Usage:      &engine.Usage{InputTokens: 10, OutputTokens: 20},
+	})
+
+	attempts, err := f.engine.Store().Attempts(f.ctx, workNodeRun)
+	if err != nil {
+		t.Fatalf("Attempts: %v", err)
+	}
+	usage := attempts[0].Usage
+	if usage == nil {
+		t.Fatal("Usage = nil, want a block with tokens set")
+	}
+	if usage.InputTokens != 10 || usage.OutputTokens != 20 {
+		t.Errorf("tokens = %d/%d, want 10/20", usage.InputTokens, usage.OutputTokens)
+	}
+	if usage.Cost != nil {
+		t.Errorf("cost = %v, want nil (not reported, not fabricated as zero)", *usage.Cost)
+	}
+	if usage.Currency != nil {
+		t.Errorf("currency = %v, want nil", *usage.Currency)
+	}
+}
+
+// A completion that reports no Usage block at all leaves the attempt's
+// usage NULL end to end — no fabricated zero, no backfill (task t1
+// acceptance).
+func TestCompleteAttemptWithoutUsageStaysNil(t *testing.T) {
+	f := newFixture(t, "loop.workflow.yaml")
+	_, workNodeRun := advanceToWork(t, f, "no-usage")
+
+	f.step("worker-a", workNodeRun, succeeded("completed", `{"revision":1}`))
+
+	attempts, err := f.engine.Store().Attempts(f.ctx, workNodeRun)
+	if err != nil {
+		t.Fatalf("Attempts: %v", err)
+	}
+	if len(attempts) != 1 {
+		t.Fatalf("recorded %d attempts, want 1", len(attempts))
+	}
+	if attempts[0].Usage != nil {
+		t.Errorf("Usage = %+v, want nil for an attempt that reported none", attempts[0].Usage)
+	}
+}

@@ -242,6 +242,7 @@ func (w *Worker) completeFromResult(
 		Outcome:     outcome,
 		Output:      output,
 		LedgerDelta: agentDelta,
+		Usage:       result.Usage.ToEngine(),
 	})
 	if err != nil {
 		if isStale(err) {

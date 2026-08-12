@@ -3,6 +3,7 @@ package worker_test
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -108,6 +109,26 @@ func fakeHookResult(exitCode int) runners.Result {
 	}
 }
 
+// fakeWorkspaceSnapshotHookResult is fakeHookResult shaped like a runner that
+// CAN directly compare the workspace (task t12, spec claim c15) — the
+// standard post_run workspace-snapshot pattern's whole point. Neither
+// headspace-cli 0.11.0 nor the Lambda adapter can honour that comparison
+// today (see their own package docs), which is exactly why this fake runner
+// exists: to prove the seam surfaces the fact the moment some runner does.
+func fakeWorkspaceSnapshotHookResult(exitCode int) runners.Result {
+	res := fakeHookResult(exitCode)
+	res.Changes = runners.Changes{
+		Complete:        true,
+		Paths:           []string{"internal/worker/hooks.go", "internal/runners/dispatch.go"},
+		SnapshotDigest:  "sha256:" + strings.Repeat("c", 64),
+		DiffArtifactRef: "artifact://diff/att_workspace_snapshot",
+	}
+	res.Artifacts = &runners.Artifacts{
+		OutputWorkspaceRef: "artifact://workspace/att_workspace_snapshot",
+	}
+	return res
+}
+
 // mustHookRunnerActor registers a fresh, globally-unique actors row (actors.id
 // is the table's primary key, not namespace-scoped, so every harness needs
 // its own) and returns its id. That id becomes both Options.HookRunnerName
@@ -128,6 +149,42 @@ func mustHookRunnerActor(t *testing.T, s *storepg.Store, namespaceID string) str
 		t.Fatalf("mustHookRunnerActor: insert actor: %v", err)
 	}
 	return actorID
+}
+
+// mustAgentActor is mustHookRunnerActor's counterpart for the agent side of
+// TestPostRunWorkspaceSnapshotEvidenceIsAppendedNotAgentDelta: the same
+// origin_actor_id foreign key applies to the agent's own proposed ledger
+// records, so a test that wants the actor to write a real (non-empty) claim
+// needs its own registered identity too — kind `agent` rather than `runner`,
+// matching what a real deployment's actor registry would carry for it.
+func mustAgentActor(t *testing.T, s *storepg.Store, namespaceID string) string {
+	t.Helper()
+	actorID := "fake-agent-" + idstore.NewULID()
+	if _, err := s.Pool().Exec(context.Background(), `
+		INSERT INTO actors (id, namespace_id, actor_key, revision, kind, protocol)
+		VALUES ($1, $2, $3, 1, 'agent', 'internal')
+	`, actorID, namespaceID, actorID); err != nil {
+		t.Fatalf("mustAgentActor: insert actor: %v", err)
+	}
+	return actorID
+}
+
+// writeSyncResultWithClaim is writeSyncResult with one addition: a real,
+// non-empty `claim` record proposed under the given agent actor id. Used
+// where a test needs to tell the agent's own ledger delta apart from a
+// hook's runner-origin evidence, rather than exercising a delta that is
+// always empty.
+func writeSyncResultWithClaim(w http.ResponseWriter, agentActorID, outcome, output string) {
+	w.Header().Set("Content-Type", "application/json")
+	_, _ = fmt.Fprintf(w, `{
+		"outcome": %q,
+		"output": %s,
+		"ledger_delta": {"records": [{
+			"record_type": "claim",
+			"origin": {"kind": "agent", "actor_id": %q},
+			"data": {"statement": "the agent's own account of what it did"}
+		}]}
+	}`, outcome, output, agentActorID)
 }
 
 // newHookHarness is worker_test.go's newHarness with a HookRunner wired in.
@@ -518,5 +575,105 @@ func TestAsyncActorWithPostRunIsRefusedNotParked(t *testing.T) {
 	statuses := h.attemptStatuses(t, run.ID, "work")
 	if len(statuses) != 1 || statuses[0] != string(engine.StatusContractRejected) {
 		t.Fatalf("attempt statuses = %v, want [contract_rejected]", statuses)
+	}
+}
+
+// (e) the standard post_run workspace-snapshot hook (task t12, spec claim
+// c15, honesty condition h10): the fake runner answers post_run with a
+// Result that measured the workspace comparison (changed files, a snapshot
+// digest, a diff artifact ref), and this test proves two things at once —
+// exactly the property the task asked for a test to prove:
+//
+//  1. that data lands in the ledger as one observed, runner-origin evidence
+//     record (the worker's appendHookEvidence path, hooks.go), with the
+//     workspace facts inside it; and
+//  2. it never rides the agent's own ledger delta: the agent proposes its
+//     own real, non-empty `claim` record through the ordinary §13.2 path,
+//     and that record — attributed to the agent's own registered actor
+//     identity, not the hook runner's — carries none of the workspace-
+//     snapshot fields at all.
+func TestPostRunWorkspaceSnapshotEvidenceIsAppendedNotAgentDelta(t *testing.T) {
+	fr := &fakeRunner{results: []fakeHookAnswer{
+		{result: fakeWorkspaceSnapshotHookResult(0)}, // post_run passes and measured the workspace
+	}}
+
+	var agentActorID string
+	h := newHookHarness(t, fr, func(_ *harness, w http.ResponseWriter, _ actors.InvocationRequest) {
+		writeSyncResultWithClaim(w, agentActorID, "completed", `{"summary":"agent says it is done"}`)
+	})
+	agentActorID = mustAgentActor(t, h.store, h.ns.ID)
+
+	run := h.createRun("hooks-workspace-snapshot.workflow.yaml", `{"subject":"widget"}`)
+	h.runUntil(20*time.Second, func() bool { return h.run(run.ID).State.Terminal() })
+
+	final := h.run(run.ID)
+	if final.State != engine.RunCompleted {
+		t.Fatalf("run state = %s, want completed (worker errors: %v)", final.State, h.workerErrors())
+	}
+
+	recs := h.ledgerRecords(t, run.ID)
+
+	evidence := filterRecordType(recs, ledger.RecordEvidence)
+	if len(evidence) != 1 {
+		t.Fatalf("ledger carries %d evidence records, want exactly 1 (post_run's own): %+v", len(evidence), recs)
+	}
+	snapshot := evidence[0]
+	if snapshot.Authority != ledger.AuthorityObserved || snapshot.Origin.Kind != ledger.OriginRunner {
+		t.Fatalf("snapshot evidence authority/origin = %s/%s, want observed/runner", snapshot.Authority, snapshot.Origin.Kind)
+	}
+	if snapshot.Origin.ActorID == agentActorID {
+		t.Fatalf("snapshot evidence is attributed to the agent's own actor id %q, not the hook runner's", agentActorID)
+	}
+
+	snapshotData, err := snapshot.DataMap()
+	if err != nil {
+		t.Fatalf("decode snapshot evidence data: %v", err)
+	}
+	paths, ok := snapshotData["changed_paths"].([]any)
+	if !ok || len(paths) != 2 {
+		t.Fatalf("snapshot evidence changed_paths = %v, want the two measured paths", snapshotData["changed_paths"])
+	}
+	if got := snapshotData["snapshot_digest"]; got != "sha256:"+strings.Repeat("c", 64) {
+		t.Errorf("snapshot evidence snapshot_digest = %v, want the measured digest", got)
+	}
+	refs, ok := snapshotData["artifact_refs"].([]any)
+	if !ok || len(refs) == 0 {
+		t.Fatalf("snapshot evidence artifact_refs = %v, want the measured refs", snapshotData["artifact_refs"])
+	}
+	foundDiffRef := false
+	for _, r := range refs {
+		if r.(string) == "artifact://diff/att_workspace_snapshot" {
+			foundDiffRef = true
+		}
+	}
+	if !foundDiffRef {
+		t.Errorf("snapshot evidence artifact_refs %v does not carry the measured diff artifact ref", refs)
+	}
+
+	// The other half of the proof: the agent's own proposed delta is a real,
+	// separate record — never the vehicle the workspace-snapshot facts rode
+	// in on.
+	claims := filterRecordType(recs, ledger.RecordClaim)
+	if len(claims) != 1 {
+		t.Fatalf("ledger carries %d claim records, want exactly 1 (the agent's own): %+v", len(claims), recs)
+	}
+	claim := claims[0]
+	if claim.Authority != ledger.AuthorityProposed || claim.Origin.Kind != ledger.OriginAgent {
+		t.Fatalf("agent claim authority/origin = %s/%s, want proposed/agent", claim.Authority, claim.Origin.Kind)
+	}
+	if claim.Origin.ActorID != agentActorID {
+		t.Fatalf("agent claim origin actor id = %q, want %q", claim.Origin.ActorID, agentActorID)
+	}
+	claimData, err := claim.DataMap()
+	if err != nil {
+		t.Fatalf("decode agent claim data: %v", err)
+	}
+	for _, field := range []string{"changed_paths", "snapshot_digest", "artifact_refs"} {
+		if _, present := claimData[field]; present {
+			t.Errorf("the agent's own claim carries %q — the workspace-snapshot evidence rode the agent's ledger delta instead of the worker's own observed-append path", field)
+		}
+	}
+	if claim.ID == snapshot.ID {
+		t.Fatal("the agent's claim and the hook's evidence are the same record")
 	}
 }

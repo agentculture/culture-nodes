@@ -172,9 +172,26 @@ func (w *Worker) buildHookOperation(kind string, op codeOperationSpec, dc Dispat
 			Network:            runners.NetworkMode(op.Network),
 			AllowedOutputPaths: op.AllowedOutputPaths,
 		},
+		// SnapshotBefore/SnapshotAfter make every hook dispatch a standing
+		// request for the runner boundary's own workspace comparison (task
+		// t12, spec claim c15, honesty condition h10) — the standard,
+		// reusable post_run "workspace-snapshot" pattern is exactly this: no
+		// special-cased operation kind, just a hook operation whose runner
+		// honours the request. A runner that cannot compare the workspace
+		// says so honestly in Observations.ChangedPaths (headspace-cli
+		// 0.11.0 and the Lambda adapter both always report it unmeasured
+		// today — see their own package docs) rather than this call site
+		// having to know which runners can. buildEvidence (internal/runners/
+		// dispatch.go) surfaces changed_paths, snapshot_digest, and
+		// artifact_refs into the evidence record only when that observation
+		// says measured, so a runner that gains snapshot support starts
+		// producing this evidence through this exact seam with no worker
+		// change at all.
 		Evidence: runners.EvidenceRequest{
-			CaptureExit: true,
-			CaptureLogs: true,
+			CaptureExit:    true,
+			CaptureLogs:    true,
+			SnapshotBefore: true,
+			SnapshotAfter:  true,
 		},
 		Context: &runners.Context{
 			RunID:     dc.RunID,

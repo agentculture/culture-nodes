@@ -1,0 +1,92 @@
+# The standard post_run workspace-snapshot hook (task t12, spec claim c15,
+# honesty condition h10): a reusable operation definition attached to an
+# agent node's post_run, whose whole purpose is to capture what changed in
+# the dispatched workspace during the agent's own turn — changed files, a
+# diff digest, and artifact refs — through the runner boundary, exactly like
+# any other hook (see internal/worker/hooks.go's package doc).
+#
+# There is no special "snapshot" operation kind: buildHookOperation
+# (internal/worker/hooks.go) asks every hook dispatch, pre_run and post_run
+# alike, for the runner's own workspace comparison (evidence.snapshot_before/
+# snapshot_after). A runner that can honour it reports Changes{paths,
+# snapshot_digest, diff_artifact_ref} on its Result with
+# Observations.changed_paths measured; that flows through
+# runners.BuildCompletion's buildEvidence (internal/runners/dispatch.go) into
+# the same observed evidence record every other runner-measured fact does —
+# NEVER through this node's own `ledger.propose` delta, because an agent node
+# can never declare `observe` at all (internal/compiler/ledger.go's
+# checkLedgerDelta only a code node's own dispatch earns that authority).
+# hooks_test.go's TestPostRunWorkspaceSnapshotEvidenceIsAppendedNotAgentDelta
+# proves exactly that split against this fixture, using an in-process fake
+# runner shaped the way a snapshot-capable runner would answer (headspace-cli
+# 0.11.0 cannot yet — see internal/runners/headspace/doc.go's "changes.*
+# ... NOT measured" note; examples/workspace-snapshot-hook documents the same
+# pattern as a stand-alone, runnable example with a real pinned image).
+apiVersion: nodes.culture.dev/v1alpha1
+kind: Workflow
+
+metadata:
+  name: worker-hooks-workspace-snapshot
+  version: 1.0.0
+  ownerRef: team/platform-ai
+
+spec:
+  entry: work
+
+  contract:
+    input:
+      schema:
+        type: object
+        required: [subject]
+        properties:
+          subject:
+            type: string
+    output:
+      schema:
+        type: object
+
+  limits:
+    maxDuration: 1h
+    maxTransitions: 8
+    maxVisitsPerNode: 4
+    maxParallelTokens: 1
+
+  ledger:
+    schemaVersion: nodes.culture.dev/ledger/v1alpha1
+    maxRecordsPerNode: 10
+
+  nodes:
+    work:
+      kind: agent
+      ownerRef: team/platform-ai
+      uses: actor://company/hookworker@sha256:cccccc
+      input:
+        from: /run/input
+      contract:
+        outcomes:
+          completed:
+            schema:
+              type: object
+      ledger:
+        propose: [claim, result]
+      policy:
+        timeout: 2m
+        retry:
+          maxAttempts: 1
+          backoff: none
+      post_run:
+        operation:
+          image: registry.example/workspace-snapshot@sha256:5555555555555555555555555555555555555555555555555555555555555555
+          argv: [workspace-snapshot]
+        on_failure:
+          outcome: completed
+
+    finish:
+      kind: end
+      ownerRef: team/platform-ai
+      output:
+        from: /nodes/work/output
+
+  edges:
+    - from: work.completed
+      to: finish

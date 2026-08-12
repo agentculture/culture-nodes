@@ -1,0 +1,6 @@
+{
+  "repo": "agentculture/culture-nodes",
+  "build_instruction": "add retry backoff to the queue consumer",
+  "review_instruction": "review the diff for correctness, missed edge cases, and whether the retry backoff can amplify load under a thundering-herd failure; do not fix anything yourself",
+  "review_success_outcome": "approve"
+}

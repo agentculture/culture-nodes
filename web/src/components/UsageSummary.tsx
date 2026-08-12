@@ -23,7 +23,11 @@ export interface UsageSummaryProps {
  *
  * `data-usage-reported` is the stable hook a test (or an agent) uses to
  * distinguish "genuinely zero" from "nothing was reported at all" without
- * parsing rendered text.
+ * parsing rendered text. `data-attempts-reported` / `data-attempts-not-reported`
+ * (task t11) carry the same two counts explicitly, on both branches below,
+ * so per-attempt cost coverage is machine-readable even when the visible
+ * copy stays terse (e.g. the "usage not reported" branch, whose wording is
+ * asserted verbatim elsewhere and is not touched here).
  */
 export function UsageSummary({ usage, compact = false, id }: UsageSummaryProps) {
   if (usage.attempts_reported === 0) {
@@ -32,6 +36,8 @@ export function UsageSummary({ usage, compact = false, id }: UsageSummaryProps) 
         id={id}
         className="usage-summary usage-summary--not-reported"
         data-usage-reported="false"
+        data-attempts-reported={usage.attempts_reported}
+        data-attempts-not-reported={usage.attempts_not_reported}
       >
         {compact ? "not reported" : "usage not reported"}
       </span>
@@ -49,10 +55,22 @@ export function UsageSummary({ usage, compact = false, id }: UsageSummaryProps) 
       id={id}
       className={`usage-summary${compact ? " usage-summary--compact" : ""}`}
       data-usage-reported="true"
+      data-attempts-reported={usage.attempts_reported}
+      data-attempts-not-reported={usage.attempts_not_reported}
     >
       <span className="usage-summary__tokens">{formatUsageTokens(usage)}</span>
       {costLines.length > 0 ? (
         <span className="usage-summary__cost">{costLines.join(", ")}</span>
+      ) : null}
+      {/* Explicit attempt-coverage line (task t11 acceptance #2): how many
+          attempts contributed the figures above, spelled out rather than
+          left implicit — additive to the `__partial` not-reported note
+          below, never a replacement for its exact wording. */}
+      {!compact ? (
+        <span className="usage-summary__attempts muted">
+          {usage.attempts_reported} attempt
+          {usage.attempts_reported === 1 ? "" : "s"} reported
+        </span>
       ) : null}
       {!compact && usage.attempts_not_reported > 0 ? (
         <span className="usage-summary__partial muted">

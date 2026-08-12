@@ -13,8 +13,8 @@ test("lists the run's ledger records with authority rendered dashed/solid", asyn
     .poll(async () => (await readAgentState(page)).status)
     .toBe("ready");
 
-  await expect(page.locator("#ledger-version")).toHaveText("5");
-  await expect(page.locator("#ledger-table tbody tr")).toHaveCount(5);
+  await expect(page.locator("#ledger-version")).toHaveText("6");
+  await expect(page.locator("#ledger-table tbody tr")).toHaveCount(6);
 
   // An agent's own claim: dashed, because nobody has confirmed it.
   const proposed = page

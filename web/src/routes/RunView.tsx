@@ -70,6 +70,34 @@ function RunViewInner() {
 
   const walkedEdges = graphState.walkedEdges ?? EMPTY_WALKED;
 
+  /**
+   * Node run ids with at least one evidence-type ledger record attached —
+   * from `ledger`, which useRunData.ts already fetches for the detail
+   * panel. Reused here rather than added as new API surface (task t11
+   * acceptance #3): the run view can flag which nodes carry measured
+   * evidence without a fresh request, because this data already flows to
+   * it. An empty set (ledger still loading, or fetch failed — useRunData
+   * degrades that non-fatally) means honestly "none known here", not "none
+   * exists".
+   */
+  const evidenceNodeRunIds = useMemo(
+    () =>
+      new Set(
+        ledger
+          .filter((record) => record.record_type === "evidence" && record.node_run_id)
+          .map((record) => record.node_run_id as string),
+      ),
+    [ledger],
+  );
+
+  const hasEvidence = useCallback(
+    (nodeId: string) =>
+      (graphState.nodes[nodeId]?.nodeRuns ?? []).some((nodeRun) =>
+        evidenceNodeRunIds.has(nodeRun.id),
+      ),
+    [graphState, evidenceNodeRunIds],
+  );
+
   const openNode = useCallback((nodeId: string) => {
     openerRef.current =
       document.activeElement instanceof HTMLElement
@@ -104,9 +132,10 @@ function RunViewInner() {
         isSelected: selected === node.id,
         reducedMotion,
         onOpen: openNode,
+        hasEvidence: hasEvidence(node.id),
       },
     }));
-  }, [graph, graphState, selected, reducedMotion, openNode]);
+  }, [graph, graphState, selected, reducedMotion, openNode, hasEvidence]);
 
   const { positions, ready: layoutReady } = useElkLayout(graph);
 
@@ -394,14 +423,20 @@ function RunViewInner() {
                     <th scope="col">state</th>
                     <th scope="col">visits</th>
                     <th scope="col">attempts</th>
+                    <th scope="col">evidence</th>
                   </tr>
                 </thead>
                 <tbody>
                   {(graph?.nodes ?? []).map((node) => {
                     const execution =
                       graphState.nodes[node.id] ?? idleExecution(node.id);
+                    const nodeHasEvidence = hasEvidence(node.id);
                     return (
-                      <tr key={node.id} data-list-node-id={node.id}>
+                      <tr
+                        key={node.id}
+                        data-list-node-id={node.id}
+                        data-node-evidence={nodeHasEvidence ? "true" : "false"}
+                      >
                         <th scope="row">
                           <button
                             type="button"
@@ -418,6 +453,7 @@ function RunViewInner() {
                         </td>
                         <td>{execution.visits}</td>
                         <td>{execution.attempts.length}</td>
+                        <td>{nodeHasEvidence ? "yes" : "—"}</td>
                       </tr>
                     );
                   })}

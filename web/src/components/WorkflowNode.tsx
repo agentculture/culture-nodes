@@ -9,6 +9,8 @@ export interface WorkflowNodeData extends Record<string, unknown> {
   isSelected: boolean;
   reducedMotion: boolean;
   onOpen: (nodeId: string) => void;
+  /** See NodeCardProps.hasEvidence — threaded straight through (task t11). */
+  hasEvidence?: boolean;
 }
 
 export type WorkflowFlowNode = Node<WorkflowNodeData, "workflow">;
@@ -44,6 +46,7 @@ export function WorkflowNode({ data }: NodeProps<WorkflowFlowNode>) {
         selected={data.isSelected}
         reducedMotion={data.reducedMotion}
         onOpen={data.onOpen}
+        hasEvidence={data.hasEvidence}
       />
       <Handle type="source" position={Position.Right} isConnectable={false} />
       <Handle

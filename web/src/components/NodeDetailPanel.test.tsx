@@ -77,6 +77,54 @@ describe("NodeDetailPanel", () => {
     ).toBeInTheDocument();
   });
 
+  describe("structured workspace evidence (task t11)", () => {
+    it("renders changed files, snapshot digest, and artifact refs for a workspace-snapshot evidence record", () => {
+      const { container } = renderPanel("build");
+      const evidence = container.querySelector("#node-detail-evidence");
+      expect(evidence).not.toBeNull();
+
+      const changedPaths = evidence!.querySelector(
+        '[data-evidence-changed-paths="true"]',
+      );
+      expect(changedPaths).not.toBeNull();
+      expect(changedPaths?.textContent).toContain("internal/worker/hooks.go");
+      expect(changedPaths?.textContent).toContain("internal/runners/dispatch.go");
+      expect(changedPaths?.querySelectorAll("li")).toHaveLength(2);
+
+      const digest = evidence!.querySelector(
+        '[data-evidence-snapshot-digest="true"]',
+      );
+      expect(digest?.textContent).toBe(`sha256:${"c".repeat(64)}`);
+
+      const refs = evidence!.querySelector('[data-evidence-artifact-refs="true"]');
+      expect(refs?.textContent).toContain("artifact://diff/att-build-1");
+      expect(refs?.querySelector("a")).toHaveAttribute(
+        "href",
+        "artifact://diff/att-build-1",
+      );
+    });
+
+    it("keeps rendering an evidence record with an unrecognized payload shape exactly as before — no regression", () => {
+      const { container } = renderPanel("test");
+      const evidence = container.querySelector("#node-detail-evidence");
+      // The test node's evidence (process_exit/workspace_diff) is not
+      // workspace-snapshot shaped: the generic line still renders (asserted
+      // by the pre-existing "surfaces observed evidence" test above), and
+      // no structured block is added for it.
+      expect(
+        evidence?.querySelector('[data-workspace-evidence="true"]'),
+      ).toBeNull();
+    });
+
+    it("adds no structured block to any evidence record when a node run has none at all", () => {
+      renderPanel("plan");
+      expect(document.getElementById("node-detail-evidence")).toBeNull();
+      expect(
+        screen.getByText("No observed evidence is attached to this node run."),
+      ).toBeInTheDocument();
+    });
+  });
+
   it("takes focus when it opens", () => {
     renderPanel("verify");
     expect(screen.getByRole("region", { name: "Node detail: verify" })).toHaveFocus();

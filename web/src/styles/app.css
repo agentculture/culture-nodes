@@ -578,6 +578,15 @@
   color: var(--accent);
 }
 
+/* Discoverable "this node has measured workspace evidence" marker (task
+   t11 #3) — a distinct hue from the in-flight/waiting badges above so a
+   reader scanning the graph does not confuse "evidence attached" with
+   "something needs attention". */
+.node-card__badge--evidence {
+  border-color: var(--nodes-ok);
+  color: color-mix(in srgb, var(--nodes-ok) 55%, var(--ink));
+}
+
 .node-card__visits {
   border: 1px solid var(--line);
   color: var(--ink-soft);
@@ -956,6 +965,67 @@ button.timeline__node {
 .detail-panel__provenance {
   font-family: var(--font-mono);
   color: var(--ink-soft);
+}
+
+/* Structured workspace evidence (task t11): the measured changed-files,
+   snapshot digest, artifact refs, and diffstat a ledger evidence record can
+   carry when its data is shaped like task t12's workspace-snapshot hook
+   output — additive to the generic authority/subject line every evidence
+   record already gets above it. */
+.detail-panel__workspace-evidence {
+  flex-basis: 100%;
+  display: flex;
+  flex-direction: column;
+  gap: 0.35rem;
+  margin: 0.35rem 0 0 0;
+  padding: 0.5rem 0.6rem;
+  border: 1px solid var(--line-soft);
+  border-radius: 0.5rem;
+}
+
+.detail-panel__workspace-evidence h4 {
+  margin: 0;
+  font-size: var(--ac-type-meta);
+  letter-spacing: var(--ac-tracking-caps);
+  text-transform: uppercase;
+  color: var(--ink-soft);
+}
+
+.detail-panel__changed-paths ul,
+.detail-panel__artifact-refs {
+  list-style: none;
+  margin: 0.2rem 0 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 0.15rem;
+  font-size: var(--ac-type-meta);
+  font-family: var(--font-mono);
+}
+
+.detail-panel__artifact-ref {
+  color: inherit;
+}
+
+.evidence-chip {
+  font-family: var(--font-mono);
+  font-size: var(--ac-type-meta);
+  padding: 0.05rem 0.4rem;
+  border: 1px solid var(--line-soft);
+  border-radius: 999px;
+  overflow-wrap: anywhere;
+}
+
+.detail-panel__diffstat {
+  margin: 0;
+  padding: 0.4rem 0.5rem;
+  font-family: var(--font-mono);
+  font-size: var(--ac-type-meta);
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  background: var(--bg);
+  border: 1px solid var(--line-soft);
+  border-radius: 0.4rem;
 }
 
 /* ---------- ledger view ---------- */

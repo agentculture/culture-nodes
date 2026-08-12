@@ -106,6 +106,71 @@ describe("UsageSummary", () => {
     expect(screen.getByText(/2 attempts not reported/)).toBeInTheDocument();
   });
 
+  it("shows attempts_reported explicitly, alongside the existing not-reported note (task t11)", () => {
+    const usage: Usage = {
+      input_tokens: 5200,
+      output_tokens: 1800,
+      cost: 0.52,
+      currency: "USD",
+      attempts_reported: 1,
+      attempts_not_reported: 1,
+    };
+    render(<UsageSummary usage={usage} id="usage" />);
+    expect(screen.getByText("1 attempt reported")).toBeInTheDocument();
+    expect(screen.getByText(/1 attempt not reported/)).toBeInTheDocument();
+    expect(document.getElementById("usage")).toHaveAttribute(
+      "data-attempts-reported",
+      "1",
+    );
+    expect(document.getElementById("usage")).toHaveAttribute(
+      "data-attempts-not-reported",
+      "1",
+    );
+  });
+
+  it("pluralizes the reported-attempts count", () => {
+    const usage: Usage = {
+      input_tokens: 100,
+      output_tokens: 50,
+      attempts_reported: 3,
+      attempts_not_reported: 0,
+    };
+    render(<UsageSummary usage={usage} />);
+    expect(screen.getByText("3 attempts reported")).toBeInTheDocument();
+  });
+
+  it("carries attempts_reported/not_reported as data attributes even in the not-reported branch", () => {
+    const usage: Usage = {
+      input_tokens: 0,
+      output_tokens: 0,
+      attempts_reported: 0,
+      attempts_not_reported: 2,
+    };
+    render(<UsageSummary usage={usage} id="usage" />);
+    // The visible copy stays exactly "usage not reported" (asserted
+    // elsewhere byte-for-byte) — the counts ride as attributes instead.
+    expect(screen.getByText("usage not reported")).toBeInTheDocument();
+    expect(document.getElementById("usage")).toHaveAttribute(
+      "data-attempts-reported",
+      "0",
+    );
+    expect(document.getElementById("usage")).toHaveAttribute(
+      "data-attempts-not-reported",
+      "2",
+    );
+  });
+
+  it("drops the explicit attempts-reported line in compact mode", () => {
+    const usage: Usage = {
+      input_tokens: 100,
+      output_tokens: 50,
+      attempts_reported: 1,
+      attempts_not_reported: 0,
+    };
+    render(<UsageSummary usage={usage} compact />);
+    expect(screen.queryByText(/attempt.*reported/)).not.toBeInTheDocument();
+  });
+
   it("compact mode drops the partial-attempts note and shortens the not-reported label", () => {
     const usage: Usage = {
       input_tokens: 0,

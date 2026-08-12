@@ -300,7 +300,10 @@ class Handler(BaseHTTPRequestHandler):
             self._write_json(
                 400,
                 {
-                    "error": f"role {role!r} is not a known colleague role (built-in, or .colleague/agents/{role}.md in the target repo)",
+                    "error": (
+                        f"role {role!r} is not a known colleague role (built-in,"
+                        f" or .colleague/agents/{role}.md in the target repo)"
+                    ),
                     "class": mapping.CLASS_ACTOR_REJECTED_INPUT,
                 },
             )
@@ -407,7 +410,10 @@ class Handler(BaseHTTPRequestHandler):
             self._write_json(
                 400,
                 {
-                    "error": "callback.url and callback.token are required for an asynchronous invocation",
+                    "error": (
+                        "callback.url and callback.token are required"
+                        " for an asynchronous invocation"
+                    ),
                     "class": mapping.CLASS_ACTOR_REJECTED_INPUT,
                 },
             )

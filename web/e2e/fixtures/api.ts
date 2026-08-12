@@ -15,10 +15,15 @@ import {
   JOB_RUNS_PAGE_1,
   JOB_RUNS_PAGE_2,
 } from "../../src/fixtures/node-runs-fixture";
+import {
+  WORKFLOW_VERSIONS,
+  WORKFLOWS_RUNS,
+} from "../../src/fixtures/workflows-fixture";
 
 export { RUN_ID, WORKFLOW_DIGEST };
 export { BOARD_RUNS };
 export { JOB_RUNS_CURSOR, JOB_RUNS_PAGE_1, JOB_RUNS_PAGE_2 };
+export { WORKFLOW_VERSIONS, WORKFLOWS_RUNS };
 
 const json = (body: unknown) => ({
   status: 200,
@@ -226,6 +231,73 @@ export async function mockJobsTimelineApi(page: Page): Promise<void> {
     }
     if (runView && path === `/v1alpha1/runs/${runId}/ledger`) {
       await route.fulfill(json({ items: [], ledger_version: 0 }));
+      return;
+    }
+
+    await route.fulfill({
+      status: 404,
+      contentType: "application/json",
+      body: JSON.stringify({
+        code: 1,
+        message: `no fixture route for ${path}`,
+        remediation: "add it to e2e/fixtures/api.ts",
+      }),
+    });
+  });
+}
+
+/**
+ * Serve the Workflows view's slice of `/v1alpha1` (task t8): `GET
+ * /v1alpha1/workflows` returns WORKFLOW_VERSIONS (two workflow_keys, three
+ * versions total) and `GET /v1alpha1/runs?sort=updated_at` returns
+ * WORKFLOWS_RUNS — no server-side filter by workflow, exactly the two
+ * documented operations this task is scoped to. Every fixture run's own
+ * `run_id` resolves through `/v1alpha1/runs/{id}` (a minimal RunView) too,
+ * so following a card's recent-run link doesn't 404.
+ */
+export async function mockWorkflowsApi(page: Page): Promise<void> {
+  const runViewById = new Map<string, RunView>(
+    WORKFLOWS_RUNS.map((run) => [run.id, { run, tokens: [], node_runs: [] }]),
+  );
+
+  await page.route("**/v1alpha1/**", async (route) => {
+    const url = new URL(route.request().url());
+    const path = decodeURIComponent(url.pathname);
+
+    if (path === "/v1alpha1/workflows") {
+      await route.fulfill(json({ items: WORKFLOW_VERSIONS }));
+      return;
+    }
+    if (path === "/v1alpha1/runs") {
+      await route.fulfill(json({ items: WORKFLOWS_RUNS }));
+      return;
+    }
+
+    const runId = path.replace("/v1alpha1/runs/", "");
+    const runView = runViewById.get(runId);
+    if (runView && path === `/v1alpha1/runs/${runId}`) {
+      await route.fulfill(json(runView));
+      return;
+    }
+    if (runView && path === `/v1alpha1/runs/${runId}/events`) {
+      await route.fulfill({
+        status: 200,
+        headers: {
+          "content-type": "text/event-stream",
+          "cache-control": "no-cache",
+        },
+        body: eventsAsSse([]),
+      });
+      return;
+    }
+    if (runView && path === `/v1alpha1/runs/${runId}/ledger`) {
+      await route.fulfill(json({ items: [], ledger_version: 0 }));
+      return;
+    }
+    const digest = path.replace("/v1alpha1/workflows/", "");
+    const version = WORKFLOW_VERSIONS.find((v) => v.digest === digest);
+    if (version && path === `/v1alpha1/workflows/${digest}`) {
+      await route.fulfill(json(version));
       return;
     }
 

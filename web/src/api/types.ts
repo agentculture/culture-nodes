@@ -132,6 +132,11 @@ export interface WorkflowVersion {
   created_at: string;
 }
 
+/** `GET /v1alpha1/workflows` (task t8). */
+export interface WorkflowVersionList {
+  items: WorkflowVersion[];
+}
+
 /** The subset of the normalized IR the Run view renders (PRD §11.3). */
 export interface WorkflowIR {
   apiVersion?: string;

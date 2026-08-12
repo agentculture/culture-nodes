@@ -406,7 +406,7 @@ type nodeRunListItemRow struct {
 	CompletedAt time.Time
 }
 
-func (r nodeRunListItemRow) out(actorID string) NodeRunListItemOut {
+func (r nodeRunListItemRow) out(actorID string, usage postgres.UsageRollup) NodeRunListItemOut {
 	out := NodeRunListItemOut{
 		ID:        r.ID,
 		RunID:     r.RunID,
@@ -416,6 +416,7 @@ func (r nodeRunListItemRow) out(actorID string) NodeRunListItemOut {
 		Outcome:   r.Outcome,
 		CreatedAt: r.CreatedAt,
 		UpdatedAt: r.UpdatedAt,
+		Usage:     usageOut(usage),
 	}
 	if !r.CompletedAt.IsZero() {
 		completedAt := r.CompletedAt
@@ -512,10 +513,17 @@ func (s *Server) listNodeRunsAcrossRuns(ctx context.Context, updatedSince, updat
 	if err != nil {
 		return nil, "", err
 	}
+	// Task t2: batched the same way actorByNodeRun above is — one extra
+	// round trip for the whole page rather than one per row — see
+	// postgres.EngineStore.NodeRunUsages' doc comment.
+	usageByNodeRun, err := s.engineStore.NodeRunUsages(ctx, ids)
+	if err != nil {
+		return nil, "", fmt.Errorf("api: list node runs: usage: %w", err)
+	}
 
 	out := make([]NodeRunListItemOut, len(scanned))
 	for i, r := range scanned {
-		out[i] = r.out(actorByNodeRun[r.ID])
+		out[i] = r.out(actorByNodeRun[r.ID], usageByNodeRun[r.ID])
 	}
 	return out, nextCursor, nil
 }

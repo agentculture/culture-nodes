@@ -79,7 +79,7 @@ export function LedgerView() {
   }, [runId, projectionName]);
 
   return (
-    <section className="container ledger-view">
+    <section className="view-rail ledger-view">
       <h1>Ledger</h1>
       <p className="muted">
         Run <code>{runId}</code>
@@ -121,22 +121,26 @@ export function LedgerView() {
               {projection.digest.slice(0, 24)}…
             </code>
           </p>
-          <LedgerTable
-            id="projection-table"
-            records={projection.items}
-            caption={`${projection.kind} — ${projection.items.length} record(s)`}
-          />
+          <div className="table-scroll">
+            <LedgerTable
+              id="projection-table"
+              records={projection.items}
+              caption={`${projection.kind} — ${projection.items.length} record(s)`}
+            />
+          </div>
         </>
       ) : (
-        <LedgerTable
-          id="ledger-table"
-          records={records ?? []}
-          caption={
-            records === null
-              ? "Loading…"
-              : `${records.length} record(s), append order`
-          }
-        />
+        <div className="table-scroll">
+          <LedgerTable
+            id="ledger-table"
+            records={records ?? []}
+            caption={
+              records === null
+                ? "Loading…"
+                : `${records.length} record(s), append order`
+            }
+          />
+        </div>
       )}
     </section>
   );

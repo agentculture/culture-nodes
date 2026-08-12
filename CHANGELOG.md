@@ -5,6 +5,32 @@ All notable changes to this project will be documented in this file.
 Format follows [Keep a Changelog](https://keepachangelog.com/). This project
 adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.11.1] - 2026-08-12
+
+### Added
+
+- Web: favicon — the AgentCulture mark, copied verbatim from the org site at
+  the ADR 0001 pinned commit into `web/public/favicon.svg`, linked from
+  `index.html`; Vite copies it into `dist/` so the `-tags embedweb` Go build
+  serves it too (issue #12 item 1)
+- Web: Board and Runs carry the Jobs view's time-range filter — the same
+  `TimeRangeFilter` control and URL-search-param state idiom (new shared
+  `useTimeRange` hook), the same "newest first by last update" ordering
+  statement, server-side `updated_since`/`updated_until` scoping, no
+  client-side re-slicing (issue #23); the Runs table gains an `updated`
+  column and sorts by `updated_at`
+
+### Changed
+
+- Web: full-width + responsive layout (issue #12 item 2) — views move from
+  the org site's 68rem prose `.container` to a full-width `.view-rail`
+  (gutters still from `--ac-page-gutter`); board columns stack vertically
+  below 48rem instead of scrolling six-across; Runs/Jobs/Ledger tables
+  scroll horizontally in their own `.table-scroll` box (the page never
+  scrolls sideways); the header nav collapses behind an aria-wired Menu
+  disclosure on narrow viewports and marks the active view (`NavLink` +
+  `.is-active`)
+
 ## [0.11.0] - 2026-08-12
 
 ### Added

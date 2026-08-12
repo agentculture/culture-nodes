@@ -80,11 +80,76 @@
   letter-spacing: var(--ac-tracking-flat);
 }
 
+.app-header__menu {
+  /* The narrow-viewport nav disclosure (issue #12 item 2). Rendered by
+     Header.tsx unconditionally; only *visible* below the collapse
+     breakpoint (media query at the end of the header section). */
+  display: none;
+  font: inherit;
+  font-size: var(--ac-type-meta);
+  padding: 0.25rem 0.9rem;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  background: transparent;
+  color: var(--ink-soft);
+  cursor: pointer;
+  margin-left: auto;
+}
+
+.app-header__menu[aria-expanded="true"] {
+  border-color: var(--accent-strong);
+  color: var(--accent);
+}
+
+/* Collapse the nav behind the Menu button on a narrow/vertical viewport —
+   same 48rem breakpoint the timeline grid already folds at. */
+@media (max-width: 48rem) {
+  .app-header__menu {
+    display: inline-flex;
+  }
+
+  .app-header__nav {
+    display: none;
+    flex-basis: 100%;
+    flex-direction: column;
+    gap: 0.6rem;
+    padding-block: 0.4rem 0.2rem;
+  }
+
+  .app-header__nav.is-open {
+    display: flex;
+  }
+
+  .app-header__tagline {
+    display: none;
+  }
+}
+
 /* ---------- generic bits ---------- */
 
+/* The app views' full-width rail (issue #12 item 2): unlike the org site's
+   prose rails in tokens.css (.container caps at 68rem), an operations
+   surface — board columns, the jobs table, the run canvas — earns the whole
+   viewport. Gutter and rhythm still come from the design layer
+   (--ac-page-gutter), so this is a width decision, not a new aesthetic. */
+.view-rail {
+  width: 100%;
+  max-width: none;
+  margin-inline: auto;
+  padding-inline: var(--ac-page-gutter);
+}
+
 .container,
-.wide-rail {
+.wide-rail,
+.view-rail {
   padding-block: 1.75rem 3rem;
+}
+
+/* A wide table scrolls sideways in its own box on a narrow viewport; the
+   page body never gains horizontal scroll — the same rule
+   .detail-panel__scroll and .runs-board__columns already follow. */
+.table-scroll {
+  overflow-x: auto;
 }
 
 .link-button {
@@ -871,6 +936,22 @@ button.timeline__node {
 .runs-board__column-empty {
   font-size: var(--ac-type-meta);
   margin: 0;
+}
+
+/* On a narrow/vertical viewport the six columns stack instead of forcing a
+   six-across sideways scroll (issue #12 item 2) — a rotated display reads
+   the board top-to-bottom, one state after another. */
+@media (max-width: 48rem) {
+  .runs-board__columns {
+    flex-direction: column;
+    overflow-x: visible;
+  }
+
+  .runs-board__column {
+    flex: 1 1 auto;
+    min-width: 0;
+    width: 100%;
+  }
 }
 
 /* ---------- jobs timeline (task t15) ---------- */

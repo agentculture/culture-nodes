@@ -42,7 +42,7 @@ export function App() {
           <Route
             path="*"
             element={
-              <section className="container">
+              <section className="view-rail">
                 <h1>Not found</h1>
                 <p className="muted">
                   No view is routed at this path. Try the run list.

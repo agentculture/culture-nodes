@@ -4,6 +4,10 @@
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <meta name="color-scheme" content="light dark" />
+    <!-- The AgentCulture mark, same file the org site serves (ADR 0001);
+         lives in public/ so Vite copies it to dist/ unhashed and the
+         embedweb Go build (webassets_embed.go) serves it at /favicon.svg. -->
+    <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
     <title>Culture Nodes</title>
   </head>
   <body>

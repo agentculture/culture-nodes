@@ -1,13 +1,11 @@
 import { useCallback, useEffect, useState } from "react";
-import { useSearchParams } from "react-router-dom";
 import { setAgentState } from "../agent-state/store";
 import { ApiError, listNodeRuns } from "../api/client";
 import type { NodeRunListItem } from "../api/types";
 import ErrorNotice from "../components/ErrorNotice";
 import JobsTable from "../components/JobsTable";
-import TimeRangeFilter, {
-  type TimeRangeValue,
-} from "../components/TimeRangeFilter";
+import TimeRangeFilter from "../components/TimeRangeFilter";
+import { useTimeRange } from "../hooks/useTimeRange";
 
 /**
  * The jobs timeline (task t15): every node run across every run, newest
@@ -16,18 +14,16 @@ import TimeRangeFilter, {
  * `GET /v1alpha1/runs`.
  *
  * The time-range filter is server-side by construction: `since`/`until`
- * live in this component's state (mirrored to the `since`/`until` URL
- * search params, so the active range is shareable/bookmarkable) and are
- * passed straight through as `updated_since`/`updated_until` on every
+ * live in the URL search params (via useTimeRange — the same hook Board and
+ * Runs use, issue #23 — so the active range is shareable/bookmarkable) and
+ * are passed straight through as `updated_since`/`updated_until` on every
  * fetch — there is no client-side filtering of an already-fetched list
  * anywhere in this file. Changing the range resets pagination and refetches
  * page one; "Load more" replays the same range with the last page's
  * `next_cursor`.
  */
 export function JobsTimeline() {
-  const [searchParams, setSearchParams] = useSearchParams();
-  const since = searchParams.get("since") ?? undefined;
-  const until = searchParams.get("until") ?? undefined;
+  const { since, until, applyRange } = useTimeRange();
 
   const [items, setItems] = useState<NodeRunListItem[] | null>(null);
   const [nextCursor, setNextCursor] = useState<string | undefined>(undefined);
@@ -88,22 +84,8 @@ export function JobsTimeline() {
       .finally(() => setLoadingMore(false));
   }, [nextCursor, since, until]);
 
-  const applyRange = useCallback(
-    (range: TimeRangeValue) => {
-      setSearchParams((prev) => {
-        const next = new URLSearchParams(prev);
-        if (range.since) next.set("since", range.since);
-        else next.delete("since");
-        if (range.until) next.set("until", range.until);
-        else next.delete("until");
-        return next;
-      });
-    },
-    [setSearchParams],
-  );
-
   return (
-    <section className="container jobs-timeline">
+    <section className="view-rail jobs-timeline">
       <h1>Jobs</h1>
       <p className="muted">
         Every node run across every run, newest first by last update.
@@ -123,11 +105,13 @@ export function JobsTimeline() {
         </p>
       ) : (
         <>
-          <JobsTable
-            id="jobs-table"
-            items={items}
-            caption={`${items.length} node run(s), newest first`}
-          />
+          <div className="table-scroll">
+            <JobsTable
+              id="jobs-table"
+              items={items}
+              caption={`${items.length} node run(s), newest first`}
+            />
+          </div>
           {nextCursor ? (
             <button
               type="button"

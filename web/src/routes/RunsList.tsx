@@ -4,19 +4,34 @@ import { ApiError, listRuns } from "../api/client";
 import type { Run } from "../api/types";
 import { setAgentState } from "../agent-state/store";
 import ErrorNotice from "../components/ErrorNotice";
+import TimeRangeFilter from "../components/TimeRangeFilter";
+import { useTimeRange } from "../hooks/useTimeRange";
 
 /**
  * The run list — the entry point into the Run view (PRD §8.6 Operations, in
  * its smallest useful form: search runs comes later, listing them does not).
+ *
+ * The time-range filter is the Jobs view's control and state idiom verbatim
+ * (issue #23): `since`/`until` ride the URL search params via useTimeRange
+ * and go to the API as `updated_since`/`updated_until` — server-side
+ * scoping, never a client-side re-slice of an already-fetched list. The
+ * list sorts by `updated_at` to match its own ordering statement (and the
+ * other two views).
  */
 export function RunsList() {
+  const { since, until, applyRange } = useTimeRange();
   const [runs, setRuns] = useState<Run[] | null>(null);
   const [error, setError] = useState<ApiError | null>(null);
 
   useEffect(() => {
     const controller = new AbortController();
     setAgentState({ status: "loading", run: null });
-    listRuns(controller.signal)
+    setError(null);
+    listRuns(controller.signal, {
+      sort: "updated_at",
+      updated_since: since,
+      updated_until: until,
+    })
       .then((list) => {
         if (controller.signal.aborted) return;
         setRuns(list.items);
@@ -36,11 +51,15 @@ export function RunsList() {
         setAgentState({ status: "ready", run: null });
       });
     return () => controller.abort();
-  }, []);
+  }, [since, until]);
 
   return (
-    <section className="container runs-list">
+    <section className="view-rail runs-list">
       <h1>Runs</h1>
+      <p className="muted">Every run, newest first by last update.</p>
+
+      <TimeRangeFilter since={since} until={until} onApply={applyRange} />
+
       {error ? <ErrorNotice error={error} /> : null}
       {runs === null ? (
         <p className="muted" id="runs-loading">
@@ -48,37 +67,44 @@ export function RunsList() {
         </p>
       ) : runs.length === 0 ? (
         <p className="muted" id="runs-empty">
-          No runs yet. Create one with <code>nodes run create</code>.
+          No runs in this range. Create one with <code>nodes run create</code>
+          , or widen the range.
         </p>
       ) : (
-        <table className="ledger-table" id="runs-table">
-          <thead>
-            <tr>
-              <th scope="col">run</th>
-              <th scope="col">state</th>
-              <th scope="col">workflow digest</th>
-              <th scope="col">created</th>
-            </tr>
-          </thead>
-          <tbody>
-            {runs.map((run) => (
-              <tr key={run.id} data-run-id={run.id}>
-                <th scope="row">
-                  <Link to={`/runs/${run.id}`}>{run.id}</Link>
-                </th>
-                <td data-run-state={run.state}>{run.state}</td>
-                <td>
-                  <code title={run.workflow_digest}>
-                    {run.workflow_digest.slice(0, 20)}…
-                  </code>
-                </td>
-                <td>
-                  <time dateTime={run.created_at}>{run.created_at}</time>
-                </td>
+        <div className="table-scroll">
+          <table className="ledger-table" id="runs-table">
+            <thead>
+              <tr>
+                <th scope="col">run</th>
+                <th scope="col">state</th>
+                <th scope="col">workflow digest</th>
+                <th scope="col">created</th>
+                <th scope="col">updated</th>
               </tr>
-            ))}
-          </tbody>
-        </table>
+            </thead>
+            <tbody>
+              {runs.map((run) => (
+                <tr key={run.id} data-run-id={run.id}>
+                  <th scope="row">
+                    <Link to={`/runs/${run.id}`}>{run.id}</Link>
+                  </th>
+                  <td data-run-state={run.state}>{run.state}</td>
+                  <td>
+                    <code title={run.workflow_digest}>
+                      {run.workflow_digest.slice(0, 20)}…
+                    </code>
+                  </td>
+                  <td>
+                    <time dateTime={run.created_at}>{run.created_at}</time>
+                  </td>
+                  <td>
+                    <time dateTime={run.updated_at}>{run.updated_at}</time>
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
       )}
     </section>
   );

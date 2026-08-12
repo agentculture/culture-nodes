@@ -213,7 +213,7 @@ function RunViewInner() {
 
   if (error) {
     return (
-      <section className="container">
+      <section className="view-rail">
         <h1>Run</h1>
         <ErrorNotice error={error} />
         <p>
@@ -224,7 +224,7 @@ function RunViewInner() {
   }
 
   return (
-    <section className="run-view wide-rail">
+    <section className="run-view view-rail">
       <div className="run-view__head">
         <div>
           <h1 className="run-view__title">

@@ -6,6 +6,7 @@ import type {
   RunState,
   RunView,
   WorkflowVersion,
+  WorkflowVersionList,
 } from "./types";
 
 /**
@@ -134,6 +135,22 @@ export const listNodeRuns = (
 export const getWorkflow = (digest: string, signal?: AbortSignal) =>
   getJson<WorkflowVersion>(
     `/workflows/${encodeURIComponent(digest)}`,
+    signal,
+  );
+
+/** GET /v1alpha1/workflows query parameters (task t8). */
+export interface ListWorkflowsParams {
+  /** Filter to versions of one workflow key. */
+  workflow_key?: string;
+  limit?: number;
+}
+
+export const listWorkflows = (
+  signal?: AbortSignal,
+  params?: ListWorkflowsParams,
+) =>
+  getJson<WorkflowVersionList>(
+    `/workflows${toQueryString(params as Record<string, string | number | undefined> | undefined)}`,
     signal,
   );
 

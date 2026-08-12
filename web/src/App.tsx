@@ -13,6 +13,7 @@ import LedgerView from "./routes/LedgerView";
 import RunView from "./routes/RunView";
 import RunsBoard from "./routes/RunsBoard";
 import RunsList from "./routes/RunsList";
+import Workflows from "./routes/Workflows";
 
 /** Keeps agent-state's `route` in step with the router. */
 function RouteWatcher() {
@@ -37,6 +38,7 @@ export function App() {
           <Route path="/runs" element={<RunsList />} />
           <Route path="/board" element={<RunsBoard />} />
           <Route path="/jobs" element={<JobsTimeline />} />
+          <Route path="/workflows" element={<Workflows />} />
           <Route path="/runs/:id" element={<RunView />} />
           <Route path="/runs/:id/ledger" element={<LedgerView />} />
           <Route

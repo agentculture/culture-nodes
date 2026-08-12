@@ -5,6 +5,47 @@ All notable changes to this project will be documented in this file.
 Format follows [Keep a Changelog](https://keepachangelog.com/). This project
 adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.13.0] - 2026-08-13
+
+### Added
+
+- §13.2 usage persisted at the completion seam (sync + async callback) via
+  expand-only migration 0012, rolled up attempt → node run → run and exposed
+  on run detail + node-runs listing with honest semantics: failed attempts
+  count (retry burn), not-reported is never zero, cost never summed across
+  currencies (spec t1/t2, closes #12 item 3's API half)
+- Run metadata: optional name/description/category at creation (migration
+  0013), category retag via PATCH, and a derived display hint that is never
+  presented as a given name (spec t3, #12 item 4 + #28 item 3)
+- Web: Workflows view over the existing endpoints (spec t8, #12 item 5) and
+  the in-UI authoring slice — paste/upload YAML → compiler diagnostics →
+  read-only graph preview → byte-identical publish (spec t9, #12 item 6),
+  gated by ADR 0007 (Phase-3 timing deviation + unauthenticated LAN-bound
+  exposure, #6 the gate)
+- Bridge-measured workspace facts in ALL three adapters: workspace_measured
+  block (HEAD before/after, status, changed files, diffstat, branch) measured
+  by the bridge process from git, structurally separate from model-claimed
+  output, honest degradation including mid-session workspace loss (spec t10 +
+  colleague-review fix, #13 item 1)
+- Workspace-snapshot hook evidence: hooks request runner-boundary snapshots
+  and measured changed-paths/diff-digest/artifact-refs surface as observed
+  evidence appended by the worker, never via the agent's delta; async post_run
+  refusal regression-locked (spec t12, #13 item 2 sync half)
+- Ledger record type `grade`: rating+rationale against an evaluated actor,
+  agent grades land proposed, self-grades refused, never observed/derived
+  (spec t14, #28 item 1's ledger half)
+- examples/independent-review: a different backend reviews the builder's
+  change-set; verdicts land proposed per §10.4 (spec t13, #13 item 3 —
+  binding gaps recorded as #33/#34)
+- OpenTelemetry beyond the stub: engine transition commit, worker dispatch,
+  actor callback (+ scheduler's engine seam) traced/metered behind env-gated
+  OTLP export with a structurally enforced attribute allowlist — ids, states,
+  counts, durations only (spec t19, closes #5)
+
+### Fixed
+
+- colleague adapter: t10 lint leftovers (unused import, long lines)
+
 ## [0.12.2] - 2026-08-12
 
 ### Added

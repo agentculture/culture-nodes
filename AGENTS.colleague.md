@@ -9,3 +9,13 @@ finish).
 Follow the operator's AGENTS.md instructions and the skills loaded from
 .colleague/skills/ when present.  Prefer small, reversible steps; handoff
 via finish when done.
+
+Dogfooding: when a scoped task is delegable (reviews, audits, doc checks,
+investigations), assign it through the culture-nodes control plane with the
+nodes-operator skill (`assign codex-thor|codex-orin "instruction" --yes` —
+billable, so only with the operator's intent) rather than doing it inline.
+Afterwards always read the run and its ledger, weigh the proposed claims
+(claims, not evidence), and record a short actor-quality note via the
+remember skill (actor, task kind, verdict, why) — the point is a growing,
+comparable record of which actor is better at what (issue #28 tracks the
+first-class grading surfaces).

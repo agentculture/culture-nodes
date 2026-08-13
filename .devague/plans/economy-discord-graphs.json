@@ -5,7 +5,7 @@
   "schema_version": 4,
   "status": "exported",
   "created": "2026-08-13T16:24:16Z",
-  "updated": "2026-08-13T16:30:17Z",
+  "updated": "2026-08-13T17:46:16Z",
   "targets": [
     {
       "id": "c1",
@@ -1196,6 +1196,23 @@
         "c38",
         "h31"
       ],
+      "instruction": ""
+    },
+    {
+      "id": "t34",
+      "summary": "Deploy-lane wiring for the two new daemons: nodes-notifier as a compose service on thor (env-configured API base, cursor file on a persistent volume, DISCORD_WEBHOOK_URL via install-secrets.sh) and the human-inbox bridge + merge tracker as host units beside the codex bridge (GITHUB_TOKEN custody); deploy docs updated",
+      "origin": "llm",
+      "status": "confirmed",
+      "acceptance_criteria": [
+        "deploy/prod/deploy.sh thor brings up the notifier and the tracker alongside the control plane, and deploy/prod/README.md documents their env and secret requirements",
+        "a real run completion on thor posts exactly one message to the configured Discord channel (live smoke, recorded)",
+        "secrets reach both daemons via install-secrets.sh, never argv and never a committed file (park v1/v3 closed for the prod host)"
+      ],
+      "deps": [
+        "t14",
+        "t16"
+      ],
+      "covers": [],
       "instruction": ""
     }
   ],

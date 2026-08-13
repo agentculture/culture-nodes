@@ -1,0 +1,34 @@
+{
+  "plan_slug": "economy-discord-graphs",
+  "schema_version": 1,
+  "created": "2026-08-13T17:16:38Z",
+  "updated": "2026-08-13T17:45:59Z",
+  "deviations": [
+    {
+      "id": "d1",
+      "what": "colleague CAN resume upstream: colleague 1.56.0 ships 'colleague work --continue ID|last' (upstream #167), contradicting t5's premise that colleague resume needs an upstream feature \u2014 t5's colleague leg becomes real bridge resume support, filed as issue #62 (implement in-cycle if capacity allows, else first follow-up); the 'null ref + upstream request' fallback is superseded",
+      "task_ref": "t5",
+      "reason": "operator correction during wave-1 execution; verified against the installed colleague CLI (--continue flag present in work --help)",
+      "affects": [
+        "t5"
+      ],
+      "origin": "user",
+      "status": "approved",
+      "classification": "acceptable"
+    },
+    {
+      "id": "d2",
+      "what": "Plan gap: the batch ships two new out-of-process daemons (cmd/nodes-notifier from t14, human-inbox merge tracker from t16) but no task wires either into the production deploy lane (deploy/prod/deploy.sh + compose.thor.yml + install-secrets.sh). Success signal 1 (a run completion posts to the Discord channel) and the merge-as-action signal cannot be demonstrated on thor without it. Adding task t34: deploy-lane wiring for both daemons, including DISCORD_WEBHOOK_URL and GITHUB_TOKEN secret custody on the prod host (closes park v3, daemon placement).",
+      "task_ref": "t33",
+      "reason": "found by the operator when scoping the thor deploy the user asked to review; the plan's t33 delivery verification depends on surfaces no task deploys",
+      "affects": [
+        "t33",
+        "t14",
+        "t16"
+      ],
+      "origin": "user",
+      "status": "approved",
+      "classification": "needs-follow-up"
+    }
+  ]
+}

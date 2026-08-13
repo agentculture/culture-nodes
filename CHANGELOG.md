@@ -5,6 +5,26 @@ All notable changes to this project will be documented in this file.
 Format follows [Keep a Changelog](https://keepachangelog.com/). This project
 adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.15.0] - 2026-08-13
+
+### Added
+
+- Extended attempt usage telemetry (migration 0017): cached-input, reasoning, model, thread and termination-reason fields carried protocol → engine → store → API → dashboard, with a cache-hit-rate tile in Statistics (ADR 0009).
+- `continuation_ref` carriage (migration 0018): the field lands on the invocation request and the completed payload, persists per attempt, and dispatch offers the prior ref back to the same actor within a run (ADR 0010).
+- Parallel tokens in full (migration 0019, issue #43): `parallel`/`join` node kinds, set-valued transition plans, token groups with race-free join-barrier counting, per-token bounds, sibling reaping with branch-cancel propagation, and `maxParallelTokens` finally honored.
+- `capacity_exhausted` error class (§13.5): body-declared, non-retryable in-attempt, with Retry-After surviving onto the terminal error.
+- `internal/notify` + `cmd/nodes-notifier`: a Discord webhook layer ported from devex's design and an out-of-process SSE consumer with a durable cursor, exactly-once delivery across restarts, and zero control-plane changes.
+- Human-inbox merge tracker (issue #54): declared observables ride the task input, a stdlib GitHub poller auto-submits only the merged state as an `observed-submission` claim naming the merge commit, and manual submission stays the override lane.
+- Node Graphs tab (issue #56) replacing Workflows: Nodes / Node Graphs / Active Graphs sub-tabs, a cross-workflow node catalog derived from published IRs, and Active Graphs with a breathing halo and committed-event pulses (reduced-motion safe, palette-pinned).
+- Dashboard auto-refresh (issue #46): one shared app-wide event stream with per-view subscriptions, stale-while-revalidate preserved across every view.
+- Deploy-lane wiring for the notifier and the human-inbox bridge + tracker on thor, with secret plumbing through `install-secrets.sh`.
+
+### Fixed
+
+- Bridge usage honesty across all three backends: cache/reasoning/model/thread telemetry is mapped where the backend reports it, and a codex turn that reports no usage now emits no usage block at all — fabricated `0/0` usage on failed turns is structurally impossible.
+- Inbox no longer regresses agent-state to `loading` on a decision-driven reload.
+- OpenAPI node-run status enums were missing `waiting_human` (pre-existing drift) alongside the new `waiting_join`.
+
 ## [0.14.1] - 2026-08-13
 
 ### Added

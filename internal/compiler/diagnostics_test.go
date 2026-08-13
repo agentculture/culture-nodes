@@ -89,6 +89,20 @@ func TestDeliberateErrorFixtures(t *testing.T) {
 			},
 		},
 		{
+			// The deferred node surfaces (artifacts, error) in a data
+			// binding: no input/output resolver answers them, so accepting
+			// them would publish a workflow that only fails at dispatch
+			// (task t7). operation.workspaceRef stays exempt — see
+			// deliver-change.workflow.yaml, which binds
+			// /nodes/build/artifacts/workspace and compiles clean.
+			name: "deferred node surface in a data binding",
+			file: "err-deferred-surface-binding.workflow.yaml",
+			want: []wantDiag{
+				{LevelError, "/spec/nodes/start/input/bindings/failure", CodeContractBindingUnresolved},
+				{LevelError, "/spec/nodes/start/input/bindings/files", CodeContractBindingUnresolved},
+			},
+		},
+		{
 			name: "invalid CEL",
 			file: "err-bad-cel.workflow.yaml",
 			want: []wantDiag{

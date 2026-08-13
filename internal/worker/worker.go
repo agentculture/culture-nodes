@@ -435,6 +435,9 @@ func (w *Worker) sources(d postgres.Dispatch) bindingSources {
 		NodeOutput: func(ctx context.Context, nodeID string) (json.RawMessage, error) {
 			return w.db.NodeOutput(ctx, d.RunID, nodeID)
 		},
+		NodeEvidence: func(ctx context.Context, nodeID string) ([]ledger.Record, error) {
+			return w.db.NodeEvidence(ctx, d.RunID, nodeID)
+		},
 		Projection: func(ctx context.Context, kind ledger.ProjectionKind, subject string) (ledger.Projection, error) {
 			return w.ledger.ProjectRun(ctx, d.RunID, kind, subject)
 		},

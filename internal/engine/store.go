@@ -144,6 +144,13 @@ type Tx interface {
 	// node within a run — what a `/nodes/<id>/output` binding resolves to.
 	NodeOutput(ctx context.Context, runID, nodeID string) (json.RawMessage, error)
 
+	// NodeEvidence returns the run's live evidence ledger records belonging
+	// to a node's node runs, in id order — what a `/nodes/<id>/evidence`
+	// binding resolves to. Evidence identity is the node run (the engine
+	// stamps node_run_id on every accepted delta record); zero records is an
+	// empty slice, not an error.
+	NodeEvidence(ctx context.Context, runID, nodeID string) ([]ledger.Record, error)
+
 	// AppendEvent writes one audit event for a run and its outbox row, in
 	// this transaction (PRD §12.5 steps 7 and 10). It returns the sequence
 	// assigned.

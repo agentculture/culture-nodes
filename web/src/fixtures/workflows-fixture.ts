@@ -84,6 +84,62 @@ export const WORKFLOW_VERSIONS: WorkflowVersion[] = [
   },
 ];
 
+/**
+ * Extra fixture data for the cross-workflow node catalog (task t29,
+ * domain/node-catalog.ts). `WORKFLOW_VERSIONS`'s two workflow_keys
+ * (`deliver-change`, `hello-world`) share no actor/runner ref, so there is
+ * nothing in the base fixture to exercise cross-workflow linkage derivation
+ * against. This adds a third workflow, `notify-team`, whose single node
+ * deliberately reuses `deliver-change`'s `intake` node actor ref
+ * (`actor://company/intake@sha256:111111`, see run-fixture.ts's
+ * `WORKFLOW_IR`) — the fixture's one intentional cross-workflow coincidence.
+ *
+ * Kept as an *additive* export (`NODE_CATALOG_WORKFLOW_VERSIONS =
+ * WORKFLOW_VERSIONS + this`) rather than folding into `WORKFLOW_VERSIONS`
+ * itself, because `web/e2e/workflows.spec.ts:164` pins
+ * `expect(WORKFLOW_VERSIONS).toHaveLength(3)` and `web/src/routes/
+ * Workflows.test.tsx` renders `WORKFLOW_VERSIONS` directly — growing that
+ * array would break both.
+ */
+export const NOTIFY_TEAM_DIGEST =
+  "sha256:9f8e7d6c5b4a39281706f5e4d3c2b1a0f9e8d7c6b5a4938271605f4e3d2c1b0a";
+
+const NOTIFY_TEAM_IR: WorkflowIR = {
+  apiVersion: "nodes.culture.dev/v1alpha1",
+  kind: "Workflow",
+  metadata: {
+    name: "notify-team",
+    version: "1.0.0",
+    ownerRef: "team/platform-ai",
+  },
+  spec: {
+    entry: "notify",
+    nodes: {
+      notify: {
+        kind: "agent",
+        ownerRef: "team/platform-ai",
+        // Same actor ref as deliver-change's `intake` node — the deliberate
+        // cross-workflow coincidence this fixture exists to exercise.
+        uses: "actor://company/intake@sha256:111111",
+        outcomes: ["completed"],
+      },
+      finish: { kind: "end", ownerRef: "team/platform-ai", outcomes: [] },
+    },
+    edges: [{ from: "notify.completed", to: "finish" }],
+  },
+};
+
+export const NOTIFY_TEAM_VERSION: WorkflowVersion = {
+  id: "wfv-notify-team-1",
+  workflow_key: "notify-team",
+  version: 1,
+  source_format: "yaml",
+  source: "# a single-node workflow sharing deliver-change's intake actor\n",
+  normalized_ir: NOTIFY_TEAM_IR,
+  digest: NOTIFY_TEAM_DIGEST,
+  created_at: "2026-08-09T09:07:00Z",
+};
+
 /** `GET /v1alpha1/runs?sort=updated_at`, newest first — as the view requests it. */
 export const WORKFLOWS_RUNS: Run[] = [
   {
@@ -118,3 +174,42 @@ export const WORKFLOWS_RUNS: Run[] = [
     completed_at: t(10),
   },
 ];
+
+/**
+ * The version list `domain/node-catalog.test.ts` derives its catalog from:
+ * `WORKFLOW_VERSIONS` (deliver-change x2 + hello-world) plus `notify-team`.
+ * Three distinct workflow_keys once grouped by latest version.
+ */
+export const NODE_CATALOG_WORKFLOW_VERSIONS: WorkflowVersion[] = [
+  ...WORKFLOW_VERSIONS,
+  NOTIFY_TEAM_VERSION,
+];
+
+/**
+ * Deterministic counts for `NODE_CATALOG_WORKFLOW_VERSIONS`, computed by
+ * hand from the latest version of each workflow_key (deliver-change v2,
+ * hello-world v1, notify-team v1) — asserted against by name in
+ * `domain/node-catalog.test.ts` rather than as inline literals, per the e2e
+ * `MESH_ACTOR_NODE_COUNT` convention (web/e2e/mesh.spec.ts).
+ *
+ * Node-definition identity is kind + `uses`/`approverRef` (see
+ * `domain/node-catalog.ts`'s doc comment). deliver-change's latest version
+ * contributes 7 distinct definitions (intake/plan/build/verify — agent,
+ * each with a distinct actor ref; test — code; human-review — approval;
+ * finish — end, no ref). hello-world's `greet` node is an agent with no
+ * `uses`, so it mints one more definition ("unbound agent"); hello-world's
+ * `finish` node collapses into deliver-change's existing "end" definition
+ * (same kind, no ref, so no ref to distinguish them). notify-team's single
+ * node reuses deliver-change's `intake` actor ref outright, so it adds an
+ * *occurrence* to an existing definition rather than a new one.
+ */
+export const NODE_CATALOG_DEFINITION_COUNT = 8;
+
+/** One graph-catalog entry per distinct workflow_key. */
+export const NODE_CATALOG_GRAPH_COUNT = 3;
+
+/**
+ * One cross-workflow link: deliver-change's `intake` node and notify-team's
+ * `notify` node both use `actor://company/intake@sha256:111111`.
+ */
+export const NODE_CATALOG_LINK_COUNT = 1;

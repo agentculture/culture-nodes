@@ -13,11 +13,11 @@ import Inbox from "./routes/Inbox";
 import JobsTimeline from "./routes/JobsTimeline";
 import LedgerView from "./routes/LedgerView";
 import Mesh from "./routes/Mesh";
+import NodeGraphs from "./routes/NodeGraphs";
 import RunView from "./routes/RunView";
 import RunsBoard from "./routes/RunsBoard";
 import RunsList from "./routes/RunsList";
 import Statistics from "./routes/Statistics";
-import Workflows from "./routes/Workflows";
 
 /** Keeps agent-state's `route` in step with the router. */
 function RouteWatcher() {
@@ -45,7 +45,14 @@ export function App() {
           <Route path="/inbox" element={<Inbox />} />
           <Route path="/mesh" element={<Mesh />} />
           <Route path="/stats" element={<Statistics />} />
-          <Route path="/workflows" element={<Workflows />} />
+          <Route path="/graphs" element={<NodeGraphs />} />
+          {/* The old Workflows tab's URL — old links/bookmarks survive by
+              landing on the sub-tab that renders the same content the
+              route used to (task t28, issue #56). */}
+          <Route
+            path="/workflows"
+            element={<Navigate to="/graphs?tab=graphs" replace />}
+          />
           <Route path="/workflows/new" element={<AuthorWorkflow />} />
           <Route path="/runs/:id" element={<RunView />} />
           <Route path="/runs/:id/ledger" element={<LedgerView />} />

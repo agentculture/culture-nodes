@@ -61,8 +61,8 @@ export function Header() {
         <NavLink to="/stats" className={navLinkClass} onClick={closeNav}>
           Statistics
         </NavLink>
-        <NavLink to="/workflows" className={navLinkClass} onClick={closeNav}>
-          Workflows
+        <NavLink to="/graphs" className={navLinkClass} onClick={closeNav}>
+          Node Graphs
         </NavLink>
       </nav>
       <p className="app-header__tagline">

@@ -1209,7 +1209,8 @@ button.timeline__node {
   cursor: default;
 }
 
-/* ---------- workflows view (task t8) ---------- */
+/* ---------- workflow cards (task t8; rendered inside the Node Graphs
+   sub-tab of the Node Graphs tab as of task t28) ---------- */
 
 .workflows-list {
   list-style: none;
@@ -1277,12 +1278,21 @@ button.timeline__node {
   font-size: var(--ac-type-meta);
 }
 
-.workflows-view__head {
+.node-graphs-view__head {
   display: flex;
   flex-wrap: wrap;
   align-items: flex-start;
   justify-content: space-between;
   gap: 1rem;
+}
+
+/* Honest empty states for the Nodes/Active Graphs sub-tabs (task t28) —
+   same rail-padded text block shape the loading/empty <p class="muted">
+   rows elsewhere in this file use, just with more room since these are the
+   entire sub-tab body rather than a one-line status. */
+.node-graphs-empty {
+  padding: 1.5rem 0;
+  max-width: 40rem;
 }
 
 /* ---------- authoring slice (task t9, ADR 0007) ---------- */

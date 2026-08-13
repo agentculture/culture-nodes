@@ -15,6 +15,40 @@ import (
 // semantics of PRD §11.2 rather than the store's ability to answer a query.
 // The store's half is covered by the end-to-end test.
 
+// The ids the projection closure's record set carries, named so the tests
+// can prove a resolved projection contains the records that were actually
+// appended rather than merely a well-shaped empty document.
+const (
+	testTaskRecordID     = ledger.IDPrefix + "00000000000000000000000001"
+	testEvidenceRecordID = ledger.IDPrefix + "00000000000000000000000002"
+)
+
+// testLedgerRecords is the record set the Projection closure projects over:
+// one ready task and one runner-observed evidence record on it. Real records
+// through the real ledger.Project dispatch, so a projection binding resolves
+// what a store would answer, not a stub's invention.
+func testLedgerRecords() []ledger.Record {
+	return []ledger.Record{
+		{
+			ID:         testTaskRecordID,
+			RecordType: ledger.RecordTask,
+			RunID:      "run_1",
+			Origin:     ledger.Origin{Kind: ledger.OriginAgent, ActorID: "actor_agent"},
+			Authority:  ledger.AuthorityProposed,
+			Data:       json.RawMessage(`{"goal":"add /healthz","status":"ready","assurance_state":"unverified"}`),
+		},
+		{
+			ID:         testEvidenceRecordID,
+			RecordType: ledger.RecordEvidence,
+			RunID:      "run_1",
+			Origin:     ledger.Origin{Kind: ledger.OriginRunner, ActorID: "runner_headspace"},
+			Authority:  ledger.AuthorityObserved,
+			SubjectRef: ledger.NullableID(testTaskRecordID),
+			Data:       json.RawMessage(`{"collection_method":"runner_wait_status","completeness":"partial"}`),
+		},
+	}
+}
+
 func testSources(t *testing.T) bindingSources {
 	t.Helper()
 	return bindingSources{
@@ -31,7 +65,7 @@ func testSources(t *testing.T) bindingSources {
 			}
 		},
 		Projection: func(_ context.Context, kind ledger.ProjectionKind, subject string) (ledger.Projection, error) {
-			return ledger.Projection{Kind: kind, Subject: subject, Items: []ledger.Record{}, Digest: "sha256:test"}, nil
+			return ledger.Project(testLedgerRecords(), kind, subject)
 		},
 	}
 }
@@ -96,6 +130,42 @@ func TestUndeclaredBindingResolvesToAnEmptyObject(t *testing.T) {
 		}
 		assertEqualJSON(t, got, `{}`)
 	}
+}
+
+// TestEvidenceBindingResolvesAppendedRecords proves the `evidence` binding
+// resolves the run's actual evidence: its empty subject reads as unscoped, so
+// the projection carries the evidence record the record set holds — not an
+// empty items list a consumer could mistake for "no evidence was appended".
+func TestEvidenceBindingResolvesAppendedRecords(t *testing.T) {
+	got, err := resolvePointer(context.Background(), testSources(t), "/ledger/projections/evidence")
+	if err != nil {
+		t.Fatalf("resolve /ledger/projections/evidence: %v", err)
+	}
+
+	var projection ledger.Projection
+	if err := json.Unmarshal(got, &projection); err != nil {
+		t.Fatalf("decode resolved projection: %v", err)
+	}
+	if projection.Kind != ledger.KindEvidenceFor {
+		t.Errorf("kind = %q, want %q", projection.Kind, ledger.KindEvidenceFor)
+	}
+	if projection.Subject != "" {
+		t.Errorf("subject = %q, want empty: the binding asks for the run's evidence, not one reference's", projection.Subject)
+	}
+	if len(projection.Items) != 1 || projection.Items[0].ID != testEvidenceRecordID {
+		t.Fatalf("items = %v, want exactly the appended evidence record %s", ids(projection.Items), testEvidenceRecordID)
+	}
+	if projection.Items[0].RecordType != ledger.RecordEvidence {
+		t.Errorf("resolved record type = %q, want evidence", projection.Items[0].RecordType)
+	}
+}
+
+func ids(records []ledger.Record) []string {
+	out := make([]string, len(records))
+	for i, rec := range records {
+		out[i] = rec.ID
+	}
+	return out
 }
 
 func TestProjectionBindingVocabulary(t *testing.T) {

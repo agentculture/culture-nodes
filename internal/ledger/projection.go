@@ -350,19 +350,21 @@ func DecisionHistory(records []Record) (Projection, error) {
 	})
 }
 
-// EvidenceForSubject projects the live evidence bearing on one reference —
-// evidence whose subject is that reference, and evidence that names it in its
-// provenance. Both are how a task or result comes to be supported.
+// EvidenceForSubject projects live evidence records. A non-empty ref selects
+// the evidence bearing on that one reference — evidence whose subject is the
+// reference, and evidence that names it in its provenance; both are how a
+// task or result comes to be supported. An empty ref is unscoped and selects
+// every live evidence record, which is what the `evidence` input binding asks
+// for (internal/worker's projectionKindFor): a run's evidence, not one
+// reference's.
 func EvidenceForSubject(records []Record, ref string) (Projection, error) {
 	items := make([]Record, 0)
-	if ref != "" {
-		for _, rec := range Live(records) {
-			if rec.RecordType != RecordEvidence {
-				continue
-			}
-			if rec.SubjectRef.String() == ref || containsString(rec.ProvenanceRefs, ref) {
-				items = append(items, rec)
-			}
+	for _, rec := range Live(records) {
+		if rec.RecordType != RecordEvidence {
+			continue
+		}
+		if ref == "" || rec.SubjectRef.String() == ref || containsString(rec.ProvenanceRefs, ref) {
+			items = append(items, rec)
 		}
 	}
 	sortByID(items)

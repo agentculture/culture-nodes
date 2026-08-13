@@ -5,6 +5,19 @@ All notable changes to this project will be documented in this file.
 Format follows [Keep a Changelog](https://keepachangelog.com/). This project
 adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.13.1] - 2026-08-13
+
+### Added
+
+- Spec: attempts-evidence-humans-loops (devague /scope + /think + /challenge) —
+  converged, challenge-passed frame for the issue 32/33/34/36/37/38/39/40 batch
+  plus the PR-upkeep live-test loop; 33 confirmed claims with instructions,
+  24 confirmed honesty conditions, 20 provenance-linked scope entries (14 from
+  scoping plus 6 challenge lenses incl. a live prod-actors probe), 5 decisions
+  (human nodes via actor protocol, routable acceptance, external loop driver,
+  spark claude-code bridge as fix executor, human performs the merge), 4 parks.
+  MD033 placeholder allowance (`<id>`/`<node>`) for devague-exported specs.
+
 ## [0.13.0] - 2026-08-13
 
 ### Added

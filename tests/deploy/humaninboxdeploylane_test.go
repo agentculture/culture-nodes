@@ -1,0 +1,185 @@
+// Package deploytest (see compose_test.go's doc comment). This file is
+// task t34's: static checks over deploy/prod/deploy.sh's human-inbox lane
+// -- the block that installs the human-inbox-bridge unit (always) and the
+// human-inbox-tracker unit (conditionally, gated on GITHUB_TOKEN being
+// present in the secrets file install-secrets.sh writes), thor-only.
+//
+// These are text assertions over the script itself, the same "cheaper and
+// more honest as static checks" call codexdeploylane_test.go makes for
+// its own lane, since deploy.sh targets production and exercising it for
+// real is a manual operator step.
+package deploytest
+
+import (
+	"regexp"
+	"strings"
+	"testing"
+)
+
+// TestHumanInboxDeployLaneExists is the smoke assertion the rest of this
+// file leans on.
+func TestHumanInboxDeployLaneExists(t *testing.T) {
+	script := deployScriptText(t)
+	if !strings.Contains(script, "deploy_human_inbox") {
+		t.Fatal("deploy/prod/deploy.sh has no deploy_human_inbox lane")
+	}
+}
+
+// TestHumanInboxDeployLaneIsThorOnly asserts the lane refuses to act on
+// any host but thor: there is exactly one logical human actor
+// (company/human-ops), so a second bridge/tracker pair on orin would race
+// the same GitHub PRs and the same inbox tasks against the same actor
+// row -- a deliberate deviation from the codex-bridge lane's
+// runs-on-both-hosts shape.
+func TestHumanInboxDeployLaneIsThorOnly(t *testing.T) {
+	script := deployScriptText(t)
+
+	fnIdx := strings.Index(script, "deploy_human_inbox() {")
+	if fnIdx == -1 {
+		t.Fatal("no deploy_human_inbox() function definition found")
+	}
+	// Bound the function body to before its call site (which repeats the
+	// function name) so the scan does not accidentally match the call.
+	callIdx := strings.Index(script[fnIdx+1:], `deploy_human_inbox "$HOST"`)
+	if callIdx == -1 {
+		t.Fatal(`no deploy_human_inbox "$HOST"` + ` call site found`)
+	}
+	body := script[fnIdx : fnIdx+1+callIdx]
+
+	if !strings.Contains(body, "thor*") {
+		t.Error("deploy_human_inbox's body does not gate on a thor*) host match")
+	}
+	if !strings.Contains(strings.ToLower(body), "skipping on $host") && !strings.Contains(strings.ToLower(body), "thor-only") {
+		t.Error("deploy_human_inbox's non-thor branch does not clearly report skipping (thor-only)")
+	}
+}
+
+// TestHumanInboxDeployLaneRequiresSecretsFromInstallSecrets mirrors
+// TestCodexDeployLaneRequiresBridgeEnvFromInstallSecrets: deploy.sh checks
+// for ~/.culture-nodes/human-inbox.env and fails with a message naming
+// install-secrets.sh, rather than generating any secret itself.
+func TestHumanInboxDeployLaneRequiresSecretsFromInstallSecrets(t *testing.T) {
+	script := deployScriptText(t)
+
+	if !strings.Contains(script, "human-inbox.env") {
+		t.Fatal("deploy.sh never references human-inbox.env; the missing-secret failure mode is unhandled")
+	}
+	if !regexp.MustCompile(`test -f [^\n]*human-inbox\.env`).MatchString(script) {
+		t.Error("deploy.sh does not test for human-inbox.env before installing the human-inbox units")
+	}
+
+	fnIdx := strings.Index(script, "deploy_human_inbox() {")
+	if fnIdx == -1 {
+		t.Fatal("no deploy_human_inbox() function found")
+	}
+	body := script[fnIdx:]
+	if endIdx := strings.Index(body, "\ndeploy_human_inbox \"$HOST\""); endIdx != -1 {
+		body = body[:endIdx]
+	}
+	if !strings.Contains(body, "install-secrets.sh") {
+		t.Error("deploy_human_inbox's missing-secret message does not name install-secrets.sh as the remedy")
+	}
+	if strings.Contains(body, "openssl rand") {
+		t.Error("deploy_human_inbox generates secret material itself; token generation belongs to install-secrets.sh alone")
+	}
+}
+
+// TestHumanInboxDeployLaneRunsViaUvRunAgainstAgentCheckout asserts the
+// lane's ExecStart-matching invocation reuses the SAME
+// ~/git/culture-nodes-agent checkout the codex-bridge lane provisions,
+// rather than inventing a second package-install mechanism.
+func TestHumanInboxDeployLaneRunsViaUvRunAgainstAgentCheckout(t *testing.T) {
+	script := deployScriptText(t)
+
+	fnIdx := strings.Index(script, "deploy_human_inbox() {")
+	if fnIdx == -1 {
+		t.Fatal("no deploy_human_inbox() function found")
+	}
+
+	if !strings.Contains(script, "human-inbox-bridge.service ~/.config/systemd/user/") {
+		t.Error("deploy.sh does not install human-inbox-bridge.service to ~/.config/systemd/user/")
+	}
+}
+
+// TestHumanInboxDeployLaneInstallsAndStartsBridgeUnit asserts the bridge
+// unit half of the lane mirrors the runner/codex-bridge shape: install,
+// daemon-reload, restart, enable, poll is-active.
+func TestHumanInboxDeployLaneInstallsAndStartsBridgeUnit(t *testing.T) {
+	script := deployScriptText(t)
+
+	for _, want := range []struct{ needle, why string }{
+		{"human-inbox-bridge.service ~/.config/systemd/user/", "the unit file install"},
+		{"systemctl --user daemon-reload", "the daemon-reload after installing the unit"},
+		{"systemctl --user restart human-inbox-bridge", "the restart (so a re-deploy picks up changes)"},
+		{"systemctl --user enable human-inbox-bridge", "the enable (so the bridge survives a reboot)"},
+		{"is-active human-inbox-bridge", "the wait-active poll"},
+	} {
+		if !strings.Contains(script, want.needle) {
+			t.Errorf("deploy.sh has no %q — %s is missing from the human-inbox-bridge lane", want.needle, want.why)
+		}
+	}
+}
+
+// TestHumanInboxDeployLaneGatesTrackerOnGitHubToken asserts the tracker
+// unit is installed/started only when GITHUB_TOKEN was actually installed
+// into human-inbox.env -- otherwise it is left uninstalled with a clear
+// warning, rather than started into an immediate crash loop.
+func TestHumanInboxDeployLaneGatesTrackerOnGitHubToken(t *testing.T) {
+	script := deployScriptText(t)
+
+	if !strings.Contains(script, "GITHUB_TOKEN") {
+		t.Fatal("deploy.sh's human-inbox lane never references GITHUB_TOKEN")
+	}
+	if !regexp.MustCompile(`grep -q "\^GITHUB_TOKEN=\.?" [^\n']*human-inbox\.env`).MatchString(script) {
+		t.Error(`deploy.sh does not grep human-inbox.env for a non-empty GITHUB_TOKEN= line before installing the tracker unit`)
+	}
+	for _, want := range []struct{ needle, why string }{
+		{"human-inbox-tracker.service ~/.config/systemd/user/", "the tracker unit file install"},
+		{"systemctl --user restart human-inbox-tracker", "the tracker restart"},
+		{"systemctl --user enable human-inbox-tracker", "the tracker enable"},
+		{"is-active human-inbox-tracker", "the tracker wait-active poll"},
+	} {
+		if !strings.Contains(script, want.needle) {
+			t.Errorf("deploy.sh has no %q — %s is missing from the human-inbox-tracker lane", want.needle, want.why)
+		}
+	}
+	if !strings.Contains(script, "WARNING") || !strings.Contains(script, "skipping human-inbox-tracker") {
+		t.Error("deploy.sh does not warn and skip the tracker unit when GITHUB_TOKEN is absent")
+	}
+}
+
+// tokenVarPatternHumanInbox mirrors codexdeploylane_test.go's
+// tokenVarPattern/tokenishName check, scoped to lines invoking ssh within
+// the human-inbox lane, so a token-bearing variable is never interpolated
+// into ssh's own argv.
+func TestHumanInboxDeployLaneNeverInterpolatesTokenIntoSSHArgv(t *testing.T) {
+	script := deployScriptText(t)
+
+	fnIdx := strings.Index(script, "deploy_human_inbox() {")
+	if fnIdx == -1 {
+		t.Fatal("no deploy_human_inbox() function found")
+	}
+	callIdx := strings.Index(script[fnIdx+1:], `deploy_human_inbox "$HOST"`)
+	if callIdx == -1 {
+		t.Fatal("no deploy_human_inbox call site found")
+	}
+	body := script[fnIdx : fnIdx+1+callIdx]
+
+	checked := 0
+	for i, line := range strings.Split(body, "\n") {
+		idx := strings.Index(line, "ssh ")
+		if idx == -1 {
+			continue
+		}
+		checked++
+		argvPortion := line[idx:]
+		for _, m := range tokenVarPattern.FindAllStringSubmatch(argvPortion, -1) {
+			if tokenishName.MatchString(m[1]) {
+				t.Errorf("line %d of deploy_human_inbox: %q interpolates $%s into ssh argv; secret material must never ride argv", i+1, line, m[1])
+			}
+		}
+	}
+	if checked == 0 {
+		t.Fatal("no ssh invocation found in deploy_human_inbox; this test is not proving anything")
+	}
+}

@@ -150,6 +150,49 @@ services:
         condition: service_healthy
     restart: unless-stopped
 
+  # Discord/webhook notifier daemon (economy-discord-graphs task t14): a
+  # separate process from api/worker/scheduler by design, so the control
+  # plane gains zero Discord code and zero Discord egress by construction
+  # (see internal/notifier/doc.go). Same image as the control plane — the
+  # Dockerfile's build stage compiles both `nodes` and `nodes-notifier`;
+  # this service just selects the second binary via an entrypoint
+  # override, the smallest change that avoids a second image (see the
+  # Dockerfile's own header comment for the full reasoning).
+  notifier:
+    image: culture-nodes:prod
+    entrypoint: ["/nodes-notifier"]
+    environment:
+      # Container-network address: notifier and api are sibling services on
+      # the same compose network, unlike NODES_CALLBACK_BASE_URL below,
+      # which is a URL actor bridges on the LAN call back to and so must be
+      # the host-reachable address.
+      NODES_NOTIFIER_API_BASE: http://api:8080
+      NODES_NOTIFIER_CURSOR_FILE: /var/lib/nodes-notifier/cursor.json
+      NODES_NOTIFIER_DASHBOARD_BASE: ${NODES_NOTIFIER_DASHBOARD_BASE:-http://thor:18080}
+      # internal/notify.ResolveWebhook reads exactly these two names, in
+      # this priority order (CULTURE_NODES_WEBHOOK_URL first) — see
+      # cmd/nodes-notifier/main.go's own usage text. Neither has a flag on
+      # purpose: the URL embeds a bearer token, and a secret on a command
+      # line is visible in every process listing. Both default to empty —
+      # install-secrets.sh installs whichever one the operator supplied
+      # into thor's prod.env; absent either, the daemon still runs and
+      # simply journals every lifecycle event as delivery-disabled rather
+      # than failing (fail-open, per internal/notify/doc.go).
+      CULTURE_NODES_WEBHOOK_URL: ${CULTURE_NODES_WEBHOOK_URL:-}
+      DISCORD_WEBHOOK_URL: ${DISCORD_WEBHOOK_URL:-}
+    volumes:
+      # A NAMED volume, not a bind mount: the durable cursor file is this
+      # daemon's whole exactly-once-across-restarts guarantee (see
+      # internal/notifier/cursor.go's doc comment) — it must survive a
+      # container recreate the same way pgdata/miniodata do, so it gets
+      # the same volume treatment as those two stateful services rather
+      # than living inside the otherwise-stateless control-plane image.
+      - notifiercursor:/var/lib/nodes-notifier
+    depends_on:
+      api:
+        condition: service_started
+    restart: unless-stopped
+
   # Scheduled logical backups (plan t20). Every BACKUP_INTERVAL_SECONDS a
   # full pg_dump lands in ~/.culture-nodes/backups on the host (bind mount),
   # newest last; the restore runbook is deploy/prod/RESTORE.md and the drill
@@ -182,3 +225,4 @@ services:
 volumes:
   pgdata: {}
   miniodata: {}
+  notifiercursor: {}

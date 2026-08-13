@@ -277,6 +277,25 @@ class Handler(BaseHTTPRequestHandler):
             )
             return
 
+        # Engine-resolved bindings beyond the transport fields ride into the
+        # session as a serialized context block: a node's input.bindings
+        # (fixReport, evidence projections, ...) are resolved by the worker
+        # and arrive here as extra input keys — dropping them silently made
+        # bound inputs invisible to the model (found live: pr-upkeep cycle 5,
+        # the review session honestly reported its bindings missing;
+        # deviation d3). Same block in all three bridges (all-backends rule).
+        _transport_keys = {"instruction", "repo", "sandbox", "model", "success_outcome", "permission_mode"}
+        _extras = {k: v for k, v in raw_input.items() if k not in _transport_keys}
+        if _extras:
+            _serialized = json.dumps(_extras, indent=2, ensure_ascii=False)
+            if len(_serialized) > 60000:
+                _serialized = _serialized[:60000] + "\n... [truncated at 60000 chars]"
+            instruction = (
+                instruction
+                + "\n\n## Bound inputs (engine-resolved, verbatim)\n"
+                + _serialized
+            )
+
         repo = raw_input.get("repo")
         if not isinstance(repo, str) or not repo.strip():
             self._write_json(

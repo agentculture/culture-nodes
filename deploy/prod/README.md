@@ -305,3 +305,140 @@ stale by the time this cycle ran:
   setup is healthy" line — the second stale issue claim, and itself
   evidence that ad-hoc bridges without systemd management do not survive
   (`s8`).
+
+## nodes-notifier (Discord webhook daemon, thor — task t34)
+
+`cmd/nodes-notifier` (economy-discord-graphs task t14) consumes the
+control plane's cross-run SSE feed and posts run-lifecycle events to a
+Discord (or generic) webhook via `internal/notify`. It runs as a compose
+service, `notifier`, in `compose.thor.yml` — thor only, since the SSE
+feed it consumes is thor's own API service; a second copy on orin would
+just be a redundant consumer of the same events.
+
+**Image**: the same `culture-nodes:prod` image every other role container
+runs. The Dockerfile's build stage now compiles `cmd/nodes-notifier`
+alongside `cmd/nodes` and the final distroless stage ships both binaries
+(`/nodes` and `/nodes-notifier`); the `notifier` service selects the
+second one with an `entrypoint: ["/nodes-notifier"]` override. This is the
+smallest change that avoids a second Dockerfile, a second build context,
+or a second image to build natively on thor — see the Dockerfile's own
+header comment for the full reasoning.
+
+**Cursor durability**: `NODES_NOTIFIER_CURSOR_FILE` points at
+`/var/lib/nodes-notifier/cursor.json` inside the container, mounted from
+the `notifiercursor` **named volume** (top-level `volumes:` entry, same
+treatment `pgdata`/`miniodata` get) — never a bind mount, and never left
+on the container's own writable layer. This is load-bearing: the cursor
+is the daemon's entire exactly-once-across-restarts guarantee
+(`internal/notifier/cursor.go`), so it must survive a `docker compose ...
+up -d` container recreate, not just an in-process restart.
+
+**Secrets**: `CULTURE_NODES_WEBHOOK_URL` (checked first) or
+`DISCORD_WEBHOOK_URL` (fallback) — read by `internal/notify.ResolveWebhook`
+inside the container, never passed as a flag (the URL embeds a bearer
+token). Neither is fabricated by `install-secrets.sh`: it only relays a
+value the operator already exported into *its own* environment before
+running the script:
+
+```bash
+CULTURE_NODES_WEBHOOK_URL='https://discord.com/api/webhooks/…' ./install-secrets.sh
+```
+
+Left unset, `nodes-notifier` still starts and runs — every lifecycle
+event is journaled as delivery-disabled rather than posted (fail-open,
+per `internal/notify`'s own doc comment) — until a later re-run of
+`install-secrets.sh` installs the URL and `deploy.sh thor` restarts the
+service.
+
+**Verify**:
+
+```bash
+ssh thor 'docker compose --env-file ~/.culture-nodes/prod.env \
+  -f culture-nodes-prod/deploy/prod/compose.thor.yml ps notifier'
+ssh thor 'docker compose --env-file ~/.culture-nodes/prod.env \
+  -f culture-nodes-prod/deploy/prod/compose.thor.yml logs --tail 50 notifier'
+```
+
+A healthy startup line reads `nodes-notifier consuming http://api:8080
+(cursor /var/lib/nodes-notifier/cursor.json, runs every active run
+(default), webhook enabled)` — `webhook disabled` means the secret above
+is not yet installed.
+
+## human-inbox actor bridge + merge tracker (thor only — task t34)
+
+`adapters/human-inbox` (task t16) is a `kind=human` actor-protocol bridge:
+culture-nodes invocations park as durable inbox tasks until a person (or
+the sibling GitHub merge tracker) submits a result. Reference config
+surface: `adapters/human-inbox/README.md`. Deployed as **two host
+systemd user units on thor only** — one logical human actor
+(`company/human-ops`), unlike codex's per-host actors, so a second copy
+on orin would just race the same GitHub PRs and the same inbox tasks
+against the same actor row.
+
+### Architecture
+
+- `human-inbox-bridge.service` — the bridge server (`human-inbox-bridge
+  serve`), always installed and started.
+- `human-inbox-tracker.service` — the GitHub merge tracker
+  (`python -m human_inbox_bridge.tracker`), installed and started **only
+  when `GITHUB_TOKEN` was actually supplied** to `install-secrets.sh`
+  (see below); absent it, deploy.sh leaves this unit uninstalled with a
+  warning rather than starting it into an immediate `TrackerConfigError`
+  crash loop. Manual submission through the bridge works either way.
+- Both units are **persistent, `Restart=always` services**, not a
+  `--once` timer: the tracker's own module docstring documents both a
+  continuous mode and a one-shot `--once` probe, and the continuous mode
+  already implements its own bounded poll loop
+  (`HUMAN_INBOX_TRACKER_POLL_SECONDS`, default 60s) with a per-cycle
+  GitHub request budget — wrapping `--once` in a systemd timer would just
+  reimplement that same interval as a second, redundant schedule.
+- Both run `uv run --directory` against the **same**
+  archive-independent `~/git/culture-nodes-agent` checkout the
+  codex-bridge lane above already provisions and keeps fast-forwarded
+  (`deploy_codex_bridge` / `CODEX_AGENT_CHECKOUT_REMOTE`) — reused here
+  rather than a second package-install mechanism, since
+  `adapters/human-inbox` has zero third-party runtime dependencies
+  (`dependencies = []`) and its tracker module has no console-script
+  entry point of its own to `uv tool install`.
+
+### Install, deploy, verify
+
+```bash
+# Operator-supplied, externally issued credentials — never generated by
+# this repo:
+CULTURE_NODES_WEBHOOK_URL='https://discord.com/api/webhooks/…' \
+GITHUB_TOKEN='ghp_…' \
+  ./install-secrets.sh   # + human-inbox lane: HUMAN_INBOX_BRIDGE_AUTH_TOKEN
+                          # generated locally like the codex-bridge tokens;
+                          # GITHUB_TOKEN relayed as-is if set; both land in
+                          # ~/.culture-nodes/human-inbox.env on thor, 0600
+./deploy.sh thor          # + human-inbox lane: bridge unit always;
+                           # tracker unit only if GITHUB_TOKEN landed
+
+# verify:
+ssh thor 'systemctl --user status human-inbox-bridge'
+ssh thor 'systemctl --user status human-inbox-tracker'   # may be absent — see above
+ssh thor 'journalctl --user -u human-inbox-bridge -n 50'
+```
+
+### Registering the `company/human-ops` actor
+
+Not part of this task's plumbing (an operator/DB step, per
+`adapters/human-inbox/README.md`'s own "Registering a `kind=human`
+actor" section): once the bridge is active, register it against thor's
+Postgres the same append-only way `register-actor.sh` registers codex
+actors, naming `HUMAN_INBOX_BRIDGE_AUTH_TOKEN` as the
+`metadata.auth_token_env` and the bridge's bound address
+(`http://<thor-lan-ip>:8087`) as `endpoint_ref`.
+
+### Secrets this task adds to install-secrets.sh
+
+| Env var | Installed as | Source | Host(s) |
+| --- | --- | --- | --- |
+| `CULTURE_NODES_WEBHOOK_URL` / `DISCORD_WEBHOOK_URL` | a line in `prod.env` | relayed from the operator's own shell environment when set; never fabricated | thor only |
+| `HUMAN_INBOX_BRIDGE_AUTH_TOKEN` | `~/.culture-nodes/human-inbox.env` (0600) | generated locally (`openssl rand -base64 32`), like the codex-bridge tokens | thor only |
+| `GITHUB_TOKEN` | `~/.culture-nodes/human-inbox.env` (0600) | relayed from the operator's own shell environment when set; never fabricated | thor only |
+
+All three follow the same discipline as every other secret in this file:
+stdin over ssh, never argv; `FORCE=1` required to overwrite an existing
+value; nothing committed to this repo.

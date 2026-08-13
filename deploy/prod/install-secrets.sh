@@ -110,6 +110,14 @@ update_actor_token_line() { # key, value — update-in-place or append into BOTH
   done
 }
 
+update_env_line_on_host() { # host, key, value — update-in-place or append into ONE prod.env
+  local host=$1 key=$2 value=$3
+  # shellcheck disable=SC2029 # the remote path is deliberately remote
+  printf '%s=%s\n' "$key" "$value" \
+    | ssh "$host" 'umask 077; mkdir -p ~/.culture-nodes; touch ~/.culture-nodes/prod.env; while IFS= read -r line; do k=${line%%=*}; [ -z "$k" ] && continue; if grep -q "^${k}=" ~/.culture-nodes/prod.env; then sed -i "s|^${k}=.*|${line}|" ~/.culture-nodes/prod.env; else printf "%s\n" "$line" >> ~/.culture-nodes/prod.env; fi; done'
+  echo "installed $key into prod.env on $host"
+}
+
 # A kept (pre-existing) bridge token must not have this run's freshly
 # generated value pushed into prod.env — only a token that actually landed
 # in a codex-bridge.env propagates, so bridge and workers always agree.
@@ -124,3 +132,57 @@ if [ "$rc" -eq 0 ]; then
   echo "installed ~/.culture-nodes/codex-bridge.env on $ORIN"
   update_actor_token_line NODES_ACTOR_CODEX_ORIN_TOKEN "$CODEX_BRIDGE_TOKEN_ORIN"
 elif [ "$rc" -ne 3 ]; then exit "$rc"; fi
+
+# --- nodes-notifier webhook (thor only — deploy/prod/compose.thor.yml's
+# `notifier` service is the only consumer; task t34) ----------------------
+# A Discord (or generic) webhook URL is EXTERNALLY ISSUED (created in
+# Discord's own UI, or whatever endpoint DISCORD_WEBHOOK_URL/
+# CULTURE_NODES_WEBHOOK_URL names) — this script never invents one, unlike
+# the openssl-generated secrets above. It only relays a value the operator
+# already exported into THIS SCRIPT'S OWN environment before invoking
+# install-secrets.sh (e.g. `CULTURE_NODES_WEBHOOK_URL=https://discord.com/
+# api/webhooks/... ./install-secrets.sh`). Left unset, nodes-notifier still
+# starts and runs — internal/notify.ResolveWebhook simply reports
+# webhook_enabled=false and every lifecycle event is journaled as
+# delivery-disabled rather than posted (fail-open, per internal/notify's
+# own doc comment) — until a later re-run installs the URL.
+if [ -n "${CULTURE_NODES_WEBHOOK_URL:-}" ]; then
+  update_env_line_on_host "$THOR" CULTURE_NODES_WEBHOOK_URL "$CULTURE_NODES_WEBHOOK_URL"
+elif [ -n "${DISCORD_WEBHOOK_URL:-}" ]; then
+  update_env_line_on_host "$THOR" DISCORD_WEBHOOK_URL "$DISCORD_WEBHOOK_URL"
+else
+  echo "CULTURE_NODES_WEBHOOK_URL/DISCORD_WEBHOOK_URL not set in this script's own environment — skipping (nodes-notifier will run with webhook delivery disabled until this is installed)" >&2
+fi
+
+# --- human-inbox bridge + tracker secrets (thor only — one logical human
+# actor, task t34) ----------------------------------------------------------
+# HUMAN_INBOX_BRIDGE_AUTH_TOKEN is a bearer token generated locally exactly
+# like the codex-bridge tokens above — nothing a human chooses, just a
+# credential this script mints and installs, same FORCE=1 rotation guard.
+# GITHUB_TOKEN is externally issued (a GitHub PAT/App token) and is never
+# fabricated here: relayed only when the operator already exported it into
+# this script's own environment. Left unset, deploy.sh installs the bridge
+# unit (manual submission keeps working) but leaves the tracker unit
+# uninstalled rather than starting it into an immediate crash loop.
+HUMAN_INBOX_BRIDGE_AUTH_TOKEN=$(openssl rand -base64 32)
+
+install_human_inbox_env() { # host
+  local host=$1 rc=0
+  local content="HUMAN_INBOX_BRIDGE_AUTH_TOKEN=${HUMAN_INBOX_BRIDGE_AUTH_TOKEN}"
+  if [ -n "${GITHUB_TOKEN:-}" ]; then
+    content="${content}
+GITHUB_TOKEN=${GITHUB_TOKEN}"
+  fi
+  # shellcheck disable=SC2029 # the remote path is deliberately remote
+  printf '%s\n' "$content" | ssh "$host" "FORCE=${FORCE:-0}; "'umask 077; mkdir -p ~/.culture-nodes; if [ -e ~/.culture-nodes/human-inbox.env ] && [ "$FORCE" != "1" ]; then echo "keeping existing human-inbox.env (set FORCE=1 to rotate)" >&2; exit 3; fi; cat > ~/.culture-nodes/human-inbox.env' || rc=$?
+  if [ "$rc" -eq 3 ]; then echo "kept existing human-inbox.env on $host"; return 0; fi
+  if [ "$rc" -eq 0 ]; then
+    if [ -n "${GITHUB_TOKEN:-}" ]; then
+      echo "installed ~/.culture-nodes/human-inbox.env on $host (with GITHUB_TOKEN)"
+    else
+      echo "installed ~/.culture-nodes/human-inbox.env on $host (no GITHUB_TOKEN in this script's environment — tracker auto-submit stays disabled until a re-run with it set)"
+    fi
+  fi
+  return "$rc"
+}
+install_human_inbox_env "$THOR"

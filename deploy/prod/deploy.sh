@@ -166,6 +166,65 @@ PYEOF"
 
 deploy_codex_bridge "$HOST"
 
+# --- human-inbox actor bridge lane (task t34: deploy wiring for the t16
+# kind=human bridge + its GitHub merge tracker) ---------------------------
+# One logical human actor (company/human-ops), so this lane is THOR ONLY --
+# a second bridge/tracker pair on orin would just race the same GitHub PRs
+# and the same inbox tasks against the same actor row. Host-resident
+# Python, run with `uv run --directory` against the SAME
+# archive-independent ~/git/culture-nodes-agent checkout the codex-bridge
+# lane above already provisions and fast-forwards -- adapters/human-inbox
+# has zero third-party runtime dependencies (dependencies = []), so this
+# needs no separate `uv tool install` step the way the codex bridge does.
+deploy_human_inbox() { # host
+  local host=$1
+  case "$host" in
+    thor*) ;;
+    *) say "human-inbox bridge is thor-only (one logical human actor: company/human-ops) -- skipping on $host"; return 0 ;;
+  esac
+
+  ssh "$host" 'test -f ~/.culture-nodes/human-inbox.env' \
+    || { echo "~/.culture-nodes/human-inbox.env missing on $host — run deploy/prod/install-secrets.sh first" >&2; exit 1; }
+
+  say "ensuring uv on $host (human-inbox lane)"
+  ssh "$host" 'bash -lc "command -v uv >/dev/null || curl -LsSf https://astral.sh/uv/install.sh | sh"'
+
+  say "installing human-inbox non-secret config on $host"
+  # Same generate-absolute-paths-at-install-time technique runner.env and
+  # codex-bridge.json use: $HOME expands on the TARGET, so
+  # EnvironmentFile values (which get no %h expansion once systemd reads
+  # them as plain KEY=VALUE lines) still resolve to real absolute paths.
+  ssh "$host" 'umask 077; mkdir -p ~/.culture-nodes
+{ echo "HUMAN_INBOX_BRIDGE_HOST=0.0.0.0"
+  echo "HUMAN_INBOX_BRIDGE_PORT=8087"
+  echo "HUMAN_INBOX_BRIDGE_STATE_DIR=$HOME/.culture-nodes/human-inbox-state"
+  echo "HUMAN_INBOX_BRIDGE_ACTOR_ID=company/human-ops"
+} > ~/.culture-nodes/human-inbox-bridge.env
+{ echo "HUMAN_INBOX_TRACKER_STATE_DIR=$HOME/.culture-nodes/human-inbox-state"
+  echo "HUMAN_INBOX_TRACKER_BRIDGE_URL=http://127.0.0.1:8087"
+  echo "HUMAN_INBOX_BRIDGE_STATE_DIR=$HOME/.culture-nodes/human-inbox-state"
+} > ~/.culture-nodes/human-inbox-tracker.env'
+
+  say "installing human-inbox-bridge systemd user unit on $host"
+  ssh "$host" "loginctl enable-linger \$(id -un) 2>/dev/null || true"
+  ssh "$host" "export XDG_RUNTIME_DIR=/run/user/\$(id -u); mkdir -p ~/.config/systemd/user && cp $REMOTE_DIR/deploy/prod/human-inbox-bridge.service ~/.config/systemd/user/ && systemctl --user daemon-reload && systemctl --user restart human-inbox-bridge && systemctl --user enable human-inbox-bridge"
+  ssh "$host" 'export XDG_RUNTIME_DIR=/run/user/$(id -u); for i in $(seq 1 15); do st=$(systemctl --user is-active human-inbox-bridge || true); [ "$st" = active ] && { echo "human-inbox-bridge: active"; exit 0; }; sleep 2; done; echo "human-inbox-bridge failed to become active:"; systemctl --user --no-pager -n 10 status human-inbox-bridge; exit 1'
+
+  # GITHUB_TOKEN is an externally issued credential install-secrets.sh
+  # never fabricates (see its own comment) -- absent, leave the tracker
+  # uninstalled rather than start it into an immediate TrackerConfigError
+  # crash loop. Manual submission through the bridge works either way.
+  if ssh "$host" 'grep -q "^GITHUB_TOKEN=." ~/.culture-nodes/human-inbox.env 2>/dev/null'; then
+    say "installing human-inbox-tracker systemd user unit on $host"
+    ssh "$host" "export XDG_RUNTIME_DIR=/run/user/\$(id -u); mkdir -p ~/.config/systemd/user && cp $REMOTE_DIR/deploy/prod/human-inbox-tracker.service ~/.config/systemd/user/ && systemctl --user daemon-reload && systemctl --user restart human-inbox-tracker && systemctl --user enable human-inbox-tracker"
+    ssh "$host" 'export XDG_RUNTIME_DIR=/run/user/$(id -u); for i in $(seq 1 15); do st=$(systemctl --user is-active human-inbox-tracker || true); [ "$st" = active ] && { echo "human-inbox-tracker: active"; exit 0; }; sleep 2; done; echo "human-inbox-tracker failed to become active:"; systemctl --user --no-pager -n 10 status human-inbox-tracker; exit 1'
+  else
+    say "WARNING: GITHUB_TOKEN not installed in ~/.culture-nodes/human-inbox.env on $host — skipping human-inbox-tracker unit (manual submission through the bridge still works; re-run install-secrets.sh with GITHUB_TOKEN set, then deploy.sh again, to enable auto-submit-on-merge)"
+  fi
+}
+
+deploy_human_inbox "$HOST"
+
 case "$HOST" in
   thor*)
     say "starting thor control plane"

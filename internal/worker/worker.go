@@ -491,8 +491,20 @@ func (w *Worker) complete(ctx context.Context, claimed postgres.ClaimedWork, req
 // per-actor surfaces (retry burn in particular) must not lose it; a
 // pre-resolution refusal, conversely, must never guess one.
 func (w *Worker) failAttempt(ctx context.Context, claimed postgres.ClaimedWork, actorID string, status engine.TechStatus, class, detail string) error {
-	_, err := w.completeTechnicalFailure(ctx, claimed, actorID, status, class, detail, nil, nil)
+	_, err := w.completeTechnicalFailure(ctx, claimed, actorID, status, class, detail, nil, actorTelemetry{})
 	return err
+}
+
+// actorTelemetry is what an actor's own terminal report contributes to an
+// attempt row beyond its outcome: the §13.2 usage block and the provider's
+// termination reason. They travel as one parameter because they come from
+// one report, and stay separate fields because either can arrive without
+// the other — a cancelled or output-capped turn can name its reason while
+// holding no parseable usage at all, which is why the reason is not a field
+// of the usage block (docs/adr/0009-usage-telemetry-extension.md).
+type actorTelemetry struct {
+	Usage             *engine.Usage
+	TerminationReason *string
 }
 
 // completeTechnicalFailure is failAttempt's twin for a caller that needs the
@@ -503,24 +515,26 @@ func (w *Worker) failAttempt(ctx context.Context, claimed postgres.ClaimedWork, 
 // a post-run hook's verdict could not be trusted, so a technical failure
 // still records what the agent itself claimed.
 //
-// usage is the §13.2 block the actor reported for the failed work, nil when
-// it reported none (issue #32: a failed session still burned real tokens,
-// and a technical failure must not cost the attempt its accounting). Nil
-// persists as NULL — unreported, never fabricated zeros.
+// telemetry is what the actor's own terminal report contributes to the
+// failed attempt's row, zero when it reported nothing (issue #32: a failed
+// session still burned real tokens, and a technical failure must not cost
+// the attempt its accounting). Absent fields persist as NULL — unreported,
+// never fabricated zeros.
 //
 // The returned CompletionResult is the zero value when the completion turned
 // out stale (isStale(err)): nothing was committed here, so there is nothing
 // for a caller to key follow-up writes to, and the error is nil — a stale
 // completion is not a worker malfunction (see isStale).
 func (w *Worker) completeTechnicalFailure(
-	ctx context.Context, claimed postgres.ClaimedWork, actorID string, status engine.TechStatus, class, detail string, delta []ledger.Record, usage *engine.Usage,
+	ctx context.Context, claimed postgres.ClaimedWork, actorID string, status engine.TechStatus, class, detail string, delta []ledger.Record, telemetry actorTelemetry,
 ) (engine.CompletionResult, error) {
 	result, err := w.complete(ctx, claimed, engine.CompletionRequest{
-		TechStatus:  status,
-		Output:      diagnosticOutput(class, detail),
-		LedgerDelta: delta,
-		Usage:       usage,
-		ActorID:     actorID,
+		TechStatus:        status,
+		Output:            diagnosticOutput(class, detail),
+		LedgerDelta:       delta,
+		Usage:             telemetry.Usage,
+		TerminationReason: telemetry.TerminationReason,
+		ActorID:           actorID,
 	})
 	if err != nil {
 		if isStale(err) {

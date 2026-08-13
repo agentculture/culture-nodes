@@ -239,7 +239,8 @@ func (w *Worker) completeFromResult(
 			// and so does the result's reported usage (issue #32): the
 			// invocation itself succeeded and burned real tokens regardless
 			// of what the hook could not verify.
-			completion, err := w.completeTechnicalFailure(ctx, claimed, dc.ActorRowID, engine.StatusFailed, hookKindPostRun, post.detail, agentDelta, result.Usage.ToEngine())
+			completion, err := w.completeTechnicalFailure(ctx, claimed, dc.ActorRowID, engine.StatusFailed, hookKindPostRun, post.detail, agentDelta,
+				actorTelemetry{Usage: result.Usage.ToEngine(), TerminationReason: result.TerminationReason})
 			if err != nil {
 				return err
 			}
@@ -274,7 +275,10 @@ func (w *Worker) completeFromResult(
 		Output:      actors.MergeWorkspaceMeasured(output, result.WorkspaceMeasured),
 		LedgerDelta: agentDelta,
 		Usage:       result.Usage.ToEngine(),
-		ActorID:     dc.ActorRowID,
+		// Beside the usage, never inside it: a turn that ended for a
+		// knowable reason may have reported no usage block (ADR 0009).
+		TerminationReason: result.TerminationReason,
+		ActorID:           dc.ActorRowID,
 	})
 	if err != nil {
 		if isStale(err) {
@@ -331,7 +335,12 @@ func (w *Worker) completeFromInvocationError(
 	}
 	completion, err := w.completeTechnicalFailure(ctx, claimed, dc.ActorRowID, actors.TechStatusFor(class), string(class),
 		fmt.Sprintf("node %q invocation failed: %v", node.ID, invokeErr),
-		nil, actors.UsageOf(invokeErr).ToEngine())
+		nil, actorTelemetry{
+			Usage: actors.UsageOf(invokeErr).ToEngine(),
+			// The provider's reason for ending the turn, which an error
+			// body can carry with no usage block at all (ADR 0009).
+			TerminationReason: actors.TerminationReasonOf(invokeErr),
+		})
 	if err != nil {
 		return err
 	}

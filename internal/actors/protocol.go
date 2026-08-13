@@ -82,11 +82,41 @@ type InvocationRequest struct {
 // Usage is the §13.2 telemetry block. Cost and Currency are pointers because
 // §13.2 shows both as nullable: an actor that does not price its work says so
 // with null rather than with a zero that reads as "free".
+//
+// CachedInputTokens, ReasoningTokens, Model, and ThreadID extend §13.2
+// additively (docs/adr/0009-usage-telemetry-extension.md, on ADR 0008's
+// precedent). Every one of them is a pointer for Cost and Currency's exact
+// reason: they are independently absent-able *within* a reported block. An
+// actor whose contract exposes no cache telemetry at all reports null, which
+// means "unmeasurable", where a 0 would claim a measured 0% cache ratio. The
+// two token-count fields keep §13.2's own casing convention
+// (`cached_input_tokens`, `reasoning_tokens`).
+//
+// InputTokens/OutputTokens stay plain int64: an actor that reports a usage
+// block at all reports those two, and `usage_input_tokens IS NOT NULL` is
+// what "this attempt reported usage" means downstream
+// (migrations/0012_attempt_usage.sql). Nothing here may be used as a
+// presence check for the block as a whole.
+//
+// The termination reason is deliberately NOT a field of this block — see
+// InvocationResult.TerminationReason.
 type Usage struct {
-	InputTokens  int64    `json:"input_tokens"`
-	OutputTokens int64    `json:"output_tokens"`
-	Cost         *float64 `json:"cost"`
-	Currency     *string  `json:"currency"`
+	InputTokens       int64    `json:"input_tokens"`
+	OutputTokens      int64    `json:"output_tokens"`
+	Cost              *float64 `json:"cost"`
+	Currency          *string  `json:"currency"`
+	CachedInputTokens *int64   `json:"cached_input_tokens,omitempty"`
+	ReasoningTokens   *int64   `json:"reasoning_tokens,omitempty"`
+	// Model is the model that produced these counts. Tokens are neither
+	// comparable nor priceable across models, so a rollup that sums them
+	// without it is summing different units.
+	Model *string `json:"model,omitempty"`
+	// ThreadID is the provider-side thread or session the usage accrued on
+	// — what makes "this workstream reused one warm session" measurable
+	// rather than assumed. It is telemetry, not a resume handle:
+	// InvocationResult.ContinuationRef is the handle the engine hands back
+	// to a bridge, and neither field is derived from the other.
+	ThreadID *string `json:"thread_id,omitempty"`
 }
 
 // ToEngine converts this §13.2 wire Usage block into the engine's own copy
@@ -106,10 +136,14 @@ func (u *Usage) ToEngine() *engine.Usage {
 		return nil
 	}
 	return &engine.Usage{
-		InputTokens:  u.InputTokens,
-		OutputTokens: u.OutputTokens,
-		Cost:         u.Cost,
-		Currency:     u.Currency,
+		InputTokens:       u.InputTokens,
+		OutputTokens:      u.OutputTokens,
+		Cost:              u.Cost,
+		Currency:          u.Currency,
+		CachedInputTokens: u.CachedInputTokens,
+		ReasoningTokens:   u.ReasoningTokens,
+		Model:             u.Model,
+		ThreadID:          u.ThreadID,
 	}
 }
 
@@ -135,6 +169,17 @@ type LedgerDelta struct {
 // actor-reported data, not observed evidence: it rides inside the node's
 // output (see MergeWorkspaceMeasured), and nothing on this path writes an
 // `observed`-authority ledger record from it.
+//
+// TerminationReason is how the turn ended as the provider reported it
+// ("max_output_tokens", a context-window stop, a cancellation, ...). It sits
+// BESIDE Usage rather than inside it, and the attempt column it lands in is
+// named `termination_reason` rather than `usage_termination_reason`, for one
+// reason (ADR 0009): a turn can know why it ended while holding no parseable
+// usage at all. Carrying the reason inside the §13.2 block would have forced
+// a usage block — and therefore fabricated zero token counts — onto exactly
+// those attempts, which is the fabrication migration 0012 and ADR 0008 were
+// written to make impossible. Absent stays absent: an actor that does not
+// report a reason omits the key and the column stays NULL.
 type InvocationResult struct {
 	Outcome           string          `json:"outcome"`
 	Output            json.RawMessage `json:"output"`
@@ -142,6 +187,7 @@ type InvocationResult struct {
 	ArtifactRefs      []string        `json:"artifact_refs"`
 	ContinuationRef   *string         `json:"continuation_ref"`
 	Usage             *Usage          `json:"usage"`
+	TerminationReason *string         `json:"termination_reason,omitempty"`
 	WorkspaceMeasured json.RawMessage `json:"workspace_measured,omitempty"`
 }
 
@@ -256,6 +302,10 @@ type CompletedPayload struct {
 	LedgerDelta  *LedgerDelta    `json:"ledger_delta"`
 	ArtifactRefs []string        `json:"artifact_refs"`
 	Usage        *Usage          `json:"usage"`
+	// TerminationReason is InvocationResult's field, for the same reason an
+	// actor that finished late reports the same Usage block: the answer is
+	// the same kind of answer whichever path carried it.
+	TerminationReason *string `json:"termination_reason,omitempty"`
 	// WorkspaceMeasured carries the same bridge-measured block
 	// InvocationResult does — an actor that finished late measured its
 	// workspace exactly like one that finished inline.
@@ -277,11 +327,19 @@ type CompletedPayload struct {
 // still have changed the workspace, and that fact is worth exactly as much
 // on a failure as on a success. A bridge that could not measure sends
 // `measured:false`; an actor that reports nothing omits the key.
+//
+// TerminationReason is optional and is emphatically not a duplicate of
+// Class: the class is how the CONTROL PLANE classifies the failure (§13.5,
+// one of a fixed set that decides retry and routing), while the reason is
+// what the PROVIDER said about how the turn ended. A failed turn is the
+// case where the two differ most — and, per ADR 0009, the case where a
+// reason most often exists with no usage block to carry it.
 type FailedPayload struct {
 	Class             ErrorClass      `json:"class"`
 	Message           string          `json:"message"`
 	Detail            string          `json:"detail,omitempty"`
 	Usage             *Usage          `json:"usage,omitempty"`
+	TerminationReason *string         `json:"termination_reason,omitempty"`
 	WorkspaceMeasured json.RawMessage `json:"workspace_measured,omitempty"`
 }
 

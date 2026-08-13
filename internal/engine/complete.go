@@ -297,6 +297,9 @@ func (c *completion) recordAttempt(ctx context.Context) error {
 		StartedAt:    c.now,
 		CompletedAt:  c.now,
 		Usage:        c.req.Usage,
+		// Carried beside Usage, not inside it: an attempt can report a
+		// termination reason with no usage block at all (ADR 0009).
+		TerminationReason: c.req.TerminationReason,
 	}); err != nil {
 		return err
 	}

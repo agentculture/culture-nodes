@@ -688,6 +688,7 @@ func completionFor(inv PendingInvocation, ev CallbackEvent) (engine.CompletionRe
 			req.LedgerDelta = append([]ledger.Record(nil), payload.LedgerDelta.Records...)
 		}
 		req.Usage = payload.Usage.ToEngine()
+		req.TerminationReason = payload.TerminationReason
 		return req, ""
 
 	case EventFailed:
@@ -706,6 +707,10 @@ func completionFor(inv PendingInvocation, ev CallbackEvent) (engine.CompletionRe
 		req.Output = MergeWorkspaceMeasured(
 			failureOutput(class, payload.Message, payload.Detail), payload.WorkspaceMeasured)
 		req.Usage = payload.Usage.ToEngine()
+		// The provider's own reason for ending the turn, which is not the
+		// §13.5 class the control plane assigned it and can arrive with no
+		// usage block at all (ADR 0009).
+		req.TerminationReason = payload.TerminationReason
 		return req, ""
 	}
 

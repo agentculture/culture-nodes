@@ -165,6 +165,18 @@ func float8FromPtr(v *float64) pgtype.Float8 {
 	return pgtype.Float8{Float64: *v, Valid: true}
 }
 
+// int8PtrFromPg is int8FromPtr's inverse, for a column whose NULL means
+// "not reported" and whose 0 is a real answer -- e.g.
+// attempts.usage_cached_input_tokens, where a nil result says the backend
+// reported no cache telemetry and a 0 would claim a measured 0% cache hit.
+func int8PtrFromPg(v pgtype.Int8) *int64 {
+	if !v.Valid {
+		return nil
+	}
+	value := v.Int64
+	return &value
+}
+
 func float8PtrFromPg(v pgtype.Float8) *float64 {
 	if !v.Valid {
 		return nil

@@ -327,32 +327,40 @@ func (c *Client) invokeOnce(ctx context.Context, url string, endpoint Endpoint, 
 	// on the returned *InvocationError for whatever consults it next —
 	// today an operator reading the attempt's diagnostic, and from task t9
 	// on the circuit breaker deciding how long to pause the actor.
+	usage, terminationReason := telemetryFromErrorBody(payload)
 	return InvocationResponse{}, &InvocationError{
-		Class:      class,
-		Op:         "invoke",
-		StatusCode: resp.StatusCode,
-		Message:    fmt.Sprintf("actor answered %s", http.StatusText(resp.StatusCode)),
-		Body:       capture(payload),
-		RetryAfter: parseRetryAfter(resp.Header.Get("Retry-After"), c.now()),
-		Usage:      usageFromErrorBody(payload),
+		Class:             class,
+		Op:                "invoke",
+		StatusCode:        resp.StatusCode,
+		Message:           fmt.Sprintf("actor answered %s", http.StatusText(resp.StatusCode)),
+		Body:              capture(payload),
+		RetryAfter:        parseRetryAfter(resp.Header.Get("Retry-After"), c.now()),
+		Usage:             usage,
+		TerminationReason: terminationReason,
 	}
 }
 
-// usageFromErrorBody decodes the optional §13.2 usage block a bridge
-// attaches to a non-2xx error body when its failed session still produced a
-// parseable terminal result (issue #32; the bridges' sync_response failure
-// branch). It reads the full payload rather than the bounded Body capture so
-// a large error document cannot truncate the accounting away. Anything that
-// is not a JSON object carrying a usage block yields nil — absent stays
-// absent, never fabricated zeros.
-func usageFromErrorBody(payload []byte) *Usage {
+// telemetryFromErrorBody decodes the optional §13.2 usage block, and the
+// optional termination reason beside it, that a bridge attaches to a non-2xx
+// error body when its failed session still produced a parseable terminal
+// result (issue #32; the bridges' sync_response failure branch). It reads
+// the full payload rather than the bounded Body capture so a large error
+// document cannot truncate the accounting away. Anything that is not a JSON
+// object carrying those keys yields nils — absent stays absent, never
+// fabricated zeros.
+//
+// The two are returned separately rather than as one block because they are
+// independently present: a turn cancelled or capped before it produced a
+// result names its reason with no usage to report (ADR 0009).
+func telemetryFromErrorBody(payload []byte) (*Usage, *string) {
 	var body struct {
-		Usage *Usage `json:"usage"`
+		Usage             *Usage  `json:"usage"`
+		TerminationReason *string `json:"termination_reason"`
 	}
 	if err := json.Unmarshal(payload, &body); err != nil {
-		return nil
+		return nil, nil
 	}
-	return body.Usage
+	return body.Usage, body.TerminationReason
 }
 
 // Cancel asks an actor to stop an in-flight invocation (PRD §13.6).

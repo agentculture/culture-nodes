@@ -4,7 +4,7 @@
   "schema_version": 5,
   "status": "exported",
   "created": "2026-08-13T14:44:30Z",
-  "updated": "2026-08-13T15:50:02Z",
+  "updated": "2026-08-13T16:24:00Z",
   "claims": [
     {
       "id": "c1",
@@ -404,7 +404,7 @@
     {
       "id": "c24",
       "kind": "requirement",
-      "text": "Session resume is an all-backends change with per-backend mechanics (#47/#48): continuation_ref is hardcoded None in ALL THREE bridges (claude-code mapping.py:370, codex mapping.py:354, colleague mapping.py:340 \u2014 issue #47 understates it) and exists only on the sync 200 body while async terminal payloads omit the key entirely, yet async is the path long sessions take; claude resumes via --resume <session_id> (already captured as claude_session_id), codex via 'codex exec resume <thread-id>' (thread_id already parsed), colleague has NO resume verb in its pinned contract \u2014 an upstream colleague feature, not a bridge change; and a session_key passed via input today would be injected verbatim into the prompt's Bound-inputs block, so stickiness needs a new transport key in all three servers",
+      "text": "Session resume is an all-backends change with per-backend mechanics (#47/#48): continuation_ref is hardcoded None in ALL THREE bridges (claude-code mapping.py:370, codex mapping.py:354, colleague mapping.py:340 \u2014 issue #47 understates it) and exists only on the sync 200 body while async terminal payloads omit the key entirely, yet async is the path long sessions take; claude resumes via --resume with the captured session id (already durable as claude_session_id), codex via 'codex exec resume' with the thread id (already parsed), colleague has NO resume verb in its pinned contract \u2014 an upstream colleague feature, not a bridge change; and a session_key passed via input today would be injected verbatim into the prompt's Bound-inputs block, so stickiness needs a new transport key in all three servers",
       "origin": "llm",
       "status": "confirmed",
       "honesty_conditions": [
@@ -418,7 +418,13 @@
       "hard_questions": [],
       "links": [],
       "instruction": "Per-backend: claude --resume, codex exec resume; carry the ref on BOTH sync response and async terminal payload; new transport key for session_key (exclude from Bound-inputs injection in all three servers); colleague returns null + upstream issue filed",
-      "revisions": []
+      "revisions": [
+        {
+          "text": "Session resume is an all-backends change with per-backend mechanics (#47/#48): continuation_ref is hardcoded None in ALL THREE bridges (claude-code mapping.py:370, codex mapping.py:354, colleague mapping.py:340 \u2014 issue #47 understates it) and exists only on the sync 200 body while async terminal payloads omit the key entirely, yet async is the path long sessions take; claude resumes via --resume <session_id> (already captured as claude_session_id), codex via 'codex exec resume <thread-id>' (thread_id already parsed), colleague has NO resume verb in its pinned contract \u2014 an upstream colleague feature, not a bridge change; and a session_key passed via input today would be injected verbatim into the prompt's Bound-inputs block, so stickiness needs a new transport key in all three servers",
+          "kind": "requirement",
+          "reason": ""
+        }
+      ]
     },
     {
       "id": "c25",

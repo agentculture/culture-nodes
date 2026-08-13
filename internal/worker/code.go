@@ -54,13 +54,16 @@ import (
 //
 // # Mechanical acceptance
 //
-// Once dispatchCode's completion has committed, evaluateAcceptance
+// Before dispatchCode commits a completion, evaluateAcceptance
 // (acceptance.go) mechanically checks the node's declared
 // `acceptance.requires` — when it declares any — against the same Result
-// the evidence above was built from, and appends the verdict as a second,
-// derived ledger record. See acceptance.go's own doc for why that is a
-// second write rather than folded into the completion above, and what it
-// deliberately does not yet do.
+// the evidence above was built from, and the node's `acceptance.enforce`
+// policy may convert the completion to contract_rejected or re-route it to
+// a declared domain outcome (task t17, issue #37). The verdict is then
+// appended as a second, derived ledger record after the completion commits.
+// See acceptance.go's own doc for the policy semantics, the honest floor
+// for unevaluable checks, and why the record is a second write rather than
+// folded into the completion's own delta.
 
 // codeOperationKind is the runner_operations.operation_kind value a code
 // node's own dispatch is recorded under, distinguishing it from the
@@ -311,9 +314,19 @@ func (w *Worker) dispatchCode(
 		return nil
 	}
 
+	// Task t17 (issue #37): the node's declared acceptance checks are
+	// evaluated BEFORE routing, against the same Result the completion's own
+	// evidence was built from, and the enforce policy may convert or
+	// re-route the completion (see acceptance.go's package doc).
+	techStatus, outcome := completion.TechStatus, completion.Outcome
+	eval := evaluateAcceptance(node, res)
+	if eval != nil {
+		techStatus, outcome = eval.apply(techStatus, outcome)
+	}
+
 	result, err := w.complete(ctx, claimed, engine.CompletionRequest{
-		TechStatus:     completion.TechStatus,
-		Outcome:        completion.Outcome,
+		TechStatus:     techStatus,
+		Outcome:        outcome,
 		Output:         completion.Output,
 		LedgerDelta:    completion.LedgerDelta,
 		RunnerManifest: completion.RunnerManifest,
@@ -326,7 +339,7 @@ func (w *Worker) dispatchCode(
 		return err
 	}
 	w.recordRunnerOperation(ctx, d.NamespaceID, result.AttemptID, codeOperationKind, operation, &res, nil)
-	w.evaluateAcceptance(ctx, node, res, result)
+	w.appendAcceptanceVerdict(ctx, node, eval, result)
 	return nil
 }
 

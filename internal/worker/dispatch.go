@@ -279,6 +279,12 @@ func (w *Worker) completeFromResult(
 	w.appendHookEvidence(ctx, completion, preRun)
 	postEvidence, postEvidenceOK := w.appendHookEvidence(ctx, completion, postRun)
 	w.recordHookOperations(ctx, d.NamespaceID, completion.AttemptID, preRun, postRun)
+	// Task t17 (issue #37): an agent node's acceptance checks are not
+	// mechanically evaluable — no runner-measured Result exists for an agent
+	// dispatch — so a routing enforce policy gets the honest floor: routing
+	// stayed the agent's own outcome (as committed above) and a derived
+	// record states the non-evaluability. See acceptance.go's package doc.
+	w.appendUnevaluableAcceptance(ctx, node, completion)
 	if rejectAssurance {
 		subject := ""
 		if postEvidenceOK {

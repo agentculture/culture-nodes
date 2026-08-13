@@ -1,7 +1,8 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { render, screen, within } from "@testing-library/react";
-import { MemoryRouter } from "react-router-dom";
-import Workflows from "./Workflows";
+import userEvent from "@testing-library/user-event";
+import { MemoryRouter, useLocation } from "react-router-dom";
+import NodeGraphs from "./NodeGraphs";
 import { ApiError, listRuns, listWorkflows } from "../api/client";
 import {
   DELIVER_CHANGE_V2_DIGEST,
@@ -20,10 +21,16 @@ vi.mock("../api/client", async (importOriginal) => {
 const mockListWorkflows = vi.mocked(listWorkflows);
 const mockListRuns = vi.mocked(listRuns);
 
-function renderWorkflows() {
+function LocationProbe() {
+  const location = useLocation();
+  return <div data-testid="location-search">{location.search}</div>;
+}
+
+function renderNodeGraphs(initialEntries: string[] = ["/graphs"]) {
   return render(
-    <MemoryRouter initialEntries={["/workflows"]}>
-      <Workflows />
+    <MemoryRouter initialEntries={initialEntries}>
+      <NodeGraphs />
+      <LocationProbe />
     </MemoryRouter>,
   );
 }
@@ -39,18 +46,93 @@ beforeEach(() => {
   resetAgentState();
 });
 
-describe("Workflows loading/empty/error", () => {
+describe("Node Graphs sub-tabs (task t28)", () => {
+  it("defaults to the Nodes sub-tab when the URL carries no ?tab param", () => {
+    renderNodeGraphs();
+    expect(
+      screen.getByRole("button", { name: "Nodes" }),
+    ).toHaveAttribute("aria-pressed", "true");
+    expect(
+      screen.getByRole("button", { name: "Node Graphs" }),
+    ).toHaveAttribute("aria-pressed", "false");
+    expect(
+      screen.getByRole("button", { name: "Active Graphs" }),
+    ).toHaveAttribute("aria-pressed", "false");
+    expect(document.getElementById("node-graphs-nodes-empty")).toBeInTheDocument();
+  });
+
+  it("selects the sub-tab named by ?tab= on first render", () => {
+    renderNodeGraphs(["/graphs?tab=active"]);
+    expect(
+      screen.getByRole("button", { name: "Active Graphs" }),
+    ).toHaveAttribute("aria-pressed", "true");
+    expect(document.getElementById("node-graphs-active-empty")).toBeInTheDocument();
+  });
+
+  it("falls back to the Nodes sub-tab for an unrecognized ?tab= value", () => {
+    renderNodeGraphs(["/graphs?tab=bogus"]);
+    expect(
+      screen.getByRole("button", { name: "Nodes" }),
+    ).toHaveAttribute("aria-pressed", "true");
+  });
+
+  it("clicking a sub-tab button updates the URL's ?tab= param (bookmarkable)", async () => {
+    const user = userEvent.setup();
+    renderNodeGraphs();
+    expect(screen.getByTestId("location-search")).toHaveTextContent("");
+
+    await user.click(screen.getByRole("button", { name: "Active Graphs" }));
+    expect(screen.getByTestId("location-search")).toHaveTextContent(
+      "?tab=active",
+    );
+
+    await user.click(screen.getByRole("button", { name: "Nodes" }));
+    // The default tab clears the param rather than writing "?tab=nodes".
+    expect(screen.getByTestId("location-search")).toHaveTextContent("");
+  });
+
+  it("switching to the Node Graphs sub-tab fetches and renders the workflow cards", async () => {
+    resolveFixture();
+    const user = userEvent.setup();
+    renderNodeGraphs();
+    await user.click(screen.getByRole("button", { name: "Node Graphs" }));
+    await screen.findByText("deliver-change");
+    expect(mockListWorkflows).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe("Nodes sub-tab honest empty state (h14)", () => {
+  it("renders an honest empty state, never fabricated node rows, and reports ready immediately", () => {
+    renderNodeGraphs(["/graphs?tab=nodes"]);
+    const empty = document.getElementById("node-graphs-nodes-empty");
+    expect(empty).toBeInTheDocument();
+    expect(empty).toHaveTextContent(/No node catalog yet/);
+    expect(getAgentState().status).toBe("ready");
+  });
+});
+
+describe("Active Graphs sub-tab honest empty state (h14)", () => {
+  it("renders an honest empty state, never fabricated activity, and reports ready immediately", () => {
+    renderNodeGraphs(["/graphs?tab=active"]);
+    const empty = document.getElementById("node-graphs-active-empty");
+    expect(empty).toBeInTheDocument();
+    expect(empty).toHaveTextContent(/No active-graph view yet/);
+    expect(getAgentState().status).toBe("ready");
+  });
+});
+
+describe("Node Graphs sub-tab loading/empty/error", () => {
   it("shows a loading state before both requests resolve", () => {
     mockListWorkflows.mockReturnValue(new Promise(() => {}));
     mockListRuns.mockReturnValue(new Promise(() => {}));
-    renderWorkflows();
+    renderNodeGraphs(["/graphs?tab=graphs"]);
     expect(screen.getByText("Loading workflows…")).toBeInTheDocument();
   });
 
   it("shows the empty state when no workflow has been published", async () => {
     mockListWorkflows.mockResolvedValue({ items: [] });
     mockListRuns.mockResolvedValue({ items: [] });
-    renderWorkflows();
+    renderNodeGraphs(["/graphs?tab=graphs"]);
     expect(
       await screen.findByText(/No workflows published yet\./),
     ).toBeInTheDocument();
@@ -61,7 +143,7 @@ describe("Workflows loading/empty/error", () => {
       new ApiError(0, "cannot reach the control plane", "start `nodes serve`"),
     );
     mockListRuns.mockResolvedValue({ items: [] });
-    renderWorkflows();
+    renderNodeGraphs(["/graphs?tab=graphs"]);
     await screen.findByText("error:", { exact: false });
     expect(
       screen.getByText("cannot reach the control plane", { exact: false }),
@@ -73,23 +155,23 @@ describe("Workflows loading/empty/error", () => {
     mockListRuns.mockRejectedValue(
       new ApiError(0, "cannot reach the control plane", "start `nodes serve`"),
     );
-    renderWorkflows();
+    renderNodeGraphs(["/graphs?tab=graphs"]);
     await screen.findByText("error:", { exact: false });
   });
 
   it("marks agent-state ready once both requests settle, loading otherwise", async () => {
     resolveFixture();
-    renderWorkflows();
+    renderNodeGraphs(["/graphs?tab=graphs"]);
     expect(getAgentState().status).toBe("loading");
     await screen.findByText("deliver-change");
     expect(getAgentState().status).toBe("ready");
   });
 });
 
-describe("Workflows data fetch", () => {
+describe("Node Graphs sub-tab data fetch", () => {
   it("requests every published workflow version and every run sorted by updated_at", async () => {
     resolveFixture();
-    renderWorkflows();
+    renderNodeGraphs(["/graphs?tab=graphs"]);
     await screen.findByText("deliver-change");
     expect(mockListWorkflows).toHaveBeenCalledTimes(1);
     expect(mockListRuns).toHaveBeenCalledTimes(1);
@@ -98,10 +180,10 @@ describe("Workflows data fetch", () => {
   });
 });
 
-describe("Workflows grouping and rendering", () => {
+describe("Node Graphs sub-tab grouping and rendering", () => {
   it("renders one card per workflow_key, not one per version", async () => {
     resolveFixture();
-    renderWorkflows();
+    renderNodeGraphs(["/graphs?tab=graphs"]);
     await screen.findByText("deliver-change");
     expect(
       document.querySelectorAll('[data-workflow-key="deliver-change"]'),
@@ -113,16 +195,14 @@ describe("Workflows grouping and rendering", () => {
 
   it("lists every version of a workflow with its own digest, newest version first", async () => {
     resolveFixture();
-    renderWorkflows();
+    renderNodeGraphs(["/graphs?tab=graphs"]);
     await screen.findByText("deliver-change");
     const card = document.querySelector(
       '[data-workflow-key="deliver-change"]',
     ) as HTMLElement;
     const rows = within(card).getAllByRole("row").slice(1); // drop header row
     expect(rows).toHaveLength(2);
-    expect(
-      within(card).getByText(String(2)),
-    ).toBeInTheDocument();
+    expect(within(card).getByText(String(2))).toBeInTheDocument();
     expect(
       card.querySelector(`[data-workflow-digest="${DELIVER_CHANGE_V2_DIGEST}"]`),
     ).toBeInTheDocument();
@@ -133,7 +213,7 @@ describe("Workflows grouping and rendering", () => {
 
   it("shows the owner from the latest version's metadata", async () => {
     resolveFixture();
-    renderWorkflows();
+    renderNodeGraphs(["/graphs?tab=graphs"]);
     await screen.findByText("deliver-change");
     const card = document.querySelector(
       '[data-workflow-key="deliver-change"]',
@@ -143,7 +223,7 @@ describe("Workflows grouping and rendering", () => {
 
   it("lists each workflow's recent runs across all of its versions, newest first, never a run belonging to another workflow", async () => {
     resolveFixture();
-    renderWorkflows();
+    renderNodeGraphs(["/graphs?tab=graphs"]);
     await screen.findByText("deliver-change");
     const card = document.querySelector(
       '[data-workflow-key="deliver-change"]',
@@ -159,7 +239,7 @@ describe("Workflows grouping and rendering", () => {
 
   it("never renders a run whose digest matches no published version", async () => {
     resolveFixture();
-    renderWorkflows();
+    renderNodeGraphs(["/graphs?tab=graphs"]);
     await screen.findByText("deliver-change");
     expect(
       screen.queryByText("run-orphan-01J8XKWORKFLOWS0003"),
@@ -169,7 +249,7 @@ describe("Workflows grouping and rendering", () => {
   it("shows a workflow's own empty state when it has no recent runs", async () => {
     mockListWorkflows.mockResolvedValue({ items: WORKFLOW_VERSIONS });
     mockListRuns.mockResolvedValue({ items: [] });
-    renderWorkflows();
+    renderNodeGraphs(["/graphs?tab=graphs"]);
     await screen.findByText("hello-world");
     const card = document.querySelector(
       '[data-workflow-key="hello-world"]',
@@ -179,12 +259,21 @@ describe("Workflows grouping and rendering", () => {
 
   it("every recent-run row is a real link into the existing Run view", async () => {
     resolveFixture();
-    renderWorkflows();
+    renderNodeGraphs(["/graphs?tab=graphs"]);
     await screen.findByText("hello-world");
     const helloRun = WORKFLOWS_RUNS.find(
       (run) => run.workflow_digest === HELLO_WORLD_DIGEST,
     )!;
     const link = screen.getByRole("link", { name: new RegExp(helloRun.id) });
     expect(link).toHaveAttribute("href", `/runs/${helloRun.id}`);
+  });
+});
+
+describe("Node Graphs authoring entry point (task t28)", () => {
+  it("links to /workflows/new from every sub-tab", () => {
+    renderNodeGraphs(["/graphs?tab=active"]);
+    expect(
+      screen.getByRole("link", { name: "New workflow" }),
+    ).toHaveAttribute("href", "/workflows/new");
   });
 });

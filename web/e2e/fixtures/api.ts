@@ -340,15 +340,20 @@ export async function mockStatisticsApi(page: Page): Promise<void> {
 }
 
 /**
- * Serve the Workflows view's slice of `/v1alpha1` (task t8): `GET
- * /v1alpha1/workflows` returns WORKFLOW_VERSIONS (two workflow_keys, three
- * versions total) and `GET /v1alpha1/runs?sort=updated_at` returns
- * WORKFLOWS_RUNS — no server-side filter by workflow, exactly the two
- * documented operations this task is scoped to. Every fixture run's own
- * `run_id` resolves through `/v1alpha1/runs/{id}` (a minimal RunView) too,
- * so following a card's recent-run link doesn't 404.
+ * Serve the Node Graphs tab's "Node Graphs" sub-tab (task t8, re-homed under
+ * task t28's tab shell): `GET /v1alpha1/workflows` returns WORKFLOW_VERSIONS
+ * (two workflow_keys, three versions total) and `GET
+ * /v1alpha1/runs?sort=updated_at` returns WORKFLOWS_RUNS — no server-side
+ * filter by workflow, exactly the two documented operations this task is
+ * scoped to. Every fixture run's own `run_id` resolves through
+ * `/v1alpha1/runs/{id}` (a minimal RunView) too, so following a card's
+ * recent-run link doesn't 404.
+ *
+ * The Nodes and Active Graphs sub-tabs (tasks t29/t31) fetch nothing this
+ * wave — their empty states are static, so nothing needs registering here
+ * for them yet.
  */
-export async function mockWorkflowsApi(page: Page): Promise<void> {
+export async function mockNodeGraphsApi(page: Page): Promise<void> {
   const runViewById = new Map<string, RunView>(
     WORKFLOWS_RUNS.map((run) => [run.id, { run, tokens: [], node_runs: [] }]),
   );

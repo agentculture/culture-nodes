@@ -155,6 +155,14 @@ frontmatter on every `SKILL.md` is load-bearing (the culture skill loader
 skips files without it). Tooling prerequisites: `devex` (>=0.21) and `agtag`
 (>=0.1) on PATH; `colleague` optional (only `ask-colleague` needs it).
 
+The first-party `nodes-operator` skill (authored here, not vendored) carries
+culture-nodes-specific split-plan guidance on work-package node sizing,
+per-wave session declaration, and codex-first routing for large packages
+(see the "Split-plan lane guidance" section in `.claude/skills/nodes-operator/SKILL.md`).
+When using the vendored `assign-to-workforce` skill, apply the split-plan
+template from `nodes-operator` to declare expected model-session counts per
+wave against the remaining subscription window.
+
 ## Conventions and workflow
 
 - **Nodes dogfooding reflex**: when a scoped task is delegable, assign it
@@ -192,3 +200,21 @@ skips files without it). Tooling prerequisites: `devex` (>=0.21) and `agtag`
   metadata for already-deleted dirs). The vendored `assign-to-workforce`
   example uses the shared path and `agent/<task-id>` branches — it is cited
   verbatim and must not be edited; override both when following it.
+- **Split-plan lane and session accounting** (economy lane, issue #48): The
+  operator's interactive Claude session, local subagents, and all bridge
+  sessions (headless claude -p, codex exec, colleague work) on the same
+  account share ONE subscription session window — not independent capacity
+  pools. Before any fan-out, the split plan declares expected model-session
+  count per wave against the remaining window (windows reset on a fixed
+  clock). Work-package node sizing: model nodes amortize bootstrap into one
+  persistent warm session with many ledgered sub-actions, never one cold
+  session per small plan task; deterministic/code nodes stay microscopic.
+  Routing: big analysis/build packages default to codex actors (full cold-session
+  tax justified only by ledger attribution, isolation, or cross-machine
+  execution); the operator's Claude window is reserved for operator-lane work
+  and merge gates. Ground these declarations in the lane-cost ladder
+  observations: operator main loop (prompt-cache warm, lowest marginal cost),
+  local subagents (cold-ish start but same-process context), bridge sessions
+  (full cold tax plus engine overhead). See issue #48 comment items 2–3 and
+  the attempted-evidence-humans-loops deviation record (issue #47/#48) for the
+  grounding economics.

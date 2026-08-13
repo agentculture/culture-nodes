@@ -1,0 +1,120 @@
+# A losing branch that is parked mid-invocation on an ASYNCHRONOUS actor
+# (issue #43, parallel-tokens design §4.4): the split fans out to a long
+# runner and to a chain of in-process decision nodes, and the join's `any`
+# policy fires on the decision chain's arrival — reaping the long runner
+# while its actor session is still live on the far side.
+#
+# The reap itself is transactional; telling the actor to stop is the
+# best-effort, post-commit half (internal/worker/branchcancel.go), and this
+# fixture is what makes it observable.
+#
+# The two-hop decision chain is load-bearing for determinism, not decoration.
+# A worker Tick snapshots its claimed batch before dispatching any of it, so
+# a single-hop sync branch could be dispatched BEFORE the long runner in the
+# same batch and fire the barrier while the runner had not yet been invoked
+# at all — nothing to cancel, and a flaky test. With `gate` between them, the
+# earliest tick that can dispatch `quick` is the one AFTER the tick that
+# dispatched (and parked) `slow`, whichever order that tick used.
+apiVersion: nodes.culture.dev/v1alpha1
+kind: Workflow
+
+metadata:
+  name: worker-parallel-any-async
+  version: 1.0.0
+  ownerRef: team/platform-ai
+
+spec:
+  entry: fan
+
+  contract:
+    input:
+      schema:
+        type: object
+        required: [subject]
+        properties:
+          subject:
+            type: string
+    output:
+      schema:
+        type: object
+
+  limits:
+    maxDuration: 1h
+    maxTransitions: 16
+    maxVisitsPerNode: 4
+    maxParallelTokens: 4
+
+  ledger:
+    schemaVersion: nodes.culture.dev/ledger/v1alpha1
+    maxRecordsPerNode: 10
+
+  nodes:
+    fan:
+      kind: parallel
+      ownerRef: team/platform-ai
+
+    slow:
+      kind: agent
+      ownerRef: team/platform-ai
+      uses: actor://company/long-runner@sha256:bbbbbb
+      input:
+        from: /run/input
+      contract:
+        outcomes:
+          completed:
+            schema:
+              type: object
+      policy:
+        timeout: 30m
+        retry:
+          maxAttempts: 1
+          backoff: none
+
+    gate:
+      kind: decision
+      ownerRef: team/platform-ai
+      input:
+        from: /run/input
+      select:
+        - outcome: go
+          when: "true"
+
+    quick:
+      kind: decision
+      ownerRef: team/platform-ai
+      input:
+        from: /run/input
+      select:
+        - outcome: go
+          when: "true"
+
+    gather:
+      kind: join
+      ownerRef: team/platform-ai
+      join:
+        policy: any
+
+    finish:
+      kind: end
+      ownerRef: team/platform-ai
+      output:
+        from: /nodes/gather/output
+
+  edges:
+    - from: fan.split
+      to: slow
+
+    - from: fan.split
+      to: gate
+
+    - from: gate.go
+      to: quick
+
+    - from: quick.go
+      to: gather
+
+    - from: slow.completed
+      to: gather
+
+    - from: gather.joined
+      to: finish

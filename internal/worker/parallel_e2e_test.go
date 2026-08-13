@@ -10,6 +10,7 @@ import (
 
 	"github.com/agentculture/culture-nodes/internal/actors"
 	"github.com/agentculture/culture-nodes/internal/engine"
+	"github.com/agentculture/culture-nodes/internal/worker"
 )
 
 // The split/join dispatch seams end to end (issue #43, parallel-tokens
@@ -173,5 +174,74 @@ func TestParkedBarrierIsNotClaimable(t *testing.T) {
 	h.runUntil(20*time.Second, func() bool { return h.run(run.ID).State.Terminal() })
 	if got := h.run(run.ID).State; got != engine.RunCompleted {
 		t.Fatalf("run state = %s, want completed (worker errors: %v)", got, h.workerErrors())
+	}
+}
+
+// TestReapedAsyncBranchIsCancelledAtTheActor is the best-effort, post-commit
+// half of design §4.4: the barrier's `any` policy fires on the decision
+// branch, the long-running branch is reaped transactionally, and the worker
+// then asks that branch's actor — still holding a live session — to stop.
+//
+// The assertion that matters is the §13.6 cancel the actor received. Without
+// it the run is still correct (the fenced guards refuse the late completion)
+// but the actor burns compute on work nobody will read, which is exactly the
+// zombie issue #19 fixed for run cancellation.
+func TestReapedAsyncBranchIsCancelledAtTheActor(t *testing.T) {
+	accepted := make(chan struct{}, 1)
+	h := newHarness(t, func(_ *harness, w http.ResponseWriter, _ actors.InvocationRequest) {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusAccepted)
+		_, _ = w.Write([]byte(`{"invocation_id":"external_reaped","heartbeat_after_seconds":300,"supports_cancellation":true}`))
+		select {
+		case accepted <- struct{}{}:
+		default:
+		}
+	})
+
+	run := h.createRun("parallel-any-async.workflow.yaml", `{"subject":"widget"}`)
+	h.runUntil(20*time.Second, func() bool { return h.run(run.ID).State.Terminal() })
+
+	final := h.run(run.ID)
+	if final.State != engine.RunCompleted {
+		t.Fatalf("run state = %s, want completed (worker errors: %v)", final.State, h.workerErrors())
+	}
+	select {
+	case <-accepted:
+	default:
+		t.Fatal("the long-running branch was never invoked, so nothing was reaped mid-invocation")
+	}
+
+	// The losing branch is retired in committed state...
+	var slowState string
+	if err := h.store.Pool().QueryRow(h.ctx,
+		`SELECT status FROM node_runs WHERE run_id = $1 AND node_key = 'slow'`, run.ID).Scan(&slowState); err != nil {
+		t.Fatalf("read the reaped branch: %v", err)
+	}
+	if slowState != "cancelled" {
+		t.Errorf("reaped branch node run = %q, want cancelled", slowState)
+	}
+
+	// ...and its actor was asked to stop.
+	cancels := h.cancellations()
+	if len(cancels) != 1 {
+		t.Fatalf("actor received %d cancel requests, want 1: %+v", len(cancels), cancels)
+	}
+	if cancels[0].InvocationID != "external_reaped" {
+		t.Errorf("cancel names invocation %q, want external_reaped", cancels[0].InvocationID)
+	}
+	if cancels[0].Reason == "" {
+		t.Error("cancel carried no reason; a reaped branch's actor deserves to know why")
+	}
+
+	// The attempt is recorded whatever the actor did with it (an
+	// attempted-but-failed cancel is still evidence).
+	var requested int
+	if err := h.store.Pool().QueryRow(h.ctx,
+		`SELECT COUNT(*)::int FROM events WHERE aggregate_id = $1 AND event_type = $2`,
+		run.ID, worker.TypeBranchCancelRequested).Scan(&requested); err != nil {
+		t.Fatalf("count cancel-requested events: %v", err)
+	}
+	if requested != 1 {
+		t.Errorf("branch cancel-requested events = %d, want 1", requested)
 	}
 }

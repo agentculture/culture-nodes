@@ -1609,7 +1609,7 @@ components:
           type: string
         state:
           type: string
-          enum: [ready, leased, running, waiting_external, completed, failed, cancelled]
+          enum: [ready, leased, running, waiting_external, waiting_human, waiting_join, completed, failed, cancelled]
         outcome:
           type: string
         visit_count:
@@ -1655,7 +1655,7 @@ components:
             run's most recently dispatched attempt.
         state:
           type: string
-          enum: [ready, leased, running, waiting_external, completed, failed, cancelled]
+          enum: [ready, leased, running, waiting_external, waiting_human, waiting_join, completed, failed, cancelled]
         outcome:
           type: string
         created_at:

@@ -418,6 +418,25 @@ func (w *Worker) dispatch(ctx context.Context, claimed postgres.ClaimedWork) err
 		return w.failAttempt(ctx, claimed, "", engine.StatusFailed, "definition",
 			fmt.Sprintf("node %q is an end node; end nodes are completed by the engine and never dispatched", node.ID))
 	default:
+		// An unknown kind stays a loud definition failure, which is a
+		// DECISION against the parallel-tokens design's open item O8 rather
+		// than an oversight. O8 proposed release-and-retry with backoff so an
+		// N-1 worker could not kill a run pinned to a workflow using kinds it
+		// has never heard of. Two things sank it:
+		//
+		//   * it cannot fix the hazard it names. An N-1 worker's behaviour is
+		//     fixed in the N-1 binary; only a worker released BEFORE the new
+		//     kind could benefit, and the same argument recurs at every
+		//     subsequent kind. The mitigation that does work is operational
+		//     and already available — do not publish workflows using a new
+		//     kind until the rollout completes. Migration 0019 is staged for
+		//     exactly that: expand-only, so an N-1 binary that never reads
+		//     token_groups or join_arrivals keeps working.
+		//   * it trades a loud failure for a silent hang. A genuinely bogus
+		//     kind (a hand-built IR, a typo in a pinned definition) would
+		//     recycle through the queue forever with nothing terminal to look
+		//     at, which is the opposite of what every other refusal in this
+		//     dispatcher does.
 		return w.failAttempt(ctx, claimed, "", engine.StatusFailed, "definition",
 			fmt.Sprintf("node %q declares kind %q, which this worker cannot dispatch", node.ID, node.Kind))
 	}
@@ -478,7 +497,16 @@ func (w *Worker) complete(ctx context.Context, claimed postgres.ClaimedWork, req
 	req.WorkerID = w.opts.WorkerID
 	req.FencingToken = claimed.FencingToken
 	req.Attempt = int(claimed.Attempt)
-	return w.engine.CompleteAttempt(ctx, req)
+	result, err := w.engine.CompleteAttempt(ctx, req)
+	if err != nil {
+		return result, err
+	}
+	// A completion that reaped sibling branches (issue #43: the losers of an
+	// any/quorum barrier, or every live branch when this completion ended the
+	// run) has already retired them transactionally. Telling their actors to
+	// stop is the best-effort, post-commit half — see branchcancel.go.
+	w.propagateBranchCancellations(ctx, result)
+	return result, nil
 }
 
 // failAttempt records a technical failure with a machine-readable diagnostic.

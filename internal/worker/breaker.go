@@ -63,14 +63,13 @@ import (
 // one bridge in adapters/ routes LONG work asynchronously by policy, and
 // long work is exactly what the split-plan routing default sends to the
 // agent fleet — so the dispatches most likely to exhaust a provider are the
-// ones on the uncovered path. Closing it means giving
-// CallbackDeps a pause seam and relocating the pause-policy constants below
-// into internal/actors (internal/actors cannot import this package —
-// the dependency runs the other way), i.e. a change to a shared protocol
-// surface that this task's brief scoped out. Until it is closed, the
-// ENFORCEMENT half still protects every queued dispatch, sync or async,
-// once a pause exists by any route: what is missing is only the async
-// TRIP.
+// ones on the uncovered path. Closing it means giving CallbackDeps a pause
+// seam and relocating the pause-policy constants below into internal/actors
+// (which cannot import this package — the dependency runs the other way),
+// i.e. a change to a shared protocol surface this task's brief scoped out.
+// Until it is closed, the ENFORCEMENT half still protects every queued
+// dispatch, sync or async, once a pause exists by any route: what is missing
+// is only the async TRIP.
 //
 // AND IT IS NOT SILENT. budget.go's objection to a claim-time skip is that
 // nothing records why. Every trip emits TypeActorPaused and every deferral

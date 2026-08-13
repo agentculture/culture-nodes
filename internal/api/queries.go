@@ -258,7 +258,7 @@ func (s *Server) listRuns(ctx context.Context, p listRunsParams) ([]RunOut, erro
 // runTokens returns every token of a run, oldest first.
 func (s *Server) runTokens(ctx context.Context, runID string) ([]TokenOut, error) {
 	rows, err := s.Store.Pool().Query(ctx, `
-		SELECT id, node_key, state, parent_token_id, created_at, consumed_at
+		SELECT id, node_key, state, parent_token_id, origin_event_id, created_at, consumed_at
 		FROM tokens WHERE run_id = $1 ORDER BY created_at, id`, runID)
 	if err != nil {
 		return nil, fmt.Errorf("api: run %s: list tokens: %w", runID, err)
@@ -270,13 +270,15 @@ func (s *Server) runTokens(ctx context.Context, runID string) ([]TokenOut, error
 		var (
 			t             TokenOut
 			parentTokenID pgtype.Text
+			originEventID pgtype.Text
 			createdAt     pgtype.Timestamptz
 			consumedAt    pgtype.Timestamptz
 		)
-		if err := rows.Scan(&t.ID, &t.NodeID, &t.State, &parentTokenID, &createdAt, &consumedAt); err != nil {
+		if err := rows.Scan(&t.ID, &t.NodeID, &t.State, &parentTokenID, &originEventID, &createdAt, &consumedAt); err != nil {
 			return nil, fmt.Errorf("api: run %s: list tokens: scan: %w", runID, err)
 		}
 		t.ParentTokenID = textOrEmpty(parentTokenID)
+		t.OriginEventID = textOrEmpty(originEventID)
 		t.CreatedAt = tsOrZero(createdAt)
 		if consumedAt.Valid {
 			consumed := consumedAt.Time

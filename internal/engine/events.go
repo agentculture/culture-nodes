@@ -56,6 +56,19 @@ const (
 	// TypeJoinArrived records one branch reaching a join barrier, with the
 	// running arrival count against the group's cardinality.
 	TypeJoinArrived = "dev.culture.nodes.join.arrived"
+	// TypeEventPickedUp records an event route creating a token at its
+	// target node (issue #43, design D9): which route, which delivered fact,
+	// and the token/node run it produced. It is the provenance an event-born
+	// token has instead of a parent token (review finding D4) — together with
+	// tokens.origin_event_id, which carries the same fact as durable state
+	// rather than only as an audit line.
+	TypeEventPickedUp = "dev.culture.nodes.event.picked-up"
+	// TypeEventPickupRefused records a route that matched but created no
+	// token: its guard declined, or the pickup would have taken the run past
+	// a §9.7 bound. It is deliberately NOT a run failure (design D13) — an
+	// external event must not fail a healthy run — so this event is the only
+	// trace, and an operator watching the run is meant to find it here.
+	TypeEventPickupRefused = "dev.culture.nodes.event.pickup-refused"
 	// TypeBranchCancelled records one sibling branch reaped explicitly —
 	// the loser of an any/quorum barrier, or a live branch retired because
 	// a terminal branch failure (or cancellation, or a bound) ended the run.

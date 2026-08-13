@@ -320,11 +320,18 @@ type DeliverSignalEventInput struct {
 	// Emitter is free text naming who delivered the fact.
 	Emitter string
 	// RunID optionally scopes the event to one run: set, it resumes only
-	// that run's matching subscriptions; empty, it resumes every matching
-	// subscription in the namespace. The caller is responsible for having
-	// verified a non-empty RunID exists in this namespace (the API handler
-	// does) — an unknown id would only fail the FK on insert.
+	// that run's matching subscriptions and routes; empty, it resumes every
+	// matching subscription and route in the namespace. The caller is
+	// responsible for having verified a non-empty RunID exists in this
+	// namespace (the API handler does) — an unknown id would only fail the FK
+	// on insert.
 	RunID string
+
+	// Pickup performs event-route pickup (issue #43, design D9) inside this
+	// delivery's transaction. Nil disables route pickup entirely, which is
+	// what every caller that only cares about signal waits wants — and what
+	// keeps a delivery from silently depending on an engine it was not given.
+	Pickup engine.EventPickupRunner
 }
 
 // selectCandidateSubscriptionsSQL is the unlocked first read of the pending
@@ -370,25 +377,25 @@ FOR UPDATE
 // deliberately does NOT retroactively fire on it (issue #43's documented
 // limitation). It returns the appended event and the subscriptions it
 // fired.
-func (s *Store) DeliverSignalEvent(ctx context.Context, in DeliverSignalEventInput) (SignalEvent, []SignalSubscription, error) {
+func (s *Store) DeliverSignalEvent(ctx context.Context, in DeliverSignalEventInput) (SignalDelivery, error) {
 	switch {
 	case in.NamespaceID == "":
-		return SignalEvent{}, nil, errors.New("postgres: DeliverSignalEvent: namespaceID is required")
+		return SignalDelivery{}, errors.New("postgres: DeliverSignalEvent: namespaceID is required")
 	case in.Name == "":
-		return SignalEvent{}, nil, errors.New("postgres: DeliverSignalEvent: name is required")
+		return SignalDelivery{}, errors.New("postgres: DeliverSignalEvent: name is required")
 	case in.Emitter == "":
-		return SignalEvent{}, nil, errors.New("postgres: DeliverSignalEvent: emitter is required")
+		return SignalDelivery{}, errors.New("postgres: DeliverSignalEvent: emitter is required")
 	}
 
 	tx, err := s.pool.Begin(ctx)
 	if err != nil {
-		return SignalEvent{}, nil, fmt.Errorf("postgres: DeliverSignalEvent: begin: %w", err)
+		return SignalDelivery{}, fmt.Errorf("postgres: DeliverSignalEvent: begin: %w", err)
 	}
 	defer func() { _ = tx.Rollback(ctx) }() // no-op once Commit has succeeded
 
-	fired, err := matchSubscriptionsUnderRunLocks(ctx, tx, in)
+	fired, routes, err := matchUnderRunLocks(ctx, tx, in)
 	if err != nil {
-		return SignalEvent{}, nil, err
+		return SignalDelivery{}, err
 	}
 
 	ev := SignalEvent{
@@ -406,67 +413,122 @@ func (s *Store) DeliverSignalEvent(ctx context.Context, in DeliverSignalEventInp
 		 RETURNING created_at`,
 		ev.ID, ev.NamespaceID, textOrNull(ev.RunID), ev.Name, ev.Payload, ev.Emitter,
 	).Scan(&createdAt); err != nil {
-		return SignalEvent{}, nil, fmt.Errorf("postgres: DeliverSignalEvent: append event: %w", err)
+		return SignalDelivery{}, fmt.Errorf("postgres: DeliverSignalEvent: append event: %w", err)
 	}
 	ev.CreatedAt = tsValue(createdAt)
 
 	for i := range fired {
 		if err := fireSubscription(ctx, tx, &fired[i], ev); err != nil {
-			return SignalEvent{}, nil, err
+			return SignalDelivery{}, err
 		}
+	}
+
+	// Route pickup runs AFTER the fact exists, because a pickup token names
+	// the event it came from (tokens.origin_event_id) and that is a real
+	// foreign key, not a label.
+	pickups, err := runEventRoutePickup(ctx, tx, in.NamespaceID, in.Pickup, routes, ev)
+	if err != nil {
+		return SignalDelivery{}, err
 	}
 
 	// One outbox row for the delivery itself, whether or not anything was
 	// waiting — the same transactional audit discipline every other state
 	// change in this store follows (appendRunEventTx, the API's cancelRun).
 	deliveredPayload, _ := json.Marshal(map[string]any{
-		"event_id": ev.ID,
-		"name":     ev.Name,
-		"emitter":  ev.Emitter,
-		"run_id":   ev.RunID,
-		"resumed":  len(fired),
+		"event_id":  ev.ID,
+		"name":      ev.Name,
+		"emitter":   ev.Emitter,
+		"run_id":    ev.RunID,
+		"resumed":   len(fired),
+		"picked_up": admittedPickups(pickups),
 	})
 	if _, err := tx.Exec(ctx,
 		`INSERT INTO outbox (id, namespace_id, topic, payload, status, available_at)
 		 VALUES ($1, $2, $3, $4, 'pending', now())`,
 		store.NewULID(), in.NamespaceID, TypeSignalDelivered, deliveredPayload,
 	); err != nil {
-		return SignalEvent{}, nil, fmt.Errorf("postgres: DeliverSignalEvent: outbox: %w", err)
+		return SignalDelivery{}, fmt.Errorf("postgres: DeliverSignalEvent: outbox: %w", err)
 	}
 
 	if err := tx.Commit(ctx); err != nil {
-		return SignalEvent{}, nil, fmt.Errorf("postgres: DeliverSignalEvent: commit: %w", err)
+		return SignalDelivery{}, fmt.Errorf("postgres: DeliverSignalEvent: commit: %w", err)
 	}
-	return ev, fired, nil
+	return SignalDelivery{Event: ev, Fired: fired, Pickups: pickups}, nil
 }
 
-// matchSubscriptionsUnderRunLocks resolves the pending subscriptions this
-// delivery fires: an unlocked candidate read to learn which runs are
-// involved, the per-run advisory locks in sorted order (the same
-// ledger.RunLockKey every other writer of those runs' waiting state and
-// audit timeline takes — appendRunEventTx's MAX+1 sequence is only safe
-// under it), then the authoritative re-read restricted to the locked runs.
-// See selectLockedSubscriptionsSQL's doc comment for the lock-ordering
-// reasoning.
-func matchSubscriptionsUnderRunLocks(ctx context.Context, tx pgx.Tx, in DeliverSignalEventInput) ([]SignalSubscription, error) {
+// SignalDelivery is what one committed delivery did: the fact it appended,
+// the parked subscriptions it fired, and the event routes it offered the fact
+// to. Pickups includes REFUSED routes as well as admitted ones — a guard that
+// declined and a bound that had no headroom are both answers the caller is
+// entitled to see, and design D13 makes the refusal the only trace a
+// bound-refused pickup leaves.
+type SignalDelivery struct {
+	Event   SignalEvent
+	Fired   []SignalSubscription
+	Pickups []engine.EventPickupResult
+}
+
+func admittedPickups(pickups []engine.EventPickupResult) int {
+	n := 0
+	for _, p := range pickups {
+		if p.Admitted {
+			n++
+		}
+	}
+	return n
+}
+
+// matchUnderRunLocks resolves everything this delivery will touch: the
+// pending subscriptions it fires and the active event routes it offers the
+// fact to. Both halves follow one two-phase discipline — an unlocked
+// candidate read to learn which runs are involved, the per-run advisory locks
+// in sorted order (the same ledger.RunLockKey every other writer of those
+// runs' waiting state and audit timeline takes — appendRunEventTx's MAX+1
+// sequence is only safe under it), then the authoritative re-reads restricted
+// to the locked runs.
+//
+// The two candidate sets are UNIONED before any lock is taken, and that is
+// the whole reason this function exists rather than two independent ones. A
+// delivery that locked the subscription runs, then discovered a route in a
+// third run and locked that too, would be acquiring locks in an order no
+// other writer shares — the lock-order inversion selectLockedSubscriptionsSQL's
+// doc comment explains is structurally impossible today. One sorted union
+// keeps it impossible.
+func matchUnderRunLocks(ctx context.Context, tx pgx.Tx, in DeliverSignalEventInput) ([]SignalSubscription, []engine.EventRoute, error) {
 	candidates, err := querySubscriptions(ctx, tx, selectCandidateSubscriptionsSQL,
 		in.NamespaceID, in.Name, textOrNull(in.RunID))
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
-	if len(candidates) == 0 {
-		return nil, nil
-	}
-
-	runIDs := sortedRunIDs(candidates)
-	for _, runID := range runIDs {
-		if _, err := tx.Exec(ctx, advisoryXactLockSQL, ledger.RunLockKey(runID)); err != nil {
-			return nil, fmt.Errorf("postgres: DeliverSignalEvent: lock run %s: %w", runID, err)
+	var routeRuns []string
+	if in.Pickup != nil {
+		if routeRuns, err = candidateEventRouteRuns(ctx, tx, in); err != nil {
+			return nil, nil, err
 		}
 	}
 
-	return querySubscriptions(ctx, tx, selectLockedSubscriptionsSQL,
+	runIDs := sortedRunIDs(candidates, routeRuns)
+	if len(runIDs) == 0 {
+		return nil, nil, nil
+	}
+	for _, runID := range runIDs {
+		if _, err := tx.Exec(ctx, advisoryXactLockSQL, ledger.RunLockKey(runID)); err != nil {
+			return nil, nil, fmt.Errorf("postgres: DeliverSignalEvent: lock run %s: %w", runID, err)
+		}
+	}
+
+	fired, err := querySubscriptions(ctx, tx, selectLockedSubscriptionsSQL,
 		in.NamespaceID, in.Name, textOrNull(in.RunID), runIDs)
+	if err != nil {
+		return nil, nil, err
+	}
+	var routes []engine.EventRoute
+	if in.Pickup != nil {
+		if routes, err = lockedEventRoutes(ctx, tx, in, runIDs); err != nil {
+			return nil, nil, err
+		}
+	}
+	return fired, routes, nil
 }
 
 // querySubscriptions runs one of the matching selects and scans its rows.
@@ -536,18 +598,28 @@ func fireSubscription(ctx context.Context, tx pgx.Tx, sub *SignalSubscription, e
 	})
 }
 
-// sortedRunIDs returns the distinct run ids of the matched subscriptions in
-// sorted order — the advisory-lock acquisition order two concurrent
-// deliveries must share.
-func sortedRunIDs(subs []SignalSubscription) []string {
-	seen := make(map[string]struct{}, len(subs))
+// sortedRunIDs returns the distinct run ids a delivery will touch — the
+// subscriptions' runs and the routes' runs together — in sorted order, which
+// is the advisory-lock acquisition order two concurrent deliveries must
+// share.
+func sortedRunIDs(subs []SignalSubscription, extra []string) []string {
+	seen := make(map[string]struct{}, len(subs)+len(extra))
 	var ids []string
-	for _, sub := range subs {
-		if _, ok := seen[sub.RunID]; ok {
-			continue
+	add := func(runID string) {
+		if runID == "" {
+			return
 		}
-		seen[sub.RunID] = struct{}{}
-		ids = append(ids, sub.RunID)
+		if _, ok := seen[runID]; ok {
+			return
+		}
+		seen[runID] = struct{}{}
+		ids = append(ids, runID)
+	}
+	for _, sub := range subs {
+		add(sub.RunID)
+	}
+	for _, runID := range extra {
+		add(runID)
 	}
 	sort.Strings(ids)
 	return ids

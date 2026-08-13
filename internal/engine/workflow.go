@@ -30,11 +30,16 @@ import (
 // CEL variables available to an edge guard (PRD §11.2), matching the
 // compiler's environment exactly: input is the run input, output is the
 // deciding node's output for the outcome being routed, outcome is that
-// outcome's name.
+// outcome's name, and event is the delivered signal event an `onEvent` edge's
+// guard filters on (issue #43). The two environments must stay identical —
+// the compiler proves a guard compiles, this rebuilds it from the pinned IR,
+// and a variable in one and not the other would make a published workflow
+// fail at run time.
 const (
 	celVarInput   = "input"
 	celVarOutput  = "output"
 	celVarOutcome = "outcome"
+	celVarEvent   = "event"
 )
 
 // Workflow is a normalized workflow IR prepared for execution: guards
@@ -180,14 +185,37 @@ type RetryPolicy struct {
 	Backoff     string
 }
 
-// Edge is one eligible transition, with its guard compiled.
+// Edge is one eligible transition, with its guard compiled. Its source is
+// either a node outcome (FromNode/FromOutcome, the ordinary case) or a named
+// external event (OnEvent, issue #43's event routes — design D9). Exactly one
+// of the two is set: the compiler's schema makes it a oneOf, and every
+// consumer here reads OnEvent != "" as "this is an event edge".
+//
+// planTransition needs no special case for them: it filters on
+// `edge.FromNode != in.NodeID`, and an event edge's FromNode is empty, so no
+// node completion can ever select one.
 type Edge struct {
 	From        string
 	FromNode    string
 	FromOutcome string
+	OnEvent     string
 	To          string
 	When        string
 	Guard       cel.Program
+}
+
+// EventEdges are the workflow's `onEvent` edges, in normalized order — what
+// CreateRun materializes as the run's durable event routes. Several edges may
+// name one event: that is the pickup split (design D9), and it needs no extra
+// machinery because one delivery simply matches every one of them.
+func (w *Workflow) EventEdges() []Edge {
+	var out []Edge
+	for _, e := range w.Edges {
+		if e.OnEvent != "" {
+			out = append(out, e)
+		}
+	}
+	return out
 }
 
 // LoadWorkflow decodes a normalized IR document and prepares it for
@@ -249,8 +277,18 @@ func LoadWorkflow(digest string, ir []byte) (*Workflow, error) {
 		return fail("%v", err)
 	}
 	for i, e := range doc.Spec.Edges {
-		edge := Edge{From: e.From, FromNode: e.FromNode, FromOutcome: e.FromOutcome, To: e.To, When: e.When}
-		if edge.FromNode == "" || edge.FromOutcome == "" {
+		edge := Edge{
+			From: e.From, FromNode: e.FromNode, FromOutcome: e.FromOutcome,
+			OnEvent: e.OnEvent, To: e.To, When: e.When,
+		}
+		switch {
+		case edge.OnEvent != "":
+			// An event edge is sourced by a name, not by a node outcome. Its
+			// target still has to exist — the run materializes a route at it.
+			if _, ok := wf.Nodes[edge.To]; !ok {
+				return fail("event edge %d (onEvent %q) targets node %q, which the IR does not declare", i, edge.OnEvent, edge.To)
+			}
+		case edge.FromNode == "" || edge.FromOutcome == "":
 			return fail("edge %d (%q) is not decomposed into node and outcome", i, e.From)
 		}
 		if edge.When != "" {
@@ -296,6 +334,7 @@ type irDocument struct {
 			From        string `json:"from"`
 			FromNode    string `json:"fromNode"`
 			FromOutcome string `json:"fromOutcome"`
+			OnEvent     string `json:"onEvent"`
 			To          string `json:"to"`
 			When        string `json:"when"`
 		} `json:"edges"`
@@ -502,6 +541,7 @@ func newCELEnv() (*cel.Env, error) {
 		cel.Variable(celVarInput, cel.DynType),
 		cel.Variable(celVarOutput, cel.DynType),
 		cel.Variable(celVarOutcome, cel.DynType),
+		cel.Variable(celVarEvent, cel.DynType),
 	)
 	if err != nil {
 		return nil, fmt.Errorf("build CEL environment: %w", err)

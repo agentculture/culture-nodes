@@ -737,6 +737,13 @@ func (c *completion) completeRun(ctx context.Context, endNodeID string, transiti
 		return err
 	}
 
+	// A completed run stops observing: its standing pickup routes are retired
+	// alongside the timers and subscriptions the reap paths already retire
+	// (issue #43, design §6.1). A route left active on a terminal run would be
+	// a delivery creating work in a run nobody will ever read.
+	if _, err := c.tx.RetireEventRoutes(ctx, c.run.ID); err != nil {
+		return err
+	}
 	if err := c.tx.UpdateRunState(ctx, c.run.ID, RunCompleted, output); err != nil {
 		return err
 	}

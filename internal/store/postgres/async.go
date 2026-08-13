@@ -229,18 +229,45 @@ const advisoryXactLockSQL = `SELECT pg_advisory_xact_lock(hashtextextended($1, 0
 type CallbackStore struct {
 	store       *Store
 	namespaceID string
+	// pickup lets a mid-execution `signal` emission fire the namespace's
+	// event routes as well as its signal waits (issue #43, design D9/D11).
+	// Nil is a complete callback store that simply does no route pickup —
+	// the honest default for a deployment wired without an engine, and what
+	// every pre-t21 caller gets.
+	pickup engine.EventPickupRunner
+}
+
+// CallbackStoreOption configures a CallbackStore.
+type CallbackStoreOption func(*CallbackStore)
+
+// WithEventPickup lets emissions from this callback store pick up event
+// routes. It takes the engine rather than building one, because the pickup
+// has to run against the SAME workflow cache and id factory the rest of the
+// process uses.
+func WithEventPickup(pickup engine.EventPickupRunner) CallbackStoreOption {
+	return func(cs *CallbackStore) {
+		if pickup != nil {
+			cs.pickup = pickup
+		}
+	}
 }
 
 // NewCallbackStore returns the actors.CallbackStore implementation for a
 // namespace.
-func NewCallbackStore(s *Store, namespaceID string) (*CallbackStore, error) {
+func NewCallbackStore(s *Store, namespaceID string, opts ...CallbackStoreOption) (*CallbackStore, error) {
 	if s == nil {
 		return nil, errors.New("postgres: NewCallbackStore requires a store")
 	}
 	if namespaceID == "" {
 		return nil, errors.New("postgres: NewCallbackStore requires a namespace id")
 	}
-	return &CallbackStore{store: s, namespaceID: namespaceID}, nil
+	cs := &CallbackStore{store: s, namespaceID: namespaceID}
+	for _, opt := range opts {
+		if opt != nil {
+			opt(cs)
+		}
+	}
+	return cs, nil
 }
 
 // invocationColumns is the column list both Invocation and

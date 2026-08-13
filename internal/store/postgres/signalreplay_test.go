@@ -80,12 +80,13 @@ func TestReplayResumesASubscriberThatSubscribedAfterTheEvent(t *testing.T) {
 
 	// The event fires while nothing is waiting. Under the pre-t21 semantics
 	// this fact was unreachable for every later subscriber of this run.
-	ev, _, err := s.DeliverSignalEvent(ctx, postgres.DeliverSignalEventInput{
+	delivery, err := s.DeliverSignalEvent(ctx, postgres.DeliverSignalEventInput{
 		NamespaceID: ns.ID, Name: "green-light", Emitter: "ci",
 	})
 	if err != nil {
 		t.Fatalf("DeliverSignalEvent: %v", err)
 	}
+	ev := delivery.Event
 
 	replayedEvent, replayed := replayFor(t, s, runID, nodeRunID, "green-light")
 	if !replayed {

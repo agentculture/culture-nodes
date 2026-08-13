@@ -1,0 +1,82 @@
+# Event-driven continuation (issue #43, parallel-tokens design §6.1): any node
+# can pick an event up and continue from it, INCLUDING as a split. Two edges
+# name one event, so a single delivery creates two tokens — one at `notify`
+# unconditionally, one at `escalate` only when the event's own payload says
+# the severity is high. It compiles with no errors and no warnings: the
+# positive control for `onEvent` edges, for `event`-scoped guards, and for
+# event-edge targets counting as reachability roots (nothing routes into
+# `notify` or `escalate` from the entry node).
+apiVersion: nodes.culture.dev/v1alpha1
+kind: Workflow
+
+metadata:
+  name: event-pickup
+  version: 1.0.0
+  ownerRef: team/platform-ai
+
+spec:
+  entry: work
+
+  contract:
+    input:
+      schema:
+        type: object
+    output:
+      schema:
+        type: object
+
+  limits:
+    maxDuration: 1h
+    maxTransitions: 32
+    maxVisitsPerNode: 4
+    maxParallelTokens: 8
+
+  nodes:
+    work:
+      kind: agent
+      ownerRef: team/platform-ai
+      uses: actor://company/worker@sha256:aaaaaa
+      input:
+        from: /run/input
+      contract:
+        outcomes:
+          completed:
+            schema:
+              type: object
+
+    notify:
+      kind: agent
+      ownerRef: team/platform-ai
+      uses: actor://company/notifier@sha256:bbbbbb
+      contract:
+        outcomes:
+          completed:
+            schema:
+              type: object
+
+    escalate:
+      kind: agent
+      ownerRef: team/platform-ai
+      uses: actor://company/escalator@sha256:cccccc
+      contract:
+        outcomes:
+          completed:
+            schema:
+              type: object
+
+    finish:
+      kind: end
+      ownerRef: team/platform-ai
+      output:
+        from: /nodes/work/output
+
+  edges:
+    - from: work.completed
+      to: finish
+
+    - onEvent: review-requested
+      to: notify
+
+    - onEvent: review-requested
+      to: escalate
+      when: "event.payload.severity == 'high'"

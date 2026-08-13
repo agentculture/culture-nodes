@@ -212,11 +212,20 @@ type RunListOut struct {
 }
 
 // TokenOut is one control token, as documented in components.schemas.Token.
+//
+// A token has a parent OR an origin event OR neither (the entry token) —
+// never both. OriginEventID is how a run-detail surface renders an
+// event-pickup token honestly: it is a ROOT, because nothing in this run
+// handed it control, but it is an explained root rather than an orphan
+// (issue #43, review finding D4). A consumer that draws the ancestry tree
+// must therefore tolerate several roots per run and label the ones carrying
+// origin_event_id with the fact that created them.
 type TokenOut struct {
 	ID            string     `json:"id"`
 	NodeID        string     `json:"node_id"`
 	State         string     `json:"state"`
 	ParentTokenID string     `json:"parent_token_id,omitempty"`
+	OriginEventID string     `json:"origin_event_id,omitempty"`
 	CreatedAt     time.Time  `json:"created_at"`
 	ConsumedAt    *time.Time `json:"consumed_at,omitempty"`
 }

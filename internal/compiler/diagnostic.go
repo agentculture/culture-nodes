@@ -85,6 +85,7 @@ const (
 	CodeGraphJoinNoIncomingEdge    = "graph.join_without_incoming_edge"
 	CodeGraphEndInsideSplit        = "graph.end_inside_split"
 	CodeGraphJoinOutsideSplit      = "graph.join_outside_split"
+	CodeGraphEventEdgeToEnd        = "graph.event_edge_to_end"
 	CodeContractJoinPolicyMissing  = "contract.join_policy_missing"
 	CodeContractJoinPolicyInvalid  = "contract.join_policy_invalid"
 	CodeContractJoinMisplaced      = "contract.join_on_non_join_node"

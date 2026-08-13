@@ -50,15 +50,22 @@ func (cs *CallbackStore) EmitSignalEvent(
 		namespaceID = cs.namespaceID
 	}
 
-	ev, fired, err := cs.store.DeliverSignalEvent(ctx, DeliverSignalEventInput{
+	delivery, err := cs.store.DeliverSignalEvent(ctx, DeliverSignalEventInput{
 		NamespaceID: namespaceID,
 		Name:        in.Name,
 		Payload:     in.Payload,
 		Emitter:     in.Emitter,
 		RunID:       in.RunID,
+		Pickup:      cs.pickup,
 	})
 	if err != nil {
 		return actors.EmitSignalResult{}, err
 	}
-	return actors.EmitSignalResult{EventID: ev.ID, Resumed: len(fired)}, nil
+	picked := 0
+	for _, p := range delivery.Pickups {
+		if p.Admitted {
+			picked++
+		}
+	}
+	return actors.EmitSignalResult{EventID: delivery.Event.ID, Resumed: len(delivery.Fired), PickedUp: picked}, nil
 }

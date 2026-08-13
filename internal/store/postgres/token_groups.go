@@ -25,15 +25,16 @@ func (eq engineQueries) Token(ctx context.Context, tokenID string) (engine.Token
 		state         string
 		parentTokenID pgtype.Text
 		groupID       pgtype.Text
+		originEventID pgtype.Text
 		createdAt     pgtype.Timestamptz
 		consumedAt    pgtype.Timestamptz
 	)
 	err := eq.q.QueryRow(ctx, `
-		SELECT id, namespace_id, run_id, node_key, state, parent_token_id, group_id, created_at, consumed_at
+		SELECT id, namespace_id, run_id, node_key, state, parent_token_id, group_id, origin_event_id, created_at, consumed_at
 		FROM tokens WHERE id = $1
 	`, tokenID).Scan(
 		&token.ID, &token.NamespaceID, &token.RunID, &token.NodeID, &state,
-		&parentTokenID, &groupID, &createdAt, &consumedAt,
+		&parentTokenID, &groupID, &originEventID, &createdAt, &consumedAt,
 	)
 	if err != nil {
 		if isNoRows(err) {
@@ -44,6 +45,7 @@ func (eq engineQueries) Token(ctx context.Context, tokenID string) (engine.Token
 	token.State = engine.TokenState(state)
 	token.ParentTokenID = textOrEmpty(parentTokenID)
 	token.GroupID = textOrEmpty(groupID)
+	token.OriginEventID = textOrEmpty(originEventID)
 	token.CreatedAt = tsValue(createdAt)
 	token.ConsumedAt = tsValue(consumedAt)
 	return token, nil
@@ -242,6 +244,14 @@ func (eq engineQueries) ReapRunState(ctx context.Context, runID, keepNodeRunID s
 		`UPDATE tokens SET state = 'consumed', consumed_at = now() WHERE run_id = $1 AND state = 'active'`, runID,
 	); err != nil {
 		return nil, fmt.Errorf("postgres: engine: ReapRunState: consume tokens: %w", err)
+	}
+	// A dead run stops observing: its standing event routes are retired
+	// alongside the timers and subscriptions above (issue #43, design §6.1).
+	// A route left active would let a later delivery create a token — and
+	// therefore claimable work — inside a run that is already terminal, which
+	// is exactly the re-dispatch zombie issue #19 closed for cancellation.
+	if _, err := eq.RetireEventRoutes(ctx, runID); err != nil {
+		return nil, fmt.Errorf("postgres: engine: ReapRunState: %w", err)
 	}
 	return reaped, nil
 }

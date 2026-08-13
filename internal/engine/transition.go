@@ -224,6 +224,11 @@ func evaluateGuard(edge *Edge, in transitionInput) (bool, error) {
 		celVarInput:   decodeActivation(in.RunInput),
 		celVarOutput:  decodeActivation(in.Output),
 		celVarOutcome: in.Outcome,
+		// A node-outcome transition has no event. The variable is still bound,
+		// to an empty map, because the shared environment declares it: a guard
+		// that reaches into it then reports "no such key" — a guard failure,
+		// which does not match — instead of failing to evaluate at all.
+		celVarEvent: map[string]any{},
 	}
 	out, _, err := edge.Guard.Eval(activation)
 	if err != nil {

@@ -62,6 +62,9 @@ class HumanTask:
     #: Extra input fields beyond `instruction`, kept verbatim so the human
     #: surface can show whatever context the workflow attached.
     extra_input: dict[str, Any] = field(default_factory=dict)
+    #: Nudge transport state: thread_id, last_nudge_at, last_seen_message_id,
+    #: escalation_level — persisted so a restart resumes the cadence.
+    nudge_state: dict[str, Any] | None = None
 
     def to_dict(self) -> dict[str, Any]:
         return asdict(self)

@@ -325,6 +325,63 @@ authority. A submission without the marker follows the original
 `human-submission` mapping unchanged, even when its task has an `observe`
 declaration.
 
+## Nudge transport
+
+When a human task sits in the inbox for too long, the tracker can **nudge**
+the person through a Discord channel instead of relying on the manual inbox
+surface.  Nudging is **opt-in**: it requires all four `DISCORD_NUDGE_*`
+environment variables to be set; without them the tracker behaves exactly as
+before.
+
+### How it works
+
+The tracker runs a nudge cycle after every merge-observation cycle.  For
+each pending task that has no nudge state yet, it calls
+`nudge.first_nudge()` which creates a **thread per task** in the configured
+Discord channel.  Subsequent cycles check the cadence:
+
+* **First nudge** — creates a new thread with the task instruction and
+  persists `thread_id`, `last_nudge_at`, `last_seen_message_id`, and
+  `escalation_level` in the task's `nudge_state`.
+* **Cadence nudge** — when `nudge_interval_seconds` has elapsed since the
+  last nudge, a follow-up message is posted in the existing thread.
+* **Escalation** — when `nudge_escalation_after_seconds` has elapsed since
+  the first nudge, the tracker escalates (levels 0 → 1 → 2), posting a
+  higher-priority message in the same thread.
+* **Reply polling** — after nudging, the tracker polls for new replies in
+  each thread.  A reply is relayed through the bridge's submit surface,
+  completing the task.
+
+The nudge cycle is **idempotent**: it never sends duplicate nudges for the
+same thread, and it never blocks the main merge observation path.  If the
+nudge module is unavailable (import error), the tracker silently skips
+nudging.
+
+### Thread-per-task model
+
+Each pending task gets its own Discord thread.  The thread is identified by
+`thread_id` stored in the task's `nudge_state` dict (persisted in the
+task's JSON file).  This means:
+
+* A person can reply in the thread and the tracker picks up the reply.
+* Multiple tasks never share a thread — no cross-talk.
+* A restart resumes from the persisted `thread_id`; no new threads are
+  created for tasks that already have one.
+
+### Configuration
+
+| Env var | Default | Meaning |
+|---|---|---|
+| `DISCORD_NUDGE_CHANNEL_ID` | unset | Discord channel to post nudges in (required for nudging) |
+| `DISCORD_NUDGE_BOT_TOKEN` | unset | Discord bot token (required for nudging) |
+| `DISCORD_NUDGE_INTERVAL_SECONDS` | `300` | Seconds between cadence nudges on the same thread |
+| `DISCORD_NUDGE_GLOBAL_THROTTLE_SECONDS` | `10` | Minimum wall-clock gap between any two nudge sends |
+| `DISCORD_NUDGE_ESCALATION_AFTER_SECONDS` | `600` | Seconds after first nudge before escalation kicks in |
+
+All five must be present for nudging to be enabled.  The channel ID and bot
+token are the gate: if either is empty, the tracker treats nudging as
+disabled and skips the nudge cycle entirely.
+
 ## Tests
 
 ```bash

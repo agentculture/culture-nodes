@@ -1,6 +1,6 @@
 [project]
 name = "culture-nodes-human-inbox-bridge"
-version = "0.1.0"
+version = "0.2.0"
 description = "Reference actor-protocol bridge for kind=human actors: parks Culture Nodes invocations as durable inbox tasks and completes them through the standard authenticated callback when a human submits a result. Runs OUTSIDE the culture-nodes deployment."
 readme = "README.md"
 license = "Apache-2.0"

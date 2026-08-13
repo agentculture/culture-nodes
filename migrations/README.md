@@ -118,6 +118,23 @@ Numbered SQL migrations for the authoritative PostgreSQL store (prd-spec
   Retry-After — never `0`, which would read as "retry immediately".
   Concurrent trips are an idempotent upsert that keeps the LATER
   `paused_until`, so a race may extend a pause and never shorten one.
+- `0023_run_sessions.sql` — expand-only: adds the `run_sessions` table (task
+  t11 of the economy-discord-graphs plan, issue #48 item 5), the session
+  ledger `budget.maxSessions` is spent against. One row per NEW provider
+  session a run opened — a COLD START — and deliberately not one per
+  dispatch: a dispatch carrying a prior `continuation_ref` (`0018`)
+  continues a conversation already paid for and writes nothing, because a
+  warm workstream of N turns that counted N would always exhaust the budget
+  it was designed to conserve. It is a new table rather than a column on
+  `attempts` because the cold/warm fact is known by the WORKER at dispatch
+  time while an attempts row is written by the engine at completion time
+  (and, for an async invocation, in another process entirely), and because
+  `attempts` holds rows for kinds that never touch a provider at all. Keyed
+  by the §13.1 protocol attempt id, so a re-entered dispatch charges once.
+  The row is written immediately BEFORE the invocation and therefore
+  over-counts a dispatch that dies in transport — the conservative
+  direction, since a budget that under-counts spends money the author
+  forbade.
 
 ## Policy
 

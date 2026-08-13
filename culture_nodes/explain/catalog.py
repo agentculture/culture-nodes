@@ -34,6 +34,7 @@ response.
 - `culture-nodes workflow validate|publish|list|get`
 - `culture-nodes run create|list|get|cancel|events|retag|grade`
 - `culture-nodes node-runs list`
+- `culture-nodes actors list|get|resume`
 - `culture-nodes ledger records|projection`
 - `culture-nodes review create|commit`
 - `culture-nodes human-tasks list|get|decide`
@@ -44,6 +45,7 @@ Every product verb resolves the API base URL as: `--api-url` flag, then the
 `NODES_API_URL` environment variable, then `http://127.0.0.1:8080`.
 `human-tasks decide` additionally resolves a bearer token: `--token`, then
 the `NODES_HUMAN_DECISION_TOKEN` environment variable — never logged.
+`actors resume` does the same against `NODES_ACTOR_REGISTRATION_TOKEN`.
 
 ## Exit-code policy
 
@@ -59,6 +61,7 @@ the `NODES_HUMAN_DECISION_TOKEN` environment variable — never logged.
 - `culture-nodes explain workflow`
 - `culture-nodes explain run`
 - `culture-nodes explain node-runs`
+- `culture-nodes explain actors`
 - `culture-nodes explain ledger`
 - `culture-nodes explain review`
 - `culture-nodes explain human-tasks`
@@ -313,6 +316,68 @@ at least one attempt in scope reported a cost. See
 `culture-nodes explain run` for the same rendering on run-level usage.
 """
 
+_ACTORS = """\
+# culture-nodes actors
+
+Thin REST client over the actors API (`api/openapi/openapi.yaml`, `actors`
+tag): list, get, resume. No engine logic lives here — the capacity circuit
+breaker's state is computed and cleared server-side.
+
+## Usage
+
+    culture-nodes actors list [--paused-only]
+    culture-nodes actors get <actor-id>
+    culture-nodes actors resume <actor-id> [--cleared-by WHO] [--token TOKEN]
+
+`list` renders every registered actor row — every revision, because actor
+identity is append-only (a capability or endpoint change is a new row, never
+an update).
+
+## The capacity circuit breaker
+
+When a dispatch to an actor fails with the `capacity_exhausted` §13.5 error
+class — a provider quota, per-session limit, or rate-window exhaustion the
+bridge declared in its own error body — the worker marks that ACTOR
+unavailable until a deadline and DEFERS work addressed to it: the work item
+goes back to `ready` with its availability pushed forward, never failed. One
+provider limit must not become a cascade of failed billable sessions.
+
+That state renders as the `availability` block on `get` and `list`:
+
+- `availability.paused` — whether the pause is in force right now.
+- `availability.paused_until` — when dispatch resumes on its own.
+- `availability.reason` — the §13.5 class that tripped it.
+- `availability.retry_after_seconds` — the provider's own Retry-After, when
+  it named one. Absent means it named none; it is never rendered as `0`.
+- `availability.tripped_by_run_id` / `tripped_by_attempt_id` — which
+  dispatch discovered the exhaustion.
+- `availability.cleared_at` / `cleared_by` — present only when an operator
+  ended the pause early, so an expiry and a human clear stay
+  distinguishable.
+
+An actor that has never been paused carries NO availability block at all —
+distinct from one whose pause lapsed, which renders with `paused: no`.
+
+## resume
+
+`resume` ends a pause early, for the operator who knows better than the
+automatic classification (the quota reset, the bridge was misreporting, the
+limit did not apply to this project). The pause is keyed by `actor_key`, so
+resuming any revision resumes the identity.
+
+Unlike `list` and `get` — and like `human-tasks decide` — `resume` requires
+a bearer token: the `NODES_ACTOR_REGISTRATION_TOKEN` environment variable,
+or `--token`. Neither is ever printed, logged, or included in `--json`
+output. It is deliberately the SAME secret actor registration uses:
+registration grants an endpoint the standing to be dispatched real work, and
+clearing a pause restores exactly that standing.
+
+Resuming an actor that is not paused succeeds (exit `0`) rather than
+erroring: the intent — "this actor should be dispatchable" — is already
+satisfied. Work items already deferred become claimable again within the
+worker's deferral horizon (minutes), not instantaneously.
+"""
+
 _REVIEW = """\
 # culture-nodes review
 
@@ -390,6 +455,10 @@ ENTRIES: dict[tuple[str, ...], str] = {
     ("run", "grade"): _RUN,
     ("node-runs",): _NODE_RUNS,
     ("node-runs", "list"): _NODE_RUNS,
+    ("actors",): _ACTORS,
+    ("actors", "list"): _ACTORS,
+    ("actors", "get"): _ACTORS,
+    ("actors", "resume"): _ACTORS,
     ("ledger",): _LEDGER,
     ("ledger", "records"): _LEDGER,
     ("ledger", "projection"): _LEDGER,

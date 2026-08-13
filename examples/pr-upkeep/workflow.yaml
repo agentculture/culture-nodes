@@ -126,7 +126,20 @@ spec:
       uses: runner://headspace/docker@sha256:5555555555555555555555555555555555555555555555555555555555555555
       operation:
         image: python:3.12-slim@sha256:57cd7c3a7a273101a6485ba99423ee568157882804b1124b4dd04266317710de
-        argv: [python3, /opt/pr-upkeep/sweep.py]
+        # The image carries no repo checkout, so the sweep script is fetched
+        # from the repo pinned to an exact commit SHA and exec'd — the only
+        # code-shipping mechanism a bare operation supports today (found
+        # live: python3 exits 2 on the missing /opt path; run
+        # 01KZXAJ7KAH7WX495TDNM4MEZR). A file-mount/artifact-input mechanism
+        # for code nodes is follow-up material alongside issue #50.
+        argv:
+          - python3
+          - -c
+          - |
+            import urllib.request
+            url = ("https://raw.githubusercontent.com/agentculture/culture-nodes/"
+                   "29eacc81c89474e667bb751f13da151aca91bed6/examples/pr-upkeep/sweep.py")
+            exec(compile(urllib.request.urlopen(url).read().decode(), "sweep.py", "exec"))
         # egress-allowlist is the DECLARED intent (sonarcloud.io +
         # api.github.com only), but headspace-cli 0.11.0 supports only a
         # disabled/enabled network posture and the runner boundary honestly

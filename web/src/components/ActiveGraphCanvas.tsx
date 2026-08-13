@@ -55,7 +55,6 @@ interface ActiveNodeData extends Record<string, unknown> {
   /** Committed events pulsed at this node so far — keys the one-shot ring. */
   pulseCount: number;
   inspected: boolean;
-  reducedMotion: boolean;
 }
 
 type ActiveFlowNode = Node<ActiveNodeData, "presence">;
@@ -184,10 +183,12 @@ export function ActiveGraphCanvas({
           live: activeSet.has(node.id),
           pulseCount: pulses[node.id] ?? 0,
           inspected: inspectedId === node.id,
-          reducedMotion,
         },
       })),
-    [graph, positions, activeSet, pulses, inspectedId, reducedMotion],
+    // Motion mode deliberately absent: a node card carries no motion state
+    // of its own — the section's `data-motion` attribute gates every
+    // animation from above, so flipping it re-creates no node objects.
+    [graph, positions, activeSet, pulses, inspectedId],
   );
 
   const flowEdges: BuiltInEdge[] = useMemo(

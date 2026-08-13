@@ -5,6 +5,20 @@ All notable changes to this project will be documented in this file.
 Format follows [Keep a Changelog](https://keepachangelog.com/). This project
 adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.14.0] - 2026-08-13
+
+### Added
+
+- The attempts-evidence-humans-loops batch (issues #32 #33 #34 #36 #37 #38 #39 #40): failed-attempt attribution and usage, evidence bindings (run-wide and per-node), workspace_measured landing, timer+signal wait surface (migration 0016), human actors via the section-13 protocol (adapters/human-inbox, web /inbox, registration API), routable acceptance + success-signal evaluator, first-class ad-hoc runs (API + nodes run), invariant gates, and the pr-upkeep example that cleared the repo entire standing SonarCloud debt live (PRs 51/53/55/57, verified by re-analysis). Delivery summary in docs/deliveries/.
+
+### Changed
+
+- Bridges (all three) forward engine-resolved bindings into sessions and honor session-declared {outcome, output} final messages (deviations d3/d4).
+
+### Fixed
+
+- SonarCloud: S3516 blocker, both S3776 criticals, S8193 — fixed through the product itself.
+
 ## [0.13.2] - 2026-08-13
 
 ### Added

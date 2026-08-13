@@ -96,13 +96,31 @@ _DISCORD_BIN = "discord"
 
 
 def _run_discord(argv: list[str]) -> subprocess.CompletedProcess[str]:
-    """Run the ``discord`` CLI binary with ``--json``."""
-    return subprocess.run(
-        [_DISCORD_BIN] + argv + ["--json"],
-        capture_output=True,
-        text=True,
-        timeout=30,
-    )
+    """Run the ``discord`` CLI binary with ``--json``.
+
+    Never raises. A missing binary, a permission error or a timeout is an
+    ABSENT nudge transport, not a tracker failure: nudging is an optional
+    courtesy layered on top of the observe/auto-submit path, and that path
+    must keep working on a host where discord-bot-cli was never installed.
+    Every failure shape is folded into a non-zero CompletedProcess so the
+    single caller-side check (`returncode != 0`) covers them all.
+    """
+    try:
+        return subprocess.run(
+            [_DISCORD_BIN] + argv + ["--json"],
+            capture_output=True,
+            text=True,
+            timeout=30,
+        )
+    except FileNotFoundError:
+        logger.debug("discord CLI %r not found — nudging disabled", _DISCORD_BIN)
+        return subprocess.CompletedProcess(argv, 127, "", "discord CLI not found")
+    except subprocess.TimeoutExpired:
+        logger.debug("discord CLI timed out")
+        return subprocess.CompletedProcess(argv, 124, "", "discord CLI timed out")
+    except OSError as exc:  # not executable, bad interpreter, resource limits
+        logger.debug("discord CLI could not be executed: %s", exc)
+        return subprocess.CompletedProcess(argv, 126, "", str(exc))
 
 
 def _parse_json_output(result: subprocess.CompletedProcess[str]) -> dict[str, Any] | None:

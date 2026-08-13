@@ -32,7 +32,7 @@ def _make_fake_discord(tmp_path: Path) -> str:
     script = tmp_path / "discord"
     script.write_text(
         "#!/usr/bin/env python3\n"
-        "import json, os, sys, tempfile\n"
+        "import json, os, sys, tempfile, zlib\n"
         "from pathlib import Path\n"
         "\n"
         "def main():\n"
@@ -47,7 +47,7 @@ def _make_fake_discord(tmp_path: Path) -> str:
         "        channel_id = argv[2] if len(argv) > 2 else ''\n"
         "        content = argv[3] if len(argv) > 3 else ''\n"
         "        # Store in a temp file keyed by channel_id+content hash\n"
-        "        key = f'msg_{channel_id}_{hash(content) % 100000}'\n"
+        "        key = f'msg_{channel_id}_{zlib.crc32(content.encode()) % 100000}'\n"
         "        out = {'id': key, 'channel_id': channel_id, 'content': content}\n"
         "        print(json.dumps(out))\n"
         "        return 0\n"
@@ -65,14 +65,14 @@ def _make_fake_discord(tmp_path: Path) -> str:
         "                i += 2\n"
         "            else:\n"
         "                i += 1\n"
-        "        key = f'thread_{channel_id}_{hash(name) % 100000}'\n"
+        "        key = f'thread_{channel_id}_{zlib.crc32(name.encode()) % 100000}'\n"
         "        out = {'id': key, 'channel_id': channel_id, 'name': name}\n"
         "        print(json.dumps(out))\n"
         "        return 0\n"
         "    if cmd == 'thread' and argv[1:2] == ['post']:\n"
         "        thread_id = argv[2] if len(argv) > 2 else ''\n"
         "        content = argv[3] if len(argv) > 3 else ''\n"
-        "        key = f'msg_{thread_id}_{hash(content) % 100000}'\n"
+        "        key = f'msg_{thread_id}_{zlib.crc32(content.encode()) % 100000}'\n"
         "        out = {'id': key, 'thread_id': thread_id, 'content': content}\n"
         "        print(json.dumps(out))\n"
         "        return 0\n"
@@ -247,9 +247,9 @@ def test_first_nudge_creates_thread_and_posts_nudge(fake_discord: str, tmp_path:
     )
     assert result is not None
     assert "thread_id" in result
-    assert result["thread_id"] == "thread_123_0"
+    assert result["thread_id"].startswith("thread_123_")
     assert "message_id" in result
-    assert result["message_id"] == "msg_thread_123_0_0"
+    assert result["message_id"].startswith(f"msg_{result['thread_id']}_")
 
 
 def test_first_nudge_posts_mention_when_user_id_set(

@@ -1,0 +1,320 @@
+<h3>Code Review by Qodo</h3>
+
+<code>🐞 Bugs (0)</code>  <code>📘 Rule violations (0)</code>  <code>📜 Skill insights (0)</code>
+
+<img src="https://www.qodo.ai/wp-content/uploads/2025/11/light-grey-line.svg" height="10%" alt="Grey Divider">
+
+<br/>
+
+<img src="https://img.shields.io/badge/High-634FD1?style=flat-square" height="20px" alt="Action required">
+
+<details>
+<summary>  1.  <s>Non-atomic run creation</s> <code>✓ Resolved</code> <code>🐞 Bug</code> <code>☼ Reliability</code></summary>
+
+<br/>
+
+> <details open>
+><summary>Description</summary>
+><br/>
+>
+><pre>
+>POST /v1alpha1/runs can now return a 5xx after Engine.CreateRun has already committed the
+>run/token/node-run transaction, because handleCreateRun performs additional DB work (metadata write
+>+ usage rollup read) afterward and fails the request if either errors. This creates an “unknown
+>success” scenario where clients may retry and create duplicate runs, and it can leave runs persisted
+>despite the caller seeing an error.
+></pre>
+></details>
+
+> <details>
+><summary>Code</summary>
+><br/>
+>
+><code>[internal/api/runs.go[R74-79]](https://github.com/agentculture/culture-nodes/pull/35/files#diff-ad9ba6ffd383f247f5e6e4e1758b9b1ef0764354a1f560c875c2207b7ad4b1a0R74-R79)</code>
+>
+>```diff
+>+	if err := s.setRunMetadata(ctx, run.ID, req.Name, req.Description, req.Category); err != nil {
+>+		return internalError(err)
+>+	}
+>+	usage, err := s.engineStore.RunUsage(ctx, run.ID)
+>+	if err != nil {
+>+		return internalError(err)
+>```
+></details>
+
+> <details>
+><summary>Relevance</summary>
+><br/>
+>
+> `●● Moderate`
+>
+><pre>
+>Behavior change (idempotency/unknown-success semantics) is design-level; no close precedent on
+>transactional handler ordering.
+></pre>
+>
+> [PR-#24](https://github.com/agentculture/culture-nodes/pull/24)
+> [PR-#26](https://github.com/agentculture/culture-nodes/pull/26)
+>
+> <code>ⓘ Recommendations generated based on similar findings in past PRs</code>
+></details>
+
+> <details>
+><summary>Evidence</summary>
+><br/>
+>
+><pre>
+>The handler calls Engine.CreateRun (which commits a full creation transaction) and then performs
+>separate metadata and usage queries that can fail and cause a 5xx response even though the run
+>already exists.
+></pre>
+>
+> <code>[internal/api/runs.go[63-86]](https://github.com/agentculture/culture-nodes/blob/b1305dd0e8bad5375edb9346ebce431394f5c7d7/internal/api/runs.go/#L63-L86)</code>
+> <code>[internal/engine/engine.go[159-219]](https://github.com/agentculture/culture-nodes/blob/b1305dd0e8bad5375edb9346ebce431394f5c7d7/internal/engine/engine.go/#L159-L219)</code>
+></details>
+
+> <details>
+><summary>Agent prompt</summary>
+><br/>
+>
+>```
+>The issue below was found during a code review. Follow the provided context and guidance below and implement a solution
+>
+>## Issue description
+>`handleCreateRun` performs extra database work *after* `Engine.CreateRun` has committed. If `setRunMetadata` or `RunUsage` fails, the handler returns 5xx even though the run already exists, creating ambiguous outcomes and potential duplicate runs on client retry.
+>
+>## Issue Context
+>`Engine.CreateRun` is explicitly transactional and commits before returning. The API handler then does a separate UPDATE and a usage rollup query, both of which can fail independently.
+>
+>## Fix Focus Areas
+>- internal/api/runs.go[63-86]
+>- internal/engine/engine.go[159-219]
+>
+>## Suggested fix direction
+>Choose one of these approaches (prefer 1):
+>1) **Make creation atomic** by moving name/description/category into the same DB transaction as the run insert (e.g., extend the engine/store insert path to include these columns, or introduce a CreateRun variant that accepts metadata and writes it in the same `InTx`).
+>2) **Eliminate post-commit failure points** in the handler:
+>   - Avoid querying `RunUsage` on create (a newly-created run has zero attempts; return a zero rollup deterministically without a DB query).
+>   - Decide how to handle `setRunMetadata` failures without returning 5xx after commit (e.g., treat as retryable background update, or return success but clearly reflect persisted metadata by re-reading / or omitting it).
+>3) If you keep post-commit work, add an idempotency key to POST /runs so client retries cannot create duplicates (larger API change).
+>```
+> <code>ⓘ Copy this prompt and use it to remediate the issue with your preferred AI generation tools</code>
+></details>
+
+<hr/>
+</details>
+
+
+<br/>
+
+<img src="https://img.shields.io/badge/Medium-634FD1?style=flat-square" height="20px" alt="Remediation recommended">
+
+<details>
+<summary>  2.  <s>Human grade bypasses review separation</s> <code>✗ Dismissed</code> <code>📘 Rule violation</code> <code>≡ Correctness</code></summary>
+
+<br/>
+
+> <details open>
+><summary>Description</summary>
+><br/>
+>
+><pre>
+><b><i>checkHumanAuthority</i></b> allows a human to append a <b><i>grade</i></b> record with <b><i>AuthorityConfirmed</i></b> outside a
+>review transaction, so the same actor both creates and confirms the record. This violates the
+>requirement to enforce actor separation between proposal creation and confirmation for ledger
+>records.
+></pre>
+></details>
+
+> <details>
+><summary>Code</summary>
+><br/>
+>
+><code>[internal/ledger/authority.go[R185-186]](https://github.com/agentculture/culture-nodes/pull/35/files#diff-b30f360188da204ec12682ca84268de7fd599297c7e125eb20c1c8bc9ed0926eR185-R186)</code>
+>
+>```diff
+>+		if rec.RecordType == RecordGrade && !o.reviewTransaction {
+>+			return nil
+>```
+></details>
+
+> <details>
+><summary>Relevance</summary>
+><br/>
+>
+> `●●● Strong`
+>
+><pre>
+>Likely treated as compliance/correctness issue; team usually accepts guardrails preventing unsafe
+>actor behavior.
+></pre>
+>
+> [PR-#22](https://github.com/agentculture/culture-nodes/pull/22)
+> [PR-#24](https://github.com/agentculture/culture-nodes/pull/24)
+>
+> <code>ⓘ Recommendations generated based on similar findings in past PRs</code>
+></details>
+
+> <details>
+><summary>Evidence</summary>
+><br/>
+>
+><pre>
+>PR Compliance ID 2619166 requires preventing the same actor from confirming records they created.
+>The new logic returns success for <b><i>RecordGrade</i></b> + <b><i>AuthorityConfirmed</i></b> when not in a review
+>transaction, enabling self-confirmation without a separate confirming actor.
+></pre>
+>
+> <code>Rule 2619166: [Enforce actor separation between proposal creation and confirmation in ledger records](https://app.qodo.ai/rules/2619166?state=active)</code>
+> <code>[internal/ledger/authority.go[173-199]](https://github.com/agentculture/culture-nodes/blob/b1305dd0e8bad5375edb9346ebce431394f5c7d7/internal/ledger/authority.go/#L173-L199)</code>
+></details>
+
+> <details>
+><summary>Agent prompt</summary>
+><br/>
+>
+>```
+>The issue below was found during a code review. Follow the provided context and guidance below and implement a solution
+>
+>## Issue description
+>Ledger records must enforce actor separation between proposal creation and confirmation. The new `grade` carve-out allows a human to write a `grade` record as `confirmed` outside a review transaction, eliminating the possibility of a distinct confirming actor.
+>
+>## Issue Context
+>This is implemented in `checkHumanAuthority` by special-casing `RecordGrade` when `!o.reviewTransaction`.
+>
+>## Fix Focus Areas
+>- internal/ledger/authority.go[173-199]
+>```
+> <code>ⓘ Copy this prompt and use it to remediate the issue with your preferred AI generation tools</code>
+></details>
+
+<hr/>
+</details>
+
+
+<details>
+<summary>  3.  <s>Git diff executes repo config</s> <code>✓ Resolved</code> <code>🐞 Bug</code> <code>⛨ Security</code></summary>
+
+<br/>
+
+> <details open>
+><summary>Description</summary>
+><br/>
+>
+><pre>
+>The new bridge workspace measurement runs <b><i>git diff</i></b> in the target repo without explicitly disabling
+>repo-configurable external diff/textconv behavior, which can cause Git to execute configured
+>commands during diff generation when measuring a repository. This expands the bridge process’s
+>command-execution surface area for any measured repo.
+></pre>
+></details>
+
+> <details>
+><summary>Code</summary>
+><br/>
+>
+><code>[adapters/colleague/src/colleague_bridge/workspace.py[R158-160]](https://github.com/agentculture/culture-nodes/pull/35/files#diff-bbe6445a6c46aa63c861d817e3f3a50adc92c572000cd2c30c55a77959b3f41cR158-R160)</code>
+>
+>```diff
+>+    status = _git_stdout(handle.repo, "status", "--porcelain")
+>+    diffstat = _git_stdout(handle.repo, "diff", "--stat", handle.head_before)
+>+    names = _git_stdout(handle.repo, "diff", "--name-only", handle.head_before)
+>```
+></details>
+
+> <details>
+><summary>Relevance</summary>
+><br/>
+>
+> `●●● Strong`
+>
+><pre>
+>Team historically accepts security hardening/validation; disabling repo-configurable diff execution
+>is low-risk.
+></pre>
+>
+> [PR-#20](https://github.com/agentculture/culture-nodes/pull/20)
+> [PR-#22](https://github.com/agentculture/culture-nodes/pull/22)
+>
+> <code>ⓘ Recommendations generated based on similar findings in past PRs</code>
+></details>
+
+> <details>
+><summary>Evidence</summary>
+><br/>
+>
+><pre>
+>The measurement code shells out to git and specifically runs <b><i>git diff</i></b> subcommands in the repo
+>directory, without any explicit flags to disable repo-configured diff execution features.
+></pre>
+>
+> <code>[adapters/colleague/src/colleague_bridge/workspace.py[37-52]](https://github.com/agentculture/culture-nodes/blob/b1305dd0e8bad5375edb9346ebce431394f5c7d7/adapters/colleague/src/colleague_bridge/workspace.py/#L37-L52)</code>
+> <code>[adapters/colleague/src/colleague_bridge/workspace.py[158-160]](https://github.com/agentculture/culture-nodes/blob/b1305dd0e8bad5375edb9346ebce431394f5c7d7/adapters/colleague/src/colleague_bridge/workspace.py/#L158-L160)</code>
+></details>
+
+> <details>
+><summary>Agent prompt</summary>
+><br/>
+>
+>```
+>The issue below was found during a code review. Follow the provided context and guidance below and implement a solution
+>
+>## Issue description
+>`workspace.measure()` invokes `git diff` commands in a repo directory. Git can honor repository configuration for diff execution paths (e.g., external diff drivers / textconv), which may result in executing configured commands during the measurement step.
+>
+>## Issue Context
+>The bridge is running subprocesses (`subprocess.run(["git", ...], cwd=repo, ...)`) and uses `git diff --stat` and `git diff --name-only` against `head_before`.
+>
+>## Fix Focus Areas
+>- adapters/colleague/src/colleague_bridge/workspace.py[37-52]
+>- adapters/colleague/src/colleague_bridge/workspace.py[158-160]
+>
+>## Suggested fix direction
+>Harden the git invocations used for measurement:
+>- For diff-based calls, add flags that disable command-executing diff features:
+>  - `git diff --no-ext-diff --no-textconv ...`
+>  - optionally also `--no-pager` (or `-c core.pager=cat`) to ensure no pager behavior.
+>- Consider using `git -c diff.external= -c diff.trustExitCode=false ...` style overrides to prevent repo config from enabling external tooling.
+>- Apply the same hardening consistently anywhere else these adapters run diff commands (claude/codex variants if identical).
+>```
+> <code>ⓘ Copy this prompt and use it to remediate the issue with your preferred AI generation tools</code>
+></details>
+
+<hr/>
+</details>
+
+
+
+<img src="https://www.qodo.ai/wp-content/uploads/2025/11/light-grey-line.svg" height="10%" alt="Grey Divider">
+
+
+<details><summary><strong>Context</strong></summary>
+
+<div>&#x2705; Compliance rules (platform): <code>19 rules</code></div>
+<div>&#x2705; Skills: <code>sonarclaude, version-bump</code></div>
+</details>
+
+<img src="https://www.qodo.ai/wp-content/uploads/2025/11/light-grey-line.svg" height="10%" alt="Grey Divider">
+
+
+
+<!-- qodo-daily-tip:start -->
+
+<details>
+<summary> Tip of the day</summary>
+
+<br/>
+
+<pre>💡 Did you know, you can type &#x27;qodo, fix this&#x27; on a finding and the fix lands right on your PR</pre>
+
+<a href="https://docs.qodo.ai/tips-and-tricks">More tips ↗</a> | <a href="https://app.qodo.ai/configurations?tab=display-preferences">Customize Qodo ↗</a> | <a href="https://docs.qodo.ai">Qodo docs ↗</a>
+
+</details>
+
+<img src="https://www.qodo.ai/wp-content/uploads/2025/11/light-grey-line.svg" height="10%" alt="Grey Divider">
+<!-- qodo-daily-tip:end -->
+
+
+<!-- https://github.com/agentculture/culture-nodes/commit/b1305dd0e8bad5375edb9346ebce431394f5c7d7 -->
+
+<a href="https://www.qodo.ai"><img src="https://www.qodo.ai/wp-content/uploads/2025/03/qodo-logo.svg" width="80" alt="Qodo Logo"></a>

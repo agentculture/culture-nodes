@@ -1,0 +1,848 @@
+{
+  "slug": "attempts-evidence-humans-loops",
+  "title": "attempts-evidence-humans-loops",
+  "schema_version": 5,
+  "status": "exported",
+  "created": "2026-08-13T04:39:50Z",
+  "updated": "2026-08-13T05:17:53Z",
+  "claims": [
+    {
+      "id": "c1",
+      "kind": "announcement",
+      "text": "Culture Nodes accounts for every attempt and orchestrates humans, loops, and itself: failed attempts carry actor attribution and usage; evidence bindings resolve real run evidence and bridge-measured diffs; nodes pre-announce success criteria that are mechanically checked; humans execute nodes through the same lifecycle as agents; ad-hoc runs are first-class; and the system proves it live with a PR-upkeep flow sweeping Qodo and SonarCloud findings on this repo",
+      "origin": "user",
+      "status": "confirmed",
+      "honesty_conditions": [
+        {
+          "id": "h1",
+          "text": "The announcement holds only if every one of the eight issue surfaces ships with its live proof \u2014 a partial batch renders as partial delivery, never as the announced whole",
+          "status": "confirmed",
+          "instruction": ""
+        }
+      ],
+      "hard_questions": [],
+      "links": [],
+      "instruction": "Verify via the eight mechanical success signals in c24; each maps to one issue plus the live-test run",
+      "revisions": []
+    },
+    {
+      "id": "c2",
+      "kind": "requirement",
+      "text": "Issue 40: thread actor attribution into worker failure completions \u2014 failAttempt/completeTechnicalFailure (internal/worker/worker.go:474,491) build CompletionRequest without ActorID across 26 failure sites; the resolved actorRowID (dispatch.go:92) is already a parameter at completeFromResult/park and in scope at the rest; DispatchContext (seams.go:49) is the natural carrier; code-path failures stamp codeRunnerActorID as their success paths already do (code.go:314); no migration needed, attempts.actor_id exists since 0002",
+      "origin": "llm",
+      "status": "confirmed",
+      "honesty_conditions": [
+        {
+          "id": "h2",
+          "text": "After the fix, a forced dispatch failure of an agent node persists an attempt row whose actor_id is the resolved actor, and actor stats retry burn counts it; failure sites that fire before any actor resolution stay honestly NULL rather than guessing an actor",
+          "status": "confirmed",
+          "instruction": ""
+        }
+      ],
+      "hard_questions": [],
+      "links": [],
+      "instruction": "Add ActorRowID to DispatchContext (seams.go:49), populate it at dispatch.go:92 after Registry.Resolve; thread the context into failAttempt/completeTechnicalFailure; stamp codeRunnerActorID on code and runner-service failure sites to match their success paths; verify with a test that forces a dispatch failure and asserts attempts.actor_id is set and actor stats retry burn counts it",
+      "revisions": []
+    },
+    {
+      "id": "c3",
+      "kind": "requirement",
+      "text": "Issue 32 async: add optional usage to FailedPayload (internal/actors/protocol.go:250) and set req.Usage in the EventFailed branch of completionFor (internal/actors/callback.go:692-703); all three bridges emit usage on their non-domain failure branches only when a terminal result object exists \u2014 codex/claude/colleague CLIs already parse usage on error and incomplete results \u2014 keeping result-is-None crash and timeout branches usage-less per the migration-0012 no-fabricated-zero stance; all-backends rule applies",
+      "origin": "llm",
+      "status": "confirmed",
+      "honesty_conditions": [
+        {
+          "id": "h3",
+          "text": "A failed async attempt whose bridge held a parseable terminal result persists that result's real token counts; a crash or timeout with no result object still persists NULL usage \u2014 zeros are never fabricated (migration 0012 stance); all three backends emit it, per the all-backends rule",
+          "status": "confirmed",
+          "instruction": ""
+        }
+      ],
+      "hard_questions": [],
+      "links": [],
+      "instruction": "Add optional Usage to FailedPayload (protocol.go:250); set req.Usage in completionFor's EventFailed branch (callback.go:692-703); in each of the three bridges emit usage on the non-domain failure branch only when a terminal result object exists; per-bridge tests plus a Go callback test asserting persisted failed-attempt usage and NULL on the no-result case",
+      "revisions": []
+    },
+    {
+      "id": "c4",
+      "kind": "requirement",
+      "text": "Issue 32 sync: the sync failure path has the same NULL-usage hole \u2014 a bridge 500 body carries error, class, workspace_measured but no usage, and completeFromInvocationError (internal/worker/dispatch.go:300-316) discards it; honesty condition h24 (every attempt counted) needs the sync hole covered or explicitly narrowed",
+      "origin": "llm",
+      "status": "confirmed",
+      "honesty_conditions": [
+        {
+          "id": "h4",
+          "text": "Either the sync failure path carries usage end-to-end (bridge 500 body plus completeFromInvocationError persisting it) or the h24 narrowing is restated explicitly in the delivery docs \u2014 silence about the sync hole is not an option",
+          "status": "confirmed",
+          "instruction": ""
+        }
+      ],
+      "hard_questions": [],
+      "links": [],
+      "instruction": "Carry usage in the bridge sync 500 error body and parse it in completeFromInvocationError (dispatch.go:300-316), or restate the h24 narrowing explicitly in delivery docs; verify with a sync-failure test asserting persisted usage",
+      "revisions": []
+    },
+    {
+      "id": "c5",
+      "kind": "requirement",
+      "text": "Issue 34: fix EvidenceForSubject empty-subject \u2014 projection.go:353 gates the whole loop on ref not empty while projectionKindFor (internal/worker/bindings.go:202) always passes empty for the evidence binding; make empty subject mean all live evidence for the run per examples/independent-review/README.md:135-144; reconcile the contradictory doc comments (projection.go:353-355 vs bindings.go:186-190); add the missing empty-subject subtest (projection_test.go:207) and make the bindings_test Projection stub project over real records (bindings_test.go:18-37)",
+      "origin": "llm",
+      "status": "confirmed",
+      "honesty_conditions": [
+        {
+          "id": "h5",
+          "text": "An e2e test proves the delivery-loop verify node's testEvidence binding resolves the run's actually-appended evidence records \u2014 not merely that the projection function returns non-empty in a unit fixture",
+          "status": "confirmed",
+          "instruction": ""
+        }
+      ],
+      "hard_questions": [],
+      "links": [],
+      "instruction": "Make EvidenceForSubject treat empty ref as all live evidence for the run (projection.go:353); reconcile the doc comments at projection.go:353-355 and bindings.go:186-190; add the empty-subject subtest, make the bindings_test Projection stub project real records, and add an e2e assertion that delivery-loop's verify receives non-empty testEvidence",
+      "revisions": []
+    },
+    {
+      "id": "c6",
+      "kind": "assumption",
+      "text": "Grounding for 34/33: node evidence carries no subject today \u2014 no production caller sets NodeContract.SubjectRef (internal/worker/code.go:288, hooks.go:383; engine ledgerdelta.go never touches SubjectRef) \u2014 so threading a subject would still resolve empty; per-node evidence needs a node-run-scoped selector (node_run_id is a stored ledger column, internal/store/postgres/ledger_store.go:74)",
+      "origin": "llm",
+      "status": "confirmed",
+      "honesty_conditions": [],
+      "hard_questions": [],
+      "links": [],
+      "instruction": "",
+      "revisions": []
+    },
+    {
+      "id": "c7",
+      "kind": "requirement",
+      "text": "Issue 33a: give workspace_measured a landing surface \u2014 InvocationResult, CompletedPayload and FailedPayload (protocol.go:124,238,250) all silently drop it today while every bridge attaches it on every sync and terminal branch (the bridge workspace.py measures via git the bridge itself ran); the independent-review README recommends folding it into the `/nodes/<id>/output` answer since agent nodes cannot hold observe authority; web UI already anticipates a diffstat on evidence (web/src/domain/evidence.ts:13-25)",
+      "origin": "llm",
+      "status": "confirmed",
+      "honesty_conditions": [
+        {
+          "id": "h6",
+          "text": "workspace_measured round-trips bridge to protocol to persisted node output on all three backends, stays actor-reported in authority terms (never observed), and a downstream node can bind it; the unmeasured case renders as unmeasured, never as an empty diff",
+          "status": "confirmed",
+          "instruction": ""
+        }
+      ],
+      "hard_questions": [],
+      "links": [],
+      "instruction": "Add a typed workspace_measured field to InvocationResult, CompletedPayload, and FailedPayload; fold it into the node's persisted output on completion so downstream nodes bind it via `/nodes/<id>/output`; render the unmeasured case as unmeasured; extend the runner-conformance fixtures so all three backends round-trip it",
+      "revisions": [
+        {
+          "text": "Issue 33a: give workspace_measured a landing surface \u2014 InvocationResult, CompletedPayload and FailedPayload (protocol.go:124,238,250) all silently drop it today while every bridge attaches it on every sync and terminal branch (adapters/*/src/*_bridge/workspace.py measures via git the bridge itself ran); the independent-review README recommends folding it into the nodes/<id>/output answer since agent nodes cannot hold observe authority; web UI already anticipates a diffstat on evidence (web/src/domain/evidence.ts:13-25)",
+          "kind": "requirement",
+          "reason": ""
+        }
+      ]
+    },
+    {
+      "id": "c8",
+      "kind": "requirement",
+      "text": "Issue 33b: resolve the `/nodes/<id>/evidence` binding \u2014 the compiler accepts it (internal/compiler/contract.go:14-31) but the worker refuses at bindings.go:133-137 and the engine at binding.go:45; the fix needs node-run-scoped evidence selection and flips the TestUnresolvableBindingsFailLoudly assertion (bindings_test.go:127)",
+      "origin": "llm",
+      "status": "confirmed",
+      "honesty_conditions": [
+        {
+          "id": "h7",
+          "text": "A downstream node binding /nodes/<id>/evidence receives exactly that node's evidence records, and the compile-clean-but-fail-at-dispatch trap closes: compiler-accepted binding surfaces and resolver-supported surfaces agree by test",
+          "status": "rejected",
+          "instruction": ""
+        },
+        {
+          "id": "h25",
+          "text": "A downstream node binding `/nodes/<id>/evidence` receives exactly that node's evidence records, and the compile-clean-but-fail-at-dispatch trap closes: compiler-accepted binding surfaces and resolver-supported surfaces agree by test",
+          "status": "confirmed",
+          "instruction": ""
+        }
+      ],
+      "hard_questions": [],
+      "links": [],
+      "instruction": "Implement a node-run-scoped evidence selector (join node_runs on run_id + node_key; node_run_id is a stored ledger column); resolve `/nodes/<id>/evidence` in both the worker and engine resolvers; flip the TestUnresolvableBindingsFailLoudly expectation and add a test that compiler-accepted and resolver-supported surfaces agree",
+      "revisions": [
+        {
+          "text": "Issue 33b: resolve the /nodes/<id>/evidence binding \u2014 the compiler accepts it (internal/compiler/contract.go:14-31) but the worker refuses at bindings.go:133-137 and the engine at binding.go:45; the fix needs node-run-scoped evidence selection and flips the TestUnresolvableBindingsFailLoudly assertion (bindings_test.go:127)",
+          "kind": "requirement",
+          "reason": ""
+        }
+      ]
+    },
+    {
+      "id": "c9",
+      "kind": "assumption",
+      "text": "Issue 39 grounding: node loops already work end-to-end \u2014 the compiler permits cycles with declared bounds (internal/compiler/graph.go:44,132; defaults 64 transitions / 8 visits), the engine re-enters nodes with visit counts (complete.go:560) and bound checks (transition.go:115), and both shipped examples carry real back-edges including park-on-human loops (examples/delivery-loop/workflow.yaml:300-333); the remaining gap is the external wait: the wait node kind and until.signal compile but WaitDispatcher has no implementation (internal/worker/worker.go:394, dispatch.go:514) and no inbound signal endpoint exists",
+      "origin": "llm",
+      "status": "confirmed",
+      "honesty_conditions": [],
+      "hard_questions": [],
+      "links": [],
+      "instruction": "",
+      "revisions": []
+    },
+    {
+      "id": "c10",
+      "kind": "requirement",
+      "text": "Issue 39: implement the durable wait surface \u2014 a production WaitDispatcher (internal/worker/seams.go:159), the wait timer effect, and an inbound signal delivery route, so a flow can park on an external non-human event (Slack, Discord, Culture message per the issue) and resume; duration and timestamp waits fail at dispatch today too",
+      "origin": "llm",
+      "status": "confirmed",
+      "honesty_conditions": [
+        {
+          "id": "h8",
+          "text": "A wait node parks its run durably (no lease held), resumes on an authenticated inbound signal or timer fire, and loop bounds still apply across the resume; an undelivered signal leaves the run parked and inspectable, never wedged",
+          "status": "confirmed",
+          "instruction": ""
+        }
+      ],
+      "hard_questions": [],
+      "links": [],
+      "instruction": "Implement the durable wait surface event-first per confirmed decision c35: events are first-class records (emit + subscribe), the wait node's until.signal subscribes to an event rather than receiving a point-to-point poke; wait timers for until.duration/timestamp ride the existing scheduler; an authenticated inbound route delivers external events; resume re-enters planTransition with bounds enforced; single-token delivery in this batch (c18) but the event schema must not preclude multi-token pickup or mid-execution emission later; e2e test parks a run on a wait node and resumes it via a delivered event",
+      "revisions": []
+    },
+    {
+      "id": "c11",
+      "kind": "requirement",
+      "text": "Issue 38a: humans as actors through the existing section-13 path \u2014 actors.kind is free text with no CHECK (migrations/0001:39-55), dispatch never reads kind (internal/worker/registry.go:93-128), and internal/actors/doc.go:6-20 names a human group as an intended case; a kind=human actor behind a human-inbox bridge speaking 202+callback needs zero new dispatch machinery",
+      "origin": "llm",
+      "status": "confirmed",
+      "honesty_conditions": [
+        {
+          "id": "h9",
+          "text": "A kind=human actor completes a node through the standard 202-plus-callback path with zero actor-kind branching added to dispatch \u2014 the neutrality test stays green unmodified",
+          "status": "confirmed",
+          "instruction": ""
+        }
+      ],
+      "hard_questions": [],
+      "links": [],
+      "instruction": "Build a human-inbox bridge speaking the section-13 protocol (202 accept, later authenticated callback with the human's submission); register a kind=human actor pointing at it; e2e: agent-kind node dispatches to the human actor, parks without a lease, completes on submission; internal/actors/neutrality_test.go untouched",
+      "revisions": []
+    },
+    {
+      "id": "c12",
+      "kind": "requirement",
+      "text": "Issue 38b: human task lifecycle and inbox \u2014 human_tasks are binary pending-to-decided today (internal/engine/types.go:241-248) with no claimed/in-progress/submitted states; the web UI has no approvals, review, grade, or human-task surface at all (web/src/api/client.ts exposes exactly two POSTs: workflow validate and publish) though the visual vocabulary exists (AuthorityChip, waiting glyph, human glyph family in mesh.ts:36-58); actor registration is only deploy/prod/register-actor.sh hardcoding kind=agent \u2014 no HTTP registration endpoint (internal/api/actors.go:49-53)",
+      "origin": "llm",
+      "status": "confirmed",
+      "honesty_conditions": [
+        {
+          "id": "h10",
+          "text": "A human can list their pending tasks and submit a result from the web UI without shell access, and actor registration happens through an authenticated API rather than raw SQL on the production database",
+          "status": "confirmed",
+          "instruction": ""
+        }
+      ],
+      "hard_questions": [],
+      "links": [],
+      "instruction": "Add a web inbox surface: list pending human tasks and submit a decision/result with the existing bearer-token auth; add an authenticated actor-registration endpoint (POST /v1alpha1/actors) so register-actor.sh's raw SQL path is no longer the only lane",
+      "revisions": []
+    },
+    {
+      "id": "c13",
+      "kind": "requirement",
+      "text": "Issue 37: pre-announced success criteria \u2014 acceptance.requires exists per node in the schema (workflow.schema.json nodeAcceptance) with a 9-kind vocabulary but only process_exit and workspace_diff are evaluable (internal/runners/acceptance.go:72-81), wired post-hoc on the code-node success path only and never affecting routing (internal/worker/acceptance.go:29-33); the success_signal ledger record type is fully specified with a mechanical flag and has zero evaluators; no workflow-level acceptance block exists",
+      "origin": "llm",
+      "status": "confirmed",
+      "honesty_conditions": [
+        {
+          "id": "h11",
+          "text": "A node whose pre-announced acceptance check fails routes per its declared policy \u2014 as contract_rejected or a declared domain outcome, never by inventing an undeclared outcome \u2014 and the evaluation appends derived-authority records; mechanical success_signal records get evaluated, non-mechanical ones honestly stay unevaluated",
+          "status": "confirmed",
+          "instruction": ""
+        }
+      ],
+      "hard_questions": [],
+      "links": [],
+      "instruction": "Extend acceptance evaluation beyond process_exit/workspace_diff, wire it on agent nodes and on failure paths before routing, honoring a declared enforce policy (route as contract_rejected or a declared domain outcome vs observe-only); implement an evaluator for mechanical success_signal records; derived-authority records for every evaluation",
+      "revisions": []
+    },
+    {
+      "id": "c14",
+      "kind": "requirement",
+      "text": "Issue 36: first-class ad-hoc runs \u2014 runs require a published digest today (internal/api/runs.go:44), the nodes run CLI verb is a stub (cmd/nodes/modes.go:18-29), and the nodes-operator skill's assign verb already proves the ergonomics by rendering a one-node workflow, publishing, creating, and polling in bash; promote that shape into the API and CLI",
+      "origin": "llm",
+      "status": "confirmed",
+      "honesty_conditions": [
+        {
+          "id": "h12",
+          "text": "One command or API call runs an ad-hoc instruction, and the resulting run is a normal pinned-digest run \u2014 ad-hoc never bypasses publish semantics, digest pinning, or the ledger",
+          "status": "confirmed",
+          "instruction": ""
+        }
+      ],
+      "hard_questions": [],
+      "links": [],
+      "instruction": "Implement nodes run / an ad-hoc API path: render a canonical one-node workflow from an instruction, publish idempotently by digest, create the run, and follow it \u2014 the nodes-operator assign lane promoted into the product; the run stays a normal pinned-digest run",
+      "revisions": []
+    },
+    {
+      "id": "c15",
+      "kind": "requirement",
+      "text": "Live test: a PR-upkeep flow ships as the dogfood workflow \u2014 sweep sources are open PRs' Qodo findings plus SonarCloud unresolved issues for agentculture_culture-nodes (today: zero open PRs; four unresolved code smells \u2014 BLOCKER python:S3516 culture_nodes/cli/_commands/node_runs.py:42, two CRITICAL go:S3776 in tests/deploy, one MINOR godre:S8193) \u2014 and the flow loops: pick item, fix or propose, review, human gate, next",
+      "origin": "llm",
+      "status": "confirmed",
+      "honesty_conditions": [
+        {
+          "id": "h13",
+          "text": "The PR-upkeep flow completes at least one live run against real Sonar or Qodo items with an externally-driven trigger, produces at least one fix that passes a human gate before merge, and renders failed or empty sweeps honestly instead of claiming success",
+          "status": "confirmed",
+          "instruction": ""
+        }
+      ],
+      "hard_questions": [],
+      "links": [],
+      "instruction": "Author the pr-upkeep workflow as a loop that exercises the batch's own machinery: sweep (Sonar API + PR Qodo comments) then triage then fix on the spark claude-code bridge actor then independent review on a codex actor then a 'human approves PR' node whose approved outcome merges and loops back into the sweep and whose changes_required routes back to fix; the loop continues to a 'human prepares next item' work-performing human node (kind=human actor, c11 machinery) that the run parks on between items \u2014 humans are in the loop as both gate and worker; drive externally via /loop or cron calling POST /v1alpha1/runs; run live against the four standing Sonar items; record grades on every assigned run",
+      "revisions": []
+    },
+    {
+      "id": "c16",
+      "kind": "boundary",
+      "text": "Provider neutrality is test-enforced \u2014 internal/actors/neutrality_test.go greps actors, worker, engine, compiler, api \u2014 so human-actor work must not introduce actor-kind branching in dispatch; the grades API (internal/api/grades.go:26-45) stays the one sanctioned kind-aware spot",
+      "origin": "llm",
+      "status": "confirmed",
+      "honesty_conditions": [
+        {
+          "id": "h14",
+          "text": "internal/actors/neutrality_test.go remains unmodified and green through the whole batch; any new kind-aware code lives outside dispatch, following the grades-API precedent",
+          "status": "confirmed",
+          "instruction": ""
+        }
+      ],
+      "hard_questions": [],
+      "links": [],
+      "instruction": "Gate at delivery: neutrality test unmodified and green; grep dispatch paths for actor-kind reads",
+      "revisions": []
+    },
+    {
+      "id": "c17",
+      "kind": "boundary",
+      "text": "The ledger authority ladder is untouched: agents propose, runner-boundary code observes, validators derive, humans confirm only via CommitReview \u2014 acceptance and KPI evaluation land as derived records, and bridge-measured workspace facts remain actor-reported rather than observed unless routed through the runner boundary (the fold-into-output recommendation honors this)",
+      "origin": "llm",
+      "status": "confirmed",
+      "honesty_conditions": [
+        {
+          "id": "h15",
+          "text": "No code path added in this batch writes observed-authority evidence from an agent path or promotes a proposal without a human; CommitReview stays the only writer of confirmed authority",
+          "status": "confirmed",
+          "instruction": ""
+        }
+      ],
+      "hard_questions": [],
+      "links": [],
+      "instruction": "Gate at delivery: authority-rule tests show no observed-authority writes from agent paths and CommitReview remains the only confirmed-authority writer",
+      "revisions": []
+    },
+    {
+      "id": "c18",
+      "kind": "non_goal",
+      "text": "maxParallelTokens greater than 1 stays out of scope \u2014 internal/engine/doc.go:46-53 says it is read and carried, not yet honored; loops in this batch are single-token",
+      "origin": "llm",
+      "status": "confirmed",
+      "honesty_conditions": [],
+      "hard_questions": [],
+      "links": [],
+      "instruction": "",
+      "revisions": []
+    },
+    {
+      "id": "c19",
+      "kind": "non_goal",
+      "text": "No shell or GitHub calls in the control plane: outbound GitHub work in the PR-upkeep flow happens through agent nodes on registered bridges or code nodes with declared egress, never in-process (PRD runner-boundary rule; action.http routes through the actor dispatcher, internal/worker/worker.go:367)",
+      "origin": "llm",
+      "status": "confirmed",
+      "honesty_conditions": [],
+      "hard_questions": [],
+      "links": [],
+      "instruction": "",
+      "revisions": []
+    },
+    {
+      "id": "c20",
+      "kind": "audience",
+      "text": "Operators of the culture-nodes control plane (Ori and mesh operators with the nodes-operator skill), workflow authors, the registered actor fleet (claude-code bridge on spark, codex-thor, codex-orin, future human actors), and the per-actor analytics consumers of issue 28",
+      "origin": "llm",
+      "status": "confirmed",
+      "honesty_conditions": [
+        {
+          "id": "h16",
+          "text": "Each named audience gets at least one shipped surface in this batch: operators get ad-hoc runs and the upkeep flow, workflow authors get working evidence bindings and routable acceptance, the actor fleet gets attribution and usage on failure, analytics gets true retry burn",
+          "status": "confirmed",
+          "instruction": ""
+        }
+      ],
+      "hard_questions": [],
+      "links": [],
+      "instruction": "At delivery, check the audience-to-surface map in the delivery summary: operators (ad-hoc + upkeep flow), authors (bindings + acceptance), fleet (attribution + usage), analytics (true burn)",
+      "revisions": []
+    },
+    {
+      "id": "c21",
+      "kind": "after_state",
+      "text": "After shipping: every attempt \u2014 failed included \u2014 carries actor attribution, and usage wherever a terminal result existed; verify nodes receive the run's real evidence and the builder's bridge-measured diff; a flow can park on an external signal or a human and resume; humans execute nodes through the same actor protocol as agents; success criteria are declared before a node runs and route the flow when unmet; one command runs an ad-hoc instruction; and a live PR-upkeep loop sweeps Qodo and SonarCloud findings on this repo through the system itself",
+      "origin": "llm",
+      "status": "confirmed",
+      "honesty_conditions": [
+        {
+          "id": "h17",
+          "text": "Every clause of the after-state maps to at least one confirmed requirement and one c24 success signal \u2014 no aspirational clause ships without a claim behind it",
+          "status": "confirmed",
+          "instruction": ""
+        }
+      ],
+      "hard_questions": [],
+      "links": [],
+      "instruction": "In the spec review, cross-map every after-state clause to its confirmed requirement and its c24 signal; any orphan clause is cut or demoted",
+      "revisions": []
+    },
+    {
+      "id": "c22",
+      "kind": "before_state",
+      "text": "Today: failed worker-path attempts persist NULL actor_id (undercounting exactly the retry burn that defines per-actor cost), failed async attempts persist NULL usage even when the bridge had real token counts, the evidence projection binding resolves empty so both shipped loop examples review blind, bridge-measured workspace facts are dropped on every path, humans are binary approve/reject gates outside the actor lifecycle, acceptance checks are post-hoc and toothless, ad-hoc work needs a hand-rendered workflow in bash, and repo upkeep happens in operator sessions, not through the product",
+      "origin": "llm",
+      "status": "confirmed",
+      "honesty_conditions": [
+        {
+          "id": "h18",
+          "text": "Every before-state deficiency is reproducible today at the file:line its scope entry cites \u2014 the description comes from read code, not recollection",
+          "status": "confirmed",
+          "instruction": ""
+        }
+      ],
+      "hard_questions": [],
+      "links": [],
+      "instruction": "Before build starts, re-verify each cited file:line still reproduces; scope entries s1-s14 are the checklist",
+      "revisions": []
+    },
+    {
+      "id": "c23",
+      "kind": "why_it_matters",
+      "text": "The product's brand line is 'every node has a contract, every result has evidence' \u2014 and the gaps cluster exactly where honesty is hardest: failures, reviews, and humans. Unattributed failed attempts misstate the retry-burn signal issue 28's analytics need; blind verify nodes make independent review a fiction; and until the system can run its own upkeep, dogfooding stays aspirational",
+      "origin": "llm",
+      "status": "confirmed",
+      "honesty_conditions": [
+        {
+          "id": "h19",
+          "text": "The two central harms are demonstrable on live data: the 2026-08-13 codex-orin failed run persists an unattributed usage-less attempt, and the loop examples' testEvidence binding resolves empty against a run with appended evidence",
+          "status": "confirmed",
+          "instruction": ""
+        }
+      ],
+      "hard_questions": [],
+      "links": [],
+      "instruction": "Attach live evidence to the delivery record: the 2026-08-13 codex-orin failed-run id for the attribution/usage harm, and an empty testEvidence repro for the blind-verify harm",
+      "revisions": []
+    },
+    {
+      "id": "c24",
+      "kind": "success_signal",
+      "text": "Mechanically checkable: (1) GET /v1alpha1/actors/{id}/stats counts a forced failed agent attempt in retry burn with non-NULL actor_id; (2) delivery-loop's verify node receives non-empty testEvidence in e2e; (3) all three bridges round-trip usage on a failed attempt with a terminal result and workspace_measured into bound node output; (4) a wait-node flow parks and resumes on a delivered signal; (5) a kind=human actor completes a node through the callback path with neutrality tests green; (6) an acceptance-failing node routes its declared outcome; (7) one CLI/API call runs an ad-hoc instruction; (8) the PR-upkeep flow completes a live run on real Sonar/Qodo items producing at least one human-gated merged fix",
+      "origin": "llm",
+      "status": "confirmed",
+      "honesty_conditions": [
+        {
+          "id": "h20",
+          "text": "Each of the eight signals is mechanically checked at delivery time; any signal that cannot actually be run then is demoted to an explicit follow-up rather than quietly claimed",
+          "status": "confirmed",
+          "instruction": ""
+        }
+      ],
+      "hard_questions": [],
+      "links": [],
+      "instruction": "At delivery, execute all eight signal checks and record outcomes; any unrunnable signal is demoted to an explicit follow-up issue, never quietly claimed",
+      "revisions": []
+    },
+    {
+      "id": "c25",
+      "kind": "decision",
+      "text": "Steady state after delivery: the PR-upkeep loop runs periodically with its nodes executed by human actors or code nodes \u2014 picking up PRs that need conflict resolution, review-comment handling, or SonarCloud fixes \u2014 agent bridges are an option, not a requirement",
+      "origin": "user",
+      "status": "confirmed",
+      "honesty_conditions": [],
+      "hard_questions": [],
+      "links": [],
+      "instruction": "",
+      "revisions": []
+    },
+    {
+      "id": "c26",
+      "kind": "boundary",
+      "text": "The PR-upkeep flow supports only the culture-nodes repo for now; sweeping other repos is out of scope until a follow-up extends it",
+      "origin": "user",
+      "status": "confirmed",
+      "honesty_conditions": [
+        {
+          "id": "h21",
+          "text": "The shipped upkeep workflow names culture-nodes as its only sweep target (hard-coded or single-value input); multi-repo support exists nowhere in the delivered code and is a recorded follow-up, not an undocumented capability",
+          "status": "confirmed",
+          "instruction": ""
+        }
+      ],
+      "hard_questions": [],
+      "links": [],
+      "instruction": "Verify at delivery: the upkeep workflow's sweep configuration names culture-nodes and nothing else; grep the delivered workflow and sweep code for repo parameters \u2014 any multi-repo seam is filed as a follow-up issue, not shipped silently",
+      "revisions": []
+    },
+    {
+      "id": "c27",
+      "kind": "requirement",
+      "text": "Challenge/security: every mutating surface this batch adds \u2014 inbound signal delivery, actor registration, human task submission from the web \u2014 ships authenticated from day one, extending the decision endpoint's bearer-token pattern (requireDecisionAuth, internal/api/humantasks.go:94-123, today's ONLY authenticated mutating route); the phase-1 authless-by-design posture does not extend to routes that can redirect dispatch to arbitrary endpoints or complete attempts",
+      "origin": "llm",
+      "status": "confirmed",
+      "honesty_conditions": [
+        {
+          "id": "h22",
+          "text": "At delivery, no route added by this batch that mutates state accepts an unauthenticated request \u2014 verified by handler tests; the authless surfaces remain read-only",
+          "status": "confirmed",
+          "instruction": ""
+        }
+      ],
+      "hard_questions": [],
+      "links": [],
+      "instruction": "Extend the requireDecisionAuth bearer-token pattern to the new signal, registration, and submission routes; add a negative test per route",
+      "revisions": []
+    },
+    {
+      "id": "c28",
+      "kind": "requirement",
+      "text": "Challenge/lifecycle: human-actor attempts need human-timescale deadlines \u2014 async attempts carry a wait-bound deadline timer and a dispatch budget of 3 per work item (engine hardening, issues 16/19), which would time out and retry a human taking days; the human-node authoring pattern must set explicit long deadlines per node (authorable config, not actor-kind branching, preserving neutrality) and the budget/park interplay must be verified for human resubmission",
+      "origin": "llm",
+      "status": "confirmed",
+      "honesty_conditions": [
+        {
+          "id": "h23",
+          "text": "A human-actor node authored with a long deadline parks for days without timeout, retry, or budget exhaustion \u2014 proven by a time-manipulated test; no engine code branches on actor kind to achieve it",
+          "status": "confirmed",
+          "instruction": ""
+        }
+      ],
+      "hard_questions": [],
+      "links": [],
+      "instruction": "Make deadline/budget authorable per node where not already; add a long-park test exercising deadline timers and the dispatch budget across a human-paced resume",
+      "revisions": []
+    },
+    {
+      "id": "c29",
+      "kind": "requirement",
+      "text": "Challenge/cost-containment: routable acceptance (c13) must compose with retry deliberately \u2014 an acceptance failure routed as contract_rejected re-enters failOrRetry (internal/engine/complete.go:382) and can automatically re-burn billable sessions; the declared enforce policy states whether retry applies, and the dispatch budget stays the backstop",
+      "origin": "llm",
+      "status": "confirmed",
+      "honesty_conditions": [
+        {
+          "id": "h24",
+          "text": "For each enforce policy the routing-versus-retry behavior is declared and tested; no acceptance failure silently triggers unbounded paid retries",
+          "status": "confirmed",
+          "instruction": ""
+        }
+      ],
+      "hard_questions": [],
+      "links": [],
+      "instruction": "Specify retry semantics in the enforce policy schema; test contract_rejected-with-retry and route-domain-outcome-no-retry paths",
+      "revisions": []
+    },
+    {
+      "id": "c30",
+      "kind": "assumption",
+      "text": "Challenge/compatibility: the protocol field additions (usage on failed, workspace_measured) are backward compatible in both directions \u2014 optional fields, unknown JSON keys dropped \u2014 but the runner-conformance fixtures (tests/conformance, tests/runnerconformance) must be updated in the same change, and the amendment to PRD section 13.2 (which defines usage only on 200/completed/blocked) recorded explicitly as an ADR or deviation per the record-deviations ground rule",
+      "origin": "llm",
+      "status": "confirmed",
+      "honesty_conditions": [],
+      "hard_questions": [],
+      "links": [],
+      "instruction": "",
+      "revisions": []
+    },
+    {
+      "id": "c31",
+      "kind": "assumption",
+      "text": "Challenge/failure-modes: cancelled attempts remain a usage hole even after c3/c4 \u2014 a SIGTERM'd session emits no terminal event, so cancelled-attempt burn stays unreported; the h24 narrowing must name cancelled attempts explicitly alongside crash/timeout, or the after-state overstates coverage",
+      "origin": "llm",
+      "status": "confirmed",
+      "honesty_conditions": [],
+      "hard_questions": [],
+      "links": [],
+      "instruction": "",
+      "revisions": []
+    },
+    {
+      "id": "c32",
+      "kind": "assumption",
+      "text": "Challenge/observability: per-actor retry-burn analytics will mix pre-fix NULL-actor failed attempts with post-fix attributed ones \u2014 no backfill is possible (the resolution happened in memory at dispatch time and was discarded); stats consumers (issue 28) need the epoch stated in docs or API so old NULLs read as unattributed-era, not zero burn",
+      "origin": "llm",
+      "status": "confirmed",
+      "honesty_conditions": [],
+      "hard_questions": [],
+      "links": [],
+      "instruction": "",
+      "revisions": []
+    },
+    {
+      "id": "c33",
+      "kind": "assumption",
+      "text": "Challenge/probe: the assumed fix executor exists \u2014 company/developer plus intake/planner/verifier are registered claude-code bridge actors on spark (192.168.1.157:8085-8089) in the live prod control plane on thor, alongside codex-thor/orin; whether those phase-2-era bridge services are currently running on spark is a build-time verification, not a registration gap",
+      "origin": "llm",
+      "status": "confirmed",
+      "honesty_conditions": [],
+      "hard_questions": [],
+      "links": [],
+      "instruction": "",
+      "revisions": []
+    },
+    {
+      "id": "c34",
+      "kind": "decision",
+      "text": "Human nodes get a background tracker: while a human-actor attempt is parked, a tracker periodically asks the assigned human for an update and posts progress back to the run (the update surface rides the human-inbox bridge; nudge cadence authorable). The concrete Discord/Slack nudge transport is deferred to its own issue \u2014 a discord-cli solution exists for the integration",
+      "origin": "user",
+      "status": "confirmed",
+      "honesty_conditions": [],
+      "hard_questions": [],
+      "links": [],
+      "instruction": "",
+      "revisions": []
+    },
+    {
+      "id": "c35",
+      "kind": "decision",
+      "text": "Graph model (design direction, confirmed): node flows and node loops are one thing \u2014 graphs that split, diverge, and reconnect, where each node has many outcomes. Continuation comes in two kinds: scripted (a fixed, configured edge set \u2014 today's compiled edges) and event-based (a node emits an event any node can pick up and continue from, including splits). Emission is non-blocking: a node may emit an event mid-execution and continue working \u2014 e.g. an agent node calls a human node for a reply while the agent keeps going. Implementation of parallel tokens/split-join is DEFERRED (non-goal c18 stands for this batch); the c10 wait/signal surface is shaped event-first (first-class, subscribable events, not point-to-point resume) so it is forward-compatible with this model",
+      "origin": "user",
+      "status": "confirmed",
+      "honesty_conditions": [],
+      "hard_questions": [],
+      "links": [],
+      "instruction": "",
+      "revisions": []
+    }
+  ],
+  "open_vagueness": [
+    {
+      "id": "v1",
+      "text": "How far issue 37 extends toward KPIs as quantitative first-class records (per-actor analytics, issue 28) beyond mechanical success criteria",
+      "kind": "unknown_nonblocking",
+      "claim_id": null,
+      "resolved": false,
+      "resolution": "",
+      "resolution_claim_id": null
+    },
+    {
+      "id": "v2",
+      "text": "Qodo findings on merged PRs were sampled (PR 35 top finding is resolved), not exhaustively inventoried; the live sweep source needs a deterministic extractor for Qodo comment structure",
+      "kind": "unknown_nonblocking",
+      "claim_id": null,
+      "resolved": false,
+      "resolution": "",
+      "resolution_claim_id": null
+    },
+    {
+      "id": "v3",
+      "text": "Web-inbox auth mechanics \u2014 how the browser session holds and presents the submission token (per-user tokens vs the single shared decision secret) \u2014 an operations detail the build must settle",
+      "kind": "unknown_nonblocking",
+      "claim_id": null,
+      "resolved": false,
+      "resolution": "",
+      "resolution_claim_id": null
+    },
+    {
+      "id": "v4",
+      "text": "Whether the spark phase-2 bridge services (developer/intake/planner/verifier) are still healthy and what repo allowlists they carry \u2014 verified at build time before the live run",
+      "kind": "unknown_nonblocking",
+      "claim_id": null,
+      "resolved": false,
+      "resolution": "",
+      "resolution_claim_id": null
+    },
+    {
+      "id": "v5",
+      "text": "Discord/Slack nudge transport for the human-node background tracker \u2014 deferred to a follow-up issue; discord-cli is the integration path",
+      "kind": "follow_up",
+      "claim_id": null,
+      "resolved": false,
+      "resolution": "",
+      "resolution_claim_id": null
+    },
+    {
+      "id": "v6",
+      "text": "Parallel tokens, split/join semantics, and event-driven continuation (any-node pickup, fire-and-continue emission) \u2014 the engine work behind the confirmed graph-model direction; deferred to a follow-up issue",
+      "kind": "follow_up",
+      "claim_id": null,
+      "resolved": false,
+      "resolution": "",
+      "resolution_claim_id": null
+    }
+  ],
+  "scope_entries": [
+    {
+      "id": "s1",
+      "surface": "internal/worker (worker.go, dispatch.go, budget.go, hooks.go, code.go)",
+      "finding": "failAttempt at worker.go:474 delegates to completeTechnicalFailure at :491, neither carries ActorID; 20 failAttempt plus 6 completeTechnicalFailure sites split into pre-resolution refusals, post-resolution sites where actorRowID is in scope or already a parameter, and code-path failures that could stamp codeRunnerActorID; DispatchContext (seams.go:49) reaches essentially every site",
+      "seeds": [
+        "c2"
+      ]
+    },
+    {
+      "id": "s2",
+      "surface": "internal/actors/protocol.go + callback.go",
+      "finding": "FailedPayload (protocol.go:250) lacks usage unlike CompletedPayload (:238); completionFor sets ActorID unconditionally at callback.go:663 (so async failures are already attributed post-0015) but the EventFailed branch never sets req.Usage; usage persistence and rollups (migration 0012, usage_rollup.go) already sum all attempts and count non-reporting ones \u2014 the only missing input is failed-attempt usage",
+      "seeds": [
+        "c3",
+        "c4"
+      ]
+    },
+    {
+      "id": "s3",
+      "surface": "adapters/claude-code, codex, colleague bridges (mapping.py, workspace.py, *_cli.py)",
+      "finding": "all three CLIs parse usage on ok, error, and incomplete results, but every bridge attaches usage only on the completed branch; workspace_measured is measured by bridge-run git and attached on every sync and terminal branch in all three, then dropped by Go unmarshalling; no bridge ever emits a blocked event kind",
+      "seeds": [
+        "c3",
+        "c7"
+      ]
+    },
+    {
+      "id": "s4",
+      "surface": "internal/ledger (projection.go, record.go, authority.go, tests)",
+      "finding": "EvidenceForSubject gates its whole loop on ref not empty (projection.go:353-370) and matches SubjectRef or ProvenanceRefs, which node evidence never carries \u2014 no non-empty subject would match today; TestEvidenceForSubject has no empty-subject subtest",
+      "seeds": [
+        "c5",
+        "c6"
+      ]
+    },
+    {
+      "id": "s5",
+      "surface": "internal/worker/bindings.go + internal/engine/binding.go + internal/compiler/contract.go",
+      "finding": "projectionKindFor returns KindEvidenceFor with empty subject (bindings.go:202) and its doc comment falsely claims that selects the run's evidence; the compiler accepts /nodes/<id>/evidence (contract.go:14-31) that both resolvers refuse, so it compiles clean and fails only at dispatch",
+      "seeds": [
+        "c5",
+        "c8"
+      ]
+    },
+    {
+      "id": "s6",
+      "surface": "examples/self-hosting-loop, delivery-loop, independent-review",
+      "finding": "both loop examples bind testEvidence to /ledger/projections/evidence for their verify nodes and have been reviewing without their intended evidence input; both are real cyclic graphs with bounded back-edges and park-on-human loops; independent-review's README documents the two-gap analysis and the recommended fixes this batch adopts",
+      "seeds": [
+        "c5",
+        "c7",
+        "c9",
+        "c15"
+      ]
+    },
+    {
+      "id": "s7",
+      "surface": "internal/compiler/graph.go + internal/engine (transition.go, complete.go, humandecision.go)",
+      "finding": "no acyclicity check exists \u2014 cycles are legal, warned only when unbounded; the engine re-enters nodes with visit counts and enforces maxTransitions/maxVisitsPerNode/maxDuration before creating the next node run; human decisions can route backwards; parallel tokens are read and carried, not honored",
+      "seeds": [
+        "c9",
+        "c10",
+        "c18"
+      ]
+    },
+    {
+      "id": "s8",
+      "surface": "internal/worker/seams.go + internal/scheduler + internal/store/postgres/timers.go + internal/queue",
+      "finding": "WaitDispatcher.DispatchWait has no production implementation and is wired nowhere so every wait node fails at dispatch; timer kinds are exactly wait/retry/deadline/lease_recovery and none can create a run; the queue is a reference-only signal channel; no schedule table, no webhook-in surface exists",
+      "seeds": [
+        "c10"
+      ]
+    },
+    {
+      "id": "s9",
+      "surface": "migrations 0001/0002/0015 + internal/worker/registry.go + internal/actors/doc.go",
+      "finding": "actors.kind is free TEXT with no CHECK; DBRegistry.Resolve reads endpoint_ref and metadata only, never kind or protocol; migration 0015 added actor_invocations.actor_id (attempts.actor_id existed since 0002, so issue 40 needs no migration); actors doc names a human group as an intended executor",
+      "seeds": [
+        "c2",
+        "c11",
+        "c16"
+      ]
+    },
+    {
+      "id": "s10",
+      "surface": "internal/engine/humantask.go, humandecision.go + internal/api/humantasks.go, reviews.go + web/src",
+      "finding": "approval nodes insert a human_tasks row in the node-run transaction and never enqueue work (test-enforced invariant); decision endpoint is the API's only authenticated mutating route; human tasks are binary pending-to-decided; the web UI has no human-task, review, or grade surface though the visual vocabulary exists",
+      "seeds": [
+        "c12",
+        "c11"
+      ]
+    },
+    {
+      "id": "s11",
+      "surface": "schemas/workflow/workflow.schema.json acceptance + schemas/ledger/success_signal + internal/runners/acceptance.go + internal/worker/acceptance.go",
+      "finding": "acceptance.requires is a pre-declared node-level check list with 9 vocabulary kinds of which 2 are mechanically evaluable, evaluated post-hoc on code-node success only, appending derived review records that never change routing; success_signal is specified with a mechanical flag and evaluated by nothing; no workflow-level acceptance block",
+      "seeds": [
+        "c13"
+      ]
+    },
+    {
+      "id": "s12",
+      "surface": "internal/api/runs.go + cmd/nodes/modes.go + .claude/skills/nodes-operator",
+      "finding": "POST /v1alpha1/runs requires an already-published workflow digest; nodes run and inspect are registered stubs; the assign skill renders a one-node workflow, publishes idempotently by digest, creates a run, and polls \u2014 the exact ergonomics issue 36 wants first-class",
+      "seeds": [
+        "c14"
+      ]
+    },
+    {
+      "id": "s13",
+      "surface": "live work sources: gh pr list, PR 35/31 comments, SonarCloud API agentculture_culture-nodes",
+      "finding": "zero open PRs today; Qodo posts structured findings per PR (PR 35's one High finding is resolved); SonarCloud holds 4 unresolved code smells including a BLOCKER in culture_nodes/cli/_commands/node_runs.py:42; codex actors are analysis-only until issue 18, constraining who can execute fixes",
+      "seeds": [
+        "c15"
+      ]
+    },
+    {
+      "id": "s14",
+      "surface": "eidetic memory (otui-delivery-cycle-2026-08-13, actor-quality-codex-orin-proof-run)",
+      "finding": "issues 40 and 32 were both observed live: a failed codex-orin attempt rendered attempts_not_reported=1 with no fabricated usage and an unattributed failed attempt; the operate-through-the-ui delivery recorded h24 as needs-follow-up, narrowed to where usage was reportable",
+      "seeds": [
+        "c2",
+        "c3"
+      ]
+    },
+    {
+      "id": "s15",
+      "surface": "challenge pass / security lens: internal/api auth surface",
+      "finding": "only the human-decision route authenticates today; the batch adds three mutating surfaces that must not inherit the authless posture",
+      "seeds": [
+        "c27"
+      ]
+    },
+    {
+      "id": "s16",
+      "surface": "challenge pass / lifecycle+concurrency lens: deadline timers, dispatch budget, retry",
+      "finding": "engine-hardening timeouts and budgets assume machine-paced actors; human pacing and routable acceptance both interact with retry and budget machinery",
+      "seeds": [
+        "c28",
+        "c29"
+      ]
+    },
+    {
+      "id": "s17",
+      "surface": "challenge pass / adjacent-systems lens: conformance fixtures, PRD 13.2, issue-28 stats consumers",
+      "finding": "wire-shape fixtures and the PRD text pin the protocol this batch extends; analytics will straddle an attribution epoch no backfill can close",
+      "seeds": [
+        "c30",
+        "c32"
+      ]
+    },
+    {
+      "id": "s18",
+      "surface": "challenge pass / failure-modes lens: cancel path vs usage reporting",
+      "finding": "SIGTERM'd sessions emit no terminal event, so cancelled burn is unreportable \u2014 the h24 narrowing must say so",
+      "seeds": [
+        "c31"
+      ]
+    },
+    {
+      "id": "s19",
+      "surface": "challenge pass / destructive-ops lens: merge credentials in the upkeep flow",
+      "finding": "the flow touches real PRs; who executes the merge is a user decision (q5), and agent nodes never merge unattended under either answer",
+      "seeds": []
+    },
+    {
+      "id": "s20",
+      "surface": "challenge pass / probe: live prod actors list (GET /v1alpha1/actors on thor)",
+      "finding": "six agent actors registered including four spark claude-code bridges \u2014 the assumed fix executor exists; service health at build time parked (v4)",
+      "seeds": [
+        "c33"
+      ]
+    }
+  ],
+  "lapses": []
+}

@@ -13,6 +13,11 @@ config:
   # Changelog entries can each have ### Added / ### Changed / ### Fixed.
   MD024:
     siblings_only: true
+  # MD033: Inline HTML — devague-exported specs render claim text verbatim,
+  # and binding-surface placeholders like /nodes/<id>/evidence read as HTML
+  # elements. Allow exactly those placeholder tokens, nothing else.
+  MD033:
+    allowed_elements: ["id", "node"]
 
 ignores:
   - "node_modules/**"

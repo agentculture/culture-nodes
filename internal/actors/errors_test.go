@@ -1,9 +1,11 @@
 package actors_test
 
 import (
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"testing"
+	"time"
 
 	"context"
 
@@ -83,8 +85,8 @@ func TestOnlyExplicitlyRetryableClassesAreRetryable(t *testing.T) {
 	}
 
 	classes := actors.ErrorClasses()
-	if len(classes) != 9 {
-		t.Fatalf("ErrorClasses() has %d entries, want the 9 PRD §13.5 lists", len(classes))
+	if len(classes) != 10 {
+		t.Fatalf("ErrorClasses() has %d entries, want the 9 PRD §13.5 lists plus capacity_exhausted", len(classes))
 	}
 	for _, class := range classes {
 		if !class.Valid() {
@@ -105,5 +107,126 @@ func TestOnlyExplicitlyRetryableClassesAreRetryable(t *testing.T) {
 	}
 	if got := actors.TechStatusFor("invented"); got != engine.StatusFailed {
 		t.Errorf("TechStatusFor(unrecognised) = %s, want failed", got)
+	}
+}
+
+// A bridge error body that declares class capacity_exhausted is
+// authoritative over the status-code heuristic classifyStatus would
+// otherwise produce — the whole point of task t8 (issue #48): a provider
+// quota, a per-session limit, and ordinary rate_limited backpressure are not
+// distinguishable by status code alone, only the bridge that talked to the
+// provider knows which one happened.
+func TestCapacityExhaustedIsBodyDeclared(t *testing.T) {
+	cases := []struct {
+		name   string
+		status int
+		body   string
+	}{
+		{"declared on a 429", http.StatusTooManyRequests, `{"error":"quota exhausted","class":"capacity_exhausted"}`},
+		{"declared on a 503", http.StatusServiceUnavailable, `{"error":"session limit reached","class":"capacity_exhausted"}`},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+				w.Header().Set("Content-Type", "application/json")
+				w.WriteHeader(tc.status)
+				_, _ = w.Write([]byte(tc.body))
+			}))
+			defer server.Close()
+
+			_, err := newClient(t, actors.WithMaxRequests(1)).
+				Invoke(context.Background(), actors.Endpoint{URL: server.URL}, testRequest())
+
+			got, ok := actors.ClassOf(err)
+			if !ok {
+				t.Fatalf("HTTP %d produced an unclassified error: %v", tc.status, err)
+			}
+			if got != actors.ClassCapacityExhausted {
+				t.Errorf("class = %s, want capacity_exhausted", got)
+			}
+			if got.Retryable() {
+				t.Error("capacity_exhausted.Retryable() = true, want false (retrying inside the attempt is issue #48's cascade)")
+			}
+			if status := actors.TechStatusFor(got); status != engine.StatusFailed {
+				t.Errorf("TechStatusFor(capacity_exhausted) = %s, want failed (the class rides along on the attempt output, not on the tech status)", status)
+			}
+		})
+	}
+}
+
+// A plain 429 with no declared class stays rate_limited: adding
+// capacity_exhausted must not silently remap the existing status heuristic.
+func TestRateLimitedStatusHeuristicUnchangedWithoutADeclaredClass(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusTooManyRequests)
+	}))
+	defer server.Close()
+
+	_, err := newClient(t, actors.WithMaxRequests(1)).
+		Invoke(context.Background(), actors.Endpoint{URL: server.URL}, testRequest())
+
+	got, ok := actors.ClassOf(err)
+	if !ok {
+		t.Fatalf("HTTP 429 produced an unclassified error: %v", err)
+	}
+	if got != actors.ClassRateLimited {
+		t.Errorf("class = %s, want rate_limited (no body declared capacity_exhausted, so the status heuristic must stand)", got)
+	}
+}
+
+// A body declaring some OTHER class is not honored: capacity_exhausted is
+// the only class a bridge is trusted to self-declare, so classifyStatus's
+// own reading of the status code stands for everything else.
+func TestBodyDeclaredClassIsIgnoredExceptForCapacityExhausted(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusInternalServerError)
+		_, _ = w.Write([]byte(`{"error":"boom","class":"auth_or_policy"}`))
+	}))
+	defer server.Close()
+
+	_, err := newClient(t, actors.WithMaxRequests(1)).
+		Invoke(context.Background(), actors.Endpoint{URL: server.URL}, testRequest())
+
+	got, ok := actors.ClassOf(err)
+	if !ok {
+		t.Fatalf("HTTP 500 produced an unclassified error: %v", err)
+	}
+	if got != actors.ClassExecution {
+		t.Errorf("class = %s, want execution (a bridge cannot relabel a 500 as auth_or_policy; only capacity_exhausted is self-declarable)", got)
+	}
+}
+
+// RetryAfter is surfaced on the terminal InvocationError for
+// capacity_exhausted exactly like every other class: the parsed delay is not
+// discarded just because Retryable() keeps this class out of the in-attempt
+// backoff sleep.
+func TestCapacityExhaustedSurfacesRetryAfter(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		w.Header().Set("Retry-After", "120")
+		w.WriteHeader(http.StatusTooManyRequests)
+		_, _ = w.Write([]byte(`{"error":"quota exhausted","class":"capacity_exhausted"}`))
+	}))
+	defer server.Close()
+
+	// maxRequests is 3 here specifically to prove the non-retryable class
+	// stops at one request rather than spending the retry budget.
+	_, err := newClient(t, actors.WithMaxRequests(3)).
+		Invoke(context.Background(), actors.Endpoint{URL: server.URL}, testRequest())
+
+	var invErr *actors.InvocationError
+	if !errors.As(err, &invErr) {
+		t.Fatalf("Invoke returned %T, want *actors.InvocationError", err)
+	}
+	if invErr.Class != actors.ClassCapacityExhausted {
+		t.Fatalf("class = %s, want capacity_exhausted", invErr.Class)
+	}
+	if invErr.RetryAfter != 120*time.Second {
+		t.Errorf("RetryAfter = %s, want 120s (parsed from the header and preserved even though this class never sleeps on it)", invErr.RetryAfter)
+	}
+	if invErr.Requests != 1 {
+		t.Errorf("Requests = %d, want 1 — a non-retryable class must not spend the maxRequests budget", invErr.Requests)
 	}
 }

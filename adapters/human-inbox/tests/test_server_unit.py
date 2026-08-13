@@ -307,7 +307,9 @@ def test_submission_delivers_completed_event(bridge, receiver):
 
 def test_submit_unknown_task_is_404(bridge):
     base, _cfg = bridge
-    status, _ = _request(base, "/inbox/tasks/hit_missing/submit", body={"outcome": "ok"}, headers=AUTH)
+    status, _ = _request(
+        base, "/inbox/tasks/hit_missing/submit", body={"outcome": "ok"}, headers=AUTH
+    )
     assert status == 404
 
 

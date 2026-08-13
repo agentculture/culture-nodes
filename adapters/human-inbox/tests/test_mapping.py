@@ -87,6 +87,4 @@ def test_submission_error_bad_note():
 
 def test_submission_error_accepts_a_valid_submission():
     assert mapping.submission_error({"outcome": "ok"}) is None
-    assert (
-        mapping.submission_error({"outcome": "ok", "output": {"a": 1}, "note": "fine"}) is None
-    )
+    assert mapping.submission_error({"outcome": "ok", "output": {"a": 1}, "note": "fine"}) is None

@@ -1,9 +1,12 @@
 package api
 
 import (
+	"crypto/sha256"
+	"crypto/subtle"
 	"encoding/json"
 	"net/http"
 	"sort"
+	"strings"
 	"time"
 
 	"github.com/agentculture/culture-nodes/internal/store/postgres"
@@ -48,9 +51,9 @@ type ActorListOut struct {
 
 // handleListActors is GET /v1alpha1/actors: every registered actor row in
 // this namespace (every revision -- see postgres.Actor's doc comment for
-// why a revision change is a new row, not an update). Read-only; there is
-// no registration endpoint here (that stays deploy/prod/register-actor.sh,
-// issue #8).
+// why a revision change is a new row, not an update). Registration is
+// handleRegisterActor below (task t13), which replaced the raw-SQL-only
+// deploy/prod/register-actor.sh lane (issue #8).
 func (s *Server) handleListActors(w http.ResponseWriter, r *http.Request) error {
 	actors, err := s.engineStore.ListActors(r.Context())
 	if err != nil {
@@ -71,6 +74,110 @@ func (s *Server) handleGetActor(w http.ResponseWriter, r *http.Request) error {
 		return classify(err)
 	}
 	writeJSON(w, http.StatusOK, actorOut(a))
+	return nil
+}
+
+// registerActorRequest is components.schemas.RegisterActorRequest (task
+// t13). Namespace is optional: this server is bound to one namespace at
+// construction, so when present it may only name that namespace — anything
+// else is refused rather than silently rerouted. Capabilities and Metadata
+// follow the actors table's credential rule (postgres.Actor's doc comment):
+// metadata carries the NAME of the environment variable a worker reads a
+// token from (metadata.auth_token_env), never a token value.
+type registerActorRequest struct {
+	Namespace    string          `json:"namespace"`
+	ActorKey     string          `json:"actor_key"`
+	Kind         string          `json:"kind"`
+	Protocol     string          `json:"protocol"`
+	EndpointRef  string          `json:"endpoint_ref"`
+	Capabilities json.RawMessage `json:"capabilities"`
+	Metadata     json.RawMessage `json:"metadata"`
+}
+
+// handleRegisterActor is POST /v1alpha1/actors (task t13): the authenticated
+// registration lane that replaces the raw-SQL-only
+// deploy/prod/register-actor.sh path. Registration is append-only —
+// re-registering an existing actor_key INSERTs the next revision row, never
+// an update to an existing one (postgres.RegisterActor carries the
+// semantics; see postgres.Actor's doc comment for why actor identity, like
+// ledger records, only ever appends).
+//
+// Like the human-task decision endpoint — and unlike the rest of this
+// authless-by-phase-1-design API (PRD spec decision c45) — this one requires
+// a bearer token, verified by requireActorRegistrationAuth against its own
+// secret (NODES_ACTOR_REGISTRATION_TOKEN_SECRET): a registration row is what
+// grants an endpoint the standing to be dispatched real work.
+func (s *Server) handleRegisterActor(w http.ResponseWriter, r *http.Request) error {
+	if err := s.requireActorRegistrationAuth(r); err != nil {
+		return err
+	}
+
+	var req registerActorRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		return badRequest(
+			"send a JSON body matching RegisterActorRequest: {actor_key, kind, protocol, endpoint_ref?, capabilities?, metadata?}",
+			"decode request body: %v", err)
+	}
+	if req.ActorKey == "" {
+		return badRequest("actor_key is required", "actor_key must not be empty")
+	}
+	if req.Kind == "" {
+		return badRequest("kind is required (e.g. agent, human, runner)", "kind must not be empty")
+	}
+	if req.Protocol == "" {
+		return badRequest("protocol is required (e.g. http)", "protocol must not be empty")
+	}
+	if req.Namespace != "" && req.Namespace != s.NamespaceID {
+		return badRequest(
+			"omit namespace or set it to this server's own namespace id",
+			"this server registers actors in namespace %q, not %q", s.NamespaceID, req.Namespace)
+	}
+
+	a, err := s.engineStore.RegisterActor(r.Context(), postgres.RegisterActorParams{
+		ActorKey:     req.ActorKey,
+		Kind:         req.Kind,
+		Protocol:     req.Protocol,
+		EndpointRef:  req.EndpointRef,
+		Capabilities: req.Capabilities,
+		Metadata:     req.Metadata,
+	})
+	if err != nil {
+		return internalError(err)
+	}
+	writeJSON(w, http.StatusCreated, actorOut(a))
+	return nil
+}
+
+// requireActorRegistrationAuth is requireDecisionAuth's pattern
+// (humantasks.go) applied to actor registration, against its OWN secret
+// (Server.actorRegistrationSecret, NODES_ACTOR_REGISTRATION_TOKEN_SECRET) —
+// deliberately not the human-decision secret, so an operator can hand out
+// registration standing without also handing out the power to decide human
+// tasks. A missing secret refuses every registration (closed by default),
+// and a present-but-wrong bearer token is refused 401 after a fixed-cost
+// digest comparison.
+func (s *Server) requireActorRegistrationAuth(r *http.Request) error {
+	if len(s.actorRegistrationSecret) == 0 {
+		return unauthorized(
+			"configure the server with an actor registration secret (NODES_ACTOR_REGISTRATION_TOKEN_SECRET) to enable actor registration",
+			"actor registration requires a configured bearer secret and none is configured")
+	}
+
+	const prefix = "bearer "
+	header := r.Header.Get("Authorization")
+	if len(header) < len(prefix) || !strings.EqualFold(header[:len(prefix)], prefix) {
+		return unauthorized("send Authorization: Bearer <token>", "missing or malformed Authorization header")
+	}
+
+	// Compare digests, not the raw values — the same fixed-cost shape
+	// requireDecisionAuth uses: ConstantTimeCompare returns early on length
+	// mismatch, which would leak the secret's length; hashing both sides
+	// first makes the comparison genuinely constant-time.
+	presented := sha256.Sum256([]byte(header[len(prefix):]))
+	expected := sha256.Sum256(s.actorRegistrationSecret)
+	if subtle.ConstantTimeCompare(presented[:], expected[:]) != 1 {
+		return unauthorized("the bearer token is not valid for this deployment", "authorization failed")
+	}
 	return nil
 }
 

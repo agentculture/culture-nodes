@@ -973,6 +973,41 @@
         ],
         "type": "object"
       },
+      "RegisterActorRequest": {
+        "description": "POST /v1alpha1/actors' body (task t13). The row's `id` and `revision` are never the caller's to choose: the id is minted server-side and the revision is always the next one for `actor_key`. `capabilities` and `metadata` follow the Actor schema's credential rule — `metadata.auth_token_env`, when set, names the environment variable a worker reads a token from, never the token value itself.",
+        "properties": {
+          "actor_key": {
+            "type": "string"
+          },
+          "capabilities": {
+            "description": "Declared capabilities, stored as the row's JSON value ('{}' when omitted)."
+          },
+          "endpoint_ref": {
+            "type": "string"
+          },
+          "kind": {
+            "description": "The actor kind (e.g. agent, human, runner).",
+            "type": "string"
+          },
+          "metadata": {
+            "description": "Open metadata, stored as the row's JSON value ('{}' when omitted)."
+          },
+          "namespace": {
+            "description": "Optional. This server is bound to one namespace at construction; when present, this may only name that namespace's id — anything else is refused with 400 rather than silently rerouted.",
+            "type": "string"
+          },
+          "protocol": {
+            "description": "The dispatch protocol (e.g. http).",
+            "type": "string"
+          }
+        },
+        "required": [
+          "actor_key",
+          "kind",
+          "protocol"
+        ],
+        "type": "object"
+      },
       "ReviewCommitResult": {
         "properties": {
           "ledger_version": {
@@ -1337,6 +1372,11 @@
       }
     },
     "securitySchemes": {
+      "actorRegistrationBearerAuth": {
+        "description": "The shared secret configured as NODES_ACTOR_REGISTRATION_TOKEN_SECRET. Used only by POST /v1alpha1/actors (task t13) — deliberately its own secret, not the decision secret, so an operator can grant registration standing without also granting the power to decide human tasks.",
+        "scheme": "bearer",
+        "type": "http"
+      },
       "decisionBearerAuth": {
         "description": "The shared secret configured as NODES_HUMAN_DECISION_TOKEN_SECRET. Used only by POST /v1alpha1/human-tasks/{id}/decision — every other operation in this API is authless by phase-1 design (spec decision c45).",
         "scheme": "bearer",
@@ -1357,7 +1397,7 @@
   "paths": {
     "/v1alpha1/actors": {
       "get": {
-        "description": "Read-only (task t15): every `actors` table row, every revision — an actor_key's identity is append-only, so a capability or endpoint change is a new row, never an update to an existing one. There is no registration endpoint here; registering an actor stays deploy/prod/register-actor.sh (issue #8).",
+        "description": "Read-only (task t15): every `actors` table row, every revision — an actor_key's identity is append-only, so a capability or endpoint change is a new row, never an update to an existing one. Registering an actor is the authenticated POST on this same path (task t13).",
         "operationId": "listActors",
         "responses": {
           "200": {
@@ -1372,6 +1412,61 @@
           }
         },
         "summary": "List every registered actor row in this namespace.",
+        "tags": [
+          "actors"
+        ]
+      },
+      "post": {
+        "description": "Task t13: the authenticated registration lane that replaces the raw-SQL-only deploy/prod/register-actor.sh path (issue #8). Registration is append-only, following that script's INSERT semantics: a first registration of an actor_key lands revision 1, and re-registering an existing actor_key inserts the next revision row — never an update to any existing row (actor identity, like ledger records, only ever appends).\nLike the human-task decision endpoint — and unlike the rest of this authless-by-phase-1-design API (spec decision c45) — this operation requires a bearer token (`Authorization: Bearer \u003ctoken\u003e`) matching the server's configured registration secret (`NODES_ACTOR_REGISTRATION_TOKEN_SECRET`, deliberately its own secret, not the decision secret): a registration row is what grants an endpoint the standing to be dispatched real work. An unauthenticated or wrongly authenticated request is refused with 401 before the body is even read.",
+        "operationId": "registerActor",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/RegisterActorRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Actor"
+                }
+              }
+            },
+            "description": "The newly appended actor revision row."
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "description": "The request is malformed, a required field is missing, or `namespace` names a namespace other than this server's own."
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "description": "No bearer token was presented, it does not match the configured registration secret, or no secret is configured at all."
+          }
+        },
+        "security": [
+          {
+            "actorRegistrationBearerAuth": []
+          }
+        ],
+        "summary": "Register an actor — append the next revision row for actor_key.",
         "tags": [
           "actors"
         ]

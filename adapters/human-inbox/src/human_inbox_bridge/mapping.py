@@ -91,7 +91,18 @@ def claim_record(
         "authority": "proposed",
         "subject_ref": None,
         "data": {
-            "statement": submission.get("note") or "",
+            # The ledger schema requires a non-empty statement. A submitter
+            # who put their prose in output.note (or sent no note at all)
+            # must not produce an engine-side contract_rejected on an
+            # otherwise-valid human decision (found live: run
+            # 01KZXD609QRFHWS8YQ6MRZ1Y0F failed on an empty statement), so
+            # the statement falls back through output.note to a generated
+            # sentence naming the outcome — never empty.
+            "statement": (
+                submission.get("note")
+                or (submission.get("output") or {}).get("note")
+                or f"human submitted outcome {submission.get('outcome')}"
+            ),
             "kind": "human-submission",
             "outcome": submission.get("outcome"),
         },

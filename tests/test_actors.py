@@ -94,6 +94,57 @@ def test_actors_get_renders_reason_and_until_when(fake_api, capsys) -> None:
     assert "availability.tripped_by_attempt_id: att-9" in out
 
 
+PACED_ACTOR = {
+    "id": "act-3",
+    "actor_key": "company/paced",
+    "revision": 1,
+    "kind": "agent",
+    "protocol": "http",
+    "created_at": "t",
+    "dispatch_rate": {
+        "scope": "actor",
+        "scope_key": "company/paced",
+        "limit_per_window": 4,
+        "window_seconds": 18000,
+        "window_anchor": "2026-08-13T00:00:00Z",
+        "window_started_at": "2026-08-13T15:00:00Z",
+        "window_ends_at": "2026-08-13T20:00:00Z",
+        "dispatched": 3,
+        "remaining": 1,
+        "next_dispatch_at": "2026-08-13T18:30:00Z",
+        "updated_at": "2026-08-13T17:00:00Z",
+    },
+}
+
+
+def test_actors_get_renders_the_declared_rate_and_its_consumption(fake_api, capsys) -> None:
+    """Task t10: the rate being enforced and how much of the window is left."""
+    fake_api.route(
+        "GET", r"/v1alpha1/actors/act-3$", lambda h, m, q, b: h.send_json(200, PACED_ACTOR)
+    )
+    fake_api.start()
+    rc = main(["actors", "get", "act-3", "--api-url", fake_api.base_url])
+    out = capsys.readouterr().out
+    assert rc == 0
+    assert "dispatch_rate.limit_per_window: 4" in out
+    assert "dispatch_rate.dispatched: 3" in out
+    assert "dispatch_rate.remaining: 1" in out
+    assert "dispatch_rate.window_ends_at: 2026-08-13T20:00:00Z" in out
+    assert "dispatch_rate.next_dispatch_at: 2026-08-13T18:30:00Z" in out
+
+
+def test_actors_get_without_a_rate_renders_no_dispatch_rate_block(fake_api, capsys) -> None:
+    """No declared rate is not a rate with nothing consumed, and must not print like one."""
+    fake_api.route(
+        "GET", r"/v1alpha1/actors/act-2$", lambda h, m, q, b: h.send_json(200, AVAILABLE_ACTOR)
+    )
+    fake_api.start()
+    rc = main(["actors", "get", "act-2", "--api-url", fake_api.base_url])
+    out = capsys.readouterr().out
+    assert rc == 0
+    assert "dispatch_rate" not in out
+
+
 def test_actors_get_without_a_pause_renders_no_availability_block(fake_api, capsys) -> None:
     """Never paused is not the same fact as `paused: no`, and must not print like it."""
     fake_api.route(

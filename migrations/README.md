@@ -136,6 +136,26 @@ Numbered SQL migrations for the authoritative PostgreSQL store (prd-spec
   direction, since a budget that under-counts spends money the author
   forbade.
 
+- `0022_dispatch_rate_state.sql` — expand-only: adds the mutable
+  `dispatch_rate_state` table (task t10 of the economy-discord-graphs plan,
+  issue #48 item 2), the dispatch pacing control's durable rate state. It is
+  in the database rather than in a worker's memory because workers scale
+  horizontally ("several processes may run one each",
+  `internal/worker/worker.go`) and N in-process limiters enforce N times the
+  declared rate. Keyed by `(namespace_id, scope, scope_key)` — `global` with
+  an empty key for the installation's own session rate, `actor` plus an
+  `actor_key` for one actor's — following `0020`'s reasoning that a rate
+  belongs to the actor identity rather than to one append-only registration
+  revision. `window_started_at` says which session window `dispatched`
+  counts, so a window roll is a comparison and never a sweep: a row from an
+  older window has consumed nothing in this one. `window_anchor`,
+  `window_seconds` and `limit_per_window` are recorded for the operator read
+  surface (`GET /v1alpha1/dispatch-rates`), not for the next decision — the
+  deciding worker carries its own configuration
+  (`NODES_DISPATCH_RATE_*`, `cmd/nodes/pacing.go`). Every decision happens
+  inside one transaction that row-locks each scope it consults and writes all
+  of them or none; a refusal writes nothing at all.
+
 ## Policy
 
 Migrations are additive-first (expand-contract). See

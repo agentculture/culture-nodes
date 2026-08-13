@@ -170,9 +170,17 @@ func cmdWorker(args []string, jsonMode bool) (int, error) {
 	if cliErr != nil {
 		return 0, cliErr
 	}
+	// Task t10: the declared dispatch rates. Absent configuration is no
+	// pacing; malformed configuration refuses to start rather than silently
+	// dispatching unpaced (see pacing.go).
+	pacingOpts, cliErr := pacingConfig()
+	if cliErr != nil {
+		return 0, cliErr
+	}
 
 	wk, err := worker.New(db, eng, worker.Options{
 		WorkerID:           os.Getenv(envWorkerIdentifier),
+		Pacing:             pacingOpts,
 		NamespaceID:        namespace,
 		ClaimBatch:         *batch,
 		LeaseDuration:      *leaseDuration,
@@ -402,8 +410,13 @@ func buildWorker(db *postgres.Store, namespace string, telemetryProvider *teleme
 	if cliErr != nil {
 		return nil, cliErr
 	}
+	pacingOpts, cliErr := pacingConfig()
+	if cliErr != nil {
+		return nil, cliErr
+	}
 	wk, err := worker.New(db, eng, worker.Options{
 		NamespaceID:        namespace,
+		Pacing:             pacingOpts,
 		Registry:           registry,
 		Signer:             signer,
 		CallbackBaseURL:    callbackBase,

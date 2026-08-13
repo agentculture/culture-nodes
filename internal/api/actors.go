@@ -36,6 +36,13 @@ type ActorOut struct {
 	// availability: provider capacity belongs to the identity, not to one
 	// append-only registration revision.
 	Availability *ActorAvailabilityOut `json:"availability,omitempty"`
+	// DispatchRate is the pacing control's state for this actor KEY (task
+	// t10, migration 0022) — absent when no declared rate has ever admitted a
+	// dispatch to it. Keyed by actor_key for the same reason Availability is:
+	// a rate belongs to the identity, not to one registration revision. The
+	// global rate is not rendered here (it is not this actor's); it is on
+	// GET /v1alpha1/dispatch-rates alongside every per-actor scope.
+	DispatchRate *DispatchRateOut `json:"dispatch_rate,omitempty"`
 }
 
 // ActorAvailabilityOut is one actor_availability row rendered for the
@@ -113,6 +120,32 @@ func actorOutWithAvailability(a postgres.Actor, pause postgres.ActorPause, ok bo
 	return out
 }
 
+// withDispatchRate adds the pacing state recorded for this actor's key, when
+// there is any. Both per-key blocks -- the breaker's and the rate's -- are
+// attached the same way and resolved the same way, by actor_key rather than
+// by row id.
+func withDispatchRate(out ActorOut, rate postgres.DispatchRateState, ok bool, now time.Time) ActorOut {
+	if ok {
+		rendered := dispatchRateOut(rate, now)
+		out.DispatchRate = &rendered
+	}
+	return out
+}
+
+// actorRatesByKey indexes the namespace's actor-scoped pacing rows by actor
+// key. The global scope is deliberately dropped here: it is not any one
+// actor's rate, and rendering it on every actor would read as though each of
+// them had its own copy of it.
+func actorRatesByKey(states []postgres.DispatchRateState) map[string]postgres.DispatchRateState {
+	byKey := make(map[string]postgres.DispatchRateState, len(states))
+	for _, state := range states {
+		if state.Scope == postgres.RateScopeActor {
+			byKey[state.ScopeKey] = state
+		}
+	}
+	return byKey
+}
+
 // ActorListOut is components.schemas.ActorList.
 type ActorListOut struct {
 	Items []ActorOut `json:"items"`
@@ -136,11 +169,18 @@ func (s *Server) handleListActors(w http.ResponseWriter, r *http.Request) error 
 	if err != nil {
 		return internalError(err)
 	}
+	// The same one-query-for-all argument, for the pacing rows (task t10).
+	rates, err := s.engineStore.DispatchRates(ctx)
+	if err != nil {
+		return internalError(err)
+	}
+	ratesByKey := actorRatesByKey(rates)
 	now := time.Now().UTC()
 	out := make([]ActorOut, len(actors))
 	for i, a := range actors {
 		pause, ok := pauses[a.ActorKey]
-		out[i] = actorOutWithAvailability(a, pause, ok, now)
+		rate, rated := ratesByKey[a.ActorKey]
+		out[i] = withDispatchRate(actorOutWithAvailability(a, pause, ok, now), rate, rated, now)
 	}
 	writeJSON(w, http.StatusOK, ActorListOut{Items: out})
 	return nil
@@ -157,7 +197,13 @@ func (s *Server) handleGetActor(w http.ResponseWriter, r *http.Request) error {
 	if err != nil {
 		return internalError(err)
 	}
-	writeJSON(w, http.StatusOK, actorOutWithAvailability(a, pause, ok, time.Now().UTC()))
+	rates, err := s.engineStore.DispatchRates(ctx)
+	if err != nil {
+		return internalError(err)
+	}
+	rate, rated := actorRatesByKey(rates)[a.ActorKey]
+	now := time.Now().UTC()
+	writeJSON(w, http.StatusOK, withDispatchRate(actorOutWithAvailability(a, pause, ok, now), rate, rated, now))
 	return nil
 }
 

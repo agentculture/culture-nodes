@@ -80,6 +80,17 @@ func (w *Worker) dispatchActor(
 		return w.deferForPause(ctx, claimed, node, dc, pause)
 	}
 
+	// Dispatch pacing, the breaker's sibling and one step behind it (task
+	// t10). Behind it deliberately: an actor the provider has already refused
+	// must not spend a slot of a rate that exists to keep the provider from
+	// refusing us. Like the breaker it DEFERS — see pacing.go for why a
+	// declared rate is a statement about the clock rather than a verdict on
+	// the work, and why the slot is consumed here rather than immediately
+	// before the invocation.
+	if decision, allowed := w.consumeDispatchSlot(ctx, node); !allowed {
+		return w.deferForPacing(ctx, claimed, node, dc, decision)
+	}
+
 	if w.opts.Registry == nil {
 		return w.failAttempt(ctx, claimed, "", engine.StatusFailed, "configuration",
 			"this worker has no actor registry configured, so it cannot resolve an endpoint to invoke")

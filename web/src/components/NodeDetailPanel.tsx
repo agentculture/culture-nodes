@@ -1,15 +1,25 @@
 import { useEffect, useRef, type KeyboardEvent } from "react";
-import type { LedgerRecord } from "../api/types";
+import type { LedgerRecord, Usage } from "../api/types";
+import { parseWorkspaceEvidence } from "../domain/evidence";
 import type { GraphNode } from "../domain/graph";
 import { NODE_STATE_LABEL, type NodeExecution } from "../domain/run-state";
 import AuthorityChip from "./AuthorityChip";
 import StatusChip from "./StatusChip";
+import UsageSummary from "./UsageSummary";
 
 export interface NodeDetailPanelProps {
   node: GraphNode;
   execution: NodeExecution;
   ledger: LedgerRecord[];
   onClose: () => void;
+  /**
+   * This node's usage/cost rollup (task t2/t5), merged across every one of
+   * its node runs (a loop revisits a node more than once). `undefined` —
+   * distinct from a `Usage` with `attempts_reported: 0` — means the
+   * best-effort node-runs join (useRunData.ts) found no entry at all for
+   * this node run, an honest "not available" rather than "not reported".
+   */
+  usage?: Usage;
 }
 
 function clockTime(iso: string): string {
@@ -39,6 +49,7 @@ export function NodeDetailPanel({
   execution,
   ledger,
   onClose,
+  usage,
 }: NodeDetailPanelProps) {
   const panelRef = useRef<HTMLElement>(null);
 
@@ -181,6 +192,15 @@ export function NodeDetailPanel({
         </div>
       )}
 
+      <h3>Usage</h3>
+      {usage ? (
+        <UsageSummary usage={usage} id="node-detail-usage" />
+      ) : (
+        <p className="muted" id="node-detail-usage-unavailable">
+          Usage data is not available for this node run.
+        </p>
+      )}
+
       <h3>Ledger delta</h3>
       {delta.length === 0 ? (
         <p className="muted">This node run has appended no ledger records.</p>
@@ -207,17 +227,83 @@ export function NodeDetailPanel({
         </p>
       ) : (
         <ul className="detail-panel__evidence" id="node-detail-evidence">
-          {evidence.map((record) => (
-            <li key={record.id}>
-              <AuthorityChip authority={record.authority} />
-              <code>{record.subject_ref ?? record.id}</code>
-              {record.provenance_refs.length > 0 ? (
-                <span className="detail-panel__provenance">
-                  ← {record.provenance_refs.join(", ")}
-                </span>
-              ) : null}
-            </li>
-          ))}
+          {evidence.map((record) => {
+            // Additive, shape-driven rendering (task t11): every evidence
+            // record still gets the generic authority/subject/provenance
+            // line above unconditionally; a record whose `data` is shaped
+            // like task t12's workspace-snapshot hook evidence (see
+            // domain/evidence.ts) ALSO gets the structured block below.
+            // Evidence whose data does not match that shape — e.g. the
+            // `test` node's runner exit-status evidence — renders exactly
+            // as it did before this task, no regression.
+            const workspace = parseWorkspaceEvidence(record.data);
+            return (
+              <li key={record.id} data-record-id={record.id}>
+                <AuthorityChip authority={record.authority} />
+                <code>{record.subject_ref ?? record.id}</code>
+                {record.provenance_refs.length > 0 ? (
+                  <span className="detail-panel__provenance">
+                    ← {record.provenance_refs.join(", ")}
+                  </span>
+                ) : null}
+                {workspace ? (
+                  <div
+                    className="detail-panel__workspace-evidence"
+                    data-workspace-evidence="true"
+                  >
+                    {workspace.changedPaths ? (
+                      <div
+                        className="detail-panel__changed-paths"
+                        data-evidence-changed-paths="true"
+                      >
+                        <h4>Changed files</h4>
+                        <ul>
+                          {workspace.changedPaths.map((path) => (
+                            <li key={path}>
+                              <code>{path}</code>
+                            </li>
+                          ))}
+                        </ul>
+                      </div>
+                    ) : null}
+                    {workspace.snapshotDigest ? (
+                      <p className="detail-panel__snapshot-digest">
+                        snapshot{" "}
+                        <code
+                          className="evidence-chip"
+                          data-evidence-snapshot-digest="true"
+                        >
+                          {workspace.snapshotDigest}
+                        </code>
+                      </p>
+                    ) : null}
+                    {workspace.artifactRefs ? (
+                      <ul
+                        className="detail-panel__artifact-refs"
+                        data-evidence-artifact-refs="true"
+                      >
+                        {workspace.artifactRefs.map((ref) => (
+                          <li key={ref}>
+                            <a href={ref} className="detail-panel__artifact-ref">
+                              <code>{ref}</code>
+                            </a>
+                          </li>
+                        ))}
+                      </ul>
+                    ) : null}
+                    {workspace.diffstat ? (
+                      <pre
+                        className="detail-panel__diffstat"
+                        data-evidence-diffstat="true"
+                      >
+                        {workspace.diffstat}
+                      </pre>
+                    ) : null}
+                  </div>
+                ) : null}
+              </li>
+            );
+          })}
         </ul>
       )}
     </aside>

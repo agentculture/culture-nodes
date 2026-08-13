@@ -9,6 +9,7 @@ import (
 
 	"github.com/agentculture/culture-nodes/internal/engine"
 	"github.com/agentculture/culture-nodes/internal/ledger"
+	"github.com/agentculture/culture-nodes/internal/telemetry"
 )
 
 // Callback ingest (PRD §13.4).
@@ -110,6 +111,11 @@ type PendingInvocation struct {
 	FencingToken int64
 	Attempt      int
 	ActorRef     string
+	// ActorID is the resolved actors-table row id captured at dispatch
+	// (actor_invocations.actor_id, migration 0015) — committed into
+	// attempts.actor_id so per-actor stats attribute async work. Empty on
+	// rows parked by pre-0015 binaries: those complete unattributed.
+	ActorID      string
 	InvocationID string
 	State        string
 	LastSequence int64
@@ -218,6 +224,14 @@ type CallbackDeps struct {
 	// InvocationLookupDelay is the pause between those re-reads. Defaults to
 	// DefaultInvocationLookupDelay.
 	InvocationLookupDelay time.Duration
+
+	// Telemetry instruments the callback ingest seam (task t19,
+	// HandleCallback) through internal/telemetry. The zero value, a nil
+	// *telemetry.Provider, is a safe no-op — every telemetry.Provider
+	// method tolerates a nil receiver — so a CallbackDeps built without
+	// setting this field (every existing caller, every existing test)
+	// behaves exactly as it did before this field existed.
+	Telemetry *telemetry.Provider
 }
 
 // DefaultResumeLease is the lease taken while a terminal callback commits.
@@ -349,7 +363,7 @@ type CallbackResult struct {
 // happen — a duplicate, a reordering, a late completion — is a successful
 // call with a disposition that says so, because those are outcomes of the
 // protocol working, not failures of it.
-func HandleCallback(ctx context.Context, deps CallbackDeps, attemptToken string, ev CallbackEvent) (CallbackResult, error) {
+func HandleCallback(ctx context.Context, deps CallbackDeps, attemptToken string, ev CallbackEvent) (result CallbackResult, err error) {
 	switch {
 	case deps.Store == nil:
 		return CallbackResult{}, errors.New("actors: HandleCallback requires a store")
@@ -363,6 +377,25 @@ func HandleCallback(ctx context.Context, deps CallbackDeps, attemptToken string,
 		return CallbackResult{}, errors.New("actors: callback event requires a positive sequence")
 	}
 
+	// Task t19's actor-callback seam: one span and one metric recording per
+	// ingested event, wrapping every disposition (duplicate, out-of-order,
+	// recorded, committed, late, rejected) and every failure path below. It
+	// starts only after the request-shape validation above — there is no
+	// attempt context yet for a malformed request to report against — and
+	// inv is declared here, not with the lookup below, so the deferred End
+	// can read whatever lookupInvocation managed to resolve even on a path
+	// that returns before every field is known.
+	var inv PendingInvocation
+	ctx, op := deps.Telemetry.Start(ctx, telemetry.SeamActorCallback)
+	defer func() {
+		op.End(ctx, err == nil,
+			telemetry.RunID(inv.RunID),
+			telemetry.NodeID(inv.NodeID),
+			telemetry.AttemptID(result.AttemptID),
+			telemetry.Disposition(string(result.Disposition)),
+		)
+	}()
+
 	// ---- 1. the token names the attempt ----
 	attemptID, err := deps.Signer.Verify(attemptToken)
 	if err != nil {
@@ -370,7 +403,7 @@ func HandleCallback(ctx context.Context, deps CallbackDeps, attemptToken string,
 	}
 
 	// ---- 2. the durable invocation ----
-	inv, err := deps.lookupInvocation(ctx, attemptID)
+	inv, err = deps.lookupInvocation(ctx, attemptID)
 	if err != nil {
 		return CallbackResult{AttemptID: attemptID}, err
 	}
@@ -386,7 +419,7 @@ func HandleCallback(ctx context.Context, deps CallbackDeps, attemptToken string,
 		return CallbackResult{AttemptID: attemptID, Disposition: DispositionDuplicate, Diagnostic: diagnostic}, nil
 	}
 
-	result, err := handleClaimed(ctx, deps, inv, ev)
+	result, err = handleClaimed(ctx, deps, inv, ev)
 	if err != nil {
 		// The claim was taken but the event was not processed. Give it back
 		// last, after handleClaimed has already returned the mark and the
@@ -627,7 +660,7 @@ func completionFor(inv PendingInvocation, ev CallbackEvent) (engine.CompletionRe
 		WorkerID:     inv.WorkerID,
 		FencingToken: inv.FencingToken,
 		Attempt:      inv.Attempt,
-		ActorID:      "",
+		ActorID:      inv.ActorID,
 	}
 
 	switch ev.Kind {
@@ -654,6 +687,7 @@ func completionFor(inv PendingInvocation, ev CallbackEvent) (engine.CompletionRe
 		if payload.LedgerDelta != nil {
 			req.LedgerDelta = append([]ledger.Record(nil), payload.LedgerDelta.Records...)
 		}
+		req.Usage = payload.Usage.ToEngine()
 		return req, ""
 
 	case EventFailed:

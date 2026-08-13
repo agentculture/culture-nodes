@@ -108,4 +108,7 @@ class FakeNodesAPI:
             def do_POST(self) -> None:  # noqa: N802 - stdlib signature
                 self._dispatch("POST")
 
+            def do_PATCH(self) -> None:  # noqa: N802 - stdlib signature
+                self._dispatch("PATCH")
+
         return Handler

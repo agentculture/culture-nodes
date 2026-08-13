@@ -140,6 +140,7 @@ func TestUndocumentedErrorsMatchTheDocumentedShape(t *testing.T) {
 		{"getLedgerProjection_unknown_run", http.MethodGet, "/v1alpha1/runs/does-not-exist/ledger/projections/current_scope"},
 		{"createReview_unknown_run", http.MethodPost, "/v1alpha1/runs/does-not-exist/reviews"},
 		{"commitReview_unknown", http.MethodPost, "/v1alpha1/reviews/does-not-exist/commit"},
+		{"createGrade_unknown_run", http.MethodPost, "/v1alpha1/runs/does-not-exist/grades"},
 		{"getHumanTask_unknown", http.MethodGet, "/v1alpha1/human-tasks/does-not-exist"},
 		// decideHumanTask: this fixture (newFixture) configures no decision
 		// auth secret, so every decision is refused with 401 before the

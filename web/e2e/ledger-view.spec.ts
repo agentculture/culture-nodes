@@ -13,8 +13,8 @@ test("lists the run's ledger records with authority rendered dashed/solid", asyn
     .poll(async () => (await readAgentState(page)).status)
     .toBe("ready");
 
-  await expect(page.locator("#ledger-version")).toHaveText("5");
-  await expect(page.locator("#ledger-table tbody tr")).toHaveCount(5);
+  await expect(page.locator("#ledger-version")).toHaveText("6");
+  await expect(page.locator("#ledger-table tbody tr")).toHaveCount(6);
 
   // An agent's own claim: dashed, because nobody has confirmed it.
   const proposed = page
@@ -45,7 +45,11 @@ test("the run list links into the run view", async ({ page }) => {
   await expect
     .poll(async () => (await readAgentState(page)).status)
     .toBe("ready");
-  await expect(page.locator(`#runs-table tr[data-run-id="${RUN_ID}"]`)).toBeVisible();
-  await page.getByRole("link", { name: RUN_ID }).click();
+  const row = page.locator(`#runs-table tr[data-run-id="${RUN_ID}"]`);
+  await expect(row).toBeVisible();
+  // The fixture run has a name (task t5), so the row's link text is its
+  // name, not the bare id — click the row's link itself rather than
+  // matching by accessible name.
+  await row.getByRole("link").click();
   await expect(page).toHaveURL(new RegExp(`/runs/${RUN_ID}$`));
 });

@@ -29,6 +29,16 @@ export interface NodeCardProps {
   selected: boolean;
   reducedMotion: boolean;
   onOpen: (nodeId: string) => void;
+  /**
+   * Whether ANY of this node's node runs has an evidence-type ledger record
+   * attached (task t11 acceptance #3: the run view must make "open node →
+   * see evidence" discoverable without opening every node first). Computed
+   * by RunView from data it already has fetched — the run's ledger,
+   * joined back to this node's node runs — never a separate API call, so
+   * absence of the flag (`undefined`/`false`) is never rendered as a claim
+   * that no evidence exists, only that none is known from here.
+   */
+  hasEvidence?: boolean;
 }
 
 function shortRef(ref: string | undefined): string | undefined {
@@ -57,6 +67,7 @@ export function NodeCard({
   selected,
   reducedMotion,
   onOpen,
+  hasEvidence = false,
 }: NodeCardProps) {
   const accent = accentFor(node.kind);
   const state = execution.state;
@@ -89,6 +100,7 @@ export function NodeCard({
       data-node-id={node.id}
       data-node-state={state}
       data-band={band}
+      data-node-evidence={hasEvidence ? "true" : "false"}
       role="button"
       tabIndex={0}
       aria-label={label}
@@ -131,6 +143,17 @@ export function NodeCard({
               // that information has to be text, not an absent animation.
               <span className="node-card__badge node-card__badge--live">
                 attempt in flight
+              </span>
+            ) : null}
+            {hasEvidence ? (
+              // Discoverability for the ship-review pause (task t11 #3): a
+              // reader scanning the graph sees which nodes carry measured
+              // workspace evidence before opening any of them.
+              <span
+                className="node-card__badge node-card__badge--evidence"
+                title="this node has measured workspace evidence"
+              >
+                <span aria-hidden="true">◈</span> evidence
               </span>
             ) : null}
           </div>

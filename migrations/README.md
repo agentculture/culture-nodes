@@ -43,6 +43,27 @@ Numbered SQL migrations for the authoritative PostgreSQL store (prd-spec
   boundary, and is deliberately distinct from `0002`'s `runner_operations`:
   the two are opposite halves of one life cycle — in-flight tracking while
   no outcome is known, versus the recorded operation and result once one is.
+- `0012_attempt_usage.sql` — expand-only: adds `attempts.usage_input_tokens`,
+  `usage_output_tokens`, `usage_cost`, `usage_currency` (task t1), the
+  per-attempt prd-spec §13.2 telemetry block both completion seams
+  (`internal/worker/dispatch.go`'s sync path, `internal/actors/callback.go`'s
+  async path) now persist. All four are nullable with no default; an
+  attempt that reported no usage stays NULL, not a fabricated zero.
+- `0013_run_metadata.sql` — expand-only: adds `runs.name`, `runs.description`,
+  `runs.category` (task t3), all nullable with no default. `name`/
+  `description` are operator-given at creation only (`internal/api/runs.go`'s
+  `handleCreateRun`); `category` alone is retaggable afterward via
+  `PATCH /v1alpha1/runs/{id}` (`handlePatchRun`) per frame decision q4.
+- `0014_events_namespace_id_index.sql` — expand-only: adds
+  `events_namespace_id_id_idx (namespace_id, id)`, serving the cross-run
+  event stream's (task t17, `GET /v1alpha1/events`) bounded, namespace-scoped
+  poll ordered by the events table's own ULID primary key.
+- `0015_actor_invocations_actor_id.sql` — expand-only: nullable
+  `actor_invocations.actor_id` (FK to `actors`), the resolved actor row id an
+  async attempt's terminal callback commits into `attempts.actor_id` — the
+  attribution per-actor stats read; without it every async attempt was
+  invisible to `GET /v1alpha1/actors/{id}/stats` (found live by the t20
+  success-signal run).
 
 ## Policy
 

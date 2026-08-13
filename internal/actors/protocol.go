@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"time"
 
+	"github.com/agentculture/culture-nodes/internal/engine"
 	"github.com/agentculture/culture-nodes/internal/ledger"
 )
 
@@ -86,6 +87,29 @@ type Usage struct {
 	OutputTokens int64    `json:"output_tokens"`
 	Cost         *float64 `json:"cost"`
 	Currency     *string  `json:"currency"`
+}
+
+// ToEngine converts this §13.2 wire Usage block into the engine's own copy
+// of it (engine.CompletionRequest.Usage, engine.Attempt.Usage), which is how
+// it reaches storage: the engine cannot import this package (this package
+// already imports engine, for the Completer interface and CompletionRequest
+// its callback commit path uses), so the engine declares an independent
+// Usage type and this is the one seam that translates into it. Both
+// completion paths that carry a Usage block convert through it —
+// internal/worker/dispatch.go's synchronous completeFromResult (on an
+// InvocationResult.Usage) and this package's own commitTerminal, by way of
+// completionFor (on a CompletedPayload.Usage) — so a nil Usage always
+// becomes a nil engine.Usage, never a fabricated zero block.
+func (u *Usage) ToEngine() *engine.Usage {
+	if u == nil {
+		return nil
+	}
+	return &engine.Usage{
+		InputTokens:  u.InputTokens,
+		OutputTokens: u.OutputTokens,
+		Cost:         u.Cost,
+		Currency:     u.Currency,
+	}
 }
 
 // LedgerDelta is what the actor proposes to write to the work ledger. It is

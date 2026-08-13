@@ -1,0 +1,38 @@
+{
+  "plan_slug": "operate-through-the-ui",
+  "schema_version": 1,
+  "created": "2026-08-12T20:24:15Z",
+  "updated": "2026-08-12T22:52:46Z",
+  "deviations": [
+    {
+      "id": "d1",
+      "what": "async failed attempts report no usage: the failed-event payload (FailedPayload, internal/actors/protocol.go) carries no \u00a713.2 Usage field, so a technically-failed async attempt records NULL usage even though the session burned tokens \u2014 h24 ('cost includes every attempt') holds only where usage was reportable; sync failures and async completed/blocked are covered",
+      "task_ref": "t1",
+      "reason": "discovered during t1 implementation: the wire protocol itself only defines Usage on completed/blocked results, not failures \u2014 extending it means touching the protocol and all three bridges, past t1's slice; operator adjudicates post-merge per standing instruction",
+      "affects": [],
+      "origin": "user",
+      "status": "approved",
+      "classification": null
+    },
+    {
+      "id": "d2",
+      "what": "the independent-review pattern cannot bind t10's measured workspace facts: workspace_measured exists only in the Python bridge layer \u2014 InvocationResult (internal/actors/protocol.go) has no field for it, and neither binding resolver exposes per-node evidence (/nodes/<id>/evidence is explicitly 'not resolvable yet') \u2014 so the example binds the closest honest substitutes (original run input instruction + build node's contract output + the evidence ledger projection) and documents the gap",
+      "task_ref": "t13",
+      "reason": "discovered during t13: carrying bridge-measured facts to downstream nodes needs a protocol field + binding surface \u2014 cross-cutting engine/protocol work outside t13's workflow-pattern scope; operator adjudicates post-merge per standing instruction",
+      "affects": [],
+      "origin": "user",
+      "status": "approved",
+      "classification": null
+    },
+    {
+      "id": "d3",
+      "what": "per-actor attribution gap found at live verification: attempts.actor_id was only ever set by code nodes \u2014 sync agent completions and async callback commits never attributed, so t15's actor stats aggregated nothing for the real fleet; fixed for completed sync+async attempts (DBRegistry.ActorRowID + migration 0015); FAILED attempts remain unattributed (failAttempt's 20 call sites), narrowing per-actor retry-burn until the follow-up lands",
+      "task_ref": "t20",
+      "reason": "t15's tests inserted actor_id directly in fixtures, so the gap was invisible until the success-signal run hit production topology; failAttempt attribution is a mechanical but broad signature change deferred to keep the closeout fix reviewable",
+      "affects": [],
+      "origin": "user",
+      "status": "approved",
+      "classification": null
+    }
+  ]
+}

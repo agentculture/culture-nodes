@@ -8,11 +8,15 @@ import {
 import AgentStateScript from "./agent-state/AgentStateScript";
 import { setAgentState } from "./agent-state/store";
 import Header from "./components/Header";
+import AuthorWorkflow from "./routes/AuthorWorkflow";
 import JobsTimeline from "./routes/JobsTimeline";
 import LedgerView from "./routes/LedgerView";
+import Mesh from "./routes/Mesh";
 import RunView from "./routes/RunView";
 import RunsBoard from "./routes/RunsBoard";
 import RunsList from "./routes/RunsList";
+import Statistics from "./routes/Statistics";
+import Workflows from "./routes/Workflows";
 
 /** Keeps agent-state's `route` in step with the router. */
 function RouteWatcher() {
@@ -37,6 +41,10 @@ export function App() {
           <Route path="/runs" element={<RunsList />} />
           <Route path="/board" element={<RunsBoard />} />
           <Route path="/jobs" element={<JobsTimeline />} />
+          <Route path="/mesh" element={<Mesh />} />
+          <Route path="/stats" element={<Statistics />} />
+          <Route path="/workflows" element={<Workflows />} />
+          <Route path="/workflows/new" element={<AuthorWorkflow />} />
           <Route path="/runs/:id" element={<RunView />} />
           <Route path="/runs/:id/ledger" element={<LedgerView />} />
           <Route

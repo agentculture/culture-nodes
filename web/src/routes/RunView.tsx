@@ -11,10 +11,12 @@ import {
 } from "@xyflow/react";
 import { setAgentState } from "../agent-state/store";
 import { DASHED, SOLID } from "../culture-design/edges";
+import CategoryChip from "../components/CategoryChip";
 import ErrorNotice from "../components/ErrorNotice";
 import EventTimeline from "../components/EventTimeline";
 import NodeDetailPanel from "../components/NodeDetailPanel";
 import StatusChip from "../components/StatusChip";
+import UsageSummary from "../components/UsageSummary";
 import WorkflowNode, {
   LOOP_SOURCE_HANDLE,
   LOOP_TARGET_HANDLE,
@@ -29,6 +31,7 @@ import {
   idleExecution,
   type RunGraphState,
 } from "../domain/run-state";
+import { mergeUsage, runDisplayName } from "../domain/usage";
 import { useRunData } from "./useRunData";
 
 const NODE_TYPES = { workflow: WorkflowNode };
@@ -39,7 +42,8 @@ type ViewMode = "graph" | "timeline";
 
 function RunViewInner() {
   const { id: runId } = useParams<{ id: string }>();
-  const { view, graph, ledger, loading, error } = useRunData(runId);
+  const { view, graph, ledger, usageByNodeRunId, loading, error } =
+    useRunData(runId);
   const { events, status: streamStatus } = useRunEvents(runId);
   const reducedMotion = useReducedMotion();
 
@@ -65,6 +69,34 @@ function RunViewInner() {
   }, [view, events]);
 
   const walkedEdges = graphState.walkedEdges ?? EMPTY_WALKED;
+
+  /**
+   * Node run ids with at least one evidence-type ledger record attached —
+   * from `ledger`, which useRunData.ts already fetches for the detail
+   * panel. Reused here rather than added as new API surface (task t11
+   * acceptance #3): the run view can flag which nodes carry measured
+   * evidence without a fresh request, because this data already flows to
+   * it. An empty set (ledger still loading, or fetch failed — useRunData
+   * degrades that non-fatally) means honestly "none known here", not "none
+   * exists".
+   */
+  const evidenceNodeRunIds = useMemo(
+    () =>
+      new Set(
+        ledger
+          .filter((record) => record.record_type === "evidence" && record.node_run_id)
+          .map((record) => record.node_run_id as string),
+      ),
+    [ledger],
+  );
+
+  const hasEvidence = useCallback(
+    (nodeId: string) =>
+      (graphState.nodes[nodeId]?.nodeRuns ?? []).some((nodeRun) =>
+        evidenceNodeRunIds.has(nodeRun.id),
+      ),
+    [graphState, evidenceNodeRunIds],
+  );
 
   const openNode = useCallback((nodeId: string) => {
     openerRef.current =
@@ -100,9 +132,10 @@ function RunViewInner() {
         isSelected: selected === node.id,
         reducedMotion,
         onOpen: openNode,
+        hasEvidence: hasEvidence(node.id),
       },
     }));
-  }, [graph, graphState, selected, reducedMotion, openNode]);
+  }, [graph, graphState, selected, reducedMotion, openNode, hasEvidence]);
 
   const { positions, ready: layoutReady } = useElkLayout(graph);
 
@@ -177,6 +210,7 @@ function RunViewInner() {
       nodeStates[node.id] = (graphState.nodes[node.id] ?? idleExecution(node.id))
         .state;
     }
+    const usage = view?.run.usage;
     setAgentState({
       status: loading ? "loading" : "ready",
       run: {
@@ -184,6 +218,18 @@ function RunViewInner() {
         state: view?.run.state ?? "unknown",
         node_states: nodeStates,
         selected,
+        name: view?.run.name ?? null,
+        display_hint: view?.run.display_hint ?? null,
+        category: view?.run.category ?? null,
+        usage: usage
+          ? {
+              input_tokens: usage.input_tokens,
+              output_tokens: usage.output_tokens,
+              cost: usage.cost ?? null,
+              currency: usage.currency ?? null,
+              reported: usage.attempts_reported > 0,
+            }
+          : null,
       },
     });
   }, [runId, graph, graphState, view, loading, selected]);
@@ -211,6 +257,22 @@ function RunViewInner() {
 
   const selectedNode = graph?.nodes.find((node) => node.id === selected);
 
+  // Merged across every node run of the selected node (a loop revisits it
+  // more than once) — undefined, not a fabricated Usage, when the
+  // best-effort node-runs join found no matching entries at all (see
+  // useRunData.ts's usageByNodeRunId doc comment).
+  const selectedNodeUsageEntries = selectedNode
+    ? (graphState.nodes[selectedNode.id]?.nodeRuns ?? [])
+        .map((nodeRun) => usageByNodeRunId[nodeRun.id])
+        .filter((usage): usage is NonNullable<typeof usage> => usage !== undefined)
+    : [];
+  const selectedNodeUsage =
+    selectedNodeUsageEntries.length > 0
+      ? mergeUsage(selectedNodeUsageEntries)
+      : undefined;
+
+  const runDisplay = view ? runDisplayName(view.run) : null;
+
   if (error) {
     return (
       <section className="view-rail">
@@ -231,11 +293,34 @@ function RunViewInner() {
             {graph?.name ?? "Run"}{" "}
             <span className="run-view__id">{runId}</span>
           </h1>
+          {view && runDisplay ? (
+            <p className="run-view__run-name" id="run-view-name">
+              <span
+                className={`run-name${runDisplay.derived ? " run-name--derived" : ""}`}
+                data-derived={runDisplay.derived ? "true" : "false"}
+                title={
+                  runDisplay.derived
+                    ? `derived guess, not a given name: "${runDisplay.text}"`
+                    : undefined
+                }
+              >
+                {runDisplay.text}
+              </span>
+              {view.run.category ? (
+                <CategoryChip category={view.run.category} />
+              ) : null}
+            </p>
+          ) : null}
           <p className="run-view__sub muted">
             {graph?.ownerRef ? <>owner {graph.ownerRef} · </> : null}
             workflow digest{" "}
             <code>{view?.run.workflow_digest.slice(0, 24) ?? "—"}…</code>
           </p>
+          {view?.run.usage ? (
+            <p className="run-view__usage">
+              <UsageSummary usage={view.run.usage} id="run-usage-summary" />
+            </p>
+          ) : null}
         </div>
         <div className="run-view__state">
           <span
@@ -338,14 +423,20 @@ function RunViewInner() {
                     <th scope="col">state</th>
                     <th scope="col">visits</th>
                     <th scope="col">attempts</th>
+                    <th scope="col">evidence</th>
                   </tr>
                 </thead>
                 <tbody>
                   {(graph?.nodes ?? []).map((node) => {
                     const execution =
                       graphState.nodes[node.id] ?? idleExecution(node.id);
+                    const nodeHasEvidence = hasEvidence(node.id);
                     return (
-                      <tr key={node.id} data-list-node-id={node.id}>
+                      <tr
+                        key={node.id}
+                        data-list-node-id={node.id}
+                        data-node-evidence={nodeHasEvidence ? "true" : "false"}
+                      >
                         <th scope="row">
                           <button
                             type="button"
@@ -362,6 +453,7 @@ function RunViewInner() {
                         </td>
                         <td>{execution.visits}</td>
                         <td>{execution.attempts.length}</td>
+                        <td>{nodeHasEvidence ? "yes" : "—"}</td>
                       </tr>
                     );
                   })}
@@ -387,6 +479,7 @@ function RunViewInner() {
               graphState.nodes[selectedNode.id] ?? idleExecution(selectedNode.id)
             }
             ledger={ledger}
+            usage={selectedNodeUsage}
             onClose={closeDetail}
           />
         ) : null}

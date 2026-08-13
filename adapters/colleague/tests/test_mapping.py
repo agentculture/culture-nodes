@@ -152,7 +152,9 @@ def test_output_carries_summary_changed_files_artifacts_path():
 
 
 def test_claim_record_is_proposed_authority_agent_origin():
-    record = mapping.claim_record(_ok_result(), CTX, actor_id="colleague-bridge", created_at="2026-01-01T00:00:00+00:00")
+    record = mapping.claim_record(
+        _ok_result(), CTX, actor_id="colleague-bridge", created_at="2026-01-01T00:00:00+00:00"
+    )
     assert record["record_type"] == "claim"
     assert record["authority"] == "proposed"
     assert record["origin"] == {"kind": "agent", "actor_id": "colleague-bridge"}
@@ -164,13 +166,19 @@ def test_claim_record_is_proposed_authority_agent_origin():
 
 
 def test_claim_record_never_uses_confirmed_or_observed_or_derived():
-    record = mapping.claim_record(_ok_result(), CTX, actor_id="x", created_at="2026-01-01T00:00:00+00:00")
+    record = mapping.claim_record(
+        _ok_result(), CTX, actor_id="x", created_at="2026-01-01T00:00:00+00:00"
+    )
     assert record["authority"] not in ("confirmed", "observed", "derived", "rejected", "superseded")
 
 
 def test_sync_response_ledger_delta_is_propose_only():
     response = mapping.sync_response(
-        _ok_result(), CTX, default_success_outcome="completed", actor_id="colleague-bridge", created_at="2026-01-01T00:00:00+00:00"
+        _ok_result(),
+        CTX,
+        default_success_outcome="completed",
+        actor_id="colleague-bridge",
+        created_at="2026-01-01T00:00:00+00:00",
     )
     records = response.body["ledger_delta"]["records"]
     assert len(records) == 1
@@ -204,7 +212,11 @@ def test_sync_response_error_is_execution_failure_not_200():
 
 def test_sync_response_incomplete_without_declaration_is_never_200_completed():
     r = mapping.sync_response(
-        _incomplete_result(), CTX, default_success_outcome="completed", actor_id="a", created_at="now"
+        _incomplete_result(),
+        CTX,
+        default_success_outcome="completed",
+        actor_id="a",
+        created_at="now",
     )
     assert r.status_code != 200
     assert r.body.get("outcome") != "completed"
@@ -213,7 +225,11 @@ def test_sync_response_incomplete_without_declaration_is_never_200_completed():
 def test_sync_response_incomplete_with_declaration_is_200_with_declared_outcome():
     ctx = mapping.InvocationContext(incomplete_outcome="incomplete")
     r = mapping.sync_response(
-        _incomplete_result(), ctx, default_success_outcome="completed", actor_id="a", created_at="now"
+        _incomplete_result(),
+        ctx,
+        default_success_outcome="completed",
+        actor_id="a",
+        created_at="now",
     )
     assert r.status_code == 200
     assert r.body["outcome"] == "incomplete"
@@ -221,14 +237,21 @@ def test_sync_response_incomplete_with_declaration_is_200_with_declared_outcome(
 
 def test_sync_response_timeout_is_408_regardless_of_task_result():
     r = mapping.sync_response(
-        _ok_result(), CTX, default_success_outcome="completed", actor_id="a", created_at="now", timed_out=True
+        _ok_result(),
+        CTX,
+        default_success_outcome="completed",
+        actor_id="a",
+        created_at="now",
+        timed_out=True,
     )
     assert r.status_code == 408
     assert r.body["class"] == mapping.CLASS_TIMEOUT
 
 
 def test_sync_response_missing_result_is_execution_failure():
-    r = mapping.sync_response(None, CTX, default_success_outcome="completed", actor_id="a", created_at="now")
+    r = mapping.sync_response(
+        None, CTX, default_success_outcome="completed", actor_id="a", created_at="now"
+    )
     assert r.status_code == 500
     assert r.body["class"] == mapping.CLASS_EXECUTION
 
@@ -257,7 +280,11 @@ def test_terminal_event_error_is_failed_kind_with_execution_class():
 
 def test_terminal_event_incomplete_without_declaration_is_failed_never_completed():
     ev = mapping.terminal_event(
-        _incomplete_result(), CTX, default_success_outcome="completed", actor_id="a", created_at="now"
+        _incomplete_result(),
+        CTX,
+        default_success_outcome="completed",
+        actor_id="a",
+        created_at="now",
     )
     assert ev.kind == "failed"
     assert ev.kind != "completed"
@@ -266,7 +293,11 @@ def test_terminal_event_incomplete_without_declaration_is_failed_never_completed
 def test_terminal_event_incomplete_with_declaration_is_completed_with_declared_outcome():
     ctx = mapping.InvocationContext(incomplete_outcome="incomplete")
     ev = mapping.terminal_event(
-        _incomplete_result(), ctx, default_success_outcome="completed", actor_id="a", created_at="now"
+        _incomplete_result(),
+        ctx,
+        default_success_outcome="completed",
+        actor_id="a",
+        created_at="now",
     )
     assert ev.kind == "completed"
     assert ev.payload["outcome"] == "incomplete"
@@ -274,7 +305,13 @@ def test_terminal_event_incomplete_with_declaration_is_completed_with_declared_o
 
 def test_terminal_event_timeout_is_failed_with_timeout_class():
     ev = mapping.terminal_event(
-        None, CTX, default_success_outcome="completed", actor_id="a", created_at="now", timed_out=True, detail="gave up waiting"
+        None,
+        CTX,
+        default_success_outcome="completed",
+        actor_id="a",
+        created_at="now",
+        timed_out=True,
+        detail="gave up waiting",
     )
     assert ev.kind == "failed"
     assert ev.payload["class"] == mapping.CLASS_TIMEOUT
@@ -282,6 +319,125 @@ def test_terminal_event_timeout_is_failed_with_timeout_class():
 
 
 def test_terminal_event_missing_result_without_timeout_is_execution_failure():
-    ev = mapping.terminal_event(None, CTX, default_success_outcome="completed", actor_id="a", created_at="now")
+    ev = mapping.terminal_event(
+        None, CTX, default_success_outcome="completed", actor_id="a", created_at="now"
+    )
     assert ev.kind == "failed"
     assert ev.payload["class"] == mapping.CLASS_EXECUTION
+
+
+# ---------------------------------------------------------------------------
+# workspace_measured (task t10): passed through untouched, structurally
+# distinct from `output`'s model-claimed changed_files, and honestly
+# defaulted when a caller supplies none.
+# ---------------------------------------------------------------------------
+
+_REAL_MEASUREMENT = {
+    "measured": True,
+    "repo": "/tmp/some-repo",
+    "reason": None,
+    "branch": "main",
+    "head_before": "aaaa",
+    "head_after": "bbbb",
+    "status_porcelain": " M b.py\n",
+    "changed_files": ["b.py"],
+    "diffstat": " b.py | 1 +\n",
+}
+
+
+def test_sync_response_passes_through_a_supplied_workspace_measurement_untouched():
+    r = mapping.sync_response(
+        _ok_result(),
+        CTX,
+        default_success_outcome="completed",
+        actor_id="a",
+        created_at="now",
+        workspace_measured=_REAL_MEASUREMENT,
+    )
+    assert r.body["workspace_measured"] == _REAL_MEASUREMENT
+    # Structurally distinct from the model-claimed output block: colleague's
+    # own self-reported changed_files ("a.py") differs from what the bridge
+    # actually measured against git ("b.py") — never conflated.
+    assert r.body["output"]["changed_files"] == ["a.py"]
+    assert r.body["workspace_measured"]["changed_files"] == ["b.py"]
+
+
+def test_sync_response_defaults_workspace_measured_to_an_honest_unmeasured_shape():
+    r = mapping.sync_response(
+        _ok_result(), CTX, default_success_outcome="completed", actor_id="a", created_at="now"
+    )
+    wm = r.body["workspace_measured"]
+    assert wm["measured"] is False
+    assert wm["reason"]
+    assert wm["changed_files"] == []
+
+
+def test_sync_response_carries_workspace_measured_even_on_failure():
+    r = mapping.sync_response(
+        _error_result(),
+        CTX,
+        default_success_outcome="completed",
+        actor_id="a",
+        created_at="now",
+        workspace_measured=_REAL_MEASUREMENT,
+    )
+    assert r.status_code != 200
+    assert r.body["workspace_measured"] == _REAL_MEASUREMENT
+
+
+def test_sync_response_carries_workspace_measured_on_timeout():
+    r = mapping.sync_response(
+        None,
+        CTX,
+        default_success_outcome="completed",
+        actor_id="a",
+        created_at="now",
+        timed_out=True,
+        workspace_measured=_REAL_MEASUREMENT,
+    )
+    assert r.status_code == 408
+    assert r.body["workspace_measured"] == _REAL_MEASUREMENT
+
+
+def test_terminal_event_passes_through_a_supplied_workspace_measurement_untouched():
+    ev = mapping.terminal_event(
+        _ok_result(),
+        CTX,
+        default_success_outcome="completed",
+        actor_id="a",
+        created_at="now",
+        workspace_measured=_REAL_MEASUREMENT,
+    )
+    assert ev.payload["workspace_measured"] == _REAL_MEASUREMENT
+
+
+def test_terminal_event_defaults_workspace_measured_to_an_honest_unmeasured_shape():
+    ev = mapping.terminal_event(
+        _ok_result(), CTX, default_success_outcome="completed", actor_id="a", created_at="now"
+    )
+    wm = ev.payload["workspace_measured"]
+    assert wm["measured"] is False
+    assert wm["reason"]
+
+
+def test_terminal_event_carries_workspace_measured_on_failure_and_timeout():
+    failed = mapping.terminal_event(
+        _error_result(),
+        CTX,
+        default_success_outcome="completed",
+        actor_id="a",
+        created_at="now",
+        workspace_measured=_REAL_MEASUREMENT,
+    )
+    assert failed.payload["workspace_measured"] == _REAL_MEASUREMENT
+
+    timed_out = mapping.terminal_event(
+        None,
+        CTX,
+        default_success_outcome="completed",
+        actor_id="a",
+        created_at="now",
+        timed_out=True,
+        workspace_measured=_REAL_MEASUREMENT,
+    )
+    assert timed_out.payload["workspace_measured"] == _REAL_MEASUREMENT

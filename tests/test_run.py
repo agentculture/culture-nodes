@@ -164,6 +164,127 @@ def _write_compact(handler, status: int, payload: object) -> None:
     handler.wfile.write(body)
 
 
+def test_run_create_sends_name_description_category(fake_api) -> None:
+    seen = {}
+
+    def handler(h, m, q, b):
+        seen["body"] = json.loads(b)
+        h.send_json(
+            201,
+            {
+                "id": "run-1",
+                "workflow_digest": "sha256:abc",
+                "state": "running",
+                "created_at": "t",
+                "name": "nightly audit",
+                "category": "audit",
+            },
+        )
+
+    fake_api.route("POST", r"/v1alpha1/runs", handler)
+    fake_api.start()
+    rc = main(
+        [
+            "run",
+            "create",
+            "--workflow",
+            "sha256:abc",
+            "--name",
+            "nightly audit",
+            "--description",
+            "runs every night",
+            "--category",
+            "audit",
+            "--api-url",
+            fake_api.base_url,
+        ]
+    )
+    assert rc == 0
+    assert seen["body"] == {
+        "workflow_digest": "sha256:abc",
+        "name": "nightly audit",
+        "description": "runs every night",
+        "category": "audit",
+    }
+
+
+def test_run_create_text_renders_name_and_category(fake_api, capsys) -> None:
+    fake_api.route(
+        "POST",
+        r"/v1alpha1/runs",
+        lambda h, m, q, b: h.send_json(
+            201,
+            {
+                "id": "run-1",
+                "workflow_digest": "sha256:abc",
+                "state": "running",
+                "created_at": "t",
+                "name": "nightly audit",
+                "category": "audit",
+            },
+        ),
+    )
+    fake_api.start()
+    rc = main(["run", "create", "--workflow", "sha256:abc", "--api-url", fake_api.base_url])
+    out = capsys.readouterr().out
+    assert rc == 0
+    assert "name: nightly audit" in out
+    assert "category: audit" in out
+
+
+def test_run_create_text_renders_display_hint_as_derived(fake_api, capsys) -> None:
+    fake_api.route(
+        "POST",
+        r"/v1alpha1/runs",
+        lambda h, m, q, b: h.send_json(
+            201,
+            {
+                "id": "run-1",
+                "workflow_digest": "sha256:abc",
+                "state": "running",
+                "created_at": "t",
+                "display_hint": "review the pending PR",
+            },
+        ),
+    )
+    fake_api.start()
+    rc = main(["run", "create", "--workflow", "sha256:abc", "--api-url", fake_api.base_url])
+    out = capsys.readouterr().out
+    assert rc == 0
+    assert "name: review the pending PR (derived)" in out
+
+
+def test_run_create_text_renders_usage_when_present(fake_api, capsys) -> None:
+    fake_api.route(
+        "POST",
+        r"/v1alpha1/runs",
+        lambda h, m, q, b: h.send_json(
+            201,
+            {
+                "id": "run-1",
+                "workflow_digest": "sha256:abc",
+                "state": "running",
+                "created_at": "t",
+                "usage": {
+                    "input_tokens": 0,
+                    "output_tokens": 0,
+                    "attempts_reported": 0,
+                    "attempts_not_reported": 0,
+                },
+            },
+        ),
+    )
+    fake_api.start()
+    rc = main(["run", "create", "--workflow", "sha256:abc", "--api-url", fake_api.base_url])
+    out = capsys.readouterr().out
+    assert rc == 0
+    assert "usage.input_tokens: 0" in out
+    assert "usage.attempts_reported: 0" in out
+    assert "usage.attempts_not_reported: 0" in out
+    # no attempt reported anything, so cost must never be fabricated
+    assert "usage.cost" not in out
+
+
 # --- list / get / cancel ------------------------------------------------------
 
 
@@ -227,6 +348,49 @@ def test_run_list_time_window_and_sort_query(fake_api, capsys) -> None:
     }
 
 
+def test_run_list_renders_name_or_derived_hint(fake_api, capsys) -> None:
+    fake_api.route(
+        "GET",
+        r"/v1alpha1/runs",
+        lambda h, m, q, b: h.send_json(
+            200,
+            {
+                "items": [
+                    {
+                        "id": "run-1",
+                        "state": "completed",
+                        "workflow_digest": "sha256:abc",
+                        "created_at": "t",
+                        "name": "nightly audit",
+                    },
+                    {
+                        "id": "run-2",
+                        "state": "running",
+                        "workflow_digest": "sha256:abc",
+                        "created_at": "t",
+                        "display_hint": "review the pending PR",
+                    },
+                    {
+                        "id": "run-3",
+                        "state": "running",
+                        "workflow_digest": "sha256:abc",
+                        "created_at": "t",
+                    },
+                ]
+            },
+        ),
+    )
+    fake_api.start()
+    rc = main(["run", "list", "--api-url", fake_api.base_url])
+    out = capsys.readouterr().out
+    assert rc == 0
+    lines = out.strip("\n").split("\n")
+    assert "nightly audit" in lines[0]
+    assert "review the pending PR (derived)" in lines[1]
+    # run-3 has neither name nor display_hint: no trailing name segment at all.
+    assert lines[2].rstrip().endswith("t")
+
+
 def test_run_list_sort_rejects_unknown_value(capsys) -> None:
     with pytest.raises(SystemExit) as exc:
         main(["run", "list", "--sort", "bogus"])
@@ -259,6 +423,457 @@ def test_run_get_text(fake_api, capsys) -> None:
     assert "tokens: 1" in out
     assert "node_runs: 1" in out
     assert "intake: completed" in out
+    # no usage/name/category keys in the fake response: none of those lines
+    # get fabricated.
+    assert "usage." not in out
+    assert "name:" not in out
+    assert "category:" not in out
+
+
+def test_run_get_renders_name_category_and_full_usage(fake_api, capsys) -> None:
+    fake_api.route(
+        "GET",
+        r"/v1alpha1/runs/(?P<id>[^/]+)",
+        lambda h, m, q, b: h.send_json(
+            200,
+            {
+                "run": {
+                    "id": "run-1",
+                    "state": "completed",
+                    "workflow_digest": "sha256:abc",
+                    "name": "nightly audit",
+                    "category": "audit",
+                    "usage": {
+                        "input_tokens": 1200,
+                        "output_tokens": 340,
+                        "cost": 0.42,
+                        "currency": "USD",
+                        "attempts_reported": 3,
+                        "attempts_not_reported": 1,
+                    },
+                },
+                "tokens": [],
+                "node_runs": [],
+            },
+        ),
+    )
+    fake_api.start()
+    rc = main(["run", "get", "run-1", "--api-url", fake_api.base_url])
+    out = capsys.readouterr().out
+    assert rc == 0
+    assert "name: nightly audit" in out
+    assert "category: audit" in out
+    assert "usage.input_tokens: 1200" in out
+    assert "usage.output_tokens: 340" in out
+    assert "usage.cost: 0.42 USD" in out
+    assert "usage.attempts_reported: 3" in out
+    assert "usage.attempts_not_reported: 1" in out
+
+
+def test_run_get_renders_cost_by_currency_never_summed(fake_api, capsys) -> None:
+    fake_api.route(
+        "GET",
+        r"/v1alpha1/runs/(?P<id>[^/]+)",
+        lambda h, m, q, b: h.send_json(
+            200,
+            {
+                "run": {
+                    "id": "run-1",
+                    "state": "completed",
+                    "workflow_digest": "sha256:abc",
+                    "usage": {
+                        "input_tokens": 100,
+                        "output_tokens": 50,
+                        "cost_by_currency": [
+                            {"currency": "USD", "cost": 0.1},
+                            {"currency": "EUR", "cost": 0.2},
+                        ],
+                        "attempts_reported": 2,
+                        "attempts_not_reported": 0,
+                    },
+                },
+                "tokens": [],
+                "node_runs": [],
+            },
+        ),
+    )
+    fake_api.start()
+    rc = main(["run", "get", "run-1", "--api-url", fake_api.base_url])
+    out = capsys.readouterr().out
+    assert rc == 0
+    assert "usage.cost_by_currency: 0.1 USD" in out
+    assert "usage.cost_by_currency: 0.2 EUR" in out
+    # no single summed cost across currencies
+    assert "usage.cost:" not in out
+
+
+def test_run_get_usage_absent_reports_no_attempt_never_zero_fabricated(fake_api, capsys) -> None:
+    fake_api.route(
+        "GET",
+        r"/v1alpha1/runs/(?P<id>[^/]+)",
+        lambda h, m, q, b: h.send_json(
+            200,
+            {
+                "run": {
+                    "id": "run-1",
+                    "state": "running",
+                    "workflow_digest": "sha256:abc",
+                    "usage": {
+                        "input_tokens": 0,
+                        "output_tokens": 0,
+                        "attempts_reported": 0,
+                        "attempts_not_reported": 2,
+                    },
+                },
+                "tokens": [],
+                "node_runs": [],
+            },
+        ),
+    )
+    fake_api.start()
+    rc = main(["run", "get", "run-1", "--api-url", fake_api.base_url])
+    out = capsys.readouterr().out
+    assert rc == 0
+    assert "usage.attempts_reported: 0" in out
+    assert "usage.attempts_not_reported: 2" in out
+    assert "usage.cost" not in out
+
+
+# --- retag ---------------------------------------------------------------
+
+
+def test_run_retag_text(fake_api, capsys) -> None:
+    seen = {}
+
+    def handler(h, m, q, b):
+        seen["body"] = json.loads(b)
+        h.send_json(200, {"id": "run-1", "state": "running", "category": "review"})
+
+    fake_api.route("PATCH", r"/v1alpha1/runs/(?P<id>[^/]+)", handler)
+    fake_api.start()
+    rc = main(["run", "retag", "run-1", "--category", "review", "--api-url", fake_api.base_url])
+    out = capsys.readouterr().out
+    assert rc == 0
+    assert seen["body"] == {"category": "review"}
+    assert "id: run-1" in out
+    assert "category: review" in out
+
+
+def test_run_retag_json_passthrough_byte_exact(fake_api, capsys) -> None:
+    payload = {"id": "run-1", "state": "running", "category": "review"}
+    fake_api.route(
+        "PATCH", r"/v1alpha1/runs/(?P<id>[^/]+)", lambda h, m, q, b: _write_compact(h, 200, payload)
+    )
+    fake_api.start()
+    rc = main(
+        [
+            "run",
+            "retag",
+            "run-1",
+            "--category",
+            "review",
+            "--json",
+            "--api-url",
+            fake_api.base_url,
+        ]
+    )
+    out = capsys.readouterr().out
+    assert rc == 0
+    assert out == json.dumps(payload, separators=(",", ":")) + "\n"
+
+
+def test_run_retag_empty_string_clears_category(fake_api) -> None:
+    seen = {}
+
+    def handler(h, m, q, b):
+        seen["body"] = json.loads(b)
+        h.send_json(200, {"id": "run-1", "state": "running"})
+
+    fake_api.route("PATCH", r"/v1alpha1/runs/(?P<id>[^/]+)", handler)
+    fake_api.start()
+    rc = main(["run", "retag", "run-1", "--category", "", "--api-url", fake_api.base_url])
+    assert rc == 0
+    assert seen["body"] == {"category": ""}
+
+
+def test_run_retag_400_immutable_field_refused(fake_api, capsys) -> None:
+    fake_api.route(
+        "PATCH",
+        r"/v1alpha1/runs/(?P<id>[^/]+)",
+        lambda h, m, q, b: h.send_json(
+            400,
+            {
+                "code": 1,
+                "message": "PATCH only accepts category",
+                "remediation": "name/description are immutable after creation",
+            },
+        ),
+    )
+    fake_api.start()
+    rc = main(["run", "retag", "run-1", "--category", "review", "--api-url", fake_api.base_url])
+    captured = capsys.readouterr()
+    assert rc == 1
+    assert "PATCH only accepts category" in captured.err
+    assert "hint: name/description are immutable after creation" in captured.err
+
+
+def test_run_retag_404_unknown_run(fake_api, capsys) -> None:
+    fake_api.route(
+        "PATCH",
+        r"/v1alpha1/runs/(?P<id>[^/]+)",
+        lambda h, m, q, b: h.send_json(
+            404, {"code": 1, "message": "no run with id bogus", "remediation": "check the run id"}
+        ),
+    )
+    fake_api.start()
+    rc = main(["run", "retag", "bogus", "--category", "review", "--api-url", fake_api.base_url])
+    captured = capsys.readouterr()
+    assert rc == 1
+    assert "no run with id bogus" in captured.err
+
+
+# --- grade -----------------------------------------------------------------
+
+
+def test_run_grade_text(fake_api, capsys) -> None:
+    seen = {}
+
+    def handler(h, m, q, b):
+        seen["body"] = json.loads(b)
+        h.send_json(
+            201,
+            {
+                "id": "ledger_1",
+                "record_type": "grade",
+                "authority": "proposed",
+                "origin": {"kind": "agent", "actor_id": "actor-grader"},
+                "data": {
+                    "rating": 4,
+                    "rationale": "solid",
+                    "evaluated_actor_id": "actor-evaluated",
+                },
+            },
+        )
+
+    fake_api.route("POST", r"/v1alpha1/runs/(?P<id>[^/]+)/grades", handler)
+    fake_api.start()
+    rc = main(
+        [
+            "run",
+            "grade",
+            "run-1",
+            "--rating",
+            "4",
+            "--notes",
+            "solid",
+            "--actor",
+            "actor-evaluated",
+            "--as",
+            "actor-grader",
+            "--api-url",
+            fake_api.base_url,
+        ]
+    )
+    out = capsys.readouterr().out
+    assert rc == 0
+    assert seen["body"] == {
+        "rating": 4,
+        "rationale": "solid",
+        "evaluated_actor_id": "actor-evaluated",
+        "grading_actor_id": "actor-grader",
+    }
+    assert "id: ledger_1" in out
+    assert "authority: proposed" in out
+    assert "origin: agent (actor-grader)" in out
+    assert "rating: 4" in out
+    assert "evaluated_actor_id: actor-evaluated" in out
+
+
+def test_run_grade_optional_fields_included_only_when_given(fake_api) -> None:
+    seen = {}
+
+    def handler(h, m, q, b):
+        seen["body"] = json.loads(b)
+        h.send_json(
+            201,
+            {
+                "id": "ledger_1",
+                "authority": "confirmed",
+                "origin": {"kind": "human", "actor_id": "actor-human"},
+                "data": {
+                    "rating": 5,
+                    "rationale": "clean",
+                    "evaluated_actor_id": "actor-evaluated",
+                },
+            },
+        )
+
+    fake_api.route("POST", r"/v1alpha1/runs/(?P<id>[^/]+)/grades", handler)
+    fake_api.start()
+    rc = main(
+        [
+            "run",
+            "grade",
+            "run-1",
+            "--rating",
+            "5",
+            "--notes",
+            "clean",
+            "--actor",
+            "actor-evaluated",
+            "--as",
+            "actor-human",
+            "--node-run-ref",
+            "nr-1",
+            "--attempt-ref",
+            "att-1",
+            "--category",
+            "review",
+            "--api-url",
+            fake_api.base_url,
+        ]
+    )
+    assert rc == 0
+    assert seen["body"] == {
+        "rating": 5,
+        "rationale": "clean",
+        "evaluated_actor_id": "actor-evaluated",
+        "grading_actor_id": "actor-human",
+        "node_run_ref": "nr-1",
+        "attempt_ref": "att-1",
+        "category": "review",
+    }
+
+
+def test_run_grade_json_passthrough_byte_exact(fake_api, capsys) -> None:
+    payload = {
+        "id": "ledger_1",
+        "authority": "proposed",
+        "origin": {"kind": "agent", "actor_id": "actor-grader"},
+        "data": {"rating": 4, "rationale": "solid", "evaluated_actor_id": "actor-evaluated"},
+    }
+    fake_api.route(
+        "POST",
+        r"/v1alpha1/runs/(?P<id>[^/]+)/grades",
+        lambda h, m, q, b: _write_compact(h, 201, payload),
+    )
+    fake_api.start()
+    rc = main(
+        [
+            "run",
+            "grade",
+            "run-1",
+            "--rating",
+            "4",
+            "--notes",
+            "solid",
+            "--actor",
+            "actor-evaluated",
+            "--as",
+            "actor-grader",
+            "--json",
+            "--api-url",
+            fake_api.base_url,
+        ]
+    )
+    out = capsys.readouterr().out
+    assert rc == 0
+    assert out == json.dumps(payload, separators=(",", ":")) + "\n"
+
+
+def test_run_grade_rating_out_of_bounds_refused_by_argparse(capsys) -> None:
+    with pytest.raises(SystemExit) as exc:
+        main(
+            [
+                "run",
+                "grade",
+                "run-1",
+                "--rating",
+                "6",
+                "--notes",
+                "solid",
+                "--actor",
+                "actor-evaluated",
+                "--as",
+                "actor-grader",
+            ]
+        )
+    assert exc.value.code == 1
+    err = capsys.readouterr().err
+    assert err.startswith("error:")
+    assert "hint:" in err
+
+
+def test_run_grade_400_self_grade_refused(fake_api, capsys) -> None:
+    fake_api.route(
+        "POST",
+        r"/v1alpha1/runs/(?P<id>[^/]+)/grades",
+        lambda h, m, q, b: h.send_json(
+            400,
+            {
+                "code": 1,
+                "message": "ledger: authority refused [no_self_grade]: origin agent (actor-1) ...",
+                "remediation": "the producer named in origin may not write this record's authority",
+            },
+        ),
+    )
+    fake_api.start()
+    rc = main(
+        [
+            "run",
+            "grade",
+            "run-1",
+            "--rating",
+            "3",
+            "--notes",
+            "solid",
+            "--actor",
+            "actor-1",
+            "--as",
+            "actor-1",
+            "--api-url",
+            fake_api.base_url,
+        ]
+    )
+    captured = capsys.readouterr()
+    assert rc == 1
+    assert "no_self_grade" in captured.err
+
+
+def test_run_grade_404_unknown_actor(fake_api, capsys) -> None:
+    fake_api.route(
+        "POST",
+        r"/v1alpha1/runs/(?P<id>[^/]+)/grades",
+        lambda h, m, q, b: h.send_json(
+            404,
+            {
+                "code": 1,
+                "message": "no actor with id does-not-exist",
+                "remediation": "check the id and try again",
+            },
+        ),
+    )
+    fake_api.start()
+    rc = main(
+        [
+            "run",
+            "grade",
+            "run-1",
+            "--rating",
+            "3",
+            "--notes",
+            "solid",
+            "--actor",
+            "does-not-exist",
+            "--as",
+            "actor-grader",
+            "--api-url",
+            fake_api.base_url,
+        ]
+    )
+    captured = capsys.readouterr()
+    assert rc == 1
+    assert "no actor with id does-not-exist" in captured.err
 
 
 def test_run_cancel_text(fake_api, capsys) -> None:
@@ -391,7 +1006,10 @@ def test_run_events_404_unknown_run(fake_api, capsys) -> None:
 def test_run_bare_noun(capsys) -> None:
     rc = main(["run"])
     assert rc == 0
-    assert "usage: nodes run" in capsys.readouterr().out
+    out = capsys.readouterr().out
+    assert "usage: nodes run" in out
+    assert "retag" in out
+    assert "grade" in out
 
 
 def test_run_connection_refused_exit_2(capsys) -> None:

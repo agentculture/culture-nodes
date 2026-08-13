@@ -34,13 +34,19 @@ usage: nodes-op.sh <verb> [args]
   cancel <id>                  cancel a run (reaps items, propagates actor Cancel)
   validate <file.yaml>         server-side compile check, prints digest
   publish <file.yaml>          validate + publish, prints digest
-  create <digest> <input.json> create a run (BILLABLE for agent nodes; needs --yes)
+  create <digest> <input.json> [--category C] create a run (BILLABLE for agent nodes; needs --yes)
   watch <id> [timeout-s]       poll a run to terminal, print outcomes + claims
+  grade <run-id> --rating N --notes "..." [--actor ID] [--as ID] [--category C]
+                                grade a run against an actor (1-5 rating + rationale).
+                                --as defaults to the first registered kind=human actor;
+                                --actor defaults to the run's most recent attempt actor.
+                                Human --as lands confirmed; agent --as lands proposed.
   assign <actor> "<instruction>" [opts]   one-node workflow -> publish -> run -> watch
       opts: --sandbox read-only|workspace-write   (default read-only)
             --timeout DUR                          (default 15m)
             --retries N                            (default 1 — no auto-retry)
             --outcome NAME                         (default completed)
+            --category C                           (optional run category tag)
             --no-watch                             (create and return the run id)
             --yes                                  (required: this bills a session)
   actors                       registered actors (requires `ssh thor`)
@@ -147,12 +153,23 @@ import json,sys; d=json.load(sys.stdin)
 print(d.get("digest",""))'
   ;;
 create)
-  digest="${1:?usage: create <digest> <input.json> [--yes]}"; input="${2:?input json file}"
-  [ "${3:-}" = "--yes" ] && ASSUME_YES=1
+  digest="${1:?usage: create <digest> <input.json> [--category C] [--yes]}"; input="${2:?input json file}"; shift 2 || true
+  category=""
+  while [ $# -gt 0 ]; do
+    case "$1" in
+      --yes) ASSUME_YES=1; shift;;
+      --category) category="$2"; shift 2;;
+      *) echo "nodes-op: unknown create option $1" >&2; exit 1;;
+    esac
+  done
   need_yes
-  body=$(python3 - "$digest" "$input" <<'PYEOF'
+  body=$(python3 - "$digest" "$input" "$category" <<'PYEOF'
 import json, sys
-print(json.dumps({"workflow_digest": sys.argv[1], "input": json.load(open(sys.argv[2]))}))
+digest, input_path, category = sys.argv[1], sys.argv[2], sys.argv[3]
+body = {"workflow_digest": digest, "input": json.load(open(input_path))}
+if category:
+    body["category"] = category
+print(json.dumps(body))
 PYEOF
 )
   api_post /v1alpha1/runs "$body" | py 'import json,sys; d=json.load(sys.stdin); print(d["id"], d.get("state"))'
@@ -168,16 +185,85 @@ watch)
   "$0" run "$id"
   "$0" ledger "$id"
   ;;
+grade)
+  run_id="${1:?usage: grade <run-id> --rating N --notes \"...\" [--actor ID] [--as ID] [--category C] [--node-run-ref REF] [--attempt-ref REF]}"; shift
+  rating=""; notes=""; actor=""; as_actor=""; category=""; node_run_ref=""; attempt_ref=""
+  while [ $# -gt 0 ]; do
+    case "$1" in
+      --rating) rating="$2"; shift 2;;
+      --notes) notes="$2"; shift 2;;
+      --actor) actor="$2"; shift 2;;
+      --as) as_actor="$2"; shift 2;;
+      --category) category="$2"; shift 2;;
+      --node-run-ref) node_run_ref="$2"; shift 2;;
+      --attempt-ref) attempt_ref="$2"; shift 2;;
+      *) echo "nodes-op: unknown grade option $1" >&2; exit 1;;
+    esac
+  done
+  [[ "$rating" =~ ^[1-5]$ ]] || { echo "nodes-op: grade requires --rating N with N in 1-5 (got '${rating:-<empty>}')" >&2; exit 1; }
+  [ -n "$notes" ] || { echo "nodes-op: grade requires --notes \"rationale text\"" >&2; exit 1; }
+
+  # --as defaults to the first registered kind=human actor -- discoverable
+  # cheaply from the actors listing already exposed for the `actors`-less
+  # (ssh-free) case: GET /v1alpha1/actors renders each row's kind.
+  if [ -z "$as_actor" ]; then
+    as_actor=$(api_get /v1alpha1/actors | py '
+import json, sys
+items = json.load(sys.stdin).get("items", [])
+human = [a["id"] for a in items if a.get("kind") == "human"]
+print(human[0] if human else "")')
+    [ -n "$as_actor" ] || { echo "nodes-op: --as not given and no kind=human actor is registered — pass --as ACTOR_ID" >&2; exit 1; }
+  fi
+
+  # --actor defaults to the run's most recently attempted actor -- one extra
+  # GET, the same node_runs[].attempts[].actor_id the `run <id>` verb above
+  # already prints.
+  if [ -z "$actor" ]; then
+    actor=$(api_get "/v1alpha1/runs/$run_id" | py '
+import json, sys
+d = json.load(sys.stdin)
+ids = [a.get("actor_id") for nr in d.get("node_runs", []) for a in nr.get("attempts", []) if a.get("actor_id")]
+print(ids[-1] if ids else "")')
+    [ -n "$actor" ] || { echo "nodes-op: --actor not given and no assigned actor could be discovered on run $run_id — pass --actor ACTOR_ID" >&2; exit 1; }
+  fi
+
+  body=$(python3 - "$rating" "$notes" "$actor" "$as_actor" "$category" "$node_run_ref" "$attempt_ref" <<'PYEOF'
+import json, sys
+rating, notes, actor, as_actor, category, node_run_ref, attempt_ref = sys.argv[1:8]
+body = {
+    "rating": int(rating),
+    "rationale": notes,
+    "evaluated_actor_id": actor,
+    "grading_actor_id": as_actor,
+}
+if category:
+    body["category"] = category
+if node_run_ref:
+    body["node_run_ref"] = node_run_ref
+if attempt_ref:
+    body["attempt_ref"] = attempt_ref
+print(json.dumps(body))
+PYEOF
+)
+  api_post "/v1alpha1/runs/$run_id/grades" "$body" | py '
+import json, sys
+d = json.load(sys.stdin)
+origin = d.get("origin", {})
+data = d.get("data", {})
+print(d.get("id", ""), d.get("authority", ""), origin.get("kind", ""),
+      "rating=" + str(data.get("rating", "")), "actor=" + str(data.get("evaluated_actor_id", "")))'
+  ;;
 assign)
   actor="${1:?usage: assign <codex-thor|codex-orin> \"instruction\" [opts]}"; shift
   instruction="${1:?assign needs an instruction}"; shift
-  sandbox=read-only; timeout=15m; retries=1; outcome=completed; watch=1
+  sandbox=read-only; timeout=15m; retries=1; outcome=completed; watch=1; category=""
   while [ $# -gt 0 ]; do
     case "$1" in
       --sandbox) sandbox="$2"; shift 2;;
       --timeout) timeout="$2"; shift 2;;
       --retries) retries="$2"; shift 2;;
       --outcome) outcome="$2"; shift 2;;
+      --category) category="$2"; shift 2;;
       --no-watch) watch=0; shift;;
       --yes) ASSUME_YES=1; shift;;
       *) echo "nodes-op: unknown assign option $1" >&2; exit 1;;
@@ -202,9 +288,13 @@ import json, sys
 print(json.dumps({"instruction": sys.argv[1], "sandbox": sys.argv[2],
                   "success_outcome": sys.argv[3], "repo": sys.argv[4]}))
 PYEOF
-  out=$(NODES_OP_YES=1 "$0" create "$digest" "$wf.json")
+  if [ -n "$category" ]; then
+    out=$(NODES_OP_YES=1 "$0" create "$digest" "$wf.json" --category "$category")
+  else
+    out=$(NODES_OP_YES=1 "$0" create "$digest" "$wf.json")
+  fi
   run_id=$(echo "$out" | awk '{print $1}')
-  echo "assigned: run=$run_id actor=$actor sandbox=$sandbox timeout=$timeout"
+  echo "assigned: run=$run_id actor=$actor sandbox=$sandbox timeout=$timeout${category:+ category=$category}"
   [ "$watch" = "1" ] && "$0" watch "$run_id"
   ;;
 actors)

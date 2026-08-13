@@ -230,6 +230,39 @@ func artifactMap(a Artifacts) map[string]string {
 	return out
 }
 
+// evidenceArtifactRefs collects every stored-content reference this result
+// names that the evidence record should point at: the runner's own Artifacts
+// block, plus the workspace diff artifact ref when (and only when) the
+// changed_paths observation says the workspace comparison it came from was
+// actually measured — an unmeasured diff artifact ref would assert a
+// comparison the runner never made. Deduplicated and sorted so the payload
+// is deterministic for the same Result.
+func evidenceArtifactRefs(res Result) []string {
+	seen := map[string]bool{}
+	var refs []string
+	add := func(ref string) {
+		if ref == "" || seen[ref] {
+			return
+		}
+		seen[ref] = true
+		refs = append(refs, ref)
+	}
+	if res.Artifacts != nil {
+		add(res.Artifacts.StdoutRef)
+		add(res.Artifacts.StderrRef)
+		add(res.Artifacts.OutputWorkspaceRef)
+		add(res.Artifacts.ResultPayloadRef)
+		for _, v := range res.Artifacts.Additional {
+			add(v)
+		}
+	}
+	if res.Observations.ChangedPaths.Measured {
+		add(res.Changes.DiffArtifactRef)
+	}
+	sort.Strings(refs)
+	return refs
+}
+
 // evidenceBuilder accumulates an evidence payload and, in lockstep, the
 // manifest pointers that declare it. Every write goes through set, so there
 // is no way to add a field without declaring it — the two lists are the same
@@ -266,10 +299,13 @@ func (b *evidenceBuilder) measure(key string, value any) {
 // manifest that authorizes it.
 //
 // What goes in: the runner's self-description, the honesty declarations, and
-// every measurement whose observation says measured. What stays out:
-// anything the observations mark unmeasured — workspace changes on a platform
-// that cannot see a workspace, a subprocess exit code the platform never
-// watched, artifact refs the executed function asserted. Those are not
+// every measurement whose observation says measured — including, when the
+// runner's own changed_paths observation says it directly compared the
+// workspace (task t12, spec claim c15, honesty condition h10), the changed
+// files, a diff digest, and artifact refs from that comparison. What stays
+// out: anything the observations mark unmeasured — workspace changes on a
+// platform that cannot see a workspace, a subprocess exit code the platform
+// never watched, artifact refs the executed function asserted. Those are not
 // omitted quietly: covered_scope names what the observation actually covers
 // and completeness says `partial` when it is partial.
 func buildEvidence(res Result, contract NodeContract) (ledger.Record, ledger.RunnerManifest, error) {
@@ -317,6 +353,35 @@ func buildEvidence(res Result, contract NodeContract) (ledger.Record, ledger.Run
 		if code, ok := res.ExitCode(); ok {
 			b.measure("exit_code", code)
 		}
+	}
+	// Workspace-snapshot facts (task t12, spec claim c15, honesty condition
+	// h10): changed_paths and snapshot_digest ride the same measured gate as
+	// every other observation above — they appear only when the runner's own
+	// changed_paths observation says it directly compared the workspace.
+	// Neither headspace-cli 0.11.0 nor the Lambda adapter can honour that
+	// comparison today (see their own package docs), so this is dormant on
+	// both until a runner that can measure it exists; a hook operation is the
+	// one place today's worker always requests it (buildHookOperation), so a
+	// capable runner starts producing this evidence through this same seam
+	// without any worker change.
+	if res.Observations.ChangedPaths.Measured {
+		if len(res.Changes.Paths) > 0 {
+			b.set("changed_paths", res.Changes.Paths)
+		}
+		if res.Changes.SnapshotDigest != "" {
+			b.set("snapshot_digest", res.Changes.SnapshotDigest)
+		}
+	}
+	// artifact_refs is the evidence schema's own named field
+	// (schemas/ledger/evidence.schema.json) for stored content this record
+	// points at. It is not gated on changed_paths being measured the way the
+	// diff artifact ref folded into it is: an artifact ref's trust comes from
+	// the store's own content-addressing at Put time (buildOutput's own
+	// comment makes the identical point about CodeNodeOutput.Artifacts), not
+	// from a runner's honesty about a workspace comparison it may never have
+	// made.
+	if refs := evidenceArtifactRefs(res); len(refs) > 0 {
+		b.set("artifact_refs", refs)
 	}
 
 	payload, err := json.Marshal(b.data)

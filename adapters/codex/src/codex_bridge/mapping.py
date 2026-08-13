@@ -22,6 +22,33 @@ event). This module reports it as the node's own declared `incomplete`
 domain outcome ONLY when the invocation explicitly named one; otherwise it
 is reported as an execution failure. It is never silently folded into
 `"completed"` — no adapter-specific exemption exists for this rule.
+
+Task t10's `workspace_measured` block: every `sync_response`/`terminal_event`
+body carries a `workspace_measured` key, STRUCTURALLY SEPARATE from
+`output` (which carries codex's own model-claimed `changed_files` — see
+`output_from_task_result`). `workspace_measured` is never built here — this
+module stays a pure translation with no subprocess of its own — it is
+measured by `workspace.py` (via real `git` calls bracketing the session)
+and simply passed through by the `workspace_measured` keyword argument
+below. The shape, identical across `claude_code_bridge`, `codex_bridge`,
+and `colleague_bridge`:
+
+    {
+      "measured": bool,
+      "repo": str | None,
+      "reason": str | None,       # unmeasured reason, or partial-probe note while measured
+      "branch": str | None,
+      "head_before": str | None,  # git rev-parse HEAD, captured before dispatch
+      "head_after": str | None,   # git rev-parse HEAD, captured after
+      "status_porcelain": str | None,  # git status --porcelain, captured after
+      "changed_files": list[str],      # bridge-measured, never model-claimed
+      "diffstat": str | None,          # git diff --stat vs head_before
+    }
+
+A caller that omits `workspace_measured` (e.g. an older test literal) gets
+`measured: False` with an honest reason rather than a crash or a fabricated
+value — real dispatch through `server.py`/`async_runner.py` always supplies
+a real measurement.
 """
 
 from __future__ import annotations
@@ -134,6 +161,24 @@ def classify(
     )
 
 
+def _default_workspace_measured() -> dict[str, Any]:
+    """The `workspace_measured` fallback when a caller builds a response
+    without supplying one. Mirrors `workspace.unmeasured()`'s shape exactly
+    (duplicated rather than imported: this module never depends on the
+    subprocess-touching `workspace` module, per its own docstring)."""
+    return {
+        "measured": False,
+        "repo": None,
+        "reason": "no workspace measurement was supplied to the mapping layer",
+        "branch": None,
+        "head_before": None,
+        "head_after": None,
+        "status_porcelain": None,
+        "changed_files": [],
+        "diffstat": None,
+    }
+
+
 def usage_from_task_result(task_result: dict[str, Any] | None) -> dict[str, Any]:
     """Map codex's own `usage` (input/output tokens) onto §13.2 `Usage`.
 
@@ -226,14 +271,26 @@ def sync_response(
     actor_id: str,
     created_at: str,
     timed_out: bool = False,
+    workspace_measured: dict[str, Any] | None = None,
 ) -> SyncResponse:
-    """Build the §13.2 200 body, or an execution-failure error body."""
+    """Build the §13.2 200 body, or an execution-failure error body.
+
+    *workspace_measured* (task t10) is measured by `workspace.py` around
+    the dispatch and attached to EVERY branch below, success or failure —
+    the workspace may have changed even when the session itself did not
+    succeed, so this is never conditioned on `classification.domain`.
+    """
+    measured = (
+        workspace_measured if workspace_measured is not None else _default_workspace_measured()
+    )
+
     if timed_out:
         return SyncResponse(
             status_code=408,
             body={
                 "error": "codex did not finish within the bridge's sync timeout",
                 "class": CLASS_TIMEOUT,
+                "workspace_measured": measured,
             },
         )
 
@@ -241,7 +298,11 @@ def sync_response(
     if not classification.domain:
         return SyncResponse(
             status_code=500,
-            body={"error": classification.message, "class": classification.error_class},
+            body={
+                "error": classification.message,
+                "class": classification.error_class,
+                "workspace_measured": measured,
+            },
         )
 
     return SyncResponse(
@@ -257,6 +318,7 @@ def sync_response(
             "artifact_refs": [],
             "continuation_ref": None,
             "usage": usage_from_task_result(task_result),
+            "workspace_measured": measured,
         },
     )
 
@@ -278,8 +340,17 @@ def terminal_event(
     created_at: str,
     timed_out: bool = False,
     detail: str = "",
+    workspace_measured: dict[str, Any] | None = None,
 ) -> TerminalEvent:
-    """Build the terminal callback payload for an asynchronous invocation."""
+    """Build the terminal callback payload for an asynchronous invocation.
+
+    *workspace_measured* (task t10) is attached to EVERY branch below, the
+    same way `sync_response` does — see its own docstring for why.
+    """
+    measured = (
+        workspace_measured if workspace_measured is not None else _default_workspace_measured()
+    )
+
     if timed_out:
         return TerminalEvent(
             kind="failed",
@@ -287,6 +358,7 @@ def terminal_event(
                 "class": CLASS_TIMEOUT,
                 "message": "codex did not finish within the bridge's async wait bound",
                 "detail": detail,
+                "workspace_measured": measured,
             },
         )
 
@@ -298,6 +370,7 @@ def terminal_event(
                 "class": classification.error_class,
                 "message": classification.message,
                 "detail": detail,
+                "workspace_measured": measured,
             },
         )
 
@@ -313,5 +386,6 @@ def terminal_event(
             },
             "artifact_refs": [],
             "usage": usage_from_task_result(task_result),
+            "workspace_measured": measured,
         },
     )

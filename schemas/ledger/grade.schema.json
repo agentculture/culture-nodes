@@ -1,0 +1,75 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://nodes.culture.dev/schemas/ledger/grade.schema.json",
+  "title": "Ledger record: grade",
+  "description": "A first-class OPINION record: a bounded rating and a free-text rationale evaluating a completed run/attempt, recorded against the evaluated actor (issue #28 item 1; PRD §10.4 extended). A grade is never a review's confirm/reject verdict on a claim, and it never carries observed or derived authority under any origin — it states a judgment, not a measurement a runner directly observed or a value a deterministic producer derived. The grading producer is the envelope's `origin`/`authority`, exactly like every other record; the actor being graded is a distinct subject named in `data.evaluated_actor_id`, because the two must never be the same actor (no actor grades its own work) -- the ledger append layer refuses that case beside the PRD §10.4 authority checks. The run being graded is the envelope's `run_id`, since every record is already run-scoped; `data.node_run_ref`/`data.attempt_ref` narrow the evaluation to one node run or attempt when the grade is not about the whole run.",
+  "allOf": [
+    {
+      "$ref": "envelope.schema.json"
+    }
+  ],
+  "required": [
+    "record_type"
+  ],
+  "properties": {
+    "record_type": {
+      "const": "grade"
+    },
+    "data": {
+      "type": "object",
+      "$comment": "Unlike the Phase 0 record types, a grade's core fields are required rather than documentary: a rating with no named evaluated actor, or an actor with no rating and no rationale, is not a grade.",
+      "required": [
+        "rating",
+        "rationale",
+        "evaluated_actor_id"
+      ],
+      "properties": {
+        "rating": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 5,
+          "description": "The evaluator's opinion score on a fixed 1-5 scale, bounded so grades stay comparable across actors and evaluators."
+        },
+        "rationale": {
+          "type": "string",
+          "minLength": 1,
+          "description": "Free-text justification for the rating. A number alone is not an opinion record; it must carry the reasoning behind it."
+        },
+        "evaluated_actor_id": {
+          "type": "string",
+          "minLength": 1,
+          "description": "The actor being evaluated. Distinct from the envelope's `origin.actor_id`, which is the grading actor -- the ledger append layer refuses a grade where the two are equal."
+        },
+        "node_run_ref": {
+          "oneOf": [
+            {
+              "type": "string",
+              "minLength": 1
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "The node run being evaluated, when the grade is scoped narrower than the whole run. Distinct from the envelope's `node_run_id`, which names what produced this grade record rather than what it evaluates."
+        },
+        "attempt_ref": {
+          "oneOf": [
+            {
+              "type": "string",
+              "minLength": 1
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "The attempt being evaluated, when the grade is scoped to one attempt rather than the whole node run. Distinct from the envelope's `attempt_id` for the same reason as `node_run_ref`."
+        },
+        "category": {
+          "type": "string",
+          "minLength": 1,
+          "description": "An optional flat tag (e.g. review, audit, explore, implement, docs) carried onto the grade so per-actor aggregates can slice quality by task category (issue #28 item 3). Documentary and not a taxonomy: an absent category is a real answer, not an error."
+        }
+      }
+    }
+  }
+}

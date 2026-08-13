@@ -9,6 +9,7 @@ import (
 	"github.com/agentculture/culture-nodes/internal/clifmt"
 	"github.com/agentculture/culture-nodes/internal/scheduler"
 	"github.com/agentculture/culture-nodes/internal/store/postgres"
+	"github.com/agentculture/culture-nodes/internal/telemetry"
 )
 
 // `nodes scheduler`: the process that fires durable timers and sweeps expired
@@ -42,6 +43,29 @@ func cmdScheduler(args []string, jsonMode bool) (int, error) {
 	ctx, stop := shutdownContext()
 	defer stop()
 
+	// task t19: env-gated (OTEL_EXPORTER_OTLP_ENDPOINT); telemetry.New
+	// returns a safe no-op Provider when it is unset, so a standalone
+	// `nodes scheduler` process with no collector configured fires
+	// deadline timers exactly as it did before this instrumentation
+	// existed. This is the one engine-transition-commit path this package
+	// drives itself (deadline timeouts, scheduler.go's commitTimeout).
+	telemetryProvider, err := telemetry.New(ctx)
+	if err != nil {
+		return 0, &clifmt.CliError{
+			Code:    clifmt.ExitEnvError,
+			Message: fmt.Sprintf("building telemetry: %v", err),
+			Remediation: "verify OTEL_EXPORTER_OTLP_ENDPOINT and any other OTEL_EXPORTER_OTLP_* " +
+				"variables, or unset them to disable export",
+		}
+	}
+	defer func() {
+		flushCtx, cancelFlush := context.WithTimeout(context.Background(), shutdownTimeout)
+		defer cancelFlush()
+		if err := telemetryProvider.Shutdown(flushCtx); err != nil {
+			clifmt.EmitDiagnostic(fmt.Sprintf("nodes scheduler: telemetry shutdown: %v", err))
+		}
+	}()
+
 	db, err := postgres.Connect(ctx, url)
 	if err != nil {
 		return 0, &clifmt.CliError{
@@ -56,6 +80,7 @@ func cmdScheduler(args []string, jsonMode bool) (int, error) {
 		OwnerID:      os.Getenv("NODES_SCHEDULER_ID"),
 		TickInterval: *tickInterval,
 		BatchSize:    *batchSize,
+		Telemetry:    telemetryProvider,
 	})
 
 	startup := map[string]any{
@@ -97,8 +122,11 @@ several is how the role is made highly available, not a misconfiguration.
 
 ## Configuration
 
-    NODES_DATABASE_URL   PostgreSQL connection URL (required)
-    NODES_SCHEDULER_ID   instance identity stamped into timers.claimed_by
+    NODES_DATABASE_URL           PostgreSQL connection URL (required)
+    NODES_SCHEDULER_ID           instance identity stamped into timers.claimed_by
+    OTEL_EXPORTER_OTLP_ENDPOINT  OTLP collector endpoint; unset disables all
+                                  tracing/metrics export (no exporter, no
+                                  goroutine, no dial -- see internal/telemetry)
 
 ## Usage
 

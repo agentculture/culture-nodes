@@ -2,7 +2,11 @@ import { describe, expect, it } from "vitest";
 import { render, screen, within } from "@testing-library/react";
 import { MemoryRouter } from "react-router-dom";
 import JobsTable from "./JobsTable";
-import { JOB_RUNS_PAGE_1 } from "../fixtures/node-runs-fixture";
+import {
+  JOB_RUNS_ALL,
+  JOB_RUNS_NAMED_RUNS,
+  JOB_RUNS_PAGE_1,
+} from "../fixtures/node-runs-fixture";
 
 function renderTable(items = JOB_RUNS_PAGE_1) {
   return render(
@@ -101,5 +105,75 @@ describe("JobsTable", () => {
     expect(times).toHaveLength(2);
     expect(times[0]).toHaveAttribute("dateTime", item.created_at);
     expect(times[1]).toHaveAttribute("dateTime", item.updated_at);
+  });
+
+  describe("per-node-run usage (task t5)", () => {
+    it("renders tokens compactly for a row that reported usage", () => {
+      const { container } = renderTable();
+      // JOB_RUNS_PAGE_1[3] (verify) carries USAGE_WITH_COST.
+      const row = container.querySelector(
+        `[data-node-run-id="${JOB_RUNS_PAGE_1[3].id}"]`,
+      ) as HTMLElement;
+      expect(within(row).getByText("12.3k in / 4.1k out")).toBeInTheDocument();
+    });
+
+    it("renders the not-reported state, never '0 tokens', for a row with no usage", () => {
+      const { container } = renderTable();
+      // JOB_RUNS_PAGE_1[0] (build) carries USAGE_NOT_REPORTED.
+      const row = container.querySelector(
+        `[data-node-run-id="${JOB_RUNS_PAGE_1[0].id}"]`,
+      ) as HTMLElement;
+      expect(within(row).getByText("not reported")).toBeInTheDocument();
+      expect(within(row).queryByText(/0 in \/ 0 out/)).not.toBeInTheDocument();
+    });
+  });
+
+  describe("run name/category lookup (task t5)", () => {
+    const runsById = Object.fromEntries(
+      JOB_RUNS_NAMED_RUNS.map((run) => [run.id, run]),
+    );
+
+    it("falls back to the bare run id when no lookup is provided", () => {
+      renderTable();
+      const item = JOB_RUNS_PAGE_1[0];
+      expect(
+        screen.getByRole("link", { name: item.run_id }),
+      ).toBeInTheDocument();
+    });
+
+    it("shows the run's given name and category chip when the lookup has one", () => {
+      render(
+        <MemoryRouter>
+          <JobsTable items={JOB_RUNS_PAGE_1} runsById={runsById} />
+        </MemoryRouter>,
+      );
+      const item = JOB_RUNS_PAGE_1[1]; // human-review row, named "nightly regression sweep"
+      const row = screen
+        .getByText(item.node_id, { selector: "code" })
+        .closest("tr") as HTMLElement;
+      const name = within(row).getByText("nightly regression sweep");
+      expect(name).toHaveAttribute("data-derived", "false");
+      expect(within(row).getByText("ci")).toBeInTheDocument();
+    });
+
+    it("shows a derived display_hint marked distinctly, never as a given name", () => {
+      render(
+        <MemoryRouter>
+          <JobsTable items={JOB_RUNS_ALL} runsById={runsById} />
+        </MemoryRouter>,
+      );
+      // The second named fixture run belongs to a JOB_RUNS_PAGE_2 row.
+      const item = JOB_RUNS_ALL.find(
+        (candidate) => candidate.run_id === JOB_RUNS_NAMED_RUNS[1].id,
+      )!;
+      const row = screen
+        .getByText(item.node_id, { selector: "code" })
+        .closest("tr") as HTMLElement;
+      const hint = within(row).getByText(
+        "fix the flaky pytest-report parser",
+      );
+      expect(hint).toHaveAttribute("data-derived", "true");
+      expect(hint.className).toContain("run-name--derived");
+    });
   });
 });

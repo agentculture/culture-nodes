@@ -11,6 +11,7 @@ import (
 	"github.com/agentculture/culture-nodes/internal/engine"
 	"github.com/agentculture/culture-nodes/internal/ledger"
 	"github.com/agentculture/culture-nodes/internal/store/postgres"
+	"github.com/agentculture/culture-nodes/internal/telemetry"
 )
 
 // dispatchActor invokes a §13 actor for an `agent` or `action.http` node.
@@ -28,7 +29,20 @@ func (w *Worker) dispatchActor(
 	spec *workflowSpec,
 	node *nodeSpec,
 	dc DispatchContext,
-) error {
+) (err error) {
+	// Task t19's worker seam: one span and one metric recording per
+	// dispatch attempt, wrapping every path through this function —
+	// budget/registry/pre_run refusals, a synchronous result, an
+	// asynchronous park, and an invocation error alike. node.Uses is the
+	// actor *reference* the node names, recorded as the actor id even on a
+	// path that never resolves an endpoint: which actor a dispatch was
+	// addressed to is exactly the fact worth keeping on a failed dispatch.
+	ctx, op := w.opts.Telemetry.Start(ctx, telemetry.SeamWorkerDispatch,
+		telemetry.RunID(dc.RunID), telemetry.NodeID(dc.NodeID), telemetry.AttemptID(dc.AttemptID),
+		telemetry.ActorID(node.Uses),
+	)
+	defer func() { op.End(ctx, err == nil) }()
+
 	// The dispatch budget is checked before anything else this function can
 	// do — before the registry lookup, before a pre_run hook, and certainly
 	// before the actor is invoked — because everything below this line costs
@@ -69,6 +83,13 @@ func (w *Worker) dispatchActor(
 		return w.failAttempt(ctx, claimed, engine.StatusPolicyDenied, string(actors.ClassAuthOrPolicy),
 			fmt.Sprintf("node %q uses %q, which did not resolve to an endpoint: %v", node.ID, node.Uses, err))
 	}
+
+	// Best-effort durable attribution: the actors-table row id this
+	// reference resolves to today, recorded on the attempt at completion
+	// (attempts.actor_id) so per-actor surfaces can attribute the work. A
+	// registry that cannot answer (StaticRegistry, a vanished row) yields
+	// "" — unattributed, never a dispatch failure.
+	actorRowID := w.actorRowID(ctx, node.Uses)
 
 	req := actors.InvocationRequest{
 		ProtocolVersion: actors.ProtocolVersion,
@@ -121,14 +142,14 @@ func (w *Worker) dispatchActor(
 	}
 
 	if !response.Async {
-		return w.completeFromResult(ctx, claimed, d, node, dc, response.Result, preRun)
+		return w.completeFromResult(ctx, claimed, d, node, dc, response.Result, preRun, actorRowID)
 	}
 	if node.PostRun != nil {
 		// See hooks.go's package doc for why async+post_run is refused here
 		// rather than run against a callback-delivered result.
 		return w.refuseAsyncPostRun(ctx, claimed, d, node, dc, preRun)
 	}
-	return w.park(ctx, claimed, d, node, dc, response.Accepted)
+	return w.park(ctx, claimed, d, node, dc, response.Accepted, actorRowID)
 }
 
 // callbackFor builds §13.1's callback block: where to POST, and a token that
@@ -189,7 +210,7 @@ func (w *Worker) callbackURL(attemptID string) string {
 // ledger delta).
 func (w *Worker) completeFromResult(
 	ctx context.Context, claimed postgres.ClaimedWork, d postgres.Dispatch, node *nodeSpec, dc DispatchContext,
-	result *actors.InvocationResult, preRun *hookRun,
+	result *actors.InvocationResult, preRun *hookRun, actorRowID string,
 ) error {
 	if result == nil {
 		return w.failAttempt(ctx, claimed, engine.StatusContractRejected, string(actors.ClassContract),
@@ -242,6 +263,8 @@ func (w *Worker) completeFromResult(
 		Outcome:     outcome,
 		Output:      output,
 		LedgerDelta: agentDelta,
+		Usage:       result.Usage.ToEngine(),
+		ActorID:     actorRowID,
 	})
 	if err != nil {
 		if isStale(err) {
@@ -307,6 +330,7 @@ func (w *Worker) park(
 	node *nodeSpec,
 	dc DispatchContext,
 	accepted *actors.AsyncAccepted,
+	actorRowID string,
 ) error {
 	if accepted == nil {
 		return w.failAttempt(ctx, claimed, engine.StatusContractRejected, string(actors.ClassContract),
@@ -325,6 +349,7 @@ func (w *Worker) park(
 		NodeID:                node.ID,
 		AttemptID:             dc.AttemptID,
 		ActorRef:              node.Uses,
+		ActorID:               actorRowID,
 		InvocationID:          accepted.InvocationID,
 		HeartbeatAfterSeconds: accepted.HeartbeatAfterSeconds,
 		SupportsCancellation:  accepted.SupportsCancellation,
@@ -442,10 +467,12 @@ func (w *Worker) dispatchSeam(
 		// acceptance does: same durable record, same fencing tuple, same
 		// released capacity. The seam's own handle stands in for the actor's
 		// invocation id.
+		// Seam dispatches (code/runner paths) attribute at their own
+		// completion sites; no actor row resolution happened here.
 		return w.park(ctx, claimed, d, node, dc, &actors.AsyncAccepted{
 			InvocationID:          result.AsyncRef,
 			HeartbeatAfterSeconds: 0,
-		})
+		}, "")
 	}
 
 	var delta []ledger.Record

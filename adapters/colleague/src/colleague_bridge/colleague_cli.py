@@ -108,10 +108,19 @@ def run_sync(
     committing partial WIP after that; this function does not block on it
     forever, but it never escalates to SIGKILL itself).
     """
-    argv = [cfg.colleague_bin, *_common_argv(
-        instruction, repo, role=role, max_steps=max_steps, mode=mode,
-        open_pr=cfg.open_pr, allow_dirty=cfg.allow_dirty,
-    ), "--no-watch"]
+    argv = [
+        cfg.colleague_bin,
+        *_common_argv(
+            instruction,
+            repo,
+            role=role,
+            max_steps=max_steps,
+            mode=mode,
+            open_pr=cfg.open_pr,
+            allow_dirty=cfg.allow_dirty,
+        ),
+        "--no-watch",
+    ]
 
     proc = subprocess.Popen(  # noqa: S603 - the sanctioned subprocess boundary
         argv,
@@ -200,10 +209,19 @@ def spawn_background(
     `Config.background_dispatch_timeout_seconds` as a defensive ceiling, not
     because the normal case is slow.
     """
-    argv = [cfg.colleague_bin, *_common_argv(
-        instruction, repo, role=role, max_steps=max_steps, mode=mode,
-        open_pr=cfg.open_pr, allow_dirty=cfg.allow_dirty,
-    ), "--background"]
+    argv = [
+        cfg.colleague_bin,
+        *_common_argv(
+            instruction,
+            repo,
+            role=role,
+            max_steps=max_steps,
+            mode=mode,
+            open_pr=cfg.open_pr,
+            allow_dirty=cfg.allow_dirty,
+        ),
+        "--background",
+    ]
 
     try:
         proc = subprocess.run(  # noqa: S603 - the sanctioned subprocess boundary

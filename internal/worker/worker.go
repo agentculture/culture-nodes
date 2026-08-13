@@ -13,6 +13,7 @@ import (
 	"github.com/agentculture/culture-nodes/internal/runners"
 	idstore "github.com/agentculture/culture-nodes/internal/store"
 	"github.com/agentculture/culture-nodes/internal/store/postgres"
+	"github.com/agentculture/culture-nodes/internal/telemetry"
 )
 
 // Defaults. Each is a named constant because a deployment tuning the worker
@@ -164,6 +165,15 @@ type Options struct {
 	// observability only: a failed dispatch never stops the loop, because the
 	// work item's lease will expire and another worker will retry it.
 	OnError func(error)
+
+	// Telemetry instruments the actor dispatch seam (task t19,
+	// internal/worker/dispatch.go's dispatchActor) through
+	// internal/telemetry. The zero value, a nil *telemetry.Provider, is a
+	// safe no-op — every telemetry.Provider method tolerates a nil
+	// receiver — so a Worker built without setting this field (every
+	// existing caller, every existing test) behaves exactly as it did
+	// before this field existed.
+	Telemetry *telemetry.Provider
 }
 
 // Worker claims ready work and dispatches it. It is safe for concurrent use;
@@ -538,4 +548,20 @@ func sleepCtx(ctx context.Context, d time.Duration) bool {
 	case <-ctx.Done():
 		return false
 	}
+}
+
+// actorRowID best-effort resolves a node's actor reference to its
+// actors-table row id for attempt attribution. Any miss — a registry
+// without the capability, an unknown ref, a query error — yields "":
+// attribution is worth having, never worth failing a dispatch over.
+func (w *Worker) actorRowID(ctx context.Context, ref string) string {
+	r, ok := w.opts.Registry.(actorRowIDResolver)
+	if !ok {
+		return ""
+	}
+	id, err := r.ActorRowID(ctx, ref)
+	if err != nil {
+		return ""
+	}
+	return id
 }

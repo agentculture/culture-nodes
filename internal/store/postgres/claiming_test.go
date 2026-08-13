@@ -738,8 +738,14 @@ func TestTerminalRunStatusesMatchTheEngineVocabulary(t *testing.T) {
 	for _, status := range postgres.TerminalRunStatuses() {
 		guarded[status] = true
 	}
+	active := map[string]bool{}
+	for _, status := range postgres.ActiveRunStatuses() {
+		active[status] = true
+	}
 
-	// Every state the engine declares, checked both ways.
+	// Every state the engine declares, checked three ways: terminal-guard
+	// membership matches Terminal(), active-list membership is exactly its
+	// negation, and no state is claimed by both or neither list.
 	for _, state := range []engine.RunState{
 		engine.RunCreated, engine.RunRunning, engine.RunWaiting,
 		engine.RunCompleted, engine.RunFailed, engine.RunCancelled,
@@ -747,9 +753,21 @@ func TestTerminalRunStatusesMatchTheEngineVocabulary(t *testing.T) {
 		if got, want := guarded[string(state)], state.Terminal(); got != want {
 			t.Errorf("run state %q: guarded as terminal = %v, engine.RunState.Terminal() = %v", state, got, want)
 		}
+		if got, want := active[string(state)], !state.Terminal(); got != want {
+			t.Errorf("run state %q: guarded as active = %v, want %v", state, got, want)
+		}
+		if guarded[string(state)] && active[string(state)] {
+			t.Errorf("run state %q is claimed by both TerminalRunStatuses() and ActiveRunStatuses()", state)
+		}
 	}
 	if len(guarded) != len(postgres.TerminalRunStatuses()) {
 		t.Errorf("TerminalRunStatuses() contains duplicates: %v", postgres.TerminalRunStatuses())
+	}
+	if len(active) != len(postgres.ActiveRunStatuses()) {
+		t.Errorf("ActiveRunStatuses() contains duplicates: %v", postgres.ActiveRunStatuses())
+	}
+	if len(guarded)+len(active) != 6 {
+		t.Errorf("TerminalRunStatuses() + ActiveRunStatuses() cover %d of engine.RunState's 6 values", len(guarded)+len(active))
 	}
 }
 

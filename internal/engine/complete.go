@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/agentculture/culture-nodes/internal/ledger"
+	"github.com/agentculture/culture-nodes/internal/telemetry"
 )
 
 // CompleteAttempt is the PRD §12.5 transaction: one node attempt's report
@@ -47,6 +48,13 @@ func (e *Engine) CompleteAttempt(ctx context.Context, req CompletionRequest) (Co
 		return CompletionResult{}, err
 	}
 
+	// Task t19's engine seam: one span and one metric recording per §12.5
+	// transaction attempt, wrapping the entire InTx call below so its
+	// duration is the transaction's real commit latency, not an estimate.
+	// A malformed request (validated above) never reaches here — there is
+	// no transaction to report on for one.
+	ctx, op := e.telemetry.Start(ctx, telemetry.SeamEngineTransitionCommit, telemetry.ActorID(req.ActorID))
+
 	var result CompletionResult
 	err := e.store.InTx(ctx, func(ctx context.Context, tx Tx) error {
 		c := &completion{engine: e, tx: tx, req: req, now: e.now().UTC()}
@@ -56,6 +64,18 @@ func (e *Engine) CompleteAttempt(ctx context.Context, req CompletionRequest) (Co
 		result = c.result
 		return nil
 	})
+
+	op.End(ctx, err == nil,
+		telemetry.RunID(result.RunID),
+		telemetry.NodeID(result.NodeID),
+		telemetry.AttemptID(result.AttemptID),
+		telemetry.AttemptNumber(result.AttemptNumber),
+		telemetry.TechStatus(string(result.TechStatus)),
+		telemetry.Outcome(result.Outcome),
+		telemetry.NodeRunState(string(result.NodeRunState)),
+		telemetry.RunState(string(result.RunState)),
+	)
+
 	if err != nil {
 		return CompletionResult{}, err
 	}
@@ -276,6 +296,7 @@ func (c *completion) recordAttempt(ctx context.Context) error {
 		Result:       jsonOrNull(c.req.Output),
 		StartedAt:    c.now,
 		CompletedAt:  c.now,
+		Usage:        c.req.Usage,
 	}); err != nil {
 		return err
 	}

@@ -337,3 +337,114 @@ func TestCompletenessIsUnknownWhenNothingWasMeasured(t *testing.T) {
 		t.Errorf("completeness = %v, want unknown", got)
 	}
 }
+
+// workspaceSnapshotShapedResult is a result shaped like a runner that CAN
+// directly compare the workspace (task t12, spec claim c15) — headspace-cli
+// 0.11.0 and the Lambda adapter cannot (see their own package docs), which
+// is exactly why this seam has to be proven with a result that measures it,
+// not with either adapter's own shape.
+func workspaceSnapshotShapedResult() runners.Result {
+	res := minimalResult()
+	res.Changes = runners.Changes{
+		Complete:        true,
+		Paths:           []string{"internal/worker/hooks.go", "internal/runners/dispatch.go"},
+		SnapshotDigest:  "sha256:" + strings.Repeat("c", 64),
+		DiffArtifactRef: "artifact://diff/att_01JAV3QK2M0000000000000010",
+	}
+	res.Artifacts = &runners.Artifacts{
+		StdoutRef: "artifact://logs/stdout",
+	}
+	res.Observations = runners.Observations{
+		ExitStatus:    runners.Observation{Measured: true, Complete: true, Method: "wait4"},
+		ChangedPaths:  runners.Observation{Measured: true, Complete: true, Method: "workspace_snapshot_diff"},
+		Logs:          runners.Observation{Measured: true, Complete: true},
+		ResourceUsage: runners.Observation{Measured: false, Complete: false},
+	}
+	return res
+}
+
+// TestBuildCompletionSurfacesWorkspaceSnapshotEvidenceWhenMeasured is the
+// standard post_run workspace-snapshot pattern's evidence half (task t12,
+// spec claim c15, honesty condition h10): when a runner's changed_paths
+// observation says it directly measured the workspace comparison, the
+// changed files, the snapshot digest, and every artifact ref — including the
+// diff artifact ref — land in the same observed evidence record every other
+// runner-measured fact does, admissible against its own manifest.
+func TestBuildCompletionSurfacesWorkspaceSnapshotEvidenceWhenMeasured(t *testing.T) {
+	completion, err := runners.BuildCompletion(workspaceSnapshotShapedResult(), testContract())
+	if err != nil {
+		t.Fatalf("BuildCompletion: %v", err)
+	}
+	data, err := completion.LedgerDelta[0].DataMap()
+	if err != nil {
+		t.Fatalf("DataMap: %v", err)
+	}
+
+	paths, ok := data["changed_paths"].([]any)
+	if !ok || len(paths) != 2 {
+		t.Fatalf("changed_paths = %v, want the two measured paths", data["changed_paths"])
+	}
+	wantDigest := "sha256:" + strings.Repeat("c", 64)
+	if got := data["snapshot_digest"]; got != wantDigest {
+		t.Errorf("snapshot_digest = %v, want %q", got, wantDigest)
+	}
+
+	refs, ok := data["artifact_refs"].([]any)
+	if !ok {
+		t.Fatalf("artifact_refs missing or not an array: %v", data["artifact_refs"])
+	}
+	wantRefs := map[string]bool{
+		"artifact://logs/stdout":                         true,
+		"artifact://diff/att_01JAV3QK2M0000000000000010": true,
+	}
+	if len(refs) != len(wantRefs) {
+		t.Fatalf("artifact_refs = %v, want exactly %v", refs, wantRefs)
+	}
+	for _, r := range refs {
+		if !wantRefs[r.(string)] {
+			t.Errorf("artifact_refs contains unexpected ref %v", r)
+		}
+	}
+
+	if err := ledger.CheckAuthority(completion.LedgerDelta[0], completion.RunnerManifest); err != nil {
+		t.Fatalf("the delta does not pass its own manifest: %v", err)
+	}
+
+	scope, _ := data["covered_scope"].(string)
+	if strings.Contains(scope, "changed_paths") {
+		t.Errorf("covered_scope still names changed_paths as unmeasured: %q", scope)
+	}
+}
+
+// TestDiffArtifactRefStaysOutWhenTheWorkspaceComparisonIsUnmeasured proves
+// the diff artifact ref does not leak into artifact_refs merely because some
+// OTHER artifact is present — it rides the same changed_paths measured gate
+// as changed_paths and snapshot_digest themselves, never a looser one.
+func TestDiffArtifactRefStaysOutWhenTheWorkspaceComparisonIsUnmeasured(t *testing.T) {
+	res := workspaceSnapshotShapedResult()
+	res.Observations.ChangedPaths = runners.Observation{Measured: false, Complete: false}
+
+	completion, err := runners.BuildCompletion(res, testContract())
+	if err != nil {
+		t.Fatalf("BuildCompletion: %v", err)
+	}
+	data, err := completion.LedgerDelta[0].DataMap()
+	if err != nil {
+		t.Fatalf("DataMap: %v", err)
+	}
+	if _, present := data["changed_paths"]; present {
+		t.Error("changed_paths present despite an unmeasured workspace comparison")
+	}
+	if _, present := data["snapshot_digest"]; present {
+		t.Error("snapshot_digest present despite an unmeasured workspace comparison")
+	}
+	refs, _ := data["artifact_refs"].([]any)
+	for _, r := range refs {
+		if r.(string) == res.Changes.DiffArtifactRef {
+			t.Errorf("artifact_refs leaked the diff artifact ref despite an unmeasured comparison: %v", refs)
+		}
+	}
+	if len(refs) != 1 || refs[0].(string) != "artifact://logs/stdout" {
+		t.Errorf("artifact_refs = %v, want only the plain stdout ref", refs)
+	}
+}

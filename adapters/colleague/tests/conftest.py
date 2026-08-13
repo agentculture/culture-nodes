@@ -69,7 +69,9 @@ def colleague_bin() -> str:
     if bin_path is None:
         pytest.skip("colleague is not on PATH; skipping integration tests")
     if not _mock_engine_reachable(bin_path):
-        pytest.skip("colleague whoami --json with COLLEAGUE_ENGINE=mock did not report the mock engine")
+        pytest.skip(
+            "colleague whoami --json with COLLEAGUE_ENGINE=mock did not report the mock engine"
+        )
     return bin_path
 
 
@@ -84,9 +86,17 @@ def scratch_repo(colleague_bin: str) -> Path:
     SCRATCH_REPO.mkdir(parents=True, exist_ok=True)
     if not (SCRATCH_REPO / ".git").is_dir():
         subprocess.run(["git", "init", "-q"], cwd=SCRATCH_REPO, check=True)
-        subprocess.run(["git", "config", "user.email", "t26-bridge-tests@example.com"], cwd=SCRATCH_REPO, check=True)
-        subprocess.run(["git", "config", "user.name", "t26 bridge tests"], cwd=SCRATCH_REPO, check=True)
-        (SCRATCH_REPO / "README.md").write_text("# t26 colleague-bridge scratch repo\n", encoding="utf-8")
+        subprocess.run(
+            ["git", "config", "user.email", "t26-bridge-tests@example.com"],
+            cwd=SCRATCH_REPO,
+            check=True,
+        )
+        subprocess.run(
+            ["git", "config", "user.name", "t26 bridge tests"], cwd=SCRATCH_REPO, check=True
+        )
+        (SCRATCH_REPO / "README.md").write_text(
+            "# t26 colleague-bridge scratch repo\n", encoding="utf-8"
+        )
         subprocess.run(["git", "add", "README.md"], cwd=SCRATCH_REPO, check=True)
         subprocess.run(["git", "commit", "-q", "-m", "init"], cwd=SCRATCH_REPO, check=True)
     return SCRATCH_REPO

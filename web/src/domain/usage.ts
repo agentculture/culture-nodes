@@ -1,0 +1,121 @@
+import type { CurrencyCost, Run, Usage } from "../api/types";
+
+/**
+ * Token-first cost rendering (task t5, honesty condition h27 / frame claim
+ * c35): every helper here treats token counts as the primary figure and
+ * currency cost as secondary, reported-only detail. None of them ever
+ * invents a currency the API did not send — there is no default currency,
+ * no symbol substitution, no pricing table. If the API sent no `currency`,
+ * nothing here prints one.
+ */
+
+/** `12345` -> `"12.3k"`, `1234567` -> `"1.2m"`, anything under 1000 verbatim. */
+export function formatTokenCount(count: number): string {
+  const abs = Math.abs(count);
+  if (abs < 1000) return String(count);
+  if (abs < 1_000_000) {
+    return `${trimTrailingZero((count / 1000).toFixed(1))}k`;
+  }
+  return `${trimTrailingZero((count / 1_000_000).toFixed(1))}m`;
+}
+
+function trimTrailingZero(value: string): string {
+  return value.endsWith(".0") ? value.slice(0, -2) : value;
+}
+
+/** `"12.3k in / 4.1k out"` — the primary, always-safe-to-show figure. */
+export function formatUsageTokens(usage: Usage): string {
+  return `${formatTokenCount(usage.input_tokens)} in / ${formatTokenCount(usage.output_tokens)} out`;
+}
+
+/**
+ * A single reported cost as secondary text — never a symbol invented for a
+ * currency the API did not send (h27). `"12.34"` when no currency was
+ * reported alongside the cost, `"12.34 USD"` when one was.
+ */
+export function formatCost(cost: number, currency?: string): string {
+  const amount = cost.toFixed(2);
+  return currency ? `${amount} ${currency}` : amount;
+}
+
+/** One line per `CurrencyCost` entry, in the order the API listed them. */
+export function formatCostByCurrency(entries: CurrencyCost[]): string[] {
+  return entries.map((entry) => formatCost(entry.cost, entry.currency));
+}
+
+/**
+ * Merge several node-run-level Usage rollups (e.g. every visit of a looped
+ * node) into one, client-side, using the same rules the server's §13.2
+ * aggregation uses: sum tokens and attempt counts; sum cost per currency
+ * actually seen, and only collapse to a single `cost`/`currency` pair when
+ * every contributing entry agreed on one currency (an entry with no
+ * currency at all merges under the empty-string bucket, its own group).
+ */
+export function mergeUsage(entries: Usage[]): Usage {
+  let inputTokens = 0;
+  let outputTokens = 0;
+  let attemptsReported = 0;
+  let attemptsNotReported = 0;
+  const costByCurrency = new Map<string, number>();
+
+  for (const usage of entries) {
+    inputTokens += usage.input_tokens;
+    outputTokens += usage.output_tokens;
+    attemptsReported += usage.attempts_reported;
+    attemptsNotReported += usage.attempts_not_reported;
+
+    if (usage.cost_by_currency) {
+      for (const entry of usage.cost_by_currency) {
+        const key = entry.currency ?? "";
+        costByCurrency.set(key, (costByCurrency.get(key) ?? 0) + entry.cost);
+      }
+    } else if (usage.cost !== undefined) {
+      const key = usage.currency ?? "";
+      costByCurrency.set(key, (costByCurrency.get(key) ?? 0) + usage.cost);
+    }
+  }
+
+  const merged: Usage = {
+    input_tokens: inputTokens,
+    output_tokens: outputTokens,
+    attempts_reported: attemptsReported,
+    attempts_not_reported: attemptsNotReported,
+  };
+
+  if (costByCurrency.size === 1) {
+    const [[currency, cost]] = costByCurrency.entries();
+    merged.cost = cost;
+    if (currency) merged.currency = currency;
+  } else if (costByCurrency.size > 1) {
+    merged.cost_by_currency = [...costByCurrency.entries()].map(
+      ([currency, cost]) => (currency ? { currency, cost } : { cost }),
+    );
+  }
+
+  return merged;
+}
+
+export interface RunDisplayName {
+  /** The text to render as the run's title. */
+  text: string;
+  /**
+   * `true` only for a `display_hint` — a derived guess, never something an
+   * operator actually said. A renderer MUST mark this visibly distinct from
+   * a given `name` (muted style + a title attribute, per task t5) and never
+   * present it as if it were the given name.
+   */
+  derived: boolean;
+}
+
+/**
+ * `name` when the operator gave one, else `display_hint` marked as derived,
+ * else the run id — task t5's fallback chain, in one place so every view
+ * (RunsList, RunCard, JobsTable, RunView) resolves it identically.
+ */
+export function runDisplayName(
+  run: Pick<Run, "id" | "name" | "display_hint">,
+): RunDisplayName {
+  if (run.name) return { text: run.name, derived: false };
+  if (run.display_hint) return { text: run.display_hint, derived: true };
+  return { text: run.id, derived: false };
+}

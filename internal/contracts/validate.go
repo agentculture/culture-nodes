@@ -33,12 +33,14 @@ const (
 	SchemaLedgerEvidence      = "ledger/evidence.schema.json"
 	SchemaLedgerResult        = "ledger/result.schema.json"
 	SchemaLedgerReview        = "ledger/review.schema.json"
+	SchemaLedgerGrade         = "ledger/grade.schema.json"
 
 	SchemaRunnerOperation = "runner/operation.schema.json"
 	SchemaRunnerResult    = "runner/result.schema.json"
 )
 
-// ledgerRecordTypes lists the MVP record types in PRD §10.2 order.
+// ledgerRecordTypes lists the MVP record types in PRD §10.2 order, plus
+// `grade`, registered additively after them (issue #28 item 1).
 var ledgerRecordTypes = []string{
 	"announcement",
 	"claim",
@@ -50,9 +52,10 @@ var ledgerRecordTypes = []string{
 	"evidence",
 	"result",
 	"review",
+	"grade",
 }
 
-// LedgerRecordTypes returns the MVP work-ledger record types.
+// LedgerRecordTypes returns the registered work-ledger record types.
 func LedgerRecordTypes() []string {
 	out := make([]string, len(ledgerRecordTypes))
 	copy(out, ledgerRecordTypes)

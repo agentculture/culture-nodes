@@ -68,6 +68,10 @@ type StartAsyncWaitInput struct {
 	// `attempt_id`, used as the Idempotency-Key, and signed into the callback
 	// token. It keys the actor_invocations row.
 	AttemptID string
+	// ActorID is the resolved actors-table row id (migration 0015) the
+	// terminal callback commits into attempts.actor_id — per-actor stats'
+	// attribution. Empty means unattributed (registry could not answer).
+	ActorID string
 	// ActorRef is the node's declared actor reference, kept for operator
 	// questions ("what is this run waiting on").
 	ActorRef string
@@ -100,9 +104,9 @@ const insertActorInvocationSQL = `
 INSERT INTO actor_invocations (
     attempt_id, namespace_id, run_id, node_run_id, token_id, work_id, worker_id,
     fencing_token, attempt, node_key, actor_ref, invocation_id, state,
-    heartbeat_after_seconds, deadline_timer_id, supports_cancellation
+    heartbeat_after_seconds, deadline_timer_id, supports_cancellation, actor_id
 )
-VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, 'waiting_external', $13, $14, $15)
+VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, 'waiting_external', $13, $14, $15, $16)
 `
 
 // StartAsyncWait commits the whole §12.6 transition in one transaction:
@@ -182,6 +186,7 @@ func (s *Store) StartAsyncWait(ctx context.Context, in StartAsyncWaitInput) erro
 		in.WorkID, in.WorkerID, in.FencingToken, int32(in.Attempt), in.NodeID,
 		textOrNull(in.ActorRef), textOrNull(in.InvocationID),
 		int32OrNull(in.HeartbeatAfterSeconds), textOrNull(timerID), in.SupportsCancellation,
+		textOrNull(in.ActorID),
 	); err != nil {
 		return fmt.Errorf("postgres: StartAsyncWait: record invocation: %w", err)
 	}
@@ -243,7 +248,7 @@ func NewCallbackStore(s *Store, namespaceID string) (*CallbackStore, error) {
 // different keys (attempt_id, the protocol identity; deadline_timer_id, the
 // reverse link a fired deadline timer names).
 const invocationColumns = `attempt_id, namespace_id, run_id, node_run_id, token_id, node_key, work_id,
-       worker_id, fencing_token, attempt, actor_ref, invocation_id, state, last_sequence`
+       worker_id, fencing_token, attempt, actor_ref, invocation_id, state, last_sequence, actor_id`
 
 const selectInvocationSQL = `
 SELECT ` + invocationColumns + `
@@ -262,20 +267,21 @@ type invocationRowScanner interface {
 // list.
 func scanPendingInvocation(row invocationRowScanner) (actors.PendingInvocation, error) {
 	var (
-		inv                             actors.PendingInvocation
-		tokenID, actorRef, invocationID pgtype.Text
-		attempt                         int32
+		inv                                      actors.PendingInvocation
+		tokenID, actorRef, invocationID, actorID pgtype.Text
+		attempt                                  int32
 	)
 	if err := row.Scan(
 		&inv.AttemptID, &inv.NamespaceID, &inv.RunID, &inv.NodeRunID, &tokenID, &inv.NodeID,
 		&inv.WorkID, &inv.WorkerID, &inv.FencingToken, &attempt, &actorRef, &invocationID,
-		&inv.State, &inv.LastSequence,
+		&inv.State, &inv.LastSequence, &actorID,
 	); err != nil {
 		return actors.PendingInvocation{}, err
 	}
 	inv.TokenID = textOrEmpty(tokenID)
 	inv.ActorRef = textOrEmpty(actorRef)
 	inv.InvocationID = textOrEmpty(invocationID)
+	inv.ActorID = textOrEmpty(actorID)
 	inv.Attempt = int(attempt)
 	return inv, nil
 }

@@ -144,3 +144,51 @@ func jsonOrEmptyObject(data json.RawMessage) json.RawMessage {
 	}
 	return data
 }
+
+// int8FromPtr and float8FromPtr convert a genuinely optional Go pointer
+// (nil meaning NULL, not textOrNull's "" meaning NULL) to its pgtype
+// nullable equivalent. They exist for columns like attempts.usage_cost
+// where the zero value is a real, meaningful answer (an actor priced its
+// work at 0) and cannot double as the NULL sentinel the way textOrNull's ""
+// can for an optional foreign key.
+func int8FromPtr(v *int64) pgtype.Int8 {
+	if v == nil {
+		return pgtype.Int8{}
+	}
+	return pgtype.Int8{Int64: *v, Valid: true}
+}
+
+func float8FromPtr(v *float64) pgtype.Float8 {
+	if v == nil {
+		return pgtype.Float8{}
+	}
+	return pgtype.Float8{Float64: *v, Valid: true}
+}
+
+func float8PtrFromPg(v pgtype.Float8) *float64 {
+	if !v.Valid {
+		return nil
+	}
+	value := v.Float64
+	return &value
+}
+
+// textPtrFromNullable is textOrNull's pointer-aware sibling: nil converts
+// to NULL, and — unlike textOrNull — a non-nil empty string still converts
+// to a valid (non-NULL) empty string, because a *string field's nilness,
+// not its emptiness, is what carries the NULL/not-NULL distinction for a
+// column like attempts.usage_currency.
+func textPtrFromNullable(s *string) pgtype.Text {
+	if s == nil {
+		return pgtype.Text{}
+	}
+	return pgtype.Text{String: *s, Valid: true}
+}
+
+func textPtrFromPg(t pgtype.Text) *string {
+	if !t.Valid {
+		return nil
+	}
+	value := t.String
+	return &value
+}

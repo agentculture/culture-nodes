@@ -1,12 +1,25 @@
 import { useEffect, useState } from "react";
-import { ApiError, getLedger, getRun, getWorkflow } from "../api/client";
-import type { LedgerRecord, RunView as RunViewPayload } from "../api/types";
+import { ApiError, getLedger, getRun, getWorkflow, listNodeRuns } from "../api/client";
+import type { LedgerRecord, RunView as RunViewPayload, Usage } from "../api/types";
 import { parseWorkflowGraph, type WorkflowGraph } from "../domain/graph";
 
 export interface RunData {
   view: RunViewPayload | null;
   graph: WorkflowGraph | null;
   ledger: LedgerRecord[];
+  /**
+   * Node-run-level usage (task t2/t5), keyed by node run id. `GET
+   * /v1alpha1/runs/{id}`'s nested `node_runs` carry no `usage` field of
+   * their own (only `GET /v1alpha1/node-runs`'s flat listing items do — see
+   * api/openapi/openapi.yaml's NodeRunListItem vs NodeRun), so this is
+   * filled from a second, best-effort fetch of that listing, matched back
+   * onto this run by `run_id`. The listing has no `run_id` filter and is
+   * paginated by recency across the whole namespace, so this is honestly a
+   * best-effort join, not a guarantee — a node run absent from the map
+   * simply has no entry here (never a fabricated one), and NodeDetailPanel
+   * renders that absence as "usage data not available" rather than a zero.
+   */
+  usageByNodeRunId: Record<string, Usage>;
   loading: boolean;
   error: ApiError | null;
 }
@@ -27,6 +40,7 @@ export function useRunData(runId: string | undefined): RunData {
     view: null,
     graph: null,
     ledger: [],
+    usageByNodeRunId: {},
     loading: true,
     error: null,
   });
@@ -36,7 +50,14 @@ export function useRunData(runId: string | undefined): RunData {
     const controller = new AbortController();
     const { signal } = controller;
 
-    setData({ view: null, graph: null, ledger: [], loading: true, error: null });
+    setData({
+      view: null,
+      graph: null,
+      ledger: [],
+      usageByNodeRunId: {},
+      loading: true,
+      error: null,
+    });
 
     (async () => {
       try {
@@ -51,14 +72,28 @@ export function useRunData(runId: string | undefined): RunData {
         } catch {
           ledger = [];
         }
+        // Same non-fatal treatment for the node-run usage join: it enriches
+        // NodeDetailPanel, it does not gate the graph rendering at all.
+        let usageByNodeRunId: Record<string, Usage> = {};
+        try {
+          const page = await listNodeRuns(signal, { limit: 500 });
+          usageByNodeRunId = Object.fromEntries(
+            page.items
+              .filter((item) => item.run_id === runId)
+              .map((item) => [item.id, item.usage] as const),
+          );
+        } catch {
+          usageByNodeRunId = {};
+        }
         if (signal.aborted) return;
-        setData({ view, graph, ledger, loading: false, error: null });
+        setData({ view, graph, ledger, usageByNodeRunId, loading: false, error: null });
       } catch (cause) {
         if (signal.aborted) return;
         setData({
           view: null,
           graph: null,
           ledger: [],
+          usageByNodeRunId: {},
           loading: false,
           error: asApiError(cause),
         });

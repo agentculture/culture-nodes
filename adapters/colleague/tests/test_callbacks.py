@@ -18,7 +18,9 @@ def receiver():
 
 
 def test_send_delivers_with_stable_id_and_incrementing_sequence(receiver):
-    emitter = CallbackEmitter(receiver.url, "tok", "task1", CallbackConfig(max_retries=1, backoff_seconds=0.01))
+    emitter = CallbackEmitter(
+        receiver.url, "tok", "task1", CallbackConfig(max_retries=1, backoff_seconds=0.01)
+    )
     assert emitter.send("accepted", {"a": 1}) is True
     assert emitter.send("progress", {"b": 2}) is True
     assert [e["event_id"] for e in receiver.events] == ["evt_task1_1", "evt_task1_2"]
@@ -27,7 +29,9 @@ def test_send_delivers_with_stable_id_and_incrementing_sequence(receiver):
 
 
 def test_retries_and_redelivers_the_same_event_id_and_sequence(receiver):
-    emitter = CallbackEmitter(receiver.url, "tok", "task1", CallbackConfig(max_retries=3, backoff_seconds=0.01))
+    emitter = CallbackEmitter(
+        receiver.url, "tok", "task1", CallbackConfig(max_retries=3, backoff_seconds=0.01)
+    )
     event_id, sequence = emitter.next_event_id_and_sequence()
     receiver.refuse_next(event_id, 2)  # refuse the first two deliveries
     ok = emitter.resend(event_id, sequence, "completed", {"outcome": "completed"})
@@ -38,7 +42,9 @@ def test_retries_and_redelivers_the_same_event_id_and_sequence(receiver):
 
 
 def test_gives_up_after_max_retries_exhausted(receiver):
-    emitter = CallbackEmitter(receiver.url, "tok", "task1", CallbackConfig(max_retries=1, backoff_seconds=0.01))
+    emitter = CallbackEmitter(
+        receiver.url, "tok", "task1", CallbackConfig(max_retries=1, backoff_seconds=0.01)
+    )
     event_id, sequence = emitter.next_event_id_and_sequence()
     receiver.refuse_next(event_id, 10)  # always refuse
     ok = emitter.resend(event_id, sequence, "completed", {})
@@ -61,11 +67,18 @@ def test_gives_up_immediately_on_401_without_retrying(receiver):
             self.end_headers()
 
     server = HTTPServer(("127.0.0.1", 0), Handler)
-    thread = threading.Thread(target=server.serve_forever, kwargs={"poll_interval": 0.05}, daemon=True)
+    thread = threading.Thread(
+        target=server.serve_forever, kwargs={"poll_interval": 0.05}, daemon=True
+    )
     thread.start()
     try:
         host, port = server.server_address
-        emitter = CallbackEmitter(f"http://{host}:{port}/events", "tok", "task1", CallbackConfig(max_retries=5, backoff_seconds=0.01))
+        emitter = CallbackEmitter(
+            f"http://{host}:{port}/events",
+            "tok",
+            "task1",
+            CallbackConfig(max_retries=5, backoff_seconds=0.01),
+        )
         assert emitter.send("accepted", {}) is False
     finally:
         server.shutdown()
@@ -73,5 +86,10 @@ def test_gives_up_immediately_on_401_without_retrying(receiver):
 
 
 def test_unreachable_url_is_treated_as_a_retryable_failure():
-    emitter = CallbackEmitter("http://127.0.0.1:1/nope", "tok", "task1", CallbackConfig(max_retries=1, backoff_seconds=0.01, timeout_seconds=1))
+    emitter = CallbackEmitter(
+        "http://127.0.0.1:1/nope",
+        "tok",
+        "task1",
+        CallbackConfig(max_retries=1, backoff_seconds=0.01, timeout_seconds=1),
+    )
     assert emitter.send("accepted", {}) is False

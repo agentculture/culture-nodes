@@ -117,6 +117,20 @@ func checkAuthority(rec Record, o appendOptions) error {
 			"a record is superseded by a later record naming it in `supersedes`, never by declaring itself so")
 	}
 
+	// No actor grades its own work, regardless of what authority it asks
+	// for or what origin it writes from — the PRD §10.4 self-promotion rule
+	// extended to opinion records (issue #28 item 1). This is checked ahead
+	// of the origin dispatch below because it is a distinct invariant from
+	// the producer/authority matrix, not a cell in it.
+	if rec.RecordType == RecordGrade {
+		if evaluated := gradeEvaluatedActorID(rec); evaluated != "" && evaluated == rec.Origin.ActorID {
+			e := fail(RuleNoSelfGrade,
+				"a grade whose grading actor equals the evaluated actor would be an actor grading its own work — the self-promotion rule (PRD §10.4) extended to opinion records")
+			e.Field = "/data/evaluated_actor_id"
+			return e
+		}
+	}
+
 	switch rec.Origin.Kind {
 	case OriginAgent:
 		if rec.Authority != AuthorityProposed {
@@ -136,6 +150,15 @@ func checkAuthority(rec Record, o appendOptions) error {
 			return fail(RuleDeterministicDerivedOnly,
 				"deterministic producers compute derived records from referenced confirmed or observed records")
 		}
+		if rec.RecordType == RecordGrade {
+			// The one origin whose ordinary rule (derived, and only
+			// derived) would otherwise admit a grade: every other origin
+			// already refuses grade+observed and grade+derived through its
+			// own rule above, independent of record type. A deterministic
+			// producer computes values; it does not hold opinions.
+			return fail(RuleGradeNeverObservedOrDerived,
+				"a grade is an opinion record: a rating and rationale, never a value a deterministic producer derived")
+		}
 		return nil
 
 	default:
@@ -151,7 +174,19 @@ func checkHumanAuthority(rec Record, o appendOptions, fail func(rule, detail str
 	switch rec.Authority {
 	case AuthorityProposed:
 		return nil
-	case AuthorityConfirmed, AuthorityRejected:
+	case AuthorityConfirmed:
+		// A grade is a human's own opinion, not a claim about the world
+		// someone else must ratify: writing it is already the confirmation.
+		// A human grading directly may therefore land confirmed authority
+		// outside a review transaction. Inside a review transaction the
+		// ordinary rule still applies below — a review confirms by
+		// appending a review record that references its target, it never
+		// rewrites the target itself, grade included.
+		if rec.RecordType == RecordGrade && !o.reviewTransaction {
+			return nil
+		}
+		fallthrough
+	case AuthorityRejected:
 		if !o.reviewTransaction {
 			return fail(RuleHumanReviewOnly,
 				"confirmation and rejection are review transactions (PRD §10.8), not ordinary appends")
@@ -165,6 +200,26 @@ func checkHumanAuthority(rec Record, o appendOptions, fail func(rule, detail str
 		return fail(RuleHumanAuthorityLimited,
 			"observed belongs to a measuring runner and derived to deterministic computation; a person asserting either would be claiming coverage nobody measured")
 	}
+}
+
+// gradeEvaluatedActorID reads a grade record's evaluated actor from its
+// payload, returning "" when the record is not a grade, the payload cannot
+// be decoded, or the field is absent. Schema validation (which always runs
+// before authority checks in both Ledger.appendThrough and the engine's
+// ledger-delta pre-flight) is what makes the field's presence and shape a
+// hard requirement for a grade; this helper only reads what schema
+// validation has already accepted, and stays silent rather than erroring
+// when it cannot — the self-grade rule is an additional refusal on top of a
+// valid document, not a second validator.
+func gradeEvaluatedActorID(rec Record) string {
+	if rec.RecordType != RecordGrade {
+		return ""
+	}
+	data, err := rec.DataMap()
+	if err != nil {
+		return ""
+	}
+	return dataString(data, "evaluated_actor_id")
 }
 
 func checkRunnerAuthority(rec Record, o appendOptions, fail func(rule, detail string) *AuthorityError) error {

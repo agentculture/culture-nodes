@@ -260,7 +260,9 @@ def _normalize_allowlist(cfg: Config) -> None:
         try:
             resolved.append(str(Path(entry).expanduser().resolve()))
         except OSError as exc:
-            raise ConfigError(f"repo allowlist entry {entry!r} could not be resolved: {exc}") from exc
+            raise ConfigError(
+                f"repo allowlist entry {entry!r} could not be resolved: {exc}"
+            ) from exc
     cfg.repo_allowlist = tuple(resolved)
 
 

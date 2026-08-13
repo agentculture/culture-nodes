@@ -55,6 +55,32 @@ type Run struct {
 	CreatedAt         time.Time
 	UpdatedAt         time.Time
 	CompletedAt       time.Time
+
+	// Name/Description/Category are operator-facing run metadata
+	// (migrations/0013). The engine never branches on them — they ride
+	// Run only so CreateRun can persist them inside the same transaction
+	// that inserts the run row (a post-commit UPDATE gave POST /runs an
+	// unknown-success window: a 5xx after the run already existed).
+	// Empty string means absent; InsertRun stores NULL. They are write-
+	// through fields: engine read paths do not populate them (the API
+	// reads metadata back through its own queries).
+	Name        string
+	Description string
+	Category    string
+}
+
+// RunOption adjusts the Run a CreateRun call is about to persist, inside
+// the same transaction as the run row itself.
+type RunOption func(*Run)
+
+// WithRunMetadata sets operator-facing name/description/category on the
+// run at creation, atomically with the insert. Empty strings mean absent.
+func WithRunMetadata(name, description, category string) RunOption {
+	return func(r *Run) {
+		r.Name = name
+		r.Description = description
+		r.Category = category
+	}
 }
 
 // TokenState is the lifecycle of a control token.
@@ -191,6 +217,25 @@ type Attempt struct {
 	Result       json.RawMessage
 	StartedAt    time.Time
 	CompletedAt  time.Time
+	// Usage is the §13.2 telemetry block this attempt reported, nil when it
+	// reported none. See CompletionRequest.Usage for why it is never
+	// fabricated.
+	Usage *Usage
+}
+
+// Usage is the §13.2 telemetry block as the engine persists it. It mirrors
+// internal/actors.Usage field-for-field but is declared independently here:
+// the engine cannot import internal/actors, because actors already imports
+// engine (for the Completer interface and CompletionRequest that its
+// callback commit path uses), and the reverse import would cycle. Cost and
+// Currency stay pointers for the reason actors.Usage's do: an actor that
+// does not price its work says so with null, not with a zero that reads as
+// "free".
+type Usage struct {
+	InputTokens  int64
+	OutputTokens int64
+	Cost         *float64
+	Currency     *string
 }
 
 // HumanTaskStatusPending is the status a human task is created with
@@ -272,6 +317,13 @@ type CompletionRequest struct {
 	// completing on behalf of an unregistered actor still gets its attempt
 	// recorded.
 	ActorID string
+
+	// Usage is the §13.2 telemetry block the actor reported, nil when it
+	// reported none. It rides straight onto the recorded attempt row
+	// (recordAttempt) with no derivation and no fabricated zero — the same
+	// null Cost/Currency semantics a Usage block arrived with are preserved
+	// into storage.
+	Usage *Usage
 }
 
 // RejectionKind names which contract refused a completion.

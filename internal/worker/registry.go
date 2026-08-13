@@ -156,3 +156,35 @@ func authTokenEnvOf(metadata []byte) string {
 	}
 	return fields.AuthTokenEnv
 }
+
+// ActorRowID resolves a reference to the actors-table row id of its current
+// (highest) revision — the identity attempts.actor_id records so per-actor
+// surfaces (GET /v1alpha1/actors/{id}/stats, the jobs view) can attribute
+// work. Separate from Resolve on purpose: Resolve answers "where do I send
+// the invocation", this answers "who, durably, was invoked" — and callers
+// treat a miss as unattributed, never as a dispatch failure.
+func (r *DBRegistry) ActorRowID(ctx context.Context, ref string) (string, error) {
+	key := actorKeyOf(ref)
+	if key == "" {
+		return "", fmt.Errorf("worker: reference %q names no actor key: %w", ref, ErrUnknownActor)
+	}
+	var id string
+	err := r.store.Pool().QueryRow(ctx, `
+		SELECT id
+		FROM actors
+		WHERE namespace_id = $1 AND actor_key = $2
+		ORDER BY revision DESC
+		LIMIT 1
+	`, r.namespaceID, key).Scan(&id)
+	if err != nil {
+		return "", fmt.Errorf("worker: actor row for %q: %w: %v", ref, ErrUnknownActor, err)
+	}
+	return id, nil
+}
+
+// actorRowIDResolver is the optional registry capability the worker uses
+// for durable attribution — DBRegistry implements it; a registry that does
+// not (StaticRegistry in tests) simply leaves attempts unattributed.
+type actorRowIDResolver interface {
+	ActorRowID(ctx context.Context, ref string) (string, error)
+}

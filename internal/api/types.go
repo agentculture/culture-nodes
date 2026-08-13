@@ -50,7 +50,14 @@ type WorkflowVersionListOut struct {
 	Items []WorkflowVersionOut `json:"items"`
 }
 
-// RunOut is one run, as documented in components.schemas.Run.
+// RunOut is one run, as documented in components.schemas.Run. Usage is set
+// only where the caller actually computed a rollup (runOut below, used by
+// createRun/getRun/cancelRun) — never by listRuns' own runRow.out() in
+// queries.go, which would otherwise need one extra query per listed run.
+// Its absence (nil, omitted) from a runs-list response therefore means "not
+// computed for this endpoint", distinguishable from run detail's Usage,
+// which is always present (even when every field inside it is zero — see
+// UsageOut's doc comment for what that zero state means).
 type RunOut struct {
 	ID             string          `json:"id"`
 	WorkflowDigest string          `json:"workflow_digest"`
@@ -60,9 +67,34 @@ type RunOut struct {
 	CreatedAt      time.Time       `json:"created_at"`
 	UpdatedAt      time.Time       `json:"updated_at"`
 	CompletedAt    *time.Time      `json:"completed_at,omitempty"`
+	Usage          *UsageOut       `json:"usage,omitempty"`
+	// Name, Description, and Category are task t3's optional run metadata
+	// (migrations/0013): Name and Description are operator-given at
+	// creation only (POST /v1alpha1/runs), never changed afterward.
+	// Category alone is retaggable via PATCH /v1alpha1/runs/{id} (frame
+	// decision q4) — see runMetadata's doc comment in queries.go.
+	Name        string `json:"name,omitempty"`
+	Description string `json:"description,omitempty"`
+	Category    string `json:"category,omitempty"`
+	// DisplayHint is a truncated, best-effort guess at what this run is
+	// about, derived at read time from a request/instruction/task-ish
+	// string field in the run's own input (deriveDisplayHint in runs.go) —
+	// never persisted, and never rendered when Name is set. A UI must read
+	// Name (operator-given) and DisplayHint (a guess) as distinct fields
+	// so it never presents a derived hint as if an operator had actually
+	// named the run.
+	DisplayHint string `json:"display_hint,omitempty"`
 }
 
-func runOut(r engine.Run) RunOut {
+// runOut renders r with usage (the run-level §13.2 rollup task t2 adds,
+// postgres.EngineStore.RunUsage) and meta (task t3's name/description/
+// category, queries.go's runMetadataByID) — every call site fetches both
+// fresh rather than this function reaching into the database itself,
+// keeping runOut a pure function the way it always has been. DisplayHint
+// is derived here, from r.Input, only when meta.Name is empty — see
+// RunOut's doc comment above for why a UI must be able to tell the two
+// apart.
+func runOut(r engine.Run, usage postgres.UsageRollup, meta runMetadata) RunOut {
 	out := RunOut{
 		ID:             r.ID,
 		WorkflowDigest: r.WorkflowDigest,
@@ -71,10 +103,85 @@ func runOut(r engine.Run) RunOut {
 		Output:         nonNullJSON(r.Output),
 		CreatedAt:      r.CreatedAt,
 		UpdatedAt:      r.UpdatedAt,
+		Usage:          usageOut(usage),
+		Name:           meta.Name,
+		Description:    meta.Description,
+		Category:       meta.Category,
+	}
+	if meta.Name == "" {
+		out.DisplayHint = deriveDisplayHint(r.Input)
 	}
 	if !r.CompletedAt.IsZero() {
 		completedAt := r.CompletedAt
 		out.CompletedAt = &completedAt
+	}
+	return out
+}
+
+// UsageOut is the §13.2 usage/cost rollup attached to a run or a node run,
+// as documented in components.schemas.Usage. It renders postgres.UsageRollup
+// (see that type's doc comment for the full aggregation rules — retry burn
+// included, unreported attempts excluded from sums, cost never summed
+// across currencies) as the wire shape:
+//
+//   - AttemptsReported == 0 (with InputTokens == OutputTokens == 0) is "no
+//     attempt in scope reported usage" — distinct from AttemptsReported > 0
+//     with InputTokens/OutputTokens == 0, which is "an attempt reported
+//     usage and it was genuinely zero tokens". A caller must read
+//     attempts_reported/attempts_not_reported to tell the two apart; the
+//     token fields alone are ambiguous between them by design (0 is a
+//     legitimate sum of an empty set AND a legitimate reported value).
+//   - Cost/Currency are set together only when every cost-reporting
+//     attempt in scope agreed on one currency ("coherent") — including the
+//     case where that shared value is "" (cost reported, currency
+//     unknown), which renders as Cost set and Currency omitted.
+//   - CostByCurrency is set instead, as a list, whenever more than one
+//     distinct currency was seen — mixed currencies are exposed
+//     per-currency, never summed into one misleading number.
+//   - When no attempt in scope reported a cost at all, neither Cost,
+//     Currency, nor CostByCurrency is set.
+type UsageOut struct {
+	InputTokens         int64             `json:"input_tokens"`
+	OutputTokens        int64             `json:"output_tokens"`
+	Cost                *float64          `json:"cost,omitempty"`
+	Currency            string            `json:"currency,omitempty"`
+	CostByCurrency      []CurrencyCostOut `json:"cost_by_currency,omitempty"`
+	AttemptsReported    int               `json:"attempts_reported"`
+	AttemptsNotReported int               `json:"attempts_not_reported"`
+}
+
+// CurrencyCostOut is one UsageOut.CostByCurrency entry. Currency is omitted
+// (not the empty string in the rendered JSON) when the attempt(s) it
+// summarizes reported a cost with no currency at all — see
+// postgres.CurrencyCost's doc comment.
+type CurrencyCostOut struct {
+	Currency string  `json:"currency,omitempty"`
+	Cost     float64 `json:"cost"`
+}
+
+// usageOut renders a postgres.UsageRollup as the wire shape — always a
+// non-nil *UsageOut, per RunOut's doc comment above: computing a rollup at
+// all always yields a usage object, even one whose every field is zero.
+func usageOut(r postgres.UsageRollup) *UsageOut {
+	out := &UsageOut{
+		InputTokens:         r.InputTokens,
+		OutputTokens:        r.OutputTokens,
+		AttemptsReported:    r.AttemptsReported,
+		AttemptsNotReported: r.AttemptsNotReported,
+	}
+	switch len(r.Cost) {
+	case 0:
+		// No attempt in scope reported a cost — Cost/Currency/CostByCurrency
+		// all stay unset.
+	case 1:
+		cost := r.Cost[0].Cost
+		out.Cost = &cost
+		out.Currency = r.Cost[0].Currency
+	default:
+		out.CostByCurrency = make([]CurrencyCostOut, len(r.Cost))
+		for i, cc := range r.Cost {
+			out.CostByCurrency[i] = CurrencyCostOut{Currency: cc.Currency, Cost: cc.Cost}
+		}
 	}
 	return out
 }
@@ -140,7 +247,11 @@ type RunViewOut struct {
 // added (the most recent attempt's actor/runner reference — see
 // queries.go's latestAttemptActorIDs; empty until the node run has been
 // dispatched at least once, the same optional reference AttemptOut.ActorID
-// already is).
+// already is). Usage is task t2's §13.2 rollup over this node run's own
+// attempts (postgres.EngineStore.NodeRunUsages, batched across the page —
+// see listNodeRunsAcrossRuns in queries.go), always present the same way
+// RunOut's is on run detail — see UsageOut's doc comment for what its zero
+// state means.
 type NodeRunListItemOut struct {
 	ID          string     `json:"id"`
 	RunID       string     `json:"run_id"`
@@ -151,6 +262,7 @@ type NodeRunListItemOut struct {
 	CreatedAt   time.Time  `json:"created_at"`
 	UpdatedAt   time.Time  `json:"updated_at"`
 	CompletedAt *time.Time `json:"completed_at,omitempty"`
+	Usage       *UsageOut  `json:"usage,omitempty"`
 }
 
 // NodeRunListOut is components.schemas.NodeRunList: a page of

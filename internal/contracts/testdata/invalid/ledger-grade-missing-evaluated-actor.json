@@ -1,0 +1,22 @@
+{
+  "id": "ledger_fixture_grade_missing_actor",
+  "schema_version": "nodes.culture.dev/ledger/v1alpha1",
+  "record_type": "grade",
+  "run_id": "run_fixture",
+  "node_run_id": null,
+  "attempt_id": null,
+  "origin": {
+    "kind": "human",
+    "actor_id": "user_ori"
+  },
+  "authority": "confirmed",
+  "subject_ref": "ledger_fixture_result",
+  "data": {
+    "rating": 4,
+    "rationale": "INVALID FIXTURE: `evaluated_actor_id` is absent. A grade with no named evaluated actor is not a grade -- it must be rejected at /data/evaluated_actor_id rather than left implicit."
+  },
+  "provenance_refs": [],
+  "supersedes": null,
+  "created_at": "2026-08-08T15:35:00Z",
+  "content_digest": "sha256:b1fda3ff25de45a6a417854c5102fe9b0f8382ab2f63d0161f3e06683f3853cd"
+}

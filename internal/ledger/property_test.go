@@ -113,7 +113,7 @@ func TestPropertyRunnerMayOnlyProduceEvidence(t *testing.T) {
 					RunID:      testRunID,
 					Origin:     runnerOrigin,
 					Authority:  authority,
-					Data:       mustJSON(t, map[string]any{}),
+					Data:       mustJSON(t, minimalPayload(recordType)),
 				}, ledger.WithRunnerManifest(manifest))
 
 				var authErr *ledger.AuthorityError
@@ -460,6 +460,24 @@ func randomAgentRecord(t *testing.T, rng *rand.Rand) ledger.Record {
 		Origin:     agentOrigin,
 		Authority:  ledger.AuthorityProposed,
 		Data:       mustJSON(t, chosen.payload),
+	}
+}
+
+// minimalPayload returns a schema-valid `data` payload for recordType. Every
+// Phase 0 record type's payload is documentary and optional, so `{}`
+// satisfies it; `grade` is the one type with required fields (rating,
+// rationale, evaluated_actor_id), so it needs an actual minimal payload. The
+// evaluated actor is a fixture id no test origin ever writes as, so this
+// helper never accidentally trips the self-grade refusal for a test whose
+// point is a different rule entirely.
+func minimalPayload(recordType ledger.RecordType) map[string]any {
+	if recordType != ledger.RecordGrade {
+		return map[string]any{}
+	}
+	return map[string]any{
+		"rating":             3,
+		"rationale":          "Minimal payload for a property test that is not about grade content.",
+		"evaluated_actor_id": "actor_property_fixture_evaluated",
 	}
 }
 

@@ -122,7 +122,7 @@
     },
     "recordType": {
       "type": "string",
-      "description": "MVP record types (PRD §10.2). Additional domain record types may be registered by schema later, but may not redefine core authority semantics.",
+      "description": "MVP record types (PRD §10.2), plus `grade` -- a domain record type registered additively (issue #28 item 1) that does not redefine core authority semantics.",
       "enum": [
         "announcement",
         "claim",
@@ -133,7 +133,8 @@
         "success_signal",
         "evidence",
         "result",
-        "review"
+        "review",
+        "grade"
       ]
     },
     "authority": {

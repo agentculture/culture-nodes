@@ -308,6 +308,42 @@
   color: var(--ink-soft);
 }
 
+/* ---------- usage summary (task t5, honesty condition h27) ---------- */
+
+/* Token counts are the primary figure everywhere this renders; cost is
+   secondary, muted text that only appears when the API actually reported
+   one — never derived from the token counts (c35). */
+.usage-summary {
+  display: inline-flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 0.4rem;
+  font-size: var(--ac-type-ui);
+}
+
+.usage-summary--compact {
+  font-size: var(--ac-type-micro);
+  gap: 0.3rem;
+}
+
+.usage-summary__tokens {
+  font-family: var(--font-mono);
+  color: var(--ink);
+}
+
+.usage-summary__cost,
+.usage-summary__partial {
+  color: var(--ink-soft);
+  font-size: var(--ac-type-micro);
+}
+
+/* Not "0 tokens" — a distinct, explicit state for attempts_reported === 0,
+   so absent usage is never mistaken for a reported zero. */
+.usage-summary--not-reported {
+  color: var(--ink-soft);
+  font-style: italic;
+}
+
 /* ---------- run view ---------- */
 
 .run-view__head {
@@ -329,9 +365,20 @@
   color: var(--ink-soft);
 }
 
+.run-view__run-name {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  margin: 0.1rem 0 0.2rem;
+}
+
 .run-view__sub {
   font-size: var(--ac-type-meta);
   margin-bottom: 0;
+}
+
+.run-view__usage {
+  margin: 0.35rem 0 0;
 }
 
 .run-view__state {
@@ -531,6 +578,15 @@
   color: var(--accent);
 }
 
+/* Discoverable "this node has measured workspace evidence" marker (task
+   t11 #3) — a distinct hue from the in-flight/waiting badges above so a
+   reader scanning the graph does not confuse "evidence attached" with
+   "something needs attention". */
+.node-card__badge--evidence {
+  border-color: var(--nodes-ok);
+  color: color-mix(in srgb, var(--nodes-ok) 55%, var(--ink));
+}
+
 .node-card__visits {
   border: 1px solid var(--line);
   color: var(--ink-soft);
@@ -642,6 +698,49 @@
 .run-card__updated {
   font-size: var(--ac-type-micro);
   color: var(--ink-soft);
+}
+
+/* task t5: the run's given name/description or a derived display_hint,
+   shown above the run id once one exists — RunCard, RunsList, JobsTable,
+   and the Run view header all reuse this pair. */
+.run-card__name-row {
+  margin: 0.1rem 0 0.15rem;
+}
+
+.run-name {
+  font-family: var(--font-display);
+  font-optical-sizing: auto;
+  font-weight: 500;
+  font-size: var(--ac-type-ui);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  display: inline-block;
+  max-width: 100%;
+}
+
+/* A display_hint is a derived GUESS, never something an operator actually
+   said (openapi.yaml's Run.display_hint) — muted style + italics, distinct
+   from a given name at a glance, never colour alone (it also carries a
+   `title` attribute and a `data-derived="true"` hook). */
+.run-name--derived {
+  color: var(--ink-soft);
+  font-style: italic;
+  font-weight: 400;
+}
+
+/* task t3/t5: a run's flat category tag, rendered as a small chip wherever
+   the run's name/hint shows. */
+.category-chip {
+  display: inline-flex;
+  align-items: center;
+  border-radius: 999px;
+  border: 1px solid var(--line);
+  padding: 0.05rem 0.5rem;
+  font-size: var(--ac-type-micro);
+  letter-spacing: var(--ac-tracking-flat);
+  color: var(--ink-soft);
+  white-space: nowrap;
 }
 
 /* --- run-state overlays, the Run.state equivalent of the node-card ones --- */
@@ -868,6 +967,67 @@ button.timeline__node {
   color: var(--ink-soft);
 }
 
+/* Structured workspace evidence (task t11): the measured changed-files,
+   snapshot digest, artifact refs, and diffstat a ledger evidence record can
+   carry when its data is shaped like task t12's workspace-snapshot hook
+   output — additive to the generic authority/subject line every evidence
+   record already gets above it. */
+.detail-panel__workspace-evidence {
+  flex-basis: 100%;
+  display: flex;
+  flex-direction: column;
+  gap: 0.35rem;
+  margin: 0.35rem 0 0 0;
+  padding: 0.5rem 0.6rem;
+  border: 1px solid var(--line-soft);
+  border-radius: 0.5rem;
+}
+
+.detail-panel__workspace-evidence h4 {
+  margin: 0;
+  font-size: var(--ac-type-meta);
+  letter-spacing: var(--ac-tracking-caps);
+  text-transform: uppercase;
+  color: var(--ink-soft);
+}
+
+.detail-panel__changed-paths ul,
+.detail-panel__artifact-refs {
+  list-style: none;
+  margin: 0.2rem 0 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 0.15rem;
+  font-size: var(--ac-type-meta);
+  font-family: var(--font-mono);
+}
+
+.detail-panel__artifact-ref {
+  color: inherit;
+}
+
+.evidence-chip {
+  font-family: var(--font-mono);
+  font-size: var(--ac-type-meta);
+  padding: 0.05rem 0.4rem;
+  border: 1px solid var(--line-soft);
+  border-radius: 999px;
+  overflow-wrap: anywhere;
+}
+
+.detail-panel__diffstat {
+  margin: 0;
+  padding: 0.4rem 0.5rem;
+  font-family: var(--font-mono);
+  font-size: var(--ac-type-meta);
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  background: var(--bg);
+  border: 1px solid var(--line-soft);
+  border-radius: 0.4rem;
+}
+
 /* ---------- ledger view ---------- */
 
 .ledger-view__projection {
@@ -1047,4 +1207,504 @@ button.timeline__node {
 .jobs-timeline__load-more:disabled {
   opacity: 0.6;
   cursor: default;
+}
+
+/* ---------- workflows view (task t8) ---------- */
+
+.workflows-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 1rem;
+}
+
+/* Same card frame as .runs-board__column — a published workflow and a board
+   column are the same shape of "one bounded thing among several", not a
+   new aesthetic. */
+.workflow-card {
+  background: color-mix(in srgb, var(--surface) 55%, transparent);
+  border: 1px solid var(--line-soft);
+  border-radius: var(--radius);
+  padding: 0.85rem 1rem;
+}
+
+.workflow-card__head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 0.5rem;
+  margin-bottom: 0.6rem;
+}
+
+.workflow-card__head h2 {
+  margin: 0;
+}
+
+.workflow-card__owner {
+  font-family: var(--font-mono);
+  font-size: var(--ac-type-meta);
+  color: var(--ink-soft);
+}
+
+.workflow-card__versions {
+  margin-bottom: 0.85rem;
+}
+
+.workflow-card__runs h3 {
+  font-size: var(--ac-type-meta);
+  letter-spacing: var(--ac-tracking-caps);
+  text-transform: uppercase;
+  color: var(--ink-soft);
+  font-weight: 640;
+  margin: 0 0 0.4rem;
+}
+
+.workflow-card__run-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 0.3rem;
+  font-size: var(--ac-type-ui);
+}
+
+.workflow-card__run-list time {
+  color: var(--ink-soft);
+  font-size: var(--ac-type-meta);
+}
+
+.workflows-view__head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 1rem;
+}
+
+/* ---------- authoring slice (task t9, ADR 0007) ---------- */
+
+.author-workflow__button {
+  display: inline-flex;
+  align-items: center;
+  font: inherit;
+  font-size: var(--ac-type-ui);
+  padding: 0.4rem 1.1rem;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  background: var(--surface);
+  color: var(--ink);
+  cursor: pointer;
+  text-decoration: none;
+}
+
+.author-workflow__button:hover {
+  border-color: color-mix(in srgb, var(--accent) 40%, var(--line));
+}
+
+.author-workflow__button:disabled {
+  opacity: 0.55;
+  cursor: default;
+}
+
+.author-workflow__button--primary {
+  border-color: var(--accent-strong);
+  background: var(--accent-strong);
+  color: var(--on-accent);
+}
+
+.author-workflow__button--primary:disabled {
+  background: var(--accent-strong);
+  color: var(--on-accent);
+}
+
+.author-workflow__source {
+  margin: 1.25rem 0;
+}
+
+.author-workflow__source-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.6rem 1rem;
+  margin-bottom: 0.5rem;
+}
+
+.author-workflow__source-head > label {
+  font-size: var(--ac-type-meta);
+  letter-spacing: var(--ac-tracking-caps);
+  text-transform: uppercase;
+  color: var(--ink-soft);
+  font-weight: 640;
+}
+
+.author-workflow__source-controls {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  font-size: var(--ac-type-meta);
+}
+
+.author-workflow__source-controls select {
+  font: inherit;
+  font-size: var(--ac-type-ui);
+  padding: 0.3rem 0.6rem;
+  border: 1px solid var(--line);
+  border-radius: 0.6rem;
+  background: var(--surface);
+  color: var(--ink);
+}
+
+.author-workflow__upload {
+  font: inherit;
+  font-size: var(--ac-type-ui);
+  padding: 0.3rem 0.9rem;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  background: var(--surface);
+  color: var(--ink);
+  cursor: pointer;
+}
+
+.author-workflow__upload:hover {
+  border-color: color-mix(in srgb, var(--accent) 40%, var(--line));
+}
+
+/* Visually hidden but still keyboard/AT reachable via its <label>. */
+#workflow-file-input {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+  border: 0;
+}
+
+.author-workflow__textarea {
+  display: block;
+  width: 100%;
+  min-height: 16rem;
+  font-family: var(--font-mono);
+  font-size: var(--ac-type-ui);
+  line-height: 1.5;
+  padding: 0.85rem 1rem;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  background: var(--surface);
+  color: var(--ink);
+  resize: vertical;
+}
+
+.author-workflow__textarea:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 1px;
+}
+
+.author-workflow__actions {
+  display: flex;
+  gap: 0.6rem;
+  margin-top: 0.75rem;
+}
+
+.author-workflow__diagnostics,
+.author-workflow__preview,
+.author-workflow__published {
+  margin: 1.5rem 0;
+}
+
+.author-workflow__diagnostics h2,
+.author-workflow__preview h2,
+.author-workflow__published h2 {
+  font-size: var(--ac-type-component-title);
+}
+
+.author-workflow__diagnostics-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 0.6rem;
+}
+
+.author-workflow__diagnostic {
+  display: grid;
+  grid-template-columns: auto 1fr;
+  gap: 0.2rem 0.75rem;
+  padding: 0.6rem 0.85rem;
+  border: 1px solid var(--line-soft);
+  border-left-width: 3px;
+  border-radius: 0.6rem;
+  background: color-mix(in srgb, var(--surface) 55%, transparent);
+}
+
+.author-workflow__diagnostic--error {
+  border-left-color: var(--nodes-danger);
+}
+
+.author-workflow__diagnostic--warning {
+  border-left-color: var(--nodes-warn);
+}
+
+.author-workflow__diagnostic-level {
+  grid-column: 1;
+  font-size: var(--ac-type-meta);
+  text-transform: uppercase;
+  letter-spacing: var(--ac-tracking-caps);
+  font-weight: 640;
+  color: var(--ink-soft);
+}
+
+.author-workflow__diagnostic-path {
+  grid-column: 2;
+  font-family: var(--font-mono);
+  font-size: var(--ac-type-ui);
+}
+
+.author-workflow__diagnostic-message,
+.author-workflow__diagnostic-hint {
+  grid-column: 1 / -1;
+  margin: 0;
+  font-size: var(--ac-type-ui);
+}
+
+.author-workflow__digest code {
+  font-family: var(--font-mono);
+  font-size: var(--ac-type-meta);
+  word-break: break-all;
+}
+
+/* ---------- statistics view (task t6) ---------- */
+
+/* The denominator statement (honesty condition h9): always present, never a
+   footnote — same body-text weight as the rest of the page, with only the
+   excluded count picked out so it cannot be skimmed past. */
+.statistics-denominator {
+  font-size: var(--ac-type-ui);
+  margin: 1rem 0;
+}
+
+.statistics-denominator__excluded {
+  color: var(--ink);
+  font-weight: 600;
+}
+
+.stat-tiles {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(13rem, 1fr));
+  gap: var(--nodes-gap);
+  margin-bottom: 1.75rem;
+}
+
+/* Same card frame as .workflow-card (surface wash, --line-soft, --radius) —
+   a stat tile is a sibling of the other "one bounded thing among several"
+   cards, not a new aesthetic. */
+.stat-tile {
+  display: flex;
+  flex-direction: column;
+  gap: 0.35rem;
+  background: color-mix(in srgb, var(--surface) 55%, transparent);
+  border: 1px solid var(--line-soft);
+  border-radius: var(--radius);
+  padding: 0.9rem 1.1rem;
+}
+
+.stat-tile__label {
+  font-size: var(--ac-type-meta);
+  letter-spacing: var(--ac-tracking-caps);
+  text-transform: uppercase;
+  color: var(--ink-soft);
+  font-weight: 640;
+}
+
+.stat-tile__value {
+  font-family: var(--font-mono);
+  font-size: var(--ac-type-component-title);
+}
+
+.category-stats-table td,
+.category-stats-table th {
+  white-space: nowrap;
+}
+
+.category-chip--uncategorized {
+  font-style: italic;
+  border-style: dashed;
+}
+
+/* ---------- live-mesh view (task t18) ---------- */
+
+.mesh-view__head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 1rem;
+  flex-wrap: wrap;
+}
+
+/* The honest connection state: live only while the SSE stream is open. */
+.mesh-connection {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.45rem;
+  margin: 0.4rem 0 0;
+  font-family: var(--font-mono);
+  font-size: var(--ac-type-meta);
+  letter-spacing: var(--ac-tracking-caps);
+  text-transform: uppercase;
+  color: var(--ink-soft);
+  white-space: nowrap;
+}
+
+.mesh-connection__dot {
+  width: 0.55rem;
+  height: 0.55rem;
+  border-radius: 999px;
+  background: var(--ink-soft);
+}
+
+.mesh-connection[data-state="live"] {
+  color: var(--accent);
+}
+
+.mesh-connection[data-state="live"] .mesh-connection__dot {
+  background: var(--accent);
+}
+
+@media (prefers-reduced-motion: no-preference) {
+  .mesh-connection[data-state="live"] .mesh-connection__dot {
+    animation: mesh-live-breathe 2.6s var(--ease-gentle) infinite alternate;
+  }
+}
+
+@keyframes mesh-live-breathe {
+  from {
+    opacity: 0.55;
+  }
+
+  to {
+    opacity: 1;
+  }
+}
+
+/* The canvas viewport: the org's fixed dark terminal ground (see
+   culture-design/palette.ts TERMINAL_GROUND — "the ground itself never
+   changes with the theme"), so the terminal palette keeps its contrast in
+   the light theme too. The canvas paints the same ground color itself;
+   this frame supplies the border, radius, and overflow clip. */
+.mesh-canvas {
+  position: relative;
+  margin-top: 1.25rem;
+  background: #10142b;
+  border: 1px solid rgba(233, 236, 248, 0.12);
+  border-radius: var(--radius);
+  overflow: hidden;
+}
+
+.mesh-canvas canvas {
+  display: block;
+  width: 100%;
+}
+
+/* The inspection tooltip rides the canvas coordinate space: transform is
+   set imperatively to the node's drawn position each frame. */
+.mesh-tooltip {
+  position: absolute;
+  top: 0;
+  left: 0;
+  transform: translate(-200%, -200%);
+  translate: -50% 0;
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  padding: 0.3rem 0.65rem;
+  border-radius: 0.5rem;
+  background: rgba(16, 20, 43, 0.92);
+  border: 1px solid rgba(233, 236, 248, 0.18);
+  color: #e9ecf8;
+  font-family: var(--font-mono);
+  font-size: var(--ac-type-terminal);
+  line-height: var(--ac-leading-ui);
+  pointer-events: none;
+  max-width: min(70%, 26rem);
+  white-space: nowrap;
+}
+
+/* The [hidden] attribute must win over the flex display above. */
+.mesh-tooltip[hidden] {
+  display: none;
+}
+
+.mesh-tooltip__label {
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.mesh-tooltip__sub {
+  color: #8790b8;
+}
+
+.mesh-legend {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 0.4rem 1.4rem;
+  list-style: none;
+  margin: 0.9rem 0 0;
+  padding: 0;
+  font-family: var(--font-mono);
+  font-size: var(--ac-type-micro);
+  color: var(--ink-soft);
+}
+
+.mesh-legend li {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.45rem;
+}
+
+.mesh-legend__glyph {
+  width: 0.65rem;
+  height: 0.65rem;
+  border-radius: 999px;
+  border: 1.5px solid currentcolor;
+}
+
+/* Legend swatches quote culture-design/palette.ts's terminal palette —
+   the same hexes the canvas draws (teal/neutral/blue/amber). The word sits
+   beside every swatch, so colour never carries the meaning alone. */
+.mesh-legend__glyph--agent {
+  color: #7fdcc9; /* palette.teal */
+}
+
+.mesh-legend__glyph--human {
+  color: var(--nodes-idle); /* palette.neutral */
+}
+
+.mesh-legend__glyph--runner {
+  color: #7fb3f2; /* palette.blue */
+  border-radius: 2px;
+}
+
+.mesh-legend__glyph--run {
+  color: var(--nodes-warn); /* palette.amber */
+  width: 0.5rem;
+  height: 0.5rem;
+}
+
+.mesh-legend__note {
+  color: var(--ink-soft);
+}
+
+@media (max-width: 48rem) {
+  .mesh-view__head {
+    flex-direction: column;
+  }
 }

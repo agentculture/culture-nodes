@@ -27,6 +27,7 @@ function renderCard(
     reducedMotion?: boolean;
     selected?: boolean;
     onOpen?: (id: string) => void;
+    hasEvidence?: boolean;
   } = {},
 ) {
   const base = executions[nodeId] ?? idleExecution(nodeId);
@@ -38,6 +39,7 @@ function renderCard(
       selected={overrides.selected ?? false}
       reducedMotion={overrides.reducedMotion ?? false}
       onOpen={overrides.onOpen ?? (() => {})}
+      hasEvidence={overrides.hasEvidence}
     />,
   );
 }
@@ -119,6 +121,33 @@ describe("NodeCard execution-state overlays", () => {
   it("badges a waiting node rather than relying on the border alone", () => {
     renderCard("human-review", { execution: { state: "waiting" } });
     expect(screen.getByText("awaiting signal")).toBeInTheDocument();
+  });
+});
+
+describe("NodeCard evidence marker (task t11)", () => {
+  it("carries data-node-evidence regardless of band, so a selector doesn't depend on zoom", () => {
+    const { container } = renderCard("build", { band: "far", hasEvidence: true });
+    expect(
+      container.querySelector('.node-card[data-node-evidence="true"]'),
+    ).toBeInTheDocument();
+  });
+
+  it("defaults to false when the caller does not know (never a fabricated claim)", () => {
+    const { container } = renderCard("build", { band: "medium" });
+    expect(
+      container.querySelector('.node-card[data-node-evidence="false"]'),
+    ).toBeInTheDocument();
+    expect(screen.queryByText("evidence")).not.toBeInTheDocument();
+  });
+
+  it("shows a visible evidence badge at medium/close zoom when hasEvidence is true", () => {
+    renderCard("build", { band: "medium", hasEvidence: true });
+    expect(screen.getByText("evidence")).toBeInTheDocument();
+  });
+
+  it("does not show the visible badge at far zoom — that band renders topology/failure only", () => {
+    const { container } = renderCard("build", { band: "far", hasEvidence: true });
+    expect(container.querySelector(".node-card__badge--evidence")).toBeNull();
   });
 });
 

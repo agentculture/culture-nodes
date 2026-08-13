@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useState } from "react";
 import { setAgentState } from "../agent-state/store";
-import { ApiError, listNodeRuns } from "../api/client";
-import type { NodeRunListItem } from "../api/types";
+import { ApiError, listNodeRuns, listRuns } from "../api/client";
+import type { NodeRunListItem, Run } from "../api/types";
 import ErrorNotice from "../components/ErrorNotice";
 import JobsTable from "../components/JobsTable";
 import TimeRangeFilter from "../components/TimeRangeFilter";
@@ -21,6 +21,15 @@ import { useTimeRange } from "../hooks/useTimeRange";
  * anywhere in this file. Changing the range resets pagination and refetches
  * page one; "Load more" replays the same range with the last page's
  * `next_cursor`.
+ *
+ * `runsById` (task t5) is a second, best-effort lookup: `GET
+ * /v1alpha1/node-runs` carries no run name/category of its own (only
+ * `run_id`), so this view separately fetches `GET /v1alpha1/runs` for the
+ * same since/until window and joins by id, purely to let JobsTable show a
+ * name/category chip next to the run link. It is deliberately non-blocking
+ * and non-fatal — a failed or incomplete lookup just leaves rows showing
+ * the bare run id, exactly as before this task, never an error state of its
+ * own.
  */
 export function JobsTimeline() {
   const { since, until, applyRange } = useTimeRange();
@@ -29,6 +38,7 @@ export function JobsTimeline() {
   const [nextCursor, setNextCursor] = useState<string | undefined>(undefined);
   const [error, setError] = useState<ApiError | null>(null);
   const [loadingMore, setLoadingMore] = useState(false);
+  const [runsById, setRunsById] = useState<Record<string, Run>>({});
 
   // Page one: refetched whenever the range changes. Pagination state resets
   // with it — a new range means a new result set, not more of the old one.
@@ -61,6 +71,25 @@ export function JobsTimeline() {
         // "ready" means the initial load finished, including finishing it
         // badly — same convention RunsBoard/RunsList use.
         setAgentState({ status: "ready" });
+      });
+    return () => controller.abort();
+  }, [since, until]);
+
+  // The name/category lookup (task t5): a separate, non-blocking fetch of
+  // GET /v1alpha1/runs for the same window. It does not gate `status` —
+  // an agent/test only needs to know the node-run rows themselves loaded —
+  // and its own failure is swallowed: rows just fall back to the bare run
+  // id, same as if this effect did not exist.
+  useEffect(() => {
+    const controller = new AbortController();
+    listRuns(controller.signal, { updated_since: since, updated_until: until })
+      .then((list) => {
+        if (controller.signal.aborted) return;
+        setRunsById(Object.fromEntries(list.items.map((run) => [run.id, run])));
+      })
+      .catch(() => {
+        if (controller.signal.aborted) return;
+        setRunsById({});
       });
     return () => controller.abort();
   }, [since, until]);
@@ -112,6 +141,7 @@ export function JobsTimeline() {
             <JobsTable
               id="jobs-table"
               items={items}
+              runsById={runsById}
               caption={`${items.length} node run(s), newest first`}
             />
           </div>

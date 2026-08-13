@@ -1,0 +1,285 @@
+# The independent-review pattern (plan task t13, spec claim c17, honesty
+# condition h11): a build node and its review node dispatch to two
+# DIFFERENT actor backends, on purpose.
+#
+# examples/self-hosting-loop/workflow.yaml's `verify` node is the same
+# workflow's own developer-experience build fed back to a `company/verifier`
+# actor identity — but nothing in that example's `uses:` values, actor
+# registration, or bridge deployment actually requires `company/verifier`
+# to run on a different backend than `company/developer`. Today, on the
+# thor/orin fleet, that is exactly what happens in practice: one Culture
+# mesh backend model reviewing its own kind's output. This example makes
+# the backend difference an authored, load-bearing part of the graph
+# instead of an operational accident: `build` is placed on
+# `company/developer` (the claude-code bridge, same actor identity
+# self-hosting-loop and delivery-loop use for their own build node) and
+# `review` is placed on `company/codex-thor` (the codex bridge,
+# examples/codex-smoke-pair's own registered actor). Two different model
+# families, two different bridge implementations, reviewing the same diff —
+# ask-colleague's "the diversity is the value" principle
+# (.claude/skills/ask-colleague/SKILL.md), expressed as a workflow node
+# instead of an interactive skill invocation. See README.md for the full
+# reasoning, the binding this example actually uses (and why), and the
+# honesty conditions it satisfies and does not.
+apiVersion: nodes.culture.dev/v1alpha1
+kind: Workflow
+
+metadata:
+  name: independent-review
+  version: 1.0.0
+  ownerRef: team/platform-ai
+
+spec:
+  entry: build
+
+  contract:
+    input:
+      schema:
+        type: object
+        required: [repo, build_instruction, review_instruction, review_success_outcome]
+        properties:
+          repo:
+            type: string
+          build_instruction:
+            type: string
+          review_instruction:
+            type: string
+          # Bound straight into review's `input.success_outcome` (README's
+          # "what the bridge actually does" section). Naming it explicitly
+          # in the run input, rather than hardcoding it in the node, is
+          # what let this example be validated once and still let an
+          # operator choose which branch a given run exercises.
+          review_success_outcome:
+            type: string
+            enum: [approve, changes_required]
+    output:
+      schema:
+        type: object
+
+  # build is reachable from two loop edges (review.changes_required and
+  # ship-review.rejected), so it needs headroom for both before the bound
+  # stops the run — the same reasoning self-hosting-loop's header comment
+  # gives for its own build node.
+  limits:
+    maxDuration: 2h
+    maxTransitions: 24
+    maxVisitsPerNode: 3
+    maxParallelTokens: 1
+
+  ledger:
+    schemaVersion: nodes.culture.dev/ledger/v1alpha1
+    maxRecordsPerNode: 100
+
+  nodes:
+    # The builder. Same actor identity examples/self-hosting-loop and
+    # examples/delivery-loop use for their own `build` node (claude-code
+    # bridge), including the digest placeholder — it is the same referenced
+    # identity, not a coincidence.
+    build:
+      kind: agent
+      ownerRef: team/developer-experience
+      uses: actor://company/developer@sha256:3333333333333333333333333333333333333333333333333333333333333333
+      input:
+        bindings:
+          instruction: /run/input/build_instruction
+          repo: /run/input/repo
+      contract:
+        input:
+          schema:
+            type: object
+            required: [instruction, repo]
+        outcomes:
+          completed:
+            schema:
+              type: object
+              required: [summary]
+              properties:
+                summary:
+                  type: string
+      ledger:
+        propose: [claim]
+      policy:
+        timeout: 20m
+        retry:
+          maxAttempts: 2
+          backoff: exponential
+      # Task t12's standard post_run workspace-snapshot pattern
+      # (examples/workspace-snapshot-hook), attached to the node that
+      # actually changes the workspace. This is the honest half of
+      # "measured facts from the build attempt" this example can deliver
+      # today: the worker requests a runner-measured before/after
+      # comparison around this hook (internal/worker/hooks.go's
+      # buildHookOperation) and, when a runner can honour it, appends the
+      # result as `observed` evidence — never through build's own
+      # `ledger.propose` delta, and never through the agent's self-report.
+      # No shipped runner can honour the request yet (same honest gap
+      # workspace-snapshot-hook's own README records), so `review`'s
+      # `measuredEvidence` binding below resolves to an empty ledger
+      # projection today. See README.md for why that is still the right
+      # binding to ship. The hook itself is a no-op snapshot request, not a
+      # policy gate, so a hook-side failure marks assurance rejected rather
+      # than steering build's own domain outcome — build either completed
+      # or it did not, independent of whether evidence collection worked.
+      post_run:
+        operation:
+          image: registry.example/workspace-snapshot@sha256:7777777777777777777777777777777777777777777777777777777777777777
+          argv: [workspace-snapshot]
+          network: none
+          allowedOutputPaths: []
+        on_failure: reject_assurance
+
+    # The reviewer. A DIFFERENT actor identity and a DIFFERENT bridge
+    # implementation than `build` — examples/codex-smoke-pair's own
+    # registered `company/codex-thor`, digest reused verbatim from that
+    # example for the same reason self-hosting-loop and delivery-loop reuse
+    # `company/developer`'s digest: it names the same identity, not a fresh
+    # placeholder.
+    review:
+      kind: agent
+      ownerRef: team/quality
+      uses: actor://company/codex-thor@sha256:1111111111111111111111111111111111111111111111111111111111111a
+      input:
+        bindings:
+          instruction: /run/input/review_instruction
+          repo: /run/input/repo
+          # README's central binding claim: the ORIGINAL task instruction,
+          # read straight from run input — never routed through build's own
+          # paraphrase of what it was asked to do.
+          taskInstruction: /run/input/build_instruction
+          # The builder's own declared, contract-shaped output (today: just
+          # `{summary}` — build's self-report). Bound as the WHOLE node
+          # output object, not narrowed to `.../summary`, so a future build
+          # contract that adds self-reported structure (e.g. its own
+          # changed-file list) reaches review without touching this
+          # binding. Labelled honestly in the contract below as
+          # self-reported.
+          changeSet: /nodes/build/output
+          # The run's observed-evidence ledger projection — the same
+          # surface, and the same binding name convention (`testEvidence`
+          # in the reference workflows; `measuredEvidence` here), that
+          # examples/delivery-loop's and examples/self-hosting-loop's
+          # `verify` nodes already use to read the `test` node's runner-
+          # measured evidence. Wired to carry build's post_run snapshot
+          # evidence the moment a capable runner exists AND the projection
+          # resolves non-empty for a run-scoped read (README's "what does
+          # not work yet" section names the second, pre-existing gap this
+          # binding inherits rather than introduces).
+          measuredEvidence: /ledger/projections/evidence
+          # See workflow-level contract.input's review_success_outcome:
+          # bound from run input, not derived from review's own verdict —
+          # README's "the outcome name and the verdict field can disagree"
+          # section explains why that matters here.
+          success_outcome: /run/input/review_success_outcome
+      contract:
+        input:
+          schema:
+            type: object
+            required: [instruction, repo, taskInstruction, changeSet]
+        outcomes:
+          # Both outcomes below share one payload shape: a `verdict` field
+          # and a non-empty rationale in `findings`. Two declared outcomes
+          # rather than one, deliberately: `changes_required` is a domain
+          # outcome that follows its own edge (PRD's domain-outcome-is-not-
+          # an-engine-failure rule), not a value packed inside a single
+          # `completed` payload for a human to notice or miss.
+          approve:
+            schema:
+              type: object
+              required: [verdict, findings]
+              properties:
+                verdict:
+                  type: string
+                  enum: [approve]
+                findings:
+                  type: array
+                  items:
+                    type: object
+                    required: [severity, note]
+                    properties:
+                      severity:
+                        type: string
+                        enum: [info, minor, major, blocking]
+                      note:
+                        type: string
+          changes_required:
+            schema:
+              type: object
+              required: [verdict, findings]
+              properties:
+                verdict:
+                  type: string
+                  enum: [changes_required]
+                findings:
+                  type: array
+                  minItems: 1
+                  items:
+                    type: object
+                    required: [severity, note]
+                    properties:
+                      severity:
+                        type: string
+                        enum: [info, minor, major, blocking]
+                      note:
+                        type: string
+      ledger:
+        # A `claim`, exactly like self-hosting-loop's and delivery-loop's
+        # own `verify` nodes propose — never the ledger's `review` record
+        # type, which schemas/ledger/review.schema.json reserves for the
+        # human confirm/reject transaction itself (PRD §10.8). This node's
+        # verdict is a completion claim about the diff, not that
+        # transaction; README's §10.4 section spells out why the
+        # distinction matters here specifically.
+        propose: [claim]
+      policy:
+        timeout: 15m
+        retry:
+          maxAttempts: 2
+          backoff: exponential
+
+    # The human gate, placed exactly where self-hosting-loop places its own
+    # ship-review: after the happy-path outcome, reading the reviewer's own
+    # output, deciding ship vs rework. Nothing upstream of this node can
+    # promote review's `proposed` claim to anything a run can act on
+    # irreversibly — README's §10.4 section is the load-bearing claim this
+    # node exists to keep true.
+    ship-review:
+      kind: approval
+      ownerRef: team/platform-ai
+      decisionSchemaRef: ./contracts/ship-decision.schema.json
+      approverRef: group/platform-ai-approvers
+      deadline: 24h
+      input:
+        from: /nodes/review/output
+
+    finish:
+      kind: end
+      ownerRef: team/platform-ai
+      output:
+        from: /nodes/review/output
+
+  edges:
+    - from: build.completed
+      to: review
+
+    # The happy path still needs a human before it ships — matching
+    # self-hosting-loop's own routing of its single happy-path outcome
+    # into ship-review rather than straight to finish.
+    - from: review.approve
+      to: ship-review
+
+    # changes_required is delivery-loop's own pattern: a domain answer that
+    # loops back to build directly, bounded by maxVisitsPerNode, without
+    # needing a human to approve sending it back for more work.
+    - from: review.changes_required
+      to: build
+
+    - from: ship-review.approved
+      to: finish
+
+    # The approval vocabulary is fixed (approved/rejected/expired/...);
+    # `rejected` on the happy path is this workflow's own "changes
+    # required after all" — a human overruling an `approve` verdict sends
+    # the same work back to build that a `changes_required` verdict would
+    # have.
+    - from: ship-review.rejected
+      to: build

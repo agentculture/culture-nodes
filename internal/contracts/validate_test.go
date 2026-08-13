@@ -195,6 +195,19 @@ func TestMalformedFixturesReportPointerPaths(t *testing.T) {
 			wantPointer: "/observations/changed_paths",
 		},
 		{
+			// Also proves record.schema.json dispatches into the
+			// additively-registered grade.schema.json the same way it
+			// dispatches into the PRD §10.2 types.
+			fixture:     "ledger-grade-rating-out-of-range.json",
+			schema:      contracts.SchemaLedgerRecord,
+			wantPointer: "/data/rating",
+		},
+		{
+			fixture:     "ledger-grade-missing-evaluated-actor.json",
+			schema:      contracts.SchemaLedgerGrade,
+			wantPointer: "/data/evaluated_actor_id",
+		},
+		{
 			fixture:     "runner-operation-unpinned-image.json",
 			schema:      contracts.SchemaRunnerOperation,
 			wantPointer: "/execution/image_digest",

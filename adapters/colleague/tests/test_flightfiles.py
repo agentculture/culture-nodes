@@ -44,7 +44,9 @@ def test_feed_tail_reads_no_records_when_file_absent(tmp_path):
 def test_feed_tail_reads_only_new_complete_lines(tmp_path):
     fp = flightfiles.feed_path(tmp_path, "task1")
     fp.parent.mkdir(parents=True)
-    fp.write_text(json.dumps({"step_index": 0, "tool": "write_file", "intent": None, "stats": {}}) + "\n")
+    fp.write_text(
+        json.dumps({"step_index": 0, "tool": "write_file", "intent": None, "stats": {}}) + "\n"
+    )
 
     tail = flightfiles.FeedTail(tmp_path, "task1")
     first = tail.read_new_records()
@@ -83,7 +85,11 @@ def test_feed_tail_leaves_a_partial_trailing_line_for_next_read(tmp_path):
 def test_feed_tail_skips_malformed_lines_without_raising(tmp_path):
     fp = flightfiles.feed_path(tmp_path, "task1")
     fp.parent.mkdir(parents=True)
-    fp.write_text("not json\n" + json.dumps({"step_index": 0, "tool": "a", "intent": None, "stats": {}}) + "\n")
+    fp.write_text(
+        "not json\n"
+        + json.dumps({"step_index": 0, "tool": "a", "intent": None, "stats": {}})
+        + "\n"
+    )
     tail = flightfiles.FeedTail(tmp_path, "task1")
     records = tail.read_new_records()
     assert len(records) == 1

@@ -13,7 +13,30 @@ from __future__ import annotations
 import argparse
 
 from culture_nodes.api_client import API_PREFIX, add_api_url_argument, client_from_args
-from culture_nodes.cli._output import JSON_FLAG_HELP, emit_json_passthrough, emit_result
+from culture_nodes.cli._output import (
+    JSON_FLAG_HELP,
+    emit_json_passthrough,
+    emit_result,
+    format_usage_lines,
+)
+
+
+def _node_run_lines(payload: dict) -> str:
+    """Render the text listing: one header line per node run, its usage
+    block indented beneath it, and the pagination cursor last."""
+    lines = []
+    for item in payload.get("items") or []:
+        lines.append(
+            f"{item.get('id', '')}  {item.get('run_id', '')}  {item.get('node_id', '')}  "
+            f"{item.get('state', '')}  {item.get('updated_at', '')}"
+        )
+        usage = item.get("usage")
+        if isinstance(usage, dict):
+            lines.extend(f"  {line}" for line in format_usage_lines(usage))
+    next_cursor = payload.get("next_cursor")
+    if next_cursor:
+        lines.append(f"next_cursor: {next_cursor}")
+    return "\n".join(lines)
 
 
 def cmd_node_runs_list(args: argparse.Namespace) -> int:
@@ -28,24 +51,14 @@ def cmd_node_runs_list(args: argparse.Namespace) -> int:
             "limit": args.limit,
         },
     )
-    json_mode = bool(getattr(args, "json", False))
-    if json_mode:
+    if bool(getattr(args, "json", False)):
         emit_json_passthrough(resp.raw)
-    else:
-        payload = resp.payload or {}
-        items = payload.get("items") or []
-        if not items:
-            emit_result("no node runs", json_mode=False)
-        else:
-            lines = [
-                f"{item.get('id', '')}  {item.get('run_id', '')}  {item.get('node_id', '')}  "
-                f"{item.get('state', '')}  {item.get('updated_at', '')}"
-                for item in items
-            ]
-            next_cursor = payload.get("next_cursor")
-            if next_cursor:
-                lines.append(f"next_cursor: {next_cursor}")
-            emit_result("\n".join(lines), json_mode=False)
+        return 0
+    payload = resp.payload or {}
+    if not (payload.get("items") or []):
+        emit_result("no node runs", json_mode=False)
+        return 0
+    emit_result(_node_run_lines(payload), json_mode=False)
     return 0
 
 

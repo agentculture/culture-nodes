@@ -12,6 +12,7 @@ import (
 	"github.com/agentculture/culture-nodes/internal/contracts"
 	"github.com/agentculture/culture-nodes/internal/ledger"
 	"github.com/agentculture/culture-nodes/internal/store"
+	"github.com/agentculture/culture-nodes/internal/telemetry"
 )
 
 // Default retry pacing. The PRD fixes neither, so they are named constants a
@@ -69,6 +70,18 @@ func WithValidator(v *contracts.Validator) Option {
 	}
 }
 
+// WithTelemetry wires the §12.5 completion transaction (task t19,
+// CompleteAttempt) through a telemetry.Provider. Omitting this option
+// leaves e.telemetry at its zero value, a nil *telemetry.Provider — every
+// telemetry.Provider method tolerates a nil receiver, so an Engine built
+// without this option (every existing caller, every existing test) behaves
+// exactly as it did before this option existed.
+func WithTelemetry(p *telemetry.Provider) Option {
+	return func(e *Engine) {
+		e.telemetry = p
+	}
+}
+
 // Engine is the workflow state machine: it creates runs and commits the
 // §12.5 completion transaction. It is safe for concurrent use as long as its
 // Store is.
@@ -79,6 +92,7 @@ type Engine struct {
 	newID     func() string
 	retryBase time.Duration
 	retryMax  time.Duration
+	telemetry *telemetry.Provider
 
 	mu       sync.Mutex
 	prepared map[string]*Workflow
@@ -159,7 +173,7 @@ func (e *Engine) Workflow(digest string, ir []byte) (*Workflow, error) {
 //   - run.created and node-run.ready are appended to the event log and the
 //     outbox, so the queue signal and the audit trail cannot disagree with
 //     the state that produced them.
-func (e *Engine) CreateRun(ctx context.Context, cw *compiler.CompiledWorkflow, input json.RawMessage) (Run, error) {
+func (e *Engine) CreateRun(ctx context.Context, cw *compiler.CompiledWorkflow, input json.RawMessage, opts ...RunOption) (Run, error) {
 	if cw == nil {
 		return Run{}, errors.New("engine: CreateRun requires a compiled workflow")
 	}
@@ -185,6 +199,9 @@ func (e *Engine) CreateRun(ctx context.Context, cw *compiler.CompiledWorkflow, i
 		Input:          jsonOrNull(input),
 		CreatedAt:      now,
 		UpdatedAt:      now,
+	}
+	for _, opt := range opts {
+		opt(&run)
 	}
 
 	err = e.store.InTx(ctx, func(ctx context.Context, tx Tx) error {

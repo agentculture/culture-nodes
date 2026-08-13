@@ -373,6 +373,9 @@ spec:
           instruction: /run/input/merge_instruction
           fixReport: /nodes/fix/output
           reviewVerdict: /nodes/review/output
+          observe:
+            kind: github_pr_merged
+            pr: /nodes/fix/output/pr_number
       contract:
         input:
           schema:

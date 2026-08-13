@@ -232,6 +232,41 @@ uv run human-inbox-bridge serve --config bridge.json
 uv run python -m human_inbox_bridge serve
 ```
 
+## Observable-declaration convention (t15 / c11 / h8)
+
+A workflow node that targets a `kind=human` actor through this bridge can
+declare an **observable** in its input: any non-`instruction` key round-trips
+verbatim into the bridge's stored `extra_input` (server.py line 369:
+`extra_input={k: v for k, v in raw_input.items() if k != "instruction"}`),
+where an external tracker reads it to watch for real-world completion.
+
+```yaml
+input:
+  bindings:
+    instruction: /run/input/merge_instruction
+    prNumber: /nodes/fix/output
+    observe:
+      kind: github_pr_merged
+      pr: /nodes/fix/output/pr_number   # or a literal: pr: 42
+```
+
+The tracker contract:
+
+* **Auto-submit on merge only.** When the tracker observes the declared
+  observable reaching its target state (e.g. a `github_pr_merged` event
+  for the given PR), it calls the bridge's existing submit surface
+  (`POST /inbox/tasks/<id>/submit`) with the observed outcome — no human
+  intervention needed.
+* **Manual submit always remains.** A person can still submit the task
+  through the inbox surface at any time; the tracker's auto-submission
+  does not remove or block the manual path.
+* **Only declared observables are watched.** Tasks with no `observe` key
+  behave exactly as today — purely manual.
+
+The `observe` value is a free-form object; the tracker interprets the
+`kind` field to select the right external check. Today the only
+supported kind is `github_pr_merged`.
+
 ## Tests
 
 ```bash

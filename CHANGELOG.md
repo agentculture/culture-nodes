@@ -5,6 +5,12 @@ All notable changes to this project will be documented in this file.
 Format follows [Keep a Changelog](https://keepachangelog.com/). This project
 adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.13.2] - 2026-08-13
+
+### Added
+
+- Plan: attempts-evidence-humans-loops (devague /spec-to-plan) — 23 confirmed TDD-gated tasks in 6 dependency waves covering all 48 spec targets, with file-precise operator instructions, 5 recorded risks, and the PR-upkeep live run as the delivery gate
+
 ## [0.13.1] - 2026-08-13
 
 ### Added

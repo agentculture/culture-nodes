@@ -12,10 +12,11 @@ import (
 )
 
 // The production WaitDispatcher (issue #39, PRD §9.2, §12.7): a `wait`
-// node's until.duration / until.timestamp becomes a durable timer, never a
-// held lease or a sleeping goroutine.
+// node's until.duration / until.timestamp becomes a durable timer, and its
+// until.signal a durable event subscription (task t10, spec decision c35) —
+// never a held lease or a sleeping goroutine.
 //
-// The life of a wait, end to end:
+// The life of a timer wait, end to end:
 //
 //  1. First dispatch: the fire time is computed from the until block. If it
 //     is already past, the node completes immediately with its kind-implied
@@ -37,13 +38,33 @@ import (
 //     (maxTransitions, maxVisitsPerNode, maxDuration) enforced across the
 //     park: a wait inside a cycle is bounded exactly like any other node.
 //
-// until.signal is explicitly refused: delivering a named external signal
-// needs the first-class event surface (emit/subscribe records and an
-// authenticated inbound delivery route) that a follow-up task builds — see
-// the build plan's t10 (docs/plans/2026-08-13-attempts-evidence-humans-loops.md).
-// Refusing loudly is deliberate: a wait that silently completed (or silently
-// never armed) because its signal surface does not exist yet would be the
-// same claims-must-be-earned failure mode seams.go documents.
+// A signal wait is the same walk with the timer swapped for a first-class
+// event subscription and the scheduler swapped for the inbound delivery
+// route:
+//
+//  1. First dispatch parks: Store.StartDurableSignalWait — the identical
+//     fenced release and waiting_external node run, with a pending
+//     signal_subscriptions row (keyed deterministically off the node run,
+//     like waitTimerID) where the timer would be, and deliberately NO
+//     deadline: an undelivered signal leaves the run parked and
+//     inspectable, never timed out by a dispatch default.
+//  2. POST /v1alpha1/events (authenticated, internal/api) delivers a named
+//     event: Store.DeliverSignalEvent appends the event fact, marks every
+//     matching pending subscription fired, and returns the parked work
+//     items to 'ready' in one transaction — the exact effect a timer fire
+//     applies, performed by the delivery transaction instead of the
+//     scheduler (see signal.go's doc comment for the single-writer
+//     reasoning).
+//  3. The re-claimed dispatch finds the fired subscription and completes
+//     with the `completed` outcome through the same §12.5 completion as a
+//     fired timer — planTransition, loop bounds and all. The resuming
+//     event (id, name, emitter, payload) is folded into the node's output,
+//     so downstream bindings can read what actually woke the run.
+//
+// An event with no waiting subscription is still appended — a fact, not an
+// error — but a subscription created after the event does NOT retroactively
+// fire: subscription-then-event resumes, event-then-subscription stays
+// parked (this pass's documented limitation, issue #43).
 
 // waitOutcome is the kind-implied domain outcome every wait node declares
 // (internal/compiler/vocabulary.go's impliedOutcomes[KindWait]).
@@ -55,6 +76,13 @@ const waitOutcome = "completed"
 // original fire_at anchor), and the resumed dispatch after the fire finds
 // the fired row under the same id without a search.
 func waitTimerID(nodeRunID string) string { return "wait-" + nodeRunID }
+
+// signalSubscriptionID derives the durable signal subscription's id from
+// the node run it wakes — waitTimerID's signal-kind twin, deterministic for
+// the same two reasons: a crashed-and-redispatched arm re-adopts the same
+// subscription (StartDurableSignalWait's ON CONFLICT DO NOTHING), and the
+// resumed dispatch finds the fired row under the same id without a search.
+func signalSubscriptionID(nodeRunID string) string { return "signal-" + nodeRunID }
 
 // untilSpec is the worker's decoded view of a wait node's until block,
 // mirroring internal/compiler's identically-shaped `until` type (model.go).
@@ -83,13 +111,16 @@ func NewTimerWaitDispatcher(db *postgres.Store, now func() time.Time) *TimerWait
 	return &TimerWaitDispatcher{db: db, now: now}
 }
 
-// DispatchWait implements WaitDispatcher for until.duration and
-// until.timestamp, and refuses until.signal. See the file doc comment for
-// the full arm → park → fire → resume walk-through.
+// DispatchWait implements WaitDispatcher for until.duration,
+// until.timestamp, and until.signal. See the file doc comment for the full
+// arm → park → deliver/fire → resume walk-through of both wait kinds.
 func (t *TimerWaitDispatcher) DispatchWait(ctx context.Context, dc DispatchContext, until json.RawMessage) (SeamResult, error) {
 	spec, err := decodeUntil(until)
 	if err != nil {
 		return SeamResult{}, err
+	}
+	if spec.Signal != "" {
+		return t.dispatchSignalWait(ctx, dc, until, spec.Signal)
 	}
 
 	now := t.now().UTC()
@@ -149,8 +180,91 @@ func (t *TimerWaitDispatcher) DispatchWait(ctx context.Context, dc DispatchConte
 	return SeamResult{Async: true, AsyncRef: timerID, AsyncDeadline: fireAt}, nil
 }
 
+// dispatchSignalWait is DispatchWait's until.signal half. The persisted
+// subscription — not any recomputation — is the authority on whether the
+// signal has arrived, for the same reason the timer row is on the timer
+// path: a fired subscription must complete the resume, and a pending one
+// must re-park on the ORIGINAL subscription rather than arming a second.
+func (t *TimerWaitDispatcher) dispatchSignalWait(ctx context.Context, dc DispatchContext, until json.RawMessage, signalName string) (SeamResult, error) {
+	subID := signalSubscriptionID(dc.NodeRunID)
+	sub, found, err := t.db.SignalSubscriptionByID(ctx, subID)
+	if err != nil {
+		return SeamResult{}, fmt.Errorf("load signal subscription %s: %w", subID, err)
+	}
+	if !found {
+		// First dispatch: park. parkWait routes an AsyncSignal answer to
+		// StartDurableSignalWait, which persists the subscription under the
+		// fencing tuple only the worker legitimately holds.
+		return SeamResult{Async: true, AsyncRef: subID, AsyncSignal: signalName}, nil
+	}
+
+	switch sub.Status {
+	case postgres.SignalSubscriptionFired:
+		return t.signalWaitCompleted(ctx, until, sub)
+	case postgres.SignalSubscriptionCanceled:
+		// Run cancellation retires the subscription AND the work item in one
+		// transaction (the API's cancelRun REAP step), so — exactly like a
+		// canceled timer above — a canceled subscription under a
+		// still-claimable work item is a state this system never writes.
+		return SeamResult{}, fmt.Errorf(
+			"signal subscription %s is canceled but the work item was still dispatched; "+
+				"run cancellation retires both together, so this work item is stale — refusing to guess an outcome", subID)
+	default:
+		// Pending: an anomalous early wake (nothing in this codebase
+		// produces one, but a hand-poked row can). Re-park on the original
+		// subscription — the eventual delivery is what completes it.
+		return SeamResult{Async: true, AsyncRef: subID, AsyncSignal: signalName}, nil
+	}
+}
+
+// signalWaitCompleted builds the completion for a signal wait whose
+// subscription has fired: the kind-implied `completed` outcome, with the
+// resuming event folded into the output so downstream bindings
+// (/nodes/<id>/output) can read what actually woke the run.
+func (t *TimerWaitDispatcher) signalWaitCompleted(ctx context.Context, until json.RawMessage, sub postgres.SignalSubscription) (SeamResult, error) {
+	ev, found, err := t.db.SignalEventByID(ctx, sub.FiredEventID)
+	if err != nil {
+		return SeamResult{}, fmt.Errorf("load signal event %s: %w", sub.FiredEventID, err)
+	}
+	if !found {
+		// A fired subscription always records the event that fired it in the
+		// same transaction (DeliverSignalEvent), and signal_events is
+		// append-only — so a missing row is corruption, not a race.
+		return SeamResult{}, fmt.Errorf(
+			"signal subscription %s is fired by event %s, but no such event exists; "+
+				"refusing to complete a wait on evidence that cannot be read", sub.ID, sub.FiredEventID)
+	}
+
+	payload := struct {
+		Until       json.RawMessage `json:"until"`
+		CompletedAt string          `json:"completed_at"`
+		Event       signalEventOut  `json:"event"`
+	}{
+		Until:       until,
+		CompletedAt: sub.FiredAt.UTC().Format(time.RFC3339Nano),
+		Event: signalEventOut{
+			ID:      ev.ID,
+			Name:    ev.Name,
+			Emitter: ev.Emitter,
+			Payload: ev.Payload,
+		},
+	}
+	// A struct of raw JSON and strings never fails to marshal.
+	output, _ := json.Marshal(payload)
+	return SeamResult{TechStatus: engine.StatusSucceeded, Outcome: waitOutcome, Output: output}, nil
+}
+
+// signalEventOut is the resuming event's shape inside a signal wait's
+// output payload.
+type signalEventOut struct {
+	ID      string          `json:"id"`
+	Name    string          `json:"name"`
+	Emitter string          `json:"emitter"`
+	Payload json.RawMessage `json:"payload"`
+}
+
 // decodeUntil validates the until block down to exactly one supported
-// resume condition, refusing until.signal with the follow-up named.
+// resume condition: duration, timestamp, or signal.
 func decodeUntil(until json.RawMessage) (untilSpec, error) {
 	if len(until) == 0 {
 		return untilSpec{}, errors.New("wait node carries no until block; the compiler requires one, so this pinned definition is corrupt")
@@ -159,12 +273,6 @@ func decodeUntil(until json.RawMessage) (untilSpec, error) {
 	if err := json.Unmarshal(until, &spec); err != nil {
 		return untilSpec{}, fmt.Errorf("until block could not be decoded: %w", err)
 	}
-	if spec.Signal != "" {
-		return untilSpec{}, fmt.Errorf(
-			"until.signal %q is not supported yet: delivering a named signal needs the first-class event surface "+
-				"(emit/subscribe records and an authenticated inbound event delivery route), which a follow-up task builds "+
-				"(build plan t10, issue #39); use until.duration or until.timestamp until it lands", spec.Signal)
-	}
 	declared := 0
 	if spec.Duration != "" {
 		declared++
@@ -172,10 +280,13 @@ func decodeUntil(until json.RawMessage) (untilSpec, error) {
 	if spec.Timestamp != "" {
 		declared++
 	}
+	if spec.Signal != "" {
+		declared++
+	}
 	if declared != 1 {
 		return untilSpec{}, fmt.Errorf(
-			"until block must declare exactly one resume condition, got %d of duration/timestamp; "+
-				"declare one of them (until.signal is a separate, not-yet-supported condition)", declared)
+			"until block must declare exactly one resume condition, got %d of duration/timestamp/signal; "+
+				"declare exactly one of them", declared)
 	}
 	return spec, nil
 }
@@ -223,6 +334,9 @@ func waitCompleted(until json.RawMessage, now time.Time) SeamResult {
 // default dispatch timeout must not fail a wait for lasting longer than an
 // actor call is allowed to.
 func (w *Worker) parkWait(ctx context.Context, claimed postgres.ClaimedWork, d postgres.Dispatch, dc DispatchContext, result SeamResult) error {
+	if result.AsyncSignal != "" {
+		return w.parkSignalWait(ctx, claimed, d, dc, result)
+	}
 	if result.AsyncDeadline.IsZero() {
 		return w.failAttempt(ctx, claimed, "", engine.StatusFailed, kindWait,
 			fmt.Sprintf("node %q wait dispatch answered async with no fire time; the wait cannot be armed", dc.NodeID))
@@ -246,6 +360,37 @@ func (w *Worker) parkWait(ctx context.Context, claimed postgres.ClaimedWork, d p
 			// written; whoever holds the item now will arm it again.
 			return nil
 		}
+		return err
+	}
+	return nil
+}
+
+// parkSignalWait is parkWait's until.signal half: the identical fenced
+// release and waiting_external node run, with a pending signal subscription
+// (Store.StartDurableSignalWait) where the timer would be, and deliberately
+// NO deadline — an undelivered signal leaves the run parked and
+// inspectable, never timed out by a dispatch default. The inbound event
+// delivery route (POST /v1alpha1/events, internal/api) is what returns the
+// parked work item to 'ready', the way the scheduler's timer fire does for
+// a timer wait.
+func (w *Worker) parkSignalWait(ctx context.Context, claimed postgres.ClaimedWork, d postgres.Dispatch, dc DispatchContext, result SeamResult) error {
+	err := w.db.StartDurableSignalWait(ctx, postgres.StartDurableSignalWaitInput{
+		WorkID:         claimed.ID,
+		WorkerID:       w.opts.WorkerID,
+		FencingToken:   claimed.FencingToken,
+		Attempt:        int(claimed.Attempt),
+		NamespaceID:    d.NamespaceID,
+		RunID:          dc.RunID,
+		NodeRunID:      dc.NodeRunID,
+		NodeID:         dc.NodeID,
+		AttemptID:      dc.AttemptID,
+		SubscriptionID: result.AsyncRef,
+		EventName:      result.AsyncSignal,
+	})
+	if err != nil && !isStale(err) {
+		// A stale claim means the lease went while the park was being armed:
+		// nothing was written, and whoever holds the item now arms it again —
+		// the same tolerance parkWait's timer half applies.
 		return err
 	}
 	return nil

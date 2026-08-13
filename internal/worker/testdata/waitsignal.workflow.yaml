@@ -1,8 +1,8 @@
-# A wait node on until.signal, which the timer-backed wait dispatcher
-# explicitly refuses until the first-class event surface lands (build plan
-# t10, issue #39). The test asserts the refusal is a diagnosed technical
-# failure naming that follow-up — never a silent stub, never an invented
-# completion.
+# A wait node on until.signal (task t10, issue #39, spec decision c35):
+# the dispatch parks the run on a durable signal subscription — no lease,
+# no timer — and an authenticated POST /v1alpha1/events delivery of the
+# named event is what resumes it, the run completing through its normal
+# edges with the resuming event folded into the wait node's output.
 apiVersion: nodes.culture.dev/v1alpha1
 kind: Workflow
 

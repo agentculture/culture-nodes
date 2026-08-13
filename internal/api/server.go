@@ -72,6 +72,14 @@ type Server struct {
 	// closed-by-default posture: nil refuses every registration with 401.
 	actorRegistrationSecret []byte
 
+	// eventTokenSecret gates POST /v1alpha1/events (see
+	// (*Server).requireEventAuth in signalevents.go) — its own secret
+	// (NODES_EVENT_TOKEN_SECRET), separate from the two above so an
+	// operator can grant an external system the standing to emit signal
+	// events without also granting decision or registration power. Same
+	// closed-by-default posture: nil refuses every delivery with 401.
+	eventTokenSecret []byte
+
 	pollInterval time.Duration
 	webAssets    fs.FS
 
@@ -149,6 +157,19 @@ func WithActorRegistrationSecret(secret string) Option {
 	return func(s *Server) {
 		if secret != "" {
 			s.actorRegistrationSecret = []byte(secret)
+		}
+	}
+}
+
+// WithEventTokenSecret configures the bearer secret POST /v1alpha1/events
+// requires (see requireEventAuth in signalevents.go). Omitting it (or
+// passing "") leaves every inbound event delivery refused with 401 rather
+// than mounted-but-authless — the same closed-by-default rule the decision
+// and registration secrets follow.
+func WithEventTokenSecret(secret string) Option {
+	return func(s *Server) {
+		if secret != "" {
+			s.eventTokenSecret = []byte(secret)
 		}
 	}
 }
@@ -254,6 +275,7 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("POST /v1alpha1/runs/{id}/cancel", s.wrap(s.handleCancelRun))
 	mux.HandleFunc("GET /v1alpha1/runs/{id}/events", s.handleStreamRunEvents)
 	mux.HandleFunc("GET /v1alpha1/events", s.handleStreamEvents)
+	mux.HandleFunc("POST /v1alpha1/events", s.wrap(s.handleDeliverEvent))
 
 	mux.HandleFunc("GET /v1alpha1/runs/{id}/ledger", s.wrap(s.handleListLedgerRecords))
 	mux.HandleFunc("GET /v1alpha1/runs/{id}/ledger/projections/{name}", s.wrap(s.handleGetLedgerProjection))

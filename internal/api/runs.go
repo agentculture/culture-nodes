@@ -444,6 +444,21 @@ func (s *Server) cancelRun(ctx context.Context, runID string) (engine.Run, error
 	); err != nil {
 		return engine.Run{}, internalError(fmt.Errorf("cancel run: cancel timers: %w", err))
 	}
+	// The signal-wait sibling of the timer REAP above (task t10, issue #39):
+	// a until.signal park (Store.StartDurableSignalWait) leaves a pending
+	// signal_subscriptions row as the only thing that will ever wake the
+	// parked work item, and an event delivered after this cancel must find
+	// no pending subscription to fire — otherwise it would flip a dead run's
+	// work item back to 'ready' exactly the way an unretired timer would.
+	// Same status vocabulary as timers ('canceled', one l:
+	// postgres.SignalSubscriptionCanceled), same no-op-if-already-retired
+	// convention.
+	if _, err := tx.Exec(ctx, `
+		UPDATE signal_subscriptions SET status = 'canceled'
+		WHERE run_id = $1 AND status = 'pending'`, runID,
+	); err != nil {
+		return engine.Run{}, internalError(fmt.Errorf("cancel run: cancel signal subscriptions: %w", err))
+	}
 
 	var sequence int64
 	if err := tx.QueryRow(ctx,

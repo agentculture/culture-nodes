@@ -1,0 +1,1210 @@
+{
+  "slug": "economy-discord-graphs",
+  "title": "economy-discord-graphs",
+  "schema_version": 5,
+  "status": "exported",
+  "created": "2026-08-13T14:44:30Z",
+  "updated": "2026-08-13T15:50:02Z",
+  "claims": [
+    {
+      "id": "c1",
+      "kind": "announcement",
+      "text": "Culture Nodes runs economically and legibly: runs post live updates to Discord as devex does; model actors keep warm sessions and measurable cache economics; dispatch is budget-aware so a build never starves the operator's own Claude window; bigger work packages route to codex actors by default; a human's real-world action (merging the PR) completes their task without a second submission; failed nodes preserve their changes; and the dashboard self-refreshes with a living Node Graphs tab",
+      "origin": "user",
+      "status": "confirmed",
+      "honesty_conditions": [
+        {
+          "id": "h24",
+          "text": "the announcement holds only if every one of the seven workstreams ships with its mechanical success signal (c38) \u2014 a partial batch renders as partial delivery, never as the announced whole",
+          "status": "confirmed",
+          "instruction": ""
+        }
+      ],
+      "hard_questions": [],
+      "links": [],
+      "instruction": "Verify via the eight mechanical signals in c38; each maps to its issues: Discord (#41+webhook ask), telemetry+stickiness+breaker+pacing+budget (#47/#48), routing/granularity (#47 item 3), merge-as-action (#54), preserve (#49), auto-refresh (#46), Node Graphs (#56), plan pipeline (#45 gated on #43)",
+      "revisions": []
+    },
+    {
+      "id": "c2",
+      "kind": "requirement",
+      "text": "Cache/usage telemetry first (#48 item 4, #47 item 2): attempts gain nullable usage_cached_input_tokens, usage_reasoning_tokens, usage_model, usage_thread_id, termination_reason via an expand-only migration on 0012's precedent; the change lands in five layers \u2014 migration, actors.Usage+ToEngine+engine.Usage (internal/actors/protocol.go:85-114), insertAttemptSQL + usage rollups + actorstats, API types + openapi.yaml Usage component, web usage domain \u2014 and the protocol's PRD-mirroring rule means \u00a713.2 needs an ADR-style amendment (ADR-0008 precedent)",
+      "origin": "llm",
+      "status": "confirmed",
+      "honesty_conditions": [
+        {
+          "id": "h1",
+          "text": "usage rows persist cached_input_tokens for codex attempts and cache_ratio is computable from stats; backends reporting no cache fields (colleague) stay NULL \u2014 never zero-filled",
+          "status": "confirmed",
+          "instruction": ""
+        }
+      ],
+      "hard_questions": [],
+      "links": [],
+      "instruction": "Expand-only migration 00NN + actors.Usage/ToEngine/engine.Usage + insertAttemptSQL/rollups/actorstats + API types/openapi + web usage domain + all three bridge mappings; ADR amending PRD \u00a713.2 (ADR-0008 precedent); do this workstream FIRST",
+      "revisions": []
+    },
+    {
+      "id": "c3",
+      "kind": "requirement",
+      "text": "Session stickiness (#48 item 3, #47 item 1): continuation_ref exists only on InvocationResult (internal/actors/protocol.go:143) and completeFromResult silently drops it (internal/worker/dispatch.go:214-303) \u2014 stickiness adds it to InvocationRequest and CompletedPayload, persists it per attempt, and dispatchActor passes the prior ref for the same session key (actor+repo+workstream)",
+      "origin": "llm",
+      "status": "confirmed",
+      "honesty_conditions": [
+        {
+          "id": "h2",
+          "text": "a second node turn with the same session key reaches the bridge with the prior continuation_ref populated, and a resumed session shows measurably lower uncached input than a cold one on the same task",
+          "status": "confirmed",
+          "instruction": ""
+        }
+      ],
+      "hard_questions": [],
+      "links": [],
+      "instruction": "Add continuation_ref to InvocationRequest + CompletedPayload, persist per attempt, dispatchActor passes prior ref by session key; bridges return native handles (claude session_id, codex thread_id); colleague returns none honestly; gated by c42's A/B",
+      "revisions": []
+    },
+    {
+      "id": "c4",
+      "kind": "requirement",
+      "text": "Capacity circuit breaker (#48 item 1): a quota/session-limit class is missing from \u00a713.5 (internal/actors/errors.go:20-47 maps provider limits to execution or auth_or_policy); Retry-After is parsed then discarded in-attempt (client.go:225); the breaker's paused-until state needs a NEW mutable table because actors rows are append-only by contract (actorstats.go:13-23), and enforcement defers work_items.available_at at the dispatch site (dispatch.go:51 area) instead of failing the attempt",
+      "origin": "llm",
+      "status": "confirmed",
+      "honesty_conditions": [
+        {
+          "id": "h3",
+          "text": "a forced quota/rate/session-limit failure pauses the actor \u2014 no further dispatch reaches it until the pause expires \u2014 verified by a test observing deferred available_at, not a failed-attempt cascade",
+          "status": "confirmed",
+          "instruction": ""
+        }
+      ],
+      "hard_questions": [],
+      "links": [],
+      "instruction": "New \u00a713.5 class (capacity_exhausted) + new mutable actor_availability table + dispatch-site check deferring work_items.available_at; honor persisted Retry-After; pair with c45's observability",
+      "revisions": []
+    },
+    {
+      "id": "c5",
+      "kind": "requirement",
+      "text": "Pacing (#48 item 2) is greenfield: the worker loop is deliberately anti-pacing (a backlog drains at dispatch speed, internal/worker/worker.go:284-286) and workers scale horizontally, so a global or per-actor dispatch-rate control must be durable (DB-backed token bucket / next-dispatch-at), not an in-memory limiter",
+      "origin": "llm",
+      "status": "confirmed",
+      "honesty_conditions": [
+        {
+          "id": "h4",
+          "text": "an operator-declared session rate is honored across horizontally-scaled workers (durable state, not per-process memory), and a backlog demonstrably drains no faster than the declared rate",
+          "status": "confirmed",
+          "instruction": ""
+        }
+      ],
+      "hard_questions": [],
+      "links": [],
+      "instruction": "DB-backed rate state consulted at the dispatch site; per-actor and global knobs; reset-clock arithmetic per c43",
+      "revisions": []
+    },
+    {
+      "id": "c6",
+      "kind": "requirement",
+      "text": "Economic contract (#48 item 5): the only budget today is the hardcoded MaxDispatchAttempts=3 dispatch-count cap (internal/worker/worker.go:41, budget.go:65-67) \u2014 budget.max_sessions / max_uncached_input become declared workflow limits (schema + engine.Limits + run pinning) enforced at the same pre-invoke site budget.go argues for",
+      "origin": "llm",
+      "status": "confirmed",
+      "honesty_conditions": [
+        {
+          "id": "h5",
+          "text": "a workflow declaring budget.max_sessions is refused at dispatch when the budget cannot fund the next session, recorded as a domain outcome \u2014 never discovered as provider exhaustion mid-wave",
+          "status": "confirmed",
+          "instruction": ""
+        }
+      ],
+      "hard_questions": [],
+      "links": [],
+      "instruction": "budget block in workflow schema + engine.Limits + run pinning; enforce pre-invoke at the budget.go site; refusal is a domain outcome routed on an edge; session counting per c46",
+      "revisions": []
+    },
+    {
+      "id": "c7",
+      "kind": "requirement",
+      "text": "Discord updates ship as an out-of-process notifier daemon consuming the existing cross-run SSE feed (GET /v1alpha1/events, internal/api/events.go:183-272) and fetching human-readable detail via the read API; the control-plane process gains no Discord egress (PRD boundary rule; events carry IDs not content per internal/events/doc.go:16-25)",
+      "origin": "llm",
+      "status": "confirmed",
+      "honesty_conditions": [
+        {
+          "id": "h6",
+          "text": "run-lifecycle events reach the webhook with zero Discord code or webhook URL inside the control-plane process, and a webhook outage never stalls dispatch or the SSE feed",
+          "status": "confirmed",
+          "instruction": ""
+        }
+      ],
+      "hard_questions": [],
+      "links": [],
+      "instruction": "New out-of-process daemon (Go, cmd/nodes-notifier or standalone) consuming GET /v1alpha1/events with ?from= cursor per c39; detail via read API; payload per c40 boundary",
+      "revisions": []
+    },
+    {
+      "id": "c8",
+      "kind": "assumption",
+      "text": "The designed in-process hook (events.EventSink on the outbox Relay, internal/events/relay.go:26) is wired into no binary today \u2014 nothing constructs a Relay in cmd/ \u2014 and a sink runs inside the batch transaction, so if it were used for notifications it must enqueue-and-return; the SSE daemon path avoids standing the Relay up at all",
+      "origin": "llm",
+      "status": "confirmed",
+      "honesty_conditions": [],
+      "hard_questions": [],
+      "links": [],
+      "instruction": "",
+      "revisions": []
+    },
+    {
+      "id": "c9",
+      "kind": "assumption",
+      "text": "Parallel-token groundwork exists but is unhonored (#43): limits.maxParallelTokens is read, defaulted to 1, and carried (internal/engine/workflow.go:77) yet the engine runs exactly one active token (engine/doc.go:46-53); token rows already carry parent links and signal_subscriptions (migration 0016) already permit multi-waiter subscription \u2014 split/join and any-node event pickup are the missing pieces",
+      "origin": "llm",
+      "status": "confirmed",
+      "honesty_conditions": [],
+      "hard_questions": [],
+      "links": [],
+      "instruction": "",
+      "revisions": []
+    },
+    {
+      "id": "c10",
+      "kind": "requirement",
+      "text": "Implement-plan mode (#45) needs an ingestion path that does not exist: internal/devague is a pure JSON-to-ledger mapper with zero production callers (no HTTP route, no CLI verb, no store) \u2014 assigning the system a plan means an import surface + durable plan/wave/task state + dashboard projection, with MapPlanWaves' wave-layering (depends_on = whole previous wave, plan.go:42-51) as the dependency shape",
+      "origin": "llm",
+      "status": "confirmed",
+      "honesty_conditions": [
+        {
+          "id": "h7",
+          "text": "a devague plan can be handed to the system and appears in the dashboard with per-task status, with nothing in the ingestion path hardcoding code-repo semantics (it is instance one of the c30 generic pipeline)",
+          "status": "confirmed",
+          "instruction": ""
+        }
+      ],
+      "hard_questions": [],
+      "links": [],
+      "instruction": "Plan import surface (API + CLI verb) over internal/devague mappers extended with MapPlanShow/MapDeviations; durable plan/wave/task state projected to the dashboard; instance one of c30",
+      "revisions": []
+    },
+    {
+      "id": "c11",
+      "kind": "requirement",
+      "text": "Merge-as-action (#54) targets the human-inbox bridge path (Path B), not engine approval nodes: the cited live task hit_76b9a865c6132b12 is a bridge task, and the bridge already persists every non-instruction input key verbatim (extra_input, adapters/human-inbox/src/human_inbox_bridge/server.py:369) \u2014 so a declared observe: {kind: github_pr_merged, pr: N} bound into the node's input arrives and persists with zero bridge ingest changes",
+      "origin": "llm",
+      "status": "confirmed",
+      "honesty_conditions": [
+        {
+          "id": "h8",
+          "text": "a human task carrying observe: github_pr_merged completes when the PR merges with no manual submit, and the ledger record names the merge commit with observed-by-tracker attribution",
+          "status": "confirmed",
+          "instruction": ""
+        }
+      ],
+      "hard_questions": [],
+      "links": [],
+      "instruction": "Author the observe declaration into the human-task node's input bindings; it round-trips through extra_input untouched \u2014 tracker reads it from the bridge's stored task",
+      "revisions": []
+    },
+    {
+      "id": "c12",
+      "kind": "requirement",
+      "text": "The merge-observer lives inside or beside the human-inbox bridge, matching spec decision c34 (the tracker that nudges is the tracker that observes): the bridge runs outside the deployment, already holds the persisted attempt-scoped HMAC callback token a days-later terminal callback needs (token TTL 15m, bridge persists it \u2014 internal/actors/token.go:35, store.py:5-12), and is stdlib-only \u2014 it would become the first bridge holding a third-party credential (GITHUB_TOKEN)",
+      "origin": "llm",
+      "status": "confirmed",
+      "honesty_conditions": [
+        {
+          "id": "h9",
+          "text": "the tracker runs outside the control-plane deployment, is the only component holding the GitHub credential, and delivers the terminal callback using the bridge's persisted attempt-scoped token",
+          "status": "confirmed",
+          "instruction": ""
+        }
+      ],
+      "hard_questions": [],
+      "links": [],
+      "instruction": "Tracker lives in adapters/human-inbox (or a sibling process sharing its store), stdlib-only, GITHUB_TOKEN env; polls the GitHub API for the declared observable; submits via the existing bridge surface with the persisted callback token",
+      "revisions": []
+    },
+    {
+      "id": "c13",
+      "kind": "boundary",
+      "text": "The control plane never gains a GitHub credential or calls api.github.com (PRD: the control plane should not materialize provider credentials, prd-spec.md:1646; only GitHub caller today is examples/pr-upkeep/sweep.py through the runner boundary) \u2014 and #54 explicitly revises the pr-upkeep README's human-merges rule section, so that doc is edited as part of the work, never silently contradicted",
+      "origin": "llm",
+      "status": "confirmed",
+      "honesty_conditions": [
+        {
+          "id": "h25",
+          "text": "grep for github credentials/api.github.com in the control-plane process stays empty after the batch, and the pr-upkeep README's human-merges section is visibly rewritten to name observed merges",
+          "status": "confirmed",
+          "instruction": ""
+        }
+      ],
+      "hard_questions": [],
+      "links": [],
+      "instruction": "Verify with a grep gate in CI or review; rewrite examples/pr-upkeep/README.md's human-merges section to define approved as the observed merge",
+      "revisions": []
+    },
+    {
+      "id": "c14",
+      "kind": "requirement",
+      "text": "Manual submit stays as the override lane (#54): tasks with no declared observable keep the inbox submit surface unchanged, covering dropped and merge-without-PR cases",
+      "origin": "llm",
+      "status": "confirmed",
+      "honesty_conditions": [
+        {
+          "id": "h10",
+          "text": "a task with no declared observable behaves exactly as today, and the manual submit path still works on observed tasks (dropped / merge-without-PR cases)",
+          "status": "confirmed",
+          "instruction": ""
+        }
+      ],
+      "hard_questions": [],
+      "links": [],
+      "instruction": "No change to the manual submit path; add a tracker test proving an observed task still accepts manual submission",
+      "revisions": []
+    },
+    {
+      "id": "c15",
+      "kind": "requirement",
+      "text": "Implement-plan mode (#45) reads the faithful plan view: devague plan show --json carries per-task status and real dependency edges, which nothing consumes today (MapPlanWaves deliberately reads the lossy waves view \u2014 internal/devague/plan.go:20-52); deviations already have a data model with origin user|llm and status proposed|approved (.devague/deliveries/*.json) \u2014 exactly the issue's system-knows vs user-reports split \u2014 but internal/devague has no MapDeviations and no API or web surface exposes plans",
+      "origin": "llm",
+      "status": "confirmed",
+      "honesty_conditions": [
+        {
+          "id": "h11",
+          "text": "the plan view renders per-task status and real dependency edges from plan show --json (not the lossy waves view), and deviations render with origin user vs llm visibly distinguished",
+          "status": "confirmed",
+          "instruction": ""
+        }
+      ],
+      "hard_questions": [],
+      "links": [],
+      "instruction": "Add MapPlanShow (per-task status + deps) and MapDeviations (origin user|llm) to internal/devague; render origin distinction with the existing AuthorityChip vocabulary",
+      "revisions": []
+    },
+    {
+      "id": "c16",
+      "kind": "requirement",
+      "text": "Discord updates port devex's proven webhook design (~120 lines) into the culture-nodes notifier: env-resolved webhook URL (never in config files \u2014 the URL embeds a token), Discord-embed payload with defensive trims, one bounded 5s POST, no retries, no redirects, strictly fail-open, outcomes journaled WITHOUT ever recording the URL or payload (devex core/webhook.py + pr/scripts/_webhook.py); devex is the only webhook POST implementation across all sibling repos and it is Python \u2014 this is a port, not an import",
+      "origin": "llm",
+      "status": "confirmed",
+      "honesty_conditions": [
+        {
+          "id": "h12",
+          "text": "the notifier resolves its webhook URL from env only, posts fail-open with a bounded timeout and no retries, and journals outcomes without ever recording the URL or payload",
+          "status": "confirmed",
+          "instruction": ""
+        }
+      ],
+      "hard_questions": [],
+      "links": [],
+      "instruction": "Port devex's two-layer design to Go inside the notifier daemon: env resolve (c33 chain), embed shape with trims, 5s bounded POST, no retries/redirects, fail-open, journal without URL/payload",
+      "revisions": []
+    },
+    {
+      "id": "c17",
+      "kind": "assumption",
+      "text": "The nudge/reply-relay leg of #41 is a separate transport from the webhook: the webhook is outbound fire-and-forget only, while discord-bot-cli (/home/spark/git/discord-bot-cli, the 'discord-cli' issue #41 names) is bidirectional but strictly one-shot and poll-based \u2014 no gateway listener, no DM verb \u2014 so the tracker owns the cadence: thread create per parked attempt + thread post nudges + channel messages polling for the human's reply; nothing upstream provides rate limiting, and steward's discord-notify skill has the severity-color/username/timestamp embed vocabulary worth lifting for escalating nudges",
+      "origin": "llm",
+      "status": "confirmed",
+      "honesty_conditions": [],
+      "hard_questions": [],
+      "links": [],
+      "instruction": "",
+      "revisions": []
+    },
+    {
+      "id": "c18",
+      "kind": "non_goal",
+      "text": "The notifier never logs or journals the webhook URL or payload bodies (devex convention, _webhook.py:100-110), and the test suite follows devex's hermetic pattern: live-network tests gate on a separate TEST url env var while an autouse fixture unsets the production one so tests can never fire the real webhook",
+      "origin": "llm",
+      "status": "confirmed",
+      "honesty_conditions": [],
+      "hard_questions": [],
+      "links": [],
+      "instruction": "",
+      "revisions": []
+    },
+    {
+      "id": "c19",
+      "kind": "requirement",
+      "text": "Node Graphs tab (#56) replaces the Workflows tab (web/src/components/Header.tsx:64-66, routes/Workflows.tsx) with sub-tabs Nodes / Node Graphs / Active Graphs \u2014 the app's first sub-tab set, copying RunView's aria-pressed segmented-toggle prior art (RunView.tsx:347-367) with URL-param-driven selection for bookmarkability; the /workflows/new authoring entry point must stay reachable, and the rename touches Header.test.tsx and web/e2e/workflows.spec.ts pins",
+      "origin": "llm",
+      "status": "confirmed",
+      "honesty_conditions": [
+        {
+          "id": "h13",
+          "text": "the Node Graphs tab replaces Workflows with Nodes / Node Graphs / Active Graphs sub-tabs, /workflows/new authoring stays reachable, and every existing web e2e + webglass gate stays green",
+          "status": "confirmed",
+          "instruction": ""
+        }
+      ],
+      "hard_questions": [],
+      "links": [],
+      "instruction": "Rename nav + route, add the segmented sub-tab set (aria-pressed pattern, URL-param state), keep /workflows/new links; update Header.test.tsx + workflows e2e + add nav e2e for the new tab",
+      "revisions": []
+    },
+    {
+      "id": "c20",
+      "kind": "assumption",
+      "text": "A single-workflow graph renderer already exists to build on: React Flow + dynamically-imported ELK layout with deterministic fallback (hooks/useElkLayout.ts) + parseWorkflowGraph over one IR's spec.edges (domain/graph.ts) \u2014 but #56's cross-workflow 'known Node Graphs' joined by handovers and announced/consumed events has NO data source: there is no /v1alpha1/nodes endpoint, node definitions live only inside workflow-version IRs, and node-announced/consumed events have no schema at all today",
+      "origin": "llm",
+      "status": "confirmed",
+      "honesty_conditions": [],
+      "hard_questions": [],
+      "links": [],
+      "instruction": "",
+      "revisions": []
+    },
+    {
+      "id": "c21",
+      "kind": "boundary",
+      "text": "New visualizations obey the culture-design contract: colors only from the pinned TERMINAL_PALETTE/TERMINAL_GROUND/NODE_KIND_PALETTE (scripts/check-culture-design.mjs pins every hex to agentculture/org sources), tokens.css stays byte-frozen, any canvas view publishes a machine-readable #agent-state mirror (webglass cannot see canvas), prefers-reduced-motion renders one static frame, and honesty condition h14 holds \u2014 everything drawn traces to a committed API row, no canned data, no decorative traffic",
+      "origin": "llm",
+      "status": "confirmed",
+      "honesty_conditions": [
+        {
+          "id": "h26",
+          "text": "scripts/check-culture-design.mjs passes against the pinned org sources on the new tab, and the webglass gate (agent-state ready + zero page errors) stays green",
+          "status": "confirmed",
+          "instruction": ""
+        }
+      ],
+      "hard_questions": [],
+      "links": [],
+      "instruction": "Run scripts/check-culture-design.mjs against the pinned org checkout before PR; new tab publishes its #agent-state block; reduced-motion static frame test",
+      "revisions": []
+    },
+    {
+      "id": "c22",
+      "kind": "requirement",
+      "text": "Dashboard auto-refresh (#46): Mesh and RunView are already SSE-live; the other seven views are fetch-on-mount with zero polling and no refresh button anywhere \u2014 the fix generalizes the existing idioms (Inbox's reloadKey re-run counter, the cross-run SSE feed whose ?runs= scoping api/client.ts does not yet expose) rather than naive intervals, and must preserve the load conventions: AbortController on every fetch, agent-state 'ready' meaning initial-load-settled, stale-while-revalidate (never null a rendered list back to loading)",
+      "origin": "llm",
+      "status": "confirmed",
+      "honesty_conditions": [
+        {
+          "id": "h14",
+          "text": "every dashboard view reflects new server state without a browser refresh, with stale-while-revalidate preserved \u2014 no rendered list ever nulls back to a loading state",
+          "status": "confirmed",
+          "instruction": ""
+        }
+      ],
+      "hard_questions": [],
+      "links": [],
+      "instruction": "Shared app-wide EventSource provider (c48) + reloadKey-style refetch triggers per view; expose ?runs= scoping in api/client.ts; preserve AbortController/ready/stale-while-revalidate conventions",
+      "revisions": []
+    },
+    {
+      "id": "c23",
+      "kind": "assumption",
+      "text": "The #45 dashboard substrate already exists as ledger projections: the PRD \u00a710.9 set (ready_tasks, active_tasks, verification_queue, decision_history, delivery_summary, open_assumptions_and_questions, confirmed_claims, current_scope) is served per run and rendered today only inside the per-run LedgerView picker; authority levels + AuthorityChip already encode system-knows vs user-reports visually",
+      "origin": "llm",
+      "status": "confirmed",
+      "honesty_conditions": [],
+      "hard_questions": [],
+      "links": [],
+      "instruction": "",
+      "revisions": []
+    },
+    {
+      "id": "c24",
+      "kind": "requirement",
+      "text": "Session resume is an all-backends change with per-backend mechanics (#47/#48): continuation_ref is hardcoded None in ALL THREE bridges (claude-code mapping.py:370, codex mapping.py:354, colleague mapping.py:340 \u2014 issue #47 understates it) and exists only on the sync 200 body while async terminal payloads omit the key entirely, yet async is the path long sessions take; claude resumes via --resume <session_id> (already captured as claude_session_id), codex via 'codex exec resume <thread-id>' (thread_id already parsed), colleague has NO resume verb in its pinned contract \u2014 an upstream colleague feature, not a bridge change; and a session_key passed via input today would be injected verbatim into the prompt's Bound-inputs block, so stickiness needs a new transport key in all three servers",
+      "origin": "llm",
+      "status": "confirmed",
+      "honesty_conditions": [
+        {
+          "id": "h15",
+          "text": "claude and codex bridges resume real sessions via their native handles on both sync and async paths; colleague honestly reports no continuation (never a fabricated ref) until upstream support exists \u2014 the all-backends rule is satisfied by explicit per-backend behavior, not pretended parity",
+          "status": "confirmed",
+          "instruction": ""
+        }
+      ],
+      "hard_questions": [],
+      "links": [],
+      "instruction": "Per-backend: claude --resume, codex exec resume; carry the ref on BOTH sync response and async terminal payload; new transport key for session_key (exclude from Bound-inputs injection in all three servers); colleague returns null + upstream issue filed",
+      "revisions": []
+    },
+    {
+      "id": "c25",
+      "kind": "requirement",
+      "text": "Fix fabricated codex usage on failure: codex captures usage only from turn.completed (codex_cli.py:163-166), so turn.failed and incomplete paths leave usage empty and the issue-#32 failed-attempt branch emits input_tokens:0/output_tokens:0 \u2014 fabricated zeros for sessions that burned real tokens, and failed sessions are exactly the burn #47 diagnosed; the cached_input_tokens/reasoning_output_tokens drop is pinned in the codex fixture with issue #47's exact numbers (13880/9984), while colleague's contract exposes no cache telemetry at all \u2014 its cache_ratio is honestly unmeasurable",
+      "origin": "llm",
+      "status": "confirmed",
+      "honesty_conditions": [
+        {
+          "id": "h16",
+          "text": "a failed codex turn either reports its real usage or reports none (counted in attempts_not_reported) \u2014 fabricated zeros are impossible by construction and pinned by a test",
+          "status": "confirmed",
+          "instruction": ""
+        }
+      ],
+      "hard_questions": [],
+      "links": [],
+      "instruction": "Capture codex usage from turn.failed and incomplete paths; when truly absent emit no usage block (attempts_not_reported), never zeros; extend mappings to cached_input/reasoning fields per c2",
+      "revisions": []
+    },
+    {
+      "id": "c26",
+      "kind": "requirement",
+      "text": "Preserve-changes-on-failure (#49) lives bridge-side and needs explicit policy: workspace.py (byte-identical across the three bridges) is measurement-only \u2014 no worktree, clone, branch, commit, or stash anywhere \u2014 and bridges run in the operator's live allowlisted checkout, so preservation means committing/branching in that live tree (config knobs: commit-on-failure toggle, branch prefix, push-or-local); the post_run hook lane cannot cover it because async agent dispatch refuses post_run outright (internal/worker/hooks.go:358-383), and the all-backends asymmetry is real: colleague commits partial WIP on SIGTERM upstream, claude/codex leave uncommitted edits sitting in the tree; a dead bridge preserves nothing (in-process invocation registry)",
+      "origin": "llm",
+      "status": "confirmed",
+      "honesty_conditions": [
+        {
+          "id": "h17",
+          "text": "a failed node with workspace changes leaves a commit whose message names the failure reason; when push succeeds the branch is on the remote, when push fails the local commit still exists and the run records which happened",
+          "status": "confirmed",
+          "instruction": ""
+        }
+      ],
+      "hard_questions": [],
+      "links": [],
+      "instruction": "Bridge-side on-failure hook after measure(): plumbing commit per c41, branch name minted per c32, push best-effort with honest local-only fallback recorded in the failure payload",
+      "revisions": []
+    },
+    {
+      "id": "c27",
+      "kind": "assumption",
+      "text": "The bridge config surface budget work builds on: always_async, sync_max_steps/decide_async, and two refusal precedents (503 actor_unavailable version gate, 403 allowlist) exist field-for-field across the three bridges; nothing exists for concurrency caps, in-flight limits, pacing, capacity/quota state, budget ceilings, or git-preserve policy \u2014 async_runner.start() spawns unbounded",
+      "origin": "llm",
+      "status": "confirmed",
+      "honesty_conditions": [],
+      "hard_questions": [],
+      "links": [],
+      "instruction": "",
+      "revisions": []
+    },
+    {
+      "id": "c28",
+      "kind": "requirement",
+      "text": "Node granularity and actor routing (#47 item 3, the 'pass on bigger tasks / better utilize codex' ask): model nodes become work packages sized to amortize bootstrap \u2014 one persistent session with many ledgered sub-actions, not one cold session per plan task (this cycle's wave-0 tasks averaged ~25k output tokens on top of a repeated cold bootstrap) \u2014 and the split-plan lane routes big analysis/build packages to codex actors by default per the lane-cost ladder in #48's comment, keeping the operator's Claude window (one meter, many lanes: interactive session, local subagents, and claude-code bridge sessions share ONE subscription pool) for operator work; deterministic/code nodes stay microscopic",
+      "origin": "llm",
+      "status": "confirmed",
+      "honesty_conditions": [
+        {
+          "id": "h18",
+          "text": "the split-plan lane declares expected model-session count per wave against the remaining window before fan-out, work packages amortize bootstrap across a shared warm session, and big analysis/build packages default to codex actors",
+          "status": "confirmed",
+          "instruction": ""
+        }
+      ],
+      "hard_questions": [],
+      "links": [],
+      "instruction": "Encode in the split-plan lane and nodes-operator guidance: work-package node sizing, per-wave session-count declaration against the remaining window, codex-first default for big packages; workstream sessions per c3",
+      "revisions": []
+    },
+    {
+      "id": "c29",
+      "kind": "boundary",
+      "text": "Issue #50 is blocked upstream, not here: headspace-cli 0.11.0 supports only disabled/enabled network posture, and the runner boundary already rejects egress-allowlist honestly as rejected_input; culture-nodes' side of the fix is only to restore 'network: egress-allowlist' on the pr-upkeep sweep and pin a conformance fixture once headspace ships the allowlist \u2014 no control-plane workaround (proxy-in-process) is built in the meantime",
+      "origin": "llm",
+      "status": "confirmed",
+      "honesty_conditions": [
+        {
+          "id": "h27",
+          "text": "culture-nodes ships no in-process network proxy; the sweep's declared egress-allowlist intent stays documented in the workflow comment until headspace lands it, then a conformance fixture pins the round-trip",
+          "status": "confirmed",
+          "instruction": ""
+        }
+      ],
+      "hard_questions": [],
+      "links": [],
+      "instruction": "Track headspace upstream; on release restore egress-allowlist on the pr-upkeep sweep + add a runner conformance fixture pinning the round-trip",
+      "revisions": []
+    },
+    {
+      "id": "c30",
+      "kind": "requirement",
+      "text": "Generic decompose pipeline (#45 reframed): the system supports splitting any source document into claims with tracked sources (the devague method productized), then splitting claims into connected decisions/actions, executing them, and verifying at the end \u2014 domain-agnostic (code, design, document writing, newsletter: scope from web -> claims -> article plan -> write -> verify); devague-plan import is one instance of this pipeline, and #45 builds on #43's split/join rather than shipping sequentially",
+      "origin": "user",
+      "status": "confirmed",
+      "honesty_conditions": [
+        {
+          "id": "h19",
+          "text": "the decompose pipeline runs end-to-end on at least one non-code domain (e.g. newsletter: web scope -> claims -> article plan -> write -> verify) with sources tracked at every step and a verification pass at the end",
+          "status": "confirmed",
+          "instruction": ""
+        }
+      ],
+      "hard_questions": [],
+      "links": [],
+      "instruction": "Build as devague-method surfaces on the engine: document -> claims (with sources) -> decisions/actions linked to claims -> execute -> verify; devague plan import is instance one; gated on #43 split/join per q1",
+      "revisions": []
+    },
+    {
+      "id": "c31",
+      "kind": "requirement",
+      "text": "Node Graphs aliveness spec (#56): WebGPU is deferred by human decision, but the tab must still be stunning and feel alive on the Canvas-2D/React-Flow substrate \u2014 a faint breathing halo marks an active graph, periodic actions (heartbeat/cron checks) render visibly, all within the existing reduced-motion, agent-state-mirror, and h14 no-decorative-traffic constraints; the graph catalog derives client-side from published workflow IRs",
+      "origin": "user",
+      "status": "confirmed",
+      "honesty_conditions": [
+        {
+          "id": "h20",
+          "text": "an active graph shows a faint breathing halo and periodic actions render visibly; prefers-reduced-motion gets a static frame; the agent-state mirror stays complete; every rendered pulse traces to a committed API row (h14 \u2014 no decorative traffic)",
+          "status": "confirmed",
+          "instruction": ""
+        }
+      ],
+      "hard_questions": [],
+      "links": [],
+      "instruction": "Apply MeshCanvas's craft idioms (glow sprites, quantized style tables, observer-gated rAF) to the graph substrate; halo/pulse driven by active-token presence from the cross-run SSE feed",
+      "revisions": []
+    },
+    {
+      "id": "c32",
+      "kind": "requirement",
+      "text": "Preserve-on-failure (#49) is commit-and-push to a recoverable branch: on node failure the bridge commits changes with the failure reason to a unique, pre-agreed branch (web-accessible on the remote), the branch name is generated by code, written to the DB, and reflected on the dashboard \u2014 recovery is possible and the operator always knows where what is; local-only commit remains the fallback when push is impossible",
+      "origin": "user",
+      "status": "confirmed",
+      "honesty_conditions": [
+        {
+          "id": "h21",
+          "text": "the preserve branch name is minted by code, stored in the DB, shown on the run detail page, and web-accessible on the remote after a successful push",
+          "status": "confirmed",
+          "instruction": ""
+        }
+      ],
+      "hard_questions": [],
+      "links": [],
+      "instruction": "Bridge-side commit+push on failure; branch name minted by code, persisted on the attempt/node-run row, rendered as a link on the run detail page",
+      "revisions": []
+    },
+    {
+      "id": "c33",
+      "kind": "requirement",
+      "text": "Run-lifecycle Discord updates reuse DISCORD_WEBHOOK_URL (the steward discord-notify channel) for now, via a CULTURE_NODES_WEBHOOK_URL-style env resolve falling back to it",
+      "origin": "user",
+      "status": "confirmed",
+      "honesty_conditions": [
+        {
+          "id": "h22",
+          "text": "updates arrive on the DISCORD_WEBHOOK_URL channel and moving to a dedicated channel later is an env-only change",
+          "status": "confirmed",
+          "instruction": ""
+        }
+      ],
+      "hard_questions": [],
+      "links": [],
+      "instruction": "Notifier resolves CULTURE_NODES_WEBHOOK_URL first, falls back to DISCORD_WEBHOOK_URL; neither is ever logged or journaled",
+      "revisions": []
+    },
+    {
+      "id": "c34",
+      "kind": "requirement",
+      "text": "Observed-merge attribution (#54, decided): the tracker completes the task via the existing bridge submit path with a proposed claim carrying data.kind observed-submission and collection_method github_pr_merged plus the merge commit \u2014 honest attribution without touching the authority model or the agent-nodes-never-declare-observe compiler invariant; upgrade path recorded: graduate to runner-origin observed evidence with a RunnerManifest once manifest-bound producer registration exists",
+      "origin": "user",
+      "status": "confirmed",
+      "honesty_conditions": [
+        {
+          "id": "h23",
+          "text": "observed submissions land as proposed claims with data.kind observed-submission and collection_method github_pr_merged; no compiler or authority-model invariant changes; the runner-origin upgrade path is recorded in the exported spec",
+          "status": "confirmed",
+          "instruction": ""
+        }
+      ],
+      "hard_questions": [],
+      "links": [],
+      "instruction": "Extend human-inbox mapping.py with the observed-submission claim shape (collection_method, merge commit); the tracker submits through the existing bridge submit surface; record the runner-origin upgrade path in the spec's follow-ups",
+      "revisions": []
+    },
+    {
+      "id": "c35",
+      "kind": "audience",
+      "text": "Operators of the control plane (Ori and mesh operators, now also reachable via the Discord channel), workflow authors, the actor fleet (claude-code/codex/colleague bridges on spark/thor/orin plus human actors on the inbox bridge), dashboard viewers, and the per-actor analytics consumers of #28",
+      "origin": "llm",
+      "status": "confirmed",
+      "honesty_conditions": [
+        {
+          "id": "h28",
+          "text": "each named audience receives at least one shipped surface: operators get Discord updates + budget controls, authors get budget/observe contract fields, the fleet gets stickiness + honest usage, dashboard viewers get auto-refresh + Node Graphs, analytics gets cache telemetry",
+          "status": "confirmed",
+          "instruction": ""
+        }
+      ],
+      "hard_questions": [],
+      "links": [],
+      "instruction": "At delivery, check the audience-to-surface map in the delivery summary against h28",
+      "revisions": []
+    },
+    {
+      "id": "c36",
+      "kind": "after_state",
+      "text": "After shipping: every run announces its lifecycle in Discord without anyone opening the dashboard; model actors resume warm sessions and the cache economics are measurable per attempt; dispatch paces itself through the session window and trips a capacity breaker instead of cascading failed billable sessions; big work packages route to codex actors by default, preserving the operator's Claude window; a human who merges a PR is done \u2014 the system observes the merge and completes the task; a failed node leaves its changes on a pushed, DB-recorded, dashboard-visible branch; and the dashboard self-refreshes with a Node Graphs tab where active graphs visibly breathe",
+      "origin": "llm",
+      "status": "confirmed",
+      "honesty_conditions": [
+        {
+          "id": "h29",
+          "text": "every after-state clause cross-maps to a confirmed requirement and a c38 signal; any orphan clause is cut or demoted at spec review",
+          "status": "confirmed",
+          "instruction": ""
+        }
+      ],
+      "hard_questions": [],
+      "links": [],
+      "instruction": "At spec review, cross-map every after-state clause to its requirement and c38 signal; cut orphans",
+      "revisions": []
+    },
+    {
+      "id": "c37",
+      "kind": "why_it_matters",
+      "text": "The attempts-evidence-humans-loops build proved the constraint has moved: the live fan-out exhausted the Claude 5-hour session window mid-wave (cold-session tax on ~14 bridge builds), the operator manually relayed a merge the human had already performed, and every status check required opening or refreshing the dashboard \u2014 economics and legibility, not features, now bound what the system can dogfood",
+      "origin": "llm",
+      "status": "confirmed",
+      "honesty_conditions": [
+        {
+          "id": "h30",
+          "text": "the pain is cited from the recorded live build (deviation d1, issues #47/#48 diagnosis), not asserted \u2014 if the next dogfood cycle still exhausts the window mid-wave, this batch failed its own why",
+          "status": "confirmed",
+          "instruction": ""
+        }
+      ],
+      "hard_questions": [],
+      "links": [],
+      "instruction": "Cite deviation d1 and the #47/#48 diagnosis in the spec; re-examine after the next dogfood cycle",
+      "revisions": []
+    },
+    {
+      "id": "c38",
+      "kind": "success_signal",
+      "text": "Mechanical, per-workstream: (1) a run completion posts to the Discord channel with no Discord code in the control plane; (2) stats expose cache_ratio and a resumed session shows measurably lower uncached input than a cold one; (3) a forced provider-limit failure pauses the actor \u2014 zero further dispatches until the pause expires \u2014 instead of a failure cascade; (4) a workflow declaring budget.max_sessions is refused at dispatch when unfundable, as a domain outcome; (5) merging a live PR completes its human task with an observed-submission claim naming the merge commit, no manual submit; (6) a failed node's changes are reachable via a branch link on the run detail page; (7) every dashboard view reflects new server state without a browser refresh; (8) the Node Graphs tab renders nodes/graphs/active-graphs derived from workflow IRs with a breathing active indicator, all web gates green",
+      "origin": "llm",
+      "status": "confirmed",
+      "honesty_conditions": [
+        {
+          "id": "h31",
+          "text": "every signal is mechanically checkable (a test, a rendered element, a posted message, a ledger record) \u2014 none requires trusting an agent's completion claim",
+          "status": "confirmed",
+          "instruction": ""
+        }
+      ],
+      "hard_questions": [],
+      "links": [],
+      "instruction": "Each signal becomes acceptance criteria on its plan tasks; the delivery summary maps signal -> evidence",
+      "revisions": []
+    },
+    {
+      "id": "c39",
+      "kind": "requirement",
+      "text": "Notifier resilience: the Discord daemon keeps a durable last-event-id cursor and dedups on the outbox's stable event ids (delivery is at-least-once by design, internal/events/relay.go:58-68; the SSE surface already accepts ?from= for exactly this) \u2014 a notifier restart never silently drops or double-posts a run's lifecycle",
+      "origin": "llm",
+      "status": "confirmed",
+      "honesty_conditions": [
+        {
+          "id": "h32",
+          "text": "killing and restarting the notifier mid-run produces exactly one Discord post per lifecycle event \u2014 verified by a restart test against the recorded journal",
+          "status": "confirmed",
+          "instruction": ""
+        }
+      ],
+      "hard_questions": [],
+      "links": [],
+      "instruction": "",
+      "revisions": []
+    },
+    {
+      "id": "c40",
+      "kind": "boundary",
+      "text": "The notifier posts minimal metadata only \u2014 run id, workflow name, state, actor, and a dashboard link \u2014 never ledger records, node output, instructions, or diffs: run content is not public-by-default the way devex's PR titles are, and the events-carry-IDs-not-content rule (internal/events/doc.go:16-25) extends to what leaves for Discord",
+      "origin": "llm",
+      "status": "confirmed",
+      "honesty_conditions": [
+        {
+          "id": "h33",
+          "text": "no Discord payload field is populated from ledger record data, node output, or workflow input \u2014 pinned by the payload-shaping unit tests",
+          "status": "confirmed",
+          "instruction": ""
+        }
+      ],
+      "hard_questions": [],
+      "links": [],
+      "instruction": "",
+      "revisions": []
+    },
+    {
+      "id": "c41",
+      "kind": "requirement",
+      "text": "Preservation never disturbs the live tree: the #49 commit is built with git plumbing (write the index to a tree object, commit-tree with the failure reason, update-ref the preserve branch) so HEAD, the index, the working tree, and any concurrently-running warm session in the same checkout are untouched \u2014 bridges share the operator's live checkout (workspace.py dispatches cwd=repo), so a checkout/branch-switch approach would corrupt concurrent work",
+      "origin": "llm",
+      "status": "confirmed",
+      "honesty_conditions": [
+        {
+          "id": "h34",
+          "text": "after a preserve commit, git status/HEAD/index in the operator checkout are byte-identical to the pre-preserve state, and a concurrently parked session's next turn sees no tree change it didn't make",
+          "status": "confirmed",
+          "instruction": ""
+        }
+      ],
+      "hard_questions": [],
+      "links": [],
+      "instruction": "",
+      "revisions": []
+    },
+    {
+      "id": "c42",
+      "kind": "requirement",
+      "text": "Telemetry gates stickiness (#47's explicit ordering): before session reuse becomes default behavior, run the A/B the diagnosis prescribes \u2014 ten representative tasks through fresh sessions vs one resumed thread, comparing uncached input, cached input, session count, failures, wall time \u2014 because provider cache TTLs mean a resumed long-history session can cost MORE than a cold start; stickiness ships config-gated and flips on only with measured benefit",
+      "origin": "llm",
+      "status": "confirmed",
+      "honesty_conditions": [
+        {
+          "id": "h35",
+          "text": "the A/B comparison exists as a recorded artifact before stickiness defaults on; if resumed sessions do not measurably reduce uncached input, stickiness stays opt-in and the spec's economics claims are re-examined",
+          "status": "confirmed",
+          "instruction": ""
+        }
+      ],
+      "hard_questions": [],
+      "links": [],
+      "instruction": "",
+      "revisions": []
+    },
+    {
+      "id": "c43",
+      "kind": "requirement",
+      "text": "Pacing is reset-clock-aware (#48 comment item 5): session windows reset on a fixed clock, so the control is 'spread N sessions across the REMAINING window', not a naive fixed rate \u2014 the pacing config carries the window reset anchor and the scheduler computes remaining capacity from it",
+      "origin": "llm",
+      "status": "confirmed",
+      "honesty_conditions": [
+        {
+          "id": "h36",
+          "text": "a wave started mid-window demonstrably schedules fewer sessions than the same wave started at reset, matching remaining-window arithmetic",
+          "status": "confirmed",
+          "instruction": ""
+        }
+      ],
+      "hard_questions": [],
+      "links": [],
+      "instruction": "",
+      "revisions": []
+    },
+    {
+      "id": "c44",
+      "kind": "requirement",
+      "text": "Warm sessions serialize per session key: exactly one in-flight invocation per continuation ref \u2014 concurrent work items sharing a session_key either queue behind the active turn or deliberately fork a fresh session (recorded as such), because codex exec resume / claude --resume assume single-threaded conversations and the bridges' async runners spawn unbounded today",
+      "origin": "llm",
+      "status": "confirmed",
+      "honesty_conditions": [
+        {
+          "id": "h37",
+          "text": "two simultaneous dispatches with the same session key never produce interleaved turns on one provider thread \u2014 pinned by a bridge test",
+          "status": "confirmed",
+          "instruction": ""
+        }
+      ],
+      "hard_questions": [],
+      "links": [],
+      "instruction": "",
+      "revisions": []
+    },
+    {
+      "id": "c45",
+      "kind": "requirement",
+      "text": "Breaker and pacing decisions are observable and reversible: pausing an actor emits an engine event (visible on the dashboard and in Discord), the paused-until state renders on the actors surface, and an operator can clear a pause early via the API/CLI \u2014 budget.go's own argument (a silent skip 'stays ready forever and nothing anywhere records why') applies to the breaker exactly",
+      "origin": "llm",
+      "status": "confirmed",
+      "honesty_conditions": [
+        {
+          "id": "h38",
+          "text": "a tripped breaker is diagnosable from the dashboard alone within one glance (which actor, why, until when) and clearable without touching the database",
+          "status": "confirmed",
+          "instruction": ""
+        }
+      ],
+      "hard_questions": [],
+      "links": [],
+      "instruction": "",
+      "revisions": []
+    },
+    {
+      "id": "c46",
+      "kind": "assumption",
+      "text": "Budget accounting distinguishes cold starts from resumed turns: budget.max_sessions counts NEW provider sessions, and a resumed warm turn charges differently \u2014 otherwise stickiness (c3) and the economic contract (c6) fight each other, since a workstream of N node turns on one warm session would count as N sessions and always exhaust the budget it was designed to conserve",
+      "origin": "llm",
+      "status": "confirmed",
+      "honesty_conditions": [
+        {
+          "id": "h39",
+          "text": "a workstream of node turns sharing one warm session consumes 1 from max_sessions, not N \u2014 pinned by an engine test",
+          "status": "confirmed",
+          "instruction": ""
+        }
+      ],
+      "hard_questions": [],
+      "links": [],
+      "instruction": "",
+      "revisions": []
+    },
+    {
+      "id": "c47",
+      "kind": "requirement",
+      "text": "The observe declaration maps observed states to outcomes explicitly, and v1 auto-completes only the merged state (observe: {kind: github_pr_merged, pr: N} -> outcome merged): a PR closed without merging stays on the manual lane (the operator decides dropped vs retry), because #54's own override list names dropped and merge-without-PR as human-judgment cases \u2014 the tracker never guesses an outcome from an ambiguous external state",
+      "origin": "llm",
+      "status": "confirmed",
+      "honesty_conditions": [
+        {
+          "id": "h40",
+          "text": "a PR closed unmerged does NOT auto-complete its task; only the merged state produces an automatic submission \u2014 pinned by a tracker test",
+          "status": "confirmed",
+          "instruction": ""
+        }
+      ],
+      "hard_questions": [],
+      "links": [],
+      "instruction": "",
+      "revisions": []
+    },
+    {
+      "id": "c48",
+      "kind": "requirement",
+      "text": "Auto-refresh shares one event stream: the app opens a single app-wide EventSource (a shared provider/context over the cross-run feed) that views subscribe to, instead of each view opening its own \u2014 browsers cap concurrent connections per origin (6 on HTTP/1.1), and Mesh + RunView already hold two; per-view EventSources across seven more views would starve the cap in multi-tab use",
+      "origin": "llm",
+      "status": "confirmed",
+      "honesty_conditions": [
+        {
+          "id": "h41",
+          "text": "opening every dashboard view across two tabs holds at most one SSE connection per tab, and view-level subscriptions attach/detach without reconnecting the stream",
+          "status": "confirmed",
+          "instruction": ""
+        }
+      ],
+      "hard_questions": [],
+      "links": [],
+      "instruction": "",
+      "revisions": []
+    },
+    {
+      "id": "c49",
+      "kind": "requirement",
+      "text": "Parallel tokens ship in full (#43, per q8): the engine honors limits.maxParallelTokens, transition plans grow multi-edge splits and join barriers with per-token bounds, and event-driven continuation lands whole \u2014 a node emits events non-blocking mid-execution and any subscribed node picks them up, including as splits; the c9 groundwork (token parent links, multi-waiter signal_subscriptions) is the substrate, and event-then-subscription replay (the 0016 documented gap) is closed as part of this",
+      "origin": "user",
+      "status": "confirmed",
+      "honesty_conditions": [
+        {
+          "id": "h42",
+          "text": "a workflow declaring maxParallelTokens > 1 demonstrably runs concurrent tokens through a split and reconverges at a join with bounds enforced, and an event emitted mid-execution resumes a waiter that subscribed AFTER emission (replay closed) \u2014 both pinned by engine tests",
+          "status": "confirmed",
+          "instruction": ""
+        }
+      ],
+      "hard_questions": [],
+      "links": [],
+      "instruction": "Design pass inside spec-to-plan covering: multi-edge transitionPlan, join-barrier node-run state, per-token bound enforcement, signal replay/catch-up, mid-execution emission surface for actor nodes; #45's wave execution builds directly on it",
+      "revisions": []
+    }
+  ],
+  "open_vagueness": [
+    {
+      "id": "v1",
+      "text": "Secret custody for the notifier/tracker daemons: DISCORD_BOT_TOKEN and both webhook URLs live as plaintext exports in ~/.bashrc today \u2014 fine for a host daemon inheriting the interactive shell, but a pod/CI deployment needs a real secret path (deploy/prod install-secrets.sh precedent exists)",
+      "kind": "unknown_nonblocking",
+      "claim_id": null,
+      "resolved": false,
+      "resolution": "",
+      "resolution_claim_id": null
+    },
+    {
+      "id": "v2",
+      "text": "Push credentials on the bridge hosts are unexamined: #49's push leg assumes thor/orin bridge processes can push to the repo's remote \u2014 nobody verified a writable credential (deploy key / gh auth) exists in those service environments; if absent, the local-commit fallback carries until ops lands one",
+      "kind": "unknown_nonblocking",
+      "claim_id": null,
+      "resolved": false,
+      "resolution": "",
+      "resolution_claim_id": null
+    },
+    {
+      "id": "v3",
+      "text": "Deployment placement of the two new daemons (Discord notifier, merge/nudge tracker) is undecided: the SSE feed is authless-by-design so network locality matters, DISCORD_WEBHOOK_URL lives on spark's shell today while the control plane runs on thor \u2014 compose services beside the API vs host daemons on spark both work, and the choice rides the v1 secret-custody park",
+      "kind": "unknown_nonblocking",
+      "claim_id": null,
+      "resolved": false,
+      "resolution": "",
+      "resolution_claim_id": null
+    }
+  ],
+  "scope_entries": [
+    {
+      "id": "s1",
+      "surface": "internal/worker (budget.go, worker.go:262-292, dispatch.go:51)",
+      "finding": "the only budget today is the hardcoded MaxDispatchAttempts=3 dispatch-count cap, checked first on claimed work pre-invoke; the worker loop is deliberately anti-pacing (a backlog drains at dispatch speed) \u2014 pacing and an economic contract are greenfield with a documented enforcement-site precedent",
+      "seeds": [
+        "c5",
+        "c6"
+      ]
+    },
+    {
+      "id": "s2",
+      "surface": "internal/actors/protocol.go:85-114 + migrations/0012_attempt_usage.sql + store usage rollups",
+      "finding": "\u00a713.2 usage persists exactly four nullable fields (input/output tokens, cost, currency); cached_input_tokens, reasoning_tokens, model, thread_id, termination_reason exist nowhere in the Go tree \u2014 a five-layer expand-only landing path is identified (migration \u2192 protocol/engine structs \u2192 store SQL \u2192 API/openapi \u2192 web domain)",
+      "seeds": [
+        "c2"
+      ]
+    },
+    {
+      "id": "s3",
+      "surface": "internal/actors/protocol.go:143 (continuation_ref) + internal/worker/dispatch.go:214-303",
+      "finding": "continuation_ref is declared only on InvocationResult, absent from InvocationRequest and CompletedPayload, and completeFromResult silently drops it \u2014 the same silently-dropped state usage was in before migration 0012; bridges already hold the underlying handles (codex thread_id, claude session_id)",
+      "seeds": [
+        "c3"
+      ]
+    },
+    {
+      "id": "s4",
+      "surface": "internal/actors/errors.go + client.go:225 + store actors append-only contract (actorstats.go:13-23)",
+      "finding": "no quota/session-limit error class exists (\u00a713.5 maps provider limits to execution or auth_or_policy); Retry-After is parsed then discarded in-attempt; actors rows are append-only by contract so breaker paused-until state needs a separate mutable table; claim SQL is actor-blind",
+      "seeds": [
+        "c4"
+      ]
+    },
+    {
+      "id": "s5",
+      "surface": "internal/events/relay.go + internal/api/events.go:183-272 (cross-run SSE)",
+      "finding": "the designed EventSink hook exists but no binary constructs a Relay (outbox rows accumulate undrained); GET /v1alpha1/events is a ready-made, terminal-aware, cross-run SSE subscription surface, authless by design (spec decision c45) \u2014 the Discord notifier's cheapest legitimate attach point",
+      "seeds": [
+        "c7",
+        "c8"
+      ]
+    },
+    {
+      "id": "s6",
+      "surface": "internal/engine (doc.go:46-53, transition.go:38-58, complete.go:536-570) + migrations/0016_signal_events.sql",
+      "finding": "maxParallelTokens is read, defaulted to 1, carried, and never honored; transition plans are structurally single-edge first-match-wins; advance() creates exactly one token; no join state exists \u2014 but token parent links and multi-waiter signal_subscriptions are deliberate #43 groundwork",
+      "seeds": [
+        "c9"
+      ]
+    },
+    {
+      "id": "s7",
+      "surface": "internal/devague package + .devague/plans/*.json + .devague/deliveries/*.json",
+      "finding": "a pure JSON-to-ledger mapper with zero production callers (no API route, no CLI verb, no store); plan JSON carries per-task status and real deps that MapPlanWaves deliberately does not read; deviations live in deliveries JSON with origin user|llm and status proposed|approved \u2014 the #45 data model largely pre-exists, the ingestion and display surfaces do not",
+      "seeds": [
+        "c10",
+        "c15"
+      ]
+    },
+    {
+      "id": "s8",
+      "surface": "adapters/human-inbox (server.py:369, store.py, mapping.py:68-126) + internal/actors/callback_http.go + token.go",
+      "finding": "the bridge persists extra_input verbatim (a declared observable already round-trips), holds the attempt-scoped HMAC callback token durably for days-later completion, and stamps origin.actor_id with data.kind human-submission \u2014 an observed-submission sibling is the minimal honest extension; two distinct human-task mechanisms exist and #54's live evidence is the bridge path",
+      "seeds": [
+        "c11",
+        "c12",
+        "c14"
+      ]
+    },
+    {
+      "id": "s9",
+      "surface": "internal/ledger/authority.go + internal/worker/hooks.go:35-38 + engine/ledgerdelta.go:112-125",
+      "finding": "humans are refused observed authority outright; runner-origin observed evidence requires a RunnerManifest whose trust is currently the caller's authentication (documented Phase-0 gap); agent nodes \u2014 which is what kind=human actor nodes compile to \u2014 can never declare ledger.observe, so the tracker's honest-attribution lane is a real open decision",
+      "seeds": [
+        "c11"
+      ]
+    },
+    {
+      "id": "s10",
+      "surface": "examples/pr-upkeep/README.md (human-merges rule) + docs/initial-design/culture-nodes-prd-spec.md:1646",
+      "finding": "the flow holds zero merge credentials and approved is defined as the record of the human's own merge \u2014 #54 deliberately revises this stated design, so the README edit is in scope and the no-provider-credentials PRD rule stays intact by placing the observer outside the control plane",
+      "seeds": [
+        "c13"
+      ]
+    },
+    {
+      "id": "s11",
+      "surface": "devex (core/webhook.py, pr/scripts/_webhook.py) + ~/.bashrc webhook exports",
+      "finding": "devex's auto-Discord is a two-layer stdlib webhook POST (content-agnostic transport + PR-lane payload policy), fail-open, journaling without URL/payload; the URL is env-only (DEVEX_PR_WEBHOOK_URL, global in ~/.bashrc) and a SECOND distinct webhook (DISCORD_WEBHOOK_URL, steward discord-notify) also exists \u2014 'reuse the webhook' needs a channel decision",
+      "seeds": [
+        "c16",
+        "c18"
+      ]
+    },
+    {
+      "id": "s12",
+      "surface": "/home/spark/git/discord-bot-cli + steward discord-notify skill",
+      "finding": "discord-bot-cli (the 'discord-cli' of issue #41) is bidirectional but strictly one-shot and poll-based \u2014 no gateway listener, no DM verb; thread-per-attempt + mention + channel-messages polling is the nudge/relay shape, and the steward skill's severity-color/username/timestamp embed vocabulary is worth lifting; no upstream rate limiting exists",
+      "seeds": [
+        "c17"
+      ]
+    },
+    {
+      "id": "s13",
+      "surface": "web/src (App.tsx, Header.tsx, routes/Workflows.tsx)",
+      "finding": "seven top-level tabs, no sub-tab component anywhere; the Workflows tab #56 replaces exists and owns the /workflows/new authoring entry; RunView's aria-pressed segmented toggle is the sub-tab prior art; Header.test.tsx and workflows e2e pins break on rename",
+      "seeds": [
+        "c19"
+      ]
+    },
+    {
+      "id": "s14",
+      "surface": "web/src Mesh stack (MeshCanvas.tsx, useMeshEvents.ts, domain/mesh.ts)",
+      "finding": "the Mesh is hand-written Canvas 2D fed by the cross-run SSE feed \u2014 glow sprites, quantized alpha tables, 64-particle pool, observer-gated rAF, reduced-motion static frame, agent-state mirror, honesty h14 (every pixel traces to a committed event); no WebGL/WebGPU anywhere in the stack",
+      "seeds": [
+        "c21"
+      ]
+    },
+    {
+      "id": "s15",
+      "surface": "web/src graph machinery (useElkLayout.ts, domain/graph.ts, WorkflowNode.tsx) + api/openapi paths",
+      "finding": "a production single-IR graph renderer exists (React Flow + ELK + BFS parser + authority-mapped edge styles); no /v1alpha1/nodes endpoint, no cross-workflow graph parser, and node announced/consumed events have no schema \u2014 #56's catalog half needs a data-source decision",
+      "seeds": [
+        "c20"
+      ]
+    },
+    {
+      "id": "s16",
+      "surface": "web/src data-fetch conventions (all routes) + hooks/useRunEvents.ts",
+      "finding": "SSE-live: Mesh and RunView only; the other seven views fetch on mount with zero polling and no refresh button; Inbox's reloadKey counter is the one re-run idiom; the cross-run SSE ?runs= scoping exists server-side but is unexposed in api/client.ts; load conventions (AbortController, agent-state ready semantics, stale-while-revalidate) are e2e-pinned",
+      "seeds": [
+        "c22"
+      ]
+    },
+    {
+      "id": "s17",
+      "surface": "scripts/check-culture-design.mjs + web/src/culture-design + web.yml webglass gate",
+      "finding": "palette hexes are pinned to agentculture/org sources, tokens.css is byte-frozen, edge dasharrays need upstream precedent; webglass CI asserts agent-state ready + zero page errors on the built bundle \u2014 a canvas or GPU path must publish its state mirror and pass these gates",
+      "seeds": [
+        "c21"
+      ]
+    },
+    {
+      "id": "s18",
+      "surface": "web/src/api/client.ts PROJECTION_NAMES + routes/LedgerView.tsx",
+      "finding": "the PRD \u00a710.9 projection set (ready_tasks, decision_history, delivery_summary, ...) is served per run and rendered only in the per-run LedgerView picker \u2014 the nearest existing substrate for an implement-plan dashboard, with AuthorityChip already encoding system-knows vs user-reports",
+      "seeds": [
+        "c23",
+        "c15"
+      ]
+    },
+    {
+      "id": "s19",
+      "surface": "adapters/*/mapping.py (sync_response + terminal payloads) + adapters/*/tests test_mapping pins",
+      "finding": "continuation_ref is hardcoded None in all three bridges and pinned by tests; the async terminal payload omits the key entirely, so even a populated ref would be invisible on the path long sessions take",
+      "seeds": [
+        "c24"
+      ]
+    },
+    {
+      "id": "s20",
+      "surface": "adapters/*/claude_cli.py + codex_cli.py + colleague_cli.py + /home/spark/git/colleague/docs/contract.md",
+      "finding": "every invocation is a cold start (claude -p, codex exec, colleague work \u2014 no resume flags anywhere); claude's session_id and codex's thread_id are already captured into ledger claims, so the resume handle is durable but in the wrong shape; colleague's pinned contract has no resume surface at all \u2014 upstream feature required",
+      "seeds": [
+        "c24"
+      ]
+    },
+    {
+      "id": "s21",
+      "surface": "adapters usage mapping (claude-code mapping.py:197-213, codex mapping.py:182-198 + codex_cli.py:163-175, colleague mapping.py:174-189)",
+      "finding": "all three bridges emit only input/output/cost/currency; codex drops cached_input_tokens and reasoning_output_tokens (fixture pins issue #47's exact 13880/9984 numbers) and fabricates 0/0 usage on turn.failed; colleague's backend reports no cache fields, so its cache economics are honestly unmeasurable",
+      "seeds": [
+        "c2",
+        "c25"
+      ]
+    },
+    {
+      "id": "s22",
+      "surface": "adapters/*/workspace.py + internal/actors/workspace.go + examples/workspace-snapshot-hook + internal/worker/hooks.go:358-383",
+      "finding": "bridge workspace handling is measurement-only in the operator's live checkout (no worktree/branch/commit/stash exists anywhere); the Go side only merges the measured block into output; the snapshot hook lane is observation-only, unimplemented by any runner, and refused for async agent dispatch \u2014 so #49 preservation is a new bridge-side capability with an explicit policy decision",
+      "seeds": [
+        "c26"
+      ]
+    },
+    {
+      "id": "s23",
+      "surface": "adapters/*/config.py + server.py decide_async/refusal seams",
+      "finding": "always_async, sync_max_steps, and the 503/403 refusal precedents exist identically across the three bridges as the seams budget/breaker work extends; no concurrency, pacing, capacity, budget, or git-policy knob exists anywhere, and async runners spawn unbounded",
+      "seeds": [
+        "c27",
+        "c4"
+      ]
+    },
+    {
+      "id": "s24",
+      "surface": "issue #50 + deploy/prod/deploy.sh:36-47 (headspace via uv tool) + issue #48 comment (lane-cost ladder, one-meter-many-lanes)",
+      "finding": "headspace is an external uv-tool dependency on the prod hosts, so the egress-allowlist gap lives in the headspace-cli project; the #48 comment's grounded economics (bridge sessions pay full cold-session tax and share the operator's single subscription window) drive both the codex-first routing default and the work-package node granularity",
+      "seeds": [
+        "c28",
+        "c29"
+      ]
+    },
+    {
+      "id": "s25",
+      "surface": "challenge pass / adjacent-systems lens: bridges' shared live checkout x warm sessions x preserve branch",
+      "finding": "three confirmed features collide in one working tree \u2014 warm sessions continue in the checkout that preserve-on-failure wants to commit in; a checkout/branch-switch implementation would corrupt concurrent turns, and concurrent same-key dispatches would interleave one provider thread",
+      "seeds": [
+        "c41",
+        "c44"
+      ]
+    },
+    {
+      "id": "s26",
+      "surface": "challenge pass / counter-evidence lens: resumed-session economics vs provider cache TTLs",
+      "finding": "#47's diagnosis itself orders telemetry BEFORE reuse and prescribes the ten-task A/B; nothing in the frame carried that gate, and a long-history resume can cost more than a cold start \u2014 also surfaced the c3xc6 accounting conflict (a warm workstream must not count as N sessions)",
+      "seeds": [
+        "c42",
+        "c46"
+      ]
+    },
+    {
+      "id": "s27",
+      "surface": "challenge pass / missing-dimension lens: #48 comment item 5 (reset-clock-aware pacing)",
+      "finding": "the confirmed pacing claim (c5) omitted the session-window reset anchor the diagnosis explicitly asked for \u2014 'spread across the remaining window', not a fixed rate",
+      "seeds": [
+        "c43"
+      ]
+    },
+    {
+      "id": "s28",
+      "surface": "challenge pass / security lens: notifier egress content + authless SSE (spec decision c45)",
+      "finding": "the notifier adds no new exposure to the already-authless event feed, but nothing bounded WHAT leaves for Discord \u2014 run/ledger content is not public-by-default the way devex's PR metadata is, so content minimization becomes a boundary",
+      "seeds": [
+        "c40"
+      ]
+    },
+    {
+      "id": "s29",
+      "surface": "challenge pass / failure-mode lens: notifier restart over at-least-once delivery",
+      "finding": "outbox events are stable-id, at-least-once by design and the SSE surface takes ?from= \u2014 without a durable cursor the daemon drops or double-posts across restarts",
+      "seeds": [
+        "c39"
+      ]
+    },
+    {
+      "id": "s30",
+      "surface": "challenge pass / observability-recovery lens: breaker/pacing silent-skip",
+      "finding": "budget.go's own recorded argument (a silent skip 'stays ready forever and nothing anywhere records why') applies verbatim to a breaker pause; without emitted events, a visible paused-until, and a manual clear, a tripped breaker reads as a hung system",
+      "seeds": [
+        "c45"
+      ]
+    },
+    {
+      "id": "s31",
+      "surface": "challenge pass / lifecycle lens: observed-state to outcome mapping (#54 override list)",
+      "finding": "the frame declared merged->auto-complete but was silent on closed-unmerged; #54's own override list names dropped and merge-without-PR as human-judgment cases, so v1 auto-completes only the unambiguous merged state",
+      "seeds": [
+        "c47"
+      ]
+    },
+    {
+      "id": "s32",
+      "surface": "challenge pass / adjacent-systems lens: browser SSE connection caps across dashboard views",
+      "finding": "Mesh and RunView each hold their own EventSource; extending per-view connections to seven more views exceeds the HTTP/1.1 per-origin cap in multi-tab use \u2014 auto-refresh needs one shared app-wide stream",
+      "seeds": [
+        "c48"
+      ]
+    },
+    {
+      "id": "s33",
+      "surface": "challenge pass / migration lens: 0012 expand-only precedent + ADR-0002 (clean)",
+      "finding": "clean pass \u2014 the c2 usage migration follows a pinned precedent (nullable, no backfill, N-1 safe) and migration policy is already an ADR; residual: the breaker table is the first deliberately-mutable table beside the append-only actors contract, its ownership named at plan time",
+      "seeds": []
+    },
+    {
+      "id": "s34",
+      "surface": "challenge pass / concurrency lens: breaker state races across horizontal workers (clean)",
+      "finding": "clean pass \u2014 concurrent workers marking the same actor exhausted is an idempotent upsert (last-writer-wins on paused_until is safe); residual risk routed plan-side once the plan exists",
+      "seeds": []
+    },
+    {
+      "id": "s35",
+      "surface": "challenge pass / h14 lens: breathing halo vs no-decorative-traffic (clean)",
+      "finding": "clean pass \u2014 the halo animates a committed fact (an active token exists), not invented traffic; the periodic-action pulses map to real dispatch/heartbeat events, so c31's aliveness and h14 are compatible as specified",
+      "seeds": []
+    }
+  ],
+  "lapses": []
+}

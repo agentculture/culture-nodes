@@ -282,14 +282,18 @@ def sync_response(
 
     classification = classify(task_result, ctx, default_success_outcome=default_success_outcome)
     if not classification.domain:
-        return SyncResponse(
-            status_code=500,
-            body={
-                "error": classification.message,
-                "class": classification.error_class,
-                "workspace_measured": measured,
-            },
-        )
+        body = {
+            "error": classification.message,
+            "class": classification.error_class,
+            "workspace_measured": measured,
+        }
+        # Issue #32: a failed session still burned real tokens. When colleague
+        # produced a parseable terminal result, its API-reported usage rides
+        # the failure body; a result-less crash stays usage-less — absent,
+        # never fabricated zeros.
+        if task_result is not None:
+            body["usage"] = usage_from_task_result(task_result)
+        return SyncResponse(status_code=500, body=body)
 
     return SyncResponse(
         status_code=200,
@@ -350,15 +354,18 @@ def terminal_event(
 
     classification = classify(task_result, ctx, default_success_outcome=default_success_outcome)
     if not classification.domain:
-        return TerminalEvent(
-            kind="failed",
-            payload={
-                "class": classification.error_class,
-                "message": classification.message,
-                "detail": detail,
-                "workspace_measured": measured,
-            },
-        )
+        payload = {
+            "class": classification.error_class,
+            "message": classification.message,
+            "detail": detail,
+            "workspace_measured": measured,
+        }
+        # Issue #32: same rule as sync_response — real usage from a parseable
+        # terminal result rides the failed payload; a result-less crash stays
+        # usage-less rather than reporting fabricated zeros.
+        if task_result is not None:
+            payload["usage"] = usage_from_task_result(task_result)
+        return TerminalEvent(kind="failed", payload=payload)
 
     return TerminalEvent(
         kind="completed",

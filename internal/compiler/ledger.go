@@ -14,7 +14,7 @@ func (c *compilation) checkLedger() {
 		n := c.doc.Spec.Nodes[id]
 		base := pointerJoin("/spec/nodes", id)
 		c.checkLedgerDelta(base, id, n)
-		c.checkAcceptance(base, n)
+		c.checkAcceptance(base, id, n)
 		c.checkProjectionBindings(base, n)
 	}
 }
@@ -60,7 +60,7 @@ func (c *compilation) checkLedgerDelta(base, id string, n *node) {
 // PRD names (§10.10). Unknown kinds warn rather than fail: the check registry
 // is later work, and an unrecognised check is a gap in this compiler's
 // knowledge, not proof the author is wrong.
-func (c *compilation) checkAcceptance(base string, n *node) {
+func (c *compilation) checkAcceptance(base, id string, n *node) {
 	if n.Acceptance == nil {
 		return
 	}
@@ -72,6 +72,47 @@ func (c *compilation) checkAcceptance(base string, n *node) {
 		c.add(LevelWarning, base+"/acceptance/requires/"+strconv.Itoa(i)+"/kind", CodeLedgerAcceptanceUnknown,
 			fmt.Sprintf("acceptance check %q is not a check this compiler knows how to run", kind),
 			fmt.Sprintf("known checks are: %s; an unknown check cannot be mechanically enforced yet", strings.Join(sortedKeys(acceptanceKinds), ", ")))
+	}
+	c.checkAcceptanceEnforce(base, id, n)
+}
+
+// Enforce vocabulary (issue #37). An omitted field means enforceObserve — the
+// default lives in the schema's documentation, not in normalization, so it
+// re-digests no published workflow.
+const (
+	enforceObserve            = "observe"
+	enforceRouteTechnical     = "route_technical"
+	enforceRouteOutcomePrefix = "route_outcome:"
+)
+
+// checkAcceptanceEnforce validates the enforce policy, unlike the check kinds
+// as an error: enforcement changes routing, and dispatching to a mode this
+// engine does not implement — or down a domain edge the node never declared —
+// is not a knowledge gap but a workflow that cannot mean what it says. The
+// schema's pattern already refuses an out-of-vocabulary value; this is the
+// second, independent no, on the hookOnFailure precedent.
+func (c *compilation) checkAcceptanceEnforce(base, id string, n *node) {
+	enforce := n.Acceptance.Enforce
+	switch {
+	case enforce == "" || enforce == enforceObserve || enforce == enforceRouteTechnical:
+		return
+	case strings.HasPrefix(enforce, enforceRouteOutcomePrefix):
+		name := strings.TrimPrefix(enforce, enforceRouteOutcomePrefix)
+		outcomes := declaredOutcomes(n)
+		if name != "" && contains(outcomes, name) {
+			return
+		}
+		hint := fmt.Sprintf("declare it under the node's contract.outcomes, or route to one of: %s", strings.Join(outcomes, ", "))
+		if len(outcomes) == 0 {
+			hint = "the node declares no domain outcomes; add contract.outcomes before routing acceptance failures to one"
+		}
+		c.add(LevelError, base+"/acceptance/enforce", CodeLedgerAcceptanceEnforceOutcomeUndeclared,
+			fmt.Sprintf("node %q acceptance.enforce routes to outcome %q, which the node does not declare", id, name),
+			hint)
+	default:
+		c.add(LevelError, base+"/acceptance/enforce", CodeLedgerAcceptanceEnforceUnknown,
+			fmt.Sprintf("node %q acceptance.enforce is %q, which is not an enforce policy this engine implements", id, enforce),
+			fmt.Sprintf("use %q (the default), %q, or %q with a domain outcome the node declares", enforceObserve, enforceRouteTechnical, enforceRouteOutcomePrefix+"<name>"))
 	}
 }
 

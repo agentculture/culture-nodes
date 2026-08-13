@@ -1,0 +1,48 @@
+apiVersion: nodes.culture.dev/v1alpha1
+kind: Workflow
+
+metadata:
+  name: err-acceptance-enforce-outcome
+  version: 1.0.0
+  ownerRef: team/platform-ai
+
+spec:
+  entry: build
+
+  contract:
+    input:
+      schemaRef: ./contracts/in.schema.json
+    output:
+      schemaRef: ./contracts/out.schema.json
+
+  nodes:
+    build:
+      kind: code
+      ownerRef: team/platform-ai
+      uses: runner://headspace/docker@sha256:aaaaaa
+      operation:
+        image: registry.example/build@sha256:111111
+        argv: [make, build]
+      contract:
+        outcomes:
+          passed:
+            schemaRef: ./contracts/result.schema.json
+          failed:
+            schemaRef: ./contracts/result.schema.json
+      acceptance:
+        enforce: route_outcome:ghost
+        requires:
+          - kind: process_exit
+            equals: 0
+
+    finish:
+      kind: end
+      ownerRef: team/platform-ai
+      output:
+        from: /nodes/build/output
+
+  edges:
+    - from: build.passed
+      to: finish
+    - from: build.failed
+      to: finish

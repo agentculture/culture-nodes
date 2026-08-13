@@ -1,0 +1,104 @@
+apiVersion: nodes.culture.dev/v1alpha1
+kind: Workflow
+
+metadata:
+  name: acceptance-enforce-ok
+  version: 1.0.0
+  ownerRef: team/platform-ai
+
+spec:
+  entry: build
+
+  contract:
+    input:
+      schemaRef: ./contracts/in.schema.json
+    output:
+      schemaRef: ./contracts/out.schema.json
+
+  nodes:
+    build:
+      kind: code
+      ownerRef: team/platform-ai
+      uses: runner://headspace/docker@sha256:aaaaaa
+      operation:
+        image: registry.example/build@sha256:111111
+        argv: [make, build]
+      contract:
+        outcomes:
+          passed:
+            schemaRef: ./contracts/result.schema.json
+          failed:
+            schemaRef: ./contracts/result.schema.json
+      acceptance:
+        enforce: route_outcome:failed
+        requires:
+          - kind: process_exit
+            equals: 0
+
+    test:
+      kind: code
+      ownerRef: team/platform-ai
+      uses: runner://headspace/docker@sha256:aaaaaa
+      operation:
+        image: registry.example/test@sha256:222222
+        argv: [make, test]
+      contract:
+        outcomes:
+          passed:
+            schemaRef: ./contracts/result.schema.json
+          failed:
+            schemaRef: ./contracts/result.schema.json
+      acceptance:
+        enforce: route_technical
+        requires:
+          - kind: workspace_diff
+            complete: true
+
+    review:
+      kind: agent
+      ownerRef: team/platform-ai
+      uses: actor://company/reviewer@sha256:bbbbbb
+      contract:
+        outcomes:
+          completed:
+            schemaRef: ./contracts/result.schema.json
+      input:
+        from: /run/input
+      acceptance:
+        enforce: observe
+        requires:
+          - kind: claims_confirmed
+
+    audit:
+      kind: agent
+      ownerRef: team/platform-ai
+      uses: actor://company/auditor@sha256:cccccc
+      contract:
+        outcomes:
+          completed:
+            schemaRef: ./contracts/result.schema.json
+      input:
+        from: /run/input
+      acceptance:
+        requires:
+          - kind: no_blocking_questions
+
+    finish:
+      kind: end
+      ownerRef: team/platform-ai
+      output:
+        from: /nodes/audit/output
+
+  edges:
+    - from: build.passed
+      to: test
+    - from: build.failed
+      to: finish
+    - from: test.passed
+      to: review
+    - from: test.failed
+      to: finish
+    - from: review.completed
+      to: audit
+    - from: audit.completed
+      to: finish

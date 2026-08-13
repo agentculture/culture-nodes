@@ -64,10 +64,12 @@ const (
 	CodeContractCELNotBoolean      = "contract.cel_not_boolean"
 
 	// Ledger.
-	CodeLedgerProjectionUnknown   = "ledger.projection_unknown"
-	CodeLedgerRecordTypeUnknown   = "ledger.record_type_unknown"
-	CodeLedgerObserveNotPermitted = "ledger.observe_not_permitted"
-	CodeLedgerAcceptanceUnknown   = "ledger.acceptance_kind_unknown"
+	CodeLedgerProjectionUnknown                  = "ledger.projection_unknown"
+	CodeLedgerRecordTypeUnknown                  = "ledger.record_type_unknown"
+	CodeLedgerObserveNotPermitted                = "ledger.observe_not_permitted"
+	CodeLedgerAcceptanceUnknown                  = "ledger.acceptance_kind_unknown"
+	CodeLedgerAcceptanceEnforceUnknown           = "ledger.acceptance_enforce_unknown"
+	CodeLedgerAcceptanceEnforceOutcomeUndeclared = "ledger.acceptance_enforce_outcome_undeclared"
 
 	// Policy.
 	CodePolicyDurationInvalid   = "policy.duration_invalid"

@@ -211,6 +211,12 @@ type ledgerDelta struct {
 }
 
 type acceptance struct {
+	// Enforce is the issue #37 policy for a failed check: "observe" (also the
+	// meaning of an omitted field — the default is documented in the schema,
+	// never materialized here, so it re-digests no published workflow),
+	// "route_technical", or "route_outcome:<name>" where <name> is a domain
+	// outcome the node itself declares.
+	Enforce  string           `json:"enforce,omitempty"`
 	Requires []map[string]any `json:"requires"`
 }
 

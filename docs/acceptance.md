@@ -144,8 +144,17 @@ Expected-behavior prose from the same section:
   parallelism: `maxParallelTokens` is charged at a split's fan-out and a split
   that would cross it is refused whole
   (`TestSplitPastMaxParallelTokensIsRefusedWhole`), with `maxTransitions`
-  charged `+K` over the eligible set (`TestSplitIsChargedKTransitions`). Cost
-  budgets are not implemented (also listed as optional).
+  charged `+K` over the eligible set (`TestSplitIsChargedKTransitions`). The
+  optional "agent token or cost budget" is **partial** since task t11 of the
+  economy-discord-graphs plan (issue #48 item 5): `spec.budget.maxSessions`
+  and `spec.budget.maxUncachedInput` are declared, pinned in the IR, and
+  enforced pre-invoke, where an unfundable dispatch is refused and routed as
+  `budget_exhausted` rather than failing the run
+  (`TestUnfundableDispatchIsRefusedAndRoutesItsDeclaredEdge`,
+  `TestWarmWorkstreamConsumesOneSessionNotN`,
+  `TestUncachedInputAccumulatesAndRefusesWithoutCacheTelemetry`). A budget
+  denominated in **currency** is still not implemented: attempts persist
+  `usage_cost`/`usage_currency`, but nothing bounds a run by them.
 
 ---
 

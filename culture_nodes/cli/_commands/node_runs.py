@@ -39,7 +39,9 @@ def _node_run_lines(payload: dict) -> str:
     return "\n".join(lines)
 
 
-def cmd_node_runs_list(args: argparse.Namespace) -> int:
+def cmd_node_runs_list(args: argparse.Namespace) -> None:
+    """Success on every path; errors surface as CliError from the client
+    (a ``None`` handler result means exit 0, see ``_dispatch``)."""
     client = client_from_args(args)
     resp = client.request(
         "GET",
@@ -53,13 +55,11 @@ def cmd_node_runs_list(args: argparse.Namespace) -> int:
     )
     if bool(getattr(args, "json", False)):
         emit_json_passthrough(resp.raw)
-        return 0
-    payload = resp.payload or {}
-    if not (payload.get("items") or []):
-        emit_result("no node runs", json_mode=False)
-        return 0
-    emit_result(_node_run_lines(payload), json_mode=False)
-    return 0
+    else:
+        payload = resp.payload or {}
+        has_items = bool(payload.get("items") or [])
+        text = _node_run_lines(payload) if has_items else "no node runs"
+        emit_result(text, json_mode=False)
 
 
 def _bare_noun(args: argparse.Namespace) -> int:

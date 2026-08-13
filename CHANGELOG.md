@@ -5,6 +5,15 @@ All notable changes to this project will be documented in this file.
 Format follows [Keep a Changelog](https://keepachangelog.com/). This project
 adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.13.3] - 2026-08-13
+
+### Fixed
+
+- `nodes node-runs list` handler no longer returns an invariant `0` from every
+  path (SonarCloud BLOCKER python:S3516): it is now a `-> None` procedure on
+  the dispatcher's None-means-success contract, matching `whoami`. PR-upkeep
+  sweep item 1 of 4 (run 01KZXATS1HM63SAQZVHX0K4ZD0).
+
 ## [0.13.2] - 2026-08-13
 
 ### Added

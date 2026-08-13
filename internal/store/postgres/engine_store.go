@@ -563,42 +563,57 @@ const insertAttemptSQL = `
 INSERT INTO attempts (
 	id, namespace_id, node_run_id, attempt_number, actor_id, status, fencing_token,
 	result, started_at, completed_at,
-	usage_input_tokens, usage_output_tokens, usage_cost, usage_currency
+	usage_input_tokens, usage_output_tokens, usage_cost, usage_currency,
+	usage_cached_input_tokens, usage_reasoning_tokens, usage_model, usage_thread_id,
+	termination_reason
 )
-VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14)
+VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19)
 `
 
 // InsertAttempt records one dispatch attempt's result. The
 // attempts(node_run_id, attempt_number) unique constraint means a duplicate
 // completion is a constraint violation rather than a second silent row.
 //
-// The four usage_* columns (migrations/0012_attempt_usage.sql) are written
-// straight from attempt.Usage with no derivation: a nil Usage leaves all
-// four NULL, and a non-nil one preserves Cost/Currency's own independent
-// nullability rather than coercing an unpriced attempt's cost to 0 — see
-// engine.Usage's doc comment for why 0 would be a lie ("free") that null
-// is not.
+// The usage_* columns (migrations/0012_attempt_usage.sql and its extension
+// 0017_attempt_usage_extended.sql) are written straight from attempt.Usage
+// with no derivation: a nil Usage leaves every one of them NULL, and a
+// non-nil one preserves each optional field's own independent nullability
+// rather than coercing an unpriced attempt's cost to 0 or a cache-blind
+// backend's cached-input count to 0 — see engine.Usage's doc comment for
+// why 0 would be a lie ("free", "0% cached") that null is not.
+//
+// termination_reason is written from attempt.TerminationReason, NOT from
+// the usage block, because an attempt can carry one with no usage block at
+// all (ADR 0009).
 func (eq engineQueries) InsertAttempt(ctx context.Context, attempt engine.Attempt) error {
 	var result any
 	if len(attempt.Result) > 0 {
 		result = []byte(attempt.Result)
 	}
 	var (
-		inputTokens, outputTokens pgtype.Int8
-		cost                      pgtype.Float8
-		currency                  pgtype.Text
+		inputTokens, outputTokens          pgtype.Int8
+		cost                               pgtype.Float8
+		currency                           pgtype.Text
+		cachedInputTokens, reasoningTokens pgtype.Int8
+		usageModel, usageThreadID          pgtype.Text
 	)
 	if attempt.Usage != nil {
 		inputTokens = int8FromPtr(&attempt.Usage.InputTokens)
 		outputTokens = int8FromPtr(&attempt.Usage.OutputTokens)
 		cost = float8FromPtr(attempt.Usage.Cost)
 		currency = textPtrFromNullable(attempt.Usage.Currency)
+		cachedInputTokens = int8FromPtr(attempt.Usage.CachedInputTokens)
+		reasoningTokens = int8FromPtr(attempt.Usage.ReasoningTokens)
+		usageModel = textPtrFromNullable(attempt.Usage.Model)
+		usageThreadID = textPtrFromNullable(attempt.Usage.ThreadID)
 	}
 	_, err := eq.q.Exec(ctx, insertAttemptSQL,
 		attempt.ID, eq.namespaceID, attempt.NodeRunID, int32(attempt.Number),
 		textOrNull(attempt.ActorID), string(attempt.Status), attempt.FencingToken,
 		result, tsOrNow(attempt.StartedAt), tsOrNow(attempt.CompletedAt),
 		inputTokens, outputTokens, cost, currency,
+		cachedInputTokens, reasoningTokens, usageModel, usageThreadID,
+		textPtrFromNullable(attempt.TerminationReason),
 	)
 	if err != nil {
 		return fmt.Errorf("postgres: engine: InsertAttempt: %w", err)
@@ -624,7 +639,9 @@ func (eq engineQueries) Attempts(ctx context.Context, nodeRunID string) ([]engin
 	rows, err := eq.q.Query(ctx, `
 		SELECT id, namespace_id, node_run_id, attempt_number, actor_id, status,
 		       fencing_token, result, started_at, completed_at,
-		       usage_input_tokens, usage_output_tokens, usage_cost, usage_currency
+		       usage_input_tokens, usage_output_tokens, usage_cost, usage_currency,
+		       usage_cached_input_tokens, usage_reasoning_tokens, usage_model,
+		       usage_thread_id, termination_reason
 		FROM attempts
 		WHERE node_run_id = $1
 		ORDER BY attempt_number
@@ -649,11 +666,18 @@ func (eq engineQueries) Attempts(ctx context.Context, nodeRunID string) ([]engin
 			usageOutputTokens pgtype.Int8
 			usageCost         pgtype.Float8
 			usageCurrency     pgtype.Text
+			usageCachedInput  pgtype.Int8
+			usageReasoning    pgtype.Int8
+			usageModel        pgtype.Text
+			usageThreadID     pgtype.Text
+			terminationReason pgtype.Text
 		)
 		if err := rows.Scan(
 			&attempt.ID, &attempt.NamespaceID, &attempt.NodeRunID, &number, &actorID,
 			&status, &fencingToken, &result, &startedAt, &completedAt,
 			&usageInputTokens, &usageOutputTokens, &usageCost, &usageCurrency,
+			&usageCachedInput, &usageReasoning, &usageModel, &usageThreadID,
+			&terminationReason,
 		); err != nil {
 			return nil, fmt.Errorf("postgres: engine: Attempts: scan: %w", err)
 		}
@@ -677,8 +701,19 @@ func (eq engineQueries) Attempts(ctx context.Context, nodeRunID string) ([]engin
 				OutputTokens: int8PtrValueOrZero(usageOutputTokens),
 				Cost:         float8PtrFromPg(usageCost),
 				Currency:     textPtrFromPg(usageCurrency),
+				// migrations/0017's four extended columns are independently
+				// nullable *within* a reported block, so each reads back on
+				// its own: a bridge that reported tokens but no cache
+				// counts yields nil, never 0.
+				CachedInputTokens: int8PtrFromPg(usageCachedInput),
+				ReasoningTokens:   int8PtrFromPg(usageReasoning),
+				Model:             textPtrFromPg(usageModel),
+				ThreadID:          textPtrFromPg(usageThreadID),
 			}
 		}
+		// Read outside the usage block on purpose: termination_reason is
+		// non-NULL on attempts whose usage columns are all NULL (ADR 0009).
+		attempt.TerminationReason = textPtrFromPg(terminationReason)
 		attempts = append(attempts, attempt)
 	}
 	if err := rows.Err(); err != nil {

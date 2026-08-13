@@ -221,6 +221,13 @@ type Attempt struct {
 	// reported none. See CompletionRequest.Usage for why it is never
 	// fabricated.
 	Usage *Usage
+	// TerminationReason is how the turn ended as the provider reported it,
+	// nil when nothing reported one. It is a sibling of Usage rather than a
+	// field of it because it can be known when no usage block exists at all
+	// (docs/adr/0009-usage-telemetry-extension.md) — the attempts column is
+	// `termination_reason`, not `usage_termination_reason`, for the same
+	// reason.
+	TerminationReason *string
 }
 
 // Usage is the §13.2 telemetry block as the engine persists it. It mirrors
@@ -230,12 +237,23 @@ type Attempt struct {
 // callback commit path uses), and the reverse import would cycle. Cost and
 // Currency stay pointers for the reason actors.Usage's do: an actor that
 // does not price its work says so with null, not with a zero that reads as
-// "free".
+// "free". The four extended fields (ADR 0009) are pointers for that same
+// reason and are each independently absent-able within a reported block:
+// none of them may stand in for "this attempt reported usage", which is
+// still what a non-nil Usage (persisted as a non-NULL usage_input_tokens)
+// means.
 type Usage struct {
-	InputTokens  int64
-	OutputTokens int64
-	Cost         *float64
-	Currency     *string
+	InputTokens       int64
+	OutputTokens      int64
+	Cost              *float64
+	Currency          *string
+	CachedInputTokens *int64
+	ReasoningTokens   *int64
+	// Model is the model that produced these counts; ThreadID is the
+	// provider-side thread they accrued on. ThreadID is telemetry, not the
+	// resume handle a later dispatch passes back to a bridge.
+	Model    *string
+	ThreadID *string
 }
 
 // HumanTaskStatusPending is the status a human task is created with
@@ -324,6 +342,13 @@ type CompletionRequest struct {
 	// null Cost/Currency semantics a Usage block arrived with are preserved
 	// into storage.
 	Usage *Usage
+
+	// TerminationReason is how the actor's turn ended, as the actor
+	// reported it, nil when it reported nothing. Like Usage it rides
+	// straight onto the attempt row with no derivation, and it is carried
+	// separately from Usage because an actor can know the reason without
+	// holding a usage block to attach it to (ADR 0009).
+	TerminationReason *string
 }
 
 // RejectionKind names which contract refused a completion.

@@ -306,7 +306,7 @@ func (w *Worker) dispatchCode(
 		// not a claim about what the operation did — and the operation row is
 		// still recorded below so the raw Result stays inspectable.
 		result, cerr := w.completeTechnicalFailure(ctx, claimed, w.codeRunnerActorID(), engine.StatusContractRejected, "runner",
-			fmt.Sprintf("node %q result could not be mapped onto a completion: %v", node.ID, err), nil, nil)
+			fmt.Sprintf("node %q result could not be mapped onto a completion: %v", node.ID, err), nil, actorTelemetry{})
 		if cerr != nil {
 			return cerr
 		}
@@ -359,7 +359,7 @@ func (w *Worker) completeCodeDispatchError(
 		status = dispatchErr.TechStatus()
 	}
 	result, err := w.completeTechnicalFailure(ctx, claimed, w.codeRunnerActorID(), status, "runner",
-		fmt.Sprintf("node %q code dispatch was refused by the runner boundary: %v", node.ID, execErr), nil, nil)
+		fmt.Sprintf("node %q code dispatch was refused by the runner boundary: %v", node.ID, execErr), nil, actorTelemetry{})
 	if err != nil {
 		return err
 	}

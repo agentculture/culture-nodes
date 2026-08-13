@@ -75,6 +75,21 @@ Numbered SQL migrations for the authoritative PostgreSQL store (prd-spec
   attribution per-actor stats read; without it every async attempt was
   invisible to `GET /v1alpha1/actors/{id}/stats` (found live by the t20
   success-signal run).
+- `0017_attempt_usage_extended.sql` — expand-only: adds
+  `attempts.usage_cached_input_tokens`, `usage_reasoning_tokens`,
+  `usage_model`, `usage_thread_id`, and `termination_reason` (task t1 of the
+  economy-discord-graphs plan), the extended §13.2 telemetry
+  `docs/adr/0009-usage-telemetry-extension.md` amends the PRD with. All five
+  are nullable with no default and nothing is backfilled, exactly as in
+  `0012`. `usage_input_tokens IS NOT NULL` remains the "this attempt
+  reported usage" sentinel — the four new `usage_*` columns are each
+  independently nullable *within* a reported block, so none of them may
+  stand in for it. NULL still means "not reported", never zero: an actor
+  whose contract exposes no cache telemetry is honestly unmeasurable rather
+  than measured at 0%. `termination_reason` carries no
+  `usage_` prefix on purpose — a turn can know why it ended while holding no
+  parseable usage at all, so it is a sibling of the usage block rather than
+  a member of it (see the migration header and ADR 0009).
 
 ## Policy
 

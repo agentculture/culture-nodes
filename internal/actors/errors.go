@@ -157,6 +157,15 @@ type InvocationError struct {
 	// large error document cannot cost the attempt its accounting. Nil
 	// means unreported — the worker persists it as NULL, never as zeros.
 	Usage *Usage
+	// TerminationReason is the provider's own reason for ending the turn,
+	// attached to the same error body Usage comes from, nil when the actor
+	// attached none. It is carried separately from Usage for ADR 0009's
+	// reason: an error body can name the reason ("max_output_tokens", a
+	// cancellation) while holding no parseable usage block to attach it to.
+	// It is not a second copy of Class — the class is this package's
+	// §13.5 classification of the failure, the reason is the provider's
+	// statement about the turn.
+	TerminationReason *string
 	// Requests is how many HTTP requests were spent before giving up.
 	Requests int
 	// Err is the underlying transport or decode error, if any.
@@ -218,6 +227,20 @@ func UsageOf(err error) *Usage {
 	var invErr *InvocationError
 	if errors.As(err, &invErr) {
 		return invErr.Usage
+	}
+	return nil
+}
+
+// TerminationReasonOf is UsageOf's sibling for the termination reason: it
+// extracts the reason a classified invocation failure's error body carried,
+// nil when err is not one or when its body named none. The worker threads it
+// onto the failed attempt beside the usage, so a bridge that reported WHY
+// its turn ended — including when it held no usage block to report — does
+// not have that fact dropped at the sync failure path.
+func TerminationReasonOf(err error) *string {
+	var invErr *InvocationError
+	if errors.As(err, &invErr) {
+		return invErr.TerminationReason
 	}
 	return nil
 }

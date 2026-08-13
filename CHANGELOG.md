@@ -5,6 +5,16 @@ All notable changes to this project will be documented in this file.
 Format follows [Keep a Changelog](https://keepachangelog.com/). This project
 adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.13.6] - 2026-08-13
+
+### Fixed
+
+- `runRegisterActor` uses the `asExitError(err, &exitErr)` call directly as
+  the `if` condition instead of declaring a throwaway `ok` variable
+  (SonarCloud MINOR godre:S8193, `tests/deploy/registeractor_test.go:187`).
+  Behaviour-identical; PR-upkeep sweep sole item
+  (run 01KZXFYJR1Y6KHCZHT843PTMEG).
+
 ## [0.13.5] - 2026-08-13
 
 ### Fixed

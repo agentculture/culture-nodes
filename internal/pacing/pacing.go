@@ -93,11 +93,21 @@ func (c Config) Enabled() bool { return c.Limit > 0 && c.Window > 0 }
 // anchorAt is Anchor with the zero value resolved to the Unix epoch. It also
 // keeps the arithmetic away from year 1, where a Sub against a modern
 // timestamp would overflow time.Duration rather than return a number.
+//
+// It truncates to microseconds, which is not cosmetic. The window start this
+// produces is written to a PostgreSQL TIMESTAMPTZ, whose resolution is one
+// microsecond, and read back to be compared against a freshly computed one
+// (that comparison is how a window roll is detected). An anchor carrying
+// nanoseconds would make every stored window start a few hundred nanoseconds
+// EARLIER than the recomputed one, every row would look like it belonged to
+// an older window, and the counter would reset on every single decision --
+// a rate limiter that silently limits nothing. Rounding here, once, is the
+// cheapest place to make the in-memory and stored values the same value.
 func (c Config) anchorAt() time.Time {
 	if c.Anchor.IsZero() {
 		return time.Unix(0, 0).UTC()
 	}
-	return c.Anchor.UTC()
+	return c.Anchor.UTC().Truncate(time.Microsecond)
 }
 
 // Window is one session window: the half-open interval [Start, End).
@@ -121,17 +131,29 @@ func (c Config) WindowAt(now time.Time) Window {
 	anchor := c.anchorAt()
 	elapsed := now.Sub(anchor)
 	index := floorDiv(int64(elapsed), int64(c.Window))
-	start := anchor.Add(time.Duration(index) * c.Window)
+	// Truncated for the same round-trip reason anchorAt is: a window length
+	// carrying sub-microsecond precision would otherwise reintroduce the
+	// mismatch the anchor rounding removes.
+	start := anchor.Add(time.Duration(index) * c.Window).Truncate(time.Microsecond)
 	return Window{Start: start, End: start.Add(c.Window)}
 }
 
 // Capacity is how many more dispatches the REST of the current window can
-// absorb at the declared pace: the remaining time divided by the pace
-// interval, floored.
+// absorb at the declared pace: the remaining time measured in pace intervals.
 //
 // This is the reset-clock half of the arithmetic and the one h36 is stated
 // against. It ignores consumption entirely -- Allowance combines the two --
 // so that "how much window is left" stays a fact about the clock alone.
+//
+// It rounds UP, and that is a decision rather than an accident. Rounding down
+// is the tidier arithmetic and it makes small rates unusable: with a limit of
+// one session per window, floor(1 x remaining/window) is 1 only at the exact
+// instant of the reset and 0 for every other moment of the window, so the
+// rate would admit nothing at all unless a worker happened to ask in the
+// first nanosecond. Rounding up says instead that while any of the window
+// remains there is room for one more session -- and because Spacing then
+// spreads that single session over the whole remaining time, "one more" at
+// the tail of a window is one, not a burst.
 func (c Config) Capacity(now time.Time) int {
 	if !c.Enabled() {
 		return 0
@@ -148,7 +170,7 @@ func (c Config) Capacity(now time.Time) int {
 	// int64 for perfectly ordinary configurations (a thousand sessions across
 	// an hour), and the ratio is in [0,1) here so a 53-bit mantissa is more
 	// precision than a session count can use.
-	n := int(math.Floor(float64(c.Limit) * (float64(remaining) / float64(c.Window))))
+	n := int(math.Ceil(float64(c.Limit) * (float64(remaining) / float64(c.Window))))
 	if n < 0 {
 		return 0
 	}

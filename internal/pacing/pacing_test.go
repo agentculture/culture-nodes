@@ -45,9 +45,15 @@ func TestCapacityShrinksWithTheRemainingWindow(t *testing.T) {
 		t.Errorf("capacity mid-window (%d) must be FEWER than at reset (%d) — h36", midWindow, atReset)
 	}
 
+	// Rounding up, so a tail of window is worth exactly one more session --
+	// see Capacity's own comment for why rounding down would make small
+	// rates unusable.
 	lateWindow := cfg.Capacity(anchor.Add(4*time.Hour + 42*time.Minute))
-	if lateWindow != 0 {
-		t.Errorf("capacity with 18 minutes left = %d, want 0: less than one session's worth of window remains", lateWindow)
+	if lateWindow != 1 {
+		t.Errorf("capacity with 18 minutes left = %d, want 1: room for one more, not for a wave", lateWindow)
+	}
+	if lateWindow >= midWindow {
+		t.Errorf("capacity late in the window (%d) must be fewer than mid-window (%d)", lateWindow, midWindow)
 	}
 }
 
@@ -72,7 +78,7 @@ func TestWindowsTileFromTheResetAnchor(t *testing.T) {
 			if !w.Start.Equal(tc.wantStart) {
 				t.Errorf("window start = %s, want %s", w.Start, tc.wantStart)
 			}
-			if !w.End.Equal(tc.wantStart.Add(5*time.Hour)) {
+			if !w.End.Equal(tc.wantStart.Add(5 * time.Hour)) {
 				t.Errorf("window end = %s, want %s", w.End, tc.wantStart.Add(5*time.Hour))
 			}
 		})
@@ -157,8 +163,8 @@ func TestAWaveStartedMidWindowSchedulesFewerSessions(t *testing.T) {
 	if midWindow != 5 {
 		t.Errorf("wave started mid-window scheduled %d sessions, want 5", midWindow)
 	}
-	if nearlyOver != 0 {
-		t.Errorf("wave started 15 minutes from the reset scheduled %d sessions, want 0", nearlyOver)
+	if nearlyOver != 1 {
+		t.Errorf("wave started 15 minutes from the reset scheduled %d sessions, want 1", nearlyOver)
 	}
 	if !(atReset > midWindow && midWindow > nearlyOver) {
 		t.Errorf("h36: later starts must schedule fewer sessions; got reset=%d mid=%d late=%d",

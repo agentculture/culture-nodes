@@ -1,6 +1,8 @@
 import { describe, expect, it } from "vitest";
 import type { Usage } from "../api/types";
 import {
+  cacheRatio,
+  formatCacheRatio,
   formatCost,
   formatCostByCurrency,
   formatTokenCount,
@@ -31,10 +33,27 @@ describe("formatUsageTokens", () => {
     const usage: Usage = {
       input_tokens: 12300,
       output_tokens: 4100,
+      cached_input_tokens: 0,
+      reasoning_tokens: 0,
       attempts_reported: 3,
       attempts_not_reported: 0,
     };
     expect(formatUsageTokens(usage)).toBe("12.3k in / 4.1k out");
+  });
+});
+
+describe("cacheRatio / formatCacheRatio", () => {
+  it("computes cached/input only when input_tokens > 0", () => {
+    expect(cacheRatio({ input_tokens: 200, cached_input_tokens: 50 })).toBe(0.25);
+  });
+
+  it("never fabricates a 0/0 ratio when input_tokens is 0", () => {
+    expect(cacheRatio({ input_tokens: 0, cached_input_tokens: 0 })).toBeUndefined();
+  });
+
+  it("formats a ratio as a percentage with the word 'cached'", () => {
+    expect(formatCacheRatio(0.1333)).toBe("13.3% cached");
+    expect(formatCacheRatio(0)).toBe("0.0% cached");
   });
 });
 
@@ -63,8 +82,8 @@ describe("formatCost / formatCostByCurrency", () => {
 describe("mergeUsage", () => {
   it("sums tokens and attempt counts across entries", () => {
     const merged = mergeUsage([
-      { input_tokens: 100, output_tokens: 50, attempts_reported: 1, attempts_not_reported: 0 },
-      { input_tokens: 200, output_tokens: 75, attempts_reported: 1, attempts_not_reported: 1 },
+      { input_tokens: 100, output_tokens: 50, cached_input_tokens: 0, reasoning_tokens: 0, attempts_reported: 1, attempts_not_reported: 0 },
+      { input_tokens: 200, output_tokens: 75, cached_input_tokens: 0, reasoning_tokens: 0, attempts_reported: 1, attempts_not_reported: 1 },
     ]);
     expect(merged.input_tokens).toBe(300);
     expect(merged.output_tokens).toBe(125);
@@ -74,8 +93,8 @@ describe("mergeUsage", () => {
 
   it("collapses to a single cost/currency when every entry agreed", () => {
     const merged = mergeUsage([
-      { input_tokens: 1, output_tokens: 1, cost: 1, currency: "USD", attempts_reported: 1, attempts_not_reported: 0 },
-      { input_tokens: 1, output_tokens: 1, cost: 2, currency: "USD", attempts_reported: 1, attempts_not_reported: 0 },
+      { input_tokens: 1, output_tokens: 1, cached_input_tokens: 0, reasoning_tokens: 0, cost: 1, currency: "USD", attempts_reported: 1, attempts_not_reported: 0 },
+      { input_tokens: 1, output_tokens: 1, cached_input_tokens: 0, reasoning_tokens: 0, cost: 2, currency: "USD", attempts_reported: 1, attempts_not_reported: 0 },
     ]);
     expect(merged.cost).toBe(3);
     expect(merged.currency).toBe("USD");
@@ -84,8 +103,8 @@ describe("mergeUsage", () => {
 
   it("falls back to cost_by_currency when entries disagree on currency", () => {
     const merged = mergeUsage([
-      { input_tokens: 1, output_tokens: 1, cost: 1, currency: "USD", attempts_reported: 1, attempts_not_reported: 0 },
-      { input_tokens: 1, output_tokens: 1, cost: 2, currency: "EUR", attempts_reported: 1, attempts_not_reported: 0 },
+      { input_tokens: 1, output_tokens: 1, cached_input_tokens: 0, reasoning_tokens: 0, cost: 1, currency: "USD", attempts_reported: 1, attempts_not_reported: 0 },
+      { input_tokens: 1, output_tokens: 1, cached_input_tokens: 0, reasoning_tokens: 0, cost: 2, currency: "EUR", attempts_reported: 1, attempts_not_reported: 0 },
     ]);
     expect(merged.cost).toBeUndefined();
     expect(merged.cost_by_currency).toEqual(
@@ -98,7 +117,7 @@ describe("mergeUsage", () => {
 
   it("never fabricates a cost when no entry reported one", () => {
     const merged = mergeUsage([
-      { input_tokens: 1, output_tokens: 1, attempts_reported: 1, attempts_not_reported: 0 },
+      { input_tokens: 1, output_tokens: 1, cached_input_tokens: 0, reasoning_tokens: 0, attempts_reported: 1, attempts_not_reported: 0 },
     ]);
     expect(merged.cost).toBeUndefined();
     expect(merged.cost_by_currency).toBeUndefined();
@@ -109,9 +128,51 @@ describe("mergeUsage", () => {
     expect(merged).toEqual({
       input_tokens: 0,
       output_tokens: 0,
+      cached_input_tokens: 0,
+      reasoning_tokens: 0,
       attempts_reported: 0,
       attempts_not_reported: 0,
     });
+    // input_tokens is 0, so cache_ratio must never be a fabricated 0/0 —
+    // it must be entirely absent from the merged object.
+    expect(merged.cache_ratio).toBeUndefined();
+    expect("cache_ratio" in merged).toBe(false);
+  });
+
+  // task t2/ADR 0009: the client-side mirror of the server's rollup rules
+  // for the extended usage fields.
+  it("sums cached_input_tokens and reasoning_tokens across entries, mirroring the server rollup", () => {
+    const merged = mergeUsage([
+      { input_tokens: 400, output_tokens: 200, cached_input_tokens: 200, reasoning_tokens: 50, attempts_reported: 1, attempts_not_reported: 0 },
+      { input_tokens: 2000, output_tokens: 1000, cached_input_tokens: 800, reasoning_tokens: 100, attempts_reported: 1, attempts_not_reported: 0 },
+    ]);
+    expect(merged.cached_input_tokens).toBe(1000);
+    expect(merged.reasoning_tokens).toBe(150);
+  });
+
+  it("an entry with tokens but no cache telemetry at all contributes nothing to the cached sum, never a fabricated zero standing in for 'unmeasurable'", () => {
+    const merged = mergeUsage([
+      { input_tokens: 100, output_tokens: 50, cached_input_tokens: 60, reasoning_tokens: 10, attempts_reported: 1, attempts_not_reported: 0 },
+      // A backend whose contract exposes no cache telemetry at all reports
+      // input/output tokens with cached_input_tokens/reasoning_tokens
+      // genuinely 0 (per the wire contract they're always-present sums,
+      // never omitted) -- contributing 0 to the merge is exactly right.
+      { input_tokens: 50, output_tokens: 20, cached_input_tokens: 0, reasoning_tokens: 0, attempts_reported: 1, attempts_not_reported: 0 },
+    ]);
+    expect(merged.input_tokens).toBe(150);
+    expect(merged.cached_input_tokens).toBe(60);
+  });
+
+  it("recomputes cache_ratio from the merged sums rather than averaging the inputs' own ratios", () => {
+    const merged = mergeUsage([
+      // ratio 0.5 on its own
+      { input_tokens: 100, output_tokens: 0, cached_input_tokens: 50, reasoning_tokens: 0, attempts_reported: 1, attempts_not_reported: 0 },
+      // ratio 0 on its own
+      { input_tokens: 900, output_tokens: 0, cached_input_tokens: 0, reasoning_tokens: 0, attempts_reported: 1, attempts_not_reported: 0 },
+    ]);
+    // A naive average of 0.5 and 0 would be 0.25; the honest weighted
+    // figure over the merged sums is 50/1000 = 0.05.
+    expect(merged.cache_ratio).toBeCloseTo(0.05);
   });
 });
 

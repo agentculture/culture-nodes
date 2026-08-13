@@ -25,10 +25,20 @@ export type RunState =
  * list, whenever more than one currency was seen. Never derive a currency
  * that was not reported — that is c35/h27's other half, and applies to every
  * renderer of this type.
+ *
+ * `cached_input_tokens`/`reasoning_tokens` (task t2, ADR 0009) sum the same
+ * way `input_tokens`/`output_tokens` do: an attempt that reported tokens
+ * but no cache telemetry at all contributes nothing, never a fabricated
+ * zero. `cache_ratio` (`cached_input_tokens / input_tokens`) is present
+ * only when `input_tokens > 0` — omitted, not a fabricated 0, when nothing
+ * in scope reported any input tokens.
  */
 export interface Usage {
   input_tokens: number;
   output_tokens: number;
+  cached_input_tokens: number;
+  reasoning_tokens: number;
+  cache_ratio?: number;
   cost?: number;
   currency?: string;
   cost_by_currency?: CurrencyCost[];

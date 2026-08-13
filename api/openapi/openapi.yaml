@@ -1486,7 +1486,15 @@ components:
         `currency` are set together only when every cost-reporting
         attempt in scope agreed on one currency; `cost_by_currency` is set
         instead, as a list, whenever more than one currency was seen.
-      required: [input_tokens, output_tokens, attempts_reported, attempts_not_reported]
+      required:
+        [
+          input_tokens,
+          output_tokens,
+          cached_input_tokens,
+          reasoning_tokens,
+          attempts_reported,
+          attempts_not_reported,
+        ]
       properties:
         input_tokens:
           type: integer
@@ -1496,6 +1504,29 @@ components:
             contributes nothing here — never folded in as zero.
         output_tokens:
           type: integer
+        cached_input_tokens:
+          type: integer
+          description: >-
+            docs/adr/0009-usage-telemetry-extension.md: summed over
+            attempts that reported this field specifically. An attempt
+            that reported input/output tokens but no cache telemetry at
+            all (its contract exposes none) contributes nothing here —
+            never a fabricated zero standing in for "unmeasurable". This
+            is not gated by its own reported/not-reported count;
+            attempts_reported/attempts_not_reported below remains the one
+            coverage signal for the whole usage block.
+        reasoning_tokens:
+          type: integer
+          description: >-
+            docs/adr/0009-usage-telemetry-extension.md. Same aggregation
+            rule as cached_input_tokens.
+        cache_ratio:
+          type: number
+          description: >-
+            cached_input_tokens / input_tokens, present only when
+            input_tokens > 0. Never computed as a fabricated 0 when no
+            attempt in scope reported any input tokens (0/0 is undefined,
+            not zero) — absent in that case.
         cost:
           type: number
           description: >-

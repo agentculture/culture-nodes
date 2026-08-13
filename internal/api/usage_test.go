@@ -180,6 +180,68 @@ func TestRunDetailUsageMixedCurrenciesExposedSeparately(t *testing.T) {
 	}
 }
 
+// TestRunDetailUsageCacheRatioComputedHonestly proves GET
+// /v1alpha1/runs/{id} renders task t2/ADR 0009's cached_input_tokens,
+// reasoning_tokens, and a computed cache_ratio (cached/input, only when
+// input_tokens > 0) — and that an attempt reporting tokens with no cache
+// telemetry at all contributes nothing to the cached sum, never a
+// fabricated zero standing in for "unmeasurable".
+func TestRunDetailUsageCacheRatioComputedHonestly(t *testing.T) {
+	f := newFixture(t)
+	run, nodeRunID := createMinimalRun(t, f)
+
+	cachedTokens, reasoningTokens := int64(9984), int64(500)
+	seedAttempt(t, f, nodeRunID, 1, engine.StatusSucceeded,
+		&engine.Usage{InputTokens: 13880, OutputTokens: 200, CachedInputTokens: &cachedTokens, ReasoningTokens: &reasoningTokens})
+	// A second attempt reports usage but no cache telemetry (e.g. a backend
+	// whose contract exposes none) -- must not pollute the sum with a zero.
+	seedAttempt(t, f, nodeRunID, 2, engine.StatusSucceeded,
+		&engine.Usage{InputTokens: 100, OutputTokens: 20})
+
+	view := getRunView(t, f, run.ID)
+	usage := view.Run.Usage
+	if usage == nil {
+		t.Fatal("run detail Usage is nil")
+	}
+	if usage.InputTokens != 13980 {
+		t.Fatalf("InputTokens = %d, want 13980", usage.InputTokens)
+	}
+	if usage.CachedInputTokens != 9984 {
+		t.Fatalf("CachedInputTokens = %d, want 9984 (only attempt 1 reported any)", usage.CachedInputTokens)
+	}
+	if usage.ReasoningTokens != 500 {
+		t.Fatalf("ReasoningTokens = %d, want 500", usage.ReasoningTokens)
+	}
+	if usage.CacheRatio == nil {
+		t.Fatal("CacheRatio is nil, want computed (input_tokens > 0)")
+	}
+	wantRatio := 9984.0 / 13980.0
+	if *usage.CacheRatio < wantRatio-0.0001 || *usage.CacheRatio > wantRatio+0.0001 {
+		t.Fatalf("CacheRatio = %v, want ~%v", *usage.CacheRatio, wantRatio)
+	}
+}
+
+// TestRunDetailUsageCacheRatioOmittedWhenNoInputTokensReported proves
+// cache_ratio never renders as a fabricated 0 when no attempt in scope
+// reported any input tokens at all -- the boundary case a naive
+// cached/input division would get wrong (0/0).
+func TestRunDetailUsageCacheRatioOmittedWhenNoInputTokensReported(t *testing.T) {
+	f := newFixture(t)
+	run, _ := createMinimalRun(t, f)
+
+	view := getRunView(t, f, run.ID)
+	usage := view.Run.Usage
+	if usage == nil {
+		t.Fatal("run detail Usage is nil")
+	}
+	if usage.CacheRatio != nil {
+		t.Fatalf("CacheRatio = %v, want nil (no attempt reported any input tokens)", *usage.CacheRatio)
+	}
+	if usage.CachedInputTokens != 0 || usage.ReasoningTokens != 0 {
+		t.Fatalf("cached/reasoning tokens = %d/%d, want 0/0 (sum of nothing)", usage.CachedInputTokens, usage.ReasoningTokens)
+	}
+}
+
 // TestNodeRunsListingCarriesPerNodeRunUsage proves GET /v1alpha1/node-runs
 // (the cross-run listing) carries each row's own usage rollup: a
 // dispatched-and-completed node run's usage reflects what that attempt

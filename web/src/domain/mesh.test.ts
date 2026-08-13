@@ -17,6 +17,8 @@ import {
 const USAGE = {
   input_tokens: 0,
   output_tokens: 0,
+  cached_input_tokens: 0,
+  reasoning_tokens: 0,
   attempts_reported: 0,
   attempts_not_reported: 0,
 };

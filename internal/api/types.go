@@ -140,9 +140,23 @@ func runOut(r engine.Run, usage postgres.UsageRollup, meta runMetadata) RunOut {
 //     per-currency, never summed into one misleading number.
 //   - When no attempt in scope reported a cost at all, neither Cost,
 //     Currency, nor CostByCurrency is set.
+//   - CachedInputTokens/ReasoningTokens (ADR 0009, task t2) sum
+//     postgres.UsageRollup's own fields the same way InputTokens/OutputTokens
+//     do: an attempt that reported tokens but no cache telemetry at all
+//     contributes nothing to CachedInputTokens, never a fabricated zero
+//     counted as "measured 0% cached" — see UsageRollup's doc comment. They
+//     are NOT independently gated by their own reported/not-reported count;
+//     AttemptsReported/AttemptsNotReported remains the one coverage signal,
+//     per the ADR's explicit instruction not to invent a second sentinel.
+//   - CacheRatio is CachedInputTokens/InputTokens, computed only when
+//     InputTokens > 0 — never a fabricated 0/0 ratio when nothing in scope
+//     reported any input tokens at all. Omitted (nil) in that case.
 type UsageOut struct {
 	InputTokens         int64             `json:"input_tokens"`
 	OutputTokens        int64             `json:"output_tokens"`
+	CachedInputTokens   int64             `json:"cached_input_tokens"`
+	ReasoningTokens     int64             `json:"reasoning_tokens"`
+	CacheRatio          *float64          `json:"cache_ratio,omitempty"`
 	Cost                *float64          `json:"cost,omitempty"`
 	Currency            string            `json:"currency,omitempty"`
 	CostByCurrency      []CurrencyCostOut `json:"cost_by_currency,omitempty"`
@@ -166,8 +180,14 @@ func usageOut(r postgres.UsageRollup) *UsageOut {
 	out := &UsageOut{
 		InputTokens:         r.InputTokens,
 		OutputTokens:        r.OutputTokens,
+		CachedInputTokens:   r.CachedInputTokens,
+		ReasoningTokens:     r.ReasoningTokens,
 		AttemptsReported:    r.AttemptsReported,
 		AttemptsNotReported: r.AttemptsNotReported,
+	}
+	if r.InputTokens > 0 {
+		ratio := float64(r.CachedInputTokens) / float64(r.InputTokens)
+		out.CacheRatio = &ratio
 	}
 	switch len(r.Cost) {
 	case 0:

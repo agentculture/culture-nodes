@@ -23,6 +23,12 @@
  * (500+1000+1500+750), cost $15.00 USD (2+4+6+3). avg input 1875, median
  * input 1750 (sorted [1000,1500,2000,3000] -> (1500+2000)/2). avg output
  * 937.5, median output 875. avg cost 3.75, median cost 3.5.
+ *
+ * Cache telemetry (task t2, ADR 0009): only nr-stat-a1 (200 of 400 input)
+ * and nr-stat-b1 (800 of 2000 input) report any cached_input_tokens — every
+ * other reporting node run's contract exposes none, contributing nothing
+ * (never a fabricated zero standing in for "unmeasurable"). Total cached
+ * 1000 / total input 7500 = cache_ratio ~0.1333 ("13.3% cached").
  */
 
 import type { NodeRunListItem, Run, Usage } from "../api/types";
@@ -30,10 +36,18 @@ import type { NodeRunListItem, Run, Usage } from "../api/types";
 const t = (minute: number, second = 0) =>
   `2026-08-10T10:${String(minute).padStart(2, "0")}:${String(second).padStart(2, "0")}Z`;
 
-function reportedUsage(input: number, output: number, cost: number): Usage {
+function reportedUsage(
+  input: number,
+  output: number,
+  cost: number,
+  cachedInput = 0,
+  reasoningTokens = 0,
+): Usage {
   return {
     input_tokens: input,
     output_tokens: output,
+    cached_input_tokens: cachedInput,
+    reasoning_tokens: reasoningTokens,
     cost,
     currency: "USD",
     attempts_reported: 1,
@@ -44,6 +58,8 @@ function reportedUsage(input: number, output: number, cost: number): Usage {
 const USAGE_NOT_REPORTED: Usage = {
   input_tokens: 0,
   output_tokens: 0,
+  cached_input_tokens: 0,
+  reasoning_tokens: 0,
   attempts_reported: 0,
   attempts_not_reported: 1,
 };
@@ -115,7 +131,7 @@ export const STATS_NODE_RUNS_PAGE_1: NodeRunListItem[] = [
     created_at: t(0),
     updated_at: t(2),
     completed_at: t(2),
-    usage: reportedUsage(400, 200, 0.8),
+    usage: reportedUsage(400, 200, 0.8, 200, 50),
   },
   {
     id: "nr-stat-a2",
@@ -137,7 +153,7 @@ export const STATS_NODE_RUNS_PAGE_1: NodeRunListItem[] = [
     created_at: t(6),
     updated_at: t(10),
     completed_at: t(10),
-    usage: reportedUsage(2000, 1000, 4),
+    usage: reportedUsage(2000, 1000, 4, 800, 100),
   },
 ];
 

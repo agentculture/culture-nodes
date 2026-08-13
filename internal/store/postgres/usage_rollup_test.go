@@ -257,6 +257,47 @@ func TestRunUsageSumsAcrossNodeRuns(t *testing.T) {
 	}
 }
 
+// TestNodeRunUsageSumsCachedAndReasoningTokens proves task t2's rollup
+// aggregates the ADR-0009 extended usage columns (cached_input_tokens,
+// reasoning_tokens) alongside input/output tokens, and that an attempt
+// which reported tokens but no cache telemetry at all contributes nothing
+// to those sums -- never a fabricated zero standing in for "unmeasurable"
+// (docs/adr/0009-usage-telemetry-extension.md).
+func TestNodeRunUsageSumsCachedAndReasoningTokens(t *testing.T) {
+	es, ns := newEngineStore(t)
+	ctx := context.Background()
+	_, _, nodeRunID, _ := seedRun(t, es, ns.ID, "a")
+
+	// Attempt 1 reports full extended telemetry.
+	insertAttempt(t, es, nodeRunID, 1, engine.StatusSucceeded, &engine.Usage{
+		InputTokens: 100, OutputTokens: 20,
+		CachedInputTokens: ptr(int64(60)), ReasoningTokens: ptr(int64(10)),
+	})
+	// Attempt 2 reports input/output tokens but no cache telemetry at all
+	// (a backend whose contract exposes none, e.g. colleague) -- its NULL
+	// cached/reasoning columns must contribute nothing, not a zero.
+	insertAttempt(t, es, nodeRunID, 2, engine.StatusSucceeded, &engine.Usage{
+		InputTokens: 40, OutputTokens: 8,
+	})
+
+	rollup, err := es.NodeRunUsage(ctx, nodeRunID)
+	if err != nil {
+		t.Fatalf("NodeRunUsage: %v", err)
+	}
+	if rollup.InputTokens != 140 || rollup.OutputTokens != 28 {
+		t.Fatalf("tokens = %d/%d, want 140/28", rollup.InputTokens, rollup.OutputTokens)
+	}
+	if rollup.CachedInputTokens != 60 {
+		t.Fatalf("CachedInputTokens = %d, want 60 (only attempt 1 reported any)", rollup.CachedInputTokens)
+	}
+	if rollup.ReasoningTokens != 10 {
+		t.Fatalf("ReasoningTokens = %d, want 10", rollup.ReasoningTokens)
+	}
+	if rollup.AttemptsReported != 2 {
+		t.Fatalf("AttemptsReported = %d, want 2 (both attempts reported a usage block)", rollup.AttemptsReported)
+	}
+}
+
 // TestNodeRunUsagesBatchMatchesPerNodeRunLookup proves the batched
 // NodeRunUsages (used by the cross-run node-runs listing) returns exactly
 // the same rollup per node run as calling NodeRunUsage individually, and

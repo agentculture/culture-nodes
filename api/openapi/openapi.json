@@ -1363,6 +1363,14 @@
             "description": "How many attempts in scope reported a usage block at all.",
             "type": "integer"
           },
+          "cache_ratio": {
+            "description": "cached_input_tokens / input_tokens, present only when input_tokens \u003e 0. Never computed as a fabricated 0 when no attempt in scope reported any input tokens (0/0 is undefined, not zero) — absent in that case.",
+            "type": "number"
+          },
+          "cached_input_tokens": {
+            "description": "docs/adr/0009-usage-telemetry-extension.md: summed over attempts that reported this field specifically. An attempt that reported input/output tokens but no cache telemetry at all (its contract exposes none) contributes nothing here — never a fabricated zero standing in for \"unmeasurable\". This is not gated by its own reported/not-reported count; attempts_reported/attempts_not_reported below remains the one coverage signal for the whole usage block.",
+            "type": "integer"
+          },
           "cost": {
             "description": "Set only when every cost-reporting attempt in scope agreed on one currency (see `currency`); unset when no attempt reported a cost, or when currencies differ (see `cost_by_currency`).",
             "type": "number"
@@ -1384,11 +1392,17 @@
           },
           "output_tokens": {
             "type": "integer"
+          },
+          "reasoning_tokens": {
+            "description": "docs/adr/0009-usage-telemetry-extension.md. Same aggregation rule as cached_input_tokens.",
+            "type": "integer"
           }
         },
         "required": [
           "input_tokens",
           "output_tokens",
+          "cached_input_tokens",
+          "reasoning_tokens",
           "attempts_reported",
           "attempts_not_reported"
         ],

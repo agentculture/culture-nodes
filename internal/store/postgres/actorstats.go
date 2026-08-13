@@ -500,6 +500,8 @@ func (eq engineQueries) loadActorUsageTotals(ctx context.Context, actorID string
 			CASE WHEN GROUPING(COALESCE(r.category, '')) = 1 THEN NULL ELSE COALESCE(r.category, '') END,
 			COALESCE(SUM(a.usage_input_tokens), 0),
 			COALESCE(SUM(a.usage_output_tokens), 0),
+			COALESCE(SUM(a.usage_cached_input_tokens), 0),
+			COALESCE(SUM(a.usage_reasoning_tokens), 0),
 			COUNT(*) FILTER (WHERE a.usage_input_tokens IS NOT NULL)::int,
 			COUNT(*) FILTER (WHERE a.usage_input_tokens IS NULL)::int
 		FROM attempts a
@@ -515,12 +517,18 @@ func (eq engineQueries) loadActorUsageTotals(ctx context.Context, actorID string
 	for rows.Next() {
 		var category pgtype.Text
 		var u UsageRollup
-		if err := rows.Scan(&category, &u.InputTokens, &u.OutputTokens, &u.AttemptsReported, &u.AttemptsNotReported); err != nil {
+		if err := rows.Scan(
+			&category, &u.InputTokens, &u.OutputTokens,
+			&u.CachedInputTokens, &u.ReasoningTokens,
+			&u.AttemptsReported, &u.AttemptsNotReported,
+		); err != nil {
 			return fmt.Errorf("postgres: engine: ActorStats: usage totals: scan: %w", err)
 		}
 		stats.bucket(category).apply(func(s *ActorCategoryStats) {
 			s.Usage.InputTokens = u.InputTokens
 			s.Usage.OutputTokens = u.OutputTokens
+			s.Usage.CachedInputTokens = u.CachedInputTokens
+			s.Usage.ReasoningTokens = u.ReasoningTokens
 			s.Usage.AttemptsReported = u.AttemptsReported
 			s.Usage.AttemptsNotReported = u.AttemptsNotReported
 		})

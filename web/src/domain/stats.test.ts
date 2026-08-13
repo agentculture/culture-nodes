@@ -10,6 +10,8 @@ import {
 const NOT_REPORTED: Usage = {
   input_tokens: 0,
   output_tokens: 0,
+  cached_input_tokens: 0,
+  reasoning_tokens: 0,
   attempts_reported: 0,
   attempts_not_reported: 1,
 };
@@ -21,10 +23,19 @@ function reported(
   currency = "USD",
 ): Usage {
   return cost === undefined
-    ? { input_tokens: input, output_tokens: output, attempts_reported: 1, attempts_not_reported: 0 }
+    ? {
+        input_tokens: input,
+        output_tokens: output,
+        cached_input_tokens: 0,
+        reasoning_tokens: 0,
+        attempts_reported: 1,
+        attempts_not_reported: 0,
+      }
     : {
         input_tokens: input,
         output_tokens: output,
+        cached_input_tokens: 0,
+        reasoning_tokens: 0,
         cost,
         currency,
         attempts_reported: 1,

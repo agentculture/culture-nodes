@@ -221,6 +221,8 @@ describe("NodeDetailPanel", () => {
       const usage: Usage = {
         input_tokens: 12300,
         output_tokens: 4100,
+        cached_input_tokens: 0,
+        reasoning_tokens: 0,
         cost: 0.42,
         currency: "USD",
         attempts_reported: 1,
@@ -237,6 +239,8 @@ describe("NodeDetailPanel", () => {
       const usage: Usage = {
         input_tokens: 0,
         output_tokens: 0,
+        cached_input_tokens: 0,
+        reasoning_tokens: 0,
         attempts_reported: 0,
         attempts_not_reported: 1,
       };

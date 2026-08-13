@@ -173,6 +173,24 @@
             }
           }
         },
+        "budget": {
+          "type": "object",
+          "description": "Declared economic limits for one run (PRD §9.7's \"optional agent token or cost budget\"). Unlike `limits`, nothing here is defaulted: an omitted budget means unbudgeted, and the compiler never invents a ceiling the author did not declare. When the next dispatch cannot be funded the control plane refuses it BEFORE invoking anything and routes the reserved outcome `budget_exhausted`, which an agent or action.http node may declare an edge from.",
+          "additionalProperties": false,
+          "minProperties": 1,
+          "properties": {
+            "maxSessions": {
+              "type": "integer",
+              "minimum": 1,
+              "description": "How many NEW provider sessions one run may start. It counts COLD STARTS only: an attempt dispatched carrying a prior `continuation_ref` continues a session already paid for and charges nothing, so a warm workstream of N node turns consumes 1, not N. 0 is refused rather than read — it reads as both \"no bound\" and \"no session may start\"."
+            },
+            "maxUncachedInput": {
+              "type": "integer",
+              "minimum": 1,
+              "description": "How many input tokens one run may send that the provider did NOT serve from cache, summed over every attempt that reported usage (usage_input_tokens - usage_cached_input_tokens). An attempt that reported input tokens but no cached figure charges its input IN FULL: a backend reporting no cache telemetry is not a backend with a 0% hit rate. Attempts that reported no usage at all charge nothing and cannot — the ceiling bounds measured spend, and unmeasured spend stays visible as the attempt's unreported usage."
+            }
+          }
+        },
         "ledger": {
           "type": "object",
           "additionalProperties": false,

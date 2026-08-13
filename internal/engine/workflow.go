@@ -53,6 +53,7 @@ type Workflow struct {
 
 	Entry  string
 	Limits Limits
+	Budget Budget
 	Ledger LedgerLimits
 
 	Nodes map[string]*Node
@@ -81,6 +82,49 @@ type Limits struct {
 	MaxVisitsPerNode  int
 	MaxParallelTokens int
 }
+
+// Budget is the workflow's declared ECONOMIC contract (PRD §9.7's "optional
+// agent token or cost budget"; task t11, spec claim c6). Zero on a field
+// means the author declared no bound on that axis — never "zero allowed",
+// which the compiler refuses outright so the two readings can never collide
+// here.
+//
+// It is separate from Limits because the two fail differently. Exceeding a
+// limit is a bound the engine raises against the run; exceeding a budget is a
+// refusal the AUTHOR routes (OutcomeBudgetExhausted), decided before anything
+// is dispatched. The budget travels in the pinned IR with everything else, so
+// the enforcement site reads what this run agreed to rather than a live
+// setting that may have moved since it started.
+type Budget struct {
+	// MaxSessions bounds the NEW provider sessions one run may start —
+	// cold starts only. A dispatch carrying a prior continuation ref (ADR
+	// 0010) continues a session already paid for and charges nothing; see
+	// internal/worker/budget.go for why counting warm turns would make the
+	// budget fight the stickiness it exists beside.
+	MaxSessions int
+	// MaxUncachedInput bounds the input tokens one run may send that the
+	// provider did not serve from cache, summed over the attempts that
+	// reported usage. An attempt reporting no cached figure charges its
+	// input in full — absent cache telemetry is not a demonstrated cache
+	// hit.
+	MaxUncachedInput int64
+}
+
+// Declared reports whether the workflow bounded anything economically.
+func (b Budget) Declared() bool {
+	return b.MaxSessions > 0 || b.MaxUncachedInput > 0
+}
+
+// OutcomeBudgetExhausted is the reserved name a dispatch refused for want of
+// budget routes under (compiler.OutcomeBudgetExhausted, kept in step).
+//
+// It is not one of §3.4's technical statuses and no node contract declares
+// it: no actor produces it, the control plane does, before invoking anything.
+// The refused attempt's technical status is `policy_denied` — a declared
+// policy denied the dispatch — and this is the name the edge is looked up
+// under, so an author can distinguish "the budget refused this" from every
+// other policy denial.
+const OutcomeBudgetExhausted = "budget_exhausted"
 
 // LedgerLimits are the workflow-level ledger bounds (PRD §10.7).
 type LedgerLimits struct {
@@ -245,6 +289,7 @@ func LoadWorkflow(digest string, ir []byte) (*Workflow, error) {
 		Version: doc.Metadata.Version,
 		Entry:   doc.Spec.Entry,
 		Limits:  limits,
+		Budget:  decodeBudget(doc.Spec.Budget),
 		Ledger: LedgerLimits{
 			SchemaVersion:     doc.Spec.Ledger.SchemaVersion,
 			MaxRecordsPerNode: valueOr(doc.Spec.Ledger.MaxRecordsPerNode, 0),
@@ -325,6 +370,13 @@ type irDocument struct {
 			MaxVisitsPerNode  *int   `json:"maxVisitsPerNode"`
 			MaxParallelTokens *int   `json:"maxParallelTokens"`
 		} `json:"limits"`
+		// A pointer, unlike Limits: the compiler expands no defaults here,
+		// so an absent block is the IR saying "unbudgeted" rather than an
+		// omission to fill in.
+		Budget *struct {
+			MaxSessions      *int   `json:"maxSessions"`
+			MaxUncachedInput *int64 `json:"maxUncachedInput"`
+		} `json:"budget"`
 		Ledger struct {
 			SchemaVersion     string `json:"schemaVersion"`
 			MaxRecordsPerNode *int   `json:"maxRecordsPerNode"`
@@ -485,6 +537,27 @@ func decodeLimits(raw struct {
 		limits.MaxDuration = d
 	}
 	return limits, nil
+}
+
+// decodeBudget reads the optional economic block. An absent block, and an
+// absent field within one, are both "no bound on this axis" — zero, which
+// every enforcement site tests with `> 0`. The compiler has already refused
+// an authored 0, so a zero here can only ever mean absent.
+func decodeBudget(raw *struct {
+	MaxSessions      *int   `json:"maxSessions"`
+	MaxUncachedInput *int64 `json:"maxUncachedInput"`
+}) Budget {
+	if raw == nil {
+		return Budget{}
+	}
+	budget := Budget{}
+	if raw.MaxSessions != nil {
+		budget.MaxSessions = *raw.MaxSessions
+	}
+	if raw.MaxUncachedInput != nil {
+		budget.MaxUncachedInput = *raw.MaxUncachedInput
+	}
+	return budget
 }
 
 func valueOr(p *int, fallback int) int {

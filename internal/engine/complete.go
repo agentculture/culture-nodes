@@ -92,6 +92,9 @@ func (r CompletionRequest) validate() error {
 		return fmt.Errorf("engine: CompleteAttempt: technical status %q is not one of the statuses PRD §3.4 lists", r.TechStatus)
 	case r.TechStatus == StatusSucceeded && r.Outcome == "":
 		return errors.New("engine: CompleteAttempt: a succeeded attempt must name the domain outcome it produced")
+	case r.TechStatus == StatusSucceeded && r.RefusalOutcome != "":
+		return fmt.Errorf("engine: CompleteAttempt: refusal outcome %q on a succeeded attempt; "+
+			"a refusal is the control plane declining to dispatch, and a succeeded attempt was dispatched", r.RefusalOutcome)
 	}
 	return nil
 }
@@ -390,6 +393,22 @@ func (c *completion) emitAttemptEvents(ctx context.Context) error {
 // first, then look for an edge the workflow declares from this technical
 // status, and only then fail the node run and the run.
 func (c *completion) failOrRetry(ctx context.Context) error {
+	// A refusal the control plane itself produced (task t11: the declared
+	// economic budget cannot fund the next dispatch) routes under its own
+	// name rather than under the technical status, so an author can send
+	// "we ran out of money" somewhere different from "the actor was denied
+	// by policy". Nothing was dispatched, so there is nothing to retry —
+	// and policy_denied is not retryable anyway, which is why this sits
+	// above the retry ladder rather than inside it.
+	if name := c.req.RefusalOutcome; name != "" {
+		if hasEdgeFrom(c.wf, c.nodeRun.NodeID, name) {
+			return c.transition(ctx, name, NodeRunFailed)
+		}
+		return c.failRun(ctx, NodeRunFailed, fmt.Sprintf(
+			"node %q was refused before dispatch (%s) and the workflow declares no edge from %q",
+			c.nodeRun.NodeID, c.status, name))
+	}
+
 	if c.status.retryable() && c.attemptNumber < c.node.Retry.MaxAttempts {
 		return c.scheduleRetry(ctx)
 	}

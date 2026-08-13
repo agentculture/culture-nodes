@@ -1,0 +1,48 @@
+# A budget that cannot mean anything: zero sessions.
+#
+# Zero is refused rather than read, because the two readings are both
+# plausible and opposite -- "no bound" (the runtime's own convention for the
+# §9.7 limits, where 0 means the bound is off) and "nothing may be spent".
+# An author who wants no budget omits the key.
+apiVersion: nodes.culture.dev/v1alpha1
+kind: Workflow
+
+metadata:
+  name: budget-nonsense
+  version: 1.0.0
+  ownerRef: team/platform-ai
+
+spec:
+  entry: start
+
+  contract:
+    input:
+      schemaRef: ./contracts/in.schema.json
+    output:
+      schemaRef: ./contracts/out.schema.json
+
+  budget:
+    maxSessions: 0
+    maxUncachedInput: -1
+
+  nodes:
+    start:
+      kind: agent
+      ownerRef: team/platform-ai
+      uses: actor://company/start@sha256:aaaaaa
+      contract:
+        outcomes:
+          completed:
+            schemaRef: ./contracts/start.schema.json
+      input:
+        from: /run/input
+
+    finish:
+      kind: end
+      ownerRef: team/platform-ai
+      output:
+        from: /nodes/start/output
+
+  edges:
+    - from: start.completed
+      to: finish

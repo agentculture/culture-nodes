@@ -1,0 +1,95 @@
+# A workflow with a declared economic budget and a route for being refused.
+#
+# `build.budget_exhausted` is neither a domain outcome the actor can produce
+# nor one of §3.4's technical statuses: it is the name the CONTROL PLANE
+# refuses a dispatch under when the run's declared budget cannot fund the next
+# provider session. The author routes it, which is the whole point of
+# declaring a budget instead of discovering exhaustion as a provider error
+# halfway through a wave.
+apiVersion: nodes.culture.dev/v1alpha1
+kind: Workflow
+
+metadata:
+  name: engine-budget-route
+  version: 1.0.0
+  ownerRef: team/platform-ai
+
+spec:
+  entry: build
+
+  contract:
+    input:
+      schema:
+        type: object
+    output:
+      schema:
+        type: object
+
+  limits:
+    maxDuration: 1h
+    maxTransitions: 8
+    maxVisitsPerNode: 4
+    maxParallelTokens: 1
+
+  budget:
+    maxSessions: 1
+    maxUncachedInput: 250000
+
+  nodes:
+    build:
+      kind: agent
+      ownerRef: team/platform-ai
+      uses: actor://company/builder@sha256:111111
+      input:
+        from: /run/input
+      contract:
+        outcomes:
+          completed:
+            schema:
+              type: object
+      policy:
+        timeout: 1m
+        retry:
+          maxAttempts: 1
+          backoff: none
+
+    summarise:
+      kind: agent
+      ownerRef: team/platform-ai
+      uses: actor://company/cheap@sha256:222222
+      contract:
+        outcomes:
+          completed:
+            schema:
+              type: object
+              required: [stopped]
+              properties:
+                stopped:
+                  type: boolean
+      policy:
+        timeout: 1m
+        retry:
+          maxAttempts: 1
+          backoff: none
+
+    finish:
+      kind: end
+      ownerRef: team/platform-ai
+      output:
+        from: /nodes/build/output
+
+    stopped:
+      kind: end
+      ownerRef: team/platform-ai
+      output:
+        from: /nodes/summarise/output
+
+  edges:
+    - from: build.completed
+      to: finish
+
+    - from: build.budget_exhausted
+      to: summarise
+
+    - from: summarise.completed
+      to: stopped

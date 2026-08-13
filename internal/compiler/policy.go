@@ -17,6 +17,7 @@ func (c *compilation) checkPolicy() {
 	if c.doc.Spec.Limits != nil {
 		c.checkDuration("/spec/limits/maxDuration", "spec.limits.maxDuration", c.doc.Spec.Limits.MaxDuration)
 	}
+	c.checkBudget()
 
 	for _, id := range c.nodeIDs {
 		n := c.doc.Spec.Nodes[id]
@@ -40,6 +41,39 @@ func (c *compilation) checkPolicy() {
 		c.checkOperation(base, id, n)
 		c.checkRunnerCaps(base, id, n)
 		c.checkHookOperations(base, id, n)
+	}
+}
+
+// checkBudget validates the declared economic contract (task t11, spec claim
+// c6). The schema already refuses a non-positive value and an empty block;
+// this is the second, independent no, on the same precedent as
+// checkAcceptanceEnforce — a value whose two plausible readings are opposites
+// should be refused by the level that understands what it means, not only by
+// the level that counts its type.
+func (c *compilation) checkBudget() {
+	b := c.doc.Spec.Budget
+	if b == nil {
+		// Unbudgeted. A workflow that never mentions money is not a workflow
+		// with a budget of zero.
+		return
+	}
+	if !b.declared() {
+		c.add(LevelError, "/spec/budget", CodeBudgetEmpty,
+			"spec.budget declares no bound",
+			"declare maxSessions and/or maxUncachedInput, or remove the budget block; an empty budget cannot refuse anything")
+		return
+	}
+	if b.MaxSessions != nil && *b.MaxSessions < 1 {
+		c.add(LevelError, "/spec/budget/maxSessions", CodeBudgetNotPositive,
+			fmt.Sprintf("spec.budget.maxSessions is %d", *b.MaxSessions),
+			"use a positive count, or omit the key; 0 reads as both \"no bound\" and \"no session may start\", "+
+				"and a budget that could mean either is not a contract")
+	}
+	if b.MaxUncachedInput != nil && *b.MaxUncachedInput < 1 {
+		c.add(LevelError, "/spec/budget/maxUncachedInput", CodeBudgetNotPositive,
+			fmt.Sprintf("spec.budget.maxUncachedInput is %d", *b.MaxUncachedInput),
+			"use a positive token count, or omit the key; 0 reads as both \"no bound\" and \"no input may be sent\", "+
+				"and a budget that could mean either is not a contract")
 	}
 }
 

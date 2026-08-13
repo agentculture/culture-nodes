@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/agentculture/culture-nodes/internal/contracts"
+	"github.com/agentculture/culture-nodes/internal/engine"
 )
 
 // The worker's view of the normalized IR.
@@ -28,7 +29,14 @@ type workflowSpec struct {
 	Digest  string
 	Name    string
 	Version string
-	Nodes   map[string]*nodeSpec
+	// Budget is the declared economic contract this definition pins (task
+	// t11, spec claim c6). Zero on a field means the author bounded nothing
+	// on that axis; the compiler refuses an authored 0, so a zero here can
+	// only ever mean absent. It is engine.Budget rather than a fourth
+	// hand-rolled struct because the value is the same value the engine
+	// loads — only the decoding is per package (see this file's header).
+	Budget engine.Budget
+	Nodes  map[string]*nodeSpec
 }
 
 // nodeSpec is the worker's view of one node.
@@ -178,6 +186,13 @@ type irDocument struct {
 		Version string `json:"version"`
 	} `json:"metadata"`
 	Spec struct {
+		// Budget is a pointer because the compiler expands no defaults for
+		// it: an absent block is the IR saying "unbudgeted", not an omission
+		// to fill in.
+		Budget *struct {
+			MaxSessions      *int   `json:"maxSessions"`
+			MaxUncachedInput *int64 `json:"maxUncachedInput"`
+		} `json:"budget"`
 		Nodes map[string]*irNode `json:"nodes"`
 	} `json:"spec"`
 }
@@ -219,6 +234,14 @@ func loadWorkflowSpec(digest string, ir []byte) (*workflowSpec, error) {
 		Name:    doc.Metadata.Name,
 		Version: doc.Metadata.Version,
 		Nodes:   make(map[string]*nodeSpec, len(doc.Spec.Nodes)),
+	}
+	if b := doc.Spec.Budget; b != nil {
+		if b.MaxSessions != nil {
+			spec.Budget.MaxSessions = *b.MaxSessions
+		}
+		if b.MaxUncachedInput != nil {
+			spec.Budget.MaxUncachedInput = *b.MaxUncachedInput
+		}
 	}
 	for id, raw := range doc.Spec.Nodes {
 		node, err := decodeNode(id, raw)

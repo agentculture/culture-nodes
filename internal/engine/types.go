@@ -389,6 +389,25 @@ type CompletionRequest struct {
 	// that did not succeed has no domain answer to route.
 	Outcome string
 
+	// RefusalOutcome is the name a dispatch the CONTROL PLANE refused routes
+	// under — today only OutcomeBudgetExhausted (task t11, spec claim c6).
+	//
+	// It is a separate field from Outcome because it is a different kind of
+	// statement made by a different producer. Outcome is the actor's answer,
+	// and setting it requires TechStatus succeeded. This is the control
+	// plane's own answer, produced when nothing was dispatched at all: the
+	// attempt's technical status is the honest one for "a declared policy
+	// denied this" (policy_denied), and this names the edge the workflow
+	// author declared for that refusal. Reusing Outcome would have meant
+	// either claiming a dispatch succeeded when none happened, or quietly
+	// giving a field that is "ignored otherwise" a second meaning on failure
+	// paths that already set nothing.
+	//
+	// It may only accompany a non-succeeded status, and it only routes when
+	// the workflow declares an edge from it; otherwise the run fails with a
+	// diagnostic naming it, exactly as an unrouted technical status does.
+	RefusalOutcome string
+
 	// Output is the payload for that outcome. It is validated against the
 	// outcome's schema; a violation is recorded as the *technical* status
 	// contract_rejected, never as a domain outcome.

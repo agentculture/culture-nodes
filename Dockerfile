@@ -64,10 +64,23 @@ RUN CGO_ENABLED=0 go build \
     -o /out/nodes-notifier \
     ./cmd/nodes-notifier
 
+# Empty directory the final stage copies in as the notifier's cursor mount
+# point (see its COPY --chown below for why it must pre-exist).
+RUN mkdir -p /out/notifier-state
+
 FROM gcr.io/distroless/static-debian12:nonroot
 
 COPY --from=build /out/nodes /nodes
 COPY --from=build /out/nodes-notifier /nodes-notifier
+
+# The notifier's cursor directory must exist in the image, owned by nonroot,
+# BEFORE a named volume is mounted over it: Docker seeds an empty named
+# volume from the image path it covers, ownership included, and a volume
+# created against a missing path is root-owned instead. Found live on thor —
+# the daemon persists its cursor before delivering (its exactly-once
+# guarantee), so a read-only cursor directory blocked delivery entirely
+# rather than risking duplicate posts.
+COPY --from=build --chown=nonroot:nonroot /out/notifier-state /var/lib/nodes-notifier
 
 USER nonroot
 

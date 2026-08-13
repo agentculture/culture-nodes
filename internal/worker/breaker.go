@@ -48,6 +48,29 @@ import (
 // forward (postgres.DeferWork), and the dispatch counter it burned given
 // back, because no dispatch happened.
 //
+// WHAT IT DOES NOT COVER YET, STATED RATHER THAN LEFT TO BE DISCOVERED. Only
+// the SYNCHRONOUS dispatch path trips the breaker: capacity_exhausted
+// reaches this package as a classified *actors.InvocationError, which is
+// what a synchronous invocation produces (internal/actors/client.go). An
+// ASYNCHRONOUS bridge that answers 202 and later reports a §13.4 `failed`
+// event carrying "class":"capacity_exhausted" commits through
+// internal/actors' callback handler, in the API process, which holds no
+// availability store and no worker — so that path fails its attempt with
+// the class recorded and does not pause the actor.
+//
+// This is a real gap, not a decision that async exhaustion does not matter,
+// and it is worth being blunt about which dispatches fall in it: the codex
+// bridge routes long work asynchronously (decide_async in
+// adapters/codex/src/codex_bridge/server.py), and long work is exactly what
+// the routing default sends to codex actors. Closing it means giving
+// CallbackDeps a pause seam and relocating the pause-policy constants below
+// into internal/actors (internal/actors cannot import this package —
+// the dependency runs the other way), i.e. a change to a shared protocol
+// surface that this task's brief scoped out. Until it is closed, the
+// ENFORCEMENT half still protects every queued dispatch, sync or async,
+// once a pause exists by any route: what is missing is only the async
+// TRIP.
+//
 // AND IT IS NOT SILENT. budget.go's objection to a claim-time skip is that
 // nothing records why. Every trip emits TypeActorPaused and every deferral
 // emits TypeDispatchDeferred against the run, the pause is a readable row

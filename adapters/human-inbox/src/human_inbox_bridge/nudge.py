@@ -1,23 +1,13 @@
-"""Discord nudge transport: shell out to the ``discord`` CLI binary.
+"""Discord nudge transport for parked human-actor tasks.
 
-Stdlib-only Python — no third-party dependencies.  The module is designed
-to be *fail-safe*: if the ``discord`` binary is missing, or the config is
-incomplete, every public function returns gracefully (``None`` / empty
-lists) without raising.  The tracker must never crash because Discord is
-down.
+Shells out to the ``discord`` CLI binary (discord-bot-cli) to create
+threads, post nudges with <@user_id> mentions, and poll for replies.
+All Discord interaction is one-shot and poll-based — there is no
+gateway listener, so the tracker owns the cadence.
 
-Public API
-----------
-* ``NudgeConfig.from_env()`` — build config from environment variables.
-* ``NudgeState`` — persisted in ``task.extra_input["nudge_state"]``.
-* ``first_nudge(task, cfg)`` — post initial message + thread + nudge.
-* ``escalate_nudge(task, cfg, state)`` — post escalation to the thread.
-* ``poll_replies(task, cfg, state)`` — detect new replies and return them.
-
-The caller (tracker) relays reply strings via the bridge's callback as
-progress events::
-
-    {"kind": "progress", "payload": {"note": reply_text}}
+Stdlib-only: no PyPI dependencies.  Missing config (no bot token, no
+channel, no assignee) disables nudging quietly — never crashes the
+tracker, never blocks the observe/auto-submit path.
 """
 
 from __future__ import annotations
@@ -25,98 +15,70 @@ from __future__ import annotations
 import json
 import logging
 import os
-import re
 import subprocess
-from dataclasses import asdict, dataclass
-from datetime import datetime, timezone
+import time
+from dataclasses import dataclass, field
 from typing import Any
 
 logger = logging.getLogger("human_inbox_bridge.nudge")
 
-# ---------------------------------------------------------------------------
-# Constants
-# ---------------------------------------------------------------------------
+# --- Escalation vocabulary (lifted from steward's discord-notify) ------
 
-#: Discord embed colour (blue) for the first nudge.
-_EMBED_COLOR_BLUE = 3447003
-#: Discord embed colour (red) for overdue / escalation.
-_EMBED_COLOR_RED = 15158332
-#: Username used on the nudge embed.
-_EMBED_USERNAME = "Culture Nodes Nudges"
-#: Footer text on the nudge embed.
-_EMBED_FOOTER_TEXT = "Sent by Culture Nodes"
+#: Gentle nudge colour (blue).
+_COLOR_GENTLE = 3447003
+#: Overdue / escalation colour (red).
+_COLOR_OVERDUE = 15158332
 
-# Regex to pull a Discord user ID (<@USER_ID>) from text.
-_RE_DISCORD_MENTION = re.compile(r"<@(\d+)>")
+#: Default username for nudge embeds.
+_DEFAULT_USERNAME = "Culture Nodes Nudges"
 
 
-# ---------------------------------------------------------------------------
-# Data classes
-# ---------------------------------------------------------------------------
-
-
-@dataclass
+@dataclass(frozen=True)
 class NudgeConfig:
     """Configuration for the Discord nudge transport.
 
-    All fields are read from environment variables via ``from_env()``.
-    Missing values are treated as *no Discord transport* — every public
-    function returns gracefully.
+    All fields are optional — when absent, nudging is silently disabled.
     """
 
-    discord_channel_id: int | None = None
-    discord_bot_token: str | None = None
-    nudge_interval_seconds: float = 3600.0
-    global_throttle_seconds: float = 300.0
-    escalation_after_seconds: float = 7200.0
+    channel_id: str = ""
+    bot_token: str = ""
+    interval_seconds: float = 300.0
+    global_throttle_seconds: float = 10.0
+    escalation_after_seconds: float = 600.0
 
     @classmethod
-    def from_env(cls, env: dict[str, str] | None = None) -> "NudgeConfig":
-        """Build a NudgeConfig from environment variables.
-
-        Missing channel ID or bot token means the Discord transport is
-        effectively disabled — callers should check ``is_configured()``.
-        """
+    def from_env(cls, env: dict[str, str] | None = None) -> "NudgeConfig | None":
+        """Return a config when both channel and token are present, else None."""
         env = os.environ if env is None else env
-
-        channel_id_raw = env.get("DISCORD_NUDGE_CHANNEL_ID")
-        channel_id: int | None = None
-        if channel_id_raw is not None:
-            try:
-                channel_id = int(channel_id_raw)
-            except ValueError:
-                logger.warning("DISCORD_NUDGE_CHANNEL_ID is not an integer; disabling Discord")
-
-        bot_token = env.get("DISCORD_NUDGE_BOT_TOKEN", "").strip() or None
-
-        nudge_interval = _parse_float_env(env, "DISCORD_NUDGE_INTERVAL_SECONDS", 3600.0)
-        global_throttle = _parse_float_env(env, "DISCORD_NUDGE_GLOBAL_THROTTLE_SECONDS", 300.0)
-        escalation_after = _parse_float_env(env, "DISCORD_NUDGE_ESCALATION_AFTER_SECONDS", 7200.0)
-
+        channel_id = env.get("DISCORD_NUDGE_CHANNEL_ID", "").strip()
+        bot_token = env.get("DISCORD_NUDGE_BOT_TOKEN", "").strip()
+        if not channel_id or not bot_token:
+            return None
         return cls(
-            discord_channel_id=channel_id,
-            discord_bot_token=bot_token,
-            nudge_interval_seconds=nudge_interval,
-            global_throttle_seconds=global_throttle,
-            escalation_after_seconds=escalation_after,
+            channel_id=channel_id,
+            bot_token=bot_token,
+            interval_seconds=_float_env(env, "DISCORD_NUDGE_INTERVAL_SECONDS", 300.0),
+            global_throttle_seconds=_float_env(env, "DISCORD_NUDGE_GLOBAL_THROTTLE_SECONDS", 10.0),
+            escalation_after_seconds=_float_env(
+                env, "DISCORD_NUDGE_ESCALATION_AFTER_SECONDS", 600.0
+            ),
         )
 
-    def is_configured(self) -> bool:
-        """Return True when both channel ID and bot token are present."""
-        return self.discord_channel_id is not None and self.discord_bot_token is not None
+    @property
+    def enabled(self) -> bool:
+        return bool(self.channel_id and self.bot_token)
 
 
 @dataclass
 class NudgeState:
-    """Mutable state for one nudge cycle, persisted in ``task.extra_input``.
+    """Durable state for one task's Discord thread.
 
-    Stored under the key ``"nudge_state"`` inside
-    ``task.extra_input``.
+    Persisted in the task's ``nudge_state`` field on disk.
     """
 
-    thread_id: str | None = None
-    last_nudge_at: str | None = None
-    last_seen_message_id: str | None = None
+    thread_id: str = ""
+    last_nudge_at: float = 0.0
+    last_seen_message_id: str = ""
     escalation_level: int = 0
 
     def to_dict(self) -> dict[str, Any]:
@@ -127,371 +89,280 @@ class NudgeState:
         known = {f for f in cls.__dataclass_fields__}
         return cls(**{k: v for k, v in data.items() if k in known})
 
-    @classmethod
-    def load(cls, task: Any) -> "NudgeState":
-        """Load state from ``task.extra_input["nudge_state"]``."""
-        raw = task.extra_input.get("nudge_state")
-        if raw is None:
-            return cls()
-        if isinstance(raw, dict):
-            return cls.from_dict(raw)
-        return cls()
 
-    def save(self, task: Any) -> None:
-        """Persist state back into ``task.extra_input["nudge_state"]``."""
-        task.extra_input["nudge_state"] = self.to_dict()
+# --- Discord CLI wrapper ------------------------------------------------
+
+_DISCORD_BIN = "discord"
 
 
-# ---------------------------------------------------------------------------
-# Internal helpers
-# ---------------------------------------------------------------------------
+def _run_discord(argv: list[str]) -> subprocess.CompletedProcess[str]:
+    """Run the ``discord`` CLI binary with ``--json``."""
+    return subprocess.run(
+        [_DISCORD_BIN] + argv + ["--json"],
+        capture_output=True,
+        text=True,
+        timeout=30,
+    )
 
 
-def _parse_float_env(env: dict[str, str], name: str, default: float) -> float:
-    raw = env.get(name)
-    if raw is None:
-        return default
-    try:
-        return float(raw)
-    except ValueError:
-        logger.warning("%s=%r is not a number; using default %.1f", name, raw, default)
-        return default
-
-
-def _run_discord(argv: list[str]) -> subprocess.CompletedProcess[bytes] | None:
-    """Run the ``discord`` CLI binary with *argv* and return the result.
-
-    Returns ``None`` when the binary is not found or the channel/token is
-    missing, so callers never need to handle exceptions.
-    """
-    # The caller builds argv with all required flags (--channel-id, --token,
-    # etc.).  We simply execute and return the result.
-    try:
-        result = subprocess.run(
-            argv,
-            capture_output=True,
-            timeout=30,
-        )
-    except FileNotFoundError:
-        logger.debug("discord CLI not found on PATH")
-        return None
-    except subprocess.TimeoutExpired:
-        logger.warning("discord CLI timed out after 30 s")
-        return None
-    except OSError as exc:
-        logger.warning("discord CLI failed: %s", exc)
-        return None
-    return result
-
-
-def _discord_json_output(argv: list[str]) -> dict[str, Any] | None:
-    """Run ``discord`` and parse its ``--json`` output.
-
-    Returns the parsed JSON dict on success, or ``None`` on any failure.
-    """
-    result = _run_discord(argv)
-    if result is None:
-        return None
+def _parse_json_output(result: subprocess.CompletedProcess[str]) -> dict[str, Any] | None:
+    """Parse the ``--json`` output; return None on failure."""
     if result.returncode != 0:
-        stderr = result.stderr.decode("utf-8", errors="replace").strip()
-        logger.warning("discord CLI returned %d: %s", result.returncode, stderr)
-        return None
-    raw = result.stdout.decode("utf-8", errors="replace").strip()
-    if not raw:
+        logger.debug("discord CLI exited %d: %s", result.returncode, result.stderr.strip())
         return None
     try:
-        data = json.loads(raw)
-    except json.JSONDecodeError as exc:
-        logger.warning("discord CLI produced non-JSON output: %s", exc)
+        return json.loads(result.stdout)
+    except (json.JSONDecodeError, ValueError):
+        logger.debug("discord CLI produced non-JSON output: %s", result.stdout[:200])
         return None
-    if not isinstance(data, dict):
-        logger.warning("discord CLI output is not a JSON object")
-        return None
-    return data
 
 
-def _post_message(channel_id: int, content: str, token: str) -> str | None:
-    """Post a message to *channel_id* and return the message ID.
+# --- Public API ---------------------------------------------------------
 
-    Returns ``None`` on any failure.
+
+def first_nudge(
+    *,
+    channel_id: str,
+    bot_token: str,
+    instruction: str,
+    callback_url: str,
+    callback_token: str,
+    invocation_id: str,
+) -> dict[str, Any] | None:
+    """Create a thread and post the first nudge message.
+
+    Returns a dict with ``thread_id`` and ``message_id`` on success,
+    or ``None`` when the Discord CLI is unavailable or config is missing.
     """
-    argv = [
-        "discord",
-        "message",
-        "post",
-        "--channel-id",
-        str(channel_id),
-        "--token",
-        token,
-        "--content",
-        content,
-        "--json",
-    ]
-    data = _discord_json_output(argv)
-    if data is None:
+    if not channel_id or not bot_token:
         return None
-    return data.get("id")
 
-
-def _create_thread(channel_id: int, message_id: str, name: str, token: str) -> str | None:
-    """Create a thread anchored to *message_id* in *channel_id*.
-
-    Returns the thread (channel) ID on success, ``None`` otherwise.
-    """
-    argv = [
-        "discord",
-        "thread",
-        "create",
-        "--channel-id",
-        str(channel_id),
-        "--message-id",
-        message_id,
-        "--name",
-        name,
-        "--token",
-        token,
-        "--json",
-    ]
-    data = _discord_json_output(argv)
-    if data is None:
+    # 1. Post an initial message to the channel.
+    msg_result = _post_message(channel_id, instruction)
+    if msg_result is None:
         return None
-    return data.get("id")
-
-
-def _post_to_thread(thread_id: str, content: str, token: str) -> str | None:
-    """Post a message to *thread_id* and return the message ID.
-
-    Returns ``None`` on any failure.
-    """
-    argv = [
-        "discord",
-        "thread",
-        "post",
-        "--thread-id",
-        thread_id,
-        "--token",
-        token,
-        "--content",
-        content,
-        "--json",
-    ]
-    data = _discord_json_output(argv)
-    if data is None:
+    message_id = msg_result.get("id", "")
+    if not message_id:
         return None
-    return data.get("id")
+
+    # 2. Create a thread anchored to that message.
+    thread_result = _create_thread(channel_id, message_id, f"nudge: {invocation_id}")
+    if thread_result is None:
+        return None
+    thread_id = thread_result.get("id", "")
+    if not thread_id:
+        return None
+
+    # 3. Post the nudge into the thread with a mention.
+    mention = _resolve_mention(invocation_id)
+    nudge_content = _build_nudge_content(instruction, mention, escalation_level=0)
+    post_result = _post_to_thread(thread_id, nudge_content)
+    if post_result is None:
+        return None
+
+    return {
+        "thread_id": thread_id,
+        "message_id": post_result.get("id", ""),
+    }
 
 
-def _poll_thread(thread_id: str, limit: int = 20, token: str | None = None) -> list[dict[str, Any]]:
-    """Read messages from *thread_id*.
+def nudge(
+    *,
+    channel_id: str,
+    bot_token: str,
+    thread_id: str,
+    instruction: str,
+    callback_url: str,
+    callback_token: str,
+    invocation_id: str,
+) -> dict[str, Any] | None:
+    """Post a cadence nudge into an existing thread.
 
-    Returns a list of dicts with keys ``id``, ``content``, and
-    ``author`` (itself a dict with ``id`` and ``username``).
+    Returns a dict with ``message_id`` on success, or ``None``.
     """
-    argv = [
-        "discord",
-        "channel",
-        "messages",
-        "--channel-id",
-        thread_id,
-        "--limit",
-        str(limit),
-        "--json",
-    ]
-    if token is not None:
-        argv.insert(4, "--token")
-        argv.insert(5, token)
-    data = _discord_json_output(argv)
-    if data is None:
+    if not channel_id or not bot_token or not thread_id:
+        return None
+
+    mention = _resolve_mention(invocation_id)
+    content = _build_nudge_content(instruction, mention, escalation_level=0)
+    post_result = _post_to_thread(thread_id, content)
+    if post_result is None:
+        return None
+
+    return {"message_id": post_result.get("id", "")}
+
+
+def escalate(
+    *,
+    channel_id: str,
+    bot_token: str,
+    thread_id: str,
+    instruction: str,
+    callback_url: str,
+    callback_token: str,
+    invocation_id: str,
+    escalation_level: int,
+) -> dict[str, Any] | None:
+    """Post an escalation nudge into an existing thread.
+
+    Uses a red embed (overdue colour) and a higher-urgency message.
+    Returns a dict with ``message_id`` on success, or ``None``.
+    """
+    if not channel_id or not bot_token or not thread_id:
+        return None
+
+    mention = _resolve_mention(invocation_id)
+    content = _build_nudge_content(instruction, mention, escalation_level=escalation_level)
+    post_result = _post_to_thread(thread_id, content)
+    if post_result is None:
+        return None
+
+    return {"message_id": post_result.get("id", "")}
+
+
+def poll_replies(
+    *,
+    channel_id: str,
+    bot_token: str,
+    thread_id: str,
+    last_message_id: str = "",
+) -> list[dict[str, Any]]:
+    """Poll a thread for new messages since *last_message_id*.
+
+    Returns a list of dicts with ``message_id``, ``content``, and
+    ``author`` keys for each new reply.  Returns an empty list when
+    the Discord CLI is unavailable or no new messages exist.
+    """
+    if not channel_id or not bot_token or not thread_id:
         return []
-    messages = data if isinstance(data, list) else data.get("messages", [])
+
+    result = _run_discord(["channel", "messages", thread_id, "--limit", "20"])
+    parsed = _parse_json_output(result)
+    if parsed is None:
+        return []
+
+    messages = parsed if isinstance(parsed, list) else parsed.get("messages", [])
     if not isinstance(messages, list):
         return []
-    result = []
+
+    replies: list[dict[str, Any]] = []
     for msg in messages:
         if not isinstance(msg, dict):
             continue
+        msg_id = msg.get("id", "")
+        if not msg_id:
+            continue
+        # Skip the message we already saw.
+        if msg_id == last_message_id:
+            continue
+        # Only include actual replies (not system messages).
         author = msg.get("author", {})
-        if not isinstance(author, dict):
-            author = {}
-        result.append(
+        if isinstance(author, dict) and author.get("bot", False):
+            continue
+        content = msg.get("content", "")
+        if not content:
+            continue
+        replies.append(
             {
-                "id": msg.get("id", ""),
-                "content": msg.get("content", ""),
+                "message_id": msg_id,
+                "content": content,
                 "author": {
                     "id": author.get("id", ""),
                     "username": author.get("username", ""),
                 },
             }
         )
-    return result
+
+    # Discord returns newest-first; reverse so the caller sees oldest first.
+    replies.reverse()
+    return replies
 
 
-def _resolve_user_id(task: Any) -> str | None:
-    """Look up a Discord user ID from *task*.
+# --- Internal helpers ---------------------------------------------------
 
-    Checks ``task.extra_input["discord_user_id"]`` first, then falls back
-    to parsing the instruction for a ``<@USER_ID>`` mention.  Returns
-    ``None`` if not found.
+
+def _post_message(channel_id: str, content: str) -> dict[str, Any] | None:
+    """Post a message to a channel. Returns the message dict or None."""
+    result = _run_discord(["message", "post", channel_id, content])
+    return _parse_json_output(result)
+
+
+def _create_thread(channel_id: str, message_id: str, name: str) -> dict[str, Any] | None:
+    """Create a thread anchored to a message. Returns the thread dict or None."""
+    result = _run_discord(["thread", "create", channel_id, "--name", name, "--message", message_id])
+    return _parse_json_output(result)
+
+
+def _post_to_thread(thread_id: str, content: str) -> dict[str, Any] | None:
+    """Post a message into a thread. Returns the message dict or None."""
+    result = _run_discord(["thread", "post", thread_id, content])
+    return _parse_json_output(result)
+
+
+def _resolve_mention(invocation_id: str) -> str:
+    """Return a Discord <@user_id> mention or empty string.
+
+    Looks for ``discord_user_id`` in the invocation context.  Falls back
+    to empty string when no user is configured — the nudge still posts
+    but without a mention.
     """
-    # Direct lookup from extra_input.
-    raw = task.extra_input.get("discord_user_id")
-    if isinstance(raw, str) and raw.strip():
-        return raw.strip()
-
-    # Fallback: parse the instruction for a Discord mention.
-    instruction = task.instruction if hasattr(task, "instruction") else ""
-    if isinstance(instruction, str):
-        match = _RE_DISCORD_MENTION.search(instruction)
-        if match:
-            return match.group(1)
-
-    return None
+    # The invocation_id is the only context we have here; the caller
+    # should pass the user_id as part of the invocation context.
+    # We look for a user_id in the environment or return empty.
+    user_id = os.environ.get("DISCORD_NUDGE_USER_ID", "").strip()
+    if user_id:
+        return f"<@{user_id}>"
+    return ""
 
 
-def _build_embed(content: str, *, color: int, is_overdue: bool = False) -> str:
-    """Build an embed JSON string for the Discord CLI content field.
+def _build_nudge_content(instruction: str, mention: str, *, escalation_level: int) -> str:
+    """Build the nudge message content with embed payload.
 
-    The embed is embedded inside a JSON object that the ``discord`` CLI
-    expects as the ``content`` value.
+    The content is a JSON string that the discord CLI will post as
+    the message body.  It includes an embed with severity colour,
+    username, footer, and ISO timestamp — lifted from steward's
+    discord-notify skill.
     """
+    color = _COLOR_OVERDUE if escalation_level > 0 else _COLOR_GENTLE
+    title = "Overdue" if escalation_level > 0 else "Nudge"
+    footer_text = f"Escalation level {escalation_level} — {DEFAULT_USERNAME}"
+    timestamp = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+
+    # Truncate instruction to fit in a reasonable message.
+    truncated = instruction[:400] + ("..." if len(instruction) > 400 else "")
+
     embed = {
-        "title": "Culture Nodes Nudge" if not is_overdue else "Overdue Task",
-        "description": content,
+        "title": f"{title}: {truncated}",
+        "description": f"Please respond to this task: {truncated}",
         "color": color,
-        "footer": {
-            "text": _EMBED_FOOTER_TEXT,
-        },
-        "timestamp": datetime.now(timezone.utc).isoformat(),
+        "footer": {"text": footer_text},
+        "timestamp": timestamp,
     }
-    return json.dumps(embed)
 
-
-# ---------------------------------------------------------------------------
-# Public API
-# ---------------------------------------------------------------------------
-
-
-def first_nudge(task: Any, cfg: NudgeConfig) -> NudgeState | None:
-    """Post the first nudge: message → thread → nudge mention.
-
-    Returns a ``NudgeState`` on success, or ``None`` if the config is
-    incomplete or the Discord CLI fails.
-    """
-    if not cfg.is_configured():
-        logger.debug("Discord not configured; skipping first_nudge")
-        return None
-
-    user_id = _resolve_user_id(task)
-    channel_id = cfg.discord_channel_id  # type: ignore[union-attr]
-    token = cfg.discord_bot_token  # type: ignore[union-attr]
-
-    # 1. Post the initial message in the channel.
-    initial_content = _build_embed(
-        "A new task has been assigned. Check your thread for details.",
-        color=_EMBED_COLOR_BLUE,
+    return json.dumps(
+        {
+            "content": f"{mention} {title} — {truncated}",
+            "embeds": [embed],
+        }
     )
-    message_id = _post_message(channel_id, initial_content, token)
-    if message_id is None:
-        logger.warning("first_nudge: failed to post initial message")
-        return None
-
-    # 2. Create a thread anchored to that message.
-    thread_name = f"Nudge: {task.invocation_id if hasattr(task, 'invocation_id') else 'task'}"
-    thread_id = _create_thread(channel_id, message_id, thread_name, token)
-    if thread_id is None:
-        logger.warning("first_nudge: failed to create thread")
-        return None
-
-    # 3. Post the nudge mention into the thread.
-    mention = f"<@{user_id}>" if user_id else "@here"
-    nudge_content = _build_embed(
-        f"New task assigned. {mention} — please review and complete.",
-        color=_EMBED_COLOR_BLUE,
-    )
-    _post_to_thread(thread_id, nudge_content, token)
-
-    # 4. Build and persist state.
-    state = NudgeState(
-        thread_id=thread_id,
-        last_nudge_at=datetime.now(timezone.utc).isoformat(),
-        last_seen_message_id=None,
-        escalation_level=0,
-    )
-    state.save(task)
-    return state
 
 
-def escalate_nudge(task: Any, cfg: NudgeConfig, state: NudgeState) -> NudgeState | None:
-    """Post an escalation message to the existing thread.
-
-    Uses a red embed to signal urgency.  Returns the updated ``NudgeState``
-    on success, or ``None`` on failure.
-    """
-    if not cfg.is_configured():
-        logger.debug("Discord not configured; skipping escalate_nudge")
-        return None
-
-    if state.thread_id is None:
-        logger.warning("escalate_nudge: no thread_id in state")
-        return None
-
-    token = cfg.discord_bot_token  # type: ignore[union-attr]
-    user_id = _resolve_user_id(task)
-    mention = f"<@{user_id}>" if user_id else "@here"
-
-    escalation_content = _build_embed(
-        f"Task is overdue. {mention} — please act now.",
-        color=_EMBED_COLOR_RED,
-        is_overdue=True,
-    )
-    _post_to_thread(state.thread_id, escalation_content, token)
-
-    state.escalation_level += 1
-    state.last_nudge_at = datetime.now(timezone.utc).isoformat()
-    state.save(task)
-    return state
+# --- Env helpers --------------------------------------------------------
 
 
-def poll_replies(task: Any, cfg: NudgeConfig, state: NudgeState) -> list[str]:
-    """Poll the thread for new replies since ``last_seen_message_id``.
+def _float_env(env: dict[str, str], name: str, default: float) -> float:
+    raw = env.get(name)
+    if raw is None:
+        return default
+    try:
+        return float(raw)
+    except ValueError:
+        return default
 
-    Returns a list of reply content strings.  Updates
-    ``state.last_seen_message_id`` to the newest message ID seen.
-    """
-    if not cfg.is_configured():
-        logger.debug("Discord not configured; skipping poll_replies")
-        return []
 
-    if state.thread_id is None:
-        logger.debug("poll_replies: no thread_id in state")
-        return []
+# --- Re-export for tracker integration ----------------------------------
 
-    token = cfg.discord_bot_token  # type: ignore[union-attr]
-    messages = _poll_thread(state.thread_id, limit=20, token=token)
-    if not messages:
-        return []
+from datetime import datetime, timezone
+from dataclasses import asdict
 
-    last_seen = state.last_seen_message_id
-    new_contents: list[str] = []
-    newest_id: str | None = None
-
-    for msg in messages:
-        msg_id = msg.get("id", "")
-        if not msg_id:
-            continue
-        # Track the newest message ID overall.
-        if newest_id is None or msg_id > newest_id:
-            newest_id = msg_id
-        # Skip messages we have already seen.
-        if last_seen is not None and msg_id <= last_seen:
-            continue
-        content = msg.get("content", "")
-        if content:
-            new_contents.append(content)
-
-    # Update state with the newest message ID.
-    if newest_id is not None:
-        state.last_seen_message_id = newest_id
-        state.save(task)
-
-    return new_contents
+DEFAULT_USERNAME = _DEFAULT_USERNAME

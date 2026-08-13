@@ -268,6 +268,19 @@ const (
 	EventProgress EventKind = "progress"
 	// EventArtifact announces an artifact reference.
 	EventArtifact EventKind = "artifact"
+	// EventSignal asks the control plane to append a signal event on the
+	// emitting attempt's behalf and deliver it (issue #43 task t21, design
+	// D11). It is NON-TERMINAL, and that is the whole feature: an agent node
+	// that needs a human answer, a sibling branch woken, or a downstream run
+	// nudged emits the event and KEEPS WORKING. The attempt's lease and
+	// fencing state are untouched — only terminal kinds commit workflow state
+	// — so emission can never complete or block the session that emitted it.
+	//
+	// The event it appends is actor-reported information, never observed
+	// evidence (PRD §10.4): its emitter is derived from the verified attempt
+	// context, never from the payload, so an actor cannot emit as somebody
+	// else.
+	EventSignal EventKind = "signal"
 	// EventCompleted is terminal: the actor produced a domain outcome.
 	EventCompleted EventKind = "completed"
 	// EventFailed is terminal: the dispatch itself failed.
@@ -289,11 +302,13 @@ func (k EventKind) Terminal() bool {
 	}
 }
 
-// Valid reports whether k is one of §13.4's kinds.
+// Valid reports whether k is one of §13.4's kinds, or the additive `signal`
+// kind this control plane extends the section with (design D11, the same way
+// ADR 0008/0009/0010 extended §13.2 additively).
 func (k EventKind) Valid() bool {
 	switch k {
 	case EventAccepted, EventHeartbeat, EventProgress, EventArtifact,
-		EventCompleted, EventFailed, EventBlocked:
+		EventCompleted, EventFailed, EventBlocked, EventSignal:
 		return true
 	default:
 		return false
@@ -372,6 +387,30 @@ type FailedPayload struct {
 	Usage             *Usage          `json:"usage,omitempty"`
 	TerminationReason *string         `json:"termination_reason,omitempty"`
 	WorkspaceMeasured json.RawMessage `json:"workspace_measured,omitempty"`
+}
+
+// Signal event scopes. A `run`-scoped emission is delivered as a fact about
+// the emitting run (only that run's subscriptions and routes see it); a
+// `namespace`-scoped one is delivered namespace-wide, which is how one run's
+// node wakes another run.
+const (
+	SignalScopeRun       = "run"
+	SignalScopeNamespace = "namespace"
+)
+
+// SignalPayload is the body of a `signal` event: the name the control plane
+// appends the fact under, the free-form body, and how widely it is delivered.
+//
+// There is deliberately no emitter field. The emitter is derived from the
+// verified attempt context (callback.go's signalEmitter) precisely because
+// this is the one callback kind that writes a fact OTHER runs can act on —
+// letting the caller name itself would let any actor holding one attempt's
+// token emit as any node it liked.
+type SignalPayload struct {
+	Name    string          `json:"name"`
+	Payload json.RawMessage `json:"payload,omitempty"`
+	// Scope is "run" (the default when absent) or "namespace".
+	Scope string `json:"scope,omitempty"`
 }
 
 // AcceptedPayload is the body of an `accepted` event. It may restate the

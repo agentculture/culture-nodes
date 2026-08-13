@@ -69,6 +69,10 @@ func (f *fakeCallbackStore) TouchInvocation(_ context.Context, _, _ string, _ ti
 
 func (f *fakeCallbackStore) CloseInvocation(_ context.Context, _, _ string) error { return nil }
 
+func (f *fakeCallbackStore) EmitSignalEvent(_ context.Context, _ actors.PendingInvocation, _ actors.EmitSignalInput) (actors.EmitSignalResult, error) {
+	return actors.EmitSignalResult{}, nil
+}
+
 func (f *fakeCallbackStore) ResumeWaitingWork(_ context.Context, _ actors.PendingInvocation, _ time.Duration) error {
 	return nil
 }

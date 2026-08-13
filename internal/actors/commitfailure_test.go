@@ -176,8 +176,9 @@ type compensationStore struct {
 	claims map[string]bool
 	leased bool
 
-	calls  []string
-	events []recordedEvent
+	calls   []string
+	events  []recordedEvent
+	emitted []actors.EmitSignalInput
 }
 
 type recordedEvent struct {
@@ -233,6 +234,12 @@ func (s *compensationStore) RollbackCallbackSequence(_ context.Context, _ string
 func (s *compensationStore) TouchInvocation(context.Context, string, string, time.Time) error {
 	s.note("touch")
 	return nil
+}
+
+func (s *compensationStore) EmitSignalEvent(_ context.Context, _ actors.PendingInvocation, in actors.EmitSignalInput) (actors.EmitSignalResult, error) {
+	s.note("emit_signal")
+	s.emitted = append(s.emitted, in)
+	return actors.EmitSignalResult{EventID: "evt_" + in.Name}, nil
 }
 
 func (s *compensationStore) CloseInvocation(context.Context, string, string) error {

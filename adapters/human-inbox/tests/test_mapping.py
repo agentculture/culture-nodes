@@ -88,3 +88,28 @@ def test_submission_error_bad_note():
 def test_submission_error_accepts_a_valid_submission():
     assert mapping.submission_error({"outcome": "ok"}) is None
     assert mapping.submission_error({"outcome": "ok", "output": {"a": 1}, "note": "fine"}) is None
+
+
+def test_submission_error_validates_observed_marker():
+    assert (
+        mapping.submission_error(
+            {
+                "outcome": "merged",
+                "observed": {
+                    "collection_method": "github_pr_merged",
+                    "merge_commit": "abc123",
+                },
+            }
+        )
+        is None
+    )
+    assert mapping.submission_error({"outcome": "merged", "observed": True}) is not None
+    assert (
+        mapping.submission_error(
+            {
+                "outcome": "merged",
+                "observed": {"collection_method": "github_pr_merged", "merge_commit": ""},
+            }
+        )
+        is not None
+    )

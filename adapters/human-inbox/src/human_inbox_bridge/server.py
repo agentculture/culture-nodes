@@ -25,7 +25,7 @@ Human surface (same server, same bearer token):
 
 * ``GET /inbox/tasks[?status=pending]`` — list tasks (callback credentials
   redacted).
-* ``POST /inbox/tasks/<id>/submit`` — body ``{outcome, output?, note?}``;
+* ``POST /inbox/tasks/<id>/submit`` — body ``{outcome, output?, note?, observed?}``;
   delivers the terminal ``completed`` event through the standard
   authenticated callback path and marks the task completed only when the
   delivery was accepted. A failed delivery leaves the task pending so the
@@ -492,6 +492,11 @@ class Handler(BaseHTTPRequestHandler):
             "note": body.get("note"),
             "submitted_at": task.completed_at,
         }
+        if "observed" in body:
+            # Preserve the validated tracker marker in the durable audit
+            # trail. Manual submissions omit it and retain their exact
+            # historical stored shape.
+            task.submission["observed"] = body["observed"]
         self.bridge.tasks.save(task)
         self._write_json(
             200,

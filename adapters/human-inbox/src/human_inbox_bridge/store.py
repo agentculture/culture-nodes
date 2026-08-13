@@ -86,9 +86,10 @@ class TaskStore:
     (the HTTP handler thread and the accepted-event delivery thread both
     reserve sequences and save tasks)."""
 
-    def __init__(self, state_dir: str | Path) -> None:
+    def __init__(self, state_dir: str | Path, *, create: bool = True) -> None:
         self.tasks_dir = Path(state_dir) / "tasks"
-        self.tasks_dir.mkdir(parents=True, exist_ok=True, mode=0o700)
+        if create:
+            self.tasks_dir.mkdir(parents=True, exist_ok=True, mode=0o700)
         self._lock = threading.Lock()
 
     def _path(self, invocation_id: str) -> Path:

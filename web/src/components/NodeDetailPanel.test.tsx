@@ -2,7 +2,7 @@ import { describe, expect, it, vi } from "vitest";
 import { render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import NodeDetailPanel from "./NodeDetailPanel";
-import type { Usage } from "../api/types";
+import type { LedgerRecord, Usage } from "../api/types";
 import { parseWorkflowGraph } from "../domain/graph";
 import { executionFromRunView, idleExecution } from "../domain/run-state";
 import { LEDGER_RECORDS, RUN_VIEW, WORKFLOW_IR } from "../fixtures/run-fixture";
@@ -122,6 +122,68 @@ describe("NodeDetailPanel", () => {
       expect(
         screen.getByText("No observed evidence is attached to this node run."),
       ).toBeInTheDocument();
+    });
+  });
+
+  describe("success signals (task t18)", () => {
+    function signalRecord(id: string, mechanical: boolean): LedgerRecord {
+      return {
+        id,
+        schema_version: "nodes.culture.dev/ledger/v1alpha1",
+        record_type: "success_signal",
+        run_id: "run_01ABC",
+        node_run_id: "nr-test",
+        attempt_id: "att-test-1",
+        origin: { kind: "agent", actor_id: "actor://company/intake" },
+        authority: "proposed",
+        data: {
+          statement: mechanical
+            ? "the test process exits 0"
+            : "the change reads well to a reviewer",
+          check: { kind: "process_exit", equals: 0 },
+          mechanical,
+        },
+        provenance_refs: [],
+        created_at: "2026-08-13T10:23:26Z",
+        content_digest: `sha256:${id.padEnd(40, "0")}`,
+      };
+    }
+
+    function renderWithSignals() {
+      const node = graph.nodes.find((candidate) => candidate.id === "test");
+      if (!node) throw new Error("fixture has no node test");
+      return render(
+        <NodeDetailPanel
+          node={node}
+          execution={executions.test}
+          ledger={[
+            ...LEDGER_RECORDS,
+            signalRecord("lr-sig-mech", true),
+            signalRecord("lr-sig-prose", false),
+          ]}
+          onClose={vi.fn()}
+        />,
+      );
+    }
+
+    it("marks a mechanical:false signal as not machine-checkable in the ledger delta", () => {
+      const { container } = renderWithSignals();
+      const prose = container.querySelector('[data-record-id="lr-sig-prose"]');
+      expect(prose?.textContent).toContain("success_signal");
+      expect(
+        prose?.querySelector(
+          '[data-signal-checkability="not-machine-checkable"]',
+        ),
+      ).toHaveTextContent("not machine-checkable");
+    });
+
+    it("adds no such mark to a mechanical:true signal — its verdict is the derived evaluation record", () => {
+      const { container } = renderWithSignals();
+      const mech = container.querySelector('[data-record-id="lr-sig-mech"]');
+      expect(mech?.textContent).toContain("success_signal");
+      expect(
+        mech?.querySelector("[data-signal-checkability]"),
+      ).toBeNull();
     });
   });
 

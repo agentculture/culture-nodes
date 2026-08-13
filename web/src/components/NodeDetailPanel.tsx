@@ -1,6 +1,10 @@
 import { useEffect, useRef, type KeyboardEvent } from "react";
 import type { LedgerRecord, Usage } from "../api/types";
 import { parseWorkspaceEvidence } from "../domain/evidence";
+import {
+  isMachineCheckableSignal,
+  NOT_MACHINE_CHECKABLE,
+} from "../domain/success-signal";
 import type { GraphNode } from "../domain/graph";
 import { NODE_STATE_LABEL, type NodeExecution } from "../domain/run-state";
 import AuthorityChip from "./AuthorityChip";
@@ -212,6 +216,18 @@ export function NodeDetailPanel({
               <span className="detail-panel__record-type">
                 {record.record_type}
               </span>
+              {/* A success_signal whose author did not declare it mechanical
+                  will never get a machine verdict (task t18) — say so, so it
+                  is not mistaken for one whose evaluation just hasn't landed. */}
+              {record.record_type === "success_signal" &&
+              !isMachineCheckableSignal(record.data) ? (
+                <span
+                  className="detail-panel__signal-checkability"
+                  data-signal-checkability="not-machine-checkable"
+                >
+                  {NOT_MACHINE_CHECKABLE}
+                </span>
+              ) : null}
               <code className="detail-panel__digest">
                 {record.content_digest.slice(0, 20)}…
               </code>

@@ -340,6 +340,7 @@ func (w *Worker) dispatchCode(
 	}
 	w.recordRunnerOperation(ctx, d.NamespaceID, result.AttemptID, codeOperationKind, operation, &res, nil)
 	w.appendAcceptanceVerdict(ctx, node, eval, result)
+	w.evaluateSuccessSignals(ctx, res, result)
 	return nil
 }
 

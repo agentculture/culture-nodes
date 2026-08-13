@@ -183,8 +183,16 @@ deploy_human_inbox() { # host
     *) say "human-inbox bridge is thor-only (one logical human actor: company/human-ops) -- skipping on $host"; return 0 ;;
   esac
 
-  ssh "$host" 'test -f ~/.culture-nodes/human-inbox.env' \
-    || { echo "~/.culture-nodes/human-inbox.env missing on $host — run deploy/prod/install-secrets.sh first" >&2; exit 1; }
+  # A missing human-inbox.env skips this lane rather than failing the deploy:
+  # the bridge and tracker are optional daemons beside the control plane, and
+  # an absent optional secret must never block the control plane from
+  # shipping (found live — the hard exit here aborted the whole thor deploy
+  # before the compose step ever ran). Same posture the GITHUB_TOKEN branch
+  # below already takes.
+  ssh "$host" 'test -f ~/.culture-nodes/human-inbox.env' || {
+    say "WARNING: ~/.culture-nodes/human-inbox.env missing on $host — skipping the human-inbox bridge and tracker (run deploy/prod/install-secrets.sh, then deploy.sh again, to enable human nodes and auto-submit-on-merge)"
+    return 0
+  }
 
   say "ensuring uv on $host (human-inbox lane)"
   ssh "$host" 'bash -lc "command -v uv >/dev/null || curl -LsSf https://astral.sh/uv/install.sh | sh"'
@@ -223,8 +231,6 @@ deploy_human_inbox() { # host
   fi
 }
 
-deploy_human_inbox "$HOST"
-
 case "$HOST" in
   thor*)
     say "starting thor control plane"
@@ -236,6 +242,11 @@ case "$HOST" in
     [ -n "$NS" ] || { echo "no namespace row found" >&2; exit 1; }
     ssh "$HOST" "grep -q '^NODES_NAMESPACE_ID=' ~/.culture-nodes/prod.env && sed -i 's/^NODES_NAMESPACE_ID=.*/NODES_NAMESPACE_ID=$NS/' ~/.culture-nodes/prod.env || echo NODES_NAMESPACE_ID=$NS >> ~/.culture-nodes/prod.env"
     ssh "$HOST" "cd $REMOTE_DIR/deploy/prod && docker compose --env-file ~/.culture-nodes/prod.env -f compose.thor.yml up -d worker"
+    # The human-inbox bridge and tracker come up AFTER the control plane:
+    # the tracker submits into the bridge and the bridge calls back into the
+    # API, so standing them up first only means they start against a stack
+    # that is still restarting.
+    deploy_human_inbox "$HOST"
     say "thor deploy complete (namespace $NS)"
     ;;
   orin*)

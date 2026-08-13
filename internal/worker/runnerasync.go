@@ -582,8 +582,11 @@ func (w *Worker) commitRunnerTerminal(ctx context.Context, op postgres.RunnerOpe
 	if opErr == nil {
 		w.recordRunnerOperation(ctx, op.NamespaceID, committed.AttemptID, runnerOperationKind, operation, &result, nil)
 	}
-	if buildErr == nil && node != nil {
-		w.evaluateAcceptance(ctx, node, result, committed)
+	if buildErr == nil {
+		if node != nil {
+			w.evaluateAcceptance(ctx, node, result, committed)
+		}
+		w.evaluateSuccessSignals(ctx, result, committed)
 	}
 	return nil
 }

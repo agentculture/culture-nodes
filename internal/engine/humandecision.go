@@ -553,7 +553,7 @@ func (d *humanTaskDecision) advance(ctx context.Context, plan transitionPlan, tr
 		return d.completeRun(ctx, nodeRun.NodeID, transitions+1)
 	}
 
-	workID, humanTaskID, err := d.engine.dispatchNode(ctx, d.tx, next, d.run, nodeRun, plan.Edge.FromNode, plan.Edge.FromOutcome, d.now)
+	workID, humanTaskID, err := d.engine.dispatchNode(ctx, d.tx, next, d.run, nodeRun, target.Edge.FromNode, target.Edge.FromOutcome, d.now)
 	if err != nil {
 		return err
 	}

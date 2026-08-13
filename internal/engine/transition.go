@@ -60,13 +60,22 @@ type transitionTarget struct {
 	NextNodeID string
 }
 
-// single returns the plan's one target for the sequential paths, nil when the
-// plan has none or several.
-func (p transitionPlan) single() *transitionTarget {
-	if len(p.Targets) != 1 {
+// edge is the plan's first eligible edge and nextNodeID its target — the
+// sequential view every non-parallel path reads, since only a parallel node's
+// split ever puts more than one target in the plan. edge is nil when the plan
+// selected nothing.
+func (p transitionPlan) edge() *Edge {
+	if len(p.Targets) == 0 {
 		return nil
 	}
-	return &p.Targets[0]
+	return p.Targets[0].Edge
+}
+
+func (p transitionPlan) nextNodeID() string {
+	if len(p.Targets) == 0 {
+		return ""
+	}
+	return p.Targets[0].NextNodeID
 }
 
 // planTransition performs §12.5 steps 8 and 9's decision half: it selects the

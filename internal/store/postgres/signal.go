@@ -23,11 +23,13 @@ import (
 // delivery is what wakes it.
 //
 // Single-writer authority (why delivery resumes here, in the API handler's
-// transaction, and not via the scheduler): the resume effect is the SAME
-// idempotent, guarded UPDATE the scheduler's TimerKindWait effect applies —
+// transaction, and not via the scheduler): the resume effect is the same
+// idempotent, guarded shape as the scheduler's TimerKindWait effect —
 // flip the parked work item back to 'ready' (internal/scheduler's
-// makeWorkItemAvailableSQL) — and it runs in the one PostgreSQL transaction
-// that also appends the event fact and marks the subscription fired.
+// makeWorkItemAvailableSQL), though with a stricter `state = 'waiting'`
+// guard (see fireSubscription) — and it runs in the one PostgreSQL
+// transaction that also appends the event fact and marks the subscription
+// fired.
 // PostgreSQL therefore stays the single authority over waiting state: there
 // is no cross-process hand-off to lose (no relayed resume that could lag or
 // double-fire), and node-run COMPLETION authority is untouched — delivery
@@ -481,13 +483,17 @@ func querySubscriptions(ctx context.Context, tx pgx.Tx, sql string, args ...any)
 }
 
 // fireSubscription marks one locked subscription fired by ev and returns
-// its parked work item to 'ready' — the same guarded, idempotent UPDATE the
-// scheduler's wait/retry effect applies (internal/scheduler's
-// makeWorkItemAvailableSQL). Zero work-item rows affected is a legitimate
-// no-op, not an error: run cancellation retires the work item and the
-// subscription together (the API's cancelRun REAP step), and this guard is
-// what tolerates a delivery racing that cancel — a dead run's rows are
-// left dead.
+// its parked work item to 'ready'. The work-item UPDATE matches only
+// `state = 'waiting'` — the one state the signal park
+// (StartDurableSignalWait's parkWorkSQL) leaves the item in — never the
+// broader `state <> 'completed'` the scheduler's wait/retry effect uses: a
+// 'cancelled' row matched by that broader guard would be a dead run's work
+// item resurrected and re-executed. Zero work-item rows affected is a
+// legitimate no-op, not an error: run cancellation retires the work item
+// and the subscription together (the API's cancelRun REAP step), and when
+// a pending subscription nonetheless outlives that reap, this guard is
+// what keeps its delivery an ack (subscription retired, event appended)
+// rather than a resurrection — a dead run's rows are left dead.
 func fireSubscription(ctx context.Context, tx pgx.Tx, sub *SignalSubscription, ev SignalEvent) error {
 	firedAt := time.Now().UTC()
 	if _, err := tx.Exec(ctx,
@@ -505,7 +511,7 @@ func fireSubscription(ctx context.Context, tx pgx.Tx, sub *SignalSubscription, e
 	if _, err := tx.Exec(ctx,
 		`UPDATE work_items
 		 SET available_at = now(), state = 'ready', state_version = state_version + 1, updated_at = now()
-		 WHERE node_run_id = $1 AND state <> 'completed'`,
+		 WHERE node_run_id = $1 AND state = 'waiting'`,
 		sub.NodeRunID,
 	); err != nil {
 		return fmt.Errorf("postgres: DeliverSignalEvent: make work item available for node run %s: %w", sub.NodeRunID, err)

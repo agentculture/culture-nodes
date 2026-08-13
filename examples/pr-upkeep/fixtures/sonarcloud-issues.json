@@ -1,0 +1,619 @@
+{
+  "total": 4,
+  "p": 1,
+  "ps": 50,
+  "paging": {
+    "pageIndex": 1,
+    "pageSize": 50,
+    "total": 4
+  },
+  "effortTotal": 26,
+  "debtTotal": 26,
+  "issues": [
+    {
+      "key": "AZ_5XgmRQ6BlSztM08nB",
+      "rule": "python:S3516",
+      "severity": "BLOCKER",
+      "component": "agentculture_culture-nodes:culture_nodes/cli/_commands/node_runs.py",
+      "project": "agentculture_culture-nodes",
+      "line": 42,
+      "hash": "25de75f6385aa1baf29b017f15bad53c",
+      "textRange": {
+        "startLine": 42,
+        "endLine": 42,
+        "startOffset": 4,
+        "endOffset": 22
+      },
+      "flows": [
+        {
+          "locations": [
+            {
+              "component": "agentculture_culture-nodes:culture_nodes/cli/_commands/node_runs.py",
+              "textRange": {
+                "startLine": 62,
+                "endLine": 62,
+                "startOffset": 4,
+                "endOffset": 12
+              },
+              "msg": "returned value"
+            }
+          ]
+        },
+        {
+          "locations": [
+            {
+              "component": "agentculture_culture-nodes:culture_nodes/cli/_commands/node_runs.py",
+              "textRange": {
+                "startLine": 60,
+                "endLine": 60,
+                "startOffset": 8,
+                "endOffset": 16
+              },
+              "msg": "returned value"
+            }
+          ]
+        },
+        {
+          "locations": [
+            {
+              "component": "agentculture_culture-nodes:culture_nodes/cli/_commands/node_runs.py",
+              "textRange": {
+                "startLine": 56,
+                "endLine": 56,
+                "startOffset": 8,
+                "endOffset": 16
+              },
+              "msg": "returned value"
+            }
+          ]
+        }
+      ],
+      "status": "OPEN",
+      "message": "Refactor this method to not always return the same value.",
+      "effort": "2min",
+      "debt": "2min",
+      "assignee": "OriNachum-g2k3F@github",
+      "tags": [
+        "confusing",
+        "design"
+      ],
+      "creationDate": "2026-08-13T04:24:02+0000",
+      "updateDate": "2026-08-13T04:24:39+0000",
+      "type": "CODE_SMELL",
+      "organization": "agentculture",
+      "cleanCodeAttribute": "LOGICAL",
+      "cleanCodeAttributeCategory": "INTENTIONAL",
+      "impacts": [
+        {
+          "softwareQuality": "MAINTAINABILITY",
+          "severity": "BLOCKER"
+        }
+      ],
+      "issueStatus": "OPEN",
+      "projectName": "culture-nodes",
+      "internalTags": [],
+      "lastChangeAnalysisUuid": "021f6590-f03a-4166-9184-da91bc449306",
+      "lastChangeSource": "ANALYSIS"
+    },
+    {
+      "key": "AZ_ylR5aSzsUlYvt6t2d",
+      "rule": "go:S3776",
+      "severity": "CRITICAL",
+      "component": "agentculture_culture-nodes:tests/deploy/codexsmoke_test.go",
+      "project": "agentculture_culture-nodes",
+      "line": 83,
+      "hash": "b50e4e06050fc317ec71888a3dc521a5",
+      "textRange": {
+        "startLine": 83,
+        "endLine": 83,
+        "startOffset": 5,
+        "endOffset": 51
+      },
+      "flows": [
+        {
+          "locations": [
+            {
+              "component": "agentculture_culture-nodes:tests/deploy/codexsmoke_test.go",
+              "textRange": {
+                "startLine": 85,
+                "endLine": 85,
+                "startOffset": 1,
+                "endOffset": 3
+              },
+              "msg": "+1"
+            }
+          ]
+        },
+        {
+          "locations": [
+            {
+              "component": "agentculture_culture-nodes:tests/deploy/codexsmoke_test.go",
+              "textRange": {
+                "startLine": 104,
+                "endLine": 104,
+                "startOffset": 1,
+                "endOffset": 3
+              },
+              "msg": "+1"
+            }
+          ]
+        },
+        {
+          "locations": [
+            {
+              "component": "agentculture_culture-nodes:tests/deploy/codexsmoke_test.go",
+              "textRange": {
+                "startLine": 109,
+                "endLine": 109,
+                "startOffset": 1,
+                "endOffset": 3
+              },
+              "msg": "+1"
+            }
+          ]
+        },
+        {
+          "locations": [
+            {
+              "component": "agentculture_culture-nodes:tests/deploy/codexsmoke_test.go",
+              "textRange": {
+                "startLine": 112,
+                "endLine": 112,
+                "startOffset": 1,
+                "endOffset": 3
+              },
+              "msg": "+1"
+            }
+          ]
+        },
+        {
+          "locations": [
+            {
+              "component": "agentculture_culture-nodes:tests/deploy/codexsmoke_test.go",
+              "textRange": {
+                "startLine": 115,
+                "endLine": 115,
+                "startOffset": 1,
+                "endOffset": 3
+              },
+              "msg": "+1"
+            }
+          ]
+        },
+        {
+          "locations": [
+            {
+              "component": "agentculture_culture-nodes:tests/deploy/codexsmoke_test.go",
+              "textRange": {
+                "startLine": 115,
+                "endLine": 115,
+                "startOffset": 77,
+                "endOffset": 79
+              },
+              "msg": "+1"
+            }
+          ]
+        },
+        {
+          "locations": [
+            {
+              "component": "agentculture_culture-nodes:tests/deploy/codexsmoke_test.go",
+              "textRange": {
+                "startLine": 120,
+                "endLine": 120,
+                "startOffset": 1,
+                "endOffset": 3
+              },
+              "msg": "+1"
+            }
+          ]
+        },
+        {
+          "locations": [
+            {
+              "component": "agentculture_culture-nodes:tests/deploy/codexsmoke_test.go",
+              "textRange": {
+                "startLine": 123,
+                "endLine": 123,
+                "startOffset": 1,
+                "endOffset": 3
+              },
+              "msg": "+1"
+            }
+          ]
+        },
+        {
+          "locations": [
+            {
+              "component": "agentculture_culture-nodes:tests/deploy/codexsmoke_test.go",
+              "textRange": {
+                "startLine": 126,
+                "endLine": 126,
+                "startOffset": 1,
+                "endOffset": 3
+              },
+              "msg": "+1"
+            }
+          ]
+        },
+        {
+          "locations": [
+            {
+              "component": "agentculture_culture-nodes:tests/deploy/codexsmoke_test.go",
+              "textRange": {
+                "startLine": 126,
+                "endLine": 126,
+                "startOffset": 77,
+                "endOffset": 79
+              },
+              "msg": "+1"
+            }
+          ]
+        },
+        {
+          "locations": [
+            {
+              "component": "agentculture_culture-nodes:tests/deploy/codexsmoke_test.go",
+              "textRange": {
+                "startLine": 132,
+                "endLine": 132,
+                "startOffset": 1,
+                "endOffset": 4
+              },
+              "msg": "+1"
+            }
+          ]
+        },
+        {
+          "locations": [
+            {
+              "component": "agentculture_culture-nodes:tests/deploy/codexsmoke_test.go",
+              "textRange": {
+                "startLine": 133,
+                "endLine": 133,
+                "startOffset": 2,
+                "endOffset": 4
+              },
+              "msg": "+2 (incl 1 for nesting)"
+            }
+          ]
+        },
+        {
+          "locations": [
+            {
+              "component": "agentculture_culture-nodes:tests/deploy/codexsmoke_test.go",
+              "textRange": {
+                "startLine": 133,
+                "endLine": 133,
+                "startOffset": 38,
+                "endOffset": 40
+              },
+              "msg": "+1"
+            }
+          ]
+        },
+        {
+          "locations": [
+            {
+              "component": "agentculture_culture-nodes:tests/deploy/codexsmoke_test.go",
+              "textRange": {
+                "startLine": 136,
+                "endLine": 136,
+                "startOffset": 2,
+                "endOffset": 4
+              },
+              "msg": "+2 (incl 1 for nesting)"
+            }
+          ]
+        },
+        {
+          "locations": [
+            {
+              "component": "agentculture_culture-nodes:tests/deploy/codexsmoke_test.go",
+              "textRange": {
+                "startLine": 136,
+                "endLine": 136,
+                "startOffset": 38,
+                "endOffset": 40
+              },
+              "msg": "+1"
+            }
+          ]
+        },
+        {
+          "locations": [
+            {
+              "component": "agentculture_culture-nodes:tests/deploy/codexsmoke_test.go",
+              "textRange": {
+                "startLine": 140,
+                "endLine": 140,
+                "startOffset": 1,
+                "endOffset": 3
+              },
+              "msg": "+1"
+            }
+          ]
+        },
+        {
+          "locations": [
+            {
+              "component": "agentculture_culture-nodes:tests/deploy/codexsmoke_test.go",
+              "textRange": {
+                "startLine": 143,
+                "endLine": 143,
+                "startOffset": 1,
+                "endOffset": 3
+              },
+              "msg": "+1"
+            }
+          ]
+        }
+      ],
+      "status": "OPEN",
+      "message": "Refactor this method to reduce its Cognitive Complexity from 19 to the 15 allowed.",
+      "effort": "9min",
+      "debt": "9min",
+      "assignee": "OriNachum-g2k3F@github",
+      "tags": [
+        "brain-overload"
+      ],
+      "creationDate": "2026-08-11T20:46:51+0000",
+      "updateDate": "2026-08-11T20:47:30+0000",
+      "type": "CODE_SMELL",
+      "organization": "agentculture",
+      "cleanCodeAttribute": "FOCUSED",
+      "cleanCodeAttributeCategory": "ADAPTABLE",
+      "impacts": [
+        {
+          "softwareQuality": "MAINTAINABILITY",
+          "severity": "HIGH"
+        }
+      ],
+      "issueStatus": "OPEN",
+      "projectName": "culture-nodes",
+      "internalTags": [],
+      "lastChangeAnalysisUuid": "548ffbda-869e-4156-93a5-0d47ca5e8bbe",
+      "lastChangeSource": "ANALYSIS"
+    },
+    {
+      "key": "AZ_ylR6YSzsUlYvt6t2e",
+      "rule": "go:S3776",
+      "severity": "CRITICAL",
+      "component": "agentculture_culture-nodes:tests/deploy/codexworkerenv_test.go",
+      "project": "agentculture_culture-nodes",
+      "line": 33,
+      "hash": "4d278299c5e1aa9f280b188d94c57987",
+      "textRange": {
+        "startLine": 33,
+        "endLine": 33,
+        "startOffset": 5,
+        "endOffset": 36
+      },
+      "flows": [
+        {
+          "locations": [
+            {
+              "component": "agentculture_culture-nodes:tests/deploy/codexworkerenv_test.go",
+              "textRange": {
+                "startLine": 45,
+                "endLine": 45,
+                "startOffset": 1,
+                "endOffset": 4
+              },
+              "msg": "+1"
+            }
+          ]
+        },
+        {
+          "locations": [
+            {
+              "component": "agentculture_culture-nodes:tests/deploy/codexworkerenv_test.go",
+              "textRange": {
+                "startLine": 48,
+                "endLine": 48,
+                "startOffset": 3,
+                "endOffset": 5
+              },
+              "msg": "+3 (incl 2 for nesting)"
+            }
+          ]
+        },
+        {
+          "locations": [
+            {
+              "component": "agentculture_culture-nodes:tests/deploy/codexworkerenv_test.go",
+              "textRange": {
+                "startLine": 52,
+                "endLine": 52,
+                "startOffset": 3,
+                "endOffset": 5
+              },
+              "msg": "+3 (incl 2 for nesting)"
+            }
+          ]
+        },
+        {
+          "locations": [
+            {
+              "component": "agentculture_culture-nodes:tests/deploy/codexworkerenv_test.go",
+              "textRange": {
+                "startLine": 57,
+                "endLine": 57,
+                "startOffset": 3,
+                "endOffset": 5
+              },
+              "msg": "+3 (incl 2 for nesting)"
+            }
+          ]
+        },
+        {
+          "locations": [
+            {
+              "component": "agentculture_culture-nodes:tests/deploy/codexworkerenv_test.go",
+              "textRange": {
+                "startLine": 61,
+                "endLine": 61,
+                "startOffset": 3,
+                "endOffset": 5
+              },
+              "msg": "+3 (incl 2 for nesting)"
+            }
+          ]
+        },
+        {
+          "locations": [
+            {
+              "component": "agentculture_culture-nodes:tests/deploy/codexworkerenv_test.go",
+              "textRange": {
+                "startLine": 65,
+                "endLine": 65,
+                "startOffset": 3,
+                "endOffset": 6
+              },
+              "msg": "+3 (incl 2 for nesting)"
+            }
+          ]
+        },
+        {
+          "locations": [
+            {
+              "component": "agentculture_culture-nodes:tests/deploy/codexworkerenv_test.go",
+              "textRange": {
+                "startLine": 66,
+                "endLine": 66,
+                "startOffset": 4,
+                "endOffset": 6
+              },
+              "msg": "+4 (incl 3 for nesting)"
+            }
+          ]
+        }
+      ],
+      "status": "OPEN",
+      "message": "Refactor this method to reduce its Cognitive Complexity from 20 to the 15 allowed.",
+      "effort": "10min",
+      "debt": "10min",
+      "assignee": "OriNachum-g2k3F@github",
+      "tags": [
+        "brain-overload"
+      ],
+      "creationDate": "2026-08-11T20:46:51+0000",
+      "updateDate": "2026-08-11T20:47:30+0000",
+      "type": "CODE_SMELL",
+      "organization": "agentculture",
+      "cleanCodeAttribute": "FOCUSED",
+      "cleanCodeAttributeCategory": "ADAPTABLE",
+      "impacts": [
+        {
+          "softwareQuality": "MAINTAINABILITY",
+          "severity": "HIGH"
+        }
+      ],
+      "issueStatus": "OPEN",
+      "projectName": "culture-nodes",
+      "internalTags": [],
+      "lastChangeAnalysisUuid": "548ffbda-869e-4156-93a5-0d47ca5e8bbe",
+      "lastChangeSource": "ANALYSIS"
+    },
+    {
+      "key": "AZ_ylR60SzsUlYvt6t2f",
+      "rule": "godre:S8193",
+      "severity": "MINOR",
+      "component": "agentculture_culture-nodes:tests/deploy/registeractor_test.go",
+      "project": "agentculture_culture-nodes",
+      "line": 187,
+      "hash": "3a3af4acc57b43b9031c282fd32d2297",
+      "textRange": {
+        "startLine": 187,
+        "endLine": 187,
+        "startOffset": 4,
+        "endOffset": 6
+      },
+      "flows": [],
+      "status": "OPEN",
+      "message": "Remove this unnecessary variable declaration and use the expression directly in the condition.",
+      "effort": "5min",
+      "debt": "5min",
+      "assignee": "OriNachum-g2k3F@github",
+      "tags": [
+        "go-idiom",
+        "readability"
+      ],
+      "creationDate": "2026-08-11T20:46:51+0000",
+      "updateDate": "2026-08-11T20:47:30+0000",
+      "type": "CODE_SMELL",
+      "organization": "agentculture",
+      "cleanCodeAttribute": "CLEAR",
+      "cleanCodeAttributeCategory": "INTENTIONAL",
+      "impacts": [
+        {
+          "softwareQuality": "MAINTAINABILITY",
+          "severity": "LOW"
+        }
+      ],
+      "issueStatus": "OPEN",
+      "projectName": "culture-nodes",
+      "internalTags": [],
+      "lastChangeAnalysisUuid": "548ffbda-869e-4156-93a5-0d47ca5e8bbe",
+      "lastChangeSource": "ANALYSIS"
+    }
+  ],
+  "components": [
+    {
+      "organization": "agentculture",
+      "key": "agentculture_culture-nodes:culture_nodes/cli/_commands/node_runs.py",
+      "uuid": "AZ_mI4FkLvtD4aNifAiS",
+      "enabled": true,
+      "qualifier": "FIL",
+      "name": "node_runs.py",
+      "longName": "culture_nodes/cli/_commands/node_runs.py",
+      "path": "culture_nodes/cli/_commands/node_runs.py"
+    },
+    {
+      "organization": "agentculture",
+      "key": "agentculture_culture-nodes",
+      "uuid": "AZ_iSOQ30oEqygZ54y3g",
+      "enabled": true,
+      "qualifier": "TRK",
+      "name": "culture-nodes",
+      "longName": "culture-nodes"
+    },
+    {
+      "organization": "agentculture",
+      "key": "agentculture_culture-nodes:tests/deploy/codexsmoke_test.go",
+      "uuid": "AZ_ylReCSzsUlYvt6t2X",
+      "enabled": true,
+      "qualifier": "UTS",
+      "name": "codexsmoke_test.go",
+      "longName": "tests/deploy/codexsmoke_test.go",
+      "path": "tests/deploy/codexsmoke_test.go"
+    },
+    {
+      "organization": "agentculture",
+      "key": "agentculture_culture-nodes:tests/deploy/codexworkerenv_test.go",
+      "uuid": "AZ_ylReCSzsUlYvt6t2a",
+      "enabled": true,
+      "qualifier": "UTS",
+      "name": "codexworkerenv_test.go",
+      "longName": "tests/deploy/codexworkerenv_test.go",
+      "path": "tests/deploy/codexworkerenv_test.go"
+    },
+    {
+      "organization": "agentculture",
+      "key": "agentculture_culture-nodes:tests/deploy/registeractor_test.go",
+      "uuid": "AZ_ylReCSzsUlYvt6t2b",
+      "enabled": true,
+      "qualifier": "UTS",
+      "name": "registeractor_test.go",
+      "longName": "tests/deploy/registeractor_test.go",
+      "path": "tests/deploy/registeractor_test.go"
+    }
+  ],
+  "organizations": [
+    {
+      "key": "agentculture",
+      "name": "agentculture"
+    }
+  ],
+  "facets": []
+}

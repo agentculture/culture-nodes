@@ -17,7 +17,7 @@ config:
   # and binding-surface placeholders like /nodes/<id>/evidence read as HTML
   # elements. Allow exactly those placeholder tokens, nothing else.
   MD033:
-    allowed_elements: ["id", "node"]
+    allowed_elements: ["id", "node", "name"]
 
 ignores:
   - "node_modules/**"

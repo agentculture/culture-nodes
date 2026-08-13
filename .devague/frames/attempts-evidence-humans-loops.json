@@ -4,7 +4,7 @@
   "schema_version": 5,
   "status": "exported",
   "created": "2026-08-13T04:39:50Z",
-  "updated": "2026-08-13T05:09:35Z",
+  "updated": "2026-08-13T05:17:53Z",
   "claims": [
     {
       "id": "c1",
@@ -116,7 +116,7 @@
     {
       "id": "c7",
       "kind": "requirement",
-      "text": "Issue 33a: give workspace_measured a landing surface \u2014 InvocationResult, CompletedPayload and FailedPayload (protocol.go:124,238,250) all silently drop it today while every bridge attaches it on every sync and terminal branch (adapters/*/src/*_bridge/workspace.py measures via git the bridge itself ran); the independent-review README recommends folding it into the nodes/<id>/output answer since agent nodes cannot hold observe authority; web UI already anticipates a diffstat on evidence (web/src/domain/evidence.ts:13-25)",
+      "text": "Issue 33a: give workspace_measured a landing surface \u2014 InvocationResult, CompletedPayload and FailedPayload (protocol.go:124,238,250) all silently drop it today while every bridge attaches it on every sync and terminal branch (the bridge workspace.py measures via git the bridge itself ran); the independent-review README recommends folding it into the `/nodes/<id>/output` answer since agent nodes cannot hold observe authority; web UI already anticipates a diffstat on evidence (web/src/domain/evidence.ts:13-25)",
       "origin": "llm",
       "status": "confirmed",
       "honesty_conditions": [
@@ -129,27 +129,45 @@
       ],
       "hard_questions": [],
       "links": [],
-      "instruction": "Add a typed workspace_measured field to InvocationResult, CompletedPayload, and FailedPayload; fold it into the node's persisted output on completion so downstream nodes bind it via /nodes/<id>/output; render the unmeasured case as unmeasured; extend the runner-conformance fixtures so all three backends round-trip it",
-      "revisions": []
+      "instruction": "Add a typed workspace_measured field to InvocationResult, CompletedPayload, and FailedPayload; fold it into the node's persisted output on completion so downstream nodes bind it via `/nodes/<id>/output`; render the unmeasured case as unmeasured; extend the runner-conformance fixtures so all three backends round-trip it",
+      "revisions": [
+        {
+          "text": "Issue 33a: give workspace_measured a landing surface \u2014 InvocationResult, CompletedPayload and FailedPayload (protocol.go:124,238,250) all silently drop it today while every bridge attaches it on every sync and terminal branch (adapters/*/src/*_bridge/workspace.py measures via git the bridge itself ran); the independent-review README recommends folding it into the nodes/<id>/output answer since agent nodes cannot hold observe authority; web UI already anticipates a diffstat on evidence (web/src/domain/evidence.ts:13-25)",
+          "kind": "requirement",
+          "reason": ""
+        }
+      ]
     },
     {
       "id": "c8",
       "kind": "requirement",
-      "text": "Issue 33b: resolve the /nodes/<id>/evidence binding \u2014 the compiler accepts it (internal/compiler/contract.go:14-31) but the worker refuses at bindings.go:133-137 and the engine at binding.go:45; the fix needs node-run-scoped evidence selection and flips the TestUnresolvableBindingsFailLoudly assertion (bindings_test.go:127)",
+      "text": "Issue 33b: resolve the `/nodes/<id>/evidence` binding \u2014 the compiler accepts it (internal/compiler/contract.go:14-31) but the worker refuses at bindings.go:133-137 and the engine at binding.go:45; the fix needs node-run-scoped evidence selection and flips the TestUnresolvableBindingsFailLoudly assertion (bindings_test.go:127)",
       "origin": "llm",
       "status": "confirmed",
       "honesty_conditions": [
         {
           "id": "h7",
           "text": "A downstream node binding /nodes/<id>/evidence receives exactly that node's evidence records, and the compile-clean-but-fail-at-dispatch trap closes: compiler-accepted binding surfaces and resolver-supported surfaces agree by test",
+          "status": "rejected",
+          "instruction": ""
+        },
+        {
+          "id": "h25",
+          "text": "A downstream node binding `/nodes/<id>/evidence` receives exactly that node's evidence records, and the compile-clean-but-fail-at-dispatch trap closes: compiler-accepted binding surfaces and resolver-supported surfaces agree by test",
           "status": "confirmed",
           "instruction": ""
         }
       ],
       "hard_questions": [],
       "links": [],
-      "instruction": "Implement a node-run-scoped evidence selector (join node_runs on run_id + node_key; node_run_id is a stored ledger column); resolve /nodes/<id>/evidence in both the worker and engine resolvers; flip the TestUnresolvableBindingsFailLoudly expectation and add a test that compiler-accepted and resolver-supported surfaces agree",
-      "revisions": []
+      "instruction": "Implement a node-run-scoped evidence selector (join node_runs on run_id + node_key; node_run_id is a stored ledger column); resolve `/nodes/<id>/evidence` in both the worker and engine resolvers; flip the TestUnresolvableBindingsFailLoudly expectation and add a test that compiler-accepted and resolver-supported surfaces agree",
+      "revisions": [
+        {
+          "text": "Issue 33b: resolve the /nodes/<id>/evidence binding \u2014 the compiler accepts it (internal/compiler/contract.go:14-31) but the worker refuses at bindings.go:133-137 and the engine at binding.go:45; the fix needs node-run-scoped evidence selection and flips the TestUnresolvableBindingsFailLoudly assertion (bindings_test.go:127)",
+          "kind": "requirement",
+          "reason": ""
+        }
+      ]
     },
     {
       "id": "c9",

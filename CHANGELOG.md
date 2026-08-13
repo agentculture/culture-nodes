@@ -5,6 +5,17 @@ All notable changes to this project will be documented in this file.
 Format follows [Keep a Changelog](https://keepachangelog.com/). This project
 adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.13.5] - 2026-08-13
+
+### Fixed
+
+- `TestCodexWorkerEnvInProdCompose` refactored below the cognitive-complexity
+  ceiling (SonarCloud CRITICAL go:S3776, 20 > 15): the per-compose-file
+  read/parse/assert body moved out of the nested `t.Run` closure into a
+  top-level `assertWorkerEnvHasKeys` `t.Helper()`, same shape as the 0.13.4
+  codexsmoke fix. Behaviour-identical; PR-upkeep sweep item 1 of 2
+  (run 01KZXFFDZC7NF56HSS6DSWY5XN).
+
 ## [0.13.4] - 2026-08-13
 
 ### Fixed

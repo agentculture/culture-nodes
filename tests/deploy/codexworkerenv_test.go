@@ -44,30 +44,37 @@ func TestCodexWorkerEnvInProdCompose(t *testing.T) {
 
 	for _, composeFile := range composeFiles {
 		t.Run(filepath.Base(composeFile), func(t *testing.T) {
-			raw, err := os.ReadFile(composeFile)
-			if err != nil {
-				t.Fatalf("read %s: %v", composeFile, err)
-			}
-			var doc prodComposeFile
-			if err := yaml.Unmarshal(raw, &doc); err != nil {
-				t.Fatalf("parse %s: %v", composeFile, err)
-			}
-
-			worker, ok := doc.Services["worker"]
-			if !ok {
-				t.Fatalf("%s: expected a \"worker\" service, found none", composeFile)
-			}
-
-			if len(worker.Environment) == 0 {
-				t.Fatalf("%s: worker service has no environment variables", composeFile)
-			}
-
-			for _, envVar := range requiredEnvVars {
-				if _, exists := worker.Environment[envVar]; !exists {
-					t.Errorf("%s: worker environment missing %q (required key not found)", composeFile, envVar)
-				}
-			}
+			assertWorkerEnvHasKeys(t, composeFile, requiredEnvVars)
 		})
+	}
+}
+
+// assertWorkerEnvHasKeys parses one prod compose file and asserts its
+// "worker" service's environment block carries every required key.
+func assertWorkerEnvHasKeys(t *testing.T, composeFile string, requiredEnvVars []string) {
+	t.Helper()
+	raw, err := os.ReadFile(composeFile)
+	if err != nil {
+		t.Fatalf("read %s: %v", composeFile, err)
+	}
+	var doc prodComposeFile
+	if err := yaml.Unmarshal(raw, &doc); err != nil {
+		t.Fatalf("parse %s: %v", composeFile, err)
+	}
+
+	worker, ok := doc.Services["worker"]
+	if !ok {
+		t.Fatalf("%s: expected a \"worker\" service, found none", composeFile)
+	}
+
+	if len(worker.Environment) == 0 {
+		t.Fatalf("%s: worker service has no environment variables", composeFile)
+	}
+
+	for _, envVar := range requiredEnvVars {
+		if _, exists := worker.Environment[envVar]; !exists {
+			t.Errorf("%s: worker environment missing %q (required key not found)", composeFile, envVar)
+		}
 	}
 }
 

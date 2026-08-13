@@ -80,6 +80,16 @@ const (
 	CodePolicyImageUnpinned     = "policy.image_unpinned"
 	CodePolicyShellRequested    = "policy.shell_requested"
 
+	// Parallel/join (issue #43, parallel-tokens design §8).
+	CodeGraphParallelNoSplitEdge   = "graph.parallel_without_split_edge"
+	CodeGraphJoinNoIncomingEdge    = "graph.join_without_incoming_edge"
+	CodeGraphEndInsideSplit        = "graph.end_inside_split"
+	CodeGraphJoinOutsideSplit      = "graph.join_outside_split"
+	CodeContractJoinPolicyMissing  = "contract.join_policy_missing"
+	CodeContractJoinPolicyInvalid  = "contract.join_policy_invalid"
+	CodeContractJoinMisplaced      = "contract.join_on_non_join_node"
+	CodeContractRouterWithContract = "contract.router_with_contract"
+
 	// Hooks (task t14, spec claim c37).
 	CodeHookKindNotAgent      = "hook.kind_not_agent"
 	CodeHookOutcomeUndeclared = "hook.on_failure_outcome_undeclared"

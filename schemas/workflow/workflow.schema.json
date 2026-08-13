@@ -227,7 +227,7 @@
       "properties": {
         "kind": {
           "type": "string",
-          "description": "MVP node kinds (PRD §9.2). `action.container`, `transform.wasm`, `parallel`, `join`, `foreach`, `subworkflow`, and `event` are named in the PRD as later work and are deliberately absent from this enum.",
+          "description": "Node kinds (PRD §9.2, §9.8). `parallel` and `join` are the split/barrier routers (issue #43): a parallel node fans out one token per eligible `<node>.split` edge, and a join node reconvenes the sibling set under its declared policy. `action.container`, `transform.wasm`, `foreach`, `subworkflow`, and `event` are named in the PRD as later work and are deliberately absent from this enum.",
           "enum": [
             "agent",
             "code",
@@ -235,6 +235,8 @@
             "decision",
             "approval",
             "wait",
+            "parallel",
+            "join",
             "end"
           ]
         },
@@ -303,6 +305,9 @@
               }
             }
           }
+        },
+        "join": {
+          "$ref": "#/$defs/joinConfig"
         },
         "until": {
           "type": "object",
@@ -404,8 +409,47 @@
               "output"
             ]
           }
+        },
+        {
+          "if": {
+            "properties": {
+              "kind": {
+                "const": "join"
+              }
+            },
+            "required": [
+              "kind"
+            ]
+          },
+          "then": {
+            "required": [
+              "join"
+            ]
+          }
         }
       ]
+    },
+    "joinConfig": {
+      "type": "object",
+      "description": "A join node's barrier policy (PRD §9.8, issue #43). The sibling set the barrier counts against is discovered at split time (token_groups.cardinality), never declared here. `first_success` is deliberately not in this enum: domain outcomes carry no success/failure typing (PRD §3.4), so \"first success\" has no honest meaning yet — a recorded PRD deviation, see the parallel-tokens design §10.",
+      "required": [
+        "policy"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "policy": {
+          "enum": [
+            "all",
+            "any",
+            "quorum"
+          ]
+        },
+        "quorum": {
+          "type": "integer",
+          "minimum": 1,
+          "description": "Required iff policy is `quorum` (a compiler check); how many arrivals fire the barrier."
+        }
+      }
     },
     "nodeContract": {
       "type": "object",

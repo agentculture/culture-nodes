@@ -455,7 +455,7 @@ func (d *humanTaskDecision) transition(ctx context.Context, outcome string, stat
 		return d.failBound(ctx, plan.Bound, transitions)
 	case plan.Complete:
 		return d.completeRun(ctx, d.nodeRun.NodeID, transitions)
-	case plan.Edge == nil:
+	case len(plan.Targets) == 0:
 		return d.failRun(ctx, state, plan.Diagnostic)
 	default:
 		return d.advance(ctx, plan, transitions, visits)
@@ -467,21 +467,40 @@ func (d *humanTaskDecision) transition(ctx context.Context, outcome string, stat
 // approval node's decision may itself route straight into a further human
 // task, and that is not a special case here).
 func (d *humanTaskDecision) advance(ctx context.Context, plan transitionPlan, transitions int, visits map[string]int) error {
-	next := d.wf.Nodes[plan.NextNodeID]
+	target := plan.Targets[0] // an approval node is never a parallel node, so the plan is singular
+	next := d.wf.Nodes[target.NextNodeID]
 	if next == nil {
 		return &WorkflowError{
 			Digest: d.wf.Digest,
-			Detail: fmt.Sprintf("edge %q targets node %q, which the pinned definition does not declare", plan.Edge.From, plan.NextNodeID),
+			Detail: fmt.Sprintf("edge %q targets node %q, which the pinned definition does not declare", target.Edge.From, target.NextNodeID),
 		}
+	}
+	if next.Kind == kindJoin {
+		// The join-arrival path lives on the completion transaction
+		// (parallel.go); this human-decision slice does not implement it,
+		// and the compiler refuses approval-outcome edges into a join
+		// (graph.approval_into_join) so authored workflows cannot get here.
+		// This guard keeps a hand-built IR loud instead of corrupting a
+		// barrier with a non-arrival node run.
+		return d.failRun(ctx, d.result.NodeRunState, fmt.Sprintf(
+			"approval node %q routed directly into join node %q, which the human-decision path does not support; route the decision through an intermediate node", d.nodeRun.NodeID, next.ID))
+	}
+
+	// Group propagation (parallel-tokens design §3.3): an approval node
+	// inside a split branch keeps its branch in the group.
+	sourceToken, err := d.tx.Token(ctx, d.nodeRun.TokenID)
+	if err != nil {
+		return err
 	}
 
 	token := Token{
 		ID:            d.engine.newID(),
 		NamespaceID:   d.run.NamespaceID,
 		RunID:         d.run.ID,
-		NodeID:        plan.NextNodeID,
+		NodeID:        target.NextNodeID,
 		State:         TokenActive,
 		ParentTokenID: d.nodeRun.TokenID,
+		GroupID:       sourceToken.GroupID,
 		CreatedAt:     d.now,
 	}
 	if err := d.tx.InsertToken(ctx, token); err != nil {
@@ -493,9 +512,9 @@ func (d *humanTaskDecision) advance(ctx context.Context, plan transitionPlan, tr
 		NamespaceID: d.run.NamespaceID,
 		RunID:       d.run.ID,
 		TokenID:     token.ID,
-		NodeID:      plan.NextNodeID,
+		NodeID:      target.NextNodeID,
 		State:       dispatchState(next.Kind),
-		VisitCount:  visits[plan.NextNodeID] + 1,
+		VisitCount:  visits[target.NextNodeID] + 1,
 		CreatedAt:   d.now,
 		UpdatedAt:   d.now,
 	}
@@ -505,7 +524,7 @@ func (d *humanTaskDecision) advance(ctx context.Context, plan transitionPlan, tr
 
 	d.result.NextNodeID = nodeRun.NodeID
 	d.result.NextNodeRunID = nodeRun.ID
-	d.result.EdgeFrom = plan.Edge.From
+	d.result.EdgeFrom = target.Edge.From
 	d.result.Transitions = transitions + 1
 
 	if err := d.emit(ctx, TypeTokenTransitioned, map[string]any{
@@ -513,9 +532,9 @@ func (d *humanTaskDecision) advance(ctx context.Context, plan transitionPlan, tr
 		"node_run_id":   nodeRun.ID,
 		"from_node":     d.nodeRun.NodeID,
 		"to_node":       nodeRun.NodeID,
-		"outcome":       plan.Edge.FromOutcome,
-		"edge":          plan.Edge.From,
-		"guard":         plan.Edge.When,
+		"outcome":       target.Edge.FromOutcome,
+		"edge":          target.Edge.From,
+		"guard":         target.Edge.When,
 		"from_token_id": d.nodeRun.TokenID,
 		"token_id":      token.ID,
 		"transition":    transitions + 1,

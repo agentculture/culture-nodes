@@ -67,6 +67,9 @@ type nodeSpec struct {
 	ApproverRef string
 	// Until is a wait node's resume condition, carried verbatim.
 	Until json.RawMessage
+	// JoinPolicy is a join node's barrier policy (all | any | quorum),
+	// echoed into the joined output so downstream guards can read it.
+	JoinPolicy string
 	// PreRun/PostRun are the node's declared code hooks (task t14, spec claim
 	// c37), nil when the node declares neither. The compiler's checkNodeHooks
 	// already refused any node but an agent from declaring one, so the worker
@@ -189,7 +192,10 @@ type irNode struct {
 	ApproverRef string          `json:"approverRef"`
 	Deadline    string          `json:"deadline"`
 	Until       json.RawMessage `json:"until"`
-	Policy      *struct {
+	Join        *struct {
+		Policy string `json:"policy"`
+	} `json:"join"`
+	Policy *struct {
 		Timeout string `json:"timeout"`
 	} `json:"policy"`
 	PreRun *struct {
@@ -238,6 +244,9 @@ func decodeNode(id string, raw *irNode) (*nodeSpec, error) {
 		ApproverRef: raw.ApproverRef,
 		Until:       raw.Until,
 		Acceptance:  raw.Acceptance,
+	}
+	if raw.Join != nil {
+		node.JoinPolicy = raw.Join.Policy
 	}
 	if raw.PreRun != nil {
 		node.PreRun = &hookSpec{Operation: raw.PreRun.Operation}

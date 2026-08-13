@@ -43,14 +43,20 @@
 // step-by-step mapping to §12.5's numbered list, and internal/engine.Tx for
 // the surface that transaction spans.
 //
-// # What this slice does not do yet
+// # Parallel tokens
 //
-// Sequential execution only. A run has exactly one active token, and no path
-// here splits or joins one, so a workflow that declares
-// limits.maxParallelTokens above 1 still runs sequentially — the limit is
-// read and carried, not yet honored. Tokens are nonetheless first-class rows
-// with parent links, because §9.8's split and join model needs them to be and
-// a token that only existed implicitly could not later be forked.
+// A run may hold several active tokens (§9.8, issue #43): a `parallel` node's
+// completion fans one token out per eligible `split` edge under a recorded
+// token group, and a `join` node is a barrier that reconvenes the group —
+// arrivals counted race-free under the run's advisory lock, the sibling set
+// discovered at split time, losers of an any/quorum barrier reaped
+// explicitly. limits.maxParallelTokens is honored at fan-out: a split that
+// would exceed it is refused whole as a bound failure. See parallel.go and
+// docs/design/2026-08-13-parallel-tokens-full.md. A workflow without
+// parallel nodes still runs exactly one token at a time, byte-identically to
+// the sequential engine this grew from.
+//
+// # What this slice does not do yet
 //
 // The engine does not build actor invocation payloads: it enqueues work
 // referencing a node run, and resolving a node's input bindings into a

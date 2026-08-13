@@ -406,6 +406,10 @@ func (w *Worker) dispatch(ctx context.Context, claimed postgres.ClaimedWork) err
 			}
 			return w.opts.Waiter.DispatchWait(ctx, dc, node.Until)
 		})
+	case kindParallel:
+		return w.dispatchParallel(ctx, claimed)
+	case kindJoin:
+		return w.dispatchJoin(ctx, claimed, node, dc)
 	case kindEnd:
 		// An end node produces the workflow result inside the engine's own
 		// transition transaction and is never enqueued. Reaching one here
@@ -430,6 +434,8 @@ const (
 	kindDecision   = "decision"
 	kindApproval   = "approval"
 	kindWait       = "wait"
+	kindParallel   = "parallel"
+	kindJoin       = "join"
 	kindEnd        = "end"
 )
 

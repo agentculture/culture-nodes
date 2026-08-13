@@ -197,6 +197,16 @@ deploy_human_inbox() { # host
   say "ensuring uv on $host (human-inbox lane)"
   ssh "$host" 'bash -lc "command -v uv >/dev/null || curl -LsSf https://astral.sh/uv/install.sh | sh"'
 
+  # Resolve uv's REAL absolute path on the target and substitute it into the
+  # units at install time. Found live on thor: uv was already on PATH at
+  # /snap/bin/uv, so the ensure-step above correctly did nothing — and the
+  # units, which hardcoded %h/.local/bin/uv, then died with 203/EXEC. A
+  # systemd ExecStart takes no PATH lookup, so the unit must carry the path
+  # the host actually has, not the one the installer would have created.
+  UV_BIN=$(ssh "$host" 'bash -lc "command -v uv"' | tr -d '\r')
+  [ -n "$UV_BIN" ] || { echo "uv not found on $host after the ensure step" >&2; return 1; }
+  say "human-inbox units will exec uv at $UV_BIN on $host"
+
   say "installing human-inbox non-secret config on $host"
   # Same generate-absolute-paths-at-install-time technique runner.env and
   # codex-bridge.json use: $HOME expands on the TARGET, so
@@ -215,7 +225,7 @@ deploy_human_inbox() { # host
 
   say "installing human-inbox-bridge systemd user unit on $host"
   ssh "$host" "loginctl enable-linger \$(id -un) 2>/dev/null || true"
-  ssh "$host" "export XDG_RUNTIME_DIR=/run/user/\$(id -u); mkdir -p ~/.config/systemd/user && cp $REMOTE_DIR/deploy/prod/human-inbox-bridge.service ~/.config/systemd/user/ && systemctl --user daemon-reload && systemctl --user restart human-inbox-bridge && systemctl --user enable human-inbox-bridge"
+  ssh "$host" "export XDG_RUNTIME_DIR=/run/user/\$(id -u); mkdir -p ~/.config/systemd/user && sed \"s#%h/.local/bin/uv#$UV_BIN#\" $REMOTE_DIR/deploy/prod/human-inbox-bridge.service > ~/.config/systemd/user/human-inbox-bridge.service && systemctl --user daemon-reload && systemctl --user restart human-inbox-bridge && systemctl --user enable human-inbox-bridge"
   ssh "$host" 'export XDG_RUNTIME_DIR=/run/user/$(id -u); for i in $(seq 1 15); do st=$(systemctl --user is-active human-inbox-bridge || true); [ "$st" = active ] && { echo "human-inbox-bridge: active"; exit 0; }; sleep 2; done; echo "human-inbox-bridge failed to become active:"; systemctl --user --no-pager -n 10 status human-inbox-bridge; exit 1'
 
   # GITHUB_TOKEN is an externally issued credential install-secrets.sh
@@ -224,7 +234,7 @@ deploy_human_inbox() { # host
   # crash loop. Manual submission through the bridge works either way.
   if ssh "$host" 'grep -q "^GITHUB_TOKEN=." ~/.culture-nodes/human-inbox.env 2>/dev/null'; then
     say "installing human-inbox-tracker systemd user unit on $host"
-    ssh "$host" "export XDG_RUNTIME_DIR=/run/user/\$(id -u); mkdir -p ~/.config/systemd/user && cp $REMOTE_DIR/deploy/prod/human-inbox-tracker.service ~/.config/systemd/user/ && systemctl --user daemon-reload && systemctl --user restart human-inbox-tracker && systemctl --user enable human-inbox-tracker"
+    ssh "$host" "export XDG_RUNTIME_DIR=/run/user/\$(id -u); mkdir -p ~/.config/systemd/user && sed \"s#%h/.local/bin/uv#$UV_BIN#\" $REMOTE_DIR/deploy/prod/human-inbox-tracker.service > ~/.config/systemd/user/human-inbox-tracker.service && systemctl --user daemon-reload && systemctl --user restart human-inbox-tracker && systemctl --user enable human-inbox-tracker"
     ssh "$host" 'export XDG_RUNTIME_DIR=/run/user/$(id -u); for i in $(seq 1 15); do st=$(systemctl --user is-active human-inbox-tracker || true); [ "$st" = active ] && { echo "human-inbox-tracker: active"; exit 0; }; sleep 2; done; echo "human-inbox-tracker failed to become active:"; systemctl --user --no-pager -n 10 status human-inbox-tracker; exit 1'
   else
     say "WARNING: GITHUB_TOKEN not installed in ~/.culture-nodes/human-inbox.env on $host — skipping human-inbox-tracker unit (manual submission through the bridge still works; re-run install-secrets.sh with GITHUB_TOKEN set, then deploy.sh again, to enable auto-submit-on-merge)"

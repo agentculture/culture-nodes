@@ -53,12 +53,16 @@
 // asynchronous runner-service path (runnerasync.go) taken when the registry
 // resolves the node to a ServiceIdentity — dispatch, park as
 // waiting_external, and commit on a later authenticated status sample.
-// `wait` nodes still need durable wait semantics (§12.7) a later task owns,
-// with the pending WaitDispatcher extension point in seams.go. In every
-// unconfigured case the attempt fails with a diagnostic that names the
-// missing capability (seamRemedy) rather than silently succeeding or
-// silently hanging. A node kind that cannot be executed is an honest
-// failure, not an outcome.
+// `wait` nodes execute through the timer-backed TimerWaitDispatcher
+// (wait.go), wired in by New whenever Options.Waiter is nil: until.duration
+// and until.timestamp park the work item leaselessly on a durable §12.7 wait
+// timer the scheduler fires, and the resumed dispatch completes the node
+// through the ordinary §12.5 path so loop bounds hold across the park;
+// until.signal is an explicit, diagnosed refusal until the event surface
+// lands (build plan t10). In every unconfigured case the attempt fails with
+// a diagnostic that names the missing capability (seamRemedy) rather than
+// silently succeeding or silently hanging. A node kind that cannot be
+// executed is an honest failure, not an outcome.
 //
 // `approval` nodes are not in that category, even though a HumanDispatcher
 // seam exists in seams.go too. The human-task surface (§9.9) is not

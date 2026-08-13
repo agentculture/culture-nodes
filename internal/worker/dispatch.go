@@ -465,10 +465,17 @@ func (w *Worker) dispatchSeam(
 	}
 
 	if result.Async {
-		// A seam that took ownership parks the work item exactly as a §13.3
-		// acceptance does: same durable record, same fencing tuple, same
-		// released capacity. The seam's own handle stands in for the actor's
-		// invocation id.
+		// A wait seam's async answer parks on a durable TIMER, not on an
+		// actor invocation: there is no external party to record, no
+		// callback to fence, and — critically — no deadline timer, because a
+		// wait must be allowed to be away for exactly its declared time.
+		if kind == kindWait {
+			return w.parkWait(ctx, claimed, d, dc, result)
+		}
+		// Any other seam that took ownership parks the work item exactly as
+		// a §13.3 acceptance does: same durable record, same fencing tuple,
+		// same released capacity. The seam's own handle stands in for the
+		// actor's invocation id.
 		// Seam dispatches (code/runner paths) attribute at their own
 		// completion sites; no actor row resolution happened here, so
 		// dc.ActorRowID is still "" and park records no attribution.
@@ -515,7 +522,9 @@ func seamRemedy(kind string) string {
 		return "configure Options.Human; approval nodes are otherwise resolved engine-side and never " +
 			"reach this dispatcher"
 	case kindWait:
-		return "configure Options.Waiter; durable wait dispatch has no default implementation"
+		return "durable wait dispatch defaults to the timer-backed dispatcher (worker.New wires " +
+			"TimerWaitDispatcher when Options.Waiter is nil), so this branch should be unreachable; " +
+			"a custom build that cleared the seam after construction must restore it"
 	default:
 		return "no dispatcher is registered for this kind"
 	}

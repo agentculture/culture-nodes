@@ -425,6 +425,25 @@ func (s *Server) cancelRun(ctx context.Context, runID string) (engine.Run, error
 	); err != nil {
 		return engine.Run{}, internalError(fmt.Errorf("cancel run: cancel work items: %w", err))
 	}
+	// REAP the run's pending timers alongside its work items (task t9,
+	// issue #39). A durable-wait park (Store.StartDurableWait) leaves a
+	// pending wait timer as the only thing that will ever wake the parked
+	// work item; cancelling the item without retiring the timer would leave
+	// a firing timer flipping a dead run's rows around (the wait/retry
+	// effect's UPDATE targets `state <> 'completed'`, which a 'cancelled'
+	// row satisfies). Retiring every pending timer bound to the run — wait,
+	// retry, and deadline alike — is correct for all three kinds: the run is
+	// terminal, so there is nothing any of them could still legitimately do,
+	// and CancelTimer's own convention (timers.go) already treats retiring
+	// the retired as a no-op. The 'canceled' spelling (one l) is the timers
+	// table's own status vocabulary (postgres.TimerStatusCanceled), distinct
+	// from the run-state 'cancelled' above.
+	if _, err := tx.Exec(ctx, `
+		UPDATE timers SET status = 'canceled'
+		WHERE run_id = $1 AND status = 'pending'`, runID,
+	); err != nil {
+		return engine.Run{}, internalError(fmt.Errorf("cancel run: cancel timers: %w", err))
+	}
 
 	var sequence int64
 	if err := tx.QueryRow(ctx,

@@ -1,0 +1,48 @@
+# A minimal wait workflow: one wait node on a long until.duration, one end
+# node. Compiles clean; internal/api's cancel tests use it to park a run on
+# a durable wait timer and prove POST /runs/{id}/cancel reaps the timer
+# along with the work item (task t9, issue #39).
+apiVersion: nodes.culture.dev/v1alpha1
+kind: Workflow
+
+metadata:
+  name: wait-minimal
+  version: 1.0.0
+  ownerRef: team/platform-ai
+
+spec:
+  entry: pause
+
+  contract:
+    input:
+      schema:
+        type: object
+    output:
+      schema: {}
+
+  limits:
+    maxDuration: 24h
+    maxTransitions: 8
+    maxVisitsPerNode: 4
+    maxParallelTokens: 1
+
+  ledger:
+    schemaVersion: nodes.culture.dev/ledger/v1alpha1
+    maxRecordsPerNode: 10
+
+  nodes:
+    pause:
+      kind: wait
+      ownerRef: team/platform-ai
+      until:
+        duration: 1h
+
+    finish:
+      kind: end
+      ownerRef: team/platform-ai
+      output:
+        from: /run/input
+
+  edges:
+    - from: pause.completed
+      to: finish

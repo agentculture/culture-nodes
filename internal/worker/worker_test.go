@@ -601,10 +601,12 @@ func TestWorkerRefusesToDispatchAnUnresolvableBinding(t *testing.T) {
 // an already-dispatched node's pinned kind — see
 // TestApprovalWorkItemThatSomehowExistsIsRefusedNotProcessed in
 // approval_invariant_test.go for the same refusal proven against a real
-// approval node's own node run). For `code` and `wait` this diagnostic is a
-// temporary gap later tasks close; for `approval` it is the permanent,
-// correct behaviour, because no approval work item legitimately reaches the
-// worker at all (see seams.go's HumanDispatcher doc comment).
+// approval node's own node run). For `code` this diagnostic is what an
+// unconfigured deployment sees; `wait` no longer reaches it at all (New
+// wires the timer-backed dispatcher by default — see wait.go); for
+// `approval` it is the permanent, correct behaviour, because no approval
+// work item legitimately reaches the worker at all (see seams.go's
+// HumanDispatcher doc comment).
 func TestUnwiredKindsFailWithADiagnosticRatherThanSucceeding(t *testing.T) {
 	h := newHarness(t, func(_ *harness, w http.ResponseWriter, _ actors.InvocationRequest) {
 		writeSyncResult(w, "completed", `{"summary":"x"}`)

@@ -29,6 +29,11 @@ from typing import Any, Callable
 from human_inbox_bridge.config import Config, ConfigError
 from human_inbox_bridge.store import STATUS_PENDING, HumanTask, TaskStore
 
+try:
+    from human_inbox_bridge import nudge as _nudge_mod  # noqa: F401
+except ImportError:
+    _nudge_mod = None  # type: ignore[assignment]
+
 logger = logging.getLogger("human_inbox_bridge.tracker")
 
 GITHUB_API = "https://api.github.com"
@@ -50,6 +55,12 @@ class TrackerConfig:
     poll_seconds: float = 60.0
     github_request_budget: int = 50
     http_timeout_seconds: float = 30.0
+    # Nudge transport settings (all optional; absent means nudging is disabled).
+    nudge_channel_id: str = ""
+    nudge_bot_token: str = ""
+    nudge_interval_seconds: float = 300.0
+    nudge_global_throttle_seconds: float = 10.0
+    nudge_escalation_after_seconds: float = 600.0
 
     @classmethod
     def from_env(cls, env: dict[str, str] | None = None) -> "TrackerConfig":
@@ -101,6 +112,17 @@ class TrackerConfig:
             poll_seconds=poll_seconds,
             github_request_budget=request_budget,
             http_timeout_seconds=timeout_seconds,
+            # Nudge transport (opt-in: all four DISCORD_NUDGE_* vars must be
+            # present for nudging to be enabled).
+            nudge_channel_id=env.get("DISCORD_NUDGE_CHANNEL_ID", "").strip(),
+            nudge_bot_token=env.get("DISCORD_NUDGE_BOT_TOKEN", "").strip(),
+            nudge_interval_seconds=_float_env(env, "DISCORD_NUDGE_INTERVAL_SECONDS", 300.0),
+            nudge_global_throttle_seconds=_float_env(
+                env, "DISCORD_NUDGE_GLOBAL_THROTTLE_SECONDS", 10.0
+            ),
+            nudge_escalation_after_seconds=_float_env(
+                env, "DISCORD_NUDGE_ESCALATION_AFTER_SECONDS", 600.0
+            ),
         )
 
 
@@ -220,6 +242,7 @@ class MergeTracker:
         *,
         github_fetch: GithubFetch = fetch_github_pull,
         bridge_submit: BridgeSubmit = submit_observation,
+        nudge_cfg: object | None = None,
     ) -> None:
         self.cfg = cfg
         # The tracker is a reader of bridge-owned task files. In particular,
@@ -228,6 +251,7 @@ class MergeTracker:
         self.store = TaskStore(cfg.state_dir, create=False)
         self.github_fetch = github_fetch
         self.bridge_submit = bridge_submit
+        self.nudge_cfg = nudge_cfg
 
     def run_cycle(self) -> CycleResult:
         pending = self.store.list(status=STATUS_PENDING)
@@ -302,6 +326,12 @@ class MergeTracker:
                 "GitHub request budget exhausted after %d request(s); remaining tasks wait",
                 github_requests,
             )
+
+        # Nudge cycle — runs after merge observation so it never blocks the
+        # main path.  Idempotent: nudges are deduplicated by thread_id and
+        # last_nudge_at timestamps.
+        self._run_nudge_cycle(pending)
+
         return CycleResult(
             pending_tasks=len(pending),
             eligible_tasks=eligible,
@@ -321,6 +351,198 @@ class MergeTracker:
                 result.submissions,
             )
             time.sleep(self.cfg.poll_seconds)
+
+    def _run_nudge_cycle(self, pending: list[HumanTask]) -> None:
+        """Run the nudge cadence for pending tasks that have nudge transport.
+
+        This method is idempotent and never blocks the main merge observation
+        path.  It is a no-op when ``nudge_cfg`` is None or the nudge module
+        is not available.
+        """
+        if self.nudge_cfg is None or _nudge_mod is None:
+            return
+
+        now = time.time()
+        last_global_nudge = getattr(self, "_last_nudge_wall", 0.0)
+
+        for task in pending:
+            # Skip tasks already completed by the merge observation path.
+            if task.status != STATUS_PENDING:
+                continue
+
+            nudge_state = task.nudge_state
+            if nudge_state is None:
+                # First nudge for this task — create a thread.
+                try:
+                    result = _nudge_mod.first_nudge(
+                        channel_id=self.cfg.nudge_channel_id,
+                        bot_token=self.cfg.nudge_bot_token,
+                        instruction=task.instruction,
+                        callback_url=task.callback_url,
+                        callback_token=task.callback_token,
+                        invocation_id=task.invocation_id,
+                    )
+                except Exception:  # noqa: BLE001 - best-effort, never block
+                    logger.warning("first_nudge failed for %s", task.invocation_id, exc_info=True)
+                    continue
+
+                if result is None:
+                    continue
+
+                thread_id = result.get("thread_id")
+                if not thread_id:
+                    continue
+
+                # Persist the new nudge state.
+                task.nudge_state = {
+                    "thread_id": thread_id,
+                    "last_nudge_at": now,
+                    "last_seen_message_id": "",
+                    "escalation_level": 0,
+                }
+                try:
+                    self.store.save(task)
+                except Exception:  # noqa: BLE001
+                    logger.warning(
+                        "persisted nudge state failed for %s", task.invocation_id, exc_info=True
+                    )
+                continue
+
+            # Task already has nudge state — check cadence.
+            last_nudge_at = nudge_state.get("last_nudge_at", 0.0)
+            elapsed = now - last_nudge_at
+            if elapsed < self.cfg.nudge_interval_seconds:
+                continue
+
+            # Global throttle: don't send more than one nudge per interval.
+            if elapsed - self.cfg.nudge_global_throttle_seconds < last_global_nudge:
+                continue
+
+            escalation_level = nudge_state.get("escalation_level", 0)
+            escalation_after = self.cfg.nudge_escalation_after_seconds
+
+            if elapsed >= escalation_after and escalation_level < 2:
+                # Escalate: send a higher-priority nudge.
+                try:
+                    result = _nudge_mod.escalate(
+                        channel_id=self.cfg.nudge_channel_id,
+                        bot_token=self.cfg.nudge_bot_token,
+                        thread_id=nudge_state["thread_id"],
+                        instruction=task.instruction,
+                        callback_url=task.callback_url,
+                        callback_token=task.callback_token,
+                        invocation_id=task.invocation_id,
+                        escalation_level=escalation_level + 1,
+                    )
+                except Exception:  # noqa: BLE001
+                    logger.warning("escalate failed for %s", task.invocation_id, exc_info=True)
+                    continue
+
+                if result is None:
+                    continue
+
+                nudge_state["last_nudge_at"] = now
+                nudge_state["escalation_level"] = escalation_level + 1
+                if result.get("message_id"):
+                    nudge_state["last_seen_message_id"] = result["message_id"]
+                try:
+                    self.store.save(task)
+                except Exception:  # noqa: BLE001
+                    logger.warning(
+                        "persisted escalation state failed for %s",
+                        task.invocation_id,
+                        exc_info=True,
+                    )
+                last_global_nudge = now
+                continue
+
+            # Normal cadence nudge.
+            try:
+                result = _nudge_mod.nudge(
+                    channel_id=self.cfg.nudge_channel_id,
+                    bot_token=self.cfg.nudge_bot_token,
+                    thread_id=nudge_state["thread_id"],
+                    instruction=task.instruction,
+                    callback_url=task.callback_url,
+                    callback_token=task.callback_token,
+                    invocation_id=task.invocation_id,
+                )
+            except Exception:  # noqa: BLE001
+                logger.warning("nudge failed for %s", task.invocation_id, exc_info=True)
+                continue
+
+            if result is None:
+                continue
+
+            nudge_state["last_nudge_at"] = now
+            if result.get("message_id"):
+                nudge_state["last_seen_message_id"] = result["message_id"]
+            try:
+                self.store.save(task)
+            except Exception:  # noqa: BLE001
+                logger.warning(
+                    "persisted nudge state failed for %s", task.invocation_id, exc_info=True
+                )
+            last_global_nudge = now
+
+        # Poll for replies on all threads that have nudge state.
+        tasks_with_nudge = [t for t in pending if t.nudge_state is not None]
+        for task in tasks_with_nudge:
+            if task.status != STATUS_PENDING:
+                continue
+            nudge_state = task.nudge_state
+            if nudge_state is None:
+                continue
+            thread_id = nudge_state.get("thread_id")
+            if not thread_id:
+                continue
+            last_seen = nudge_state.get("last_seen_message_id", "")
+            try:
+                replies = _nudge_mod.poll_replies(
+                    channel_id=self.cfg.nudge_channel_id,
+                    bot_token=self.cfg.nudge_bot_token,
+                    thread_id=thread_id,
+                    last_message_id=last_seen,
+                )
+            except Exception:  # noqa: BLE001
+                logger.warning("poll_replies failed for %s", task.invocation_id, exc_info=True)
+                continue
+
+            if not replies:
+                continue
+
+            for reply in replies:
+                message_id = reply.get("message_id", "")
+                if message_id and message_id > last_seen:
+                    nudge_state["last_seen_message_id"] = message_id
+
+                content = reply.get("content", "")
+                if not content:
+                    continue
+
+                # A reply counts as a human submission.
+                try:
+                    self.bridge_submit(
+                        self.cfg.bridge_url,
+                        self.cfg.bridge_token,
+                        task,
+                        None,  # observation — nudge replies bypass this
+                        "",  # merge_commit — not applicable
+                        timeout_seconds=self.cfg.http_timeout_seconds,
+                    )
+                except Exception:  # noqa: BLE001
+                    logger.warning(
+                        "bridge submit for nudge reply failed for %s",
+                        task.invocation_id,
+                        exc_info=True,
+                    )
+
+            try:
+                self.store.save(task)
+            except Exception:  # noqa: BLE001
+                logger.warning(
+                    "persisted reply state failed for %s", task.invocation_id, exc_info=True
+                )
 
 
 def _int_env(env: dict[str, str], name: str, default: int) -> int:

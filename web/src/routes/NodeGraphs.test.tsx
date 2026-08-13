@@ -1,5 +1,5 @@
-import { beforeEach, describe, expect, it, vi } from "vitest";
-import { render, screen, within } from "@testing-library/react";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { act, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { MemoryRouter, useLocation } from "react-router-dom";
 import NodeGraphs from "./NodeGraphs";
@@ -12,6 +12,7 @@ import {
 } from "../fixtures/workflows-fixture";
 import { WORKFLOW_DIGEST } from "../fixtures/run-fixture";
 import { getAgentState, resetAgentState } from "../agent-state/store";
+import { resetSharedEventsForTests } from "../hooks/useSharedEvents";
 
 vi.mock("../api/client", async (importOriginal) => {
   const actual = await importOriginal<typeof import("../api/client")>();
@@ -20,6 +21,57 @@ vi.mock("../api/client", async (importOriginal) => {
 
 const mockListWorkflows = vi.mocked(listWorkflows);
 const mockListRuns = vi.mocked(listRuns);
+
+/** A minimal fake of the shared cross-run EventSource (mirrors Mesh.test.tsx). */
+class FakeEventSource {
+  static instances: FakeEventSource[] = [];
+  url: string;
+  readyState = 0;
+  onopen: (() => void) | null = null;
+  onmessage: ((event: { data: string; lastEventId: string }) => void) | null = null;
+  onerror: (() => void) | null = null;
+  private listeners = new Map<
+    string,
+    Array<(event: { data: string; lastEventId: string }) => void>
+  >();
+
+  constructor(url: string) {
+    this.url = url;
+    FakeEventSource.instances.push(this);
+  }
+
+  addEventListener(
+    type: string,
+    listener: (event: { data: string; lastEventId: string }) => void,
+  ) {
+    const list = this.listeners.get(type) ?? [];
+    list.push(listener);
+    this.listeners.set(type, list);
+  }
+
+  close() {
+    this.readyState = 2;
+  }
+
+  open() {
+    this.readyState = 1;
+    this.onopen?.();
+  }
+
+  emit(type: string, data: Record<string, unknown>, id: string) {
+    const envelope = {
+      id,
+      source: "nodes",
+      specversion: "1.0",
+      type,
+      time: "2026-08-13T00:00:00Z",
+      datacontenttype: "application/json",
+      data,
+    };
+    const event = { data: JSON.stringify(envelope), lastEventId: id };
+    for (const listener of this.listeners.get(type) ?? []) listener(event);
+  }
+}
 
 function LocationProbe() {
   const location = useLocation();
@@ -275,5 +327,112 @@ describe("Node Graphs authoring entry point (task t28)", () => {
     expect(
       screen.getByRole("link", { name: "New workflow" }),
     ).toHaveAttribute("href", "/workflows/new");
+  });
+});
+
+describe("Node Graphs panel auto-refresh (issue #46, task t30)", () => {
+  beforeEach(() => {
+    resetSharedEventsForTests();
+    FakeEventSource.instances = [];
+    vi.stubGlobal("EventSource", FakeEventSource);
+  });
+
+  afterEach(() => {
+    resetSharedEventsForTests();
+    vi.unstubAllGlobals();
+  });
+
+  it("refetches on a run-lifecycle event, staying stale-while-revalidate: no loading regression, no nulled cards", async () => {
+    resolveFixture();
+    renderNodeGraphs(["/graphs?tab=graphs"]);
+    await screen.findByText("hello-world");
+    await waitFor(() => expect(getAgentState().status).toBe("ready"));
+
+    const source = FakeEventSource.instances[0];
+    act(() => source.open());
+
+    let resolveWorkflows: ((value: { items: typeof WORKFLOW_VERSIONS }) => void) | undefined;
+    mockListWorkflows.mockImplementationOnce(
+      () =>
+        new Promise((resolve) => {
+          resolveWorkflows = resolve;
+        }),
+    );
+
+    act(() => {
+      source.emit("dev.culture.nodes.run.completed", { run_id: "some-run" }, "01EVT1");
+    });
+
+    await waitFor(() => expect(mockListWorkflows).toHaveBeenCalledTimes(2));
+
+    // The reload fetch is in flight — the original cards and agent-state
+    // must still be exactly as they were (stale-while-revalidate).
+    expect(screen.getByText("hello-world")).toBeInTheDocument();
+    expect(screen.queryByText("Loading workflows…")).not.toBeInTheDocument();
+    expect(getAgentState().status).toBe("ready");
+
+    await act(async () => {
+      resolveWorkflows?.({ items: WORKFLOW_VERSIONS });
+    });
+    expect(getAgentState().status).toBe("ready");
+  });
+
+  it("debounces a burst of simultaneous events into a single refetch", async () => {
+    resolveFixture();
+    renderNodeGraphs(["/graphs?tab=graphs"]);
+    await screen.findByText("hello-world");
+
+    const source = FakeEventSource.instances[0];
+    act(() => source.open());
+    mockListWorkflows.mockClear();
+    mockListWorkflows.mockResolvedValue({ items: WORKFLOW_VERSIONS });
+
+    act(() => {
+      source.emit("dev.culture.nodes.run.completed", { run_id: "a" }, "01EVT1");
+      source.emit("dev.culture.nodes.run.failed", { run_id: "b" }, "01EVT2");
+      source.emit("dev.culture.nodes.run.cancelled", { run_id: "c" }, "01EVT3");
+    });
+
+    await waitFor(() => expect(mockListWorkflows).toHaveBeenCalledTimes(1));
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    expect(mockListWorkflows).toHaveBeenCalledTimes(1);
+  });
+
+  it("ignores an event type this view did not subscribe to", async () => {
+    resolveFixture();
+    renderNodeGraphs(["/graphs?tab=graphs"]);
+    await screen.findByText("hello-world");
+
+    const source = FakeEventSource.instances[0];
+    act(() => source.open());
+    mockListWorkflows.mockClear();
+
+    act(() => {
+      source.emit("dev.culture.nodes.attempt.started", { run_id: "a" }, "01EVT1");
+    });
+    await new Promise((resolve) => setTimeout(resolve, 20));
+
+    expect(mockListWorkflows).not.toHaveBeenCalled();
+  });
+
+  it("detaches the subscription when switching away from the Node Graphs sub-tab (no reload after leaving)", async () => {
+    resolveFixture();
+    const { rerender } = renderNodeGraphs(["/graphs?tab=graphs"]);
+    await screen.findByText("hello-world");
+
+    const source = FakeEventSource.instances[0];
+    act(() => source.open());
+
+    const user = userEvent.setup();
+    await user.click(screen.getByRole("button", { name: "Nodes" }));
+    expect(screen.queryByText("hello-world")).not.toBeInTheDocument();
+
+    mockListWorkflows.mockClear();
+    act(() => {
+      source.emit("dev.culture.nodes.run.completed", { run_id: "a" }, "01EVT1");
+    });
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    expect(mockListWorkflows).not.toHaveBeenCalled();
+    void rerender;
   });
 });

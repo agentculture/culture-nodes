@@ -1,5 +1,5 @@
 import { beforeEach, afterEach, describe, expect, it, vi } from "vitest";
-import { render, screen, within } from "@testing-library/react";
+import { act, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { MemoryRouter } from "react-router-dom";
 import Inbox from "./Inbox";
@@ -11,7 +11,59 @@ import {
   PENDING_TASK,
   PENDING_TASK_MINIMAL,
 } from "../fixtures/human-tasks-fixture";
-import { resetAgentState } from "../agent-state/store";
+import { getAgentState, resetAgentState } from "../agent-state/store";
+import { resetSharedEventsForTests } from "../hooks/useSharedEvents";
+
+/** A minimal fake of the shared cross-run EventSource (mirrors Mesh.test.tsx). */
+class FakeEventSource {
+  static instances: FakeEventSource[] = [];
+  url: string;
+  readyState = 0;
+  onopen: (() => void) | null = null;
+  onmessage: ((event: { data: string; lastEventId: string }) => void) | null = null;
+  onerror: (() => void) | null = null;
+  private listeners = new Map<
+    string,
+    Array<(event: { data: string; lastEventId: string }) => void>
+  >();
+
+  constructor(url: string) {
+    this.url = url;
+    FakeEventSource.instances.push(this);
+  }
+
+  addEventListener(
+    type: string,
+    listener: (event: { data: string; lastEventId: string }) => void,
+  ) {
+    const list = this.listeners.get(type) ?? [];
+    list.push(listener);
+    this.listeners.set(type, list);
+  }
+
+  close() {
+    this.readyState = 2;
+  }
+
+  open() {
+    this.readyState = 1;
+    this.onopen?.();
+  }
+
+  emit(type: string, data: Record<string, unknown>, id: string) {
+    const envelope = {
+      id,
+      source: "nodes",
+      specversion: "1.0",
+      type,
+      time: "2026-08-13T00:00:00Z",
+      datacontenttype: "application/json",
+      data,
+    };
+    const event = { data: JSON.stringify(envelope), lastEventId: id };
+    for (const listener of this.listeners.get(type) ?? []) listener(event);
+  }
+}
 
 /**
  * The stub-API pattern Workflows.test.tsx established, with one deliberate
@@ -378,5 +430,97 @@ describe("Inbox decision submission", () => {
     expect(
       await within(card).findByText(/not valid for this deployment/),
     ).toBeInTheDocument();
+  });
+});
+
+describe("Inbox auto-refresh (issue #46, task t30)", () => {
+  beforeEach(() => {
+    resetSharedEventsForTests();
+    FakeEventSource.instances = [];
+    vi.stubGlobal("EventSource", FakeEventSource);
+  });
+
+  afterEach(() => {
+    resetSharedEventsForTests();
+  });
+
+  it("refetches on a human-task event, staying stale-while-revalidate: no loading regression, no nulled list", async () => {
+    resolveFixture();
+    renderInbox();
+    await screen.findByRole("heading", { name: "Pending" });
+    await waitFor(() => expect(getAgentState().status).toBe("ready"));
+
+    const source = FakeEventSource.instances[0];
+    act(() => source.open());
+
+    let resolveReload: (() => void) | undefined;
+    mockListHumanTasks.mockImplementationOnce(
+      () =>
+        new Promise(() => {
+          /* pending decided-status call from the reload's Promise.all */
+        }),
+    );
+    mockListHumanTasks.mockImplementationOnce(
+      () =>
+        new Promise((resolve) => {
+          resolveReload = () => resolve({ items: [PENDING_TASK, PENDING_TASK_MINIMAL] });
+        }),
+    );
+
+    act(() => {
+      source.emit("dev.culture.nodes.human-task.created", {}, "01EVT1");
+    });
+
+    // The reload's own two listHumanTasks calls (pending, decided) join the
+    // two from the initial mount — wait for both to have started.
+    await waitFor(() => expect(mockListHumanTasks).toHaveBeenCalledTimes(4));
+
+    // The reload fetch is in flight — the rendered cards and agent-state
+    // must still be exactly as they were (stale-while-revalidate).
+    expect(screen.getByText(PENDING_TASK.id)).toBeInTheDocument();
+    expect(screen.queryByText("Loading inbox…")).not.toBeInTheDocument();
+    expect(getAgentState().status).toBe("ready");
+
+    await act(async () => {
+      resolveReload?.();
+    });
+    expect(getAgentState().status).toBe("ready");
+  });
+
+  it("debounces a burst of simultaneous events into a single refetch", async () => {
+    resolveFixture();
+    renderInbox();
+    await screen.findByRole("heading", { name: "Pending" });
+
+    const source = FakeEventSource.instances[0];
+    act(() => source.open());
+    mockListHumanTasks.mockClear();
+    resolveFixture();
+
+    act(() => {
+      source.emit("dev.culture.nodes.human-task.created", {}, "01EVT1");
+      source.emit("dev.culture.nodes.human-task.decided", {}, "01EVT2");
+    });
+
+    await waitFor(() => expect(mockListHumanTasks).toHaveBeenCalledTimes(2));
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    expect(mockListHumanTasks).toHaveBeenCalledTimes(2);
+  });
+
+  it("ignores an event type this view did not subscribe to", async () => {
+    resolveFixture();
+    renderInbox();
+    await screen.findByRole("heading", { name: "Pending" });
+
+    const source = FakeEventSource.instances[0];
+    act(() => source.open());
+    mockListHumanTasks.mockClear();
+
+    act(() => {
+      source.emit("dev.culture.nodes.run.created", { run_id: "a" }, "01EVT1");
+    });
+    await new Promise((resolve) => setTimeout(resolve, 20));
+
+    expect(mockListHumanTasks).not.toHaveBeenCalled();
   });
 });

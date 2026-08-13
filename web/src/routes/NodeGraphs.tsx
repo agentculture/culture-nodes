@@ -1,10 +1,31 @@
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { Link, useSearchParams } from "react-router-dom";
 import { setAgentState } from "../agent-state/store";
 import { ApiError, listRuns, listWorkflows } from "../api/client";
 import type { Run, WorkflowVersion } from "../api/types";
 import ErrorNotice from "../components/ErrorNotice";
 import { groupWorkflowVersions, withRecentRuns } from "../domain/workflows";
+import { useSharedEvents, type SharedEventType } from "../hooks/useSharedEvents";
+
+/**
+ * Every run-lifecycle event that can change a workflow card's "recent runs"
+ * list — a stable module-level reference, as useSharedEvents requires
+ * (issue #46). A new workflow *version* publish has no committed-event
+ * counterpart in the shared stream's vocabulary today, so this panel's
+ * auto-refresh honestly tracks run activity only; a version published with
+ * no accompanying run stays until the next mount/tab-revisit.
+ */
+const NODE_GRAPHS_EVENT_TYPES = [
+  "dev.culture.nodes.run.created",
+  "dev.culture.nodes.run.waiting",
+  "dev.culture.nodes.run.completed",
+  "dev.culture.nodes.run.failed",
+  "dev.culture.nodes.run.cancelled",
+  "dev.culture.nodes.run.bounded",
+] as const satisfies readonly SharedEventType[];
+
+/** Mirrors the Mesh view's attribution-refresh discipline (Mesh.tsx). */
+const REFRESH_DEBOUNCE_MS = 4000;
 
 /**
  * The Node Graphs tab (task t28, issue #56): replaces the standalone
@@ -52,12 +73,42 @@ function parseTab(value: string | null): SubTab {
  * Mounted only while `tab === "graphs"` (a plain conditional render, not a
  * route), so switching away and back re-fetches on mount just like any
  * other route would — and switching to Nodes/Active never leaves a stale
- * error notice or loading state from this panel behind.
+ * error notice or loading state from this panel behind. Unmounting also
+ * detaches this panel's shared-events subscription, so a tab switch never
+ * schedules a reload for a panel nobody can see.
+ *
+ * Auto-refresh (issue #46, task t30): a run-lifecycle event on the shared
+ * cross-run stream schedules a debounced background refetch via
+ * `reloadKey`, exactly the RunsList/RunsBoard idiom — never nulls the
+ * rendered cards, never regresses agent-state back to "loading".
  */
 function NodeGraphsPanel() {
   const [versions, setVersions] = useState<WorkflowVersion[] | null>(null);
   const [runs, setRuns] = useState<Run[] | null>(null);
   const [error, setError] = useState<ApiError | null>(null);
+  const [reloadKey, setReloadKey] = useState(0);
+  const reloadTimer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
+  const lastReload = useRef(0);
+
+  const scheduleReload = useCallback(() => {
+    if (reloadTimer.current) return;
+    const elapsed = Date.now() - lastReload.current;
+    const wait = Math.max(0, REFRESH_DEBOUNCE_MS - elapsed);
+    reloadTimer.current = setTimeout(() => {
+      reloadTimer.current = undefined;
+      lastReload.current = Date.now();
+      setReloadKey((key) => key + 1);
+    }, wait);
+  }, []);
+
+  useEffect(
+    () => () => {
+      if (reloadTimer.current) clearTimeout(reloadTimer.current);
+    },
+    [],
+  );
+
+  useSharedEvents(NODE_GRAPHS_EVENT_TYPES, scheduleReload);
 
   useEffect(() => {
     const controller = new AbortController();
@@ -93,6 +144,35 @@ function NodeGraphsPanel() {
       });
     return () => controller.abort();
   }, []);
+
+  // The SSE-triggered background refresh (issue #46): skips the very first
+  // render (reloadKey === 0, already handled above). Never nulls
+  // `versions`/`runs`, never touches agent-state — a failed refresh keeps
+  // the last honest cards and reports the error alongside.
+  useEffect(() => {
+    if (reloadKey === 0) return;
+    const controller = new AbortController();
+    Promise.all([
+      listWorkflows(controller.signal),
+      listRuns(controller.signal, { sort: "updated_at" }),
+    ])
+      .then(([workflowList, runList]) => {
+        if (controller.signal.aborted) return;
+        setVersions(workflowList.items);
+        setRuns(runList.items);
+        setError(null);
+      })
+      .catch((cause: unknown) => {
+        if (controller.signal.aborted) return;
+        setError(
+          cause instanceof ApiError
+            ? cause
+            : new ApiError(0, String(cause), "check the browser console"),
+        );
+      });
+    return () => controller.abort();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [reloadKey]);
 
   const groups =
     versions !== null && runs !== null

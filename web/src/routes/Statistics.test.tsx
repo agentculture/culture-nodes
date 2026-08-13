@@ -1,10 +1,11 @@
-import { beforeEach, describe, expect, it, vi } from "vitest";
-import { render, screen, waitFor, within } from "@testing-library/react";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { act, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { MemoryRouter } from "react-router-dom";
 import Statistics from "./Statistics";
 import { ApiError, listNodeRuns, listRuns } from "../api/client";
 import { getAgentState, resetAgentState } from "../agent-state/store";
+import { resetSharedEventsForTests } from "../hooks/useSharedEvents";
 import {
   STATS_CURSOR,
   STATS_NODE_RUNS_PAGE_1,
@@ -22,6 +23,57 @@ vi.mock("../api/client", async (importOriginal) => {
 
 const mockListNodeRuns = vi.mocked(listNodeRuns);
 const mockListRuns = vi.mocked(listRuns);
+
+/** A minimal fake of the shared cross-run EventSource (mirrors Mesh.test.tsx). */
+class FakeEventSource {
+  static instances: FakeEventSource[] = [];
+  url: string;
+  readyState = 0;
+  onopen: (() => void) | null = null;
+  onmessage: ((event: { data: string; lastEventId: string }) => void) | null = null;
+  onerror: (() => void) | null = null;
+  private listeners = new Map<
+    string,
+    Array<(event: { data: string; lastEventId: string }) => void>
+  >();
+
+  constructor(url: string) {
+    this.url = url;
+    FakeEventSource.instances.push(this);
+  }
+
+  addEventListener(
+    type: string,
+    listener: (event: { data: string; lastEventId: string }) => void,
+  ) {
+    const list = this.listeners.get(type) ?? [];
+    list.push(listener);
+    this.listeners.set(type, list);
+  }
+
+  close() {
+    this.readyState = 2;
+  }
+
+  open() {
+    this.readyState = 1;
+    this.onopen?.();
+  }
+
+  emit(type: string, data: Record<string, unknown>, id: string) {
+    const envelope = {
+      id,
+      source: "nodes",
+      specversion: "1.0",
+      type,
+      time: "2026-08-13T00:00:00Z",
+      datacontenttype: "application/json",
+      data,
+    };
+    const event = { data: JSON.stringify(envelope), lastEventId: id };
+    for (const listener of this.listeners.get(type) ?? []) listener(event);
+  }
+}
 
 function renderStatistics(initialEntries: string[] = ["/stats"]) {
   return render(
@@ -235,5 +287,103 @@ describe("Statistics time filter", () => {
     );
     void STATS_RUN_C;
     void STATS_RUN_E;
+  });
+});
+
+describe("Statistics auto-refresh (issue #46, task t30)", () => {
+  beforeEach(() => {
+    resetSharedEventsForTests();
+    FakeEventSource.instances = [];
+    vi.stubGlobal("EventSource", FakeEventSource);
+  });
+
+  afterEach(() => {
+    resetSharedEventsForTests();
+    vi.unstubAllGlobals();
+  });
+
+  it("refetches on a usage-affecting event, staying stale-while-revalidate: no loading regression, no nulled table", async () => {
+    mockListNodeRuns.mockResolvedValueOnce({ items: STATS_NODE_RUNS_PAGE_1 });
+    renderStatistics();
+    await screen.findByRole("table");
+    await waitFor(() => expect(getAgentState().status).toBe("ready"));
+    expect(
+      document.getElementById("statistics-denominator"),
+    ).toHaveTextContent("2 runs in this window");
+
+    const source = FakeEventSource.instances[0];
+    act(() => source.open());
+
+    let resolveReload: ((value: { items: typeof STATS_NODE_RUNS_PAGE_1 }) => void) | undefined;
+    mockListNodeRuns.mockImplementationOnce(
+      () =>
+        new Promise((resolve) => {
+          resolveReload = resolve;
+        }),
+    );
+
+    act(() => {
+      source.emit("dev.culture.nodes.attempt.completed", { run_id: STATS_RUN_A }, "01EVT1");
+    });
+
+    await waitFor(() => expect(mockListNodeRuns).toHaveBeenCalledTimes(2));
+
+    // The reload fetch is in flight — the original stats and agent-state
+    // must still be exactly as they were (stale-while-revalidate).
+    expect(screen.getByRole("table")).toBeInTheDocument();
+    expect(screen.queryByText("Loading statistics…")).not.toBeInTheDocument();
+    expect(getAgentState().status).toBe("ready");
+    expect(
+      document.getElementById("statistics-denominator"),
+    ).toHaveTextContent("2 runs in this window");
+
+    await act(async () => {
+      resolveReload?.({ items: [STATS_NODE_RUNS_PAGE_2[0]] });
+    });
+
+    await waitFor(() =>
+      expect(
+        document.getElementById("statistics-denominator"),
+      ).toHaveTextContent("1 run in this window"),
+    );
+    expect(getAgentState().status).toBe("ready");
+  });
+
+  it("debounces a burst of simultaneous events into a single refetch", async () => {
+    mockListNodeRuns.mockResolvedValueOnce({ items: STATS_NODE_RUNS_PAGE_1 });
+    renderStatistics();
+    await screen.findByRole("table");
+
+    const source = FakeEventSource.instances[0];
+    act(() => source.open());
+    mockListNodeRuns.mockClear();
+    mockListNodeRuns.mockResolvedValue({ items: STATS_NODE_RUNS_PAGE_1 });
+
+    act(() => {
+      source.emit("dev.culture.nodes.attempt.completed", { run_id: "a" }, "01EVT1");
+      source.emit("dev.culture.nodes.attempt.completed", { run_id: "b" }, "01EVT2");
+      source.emit("dev.culture.nodes.node-run.failed", { run_id: "c" }, "01EVT3");
+    });
+
+    await waitFor(() => expect(mockListNodeRuns).toHaveBeenCalledTimes(1));
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    expect(mockListNodeRuns).toHaveBeenCalledTimes(1);
+  });
+
+  it("ignores an event type this view did not subscribe to", async () => {
+    mockListNodeRuns.mockResolvedValueOnce({ items: STATS_NODE_RUNS_PAGE_1 });
+    renderStatistics();
+    await screen.findByRole("table");
+
+    const source = FakeEventSource.instances[0];
+    act(() => source.open());
+    mockListNodeRuns.mockClear();
+
+    act(() => {
+      source.emit("dev.culture.nodes.run.created", { run_id: "a" }, "01EVT1");
+    });
+    await new Promise((resolve) => setTimeout(resolve, 20));
+
+    expect(mockListNodeRuns).not.toHaveBeenCalled();
   });
 });

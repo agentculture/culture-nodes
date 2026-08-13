@@ -1,4 +1,4 @@
-import { useEffect, useState, type FormEvent } from "react";
+import { useCallback, useEffect, useRef, useState, type FormEvent } from "react";
 import { Link } from "react-router-dom";
 import { setAgentState } from "../agent-state/store";
 import {
@@ -16,6 +16,20 @@ import type { HumanTask, HumanTaskDecisionResult } from "../api/types";
 import AuthorityChip from "../components/AuthorityChip";
 import ErrorNotice from "../components/ErrorNotice";
 import StatusChip from "../components/StatusChip";
+import { useSharedEvents, type SharedEventType } from "../hooks/useSharedEvents";
+
+/**
+ * Every event that means a human task changed shape — a new one created, or
+ * one just decided (possibly from another tab/operator) — a stable
+ * module-level reference, as useSharedEvents requires (issue #46).
+ */
+const INBOX_EVENT_TYPES = [
+  "dev.culture.nodes.human-task.created",
+  "dev.culture.nodes.human-task.decided",
+] as const satisfies readonly SharedEventType[];
+
+/** Mirrors the Mesh view's attribution-refresh discipline (Mesh.tsx). */
+const REFRESH_DEBOUNCE_MS = 4000;
 
 /**
  * The Inbox view (task t14, issue #38b): every human task the control plane
@@ -45,14 +59,43 @@ export function Inbox() {
   const [decided, setDecided] = useState<HumanTask[] | null>(null);
   const [error, setError] = useState<ApiError | null>(null);
   const [tokenHeld, setTokenHeld] = useState(getDecisionToken() !== null);
-  // Bumped after a recorded decision. The effect refetches WITHOUT nulling
-  // the lists first (stale-while-revalidate), so the decided card's
-  // "decision recorded" confirmation survives the refresh.
+  // Bumped after a recorded decision, and (task t30, issue #46) by a
+  // debounced human-task event on the shared cross-run stream. The effect
+  // refetches WITHOUT nulling the lists first (stale-while-revalidate), so
+  // the decided card's "decision recorded" confirmation survives the
+  // refresh.
   const [reloadKey, setReloadKey] = useState(0);
+  const reloadTimer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
+  const lastReload = useRef(0);
+
+  const scheduleReload = useCallback(() => {
+    if (reloadTimer.current) return;
+    const elapsed = Date.now() - lastReload.current;
+    const wait = Math.max(0, REFRESH_DEBOUNCE_MS - elapsed);
+    reloadTimer.current = setTimeout(() => {
+      reloadTimer.current = undefined;
+      lastReload.current = Date.now();
+      setReloadKey((key) => key + 1);
+    }, wait);
+  }, []);
+
+  useEffect(
+    () => () => {
+      if (reloadTimer.current) clearTimeout(reloadTimer.current);
+    },
+    [],
+  );
+
+  useSharedEvents(INBOX_EVENT_TYPES, scheduleReload);
 
   useEffect(() => {
     const controller = new AbortController();
-    setAgentState({ status: "loading", run: null });
+    // "ready" means initial-load-settled and must never regress to
+    // "loading" on a refresh (task t30's hard convention) — only the very
+    // first render (reloadKey === 0) sets it; every later reload (decision
+    // submit or SSE event) stays "ready" throughout, stale-while-revalidate.
+    const isInitialLoad = reloadKey === 0;
+    if (isInitialLoad) setAgentState({ status: "loading", run: null });
     setError(null);
 
     const toApiError = (cause: unknown): ApiError =>

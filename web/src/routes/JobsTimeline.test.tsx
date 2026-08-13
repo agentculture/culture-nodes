@@ -1,5 +1,5 @@
-import { beforeEach, describe, expect, it, vi } from "vitest";
-import { render, screen, waitFor, within } from "@testing-library/react";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { act, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { MemoryRouter, useLocation } from "react-router-dom";
 import JobsTimeline from "./JobsTimeline";
@@ -11,6 +11,7 @@ import {
   JOB_RUNS_PAGE_2,
 } from "../fixtures/node-runs-fixture";
 import { getAgentState, resetAgentState } from "../agent-state/store";
+import { resetSharedEventsForTests } from "../hooks/useSharedEvents";
 
 vi.mock("../api/client", async (importOriginal) => {
   const actual = await importOriginal<typeof import("../api/client")>();
@@ -19,6 +20,57 @@ vi.mock("../api/client", async (importOriginal) => {
 
 const mockListNodeRuns = vi.mocked(listNodeRuns);
 const mockListRuns = vi.mocked(listRuns);
+
+/** A minimal fake of the shared cross-run EventSource (mirrors Mesh.test.tsx). */
+class FakeEventSource {
+  static instances: FakeEventSource[] = [];
+  url: string;
+  readyState = 0;
+  onopen: (() => void) | null = null;
+  onmessage: ((event: { data: string; lastEventId: string }) => void) | null = null;
+  onerror: (() => void) | null = null;
+  private listeners = new Map<
+    string,
+    Array<(event: { data: string; lastEventId: string }) => void>
+  >();
+
+  constructor(url: string) {
+    this.url = url;
+    FakeEventSource.instances.push(this);
+  }
+
+  addEventListener(
+    type: string,
+    listener: (event: { data: string; lastEventId: string }) => void,
+  ) {
+    const list = this.listeners.get(type) ?? [];
+    list.push(listener);
+    this.listeners.set(type, list);
+  }
+
+  close() {
+    this.readyState = 2;
+  }
+
+  open() {
+    this.readyState = 1;
+    this.onopen?.();
+  }
+
+  emit(type: string, data: Record<string, unknown>, id: string) {
+    const envelope = {
+      id,
+      source: "nodes",
+      specversion: "1.0",
+      type,
+      time: "2026-08-13T00:00:00Z",
+      datacontenttype: "application/json",
+      data,
+    };
+    const event = { data: JSON.stringify(envelope), lastEventId: id };
+    for (const listener of this.listeners.get(type) ?? []) listener(event);
+  }
+}
 
 function LocationProbe() {
   const location = useLocation();
@@ -280,5 +332,104 @@ describe("JobsTimeline run name/category lookup (task t5)", () => {
       .getByText(JOB_RUNS_PAGE_1[3].node_id, { selector: "code" })
       .closest("tr") as HTMLElement;
     expect(within(row).getByText("12.3k in / 4.1k out")).toBeInTheDocument();
+  });
+});
+
+describe("JobsTimeline auto-refresh (issue #46, task t30)", () => {
+  beforeEach(() => {
+    resetSharedEventsForTests();
+    FakeEventSource.instances = [];
+    vi.stubGlobal("EventSource", FakeEventSource);
+  });
+
+  afterEach(() => {
+    resetSharedEventsForTests();
+    vi.unstubAllGlobals();
+  });
+
+  it("refetches on a node-run/attempt event, staying stale-while-revalidate: no loading regression, no nulled table", async () => {
+    mockListNodeRuns.mockResolvedValueOnce({ items: JOB_RUNS_PAGE_1 });
+    renderJobs();
+    await screen.findByRole("table");
+    await waitFor(() => expect(getAgentState().status).toBe("ready"));
+
+    const source = FakeEventSource.instances[0];
+    act(() => source.open());
+
+    let resolveReload: ((value: { items: typeof JOB_RUNS_PAGE_1 }) => void) | undefined;
+    mockListNodeRuns.mockImplementationOnce(
+      () =>
+        new Promise((resolve) => {
+          resolveReload = resolve;
+        }),
+    );
+
+    act(() => {
+      source.emit(
+        "dev.culture.nodes.attempt.completed",
+        { run_id: JOB_RUNS_PAGE_1[0].run_id },
+        "01EVT1",
+      );
+    });
+
+    await waitFor(() => expect(mockListNodeRuns).toHaveBeenCalledTimes(2));
+
+    // The reload fetch is in flight — the original rows and agent-state
+    // must still be exactly as they were (stale-while-revalidate).
+    expect(screen.getByRole("table")).toBeInTheDocument();
+    expect(screen.queryByText("Loading node runs…")).not.toBeInTheDocument();
+    expect(getAgentState().status).toBe("ready");
+    for (const item of JOB_RUNS_PAGE_1) {
+      expect(document.querySelector(`[data-node-run-id="${item.id}"]`)).toBeTruthy();
+    }
+
+    await act(async () => {
+      resolveReload?.({ items: [JOB_RUNS_PAGE_1[0]] });
+    });
+
+    await waitFor(() =>
+      expect(
+        document.querySelector(`[data-node-run-id="${JOB_RUNS_PAGE_1[1].id}"]`),
+      ).toBeNull(),
+    );
+    expect(getAgentState().status).toBe("ready");
+  });
+
+  it("debounces a burst of simultaneous events into a single refetch", async () => {
+    mockListNodeRuns.mockResolvedValueOnce({ items: JOB_RUNS_PAGE_1 });
+    renderJobs();
+    await screen.findByRole("table");
+
+    const source = FakeEventSource.instances[0];
+    act(() => source.open());
+    mockListNodeRuns.mockClear();
+    mockListNodeRuns.mockResolvedValue({ items: JOB_RUNS_PAGE_1 });
+
+    act(() => {
+      source.emit("dev.culture.nodes.attempt.started", { run_id: "a" }, "01EVT1");
+      source.emit("dev.culture.nodes.node-run.failed", { run_id: "b" }, "01EVT2");
+      source.emit("dev.culture.nodes.actor.accepted", { run_id: "c" }, "01EVT3");
+    });
+
+    await waitFor(() => expect(mockListNodeRuns).toHaveBeenCalledTimes(1));
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    expect(mockListNodeRuns).toHaveBeenCalledTimes(1);
+  });
+
+  it("ignores an event type this view did not subscribe to", async () => {
+    mockListNodeRuns.mockResolvedValueOnce({ items: JOB_RUNS_PAGE_1 });
+    renderJobs();
+    await screen.findByRole("table");
+
+    const source = FakeEventSource.instances[0];
+    act(() => source.open());
+    mockListNodeRuns.mockClear();
+
+    act(() => {
+      source.emit("dev.culture.nodes.run.created", { run_id: "a" }, "01EVT1");
+    });
+    await new Promise((resolve) => setTimeout(resolve, 20));
+
+    expect(mockListNodeRuns).not.toHaveBeenCalled();
   });
 });

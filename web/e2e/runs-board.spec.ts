@@ -123,6 +123,99 @@ test("the page produces no uncaught errors while rendering the board", async ({
   expect(pageErrors).toEqual([]);
 });
 
+test.describe("auto-refresh (issue #46, task t30)", () => {
+  // Serve one committed run.created event over the shared cross-run stream
+  // (mockRunsBoardApi's default /v1alpha1/events is empty; this override
+  // takes precedence because Playwright tries the most-recently-registered
+  // matching route first) and change what /v1alpha1/runs answers once the
+  // reload it triggers actually fires — proving the board updates itself
+  // from a real SSE event, with no browser reload anywhere in this test.
+  test("moves a card between columns from a committed run event, without a reload", async ({
+    page,
+  }) => {
+    const created = BOARD_RUNS.find((run) => run.state === "created")!;
+    const movedRun = { ...created, state: "running" as const };
+
+    // Bare-glob route patterns (e.g. "**/v1alpha1/runs") only match a URL
+    // with NO query string appended — RunsBoard's own listRuns call always
+    // carries `?sort=updated_at&...`, so matching on pathname via a
+    // predicate is required here (a glob without a trailing `*` silently
+    // never matches and falls through to mockRunsBoardApi's fixed handler).
+    let runsRequests = 0;
+    await page.route(
+      (url) => url.pathname === "/v1alpha1/runs",
+      async (route) => {
+        if (route.request().method() !== "GET") {
+          await route.continue();
+          return;
+        }
+        runsRequests += 1;
+        const items = runsRequests === 1 ? BOARD_RUNS : [movedRun, ...BOARD_RUNS.slice(1)];
+        await route.fulfill({
+          status: 200,
+          contentType: "application/json",
+          body: JSON.stringify({ items }),
+        });
+      },
+    );
+
+    await page.route(
+      (url) => url.pathname === "/v1alpha1/events",
+      async (route) => {
+        const request = route.request();
+        const requestUrl = new URL(request.url());
+        const headers = await request.allHeaders();
+        const from =
+          headers["last-event-id"] ?? requestUrl.searchParams.get("from") ?? "";
+        // The very first connection (no resume cursor yet) carries the
+        // committed event; every reconnect after that is honestly empty —
+        // the event is never replayed twice.
+        const body =
+          from === ""
+            ? `id: 01RUNSBOARD0000000000001\nevent: dev.culture.nodes.run.completed\ndata: ${JSON.stringify(
+                {
+                  id: "01RUNSBOARD0000000000001",
+                  source: "nodes",
+                  specversion: "1.0",
+                  type: "dev.culture.nodes.run.completed",
+                  subject: created.id,
+                  time: "2026-08-13T00:00:00Z",
+                  datacontenttype: "application/json",
+                  data: { run_id: created.id },
+                },
+              )}\n\n`
+            : "";
+        await route.fulfill({
+          status: 200,
+          headers: {
+            "content-type": "text/event-stream",
+            "cache-control": "no-cache",
+          },
+          body,
+        });
+      },
+    );
+
+    // No intermediate "still created" check here on purpose: the first
+    // scheduled reload after mount has no debounce delay (same as Mesh's
+    // attribution refresh — see RunsBoard.tsx's scheduleReload), so the
+    // event -> reload -> re-render round trip can finish before the very
+    // next assertion even runs. The mechanism under test is proven by the
+    // end state below: without the auto-refresh wiring, the fixture's
+    // /v1alpha1/runs response never changes, so the card could never move.
+    await openBoard(page);
+
+    await expect(
+      page.locator(`[data-column-state="running"] [data-run-id="${created.id}"]`),
+    ).toHaveCount(1, { timeout: 10_000 });
+    await expect(
+      page.locator(`[data-column-state="created"] [data-run-id="${created.id}"]`),
+    ).toHaveCount(0);
+    // The board never nulled itself back to the loading state along the way.
+    await expect(page.locator("#runs-board-loading")).toHaveCount(0);
+  });
+});
+
 test.describe("reduced motion", () => {
   // Emulates `prefers-reduced-motion: reduce` for this block's contexts.
   test.use({ contextOptions: { reducedMotion: "reduce" } });

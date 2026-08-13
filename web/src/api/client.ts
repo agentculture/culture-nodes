@@ -1,5 +1,8 @@
 import type {
   ActorList,
+  HumanTaskDecisionRequest,
+  HumanTaskDecisionResult,
+  HumanTaskList,
   LedgerRecords,
   NodeRunList,
   Projection,
@@ -15,9 +18,12 @@ import type {
 /**
  * Same-origin API root. In dev, vite.config.ts proxies it to the Go control
  * plane; in production the Go binary serves this bundle and `/v1alpha1`
- * from one origin. Phase 1 has no auth by design (PRD §26) — no token is
- * attached here, and none should be added without the auth story landing
- * first.
+ * from one origin. Phase 1 is authless by design (PRD §26) with exactly one
+ * exception: `POST /human-tasks/{id}/decision` writes a human-authority
+ * review into a run's ledger and requires a bearer token the user presents
+ * per call (`decideHumanTask` below; retention policy in
+ * ./decision-token.ts). No other request attaches a credential, and none
+ * should without the wider auth story landing first.
  */
 export const API_ROOT = "/v1alpha1";
 
@@ -139,6 +145,7 @@ async function postJson<T>(
   path: string,
   body: unknown,
   signal?: AbortSignal,
+  headers?: Record<string, string>,
 ): Promise<T> {
   let response: Response;
   try {
@@ -148,6 +155,7 @@ async function postJson<T>(
       headers: {
         accept: "application/json",
         "content-type": "application/json",
+        ...headers,
       },
       body: JSON.stringify(body),
     });
@@ -249,6 +257,44 @@ export const getProjection = (
   getJson<Projection>(
     `/runs/${encodeURIComponent(runId)}/ledger/projections/${encodeURIComponent(name)}`,
     signal,
+  );
+
+/** GET /v1alpha1/human-tasks query parameters (task t14). */
+export interface ListHumanTasksParams {
+  /** Filter to one status; omitted returns every task, newest first. */
+  status?: "pending" | "decided";
+  limit?: number;
+}
+
+export const listHumanTasks = (
+  signal?: AbortSignal,
+  params?: ListHumanTasksParams,
+) =>
+  getJson<HumanTaskList>(
+    `/human-tasks${toQueryString(params as Record<string, string | number | undefined> | undefined)}`,
+    signal,
+  );
+
+/**
+ * `POST /v1alpha1/human-tasks/{id}/decision` (task t14): commit a human
+ * decision on a pending task. The ONLY authenticated call in this client —
+ * the API refuses it without `Authorization: Bearer <token>`
+ * (internal/api/humantasks.go's requireDecisionAuth), so `token` is a
+ * required argument here, deliberately not optional: there is no
+ * unauthenticated code path to a mutation from the browser. Where the token
+ * lives (sessionStorage only) and why is ./decision-token.ts's contract.
+ */
+export const decideHumanTask = (
+  id: string,
+  decision: HumanTaskDecisionRequest,
+  token: string,
+  signal?: AbortSignal,
+) =>
+  postJson<HumanTaskDecisionResult>(
+    `/human-tasks/${encodeURIComponent(id)}/decision`,
+    decision,
+    signal,
+    { authorization: `Bearer ${token}` },
   );
 
 /** GET /v1alpha1/actors (task t15): every registered actor row. */

@@ -365,3 +365,88 @@ export interface ApiErrorBody {
   message: string;
   remediation: string;
 }
+
+/**
+ * `human_tasks.request` as `POST` dispatch stored it (PRD §9.9, task t6's
+ * `buildHumanTaskRequest` in internal/engine/humantask.go). Carried
+ * verbatim by the API — this is a record of what the human was actually
+ * shown, so every field is optional except the audit's node id, and a
+ * renderer must not fabricate what is absent (e.g. never invent a deadline).
+ */
+export interface HumanTaskContextRefs {
+  /** A single input pointer, exactly as authored. */
+  from?: string;
+  /** Named input bindings, exactly as authored. */
+  bindings?: Record<string, string>;
+}
+
+/** PRD §9.9 "audit identity" not already on the task row's own columns. */
+export interface HumanTaskAudit {
+  node_id?: string;
+  token_id?: string;
+  workflow_digest?: string;
+  from_node?: string;
+  from_outcome?: string;
+}
+
+export interface HumanTaskRequestPayload {
+  /** Unresolved schema reference, like every schemaRef the engine carries. */
+  decision_schema_ref?: string;
+  /** The requested approver role/group, exactly as authored. */
+  approver_ref?: string;
+  /** RFC3339. Absent when the node declared no deadline — never "now". */
+  deadline?: string;
+  /** The node's resolved outcome set — what the decider may choose from. */
+  allowed_outcomes?: string[];
+  context_refs?: HumanTaskContextRefs;
+  audit?: HumanTaskAudit;
+}
+
+/** One `human_tasks` row (components.schemas.HumanTask, task t6/t12). */
+export interface HumanTask {
+  id: string;
+  run_id: string;
+  node_run_id?: string;
+  kind: string;
+  assigned_owner_id?: string;
+  status: "pending" | "decided";
+  request: HumanTaskRequestPayload;
+  /** The decision payload, present once decided. */
+  response?: unknown;
+  created_at: string;
+  resolved_at?: string;
+}
+
+/** `GET /v1alpha1/human-tasks` (components.schemas.HumanTaskList). */
+export interface HumanTaskList {
+  items: HumanTask[];
+}
+
+/** `POST /v1alpha1/human-tasks/{id}/decision` request body. */
+export interface HumanTaskDecisionRequest {
+  outcome: string;
+  decider_actor_id: string;
+  response?: unknown;
+  /**
+   * The run's ledger version the decider last read (`GET
+   * /runs/{id}/ledger`'s `ledger_version`). A stale expectation is refused
+   * atomically with nothing written — same guard as PRD §10.8 review
+   * commits.
+   */
+  expected_ledger_version: number;
+  record_ids?: string[];
+}
+
+/** `POST .../decision`'s result (components.schemas.HumanTaskDecisionResult). */
+export interface HumanTaskDecisionResult {
+  human_task_id: string;
+  run_id: string;
+  node_run_id: string;
+  outcome: string;
+  ledger_records: LedgerRecord[];
+  next_node_id?: string;
+  next_node_run_id?: string;
+  next_human_task_id?: string;
+  run_state: string;
+  run_output?: unknown;
+}

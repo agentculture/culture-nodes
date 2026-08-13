@@ -52,6 +52,9 @@ export function Header() {
         <NavLink to="/jobs" className={navLinkClass} onClick={closeNav}>
           Jobs
         </NavLink>
+        <NavLink to="/inbox" className={navLinkClass} onClick={closeNav}>
+          Inbox
+        </NavLink>
         <NavLink to="/mesh" className={navLinkClass} onClick={closeNav}>
           Mesh
         </NavLink>

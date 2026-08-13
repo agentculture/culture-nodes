@@ -76,6 +76,11 @@ func TestPhase1VerticalSlice(t *testing.T) {
 	// records stay proposed, and the projections agree ----
 	assertLedgerHonesty(t, second, ns.ID, runID, runnerID)
 
+	// The verifier judged against evidence it actually received: its
+	// `testEvidence` binding resolved the run's evidence records, not an
+	// empty projection.
+	assertVerifyReceivedEvidence(t, agents)
+
 	// ---- 5. Every committed transition emitted an event ----
 	assertEventDensity(t, second, ns.ID, runID, events)
 
@@ -292,6 +297,50 @@ func assertLedgerHonesty(t *testing.T, s *stack, namespaceID, runID, runnerID st
 	assertAgentRecordsStayProposed(t, records)
 	assertConfirmedClaimsProjection(t, led, runID)
 	assertDeliverySummaryProjection(t, led, runID)
+}
+
+// assertVerifyReceivedEvidence checks the workflow file's recorded deviation
+// 2 actually delivers: the verify node binds `testEvidence` to
+// /ledger/projections/evidence, and every verify invocation runs after the
+// `test` code node appended runner-observed evidence — so the projection each
+// invocation receives must be non-empty and hold evidence records. An empty
+// items list here would mean the verifier judged the change without the
+// evidence the workflow promised it (the empty-subject evidence projection
+// selecting nothing, PRD §10.9).
+func assertVerifyReceivedEvidence(t *testing.T, agents *deliveryAgents) {
+	t.Helper()
+	verifies := 0
+	for _, req := range agents.invocations() {
+		if req.Node.ID != "verify" {
+			continue
+		}
+		verifies++
+		var input struct {
+			TestEvidence ledger.Projection `json:"testEvidence"`
+		}
+		if err := json.Unmarshal(req.Input, &input); err != nil {
+			t.Fatalf("decode verify invocation %d input: %v", verifies, err)
+		}
+		if input.TestEvidence.Kind != ledger.KindEvidenceFor {
+			t.Errorf("verify invocation %d testEvidence kind = %q, want %q",
+				verifies, input.TestEvidence.Kind, ledger.KindEvidenceFor)
+		}
+		// The test node has passed `verifies` times by the time verify runs
+		// this invocation, and each pass appended one evidence record.
+		if got := len(input.TestEvidence.Items); got != verifies {
+			t.Errorf("verify invocation %d received %d evidence records, want %d: %s",
+				verifies, got, verifies, req.Input)
+		}
+		for _, rec := range input.TestEvidence.Items {
+			if rec.RecordType != ledger.RecordEvidence {
+				t.Errorf("verify invocation %d testEvidence holds a %s record; the evidence projection selects evidence only",
+					verifies, rec.RecordType)
+			}
+		}
+	}
+	if verifies != 2 {
+		t.Fatalf("found %d verify invocations, want 2", verifies)
+	}
 }
 
 // filterRecords returns the subset of records whose RecordType is

@@ -233,6 +233,51 @@ func TestEvidenceForSubject(t *testing.T) {
 		}
 		assertIDs(t, p.Items, nil)
 	})
+
+	t.Run("empty subject selects all live evidence", func(t *testing.T) {
+		// A second evidence record on a different subject proves the empty
+		// reference is unscoped rather than matching nothing, and superseding
+		// it proves the unscoped selection is still live-only.
+		evidenceData := func(note string) json.RawMessage {
+			return mustJSON(t, map[string]any{
+				"collection_method": "runner_wait_status",
+				"completeness":      "partial",
+				"measurements":      map[string]any{"exit_code": 0, "note": note},
+			})
+		}
+		manifest := ledger.WithRunnerManifest(ledger.RunnerManifest{
+			ActorID:          testRunner,
+			ObservableFields: []string{"/collection_method", "/completeness", "/measurements"},
+		})
+		second := mustAppend(t, f.ledger, ledger.Record{
+			RecordType: ledger.RecordEvidence,
+			RunID:      testRunID,
+			Origin:     runnerOrigin,
+			Authority:  ledger.AuthorityObserved,
+			SubjectRef: ledger.NullableID(f.verifiedTask.ID),
+			Data:       evidenceData("first measurement"),
+		}, manifest)
+		corrected, err := f.ledger.AppendSuperseding(context.Background(), ledger.Record{
+			RecordType: ledger.RecordEvidence,
+			RunID:      testRunID,
+			Origin:     runnerOrigin,
+			Authority:  ledger.AuthorityObserved,
+			SubjectRef: ledger.NullableID(f.verifiedTask.ID),
+			Data:       evidenceData("corrected measurement"),
+		}, second.ID, manifest)
+		if err != nil {
+			t.Fatalf("supersede the second evidence record: %v", err)
+		}
+
+		p, err := ledger.EvidenceForSubject(f.store.all(), "")
+		if err != nil {
+			t.Fatalf("EvidenceForSubject: %v", err)
+		}
+		assertIDs(t, p.Items, []string{f.evidence.ID, corrected.ID})
+		if p.Subject != "" {
+			t.Fatalf("subject = %q, want empty", p.Subject)
+		}
+	})
 }
 
 func TestDeliverySummaryCountsHonestly(t *testing.T) {

@@ -177,8 +177,9 @@ func resolvePointer(ctx context.Context, src bindingSources, pointer string) (js
 //   - `open_assumptions` and `open_questions` are both answered by the single
 //     open-assumptions-and-questions projection, which selects both record
 //     types. Binding either name gets that projection.
-//   - `evidence` maps to the subject-scoped evidence projection with an empty
-//     subject, which selects the run's evidence records.
+//   - `evidence` maps to the evidence projection with an empty subject,
+//     which ledger.EvidenceForSubject reads as unscoped: it selects all of
+//     the run's live evidence records rather than one reference's.
 //
 // A name outside the list is refused rather than guessed at: §10.9's
 // vocabulary is closed on purpose, so a typo should fail loudly rather than

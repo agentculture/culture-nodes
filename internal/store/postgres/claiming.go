@@ -446,6 +446,72 @@ func (s *Store) CompleteWork(ctx context.Context, workID, workerID string, fenci
 	return nil
 }
 
+// deferWorkSQL releases a claimed work item back to 'ready' and pushes its
+// availability forward, guarded by the same full lease tuple completeWorkSQL
+// uses -- work ID, state, owner, fencing token, attempt -- so a worker whose
+// claim has already gone cannot move an item somebody else now holds.
+//
+// It differs from every other release path in this file in one deliberate
+// way: it DECREMENTS attempt. work_items.attempt counts DISPATCHES (see this
+// file's invariant 2 and internal/worker/budget.go's "WHAT IT BOUNDS"), and
+// a deferral is the one case where a claim was taken and no dispatch
+// happened -- nothing was invoked, nothing was billed, nothing external was
+// touched. Leaving the increment in place would let a bounded provider pause
+// spend a node's dispatch budget without a single session ever being
+// started, which is precisely the failed-billable-session cascade the
+// capacity breaker exists to prevent, arriving by a different door. GREATEST
+// keeps it from going negative if some other path ever resets the counter.
+//
+// available_at is set forward rather than to now(): a deferred item must
+// stay invisible to ClaimWork until there is a reason to look again, or the
+// worker loop would spin on it. The row stays 'ready' the whole time, so
+// nothing has to remember it and no reaper has to find it.
+const deferWorkSQL = `
+UPDATE work_items
+SET state            = 'ready',
+    lease_owner      = NULL,
+    lease_expires_at = NULL,
+    available_at     = $5,
+    attempt          = GREATEST(attempt - 1, 0),
+    state_version    = state_version + 1,
+    updated_at       = now()
+WHERE id = $1
+  AND state = 'leased'
+  AND lease_owner = $2
+  AND fencing_token = $3
+  AND attempt = $4
+`
+
+// DeferWork releases a claimed work item without dispatching it, making it
+// claimable again at availableAt. It returns ErrStaleClaim -- never a silent
+// no-op -- when the caller no longer holds the claim, exactly like
+// CompleteWork and ExtendLease.
+//
+// It exists for the capacity circuit breaker (task t9,
+// internal/worker/breaker.go): an actor whose provider capacity is exhausted
+// must not be dispatched to, and the honest thing to do with work addressed
+// to it is to try later, not to fail the attempt. See deferWorkSQL for why
+// the attempt counter is given back.
+func (s *Store) DeferWork(ctx context.Context, workID, workerID string, fencingToken int64, expectedAttempt int, availableAt time.Time) error {
+	switch {
+	case workID == "":
+		return fmt.Errorf("postgres: DeferWork: workID is required")
+	case workerID == "":
+		return fmt.Errorf("postgres: DeferWork: workerID is required")
+	case availableAt.IsZero():
+		return fmt.Errorf("postgres: DeferWork: availableAt is required (a deferral with no deadline is a lost work item)")
+	}
+
+	tag, err := s.pool.Exec(ctx, deferWorkSQL, workID, workerID, fencingToken, int32(expectedAttempt), availableAt.UTC())
+	if err != nil {
+		return fmt.Errorf("postgres: DeferWork: %w", err)
+	}
+	if tag.RowsAffected() == 0 {
+		return ErrStaleClaim
+	}
+	return nil
+}
+
 // extendLeaseSQL guards a lease renewal the same way completeWorkSQL guards
 // completion, minus the attempt check (a heartbeat does not need to state
 // which attempt it is extending, only which lease): work ID, expected

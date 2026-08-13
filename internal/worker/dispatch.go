@@ -52,6 +52,15 @@ func (w *Worker) dispatchActor(
 		return w.parkExhausted(ctx, claimed, node, dc)
 	}
 
+	// The capacity circuit breaker, checked at the same site and for the same
+	// reason as the budget: it is the last point at which nothing outside the
+	// control plane has been touched yet. Unlike the budget it DEFERS rather
+	// than fails — a paused actor is a statement about the provider, not a
+	// verdict on this work. See breaker.go for the whole argument.
+	if pause, paused := w.activePauseFor(ctx, node); paused {
+		return w.deferForPause(ctx, claimed, node, dc, pause)
+	}
+
 	if w.opts.Registry == nil {
 		return w.failAttempt(ctx, claimed, "", engine.StatusFailed, "configuration",
 			"this worker has no actor registry configured, so it cannot resolve an endpoint to invoke")
@@ -395,6 +404,14 @@ func (w *Worker) completeFromInvocationError(
 	}
 	w.appendHookEvidence(ctx, completion, preRun)
 	w.recordHookOperations(ctx, d.NamespaceID, completion.AttemptID, preRun, nil)
+	// Task t9: a provider-capacity failure is the one class whose right
+	// response lives above the attempt (see actors.ErrorClass.Retryable's
+	// note). The failed attempt is already committed; this marks the ACTOR
+	// unavailable so the next twelve work items queued for it are not each
+	// spent discovering the same wall. Best-effort — see tripCapacityBreaker.
+	if class == actors.ClassCapacityExhausted {
+		w.tripCapacityBreaker(ctx, claimed, node, dc, invokeErr)
+	}
 	return nil
 }
 

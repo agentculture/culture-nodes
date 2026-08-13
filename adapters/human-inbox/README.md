@@ -162,6 +162,57 @@ Notes, mirroring the script's own rules:
 A workflow node then names the actor as usual — dispatch reads the
 endpoint, not the kind, which is the whole point.
 
+## Authoring the node: human-timescale deadlines
+
+A human answers in days, not minutes — and every time bound a node gets is
+**authored configuration**, never actor-kind special-casing (issue 38 /
+spec claim c28; `internal/actors/neutrality_test.go` enforces the absence
+of branching). Three settings carry the whole pattern:
+
+* **`policy.timeout`** is the async wait bound: it becomes the parked
+  attempt's durable deadline timer, verbatim and unclamped (the 900s cap
+  is a code-node runner limit and never touches agent nodes). Durations
+  are Go literals topping out at the hour unit, so a week is `168h`.
+  Without it, this bridge's `heartbeat_after_seconds: 0` makes the wait
+  genuinely open-ended — author the bound you mean.
+* **`policy.retry.maxAttempts: 1`** — a human is asked once. A timeout or
+  failure routes the node's declared edge instead of automatically
+  re-asking. (The worker's separate dispatch budget counts *dispatches*,
+  not elapsed time: a parked task consumes exactly the one dispatch that
+  started it, however long the person takes.)
+* **`spec.limits.maxDuration`** must contain the park: the run-level
+  wall-clock bound is checked when the late callback resumes the run, and
+  the `1h` default would end a five-day run right there. Two weeks is
+  `336h`.
+
+```yaml
+spec:
+  limits:
+    maxDuration: 336h          # the run outlives the longest human wait
+
+  nodes:
+    review:
+      kind: agent              # an ordinary node; the ACTOR is human
+      ownerRef: team/platform-ai
+      uses: actor://company/human-ops@sha256:<digest>
+      input:
+        from: /run/input
+      contract:
+        outcomes:
+          completed:
+            schema: {type: object}
+      policy:
+        timeout: 168h          # a week to answer, as a durable deadline
+        retry:
+          maxAttempts: 1       # ask once; route edges, don't re-ask
+```
+
+`internal/worker/humanpace_test.go` proves the pattern end to end with a
+simulated clock: the `168h` timeout lands unclamped in the deadline timer
+and the §13.1 invocation, five simulated days of sweeps and worker ticks
+leave the park untouched (no timeout, no retry, dispatch budget still at
+one), and the day-five callback completes the run normally.
+
 ## Trust model: `proposed`-only, no usage, no evidence
 
 The bridge emits exactly one ledger record per completion: a `claim` with

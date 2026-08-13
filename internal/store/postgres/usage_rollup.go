@@ -46,6 +46,16 @@ type UsageRollup struct {
 	// "no attempt reported usage" -- distinguishable from a reported sum
 	// that happens to equal zero (AttemptsReported > 0, InputTokens == 0),
 	// which never happens with AttemptsNotReported alone.
+	//
+	// AttemptsNotReported is a permanent category, not a transitional one
+	// (issue #32's honest narrowing, stated in migrations/README.md's 0012
+	// entry): an attempt reports usage only when its bridge held a parseable
+	// terminal result at completion -- on the §13.2 sync result, the
+	// completed/failed callback payloads (ADR 0008), or the sync 500 error
+	// body. Cancelled attempts (a SIGTERM'd session emits no terminal
+	// event) and result-less crashes or timeouts have nothing to report and
+	// stay NULL forever, so their real burn is visible only as this count.
+	// Consumers must render it as "unreported", never as zero spend.
 	AttemptsReported    int
 	AttemptsNotReported int
 

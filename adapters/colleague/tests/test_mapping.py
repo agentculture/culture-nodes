@@ -460,6 +460,11 @@ def test_sync_response_failure_carries_usage_from_task_result():
         created_at="now",
     )
     assert r.status_code == 500
+    # The full 500-body key set is a wire contract (issue #32, task t5): the
+    # control plane's actors client parses exactly this shape out of a non-2xx
+    # response (usageFromErrorBody in internal/actors/client.go), so a renamed
+    # or nested key would silently cost failed attempts their accounting.
+    assert set(r.body) == {"error", "class", "workspace_measured", "usage"}
     assert r.body["usage"] == {
         "input_tokens": 1,
         "output_tokens": 0,

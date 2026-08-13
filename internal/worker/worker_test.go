@@ -549,6 +549,93 @@ func TestWorkerRecordsClassifiedInvocationFailures(t *testing.T) {
 	}
 }
 
+// Issue #32, task t5: a synchronous bridge failure whose 500 error body
+// carries the §13.2 usage block — a failed session that still produced a
+// parseable terminal result, the bridges' `{error, class,
+// workspace_measured, usage}` sync_response failure shape from task t4 —
+// persists that usage on the failed attempt. A failed session burned real
+// tokens, and retries compound that burn, so the rollups must see it.
+func TestWorkerPersistsSyncFailureUsage(t *testing.T) {
+	h := newHarness(t, func(_ *harness, w http.ResponseWriter, _ actors.InvocationRequest) {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusInternalServerError)
+		_, _ = fmt.Fprint(w, `{
+			"error": "session ended with an error result",
+			"class": "execution",
+			"workspace_measured": {"measured": false},
+			"usage": {"input_tokens": 850, "output_tokens": 60, "cost": 0.017, "currency": "USD"}
+		}`)
+	})
+
+	run := h.createRun("sync.workflow.yaml", `{"subject":"widget"}`)
+	h.runUntil(20*time.Second, func() bool { return h.run(run.ID).State.Terminal() })
+
+	if state := h.run(run.ID).State; state != engine.RunFailed {
+		t.Fatalf("run state = %s, want failed (worker errors: %v)", state, h.workerErrors())
+	}
+
+	var (
+		status                    string
+		result                    []byte
+		inputTokens, outputTokens int64
+		cost                      float64
+		currency                  string
+	)
+	if err := h.store.Pool().QueryRow(h.ctx, `
+		SELECT a.status, a.result, a.usage_input_tokens, a.usage_output_tokens, a.usage_cost, a.usage_currency
+		FROM attempts AS a JOIN node_runs AS nr ON nr.id = a.node_run_id
+		WHERE nr.run_id = $1 AND nr.node_key = 'analyze'
+	`, run.ID).Scan(&status, &result, &inputTokens, &outputTokens, &cost, &currency); err != nil {
+		t.Fatalf("read attempt: %v", err)
+	}
+	if engine.TechStatus(status) != engine.StatusFailed {
+		t.Errorf("attempt status = %q, want failed for a 500 (PRD §13.5 execution)", status)
+	}
+	if !bytes.Contains(result, []byte(string(actors.ClassExecution))) {
+		t.Errorf("attempt result = %s, want the §13.5 class recorded", result)
+	}
+	if inputTokens != 850 || outputTokens != 60 {
+		t.Errorf("tokens = %d/%d, want 850/60 from the 500 error body", inputTokens, outputTokens)
+	}
+	if cost != 0.017 {
+		t.Errorf("cost = %v, want 0.017", cost)
+	}
+	if currency != "USD" {
+		t.Errorf("currency = %q, want USD", currency)
+	}
+}
+
+// The honest-null rule on the same path: a 500 error body without a usage
+// block — a result-less crash — leaves every usage column NULL, never a
+// fabricated zero (the h24 narrowing, stated in migrations/README.md's 0012
+// entry).
+func TestWorkerSyncFailureWithoutUsageLeavesAttemptUsageNull(t *testing.T) {
+	h := newHarness(t, func(_ *harness, w http.ResponseWriter, _ actors.InvocationRequest) {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusInternalServerError)
+		_, _ = fmt.Fprint(w, `{"error":"session crashed before any result","class":"execution","workspace_measured":{"measured":false}}`)
+	})
+
+	run := h.createRun("sync.workflow.yaml", `{"subject":"widget"}`)
+	h.runUntil(20*time.Second, func() bool { return h.run(run.ID).State.Terminal() })
+
+	if state := h.run(run.ID).State; state != engine.RunFailed {
+		t.Fatalf("run state = %s, want failed (worker errors: %v)", state, h.workerErrors())
+	}
+
+	var inputTokens, outputTokens, cost, currency any
+	if err := h.store.Pool().QueryRow(h.ctx, `
+		SELECT a.usage_input_tokens, a.usage_output_tokens, a.usage_cost, a.usage_currency
+		FROM attempts AS a JOIN node_runs AS nr ON nr.id = a.node_run_id
+		WHERE nr.run_id = $1 AND nr.node_key = 'analyze'
+	`, run.ID).Scan(&inputTokens, &outputTokens, &cost, &currency); err != nil {
+		t.Fatalf("read attempt usage: %v", err)
+	}
+	if inputTokens != nil || outputTokens != nil || cost != nil || currency != nil {
+		t.Errorf("usage columns = (%v, %v, %v, %v), want all NULL", inputTokens, outputTokens, cost, currency)
+	}
+}
+
 // An unresolvable input binding refuses to dispatch: an actor must never be
 // handed data the definition did not ask for.
 func TestWorkerRefusesToDispatchAnUnresolvableBinding(t *testing.T) {

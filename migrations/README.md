@@ -49,6 +49,17 @@ Numbered SQL migrations for the authoritative PostgreSQL store (prd-spec
   (`internal/worker/dispatch.go`'s sync path, `internal/actors/callback.go`'s
   async path) now persist. All four are nullable with no default; an
   attempt that reported no usage stays NULL, not a fabricated zero.
+  Coverage is honestly narrowed (issue #32, the attempts-evidence frame's
+  h24): an attempt reports usage only when its bridge held a parseable
+  terminal result at completion — carried on the §13.2 sync result, the
+  `completed`/`failed` callback payloads (ADR 0008), and the sync 500 error
+  body (task t5) alike. **Cancelled attempts and result-less crashes or
+  timeouts stay unreported**: a SIGTERM'd session emits no terminal event,
+  a bridge that crashed or timed out before its CLI produced a result holds
+  nothing to report, and in every such case all four columns stay NULL —
+  `attempts_not_reported` in the rollups (`internal/store/postgres/
+  usage_rollup.go`) is where that burn shows up, and NULL means
+  "unreported", never "free".
 - `0013_run_metadata.sql` — expand-only: adds `runs.name`, `runs.description`,
   `runs.category` (task t3), all nullable with no default. `name`/
   `description` are operator-given at creation only (`internal/api/runs.go`'s

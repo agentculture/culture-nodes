@@ -303,7 +303,7 @@ func (w *Worker) runPreRunHook(
 
 	// A pre-run hook executes BEFORE Registry.Resolve (dispatchActor), so
 	// this failure predates any actor resolution and stays unattributed.
-	completion, cerr := w.completeTechnicalFailure(ctx, claimed, "", engine.StatusFailed, hookKindPreRun, detail, nil)
+	completion, cerr := w.completeTechnicalFailure(ctx, claimed, "", engine.StatusFailed, hookKindPreRun, detail, nil, nil)
 	if cerr != nil {
 		return false, nil, cerr
 	}
@@ -363,7 +363,7 @@ func (w *Worker) refuseAsyncPostRun(
 			"node %q declares post_run and the actor answered asynchronously (202); this build cannot run a "+
 				"post-run hook against a callback-delivered result, so the async acceptance is refused rather than "+
 				"silently skipping the hook",
-			dc.NodeID), nil)
+			dc.NodeID), nil, nil)
 	if err != nil {
 		return err
 	}

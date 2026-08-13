@@ -78,6 +78,36 @@ def _availability_lines(availability: object) -> list[str]:
     return lines
 
 
+def _dispatch_rate_lines(rate: object) -> list[str]:
+    """Render the pacing control's state for this actor, or nothing when it has none.
+
+    Task t10: a worker can hold itself to a declared session rate, per actor
+    and globally, against durable state every worker shares. Absence means no
+    declared rate has ever admitted a dispatch to this actor — which is a
+    different fact from a rate with nothing consumed yet, so absence renders
+    as absence rather than as a zeroed rate.
+
+    ``remaining`` is the number an operator planning a wave actually wants:
+    how many more dispatches this actor may take before the window resets,
+    which shrinks as the window runs out even when nothing has been consumed
+    (the rate is spread across the REMAINING window). The global rate is not
+    shown here because it is not this actor's — ``GET
+    /v1alpha1/dispatch-rates`` carries every scope.
+    """
+    if not isinstance(rate, dict):
+        return []
+    lines = [
+        f"dispatch_rate.limit_per_window: {rate.get('limit_per_window', '')}",
+        f"dispatch_rate.dispatched: {rate.get('dispatched', '')}",
+        f"dispatch_rate.remaining: {rate.get('remaining', '')}",
+    ]
+    for key in ("window_ends_at", "next_dispatch_at", "last_dispatch_at"):
+        value = rate.get(key)
+        if value:
+            lines.append(f"dispatch_rate.{key}: {value}")
+    return lines
+
+
 def _actor_line(item: dict) -> str:
     availability = item.get("availability")
     state = "available"
@@ -129,6 +159,7 @@ def cmd_actors_get(args: argparse.Namespace) -> int:
         f"protocol: {payload.get('protocol', '')}",
     ]
     lines.extend(_availability_lines(payload.get("availability")))
+    lines.extend(_dispatch_rate_lines(payload.get("dispatch_rate")))
     emit_result("\n".join(lines), json_mode=False)
     return 0
 
@@ -198,7 +229,9 @@ def register(sub: argparse._SubParsersAction) -> None:
     add_api_url_argument(listp)
     listp.set_defaults(func=cmd_actors_list, paused_only=False)
 
-    getp = noun_sub.add_parser("get", help="Fetch one actor row and its availability.")
+    getp = noun_sub.add_parser(
+        "get", help="Fetch one actor row, its availability, and its dispatch rate."
+    )
     getp.add_argument("id", help=_ACTOR_ID_HELP)
     getp.add_argument("--json", action="store_true", help=JSON_FLAG_HELP)
     add_api_url_argument(getp)

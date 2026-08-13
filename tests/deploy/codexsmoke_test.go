@@ -20,6 +20,7 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
+	"strings"
 	"testing"
 
 	"github.com/agentculture/culture-nodes/internal/compiler"
@@ -88,15 +89,9 @@ func TestCodexSmokePairHasTwoCodexNodesOnEntryChain(t *testing.T) {
 
 	var ir struct {
 		Spec struct {
-			Entry string `json:"entry"`
-			Nodes map[string]struct {
-				Kind string `json:"kind"`
-				Uses string `json:"uses"`
-			} `json:"nodes"`
-			Edges []struct {
-				From string `json:"from"`
-				To   string `json:"to"`
-			} `json:"edges"`
+			Entry string                 `json:"entry"`
+			Nodes map[string]smokeIRNode `json:"nodes"`
+			Edges []smokeIREdge          `json:"edges"`
 		} `json:"spec"`
 	}
 	unmarshalNormalized(t, compiled, &ir)
@@ -105,44 +100,54 @@ func TestCodexSmokePairHasTwoCodexNodesOnEntryChain(t *testing.T) {
 		t.Errorf("spec.entry = %q, want %q", ir.Spec.Entry, "codex-thor")
 	}
 
-	thor, ok := ir.Spec.Nodes["codex-thor"]
-	if !ok {
-		t.Fatal("no codex-thor node in the compiled IR")
-	}
-	if thor.Kind != "agent" {
-		t.Errorf("codex-thor kind = %q, want %q", thor.Kind, "agent")
-	}
-	if want := "actor://company/codex-thor@sha256:"; len(thor.Uses) < len(want) || thor.Uses[:len(want)] != want {
-		t.Errorf("codex-thor uses = %q, want a company/codex-thor actor reference pinned with @sha256:", thor.Uses)
-	}
+	assertCodexAgentNode(t, ir.Spec.Nodes, "codex-thor")
+	assertCodexAgentNode(t, ir.Spec.Nodes, "codex-orin")
 
-	orin, ok := ir.Spec.Nodes["codex-orin"]
-	if !ok {
-		t.Fatal("no codex-orin node in the compiled IR")
-	}
-	if orin.Kind != "agent" {
-		t.Errorf("codex-orin kind = %q, want %q", orin.Kind, "agent")
-	}
-	if want := "actor://company/codex-orin@sha256:"; len(orin.Uses) < len(want) || orin.Uses[:len(want)] != want {
-		t.Errorf("codex-orin uses = %q, want a company/codex-orin actor reference pinned with @sha256:", orin.Uses)
-	}
-
-	foundThorToOrin := false
-	foundOrinToFinish := false
-	for _, e := range ir.Spec.Edges {
-		if e.From == "codex-thor.completed" && e.To == "codex-orin" {
-			foundThorToOrin = true
-		}
-		if e.From == "codex-orin.completed" && e.To == "finish" {
-			foundOrinToFinish = true
-		}
-	}
-	if !foundThorToOrin {
+	if !hasEdge(ir.Spec.Edges, "codex-thor.completed", "codex-orin") {
 		t.Error("no codex-thor.completed -> codex-orin edge in the compiled IR")
 	}
-	if !foundOrinToFinish {
+	if !hasEdge(ir.Spec.Edges, "codex-orin.completed", "finish") {
 		t.Error("no codex-orin.completed -> finish edge in the compiled IR")
 	}
+}
+
+// smokeIRNode and smokeIREdge are the slices of the normalized IR the
+// entry-chain assertions read; named so assertCodexAgentNode and hasEdge
+// can share them.
+type smokeIRNode struct {
+	Kind string `json:"kind"`
+	Uses string `json:"uses"`
+}
+
+type smokeIREdge struct {
+	From string `json:"from"`
+	To   string `json:"to"`
+}
+
+// assertCodexAgentNode asserts the named node exists in the compiled IR, is
+// agent-kind, and `uses` a company/<id> actor reference pinned with @sha256:.
+func assertCodexAgentNode(t *testing.T, nodes map[string]smokeIRNode, id string) {
+	t.Helper()
+	n, ok := nodes[id]
+	if !ok {
+		t.Fatalf("no %s node in the compiled IR", id)
+	}
+	if n.Kind != "agent" {
+		t.Errorf("%s kind = %q, want %q", id, n.Kind, "agent")
+	}
+	if want := "actor://company/" + id + "@sha256:"; !strings.HasPrefix(n.Uses, want) {
+		t.Errorf("%s uses = %q, want a company/%s actor reference pinned with @sha256:", id, n.Uses, id)
+	}
+}
+
+// hasEdge reports whether the compiled IR carries a from -> to edge.
+func hasEdge(edges []smokeIREdge, from, to string) bool {
+	for _, e := range edges {
+		if e.From == from && e.To == to {
+			return true
+		}
+	}
+	return false
 }
 
 // TestCodexSmokePairNodesAreReadOnlyWithExplicitTimeout is the direct check

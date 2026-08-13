@@ -5,6 +5,17 @@ All notable changes to this project will be documented in this file.
 Format follows [Keep a Changelog](https://keepachangelog.com/). This project
 adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.13.4] - 2026-08-13
+
+### Fixed
+
+- `TestCodexSmokePairHasTwoCodexNodesOnEntryChain` refactored below the
+  cognitive-complexity ceiling (SonarCloud CRITICAL go:S3776, 19 > 15): the
+  duplicated per-node existence/kind/uses assertions moved into a shared
+  `assertCodexAgentNode` helper and the edge scan into `hasEdge`, on named
+  `smokeIRNode`/`smokeIREdge` IR types. Behaviour-identical; PR-upkeep sweep
+  item 1 of 3 (run 01KZXD609QRFHWS8YQ6MRZ1Y0F).
+
 ## [0.13.3] - 2026-08-13
 
 ### Fixed

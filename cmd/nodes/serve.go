@@ -48,6 +48,14 @@ const envDecisionAuthSecret = "NODES_HUMAN_DECISION_TOKEN_SECRET"
 // registration is simply refused with 401 until an operator sets it.
 const envActorRegistrationSecret = "NODES_ACTOR_REGISTRATION_TOKEN_SECRET"
 
+// envEventTokenSecret is the bearer secret POST /v1alpha1/events requires
+// (api.WithEventTokenSecret) — task t10's inbound signal delivery lane.
+// Its own secret again, for the same separation-of-standing reason: an
+// external system that may emit signal events (resuming until.signal
+// waits) need not also hold decision or registration power. Unset is not
+// an error: delivery is simply refused with 401 until an operator sets it.
+const envEventTokenSecret = "NODES_EVENT_TOKEN_SECRET"
+
 // minDecisionAuthSecretBytes mirrors actors.MinTokenSecretBytes: a secret
 // short enough to guess is not meaningfully different from no secret at
 // all, so it is refused at startup rather than accepted and quietly weak.
@@ -175,6 +183,12 @@ func runServeMode(args []string, verb string, withScheduler bool) (int, error) {
 		return 0, err
 	}
 	opts = append(opts, api.WithActorRegistrationSecret(actorRegistrationSecret))
+
+	eventTokenSecret, err := authSecretFromEnv(envEventTokenSecret)
+	if err != nil {
+		return 0, err
+	}
+	opts = append(opts, api.WithEventTokenSecret(eventTokenSecret))
 
 	srv, err := api.NewServer(db, namespaceID, opts...)
 	if err != nil {

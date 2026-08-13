@@ -311,8 +311,24 @@ func (c *Client) invokeOnce(ctx context.Context, url string, endpoint Endpoint, 
 		return InvocationResponse{Async: true, Accepted: &accepted, StatusCode: resp.StatusCode}, nil
 	}
 
+	// classifyBody only ever narrows the status-based class towards
+	// capacity_exhausted (see its doc comment in errors.go); every other
+	// status code's classification is exactly what classifyStatus alone
+	// would have produced, unchanged.
+	class := classifyStatus(resp.StatusCode)
+	if declared, ok := classifyBody(payload); ok {
+		class = declared
+	}
+
+	// RetryAfter is attached unconditionally, including for a
+	// non-retryable class like capacity_exhausted: Retryable() below keeps
+	// this class out of the in-attempt backoff sleep (that would just be
+	// the cascade issue #48 describes), but the parsed delay still rides
+	// on the returned *InvocationError for whatever consults it next —
+	// today an operator reading the attempt's diagnostic, and from task t9
+	// on the circuit breaker deciding how long to pause the actor.
 	return InvocationResponse{}, &InvocationError{
-		Class:      classifyStatus(resp.StatusCode),
+		Class:      class,
 		Op:         "invoke",
 		StatusCode: resp.StatusCode,
 		Message:    fmt.Sprintf("actor answered %s", http.StatusText(resp.StatusCode)),

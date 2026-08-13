@@ -2,6 +2,7 @@ package actors
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"net"
@@ -13,10 +14,12 @@ import (
 	"github.com/agentculture/culture-nodes/internal/engine"
 )
 
-// ErrorClass is one of PRD §13.5's nine adapter error classes.
+// ErrorClass is one of PRD §13.5's adapter error classes.
 type ErrorClass string
 
-// The §13.5 classes, in the order that section lists them.
+// The §13.5 classes, in the order that section lists them, followed by one
+// addition this repo has made beyond the PRD text: see
+// ClassCapacityExhausted.
 const (
 	// ClassRetryableTransport is a network-level failure that says nothing
 	// about the actor: a refused connection, a reset, a truncated body.
@@ -44,15 +47,28 @@ const (
 	// ClassCancelled is the invocation being cancelled (§13.6), including a
 	// caller-cancelled context.
 	ClassCancelled ErrorClass = "cancelled"
+	// ClassCapacityExhausted is a provider-side quota, per-session limit, or
+	// rate-window exhaustion — not one of the PRD's original nine (issue
+	// #48's cascade diagnosis). It is deliberately NOT inferred from a
+	// status code the way the other nine are: a quota exhaustion and
+	// ordinary backpressure both show up as a 429 (sometimes a 5xx), so
+	// classifyStatus keeps mapping those unchanged — 429 stays
+	// rate_limited, full stop. The only path to this class is a bridge's
+	// own error body declaring "class":"capacity_exhausted" (see
+	// classifyBody below): the bridge already knows, from the provider's
+	// own error shape, which kind of limit it hit, and this package trusts
+	// that self-report the same way §13.5 already trusts a bridge's
+	// auth_or_policy or actor_rejected_input declarations.
+	ClassCapacityExhausted ErrorClass = "capacity_exhausted"
 )
 
 // ErrorClasses returns the §13.5 classes in the order that section lists
-// them.
+// them, followed by ClassCapacityExhausted.
 func ErrorClasses() []ErrorClass {
 	return []ErrorClass{
 		ClassRetryableTransport, ClassRateLimited, ClassActorUnavailable,
 		ClassActorRejectedInput, ClassAuthOrPolicy, ClassContract,
-		ClassExecution, ClassTimeout, ClassCancelled,
+		ClassExecution, ClassTimeout, ClassCancelled, ClassCapacityExhausted,
 	}
 }
 
@@ -82,6 +98,15 @@ func (c ErrorClass) Valid() bool {
 // the actor rejected, a credential it refused, a body the protocol cannot
 // parse, a failure it already ran, or a cancellation, would produce the same
 // answer and burn an attempt doing it.
+//
+// capacity_exhausted joins that non-retryable side deliberately, even though
+// at a glance it looks like rate_limited's sibling. Retrying inside the
+// attempt against a hard provider quota or session limit is exactly the
+// cascade issue #48 diagnosed: the retry does not wait out backpressure, it
+// burns another billable session against a wall that has not moved. The
+// actor identity is not "fine, just slow" the way actor_unavailable's is —
+// it is exhausted, and the right response lives one layer up, between
+// attempts (the circuit breaker, task t9), not inside this one.
 //
 // Note what this predicate is and is not: it governs the client's own
 // bounded, same-key retry inside one attempt. Whether the *engine* dispatches
@@ -120,7 +145,18 @@ func TechStatusFor(c ErrorClass) engine.TechStatus {
 		return engine.StatusContractRejected
 	default:
 		// retryable_transport, rate_limited, actor_unavailable, execution,
-		// and anything an actor invented.
+		// capacity_exhausted, and anything an actor invented.
+		//
+		// capacity_exhausted collapses into the same StatusFailed as its
+		// siblings here — TechStatusFor's job is the §3.4 technical status,
+		// and §3.4 has no dedicated status for "the actor's capacity is
+		// exhausted". The class itself is not lost by that collapse: the
+		// mapping is lossy on purpose (three classes already share
+		// `failed`), and completeFromInvocationError's own comment in
+		// internal/worker/dispatch.go explains why — the class rides along
+		// in the attempt's persisted output precisely so an operator (or,
+		// from task t9 on, the circuit breaker) can still tell a quota
+		// exhaustion apart from a plain execution failure after the fact.
 		return engine.StatusFailed
 	}
 }
@@ -264,6 +300,46 @@ func classifyStatus(status int) ErrorClass {
 		// not something §13 can interpret, which is a contract failure.
 		return ClassContract
 	}
+}
+
+// bodyDeclarableClasses is the set of §13.5 classes a bridge's own error
+// body is trusted to declare directly, overriding whatever classifyStatus
+// would have inferred from the HTTP status alone. It has exactly one member
+// today: capacity_exhausted. Every other class stays status-derived — a
+// bridge cannot talk classifyStatus's output for auth_or_policy, contract,
+// or any of the rest into something else by putting a different value in
+// its "class" field, because classifyBody only ever looks for THIS set.
+// That asymmetry is deliberate: a provider quota, session limit, or
+// rate-window exhaustion is genuinely indistinguishable from ordinary
+// backpressure at the status-code level (both commonly answer 429, and
+// providers are not consistent about even that), so the status heuristic
+// has no honest opinion to defend here the way it does everywhere else.
+var bodyDeclarableClasses = map[ErrorClass]bool{
+	ClassCapacityExhausted: true,
+}
+
+// classifyBody looks for a bridge-declared class in a non-2xx response
+// body, returning it only when the body names a class in
+// bodyDeclarableClasses. An absent "class" field, an unparseable body, or a
+// declared class this package does not trust a bridge to self-report all
+// yield ok=false, leaving classifyStatus's status-based classification
+// untouched — this function only ever narrows towards capacity_exhausted,
+// it never invents a different status-based class.
+//
+// It reads the same raw payload usageFromErrorBody does (not the truncated
+// Body capture), for the same reason: a large error document must not cost
+// the attempt its classification any more than it costs it its accounting.
+func classifyBody(payload []byte) (ErrorClass, bool) {
+	var body struct {
+		Class ErrorClass `json:"class"`
+	}
+	if err := json.Unmarshal(payload, &body); err != nil {
+		return "", false
+	}
+	if bodyDeclarableClasses[body.Class] {
+		return body.Class, true
+	}
+	return "", false
 }
 
 // classifyTransport maps a transport-level failure onto a §13.5 class. The

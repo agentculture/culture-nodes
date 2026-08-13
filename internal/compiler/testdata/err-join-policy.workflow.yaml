@@ -1,0 +1,144 @@
+# Join-policy value semantics the JSON Schema cannot state (issue #43):
+#
+#   * `quorum-gather` declares policy quorum with no quorum value — the
+#     barrier has no threshold to count to;
+#   * `all-gather` declares a quorum value under policy `all`, which never
+#     reads one, so the number is a lie about how the barrier behaves.
+#
+# The schema's own if/then only reaches "a join node must carry a join
+# block"; the pairing of policy and quorum is a compiler check.
+#
+# Each bad join sits inside its OWN split, one after the other, so the two
+# policy diagnostics are all this fixture reports: a join reachable outside a
+# split is a different error (err-join-outside-split.workflow.yaml), and
+# chaining two joins under one split would trip it here as noise.
+apiVersion: nodes.culture.dev/v1alpha1
+kind: Workflow
+
+metadata:
+  name: join-policy
+  version: 1.0.0
+  ownerRef: team/platform-ai
+
+spec:
+  entry: first-fan
+
+  contract:
+    input:
+      schema:
+        type: object
+    output:
+      schema:
+        type: object
+
+  limits:
+    maxTransitions: 16
+    maxVisitsPerNode: 4
+    maxParallelTokens: 4
+
+  nodes:
+    first-fan:
+      kind: parallel
+      ownerRef: team/platform-ai
+
+    lint:
+      kind: agent
+      ownerRef: team/platform-ai
+      uses: actor://company/linter@sha256:aaaaaa
+      input:
+        from: /run/input
+      contract:
+        outcomes:
+          clean:
+            schema:
+              type: object
+
+    test:
+      kind: agent
+      ownerRef: team/platform-ai
+      uses: actor://company/tester@sha256:bbbbbb
+      input:
+        from: /run/input
+      contract:
+        outcomes:
+          passed:
+            schema:
+              type: object
+
+    quorum-gather:
+      kind: join
+      ownerRef: team/platform-ai
+      join:
+        policy: quorum
+
+    second-fan:
+      kind: parallel
+      ownerRef: team/platform-ai
+
+    ship:
+      kind: agent
+      ownerRef: team/platform-ai
+      uses: actor://company/shipper@sha256:cccccc
+      input:
+        from: /run/input
+      contract:
+        outcomes:
+          shipped:
+            schema:
+              type: object
+
+    announce:
+      kind: agent
+      ownerRef: team/platform-ai
+      uses: actor://company/announcer@sha256:dddddd
+      input:
+        from: /run/input
+      contract:
+        outcomes:
+          announced:
+            schema:
+              type: object
+
+    all-gather:
+      kind: join
+      ownerRef: team/platform-ai
+      join:
+        policy: all
+        quorum: 2
+
+    finish:
+      kind: end
+      ownerRef: team/platform-ai
+      output:
+        from: /nodes/all-gather/output
+
+  edges:
+    - from: first-fan.split
+      to: lint
+
+    - from: first-fan.split
+      to: test
+
+    - from: lint.clean
+      to: quorum-gather
+
+    - from: test.passed
+      to: quorum-gather
+
+    - from: quorum-gather.joined
+      to: second-fan
+
+    - from: second-fan.split
+      to: ship
+
+    - from: second-fan.split
+      to: announce
+
+    - from: ship.shipped
+      to: all-gather
+
+    - from: announce.announced
+      to: all-gather
+
+    - from: all-gather.joined
+      to: finish

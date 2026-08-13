@@ -139,10 +139,12 @@ Expected-behavior prose from the same section:
 - expected negative outcomes follow graph edges rather than masquerading as
   runtime failure — **met** (criterion 5);
 - loops bounded by transition, node-visit, time, parallelism, token — **met**
-  for transitions, visits, and duration (`TestPlanTransitionEnforcesEachBound`);
-  parallelism/token bounds exist in the schema and the sequential engine holds
-  `maxParallelTokens: 1` by construction, but no test drives a parallel bound
-  because §9.8 parallelism is explicitly out of scope for this issue. Cost
+  for transitions, visits, and duration (`TestPlanTransitionEnforcesEachBound`)
+  and, since task t20 of the economy-discord-graphs plan (issue #43), for
+  parallelism: `maxParallelTokens` is charged at a split's fan-out and a split
+  that would cross it is refused whole
+  (`TestSplitPastMaxParallelTokensIsRefusedWhole`), with `maxTransitions`
+  charged `+K` over the eligible set (`TestSplitIsChargedKTransitions`). Cost
   budgets are not implemented (also listed as optional).
 
 ---

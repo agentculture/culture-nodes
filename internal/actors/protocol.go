@@ -122,13 +122,27 @@ type LedgerDelta struct {
 }
 
 // InvocationResult is the §13.2 synchronous result body (HTTP 200).
+//
+// WorkspaceMeasured is the bridge-measured workspace block (issue #33a,
+// amending §13.2 the same additive way ADR 0008 amended it for usage on the
+// failed event): `{measured, repo, reason, branch, head_before, head_after,
+// status_porcelain, changed_files, diffstat}`, produced by the bridges' own
+// workspace.py from git subprocesses the bridge itself ran. It is kept as
+// raw JSON rather than a typed struct so the block round-trips exactly as
+// the bridge reported it — a bridge that could not measure sends
+// `measured:false` with every fact null, and that shape must survive to the
+// node's output unaltered, never re-rendered as an empty diff. It is
+// actor-reported data, not observed evidence: it rides inside the node's
+// output (see MergeWorkspaceMeasured), and nothing on this path writes an
+// `observed`-authority ledger record from it.
 type InvocationResult struct {
-	Outcome         string          `json:"outcome"`
-	Output          json.RawMessage `json:"output"`
-	LedgerDelta     *LedgerDelta    `json:"ledger_delta"`
-	ArtifactRefs    []string        `json:"artifact_refs"`
-	ContinuationRef *string         `json:"continuation_ref"`
-	Usage           *Usage          `json:"usage"`
+	Outcome           string          `json:"outcome"`
+	Output            json.RawMessage `json:"output"`
+	LedgerDelta       *LedgerDelta    `json:"ledger_delta"`
+	ArtifactRefs      []string        `json:"artifact_refs"`
+	ContinuationRef   *string         `json:"continuation_ref"`
+	Usage             *Usage          `json:"usage"`
+	WorkspaceMeasured json.RawMessage `json:"workspace_measured,omitempty"`
 }
 
 // Records returns the proposed ledger records, or nil when the result carried
@@ -242,6 +256,10 @@ type CompletedPayload struct {
 	LedgerDelta  *LedgerDelta    `json:"ledger_delta"`
 	ArtifactRefs []string        `json:"artifact_refs"`
 	Usage        *Usage          `json:"usage"`
+	// WorkspaceMeasured carries the same bridge-measured block
+	// InvocationResult does — an actor that finished late measured its
+	// workspace exactly like one that finished inline.
+	WorkspaceMeasured json.RawMessage `json:"workspace_measured,omitempty"`
 }
 
 // FailedPayload is the body of a `failed` event. Class is one of §13.5's
@@ -253,11 +271,18 @@ type CompletedPayload struct {
 // holds a terminal result when the work fails reports the tokens it burned;
 // a crash or timeout that left no result omits the block entirely, and the
 // attempt's usage stays NULL rather than a fabricated zero.
+//
+// WorkspaceMeasured is optional for the same reason Usage is: the bridges
+// attach the block on every terminal branch — a session that failed may
+// still have changed the workspace, and that fact is worth exactly as much
+// on a failure as on a success. A bridge that could not measure sends
+// `measured:false`; an actor that reports nothing omits the key.
 type FailedPayload struct {
-	Class   ErrorClass `json:"class"`
-	Message string     `json:"message"`
-	Detail  string     `json:"detail,omitempty"`
-	Usage   *Usage     `json:"usage,omitempty"`
+	Class             ErrorClass      `json:"class"`
+	Message           string          `json:"message"`
+	Detail            string          `json:"detail,omitempty"`
+	Usage             *Usage          `json:"usage,omitempty"`
+	WorkspaceMeasured json.RawMessage `json:"workspace_measured,omitempty"`
 }
 
 // AcceptedPayload is the body of an `accepted` event. It may restate the

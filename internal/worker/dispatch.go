@@ -262,9 +262,13 @@ func (w *Worker) completeFromResult(
 	}
 
 	completion, err := w.complete(ctx, claimed, engine.CompletionRequest{
-		TechStatus:  engine.StatusSucceeded,
-		Outcome:     outcome,
-		Output:      output,
+		TechStatus: engine.StatusSucceeded,
+		Outcome:    outcome,
+		// The bridge-measured workspace block rides inside the persisted
+		// output so /nodes/<id>/output bindings carry it downstream; absent
+		// stays absent, and a measured:false block survives verbatim
+		// (issue #33a — actor-reported data, never observed evidence).
+		Output:      actors.MergeWorkspaceMeasured(output, result.WorkspaceMeasured),
 		LedgerDelta: agentDelta,
 		Usage:       result.Usage.ToEngine(),
 		ActorID:     dc.ActorRowID,

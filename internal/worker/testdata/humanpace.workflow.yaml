@@ -1,0 +1,81 @@
+# The human-paced authoring pattern under test in humanpace_test.go (issue
+# #38, spec claim c28/h23): one agent-kind node whose actor is a human behind
+# an async bridge. Nothing here is a special node kind — the human pacing is
+# entirely authored configuration:
+#
+#   policy.timeout: 168h     the async wait bound; the §12.7 deadline timer
+#                            is scheduled a week out, not at a machine scale
+#   retry.maxAttempts: 1     a human is asked once; no automatic re-ask
+#   limits.maxDuration: 336h the run-level wall-clock bound must contain the
+#                            park — the 1h default would end the run at the
+#                            resume transition
+apiVersion: nodes.culture.dev/v1alpha1
+kind: Workflow
+
+metadata:
+  name: worker-humanpace-slice
+  version: 1.0.0
+  ownerRef: team/platform-ai
+
+spec:
+  entry: review
+
+  contract:
+    input:
+      schema:
+        type: object
+        required: [subject]
+        properties:
+          subject:
+            type: string
+    output:
+      schema:
+        type: object
+        required: [verdict]
+        properties:
+          verdict:
+            type: string
+
+  limits:
+    maxDuration: 336h
+    maxTransitions: 8
+    maxVisitsPerNode: 4
+    maxParallelTokens: 1
+
+  ledger:
+    schemaVersion: nodes.culture.dev/ledger/v1alpha1
+    maxRecordsPerNode: 10
+
+  nodes:
+    review:
+      kind: agent
+      ownerRef: team/platform-ai
+      uses: actor://company/long-runner@sha256:bbbbbb
+      input:
+        from: /run/input
+      contract:
+        outcomes:
+          completed:
+            schema:
+              type: object
+              required: [verdict]
+              properties:
+                verdict:
+                  type: string
+      ledger:
+        propose: [claim, result]
+      policy:
+        timeout: 168h
+        retry:
+          maxAttempts: 1
+          backoff: none
+
+    finish:
+      kind: end
+      ownerRef: team/platform-ai
+      output:
+        from: /nodes/review/output
+
+  edges:
+    - from: review.completed
+      to: finish

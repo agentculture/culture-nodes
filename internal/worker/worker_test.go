@@ -52,10 +52,24 @@ type harness struct {
 
 func newHarness(t *testing.T, actorHandler func(h *harness, w http.ResponseWriter, req actors.InvocationRequest)) *harness {
 	t.Helper()
+	return newClockedHarness(t, nil, actorHandler)
+}
+
+// newClockedHarness is newHarness with an injected wall clock, shared by the
+// engine (engine.WithClock — run-duration bounds) and the worker (Options.Now
+// — dispatch deadlines). A nil clock means real time. It exists for the
+// human-timescale tests (task t11): simulating a multi-day park means moving
+// this clock, never sleeping.
+func newClockedHarness(t *testing.T, now func() time.Time, actorHandler func(h *harness, w http.ResponseWriter, req actors.InvocationRequest)) *harness {
+	t.Helper()
 	s := pgtest.RequireStore(t, testStore)
 
 	ns := pgtest.MustNamespace(t, s, "worker")
-	eng, err := storepg.NewEngine(s, ns.ID, engine.WithRetryDelays(0, 0))
+	engOpts := []engine.Option{engine.WithRetryDelays(0, 0)}
+	if now != nil {
+		engOpts = append(engOpts, engine.WithClock(now))
+	}
+	eng, err := storepg.NewEngine(s, ns.ID, engOpts...)
 	if err != nil {
 		t.Fatalf("NewEngine: %v", err)
 	}
@@ -127,6 +141,7 @@ func newHarness(t *testing.T, actorHandler func(h *harness, w http.ResponseWrite
 		Registry:          registry,
 		Signer:            signer,
 		CallbackBaseURL:   h.callbackServer.URL,
+		Now:               now,
 		OnError: func(err error) {
 			h.mu.Lock()
 			h.errs = append(h.errs, err)

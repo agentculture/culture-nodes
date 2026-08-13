@@ -423,6 +423,45 @@ describe("Active Graphs sub-tab: live presence (task t31, c31/h20)", () => {
     ).not.toBeNull();
   });
 
+  it("holds an event that arrives before the committed rows land, then judges it against them", async () => {
+    // The stream opens concurrently with the initial fetch, so a committed
+    // event can beat the runs listing. Adjudicating it against an empty
+    // known-run set would drop it as "unknown run" — a lie, and a source of
+    // nondeterministic pulse counts. It must be held and replayed.
+    mockListWorkflows.mockResolvedValue({ items: WORKFLOW_VERSIONS });
+    mockListNodeRuns.mockResolvedValue({ items: ACTIVE_NODE_RUNS });
+    let releaseRuns!: (value: Awaited<ReturnType<typeof listRuns>>) => void;
+    mockListRuns.mockReturnValue(
+      new Promise<Awaited<ReturnType<typeof listRuns>>>((resolve) => {
+        releaseRuns = resolve;
+      }),
+    );
+    renderNodeGraphs(["/graphs?tab=active"]);
+    await waitFor(() => expect(FakeEventSource.instances).toHaveLength(1));
+    act(() => {
+      FakeEventSource.instances[0].open();
+      FakeEventSource.instances[0].emit(
+        "dev.culture.nodes.attempt.started",
+        { run_id: ACTIVE_RUN_ID, node_id: ACTIVE_NODE_ID },
+        "01EVENTQ",
+      );
+    });
+    // Nothing is claimed while the rows are still in flight.
+    expect(getAgentState().active_graphs).toBeFalsy();
+
+    await act(async () => {
+      releaseRuns({ items: WORKFLOWS_RUNS });
+    });
+    await waitFor(() =>
+      expect(getAgentState().active_graphs?.pulses_total).toBe(1),
+    );
+    expect(getAgentState().active_graphs!.events_total).toBe(1);
+    expect(document.querySelector(".active-node__pulse")).toHaveAttribute(
+      "data-pulse-count",
+      "1",
+    );
+  });
+
   it("treats an event naming no known run as a no-op — counted, never rendered (h14)", async () => {
     resolveFixture();
     await renderActive();

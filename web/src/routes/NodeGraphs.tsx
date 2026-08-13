@@ -443,7 +443,7 @@ function ActiveGraphsPanel() {
     [runs],
   );
 
-  const onEvent = (event: SharedEvent) => {
+  const applyEvent = (event: SharedEvent) => {
     setEventsTotal((n) => n + 1);
     const action = presenceEventAction(event.envelope, knownRunIds);
     if (action.kind === "none") return;
@@ -480,6 +480,35 @@ function ActiveGraphsPanel() {
     }
     if (needsPresenceRefresh(event.envelope.type)) refreshPresence();
   };
+
+  // The stream opens the moment the view mounts, concurrently with the
+  // initial workflows+runs+node-runs fetch — so committed events can (and in
+  // practice routinely do) arrive before `runs` exists. Adjudicating them
+  // against an empty known-run set would drop them as "unknown run", which
+  // would be a lie: the run is known, we just had not read it yet. Hold them
+  // instead, and replay once the committed rows land — every held event is
+  // then judged against real rows, so events_total and pulses_total stay
+  // consistent with each other and with h14 (still exactly one pulse per
+  // committed event, and still none for an event naming a genuinely
+  // unknown run).
+  const pendingEvents = useRef<SharedEvent[]>([]);
+  const applyEventRef = useRef(applyEvent);
+  applyEventRef.current = applyEvent;
+
+  const onEvent = (event: SharedEvent) => {
+    if (runs === null) {
+      pendingEvents.current.push(event);
+      return;
+    }
+    applyEvent(event);
+  };
+
+  useEffect(() => {
+    if (runs === null || pendingEvents.current.length === 0) return;
+    const queued = pendingEvents.current;
+    pendingEvents.current = [];
+    for (const event of queued) applyEventRef.current(event);
+  }, [runs]);
 
   const { status, lastEventId } = useSharedEvents(
     ACTIVE_GRAPH_EVENT_TYPES,

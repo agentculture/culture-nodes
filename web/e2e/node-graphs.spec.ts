@@ -1,5 +1,10 @@
 import { expect, test, type Page } from "@playwright/test";
 import {
+  ACTIVE_EVENTS_TOTAL,
+  ACTIVE_LAST_EVENT_ID,
+  ACTIVE_NODE_ID,
+  ACTIVE_PULSES_TOTAL,
+  ACTIVE_RUN_ID,
   mockNodeGraphsApi,
   readAgentState,
   WORKFLOW_VERSIONS,
@@ -276,9 +281,10 @@ test("the graph is inspectable from the keyboard alone (t31, MeshCanvas preceden
   await expect
     .poll(async () => (await readAgentState(page)).status)
     .toBe("ready");
-  const canvas = page
-    .locator("#active-graph-deliver-change-v2")
-    .getByRole("application");
+  // The graph's own canvas by id: React Flow's wrapper carries
+  // role="application" too, so the role alone is ambiguous here.
+  const canvas = page.locator("#active-graph-deliver-change-v2-canvas");
+  await expect(canvas).toHaveAttribute("role", "application");
   await canvas.focus();
   await page.keyboard.press("ArrowRight");
   const readout = page.locator("#active-graph-deliver-change-v2-inspect");

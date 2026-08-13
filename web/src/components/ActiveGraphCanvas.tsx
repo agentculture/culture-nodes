@@ -283,6 +283,11 @@ export function ActiveGraphCanvas({
       </header>
 
       <div
+        // A stable id per graph: React Flow's own wrapper also carries
+        // role="application" (the RunView.tsx:373-379 nesting), so an
+        // agent or e2e assertion needs an unambiguous handle on *this*
+        // element rather than a role lookup that matches both.
+        id={`${domId}-canvas`}
         className="active-graph__canvas"
         tabIndex={0}
         role="application"

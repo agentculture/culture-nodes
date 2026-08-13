@@ -144,6 +144,18 @@ type Tx interface {
 	// barrier's own token). It returns the cancelled node runs' ids.
 	ReapGroupBranches(ctx context.Context, runID, groupID, keepTokenID string) ([]string, error)
 
+	// InsertEventRoute materializes one `onEvent` edge as a durable run-scoped
+	// pickup route (issue #43, design D9), and RetireEventRoutes retires every
+	// active route of a run when it reaches a terminal state — the same
+	// discipline pending timers and signal subscriptions already follow, for
+	// the same reason: a dead run must have nothing left that can create work
+	// in it. RetireEventRoutes returns how many rows it retired.
+	InsertEventRoute(ctx context.Context, route EventRoute) error
+	RetireEventRoutes(ctx context.Context, runID string) (int, error)
+	// ActiveEventRoutes lists a run's live pickup routes — what an inspection
+	// surface reads, and what a test asserts against.
+	ActiveEventRoutes(ctx context.Context, runID string) ([]EventRoute, error)
+
 	InsertNodeRun(ctx context.Context, nodeRun NodeRun) error
 	UpdateNodeRun(ctx context.Context, nodeRunID string, state NodeRunState, outcome string) error
 	NodeRun(ctx context.Context, nodeRunID string) (NodeRun, error)

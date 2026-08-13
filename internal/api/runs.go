@@ -459,6 +459,16 @@ func (s *Server) cancelRun(ctx context.Context, runID string) (engine.Run, error
 	); err != nil {
 		return engine.Run{}, internalError(fmt.Errorf("cancel run: cancel signal subscriptions: %w", err))
 	}
+	// The event-route sibling of both REAPs above (task t21, issue #43): a
+	// standing `onEvent` route left active would let a later delivery create
+	// a token — and therefore claimable work — inside a cancelled run. Same
+	// no-op-if-already-retired convention.
+	if _, err := tx.Exec(ctx, `
+		UPDATE event_routes SET status = 'retired', retired_at = now()
+		WHERE run_id = $1 AND status = 'active'`, runID,
+	); err != nil {
+		return engine.Run{}, internalError(fmt.Errorf("cancel run: retire event routes: %w", err))
+	}
 
 	var sequence int64
 	if err := tx.QueryRow(ctx,

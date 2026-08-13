@@ -109,6 +109,18 @@ type Token struct {
 	State         TokenState
 	ParentTokenID string
 	GroupID       string
+	// OriginEventID names the signal_events fact that created this token, set
+	// only on an event pickup (issue #43, design D9) and empty everywhere
+	// else.
+	//
+	// It is the answer to review finding D4. A pickup token genuinely has no
+	// PARENT TOKEN: nothing in this run handed it control, and the emitter may
+	// be another run or an external system entirely, so stamping some
+	// emitter's token as its parent would make the ancestry tree assert a
+	// causal edge that does not exist. Rather than either lie about a parent
+	// or leave an unexplained orphan, the token names the FACT it came from,
+	// and the run-detail surface renders it as an explained root.
+	OriginEventID string
 	CreatedAt     time.Time
 	ConsumedAt    time.Time
 }

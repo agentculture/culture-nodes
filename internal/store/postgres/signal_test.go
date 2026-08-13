@@ -157,7 +157,7 @@ func TestDeliverSignalEventWithNoSubscriptionIsAFactNotAnError(t *testing.T) {
 	ctx := context.Background()
 	ns := mustNamespace(t, s, "signal-fact")
 
-	ev, fired, err := s.DeliverSignalEvent(ctx, postgres.DeliverSignalEventInput{
+	delivery, err := s.DeliverSignalEvent(ctx, postgres.DeliverSignalEventInput{
 		NamespaceID: ns.ID,
 		Name:        "nobody-is-listening",
 		Payload:     json.RawMessage(`{"n":1}`),
@@ -166,6 +166,7 @@ func TestDeliverSignalEventWithNoSubscriptionIsAFactNotAnError(t *testing.T) {
 	if err != nil {
 		t.Fatalf("DeliverSignalEvent: %v", err)
 	}
+	ev, fired := delivery.Event, delivery.Fired
 	if len(fired) != 0 {
 		t.Fatalf("fired %d subscriptions, want 0", len(fired))
 	}
@@ -185,7 +186,7 @@ func TestDeliverSignalEventFiresPendingSubscription(t *testing.T) {
 	runID, nodeRunID := mustRunAndNodeRun(t, s, ns.ID)
 	claimed, subID := parkOnSignal(t, s, ns.ID, runID, nodeRunID, "green-light")
 
-	ev, fired, err := s.DeliverSignalEvent(ctx, postgres.DeliverSignalEventInput{
+	delivery, err := s.DeliverSignalEvent(ctx, postgres.DeliverSignalEventInput{
 		NamespaceID: ns.ID,
 		Name:        "green-light",
 		Payload:     json.RawMessage(`{"go":true}`),
@@ -194,6 +195,7 @@ func TestDeliverSignalEventFiresPendingSubscription(t *testing.T) {
 	if err != nil {
 		t.Fatalf("DeliverSignalEvent: %v", err)
 	}
+	ev, fired := delivery.Event, delivery.Fired
 	if len(fired) != 1 || fired[0].ID != subID {
 		t.Fatalf("fired = %+v, want exactly the parked subscription %s", fired, subID)
 	}
@@ -228,19 +230,20 @@ func TestDeliverSignalEventDoesNotFireWrongNameOrOtherRunScope(t *testing.T) {
 	claimedB, subB := parkOnSignal(t, s, ns.ID, runB, nodeRunB, "green-light")
 
 	// A different name resumes nothing.
-	if _, fired, err := s.DeliverSignalEvent(ctx, postgres.DeliverSignalEventInput{
+	if d, err := s.DeliverSignalEvent(ctx, postgres.DeliverSignalEventInput{
 		NamespaceID: ns.ID, Name: "red-light", Emitter: "external",
-	}); err != nil || len(fired) != 0 {
-		t.Fatalf("wrong-name delivery = (fired=%d, err=%v), want (0, nil)", len(fired), err)
+	}); err != nil || len(d.Fired) != 0 {
+		t.Fatalf("wrong-name delivery = (fired=%d, err=%v), want (0, nil)", len(d.Fired), err)
 	}
 
 	// A run-scoped delivery resumes only that run's subscription.
-	_, fired, err := s.DeliverSignalEvent(ctx, postgres.DeliverSignalEventInput{
+	delivery, err := s.DeliverSignalEvent(ctx, postgres.DeliverSignalEventInput{
 		NamespaceID: ns.ID, Name: "green-light", Emitter: "external", RunID: runA,
 	})
 	if err != nil {
 		t.Fatalf("DeliverSignalEvent(run-scoped): %v", err)
 	}
+	fired := delivery.Fired
 	if len(fired) != 1 || fired[0].ID != subA {
 		t.Fatalf("run-scoped delivery fired %+v, want exactly %s", fired, subA)
 	}
@@ -252,12 +255,13 @@ func TestDeliverSignalEventDoesNotFireWrongNameOrOtherRunScope(t *testing.T) {
 	}
 
 	// A namespace-wide delivery then resumes the remaining waiter.
-	_, fired, err = s.DeliverSignalEvent(ctx, postgres.DeliverSignalEventInput{
+	delivery, err = s.DeliverSignalEvent(ctx, postgres.DeliverSignalEventInput{
 		NamespaceID: ns.ID, Name: "green-light", Emitter: "external",
 	})
 	if err != nil {
 		t.Fatalf("DeliverSignalEvent(namespace-wide): %v", err)
 	}
+	fired = delivery.Fired
 	if len(fired) != 1 || fired[0].ID != subB {
 		t.Fatalf("namespace-wide delivery fired %+v, want exactly %s", fired, subB)
 	}
@@ -274,12 +278,13 @@ func TestDeliverSignalEventDoesNotRetroactivelyFireLaterSubscriber(t *testing.T)
 	runID, nodeRunID := mustRunAndNodeRun(t, s, ns.ID)
 
 	// The event arrives first — appended, resuming nothing.
-	ev, fired, err := s.DeliverSignalEvent(ctx, postgres.DeliverSignalEventInput{
+	delivery, err := s.DeliverSignalEvent(ctx, postgres.DeliverSignalEventInput{
 		NamespaceID: ns.ID, Name: "green-light", Emitter: "external",
 	})
-	if err != nil || len(fired) != 0 {
-		t.Fatalf("early delivery = (fired=%d, err=%v), want (0, nil)", len(fired), err)
+	if err != nil || len(delivery.Fired) != 0 {
+		t.Fatalf("early delivery = (fired=%d, err=%v), want (0, nil)", len(delivery.Fired), err)
 	}
+	ev := delivery.Event
 
 	// The subscription arrives second: it stays parked. Only a NEW delivery
 	// may resume it.
@@ -329,12 +334,13 @@ func TestDeliverSignalEventLeavesCancelledWorkItemDead(t *testing.T) {
 		}
 	}
 
-	_, fired, err := s.DeliverSignalEvent(ctx, postgres.DeliverSignalEventInput{
+	delivery, err := s.DeliverSignalEvent(ctx, postgres.DeliverSignalEventInput{
 		NamespaceID: ns.ID, Name: "green-light", Emitter: "external",
 	})
 	if err != nil {
 		t.Fatalf("DeliverSignalEvent: %v", err)
 	}
+	fired := delivery.Fired
 
 	// The event is acked: the leftover subscription is retired (fired), so
 	// it can never match a later delivery either.
@@ -372,12 +378,13 @@ func TestStartDurableSignalWaitReparkAdoptsOriginalSubscription(t *testing.T) {
 	runID, nodeRunID := mustRunAndNodeRun(t, s, ns.ID)
 	_, subID := parkOnSignal(t, s, ns.ID, runID, nodeRunID, "green-light")
 
-	ev, _, err := s.DeliverSignalEvent(ctx, postgres.DeliverSignalEventInput{
+	delivery, err := s.DeliverSignalEvent(ctx, postgres.DeliverSignalEventInput{
 		NamespaceID: ns.ID, Name: "green-light", Emitter: "external",
 	})
 	if err != nil {
 		t.Fatalf("DeliverSignalEvent: %v", err)
 	}
+	ev := delivery.Event
 
 	// The anomalous early re-park: claim the now-ready item and park again
 	// under the same subscription id.

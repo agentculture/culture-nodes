@@ -749,24 +749,50 @@
     },
     "edge": {
       "type": "object",
-      "description": "A transition from a node's declared domain outcome to another node. `changes_required` is an outcome that follows an edge, never an engine failure (PRD §3.4).",
+      "description": "A transition into a node, sourced either from another node's declared domain outcome (`from`) or from a named external event (`onEvent`). Exactly one of the two. `changes_required` is an outcome that follows an edge, never an engine failure (PRD §3.4).",
       "required": [
-        "from",
         "to"
       ],
       "additionalProperties": false,
+      "oneOf": [
+        {
+          "required": [
+            "from"
+          ],
+          "not": {
+            "required": [
+              "onEvent"
+            ]
+          }
+        },
+        {
+          "required": [
+            "onEvent"
+          ],
+          "not": {
+            "required": [
+              "from"
+            ]
+          }
+        }
+      ],
       "properties": {
         "from": {
           "type": "string",
           "pattern": "^[a-z0-9][a-z0-9-]*\\.[a-z][a-z0-9_]*$",
           "description": "`<node>.<outcome>`, e.g. `verify.changes_required`."
         },
+        "onEvent": {
+          "type": "string",
+          "minLength": 1,
+          "description": "An event name (issue #43): when a signal event of this name is delivered to a run of this workflow, a token is created at `to` and the node runs. Several edges may name one event — one delivery then creates one token per matching edge, which is how an event splits. Routes are multi-fire and bounded by spec.limits (§9.7); an event edge may not target an `end` node."
+        },
         "to": {
           "$ref": "#/$defs/name"
         },
         "when": {
           "$ref": "#/$defs/cel",
-          "description": "Optional CEL guard on the transition."
+          "description": "Optional CEL guard on the transition. An `onEvent` edge's guard additionally sees `event` ({name, payload, emitter})."
         }
       }
     }

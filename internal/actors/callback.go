@@ -84,8 +84,18 @@ const (
 	// diagnostic, and it is the only trace such an event leaves.
 	TypeCallbackLate = "dev.culture.nodes.actor.callback-late"
 	// TypeCallbackRejected records an event this ingest could not act on at
-	// all: an unusable payload for a terminal kind.
+	// all: an unusable payload for a terminal kind, or a `signal` emission
+	// that named no event.
 	TypeCallbackRejected = "dev.culture.nodes.actor.callback-rejected"
+	// TypeSignalEmitted records a mid-execution `signal` emission (design
+	// D11): which attempt emitted, under what name and scope, which
+	// signal_events fact it appended, and how many waiters and routes the
+	// delivery woke. It is its own type rather than a callback-received event
+	// because "this node spoke to the rest of the system while still working"
+	// is an operational fact an operator should not have to dig out of a
+	// generic event's payload — the same reasoning that gave a signal wait its
+	// own TypeAttemptWaitingSignal.
+	TypeSignalEmitted = "dev.culture.nodes.actor.signal-emitted"
 	// TypeCallbackCommitFailed records a terminal event whose commit failed
 	// for an infrastructure reason rather than a §13.4 refusal; its `stage`
 	// field says how far the commit got, and so whether the engine's own
@@ -166,6 +176,14 @@ type CallbackStore interface {
 
 	// TouchInvocation records liveness for a non-terminal event.
 	TouchInvocation(ctx context.Context, attemptID string, invocationID string, at time.Time) error
+
+	// EmitSignalEvent appends one signal event on the emitting attempt's
+	// behalf and delivers it — the same delivery POST /v1alpha1/events
+	// performs (fire pending subscriptions, fire active event routes), in one
+	// transaction. It commits NOTHING about the emitting attempt: the
+	// emitter's own work item, lease, and fencing state are untouched, which
+	// is what makes emission non-blocking (design D11).
+	EmitSignalEvent(ctx context.Context, inv PendingInvocation, in EmitSignalInput) (EmitSignalResult, error)
 	// CloseInvocation moves an invocation out of the waiting state.
 	CloseInvocation(ctx context.Context, attemptID, state string) error
 
@@ -187,6 +205,28 @@ type CallbackStore interface {
 
 	// AppendRunEvent appends one diagnostic event to a run's audit log.
 	AppendRunEvent(ctx context.Context, namespaceID, runID, eventType string, data map[string]any) error
+}
+
+// EmitSignalInput is one mid-execution emission, as the ingest resolved it:
+// the name and body the actor asked for, the emitter the ingest DERIVED from
+// the verified attempt, and the run scope (empty means namespace-wide).
+type EmitSignalInput struct {
+	Name    string
+	Payload json.RawMessage
+	Emitter string
+	RunID   string
+}
+
+// EmitSignalResult is what one emission's delivery did. Both counts are
+// reported so the audit event can say whether anything was listening — an
+// emission nobody heard is a legitimate outcome, and a silent one would be
+// indistinguishable from a broken route.
+type EmitSignalResult struct {
+	EventID string
+	// Resumed is how many parked signal subscriptions the delivery fired.
+	Resumed int
+	// PickedUp is how many event routes created a token (design D9).
+	PickedUp int
 }
 
 // Completer is the slice of the engine callback ingest needs. It is an
@@ -477,6 +517,9 @@ func handleClaimed(ctx context.Context, deps CallbackDeps, inv PendingInvocation
 // claim and the sequence mark. Every error return from here is compensated by
 // its caller.
 func processAdvanced(ctx context.Context, deps CallbackDeps, inv PendingInvocation, ev CallbackEvent) (CallbackResult, error) {
+	if ev.Kind == EventSignal {
+		return emitSignal(ctx, deps, inv, ev)
+	}
 	if !ev.Kind.Terminal() {
 		invocationID := ""
 		if ev.Kind == EventAccepted {
@@ -503,6 +546,138 @@ func processAdvanced(ctx context.Context, deps CallbackDeps, inv PendingInvocati
 	}
 
 	return commitTerminal(ctx, deps, inv, ev)
+}
+
+// emitSignal is the non-blocking mid-execution emission (issue #43 task t21,
+// design D11): the attempt asks the control plane to append a named fact and
+// deliver it, and keeps working.
+//
+// Nothing here touches the emitter's own state. There is no resume, no
+// re-lease, no completion and no repark — the invocation stays exactly as
+// parked as it was, and its own terminal event, whenever it comes, commits
+// through commitTerminal in a separate transaction that simply queues behind
+// this delivery on the run's advisory lock. That is what "non-blocking" means
+// structurally rather than aspirationally: there is no state for a failed
+// emission to have half-changed.
+//
+// Idempotency comes free from the surrounding ingest: HandleCallback's step-3
+// event-id claim means a redelivered emission never reaches here twice, so one
+// `signal` event id appends exactly one fact however many times the bridge
+// retries it.
+//
+// The emitter is DERIVED, never read from the payload — see signalEmitter.
+//
+// Design open item O1, resolved and recorded rather than left hanging. Every
+// actor dispatch is minted a callback token, synchronous or not
+// (internal/worker/dispatch.go's callbackFor, "filled in even for a dispatch
+// that turns out to be synchronous"), so the credential is never the missing
+// piece. What emission additionally needs is step 2's durable invocation row,
+// and only the §12.6 async park writes one — so an actor that answered 200
+// inline cannot emit today, and gets ErrUnknownAttempt. That is not a live
+// gap for this deployment: every bridge shipped under adapters/ answers 202
+// and is parked, which is also the only shape in which "emit and keep
+// working" is meaningful at protocol level. The
+// token's 15-minute TTL is the real constraint on a long session, and
+// emission inherits whatever re-issue path async completion already uses
+// rather than inventing a second one.
+//
+// All-backends note (repo rule): the engine-side surface is one callback
+// kind, but a backend only HAS this feature once its bridge exposes an emit
+// affordance to its session. That is adapter work outside this task's engine
+// scope, and it is named here rather than left for one backend to quietly
+// become the only emitter.
+func emitSignal(ctx context.Context, deps CallbackDeps, inv PendingInvocation, ev CallbackEvent) (CallbackResult, error) {
+	var payload SignalPayload
+	if len(ev.Payload) > 0 {
+		if err := json.Unmarshal(ev.Payload, &payload); err != nil {
+			return deps.rejectSignal(ctx, inv, ev, fmt.Sprintf(
+				"signal event %s carries a payload that is not {name, payload?, scope?}: %v", ev.EventID, err))
+		}
+	}
+	if payload.Name == "" {
+		return deps.rejectSignal(ctx, inv, ev, fmt.Sprintf(
+			"signal event %s names no event to emit; set payload.name", ev.EventID))
+	}
+	switch payload.Scope {
+	case "", SignalScopeRun, SignalScopeNamespace:
+	default:
+		return deps.rejectSignal(ctx, inv, ev, fmt.Sprintf(
+			"signal event %s declares scope %q; the scopes are %q and %q",
+			ev.EventID, payload.Scope, SignalScopeRun, SignalScopeNamespace))
+	}
+
+	// Run scope is the default: an emission is a fact about the run that
+	// emitted it unless the actor explicitly asks to speak to the namespace.
+	scopedRun := inv.RunID
+	if payload.Scope == SignalScopeNamespace {
+		scopedRun = ""
+	}
+
+	emitted, err := deps.Store.EmitSignalEvent(ctx, inv, EmitSignalInput{
+		Name:    payload.Name,
+		Payload: payload.Payload,
+		Emitter: signalEmitter(inv),
+		RunID:   scopedRun,
+	})
+	if err != nil {
+		// An infrastructure failure. The caller compensates the sequence mark
+		// and the event-id claim, so the bridge's redelivery emits once —
+		// exactly the discipline a terminal commit failure follows.
+		deps.commitFailed(ctx, inv, ev, StageEmitSignal, err)
+		return CallbackResult{}, err
+	}
+
+	// Liveness: an actor that emitted is an actor that is still working, which
+	// is precisely the claim this kind exists to make.
+	if err := deps.Store.TouchInvocation(ctx, inv.AttemptID, "", deps.now()); err != nil {
+		return CallbackResult{}, err
+	}
+
+	deps.recordDetail(ctx, inv, TypeSignalEmitted, ev, "", map[string]any{
+		"event_id":     emitted.EventID,
+		"signal_name":  payload.Name,
+		"signal_scope": scopeOrDefault(payload.Scope),
+		"emitter":      signalEmitter(inv),
+		"resumed":      emitted.Resumed,
+		"picked_up":    emitted.PickedUp,
+	})
+	return CallbackResult{AttemptID: inv.AttemptID, Disposition: DispositionRecorded}, nil
+}
+
+func scopeOrDefault(scope string) string {
+	if scope == "" {
+		return SignalScopeRun
+	}
+	return scope
+}
+
+// signalEmitter is the attribution a mid-execution emission carries, built
+// from the VERIFIED invocation record rather than from anything the caller
+// sent. §10.4 makes an emitter attribution for operators and never an
+// authority claim, but an attribution an actor could forge would not even be
+// that: the whole point of routing emission through the attempt-scoped token
+// (rather than the namespace-wide event bearer) is that an emission names the
+// attempt it actually came from.
+func signalEmitter(inv PendingInvocation) string {
+	who := inv.ActorRef
+	if who == "" {
+		who = inv.ActorID
+	}
+	if who == "" {
+		return "node:" + inv.NodeID + "/attempt:" + inv.AttemptID
+	}
+	return "node:" + inv.NodeID + "/actor:" + who
+}
+
+// rejectSignal records an emission this ingest cannot act on. It is a
+// DispositionRejected rather than an error for the same reason a rejected
+// terminal payload is: the protocol worked, the request did not, and the
+// emitting attempt must not be told to retry forever. Crucially it changes
+// nothing about the attempt — a malformed emission does not fail the session
+// that is still running.
+func (d CallbackDeps) rejectSignal(ctx context.Context, inv PendingInvocation, ev CallbackEvent, diagnostic string) (CallbackResult, error) {
+	d.record(ctx, inv, TypeCallbackRejected, ev, diagnostic)
+	return CallbackResult{AttemptID: inv.AttemptID, Disposition: DispositionRejected, Diagnostic: diagnostic}, nil
 }
 
 // commitTerminal is step 5: resume the parked work item under the dispatch's
@@ -592,6 +767,11 @@ const (
 	// StageClose is a failure to retire the invocation row AFTER the engine
 	// committed: workflow state moved, bookkeeping did not.
 	StageClose = "close_invocation"
+	// StageEmitSignal is a failure to append and deliver a mid-execution
+	// `signal` emission. Unlike the three above it says nothing about the
+	// emitting attempt, which was never touched: the fact was not written, so
+	// the redelivery the compensated claim invites writes it exactly once.
+	StageEmitSignal = "emit_signal_event"
 )
 
 // commitFailed records why a terminal event did not commit. It is recorded

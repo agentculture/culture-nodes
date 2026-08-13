@@ -62,9 +62,16 @@ import (
 //     so downstream bindings can read what actually woke the run.
 //
 // An event with no waiting subscription is still appended — a fact, not an
-// error — but a subscription created after the event does NOT retroactively
-// fire: subscription-then-event resumes, event-then-subscription stays
-// parked (this pass's documented limitation, issue #43).
+// error — and since task t21 a subscription created AFTER its event no longer
+// stays parked forever: step 1 first asks Store.ReplaySignalEvent whether the
+// run has an unconsumed backlogged fact for this name (design D12's per-run,
+// per-name cursor), and resumes immediately from it instead of arming a wait
+// for an event that has been and gone. Only when there is nothing to catch up
+// on does the dispatch park. The cursor is what keeps catch-up monotonic: a
+// loop re-parking on one name consumes the backlog one fact per iteration,
+// oldest first, never the same fact twice. See
+// internal/store/postgres/signalreplay.go for the floor, the cursor, and the
+// broadcast-versus-catch-up asymmetry they create.
 
 // waitOutcome is the kind-implied domain outcome every wait node declares
 // (internal/compiler/vocabulary.go's impliedOutcomes[KindWait]).
@@ -192,8 +199,29 @@ func (t *TimerWaitDispatcher) dispatchSignalWait(ctx context.Context, dc Dispatc
 		return SeamResult{}, fmt.Errorf("load signal subscription %s: %w", subID, err)
 	}
 	if !found {
-		// First dispatch: park. parkWait routes an AsyncSignal answer to
-		// StartDurableSignalWait, which persists the subscription under the
+		// First dispatch. Before parking, ask whether the fact this wait is
+		// waiting for has ALREADY been delivered — issue #43's replay half
+		// (design D12, internal/store/postgres/signalreplay.go). Store
+		// .ReplaySignalEvent commits an already-`fired` subscription when the
+		// run has an unconsumed backlogged fact for this name, and this
+		// dispatch then completes immediately through the ordinary §12.5
+		// transaction instead of parking on an event that has been and gone.
+		sub, ev, replayed, err := t.db.ReplaySignalEvent(ctx, postgres.ReplaySignalEventInput{
+			RunID:          dc.RunID,
+			NodeRunID:      dc.NodeRunID,
+			NodeID:         dc.NodeID,
+			AttemptID:      dc.AttemptID,
+			SubscriptionID: subID,
+			EventName:      signalName,
+		})
+		if err != nil {
+			return SeamResult{}, fmt.Errorf("replay signal %q for node run %s: %w", signalName, dc.NodeRunID, err)
+		}
+		if replayed {
+			return t.completedFromEvent(until, sub, ev), nil
+		}
+		// Nothing to catch up on: park. parkWait routes an AsyncSignal answer
+		// to StartDurableSignalWait, which persists the subscription under the
 		// fencing tuple only the worker legitimately holds.
 		return SeamResult{Async: true, AsyncRef: subID, AsyncSignal: signalName}, nil
 	}
@@ -235,6 +263,16 @@ func (t *TimerWaitDispatcher) signalWaitCompleted(ctx context.Context, until jso
 				"refusing to complete a wait on evidence that cannot be read", sub.ID, sub.FiredEventID)
 	}
 
+	return t.completedFromEvent(until, sub, ev), nil
+}
+
+// completedFromEvent builds the `completed` SeamResult for a signal wait that
+// a named event satisfied — whether the event arrived while the run was
+// parked (live delivery) or was already on the table when the wait was first
+// dispatched (replay, design D12). The output is identical either way on
+// purpose: a downstream binding reads what woke the run, not how the control
+// plane happened to notice.
+func (t *TimerWaitDispatcher) completedFromEvent(until json.RawMessage, sub postgres.SignalSubscription, ev postgres.SignalEvent) SeamResult {
 	payload := struct {
 		Until       json.RawMessage `json:"until"`
 		CompletedAt string          `json:"completed_at"`
@@ -251,7 +289,7 @@ func (t *TimerWaitDispatcher) signalWaitCompleted(ctx context.Context, until jso
 	}
 	// A struct of raw JSON and strings never fails to marshal.
 	output, _ := json.Marshal(payload)
-	return SeamResult{TechStatus: engine.StatusSucceeded, Outcome: waitOutcome, Output: output}, nil
+	return SeamResult{TechStatus: engine.StatusSucceeded, Outcome: waitOutcome, Output: output}
 }
 
 // signalEventOut is the resuming event's shape inside a signal wait's

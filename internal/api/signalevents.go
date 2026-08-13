@@ -43,11 +43,20 @@ import (
 // internal/store/postgres/signal.go's doc comment for the full
 // single-writer reasoning.
 //
-// Known limitation (issue #43): an event with no waiting subscription is
-// still appended — a fact, not an error — but a subscription created after
-// the event does NOT retroactively fire. Replay/catch-up pickup is issue
-// #43's multi-consumer territory; the append-only fact table is what makes
-// it buildable without a schema change.
+// Two things a delivery does besides firing waits, both added by task t21
+// (issue #43):
+//
+//   - Event-route pickup (design D9): the same transaction offers the fact to
+//     every active event_routes row for the name, and the engine creates a
+//     token at each matching route's target node. A refused pickup — a guard
+//     that declined, or a §9.7 bound with no headroom — is reported in the
+//     response and recorded in the audit stream, and deliberately does NOT
+//     fail the run (design D13): an external event must not kill a healthy
+//     run because it arrived at a busy moment.
+//   - Catch-up (design D12): an event with nothing waiting is still appended,
+//     and a subscription created LATER can now consume it — see
+//     internal/store/postgres/signalreplay.go. Delivery itself is unchanged
+//     by that; it remains a broadcast over what is waiting now.
 
 // deliverEventRequest is components.schemas.DeliverEventRequest.
 type deliverEventRequest struct {
@@ -75,12 +84,30 @@ type ResumedSubscriptionOut struct {
 	NodeRunID      string `json:"node_run_id"`
 }
 
+// EventPickupOut is one event route this delivery offered the fact to
+// (issue #43). A refused entry carries `refusal` (a guard decline or the
+// §9.7 bound that had no headroom) and no token — design D13 makes that
+// refusal the only trace, so reporting it here is how a caller learns its
+// event was heard but not acted on.
+type EventPickupOut struct {
+	RouteID   string `json:"route_id"`
+	RunID     string `json:"run_id"`
+	NodeID    string `json:"node_id"`
+	Admitted  bool   `json:"admitted"`
+	TokenID   string `json:"token_id,omitempty"`
+	NodeRunID string `json:"node_run_id,omitempty"`
+	Refusal   string `json:"refusal,omitempty"`
+	Detail    string `json:"detail,omitempty"`
+}
+
 // EventDeliveryOut is components.schemas.EventDeliveryResult: the appended
-// fact plus every subscription it fired. An empty `resumed` is a normal
-// answer, not an error — the event was recorded and nothing was waiting.
+// fact, every subscription it fired, and every event route it reached. Empty
+// `resumed` and `picked_up` lists are a normal answer, not an error — the
+// event was recorded and nothing was listening.
 type EventDeliveryOut struct {
-	Event   SignalEventOut           `json:"event"`
-	Resumed []ResumedSubscriptionOut `json:"resumed"`
+	Event    SignalEventOut           `json:"event"`
+	Resumed  []ResumedSubscriptionOut `json:"resumed"`
+	PickedUp []EventPickupOut         `json:"picked_up"`
 }
 
 // handleDeliverEvent is POST /v1alpha1/events. Authenticated with its own
@@ -116,17 +143,19 @@ func (s *Server) handleDeliverEvent(w http.ResponseWriter, r *http.Request) erro
 		emitter = "external"
 	}
 
-	ev, fired, err := s.Store.DeliverSignalEvent(r.Context(), postgres.DeliverSignalEventInput{
+	delivery, err := s.Store.DeliverSignalEvent(r.Context(), postgres.DeliverSignalEventInput{
 		NamespaceID: s.NamespaceID,
 		Name:        req.Name,
 		Payload:     req.Payload,
 		Emitter:     emitter,
 		RunID:       req.RunID,
+		Pickup:      s.Engine,
 	})
 	if err != nil {
 		return internalError(err)
 	}
 
+	ev := delivery.Event
 	out := EventDeliveryOut{
 		Event: SignalEventOut{
 			ID:        ev.ID,
@@ -136,13 +165,26 @@ func (s *Server) handleDeliverEvent(w http.ResponseWriter, r *http.Request) erro
 			Emitter:   ev.Emitter,
 			CreatedAt: ev.CreatedAt,
 		},
-		Resumed: make([]ResumedSubscriptionOut, 0, len(fired)),
+		Resumed:  make([]ResumedSubscriptionOut, 0, len(delivery.Fired)),
+		PickedUp: make([]EventPickupOut, 0, len(delivery.Pickups)),
 	}
-	for _, sub := range fired {
+	for _, sub := range delivery.Fired {
 		out.Resumed = append(out.Resumed, ResumedSubscriptionOut{
 			SubscriptionID: sub.ID,
 			RunID:          sub.RunID,
 			NodeRunID:      sub.NodeRunID,
+		})
+	}
+	for _, p := range delivery.Pickups {
+		out.PickedUp = append(out.PickedUp, EventPickupOut{
+			RouteID:   p.RouteID,
+			RunID:     p.RunID,
+			NodeID:    p.NodeID,
+			Admitted:  p.Admitted,
+			TokenID:   p.TokenID,
+			NodeRunID: p.NodeRunID,
+			Refusal:   p.Refusal,
+			Detail:    p.Detail,
 		})
 	}
 	writeJSON(w, http.StatusCreated, out)

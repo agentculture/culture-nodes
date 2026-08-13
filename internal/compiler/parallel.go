@@ -180,8 +180,29 @@ func (c *compilation) checkSplitReachability() {
 		adjacency[fromNode] = append(adjacency[fromNode], hop{to: e.To, delta: delta})
 	}
 
+	// Event-edge targets are additional roots at depth 0 (issue #43): a token
+	// an event creates is a new root that has passed through no split, so
+	// anything reachable from it is reachable OUTSIDE any split. That makes
+	// the existing join-outside-split refusal do the right thing for pickups
+	// for free — a join reached only from an event pickup has no token group
+	// to count against, and is refused at publish rather than discovered at
+	// run time.
 	seen := map[depthState]bool{{node: entry, depth: 0}: true}
 	queue := []depthState{{node: entry, depth: 0}}
+	for _, e := range c.doc.Spec.Edges {
+		if e.OnEvent == "" {
+			continue
+		}
+		if _, ok := nodes[e.To]; !ok {
+			continue // the graph level already reported the unknown target
+		}
+		root := depthState{node: e.To, depth: 0}
+		if seen[root] {
+			continue
+		}
+		seen[root] = true
+		queue = append(queue, root)
+	}
 	endInsideSplit := map[string]bool{}
 	joinOutsideSplit := map[string]bool{}
 

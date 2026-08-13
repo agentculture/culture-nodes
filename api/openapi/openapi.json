@@ -687,6 +687,46 @@
           "event": {
             "$ref": "#/components/schemas/SignalEvent"
           },
+          "picked_up": {
+            "description": "Every event route this delivery reached (issue #43). An admitted entry created a token and a node run at the route's target; a refused entry created nothing and says why — its guard declined, or the pickup would have taken the run past one of its spec.limits bounds. A refused pickup is deliberately NOT a run failure: an external event must not kill a healthy run because it arrived at a busy moment.",
+            "items": {
+              "properties": {
+                "admitted": {
+                  "type": "boolean"
+                },
+                "detail": {
+                  "type": "string"
+                },
+                "node_id": {
+                  "type": "string"
+                },
+                "node_run_id": {
+                  "type": "string"
+                },
+                "refusal": {
+                  "description": "\"guard\", \"run_terminal\", or the loop bound that had no headroom (max_parallel_tokens, max_visits_per_node, max_transitions).",
+                  "type": "string"
+                },
+                "route_id": {
+                  "type": "string"
+                },
+                "run_id": {
+                  "type": "string"
+                },
+                "token_id": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "route_id",
+                "run_id",
+                "node_id",
+                "admitted"
+              ],
+              "type": "object"
+            },
+            "type": "array"
+          },
           "resumed": {
             "description": "Every waiting subscription this delivery fired. Empty is a normal answer — the event was recorded and nothing was waiting.",
             "items": {
@@ -1403,6 +1443,10 @@
             "type": "string"
           },
           "node_id": {
+            "type": "string"
+          },
+          "origin_event_id": {
+            "description": "The signal event that created this token, set only on an event pickup (issue #43). A pickup token has no parent token — nothing in the run handed it control, and the emitter may be another run entirely — so it names the fact it came from instead. A consumer drawing the ancestry tree must tolerate several roots per run and label the ones carrying this field.",
             "type": "string"
           },
           "parent_token_id": {

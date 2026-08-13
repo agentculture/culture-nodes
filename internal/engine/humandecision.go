@@ -624,6 +624,12 @@ func (d *humanTaskDecision) completeRun(ctx context.Context, endNodeID string, t
 		return err
 	}
 
+	// The same route retirement completion.completeRun performs: a completed
+	// run stops observing, so no later delivery can create work in it
+	// (issue #43, design §6.1).
+	if _, err := d.tx.RetireEventRoutes(ctx, d.run.ID); err != nil {
+		return err
+	}
 	if err := d.tx.UpdateRunState(ctx, d.run.ID, RunCompleted, output); err != nil {
 		return err
 	}

@@ -56,6 +56,21 @@
 // parallel nodes still runs exactly one token at a time, byte-identically to
 // the sequential engine this grew from.
 //
+// # Event-driven continuation
+//
+// A token can also be created by the WORLD rather than by a transition
+// (§6.1 of the same design, issue #43). An `onEvent` edge is materialized at
+// CreateRun as a durable `event_routes` row; when a matching signal event is
+// delivered, the delivery transaction calls PickUpEvent per active route,
+// which creates a token, a node run, and the node's work (or its human task)
+// at the target — the entry-token shape, under the run's advisory lock.
+// Several edges naming one event is a pickup SPLIT: one delivery, several
+// tokens. Routes are multi-fire and bounded by §9.7; a pickup with no bound
+// headroom is refused and recorded, never a run failure, because an external
+// event must not kill a healthy run. A pickup token has no parent and no
+// group — nothing in the run handed it control — and names the fact that
+// created it instead (Token.OriginEventID). See eventroute.go.
+//
 // # What this slice does not do yet
 //
 // The engine does not build actor invocation payloads: it enqueues work

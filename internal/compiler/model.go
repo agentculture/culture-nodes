@@ -261,10 +261,15 @@ const (
 	JoinPolicyQuorum = "quorum"
 )
 
+// edge is one transition into a node. Its source is EITHER another node's
+// declared outcome (From, "<node>.<outcome>") or a named external event
+// (OnEvent) — the schema's oneOf makes it exactly one, and everything below
+// reads `OnEvent != ""` as "this is an event edge" (issue #43, design D9).
 type edge struct {
-	From string `json:"from"`
-	To   string `json:"to"`
-	When string `json:"when,omitempty"`
+	From    string `json:"from,omitempty"`
+	OnEvent string `json:"onEvent,omitempty"`
+	To      string `json:"to"`
+	When    string `json:"when,omitempty"`
 }
 
 // IR is the normalized representation the runtime executes (PRD §11.3).
@@ -289,11 +294,16 @@ type irSpec struct {
 }
 
 // irEdge keeps the authored `from` string and adds its decomposition, so the
-// engine never re-parses "<node>.<outcome>" at dispatch time.
+// engine never re-parses "<node>.<outcome>" at dispatch time. An event edge
+// carries OnEvent instead, and its From/FromNode/FromOutcome are empty — the
+// engine's edge selection filters on FromNode, so an event edge can never be
+// matched by a node completion, and the run's event routes are materialized
+// from exactly the edges that carry OnEvent.
 type irEdge struct {
-	From        string `json:"from"`
-	FromNode    string `json:"fromNode"`
-	FromOutcome string `json:"fromOutcome"`
+	From        string `json:"from,omitempty"`
+	FromNode    string `json:"fromNode,omitempty"`
+	FromOutcome string `json:"fromOutcome,omitempty"`
+	OnEvent     string `json:"onEvent,omitempty"`
 	To          string `json:"to"`
 	When        string `json:"when,omitempty"`
 }

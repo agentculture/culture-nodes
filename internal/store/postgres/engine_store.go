@@ -354,17 +354,21 @@ func (eq engineQueries) Run(ctx context.Context, runID string) (engine.Run, erro
 }
 
 const insertTokenSQL = `
-INSERT INTO tokens (id, namespace_id, run_id, node_key, state, parent_token_id, group_id, created_at)
-VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+INSERT INTO tokens (id, namespace_id, run_id, node_key, state, parent_token_id, group_id, origin_event_id, created_at)
+VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
 `
 
 // InsertToken records a control token at a node. group_id is NULL for a
 // token outside any split (migrations/0019) — the same value every pre-split
-// row already carries.
+// row already carries — and origin_event_id is NULL for every token except
+// one an event pickup created (migrations/0021): a pickup token has no parent
+// token to point at, so it names the fact that created it instead (review
+// finding D4).
 func (eq engineQueries) InsertToken(ctx context.Context, token engine.Token) error {
 	_, err := eq.q.Exec(ctx, insertTokenSQL,
 		token.ID, eq.namespaceID, token.RunID, token.NodeID, string(token.State),
-		textOrNull(token.ParentTokenID), textOrNull(token.GroupID), tsOrNow(token.CreatedAt),
+		textOrNull(token.ParentTokenID), textOrNull(token.GroupID),
+		textOrNull(token.OriginEventID), tsOrNow(token.CreatedAt),
 	)
 	if err != nil {
 		return fmt.Errorf("postgres: engine: InsertToken: %w", err)

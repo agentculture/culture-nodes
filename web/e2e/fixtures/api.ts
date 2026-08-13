@@ -22,6 +22,11 @@ import {
   WORKFLOWS_RUNS,
 } from "../../src/fixtures/workflows-fixture";
 import {
+  ACTIVE_EVENTS,
+  activeEventsAsSse,
+  ACTIVE_NODE_RUNS,
+} from "../../src/fixtures/active-graphs-fixture";
+import {
   INVALID_VALIDATION,
   INVALID_YAML_SOURCE,
   PUBLISHED_VERSION,
@@ -40,6 +45,13 @@ export { RUN_ID, WORKFLOW_DIGEST };
 export { BOARD_RUNS };
 export { JOB_RUNS_CURSOR, JOB_RUNS_NAMED_RUNS, JOB_RUNS_PAGE_1, JOB_RUNS_PAGE_2 };
 export { WORKFLOW_VERSIONS, WORKFLOWS_RUNS };
+export {
+  ACTIVE_EVENTS_TOTAL,
+  ACTIVE_LAST_EVENT_ID,
+  ACTIVE_NODE_ID,
+  ACTIVE_PULSES_TOTAL,
+  ACTIVE_RUN_ID,
+} from "../../src/fixtures/active-graphs-fixture";
 export { INVALID_YAML_SOURCE, PUBLISHED_VERSION };
 export {
   STATS_CURSOR,
@@ -349,9 +361,13 @@ export async function mockStatisticsApi(page: Page): Promise<void> {
  * `/v1alpha1/runs/{id}` (a minimal RunView) too, so following a card's
  * recent-run link doesn't 404.
  *
- * The Nodes and Active Graphs sub-tabs (tasks t29/t31) fetch nothing this
- * wave — their empty states are static, so nothing needs registering here
- * for them yet.
+ * The Nodes sub-tab (task t29's catalog, rendered by t31) derives from the
+ * same workflows listing. The Active Graphs sub-tab (task t31) additionally
+ * reads `GET /v1alpha1/node-runs` (ACTIVE_NODE_RUNS: one running row on the
+ * one non-terminal run) and the cross-run SSE stream `GET /v1alpha1/events`
+ * (ACTIVE_EVENTS: one committed event on the known run — a visible pulse —
+ * and one naming a run the view never loaded, which must be a no-op, h14).
+ * The events route honours both resume spellings exactly like mockMeshApi.
  */
 export async function mockNodeGraphsApi(page: Page): Promise<void> {
   const runViewById = new Map<string, RunView>(
@@ -359,7 +375,8 @@ export async function mockNodeGraphsApi(page: Page): Promise<void> {
   );
 
   await page.route("**/v1alpha1/**", async (route) => {
-    const url = new URL(route.request().url());
+    const request = route.request();
+    const url = new URL(request.url());
     const path = decodeURIComponent(url.pathname);
 
     if (path === "/v1alpha1/workflows") {
@@ -368,6 +385,24 @@ export async function mockNodeGraphsApi(page: Page): Promise<void> {
     }
     if (path === "/v1alpha1/runs") {
       await route.fulfill(json({ items: WORKFLOWS_RUNS }));
+      return;
+    }
+    if (path === "/v1alpha1/node-runs") {
+      await route.fulfill(json({ items: ACTIVE_NODE_RUNS }));
+      return;
+    }
+    if (path === "/v1alpha1/events") {
+      const headers = await request.allHeaders();
+      const from = headers["last-event-id"] ?? url.searchParams.get("from") ?? "";
+      const pending = ACTIVE_EVENTS.filter((event) => event.id > from);
+      await route.fulfill({
+        status: 200,
+        headers: {
+          "content-type": "text/event-stream",
+          "cache-control": "no-cache",
+        },
+        body: activeEventsAsSse(pending),
+      });
       return;
     }
 
@@ -604,6 +639,16 @@ export async function readAgentState(page: Page): Promise<{
     actor_count: number;
     run_count: number;
     edge_count: number;
+    connection: string;
+    last_event_id: string | null;
+    events_total: number;
+    pulses_total: number;
+    reduced_motion: boolean;
+  } | null;
+  active_graphs?: {
+    graph_count: number;
+    active_run_count: number;
+    active_node_count: number;
     connection: string;
     last_event_id: string | null;
     events_total: number;

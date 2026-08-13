@@ -1295,6 +1295,359 @@ button.timeline__node {
   max-width: 40rem;
 }
 
+/* ---------- Nodes sub-tab: the node-definition catalog (tasks t29+t31) ----------
+
+   One card per distinct definition. Same card frame as .workflow-card; the
+   kind's identity color is the NODE_KIND_PALETTE hex, delivered per-card as
+   --node-accent by the route (never a hex literal here), and never color
+   alone — the kind word sits right beside the dot. */
+
+.node-defs {
+  list-style: none;
+  margin: 1rem 0 0;
+  padding: 0;
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(17rem, 1fr));
+  gap: 1rem;
+}
+
+.node-def-card {
+  background: color-mix(in srgb, var(--surface) 55%, transparent);
+  border: 1px solid var(--line-soft);
+  border-left: 3px solid var(--node-accent, var(--line));
+  border-radius: var(--radius);
+  padding: 0.75rem 0.9rem;
+  display: flex;
+  flex-direction: column;
+  gap: 0.45rem;
+}
+
+.node-def-card__head {
+  display: flex;
+  align-items: center;
+  gap: 0.45rem;
+}
+
+.node-def-card__dot {
+  width: 0.55rem;
+  height: 0.55rem;
+  border-radius: 999px;
+  background: var(--node-accent, var(--ink-soft));
+  flex: none;
+}
+
+.node-def-card__kind {
+  font-family: var(--font-mono);
+  font-size: var(--ac-type-ui);
+  font-weight: 640;
+}
+
+.node-def-card__count {
+  margin-left: auto;
+  font-size: var(--ac-type-micro);
+  color: var(--ink-soft);
+  white-space: nowrap;
+}
+
+.node-def-card__ref {
+  font-family: var(--font-mono);
+  font-size: var(--ac-type-meta);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--ink);
+}
+
+.node-def-card__ref--none {
+  margin: 0;
+  font-family: var(--font-body);
+  font-style: italic;
+}
+
+.node-def-card__occurrences {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 0.2rem;
+  font-size: var(--ac-type-meta);
+  color: var(--ink-soft);
+}
+
+.node-def-card__node {
+  font-family: var(--font-mono);
+  color: var(--ink);
+}
+
+/* ---------- Active Graphs sub-tab (task t31, c31/h20) ----------
+
+   Each alive graph is a .workflow-card-framed section around a React Flow
+   canvas. Aliveness is a breathing halo (CSS keyframes — the Mesh craft's
+   pre-rendered-glow idiom on the compositing substrate: one declared
+   animation, no per-frame style work) and it is NEVER the only carrier:
+   the "N active runs" line and each live node's "active" badge say the
+   same thing in words. data-motion gates everything:
+     - "animated": normal life;
+     - "paused":   offscreen/tab-hidden (useAnimationGate) — play-state
+                   frozen, the animation-clock equivalent of MeshCanvas
+                   stopping its rAF loop;
+     - "static":   prefers-reduced-motion — one static frame, halo shown
+                   at rest, no keyframes ever run. */
+
+.active-graphs {
+  display: flex;
+  flex-direction: column;
+  gap: 1.25rem;
+  margin-top: 1rem;
+}
+
+.active-graph {
+  background: color-mix(in srgb, var(--surface) 55%, transparent);
+  border: 1px solid var(--line-soft);
+  border-radius: var(--radius);
+  padding: 0.85rem 1rem;
+}
+
+/* The static halo frame: present whenever the graph is alive, in every
+   motion mode — reduced-motion readers get the same fact, unanimated. */
+.active-graph.is-alive {
+  border-color: color-mix(in srgb, var(--accent) 45%, var(--line));
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 12%, transparent);
+}
+
+.active-graph__head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 0.5rem 1rem;
+  margin-bottom: 0.6rem;
+}
+
+.active-graph__title {
+  margin: 0;
+}
+
+.active-graph__version {
+  font-family: var(--font-mono);
+  font-size: var(--ac-type-meta);
+  color: var(--ink-soft);
+}
+
+.active-graph__digest {
+  margin: 0.15rem 0 0;
+  font-size: var(--ac-type-meta);
+}
+
+.active-graph__presence {
+  text-align: right;
+}
+
+.active-graph__count {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.45rem;
+  margin: 0;
+  font-family: var(--font-mono);
+  font-size: var(--ac-type-meta);
+  letter-spacing: var(--ac-tracking-caps);
+  text-transform: uppercase;
+  color: var(--accent);
+  white-space: nowrap;
+}
+
+.active-graph__live-dot {
+  width: 0.55rem;
+  height: 0.55rem;
+  border-radius: 999px;
+  background: var(--accent);
+  flex: none;
+}
+
+.active-graph__runs {
+  list-style: none;
+  margin: 0.25rem 0 0;
+  padding: 0;
+  font-family: var(--font-mono);
+  font-size: var(--ac-type-meta);
+  display: flex;
+  flex-direction: column;
+  gap: 0.15rem;
+}
+
+.active-graph__canvas {
+  height: min(46vh, 24rem);
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  background: var(--surface);
+  box-shadow: var(--shadow);
+  overflow: hidden;
+}
+
+.active-graph__inspect {
+  margin: 0.5rem 0 0;
+  font-family: var(--font-mono);
+  font-size: var(--ac-type-meta);
+  color: var(--ink-soft);
+  min-height: 1.2em;
+}
+
+/* The compact presence card each graph node renders as. Identity color
+   arrives as --node-accent (NODE_KIND_PALETTE via accentFor), same
+   mechanism as .node-card. */
+.active-node {
+  position: relative;
+  box-sizing: border-box;
+  width: 224px; /* NODE_WIDTH — the ELK box (hooks/useElkLayout.ts) */
+  min-height: 72px;
+  display: flex;
+  flex-direction: column;
+  gap: 0.25rem;
+  padding: 0.5rem 0.7rem;
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: var(--nodes-card-radius);
+  box-shadow: var(--shadow);
+}
+
+.active-node__head {
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+  min-width: 0;
+}
+
+.active-node__dot {
+  width: 0.5rem;
+  height: 0.5rem;
+  border-radius: 999px;
+  background: var(--node-accent, var(--ink-soft));
+  flex: none;
+}
+
+.active-node__name {
+  font-family: var(--font-mono);
+  font-size: var(--ac-type-ui);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.active-node__meta {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  font-size: var(--ac-type-micro);
+  color: var(--ink-soft);
+}
+
+/* The live badge: the halo's meaning in words (§8.8 — never color or
+   motion alone). */
+.active-node__badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.25rem;
+  border-radius: 999px;
+  border: 1px solid color-mix(in srgb, var(--node-accent, var(--accent)) 55%, var(--line));
+  padding: 0.02rem 0.45rem;
+  color: var(--ink);
+  white-space: nowrap;
+}
+
+/* Static live presence, all motion modes: the node's own halo at rest. */
+.active-node.is-live {
+  border-color: var(--node-accent, var(--accent-strong));
+  box-shadow:
+    var(--shadow),
+    0 0 0 3px color-mix(in srgb, var(--node-accent, var(--accent)) 16%, transparent);
+}
+
+.active-node.is-inspected {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
+/* One committed event = one ring. Remounted per event (keyed by the pulse
+   counter), it plays a single stepped fade — steps() being the quantized-
+   alpha idiom: a handful of discrete opacity levels, not a continuous
+   tween the compositor has to shade. */
+.active-node__pulse {
+  position: absolute;
+  inset: -5px;
+  border-radius: calc(var(--nodes-card-radius) + 5px);
+  border: 2px solid var(--node-accent, var(--accent));
+  opacity: 0;
+  pointer-events: none;
+}
+
+/* Animations run only in the animated state, and only for viewers who did
+   not ask for reduced motion — the media query AND the data-motion gate
+   both have to agree. */
+@media (prefers-reduced-motion: no-preference) {
+  .active-graph[data-motion="animated"].is-alive {
+    animation: active-graph-breathe 3.2s var(--ease-gentle) infinite
+      alternate;
+  }
+
+  .active-graph[data-motion="animated"] .active-node.is-live {
+    animation: active-node-breathe 2.6s var(--ease-gentle) infinite
+      alternate;
+  }
+
+  .active-graph[data-motion="animated"] .active-node__pulse {
+    animation: active-node-ring 0.9s steps(8, end) 1;
+  }
+
+  .active-graph[data-motion="animated"] .active-graph__live-dot {
+    animation: mesh-live-breathe 2.6s var(--ease-gentle) infinite alternate;
+  }
+}
+
+/* Offscreen / hidden tab: freeze the animation clock (useAnimationGate). */
+.active-graph[data-motion="paused"],
+.active-graph[data-motion="paused"] * {
+  animation-play-state: paused;
+}
+
+@keyframes active-graph-breathe {
+  from {
+    box-shadow: 0 0 0 2px color-mix(in srgb, var(--accent) 10%, transparent);
+  }
+
+  to {
+    box-shadow: 0 0 0 7px color-mix(in srgb, var(--accent) 20%, transparent);
+  }
+}
+
+@keyframes active-node-breathe {
+  from {
+    box-shadow:
+      var(--shadow),
+      0 0 0 2px
+        color-mix(in srgb, var(--node-accent, var(--accent)) 12%, transparent);
+  }
+
+  to {
+    box-shadow:
+      var(--shadow),
+      0 0 0 6px
+        color-mix(in srgb, var(--node-accent, var(--accent)) 24%, transparent);
+  }
+}
+
+@keyframes active-node-ring {
+  from {
+    opacity: 0.85;
+    transform: scale(1);
+  }
+
+  to {
+    opacity: 0;
+    transform: scale(1.16);
+  }
+}
+
 /* ---------- authoring slice (task t9, ADR 0007) ---------- */
 
 .author-workflow__button {

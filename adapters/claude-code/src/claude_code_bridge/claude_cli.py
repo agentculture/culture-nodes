@@ -167,6 +167,7 @@ def _common_argv(
     max_steps: int | None,
     model: str | None,
     verbose: bool = False,
+    continuation_ref: str | None = None,
 ) -> list[str]:
     argv = [
         "-p",
@@ -176,6 +177,8 @@ def _common_argv(
         "--permission-mode",
         permission_mode,
     ]
+    if continuation_ref:
+        argv += ["--resume", continuation_ref]
     if role:
         argv += ["--agent", role]
     if max_steps is not None:
@@ -212,6 +215,7 @@ def run_sync(
     role: str | None = None,
     max_steps: int | None = None,
     model: str | None = None,
+    continuation_ref: str | None = None,
 ) -> SyncRunResult:
     """Run `claude -p ...` in the foreground and wait for it to finish.
 
@@ -231,6 +235,7 @@ def run_sync(
             role=role,
             max_steps=max_steps,
             model=model or (cfg.model or None),
+            continuation_ref=continuation_ref,
         ),
     ]
 

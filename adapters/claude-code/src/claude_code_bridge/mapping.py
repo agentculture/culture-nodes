@@ -108,6 +108,9 @@ class InvocationContext:
     #: turn-budget-exhausted run is reported as an execution failure
     #: instead — never as a silent success.
     incomplete_outcome: str | None = None
+    #: A prior session handle to resume (from the engine's
+    #: `continuation_ref` on the InvocationRequest). `None` means cold-start.
+    continuation_ref: str | None = None
 
 
 @dataclass(frozen=True)
@@ -389,9 +392,7 @@ def sync_response(
         # never fabricated zeros.
         if result is not None:
             body["usage"] = usage_from_result(result)
-        return SyncResponse(
-            status_code=500, body=_attach_termination_reason(body, result)
-        )
+        return SyncResponse(status_code=500, body=_attach_termination_reason(body, result))
 
     _declared = declared_result_override(result)
     body = {
@@ -401,13 +402,11 @@ def sync_response(
             "records": [claim_record(result, ctx, actor_id=actor_id, created_at=created_at)]
         },
         "artifact_refs": [],
-        "continuation_ref": None,
+        "continuation_ref": r.get("session_id") if isinstance(r.get("session_id"), str) else None,
         "usage": usage_from_result(result),
         "workspace_measured": measured,
     }
-    return SyncResponse(
-        status_code=200, body=_attach_termination_reason(body, result)
-    )
+    return SyncResponse(status_code=200, body=_attach_termination_reason(body, result))
 
 
 @dataclass(frozen=True)
@@ -462,9 +461,7 @@ def terminal_event(
         # usage-less rather than reporting fabricated zeros.
         if result is not None:
             payload["usage"] = usage_from_result(result)
-        return TerminalEvent(
-            kind="failed", payload=_attach_termination_reason(payload, result)
-        )
+        return TerminalEvent(kind="failed", payload=_attach_termination_reason(payload, result))
 
     _declared = declared_result_override(result)
     payload = {
@@ -474,9 +471,8 @@ def terminal_event(
             "records": [claim_record(result, ctx, actor_id=actor_id, created_at=created_at)]
         },
         "artifact_refs": [],
+        "continuation_ref": r.get("session_id") if isinstance(r.get("session_id"), str) else None,
         "usage": usage_from_result(result),
         "workspace_measured": measured,
     }
-    return TerminalEvent(
-        kind="completed", payload=_attach_termination_reason(payload, result)
-    )
+    return TerminalEvent(kind="completed", payload=_attach_termination_reason(payload, result))

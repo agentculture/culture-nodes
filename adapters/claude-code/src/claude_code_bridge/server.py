@@ -278,6 +278,8 @@ class Handler(BaseHTTPRequestHandler):
             "model",
             "success_outcome",
             "permission_mode",
+            "session_key",
+            "continuation_ref",
         }
         _extras = {k: v for k, v in raw_input.items() if k not in _transport_keys}
         if _extras:
@@ -347,6 +349,7 @@ class Handler(BaseHTTPRequestHandler):
         model = raw_input.get("model") or None
         success_outcome = raw_input.get("success_outcome") or None
         incomplete_outcome = raw_input.get("incomplete_outcome") or None
+        continuation_ref = raw_input.get("continuation_ref") or None
 
         ctx = mapping.InvocationContext(
             run_id=str(body.get("run_id") or ""),
@@ -354,6 +357,7 @@ class Handler(BaseHTTPRequestHandler):
             attempt_id=body.get("attempt_id") or None,
             success_outcome=success_outcome,
             incomplete_outcome=incomplete_outcome,
+            continuation_ref=continuation_ref,
         )
 
         if decide_async(cfg, force_async=force_async, max_steps=max_steps):

@@ -5,6 +5,12 @@ All notable changes to this project will be documented in this file.
 Format follows [Keep a Changelog](https://keepachangelog.com/). This project
 adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.13.3] - 2026-08-13
+
+### Fixed
+
+- `nodes node-runs list` no longer trips SonarCloud S3516 (invariant returns): the command now has a single exit point, matching the `cmd_run_list` shape (pr-upkeep sweep, BLOCKER AZ_5XgmRQ6BlSztM08nB)
+
 ## [0.13.2] - 2026-08-13
 
 ### Added

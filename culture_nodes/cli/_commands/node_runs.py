@@ -53,12 +53,12 @@ def cmd_node_runs_list(args: argparse.Namespace) -> int:
     )
     if bool(getattr(args, "json", False)):
         emit_json_passthrough(resp.raw)
-        return 0
-    payload = resp.payload or {}
-    if not (payload.get("items") or []):
-        emit_result("no node runs", json_mode=False)
-        return 0
-    emit_result(_node_run_lines(payload), json_mode=False)
+    else:
+        payload = resp.payload or {}
+        if payload.get("items"):
+            emit_result(_node_run_lines(payload), json_mode=False)
+        else:
+            emit_result("no node runs", json_mode=False)
     return 0
 
 

@@ -70,7 +70,7 @@ spec:
     input:
       schema:
         type: object
-        required: [repo, review_repo, fix_instruction, review_instruction, review_sandbox, park_instruction]
+        required: [repo, review_repo, fix_instruction, review_instruction, review_sandbox, park_instruction, merge_instruction]
         additionalProperties: false
         properties:
           # The one repo this flow works on (claim c26): the fix/review
@@ -99,6 +99,9 @@ spec:
             type: string
             const: read-only
           park_instruction:
+            type: string
+            minLength: 1
+          merge_instruction:
             type: string
             minLength: 1
     output:
@@ -354,6 +357,47 @@ spec:
                   type: string
                   minLength: 1
 
+    # The merge task (user decision, cycle 6 refinement): a PR that is
+    # through review with no pending fixes becomes an ACTIVE assignment on
+    # the kind=human actor — "merge this PR" lands in the person's inbox as
+    # work, not as a passive gate. merged = the person merged it themselves
+    # and submitted; dropped = they decided not to merge (ends the run).
+    # The flow still holds zero merge credentials (README's human-merges
+    # rule) — the submission REPORTS the merge, it never performs it.
+    human-merges-pr:
+      kind: agent
+      ownerRef: team/platform-ai
+      uses: actor://company/human-ops@sha256:8888888888888888888888888888888888888888888888888888888888888888
+      input:
+        bindings:
+          instruction: /run/input/merge_instruction
+          fixReport: /nodes/fix/output
+          reviewVerdict: /nodes/review/output
+      contract:
+        input:
+          schema:
+            type: object
+            required: [instruction]
+        outcomes:
+          merged:
+            schema:
+              type: object
+              properties:
+                note:
+                  type: string
+          dropped:
+            schema:
+              type: object
+              properties:
+                note:
+                  type: string
+      ledger:
+        propose: [claim]
+      policy:
+        timeout: 168h
+        retry:
+          maxAttempts: 1
+
     # The between-items park (task t12): an agent-kind node whose actor is
     # registered kind=human through the human-inbox bridge — the run parks
     # durably (no lease, no worker) until the person answers through the
@@ -433,12 +477,19 @@ spec:
     - from: fix.completed
       to: review
 
-    # Every review verdict passes the human gate — a loop-back through
-    # the billable fix actor is never decided by an agent alone.
+    # A clean review verdict becomes an ACTIVE merge assignment on the
+    # human actor (user decision: "waiting for merge" is work in a
+    # person's inbox, not a passive gate); changes_required still passes
+    # the approval gate so a loop-back through the billable fix actor is
+    # never decided by an agent alone.
     - from: review.approve
-      to: human-approves-pr
+      to: human-merges-pr
     - from: review.changes_required
       to: human-approves-pr
+    - from: human-merges-pr.merged
+      to: sweep
+    - from: human-merges-pr.dropped
+      to: finish
 
     # approved = "I merged the PR myself" -> sweep the next item.
     - from: human-approves-pr.approved

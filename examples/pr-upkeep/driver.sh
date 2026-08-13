@@ -48,6 +48,7 @@ REPO="${PR_UPKEEP_REPO:-/home/spark/git/culture-nodes}"
 REVIEW_REPO="${PR_UPKEEP_REVIEW_REPO:-/home/thor/git/culture-nodes-agent}"
 FIX_INSTRUCTION="${FIX_INSTRUCTION:-Take the TOP item of the prioritised sweep report bound as sweepReport (its artifact refs carry the full JSON list). Work only that one item: implement the fix on a branch and open or update a PR for it. Never merge anything. Summarise what you changed and name the PR.}"
 REVIEW_INSTRUCTION="${REVIEW_INSTRUCTION:-Read-only independent review of the fix described in fixReport (see the Bound inputs block below for fixReport, fixEvidence, and runEvidence). Analysis only: change nothing. Your FINAL message must be exactly one JSON object matching the contract: {\"verdict\": \"approve\"|\"changes_required\", \"findings\": [{\"title\": string, \"detail\": string}]} — findings may be empty only with verdict approve.}"
+MERGE_INSTRUCTION="${MERGE_INSTRUCTION:-The fix PR passed independent review with no pending findings (see reviewVerdict and fixReport in your task payload). Merge the PR yourself on GitHub, then submit outcome merged with a note naming the merge commit. If you decide not to merge, submit outcome dropped with the reason.}"
 PARK_INSTRUCTION="${PARK_INSTRUCTION:-The sweep found no unresolved SonarCloud issues and no open Qodo findings. Decide: resume (sweep again now) or done (end this run).}"
 
 log() { printf '\n>>> %s\n' "$*"; }
@@ -97,12 +98,14 @@ run_input=$(jq -n \
 	--arg fix_instruction "$FIX_INSTRUCTION" \
 	--arg review_instruction "$REVIEW_INSTRUCTION" \
 	--arg park_instruction "$PARK_INSTRUCTION" \
+	--arg merge_instruction "$MERGE_INSTRUCTION" \
 	'{repo: $repo,
 	  review_repo: $review_repo,
 	  fix_instruction: $fix_instruction,
 	  review_instruction: $review_instruction,
 	  review_sandbox: "read-only",
-	  park_instruction: $park_instruction}')
+	  park_instruction: $park_instruction,
+	  merge_instruction: $merge_instruction}')
 run_body=$(jq -n --arg digest "$workflow_digest" --argjson input "$run_input" '{workflow_digest: $digest, input: $input}')
 run_resp=$(curl -sS -w '\n%{http_code}' -H 'content-type: application/json' \
 	-d "$run_body" "${BASE_URL}/v1alpha1/runs")

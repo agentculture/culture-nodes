@@ -82,6 +82,7 @@ func cmdRun(args []string, jsonMode bool) (int, error) {
 	sandbox := fs.String("sandbox", "", "sandbox mode for the session (server default: read-only)")
 	outcome := fs.String("outcome", "", "declared success outcome name (server default: completed)")
 	timeout := fs.String("timeout", "", "task attempt timeout, Go-style duration (server default: 15m)")
+	tokenFlag := fs.String("token", "", "bearer token for the ad-hoc lane (defaults to NODES_ADHOC_RUN_TOKEN)")
 	watch := fs.Bool("watch", false, "poll the run until it reaches a terminal state")
 	if err := fs.Parse(args); err != nil {
 		if errors.Is(err, flag.ErrHelp) {
@@ -125,8 +126,13 @@ func cmdRun(args []string, jsonMode bool) (int, error) {
 	}
 	baseURL = strings.TrimRight(baseURL, "/")
 
+	token := *tokenFlag
+	if token == "" {
+		token = os.Getenv("NODES_ADHOC_RUN_TOKEN")
+	}
+
 	client := &http.Client{Timeout: runRequestTimeout}
-	created, cliErr := createAdhocRun(client, baseURL, adhocRunRequest{
+	created, cliErr := createAdhocRun(client, baseURL, token, adhocRunRequest{
 		Instruction:    *instruction,
 		ActorRef:       *actor,
 		Repo:           *repo,
@@ -162,7 +168,13 @@ func cmdRun(args []string, jsonMode bool) (int, error) {
 // createAdhocRun POSTs the request and decodes either the created run or
 // the documented {code, message, remediation} error shape, which maps
 // directly onto CliError (the API's code buckets are the CLI's).
-func createAdhocRun(client *http.Client, baseURL string, req adhocRunRequest) (adhocRunResponse, *clifmt.CliError) {
+//
+// The route is bearer-gated (NODES_ADHOC_RUN_TOKEN_SECRET server-side, the
+// t15 auth-hardening gate): the CLI presents the token from
+// NODES_ADHOC_RUN_TOKEN or --token. An absent token still sends the
+// request — the server's 401 with its remediation line is the honest
+// answer, not a client-side guess.
+func createAdhocRun(client *http.Client, baseURL, token string, req adhocRunRequest) (adhocRunResponse, *clifmt.CliError) {
 	body, err := json.Marshal(req)
 	if err != nil {
 		return adhocRunResponse{}, &clifmt.CliError{
@@ -171,7 +183,19 @@ func createAdhocRun(client *http.Client, baseURL string, req adhocRunRequest) (a
 			Remediation: fmt.Sprintf("this is a CLI fault; file a bug at %s", clifmt.IssuesURL),
 		}
 	}
-	resp, err := client.Post(baseURL+"/v1alpha1/adhoc-runs", "application/json", bytes.NewReader(body))
+	httpReq, err := http.NewRequest(http.MethodPost, baseURL+"/v1alpha1/adhoc-runs", bytes.NewReader(body))
+	if err != nil {
+		return adhocRunResponse{}, &clifmt.CliError{
+			Code:        clifmt.ExitEnvError,
+			Message:     fmt.Sprintf("build request: %v", err),
+			Remediation: fmt.Sprintf("this is a CLI fault; file a bug at %s", clifmt.IssuesURL),
+		}
+	}
+	httpReq.Header.Set("Content-Type", "application/json")
+	if token != "" {
+		httpReq.Header.Set("Authorization", "Bearer "+token)
+	}
+	resp, err := client.Do(httpReq)
 	if err != nil {
 		return adhocRunResponse{}, &clifmt.CliError{
 			Code:        clifmt.ExitEnvError,

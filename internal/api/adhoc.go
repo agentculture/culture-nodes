@@ -14,6 +14,8 @@ package api
 // one created against a hand-published digest, because it *is* one.
 
 import (
+	"crypto/sha256"
+	"crypto/subtle"
 	"encoding/json"
 	"fmt"
 	"net/http"
@@ -188,8 +190,39 @@ func adhocWorkflowName(actorRef string) string {
 	return "adhoc-" + key
 }
 
+// requireAdhocRunAuth is requireEventAuth's pattern applied to the ad-hoc
+// lane: its own secret (Server.adhocRunSecret, NODES_ADHOC_RUN_TOKEN_SECRET),
+// constant-time digest comparison, closed by default. An ad-hoc run renders,
+// publishes, and starts real (often billable) work in one call — the t15
+// auth-hardening gate (spec c27) requires every mutating surface this batch
+// added to refuse unauthenticated requests.
+func (s *Server) requireAdhocRunAuth(r *http.Request) error {
+	if len(s.adhocRunSecret) == 0 {
+		return unauthorized(
+			"configure the server with an ad-hoc run secret (NODES_ADHOC_RUN_TOKEN_SECRET) to enable ad-hoc runs",
+			"ad-hoc runs require a configured bearer secret and none is configured")
+	}
+
+	const prefix = "bearer "
+	header := r.Header.Get("Authorization")
+	if len(header) < len(prefix) || !strings.EqualFold(header[:len(prefix)], prefix) {
+		return unauthorized("send Authorization: Bearer <token>", "missing or malformed Authorization header")
+	}
+
+	presented := sha256.Sum256([]byte(header[len(prefix):]))
+	expected := sha256.Sum256(s.adhocRunSecret)
+	if subtle.ConstantTimeCompare(presented[:], expected[:]) != 1 {
+		return unauthorized("the bearer token is not valid for this deployment", "authorization failed")
+	}
+	return nil
+}
+
 // handleCreateAdhocRun is POST /v1alpha1/adhoc-runs.
 func (s *Server) handleCreateAdhocRun(w http.ResponseWriter, r *http.Request) error {
+	if err := s.requireAdhocRunAuth(r); err != nil {
+		return err
+	}
+
 	var req adhocRunRequest
 	dec := json.NewDecoder(r.Body)
 	dec.DisallowUnknownFields()

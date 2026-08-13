@@ -194,6 +194,8 @@ paths:
       operationId: createAdhocRun
       tags: [runs]
       summary: Create a first-class ad-hoc run from a bare instruction.
+      security:
+        - adhocRunBearerAuth: []
       description: >-
         Renders the canonical one-node workflow (a single agent `task` node
         into a `finish` end node — the nodes-operator skill's assign
@@ -1219,6 +1221,15 @@ components:
         external system granted the standing to emit signal events (which
         can resume any signal-parked run) holds neither decision nor
         registration power.
+    adhocRunBearerAuth:
+      type: http
+      scheme: bearer
+      description: >-
+        The shared secret configured as NODES_ADHOC_RUN_TOKEN_SECRET. Used
+        only by POST /v1alpha1/adhoc-runs (task t19, gated by the t15
+        auth-hardening pass, spec c27) — its own secret, so the power to
+        start ad-hoc (often billable) work is granted independently of
+        decision, registration, and event standing.
 
   schemas:
     Error:

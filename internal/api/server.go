@@ -80,6 +80,16 @@ type Server struct {
 	// closed-by-default posture: nil refuses every delivery with 401.
 	eventTokenSecret []byte
 
+	// adhocRunSecret gates POST /v1alpha1/adhoc-runs (see
+	// (*Server).requireAdhocRunAuth in adhoc.go) — its own secret
+	// (NODES_ADHOC_RUN_TOKEN_SECRET), separate from the three above so an
+	// operator can grant the ad-hoc lane (render + publish + create in one
+	// call) without granting decision, registration, or event power. Same
+	// closed-by-default posture: nil refuses every ad-hoc run with 401.
+	// Added by the t15 auth-hardening gate (spec c27): every mutating
+	// surface this batch ships is authenticated from day one.
+	adhocRunSecret []byte
+
 	pollInterval time.Duration
 	webAssets    fs.FS
 
@@ -170,6 +180,19 @@ func WithEventTokenSecret(secret string) Option {
 	return func(s *Server) {
 		if secret != "" {
 			s.eventTokenSecret = []byte(secret)
+		}
+	}
+}
+
+// WithAdhocRunSecret configures the bearer secret POST /v1alpha1/adhoc-runs
+// requires (see requireAdhocRunAuth in adhoc.go). Omitting it (or passing
+// "") leaves every ad-hoc run refused with 401 rather than
+// mounted-but-authless — the same closed-by-default rule the decision,
+// registration, and event secrets follow (t15 auth-hardening gate, c27).
+func WithAdhocRunSecret(secret string) Option {
+	return func(s *Server) {
+		if secret != "" {
+			s.adhocRunSecret = []byte(secret)
 		}
 	}
 }

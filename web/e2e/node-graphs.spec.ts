@@ -1,5 +1,10 @@
 import { expect, test, type Page } from "@playwright/test";
 import {
+  ACTIVE_EVENTS_TOTAL,
+  ACTIVE_LAST_EVENT_ID,
+  ACTIVE_NODE_ID,
+  ACTIVE_PULSES_TOTAL,
+  ACTIVE_RUN_ID,
   mockNodeGraphsApi,
   readAgentState,
   WORKFLOW_VERSIONS,
@@ -161,26 +166,132 @@ test("sub-tab selection is URL-param driven: switching tabs updates ?tab= and is
   await expect(
     page.getByRole("button", { name: "Active Graphs" }),
   ).toHaveAttribute("aria-pressed", "true");
-  await expect(page.locator("#node-graphs-active-empty")).toBeVisible();
+  await expect(page.locator("#node-graphs-active-panel")).toBeVisible();
 });
 
-test("the Nodes and Active Graphs sub-tabs render honest empty states, never canned data", async ({
+test("the Nodes sub-tab renders the node-definition catalog from the published IRs (t29+t31, c20)", async ({
   page,
 }) => {
   await page.goto("/graphs?tab=nodes");
-  await expect(page.locator("#node-graphs-nodes-empty")).toContainText(
-    "No node catalog yet",
-  );
-  // No table/list of nodes is rendered ahead of the real catalog.
-  await expect(page.locator("#node-graphs-nodes-empty table")).toHaveCount(0);
+  await expect
+    .poll(async () => (await readAgentState(page)).status)
+    .toBe("ready");
 
-  await page.goto("/graphs?tab=active");
-  await expect(page.locator("#node-graphs-active-empty")).toContainText(
-    "No active-graph view yet",
+  // The fixture's three published versions collapse to 8 distinct
+  // definitions (see NODE_CATALOG_DEFINITION_COUNT's derivation note:
+  // deliver-change's latest version contributes 7, hello-world's unbound
+  // agent adds 1, its end node collapses into deliver-change's).
+  await expect(page.locator(".node-def-card")).toHaveCount(8);
+
+  // A ref-backed definition shows kind + ref + its occurrence.
+  const intake = page.locator(
+    '[data-definition-id="agent:actor://company/intake@sha256:111111"]',
   );
-  await expect(page.locator("#node-graphs-active-empty table")).toHaveCount(
+  await expect(intake).toHaveCount(1);
+  await expect(intake).toContainText("agent");
+  await expect(intake).toContainText("actor://company/intake@sha256:111111");
+  await expect(
+    intake.locator('[data-occurrence="deliver-change@v2:intake"]'),
+  ).toHaveCount(1);
+
+  // A ref-less definition says so honestly instead of inventing identity.
+  await expect(page.locator('[data-definition-id="end"]')).toContainText(
+    "identity is the kind alone",
+  );
+});
+
+test("the Active Graphs sub-tab halos only the workflow whose run holds active tokens (t31, h20)", async ({
+  page,
+}) => {
+  await page.goto("/graphs?tab=active");
+  await expect
+    .poll(async () => (await readAgentState(page)).status)
+    .toBe("ready");
+
+  // Exactly one graph: deliver-change v2, pinned by the one running run.
+  const graph = page.locator("#active-graph-deliver-change-v2");
+  await expect(graph).toHaveCount(1);
+  await expect(graph).toHaveAttribute("data-alive", "true");
+  await expect(graph).toHaveClass(/is-alive/);
+  await expect(graph).toContainText("1 active run");
+  await expect(
+    graph.locator(`[data-run-id="${ACTIVE_RUN_ID}"] a`),
+  ).toHaveAttribute("href", `/runs/${ACTIVE_RUN_ID}`);
+
+  // hello-world's only run is completed; the orphan digest matches no
+  // published version — neither renders a graph (h14).
+  await expect(page.locator(".active-graph")).toHaveCount(1);
+  await expect(page.getByText("run-orphan-01J8XKWORKFLOWS0003")).toHaveCount(
     0,
   );
+
+  // Node presence: only the committed running node-run's node is live.
+  await expect(
+    graph.locator(`[data-node-id="${ACTIVE_NODE_ID}"]`),
+  ).toHaveAttribute("data-node-live", "true");
+  await expect(graph.locator('[data-node-id="intake"]')).toHaveAttribute(
+    "data-node-live",
+    "false",
+  );
+});
+
+test("every rendered pulse traces to a committed event; an unknown-run event is a no-op (t31, h14)", async ({
+  page,
+}) => {
+  await page.goto("/graphs?tab=active");
+  // The fixture stream replays two committed events: one on the loaded run
+  // (a pulse), one naming a run the view never fetched (a no-op).
+  await expect
+    .poll(async () => (await readAgentState(page)).active_graphs?.events_total)
+    .toBe(ACTIVE_EVENTS_TOTAL);
+
+  const state = (await readAgentState(page)).active_graphs!;
+  expect(state.pulses_total).toBe(ACTIVE_PULSES_TOTAL);
+  expect(state.graph_count).toBe(1);
+  expect(state.active_run_count).toBe(1);
+  expect(state.active_node_count).toBe(1);
+  expect(state.last_event_id).toBe(ACTIVE_LAST_EVENT_ID);
+  expect(state.reduced_motion).toBe(false);
+});
+
+test("prefers-reduced-motion renders one static frame on the Active Graphs sub-tab (t31)", async ({
+  page,
+}) => {
+  await page.emulateMedia({ reducedMotion: "reduce" });
+  await page.goto("/graphs?tab=active");
+  await expect
+    .poll(async () => (await readAgentState(page)).status)
+    .toBe("ready");
+  await expect(
+    page.locator("#active-graph-deliver-change-v2"),
+  ).toHaveAttribute("data-motion", "static");
+  // Liveness stays readable as text, never motion/color alone.
+  await expect(page.locator("#active-graph-deliver-change-v2")).toContainText(
+    "1 active run",
+  );
+  expect((await readAgentState(page)).active_graphs?.reduced_motion).toBe(
+    true,
+  );
+});
+
+test("the graph is inspectable from the keyboard alone (t31, MeshCanvas precedent)", async ({
+  page,
+}) => {
+  await page.goto("/graphs?tab=active");
+  await expect
+    .poll(async () => (await readAgentState(page)).status)
+    .toBe("ready");
+  // The graph's own canvas by id: React Flow's wrapper carries
+  // role="application" too, so the role alone is ambiguous here.
+  const canvas = page.locator("#active-graph-deliver-change-v2-canvas");
+  await expect(canvas).toHaveAttribute("role", "application");
+  await canvas.focus();
+  await page.keyboard.press("ArrowRight");
+  const readout = page.locator("#active-graph-deliver-change-v2-inspect");
+  // BFS entry node first; the readout carries id, kind, and presence words.
+  await expect(readout).toContainText("intake · agent · no active work");
+  await page.keyboard.press("Escape");
+  await expect(readout).toContainText("arrow keys to inspect");
 });
 
 test("the skip link is still the first tab stop, unaffected by the new route", async ({

@@ -127,6 +127,33 @@ export interface AgentMeshState {
   reduced_motion: boolean;
 }
 
+/**
+ * The Active Graphs sub-tab's machine-readable mirror (task t31, c31/h20):
+ * the graph canvases are visual surfaces webglass cannot assert on, so
+ * every fact the halos and pulses claim is mirrored here — how many graphs
+ * are alive, how many runs/nodes make them so, the honest connection state,
+ * and monotonic event/pulse counters so a test can prove a committed event
+ * produced a visible pulse (and that an event naming no known run produced
+ * none, h14). Optional and absent from every other view's state (undefined
+ * keys are dropped by `JSON.stringify` — same convention as `mesh`).
+ */
+export interface AgentActiveGraphsState {
+  /** Alive graphs on screen: one per published digest with active runs. */
+  graph_count: number;
+  /** Non-terminal runs across every rendered graph. */
+  active_run_count: number;
+  /** Nodes holding a non-terminal node run across every rendered graph. */
+  active_node_count: number;
+  /** `live` | `reconnecting` — never faked (same contract as mesh). */
+  connection: string;
+  last_event_id: string | null;
+  /** Every committed event the stream delivered this session. */
+  events_total: number;
+  /** Events that became a visible pulse (known-run, non-terminal events). */
+  pulses_total: number;
+  reduced_motion: boolean;
+}
+
 export interface AgentState {
   status: AgentStatus;
   route: string;
@@ -134,6 +161,7 @@ export interface AgentState {
   authoring?: AgentAuthoringState | null;
   statistics?: AgentStatisticsState | null;
   mesh?: AgentMeshState | null;
+  active_graphs?: AgentActiveGraphsState | null;
 }
 
 const INITIAL: AgentState = { status: "loading", route: "/", run: null };
@@ -245,6 +273,24 @@ function shallowEqualMesh(
   );
 }
 
+function shallowEqualActiveGraphs(
+  a: AgentActiveGraphsState | null | undefined,
+  b: AgentActiveGraphsState | null | undefined,
+): boolean {
+  if (a === b) return true;
+  if (!a || !b) return false;
+  return (
+    a.graph_count === b.graph_count &&
+    a.active_run_count === b.active_run_count &&
+    a.active_node_count === b.active_node_count &&
+    a.connection === b.connection &&
+    a.last_event_id === b.last_event_id &&
+    a.events_total === b.events_total &&
+    a.pulses_total === b.pulses_total &&
+    a.reduced_motion === b.reduced_motion
+  );
+}
+
 /**
  * Merge a patch into the agent state. No-ops when nothing actually changed,
  * so a re-render storm cannot make the `<script>` node churn.
@@ -257,7 +303,8 @@ export function setAgentState(patch: Partial<AgentState>): void {
     shallowEqualRun(next.run, current.run) &&
     shallowEqualAuthoring(next.authoring, current.authoring) &&
     shallowEqualStatistics(next.statistics, current.statistics) &&
-    shallowEqualMesh(next.mesh, current.mesh)
+    shallowEqualMesh(next.mesh, current.mesh) &&
+    shallowEqualActiveGraphs(next.active_graphs, current.active_graphs)
   ) {
     return;
   }

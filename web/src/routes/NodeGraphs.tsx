@@ -1,11 +1,24 @@
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Link, useSearchParams } from "react-router-dom";
 import { setAgentState } from "../agent-state/store";
-import { ApiError, listRuns, listWorkflows } from "../api/client";
-import type { Run, WorkflowVersion } from "../api/types";
+import { ApiError, listNodeRuns, listRuns, listWorkflows } from "../api/client";
+import type { NodeRunListItem, Run, WorkflowVersion } from "../api/types";
+import ActiveGraphCanvas from "../components/ActiveGraphCanvas";
 import ErrorNotice from "../components/ErrorNotice";
+import {
+  deriveActiveGraphs,
+  needsPresenceRefresh,
+  presenceEventAction,
+} from "../domain/active-presence";
+import { accentFor } from "../domain/graph";
+import { deriveNodeDefinitions } from "../domain/node-catalog";
 import { groupWorkflowVersions, withRecentRuns } from "../domain/workflows";
-import { useSharedEvents, type SharedEventType } from "../hooks/useSharedEvents";
+import { useReducedMotion } from "../hooks/useReducedMotion";
+import {
+  useSharedEvents,
+  type SharedEvent,
+  type SharedEventType,
+} from "../hooks/useSharedEvents";
 
 /**
  * Every run-lifecycle event that can change a workflow card's "recent runs"
@@ -39,16 +52,15 @@ const REFRESH_DEBOUNCE_MS = 4000;
  * so a sub-tab is bookmarkable and agent-drivable without any client-side
  * component state an agent can't see from the URL alone.
  *
- * This wave only ships the *shell*: the Nodes sub-tab (task t29, a
- * client-side catalog parsed from published workflow IRs) and the Active
- * Graphs sub-tab (task t31, the SSE-driven aliveness halo) both land later.
- * Until then they render honest, accessible empty states that say what will
- * appear there — never canned or fabricated rows (design honesty rule h14:
- * everything drawn must trace to a committed API row, and an empty state
- * that pretends otherwise is exactly the kind of decorative traffic h14
- * forbids). Only the Node Graphs sub-tab does real work this wave: it is
- * the exact per-workflow-cards view the old Workflows tab rendered, moved
- * here unchanged (domain/workflows.ts is untouched — task t29's territory).
+ * All three sub-tabs do real work now: Node Graphs is the exact
+ * per-workflow-cards view the old Workflows tab rendered (task t8, moved
+ * here unchanged by t28); Nodes renders the cross-workflow node-definition
+ * catalog `domain/node-catalog.ts` (task t29) derives from published
+ * workflow IRs; Active Graphs (task t31) renders every graph a
+ * non-terminal run pins, live — halo and pulses driven by committed rows
+ * and the shared SSE stream, per `domain/active-presence.ts`. The h14 rule
+ * holds throughout: everything drawn traces to a committed API row, and
+ * each sub-tab renders an honest empty state when there is nothing.
  */
 
 type SubTab = "nodes" | "graphs" | "active";
@@ -265,48 +277,395 @@ function NodeGraphsPanel() {
   );
 }
 
+const toApiError = (cause: unknown): ApiError =>
+  cause instanceof ApiError
+    ? cause
+    : new ApiError(0, String(cause), "check the browser console");
+
 /**
- * The Nodes sub-tab: task t29's cross-workflow node-definition catalog has
- * not landed yet — there is no data source to render honestly, so this is
- * an accessible empty state rather than a placeholder that implies data
- * exists. Trivially "ready" the instant it mounts: there is nothing to
- * fetch, so there is nothing to wait for.
+ * The Nodes sub-tab (task t29's parser, rendered by task t31): every
+ * distinct node definition across the latest version of each published
+ * workflow — `deriveNodeDefinitions` over `GET /v1alpha1/workflows`, the
+ * same fetch the workflow-cards panel makes (c20: only published-IR-derived
+ * data, nothing invented). One card per definition: kind (word + the
+ * NODE_KIND_PALETTE identity color, never color alone), the actor/runner/
+ * approver ref backing its identity when the kind has one, and every
+ * (workflow, node id) occurrence.
  */
 function NodesPanel() {
+  const [versions, setVersions] = useState<WorkflowVersion[] | null>(null);
+  const [error, setError] = useState<ApiError | null>(null);
+
   useEffect(() => {
-    setAgentState({ status: "ready", run: null });
+    const controller = new AbortController();
+    setAgentState({ status: "loading", run: null });
+    setError(null);
+    setVersions(null);
+    listWorkflows(controller.signal)
+      .then((list) => {
+        if (controller.signal.aborted) return;
+        setVersions(list.items);
+        setAgentState({ status: "ready", run: null });
+      })
+      .catch((cause: unknown) => {
+        if (controller.signal.aborted) return;
+        setVersions([]);
+        setError(toApiError(cause));
+        setAgentState({ status: "ready", run: null });
+      });
+    return () => controller.abort();
   }, []);
 
+  const definitions =
+    versions !== null ? deriveNodeDefinitions(versions) : null;
+
   return (
-    <div id="node-graphs-nodes-empty" className="node-graphs-empty">
-      <p className="muted">
-        No node catalog yet. This sub-tab will list every distinct node
-        definition — one entry per node kind, not per workflow — derived
-        client-side from published workflow IRs, once the catalog parser
-        ships.
-      </p>
+    <div id="node-graphs-nodes-panel">
+      {error ? <ErrorNotice error={error} /> : null}
+      {definitions === null ? (
+        <p className="muted" id="node-defs-loading">
+          Loading node definitions…
+        </p>
+      ) : definitions.length === 0 ? (
+        <p className="muted" id="node-defs-empty">
+          No node definitions yet. They derive from published workflow IRs —
+          publish a workflow with <code>nodes workflow publish</code> and its
+          nodes appear here.
+        </p>
+      ) : (
+        <ul className="node-defs" id="node-defs-list">
+          {definitions.map((definition) => (
+            <li
+              key={definition.id}
+              className="node-def-card"
+              data-definition-id={definition.id}
+              data-node-kind={definition.kind}
+              style={{
+                ["--node-accent" as string]: accentFor(definition.kind),
+              }}
+            >
+              <div className="node-def-card__head">
+                <span className="node-def-card__dot" aria-hidden="true" />
+                <span className="node-def-card__kind">{definition.kind}</span>
+                <span className="node-def-card__count">
+                  {definition.occurrences.length}{" "}
+                  {definition.occurrences.length === 1
+                    ? "occurrence"
+                    : "occurrences"}
+                </span>
+              </div>
+              {definition.ref ? (
+                <code className="node-def-card__ref" title={definition.ref}>
+                  {definition.ref}
+                </code>
+              ) : (
+                // The IR carries nothing further to distinguish these
+                // definitions (see domain/node-catalog.ts) — say so rather
+                // than inventing a synthetic identity.
+                <p className="node-def-card__ref node-def-card__ref--none muted">
+                  no external ref — identity is the kind alone
+                </p>
+              )}
+              <ul className="node-def-card__occurrences">
+                {definition.occurrences.map((occurrence) => (
+                  <li
+                    key={`${occurrence.workflowKey}:${occurrence.version}:${occurrence.nodeId}`}
+                    data-occurrence={`${occurrence.workflowKey}@v${occurrence.version}:${occurrence.nodeId}`}
+                  >
+                    <span className="node-def-card__node">
+                      {occurrence.nodeId}
+                    </span>{" "}
+                    in {occurrence.workflowKey}{" "}
+                    <span className="muted">v{occurrence.version}</span>
+                  </li>
+                ))}
+              </ul>
+            </li>
+          ))}
+        </ul>
+      )}
     </div>
   );
 }
 
 /**
- * The Active Graphs sub-tab: task t31's SSE-driven aliveness halo has not
- * landed yet — same honesty stance as NodesPanel, no fabricated rows or
- * decorative "activity" ahead of the real thing.
+ * Every cross-run event type that can move Active Graphs presence: the
+ * pulse family (dispatch/attempt/token/ledger activity), the run lifecycle
+ * (created/terminal), and run.waiting. Module-level `as const`-style
+ * constant because useSharedEvents requires a stable reference.
+ */
+const ACTIVE_GRAPH_EVENT_TYPES: readonly SharedEventType[] = [
+  "dev.culture.nodes.run.created",
+  "dev.culture.nodes.token.entered",
+  "dev.culture.nodes.node-run.ready",
+  "dev.culture.nodes.attempt.started",
+  "dev.culture.nodes.actor.accepted",
+  "dev.culture.nodes.attempt.completed",
+  "dev.culture.nodes.node-run.failed",
+  "dev.culture.nodes.attempt.retry-scheduled",
+  "dev.culture.nodes.contract.rejected",
+  "dev.culture.nodes.token.transitioned",
+  "dev.culture.nodes.ledger.record-appended",
+  "dev.culture.nodes.runner.operation-completed",
+  "dev.culture.nodes.run.waiting",
+  "dev.culture.nodes.run.completed",
+  "dev.culture.nodes.run.failed",
+  "dev.culture.nodes.run.cancelled",
+  "dev.culture.nodes.run.bounded",
+];
+
+/** Minimum gap between presence (runs + node-runs) refetches. */
+const PRESENCE_REFRESH_MS = 4000;
+/** How many node-run rows the presence join reads (newest first). */
+const PRESENCE_NODE_RUNS_LIMIT = 200;
+
+const EMPTY_PULSES: Record<string, number> = {};
+
+/**
+ * The Active Graphs sub-tab (task t31, c31/h20): every workflow graph a
+ * non-terminal run currently pins, rendered live. Liveness derivation is
+ * `domain/active-presence.ts` — a pure readout of committed rows — and
+ * aliveness on screen is driven by the initial fetch (workflows + runs +
+ * node-runs) plus the shared cross-run SSE stream (task t27's one
+ * connection): each committed event on a known run becomes exactly one
+ * visible pulse; an event naming no known run is a no-op (h14); a
+ * `run.created` for an unseen run triggers a debounced refetch of the
+ * committed rows rather than a rendered placeholder.
  */
 function ActiveGraphsPanel() {
+  const [versions, setVersions] = useState<WorkflowVersion[] | null>(null);
+  const [runs, setRuns] = useState<Run[] | null>(null);
+  const [nodeRuns, setNodeRuns] = useState<NodeRunListItem[] | null>(null);
+  const [error, setError] = useState<ApiError | null>(null);
+  const [eventsTotal, setEventsTotal] = useState(0);
+  const [pulsesTotal, setPulsesTotal] = useState(0);
+  /** digest -> nodeId -> committed-event pulse count. */
+  const [pulses, setPulses] = useState<Record<string, Record<string, number>>>(
+    {},
+  );
+  const reducedMotion = useReducedMotion();
+
+  const refreshTimer = useRef<ReturnType<typeof setTimeout> | undefined>(
+    undefined,
+  );
+  const lastRefresh = useRef(0);
+
   useEffect(() => {
-    setAgentState({ status: "ready", run: null });
+    const controller = new AbortController();
+    setAgentState({ status: "loading", run: null });
+    setError(null);
+    setVersions(null);
+    setRuns(null);
+    setNodeRuns(null);
+    Promise.all([
+      listWorkflows(controller.signal),
+      listRuns(controller.signal, { sort: "updated_at" }),
+      listNodeRuns(controller.signal, { limit: PRESENCE_NODE_RUNS_LIMIT }),
+    ])
+      .then(([workflowList, runList, nodeRunList]) => {
+        if (controller.signal.aborted) return;
+        setVersions(workflowList.items);
+        setRuns(runList.items);
+        setNodeRuns(nodeRunList.items);
+        setAgentState({ status: "ready", run: null });
+      })
+      .catch((cause: unknown) => {
+        if (controller.signal.aborted) return;
+        setVersions([]);
+        setRuns([]);
+        setNodeRuns([]);
+        setError(toApiError(cause));
+        // "ready" means the initial load finished, including finishing it
+        // badly — the error renders alongside (the app-wide convention).
+        setAgentState({ status: "ready", run: null });
+      });
+    return () => controller.abort();
   }, []);
 
+  // Debounced presence refresh: at most one runs+node-runs refetch per
+  // PRESENCE_REFRESH_MS, triggered by events that can change which runs
+  // exist or which nodes hold work (the Mesh view's attribution pattern).
+  const refreshPresence = useCallback(() => {
+    if (refreshTimer.current) return;
+    const since = Date.now() - lastRefresh.current;
+    const wait = Math.max(0, PRESENCE_REFRESH_MS - since);
+    refreshTimer.current = setTimeout(() => {
+      refreshTimer.current = undefined;
+      lastRefresh.current = Date.now();
+      Promise.all([
+        listRuns(undefined, { sort: "updated_at" }),
+        listNodeRuns(undefined, { limit: PRESENCE_NODE_RUNS_LIMIT }),
+      ])
+        .then(([runList, nodeRunList]) => {
+          setRuns(runList.items);
+          setNodeRuns(nodeRunList.items);
+        })
+        .catch(() => {
+          /* a failed refresh keeps the last honest presence */
+        });
+    }, wait);
+  }, []);
+
+  useEffect(
+    () => () => {
+      if (refreshTimer.current) clearTimeout(refreshTimer.current);
+    },
+    [],
+  );
+
+  const knownRunIds = useMemo(
+    () => new Set((runs ?? []).map((run) => run.id)),
+    [runs],
+  );
+  const runById = useMemo(
+    () => new Map((runs ?? []).map((run) => [run.id, run])),
+    [runs],
+  );
+
+  const applyEvent = (event: SharedEvent) => {
+    setEventsTotal((n) => n + 1);
+    const action = presenceEventAction(event.envelope, knownRunIds);
+    if (action.kind === "none") return;
+    if (action.kind === "run-appeared") {
+      // Never render from the event alone — fetch the committed row.
+      refreshPresence();
+      return;
+    }
+    if (action.kind === "run-resolved") {
+      // The terminal state is itself a committed fact; presence derivation
+      // drops the run (and its graph, if it was the last one) from here.
+      setRuns((prev) =>
+        prev === null
+          ? prev
+          : prev.map((run) =>
+              run.id === action.runId ? { ...run, state: action.state } : run,
+            ),
+      );
+      return;
+    }
+    // A visible pulse: exactly one per committed event on a known run.
+    setPulsesTotal((n) => n + 1);
+    const run = runById.get(action.runId);
+    if (run && action.nodeId !== null) {
+      const digest = run.workflow_digest;
+      const nodeId = action.nodeId;
+      setPulses((prev) => ({
+        ...prev,
+        [digest]: {
+          ...(prev[digest] ?? {}),
+          [nodeId]: (prev[digest]?.[nodeId] ?? 0) + 1,
+        },
+      }));
+    }
+    if (needsPresenceRefresh(event.envelope.type)) refreshPresence();
+  };
+
+  // The stream opens the moment the view mounts, concurrently with the
+  // initial workflows+runs+node-runs fetch — so committed events can (and in
+  // practice routinely do) arrive before `runs` exists. Adjudicating them
+  // against an empty known-run set would drop them as "unknown run", which
+  // would be a lie: the run is known, we just had not read it yet. Hold them
+  // instead, and replay once the committed rows land — every held event is
+  // then judged against real rows, so events_total and pulses_total stay
+  // consistent with each other and with h14 (still exactly one pulse per
+  // committed event, and still none for an event naming a genuinely
+  // unknown run).
+  const pendingEvents = useRef<SharedEvent[]>([]);
+  const applyEventRef = useRef(applyEvent);
+  applyEventRef.current = applyEvent;
+
+  const onEvent = (event: SharedEvent) => {
+    if (runs === null) {
+      pendingEvents.current.push(event);
+      return;
+    }
+    applyEvent(event);
+  };
+
+  useEffect(() => {
+    if (runs === null || pendingEvents.current.length === 0) return;
+    const queued = pendingEvents.current;
+    pendingEvents.current = [];
+    for (const event of queued) applyEventRef.current(event);
+  }, [runs]);
+
+  const { status, lastEventId } = useSharedEvents(
+    ACTIVE_GRAPH_EVENT_TYPES,
+    onEvent,
+  );
+
+  const presence = useMemo(
+    () =>
+      versions !== null && runs !== null && nodeRuns !== null
+        ? deriveActiveGraphs(versions, runs, nodeRuns)
+        : null,
+    [versions, runs, nodeRuns],
+  );
+
+  // The machine-readable mirror: the halos and pulses are visual claims
+  // webglass cannot read, so every fact they assert lands in #agent-state
+  // (the Mesh.tsx:177-194 convention). Published once real data exists —
+  // while loading, the pixels claim nothing and neither does the mirror.
+  useEffect(() => {
+    if (presence === null) return;
+    setAgentState({
+      active_graphs: {
+        graph_count: presence.length,
+        active_run_count: presence.reduce(
+          (total, entry) => total + entry.runIds.length,
+          0,
+        ),
+        active_node_count: presence.reduce(
+          (total, entry) => total + entry.activeNodeIds.length,
+          0,
+        ),
+        connection: status,
+        last_event_id: lastEventId,
+        events_total: eventsTotal,
+        pulses_total: pulsesTotal,
+        reduced_motion: reducedMotion,
+      },
+    });
+  }, [presence, status, lastEventId, eventsTotal, pulsesTotal, reducedMotion]);
+
+  // Leaving the view drops the block from #agent-state (undefined keys are
+  // omitted by JSON.stringify — the mesh/authoring/statistics convention).
+  useEffect(() => () => setAgentState({ active_graphs: undefined }), []);
+
   return (
-    <div id="node-graphs-active-empty" className="node-graphs-empty">
-      <p className="muted">
-        No active-graph view yet. This sub-tab will show which node graphs
-        currently hold active tokens, with a breathing indicator driven by
-        real run events — no graph will ever be marked alive without a
-        committed event behind it.
+    <div id="node-graphs-active-panel">
+      <p
+        id="active-graphs-connection"
+        className="mesh-connection"
+        data-state={status}
+        role="status"
+      >
+        <span className="mesh-connection__dot" aria-hidden="true" />
+        {status === "live" ? "live" : "reconnecting"}
       </p>
+      {error ? <ErrorNotice error={error} /> : null}
+      {presence === null ? (
+        <p className="muted" id="active-graphs-loading">
+          Loading active graphs…
+        </p>
+      ) : presence.length === 0 ? (
+        <p className="muted" id="active-graphs-empty">
+          No graphs alive right now. A workflow appears here the moment a run
+          of it holds active tokens — start one with{" "}
+          <code>nodes run start</code>.
+        </p>
+      ) : (
+        <div className="active-graphs" id="active-graphs-list">
+          {presence.map((entry) => (
+            <ActiveGraphCanvas
+              key={entry.digest}
+              presence={entry}
+              reducedMotion={reducedMotion}
+              pulses={pulses[entry.digest] ?? EMPTY_PULSES}
+            />
+          ))}
+        </div>
+      )}
     </div>
   );
 }

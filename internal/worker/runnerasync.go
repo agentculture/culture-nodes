@@ -558,6 +558,16 @@ func (w *Worker) commitRunnerTerminal(ctx context.Context, op postgres.RunnerOpe
 		req.ActorID = w.codeRunnerActorID()
 	}
 
+	// Task t17 (issue #37): the same pre-routing acceptance evaluation
+	// code.go applies on an in-process dispatch — a node's enforce policy
+	// must mean the same thing whichever transport carried the operation.
+	var eval *acceptanceEvaluation
+	if buildErr == nil && node != nil {
+		if eval = evaluateAcceptance(node, result); eval != nil {
+			req.TechStatus, req.Outcome = eval.apply(req.TechStatus, req.Outcome)
+		}
+	}
+
 	committed, err := w.engine.CompleteAttempt(ctx, req)
 	if err != nil {
 		if isStale(err) {
@@ -582,9 +592,7 @@ func (w *Worker) commitRunnerTerminal(ctx context.Context, op postgres.RunnerOpe
 	if opErr == nil {
 		w.recordRunnerOperation(ctx, op.NamespaceID, committed.AttemptID, runnerOperationKind, operation, &result, nil)
 	}
-	if buildErr == nil && node != nil {
-		w.evaluateAcceptance(ctx, node, result, committed)
-	}
+	w.appendAcceptanceVerdict(ctx, node, eval, committed)
 	return nil
 }
 

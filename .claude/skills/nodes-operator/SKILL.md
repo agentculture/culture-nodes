@@ -118,6 +118,74 @@ only as an eidetic `/remember` note.
   skill's `run`/`ledger` verbs, or the Python `nodes` CLI
   (`uv run nodes run list`) which speaks the same API.
 
+## Split-plan lane guidance and session accounting (issue #48)
+
+When building an implementation split plan (via `/spec-to-plan` and
+`/assign-to-workforce`), account for session economics across the dispatch
+landscape. The operator's interactive Claude, local subagents, and all bridge
+sessions share ONE subscription window — not independent capacity pools.
+
+### One meter, many lanes
+
+- **Operator main loop** (lowest cost): prompt cache warm, marginal session
+  cost lowest; right place for small/mechanical steps and merge gates.
+- **Local subagents**: cold-ish start but same-process context handoff, no
+  HTTP overhead.
+- **Bridge sessions** (full cold tax): each codex exec / claude -p / colleague
+  work invocation pays a complete cold-session cost (repo discovery, plan
+  reading, zero conversational history) plus engine dispatch overhead. Worth
+  it only when ledger attribution, isolation, or cross-machine execution
+  justifies it.
+
+### Node granularity and routing
+
+- **Work-package model nodes**: amortize bootstrap into one persistent warm
+  session with many ledgered sub-actions, never one cold session per small
+  plan task. This cycle's wave-0 averaged ~25k output tokens per task on top
+  of repeated cold bootstrap — a shared workstream session would have paid
+  that bootstrap once.
+- **Deterministic/code nodes**: stay microscopic — these belong in the
+  operator lane or as part of a larger model workstream.
+- **Codex-first routing** for big analysis and build packages: the cold-session
+  tax is large enough to amortize over significant work; reserve the operator's
+  Claude window for operator-lane work and human merge gates.
+
+### Split-plan template
+
+Before any fan-out, declare expected model-session count per wave against the
+remaining subscription window (windows reset on a fixed clock; the operator should
+know the reset time and remaining capacity before planning). Copy this template
+into the plan's waves section and fill it in:
+
+```yaml
+# Wave W: <description>
+# - Tasks: t1, t2, t3, ...
+# - Model sessions (remaining window): N (justify per lane: operator X sessions,
+#   codex-bridge Y sessions for big packages P1, P2, ...)
+# - Non-billable: deterministic nodes, human tasks
+```
+
+Example:
+
+```yaml
+# Wave 0: Core design pass and scope exploration
+# - Tasks: t1 (scope), t2 (think), t3 (challenge), t4 (spec-to-plan)
+# - Model sessions (remaining window: 4h): 1 (operator lane, local design refinement)
+# - Non-billable: challenge pass findings, spec review
+#
+# Wave 1: Phase-0 vertical slice implementation
+# - Tasks: t5–t11 (usage telemetry, session stickiness, breaker, pacing, budget)
+# - Model sessions (remaining window: 3.5h): 3 (codex-thor for usage + stickiness,
+#   codex-orin for breaker logic + pacing; operator: PR review gates only)
+# - Non-billable: tests, documentation
+```
+
+Record deviations (issue #48 comment item 5): if a wave exhausts budget mid-execution
+or stays significantly under-budget, emit a deviation record with the observed session
+count and reason (longer node output, unforeseen complexity, faster execution). These
+records feed the next build's planning accuracy and the economics analysis (issue #28
+per-actor analytics).
+
 ## Provenance
 
 First-party to **culture-nodes** — authored here (2026-08-12 cycle), not

@@ -1502,6 +1502,11 @@
         "scheme": "bearer",
         "type": "http"
       },
+      "adhocRunBearerAuth": {
+        "description": "The shared secret configured as NODES_ADHOC_RUN_TOKEN_SECRET. Used only by POST /v1alpha1/adhoc-runs (task t19, gated by the t15 auth-hardening pass, spec c27) — its own secret, so the power to start ad-hoc (often billable) work is granted independently of decision, registration, and event standing.",
+        "scheme": "bearer",
+        "type": "http"
+      },
       "decisionBearerAuth": {
         "description": "The shared secret configured as NODES_HUMAN_DECISION_TOKEN_SECRET. Used only by POST /v1alpha1/human-tasks/{id}/decision — every other operation in this API is authless by phase-1 design (spec decision c45).",
         "scheme": "bearer",
@@ -1731,6 +1736,11 @@
             "description": "The rendered canonical workflow does not compile (a server-side template fault)."
           }
         },
+        "security": [
+          {
+            "adhocRunBearerAuth": []
+          }
+        ],
         "summary": "Create a first-class ad-hoc run from a bare instruction.",
         "tags": [
           "runs"

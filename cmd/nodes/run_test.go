@@ -33,7 +33,9 @@ func runAPIServer(t *testing.T) *httptest.Server {
 	t.Helper()
 	s := pgtest.RequireStore(t, testStore)
 	ns := pgtest.MustNamespace(t, s, "cli-run")
-	srv, err := api.NewServer(s, ns.ID)
+	srv, err := api.NewServer(s, ns.ID,
+		// the ad-hoc lane is bearer-gated (t15); tests present testAdhocToken
+		api.WithAdhocRunSecret(testAdhocToken))
 	if err != nil {
 		t.Fatalf("api.NewServer: %v", err)
 	}
@@ -41,6 +43,8 @@ func runAPIServer(t *testing.T) *httptest.Server {
 	t.Cleanup(ts.Close)
 	return ts
 }
+
+const testAdhocToken = "cli-test-adhoc-token-long-enough"
 
 func TestRunHelpDocumentsLane(t *testing.T) {
 	dir := t.TempDir()
@@ -87,7 +91,7 @@ func TestRunEndToEndAgainstTestServer(t *testing.T) {
 	ts := runAPIServer(t)
 	dir := t.TempDir()
 
-	r := runNodes(t, dir, "run",
+	r := runNodes(t, dir, "run", "--token", testAdhocToken,
 		"--api", ts.URL,
 		"--instruction", "review the CHANGELOG",
 		"--actor", testRunActorRef,
@@ -121,7 +125,7 @@ func TestRunEndToEndAgainstTestServer(t *testing.T) {
 	}
 
 	// Identical parameters land on the identical published digest.
-	r2 := runNodes(t, dir, "run",
+	r2 := runNodes(t, dir, "run", "--token", testAdhocToken,
 		"--api", ts.URL,
 		"--instruction", "review the CHANGELOG",
 		"--actor", testRunActorRef,
@@ -144,7 +148,7 @@ func TestRunTextOutputPrintsRunID(t *testing.T) {
 	ts := runAPIServer(t)
 	dir := t.TempDir()
 
-	r := runNodes(t, dir, "run",
+	r := runNodes(t, dir, "run", "--token", testAdhocToken,
 		"--api", ts.URL,
 		"--instruction", "say hello",
 		"--actor", testRunActorRef,
@@ -171,7 +175,7 @@ func TestRunWatchReportsTerminalState(t *testing.T) {
 	ts := runAPIServer(t)
 	dir := t.TempDir()
 
-	cmd := exec.Command(binPath, "run",
+	cmd := exec.Command(binPath, "run", "--token", testAdhocToken,
 		"--api", ts.URL,
 		"--instruction", "wait to be cancelled",
 		"--actor", testRunActorRef,

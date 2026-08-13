@@ -1,0 +1,57 @@
+{
+  "plan_slug": "attempts-evidence-humans-loops",
+  "schema_version": 1,
+  "created": "2026-08-13T09:25:26Z",
+  "updated": "2026-08-13T11:05:05Z",
+  "deviations": [
+    {
+      "id": "d1",
+      "what": "Wave-2/3 execution switches from spark claude-code bridges to paced local subagents (serial, one at a time): the shared Claude session exhausted mid-wave \u2014 t10's local agent and t11's bridge run both died on the provider session limit (resets 12:20pm); remaining tasks (t10 finish, t11, t15) run locally after reset, paced to survive the window",
+      "task_ref": "t10",
+      "reason": "Per-task cold bridge sessions plus parallel subagents on one shared session budget exhausted the window (diagnosis: issue 47; continuation: the budget-aware execution issue). User directed: continue with local subagents, pace speed, make the system budget-aware",
+      "affects": [
+        "t11",
+        "t15"
+      ],
+      "origin": "user",
+      "status": "approved",
+      "classification": "needs-follow-up"
+    },
+    {
+      "id": "d2",
+      "what": "pr-upkeep sweep node runs network:full instead of the declared egress-allowlist \u2014 headspace-cli 0.11.0 supports only a disabled/enabled posture and the runner boundary rejected the allowlist live (run 01KZXACT0E81R8QE8CSWNC3ET2, rejected_input in 1ms)",
+      "task_ref": "t22",
+      "reason": "Runner capability gap discovered by the live test; the honest rejection is itself evidence the boundary works. Weakened isolation accepted for the live cycle; restoring egress-allowlist tracked as follow-up",
+      "affects": [
+        "t21"
+      ],
+      "origin": "llm",
+      "status": "proposed",
+      "classification": "needs-follow-up"
+    },
+    {
+      "id": "d3",
+      "what": "Bridges forward engine-resolved bindings into the session: extra input keys beyond the transport fields (instruction/repo/sandbox/model/success_outcome/permission_mode) are appended to the instruction as a serialized block in all three bridges \u2014 before this, a node's input.bindings (fixReport, evidence projections) were silently invisible to the model (pr-upkeep cycle 5: the codex review honestly reported its bindings missing and got contract_rejected)",
+      "task_ref": "t22",
+      "reason": "Live test exposed the missing last mile of the binding story; without it the independent-review pattern cannot see its inputs. Minimal identical patch all-backends, capped at 60k chars",
+      "affects": [
+        "t21"
+      ],
+      "origin": "llm",
+      "status": "proposed",
+      "classification": "acceptable"
+    },
+    {
+      "id": "d4",
+      "what": "Bridges honor a session-declared outcome: a final message of exactly {outcome, output} passes through verbatim (engine contract validation enforces declaredness); needed because two-outcome agent nodes were undrivable \u2014 bridges hardcoded success_outcome (pr-upkeep cycle 6: the review answered contract-shaped JSON that arrived as a summary string)",
+      "task_ref": "t22",
+      "reason": "Protocol already carries outcome per section 13.2; bridges dropped it. All-backends patch with tests; the engine remains the enforcer",
+      "affects": [
+        "t21"
+      ],
+      "origin": "llm",
+      "status": "proposed",
+      "classification": "acceptable"
+    }
+  ]
+}

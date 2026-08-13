@@ -1,0 +1,46 @@
+# Data bindings naming the deferred node surfaces (artifacts, error): no
+# input/output resolver answers them yet, so the compiler rejects them —
+# task t7's both-ways agreement. operation.workspaceRef is the deliberate
+# exemption (it reaches the runner boundary opaque) and is exercised by
+# deliver-change.workflow.yaml, which binds /nodes/build/artifacts/workspace
+# and compiles clean.
+apiVersion: nodes.culture.dev/v1alpha1
+kind: Workflow
+
+metadata:
+  name: deferred-surface-binding
+  version: 1.0.0
+  ownerRef: team/platform-ai
+
+spec:
+  entry: start
+
+  contract:
+    input:
+      schemaRef: ./contracts/in.schema.json
+    output:
+      schemaRef: ./contracts/out.schema.json
+
+  nodes:
+    start:
+      kind: agent
+      ownerRef: team/platform-ai
+      uses: actor://company/start@sha256:aaaaaa
+      contract:
+        outcomes:
+          completed:
+            schemaRef: ./contracts/start.schema.json
+      input:
+        bindings:
+          failure: /nodes/start/error
+          files: /nodes/start/artifacts/workspace
+
+    finish:
+      kind: end
+      ownerRef: team/platform-ai
+      output:
+        from: /nodes/start/output
+
+  edges:
+    - from: start.completed
+      to: finish

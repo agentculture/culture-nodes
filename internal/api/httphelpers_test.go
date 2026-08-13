@@ -27,6 +27,14 @@ type apiErrorBody struct {
 // assert on status or headers.
 func doJSON(t *testing.T, client *http.Client, method, url string, body, out any) (*http.Response, []byte) {
 	t.Helper()
+	return doJSONBearer(t, client, method, url, "", body, out)
+}
+
+// doJSONBearer is doJSON with an Authorization: Bearer header — for the
+// mutating routes the t15 auth-hardening gate closed (empty token sends no
+// header, keeping doJSON's authless shape for everything else).
+func doJSONBearer(t *testing.T, client *http.Client, method, url, token string, body, out any) (*http.Response, []byte) {
+	t.Helper()
 
 	var reader io.Reader
 	if body != nil {
@@ -43,6 +51,9 @@ func doJSON(t *testing.T, client *http.Client, method, url string, body, out any
 	}
 	if body != nil {
 		req.Header.Set("Content-Type", "application/json")
+	}
+	if token != "" {
+		req.Header.Set("Authorization", "Bearer "+token)
 	}
 
 	resp, err := client.Do(req)

@@ -54,13 +54,16 @@ import (
 //
 // # Mechanical acceptance
 //
-// Once dispatchCode's completion has committed, evaluateAcceptance
+// Before dispatchCode commits a completion, evaluateAcceptance
 // (acceptance.go) mechanically checks the node's declared
 // `acceptance.requires` — when it declares any — against the same Result
-// the evidence above was built from, and appends the verdict as a second,
-// derived ledger record. See acceptance.go's own doc for why that is a
-// second write rather than folded into the completion above, and what it
-// deliberately does not yet do.
+// the evidence above was built from, and the node's `acceptance.enforce`
+// policy may convert the completion to contract_rejected or re-route it to
+// a declared domain outcome (task t17, issue #37). The verdict is then
+// appended as a second, derived ledger record after the completion commits.
+// See acceptance.go's own doc for the policy semantics, the honest floor
+// for unevaluable checks, and why the record is a second write rather than
+// folded into the completion's own delta.
 
 // codeOperationKind is the runner_operations.operation_kind value a code
 // node's own dispatch is recorded under, distinguishing it from the
@@ -234,8 +237,14 @@ func (w *Worker) buildCodeOperation(node *nodeSpec, dc DispatchContext) (runners
 func (w *Worker) dispatchCode(
 	ctx context.Context, claimed postgres.ClaimedWork, d postgres.Dispatch, node *nodeSpec, dc DispatchContext,
 ) error {
+	// Every completion this function commits — failure sites included —
+	// carries w.codeRunnerActorID(), the same producer identity the success
+	// path below stamps: a code node's dispatch is the runner's work
+	// whichever way it ends, and per-actor surfaces must see the failures
+	// too. (When even CodeRunnerActorID/CodeRunnerName are unconfigured the
+	// helper yields "" and the attempt stays honestly unattributed.)
 	if w.opts.CodeRunnerName == "" {
-		return w.failAttempt(ctx, claimed, engine.StatusFailed, "configuration",
+		return w.failAttempt(ctx, claimed, w.codeRunnerActorID(), engine.StatusFailed, "configuration",
 			fmt.Sprintf("node %q is a code node and this worker has a code runner but no CodeRunnerName; "+
 				"an operation that names no runner is one no adapter will accept", node.ID))
 	}
@@ -245,12 +254,12 @@ func (w *Worker) dispatchCode(
 	// no honest way to route whatever it produced.
 	outcomes, err := w.codeOutcomes(node)
 	if err != nil {
-		return w.failAttempt(ctx, claimed, engine.StatusFailed, "definition", err.Error())
+		return w.failAttempt(ctx, claimed, w.codeRunnerActorID(), engine.StatusFailed, "definition", err.Error())
 	}
 
 	operation, err := w.buildCodeOperation(node, dc)
 	if err != nil {
-		return w.failAttempt(ctx, claimed, engine.StatusFailed, "configuration", err.Error())
+		return w.failAttempt(ctx, claimed, w.codeRunnerActorID(), engine.StatusFailed, "configuration", err.Error())
 	}
 
 	// Placement is a registry fact (api/runner-protocol). When this node's
@@ -263,7 +272,7 @@ func (w *Worker) dispatchCode(
 		return w.dispatchRunnerService(ctx, claimed, d, node, dc, identity, registryName, operation)
 	}
 	if w.opts.CodeRunner == nil {
-		return w.failAttempt(ctx, claimed, engine.StatusFailed, "configuration",
+		return w.failAttempt(ctx, claimed, w.codeRunnerActorID(), engine.StatusFailed, "configuration",
 			fmt.Sprintf("node %q is a code node and this worker has a runner registry but no identity registered "+
 				"for %q (nor for %q), and no in-process code runner to fall back on; "+
 				"register the node's execution identity before a run can dispatch it",
@@ -296,8 +305,8 @@ func (w *Worker) dispatchCode(
 		// The result could not be mapped at all. That is a contract problem,
 		// not a claim about what the operation did — and the operation row is
 		// still recorded below so the raw Result stays inspectable.
-		result, cerr := w.completeTechnicalFailure(ctx, claimed, engine.StatusContractRejected, "runner",
-			fmt.Sprintf("node %q result could not be mapped onto a completion: %v", node.ID, err), nil)
+		result, cerr := w.completeTechnicalFailure(ctx, claimed, w.codeRunnerActorID(), engine.StatusContractRejected, "runner",
+			fmt.Sprintf("node %q result could not be mapped onto a completion: %v", node.ID, err), nil, nil)
 		if cerr != nil {
 			return cerr
 		}
@@ -305,9 +314,19 @@ func (w *Worker) dispatchCode(
 		return nil
 	}
 
+	// Task t17 (issue #37): the node's declared acceptance checks are
+	// evaluated BEFORE routing, against the same Result the completion's own
+	// evidence was built from, and the enforce policy may convert or
+	// re-route the completion (see acceptance.go's package doc).
+	techStatus, outcome := completion.TechStatus, completion.Outcome
+	eval := evaluateAcceptance(node, res)
+	if eval != nil {
+		techStatus, outcome = eval.apply(techStatus, outcome)
+	}
+
 	result, err := w.complete(ctx, claimed, engine.CompletionRequest{
-		TechStatus:     completion.TechStatus,
-		Outcome:        completion.Outcome,
+		TechStatus:     techStatus,
+		Outcome:        outcome,
 		Output:         completion.Output,
 		LedgerDelta:    completion.LedgerDelta,
 		RunnerManifest: completion.RunnerManifest,
@@ -320,7 +339,8 @@ func (w *Worker) dispatchCode(
 		return err
 	}
 	w.recordRunnerOperation(ctx, d.NamespaceID, result.AttemptID, codeOperationKind, operation, &res, nil)
-	w.evaluateAcceptance(ctx, node, res, result)
+	w.appendAcceptanceVerdict(ctx, node, eval, result)
+	w.evaluateSuccessSignals(ctx, res, result)
 	return nil
 }
 
@@ -338,8 +358,8 @@ func (w *Worker) completeCodeDispatchError(
 	if errors.As(execErr, &dispatchErr) {
 		status = dispatchErr.TechStatus()
 	}
-	result, err := w.completeTechnicalFailure(ctx, claimed, status, "runner",
-		fmt.Sprintf("node %q code dispatch was refused by the runner boundary: %v", node.ID, execErr), nil)
+	result, err := w.completeTechnicalFailure(ctx, claimed, w.codeRunnerActorID(), status, "runner",
+		fmt.Sprintf("node %q code dispatch was refused by the runner boundary: %v", node.ID, execErr), nil, nil)
 	if err != nil {
 		return err
 	}

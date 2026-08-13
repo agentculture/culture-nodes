@@ -171,11 +171,12 @@ func (a *ReferenceActor) invoke(w http.ResponseWriter, r *http.Request) {
 
 	default:
 		a.record(key, http.StatusOK, actors.InvocationResult{
-			Outcome:      "completed",
-			Output:       json.RawMessage(fmt.Sprintf(`{"echo":%s,"node":%q}`, string(nonEmpty(req.Input)), req.Node.ID)),
-			LedgerDelta:  &actors.LedgerDelta{},
-			ArtifactRefs: []string{},
-			Usage:        &actors.Usage{InputTokens: 0, OutputTokens: 0},
+			Outcome:           "completed",
+			Output:            json.RawMessage(fmt.Sprintf(`{"echo":%s,"node":%q}`, string(nonEmpty(req.Input)), req.Node.ID)),
+			LedgerDelta:       &actors.LedgerDelta{},
+			ArtifactRefs:      []string{},
+			Usage:             &actors.Usage{InputTokens: 0, OutputTokens: 0},
+			WorkspaceMeasured: referenceWorkspaceMeasured(),
 		}, w)
 	}
 }
@@ -247,8 +248,9 @@ func (a *ReferenceActor) reportAsync(req actors.InvocationRequest, invocationID 
 	a.mu.Unlock()
 	if cancelled {
 		failed, _ := json.Marshal(actors.FailedPayload{
-			Class:   actors.ClassCancelled,
-			Message: "cancelled at the actor's request",
+			Class:             actors.ClassCancelled,
+			Message:           "cancelled at the actor's request",
+			WorkspaceMeasured: referenceWorkspaceMeasured(),
 		})
 		a.postEvent(req, actors.CallbackEvent{
 			EventID: invocationID + "-failed", Sequence: next(),
@@ -258,10 +260,11 @@ func (a *ReferenceActor) reportAsync(req actors.InvocationRequest, invocationID 
 	}
 
 	completed, _ := json.Marshal(actors.CompletedPayload{
-		Outcome:      "completed",
-		Output:       json.RawMessage(fmt.Sprintf(`{"echo":%s,"node":%q}`, string(nonEmpty(req.Input)), req.Node.ID)),
-		LedgerDelta:  &actors.LedgerDelta{},
-		ArtifactRefs: []string{},
+		Outcome:           "completed",
+		Output:            json.RawMessage(fmt.Sprintf(`{"echo":%s,"node":%q}`, string(nonEmpty(req.Input)), req.Node.ID)),
+		LedgerDelta:       &actors.LedgerDelta{},
+		ArtifactRefs:      []string{},
+		WorkspaceMeasured: referenceWorkspaceMeasured(),
 	})
 	a.postEvent(req, actors.CallbackEvent{
 		EventID: invocationID + "-completed", Sequence: next(),
@@ -335,6 +338,26 @@ func (a *ReferenceActor) deliverOnce(target *url.URL, token string, body []byte)
 		return true
 	}
 	return status == http.StatusUnauthorized || status == http.StatusNotFound
+}
+
+// referenceWorkspaceMeasured is the workspace_measured block every terminal
+// wire shape carries (issue #33a), in the exact shape the three bridge
+// backends' workspace.py emits. The reference actor runs no work in any
+// workspace, so the only honest block is the unmeasured one — measured:false
+// with every fact null, which is a shape the control plane must round-trip
+// verbatim, never render as an empty diff, and never drop.
+func referenceWorkspaceMeasured() json.RawMessage {
+	return json.RawMessage(`{
+		"measured": false,
+		"repo": null,
+		"reason": "the conformance reference actor executes no workspace",
+		"branch": null,
+		"head_before": null,
+		"head_after": null,
+		"status_porcelain": null,
+		"changed_files": [],
+		"diffstat": null
+	}`)
 }
 
 func writeJSON(w http.ResponseWriter, status int, body any) {

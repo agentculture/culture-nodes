@@ -10,12 +10,17 @@ import (
 
 // The dispatch seams for node kinds this worker does not execute directly.
 //
-// `code` and `wait` are genuinely pending: a `code` node needs the
-// headspace-cli runner boundary (§13.7) and a `wait` node needs durable wait
-// semantics on top of §12.7's timers, and RunnerDispatcher / WaitDispatcher
-// are the extension points those later tasks fill in. Each is declared here
-// as an interface the worker will use if one is registered, and each is a
-// hard, diagnosed failure when none is.
+// `code` was genuinely pending when this file was written (a `code` node
+// needs the headspace-cli runner boundary, §13.7) and now has two
+// implementations of its own (code.go, runnerasync.go); RunnerDispatcher
+// remains the higher-level override seam. `wait` gained its production
+// implementation in issue #39's t9: wait.go's TimerWaitDispatcher is wired
+// in by New whenever Options.Waiter is nil, parking until.duration /
+// until.timestamp on §12.7's durable wait timers (until.signal stays an
+// explicit refusal until the event surface lands — build plan t10). Each
+// seam is declared here as an interface the worker will use if one is
+// registered, and — for Runner and Human — a hard, diagnosed failure when
+// none is.
 //
 // `approval` is different, and HumanDispatcher's own doc comment below says
 // why: task t6 gave approval nodes a different mechanism entirely (an
@@ -55,6 +60,14 @@ type DispatchContext struct {
 	// AttemptID is the protocol attempt id — the Idempotency-Key any external
 	// call must carry so a redispatch is not a second execution (§20.3).
 	AttemptID string
+	// ActorRowID is the actors-table row id the node's actor reference
+	// resolved to, for durable attribution on the attempt row
+	// (attempts.actor_id). It is populated only AFTER Registry.Resolve
+	// succeeds (dispatchActor), so every completion committed from a path
+	// that fired before resolution carries "" — persisted as NULL, never a
+	// guessed attribution. Best-effort besides: a registry without the
+	// ActorRowID capability leaves it empty on the success paths too.
+	ActorRowID string
 	// Attempt is the attempt number this claim represents.
 	Attempt int
 	// Input is the node's resolved input payload (§11.2).
@@ -88,6 +101,13 @@ type SeamResult struct {
 	AsyncRef string
 	// AsyncDeadline is when the async dispatch must have reported by.
 	AsyncDeadline time.Time
+	// AsyncSignal names the external signal a wait seam's async answer
+	// parks on instead of a timer (until.signal, task t10, issue #39):
+	// non-empty, parkWait routes the park to a durable signal subscription
+	// (Store.StartDurableSignalWait) — with deliberately NO deadline, since
+	// an undelivered signal leaves the run parked and inspectable rather
+	// than timed out — instead of to a wait timer. Only a wait seam sets it.
+	AsyncSignal string
 }
 
 // RunnerDispatcher executes a `code` node through the §13.7 runner boundary.
@@ -155,6 +175,10 @@ type HumanDispatcher interface {
 // `until` is the IR's wait block verbatim: a duration, a timestamp, or a
 // named signal. A duration or timestamp is a durable timer; a signal is an
 // external event. Both are asynchronous by nature.
+//
+// The production implementation is wait.go's TimerWaitDispatcher, which New
+// wires in when Options.Waiter is nil; this interface remains the
+// substitution point for a custom implementation.
 type WaitDispatcher interface {
 	// DispatchWait arms the node's resume condition.
 	DispatchWait(ctx context.Context, dc DispatchContext, until json.RawMessage) (SeamResult, error)

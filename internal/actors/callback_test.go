@@ -10,6 +10,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"reflect"
 	"testing"
 	"time"
 
@@ -429,6 +430,81 @@ func TestCallbackCompletedWithoutUsageStaysNil(t *testing.T) {
 	}
 }
 
+// A `failed` callback's optional §13.2 Usage block persists on the failed
+// attempt row exactly as a completed one's does: a session that burned real
+// tokens before failing is billable work, and ADR 0008's amendment to §13.2
+// exists so that burn is counted instead of dropped at the protocol boundary.
+func TestCallbackFailedPersistsUsage(t *testing.T) {
+	f := newAsyncFixture(t)
+
+	cost := 0.07
+	currency := "USD"
+	payload, _ := json.Marshal(actors.FailedPayload{
+		Class:   actors.ClassExecution,
+		Message: "the session crashed after doing real work",
+		Usage: &actors.Usage{
+			InputTokens:  210,
+			OutputTokens: 89,
+			Cost:         &cost,
+			Currency:     &currency,
+		},
+	})
+
+	result := f.handle(actors.CallbackEvent{
+		EventID: "ev-failed-usage", Sequence: 1, Kind: actors.EventFailed, Payload: payload,
+	})
+	if result.Disposition != actors.DispositionCommitted {
+		t.Fatalf("failed disposition = %s (%s), want committed", result.Disposition, result.Diagnostic)
+	}
+
+	attempts, err := f.engine.Store().Attempts(f.ctx, f.nodeRunID)
+	if err != nil {
+		t.Fatalf("read attempts: %v", err)
+	}
+	if len(attempts) != 1 {
+		t.Fatalf("attempts = %d, want 1", len(attempts))
+	}
+	usage := attempts[0].Usage
+	if usage == nil {
+		t.Fatal("Usage = nil, want the reported §13.2 block persisted on the failed attempt")
+	}
+	if usage.InputTokens != 210 || usage.OutputTokens != 89 {
+		t.Errorf("tokens = %d/%d, want 210/89", usage.InputTokens, usage.OutputTokens)
+	}
+	if usage.Cost == nil || *usage.Cost != cost {
+		t.Errorf("cost = %v, want %v", usage.Cost, cost)
+	}
+	if usage.Currency == nil || *usage.Currency != currency {
+		t.Errorf("currency = %v, want %v", usage.Currency, currency)
+	}
+}
+
+// A `failed` callback that reports no usage leaves the attempt's usage NULL —
+// never a fabricated zero block (the migration-0012 stance): a crash that
+// reported nothing is an unreported attempt, not a free one.
+func TestCallbackFailedWithoutUsageStaysNil(t *testing.T) {
+	f := newAsyncFixture(t)
+
+	payload, _ := json.Marshal(actors.FailedPayload{
+		Class:   actors.ClassTimeout,
+		Message: "no terminal result survived",
+	})
+	result := f.handle(actors.CallbackEvent{
+		EventID: "ev-failed-no-usage", Sequence: 1, Kind: actors.EventFailed, Payload: payload,
+	})
+	if result.Disposition != actors.DispositionCommitted {
+		t.Fatalf("failed disposition = %s (%s), want committed", result.Disposition, result.Diagnostic)
+	}
+
+	attempts, err := f.engine.Store().Attempts(f.ctx, f.nodeRunID)
+	if err != nil {
+		t.Fatalf("read attempts: %v", err)
+	}
+	if attempts[0].Usage != nil {
+		t.Errorf("Usage = %+v, want nil for a failed event that reported none", attempts[0].Usage)
+	}
+}
+
 // §13.4: "repeated callbacks are idempotent". A redelivery of the same event
 // id is recorded as a duplicate and changes nothing — including not
 // completing the attempt a second time.
@@ -740,5 +816,166 @@ func TestCallbackCompletedAttributesActor(t *testing.T) {
 	}
 	if attempts[0].ActorID != actorID {
 		t.Fatalf("attempts[0].ActorID = %q, want %q (async attribution lost)", attempts[0].ActorID, actorID)
+	}
+}
+
+// A `completed` callback carrying a workspace_measured block (issue #33a)
+// folds it into the node output the completion persists, and the downstream
+// /nodes/<id>/output binding — here the end node's own output binding, which
+// becomes the run result — receives it. This is the async twin of the worker
+// test on completeFromResult.
+func TestCallbackCompletedFoldsWorkspaceMeasuredIntoNodeOutput(t *testing.T) {
+	f := newAsyncFixture(t)
+
+	measured := `{"measured":true,"repo":"/work/repo","reason":null,"branch":"main",` +
+		`"head_before":"aaa111","head_after":"bbb222","status_porcelain":" M x.go",` +
+		`"changed_files":["x.go"],"diffstat":" x.go | 2 +-"}`
+	payload, _ := json.Marshal(actors.CompletedPayload{
+		Outcome:           "completed",
+		Output:            json.RawMessage(`{"summary":"done"}`),
+		WorkspaceMeasured: json.RawMessage(measured),
+	})
+	result := f.handle(actors.CallbackEvent{EventID: "ev-ws", Sequence: 1, Kind: actors.EventCompleted, Payload: payload})
+	if result.Disposition != actors.DispositionCommitted {
+		t.Fatalf("disposition = %s (%s), want committed", result.Disposition, result.Diagnostic)
+	}
+
+	// The node's persisted output — read through the same NodeOutput
+	// statement a /nodes/<id>/output binding resolves with — carries the
+	// block…
+	nodeOutput, err := f.store.NodeOutput(f.ctx, f.run.ID, "work")
+	if err != nil {
+		t.Fatalf("read node output: %v", err)
+	}
+	var folded struct {
+		Summary           string `json:"summary"`
+		WorkspaceMeasured *struct {
+			Measured  bool     `json:"measured"`
+			HeadAfter string   `json:"head_after"`
+			Changed   []string `json:"changed_files"`
+		} `json:"workspace_measured"`
+	}
+	if err := json.Unmarshal(nodeOutput, &folded); err != nil {
+		t.Fatalf("node output is not an object: %v\noutput: %s", err, nodeOutput)
+	}
+	if folded.Summary != "done" {
+		t.Errorf("the actor's own output was disturbed: %s", nodeOutput)
+	}
+	if folded.WorkspaceMeasured == nil {
+		t.Fatalf("node output carries no workspace_measured block: %s", nodeOutput)
+	}
+	if !folded.WorkspaceMeasured.Measured || folded.WorkspaceMeasured.HeadAfter != "bbb222" ||
+		len(folded.WorkspaceMeasured.Changed) != 1 {
+		t.Errorf("workspace_measured lost facts in transit: %s", nodeOutput)
+	}
+
+	// …and the downstream binding (finish's /nodes/work/output, which is the
+	// run result) receives it.
+	run, err := f.engine.Store().Run(f.ctx, f.run.ID)
+	if err != nil {
+		t.Fatalf("read run: %v", err)
+	}
+	if !bytes.Contains(run.Output, []byte(`"workspace_measured"`)) || !bytes.Contains(run.Output, []byte(`"bbb222"`)) {
+		t.Errorf("run output (bound from /nodes/work/output) = %s, want the workspace_measured block", run.Output)
+	}
+
+	// Authority stays actor-reported: the landing path wrote NO observed (or
+	// any other) evidence record from the block — §10.4's line between a
+	// completion claim and verified evidence.
+	var observed int
+	if err := f.store.Pool().QueryRow(f.ctx,
+		`SELECT count(*) FROM ledger_records WHERE run_id = $1 AND authority = 'observed'`,
+		f.run.ID).Scan(&observed); err != nil {
+		t.Fatalf("count observed records: %v", err)
+	}
+	if observed != 0 {
+		t.Errorf("observed-authority ledger records = %d, want 0: workspace_measured is an actor claim, not evidence", observed)
+	}
+}
+
+// The unmeasured shape — measured:false, every fact null — round-trips
+// through the callback path exactly as the bridge sent it: never rewritten
+// into an empty diff, never dropped (issue #33a acceptance).
+func TestCallbackCompletedUnmeasuredBlockRoundTripsVerbatim(t *testing.T) {
+	f := newAsyncFixture(t)
+
+	payload, _ := json.Marshal(actors.CompletedPayload{
+		Outcome:           "completed",
+		Output:            json.RawMessage(`{"summary":"nothing to measure"}`),
+		WorkspaceMeasured: json.RawMessage(unmeasuredBlock),
+	})
+	result := f.handle(actors.CallbackEvent{EventID: "ev-unmeasured", Sequence: 1, Kind: actors.EventCompleted, Payload: payload})
+	if result.Disposition != actors.DispositionCommitted {
+		t.Fatalf("disposition = %s (%s), want committed", result.Disposition, result.Diagnostic)
+	}
+
+	nodeOutput, err := f.store.NodeOutput(f.ctx, f.run.ID, "work")
+	if err != nil {
+		t.Fatalf("read node output: %v", err)
+	}
+	var folded map[string]json.RawMessage
+	if err := json.Unmarshal(nodeOutput, &folded); err != nil {
+		t.Fatalf("node output is not an object: %v", err)
+	}
+	block, ok := folded["workspace_measured"]
+	if !ok {
+		t.Fatalf("the unmeasured block was dropped from node output: %s", nodeOutput)
+	}
+	var sent, got any
+	if err := json.Unmarshal([]byte(unmeasuredBlock), &sent); err != nil {
+		t.Fatalf("fixture block: %v", err)
+	}
+	if err := json.Unmarshal(block, &got); err != nil {
+		t.Fatalf("persisted block: %v", err)
+	}
+	if !reflect.DeepEqual(sent, got) {
+		t.Errorf("the unmeasured block was altered in transit:\n sent: %s\n got: %s", unmeasuredBlock, block)
+	}
+}
+
+// A `failed` callback's workspace_measured block lands in the attempt's
+// recorded output next to the failure diagnostic: the session failed AND the
+// bridge measured what it left behind — two facts, both kept.
+func TestCallbackFailedCarriesWorkspaceMeasuredInAttemptResult(t *testing.T) {
+	f := newAsyncFixture(t)
+
+	payload, _ := json.Marshal(actors.FailedPayload{
+		Class:             actors.ClassExecution,
+		Message:           "the session crashed after editing files",
+		WorkspaceMeasured: json.RawMessage(unmeasuredBlock),
+	})
+	result := f.handle(actors.CallbackEvent{
+		EventID: "ev-failed-ws", Sequence: 1, Kind: actors.EventFailed, Payload: payload,
+	})
+	if result.Disposition != actors.DispositionCommitted {
+		t.Fatalf("failed disposition = %s (%s), want committed", result.Disposition, result.Diagnostic)
+	}
+
+	attempts, err := f.engine.Store().Attempts(f.ctx, f.nodeRunID)
+	if err != nil {
+		t.Fatalf("read attempts: %v", err)
+	}
+	if len(attempts) != 1 {
+		t.Fatalf("attempts = %d, want 1", len(attempts))
+	}
+	var recorded struct {
+		Error *struct {
+			Class string `json:"class"`
+		} `json:"error"`
+		WorkspaceMeasured *struct {
+			Measured bool `json:"measured"`
+		} `json:"workspace_measured"`
+	}
+	if err := json.Unmarshal(attempts[0].Result, &recorded); err != nil {
+		t.Fatalf("attempt result is not an object: %v\nresult: %s", err, attempts[0].Result)
+	}
+	if recorded.Error == nil || recorded.Error.Class != "execution" {
+		t.Errorf("the failure diagnostic was disturbed by the merge: %s", attempts[0].Result)
+	}
+	if recorded.WorkspaceMeasured == nil {
+		t.Fatalf("the failed attempt's result carries no workspace_measured block: %s", attempts[0].Result)
+	}
+	if recorded.WorkspaceMeasured.Measured {
+		t.Errorf("measured:false was rewritten to true: %s", attempts[0].Result)
 	}
 }

@@ -45,14 +45,18 @@ import "fmt"
 // answering it from a fact nobody measured would be exactly the fabrication
 // the runner boundary exists to prevent.
 //
-// # Never changes routing
+// # A pure evaluator; routing is the policy's business, not this package's
 //
-// Evaluating requires never changes a node's technical status or domain
-// outcome. PRD's own ground rule keeps those two concerns separate from
-// ledger assurance (§10.6): the worker records a mechanical verdict as a
-// derived ledger record alongside the evidence it verifies (see
-// internal/worker/acceptance.go), and nothing about the graph's routing
-// reads it.
+// EvaluateAcceptance itself never changes a node's technical status or
+// domain outcome — it computes a deterministic verdict and nothing else.
+// What that verdict does to routing is decided one level up by the node's
+// own declared `acceptance.enforce` policy (task t17, issue #37): the worker
+// applies observe / route_technical / route_outcome:<name> before the
+// completion commits (internal/worker/acceptance.go), and always records the
+// verdict as a derived ledger record alongside the evidence it verifies.
+// Enforcement only ever acts on a check that was genuinely Evaluated — an
+// unevaluated check is enforced by nobody, which is this file's honesty rule
+// carried through to routing.
 
 // AcceptanceCheckKind names one requirement kind this package knows how to
 // evaluate mechanically.

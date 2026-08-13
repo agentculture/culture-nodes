@@ -231,7 +231,7 @@ func (w *Worker) dispatchRunnerService(
 ) error {
 	callback, err := w.runnerCallbackFor(dc, operation.OperationID)
 	if err != nil {
-		return w.failAttempt(ctx, claimed, engine.StatusFailed, "configuration", err.Error())
+		return w.failAttempt(ctx, claimed, w.codeRunnerActorID(), engine.StatusFailed, "configuration", err.Error())
 	}
 
 	accepted, err := w.opts.RunnerService.Client.Dispatch(ctx, identity, operation, callback)
@@ -542,10 +542,13 @@ func (w *Worker) commitRunnerTerminal(ctx context.Context, op postgres.RunnerOpe
 		// The result could not be mapped onto this node's contract at all.
 		// That is a contract problem, not a claim about what the operation
 		// did — and the raw Result is still recorded below, so it stays
-		// inspectable.
+		// inspectable. The attribution is the same code-runner identity the
+		// mappable branch stamps: whichever way the mapping went, this was
+		// that runner's operation.
 		req.TechStatus = engine.StatusContractRejected
 		req.Output = diagnosticOutput("runner",
 			fmt.Sprintf("node %q result could not be mapped onto a completion: %v", op.NodeID, buildErr))
+		req.ActorID = w.codeRunnerActorID()
 	} else {
 		req.TechStatus = completion.TechStatus
 		req.Outcome = completion.Outcome
@@ -553,6 +556,16 @@ func (w *Worker) commitRunnerTerminal(ctx context.Context, op postgres.RunnerOpe
 		req.LedgerDelta = completion.LedgerDelta
 		req.RunnerManifest = completion.RunnerManifest
 		req.ActorID = w.codeRunnerActorID()
+	}
+
+	// Task t17 (issue #37): the same pre-routing acceptance evaluation
+	// code.go applies on an in-process dispatch — a node's enforce policy
+	// must mean the same thing whichever transport carried the operation.
+	var eval *acceptanceEvaluation
+	if buildErr == nil && node != nil {
+		if eval = evaluateAcceptance(node, result); eval != nil {
+			req.TechStatus, req.Outcome = eval.apply(req.TechStatus, req.Outcome)
+		}
 	}
 
 	committed, err := w.engine.CompleteAttempt(ctx, req)
@@ -579,8 +592,9 @@ func (w *Worker) commitRunnerTerminal(ctx context.Context, op postgres.RunnerOpe
 	if opErr == nil {
 		w.recordRunnerOperation(ctx, op.NamespaceID, committed.AttemptID, runnerOperationKind, operation, &result, nil)
 	}
-	if buildErr == nil && node != nil {
-		w.evaluateAcceptance(ctx, node, result, committed)
+	w.appendAcceptanceVerdict(ctx, node, eval, committed)
+	if buildErr == nil {
+		w.evaluateSuccessSignals(ctx, result, committed)
 	}
 	return nil
 }

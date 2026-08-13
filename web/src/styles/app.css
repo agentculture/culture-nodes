@@ -1708,3 +1708,156 @@ button.timeline__node {
     flex-direction: column;
   }
 }
+
+/* --- Inbox (task t14) ------------------------------------------------- */
+/* Human tasks awaiting a decision. Cards borrow .workflow-card's ground;
+   the token panel and forms reuse the author-workflow button family, so
+   nothing here invents a colour (PRD §8.1 — tokens.css supplies all). */
+
+.inbox-view h2 {
+  margin-top: 1.5rem;
+}
+
+.inbox-token {
+  background: color-mix(in srgb, var(--surface) 55%, transparent);
+  border: 1px solid var(--line-soft);
+  border-radius: var(--radius);
+  padding: 0.85rem 1rem;
+  margin: 1rem 0;
+}
+
+.inbox-token__entry {
+  display: flex;
+  align-items: center;
+  gap: 0.6rem;
+  flex-wrap: wrap;
+}
+
+.inbox-token__entry input {
+  flex: 1 1 12rem;
+  min-width: 8rem;
+}
+
+.inbox-token__state {
+  margin: 0.5rem 0 0;
+}
+
+.inbox-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: grid;
+  gap: 1rem;
+}
+
+.inbox-card {
+  background: color-mix(in srgb, var(--surface) 55%, transparent);
+  border: 1px solid var(--line-soft);
+  border-radius: var(--radius);
+  padding: 0.85rem 1rem;
+}
+
+.inbox-card__head {
+  display: flex;
+  align-items: center;
+  gap: 0.6rem;
+  flex-wrap: wrap;
+}
+
+.inbox-card__kind {
+  color: var(--ink-soft);
+}
+
+.inbox-card__request {
+  margin: 0.75rem 0 0;
+  display: grid;
+  gap: 0.35rem;
+}
+
+.inbox-card__request > div {
+  display: flex;
+  gap: 0.6rem;
+  flex-wrap: wrap;
+}
+
+.inbox-card__request dt {
+  color: var(--ink-soft);
+  min-width: 7.5rem;
+}
+
+.inbox-card__request dd {
+  margin: 0;
+}
+
+.inbox-card__audit {
+  margin: 0;
+  display: grid;
+  gap: 0.2rem;
+}
+
+.inbox-card__audit > div {
+  display: flex;
+  gap: 0.6rem;
+}
+
+.inbox-card__audit dt {
+  color: var(--ink-soft);
+  min-width: 6rem;
+}
+
+.inbox-card__bindings {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+
+.inbox-card__form {
+  margin-top: 0.85rem;
+  display: grid;
+  gap: 0.6rem;
+}
+
+.inbox-card__outcomes {
+  border: 1px solid var(--line-soft);
+  border-radius: calc(var(--radius) / 2);
+  padding: 0.5rem 0.75rem;
+  display: flex;
+  gap: 1rem;
+  flex-wrap: wrap;
+}
+
+.inbox-card__outcome {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35rem;
+}
+
+.inbox-card__field {
+  display: grid;
+  gap: 0.25rem;
+}
+
+.inbox-card__field textarea {
+  font-family: var(--mono, monospace);
+}
+
+.inbox-card__form-error {
+  color: var(--nodes-warn);
+  margin: 0;
+}
+
+.inbox-card__form button[type="submit"] {
+  justify-self: start;
+}
+
+.inbox-card__result {
+  margin: 0.85rem 0 0;
+}
+
+.inbox-card__response {
+  margin: 0.75rem 0 0;
+  overflow-x: auto;
+  border: 1px solid var(--line-soft);
+  border-radius: calc(var(--radius) / 2);
+  padding: 0.6rem 0.8rem;
+}

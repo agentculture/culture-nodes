@@ -189,6 +189,49 @@ paths:
               schema:
                 $ref: '#/components/schemas/Error'
 
+  /v1alpha1/adhoc-runs:
+    post:
+      operationId: createAdhocRun
+      tags: [runs]
+      summary: Create a first-class ad-hoc run from a bare instruction.
+      security:
+        - adhocRunBearerAuth: []
+      description: >-
+        Renders the canonical one-node workflow (a single agent `task` node
+        into a `finish` end node — the nodes-operator skill's assign
+        template shape), publishes it through the same idempotent
+        by-digest path as POST /v1alpha1/workflows (an identical render
+        always resolves to the same immutable version), and creates a
+        normal run pinned to that digest, all in one call (task t19,
+        issue #36). The instruction, repo, sandbox, and success outcome
+        ride as run input, so the run is indistinguishable from one
+        created against a hand-published digest.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/AdhocRunRequest'
+      responses:
+        '201':
+          description: The run was created and is now running.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Run'
+        '400':
+          description: A required field is missing or a field is malformed.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '422':
+          description: The rendered canonical workflow does not compile (a server-side template fault).
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+
   /v1alpha1/runs:
     post:
       operationId: createRun
@@ -361,9 +404,8 @@ paths:
       description: >-
         Read-only (task t15): every `actors` table row, every revision — an
         actor_key's identity is append-only, so a capability or endpoint
-        change is a new row, never an update to an existing one. There is
-        no registration endpoint here; registering an actor stays
-        deploy/prod/register-actor.sh (issue #8).
+        change is a new row, never an update to an existing one. Registering
+        an actor is the authenticated POST on this same path (task t13).
       responses:
         '200':
           description: Every registered actor row, ordered by actor_key then revision.
@@ -371,6 +413,55 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/ActorList'
+    post:
+      operationId: registerActor
+      tags: [actors]
+      summary: Register an actor — append the next revision row for actor_key.
+      description: >-
+        Task t13: the authenticated registration lane that replaces the
+        raw-SQL-only deploy/prod/register-actor.sh path (issue #8).
+        Registration is append-only, following that script's INSERT
+        semantics: a first registration of an actor_key lands revision 1,
+        and re-registering an existing actor_key inserts the next revision
+        row — never an update to any existing row (actor identity, like
+        ledger records, only ever appends).
+
+        Like the human-task decision endpoint — and unlike the rest of this
+        authless-by-phase-1-design API (spec decision c45) — this operation
+        requires a bearer token (`Authorization: Bearer <token>`) matching
+        the server's configured registration secret
+        (`NODES_ACTOR_REGISTRATION_TOKEN_SECRET`, deliberately its own
+        secret, not the decision secret): a registration row is what grants
+        an endpoint the standing to be dispatched real work. An
+        unauthenticated or wrongly authenticated request is refused with 401
+        before the body is even read.
+      security:
+        - actorRegistrationBearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/RegisterActorRequest'
+      responses:
+        '201':
+          description: The newly appended actor revision row.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Actor'
+        '400':
+          description: The request is malformed, a required field is missing, or `namespace` names a namespace other than this server's own.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '401':
+          description: No bearer token was presented, it does not match the configured registration secret, or no secret is configured at all.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
 
   /v1alpha1/actors/{id}:
     get:
@@ -648,6 +739,64 @@ paths:
             text/event-stream:
               schema:
                 type: string
+    post:
+      operationId: deliverEvent
+      tags: [events]
+      summary: Deliver a named signal event, resuming matching until.signal waits.
+      description: >-
+        The inbound half of the events surface (task t10, issue #39, spec
+        decision c35): appends the event to the append-only signal_events
+        fact table and, in the same transaction, resumes every node run
+        whose pending until.signal subscription matches the name (and
+        run_id, when the event is run-scoped). Resumed runs complete
+        through their normal edges — delivery makes the parked work item
+        claimable again and a worker commits the completion through the
+        ordinary engine transaction; delivery itself never completes
+        anything.
+
+        An event with no waiting subscription is still appended — a fact,
+        not an error; `resumed` is simply empty. A subscription created
+        AFTER the event does not retroactively fire (documented limitation,
+        issue #43): subscription-then-event resumes,
+        event-then-subscription stays parked.
+
+        Requires a bearer token matching the server's configured event
+        secret (`NODES_EVENT_TOKEN_SECRET`) — its own secret, separate
+        from the decision and registration secrets, since emitting a named
+        event can resume any signal-parked run in the namespace.
+      security:
+        - eventBearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/DeliverEventRequest'
+      responses:
+        '201':
+          description: The event was appended (and any matching waits resumed).
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/EventDeliveryResult'
+        '400':
+          description: The request is malformed or names no event.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '401':
+          description: No bearer token was presented, it does not match the configured secret, or no secret is configured at all.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '404':
+          description: run_id was set but no run has that id.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
 
   /v1alpha1/runs/{id}/ledger:
     get:
@@ -1054,6 +1203,33 @@ components:
         Used only by POST /v1alpha1/human-tasks/{id}/decision — every other
         operation in this API is authless by phase-1 design (spec decision
         c45).
+    actorRegistrationBearerAuth:
+      type: http
+      scheme: bearer
+      description: >-
+        The shared secret configured as
+        NODES_ACTOR_REGISTRATION_TOKEN_SECRET. Used only by POST
+        /v1alpha1/actors (task t13) — deliberately its own secret, not the
+        decision secret, so an operator can grant registration standing
+        without also granting the power to decide human tasks.
+    eventBearerAuth:
+      type: http
+      scheme: bearer
+      description: >-
+        The shared secret configured as NODES_EVENT_TOKEN_SECRET. Used only
+        by POST /v1alpha1/events (task t10) — its own secret again, so an
+        external system granted the standing to emit signal events (which
+        can resume any signal-parked run) holds neither decision nor
+        registration power.
+    adhocRunBearerAuth:
+      type: http
+      scheme: bearer
+      description: >-
+        The shared secret configured as NODES_ADHOC_RUN_TOKEN_SECRET. Used
+        only by POST /v1alpha1/adhoc-runs (task t19, gated by the t15
+        auth-hardening pass, spec c27) — its own secret, so the power to
+        start ad-hoc (often billable) work is granted independently of
+        decision, registration, and event standing.
 
   schemas:
     Error:
@@ -1190,6 +1366,37 @@ components:
             Unlike `name`/`description`, `category` alone is retaggable
             after creation via PATCH /v1alpha1/runs/{id} (frame decision
             q4).
+
+    AdhocRunRequest:
+      type: object
+      required: [instruction, actor_ref, repo]
+      properties:
+        instruction:
+          type: string
+          description: What the actor is being asked to do. Rides as run input, never workflow content.
+        actor_ref:
+          type: string
+          description: >-
+            The agent actor to dispatch to, as a component reference, e.g.
+            `actor://company/codex-thor@sha256:...`.
+        repo:
+          type: string
+          description: The checkout path the actor works in. Rides as run input.
+        sandbox:
+          type: string
+          description: Sandbox mode for the session (default `read-only`). Rides as run input.
+        success_outcome:
+          type: string
+          description: >-
+            The domain outcome name the task node declares (default
+            `completed`); must match the workflow schema's outcomeName
+            pattern `^[a-z][a-z0-9_]*$`.
+        timeout:
+          type: string
+          description: >-
+            The task node's attempt timeout as a Go-style duration literal
+            (default `15m`). Workflow content: a different timeout renders
+            to a different digest.
 
     PatchRunRequest:
       type: object
@@ -1737,6 +1944,62 @@ components:
           items:
             $ref: '#/components/schemas/HumanTask'
 
+    DeliverEventRequest:
+      type: object
+      required: [name]
+      properties:
+        name:
+          type: string
+          description: The signal name until.signal subscriptions match on.
+        payload:
+          type: object
+          description: The emitter's free-form event body. Folded into the resumed wait node's output so downstream bindings can read it. Defaults to `{}`.
+        run_id:
+          type: string
+          description: Optional scope. Set, the event resumes only that run's matching subscriptions; unset, it resumes every matching subscription in the namespace.
+        emitter:
+          type: string
+          description: Free text naming who emitted the fact (an actor ref, a node id, an external system). Attribution for operators, never an authority claim (PRD §10.4) — an inbound event is actor-reported information, not observed evidence. Defaults to `external`.
+
+    SignalEvent:
+      type: object
+      required: [id, name, payload, emitter, created_at]
+      properties:
+        id:
+          type: string
+        name:
+          type: string
+        run_id:
+          type: string
+          description: Present only when the event was run-scoped.
+        payload:
+          type: object
+        emitter:
+          type: string
+        created_at:
+          type: string
+          format: date-time
+
+    EventDeliveryResult:
+      type: object
+      required: [event, resumed]
+      properties:
+        event:
+          $ref: '#/components/schemas/SignalEvent'
+        resumed:
+          type: array
+          description: Every waiting subscription this delivery fired. Empty is a normal answer — the event was recorded and nothing was waiting.
+          items:
+            type: object
+            required: [subscription_id, run_id, node_run_id]
+            properties:
+              subscription_id:
+                type: string
+              run_id:
+                type: string
+              node_run_id:
+                type: string
+
     DecideHumanTaskRequest:
       type: object
       required: [outcome, decider_actor_id, expected_ledger_version]
@@ -1829,6 +2092,40 @@ components:
           type: array
           items:
             $ref: '#/components/schemas/Actor'
+
+    RegisterActorRequest:
+      type: object
+      description: >-
+        POST /v1alpha1/actors' body (task t13). The row's `id` and
+        `revision` are never the caller's to choose: the id is minted
+        server-side and the revision is always the next one for
+        `actor_key`. `capabilities` and `metadata` follow the Actor
+        schema's credential rule — `metadata.auth_token_env`, when set,
+        names the environment variable a worker reads a token from, never
+        the token value itself.
+      required: [actor_key, kind, protocol]
+      properties:
+        namespace:
+          type: string
+          description: >-
+            Optional. This server is bound to one namespace at
+            construction; when present, this may only name that
+            namespace's id — anything else is refused with 400 rather
+            than silently rerouted.
+        actor_key:
+          type: string
+        kind:
+          type: string
+          description: The actor kind (e.g. agent, human, runner).
+        protocol:
+          type: string
+          description: The dispatch protocol (e.g. http).
+        endpoint_ref:
+          type: string
+        capabilities:
+          description: Declared capabilities, stored as the row's JSON value ('{}' when omitted).
+        metadata:
+          description: Open metadata, stored as the row's JSON value ('{}' when omitted).
 
     ActorNodeRunOutcome:
       type: object

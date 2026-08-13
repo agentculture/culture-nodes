@@ -1,0 +1,510 @@
+# The PR-upkeep loop (plan task t21, spec claims c15/c26, honesty h21):
+# culture-nodes sweeps its OWN quality debt — unresolved SonarCloud issues
+# plus open Qodo findings on open PRs — and works the list one item at a
+# time through a human-gated fix/review cycle. The flow holds zero merge
+# credentials: `approved` on the human gate MEANS the human already merged
+# the PR themselves (see README.md, "the human-merges rule").
+#
+# The cycle: sweep -> triage -> fix -> review -> human-approves-pr, with
+# `approved` looping back to sweep for the next item, `changes_required`
+# looping back to fix, an empty sweep parking on a kind=human actor node
+# (the between-items park, task t12's human-inbox bridge), and a broken
+# sweep backing off on a wait node (task t9) before retrying.
+#
+# Authoring decisions worth stating outright:
+#
+#  1. `triage` routes on /nodes/sweep/output's `exit_code`. A code node's
+#     persisted output is runner metadata (operation id, state, exit code,
+#     artifact refs — internal/runners/dispatch.go's CodeNodeOutput), not
+#     the script's stdout, so the sweep script encodes its one routable
+#     domain fact in the exit code: 0 = work found, 10 = clean empty sweep
+#     (sweep.py's EXIT_EMPTY), anything else = the sweep itself broke.
+#     Both of sweep's outcomes feed triage — `failed` here is a DOMAIN
+#     answer (delivery-loop's own pattern), and triage tells the benign
+#     empty sweep apart from a genuine breakage by the sentinel exit code.
+#
+#  2. `review` binds /nodes/fix/evidence AND /ledger/projections/evidence —
+#     the node-run-scoped evidence surface (task t7) next to the run-wide
+#     projection (task t6). The reviewer sees exactly the fix node's own
+#     evidence records and the run's full evidence trail, alongside the
+#     fix node's self-reported output. It runs on company/codex-thor, a
+#     DIFFERENT backend than the fix actor (independent-review's
+#     "diversity is the value" pattern), and stays READ-ONLY: issue #18
+#     keeps codex sessions analysis-only, so the run-input contract below
+#     pins `review_sandbox` to the literal "read-only".
+#
+#  3. `human-approves-pr` declares `changes_required` as an EXPLICIT
+#     contract outcome next to the approval kind's implied
+#     approved/rejected/expired: the compiler merges contract and implied
+#     outcomes into the human task's allowed_outcomes, so the person at
+#     the gate can answer "changes required" as a first-class domain
+#     outcome that follows its own edge back to fix — not as a `rejected`
+#     overload. `rejected` here means "drop this item, end the run";
+#     `expired` is left unrouted on the delivery-loop precedent (a
+#     decision nobody made has no edge to follow).
+#
+#  4. Acceptance blocks use `enforce: observe` (this pass of issue #37):
+#     every check verdict lands as a derived record without touching
+#     routing. sweep's process_exit check pre-announces "found work" (exit
+#     0) as its success criterion — an empty sweep records an honest
+#     failed-check verdict that routing deliberately treats as the benign
+#     `failed` domain outcome.
+#
+#  5. The sweep operation expects the extractor at /opt/pr-upkeep/sweep.py
+#     inside the pinned image: bake examples/pr-upkeep/sweep.py into the
+#     image (or bind-mount it) when registering the runner. The script is
+#     stdlib-only, so any python:3.12 base works. `network:
+#     egress-allowlist` scopes it to sonarcloud.io + api.github.com.
+apiVersion: nodes.culture.dev/v1alpha1
+kind: Workflow
+
+metadata:
+  name: pr-upkeep
+  version: 1.0.0
+  ownerRef: team/platform-ai
+
+spec:
+  entry: sweep
+
+  contract:
+    input:
+      schema:
+        type: object
+        required: [repo, review_repo, fix_instruction, review_instruction, review_sandbox, park_instruction, merge_instruction]
+        additionalProperties: false
+        properties:
+          # The one repo this flow works on (claim c26): the fix/review
+          # bridges refuse an invocation naming a non-allowlisted repo, and
+          # the sweep script hard-codes its own component key besides.
+          repo:
+            type: string
+            minLength: 1
+          # The review actor lives on a different host with its own
+          # allowlisted checkout (found live: cycle 4's review got 403
+          # handing thor's codex bridge a spark path). Same repository,
+          # per-host path.
+          review_repo:
+            type: string
+            minLength: 1
+          fix_instruction:
+            type: string
+            minLength: 1
+          review_instruction:
+            type: string
+            minLength: 1
+          # Issue #18: codex sessions are analysis-only. Pinning the value
+          # at the contract level makes a writable review run unpublishable
+          # rather than merely unadvised.
+          review_sandbox:
+            type: string
+            const: read-only
+          park_instruction:
+            type: string
+            minLength: 1
+          merge_instruction:
+            type: string
+            minLength: 1
+    output:
+      schema:
+        type: object
+
+  # Bounded for a few loop iterations (PRD §9.7): sweep is re-entered by
+  # `approved` (next item), by the human park's `resume`, and by the
+  # backoff wait after a broken sweep, so it gets the deepest headroom;
+  # fix is re-entered by the gate's `changes_required`. maxDuration is
+  # human-timescale because two nodes in the cycle wait on people.
+  limits:
+    maxDuration: 168h
+    maxTransitions: 64
+    maxVisitsPerNode: 6
+    maxParallelTokens: 1
+
+  ledger:
+    schemaVersion: nodes.culture.dev/ledger/v1alpha1
+    maxRecordsPerNode: 200
+
+  nodes:
+    # The sweep. Read-only against two public quality surfaces; its
+    # prioritised work-item list rides in the result-payload/stdout
+    # artifacts (refs in /nodes/sweep/output.artifacts) and its measured
+    # facts (exit code, duration) land as runner-observed evidence —
+    # `ledger.observe: [evidence]` is the code-node-only declaration that
+    # lets the runner append them with observed authority (PRD §10.4).
+    sweep:
+      kind: code
+      ownerRef: team/platform-ai
+      uses: runner://headspace/docker@sha256:5555555555555555555555555555555555555555555555555555555555555555
+      operation:
+        image: python:3.12-slim@sha256:57cd7c3a7a273101a6485ba99423ee568157882804b1124b4dd04266317710de
+        # The image carries no repo checkout, so the sweep script is fetched
+        # from the repo pinned to an exact commit SHA and exec'd — the only
+        # code-shipping mechanism a bare operation supports today (found
+        # live: python3 exits 2 on the missing /opt path; run
+        # 01KZXAJ7KAH7WX495TDNM4MEZR). A file-mount/artifact-input mechanism
+        # for code nodes is follow-up material alongside issue #50.
+        argv:
+          - python3
+          - -c
+          - |
+            import urllib.request
+            url = ("https://raw.githubusercontent.com/agentculture/culture-nodes/"
+                   "29eacc81c89474e667bb751f13da151aca91bed6/examples/pr-upkeep/sweep.py")
+            exec(compile(urllib.request.urlopen(url).read().decode(), "sweep.py", "exec"))
+        # egress-allowlist is the DECLARED intent (sonarcloud.io +
+        # api.github.com only), but headspace-cli 0.11.0 supports only a
+        # disabled/enabled network posture and the runner boundary honestly
+        # rejects the allowlist request (live run 01KZXACT0E81R8QE8CSWNC3ET2,
+        # deviation d2). `full` is the working posture until headspace grows
+        # an allowlist; tightening back is tracked in the deviation record.
+        network: full
+        allowedOutputPaths: []
+      contract:
+        outcomes:
+          passed:
+            schema:
+              type: object
+              required: [operation_id, state]
+              properties:
+                state:
+                  type: string
+                exit_code:
+                  type: integer
+          failed:
+            schema:
+              type: object
+              required: [operation_id, state]
+              properties:
+                state:
+                  type: string
+                exit_code:
+                  type: integer
+      ledger:
+        observe: [evidence]
+      acceptance:
+        enforce: observe
+        requires:
+          - kind: process_exit
+            equals: 0
+      policy:
+        timeout: 10m
+        retry:
+          maxAttempts: 2
+          backoff: exponential
+
+    # The split. A decision node's `output` variable is its RESOLVED INPUT
+    # (internal/worker/decision.go's stated convention) — here the sweep's
+    # output document — and first match wins, so the ports read top-down:
+    # work found, clean empty, everything else broken.
+    triage:
+      kind: decision
+      ownerRef: team/platform-ai
+      input:
+        from: /nodes/sweep/output
+      select:
+        - outcome: items
+          when: "output.state == 'completed' && output.exit_code == 0"
+        - outcome: empty
+          when: "output.state == 'completed' && output.exit_code == 10"
+        - outcome: sweep_broken
+          when: "true"
+
+    # The fix. The spark claude-code bridge actor — the same
+    # company/developer identity delivery-loop, self-hosting-loop and
+    # independent-review build on. It takes the TOP item of the sweep's
+    # prioritised list (the list is the priority; the sweep report's
+    # artifact refs ride in sweepReport.artifacts), works ONLY that item,
+    # and opens or updates a PR — it never merges one. decision_history
+    # carries the human gate's changes_required notes back into the loop's
+    # later passes.
+    fix:
+      kind: agent
+      ownerRef: team/developer-experience
+      uses: actor://company/developer@sha256:3333333333333333333333333333333333333333333333333333333333333333
+      input:
+        bindings:
+          instruction: /run/input/fix_instruction
+          repo: /run/input/repo
+          sweepReport: /nodes/sweep/output
+          sweepEvidence: /nodes/sweep/evidence
+          decisions: /ledger/projections/decision_history
+      contract:
+        input:
+          schema:
+            type: object
+            required: [instruction, repo]
+        outcomes:
+          completed:
+            schema:
+              type: object
+              required: [summary]
+              properties:
+                summary:
+                  type: string
+      ledger:
+        read: [decision_history]
+        propose: [claim, result]
+      acceptance:
+        enforce: observe
+        requires:
+          # Pre-announced criterion: a fix that changed nothing fixed
+          # nothing. Evaluable only when a runner measured the workspace
+          # comparison; unmeasured stays honestly unevaluated (issue #37).
+          - kind: workspace_diff
+            complete: true
+      policy:
+        timeout: 45m
+        retry:
+          maxAttempts: 2
+          backoff: exponential
+
+    # The independent review. A different model family and bridge than
+    # `fix` (ask-colleague's "the diversity is the value", authored as a
+    # node exactly like examples/independent-review). Read-only per issue
+    # #18 — the run-input contract pins the sandbox. Its bindings are the
+    # evidence surfaces this build made real: the fix node's OWN evidence
+    # records (/nodes/fix/evidence, task t7) beside the run-wide evidence
+    # projection (task t6), and the fix node's self-reported output —
+    # labelled as a completion claim, not verified fact (PRD §10.4).
+    # BOTH verdicts route to the human gate: every loop-back through the
+    # billable fix actor passes a person first.
+    review:
+      kind: agent
+      ownerRef: team/quality
+      uses: actor://company/codex-thor@sha256:1111111111111111111111111111111111111111111111111111111111111a
+      input:
+        bindings:
+          instruction: /run/input/review_instruction
+          repo: /run/input/review_repo
+          sandbox: /run/input/review_sandbox
+          fixReport: /nodes/fix/output
+          fixEvidence: /nodes/fix/evidence
+          runEvidence: /ledger/projections/evidence
+      contract:
+        input:
+          schema:
+            type: object
+            required: [instruction, repo, sandbox]
+        outcomes:
+          approve:
+            schema:
+              type: object
+              required: [verdict, findings]
+              properties:
+                verdict:
+                  type: string
+                  enum: [approve]
+                findings:
+                  type: array
+                  items:
+                    type: object
+                    required: [severity, note]
+                    properties:
+                      severity:
+                        type: string
+                        enum: [info, minor, major, blocking]
+                      note:
+                        type: string
+          changes_required:
+            schema:
+              type: object
+              required: [verdict, findings]
+              properties:
+                verdict:
+                  type: string
+                  enum: [changes_required]
+                findings:
+                  type: array
+                  minItems: 1
+                  items:
+                    type: object
+                    required: [severity, note]
+                    properties:
+                      severity:
+                        type: string
+                        enum: [info, minor, major, blocking]
+                      note:
+                        type: string
+      ledger:
+        propose: [claim]
+      policy:
+        timeout: 20m
+        retry:
+          maxAttempts: 2
+          backoff: exponential
+
+    # The gate. The person here reads the review's verdict and the real
+    # PR, and their `approved` is a statement of FACT: "I merged it" —
+    # the flow itself holds no merge credential, so the approval act and
+    # the merge act are the same person's same decision (README.md).
+    # `changes_required` is declared as an explicit contract outcome so it
+    # lands in the task's allowed_outcomes next to the implied vocabulary.
+    human-approves-pr:
+      kind: approval
+      ownerRef: team/platform-ai
+      decisionSchemaRef: ./contracts/pr-approval-decision.schema.json
+      approverRef: group/platform-ai-approvers
+      deadline: 72h
+      input:
+        from: /nodes/review/output
+      contract:
+        outcomes:
+          changes_required:
+            schema:
+              type: object
+              required: [notes]
+              properties:
+                notes:
+                  type: string
+                  minLength: 1
+
+    # The merge task (user decision, cycle 6 refinement): a PR that is
+    # through review with no pending fixes becomes an ACTIVE assignment on
+    # the kind=human actor — "merge this PR" lands in the person's inbox as
+    # work, not as a passive gate. merged = the person merged it themselves
+    # and submitted; dropped = they decided not to merge (ends the run).
+    # The flow still holds zero merge credentials (README's human-merges
+    # rule) — the submission REPORTS the merge, it never performs it.
+    human-merges-pr:
+      kind: agent
+      ownerRef: team/platform-ai
+      uses: actor://company/human-ops@sha256:8888888888888888888888888888888888888888888888888888888888888888
+      input:
+        bindings:
+          instruction: /run/input/merge_instruction
+          fixReport: /nodes/fix/output
+          reviewVerdict: /nodes/review/output
+      contract:
+        input:
+          schema:
+            type: object
+            required: [instruction]
+        outcomes:
+          merged:
+            schema:
+              type: object
+              properties:
+                note:
+                  type: string
+          dropped:
+            schema:
+              type: object
+              properties:
+                note:
+                  type: string
+      ledger:
+        propose: [claim]
+      policy:
+        timeout: 168h
+        retry:
+          maxAttempts: 1
+
+    # The between-items park (task t12): an agent-kind node whose actor is
+    # registered kind=human through the human-inbox bridge — the run parks
+    # durably (no lease, no worker) until the person answers through the
+    # inbox, exactly the section-13 lifecycle every agent actor follows.
+    # company/human-ops is the bridge README's registration example. The
+    # long timeout is task t11's human-timescale deadline, authored per
+    # node — no actor-kind branching anywhere.
+    human-prepares-next-item:
+      kind: agent
+      ownerRef: team/platform-ai
+      uses: actor://company/human-ops@sha256:8888888888888888888888888888888888888888888888888888888888888888
+      input:
+        bindings:
+          instruction: /run/input/park_instruction
+          sweepReport: /nodes/sweep/output
+      contract:
+        input:
+          schema:
+            type: object
+            required: [instruction]
+        outcomes:
+          resume:
+            schema:
+              type: object
+              properties:
+                note:
+                  type: string
+          done:
+            schema:
+              type: object
+              properties:
+                note:
+                  type: string
+      ledger:
+        propose: [claim]
+      policy:
+        timeout: 72h
+        retry:
+          maxAttempts: 1
+
+    # A broken sweep waits before retrying (task t9's durable wait timer):
+    # transient API weather should not burn a maxVisitsPerNode slot every
+    # few seconds. The park is durable — no lease held while waiting.
+    backoff:
+      kind: wait
+      ownerRef: team/platform-ai
+      until:
+        duration: 30m
+
+    finish:
+      kind: end
+      ownerRef: team/platform-ai
+      # Every path to finish passes sweep (the entry), so the last sweep
+      # report is the one output every terminal run can honestly carry.
+      output:
+        from: /nodes/sweep/output
+
+  edges:
+    # Both sweep outcomes are domain answers headed for triage: `passed`
+    # is exit 0 (work found), `failed` is any nonzero exit — the sentinel
+    # empty sweep and genuine breakage alike, told apart by exit_code.
+    - from: sweep.passed
+      to: triage
+    - from: sweep.failed
+      to: triage
+
+    - from: triage.items
+      to: fix
+    - from: triage.empty
+      to: human-prepares-next-item
+    - from: triage.sweep_broken
+      to: backoff
+
+    - from: backoff.completed
+      to: sweep
+
+    - from: fix.completed
+      to: review
+
+    # A clean review verdict becomes an ACTIVE merge assignment on the
+    # human actor (user decision: "waiting for merge" is work in a
+    # person's inbox, not a passive gate); changes_required still passes
+    # the approval gate so a loop-back through the billable fix actor is
+    # never decided by an agent alone.
+    - from: review.approve
+      to: human-merges-pr
+    - from: review.changes_required
+      to: human-approves-pr
+    - from: human-merges-pr.merged
+      to: sweep
+    - from: human-merges-pr.dropped
+      to: finish
+
+    # approved = "I merged the PR myself" -> sweep the next item.
+    - from: human-approves-pr.approved
+      to: sweep
+    # changes_required follows its own edge back to fix, notes in the
+    # ledger's decision history for the next pass.
+    - from: human-approves-pr.changes_required
+      to: fix
+    # rejected = drop this item, end the run with the sweep report.
+    - from: human-approves-pr.rejected
+      to: finish
+    # `expired` is deliberately unrouted (delivery-loop precedent): a
+    # decision nobody made has no edge to follow.
+
+    - from: human-prepares-next-item.resume
+      to: sweep
+    - from: human-prepares-next-item.done
+      to: finish

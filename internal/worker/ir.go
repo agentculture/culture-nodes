@@ -84,8 +84,13 @@ type nodeSpec struct {
 // acceptanceSpec is the worker's decoded view of a node's acceptance block —
 // the requires array verbatim, exactly as internal/compiler's own acceptance
 // struct carries it (model.go), since the schema leaves each requirement's
-// payload open beyond its "kind" field.
+// payload open beyond its "kind" field. Enforce is the issue #37 policy the
+// compiler validated (internal/compiler/ledger.go's checkAcceptanceEnforce);
+// an omitted field is the observe default and stays "" here, exactly as the
+// IR carries it — the worker resolves the default at evaluation time
+// (acceptance.go), never by rewriting the pinned document's shape.
 type acceptanceSpec struct {
+	Enforce  string           `json:"enforce"`
 	Requires []map[string]any `json:"requires"`
 }
 

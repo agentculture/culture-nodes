@@ -20,13 +20,31 @@ const (
 	bindingRootLedger = "ledger"
 )
 
-// nodeBindingSurfaces are the per-node surfaces a binding may address.
-// `output` is the node's declared output; `evidence` is what a runner
-// observed; `artifacts` are the files it produced; `error` is its error
-// payload. The PRD §11.1 example binds all but the last.
+// nodeBindingSurfaces are the per-node surfaces a binding may address and a
+// resolver actually answers: `output` is the node's declared output;
+// `evidence` is the node's ledger evidence records, selected by node run —
+// the engine stamps node_run_id on every accepted delta record, so the node
+// run is evidence's identity. The PRD §11.1 example binds both.
 var nodeBindingSurfaces = map[string]bool{
-	"output":    true,
-	"evidence":  true,
+	"output":   true,
+	"evidence": true,
+}
+
+// deferredNodeBindingSurfaces are per-node surfaces the PRD names that no
+// input/output resolver answers yet: `artifacts` needs the artifact router
+// and `error` needs the error payload surface. A data binding (input.from,
+// input.bindings, output.from) naming one is rejected here rather than
+// accepted-and-refused-at-dispatch, so the compiler's verdict and the
+// resolvers' stay in agreement from both sides — a workflow cannot publish a
+// binding every runtime would fail loudly on (task t7). Moving one of these
+// into nodeBindingSurfaces requires teaching both resolvers
+// (internal/worker/bindings.go and internal/engine/binding.go) to answer it.
+//
+// operation.workspaceRef is exempt: it is not resolved by either resolver —
+// the worker hands it opaque to the runner boundary as a workspace SourceRef
+// (internal/worker/code.go) — and the PRD §11.1 example points it at
+// /nodes/build/artifacts/workspace.
+var deferredNodeBindingSurfaces = map[string]bool{
 	"artifacts": true,
 	"error":     true,
 }
@@ -192,15 +210,27 @@ func (c *compilation) checkNodeBindings(base string, n *node) {
 		c.checkBinding(base+"/output/from", n.Output.From)
 	}
 	if n.Operation != nil && n.Operation.WorkspaceRef != "" {
-		c.checkBinding(base+"/operation/workspaceRef", n.Operation.WorkspaceRef)
+		c.checkWorkspaceRef(base+"/operation/workspaceRef", n.Operation.WorkspaceRef)
 	}
 }
 
-// checkBinding decides whether a pointer is well-formed and addresses
-// something that exists. It deliberately stops short of the ledger
-// *vocabulary*: whether `/ledger/projections/foo` names a real projection is
-// the ledger level's verdict, reported with the ledger level's code.
+// checkBinding decides whether a data-binding pointer is well-formed and
+// addresses something a resolver will answer. It deliberately stops short of
+// the ledger *vocabulary*: whether `/ledger/projections/foo` names a real
+// projection is the ledger level's verdict, reported with the ledger level's
+// code.
 func (c *compilation) checkBinding(path, pointer string) {
+	c.checkPointer(path, pointer, false)
+}
+
+// checkWorkspaceRef validates an operation.workspaceRef, which reaches the
+// runner boundary opaque rather than either input/output resolver — so the
+// deferred surfaces (artifacts) stay addressable from it.
+func (c *compilation) checkWorkspaceRef(path, pointer string) {
+	c.checkPointer(path, pointer, true)
+}
+
+func (c *compilation) checkPointer(path, pointer string, allowDeferredSurfaces bool) {
 	tokens, err := parsePointer(pointer)
 	if err != nil {
 		c.add(LevelError, path, CodeContractBindingMalformed,
@@ -227,6 +257,14 @@ func (c *compilation) checkBinding(path, pointer string) {
 			c.add(LevelError, path, CodeContractBindingNodeUnknown,
 				fmt.Sprintf("binding %q references node %q, which is not declared in spec.nodes", pointer, tokens[1]),
 				fmt.Sprintf("bind to one of: %s", strings.Join(c.nodeIDs, ", ")))
+			return
+		}
+		if len(tokens) >= 3 && deferredNodeBindingSurfaces[tokens[2]] {
+			if !allowDeferredSurfaces {
+				c.unresolvedBinding(path, pointer,
+					fmt.Sprintf("surface %q is not resolvable by any runtime yet; bind one of: %s",
+						tokens[2], strings.Join(sortedKeys(nodeBindingSurfaces), ", ")))
+			}
 			return
 		}
 		if len(tokens) < 3 || !nodeBindingSurfaces[tokens[2]] {

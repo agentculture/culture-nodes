@@ -198,6 +198,36 @@ def usage_from_task_result(task_result: dict[str, Any] | None) -> dict[str, Any]
     }
 
 
+def declared_result_override(task_result):
+    """§13.2 lets the RESULT name the outcome; the session declares it by
+    making its final message exactly {"outcome": "<name>", "output": {...}}.
+    The bridge passes both through verbatim and the ENGINE's contract
+    validation stays the enforcer (an undeclared outcome or a schema
+    mismatch is contract_rejected there, never guessed here). Any other
+    final-message shape keeps today's envelope. Identical helper in all
+    three bridges (all-backends rule; deviation d4 of the
+    attempts-evidence-humans-loops build — two-outcome nodes were
+    undrivable because bridges hardcoded the outcome).
+    """
+    import json as _json
+
+    tr = task_result or {}
+    text = (tr.get("summary") or "").strip()
+    if not (text.startswith("{") and text.endswith("}")):
+        return None
+    try:
+        parsed = _json.loads(text)
+    except (ValueError, TypeError):
+        return None
+    if not isinstance(parsed, dict):
+        return None
+    outcome = parsed.get("outcome")
+    output = parsed.get("output")
+    if isinstance(outcome, str) and outcome and isinstance(output, dict):
+        return outcome, output
+    return None
+
+
 def output_from_task_result(task_result: dict[str, Any] | None) -> dict[str, Any]:
     """Map the fields the task names: `{summary, changed_files,
     artifacts_path}`. codex has no artifacts-directory convention of its
@@ -296,20 +326,25 @@ def sync_response(
 
     classification = classify(task_result, ctx, default_success_outcome=default_success_outcome)
     if not classification.domain:
-        return SyncResponse(
-            status_code=500,
-            body={
-                "error": classification.message,
-                "class": classification.error_class,
-                "workspace_measured": measured,
-            },
-        )
+        body = {
+            "error": classification.message,
+            "class": classification.error_class,
+            "workspace_measured": measured,
+        }
+        # Issue #32: a failed session still burned real tokens. When codex
+        # produced a parseable terminal result, its API-reported usage rides
+        # the failure body; a result-less crash stays usage-less — absent,
+        # never fabricated zeros.
+        if task_result is not None:
+            body["usage"] = usage_from_task_result(task_result)
+        return SyncResponse(status_code=500, body=body)
 
+    declared = declared_result_override(task_result)
     return SyncResponse(
         status_code=200,
         body={
-            "outcome": classification.outcome,
-            "output": output_from_task_result(task_result),
+            "outcome": declared[0] if declared else classification.outcome,
+            "output": declared[1] if declared else output_from_task_result(task_result),
             "ledger_delta": {
                 "records": [
                     claim_record(task_result, ctx, actor_id=actor_id, created_at=created_at)
@@ -364,21 +399,25 @@ def terminal_event(
 
     classification = classify(task_result, ctx, default_success_outcome=default_success_outcome)
     if not classification.domain:
-        return TerminalEvent(
-            kind="failed",
-            payload={
-                "class": classification.error_class,
-                "message": classification.message,
-                "detail": detail,
-                "workspace_measured": measured,
-            },
-        )
+        payload = {
+            "class": classification.error_class,
+            "message": classification.message,
+            "detail": detail,
+            "workspace_measured": measured,
+        }
+        # Issue #32: same rule as sync_response — real usage from a parseable
+        # terminal result rides the failed payload; a result-less crash stays
+        # usage-less rather than reporting fabricated zeros.
+        if task_result is not None:
+            payload["usage"] = usage_from_task_result(task_result)
+        return TerminalEvent(kind="failed", payload=payload)
 
+    _declared = declared_result_override(task_result)
     return TerminalEvent(
         kind="completed",
         payload={
-            "outcome": classification.outcome,
-            "output": output_from_task_result(task_result),
+            "outcome": _declared[0] if _declared else classification.outcome,
+            "output": _declared[1] if _declared else output_from_task_result(task_result),
             "ledger_delta": {
                 "records": [
                     claim_record(task_result, ctx, actor_id=actor_id, created_at=created_at)

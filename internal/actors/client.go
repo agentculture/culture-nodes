@@ -318,7 +318,25 @@ func (c *Client) invokeOnce(ctx context.Context, url string, endpoint Endpoint, 
 		Message:    fmt.Sprintf("actor answered %s", http.StatusText(resp.StatusCode)),
 		Body:       capture(payload),
 		RetryAfter: parseRetryAfter(resp.Header.Get("Retry-After"), c.now()),
+		Usage:      usageFromErrorBody(payload),
 	}
+}
+
+// usageFromErrorBody decodes the optional §13.2 usage block a bridge
+// attaches to a non-2xx error body when its failed session still produced a
+// parseable terminal result (issue #32; the bridges' sync_response failure
+// branch). It reads the full payload rather than the bounded Body capture so
+// a large error document cannot truncate the accounting away. Anything that
+// is not a JSON object carrying a usage block yields nil — absent stays
+// absent, never fabricated zeros.
+func usageFromErrorBody(payload []byte) *Usage {
+	var body struct {
+		Usage *Usage `json:"usage"`
+	}
+	if err := json.Unmarshal(payload, &body); err != nil {
+		return nil
+	}
+	return body.Usage
 }
 
 // Cancel asks an actor to stop an in-flight invocation (PRD §13.6).

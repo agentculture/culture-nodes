@@ -66,6 +66,30 @@ type Server struct {
 	// WithCallbackSigner uses for the callback route).
 	decisionAuthSecret []byte
 
+	// actorRegistrationSecret gates POST /v1alpha1/actors (see
+	// (*Server).requireActorRegistrationAuth in actors.go) — its own secret,
+	// deliberately separate from decisionAuthSecret, with the same
+	// closed-by-default posture: nil refuses every registration with 401.
+	actorRegistrationSecret []byte
+
+	// eventTokenSecret gates POST /v1alpha1/events (see
+	// (*Server).requireEventAuth in signalevents.go) — its own secret
+	// (NODES_EVENT_TOKEN_SECRET), separate from the two above so an
+	// operator can grant an external system the standing to emit signal
+	// events without also granting decision or registration power. Same
+	// closed-by-default posture: nil refuses every delivery with 401.
+	eventTokenSecret []byte
+
+	// adhocRunSecret gates POST /v1alpha1/adhoc-runs (see
+	// (*Server).requireAdhocRunAuth in adhoc.go) — its own secret
+	// (NODES_ADHOC_RUN_TOKEN_SECRET), separate from the three above so an
+	// operator can grant the ad-hoc lane (render + publish + create in one
+	// call) without granting decision, registration, or event power. Same
+	// closed-by-default posture: nil refuses every ad-hoc run with 401.
+	// Added by the t15 auth-hardening gate (spec c27): every mutating
+	// surface this batch ships is authenticated from day one.
+	adhocRunSecret []byte
+
 	pollInterval time.Duration
 	webAssets    fs.FS
 
@@ -130,6 +154,45 @@ func WithDecisionAuthSecret(secret string) Option {
 	return func(s *Server) {
 		if secret != "" {
 			s.decisionAuthSecret = []byte(secret)
+		}
+	}
+}
+
+// WithActorRegistrationSecret configures the bearer secret POST
+// /v1alpha1/actors requires (see requireActorRegistrationAuth in actors.go).
+// Omitting it (or passing "") leaves every registration refused with 401
+// rather than mounted-but-authless — the same closed-by-default rule
+// WithDecisionAuthSecret applies to human-task decisions.
+func WithActorRegistrationSecret(secret string) Option {
+	return func(s *Server) {
+		if secret != "" {
+			s.actorRegistrationSecret = []byte(secret)
+		}
+	}
+}
+
+// WithEventTokenSecret configures the bearer secret POST /v1alpha1/events
+// requires (see requireEventAuth in signalevents.go). Omitting it (or
+// passing "") leaves every inbound event delivery refused with 401 rather
+// than mounted-but-authless — the same closed-by-default rule the decision
+// and registration secrets follow.
+func WithEventTokenSecret(secret string) Option {
+	return func(s *Server) {
+		if secret != "" {
+			s.eventTokenSecret = []byte(secret)
+		}
+	}
+}
+
+// WithAdhocRunSecret configures the bearer secret POST /v1alpha1/adhoc-runs
+// requires (see requireAdhocRunAuth in adhoc.go). Omitting it (or passing
+// "") leaves every ad-hoc run refused with 401 rather than
+// mounted-but-authless — the same closed-by-default rule the decision,
+// registration, and event secrets follow (t15 auth-hardening gate, c27).
+func WithAdhocRunSecret(secret string) Option {
+	return func(s *Server) {
+		if secret != "" {
+			s.adhocRunSecret = []byte(secret)
 		}
 	}
 }
@@ -227,6 +290,7 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("GET /v1alpha1/workflows", s.wrap(s.handleListWorkflows))
 	mux.HandleFunc("GET /v1alpha1/workflows/{digest}", s.wrap(s.handleGetWorkflow))
 
+	mux.HandleFunc("POST /v1alpha1/adhoc-runs", s.wrap(s.handleCreateAdhocRun))
 	mux.HandleFunc("POST /v1alpha1/runs", s.wrap(s.handleCreateRun))
 	mux.HandleFunc("GET /v1alpha1/runs", s.wrap(s.handleListRuns))
 	mux.HandleFunc("GET /v1alpha1/runs/{id}", s.wrap(s.handleGetRun))
@@ -234,12 +298,14 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("POST /v1alpha1/runs/{id}/cancel", s.wrap(s.handleCancelRun))
 	mux.HandleFunc("GET /v1alpha1/runs/{id}/events", s.handleStreamRunEvents)
 	mux.HandleFunc("GET /v1alpha1/events", s.handleStreamEvents)
+	mux.HandleFunc("POST /v1alpha1/events", s.wrap(s.handleDeliverEvent))
 
 	mux.HandleFunc("GET /v1alpha1/runs/{id}/ledger", s.wrap(s.handleListLedgerRecords))
 	mux.HandleFunc("GET /v1alpha1/runs/{id}/ledger/projections/{name}", s.wrap(s.handleGetLedgerProjection))
 
 	mux.HandleFunc("GET /v1alpha1/node-runs", s.wrap(s.handleListNodeRuns))
 
+	mux.HandleFunc("POST /v1alpha1/actors", s.wrap(s.handleRegisterActor))
 	mux.HandleFunc("GET /v1alpha1/actors", s.wrap(s.handleListActors))
 	mux.HandleFunc("GET /v1alpha1/actors/{id}", s.wrap(s.handleGetActor))
 	mux.HandleFunc("GET /v1alpha1/actors/{id}/stats", s.wrap(s.handleGetActorStats))

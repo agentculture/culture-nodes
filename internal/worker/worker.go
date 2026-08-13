@@ -79,12 +79,17 @@ type Options struct {
 	CallbackBaseURL string
 
 	// Runner, Human, and Waiter are the seams for code, approval, and wait
-	// nodes. A nil seam makes its kind a diagnosed failure rather than a
-	// silent success (see seams.go). Human is expected to stay nil in every
-	// real deployment: an approval node never produces a work item for this
-	// worker to dispatch in the first place (task t6's engine-side park,
-	// internal/engine/humantask.go), so there is nothing legitimate for a
-	// HumanDispatcher to do — see HumanDispatcher's doc comment in seams.go.
+	// nodes. A nil Runner or Human makes its kind a diagnosed failure rather
+	// than a silent success (see seams.go). Waiter is different: a nil value
+	// gets the production timer-backed dispatcher (wait.go's
+	// TimerWaitDispatcher) wired in by New, because durable waits need
+	// nothing deployment-specific — only the store and the clock the worker
+	// already holds; set it only to substitute a custom implementation.
+	// Human is expected to stay nil in every real deployment: an approval
+	// node never produces a work item for this worker to dispatch in the
+	// first place (task t6's engine-side park, internal/engine/humantask.go),
+	// so there is nothing legitimate for a HumanDispatcher to do — see
+	// HumanDispatcher's doc comment in seams.go.
 	Runner RunnerDispatcher
 	Human  HumanDispatcher
 	Waiter WaitDispatcher
@@ -226,6 +231,9 @@ func New(db *postgres.Store, eng *engine.Engine, opts Options) (*Worker, error) 
 	if opts.NewID == nil {
 		opts.NewID = idstore.NewULID
 	}
+	if opts.Waiter == nil {
+		opts.Waiter = NewTimerWaitDispatcher(db, opts.Now)
+	}
 
 	callbacks, err := postgres.NewCallbackStore(db, opts.NamespaceID)
 	if err != nil {
@@ -337,7 +345,7 @@ func (w *Worker) dispatch(ctx context.Context, claimed postgres.ClaimedWork) err
 	}
 	node, ok := spec.Nodes[d.NodeID]
 	if !ok {
-		return w.failAttempt(ctx, claimed, engine.StatusFailed, "definition",
+		return w.failAttempt(ctx, claimed, "", engine.StatusFailed, "definition",
 			fmt.Sprintf("node run %s names node %q, which the pinned definition %s does not declare",
 				d.NodeRunID, d.NodeID, d.WorkflowDigest))
 	}
@@ -348,7 +356,7 @@ func (w *Worker) dispatch(ctx context.Context, claimed postgres.ClaimedWork) err
 		// transport hiccup: the actor would be handed data the definition did
 		// not ask for. It is recorded as contract_rejected because a declared
 		// contract — the input binding — was not satisfiable.
-		return w.failAttempt(ctx, claimed, engine.StatusContractRejected, string(actors.ClassContract),
+		return w.failAttempt(ctx, claimed, "", engine.StatusContractRejected, string(actors.ClassContract),
 			fmt.Sprintf("node %q input binding did not resolve: %v", node.ID, err))
 	}
 
@@ -403,10 +411,10 @@ func (w *Worker) dispatch(ctx context.Context, claimed postgres.ClaimedWork) err
 		// transition transaction and is never enqueued. Reaching one here
 		// means something enqueued work that should not exist, so it is a
 		// definition-level failure rather than something to paper over.
-		return w.failAttempt(ctx, claimed, engine.StatusFailed, "definition",
+		return w.failAttempt(ctx, claimed, "", engine.StatusFailed, "definition",
 			fmt.Sprintf("node %q is an end node; end nodes are completed by the engine and never dispatched", node.ID))
 	default:
-		return w.failAttempt(ctx, claimed, engine.StatusFailed, "definition",
+		return w.failAttempt(ctx, claimed, "", engine.StatusFailed, "definition",
 			fmt.Sprintf("node %q declares kind %q, which this worker cannot dispatch", node.ID, node.Kind))
 	}
 }
@@ -434,6 +442,9 @@ func (w *Worker) sources(d postgres.Dispatch) bindingSources {
 		RunInput: d.RunInput,
 		NodeOutput: func(ctx context.Context, nodeID string) (json.RawMessage, error) {
 			return w.db.NodeOutput(ctx, d.RunID, nodeID)
+		},
+		NodeEvidence: func(ctx context.Context, nodeID string) ([]ledger.Record, error) {
+			return w.db.NodeEvidence(ctx, d.RunID, nodeID)
 		},
 		Projection: func(ctx context.Context, kind ledger.ProjectionKind, subject string) (ledger.Projection, error) {
 			return w.ledger.ProjectRun(ctx, d.RunID, kind, subject)
@@ -471,8 +482,16 @@ func (w *Worker) complete(ctx context.Context, claimed postgres.ClaimedWork, req
 // the output. That is deliberate: an attempt that failed with no recorded
 // reason is the single most expensive thing to debug in a durable system, and
 // the attempts table is where an operator is already looking.
-func (w *Worker) failAttempt(ctx context.Context, claimed postgres.ClaimedWork, status engine.TechStatus, class, detail string) error {
-	_, err := w.completeTechnicalFailure(ctx, claimed, status, class, detail, nil)
+//
+// actorID is the durable attribution the failed attempt is recorded under
+// (attempts.actor_id): the resolved actor row id (dc.ActorRowID) for a
+// failure after Registry.Resolve, the code-runner actor id for a code-path
+// failure, and "" — persisted as NULL — for every site that fires before an
+// actor was resolved. A failed dispatch is still that actor's dispatch, and
+// per-actor surfaces (retry burn in particular) must not lose it; a
+// pre-resolution refusal, conversely, must never guess one.
+func (w *Worker) failAttempt(ctx context.Context, claimed postgres.ClaimedWork, actorID string, status engine.TechStatus, class, detail string) error {
+	_, err := w.completeTechnicalFailure(ctx, claimed, actorID, status, class, detail, nil, nil)
 	return err
 }
 
@@ -484,17 +503,24 @@ func (w *Worker) failAttempt(ctx context.Context, claimed postgres.ClaimedWork, 
 // a post-run hook's verdict could not be trusted, so a technical failure
 // still records what the agent itself claimed.
 //
+// usage is the §13.2 block the actor reported for the failed work, nil when
+// it reported none (issue #32: a failed session still burned real tokens,
+// and a technical failure must not cost the attempt its accounting). Nil
+// persists as NULL — unreported, never fabricated zeros.
+//
 // The returned CompletionResult is the zero value when the completion turned
 // out stale (isStale(err)): nothing was committed here, so there is nothing
 // for a caller to key follow-up writes to, and the error is nil — a stale
 // completion is not a worker malfunction (see isStale).
 func (w *Worker) completeTechnicalFailure(
-	ctx context.Context, claimed postgres.ClaimedWork, status engine.TechStatus, class, detail string, delta []ledger.Record,
+	ctx context.Context, claimed postgres.ClaimedWork, actorID string, status engine.TechStatus, class, detail string, delta []ledger.Record, usage *engine.Usage,
 ) (engine.CompletionResult, error) {
 	result, err := w.complete(ctx, claimed, engine.CompletionRequest{
 		TechStatus:  status,
 		Output:      diagnosticOutput(class, detail),
 		LedgerDelta: delta,
+		Usage:       usage,
+		ActorID:     actorID,
 	})
 	if err != nil {
 		if isStale(err) {

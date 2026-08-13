@@ -301,7 +301,9 @@ func (w *Worker) runPreRunHook(
 			dc.NodeID, executed.result.State)
 	}
 
-	completion, cerr := w.completeTechnicalFailure(ctx, claimed, engine.StatusFailed, hookKindPreRun, detail, nil)
+	// A pre-run hook executes BEFORE Registry.Resolve (dispatchActor), so
+	// this failure predates any actor resolution and stays unattributed.
+	completion, cerr := w.completeTechnicalFailure(ctx, claimed, "", engine.StatusFailed, hookKindPreRun, detail, nil, nil)
 	if cerr != nil {
 		return false, nil, cerr
 	}
@@ -356,12 +358,12 @@ func (w *Worker) runPostRunHook(ctx context.Context, node *nodeSpec, dc Dispatch
 func (w *Worker) refuseAsyncPostRun(
 	ctx context.Context, claimed postgres.ClaimedWork, d postgres.Dispatch, node *nodeSpec, dc DispatchContext, preRun *hookRun,
 ) error {
-	completion, err := w.completeTechnicalFailure(ctx, claimed, engine.StatusContractRejected, hookKindPostRun,
+	completion, err := w.completeTechnicalFailure(ctx, claimed, dc.ActorRowID, engine.StatusContractRejected, hookKindPostRun,
 		fmt.Sprintf(
 			"node %q declares post_run and the actor answered asynchronously (202); this build cannot run a "+
 				"post-run hook against a callback-delivered result, so the async acceptance is refused rather than "+
 				"silently skipping the hook",
-			dc.NodeID), nil)
+			dc.NodeID), nil, nil)
 	if err != nil {
 		return err
 	}

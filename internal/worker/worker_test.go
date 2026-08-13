@@ -9,8 +9,10 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -50,10 +52,24 @@ type harness struct {
 
 func newHarness(t *testing.T, actorHandler func(h *harness, w http.ResponseWriter, req actors.InvocationRequest)) *harness {
 	t.Helper()
+	return newClockedHarness(t, nil, actorHandler)
+}
+
+// newClockedHarness is newHarness with an injected wall clock, shared by the
+// engine (engine.WithClock — run-duration bounds) and the worker (Options.Now
+// — dispatch deadlines). A nil clock means real time. It exists for the
+// human-timescale tests (task t11): simulating a multi-day park means moving
+// this clock, never sleeping.
+func newClockedHarness(t *testing.T, now func() time.Time, actorHandler func(h *harness, w http.ResponseWriter, req actors.InvocationRequest)) *harness {
+	t.Helper()
 	s := pgtest.RequireStore(t, testStore)
 
 	ns := pgtest.MustNamespace(t, s, "worker")
-	eng, err := storepg.NewEngine(s, ns.ID, engine.WithRetryDelays(0, 0))
+	engOpts := []engine.Option{engine.WithRetryDelays(0, 0)}
+	if now != nil {
+		engOpts = append(engOpts, engine.WithClock(now))
+	}
+	eng, err := storepg.NewEngine(s, ns.ID, engOpts...)
 	if err != nil {
 		t.Fatalf("NewEngine: %v", err)
 	}
@@ -125,6 +141,7 @@ func newHarness(t *testing.T, actorHandler func(h *harness, w http.ResponseWrite
 		Registry:          registry,
 		Signer:            signer,
 		CallbackBaseURL:   h.callbackServer.URL,
+		Now:               now,
 		OnError: func(err error) {
 			h.mu.Lock()
 			h.errs = append(h.errs, err)
@@ -547,6 +564,93 @@ func TestWorkerRecordsClassifiedInvocationFailures(t *testing.T) {
 	}
 }
 
+// Issue #32, task t5: a synchronous bridge failure whose 500 error body
+// carries the §13.2 usage block — a failed session that still produced a
+// parseable terminal result, the bridges' `{error, class,
+// workspace_measured, usage}` sync_response failure shape from task t4 —
+// persists that usage on the failed attempt. A failed session burned real
+// tokens, and retries compound that burn, so the rollups must see it.
+func TestWorkerPersistsSyncFailureUsage(t *testing.T) {
+	h := newHarness(t, func(_ *harness, w http.ResponseWriter, _ actors.InvocationRequest) {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusInternalServerError)
+		_, _ = fmt.Fprint(w, `{
+			"error": "session ended with an error result",
+			"class": "execution",
+			"workspace_measured": {"measured": false},
+			"usage": {"input_tokens": 850, "output_tokens": 60, "cost": 0.017, "currency": "USD"}
+		}`)
+	})
+
+	run := h.createRun("sync.workflow.yaml", `{"subject":"widget"}`)
+	h.runUntil(20*time.Second, func() bool { return h.run(run.ID).State.Terminal() })
+
+	if state := h.run(run.ID).State; state != engine.RunFailed {
+		t.Fatalf("run state = %s, want failed (worker errors: %v)", state, h.workerErrors())
+	}
+
+	var (
+		status                    string
+		result                    []byte
+		inputTokens, outputTokens int64
+		cost                      float64
+		currency                  string
+	)
+	if err := h.store.Pool().QueryRow(h.ctx, `
+		SELECT a.status, a.result, a.usage_input_tokens, a.usage_output_tokens, a.usage_cost, a.usage_currency
+		FROM attempts AS a JOIN node_runs AS nr ON nr.id = a.node_run_id
+		WHERE nr.run_id = $1 AND nr.node_key = 'analyze'
+	`, run.ID).Scan(&status, &result, &inputTokens, &outputTokens, &cost, &currency); err != nil {
+		t.Fatalf("read attempt: %v", err)
+	}
+	if engine.TechStatus(status) != engine.StatusFailed {
+		t.Errorf("attempt status = %q, want failed for a 500 (PRD §13.5 execution)", status)
+	}
+	if !bytes.Contains(result, []byte(string(actors.ClassExecution))) {
+		t.Errorf("attempt result = %s, want the §13.5 class recorded", result)
+	}
+	if inputTokens != 850 || outputTokens != 60 {
+		t.Errorf("tokens = %d/%d, want 850/60 from the 500 error body", inputTokens, outputTokens)
+	}
+	if cost != 0.017 {
+		t.Errorf("cost = %v, want 0.017", cost)
+	}
+	if currency != "USD" {
+		t.Errorf("currency = %q, want USD", currency)
+	}
+}
+
+// The honest-null rule on the same path: a 500 error body without a usage
+// block — a result-less crash — leaves every usage column NULL, never a
+// fabricated zero (the h24 narrowing, stated in migrations/README.md's 0012
+// entry).
+func TestWorkerSyncFailureWithoutUsageLeavesAttemptUsageNull(t *testing.T) {
+	h := newHarness(t, func(_ *harness, w http.ResponseWriter, _ actors.InvocationRequest) {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusInternalServerError)
+		_, _ = fmt.Fprint(w, `{"error":"session crashed before any result","class":"execution","workspace_measured":{"measured":false}}`)
+	})
+
+	run := h.createRun("sync.workflow.yaml", `{"subject":"widget"}`)
+	h.runUntil(20*time.Second, func() bool { return h.run(run.ID).State.Terminal() })
+
+	if state := h.run(run.ID).State; state != engine.RunFailed {
+		t.Fatalf("run state = %s, want failed (worker errors: %v)", state, h.workerErrors())
+	}
+
+	var inputTokens, outputTokens, cost, currency any
+	if err := h.store.Pool().QueryRow(h.ctx, `
+		SELECT a.usage_input_tokens, a.usage_output_tokens, a.usage_cost, a.usage_currency
+		FROM attempts AS a JOIN node_runs AS nr ON nr.id = a.node_run_id
+		WHERE nr.run_id = $1 AND nr.node_key = 'analyze'
+	`, run.ID).Scan(&inputTokens, &outputTokens, &cost, &currency); err != nil {
+		t.Fatalf("read attempt usage: %v", err)
+	}
+	if inputTokens != nil || outputTokens != nil || cost != nil || currency != nil {
+		t.Errorf("usage columns = (%v, %v, %v, %v), want all NULL", inputTokens, outputTokens, cost, currency)
+	}
+}
+
 // An unresolvable input binding refuses to dispatch: an actor must never be
 // handed data the definition did not ask for.
 func TestWorkerRefusesToDispatchAnUnresolvableBinding(t *testing.T) {
@@ -601,10 +705,12 @@ func TestWorkerRefusesToDispatchAnUnresolvableBinding(t *testing.T) {
 // an already-dispatched node's pinned kind — see
 // TestApprovalWorkItemThatSomehowExistsIsRefusedNotProcessed in
 // approval_invariant_test.go for the same refusal proven against a real
-// approval node's own node run). For `code` and `wait` this diagnostic is a
-// temporary gap later tasks close; for `approval` it is the permanent,
-// correct behaviour, because no approval work item legitimately reaches the
-// worker at all (see seams.go's HumanDispatcher doc comment).
+// approval node's own node run). For `code` this diagnostic is what an
+// unconfigured deployment sees; `wait` no longer reaches it at all (New
+// wires the timer-backed dispatcher by default — see wait.go); for
+// `approval` it is the permanent, correct behaviour, because no approval
+// work item legitimately reaches the worker at all (see seams.go's
+// HumanDispatcher doc comment).
 func TestUnwiredKindsFailWithADiagnosticRatherThanSucceeding(t *testing.T) {
 	h := newHarness(t, func(_ *harness, w http.ResponseWriter, _ actors.InvocationRequest) {
 		writeSyncResult(w, "completed", `{"summary":"x"}`)
@@ -716,3 +822,153 @@ func (r *recordingHuman) DispatchApproval(_ context.Context, dc worker.DispatchC
 }
 
 var _ worker.HumanDispatcher = (*recordingHuman)(nil)
+
+// A synchronous §13.2 result carrying a workspace_measured block (issue
+// #33a) lands inside the node's persisted output, where downstream nodes
+// receive it: in this workflow the decision node binds
+// /nodes/analyze/output (and still routes on the agent's own score), and
+// the end node's identical binding makes it the run result. Authority stays
+// actor-reported — the landing path writes no observed evidence.
+func TestWorkerFoldsSyncWorkspaceMeasuredIntoNodeOutput(t *testing.T) {
+	h := newHarness(t, func(_ *harness, w http.ResponseWriter, _ actors.InvocationRequest) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = fmt.Fprint(w, `{
+			"outcome": "completed",
+			"output": {"score": 0.91, "summary": "looks good"},
+			"ledger_delta": {"records": []},
+			"workspace_measured": {
+				"measured": true, "repo": "/work/repo", "reason": null, "branch": "main",
+				"head_before": "aaa111", "head_after": "bbb222", "status_porcelain": " M x.go",
+				"changed_files": ["x.go"], "diffstat": " x.go | 2 +-"
+			}
+		}`)
+	})
+
+	run := h.createRun("sync.workflow.yaml", `{"subject":"widget"}`)
+	h.runUntil(20*time.Second, func() bool { return h.run(run.ID).State.Terminal() })
+
+	final := h.run(run.ID)
+	if final.State != engine.RunCompleted {
+		t.Fatalf("run state = %s, want completed (worker errors: %v)", final.State, h.workerErrors())
+	}
+
+	// The node's persisted output — the same NodeOutput statement a
+	// /nodes/<id>/output binding resolves with — carries the block.
+	nodeOutput, err := h.store.NodeOutput(h.ctx, run.ID, "analyze")
+	if err != nil {
+		t.Fatalf("read node output: %v", err)
+	}
+	var folded struct {
+		Score             float64 `json:"score"`
+		WorkspaceMeasured *struct {
+			Measured  bool     `json:"measured"`
+			HeadAfter string   `json:"head_after"`
+			Changed   []string `json:"changed_files"`
+			Diffstat  string   `json:"diffstat"`
+		} `json:"workspace_measured"`
+	}
+	if err := json.Unmarshal(nodeOutput, &folded); err != nil {
+		t.Fatalf("node output is not an object: %v\noutput: %s", err, nodeOutput)
+	}
+	if folded.Score != 0.91 {
+		t.Errorf("the actor's own output was disturbed: %s", nodeOutput)
+	}
+	if folded.WorkspaceMeasured == nil {
+		t.Fatalf("node output carries no workspace_measured block: %s", nodeOutput)
+	}
+	if !folded.WorkspaceMeasured.Measured || folded.WorkspaceMeasured.HeadAfter != "bbb222" ||
+		len(folded.WorkspaceMeasured.Changed) != 1 || folded.WorkspaceMeasured.Diffstat == "" {
+		t.Errorf("workspace_measured lost facts in transit: %s", nodeOutput)
+	}
+
+	// Downstream: the decision node bound /nodes/analyze/output and still
+	// routed on the agent's score, and the end node's identical binding put
+	// the block in the run result.
+	var routeOutcome string
+	if err := h.store.Pool().QueryRow(h.ctx,
+		`SELECT outcome FROM node_runs WHERE run_id = $1 AND node_key = 'route'`, run.ID).Scan(&routeOutcome); err != nil {
+		t.Fatalf("read decision node run: %v", err)
+	}
+	if routeOutcome != "ship" {
+		t.Errorf("decision outcome = %q, want ship: the merge must not disturb what downstream nodes route on", routeOutcome)
+	}
+	if !bytes.Contains(final.Output, []byte(`"workspace_measured"`)) || !bytes.Contains(final.Output, []byte(`"bbb222"`)) {
+		t.Errorf("run output (bound from /nodes/analyze/output) = %s, want the workspace_measured block", final.Output)
+	}
+
+	// No observed-authority ledger records were written from the block:
+	// actor-reported data is a claim, not evidence (§10.4).
+	var observed int
+	if err := h.store.Pool().QueryRow(h.ctx,
+		`SELECT count(*) FROM ledger_records WHERE run_id = $1 AND authority = 'observed'`,
+		run.ID).Scan(&observed); err != nil {
+		t.Fatalf("count observed records: %v", err)
+	}
+	if observed != 0 {
+		t.Errorf("observed-authority ledger records = %d, want 0", observed)
+	}
+}
+
+// The unmeasured shape — measured:false, every fact null — round-trips
+// through the synchronous path exactly as the bridge sent it, and a result
+// with no block at all leaves the output without the key: absent and
+// unmeasured are different facts and neither may impersonate the other.
+func TestWorkerSyncUnmeasuredBlockRoundTripsAndAbsentStaysAbsent(t *testing.T) {
+	const unmeasured = `{"measured":false,"repo":null,"reason":"no repo configured","branch":null,` +
+		`"head_before":null,"head_after":null,"status_porcelain":null,"changed_files":[],"diffstat":null}`
+
+	var sendBlock atomic.Bool
+	sendBlock.Store(true)
+	h := newHarness(t, func(_ *harness, w http.ResponseWriter, _ actors.InvocationRequest) {
+		w.Header().Set("Content-Type", "application/json")
+		if sendBlock.Load() {
+			_, _ = fmt.Fprintf(w, `{"outcome":"completed","output":{"score":0.91},"ledger_delta":{"records":[]},"workspace_measured":%s}`, unmeasured)
+			return
+		}
+		writeSyncResult(w, "completed", `{"score":0.91}`)
+	})
+
+	run := h.createRun("sync.workflow.yaml", `{"subject":"widget"}`)
+	h.runUntil(20*time.Second, func() bool { return h.run(run.ID).State.Terminal() })
+	if state := h.run(run.ID).State; state != engine.RunCompleted {
+		t.Fatalf("run state = %s, want completed (worker errors: %v)", state, h.workerErrors())
+	}
+
+	nodeOutput, err := h.store.NodeOutput(h.ctx, run.ID, "analyze")
+	if err != nil {
+		t.Fatalf("read node output: %v", err)
+	}
+	var folded map[string]json.RawMessage
+	if err := json.Unmarshal(nodeOutput, &folded); err != nil {
+		t.Fatalf("node output is not an object: %v", err)
+	}
+	block, ok := folded["workspace_measured"]
+	if !ok {
+		t.Fatalf("the unmeasured block was dropped: %s", nodeOutput)
+	}
+	var sent, got any
+	if err := json.Unmarshal([]byte(unmeasured), &sent); err != nil {
+		t.Fatalf("fixture block: %v", err)
+	}
+	if err := json.Unmarshal(block, &got); err != nil {
+		t.Fatalf("persisted block: %v", err)
+	}
+	if !reflect.DeepEqual(sent, got) {
+		t.Errorf("the unmeasured block was altered in transit:\n sent: %s\n got: %s", unmeasured, block)
+	}
+
+	// Second run, no block on the wire: the key must not appear at all.
+	sendBlock.Store(false)
+	runAbsent := h.createRun("sync.workflow.yaml", `{"subject":"widget"}`)
+	h.runUntil(20*time.Second, func() bool { return h.run(runAbsent.ID).State.Terminal() })
+	if state := h.run(runAbsent.ID).State; state != engine.RunCompleted {
+		t.Fatalf("absent-block run state = %s, want completed (worker errors: %v)", state, h.workerErrors())
+	}
+	absentOutput, err := h.store.NodeOutput(h.ctx, runAbsent.ID, "analyze")
+	if err != nil {
+		t.Fatalf("read node output: %v", err)
+	}
+	if bytes.Contains(absentOutput, []byte(`"workspace_measured"`)) {
+		t.Errorf("a result with no block grew one: %s", absentOutput)
+	}
+}

@@ -40,6 +40,30 @@ const defaultNamespaceSlug = "default"
 // c45).
 const envDecisionAuthSecret = "NODES_HUMAN_DECISION_TOKEN_SECRET"
 
+// envActorRegistrationSecret is the bearer secret POST /v1alpha1/actors
+// requires (api.WithActorRegistrationSecret) — task t13's registration
+// lane. Deliberately its own secret, not envDecisionAuthSecret, so an
+// operator can grant registration standing without also granting the power
+// to decide human tasks. The same unset-is-not-an-error rule applies:
+// registration is simply refused with 401 until an operator sets it.
+const envActorRegistrationSecret = "NODES_ACTOR_REGISTRATION_TOKEN_SECRET"
+
+// envEventTokenSecret is the bearer secret POST /v1alpha1/events requires
+// (api.WithEventTokenSecret) — task t10's inbound signal delivery lane.
+// Its own secret again, for the same separation-of-standing reason: an
+// external system that may emit signal events (resuming until.signal
+// waits) need not also hold decision or registration power. Unset is not
+// an error: delivery is simply refused with 401 until an operator sets it.
+const envEventTokenSecret = "NODES_EVENT_TOKEN_SECRET"
+
+// envAdhocRunSecret is the bearer secret POST /v1alpha1/adhoc-runs requires
+// (api.WithAdhocRunSecret) — task t19's ad-hoc lane, gated by the t15
+// auth-hardening pass (spec c27). Its own secret for the same
+// separation-of-standing reason as the three above: the power to start
+// ad-hoc (often billable) work is granted independently. Unset is not an
+// error: ad-hoc runs are simply refused with 401 until an operator sets it.
+const envAdhocRunSecret = "NODES_ADHOC_RUN_TOKEN_SECRET"
+
 // minDecisionAuthSecretBytes mirrors actors.MinTokenSecretBytes: a secret
 // short enough to guess is not meaningfully different from no secret at
 // all, so it is refused at startup rather than accepted and quietly weak.
@@ -156,11 +180,29 @@ func runServeMode(args []string, verb string, withScheduler bool) (int, error) {
 	}
 	opts = append(opts, api.WithCallbackSigner(callbackSigner))
 
-	decisionAuthSecret, err := decisionAuthSecretFromEnv()
+	decisionAuthSecret, err := authSecretFromEnv(envDecisionAuthSecret)
 	if err != nil {
 		return 0, err
 	}
 	opts = append(opts, api.WithDecisionAuthSecret(decisionAuthSecret))
+
+	actorRegistrationSecret, err := authSecretFromEnv(envActorRegistrationSecret)
+	if err != nil {
+		return 0, err
+	}
+	opts = append(opts, api.WithActorRegistrationSecret(actorRegistrationSecret))
+
+	eventTokenSecret, err := authSecretFromEnv(envEventTokenSecret)
+	if err != nil {
+		return 0, err
+	}
+	opts = append(opts, api.WithEventTokenSecret(eventTokenSecret))
+
+	adhocRunSecret, err := authSecretFromEnv(envAdhocRunSecret)
+	if err != nil {
+		return 0, err
+	}
+	opts = append(opts, api.WithAdhocRunSecret(adhocRunSecret))
 
 	srv, err := api.NewServer(db, namespaceID, opts...)
 	if err != nil {
@@ -226,21 +268,23 @@ func runServeMode(args []string, verb string, withScheduler bool) (int, error) {
 	return clifmt.ExitSuccess, nil
 }
 
-// decisionAuthSecretFromEnv reads the human-task decision bearer secret from
-// NODES_HUMAN_DECISION_TOKEN_SECRET. An unset secret is not an error — it
-// just means every decision is refused with 401 (see
-// api.WithDecisionAuthSecret) — but a secret that is present and shorter
-// than minDecisionAuthSecretBytes looks configured and is not, so that is.
-func decisionAuthSecretFromEnv() (string, error) {
-	secret := os.Getenv(envDecisionAuthSecret)
+// authSecretFromEnv reads an optional bearer secret from envName (the
+// human-task decision secret and the actor-registration secret share this
+// one rule). An unset secret is not an error — it just means the endpoint
+// it gates refuses every request with 401 (see api.WithDecisionAuthSecret,
+// api.WithActorRegistrationSecret) — but a secret that is present and
+// shorter than minDecisionAuthSecretBytes looks configured and is not, so
+// that is.
+func authSecretFromEnv(envName string) (string, error) {
+	secret := os.Getenv(envName)
 	if secret == "" {
 		return "", nil
 	}
 	if len(secret) < minDecisionAuthSecretBytes {
 		return "", &clifmt.CliError{
 			Code:        clifmt.ExitUserError,
-			Message:     fmt.Sprintf("%s is set but only %d bytes long", envDecisionAuthSecret, len(secret)),
-			Remediation: fmt.Sprintf("set %s to at least %d bytes of random data", envDecisionAuthSecret, minDecisionAuthSecretBytes),
+			Message:     fmt.Sprintf("%s is set but only %d bytes long", envName, len(secret)),
+			Remediation: fmt.Sprintf("set %s to at least %d bytes of random data", envName, minDecisionAuthSecretBytes),
 		}
 	}
 	return secret, nil

@@ -1,0 +1,58 @@
+# A wait node inside a cycle, for proving the §9.7 loop bounds hold ACROSS a
+# durable park-and-resume: every visit to `pause` parks on its own wait
+# timer, the scheduler fires it, and the resumed completion re-enters
+# planTransition — where maxVisitsPerNode stops the run on the transition
+# into visit 3.
+#
+# The guarded edge to `finish` never matches (its guard is the literal
+# `false`); it exists so the graph has a statically reachable terminal path,
+# which the compiler requires. Normalized edge order (source, outcome,
+# target, guard) evaluates it first — finish < pause — so the unguarded
+# self-loop is the edge that always wins.
+apiVersion: nodes.culture.dev/v1alpha1
+kind: Workflow
+
+metadata:
+  name: worker-wait-loop
+  version: 1.0.0
+  ownerRef: team/platform-ai
+
+spec:
+  entry: pause
+
+  contract:
+    input:
+      schema:
+        type: object
+    output:
+      schema: {}
+
+  limits:
+    maxDuration: 1h
+    maxTransitions: 10
+    maxVisitsPerNode: 2
+    maxParallelTokens: 1
+
+  ledger:
+    schemaVersion: nodes.culture.dev/ledger/v1alpha1
+    maxRecordsPerNode: 10
+
+  nodes:
+    pause:
+      kind: wait
+      ownerRef: team/platform-ai
+      until:
+        duration: 300ms
+
+    finish:
+      kind: end
+      ownerRef: team/platform-ai
+      output:
+        from: /run/input
+
+  edges:
+    - from: pause.completed
+      to: finish
+      when: "false"
+    - from: pause.completed
+      to: pause

@@ -1,0 +1,50 @@
+# The smallest workflow that can park on a durable wait: one wait node with
+# an until.duration and an end node that turns its output into the run
+# result. The worker's wait test drives this end to end: dispatch, park with
+# no lease held, scheduler fires the timer, worker re-claims, node completes
+# with its kind-implied `completed` outcome, run finishes.
+apiVersion: nodes.culture.dev/v1alpha1
+kind: Workflow
+
+metadata:
+  name: worker-wait-slice
+  version: 1.0.0
+  ownerRef: team/platform-ai
+
+spec:
+  entry: pause
+
+  contract:
+    input:
+      schema:
+        type: object
+    output:
+      schema:
+        type: object
+
+  limits:
+    maxDuration: 1h
+    maxTransitions: 8
+    maxVisitsPerNode: 4
+    maxParallelTokens: 1
+
+  ledger:
+    schemaVersion: nodes.culture.dev/ledger/v1alpha1
+    maxRecordsPerNode: 10
+
+  nodes:
+    pause:
+      kind: wait
+      ownerRef: team/platform-ai
+      until:
+        duration: 700ms
+
+    finish:
+      kind: end
+      ownerRef: team/platform-ai
+      output:
+        from: /nodes/pause/output
+
+  edges:
+    - from: pause.completed
+      to: finish

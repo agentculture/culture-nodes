@@ -53,7 +53,7 @@ func (w *Worker) dispatchActor(
 	}
 
 	if w.opts.Registry == nil {
-		return w.failAttempt(ctx, claimed, engine.StatusFailed, "configuration",
+		return w.failAttempt(ctx, claimed, "", engine.StatusFailed, "configuration",
 			"this worker has no actor registry configured, so it cannot resolve an endpoint to invoke")
 	}
 
@@ -79,17 +79,20 @@ func (w *Worker) dispatchActor(
 		// An unresolvable actor is a policy/configuration refusal, not a
 		// transport failure: retrying the same reference against the same
 		// registry will fail the same way, and policy_denied is the status
-		// the engine does not retry.
-		return w.failAttempt(ctx, claimed, engine.StatusPolicyDenied, string(actors.ClassAuthOrPolicy),
+		// the engine does not retry. The attempt stays unattributed ("" →
+		// NULL): nothing was resolved, so there is no actor to charge.
+		return w.failAttempt(ctx, claimed, "", engine.StatusPolicyDenied, string(actors.ClassAuthOrPolicy),
 			fmt.Sprintf("node %q uses %q, which did not resolve to an endpoint: %v", node.ID, node.Uses, err))
 	}
 
 	// Best-effort durable attribution: the actors-table row id this
 	// reference resolves to today, recorded on the attempt at completion
-	// (attempts.actor_id) so per-actor surfaces can attribute the work. A
-	// registry that cannot answer (StaticRegistry, a vanished row) yields
-	// "" — unattributed, never a dispatch failure.
-	actorRowID := w.actorRowID(ctx, node.Uses)
+	// (attempts.actor_id) so per-actor surfaces can attribute the work —
+	// on FAILURE completions from here on just as on success, because a
+	// failed dispatch is still this actor's dispatch and the retry-burn
+	// measure must see it. A registry that cannot answer (StaticRegistry,
+	// a vanished row) yields "" — unattributed, never a dispatch failure.
+	dc.ActorRowID = w.actorRowID(ctx, node.Uses)
 
 	req := actors.InvocationRequest{
 		ProtocolVersion: actors.ProtocolVersion,
@@ -112,7 +115,7 @@ func (w *Worker) dispatchActor(
 	// for the block afterwards.
 	callback, err := w.callbackFor(dc)
 	if err != nil {
-		return w.failAttempt(ctx, claimed, engine.StatusFailed, "configuration", err.Error())
+		return w.failAttempt(ctx, claimed, dc.ActorRowID, engine.StatusFailed, "configuration", err.Error())
 	}
 	req.Callback = callback
 
@@ -142,14 +145,14 @@ func (w *Worker) dispatchActor(
 	}
 
 	if !response.Async {
-		return w.completeFromResult(ctx, claimed, d, node, dc, response.Result, preRun, actorRowID)
+		return w.completeFromResult(ctx, claimed, d, node, dc, response.Result, preRun)
 	}
 	if node.PostRun != nil {
 		// See hooks.go's package doc for why async+post_run is refused here
 		// rather than run against a callback-delivered result.
 		return w.refuseAsyncPostRun(ctx, claimed, d, node, dc, preRun)
 	}
-	return w.park(ctx, claimed, d, node, dc, response.Accepted, actorRowID)
+	return w.park(ctx, claimed, d, node, dc, response.Accepted)
 }
 
 // callbackFor builds §13.1's callback block: where to POST, and a token that
@@ -210,10 +213,10 @@ func (w *Worker) callbackURL(attemptID string) string {
 // ledger delta).
 func (w *Worker) completeFromResult(
 	ctx context.Context, claimed postgres.ClaimedWork, d postgres.Dispatch, node *nodeSpec, dc DispatchContext,
-	result *actors.InvocationResult, preRun *hookRun, actorRowID string,
+	result *actors.InvocationResult, preRun *hookRun,
 ) error {
 	if result == nil {
-		return w.failAttempt(ctx, claimed, engine.StatusContractRejected, string(actors.ClassContract),
+		return w.failAttempt(ctx, claimed, dc.ActorRowID, engine.StatusContractRejected, string(actors.ClassContract),
 			"actor answered 200 with no result body")
 	}
 
@@ -232,8 +235,11 @@ func (w *Worker) completeFromResult(
 			// all: an attempt-level technical failure, not a domain answer
 			// — silently keeping the agent's own outcome here would be
 			// exactly the unenforced-check gap h32 forbids. The agent's own
-			// proposed records still ride along; only the routing changes.
-			completion, err := w.completeTechnicalFailure(ctx, claimed, engine.StatusFailed, hookKindPostRun, post.detail, agentDelta)
+			// proposed records still ride along; only the routing changes —
+			// and so does the result's reported usage (issue #32): the
+			// invocation itself succeeded and burned real tokens regardless
+			// of what the hook could not verify.
+			completion, err := w.completeTechnicalFailure(ctx, claimed, dc.ActorRowID, engine.StatusFailed, hookKindPostRun, post.detail, agentDelta, result.Usage.ToEngine())
 			if err != nil {
 				return err
 			}
@@ -259,12 +265,16 @@ func (w *Worker) completeFromResult(
 	}
 
 	completion, err := w.complete(ctx, claimed, engine.CompletionRequest{
-		TechStatus:  engine.StatusSucceeded,
-		Outcome:     outcome,
-		Output:      output,
+		TechStatus: engine.StatusSucceeded,
+		Outcome:    outcome,
+		// The bridge-measured workspace block rides inside the persisted
+		// output so /nodes/<id>/output bindings carry it downstream; absent
+		// stays absent, and a measured:false block survives verbatim
+		// (issue #33a — actor-reported data, never observed evidence).
+		Output:      actors.MergeWorkspaceMeasured(output, result.WorkspaceMeasured),
 		LedgerDelta: agentDelta,
 		Usage:       result.Usage.ToEngine(),
-		ActorID:     actorRowID,
+		ActorID:     dc.ActorRowID,
 	})
 	if err != nil {
 		if isStale(err) {
@@ -276,6 +286,12 @@ func (w *Worker) completeFromResult(
 	w.appendHookEvidence(ctx, completion, preRun)
 	postEvidence, postEvidenceOK := w.appendHookEvidence(ctx, completion, postRun)
 	w.recordHookOperations(ctx, d.NamespaceID, completion.AttemptID, preRun, postRun)
+	// Task t17 (issue #37): an agent node's acceptance checks are not
+	// mechanically evaluable — no runner-measured Result exists for an agent
+	// dispatch — so a routing enforce policy gets the honest floor: routing
+	// stayed the agent's own outcome (as committed above) and a derived
+	// record states the non-evaluability. See acceptance.go's package doc.
+	w.appendUnevaluableAcceptance(ctx, node, completion)
 	if rejectAssurance {
 		subject := ""
 		if postEvidenceOK {
@@ -297,6 +313,14 @@ func (w *Worker) completeFromResult(
 // measured something even though the subsequent invocation itself failed
 // technically, and that evidence is not dropped just because the actor never
 // answered.
+//
+// So is the error body's usage block (issue #32, task t5): a bridge whose
+// session failed after producing a parseable terminal result attaches the
+// §13.2 usage to its 500 body, and the failed attempt persists that burn —
+// failures get retried, so their burn compounds, and the rollups must see
+// it. A result-less crash or timeout carries no block and the attempt's
+// usage stays NULL (the h24 narrowing, stated in migrations/README.md's
+// 0012 entry).
 func (w *Worker) completeFromInvocationError(
 	ctx context.Context, claimed postgres.ClaimedWork, d postgres.Dispatch, node *nodeSpec, dc DispatchContext,
 	invokeErr error, preRun *hookRun,
@@ -305,8 +329,9 @@ func (w *Worker) completeFromInvocationError(
 	if !ok {
 		class = actors.ClassExecution
 	}
-	completion, err := w.completeTechnicalFailure(ctx, claimed, actors.TechStatusFor(class), string(class),
-		fmt.Sprintf("node %q invocation failed: %v", node.ID, invokeErr), nil)
+	completion, err := w.completeTechnicalFailure(ctx, claimed, dc.ActorRowID, actors.TechStatusFor(class), string(class),
+		fmt.Sprintf("node %q invocation failed: %v", node.ID, invokeErr),
+		nil, actors.UsageOf(invokeErr).ToEngine())
 	if err != nil {
 		return err
 	}
@@ -330,10 +355,9 @@ func (w *Worker) park(
 	node *nodeSpec,
 	dc DispatchContext,
 	accepted *actors.AsyncAccepted,
-	actorRowID string,
 ) error {
 	if accepted == nil {
-		return w.failAttempt(ctx, claimed, engine.StatusContractRejected, string(actors.ClassContract),
+		return w.failAttempt(ctx, claimed, dc.ActorRowID, engine.StatusContractRejected, string(actors.ClassContract),
 			"actor answered 202 with no acceptance body")
 	}
 
@@ -349,7 +373,7 @@ func (w *Worker) park(
 		NodeID:                node.ID,
 		AttemptID:             dc.AttemptID,
 		ActorRef:              node.Uses,
-		ActorID:               actorRowID,
+		ActorID:               dc.ActorRowID,
 		InvocationID:          accepted.InvocationID,
 		HeartbeatAfterSeconds: accepted.HeartbeatAfterSeconds,
 		SupportsCancellation:  accepted.SupportsCancellation,
@@ -402,10 +426,10 @@ func (w *Worker) dispatchDecision(
 ) error {
 	outcome, matched, err := w.decisions.evaluateDecision(spec.Digest, node, d.RunInput, dc.Input)
 	if err != nil {
-		return w.failAttempt(ctx, claimed, engine.StatusFailed, "decision", err.Error())
+		return w.failAttempt(ctx, claimed, "", engine.StatusFailed, "decision", err.Error())
 	}
 	if !matched {
-		return w.failAttempt(ctx, claimed, engine.StatusFailed, "decision",
+		return w.failAttempt(ctx, claimed, "", engine.StatusFailed, "decision",
 			fmt.Sprintf("no select port of decision node %q matched; the workflow declares no answer for this data", node.ID))
 	}
 
@@ -453,26 +477,34 @@ func (w *Worker) dispatchSeam(
 		// CONFIGURATION gap rather than an unbuilt feature. Saying "not yet
 		// implemented" for something that is implemented but unconfigured
 		// sends an operator to the build plan instead of to their own config.
-		return w.failAttempt(ctx, claimed, engine.StatusFailed, "not_implemented",
+		return w.failAttempt(ctx, claimed, "", engine.StatusFailed, "not_implemented",
 			fmt.Sprintf("node %q is a %s node and this worker has no %s dispatcher registered; %s",
 				dc.NodeID, kind, capability, seamRemedy(kind)))
 	}
 	if seamErr != nil {
-		return w.failAttempt(ctx, claimed, engine.StatusFailed, kind,
+		return w.failAttempt(ctx, claimed, "", engine.StatusFailed, kind,
 			fmt.Sprintf("node %q %s dispatch failed: %v", dc.NodeID, kind, seamErr))
 	}
 
 	if result.Async {
-		// A seam that took ownership parks the work item exactly as a §13.3
-		// acceptance does: same durable record, same fencing tuple, same
-		// released capacity. The seam's own handle stands in for the actor's
-		// invocation id.
+		// A wait seam's async answer parks on a durable TIMER, not on an
+		// actor invocation: there is no external party to record, no
+		// callback to fence, and — critically — no deadline timer, because a
+		// wait must be allowed to be away for exactly its declared time.
+		if kind == kindWait {
+			return w.parkWait(ctx, claimed, d, dc, result)
+		}
+		// Any other seam that took ownership parks the work item exactly as
+		// a §13.3 acceptance does: same durable record, same fencing tuple,
+		// same released capacity. The seam's own handle stands in for the
+		// actor's invocation id.
 		// Seam dispatches (code/runner paths) attribute at their own
-		// completion sites; no actor row resolution happened here.
+		// completion sites; no actor row resolution happened here, so
+		// dc.ActorRowID is still "" and park records no attribution.
 		return w.park(ctx, claimed, d, node, dc, &actors.AsyncAccepted{
 			InvocationID:          result.AsyncRef,
 			HeartbeatAfterSeconds: 0,
-		}, "")
+		})
 	}
 
 	var delta []ledger.Record
@@ -481,7 +513,7 @@ func (w *Worker) dispatchSeam(
 			Records []ledger.Record `json:"records"`
 		}
 		if err := json.Unmarshal(result.LedgerDelta, &records); err != nil {
-			return w.failAttempt(ctx, claimed, engine.StatusContractRejected, string(actors.ClassContract),
+			return w.failAttempt(ctx, claimed, "", engine.StatusContractRejected, string(actors.ClassContract),
 				fmt.Sprintf("node %q %s dispatch proposed a ledger delta that is not a records document: %v",
 					dc.NodeID, kind, err))
 		}
@@ -512,7 +544,9 @@ func seamRemedy(kind string) string {
 		return "configure Options.Human; approval nodes are otherwise resolved engine-side and never " +
 			"reach this dispatcher"
 	case kindWait:
-		return "configure Options.Waiter; durable wait dispatch has no default implementation"
+		return "durable wait dispatch defaults to the timer-backed dispatcher (worker.New wires " +
+			"TimerWaitDispatcher when Options.Waiter is nil), so this branch should be unreachable; " +
+			"a custom build that cleared the seam after construction must restore it"
 	default:
 		return "no dispatcher is registered for this kind"
 	}

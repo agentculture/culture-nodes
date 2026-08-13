@@ -1,0 +1,57 @@
+# A human-paced node authored the way issue #38 / spec claim c28 prescribes:
+# a week-scale policy.timeout (the async wait bound), maxAttempts 1 (a human
+# is asked once, not retried), and a run-level maxDuration wide enough to
+# contain the park. The compiler test over this fixture proves the whole
+# authoring surface accepts human timescales unclamped: the workflow schema's
+# duration pattern, checkDuration's time.ParseDuration, and the normalized IR
+# all carry 168h through verbatim — and the 900s runner cap stays what it is,
+# a code-node bound that never touches an agent node.
+apiVersion: nodes.culture.dev/v1alpha1
+kind: Workflow
+
+metadata:
+  name: humanpace
+  version: 1.0.0
+  ownerRef: team/platform-ai
+
+spec:
+  entry: review
+
+  contract:
+    input:
+      schemaRef: ./contracts/in.schema.json
+    output:
+      schemaRef: ./contracts/out.schema.json
+
+  limits:
+    maxDuration: 336h
+    maxTransitions: 8
+    maxVisitsPerNode: 4
+    maxParallelTokens: 1
+
+  nodes:
+    review:
+      kind: agent
+      ownerRef: team/platform-ai
+      uses: actor://company/human-reviewer@sha256:aaaaaa
+      contract:
+        outcomes:
+          completed:
+            schemaRef: ./contracts/start.schema.json
+      input:
+        from: /run/input
+      policy:
+        timeout: 168h
+        retry:
+          maxAttempts: 1
+          backoff: none
+
+    finish:
+      kind: end
+      ownerRef: team/platform-ai
+      output:
+        from: /nodes/review/output
+
+  edges:
+    - from: review.completed
+      to: finish

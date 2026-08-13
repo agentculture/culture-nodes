@@ -89,6 +89,20 @@ func TestDeliberateErrorFixtures(t *testing.T) {
 			},
 		},
 		{
+			// The deferred node surfaces (artifacts, error) in a data
+			// binding: no input/output resolver answers them, so accepting
+			// them would publish a workflow that only fails at dispatch
+			// (task t7). operation.workspaceRef stays exempt — see
+			// deliver-change.workflow.yaml, which binds
+			// /nodes/build/artifacts/workspace and compiles clean.
+			name: "deferred node surface in a data binding",
+			file: "err-deferred-surface-binding.workflow.yaml",
+			want: []wantDiag{
+				{LevelError, "/spec/nodes/start/input/bindings/failure", CodeContractBindingUnresolved},
+				{LevelError, "/spec/nodes/start/input/bindings/files", CodeContractBindingUnresolved},
+			},
+		},
+		{
 			name: "invalid CEL",
 			file: "err-bad-cel.workflow.yaml",
 			want: []wantDiag{
@@ -137,6 +151,28 @@ func TestDeliberateErrorFixtures(t *testing.T) {
 			file: "err-hook-outcome-undeclared.workflow.yaml",
 			want: []wantDiag{
 				{LevelError, "/spec/nodes/work/post_run/on_failure/outcome", CodeHookOutcomeUndeclared},
+			},
+		},
+		{
+			// Task t16, issue #37: routing a failed acceptance check down a
+			// domain edge the node never declared would invent an outcome at
+			// run time — refused where the author can see it.
+			name: "acceptance.enforce routes to an undeclared outcome",
+			file: "err-acceptance-enforce-outcome.workflow.yaml",
+			want: []wantDiag{
+				{LevelError, "/spec/nodes/build/acceptance/enforce", CodeLedgerAcceptanceEnforceOutcomeUndeclared},
+			},
+		},
+		{
+			// An enforce value outside the vocabulary is refused twice, on the
+			// hookOnFailure precedent: the schema pattern says no with a
+			// pointer, and the ledger level says no independently — two
+			// different statements about the same value.
+			name: "acceptance.enforce outside the vocabulary",
+			file: "err-acceptance-enforce-unknown.workflow.yaml",
+			want: []wantDiag{
+				{LevelError, "/spec/nodes/build/acceptance/enforce", CodeLedgerAcceptanceEnforceUnknown},
+				{LevelError, "/spec/nodes/build/acceptance/enforce", CodeStructureSchema},
 			},
 		},
 	}

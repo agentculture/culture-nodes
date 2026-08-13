@@ -83,6 +83,13 @@ services:
       NODES_ACTOR_CLAUDE_TOKEN: ${NODES_ACTOR_CLAUDE_TOKEN:-}
       NODES_ACTOR_CODEX_THOR_TOKEN: ${NODES_ACTOR_CODEX_THOR_TOKEN:-}
       NODES_ACTOR_CODEX_ORIN_TOKEN: ${NODES_ACTOR_CODEX_ORIN_TOKEN:-}
+      # The three bearer secrets the attempts-evidence-humans-loops batch
+      # added (t13 registration, t10 event delivery, t19+t15 ad-hoc lane).
+      # Optional on purpose: closed-by-default means an unset secret leaves
+      # that route refusing 401, never mounted-authless.
+      NODES_ACTOR_REGISTRATION_TOKEN_SECRET: ${NODES_ACTOR_REGISTRATION_TOKEN_SECRET:-}
+      NODES_EVENT_TOKEN_SECRET: ${NODES_EVENT_TOKEN_SECRET:-}
+      NODES_ADHOC_RUN_TOKEN_SECRET: ${NODES_ADHOC_RUN_TOKEN_SECRET:-}
     ports:
       - "18080:8080"
     depends_on:

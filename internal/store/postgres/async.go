@@ -680,6 +680,55 @@ func (s *Store) NodeOutput(ctx context.Context, runID, nodeID string) (json.RawM
 	return json.RawMessage(result), nil
 }
 
+// NodeEvidence returns the run's live evidence ledger records belonging to a
+// node's node runs, in id (append) order — what a `/nodes/<id>/evidence`
+// binding resolves to (§11.2). Evidence identity is the node run: the engine
+// stamps node_run_id on every accepted delta record, and node evidence
+// carries no SubjectRef, so the selector joins node_runs on run_id +
+// node_key exactly like NodeOutput does for attempts. Zero records is an
+// empty slice, not an error: "no evidence was appended" is a true answer.
+func (s *Store) NodeEvidence(ctx context.Context, runID, nodeID string) ([]ledger.Record, error) {
+	return queryNodeEvidence(ctx, s.pool, runID, nodeID)
+}
+
+var selectNodeEvidenceSQL = `
+SELECT ` + prefixedLedgerRecordColumns("lr") + `
+FROM ledger_records AS lr
+JOIN node_runs AS nr ON nr.id = lr.node_run_id
+WHERE nr.run_id = $1 AND nr.node_key = $2 AND lr.record_type = 'evidence'
+  AND NOT EXISTS (
+      SELECT 1 FROM ledger_records AS sup
+      WHERE sup.run_id = lr.run_id AND sup.supersedes = lr.id
+  )
+ORDER BY lr.id
+`
+
+// queryNodeEvidence is NodeEvidence's statement, shared by Store (a worker
+// resolving bindings outside a transaction) and engineQueries (the engine's
+// end-node output binding inside one), so both give the same answer. The
+// NOT EXISTS clause is ledger.Live's rule in SQL: a record another record of
+// the same run supersedes is not live, whatever superseded the supersessor.
+func queryNodeEvidence(ctx context.Context, q ledgerQuerier, runID, nodeID string) ([]ledger.Record, error) {
+	rows, err := q.Query(ctx, selectNodeEvidenceSQL, runID, nodeID)
+	if err != nil {
+		return nil, fmt.Errorf("postgres: NodeEvidence: %w", err)
+	}
+	defer rows.Close()
+
+	out := make([]ledger.Record, 0)
+	for rows.Next() {
+		rec, err := scanLedgerRecord(rows)
+		if err != nil {
+			return nil, fmt.Errorf("postgres: NodeEvidence: scan: %w", err)
+		}
+		out = append(out, rec)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("postgres: NodeEvidence: %w", err)
+	}
+	return out, nil
+}
+
 func int32OrNull(v int) pgtype.Int4 {
 	if v <= 0 {
 		return pgtype.Int4{}

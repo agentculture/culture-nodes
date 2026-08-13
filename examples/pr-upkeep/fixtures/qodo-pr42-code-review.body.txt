@@ -1,0 +1,133 @@
+<h3>Code Review by Qodo</h3>
+
+<code>🐞 Bugs (0)</code>  <code>📘 Rule violations (0)</code>  <code>📜 Skill insights (0)</code>
+
+<img src="https://www.qodo.ai/wp-content/uploads/2025/11/light-grey-line.svg" height="10%" alt="Grey Divider">
+
+<br/>
+
+<img src="https://img.shields.io/badge/Medium-634FD1?style=flat-square" height="20px" alt="Remediation recommended">
+
+<details>
+<summary>  1.  <s>Unescaped &lt;id&gt; placeholders</s> <code>✓ Resolved</code> <code>🐞 Bug</code> <code>⚙ Maintainability</code></summary>
+
+<br/>
+
+> <details open>
+><summary>Description</summary>
+><br/>
+>
+><pre>
+>docs/specs/2026-08-13-attempts-evidence-humans-loops.md includes paths like <b><i>/nodes/&lt;id&gt;/output</i></b> and
+><b><i>/nodes/&lt;id&gt;/evidence</i></b> without code spans/escaping, so Markdown renderers may treat <b><i>&lt;id&gt;</i></b> as inline
+>HTML instead of literal placeholder text and render/copy incorrectly. The added MD033 allowance
+>permits these tags and can let broken placeholders ship without detection.
+></pre>
+></details>
+
+> <details>
+><summary>Code</summary>
+><br/>
+>
+><code>[docs/specs/2026-08-13-attempts-evidence-humans-loops.md[R37-40]](https://github.com/agentculture/culture-nodes/pull/42/files#diff-08a0ef552d13fa7794a7333c4a415acaf865e4450112fc711030f94a5e753225R37-R40)</code>
+>
+>```diff
+>+- Issue 33a: give `workspace_measured` a landing surface — InvocationResult, CompletedPayload and FailedPayload (protocol.go:124,238,250) all silently drop it today while every bridge attaches it on every sync and terminal branch (adapters/\*/src/\*`_bridge`/workspace.py measures via git the bridge itself ran); the independent-review README recommends folding it into the nodes/<id>/output answer since agent nodes cannot hold observe authority; web UI already anticipates a diffstat on evidence (web/src/domain/evidence.ts:13-25)
+>+  - instruction: Add a typed `workspace_measured` field to InvocationResult, CompletedPayload, and FailedPayload; fold it into the node's persisted output on completion so downstream nodes bind it via /nodes/<id>/output; render the unmeasured case as unmeasured; extend the runner-conformance fixtures so all three backends round-trip it
+>+  - honesty: `workspace_measured` round-trips bridge to protocol to persisted node output on all three backends, stays actor-reported in authority terms (never observed), and a downstream node can bind it; the unmeasured case renders as unmeasured, never as an empty diff
+>+- Issue 33b: resolve the /nodes/<id>/evidence binding — the compiler accepts it (internal/compiler/contract.go:14-31) but the worker refuses at bindings.go:133-137 and the engine at binding.go:45; the fix needs node-run-scoped evidence selection and flips the TestUnresolvableBindingsFailLoudly assertion (`bindings_test.go`:127)
+>```
+></details>
+
+> <details>
+><summary>Relevance</summary>
+><br/>
+>
+> `●● Moderate`
+>
+><pre>
+>Trivial docs fix, but PR explicitly adds MD033 to allow these placeholders; intent may override.
+></pre>
+>
+> [PR-#29](https://github.com/agentculture/culture-nodes/pull/29)
+>
+> <code>ⓘ Recommendations generated based on similar findings in past PRs</code>
+></details>
+
+> <details>
+><summary>Evidence</summary>
+><br/>
+>
+><pre>
+>The new spec contains unescaped <b><i>/nodes/&lt;id&gt;/…</i></b> placeholders; markdownlint is configured to allow
+><b><i>&lt;id&gt;</i></b>/<b><i>&lt;node&gt;</i></b> elements (masking the issue); and existing documentation uses backticked binding
+>paths which avoids HTML parsing.
+></pre>
+>
+> <code>[docs/specs/2026-08-13-attempts-evidence-humans-loops.md[37-42]](https://github.com/agentculture/culture-nodes/blob/27a3b8066d9dbcb008c94503ada8e1b54e61bdb4/docs/specs/2026-08-13-attempts-evidence-humans-loops.md/#L37-L42)</code>
+> <code>[.markdownlint-cli2.yaml[16-20]](https://github.com/agentculture/culture-nodes/blob/27a3b8066d9dbcb008c94503ada8e1b54e61bdb4/.markdownlint-cli2.yaml/#L16-L20)</code>
+> <code>[examples/independent-review/README.md[66-70]](https://github.com/agentculture/culture-nodes/blob/27a3b8066d9dbcb008c94503ada8e1b54e61bdb4/examples/independent-review/README.md/#L66-L70)</code>
+></details>
+
+> <details>
+><summary>Agent prompt</summary>
+><br/>
+>
+>```
+>The issue below was found during a code review. Follow the provided context and guidance below and implement a solution
+>
+>## Issue description
+>The new spec uses placeholder tokens like `/nodes/<id>/output` in normal prose (not code spans). In Markdown, `<id>` is parsed as inline HTML, so the placeholder may not display as intended and can be hard to copy/paste correctly.
+>
+>## Issue Context
+>You already use the safer pattern elsewhere (inline code spans) for these binding surfaces. The current markdownlint change (MD033 allowed elements) suppresses lint failures but does not make the rendered Markdown correct.
+>
+>## Fix Focus Areas
+>- docs/specs/2026-08-13-attempts-evidence-humans-loops.md[37-42]
+>- .markdownlint-cli2.yaml[16-20]
+>
+>## Suggested fix
+>- Wrap binding paths in inline code spans, e.g. `` `/nodes/<id>/output` `` and `` `/nodes/<id>/evidence` `` (or escape as `&lt;id&gt;`).
+>- If these were the only intended MD033 exceptions, consider reverting/removing the MD033 allowance after converting placeholders to code spans so linting continues to catch accidental raw HTML.
+>```
+> <code>ⓘ Copy this prompt and use it to remediate the issue with your preferred AI generation tools</code>
+></details>
+
+<hr/>
+</details>
+
+
+
+<img src="https://www.qodo.ai/wp-content/uploads/2025/11/light-grey-line.svg" height="10%" alt="Grey Divider">
+
+
+<details><summary><strong>Context</strong></summary>
+
+<div>&#x2705; Compliance rules (platform): <a href="https://app.qodo.ai/rules?state=active&amp;scopes=/agentculture/culture-nodes/"><code>19 rules</code></a></div>
+<div>&#x2705; Skills: <a href="https://app.qodo.ai/rules?tab=skills&amp;state=active"><code>sonarclaude, version-bump</code></a></div>
+</details>
+
+<img src="https://www.qodo.ai/wp-content/uploads/2025/11/light-grey-line.svg" height="10%" alt="Grey Divider">
+
+
+
+<!-- qodo-daily-tip:start -->
+
+<details>
+<summary> Tip of the day</summary>
+
+<br/>
+
+<pre>💡 Did you know, you can type &#x27;qodo, fix this&#x27; on a finding and the fix lands right on your PR</pre>
+
+<a href="https://docs.qodo.ai/tips-and-tricks">More tips ↗</a> | <a href="https://app.qodo.ai/configurations?tab=display-preferences">Customize Qodo ↗</a> | <a href="https://docs.qodo.ai">Qodo docs ↗</a>
+
+</details>
+
+<img src="https://www.qodo.ai/wp-content/uploads/2025/11/light-grey-line.svg" height="10%" alt="Grey Divider">
+<!-- qodo-daily-tip:end -->
+
+
+<!-- https://github.com/agentculture/culture-nodes/commit/27a3b8066d9dbcb008c94503ada8e1b54e61bdb4 -->
+
+<a href="https://www.qodo.ai"><img src="https://www.qodo.ai/wp-content/uploads/2025/03/qodo-logo.svg" width="80" alt="Qodo Logo"></a>

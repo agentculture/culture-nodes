@@ -21,7 +21,7 @@ import (
 // handed `{}` where it expected the run input would fail in a much more
 // confusing place than here.
 //
-// # The three surfaces, and what each actually reads
+// # The four surfaces, and what each actually reads
 //
 //	/run/input                        the run's immutable input document
 //	/nodes/<id>/output                the output of that node's most recent
@@ -29,18 +29,31 @@ import (
 //	                                  or contract-rejected attempt produced no
 //	                                  answer a binding may treat as the node's
 //	                                  output, so it is not visible here.
+//	/nodes/<id>/evidence              the run's live evidence records selected
+//	                                  by that node's node runs, as a JSON
+//	                                  array in append (id) order. Evidence
+//	                                  identity is the node run: the engine
+//	                                  stamps node_run_id on every accepted
+//	                                  delta record (internal/engine/
+//	                                  ledgerdelta.go), and node evidence
+//	                                  carries no SubjectRef. A node that has
+//	                                  appended none resolves to [] — unlike a
+//	                                  missing output, "zero evidence records"
+//	                                  is itself the true answer, not an
+//	                                  absence a caller could mistake for one.
 //	/ledger/projections/<name>        a §10.9 projection over this run's
 //	                                  ledger records, computed on read.
 //
 // Any pointer may address deeper into the resolved value: /run/input/subject
 // reads the run input and then walks to its `subject` member.
 //
-// # What is deliberately not resolvable yet
+// # What is deliberately not resolvable
 //
-// /nodes/<id>/evidence and /artifacts/… appear in the compiler's accepted
-// pointer set but need the runner boundary and the artifact router. Asking
-// for one fails loudly here, naming what is resolvable, rather than
-// resolving to something a caller would mistake for a real answer.
+// /nodes/<id>/artifacts and /nodes/<id>/error need the artifact router and
+// the error payload surface. The compiler rejects a data binding naming them
+// (internal/compiler/contract.go's deferredNodeBindingSurfaces), and this
+// resolver refuses them too — the verdicts must agree from both sides, so a
+// published workflow can never carry a binding that only fails at dispatch.
 
 // bindingSources is where a resolver reads from. It is an interface-free
 // struct of closures because the three surfaces have nothing in common to
@@ -51,6 +64,9 @@ type bindingSources struct {
 	// NodeOutput returns a node's most recent succeeded output, or nil when
 	// the node has not produced one in this run.
 	NodeOutput func(ctx context.Context, nodeID string) (json.RawMessage, error)
+	// NodeEvidence returns the run's live evidence records belonging to a
+	// node's node runs, in id order. Zero records is an answer, not an error.
+	NodeEvidence func(ctx context.Context, nodeID string) ([]ledger.Record, error)
 	// Projection computes a §10.9 projection over the run's ledger records.
 	Projection func(ctx context.Context, kind ledger.ProjectionKind, subject string) (ledger.Projection, error)
 }
@@ -97,7 +113,7 @@ func resolveNodeInput(ctx context.Context, src bindingSources, binding *inputBin
 
 // resolvableSurfaces is the error message's list of what this resolver can
 // answer. It is a constant so the message never drifts from the switch below.
-const resolvableSurfaces = "/run/input, /nodes/<node>/output, /ledger/projections/<name>"
+const resolvableSurfaces = "/run/input, /nodes/<node>/output, /nodes/<node>/evidence, /ledger/projections/<name>"
 
 func resolvePointer(ctx context.Context, src bindingSources, pointer string) (json.RawMessage, error) {
 	tokens, err := parsePointer(pointer)
@@ -122,22 +138,40 @@ func resolvePointer(ctx context.Context, src bindingSources, pointer string) (js
 		if len(tokens) < 3 {
 			return nil, fmt.Errorf("a node binding names a node and a surface, e.g. /nodes/<node>/output")
 		}
-		if tokens[2] != "output" {
+		switch tokens[2] {
+		case "output":
+			if src.NodeOutput == nil {
+				return nil, fmt.Errorf("no node-output source is configured")
+			}
+			output, err := src.NodeOutput(ctx, tokens[1])
+			if err != nil {
+				return nil, err
+			}
+			if output == nil {
+				return nil, fmt.Errorf("node %q has no succeeded attempt in this run, so it has no output", tokens[1])
+			}
+			base, rest = output, tokens[3:]
+		case "evidence":
+			if src.NodeEvidence == nil {
+				return nil, fmt.Errorf("no node-evidence source is configured")
+			}
+			records, err := src.NodeEvidence(ctx, tokens[1])
+			if err != nil {
+				return nil, err
+			}
+			if records == nil {
+				records = []ledger.Record{}
+			}
+			encoded, err := json.Marshal(records)
+			if err != nil {
+				return nil, fmt.Errorf("evidence of node %q could not be encoded: %w", tokens[1], err)
+			}
+			base, rest = encoded, tokens[3:]
+		default:
 			return nil, fmt.Errorf(
-				"surface /nodes/<node>/%s is not resolvable yet; this worker resolves %s",
+				"surface /nodes/<node>/%s is not resolvable; this worker resolves %s",
 				tokens[2], resolvableSurfaces)
 		}
-		if src.NodeOutput == nil {
-			return nil, fmt.Errorf("no node-output source is configured")
-		}
-		output, err := src.NodeOutput(ctx, tokens[1])
-		if err != nil {
-			return nil, err
-		}
-		if output == nil {
-			return nil, fmt.Errorf("node %q has no succeeded attempt in this run, so it has no output", tokens[1])
-		}
-		base, rest = output, tokens[3:]
 
 	case "ledger":
 		if len(tokens) < 3 || tokens[1] != "projections" {
@@ -177,8 +211,9 @@ func resolvePointer(ctx context.Context, src bindingSources, pointer string) (js
 //   - `open_assumptions` and `open_questions` are both answered by the single
 //     open-assumptions-and-questions projection, which selects both record
 //     types. Binding either name gets that projection.
-//   - `evidence` maps to the subject-scoped evidence projection with an empty
-//     subject, which selects the run's evidence records.
+//   - `evidence` maps to the evidence projection with an empty subject,
+//     which ledger.EvidenceForSubject reads as unscoped: it selects all of
+//     the run's live evidence records rather than one reference's.
 //
 // A name outside the list is refused rather than guessed at: §10.9's
 // vocabulary is closed on purpose, so a typo should fail loudly rather than

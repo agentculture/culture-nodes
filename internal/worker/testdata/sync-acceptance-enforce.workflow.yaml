@@ -1,0 +1,86 @@
+# Task t17 (issue #37): an AGENT node declaring acceptance checks under an
+# enforce policy. An agent dispatch produces no runner-measured Result, so a
+# `process_exit` check — mechanically evaluable on a code node — is not
+# evaluable here at all. The honest floor: the checks stay unevaluated, a
+# derived record says so, and routing proceeds exactly as if observe — the
+# agent's own outcome is routed untouched. No verdict is ever fabricated
+# from an agent's self-report.
+apiVersion: nodes.culture.dev/v1alpha1
+kind: Workflow
+
+metadata:
+  name: worker-sync-acceptance-enforce
+  version: 1.0.0
+  ownerRef: team/platform-ai
+
+spec:
+  entry: analyze
+
+  contract:
+    input:
+      schema:
+        type: object
+        required: [subject]
+        properties:
+          subject:
+            type: string
+    output:
+      schema:
+        type: object
+        required: [score]
+        properties:
+          score:
+            type: number
+          summary:
+            type: string
+
+  limits:
+    maxDuration: 1h
+    maxTransitions: 8
+    maxVisitsPerNode: 4
+    maxParallelTokens: 1
+
+  ledger:
+    schemaVersion: nodes.culture.dev/ledger/v1alpha1
+    maxRecordsPerNode: 10
+
+  nodes:
+    analyze:
+      kind: agent
+      ownerRef: team/platform-ai
+      uses: actor://company/analyzer@sha256:aaaaaa
+      input:
+        from: /run/input
+      contract:
+        outcomes:
+          completed:
+            schema:
+              type: object
+              required: [score]
+              properties:
+                score:
+                  type: number
+                summary:
+                  type: string
+      ledger:
+        propose: [claim, result]
+      acceptance:
+        enforce: route_technical
+        requires:
+          - kind: process_exit
+            equals: 0
+      policy:
+        timeout: 2m
+        retry:
+          maxAttempts: 1
+          backoff: none
+
+    finish:
+      kind: end
+      ownerRef: team/platform-ai
+      output:
+        from: /nodes/analyze/output
+
+  edges:
+    - from: analyze.completed
+      to: finish

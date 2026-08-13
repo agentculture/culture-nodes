@@ -635,12 +635,19 @@
     },
     "acceptance": {
       "type": "object",
-      "description": "Mechanical acceptance checks (PRD §10.10). Check payloads stay open until the check registry lands with the compiler; only `kind` is required.",
+      "description": "Mechanical acceptance checks (PRD §10.10). Check payloads stay open until the check registry lands with the compiler; only `kind` is required. `enforce` declares what a failed check does to routing; omitting it means `observe`.",
       "required": [
         "requires"
       ],
       "additionalProperties": false,
       "properties": {
+        "enforce": {
+          "type": "string",
+          "maxLength": 142,
+          "pattern": "^(observe|route_technical|route_outcome:[a-z][a-z0-9_]*)$",
+          "default": "observe",
+          "description": "Policy for a failed acceptance check (issue #37). `observe` — the default when the field is omitted, and today's behavior — records the verdict as a derived record without touching routing. `route_technical` fails the attempt with the engine's `contract_rejected` technical status. `route_outcome:<name>` follows the graph edge of a domain outcome the node itself declares; the compiler rejects a name the node's contract does not declare."
+        },
         "requires": {
           "type": "array",
           "minItems": 1,

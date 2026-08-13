@@ -66,14 +66,33 @@ Acceptance blocks on sweep (`process_exit == 0`) and fix
 
 ## The human-merges rule
 
-**This flow holds zero merge credentials.** The sweep is read-only against
-two public APIs; the fix actor can push branches and open PRs but never
-merge; the review actor is read-only outright; the control plane holds no
-GitHub credential at all. Merging is a thing only the human at the gate can
-do, in their own session, with their own credentials — and the workflow's
-`approved` outcome is defined as the *record* of that act: answering
-`approved` states "I reviewed the PR and I merged it myself". The approval
-act includes the merge; the engine only ever learns about it.
+**This flow holds zero merge credentials in the control plane.** The sweep
+is read-only against two public APIs; the fix actor can push branches and
+open PRs but never merge; the review actor is read-only outright; the control
+plane process holds no GitHub credential at all (spec claim c13, issue #54).
+
+**How the workflow's `approved` outcome works now:** The human merges the PR
+in their own session, and a separate **merge tracker** (adapters/human-inbox,
+outside the deployment) observes the merge event through the GitHub API. When
+the tracker observes the PR transitioning to `merged: true`, it automatically
+submits the task through the bridge's existing submit surface with an
+**observed-submission claim** that names the merge commit. The engine records
+this as a `data.kind: "observed-submission"` ledger entry carrying the
+`collection_method: "github_pr_merged"` and the merge commit SHA — honest
+attribution without claiming runner-observed authority.
+
+**The credential boundary:** The GitHub credential (`GITHUB_TOKEN`) lives
+only in the tracker process beside the human-inbox bridge, outside the
+control-plane deployment. The tracker is stdlib-only and polls GitHub only
+for the declared observable (the PR number). The control plane continues to
+make zero GitHub API calls and holds zero GitHub credentials.
+
+**Override lanes stay intact:** Tasks with no declared `observe` block
+behave exactly as today — purely manual submit through the inbox. A person
+can still submit a task manually at any time, even if an observable is
+declared; the manual path is the override for dropped work and merges without
+a PR. A PR closed without merging does NOT auto-complete — only the merged
+state is unambiguous enough to trigger automatic submission.
 
 ## The single-repo boundary (claim c26)
 

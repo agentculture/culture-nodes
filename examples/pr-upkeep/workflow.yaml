@@ -127,7 +127,13 @@ spec:
       operation:
         image: python:3.12-slim@sha256:57cd7c3a7a273101a6485ba99423ee568157882804b1124b4dd04266317710de
         argv: [python3, /opt/pr-upkeep/sweep.py]
-        network: egress-allowlist
+        # egress-allowlist is the DECLARED intent (sonarcloud.io +
+        # api.github.com only), but headspace-cli 0.11.0 supports only a
+        # disabled/enabled network posture and the runner boundary honestly
+        # rejects the allowlist request (live run 01KZXACT0E81R8QE8CSWNC3ET2,
+        # deviation d2). `full` is the working posture until headspace grows
+        # an allowlist; tightening back is tracked in the deviation record.
+        network: full
         allowedOutputPaths: []
       contract:
         outcomes:

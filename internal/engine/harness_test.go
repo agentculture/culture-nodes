@@ -95,6 +95,36 @@ func compileFixture(t *testing.T, name string) *compiler.CompiledWorkflow {
 	return cw
 }
 
+// rewriteIR returns a copy of a compiled workflow whose normalized IR has
+// been edited in place — the shape of a definition a buggy or bypassed
+// compiler could pin. Nothing in production builds one; it exists so the
+// engine's defense-in-depth guards (the parallel-tokens design's D7
+// stranded-sibling refusal, for instance) can be driven at all, since the
+// compiler's job is to make them unreachable through the authoring path.
+//
+// The digest is re-derived by suffixing the original, which is enough for
+// EnsureWorkflowVersion to treat it as a distinct definition; it is
+// deliberately NOT a content hash, because a hand-mutated IR should never be
+// mistakable for something the compiler produced.
+func rewriteIR(t *testing.T, cw *compiler.CompiledWorkflow, edit func(ir map[string]any)) *compiler.CompiledWorkflow {
+	t.Helper()
+
+	var ir map[string]any
+	if err := json.Unmarshal(cw.Normalized, &ir); err != nil {
+		t.Fatalf("decode normalized IR: %v", err)
+	}
+	edit(ir)
+	normalized, err := json.Marshal(ir)
+	if err != nil {
+		t.Fatalf("encode rewritten IR: %v", err)
+	}
+
+	rewritten := *cw
+	rewritten.Normalized = normalized
+	rewritten.Digest = cw.Digest + "-rewritten"
+	return &rewritten
+}
+
 func (f *fixture) insertActor(key string) string {
 	f.t.Helper()
 	id := store.NewULID()

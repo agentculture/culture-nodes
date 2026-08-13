@@ -1,0 +1,113 @@
+# The `any` variant of the split/join slice: the barrier fires on the FIRST
+# arrival and the group's still-running branches are reaped explicitly in the
+# satisfying arrival's own transaction (parallel-tokens design §4.4 —
+# "cancellation of losing branches is explicit and best-effort"). Everything
+# below the join block is identical to parallel.workflow.yaml on purpose, so a
+# test can compare the two policies over one graph.
+apiVersion: nodes.culture.dev/v1alpha1
+kind: Workflow
+
+metadata:
+  name: engine-parallel-any
+  version: 1.0.0
+  ownerRef: team/platform-ai
+
+spec:
+  entry: fan
+
+  contract:
+    input:
+      schema:
+        type: object
+        properties:
+          slow:
+            type: boolean
+    output:
+      schema:
+        type: object
+
+  limits:
+    maxDuration: 1h
+    maxTransitions: 32
+    maxVisitsPerNode: 8
+    maxParallelTokens: 4
+
+  ledger:
+    schemaVersion: nodes.culture.dev/ledger/v1alpha1
+    maxRecordsPerNode: 10
+
+  nodes:
+    fan:
+      kind: parallel
+      ownerRef: team/platform-ai
+
+    lint:
+      kind: agent
+      ownerRef: team/quality-platform
+      uses: actor://company/linter@sha256:111111
+      input:
+        from: /run/input
+      contract:
+        outcomes:
+          clean:
+            schema:
+              type: object
+
+    test:
+      kind: agent
+      ownerRef: team/quality-platform
+      uses: actor://company/tester@sha256:222222
+      input:
+        from: /run/input
+      contract:
+        outcomes:
+          passed:
+            schema:
+              type: object
+
+    slow:
+      kind: agent
+      ownerRef: team/quality-platform
+      uses: actor://company/slowpoke@sha256:333333
+      input:
+        from: /run/input
+      contract:
+        outcomes:
+          done:
+            schema:
+              type: object
+
+    gather:
+      kind: join
+      ownerRef: team/platform-ai
+      join:
+        policy: any
+
+    finish:
+      kind: end
+      ownerRef: team/platform-ai
+      output:
+        from: /nodes/gather/output
+
+  edges:
+    - from: fan.split
+      to: lint
+
+    - from: fan.split
+      to: slow
+      when: has(input.slow) && input.slow
+
+    - from: fan.split
+      to: test
+
+    - from: lint.clean
+      to: gather
+
+    - from: test.passed
+      to: gather
+
+    - from: slow.done
+      to: gather
+
+    - from: gather.joined
+      to: finish

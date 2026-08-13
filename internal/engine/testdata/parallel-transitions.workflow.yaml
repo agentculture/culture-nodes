@@ -1,0 +1,112 @@
+# The maxTransitions fixture (parallel-tokens design §3.2/§5.2, test T6): a
+# K-way split is charged K transitions, not one, and the charge is checked
+# over the WHOLE eligible set before anything is created. maxTransitions is 2
+# here, so a three-way split is refused whole even though a two-way split
+# through the same node would be allowed.
+apiVersion: nodes.culture.dev/v1alpha1
+kind: Workflow
+
+metadata:
+  name: engine-parallel-transitions
+  version: 1.0.0
+  ownerRef: team/platform-ai
+
+spec:
+  entry: fan
+
+  contract:
+    input:
+      schema:
+        type: object
+        properties:
+          slow:
+            type: boolean
+    output:
+      schema:
+        type: object
+
+  limits:
+    maxDuration: 1h
+    maxTransitions: 2
+    maxVisitsPerNode: 8
+    maxParallelTokens: 4
+
+  ledger:
+    schemaVersion: nodes.culture.dev/ledger/v1alpha1
+    maxRecordsPerNode: 10
+
+  nodes:
+    fan:
+      kind: parallel
+      ownerRef: team/platform-ai
+
+    lint:
+      kind: agent
+      ownerRef: team/quality-platform
+      uses: actor://company/linter@sha256:111111
+      input:
+        from: /run/input
+      contract:
+        outcomes:
+          clean:
+            schema:
+              type: object
+
+    test:
+      kind: agent
+      ownerRef: team/quality-platform
+      uses: actor://company/tester@sha256:222222
+      input:
+        from: /run/input
+      contract:
+        outcomes:
+          passed:
+            schema:
+              type: object
+
+    slow:
+      kind: agent
+      ownerRef: team/quality-platform
+      uses: actor://company/slowpoke@sha256:333333
+      input:
+        from: /run/input
+      contract:
+        outcomes:
+          done:
+            schema:
+              type: object
+
+    gather:
+      kind: join
+      ownerRef: team/platform-ai
+      join:
+        policy: all
+
+    finish:
+      kind: end
+      ownerRef: team/platform-ai
+      output:
+        from: /nodes/gather/output
+
+  edges:
+    - from: fan.split
+      to: lint
+
+    - from: fan.split
+      to: slow
+      when: has(input.slow) && input.slow
+
+    - from: fan.split
+      to: test
+
+    - from: lint.clean
+      to: gather
+
+    - from: test.passed
+      to: gather
+
+    - from: slow.done
+      to: gather
+
+    - from: gather.joined
+      to: finish

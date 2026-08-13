@@ -593,13 +593,20 @@ func (c *completion) advance(ctx context.Context, plan transitionPlan, transitio
 		// already re-entered the enclosing group — which is exactly the group
 		// the outer barrier gathers (design §3.3 propagation, test T14).
 		c.result.EdgeFrom = target.Edge.From
-		return c.arriveAtJoin(ctx, next, arrival{
+		diagnostic, err := c.joinTx().arriveAtJoin(ctx, next, arrival{
 			TokenID: c.nodeRun.TokenID,
 			GroupID: nextGroupID,
 			Outcome: target.Edge.FromOutcome,
 			Output:  c.req.Output,
 			Edge:    target.Edge,
 		}, visits)
+		if err != nil {
+			return err
+		}
+		if diagnostic != "" {
+			return c.failRun(ctx, c.result.NodeRunState, diagnostic)
+		}
+		return c.finish(ctx)
 	}
 
 	token := Token{

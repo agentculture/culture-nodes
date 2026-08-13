@@ -475,22 +475,36 @@ func (d *humanTaskDecision) advance(ctx context.Context, plan transitionPlan, tr
 			Detail: fmt.Sprintf("edge %q targets node %q, which the pinned definition does not declare", target.Edge.From, target.NextNodeID),
 		}
 	}
-	if next.Kind == kindJoin {
-		// The join-arrival path lives on the completion transaction
-		// (parallel.go); this human-decision slice does not implement it,
-		// and the compiler refuses approval-outcome edges into a join
-		// (graph.approval_into_join) so authored workflows cannot get here.
-		// This guard keeps a hand-built IR loud instead of corrupting a
-		// barrier with a non-arrival node run.
-		return d.failRun(ctx, d.result.NodeRunState, fmt.Sprintf(
-			"approval node %q routed directly into join node %q, which the human-decision path does not support; route the decision through an intermediate node", d.nodeRun.NodeID, next.ID))
-	}
-
 	// Group propagation (parallel-tokens design §3.3): an approval node
 	// inside a split branch keeps its branch in the group.
 	sourceToken, err := d.tx.Token(ctx, d.nodeRun.TokenID)
 	if err != nil {
 		return err
+	}
+
+	if next.Kind == kindJoin {
+		// An approval node is a perfectly ordinary member of a split branch
+		// — "wait for a human on each branch, then reconvene" is the obvious
+		// use — so a human decision routes into a barrier through the SAME
+		// arrival implementation a worker completion does (parallel.go's
+		// joinTx), not a second copy that could count a group twice. An
+		// approval node is never a parallel node, so a decision never fans
+		// out; only the arrival half is reachable from here.
+		d.result.EdgeFrom = target.Edge.From
+		diagnostic, err := d.joinTx().arriveAtJoin(ctx, next, arrival{
+			TokenID: d.nodeRun.TokenID,
+			GroupID: sourceToken.GroupID,
+			Outcome: target.Edge.FromOutcome,
+			Output:  d.req.Response,
+			Edge:    target.Edge,
+		}, visits)
+		if err != nil {
+			return err
+		}
+		if diagnostic != "" {
+			return d.failRun(ctx, d.result.NodeRunState, diagnostic)
+		}
+		return d.finish(ctx)
 	}
 
 	token := Token{
@@ -588,6 +602,19 @@ func (d *humanTaskDecision) advance(ctx context.Context, plan transitionPlan, tr
 }
 
 func (d *humanTaskDecision) completeRun(ctx context.Context, endNodeID string, transitions int) error {
+	// Design D7's defense in depth, the same guard completion.completeRun
+	// keeps: an end node reached with sibling tokens still active means a
+	// pinned IR the compiler's no-end-inside-a-split walk never saw.
+	active, err := d.tx.ActiveTokenCount(ctx, d.run.ID)
+	if err != nil {
+		return err
+	}
+	if active > 0 {
+		return d.failRun(ctx, d.result.NodeRunState, fmt.Sprintf(
+			"end node %q was reached with %d sibling token(s) still active; a run must not complete while branches are live (parallel-tokens design D7)",
+			endNodeID, active))
+	}
+
 	output, err := d.resolveRunOutput(ctx, endNodeID)
 	if err != nil {
 		var contractErr *ContractError
@@ -622,6 +649,11 @@ func (d *humanTaskDecision) failRun(ctx context.Context, nodeRunState NodeRunSta
 	if err := d.tx.ConsumeToken(ctx, d.nodeRun.TokenID); err != nil {
 		return err
 	}
+	// Design D6, the same reap completion.failRun performs: a failed run
+	// must leave no live sibling branch behind to be re-dispatched.
+	if err := d.reapSiblings(ctx, "the run failed: "+detail); err != nil {
+		return err
+	}
 	if err := d.tx.UpdateRunState(ctx, d.run.ID, RunFailed, nil); err != nil {
 		return err
 	}
@@ -643,6 +675,9 @@ func (d *humanTaskDecision) failRun(ctx context.Context, nodeRunState NodeRunSta
 }
 
 func (d *humanTaskDecision) failBound(ctx context.Context, bound *BoundExceeded, transitions int) error {
+	if err := d.reapSiblings(ctx, fmt.Sprintf("the run was stopped by its %s bound", bound.Kind)); err != nil {
+		return err
+	}
 	if err := d.tx.UpdateRunState(ctx, d.run.ID, RunFailed, nil); err != nil {
 		return err
 	}

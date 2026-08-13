@@ -600,6 +600,43 @@ paths:
               schema:
                 $ref: '#/components/schemas/Error'
 
+  /v1alpha1/dispatch-rates:
+    get:
+      operationId: listDispatchRates
+      tags: [actors]
+      summary: The declared dispatch rates and what each has consumed.
+      description: >-
+        Task t10 (issue #48 item 2): the pacing control's read surface. A
+        worker holds itself to a declared session rate — globally and per
+        actor — against durable state every worker shares (migration 0022's
+        `dispatch_rate_state`), because workers scale horizontally and an
+        in-process limiter would enforce one rate per process rather than
+        one rate.
+
+
+        This endpoint answers "why is this run sitting still" from the
+        operator's side: the rate being enforced, how much of the CURRENT
+        session window it has consumed, how much the rest of that window can
+        still absorb, and when the next dispatch may go. Per deferral, the
+        run's own event stream answers it too
+        (`dev.culture.nodes.dispatch.paced`).
+
+
+        A scope with no recorded state is absent rather than rendered as a
+        zeroed row: this surface reports what the workers have actually
+        enforced, not what an environment somewhere claims to have
+        configured. Read-only by design — a rate is the operator's own
+        declaration, and it is changed by changing the workers'
+        configuration (`NODES_DISPATCH_RATE_*`), not by an API that would
+        then disagree with it.
+      responses:
+        '200':
+          description: Every rate scope with recorded state in this namespace.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/DispatchRateList'
+
   /v1alpha1/runs/{id}:
     get:
       operationId: getRun
@@ -2224,6 +2261,8 @@ components:
           format: date-time
         availability:
           $ref: '#/components/schemas/ActorAvailability'
+        dispatch_rate:
+          $ref: '#/components/schemas/DispatchRate'
 
     ActorAvailability:
       type: object
@@ -2289,6 +2328,95 @@ components:
             and "a human let it back in" distinguishable afterwards.
         cleared_by:
           type: string
+
+    DispatchRateList:
+      type: object
+      description: GET /v1alpha1/dispatch-rates' payload (task t10).
+      required: [items]
+      properties:
+        items:
+          type: array
+          items:
+            $ref: '#/components/schemas/DispatchRate'
+
+    DispatchRate:
+      type: object
+      description: >-
+        One dispatch-rate scope's declared rate and its standing in the
+        CURRENT session window (task t10, migration 0022's
+        `dispatch_rate_state`). On an actor payload it is that actor's own
+        rate, resolved by `actor_key` the way `availability` is, and absent
+        when no declared rate has ever admitted a dispatch to it.
+
+
+        `window_started_at`, `window_ends_at`, `dispatched` and `remaining`
+        are computed against the moment of the read, not read raw from the
+        row: session windows reset on a fixed clock, so a stored counter
+        belonging to a window that has already ended reports zero
+        consumption rather than showing last window's spending as though it
+        still constrained anything. `last_dispatch_at` and `updated_at` stay
+        raw row provenance, so that history is not lost either.
+      required:
+        [scope, limit_per_window, window_seconds, window_anchor,
+         window_started_at, window_ends_at, dispatched, remaining, updated_at]
+      properties:
+        scope:
+          type: string
+          description: >-
+            `global` (the whole installation's session rate) or `actor` (one
+            actor key's own).
+        scope_key:
+          type: string
+          description: The actor key for scope `actor`; absent for `global`.
+        limit_per_window:
+          type: integer
+          description: >-
+            Dispatches one window may admit, as the last worker to consume a
+            slot enforced it. Workers that disagree about the configured
+            rate show up here rather than being averaged away.
+        window_seconds:
+          type: integer
+          description: The session window's length.
+        window_anchor:
+          type: string
+          format: date-time
+          description: >-
+            The reset clock: an instant at which a window boundary falls.
+            Every boundary is this instant plus or minus a whole number of
+            windows, which is how horizontally-scaled workers agree on which
+            window they are in without exchanging a message.
+        window_started_at:
+          type: string
+          format: date-time
+          description: The start of the window this rate is in right now.
+        window_ends_at:
+          type: string
+          format: date-time
+          description: When that window resets and the budget returns.
+        dispatched:
+          type: integer
+          description: Dispatches admitted in the current window.
+        remaining:
+          type: integer
+          description: >-
+            How many more dispatches this scope may admit before the window
+            ends: the remaining-window capacity capped by the remaining
+            budget. It shrinks as the window runs out even when nothing has
+            been consumed, because the control spreads sessions across the
+            REMAINING window rather than at a rate that ignores when the
+            window ends (spec claim c43).
+        next_dispatch_at:
+          type: string
+          format: date-time
+          description: >-
+            The pace, made durable: the earliest instant the next dispatch
+            in this scope may go. Absent when nothing has dispatched yet.
+        last_dispatch_at:
+          type: string
+          format: date-time
+        updated_at:
+          type: string
+          format: date-time
 
     ResumeActorRequest:
       type: object

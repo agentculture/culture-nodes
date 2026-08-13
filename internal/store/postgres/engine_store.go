@@ -764,6 +764,15 @@ func (eq engineQueries) NodeOutput(ctx context.Context, runID, nodeID string) (j
 	return json.RawMessage(result), nil
 }
 
+// NodeEvidence returns the run's live evidence ledger records belonging to a
+// node's node runs, in id order — what `/nodes/<id>/evidence` resolves to.
+// It is queryNodeEvidence, the same statement Store.NodeEvidence runs, so a
+// worker resolving bindings outside an engine transaction gets the same
+// answer the engine's end-node output binding gets inside one.
+func (eq engineQueries) NodeEvidence(ctx context.Context, runID, nodeID string) ([]ledger.Record, error) {
+	return queryNodeEvidence(ctx, eq.q, runID, nodeID)
+}
+
 const insertEngineEventSQL = `
 INSERT INTO events (id, namespace_id, aggregate_type, aggregate_id, sequence, event_type, source, data, occurred_at)
 VALUES ($1, $2, 'run', $3, $4, $5, 'nodes', $6, now())

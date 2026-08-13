@@ -1,0 +1,92 @@
+# The slice task t7's end-to-end test drives: a node whose accepted ledger
+# delta leaves evidence behind, a second node appending evidence of its own
+# (the leak the selector must not make), and a third node whose input binds
+# /nodes/gather/evidence — which must resolve to exactly gather's records.
+apiVersion: nodes.culture.dev/v1alpha1
+kind: Workflow
+
+metadata:
+  name: worker-evidence-slice
+  version: 1.0.0
+  ownerRef: team/platform-ai
+
+spec:
+  entry: gather
+
+  contract:
+    input:
+      schema:
+        type: object
+    output:
+      schema:
+        type: object
+
+  limits:
+    maxDuration: 1h
+    maxTransitions: 8
+    maxVisitsPerNode: 4
+    maxParallelTokens: 1
+
+  ledger:
+    schemaVersion: nodes.culture.dev/ledger/v1alpha1
+    maxRecordsPerNode: 10
+
+  nodes:
+    gather:
+      kind: agent
+      ownerRef: team/platform-ai
+      uses: actor://company/analyzer@sha256:aaaaaa
+      input:
+        from: /run/input
+      contract:
+        outcomes:
+          completed:
+            schema:
+              type: object
+      ledger:
+        propose: [claim, evidence]
+
+    # A second node appending its own evidence: the downstream binding names
+    # gather, so none of this node's records may appear there.
+    distract:
+      kind: agent
+      ownerRef: team/platform-ai
+      uses: actor://company/analyzer@sha256:aaaaaa
+      input:
+        from: /run/input
+      contract:
+        outcomes:
+          completed:
+            schema:
+              type: object
+      ledger:
+        propose: [evidence]
+
+    verify:
+      kind: agent
+      ownerRef: team/platform-ai
+      uses: actor://company/analyzer@sha256:aaaaaa
+      input:
+        bindings:
+          testEvidence: /nodes/gather/evidence
+      contract:
+        outcomes:
+          completed:
+            schema:
+              type: object
+
+    finish:
+      kind: end
+      ownerRef: team/platform-ai
+      output:
+        from: /nodes/verify/output
+
+  edges:
+    - from: gather.completed
+      to: distract
+
+    - from: distract.completed
+      to: verify
+
+    - from: verify.completed
+      to: finish

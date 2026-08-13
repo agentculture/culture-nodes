@@ -6,6 +6,8 @@ import (
 	"fmt"
 	"strconv"
 	"strings"
+
+	"github.com/agentculture/culture-nodes/internal/ledger"
 )
 
 // Binding resolution (PRD §11.2). The compiler has already proven every
@@ -13,12 +15,16 @@ import (
 // so this resolver's job is only to *read* one, and its errors are about
 // runtime data ("that node has not produced output yet"), never about syntax.
 //
-// The MVP resolves the two surfaces a run's own state can answer: /run/input
-// and /nodes/<id>/output. The others the compiler admits — /nodes/<id>/
-// evidence, /artifacts, and /ledger/projections/<name> — need the runner
-// boundary and the ledger projection reader, which belong to their own tasks;
-// asking for one here fails loudly rather than resolving to an empty value a
-// caller would mistake for a real answer.
+// This resolver answers the surfaces a run's own state can answer: /run/input,
+// /nodes/<id>/output, and /nodes/<id>/evidence — the same node-surface set
+// internal/worker's resolver accepts, so a pointer the compiler admits never
+// resolves in one runtime and fails in the other. Evidence resolves to a JSON
+// array of the node's live evidence records in id order; evidence identity is
+// the node run (the engine stamps node_run_id on every accepted delta
+// record), and a node that appended none resolves to [] — zero records is
+// itself the answer, not an absence to fail on. /ledger/projections/<name>
+// needs the ledger projection reader and still fails loudly here rather than
+// resolving to an empty value a caller would mistake for a real answer.
 
 func resolveBinding(ctx context.Context, tx Tx, run Run, pointer string) (json.RawMessage, error) {
 	tokens, err := parsePointer(pointer)
@@ -43,17 +49,32 @@ func resolveBinding(ctx context.Context, tx Tx, run Run, pointer string) (json.R
 		if len(tokens) < 3 {
 			return nil, fmt.Errorf("a node binding names a node and a surface, e.g. /nodes/<node>/output")
 		}
-		if tokens[2] != "output" {
-			return nil, fmt.Errorf("surface %q is not resolvable yet; this engine resolves /run/input and /nodes/<node>/output", tokens[2])
+		switch tokens[2] {
+		case "output":
+			output, err := tx.NodeOutput(ctx, run.ID, tokens[1])
+			if err != nil {
+				return nil, err
+			}
+			if output == nil {
+				return nil, fmt.Errorf("node %q has no succeeded attempt in this run, so it has no output", tokens[1])
+			}
+			base, rest = output, tokens[3:]
+		case "evidence":
+			records, err := tx.NodeEvidence(ctx, run.ID, tokens[1])
+			if err != nil {
+				return nil, err
+			}
+			if records == nil {
+				records = []ledger.Record{}
+			}
+			encoded, err := json.Marshal(records)
+			if err != nil {
+				return nil, fmt.Errorf("evidence of node %q could not be encoded: %w", tokens[1], err)
+			}
+			base, rest = encoded, tokens[3:]
+		default:
+			return nil, fmt.Errorf("surface %q is not resolvable; this engine resolves /run/input, /nodes/<node>/output, and /nodes/<node>/evidence", tokens[2])
 		}
-		output, err := tx.NodeOutput(ctx, run.ID, tokens[1])
-		if err != nil {
-			return nil, err
-		}
-		if output == nil {
-			return nil, fmt.Errorf("node %q has no succeeded attempt in this run, so it has no output", tokens[1])
-		}
-		base, rest = output, tokens[3:]
 
 	default:
 		return nil, fmt.Errorf("binding root %q is not resolvable yet; this engine resolves /run/input and /nodes/<node>/output", tokens[0])

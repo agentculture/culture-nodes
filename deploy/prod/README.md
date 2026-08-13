@@ -86,6 +86,41 @@ The worker envs that complete the code-dispatch wiring:
 - `NODES_RUNNER_SERVICES_FILE` — the path to this registry file; unset
   or an empty array keeps the worker in-process only.
 
+## Dispatch pacing (NODES_DISPATCH_RATE_*)
+
+Task t10 (issue #48 item 2). A worker can hold itself to a declared
+session rate so a backlog does not drain at dispatch speed into a
+subscription window that resets on a fixed clock. The state is durable
+and shared (`dispatch_rate_state`, migration 0022), so several workers
+honour ONE rate between them rather than one rate each. Unset, there is
+no pacing and nothing changes; a malformed value refuses to start the
+worker rather than dispatching unpaced.
+
+- `NODES_DISPATCH_RATE_LIMIT` — dispatches all of this namespace's
+  workers together may start per window. This is the meter that matters
+  when several actors draw on one subscription pool.
+- `NODES_ACTOR_DISPATCH_RATE_LIMIT` — the default rate each actor key
+  gets *separately*, on the same window.
+- `NODES_ACTOR_DISPATCH_RATE_LIMITS` — per-actor overrides,
+  `company/analyzer=4,company/reviewer=1`; a limit of `0` opts that actor
+  out of the default entirely.
+- `NODES_DISPATCH_RATE_WINDOW` — the session window's length as a Go
+  duration; defaults to `5h`. It applies to every scope, because it
+  describes the subscription's reset cycle, not one scope's allowance.
+- `NODES_DISPATCH_RATE_ANCHOR` — the reset clock, an RFC 3339 instant at
+  which a window boundary falls (`2026-08-13T00:00:00Z`). Windows tile
+  off it in both directions; every worker must use the same one. Unset
+  tiles from the Unix epoch, which puts round window lengths on round
+  clock times.
+
+The rate is spread across the REMAINING window, not applied as a flat
+interval: a wave starting halfway through a window can place about half
+as many sessions as the same wave starting at the reset. Read what is
+actually being enforced — and what each scope has consumed this window —
+with `curl -s $API/v1alpha1/dispatch-rates`; each actor's own rate also
+rides on `GET /v1alpha1/actors`. A paced deferral is recorded per run as
+`dev.culture.nodes.dispatch.paced`, so a stalled run explains itself.
+
 ## Network trust
 
 Postgres (5432), MinIO (9000), the API (18080), and the runners (17070)

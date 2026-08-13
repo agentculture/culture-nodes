@@ -42,13 +42,22 @@ import (
 // since the scheduler's own effect commits through this very database
 // anyway.
 //
-// Delivery semantics in this pass (documented limitation, issue #43):
-// subscription-then-event resumes; event-then-subscription stays parked.
-// DeliverSignalEvent fires the subscriptions that are pending at append
-// time and never scans event history for a later subscriber — see the
-// migration comment (migrations/0016_signal_events.sql) for why the
-// append-only fact table keeps retroactive/multi-consumer pickup buildable
-// without a schema change.
+// Delivery semantics. DeliverSignalEvent fires the subscriptions that are
+// pending at append time and deliberately never scans event history: live
+// delivery is a broadcast over what is waiting NOW, and keeping it that way
+// is what makes it one indexed scan. Migration 0016 documented the gap that
+// left — event-then-subscription stayed parked forever — and task t21 closed
+// it from the OTHER side rather than by widening this scan: a wait that is
+// about to park first asks signalreplay.go's ReplaySignalEvent whether the
+// run has an unconsumed backlogged fact for that name (design D12's per-run,
+// per-name cursor). Delivery therefore stays a broadcast, catch-up stays a
+// per-subscriber cursor, and the append-only fact table is what lets the two
+// coexist without a schema change to this pair of tables.
+//
+// Route pickup (eventroutes.go, design D9) rides the same transaction:
+// after firing subscriptions, a delivery may also create tokens at the
+// target nodes of active event_routes. It still completes nothing — the
+// tokens it creates are new claimable work, exactly like CreateRun's.
 
 // Signal subscription status values (signal_subscriptions.status). The
 // 'canceled' spelling (one l) matches the timers table's own vocabulary

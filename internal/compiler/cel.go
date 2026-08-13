@@ -15,15 +15,15 @@ import (
 //   - input    the run input (whatever /run/input holds)
 //   - output   the deciding node's output for the outcome being routed
 //   - outcome  the domain outcome name that produced this transition
-//   - event    the delivered signal event on an `onEvent` edge (issue #43):
-//              {name, payload, emitter}. It is declared in the one shared
-//              environment rather than a second event-only one, because the
-//              engine has to rebuild the identical environment from the IR
-//              after a restart and two environments would be two chances to
-//              drift. On a node-outcome transition it evaluates as an empty
-//              map, so a guard that reaches into it reports "no such key" —
-//              a guard failure, which does not match — rather than matching
-//              on nothing.
+//   - event    the delivered signal event on an `onEvent` edge (issue #43)
+//
+// `event` ({name, payload, emitter}) is declared in the one shared
+// environment rather than a second event-only one, because the engine has to
+// rebuild the identical environment from the IR after a restart and two
+// environments would be two chances to drift. On a node-outcome transition it
+// evaluates as an empty map, so a guard that reaches into it reports "no such
+// key" — a guard failure, which does not match — rather than matching on
+// nothing.
 const (
 	CELVarInput   = "input"
 	CELVarOutput  = "output"

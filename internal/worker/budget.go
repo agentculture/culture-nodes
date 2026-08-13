@@ -233,6 +233,13 @@ func (p sessionPlan) ColdStart() bool { return p.ContinuationRef == nil }
 // Both halves are best-effort exactly as they are on their own: an
 // unresolvable row id or a failed lookup yields a cold dispatch, which costs
 // more and is never wrong.
+//
+// It runs for every actor dispatch, budgeted or not, because the outbound
+// request needs the ref regardless — these are the same two lookups
+// dispatchActor always made, moved earlier. The only dispatches that pay for
+// them without using them are the ones that end before the wire (a paused
+// actor, a failed pre-run hook), and paying two indexed reads there is worth
+// having exactly one place where "which session is this" is decided.
 func (w *Worker) planSession(ctx context.Context, node *nodeSpec, dc DispatchContext) sessionPlan {
 	if w.opts.Registry == nil {
 		return sessionPlan{}

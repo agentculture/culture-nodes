@@ -59,10 +59,11 @@ import (
 // the class recorded and does not pause the actor.
 //
 // This is a real gap, not a decision that async exhaustion does not matter,
-// and it is worth being blunt about which dispatches fall in it: the codex
-// bridge routes long work asynchronously (decide_async in
-// adapters/codex/src/codex_bridge/server.py), and long work is exactly what
-// the routing default sends to codex actors. Closing it means giving
+// and it is worth being blunt about which dispatches fall in it: at least
+// one bridge in adapters/ routes LONG work asynchronously by policy, and
+// long work is exactly what the split-plan routing default sends to the
+// agent fleet — so the dispatches most likely to exhaust a provider are the
+// ones on the uncovered path. Closing it means giving
 // CallbackDeps a pause seam and relocating the pause-policy constants below
 // into internal/actors (internal/actors cannot import this package —
 // the dependency runs the other way), i.e. a change to a shared protocol

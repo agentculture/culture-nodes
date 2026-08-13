@@ -16,8 +16,8 @@
 -- quota. So availability lives beside identity, in its own mutable row.
 --
 -- WHY KEYED BY actor_key AND NOT BY actors.id. Provider capacity belongs to
--- the IDENTITY, not to one revision of its registration: re-registering
--- codex-thor with a new endpoint does not give it a fresh quota. The
+-- the IDENTITY, not to one revision of its registration: re-registering an
+-- agent actor with a new endpoint does not give it a fresh quota. The
 -- dispatch site also has the actor key in hand unconditionally
 -- (internal/worker/registry.go's actorKeyOf over the node's `uses`), while
 -- the actors-table row id is best-effort and may be "" for a registry that

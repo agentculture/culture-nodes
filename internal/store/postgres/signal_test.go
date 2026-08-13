@@ -299,6 +299,69 @@ func TestDeliverSignalEventDoesNotRetroactivelyFireLaterSubscriber(t *testing.T)
 	}
 }
 
+// TestDeliverSignalEventLeavesCancelledWorkItemDead pins the resume
+// UPDATE's state guard: a delivery may only return a work item that is
+// actually parked ('waiting') to 'ready', never resurrect a 'cancelled'
+// one. The API's cancelRun REAP (internal/api's cancel path, task t10)
+// retires the pending subscription together with the work item under the
+// run's advisory lock, so in the normal order a delivery finds no pending
+// row at all — this test simulates the subscription OUTLIVING that reap
+// (a pre-t10 database, or any future writer that cancels the work item
+// without retiring the subscription) and asserts the delivery acks the
+// event by retiring the leftover subscription without re-enabling the
+// dead run's work.
+func TestDeliverSignalEventLeavesCancelledWorkItemDead(t *testing.T) {
+	s := requireStore(t)
+	ctx := context.Background()
+	ns := mustNamespace(t, s, "signal-dead")
+	runID, nodeRunID := mustRunAndNodeRun(t, s, ns.ID)
+	claimed, subID := parkOnSignal(t, s, ns.ID, runID, nodeRunID, "green-light")
+
+	// Cancel the run's rows exactly as cancelRun writes them — but leave
+	// the subscription pending, simulating it outliving the REAP.
+	for _, stmt := range []struct{ sql, arg string }{
+		{`UPDATE runs SET status = 'cancelled', updated_at = now(), completed_at = now() WHERE id = $1`, runID},
+		{`UPDATE node_runs SET status = 'cancelled', updated_at = now(), completed_at = now() WHERE id = $1`, nodeRunID},
+		{`UPDATE work_items SET state = 'cancelled', updated_at = now() WHERE node_run_id = $1`, nodeRunID},
+	} {
+		if _, err := s.Pool().Exec(ctx, stmt.sql, stmt.arg); err != nil {
+			t.Fatalf("cancel setup: %v", err)
+		}
+	}
+
+	_, fired, err := s.DeliverSignalEvent(ctx, postgres.DeliverSignalEventInput{
+		NamespaceID: ns.ID, Name: "green-light", Emitter: "external",
+	})
+	if err != nil {
+		t.Fatalf("DeliverSignalEvent: %v", err)
+	}
+
+	// The event is acked: the leftover subscription is retired (fired), so
+	// it can never match a later delivery either.
+	if len(fired) != 1 || fired[0].ID != subID {
+		t.Fatalf("fired = %+v, want exactly the leftover subscription %s", fired, subID)
+	}
+	sub, _, err := s.SignalSubscriptionByID(ctx, subID)
+	if err != nil {
+		t.Fatalf("SignalSubscriptionByID: %v", err)
+	}
+	if sub.Status != postgres.SignalSubscriptionFired {
+		t.Errorf("leftover subscription after delivery = %s, want fired (acked, retired)", sub.Status)
+	}
+
+	// ...but nothing about the dead run came back to life.
+	if state, _ := workItemState(t, s, claimed.ID); state != "cancelled" {
+		t.Errorf("work item after delivery = %q, want cancelled (a delivery must never resurrect a cancelled run's work)", state)
+	}
+	var runStatus string
+	if err := s.Pool().QueryRow(ctx, `SELECT status FROM runs WHERE id = $1`, runID).Scan(&runStatus); err != nil {
+		t.Fatalf("read run status: %v", err)
+	}
+	if runStatus != "cancelled" {
+		t.Errorf("run after delivery = %q, want cancelled", runStatus)
+	}
+}
+
 // TestStartDurableSignalWaitReparkAdoptsOriginalSubscription pins the
 // ON CONFLICT DO NOTHING contract: a re-park under the same deterministic
 // subscription id must not reset a subscription a delivery already fired.

@@ -40,7 +40,11 @@ func newFixture(t *testing.T) *fixture {
 	s := requireStore(t)
 
 	nsID := pgtest.MustNamespace(t, s, "api").ID
-	srv, err := api.NewServer(s, nsID, api.WithPollInterval(30*time.Millisecond))
+	srv, err := api.NewServer(s, nsID,
+		api.WithPollInterval(30*time.Millisecond),
+		// The ad-hoc lane is auth-gated (t15, spec c27); the fixture
+		// configures its secret so adhoc tests exercise the authed path.
+		api.WithAdhocRunSecret(fixtureAdhocSecret))
 	if err != nil {
 		t.Fatalf("api.NewServer: %v", err)
 	}
@@ -135,3 +139,8 @@ func (f *fixture) release(workID string) {
 		f.t.Fatalf("release work item %s: %v", workID, err)
 	}
 }
+
+// fixtureAdhocSecret is the ad-hoc bearer secret every fixture server
+// configures (t15 auth-hardening gate) — adhoc tests present it via
+// doJSONBearer.
+const fixtureAdhocSecret = "fixture-adhoc-secret-long-enough"

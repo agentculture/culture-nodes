@@ -36,7 +36,7 @@ func TestAdhocRunCreatesNormalPinnedRun(t *testing.T) {
 	f := newFixture(t)
 
 	var run apipkg.RunOut
-	resp, body := doJSON(t, f.client, http.MethodPost, f.url("/v1alpha1/adhoc-runs"),
+	resp, body := doJSONBearer(t, f.client, http.MethodPost, f.url("/v1alpha1/adhoc-runs"), fixtureAdhocSecret,
 		adhocRunReq{Instruction: "review the README for stale commands", ActorRef: testAdhocActorRef, Repo: "/tmp/culture-nodes"}, &run)
 	requireStatus(t, resp, body, http.StatusCreated)
 
@@ -112,7 +112,7 @@ func TestAdhocRunPublishIsIdempotentByDigest(t *testing.T) {
 	req := adhocRunReq{Instruction: "first pass", ActorRef: testAdhocActorRef, Repo: "/tmp/repo"}
 
 	var first apipkg.RunOut
-	resp, body := doJSON(t, f.client, http.MethodPost, f.url("/v1alpha1/adhoc-runs"), req, &first)
+	resp, body := doJSONBearer(t, f.client, http.MethodPost, f.url("/v1alpha1/adhoc-runs"), fixtureAdhocSecret, req, &first)
 	requireStatus(t, resp, body, http.StatusCreated)
 
 	// The instruction is run input, not workflow content: even a different
@@ -120,7 +120,7 @@ func TestAdhocRunPublishIsIdempotentByDigest(t *testing.T) {
 	// stable across assignments to the same actor.
 	req.Instruction = "second pass, different instruction"
 	var second apipkg.RunOut
-	resp, body = doJSON(t, f.client, http.MethodPost, f.url("/v1alpha1/adhoc-runs"), req, &second)
+	resp, body = doJSONBearer(t, f.client, http.MethodPost, f.url("/v1alpha1/adhoc-runs"), fixtureAdhocSecret, req, &second)
 	requireStatus(t, resp, body, http.StatusCreated)
 
 	if second.ID == first.ID {
@@ -140,7 +140,7 @@ func TestAdhocRunPublishIsIdempotentByDigest(t *testing.T) {
 	// A different timeout is workflow content — new digest, second version.
 	req.Timeout = "30m"
 	var third apipkg.RunOut
-	resp, body = doJSON(t, f.client, http.MethodPost, f.url("/v1alpha1/adhoc-runs"), req, &third)
+	resp, body = doJSONBearer(t, f.client, http.MethodPost, f.url("/v1alpha1/adhoc-runs"), fixtureAdhocSecret, req, &third)
 	requireStatus(t, resp, body, http.StatusCreated)
 	if third.WorkflowDigest == first.WorkflowDigest {
 		t.Fatal("digest unchanged although the rendered timeout differs")
@@ -170,7 +170,7 @@ func TestAdhocRunValidation(t *testing.T) {
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			resp, body := doJSON(t, f.client, http.MethodPost, f.url("/v1alpha1/adhoc-runs"), tc.req, nil)
+			resp, body := doJSONBearer(t, f.client, http.MethodPost, f.url("/v1alpha1/adhoc-runs"), fixtureAdhocSecret, tc.req, nil)
 			requireStatus(t, resp, body, http.StatusBadRequest)
 			decodeAPIError(t, body)
 		})

@@ -56,6 +56,14 @@ const envActorRegistrationSecret = "NODES_ACTOR_REGISTRATION_TOKEN_SECRET"
 // an error: delivery is simply refused with 401 until an operator sets it.
 const envEventTokenSecret = "NODES_EVENT_TOKEN_SECRET"
 
+// envAdhocRunSecret is the bearer secret POST /v1alpha1/adhoc-runs requires
+// (api.WithAdhocRunSecret) — task t19's ad-hoc lane, gated by the t15
+// auth-hardening pass (spec c27). Its own secret for the same
+// separation-of-standing reason as the three above: the power to start
+// ad-hoc (often billable) work is granted independently. Unset is not an
+// error: ad-hoc runs are simply refused with 401 until an operator sets it.
+const envAdhocRunSecret = "NODES_ADHOC_RUN_TOKEN_SECRET"
+
 // minDecisionAuthSecretBytes mirrors actors.MinTokenSecretBytes: a secret
 // short enough to guess is not meaningfully different from no secret at
 // all, so it is refused at startup rather than accepted and quietly weak.
@@ -189,6 +197,12 @@ func runServeMode(args []string, verb string, withScheduler bool) (int, error) {
 		return 0, err
 	}
 	opts = append(opts, api.WithEventTokenSecret(eventTokenSecret))
+
+	adhocRunSecret, err := authSecretFromEnv(envAdhocRunSecret)
+	if err != nil {
+		return 0, err
+	}
+	opts = append(opts, api.WithAdhocRunSecret(adhocRunSecret))
 
 	srv, err := api.NewServer(db, namespaceID, opts...)
 	if err != nil {

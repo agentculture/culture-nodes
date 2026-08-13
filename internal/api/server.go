@@ -227,6 +227,7 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("GET /v1alpha1/workflows", s.wrap(s.handleListWorkflows))
 	mux.HandleFunc("GET /v1alpha1/workflows/{digest}", s.wrap(s.handleGetWorkflow))
 
+	mux.HandleFunc("POST /v1alpha1/adhoc-runs", s.wrap(s.handleCreateAdhocRun))
 	mux.HandleFunc("POST /v1alpha1/runs", s.wrap(s.handleCreateRun))
 	mux.HandleFunc("GET /v1alpha1/runs", s.wrap(s.handleListRuns))
 	mux.HandleFunc("GET /v1alpha1/runs/{id}", s.wrap(s.handleGetRun))

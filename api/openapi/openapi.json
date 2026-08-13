@@ -295,6 +295,40 @@
         ],
         "type": "object"
       },
+      "AdhocRunRequest": {
+        "properties": {
+          "actor_ref": {
+            "description": "The agent actor to dispatch to, as a component reference, e.g. `actor://company/codex-thor@sha256:...`.",
+            "type": "string"
+          },
+          "instruction": {
+            "description": "What the actor is being asked to do. Rides as run input, never workflow content.",
+            "type": "string"
+          },
+          "repo": {
+            "description": "The checkout path the actor works in. Rides as run input.",
+            "type": "string"
+          },
+          "sandbox": {
+            "description": "Sandbox mode for the session (default `read-only`). Rides as run input.",
+            "type": "string"
+          },
+          "success_outcome": {
+            "description": "The domain outcome name the task node declares (default `completed`); must match the workflow schema's outcomeName pattern `^[a-z][a-z0-9_]*$`.",
+            "type": "string"
+          },
+          "timeout": {
+            "description": "The task node's attempt timeout as a Go-style duration literal (default `15m`). Workflow content: a different timeout renders to a different digest.",
+            "type": "string"
+          }
+        },
+        "required": [
+          "instruction",
+          "actor_ref",
+          "repo"
+        ],
+        "type": "object"
+      },
       "Attempt": {
         "properties": {
           "actor_id": {
@@ -1457,6 +1491,58 @@
         "summary": "Per-actor aggregate stats, sliced by run category.",
         "tags": [
           "actors"
+        ]
+      }
+    },
+    "/v1alpha1/adhoc-runs": {
+      "post": {
+        "description": "Renders the canonical one-node workflow (a single agent `task` node into a `finish` end node — the nodes-operator skill's assign template shape), publishes it through the same idempotent by-digest path as POST /v1alpha1/workflows (an identical render always resolves to the same immutable version), and creates a normal run pinned to that digest, all in one call (task t19, issue #36). The instruction, repo, sandbox, and success outcome ride as run input, so the run is indistinguishable from one created against a hand-published digest.",
+        "operationId": "createAdhocRun",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/AdhocRunRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Run"
+                }
+              }
+            },
+            "description": "The run was created and is now running."
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "description": "A required field is missing or a field is malformed."
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "description": "The rendered canonical workflow does not compile (a server-side template fault)."
+          }
+        },
+        "summary": "Create a first-class ad-hoc run from a bare instruction.",
+        "tags": [
+          "runs"
         ]
       }
     },

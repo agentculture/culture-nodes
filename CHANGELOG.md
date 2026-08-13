@@ -19,6 +19,47 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 - SonarCloud: S3516 blocker, both S3776 criticals, S8193 — fixed through the product itself.
 
+## [0.13.6] - 2026-08-13
+
+### Fixed
+
+- `runRegisterActor` uses the `asExitError(err, &exitErr)` call directly as
+  the `if` condition instead of declaring a throwaway `ok` variable
+  (SonarCloud MINOR godre:S8193, `tests/deploy/registeractor_test.go:187`).
+  Behaviour-identical; PR-upkeep sweep sole item
+  (run 01KZXFYJR1Y6KHCZHT843PTMEG).
+
+## [0.13.5] - 2026-08-13
+
+### Fixed
+
+- `TestCodexWorkerEnvInProdCompose` refactored below the cognitive-complexity
+  ceiling (SonarCloud CRITICAL go:S3776, 20 > 15): the per-compose-file
+  read/parse/assert body moved out of the nested `t.Run` closure into a
+  top-level `assertWorkerEnvHasKeys` `t.Helper()`, same shape as the 0.13.4
+  codexsmoke fix. Behaviour-identical; PR-upkeep sweep item 1 of 2
+  (run 01KZXFFDZC7NF56HSS6DSWY5XN).
+
+## [0.13.4] - 2026-08-13
+
+### Fixed
+
+- `TestCodexSmokePairHasTwoCodexNodesOnEntryChain` refactored below the
+  cognitive-complexity ceiling (SonarCloud CRITICAL go:S3776, 19 > 15): the
+  duplicated per-node existence/kind/uses assertions moved into a shared
+  `assertCodexAgentNode` helper and the edge scan into `hasEdge`, on named
+  `smokeIRNode`/`smokeIREdge` IR types. Behaviour-identical; PR-upkeep sweep
+  item 1 of 3 (run 01KZXD609QRFHWS8YQ6MRZ1Y0F).
+
+## [0.13.3] - 2026-08-13
+
+### Fixed
+
+- `nodes node-runs list` handler no longer returns an invariant `0` from every
+  path (SonarCloud BLOCKER python:S3516): it is now a `-> None` procedure on
+  the dispatcher's None-means-success contract, matching `whoami`. PR-upkeep
+  sweep item 1 of 4 (run 01KZXATS1HM63SAQZVHX0K4ZD0).
+
 ## [0.13.2] - 2026-08-13
 
 ### Added

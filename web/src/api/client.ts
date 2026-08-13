@@ -309,10 +309,22 @@ export const listActors = (signal?: AbortSignal) =>
  * first-connection rule as runEventsUrl: EventSource cannot set a
  * Last-Event-ID header before its first connect, so the API accepts the
  * same cursor as `?from=`.
+ *
+ * `runs` is the server's optional scope-down filter (task t27, c48/h41's
+ * sibling requirement; internal/api/events.go:294-313's `runsFilterParam`):
+ * an explicit `?runs=id,id` list narrows the feed to those runs instead of
+ * the default active-runs+lifecycle set. Absent or empty means "no explicit
+ * filter" on both ends — the query param is omitted entirely rather than
+ * sent empty, matching the server's own empty-means-absent parsing.
  */
-export function meshEventsUrl(from?: string): string {
+export function meshEventsUrl(from?: string, runs?: readonly string[]): string {
   const base = `${API_ROOT}/events`;
-  return from ? `${base}?from=${encodeURIComponent(from)}` : base;
+  const params: string[] = [];
+  if (from) params.push(`from=${encodeURIComponent(from)}`);
+  if (runs && runs.length > 0) {
+    params.push(`runs=${runs.map(encodeURIComponent).join(",")}`);
+  }
+  return params.length > 0 ? `${base}?${params.join("&")}` : base;
 }
 
 /** The SSE endpoint's URL, with the resume point applied. */

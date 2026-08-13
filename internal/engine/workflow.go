@@ -126,6 +126,30 @@ type Node struct {
 	DecisionSchemaRef string
 	ApproverRef       string
 	Deadline          time.Duration
+
+	// JoinPolicy and JoinQuorum are a join node's barrier policy (issue
+	// #43): all | any | quorum, with JoinQuorum meaningful only under
+	// quorum. Empty/zero for every other kind.
+	JoinPolicy string
+	JoinQuorum int
+}
+
+// joinThreshold is how many arrivals fire this join node's barrier for a
+// group of the given cardinality. The second return is false when the
+// barrier can never fire — a quorum larger than the realized cardinality,
+// which guarded split edges make reachable at runtime even though the
+// authored edge count satisfied it (design §4.2/§4.3: the compiler can only
+// validate quorum >= 1 statically; an unsatisfiable barrier resolves loudly,
+// never as a silent hang).
+func (n *Node) joinThreshold(cardinality int) (int, bool) {
+	switch n.JoinPolicy {
+	case JoinPolicyAny:
+		return 1, cardinality >= 1
+	case JoinPolicyQuorum:
+		return n.JoinQuorum, n.JoinQuorum >= 1 && n.JoinQuorum <= cardinality
+	default: // "all", and hand-built IR that declared nothing
+		return cardinality, cardinality >= 1
+	}
 }
 
 // declaresOutcome reports whether name is an outcome this node can produce.
@@ -318,6 +342,13 @@ type irNode struct {
 	DecisionSchemaRef string `json:"decisionSchemaRef"`
 	ApproverRef       string `json:"approverRef"`
 	Deadline          string `json:"deadline"`
+
+	// Join mirrors a join node's barrier policy block (#/$defs/joinConfig),
+	// carried into the IR verbatim.
+	Join *struct {
+		Policy string `json:"policy"`
+		Quorum *int   `json:"quorum"`
+	} `json:"join"`
 }
 
 func decodeNode(id string, raw *irNode) (*Node, error) {
@@ -354,6 +385,10 @@ func decodeNode(id string, raw *irNode) (*Node, error) {
 			return nil, fmt.Errorf("deadline %q is not a duration: %w", raw.Deadline, err)
 		}
 		node.Deadline = deadline
+	}
+	if raw.Join != nil {
+		node.JoinPolicy = raw.Join.Policy
+		node.JoinQuorum = valueOr(raw.Join.Quorum, 0)
 	}
 	if raw.Ledger != nil {
 		node.Propose = append([]string(nil), raw.Ledger.Propose...)

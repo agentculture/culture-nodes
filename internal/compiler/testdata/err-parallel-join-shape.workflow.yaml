@@ -1,0 +1,84 @@
+# Four split/join shape errors in one document, so the diagnostic fixture can
+# assert they are reported independently rather than as a cascade:
+#
+#   * `fan` is a parallel node with NO edge from fan.split — it can never fan
+#     out. This is a COMPILE-time failure over declared edges, and it is a
+#     different thing from a runtime split whose guards all evaluate false
+#     (that is the engine's no-eligible-edge diagnostic). Review point D6.
+#   * `fan` also carries a contract block: parallel and join nodes produce
+#     engine-shaped outputs, not domain contracts.
+#   * `orphan-gather` is a join node with no incoming edge — a barrier
+#     nothing can ever arrive at — and declares no barrier policy either.
+#   * `work` declares a join block but is an agent node, where a barrier
+#     policy means nothing.
+#
+# `fan` routes its technical `failed` status onward so the graph still has a
+# reachable end node; that keeps this fixture's diagnostic list about the
+# split/join shape rather than about reachability.
+apiVersion: nodes.culture.dev/v1alpha1
+kind: Workflow
+
+metadata:
+  name: parallel-join-shape
+  version: 1.0.0
+  ownerRef: team/platform-ai
+
+spec:
+  entry: fan
+
+  contract:
+    input:
+      schema:
+        type: object
+    output:
+      schema:
+        type: object
+
+  limits:
+    maxTransitions: 16
+    maxVisitsPerNode: 4
+    maxParallelTokens: 4
+
+  nodes:
+    fan:
+      kind: parallel
+      ownerRef: team/platform-ai
+      contract:
+        outcomes:
+          split:
+            schema:
+              type: object
+
+    work:
+      kind: agent
+      ownerRef: team/platform-ai
+      uses: actor://company/worker@sha256:aaaaaa
+      input:
+        from: /run/input
+      join:
+        policy: all
+      contract:
+        outcomes:
+          done:
+            schema:
+              type: object
+
+    orphan-gather:
+      kind: join
+      ownerRef: team/platform-ai
+
+    finish:
+      kind: end
+      ownerRef: team/platform-ai
+      output:
+        from: /nodes/work/output
+
+  edges:
+    - from: fan.failed
+      to: work
+
+    - from: work.done
+      to: finish
+
+    - from: orphan-gather.joined
+      to: finish

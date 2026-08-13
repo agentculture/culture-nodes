@@ -1,0 +1,61 @@
+# D7's dual: a join node reachable on a path that never passed a parallel
+# node. A barrier's identity is (run, node, token group), and a token that
+# never passed a split carries no group — so there is nothing for the barrier
+# to count against. The engine keeps a loud runtime guard for hand-built IRs;
+# the compiler is where the answer belongs.
+#
+# `start` routes straight into `gather` with no split anywhere in the graph.
+apiVersion: nodes.culture.dev/v1alpha1
+kind: Workflow
+
+metadata:
+  name: join-outside-split
+  version: 1.0.0
+  ownerRef: team/platform-ai
+
+spec:
+  entry: start
+
+  contract:
+    input:
+      schema:
+        type: object
+    output:
+      schema:
+        type: object
+
+  limits:
+    maxTransitions: 16
+    maxVisitsPerNode: 4
+
+  nodes:
+    start:
+      kind: agent
+      ownerRef: team/platform-ai
+      uses: actor://company/starter@sha256:aaaaaa
+      input:
+        from: /run/input
+      contract:
+        outcomes:
+          completed:
+            schema:
+              type: object
+
+    gather:
+      kind: join
+      ownerRef: team/platform-ai
+      join:
+        policy: all
+
+    finish:
+      kind: end
+      ownerRef: team/platform-ai
+      output:
+        from: /nodes/gather/output
+
+  edges:
+    - from: start.completed
+      to: gather
+
+    - from: gather.joined
+      to: finish

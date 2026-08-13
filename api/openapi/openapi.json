@@ -925,6 +925,8 @@
               "leased",
               "running",
               "waiting_external",
+              "waiting_human",
+              "waiting_join",
               "completed",
               "failed",
               "cancelled"
@@ -1002,6 +1004,8 @@
               "leased",
               "running",
               "waiting_external",
+              "waiting_human",
+              "waiting_join",
               "completed",
               "failed",
               "cancelled"

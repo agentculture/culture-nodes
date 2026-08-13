@@ -458,6 +458,12 @@ func (c *completion) cancel(ctx context.Context) error {
 	if err := c.tx.ConsumeToken(ctx, c.nodeRun.TokenID); err != nil {
 		return err
 	}
+	// Cancellation across tokens: the run is terminal, so sibling branches —
+	// active tokens, parked barriers, leasable work — are reaped in the same
+	// transaction, exactly as run failure does (design D6 / §4.4).
+	if err := c.reapSiblings(ctx, "the run was cancelled"); err != nil {
+		return err
+	}
 	if err := c.tx.UpdateRunState(ctx, c.run.ID, RunCancelled, nil); err != nil {
 		return err
 	}
@@ -476,8 +482,8 @@ func (c *completion) cancel(ctx context.Context) error {
 }
 
 // transition is §12.5 steps 6, 8, and 9: complete the node run, calculate the
-// eligible edge, enforce the §9.7 bounds, and create the next token and node
-// run.
+// eligible edge set, enforce the §9.7 bounds, and create the next token(s)
+// and node run(s).
 func (c *completion) transition(ctx context.Context, outcome string, state NodeRunState) error {
 	transitions, err := c.tx.TransitionCount(ctx, c.run.ID)
 	if err != nil {
@@ -488,7 +494,7 @@ func (c *completion) transition(ctx context.Context, outcome string, state NodeR
 		return err
 	}
 
-	plan := planTransition(transitionInput{
+	in := transitionInput{
 		Workflow:    c.wf,
 		NodeID:      c.nodeRun.NodeID,
 		Outcome:     outcome,
@@ -497,7 +503,15 @@ func (c *completion) transition(ctx context.Context, outcome string, state NodeR
 		Transitions: transitions,
 		Visits:      visits,
 		Elapsed:     c.now.Sub(c.run.CreatedAt),
-	})
+	}
+	// Only a split consults the active-token count (the maxParallelTokens
+	// bound, design §5.1), so only a split pays for the read.
+	if c.node.Kind == kindParallel && outcome == outcomeSplit {
+		if in.ActiveTokens, err = c.tx.ActiveTokenCount(ctx, c.run.ID); err != nil {
+			return err
+		}
+	}
+	plan := planTransition(in)
 
 	// §12.5(6): the node run is completed regardless of where the token goes
 	// next — the work is over either way — and its token is consumed.
@@ -527,30 +541,86 @@ func (c *completion) transition(ctx context.Context, outcome string, state NodeR
 		return c.failBound(ctx, plan.Bound, transitions)
 	case plan.Complete:
 		return c.completeRun(ctx, c.nodeRun.NodeID, transitions)
-	case plan.Edge == nil:
+	case len(plan.Targets) == 0:
 		return c.failRun(ctx, state, plan.Diagnostic)
 	default:
 		return c.advance(ctx, plan, transitions, visits)
 	}
 }
 
-// advance is §12.5 step 9: create the next token position and node run.
+// advance is §12.5 step 9: create the next token position(s) and node
+// run(s). Three shapes leave here:
+//
+//   - a split (the completed node is parallel and routed its `split`
+//     outcome): every eligible edge fans out one token under a fresh token
+//     group — see fanOut in parallel.go;
+//   - an edge into a join node: an ARRIVAL at (or creating) the group's
+//     barrier instead of a fresh dispatch — see arriveAtJoin in parallel.go;
+//   - everything else: exactly the sequential transition this engine has
+//     always made, with the consumed token's group copied forward (and a
+//     completed join handing its post-join token to the enclosing group).
 func (c *completion) advance(ctx context.Context, plan transitionPlan, transitions int, visits map[string]int) error {
-	next := c.wf.Nodes[plan.NextNodeID]
+	// The consumed token's group drives propagation (design §3.3). Reading
+	// the row is a PK lookup; sequential runs carry group "" end to end.
+	sourceToken, err := c.tx.Token(ctx, c.nodeRun.TokenID)
+	if err != nil {
+		return err
+	}
+	nextGroupID := sourceToken.GroupID
+	if c.node.Kind == kindJoin && sourceToken.GroupID != "" {
+		// The join closes its group: the post-join token re-enters the
+		// enclosing one.
+		fired, err := c.tx.TokenGroup(ctx, sourceToken.GroupID)
+		if err != nil {
+			return err
+		}
+		nextGroupID = fired.ParentGroupID
+	}
+
+	if c.node.Kind == kindParallel && plan.Targets[0].Edge.FromOutcome == outcomeSplit {
+		return c.fanOut(ctx, plan.Targets, sourceToken, transitions, visits)
+	}
+
+	target := plan.Targets[0]
+	next := c.wf.Nodes[target.NextNodeID]
 	if next == nil {
 		return &WorkflowError{
 			Digest: c.wf.Digest,
-			Detail: fmt.Sprintf("edge %q targets node %q, which the pinned definition does not declare", plan.Edge.From, plan.NextNodeID),
+			Detail: fmt.Sprintf("edge %q targets node %q, which the pinned definition does not declare", target.Edge.From, target.NextNodeID),
 		}
+	}
+
+	if next.Kind == kindJoin {
+		// The arrival counts against nextGroupID, not the raw token group:
+		// for an ordinary branch the two are the same, and for a completed
+		// inner join routing into an outer join, the post-join token has
+		// already re-entered the enclosing group — which is exactly the group
+		// the outer barrier gathers (design §3.3 propagation, test T14).
+		c.result.EdgeFrom = target.Edge.From
+		diagnostic, err := c.joinTx().arriveAtJoin(ctx, next, arrival{
+			TokenID: c.nodeRun.TokenID,
+			GroupID: nextGroupID,
+			Outcome: target.Edge.FromOutcome,
+			Output:  c.req.Output,
+			Edge:    target.Edge,
+		}, visits)
+		if err != nil {
+			return err
+		}
+		if diagnostic != "" {
+			return c.failRun(ctx, c.result.NodeRunState, diagnostic)
+		}
+		return c.finish(ctx)
 	}
 
 	token := Token{
 		ID:            c.engine.newID(),
 		NamespaceID:   c.run.NamespaceID,
 		RunID:         c.run.ID,
-		NodeID:        plan.NextNodeID,
+		NodeID:        target.NextNodeID,
 		State:         TokenActive,
 		ParentTokenID: c.nodeRun.TokenID,
+		GroupID:       nextGroupID,
 		CreatedAt:     c.now,
 	}
 	if err := c.tx.InsertToken(ctx, token); err != nil {
@@ -562,9 +632,9 @@ func (c *completion) advance(ctx context.Context, plan transitionPlan, transitio
 		NamespaceID: c.run.NamespaceID,
 		RunID:       c.run.ID,
 		TokenID:     token.ID,
-		NodeID:      plan.NextNodeID,
+		NodeID:      target.NextNodeID,
 		State:       dispatchState(next.Kind),
-		VisitCount:  visits[plan.NextNodeID] + 1,
+		VisitCount:  visits[target.NextNodeID] + 1,
 		CreatedAt:   c.now,
 		UpdatedAt:   c.now,
 	}
@@ -574,7 +644,7 @@ func (c *completion) advance(ctx context.Context, plan transitionPlan, transitio
 
 	c.result.NextNodeID = nodeRun.NodeID
 	c.result.NextNodeRunID = nodeRun.ID
-	c.result.EdgeFrom = plan.Edge.From
+	c.result.EdgeFrom = target.Edge.From
 	c.result.Transitions = transitions + 1
 
 	if err := c.emit(ctx, TypeTokenTransitioned, map[string]any{
@@ -582,9 +652,9 @@ func (c *completion) advance(ctx context.Context, plan transitionPlan, transitio
 		"node_run_id":   nodeRun.ID,
 		"from_node":     c.nodeRun.NodeID,
 		"to_node":       nodeRun.NodeID,
-		"outcome":       plan.Edge.FromOutcome,
-		"edge":          plan.Edge.From,
-		"guard":         plan.Edge.When,
+		"outcome":       target.Edge.FromOutcome,
+		"edge":          target.Edge.From,
+		"guard":         target.Edge.When,
 		"from_token_id": c.nodeRun.TokenID,
 		"token_id":      token.ID,
 		"transition":    transitions + 1,
@@ -605,7 +675,7 @@ func (c *completion) advance(ctx context.Context, plan transitionPlan, transitio
 		return c.completeRun(ctx, nodeRun.NodeID, transitions+1)
 	}
 
-	workID, humanTaskID, err := c.engine.dispatchNode(ctx, c.tx, next, c.run, nodeRun, plan.Edge.FromNode, plan.Edge.FromOutcome, c.now)
+	workID, humanTaskID, err := c.engine.dispatchNode(ctx, c.tx, next, c.run, nodeRun, target.Edge.FromNode, target.Edge.FromOutcome, c.now)
 	if err != nil {
 		return err
 	}
@@ -643,6 +713,21 @@ func (c *completion) advance(ctx context.Context, plan transitionPlan, transitio
 }
 
 func (c *completion) completeRun(ctx context.Context, endNodeID string, transitions int) error {
+	// Design D7's defense-in-depth: the compiler refuses definitions whose
+	// end nodes are reachable inside an unjoined split, so an end node with
+	// sibling tokens still active means a pinned IR from a buggy or bypassed
+	// compiler. Failing loudly beats completing a run whose branches are
+	// still doing work nobody will ever read.
+	active, err := c.tx.ActiveTokenCount(ctx, c.run.ID)
+	if err != nil {
+		return err
+	}
+	if active > 0 {
+		return c.failRun(ctx, c.result.NodeRunState, fmt.Sprintf(
+			"end node %q was reached with %d sibling token(s) still active; a run must not complete while branches are live (parallel-tokens design D7)",
+			endNodeID, active))
+	}
+
 	output, err := c.resolveRunOutput(ctx, endNodeID)
 	if err != nil {
 		var contractErr *ContractError
@@ -677,6 +762,13 @@ func (c *completion) failRun(ctx context.Context, nodeRunState NodeRunState, det
 	if err := c.tx.ConsumeToken(ctx, c.nodeRun.TokenID); err != nil {
 		return err
 	}
+	// Design D6: a run failure reaps every other live branch in this same
+	// transaction — a failed run with dangling active tokens would be
+	// re-dispatchable zombie state. Sequential runs have nothing else live,
+	// so nothing is reaped and their audit trail is unchanged.
+	if err := c.reapSiblings(ctx, "the run failed: "+detail); err != nil {
+		return err
+	}
 	if err := c.tx.UpdateRunState(ctx, c.run.ID, RunFailed, nil); err != nil {
 		return err
 	}
@@ -701,6 +793,12 @@ func (c *completion) failRun(ctx context.Context, nodeRunState NodeRunState, det
 // is enforced by the engine, not by the actor: this is the guarantee that no
 // loop relies solely on an agent deciding when to stop.
 func (c *completion) failBound(ctx context.Context, bound *BoundExceeded, transitions int) error {
+	// The same D6 reap failRun performs: a bound-refused split (design D8)
+	// fails the run whole, and any sibling branches still active — including
+	// parked waiting_join barriers — must not stay claimable.
+	if err := c.reapSiblings(ctx, fmt.Sprintf("the run was stopped by its %s bound", bound.Kind)); err != nil {
+		return err
+	}
 	if err := c.tx.UpdateRunState(ctx, c.run.ID, RunFailed, nil); err != nil {
 		return err
 	}

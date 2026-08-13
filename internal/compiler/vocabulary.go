@@ -12,6 +12,8 @@ const (
 	KindDecision   = "decision"
 	KindApproval   = "approval"
 	KindWait       = "wait"
+	KindParallel   = "parallel"
+	KindJoin       = "join"
 	KindEnd        = "end"
 )
 
@@ -40,6 +42,12 @@ var technicalStatuses = map[string]bool{
 var impliedOutcomes = map[string][]string{
 	KindApproval: {"approved", "expired", "rejected"},
 	KindWait:     {"completed"},
+	// A parallel node's `split` and a join node's `joined` are engine-shaped
+	// routing outcomes (issue #43, parallel-tokens design §3.1/§4.1): the
+	// nodes do no domain work and carry no contract block, so their one
+	// outcome each is implied by the kind exactly like a wait's `completed`.
+	KindParallel: {"split"},
+	KindJoin:     {"joined"},
 }
 
 // ledgerProjections is the standard projection vocabulary (PRD §10.9). It is

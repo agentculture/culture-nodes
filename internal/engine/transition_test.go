@@ -47,11 +47,11 @@ func TestPlanTransitionFollowsADomainOutcomeBackIntoTheLoop(t *testing.T) {
 		Output:   json.RawMessage(`{"give_up":false}`),
 		Visits:   map[string]int{"intake": 1, "work": 1, "check": 1},
 	})
-	if plan.Bound != nil || plan.Edge == nil {
+	if plan.Bound != nil || plan.edge() == nil {
 		t.Fatalf("expected an eligible edge, got %+v", plan)
 	}
-	if plan.NextNodeID != "work" {
-		t.Errorf("next node = %q, want work", plan.NextNodeID)
+	if plan.nextNodeID() != "work" {
+		t.Errorf("next node = %q, want work", plan.nextNodeID())
 	}
 }
 
@@ -66,10 +66,10 @@ func TestPlanTransitionFirstMatchingGuardWins(t *testing.T) {
 		Output:   json.RawMessage(`{"give_up":true}`),
 		Visits:   map[string]int{"check": 1},
 	})
-	if plan.Edge == nil || plan.NextNodeID != "finish" {
+	if plan.edge() == nil || plan.nextNodeID() != "finish" {
 		t.Fatalf("a checker that gave up should route to finish, got %+v", plan)
 	}
-	if plan.Edge.When == "" {
+	if plan.edge().When == "" {
 		t.Error("the winning edge should be the guarded one")
 	}
 }
@@ -93,7 +93,7 @@ func TestPlanTransitionGuardEvaluationFailureDoesNotMatch(t *testing.T) {
 		Outcome:  "done",
 		Output:   json.RawMessage(`{"present":1}`),
 	})
-	if plan.NextNodeID != "c" {
+	if plan.nextNodeID() != "c" {
 		t.Fatalf("expected the unguarded fallback, got %+v", plan)
 	}
 }
@@ -116,7 +116,7 @@ func TestPlanTransitionNonBooleanGuardIsReported(t *testing.T) {
 		Outcome:  "done",
 		Output:   json.RawMessage(`{"count":3}`),
 	})
-	if plan.Edge != nil {
+	if plan.edge() != nil {
 		t.Fatalf("a non-boolean guard should not match, got %+v", plan)
 	}
 	if plan.Diagnostic == "" {
@@ -131,7 +131,7 @@ func TestPlanTransitionNoEligibleEdgeIsDiagnosed(t *testing.T) {
 	)
 
 	plan := planTransition(transitionInput{Workflow: wf, NodeID: "a", Outcome: "blocked"})
-	if plan.Edge != nil || plan.Complete {
+	if plan.edge() != nil || plan.Complete {
 		t.Fatalf("expected no eligible edge, got %+v", plan)
 	}
 	if plan.Diagnostic == "" {
@@ -200,7 +200,7 @@ func TestPlanTransitionEnforcesEachBound(t *testing.T) {
 			}
 			// The bound is reported *with* the edge it refused to cross, so an
 			// operator can see where the run was heading.
-			if plan.Edge == nil || plan.NextNodeID != "b" {
+			if plan.edge() == nil || plan.nextNodeID() != "b" {
 				t.Errorf("a bound should still name the blocked transition, got %+v", plan)
 			}
 		})
@@ -242,12 +242,12 @@ func TestPropertyTransitionsNeverExceedMaxTransitions(t *testing.T) {
 					Transitions: transitions,
 					Visits:      visits,
 				})
-				if plan.Bound != nil || plan.Complete || plan.Edge == nil {
+				if plan.Bound != nil || plan.Complete || plan.edge() == nil {
 					break
 				}
 				transitions++
-				visits[plan.NextNodeID]++
-				current = plan.NextNodeID
+				visits[plan.nextNodeID()]++
+				current = plan.nextNodeID()
 
 				if transitions > wf.Limits.MaxTransitions {
 					t.Fatalf("took %d transitions with maxTransitions %d", transitions, wf.Limits.MaxTransitions)

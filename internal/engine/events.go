@@ -48,6 +48,18 @@ const (
 	// task: who decided, what outcome, and which review recorded it as
 	// human authority in the ledger (PRD §9.9, §10.8).
 	TypeHumanTaskDecided = "dev.culture.nodes.human-task.decided"
+
+	// TypeTokenSplit records one parallel-node fan-out (issue #43): the
+	// token group, its discovered cardinality, and the eligible edge list.
+	// The per-branch token.transitioned/node-run.ready events follow it.
+	TypeTokenSplit = "dev.culture.nodes.token.split"
+	// TypeJoinArrived records one branch reaching a join barrier, with the
+	// running arrival count against the group's cardinality.
+	TypeJoinArrived = "dev.culture.nodes.join.arrived"
+	// TypeBranchCancelled records one sibling branch reaped explicitly —
+	// the loser of an any/quorum barrier, or a live branch retired because
+	// a terminal branch failure (or cancellation, or a bound) ended the run.
+	TypeBranchCancelled = "dev.culture.nodes.branch.cancelled"
 )
 
 // event builds an EventInput, encoding data into the payload. Encoding cannot

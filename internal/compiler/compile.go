@@ -131,6 +131,7 @@ func Compile(source []byte, format Format) (*CompiledWorkflow, []Diagnostic, err
 	c.nodeIDs = sortedKeys(doc.Spec.Nodes)
 
 	c.checkGraph()
+	c.checkParallelJoin()
 	c.checkContracts()
 	c.checkLedger()
 	c.checkPolicy()

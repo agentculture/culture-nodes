@@ -580,6 +580,10 @@ func (w *Worker) commitRunnerTerminal(ctx context.Context, op postgres.RunnerOpe
 		}
 		return err
 	}
+	// Same post-commit, best-effort step w.complete performs: a resumed
+	// runner completion can be the arrival that fires an any/quorum barrier
+	// and reaps the group's losing branches (issue #43, branchcancel.go).
+	w.propagateBranchCancellations(ctx, committed)
 
 	if err := w.db.CloseRunnerOperation(ctx, op.NamespaceID, op.AttemptID, postgres.RunnerOperationCompleted); err != nil {
 		return err

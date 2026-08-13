@@ -1,0 +1,87 @@
+# Design D7: an end node reachable from inside a split WITHOUT passing
+# through a join. Completing the run there would strand the sibling branch,
+# so the compiler refuses the definition rather than leaving the engine to
+# discover it at runtime (where the answer is only a loud failure, never a
+# correct completion).
+#
+# Here `lint.clean` routes straight to `finish` while `test` is still live.
+apiVersion: nodes.culture.dev/v1alpha1
+kind: Workflow
+
+metadata:
+  name: end-inside-split
+  version: 1.0.0
+  ownerRef: team/platform-ai
+
+spec:
+  entry: fan
+
+  contract:
+    input:
+      schema:
+        type: object
+    output:
+      schema:
+        type: object
+
+  limits:
+    maxTransitions: 16
+    maxVisitsPerNode: 4
+    maxParallelTokens: 4
+
+  nodes:
+    fan:
+      kind: parallel
+      ownerRef: team/platform-ai
+
+    lint:
+      kind: agent
+      ownerRef: team/platform-ai
+      uses: actor://company/linter@sha256:aaaaaa
+      input:
+        from: /run/input
+      contract:
+        outcomes:
+          clean:
+            schema:
+              type: object
+
+    test:
+      kind: agent
+      ownerRef: team/platform-ai
+      uses: actor://company/tester@sha256:bbbbbb
+      input:
+        from: /run/input
+      contract:
+        outcomes:
+          passed:
+            schema:
+              type: object
+
+    gather:
+      kind: join
+      ownerRef: team/platform-ai
+      join:
+        policy: all
+
+    finish:
+      kind: end
+      ownerRef: team/platform-ai
+      output:
+        from: /nodes/gather/output
+
+  edges:
+    - from: fan.split
+      to: lint
+
+    - from: fan.split
+      to: test
+
+    - from: lint.clean
+      to: finish
+
+    - from: test.passed
+      to: gather
+
+    - from: gather.joined
+      to: finish

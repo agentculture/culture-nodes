@@ -354,15 +354,17 @@ func (eq engineQueries) Run(ctx context.Context, runID string) (engine.Run, erro
 }
 
 const insertTokenSQL = `
-INSERT INTO tokens (id, namespace_id, run_id, node_key, state, parent_token_id, created_at)
-VALUES ($1, $2, $3, $4, $5, $6, $7)
+INSERT INTO tokens (id, namespace_id, run_id, node_key, state, parent_token_id, group_id, created_at)
+VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
 `
 
-// InsertToken records a control token at a node.
+// InsertToken records a control token at a node. group_id is NULL for a
+// token outside any split (migrations/0019) — the same value every pre-split
+// row already carries.
 func (eq engineQueries) InsertToken(ctx context.Context, token engine.Token) error {
 	_, err := eq.q.Exec(ctx, insertTokenSQL,
 		token.ID, eq.namespaceID, token.RunID, token.NodeID, string(token.State),
-		textOrNull(token.ParentTokenID), tsOrNow(token.CreatedAt),
+		textOrNull(token.ParentTokenID), textOrNull(token.GroupID), tsOrNow(token.CreatedAt),
 	)
 	if err != nil {
 		return fmt.Errorf("postgres: engine: InsertToken: %w", err)
@@ -746,9 +748,14 @@ func int8PtrValueOrZero(v pgtype.Int8) int64 {
 	return v.Int64
 }
 
-// TransitionCount is how many transitions the run has taken. Every transition
-// creates exactly one node run and the entry node run is not a transition, so
-// the count is the node-run count less one.
+// TransitionCount is how many transitions the run has taken, derived as
+// "node runs created after entry": every transition creates exactly one node
+// run — a K-way split is K transitions creating K node runs — with one
+// documented exception (parallel-tokens design §5.2): join arrivals after
+// the first create no node run, so a K-way join contributes K transitions'
+// worth of routing but only 1 to this count. That undercount is intentional
+// — an arrival does no dispatchable work, and the §9.7 limit exists to
+// bound work.
 func (eq engineQueries) TransitionCount(ctx context.Context, runID string) (int, error) {
 	var count int32
 	err := eq.q.QueryRow(ctx,

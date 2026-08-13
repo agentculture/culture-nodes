@@ -95,10 +95,12 @@ const (
 
 // Token is a unit of control flow moving through the graph (PRD §3.2).
 //
-// The MVP engine is sequential — one active token per run, which is what
-// limits.maxParallelTokens = 1 means — but tokens are still first-class rows
-// rather than a field on the run, because §9.8's split and join model needs
-// them to be, and a token that only exists implicitly cannot later be forked.
+// GroupID names the token group (split fan-out set) this token belongs to,
+// empty for the entry token and for every token outside any split. An
+// ordinary transition copies the consumed token's group to the next token; a
+// split stamps each fanned token with the fresh group; the post-join token
+// takes the fired group's parent — the join closes the group and re-enters
+// the enclosing one (parallel-tokens design §3.3).
 type Token struct {
 	ID            string
 	NamespaceID   string
@@ -106,9 +108,49 @@ type Token struct {
 	NodeID        string
 	State         TokenState
 	ParentTokenID string
+	GroupID       string
 	CreatedAt     time.Time
 	ConsumedAt    time.Time
 }
+
+// TokenGroup records one split: the fan-out set of sibling tokens created by
+// a single parallel-node completion. Cardinality is fixed at creation — the
+// join barrier counts arrivals against it (design D4: the sibling set is
+// discovered at split time, never declared at the join, because guarded
+// split edges make a declared count wrong by construction).
+type TokenGroup struct {
+	ID             string
+	NamespaceID    string
+	RunID          string
+	SplitNodeRunID string // the parallel node run whose completion fanned out
+	ParentGroupID  string // enclosing group; "" at top level (nested splits)
+	Cardinality    int    // how many tokens the eligible edge set produced
+	CreatedAt      time.Time
+}
+
+// JoinArrival is one branch reaching a barrier (design §4.1). Rows are
+// append-only; counting them under the run's advisory lock is the barrier.
+type JoinArrival struct {
+	ID            string
+	NamespaceID   string
+	RunID         string
+	JoinNodeRunID string
+	GroupID       string
+	TokenID       string          // the consumed branch token
+	FromNode      string          // the branch node that completed into the join
+	Outcome       string          // the domain outcome that routed here
+	Output        json.RawMessage // that outcome's output payload
+	ArrivedAt     time.Time
+}
+
+// Join policies a join node's barrier fires under (PRD §9.8; the schema's
+// #/$defs/joinConfig). `first_success` is a recorded PRD deviation — domain
+// outcomes carry no success typing, so it has no honest meaning yet.
+const (
+	JoinPolicyAll    = "all"
+	JoinPolicyAny    = "any"
+	JoinPolicyQuorum = "quorum"
+)
 
 // NodeRunState is the lifecycle of one node's logical execution.
 type NodeRunState string
@@ -128,9 +170,19 @@ const (
 	// internal/engine/humantask.go for the dispatch decision and the seam
 	// this leaves for resolving the task later.
 	NodeRunWaitingHuman NodeRunState = "waiting_human"
-	NodeRunCompleted    NodeRunState = "completed"
-	NodeRunFailed       NodeRunState = "failed"
-	NodeRunCancelled    NodeRunState = "cancelled"
+	// NodeRunWaitingJoin is a join node run parked as a barrier (issue #43,
+	// parallel-tokens design D3): created by the first sibling arrival,
+	// waiting for the rest of the token group. It parallels waiting_human's
+	// shape exactly — parked, not terminal, nothing to lease — and there is
+	// deliberately no work item, because there is no claimable work until
+	// the barrier satisfies. Unlike every other parked state, what wakes it
+	// is a COMPLETION path, not a scheduler tick or an event delivery: the
+	// sibling arrival that reaches the threshold flips it to ready and
+	// enqueues the join's work inside its own §12.5 transaction.
+	NodeRunWaitingJoin NodeRunState = "waiting_join"
+	NodeRunCompleted   NodeRunState = "completed"
+	NodeRunFailed      NodeRunState = "failed"
+	NodeRunCancelled   NodeRunState = "cancelled"
 )
 
 // Terminal reports whether the node run has reached a state it never leaves.
@@ -406,6 +458,11 @@ const (
 	BoundTransitions BoundKind = "max_transitions"
 	BoundVisits      BoundKind = "max_visits_per_node"
 	BoundDuration    BoundKind = "max_duration"
+	// BoundParallelTokens is the §9.8/§9.7 cap on concurrently active tokens,
+	// enforced at split fan-out: a split whose eligible set would push the
+	// run past limits.maxParallelTokens is refused WHOLE — never a partial
+	// fan-out — as a bound failure (parallel-tokens design D8).
+	BoundParallelTokens BoundKind = "max_parallel_tokens"
 )
 
 // BoundExceeded is a loop bound the engine refused to cross.
@@ -456,6 +513,23 @@ type CompletionResult struct {
 	// EdgeFrom is the "<node>.<outcome>" the followed edge originated from.
 	EdgeFrom string
 
+	// Split is set when this completion fanned a parallel node out (issue
+	// #43): NextNodeID/NextNodeRunID stay empty, because a split has no
+	// single "next" — every created branch is listed here instead.
+	Split *SplitResult
+	// JoinNodeRunID is set when this completion routed into a join node: the
+	// barrier node run the arrival was recorded against (created by this
+	// arrival when it was the first). JoinSatisfied reports whether this
+	// arrival was the one that fired the barrier and enqueued the join's
+	// work. ReapedBranchNodeRuns lists the sibling node runs this completion
+	// cancelled — losers of an any/quorum barrier, or every remaining branch
+	// when a terminal branch failure failed the run (design D6/§4.4);
+	// propagating those cancellations to async actors mid-invocation is the
+	// caller's best-effort, post-commit job, mirroring cancelpropagate.
+	JoinNodeRunID        string
+	JoinSatisfied        bool
+	ReapedBranchNodeRuns []string
+
 	// Bound is non-nil when a loop bound stopped the run.
 	Bound *BoundExceeded
 	// Diagnostic explains a run failure the caller did not cause, e.g. a
@@ -472,4 +546,23 @@ type CompletionResult struct {
 	// EventTypes lists the audit events appended, in order.
 	Transitions int
 	EventTypes  []string
+}
+
+// SplitResult is what one committed split fan-out created (design §3.3): the
+// token group and every branch, in normalized edge order.
+type SplitResult struct {
+	GroupID     string
+	Cardinality int
+	Branches    []SplitBranch
+}
+
+// SplitBranch is one fanned-out branch of a split.
+type SplitBranch struct {
+	NodeID    string
+	NodeRunID string
+	TokenID   string
+	// WorkID is empty when the branch did not enqueue claimable work — an
+	// approval node's human-task park, or a branch edge that routed straight
+	// into a join barrier.
+	WorkID string
 }

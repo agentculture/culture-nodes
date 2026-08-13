@@ -31,21 +31,51 @@ type transitionInput struct {
 	Transitions int
 	Visits      map[string]int
 	Elapsed     time.Duration
+	// ActiveTokens is how many tokens the run currently has active, read
+	// inside the transaction (tokens_run_state_idx serves it). Only a
+	// parallel node's fan-out consults it — the completion reads it exactly
+	// then, so a sequential transition costs no extra query.
+	ActiveTokens int
 }
 
-// transitionPlan is what the engine should do next. Exactly one of Edge,
+// transitionPlan is what the engine should do next. Exactly one of Targets,
 // Complete, Bound, or Diagnostic is meaningful.
 type transitionPlan struct {
-	// Edge is the eligible edge, nil when none was found.
-	Edge *Edge
-	// NextNodeID is the node the token moves to.
-	NextNodeID string
+	// Targets are the eligible edges in normalized order. len == 1 for every
+	// node kind except parallel, where it is the full eligible set (design
+	// D1: set selection is opt-in via the explicit kind; ordinary edges stay
+	// first-match-wins).
+	Targets []transitionTarget
 	// Complete reports that the run ends here with no further node run.
 	Complete bool
 	// Bound is the loop bound that stopped the run.
 	Bound *BoundExceeded
 	// Diagnostic explains why no edge was eligible.
 	Diagnostic string
+}
+
+// transitionTarget is one edge the plan follows.
+type transitionTarget struct {
+	Edge       *Edge
+	NextNodeID string
+}
+
+// edge is the plan's first eligible edge and nextNodeID its target — the
+// sequential view every non-parallel path reads, since only a parallel node's
+// split ever puts more than one target in the plan. edge is nil when the plan
+// selected nothing.
+func (p transitionPlan) edge() *Edge {
+	if len(p.Targets) == 0 {
+		return nil
+	}
+	return p.Targets[0].Edge
+}
+
+func (p transitionPlan) nextNodeID() string {
+	if len(p.Targets) == 0 {
+		return ""
+	}
+	return p.Targets[0].NextNodeID
 }
 
 // planTransition performs §12.5 steps 8 and 9's decision half: it selects the
@@ -68,8 +98,13 @@ func planTransition(in transitionInput) transitionPlan {
 		return transitionPlan{Diagnostic: fmt.Sprintf("node %q is not declared in the pinned workflow", in.NodeID)}
 	}
 
+	// A parallel node's `split` outcome selects a SET: every edge whose
+	// guard passes fires (design D1). Every other node kind — and a parallel
+	// node's routed technical statuses — keeps first-match-wins.
+	collectAll := node.Kind == kindParallel && in.Outcome == outcomeSplit
+
 	var guardFailures []string
-	var matched *Edge
+	var matched []transitionTarget
 
 	for i := range in.Workflow.Edges {
 		edge := &in.Workflow.Edges[i]
@@ -77,8 +112,11 @@ func planTransition(in transitionInput) transitionPlan {
 			continue
 		}
 		if edge.Guard == nil {
-			matched = edge
-			break
+			matched = append(matched, transitionTarget{Edge: edge, NextNodeID: edge.To})
+			if !collectAll {
+				break
+			}
+			continue
 		}
 		ok, err := evaluateGuard(edge, in)
 		if err != nil {
@@ -86,58 +124,96 @@ func planTransition(in transitionInput) transitionPlan {
 			continue
 		}
 		if ok {
-			matched = edge
-			break
+			matched = append(matched, transitionTarget{Edge: edge, NextNodeID: edge.To})
+			if !collectAll {
+				break
+			}
 		}
 	}
 
-	if matched == nil {
+	if len(matched) == 0 {
 		// An end node produces the workflow result and has no outgoing edges
 		// (the compiler refuses them), so reaching this point on one is the
-		// run finishing, not a routing failure.
+		// run finishing, not a routing failure. A split that selects zero
+		// edges is the same no-eligible-edge routing failure as any other
+		// unrouted outcome (design §3.1).
 		if node.Kind == kindEnd {
 			return transitionPlan{Complete: true}
 		}
 		return transitionPlan{Diagnostic: noEligibleEdgeDiagnostic(in, node, guardFailures)}
 	}
 
-	// §9.7 loop bounds, enforced before the next node run exists. Checking
-	// after creating it would let a run cross the bound and then be told off
-	// for it.
-	if bound := checkBounds(in, matched.To); bound != nil {
-		return transitionPlan{Edge: matched, NextNodeID: matched.To, Bound: bound}
+	// §9.7 loop bounds, enforced before the next node runs exist and over
+	// the WHOLE eligible set: a K-way split is charged K transitions, each
+	// target one visit, and K-1 net new active tokens — and a bound refuses
+	// the entire split, never a partial fan-out (design D8).
+	if bound := checkBounds(in, node, matched); bound != nil {
+		return transitionPlan{Targets: matched, Bound: bound}
 	}
 
-	return transitionPlan{Edge: matched, NextNodeID: matched.To}
+	return transitionPlan{Targets: matched}
 }
 
-const kindEnd = "end"
+// Node kinds and kind-implied outcomes the engine branches on. Declared here
+// rather than imported from the compiler for the reason the worker states:
+// the dependency is on the IR's values, not on the authoring package.
+const (
+	kindEnd      = "end"
+	kindParallel = "parallel"
+	kindJoin     = "join"
 
-func checkBounds(in transitionInput, nextNodeID string) *BoundExceeded {
+	outcomeSplit  = "split"
+	outcomeJoined = "joined"
+)
+
+func checkBounds(in transitionInput, node *Node, targets []transitionTarget) *BoundExceeded {
 	limits := in.Workflow.Limits
+	k := len(targets)
 
-	if limits.MaxTransitions > 0 && in.Transitions+1 > limits.MaxTransitions {
+	if limits.MaxTransitions > 0 && in.Transitions+k > limits.MaxTransitions {
 		return &BoundExceeded{
 			Kind:   BoundTransitions,
-			NodeID: nextNodeID,
+			NodeID: targets[0].NextNodeID,
 			Limit:  strconv.Itoa(limits.MaxTransitions),
-			Actual: strconv.Itoa(in.Transitions + 1),
+			Actual: strconv.Itoa(in.Transitions + k),
 		}
 	}
-	if limits.MaxVisitsPerNode > 0 && in.Visits[nextNodeID]+1 > limits.MaxVisitsPerNode {
-		return &BoundExceeded{
-			Kind:   BoundVisits,
-			NodeID: nextNodeID,
-			Limit:  strconv.Itoa(limits.MaxVisitsPerNode),
-			Actual: strconv.Itoa(in.Visits[nextNodeID] + 1),
+	if limits.MaxVisitsPerNode > 0 {
+		// Two split edges may target one node; each creates a node run there,
+		// so the charge accumulates per target rather than being a flat +1.
+		charged := make(map[string]int, k)
+		for _, target := range targets {
+			charged[target.NextNodeID]++
+			if visits := in.Visits[target.NextNodeID] + charged[target.NextNodeID]; visits > limits.MaxVisitsPerNode {
+				return &BoundExceeded{
+					Kind:   BoundVisits,
+					NodeID: target.NextNodeID,
+					Limit:  strconv.Itoa(limits.MaxVisitsPerNode),
+					Actual: strconv.Itoa(visits),
+				}
+			}
 		}
 	}
 	if limits.MaxDuration > 0 && in.Elapsed > limits.MaxDuration {
 		return &BoundExceeded{
 			Kind:   BoundDuration,
-			NodeID: nextNodeID,
+			NodeID: targets[0].NextNodeID,
 			Limit:  limits.MaxDuration.String(),
 			Actual: in.Elapsed.Round(time.Millisecond).String(),
+		}
+	}
+	// maxParallelTokens is charged only at a split: an ordinary transition
+	// consumes one token and creates one, so the active count cannot move.
+	// The source token is consumed in the same transaction, hence the -1
+	// (design §5.1). A cardinality-1 split cannot raise the count either,
+	// but the check still runs so the accounting stays one rule.
+	if node.Kind == kindParallel && in.Outcome == outcomeSplit &&
+		limits.MaxParallelTokens > 0 && in.ActiveTokens-1+k > limits.MaxParallelTokens {
+		return &BoundExceeded{
+			Kind:   BoundParallelTokens,
+			NodeID: in.NodeID,
+			Limit:  strconv.Itoa(limits.MaxParallelTokens),
+			Actual: strconv.Itoa(in.ActiveTokens - 1 + k),
 		}
 	}
 	return nil

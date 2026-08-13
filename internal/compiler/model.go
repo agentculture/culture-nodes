@@ -92,6 +92,7 @@ type node struct {
 	Deadline          string       `json:"deadline,omitempty"`
 	Select            []selectPort `json:"select,omitempty"`
 	Until             *until       `json:"until,omitempty"`
+	Join              *joinConfig  `json:"join,omitempty"`
 
 	Presentation map[string]any `json:"presentation,omitempty"`
 
@@ -243,6 +244,22 @@ type until struct {
 	Timestamp string `json:"timestamp,omitempty"`
 	Signal    string `json:"signal,omitempty"`
 }
+
+// joinConfig mirrors schemas/workflow/workflow.schema.json's #/$defs/joinConfig
+// (issue #43): a join node's barrier policy. Quorum is a pointer so an omitted
+// value round-trips as omitted — checkParallelJoin enforces "required iff
+// policy == quorum" as value semantics the schema cannot state.
+type joinConfig struct {
+	Policy string `json:"policy"`
+	Quorum *int   `json:"quorum,omitempty"`
+}
+
+// Join policies the schema's enum admits.
+const (
+	JoinPolicyAll    = "all"
+	JoinPolicyAny    = "any"
+	JoinPolicyQuorum = "quorum"
+)
 
 type edge struct {
 	From string `json:"from"`

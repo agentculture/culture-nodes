@@ -171,6 +171,14 @@ type Options struct {
 	// work item's lease will expire and another worker will retry it.
 	OnError func(error)
 
+	// Pacing declares the dispatch rates this worker holds itself to (task
+	// t10): a global session rate and per-actor rates, enforced at the
+	// dispatch site against durable state every worker shares. The zero
+	// value declares nothing, which is what every deployment that has not
+	// configured pacing gets — no rate rows, no transaction, and the
+	// dispatch path exactly as it was. See pacing.go.
+	Pacing PacingOptions
+
 	// Telemetry instruments the actor dispatch seam (task t19,
 	// internal/worker/dispatch.go's dispatchActor) through
 	// internal/telemetry. The zero value, a nil *telemetry.Provider, is a

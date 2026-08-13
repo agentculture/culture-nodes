@@ -5,6 +5,12 @@ All notable changes to this project will be documented in this file.
 Format follows [Keep a Changelog](https://keepachangelog.com/). This project
 adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.14.1] - 2026-08-13
+
+### Added
+
+- Spec cycle economy-discord-graphs (issues #41 #43 #45 #46 #47 #48 #49 #50 #54 #56): converged, challenged, and exported frame — 49 confirmed claims, 42 honesty conditions, 35 scope entries with file-level provenance, 8 resolved questions, 3 parks. Covers Discord run updates (devex webhook port over the cross-run SSE feed), cache/usage telemetry, session stickiness gated on a cold-vs-resumed A/B, capacity circuit breaker, reset-clock-aware pacing, budget contracts, full parallel tokens (#43 split/join + event pickup), the generic document-to-claims pipeline reframing of implement-plan mode, merge-as-action human tasks, preserve-on-failure plumbing commits to DB-recorded branches, dashboard auto-refresh, and the Node Graphs tab. Spec at docs/specs/2026-08-13-economy-discord-graphs.md.
+
 ## [0.14.0] - 2026-08-13
 
 ### Added

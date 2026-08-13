@@ -20,6 +20,8 @@ def test_transport_keys_are_not_forwarded_but_extras_are():
     extras = {k: v for k, v in raw_input.items() if k not in transport}
     assert set(extras) == {"fixReport", "runEvidence"}
     serialized = json.dumps(extras, indent=2, ensure_ascii=False)
-    combined = raw_input["instruction"] + "\n\n## Bound inputs (engine-resolved, verbatim)\n" + serialized
+    combined = (
+        raw_input["instruction"] + "\n\n## Bound inputs (engine-resolved, verbatim)\n" + serialized
+    )
     assert "fixReport" in combined and "did the thing" in combined
     assert combined.startswith("review the fix")

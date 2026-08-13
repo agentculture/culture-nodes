@@ -184,7 +184,7 @@ func runRegisterActor(t *testing.T, env []string) (output string, exitCode int) 
 		return output, 0
 	}
 	var exitErr *exec.ExitError
-	if ok := asExitError(err, &exitErr); ok {
+	if asExitError(err, &exitErr) {
 		return output, exitErr.ExitCode()
 	}
 	t.Fatalf("run register-actor.sh: %v (output: %s)", err, output)

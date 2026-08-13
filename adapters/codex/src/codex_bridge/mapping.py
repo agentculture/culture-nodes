@@ -179,23 +179,70 @@ def _default_workspace_measured() -> dict[str, Any]:
     }
 
 
-def usage_from_task_result(task_result: dict[str, Any] | None) -> dict[str, Any]:
-    """Map codex's own `usage` (input/output tokens) onto §13.2 `Usage`.
+def usage_from_task_result(task_result: dict[str, Any] | None) -> dict[str, Any] | None:
+    """Map provider-reported codex usage onto §13.2 `Usage`.
 
-    codex's usage is exact, API-reported token accounting (the
-    `turn.completed` event's own `usage` field); the bridge never estimates
-    cost, so `cost`/`currency` are always null — an actor that does not
-    price its work says so with null rather than a zero that reads as
-    "free" (protocol.go's own docstring, matching colleague-bridge's own
-    stance).
+    Input and output are the block-presence sentinel. If either count was
+    not reported, returning ``None`` makes it structurally impossible for a
+    caller to manufacture the old 0/0 block. Real zero counts remain real
+    because presence is checked with ``is None``, never truthiness.
+
+    Codex does not price its own work here, so `cost`/`currency` stay null.
+    Cache reads, reasoning output, model metadata, and the provider thread
+    are independently optional within an otherwise real usage block.
     """
-    usage = (task_result or {}).get("usage") or {}
-    return {
-        "input_tokens": int(usage.get("input_tokens") or 0),
-        "output_tokens": int(usage.get("output_tokens") or 0),
+    task = task_result or {}
+    usage = task.get("usage") or {}
+    input_tokens = usage.get("input_tokens")
+    output_tokens = usage.get("output_tokens")
+    if input_tokens is None or output_tokens is None:
+        return None
+
+    mapped: dict[str, Any] = {
+        "input_tokens": int(input_tokens),
+        "output_tokens": int(output_tokens),
         "cost": None,
         "currency": None,
     }
+
+    cached_input_tokens = usage.get("cached_input_tokens")
+    if cached_input_tokens is not None:
+        mapped["cached_input_tokens"] = int(cached_input_tokens)
+
+    reasoning_tokens = usage.get("reasoning_output_tokens")
+    if reasoning_tokens is not None:
+        mapped["reasoning_tokens"] = int(reasoning_tokens)
+
+    model = task.get("model")
+    if isinstance(model, str) and model:
+        mapped["model"] = model
+
+    thread_id = task.get("task_id")
+    if isinstance(thread_id, str) and thread_id:
+        mapped["thread_id"] = thread_id
+
+    return mapped
+
+
+def _attach_provider_telemetry(
+    payload: dict[str, Any], task_result: dict[str, Any] | None
+) -> dict[str, Any]:
+    """Attach independently optional usage and termination telemetry.
+
+    Keeping this single seam for success and failure payloads is what makes
+    the no-fabricated-zeros rule structural: no caller decides that a parsed
+    result is enough to imply usage. Only ``usage_from_task_result`` can add
+    that block, and it returns ``None`` until both required counts exist.
+    """
+    usage = usage_from_task_result(task_result)
+    if usage is not None:
+        payload["usage"] = usage
+
+    reason = (task_result or {}).get("termination_reason")
+    if isinstance(reason, str) and reason:
+        payload["termination_reason"] = reason
+
+    return payload
 
 
 def declared_result_override(task_result):
@@ -315,13 +362,13 @@ def sync_response(
     )
 
     if timed_out:
+        body = {
+            "error": "codex did not finish within the bridge's sync timeout",
+            "class": CLASS_TIMEOUT,
+            "workspace_measured": measured,
+        }
         return SyncResponse(
-            status_code=408,
-            body={
-                "error": "codex did not finish within the bridge's sync timeout",
-                "class": CLASS_TIMEOUT,
-                "workspace_measured": measured,
-            },
+            status_code=408, body=_attach_provider_telemetry(body, task_result)
         )
 
     classification = classify(task_result, ctx, default_success_outcome=default_success_outcome)
@@ -331,30 +378,27 @@ def sync_response(
             "class": classification.error_class,
             "workspace_measured": measured,
         }
-        # Issue #32: a failed session still burned real tokens. When codex
-        # produced a parseable terminal result, its API-reported usage rides
-        # the failure body; a result-less crash stays usage-less — absent,
-        # never fabricated zeros.
-        if task_result is not None:
-            body["usage"] = usage_from_task_result(task_result)
-        return SyncResponse(status_code=500, body=body)
+        # Usage and the provider reason are independent: a failed turn can
+        # report either one without forcing the other into existence.
+        return SyncResponse(
+            status_code=500, body=_attach_provider_telemetry(body, task_result)
+        )
 
     declared = declared_result_override(task_result)
-    return SyncResponse(
-        status_code=200,
-        body={
-            "outcome": declared[0] if declared else classification.outcome,
-            "output": declared[1] if declared else output_from_task_result(task_result),
-            "ledger_delta": {
-                "records": [
-                    claim_record(task_result, ctx, actor_id=actor_id, created_at=created_at)
-                ]
-            },
-            "artifact_refs": [],
-            "continuation_ref": None,
-            "usage": usage_from_task_result(task_result),
-            "workspace_measured": measured,
+    body = {
+        "outcome": declared[0] if declared else classification.outcome,
+        "output": declared[1] if declared else output_from_task_result(task_result),
+        "ledger_delta": {
+            "records": [
+                claim_record(task_result, ctx, actor_id=actor_id, created_at=created_at)
+            ]
         },
+        "artifact_refs": [],
+        "continuation_ref": None,
+        "workspace_measured": measured,
+    }
+    return SyncResponse(
+        status_code=200, body=_attach_provider_telemetry(body, task_result)
     )
 
 
@@ -387,14 +431,14 @@ def terminal_event(
     )
 
     if timed_out:
+        payload = {
+            "class": CLASS_TIMEOUT,
+            "message": "codex did not finish within the bridge's async wait bound",
+            "detail": detail,
+            "workspace_measured": measured,
+        }
         return TerminalEvent(
-            kind="failed",
-            payload={
-                "class": CLASS_TIMEOUT,
-                "message": "codex did not finish within the bridge's async wait bound",
-                "detail": detail,
-                "workspace_measured": measured,
-            },
+            kind="failed", payload=_attach_provider_telemetry(payload, task_result)
         )
 
     classification = classify(task_result, ctx, default_success_outcome=default_success_outcome)
@@ -405,26 +449,22 @@ def terminal_event(
             "detail": detail,
             "workspace_measured": measured,
         }
-        # Issue #32: same rule as sync_response — real usage from a parseable
-        # terminal result rides the failed payload; a result-less crash stays
-        # usage-less rather than reporting fabricated zeros.
-        if task_result is not None:
-            payload["usage"] = usage_from_task_result(task_result)
-        return TerminalEvent(kind="failed", payload=payload)
+        return TerminalEvent(
+            kind="failed", payload=_attach_provider_telemetry(payload, task_result)
+        )
 
     _declared = declared_result_override(task_result)
-    return TerminalEvent(
-        kind="completed",
-        payload={
-            "outcome": _declared[0] if _declared else classification.outcome,
-            "output": _declared[1] if _declared else output_from_task_result(task_result),
-            "ledger_delta": {
-                "records": [
-                    claim_record(task_result, ctx, actor_id=actor_id, created_at=created_at)
-                ]
-            },
-            "artifact_refs": [],
-            "usage": usage_from_task_result(task_result),
-            "workspace_measured": measured,
+    payload = {
+        "outcome": _declared[0] if _declared else classification.outcome,
+        "output": _declared[1] if _declared else output_from_task_result(task_result),
+        "ledger_delta": {
+            "records": [
+                claim_record(task_result, ctx, actor_id=actor_id, created_at=created_at)
+            ]
         },
+        "artifact_refs": [],
+        "workspace_measured": measured,
+    }
+    return TerminalEvent(
+        kind="completed", payload=_attach_provider_telemetry(payload, task_result)
     )

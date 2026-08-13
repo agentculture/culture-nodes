@@ -178,7 +178,13 @@ def test_sync_dispatch_maps_ok_result_to_200(bridge_url, monkeypatch):
     assert status == 200
     assert body["outcome"] == "completed"
     assert body["output"]["summary"] == "did it"
-    assert body["usage"] == {"input_tokens": 1, "output_tokens": 2, "cost": None, "currency": None}
+    assert body["usage"] == {
+        "input_tokens": 1,
+        "output_tokens": 2,
+        "cost": None,
+        "currency": None,
+        "thread_id": "019fe54f-8e7b-7940-943c-1728fd3a7c6b",
+    }
     assert body["ledger_delta"]["records"][0]["authority"] == "proposed"
 
 

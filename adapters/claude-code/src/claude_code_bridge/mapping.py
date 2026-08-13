@@ -195,22 +195,56 @@ def _default_workspace_measured() -> dict[str, Any]:
 
 
 def usage_from_result(result: dict[str, Any] | None) -> dict[str, Any]:
-    """Map claude's `usage`/`total_cost_usd` onto §13.2 `Usage`.
+    """Map claude's reported usage and identity onto §13.2 `Usage`.
 
-    Unlike colleague (which never prices its own work and always reports
-    `cost: null`), claude's own result carries `total_cost_usd` — an actual,
-    API-reported figure — so this bridge passes it through honestly rather
-    than nulling out a number it actually has.
+    Unlike colleague, claude reports a real `total_cost_usd`, so it passes
+    through with USD. `cache_read_input_tokens` is the cache-hit count and
+    therefore maps to `cached_input_tokens`. We deliberately do NOT add
+    `cache_creation_input_tokens`: those are uncached tokens spent writing
+    a new cache entry, not reads served from cache, and adding them would
+    overstate the cache ratio this field exists to measure.
+
+    A direct model name is preferred. Some CLI result versions expose only
+    a `modelUsage` map; its sole key is unambiguous, while a multi-model
+    aggregate cannot honestly be labeled as one model and is left absent.
     """
     r = result or {}
     usage = r.get("usage") or {}
     cost = r.get("total_cost_usd")
-    return {
+    mapped: dict[str, Any] = {
         "input_tokens": int(usage.get("input_tokens") or 0),
         "output_tokens": int(usage.get("output_tokens") or 0),
         "cost": float(cost) if isinstance(cost, (int, float)) else None,
         "currency": "USD" if isinstance(cost, (int, float)) else None,
     }
+
+    cached_input_tokens = usage.get("cache_read_input_tokens")
+    if cached_input_tokens is not None:
+        mapped["cached_input_tokens"] = int(cached_input_tokens)
+
+    model = r.get("model")
+    if not isinstance(model, str) or not model:
+        model_usage = r.get("modelUsage") or r.get("model_usage")
+        if isinstance(model_usage, dict) and len(model_usage) == 1:
+            model = next(iter(model_usage))
+    if isinstance(model, str) and model:
+        mapped["model"] = model
+
+    session_id = r.get("session_id")
+    if isinstance(session_id, str) and session_id:
+        mapped["thread_id"] = session_id
+
+    return mapped
+
+
+def _attach_termination_reason(
+    payload: dict[str, Any], result: dict[str, Any] | None
+) -> dict[str, Any]:
+    """Carry claude's stop reason beside usage, never by inventing usage."""
+    reason = (result or {}).get("stop_reason")
+    if isinstance(reason, str) and reason:
+        payload["termination_reason"] = reason
+    return payload
 
 
 def declared_result_override(result):
@@ -355,22 +389,24 @@ def sync_response(
         # never fabricated zeros.
         if result is not None:
             body["usage"] = usage_from_result(result)
-        return SyncResponse(status_code=500, body=body)
+        return SyncResponse(
+            status_code=500, body=_attach_termination_reason(body, result)
+        )
 
     _declared = declared_result_override(result)
-    return SyncResponse(
-        status_code=200,
-        body={
-            "outcome": _declared[0] if _declared else classification.outcome,
-            "output": _declared[1] if _declared else output_from_result(result),
-            "ledger_delta": {
-                "records": [claim_record(result, ctx, actor_id=actor_id, created_at=created_at)]
-            },
-            "artifact_refs": [],
-            "continuation_ref": None,
-            "usage": usage_from_result(result),
-            "workspace_measured": measured,
+    body = {
+        "outcome": _declared[0] if _declared else classification.outcome,
+        "output": _declared[1] if _declared else output_from_result(result),
+        "ledger_delta": {
+            "records": [claim_record(result, ctx, actor_id=actor_id, created_at=created_at)]
         },
+        "artifact_refs": [],
+        "continuation_ref": None,
+        "usage": usage_from_result(result),
+        "workspace_measured": measured,
+    }
+    return SyncResponse(
+        status_code=200, body=_attach_termination_reason(body, result)
     )
 
 
@@ -426,19 +462,21 @@ def terminal_event(
         # usage-less rather than reporting fabricated zeros.
         if result is not None:
             payload["usage"] = usage_from_result(result)
-        return TerminalEvent(kind="failed", payload=payload)
+        return TerminalEvent(
+            kind="failed", payload=_attach_termination_reason(payload, result)
+        )
 
     _declared = declared_result_override(result)
-    return TerminalEvent(
-        kind="completed",
-        payload={
-            "outcome": _declared[0] if _declared else classification.outcome,
-            "output": _declared[1] if _declared else output_from_result(result),
-            "ledger_delta": {
-                "records": [claim_record(result, ctx, actor_id=actor_id, created_at=created_at)]
-            },
-            "artifact_refs": [],
-            "usage": usage_from_result(result),
-            "workspace_measured": measured,
+    payload = {
+        "outcome": _declared[0] if _declared else classification.outcome,
+        "output": _declared[1] if _declared else output_from_result(result),
+        "ledger_delta": {
+            "records": [claim_record(result, ctx, actor_id=actor_id, created_at=created_at)]
         },
+        "artifact_refs": [],
+        "usage": usage_from_result(result),
+        "workspace_measured": measured,
+    }
+    return TerminalEvent(
+        kind="completed", payload=_attach_termination_reason(payload, result)
     )

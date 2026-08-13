@@ -12,6 +12,7 @@ a fake §13.4 callback receiver. These prove the whole t12 acceptance set:
 from __future__ import annotations
 
 import json
+import socket
 import time
 import urllib.error
 import urllib.request
@@ -111,6 +112,67 @@ def test_unknown_route_is_404(bridge):
     base, _cfg = bridge
     status, _ = _request(base, "/nope", method="GET")
     assert status == 404
+
+
+def _host_port(base):
+    host, port = base.removeprefix("http://").split(":")
+    return host, int(port)
+
+
+def test_oversized_body_is_413_and_closes_the_connection(bridge, monkeypatch):
+    """A body over MAX_BODY_BYTES must be refused with 413 + Connection:
+    close, never silently truncated: a truncating read leaves the remainder
+    unread on the keep-alive connection, and the next request's parse would
+    start mid-body (request desynchronization)."""
+    base, _cfg = bridge
+    monkeypatch.setattr(server, "MAX_BODY_BYTES", 1024)
+    host, port = _host_port(base)
+    body = b"x" * 4096
+    request = (
+        f"POST {server.INVOCATIONS_PATH} HTTP/1.1\r\n"
+        f"Host: {host}\r\n"
+        "Authorization: Bearer s3cr3t\r\n"
+        "Idempotency-Key: att_oversize\r\n"
+        "Content-Type: application/json\r\n"
+        f"Content-Length: {len(body)}\r\n"
+        "\r\n"
+    ).encode("ascii") + body
+
+    with socket.create_connection((host, port), timeout=10) as sock:
+        sock.sendall(request)
+        raw = b""
+        while True:
+            chunk = sock.recv(65536)
+            if not chunk:  # EOF: the server really closed the connection
+                break
+            raw += chunk
+
+    head = raw.split(b"\r\n\r\n", 1)[0].decode("latin-1")
+    status_line = head.splitlines()[0]
+    assert " 413 " in status_line, status_line
+    assert "connection: close" in head.lower()
+    # The refusal poisoned nothing: a fresh connection is served normally.
+    status, _ = _request(base, "/healthz", method="GET")
+    assert status == 200
+
+
+def test_keep_alive_connection_serves_sequential_requests(bridge):
+    """The 413 close path must not cost normal requests their keep-alive:
+    two well-formed requests on one connection both get answered."""
+    base, _cfg = bridge
+    host, port = _host_port(base)
+    get = f"GET /healthz HTTP/1.1\r\nHost: {host}\r\n\r\n".encode("ascii")
+
+    with socket.create_connection((host, port), timeout=10) as sock:
+        sock.sendall(get + get)
+        raw = b""
+        while raw.count(b"HTTP/1.1 200") < 2:
+            chunk = sock.recv(65536)
+            if not chunk:
+                break
+            raw += chunk
+
+    assert raw.count(b"HTTP/1.1 200") == 2
 
 
 # -- auth -------------------------------------------------------------------

@@ -101,6 +101,23 @@ Numbered SQL migrations for the authoritative PostgreSQL store (prd-spec
   `usage_thread_id` from `0017`: that column is telemetry about where a
   turn's usage accrued, this one is the handle a later dispatch resumes
   with, and neither is derived from the other.
+- `0020_actor_availability.sql` — expand-only: adds the mutable
+  `actor_availability` table (task t9 of the economy-discord-graphs plan,
+  issue #48 item 1), the capacity circuit breaker's durable paused-until
+  state. It is a NEW table rather than a column on `actors` because actor
+  identity is append-only by contract (`0001`, restated in
+  `internal/store/postgres/actorstats.go`): a pause is mutable and
+  short-lived, and recording one as a new identity revision would be a lie
+  about the actor's registration. It is keyed by `(namespace_id,
+  actor_key)`, not by `actors.id`, because provider capacity belongs to the
+  identity rather than to one revision of its registration — and because the
+  dispatch site always has the actor key while the actors-table row id is
+  best-effort. `paused_until` in the past means "history", never "paused":
+  every read compares against `now()` rather than treating row presence as a
+  pause. `retry_after_seconds` is NULL when the provider named no
+  Retry-After — never `0`, which would read as "retry immediately".
+  Concurrent trips are an idempotent upsert that keeps the LATER
+  `paused_until`, so a race may extend a pause and never shorten one.
 
 ## Policy
 

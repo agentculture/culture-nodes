@@ -228,6 +228,17 @@ type Attempt struct {
 	// `termination_reason`, not `usage_termination_reason`, for the same
 	// reason.
 	TerminationReason *string
+	// ContinuationRef is the §13.2 handle the actor offered for continuing
+	// the conversation this attempt had, nil when it offered none
+	// (docs/adr/0010-continuation-ref-on-request.md). It is opaque: the
+	// engine stores it and hands it back to the same actor on a later
+	// dispatch, and never parses or derives from it.
+	//
+	// It is NOT Usage.ThreadID. The thread id is telemetry about where the
+	// turn's usage accrued; this is the handle a resume takes. A backend
+	// can honestly report either without the other, and neither is derived
+	// from the other (ADR 0009 §1).
+	ContinuationRef *string
 }
 
 // Usage is the §13.2 telemetry block as the engine persists it. It mirrors
@@ -349,6 +360,13 @@ type CompletionRequest struct {
 	// separately from Usage because an actor can know the reason without
 	// holding a usage block to attach it to (ADR 0009).
 	TerminationReason *string
+
+	// ContinuationRef is the §13.2 handle the actor offered for continuing
+	// its conversation, nil when it offered none. Like Usage it rides
+	// straight onto the attempt row with no derivation: a handle nobody
+	// offered is never invented, and NULL there means "not reported", never
+	// "the session ended" (ADR 0010).
+	ContinuationRef *string
 }
 
 // RejectionKind names which contract refused a completion.

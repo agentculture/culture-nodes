@@ -1,0 +1,104 @@
+# Two agent nodes, one actor: the smallest workflow that can show a session
+# handle travelling from one turn to the next (task t4, spec claim c3).
+#
+# `first` and `second` name the SAME actor reference on purpose. The engine's
+# continuation lookup is scoped to run + actor row (ADR 0010 §4), so this is
+# exactly the shape where a ref returned by turn one must reach turn two —
+# and, when the actor offers none, exactly the shape where turn two must
+# dispatch cold rather than with something invented.
+apiVersion: nodes.culture.dev/v1alpha1
+kind: Workflow
+
+metadata:
+  name: worker-continuation-slice
+  version: 1.0.0
+  ownerRef: team/platform-ai
+
+spec:
+  entry: first
+
+  contract:
+    input:
+      schema:
+        type: object
+        required: [subject]
+        properties:
+          subject:
+            type: string
+    output:
+      schema:
+        type: object
+        required: [summary]
+        properties:
+          summary:
+            type: string
+
+  limits:
+    maxDuration: 1h
+    maxTransitions: 8
+    maxVisitsPerNode: 4
+    maxParallelTokens: 1
+
+  ledger:
+    schemaVersion: nodes.culture.dev/ledger/v1alpha1
+    maxRecordsPerNode: 10
+
+  nodes:
+    first:
+      kind: agent
+      ownerRef: team/platform-ai
+      uses: actor://company/analyzer@sha256:aaaaaa
+      input:
+        from: /run/input
+      contract:
+        outcomes:
+          completed:
+            schema:
+              type: object
+              required: [summary]
+              properties:
+                summary:
+                  type: string
+      ledger:
+        propose: [claim, result]
+      policy:
+        timeout: 2m
+        retry:
+          maxAttempts: 1
+          backoff: none
+
+    second:
+      kind: agent
+      ownerRef: team/platform-ai
+      uses: actor://company/analyzer@sha256:aaaaaa
+      input:
+        from: /nodes/first/output
+      contract:
+        outcomes:
+          completed:
+            schema:
+              type: object
+              required: [summary]
+              properties:
+                summary:
+                  type: string
+      ledger:
+        propose: [claim, result]
+      policy:
+        timeout: 2m
+        retry:
+          maxAttempts: 1
+          backoff: none
+
+    finish:
+      kind: end
+      ownerRef: team/platform-ai
+      output:
+        from: /nodes/second/output
+
+  edges:
+    - from: first.completed
+      to: second
+
+    - from: second.completed
+      to: finish

@@ -300,6 +300,10 @@ func (c *completion) recordAttempt(ctx context.Context) error {
 		// Carried beside Usage, not inside it: an attempt can report a
 		// termination reason with no usage block at all (ADR 0009).
 		TerminationReason: c.req.TerminationReason,
+		// The handle the actor offered for continuing this conversation,
+		// recorded so a LATER dispatch to the same actor can pass it back
+		// (ADR 0010). Absent stays absent — nothing here invents one.
+		ContinuationRef: c.req.ContinuationRef,
 	}); err != nil {
 		return err
 	}

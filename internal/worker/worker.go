@@ -502,9 +502,14 @@ func (w *Worker) failAttempt(ctx context.Context, claimed postgres.ClaimedWork, 
 // the other — a cancelled or output-capped turn can name its reason while
 // holding no parseable usage at all, which is why the reason is not a field
 // of the usage block (docs/adr/0009-usage-telemetry-extension.md).
+// ContinuationRef is the third such fact (ADR 0010): the handle the actor
+// offered for continuing its conversation. It belongs here rather than
+// beside the outcome because a completion that records no outcome at all can
+// still have been produced by a session that exists and is resumable.
 type actorTelemetry struct {
 	Usage             *engine.Usage
 	TerminationReason *string
+	ContinuationRef   *string
 }
 
 // completeTechnicalFailure is failAttempt's twin for a caller that needs the
@@ -534,6 +539,7 @@ func (w *Worker) completeTechnicalFailure(
 		LedgerDelta:       delta,
 		Usage:             telemetry.Usage,
 		TerminationReason: telemetry.TerminationReason,
+		ContinuationRef:   telemetry.ContinuationRef,
 		ActorID:           actorID,
 	})
 	if err != nil {

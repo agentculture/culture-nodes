@@ -689,6 +689,11 @@ func completionFor(inv PendingInvocation, ev CallbackEvent) (engine.CompletionRe
 		}
 		req.Usage = payload.Usage.ToEngine()
 		req.TerminationReason = payload.TerminationReason
+		// The handle for continuing this conversation, reported by an actor
+		// that finished late. Persisting it here is what makes continuation
+		// reachable on the path long sessions actually take (ADR 0010 §2);
+		// absent stays absent, and nothing invents one.
+		req.ContinuationRef = payload.ContinuationRef
 		return req, ""
 
 	case EventFailed:

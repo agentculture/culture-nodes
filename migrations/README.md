@@ -90,6 +90,17 @@ Numbered SQL migrations for the authoritative PostgreSQL store (prd-spec
   `usage_` prefix on purpose — a turn can know why it ended while holding no
   parseable usage at all, so it is a sibling of the usage block rather than
   a member of it (see the migration header and ADR 0009).
+- `0018_attempt_continuation_ref.sql` — expand-only: adds nullable
+  `attempts.continuation_ref` (task t4 of the economy-discord-graphs plan),
+  the §13.2 handle an actor offers for continuing the conversation a turn
+  had, which `docs/adr/0010-continuation-ref-on-request.md` also adds to
+  §13.1's request and §13.4's `completed` event. The value is opaque —
+  nothing parses it or derives from it — and NULL means "no handle
+  reported", never "the session ended" and never `''` (an empty string is a
+  value a bridge could mistake for a handle). It is deliberately NOT
+  `usage_thread_id` from `0017`: that column is telemetry about where a
+  turn's usage accrued, this one is the handle a later dispatch resumes
+  with, and neither is derived from the other.
 
 ## Policy
 

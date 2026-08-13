@@ -104,6 +104,7 @@ func (w *Worker) dispatchActor(
 		Workflow:        actors.WorkflowRef{Name: spec.Name, VersionDigest: spec.Digest},
 		Node:            actors.NodeRef{ID: node.ID, ContractDigest: node.ContractDigest},
 		Input:           dc.Input,
+		ContinuationRef: w.priorContinuationRef(ctx, dc),
 	}
 	if !dc.Deadline.IsZero() {
 		deadline := dc.Deadline.UTC()
@@ -153,6 +154,41 @@ func (w *Worker) dispatchActor(
 		return w.refuseAsyncPostRun(ctx, claimed, d, node, dc, preRun)
 	}
 	return w.park(ctx, claimed, d, node, dc, response.Accepted)
+}
+
+// priorContinuationRef is §13.1's continuation_ref for this dispatch: the
+// handle the most recent prior attempt AGAINST THIS ACTOR, IN THIS RUN,
+// offered — nil when there is none (task t4,
+// docs/adr/0010-continuation-ref-on-request.md).
+//
+// The scope is narrower than spec claim c3's eventual session key (actor +
+// repo + workstream), and narrow on purpose. A workstream outlives a run, so
+// keying on one needs the declared transport key all three bridges must
+// exclude from their Bound-inputs block (task t5) and the per-key
+// serialization that keeps two dispatches from interleaving turns on one
+// provider thread (task t6). Neither exists yet, and resuming a conversation
+// nothing declared it wanted resumed is worse than paying for a cold one. So
+// this reads run + actor, and says so.
+//
+// Best-effort by construction: a lookup that fails is reported and the
+// dispatch proceeds cold. A cold session costs more and is never wrong;
+// failing a dispatch because an optimization could not be looked up would be.
+// An unattributed dispatch (no resolved actor row id) looks up nothing —
+// there is no identity whose conversation this would be.
+func (w *Worker) priorContinuationRef(ctx context.Context, dc DispatchContext) *string {
+	if dc.ActorRowID == "" {
+		return nil
+	}
+	ref, ok, err := w.db.LatestContinuationRef(ctx, dc.RunID, dc.ActorRowID)
+	if err != nil {
+		w.report(fmt.Errorf("worker: run %s: look up prior continuation ref for actor %s: %w",
+			dc.RunID, dc.ActorRowID, err))
+		return nil
+	}
+	if !ok {
+		return nil
+	}
+	return &ref
 }
 
 // callbackFor builds §13.1's callback block: where to POST, and a token that
@@ -240,7 +276,15 @@ func (w *Worker) completeFromResult(
 			// invocation itself succeeded and burned real tokens regardless
 			// of what the hook could not verify.
 			completion, err := w.completeTechnicalFailure(ctx, claimed, dc.ActorRowID, engine.StatusFailed, hookKindPostRun, post.detail, agentDelta,
-				actorTelemetry{Usage: result.Usage.ToEngine(), TerminationReason: result.TerminationReason})
+				actorTelemetry{
+					Usage:             result.Usage.ToEngine(),
+					TerminationReason: result.TerminationReason,
+					// The invocation itself happened and its session still
+					// exists, whatever the hook could not verify about the
+					// work — dropping the handle here would re-open the
+					// silent drop ADR 0010 closes.
+					ContinuationRef: result.ContinuationRef,
+				})
 			if err != nil {
 				return err
 			}
@@ -278,7 +322,12 @@ func (w *Worker) completeFromResult(
 		// Beside the usage, never inside it: a turn that ended for a
 		// knowable reason may have reported no usage block (ADR 0009).
 		TerminationReason: result.TerminationReason,
-		ActorID:           dc.ActorRowID,
+		// The handle §13.2 lets the actor offer for continuing this
+		// conversation. It was read off the wire and dropped here before
+		// task t4 (spec scope entry s3), which is why every node turn
+		// started a cold session.
+		ContinuationRef: result.ContinuationRef,
+		ActorID:         dc.ActorRowID,
 	})
 	if err != nil {
 		if isStale(err) {

@@ -29,7 +29,7 @@ var explainCatalog = map[string]string{
 	"worker":    explainWorker,
 	"all":       explainAll,
 	"validate":  explainValidate,
-	"run":       explainStubMode("run", "start a workflow run"),
+	"run":       explainRun,
 	"inspect":   explainStubMode("inspect", "inspect ledger records for a run"),
 }
 
@@ -48,10 +48,12 @@ docs/initial-design/.
 - ` + "`nodes doctor`" + ` — environment/identity checks.
 - ` + "`nodes cli overview`" + ` — describe the CLI surface.
 - ` + "`nodes validate <file>`" + ` — compile a workflow and report diagnostics.
+- ` + "`nodes run`" + ` — create a first-class ad-hoc run from an instruction.
 
-## Process modes (recognized, not yet implemented)
+## Process modes
 
-serve, scheduler, worker, all, run, inspect.
+serve, scheduler, worker, all. (inspect is recognized but not yet
+implemented.)
 
 ## Exit-code policy
 

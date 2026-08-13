@@ -24,6 +24,9 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	storepg "github.com/agentculture/culture-nodes/internal/store/postgres"
+	"github.com/agentculture/culture-nodes/internal/store/postgres/pgtest"
 )
 
 var binPath string
@@ -44,7 +47,11 @@ func TestMain(m *testing.M) {
 		os.Exit(1)
 	}
 
-	code := m.Run()
+	// pgtest provides the PostgreSQL the `nodes run` end-to-end tests
+	// (run_test.go) drive a real API server over; when none is available it
+	// leaves testStore nil and those tests skip via pgtest.RequireStore,
+	// while every conformance test here still runs.
+	code := pgtest.Run(m, func(s *storepg.Store) { testStore = s })
 	os.RemoveAll(dir)
 	os.Exit(code)
 }
@@ -313,12 +320,12 @@ func TestConformance_DoctorHealthyFromRepoRoot(t *testing.T) {
 }
 
 func TestConformance_StubModeIsCliErrorNotResult(t *testing.T) {
-	// "run" stands in for a still-stubbed process mode; serve/all/scheduler/
-	// worker are all real now (serve.go, worker.go, scheduler.go) and are
-	// exercised by their own suites and TestConformance_ServeRequiresDatabaseURL
-	// below instead.
+	// "inspect" stands in for a still-stubbed process mode; serve/all/
+	// scheduler/worker are all real now (serve.go, worker.go, scheduler.go),
+	// and run is real as of task t19 (run.go) — each exercised by its own
+	// suite instead.
 	dir := t.TempDir()
-	r := runNodes(t, dir, "run")
+	r := runNodes(t, dir, "inspect")
 
 	assertNeverMixed(t, r)
 	if r.Stdout != "" {

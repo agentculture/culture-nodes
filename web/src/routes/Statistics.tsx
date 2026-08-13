@@ -7,7 +7,7 @@ import ErrorNotice from "../components/ErrorNotice";
 import TimeRangeFilter from "../components/TimeRangeFilter";
 import UsageSummary from "../components/UsageSummary";
 import { computeCategoryStats, computeRunStats, groupUsageByRun } from "../domain/stats";
-import { formatCost, formatTokenCount } from "../domain/usage";
+import { formatCacheRatio, formatCost, formatTokenCount } from "../domain/usage";
 import { useTimeRange } from "../hooks/useTimeRange";
 
 /**
@@ -204,6 +204,19 @@ export function Statistics() {
                 <span className="stat-tile__value" data-stat="median-tokens">
                   {formatTokenCount(Math.round(stats.medianInputTokens))} in /{" "}
                   {formatTokenCount(Math.round(stats.medianOutputTokens ?? 0))} out
+                </span>
+              )}
+            </div>
+
+            <div className="stat-tile" id="stat-tile-cache-ratio" data-stat-tile="cache-ratio">
+              <span className="stat-tile__label">Cache hit rate</span>
+              {stats.usage.cache_ratio === undefined ? (
+                <span className="muted" data-usage-reported="false">
+                  not computable (no input tokens reported)
+                </span>
+              ) : (
+                <span className="stat-tile__value" data-stat="cache-ratio">
+                  {formatCacheRatio(stats.usage.cache_ratio)}
                 </span>
               )}
             </div>

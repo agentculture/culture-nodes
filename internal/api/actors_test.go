@@ -436,3 +436,45 @@ func TestActorStatsUsageNeverSumsAcrossCurrencies(t *testing.T) {
 		t.Errorf("EUR cost = %v, want ~2.5", c)
 	}
 }
+
+// TestActorStatsCachedTokensAndCacheRatio proves the actor-level usage
+// rollup (task t2, ADR 0009) surfaces cached_input_tokens/reasoning_tokens
+// summed the same way input/output tokens are, and that cache_ratio is
+// computed honestly: only when input_tokens > 0, and never contaminated by
+// an attempt that reported tokens but no cache telemetry at all.
+func TestActorStatsCachedTokensAndCacheRatio(t *testing.T) {
+	f := newFixture(t)
+	actorID := f.insertActor("worker")
+	t0 := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
+
+	_, nr := createCategorizedRun(t, f, "")
+
+	cachedTokens, reasoningTokens := int64(60), int64(10)
+	seedActorAttempt(t, f, nr, actorID, 1, engine.StatusSucceeded, t0, t0.Add(time.Second),
+		&engine.Usage{InputTokens: 100, OutputTokens: 20, CachedInputTokens: &cachedTokens, ReasoningTokens: &reasoningTokens})
+	// Reports tokens but no cache telemetry at all -- its NULL cache columns
+	// must contribute nothing to the sum, never a fabricated zero.
+	seedActorAttempt(t, f, nr, actorID, 2, engine.StatusSucceeded, t0, t0.Add(time.Second),
+		&engine.Usage{InputTokens: 50, OutputTokens: 10})
+
+	stats := getActorStats(t, f, actorID)
+	usage := stats.Total.Usage
+	if usage == nil {
+		t.Fatal("usage is nil")
+	}
+	if usage.InputTokens != 150 || usage.OutputTokens != 30 {
+		t.Fatalf("tokens = %d/%d, want 150/30", usage.InputTokens, usage.OutputTokens)
+	}
+	if usage.CachedInputTokens != 60 {
+		t.Fatalf("CachedInputTokens = %d, want 60 (only attempt 1 reported any)", usage.CachedInputTokens)
+	}
+	if usage.ReasoningTokens != 10 {
+		t.Fatalf("ReasoningTokens = %d, want 10", usage.ReasoningTokens)
+	}
+	if usage.CacheRatio == nil {
+		t.Fatal("CacheRatio is nil, want 60/150 = 0.4 (input_tokens > 0)")
+	}
+	if *usage.CacheRatio < 0.399 || *usage.CacheRatio > 0.401 {
+		t.Fatalf("CacheRatio = %v, want ~0.4", *usage.CacheRatio)
+	}
+}

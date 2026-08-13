@@ -149,6 +149,32 @@ describe("Statistics tokens/cost aggregation", () => {
   });
 });
 
+describe("Statistics cache-ratio tile (task t2, ADR 0009)", () => {
+  beforeEach(() => mockTwoPages());
+
+  it("renders the window's cache hit rate computed from cached/input across every reporting run", async () => {
+    renderStatistics();
+    await screen.findByRole("table");
+
+    // Fixture total: cached 1000 (200 from nr-stat-a1 + 800 from
+    // nr-stat-b1) / input 7500 = 13.3%.
+    const cacheTile = document.getElementById("stat-tile-cache-ratio")!;
+    expect(within(cacheTile).getByText(/13\.3% cached/)).toBeInTheDocument();
+  });
+
+  it("renders an honest not-computable state, never a fabricated 0%, when no node runs are in the window", async () => {
+    mockListNodeRuns.mockReset();
+    mockListNodeRuns.mockResolvedValue({ items: [] });
+    renderStatistics();
+    await screen.findByText("No node runs in this range.");
+    // The stat tile itself doesn't render at all in the empty state (the
+    // whole stat-tiles block is gated on stats.totalRuns > 0) — this test
+    // pins that the empty state short-circuits before any tile, cache-ratio
+    // included, could render a fabricated figure.
+    expect(document.getElementById("stat-tile-cache-ratio")).toBeNull();
+  });
+});
+
 describe("Statistics category breakdown", () => {
   beforeEach(() => mockTwoPages());
 

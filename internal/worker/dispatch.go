@@ -235,8 +235,11 @@ func (w *Worker) completeFromResult(
 			// all: an attempt-level technical failure, not a domain answer
 			// — silently keeping the agent's own outcome here would be
 			// exactly the unenforced-check gap h32 forbids. The agent's own
-			// proposed records still ride along; only the routing changes.
-			completion, err := w.completeTechnicalFailure(ctx, claimed, dc.ActorRowID, engine.StatusFailed, hookKindPostRun, post.detail, agentDelta)
+			// proposed records still ride along; only the routing changes —
+			// and so does the result's reported usage (issue #32): the
+			// invocation itself succeeded and burned real tokens regardless
+			// of what the hook could not verify.
+			completion, err := w.completeTechnicalFailure(ctx, claimed, dc.ActorRowID, engine.StatusFailed, hookKindPostRun, post.detail, agentDelta, result.Usage.ToEngine())
 			if err != nil {
 				return err
 			}
@@ -310,6 +313,14 @@ func (w *Worker) completeFromResult(
 // measured something even though the subsequent invocation itself failed
 // technically, and that evidence is not dropped just because the actor never
 // answered.
+//
+// So is the error body's usage block (issue #32, task t5): a bridge whose
+// session failed after producing a parseable terminal result attaches the
+// §13.2 usage to its 500 body, and the failed attempt persists that burn —
+// failures get retried, so their burn compounds, and the rollups must see
+// it. A result-less crash or timeout carries no block and the attempt's
+// usage stays NULL (the h24 narrowing, stated in migrations/README.md's
+// 0012 entry).
 func (w *Worker) completeFromInvocationError(
 	ctx context.Context, claimed postgres.ClaimedWork, d postgres.Dispatch, node *nodeSpec, dc DispatchContext,
 	invokeErr error, preRun *hookRun,
@@ -319,7 +330,8 @@ func (w *Worker) completeFromInvocationError(
 		class = actors.ClassExecution
 	}
 	completion, err := w.completeTechnicalFailure(ctx, claimed, dc.ActorRowID, actors.TechStatusFor(class), string(class),
-		fmt.Sprintf("node %q invocation failed: %v", node.ID, invokeErr), nil)
+		fmt.Sprintf("node %q invocation failed: %v", node.ID, invokeErr),
+		nil, actors.UsageOf(invokeErr).ToEngine())
 	if err != nil {
 		return err
 	}

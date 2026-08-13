@@ -244,6 +244,102 @@ func TestInvokeDoesNotRetryNonRetryableClasses(t *testing.T) {
 	}
 }
 
+// Issue #32 (task t5): a bridge whose session failed after producing a
+// parseable terminal result attaches the §13.2 usage block to its 500 error
+// body (`{error, class, workspace_measured, usage}` — the bridges'
+// sync_response failure shape, task t4). The client surfaces that block on
+// the InvocationError so the worker can persist the burn on the failed
+// attempt.
+func TestInvokeCapturesUsageFromErrorBody(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusInternalServerError)
+		_, _ = w.Write([]byte(`{
+			"error": "session ended with an error result",
+			"class": "execution",
+			"workspace_measured": {"measured": false},
+			"usage": {"input_tokens": 700, "output_tokens": 55, "cost": 0.012, "currency": "USD"}
+		}`))
+	}))
+	defer server.Close()
+
+	_, err := newClient(t).Invoke(context.Background(), actors.Endpoint{URL: server.URL}, testRequest())
+	assertClass(t, err, actors.ClassExecution)
+
+	usage := actors.UsageOf(err)
+	if usage == nil {
+		t.Fatal("UsageOf = nil, want the error body's usage block surfaced")
+	}
+	if usage.InputTokens != 700 || usage.OutputTokens != 55 {
+		t.Errorf("tokens = %d/%d, want 700/55", usage.InputTokens, usage.OutputTokens)
+	}
+	if usage.Cost == nil || *usage.Cost != 0.012 {
+		t.Errorf("cost = %v, want 0.012", usage.Cost)
+	}
+	if usage.Currency == nil || *usage.Currency != "USD" {
+		t.Errorf("currency = %v, want USD", usage.Currency)
+	}
+}
+
+// The honest-null rule end to end: an error body with no usage block — or no
+// parseable body at all — yields a nil Usage, never fabricated zeros.
+func TestInvokeErrorBodyWithoutUsageYieldsNilUsage(t *testing.T) {
+	for name, body := range map[string]string{
+		"no usage key":  `{"error":"session crashed before any result","class":"execution","workspace_measured":{"measured":false}}`,
+		"not JSON":      `upstream proxy meltdown`,
+		"usage is null": `{"error":"crashed","class":"execution","usage":null}`,
+	} {
+		t.Run(name, func(t *testing.T) {
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+				w.WriteHeader(http.StatusInternalServerError)
+				_, _ = w.Write([]byte(body))
+			}))
+			defer server.Close()
+
+			_, err := newClient(t).Invoke(context.Background(), actors.Endpoint{URL: server.URL}, testRequest())
+			assertClass(t, err, actors.ClassExecution)
+			if usage := actors.UsageOf(err); usage != nil {
+				t.Errorf("UsageOf = %+v, want nil: absent usage stays absent", usage)
+			}
+		})
+	}
+}
+
+// The usage block is decoded from the full response body, not from the
+// bounded Body capture: a bridge error document larger than the capture
+// limit must not cost the attempt its accounting.
+func TestInvokeCapturesUsageBeyondBodyCaptureBound(t *testing.T) {
+	filler := strings.Repeat("x", 4096)
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusInternalServerError)
+		_, _ = fmt.Fprintf(w, `{"error":%q,"class":"execution","usage":{"input_tokens":31,"output_tokens":7,"cost":null,"currency":null}}`, filler)
+	}))
+	defer server.Close()
+
+	_, err := newClient(t).Invoke(context.Background(), actors.Endpoint{URL: server.URL}, testRequest())
+	assertClass(t, err, actors.ClassExecution)
+
+	usage := actors.UsageOf(err)
+	if usage == nil || usage.InputTokens != 31 || usage.OutputTokens != 7 {
+		t.Fatalf("usage = %+v, want 31/7 decoded past the Body capture bound", usage)
+	}
+	var invErr *actors.InvocationError
+	if !errors.As(err, &invErr) {
+		t.Fatalf("error is not an *InvocationError: %v", err)
+	}
+	if len(invErr.Body) >= len(filler) {
+		t.Errorf("Body capture is unbounded (%d bytes): the diagnostic capture must stay truncated", len(invErr.Body))
+	}
+}
+
+// UsageOf on an unclassified error is nil, matching ClassOf's shape.
+func TestUsageOfUnclassifiedErrorIsNil(t *testing.T) {
+	if usage := actors.UsageOf(errors.New("plain")); usage != nil {
+		t.Errorf("UsageOf(plain error) = %+v, want nil", usage)
+	}
+}
+
 // A rate-limited actor's Retry-After is honoured over the client's own
 // schedule: it is the only party that knows when it will be ready.
 func TestInvokeHonoursRetryAfter(t *testing.T) {

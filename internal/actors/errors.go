@@ -148,6 +148,15 @@ type InvocationError struct {
 	// RetryAfter is the delay the actor asked for (Retry-After), zero when it
 	// asked for none.
 	RetryAfter time.Duration
+	// Usage is the §13.2 usage block the actor attached to its error body,
+	// nil when it attached none. Issue #32: a failed session still burned
+	// real tokens, and the bridges' 500 bodies carry the block alongside
+	// `error` and `class` whenever a parseable terminal result existed —
+	// the sync twin of ADR 0008's failed-event usage. It is decoded from
+	// the full response body, not from the truncated Body capture, so a
+	// large error document cannot cost the attempt its accounting. Nil
+	// means unreported — the worker persists it as NULL, never as zeros.
+	Usage *Usage
 	// Requests is how many HTTP requests were spent before giving up.
 	Requests int
 	// Err is the underlying transport or decode error, if any.
@@ -197,6 +206,20 @@ func ClassOf(err error) (ErrorClass, bool) {
 		return invErr.Class, true
 	}
 	return "", false
+}
+
+// UsageOf extracts the §13.2 usage block from a classified invocation
+// failure's error body, nil when err is not one or when its body carried
+// none. It is ClassOf's shape for the usage field: the worker's
+// completeFromInvocationError threads the result into the failure
+// completion so a sync bridge failure with a parseable terminal result
+// persists its burn on the failed attempt (issue #32, task t5).
+func UsageOf(err error) *Usage {
+	var invErr *InvocationError
+	if errors.As(err, &invErr) {
+		return invErr.Usage
+	}
+	return nil
 }
 
 // classifyStatus maps an HTTP status the actor returned onto a §13.5 class.

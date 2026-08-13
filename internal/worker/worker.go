@@ -483,7 +483,7 @@ func (w *Worker) complete(ctx context.Context, claimed postgres.ClaimedWork, req
 // per-actor surfaces (retry burn in particular) must not lose it; a
 // pre-resolution refusal, conversely, must never guess one.
 func (w *Worker) failAttempt(ctx context.Context, claimed postgres.ClaimedWork, actorID string, status engine.TechStatus, class, detail string) error {
-	_, err := w.completeTechnicalFailure(ctx, claimed, actorID, status, class, detail, nil)
+	_, err := w.completeTechnicalFailure(ctx, claimed, actorID, status, class, detail, nil, nil)
 	return err
 }
 
@@ -495,17 +495,23 @@ func (w *Worker) failAttempt(ctx context.Context, claimed postgres.ClaimedWork, 
 // a post-run hook's verdict could not be trusted, so a technical failure
 // still records what the agent itself claimed.
 //
+// usage is the §13.2 block the actor reported for the failed work, nil when
+// it reported none (issue #32: a failed session still burned real tokens,
+// and a technical failure must not cost the attempt its accounting). Nil
+// persists as NULL — unreported, never fabricated zeros.
+//
 // The returned CompletionResult is the zero value when the completion turned
 // out stale (isStale(err)): nothing was committed here, so there is nothing
 // for a caller to key follow-up writes to, and the error is nil — a stale
 // completion is not a worker malfunction (see isStale).
 func (w *Worker) completeTechnicalFailure(
-	ctx context.Context, claimed postgres.ClaimedWork, actorID string, status engine.TechStatus, class, detail string, delta []ledger.Record,
+	ctx context.Context, claimed postgres.ClaimedWork, actorID string, status engine.TechStatus, class, detail string, delta []ledger.Record, usage *engine.Usage,
 ) (engine.CompletionResult, error) {
 	result, err := w.complete(ctx, claimed, engine.CompletionRequest{
 		TechStatus:  status,
 		Output:      diagnosticOutput(class, detail),
 		LedgerDelta: delta,
+		Usage:       usage,
 		ActorID:     actorID,
 	})
 	if err != nil {

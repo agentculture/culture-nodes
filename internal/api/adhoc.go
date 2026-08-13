@@ -37,8 +37,8 @@ type adhocRunRequest struct {
 	Timeout        string `json:"timeout,omitempty"`
 }
 
-// The defaults mirror .claude/skills/nodes-operator/scripts/nodes-op.sh's
-// assign verb (sandbox=read-only, timeout=15m, outcome=completed,
+// The defaults mirror the nodes-operator skill's assign verb
+// (sandbox=read-only, timeout=15m, outcome=completed,
 // retries=1) — an ad-hoc assignment is a billable agent session, so a
 // silent retry doubles real spend; maxAttempts stays fixed at 1 here.
 const (
@@ -63,9 +63,9 @@ var (
 )
 
 // adhocWorkflowTemplate is the canonical one-node workflow, mirroring the
-// shape of .claude/skills/nodes-operator/templates/assign.workflow.yaml
-// (which is vendored and must not be edited — this is a deliberate copy of
-// its structure, not a citation of its bytes). The instruction, repo,
+// shape of the nodes-operator skill's assign workflow template (which is
+// vendored and must not be edited — this is a deliberate copy of its
+// structure, not a citation of its bytes). The instruction, repo,
 // sandbox, and success outcome all arrive as run input, so ONE published
 // digest serves every ad-hoc run to the same actor with the same timeout
 // and outcome: an identical render republishes as a no-op returning the
@@ -165,8 +165,8 @@ func renderAdhocWorkflow(name, actorRef, timeout, outcome string) string {
 }
 
 // adhocWorkflowName derives the rendered workflow's metadata.name from the
-// actor reference — `adhoc-<actor key>` (e.g. adhoc-codex-thor for
-// actor://company/codex-thor@sha256:...), mirroring the skill's
+// actor reference — `adhoc-<actor key>` (e.g. adhoc-planner for
+// actor://company/planner@sha256:...), mirroring the skill's
 // assign-<actor> naming. The key is sanitized to the schema's name pattern;
 // a ref whose key sanitizes away entirely still gets a valid name.
 func adhocWorkflowName(actorRef string) string {
@@ -201,10 +201,10 @@ func (s *Server) handleCreateAdhocRun(w http.ResponseWriter, r *http.Request) er
 		return badRequest("instruction is required", "instruction must not be empty")
 	}
 	if req.ActorRef == "" {
-		return badRequest("actor_ref is required, e.g. actor://company/codex-thor@sha256:...", "actor_ref must not be empty")
+		return badRequest("actor_ref is required, e.g. actor://company/planner@sha256:...", "actor_ref must not be empty")
 	}
 	if !adhocActorRefPattern.MatchString(req.ActorRef) {
-		return badRequest("actor_ref must be a component reference like actor://company/codex-thor@sha256:...", "malformed actor_ref %q", req.ActorRef)
+		return badRequest("actor_ref must be a component reference like actor://company/planner@sha256:...", "malformed actor_ref %q", req.ActorRef)
 	}
 	if req.Repo == "" {
 		return badRequest("repo is required: the checkout path the actor works in", "repo must not be empty")

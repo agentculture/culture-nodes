@@ -83,13 +83,6 @@ func TestRunMissingFlagsIsUserError(t *testing.T) {
 	}
 }
 
-// runResultPayload is `nodes run --json`'s stable result shape.
-type runResultPayload struct {
-	RunID          string `json:"run_id"`
-	WorkflowDigest string `json:"workflow_digest"`
-	State          string `json:"state"`
-}
-
 func TestRunEndToEndAgainstTestServer(t *testing.T) {
 	ts := runAPIServer(t)
 	dir := t.TempDir()

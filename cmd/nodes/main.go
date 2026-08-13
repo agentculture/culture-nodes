@@ -2,11 +2,11 @@
 //
 // It wires the agent-first CLI contract from internal/clifmt onto the
 // verb surface: the introspection verbs whoami, learn, explain, overview,
-// doctor, and cli overview, plus the process modes the PRD describes
-// (serve, scheduler, worker, all, run, inspect), which are recognized here
-// but not yet implemented — invoking one reports a structured CliError
-// instead of dispatching to real work — plus validate, which compiles a
-// workflow definition through internal/compiler.
+// doctor, and cli overview; the process modes the PRD describes (serve,
+// scheduler, worker, all — real; inspect is still recognized-but-stubbed,
+// reporting a structured CliError instead of dispatching to work);
+// validate, which compiles a workflow definition through internal/compiler;
+// and run, the first-class ad-hoc run lane (task t19, issue #36).
 package main
 
 import (
@@ -42,8 +42,14 @@ Database:
 Workflows:
   validate <file>    compile a workflow definition and report diagnostics
 
-Process modes (recognized, not yet implemented):
-  serve  scheduler  worker  all  run  inspect
+Runs:
+  run                create a first-class ad-hoc run from an instruction
+
+Process modes:
+  serve  scheduler  worker  all
+
+Recognized, not yet implemented:
+  inspect
 
 Every command supports --json, including parse-time failures. Run
 'nodes learn' for the full contract, or 'nodes explain <path>' for docs
@@ -86,6 +92,7 @@ func commands() map[string]handlerFunc {
 	m["all"] = cmdAll
 	m["worker"] = cmdWorker
 	m["scheduler"] = cmdScheduler
+	m["run"] = cmdRun
 	return m
 }
 

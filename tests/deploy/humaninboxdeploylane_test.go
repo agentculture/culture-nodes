@@ -96,7 +96,7 @@ func TestHumanInboxDeployLaneRunsViaUvRunAgainstAgentCheckout(t *testing.T) {
 		t.Fatal("no deploy_human_inbox() function found")
 	}
 
-	if !strings.Contains(script, "human-inbox-bridge.service ~/.config/systemd/user/") {
+	if !strings.Contains(script, "~/.config/systemd/user/human-inbox-bridge.service") {
 		t.Error("deploy.sh does not install human-inbox-bridge.service to ~/.config/systemd/user/")
 	}
 }
@@ -108,7 +108,7 @@ func TestHumanInboxDeployLaneInstallsAndStartsBridgeUnit(t *testing.T) {
 	script := deployScriptText(t)
 
 	for _, want := range []struct{ needle, why string }{
-		{"human-inbox-bridge.service ~/.config/systemd/user/", "the unit file install"},
+		{"~/.config/systemd/user/human-inbox-bridge.service", "the unit file install"},
 		{"systemctl --user daemon-reload", "the daemon-reload after installing the unit"},
 		{"systemctl --user restart human-inbox-bridge", "the restart (so a re-deploy picks up changes)"},
 		{"systemctl --user enable human-inbox-bridge", "the enable (so the bridge survives a reboot)"},
@@ -134,7 +134,7 @@ func TestHumanInboxDeployLaneGatesTrackerOnGitHubToken(t *testing.T) {
 		t.Error(`deploy.sh does not grep human-inbox.env for a non-empty GITHUB_TOKEN= line before installing the tracker unit`)
 	}
 	for _, want := range []struct{ needle, why string }{
-		{"human-inbox-tracker.service ~/.config/systemd/user/", "the tracker unit file install"},
+		{"~/.config/systemd/user/human-inbox-tracker.service", "the tracker unit file install"},
 		{"systemctl --user restart human-inbox-tracker", "the tracker restart"},
 		{"systemctl --user enable human-inbox-tracker", "the tracker enable"},
 		{"is-active human-inbox-tracker", "the tracker wait-active poll"},

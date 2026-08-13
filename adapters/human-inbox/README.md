@@ -69,7 +69,10 @@ Human surface (same server, same bearer token):
 
 * `GET /inbox/tasks?status=pending` — list tasks; callback credentials are
   redacted from every listing.
-* `POST /inbox/tasks/<id>/submit` — body `{outcome, output?, note?}`.
+* `POST /inbox/tasks/<id>/submit` — body `{outcome, output?, note?}` for a
+  manual submission. The sibling merge tracker adds a validated
+  `observed: {collection_method, merge_commit}` marker; manual clients do
+  not need to send it.
   `outcome` is required and never defaulted: a person who did not say what
   happened has not answered. `output` must be a JSON object when present
   (it is bound into the node's contract-shaped output).
@@ -265,7 +268,62 @@ The tracker contract:
 
 The `observe` value is a free-form object; the tracker interprets the
 `kind` field to select the right external check. Today the only
-supported kind is `github_pr_merged`.
+supported kind is `github_pr_merged`. That declaration also accepts
+`repo: owner/name`; when absent, the tracker uses its configured default
+repository. A task-level `input.success_outcome` is used when present;
+otherwise this observation kind reports its unambiguous `merged` outcome.
+
+### Running the GitHub merge tracker
+
+The tracker is a separate stdlib-only process beside the bridge. It reads
+only `pending` task files from the same durable state directory, calls
+`GET /repos/{repo}/pulls/{number}` with `GITHUB_TOKEN`, and talks back only
+to the bridge's authenticated submit surface. It never calls the Culture
+Nodes control plane. `merged: true` plus a non-empty `merge_commit_sha` is
+the sole auto-submit state; `closed` with `merged: false`, malformed or
+unsupported declarations, and undeclared tasks stay manual.
+
+```bash
+export GITHUB_TOKEN=...
+export HUMAN_INBOX_BRIDGE_AUTH_TOKEN=...       # submit auth to the sibling bridge
+export HUMAN_INBOX_BRIDGE_STATE_DIR=.human-inbox-bridge-state
+export HUMAN_INBOX_TRACKER_DEFAULT_REPO=agentculture/culture-nodes
+
+uv run python -m human_inbox_bridge.tracker
+# operational/test probe: run exactly one bounded cycle
+uv run python -m human_inbox_bridge.tracker --once
+```
+
+| Env var | Default | Meaning |
+|---|---|---|
+| `GITHUB_TOKEN` | required | GitHub bearer token held by the tracker process |
+| `HUMAN_INBOX_TRACKER_STATE_DIR` | bridge config's `state_dir` | Durable bridge state directory to scan read-only |
+| `HUMAN_INBOX_TRACKER_BRIDGE_URL` | loopback + bridge config's `port` | Sibling bridge base URL |
+| `HUMAN_INBOX_BRIDGE_AUTH_TOKEN` | bridge config's `auth_token` | Bearer token for the bridge submit surface |
+| `HUMAN_INBOX_TRACKER_DEFAULT_REPO` | unset | Fallback GitHub `owner/repository` when `observe.repo` is absent |
+| `HUMAN_INBOX_TRACKER_POLL_SECONDS` | `60` | Delay between complete poll cycles |
+| `HUMAN_INBOX_TRACKER_GITHUB_REQUEST_BUDGET` | `50` | Maximum unique PR GETs per cycle (`0` disables GitHub requests) |
+| `HUMAN_INBOX_TRACKER_HTTP_TIMEOUT_SECONDS` | `30` | Timeout for each GitHub GET and bridge POST |
+
+An automatic submit uses the task success outcome and a note naming the
+merge commit, plus this explicit marker:
+
+```json
+{
+  "observed": {
+    "collection_method": "github_pr_merged",
+    "merge_commit": "9f64f1bc75353f4b2e6b232f5668e338168b794e"
+  }
+}
+```
+
+The server validates that exact marker shape. Mapping then emits a
+`data.kind: "observed-submission"` claim carrying the collection method
+and merge commit. The record remains `authority: "proposed"` and retains
+the bridge actor origin; this attribution does not claim runner-observed
+authority. A submission without the marker follows the original
+`human-submission` mapping unchanged, even when its task has an `observe`
+declaration.
 
 ## Tests
 

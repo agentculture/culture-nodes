@@ -41,6 +41,12 @@ def test_get_unknown_is_none(tmp_path):
     assert store.get("hit_missing") is None
 
 
+def test_read_only_store_does_not_create_state_directory(tmp_path):
+    store = TaskStore(tmp_path / "missing", create=False)
+    assert store.list(status="pending") == []
+    assert not store.tasks_dir.exists()
+
+
 def test_tasks_survive_a_new_store_instance(tmp_path):
     # The restart test at store level: a NEW TaskStore over the same
     # directory (as after a process restart) sees the same pending task.

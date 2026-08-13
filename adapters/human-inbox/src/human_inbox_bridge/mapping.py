@@ -16,8 +16,10 @@ Two deliberate divergences from the agent bridges, both honesty rules:
   append path a human-origin record may carry `proposed` and nothing
   stronger (`internal/ledger/authority.go` `checkHumanAuthority`):
   confirmation and rejection are review transactions (PRD §10.8), not
-  callback payloads. The human's submission is their claim about what they
-  did; the run's approval surface is where anything gets confirmed.
+  callback payloads. Manual submissions use `human-submission`; the merge
+  tracker uses an explicit, validated `observed` marker to select the
+  `observed-submission` sibling and attach its collection method + merge
+  commit. Neither path changes origin or authority.
 
 There is also no `classify` ladder here: the human names the domain outcome
 explicitly in the submission, so the mapping never infers one. A submission
@@ -46,7 +48,7 @@ class InvocationContext:
 
 
 def submission_error(body: dict[str, Any]) -> str | None:
-    """Validate a human submission `{outcome, output?, note?}`.
+    """Validate a submission `{outcome, output?, note?, observed?}`.
 
     Returns a human-readable refusal, or None when the submission is
     acceptable. `outcome` is required and never defaulted (see module
@@ -62,6 +64,17 @@ def submission_error(body: dict[str, Any]) -> str | None:
     note = body.get("note")
     if note is not None and not isinstance(note, str):
         return "note must be a string when present"
+    if "observed" in body:
+        observed = body["observed"]
+        if not isinstance(observed, dict):
+            return "observed must be a JSON object when present"
+        if set(observed) != {"collection_method", "merge_commit"}:
+            return "observed must contain exactly collection_method and merge_commit"
+        if observed.get("collection_method") != "github_pr_merged":
+            return "observed.collection_method must be github_pr_merged"
+        merge_commit = observed.get("merge_commit")
+        if not isinstance(merge_commit, str) or not merge_commit.strip():
+            return "observed.merge_commit must be a non-empty string"
     return None
 
 
@@ -80,6 +93,32 @@ def claim_record(
     the human case. The engine re-checks authority on append regardless of
     what is claimed here.
     """
+    observed = submission.get("observed")
+    is_observed = isinstance(observed, dict)
+    data = {
+        # The ledger schema requires a non-empty statement. A submitter
+        # who put their prose in output.note (or sent no note at all)
+        # must not produce an engine-side contract_rejected on an
+        # otherwise-valid human decision (found live: run
+        # 01KZXD609QRFHWS8YQ6MRZ1Y0F failed on an empty statement), so
+        # the statement falls back through output.note to a generated
+        # sentence naming the outcome — never empty.
+        "statement": (
+            submission.get("note")
+            or (submission.get("output") or {}).get("note")
+            or f"human submitted outcome {submission.get('outcome')}"
+        ),
+        "kind": "observed-submission" if is_observed else "human-submission",
+        "outcome": submission.get("outcome"),
+    }
+    if is_observed:
+        # submission_error has already pinned this marker to the one
+        # observation method this bridge understands. Keep authority and
+        # origin unchanged: this is honest attribution inside a proposed
+        # bridge claim, not runner-origin observed authority.
+        data["collection_method"] = observed["collection_method"]
+        data["merge_commit"] = observed["merge_commit"].strip()
+
     return {
         "id": "",
         "schema_version": "nodes.culture.dev/ledger/v1alpha1",
@@ -90,22 +129,7 @@ def claim_record(
         "origin": {"kind": "human", "actor_id": actor_id},
         "authority": "proposed",
         "subject_ref": None,
-        "data": {
-            # The ledger schema requires a non-empty statement. A submitter
-            # who put their prose in output.note (or sent no note at all)
-            # must not produce an engine-side contract_rejected on an
-            # otherwise-valid human decision (found live: run
-            # 01KZXD609QRFHWS8YQ6MRZ1Y0F failed on an empty statement), so
-            # the statement falls back through output.note to a generated
-            # sentence naming the outcome — never empty.
-            "statement": (
-                submission.get("note")
-                or (submission.get("output") or {}).get("note")
-                or f"human submitted outcome {submission.get('outcome')}"
-            ),
-            "kind": "human-submission",
-            "outcome": submission.get("outcome"),
-        },
+        "data": data,
         "provenance_refs": [],
         "supersedes": None,
         "created_at": created_at,

@@ -55,6 +55,14 @@ type DispatchContext struct {
 	// AttemptID is the protocol attempt id — the Idempotency-Key any external
 	// call must carry so a redispatch is not a second execution (§20.3).
 	AttemptID string
+	// ActorRowID is the actors-table row id the node's actor reference
+	// resolved to, for durable attribution on the attempt row
+	// (attempts.actor_id). It is populated only AFTER Registry.Resolve
+	// succeeds (dispatchActor), so every completion committed from a path
+	// that fired before resolution carries "" — persisted as NULL, never a
+	// guessed attribution. Best-effort besides: a registry without the
+	// ActorRowID capability leaves it empty on the success paths too.
+	ActorRowID string
 	// Attempt is the attempt number this claim represents.
 	Attempt int
 	// Input is the node's resolved input payload (§11.2).

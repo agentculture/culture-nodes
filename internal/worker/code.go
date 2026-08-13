@@ -234,8 +234,14 @@ func (w *Worker) buildCodeOperation(node *nodeSpec, dc DispatchContext) (runners
 func (w *Worker) dispatchCode(
 	ctx context.Context, claimed postgres.ClaimedWork, d postgres.Dispatch, node *nodeSpec, dc DispatchContext,
 ) error {
+	// Every completion this function commits — failure sites included —
+	// carries w.codeRunnerActorID(), the same producer identity the success
+	// path below stamps: a code node's dispatch is the runner's work
+	// whichever way it ends, and per-actor surfaces must see the failures
+	// too. (When even CodeRunnerActorID/CodeRunnerName are unconfigured the
+	// helper yields "" and the attempt stays honestly unattributed.)
 	if w.opts.CodeRunnerName == "" {
-		return w.failAttempt(ctx, claimed, engine.StatusFailed, "configuration",
+		return w.failAttempt(ctx, claimed, w.codeRunnerActorID(), engine.StatusFailed, "configuration",
 			fmt.Sprintf("node %q is a code node and this worker has a code runner but no CodeRunnerName; "+
 				"an operation that names no runner is one no adapter will accept", node.ID))
 	}
@@ -245,12 +251,12 @@ func (w *Worker) dispatchCode(
 	// no honest way to route whatever it produced.
 	outcomes, err := w.codeOutcomes(node)
 	if err != nil {
-		return w.failAttempt(ctx, claimed, engine.StatusFailed, "definition", err.Error())
+		return w.failAttempt(ctx, claimed, w.codeRunnerActorID(), engine.StatusFailed, "definition", err.Error())
 	}
 
 	operation, err := w.buildCodeOperation(node, dc)
 	if err != nil {
-		return w.failAttempt(ctx, claimed, engine.StatusFailed, "configuration", err.Error())
+		return w.failAttempt(ctx, claimed, w.codeRunnerActorID(), engine.StatusFailed, "configuration", err.Error())
 	}
 
 	// Placement is a registry fact (api/runner-protocol). When this node's
@@ -263,7 +269,7 @@ func (w *Worker) dispatchCode(
 		return w.dispatchRunnerService(ctx, claimed, d, node, dc, identity, registryName, operation)
 	}
 	if w.opts.CodeRunner == nil {
-		return w.failAttempt(ctx, claimed, engine.StatusFailed, "configuration",
+		return w.failAttempt(ctx, claimed, w.codeRunnerActorID(), engine.StatusFailed, "configuration",
 			fmt.Sprintf("node %q is a code node and this worker has a runner registry but no identity registered "+
 				"for %q (nor for %q), and no in-process code runner to fall back on; "+
 				"register the node's execution identity before a run can dispatch it",
@@ -296,7 +302,7 @@ func (w *Worker) dispatchCode(
 		// The result could not be mapped at all. That is a contract problem,
 		// not a claim about what the operation did — and the operation row is
 		// still recorded below so the raw Result stays inspectable.
-		result, cerr := w.completeTechnicalFailure(ctx, claimed, engine.StatusContractRejected, "runner",
+		result, cerr := w.completeTechnicalFailure(ctx, claimed, w.codeRunnerActorID(), engine.StatusContractRejected, "runner",
 			fmt.Sprintf("node %q result could not be mapped onto a completion: %v", node.ID, err), nil)
 		if cerr != nil {
 			return cerr
@@ -338,7 +344,7 @@ func (w *Worker) completeCodeDispatchError(
 	if errors.As(execErr, &dispatchErr) {
 		status = dispatchErr.TechStatus()
 	}
-	result, err := w.completeTechnicalFailure(ctx, claimed, status, "runner",
+	result, err := w.completeTechnicalFailure(ctx, claimed, w.codeRunnerActorID(), status, "runner",
 		fmt.Sprintf("node %q code dispatch was refused by the runner boundary: %v", node.ID, execErr), nil)
 	if err != nil {
 		return err

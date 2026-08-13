@@ -53,7 +53,7 @@ func (w *Worker) dispatchActor(
 	}
 
 	if w.opts.Registry == nil {
-		return w.failAttempt(ctx, claimed, engine.StatusFailed, "configuration",
+		return w.failAttempt(ctx, claimed, "", engine.StatusFailed, "configuration",
 			"this worker has no actor registry configured, so it cannot resolve an endpoint to invoke")
 	}
 
@@ -79,17 +79,20 @@ func (w *Worker) dispatchActor(
 		// An unresolvable actor is a policy/configuration refusal, not a
 		// transport failure: retrying the same reference against the same
 		// registry will fail the same way, and policy_denied is the status
-		// the engine does not retry.
-		return w.failAttempt(ctx, claimed, engine.StatusPolicyDenied, string(actors.ClassAuthOrPolicy),
+		// the engine does not retry. The attempt stays unattributed ("" →
+		// NULL): nothing was resolved, so there is no actor to charge.
+		return w.failAttempt(ctx, claimed, "", engine.StatusPolicyDenied, string(actors.ClassAuthOrPolicy),
 			fmt.Sprintf("node %q uses %q, which did not resolve to an endpoint: %v", node.ID, node.Uses, err))
 	}
 
 	// Best-effort durable attribution: the actors-table row id this
 	// reference resolves to today, recorded on the attempt at completion
-	// (attempts.actor_id) so per-actor surfaces can attribute the work. A
-	// registry that cannot answer (StaticRegistry, a vanished row) yields
-	// "" — unattributed, never a dispatch failure.
-	actorRowID := w.actorRowID(ctx, node.Uses)
+	// (attempts.actor_id) so per-actor surfaces can attribute the work —
+	// on FAILURE completions from here on just as on success, because a
+	// failed dispatch is still this actor's dispatch and the retry-burn
+	// measure must see it. A registry that cannot answer (StaticRegistry,
+	// a vanished row) yields "" — unattributed, never a dispatch failure.
+	dc.ActorRowID = w.actorRowID(ctx, node.Uses)
 
 	req := actors.InvocationRequest{
 		ProtocolVersion: actors.ProtocolVersion,
@@ -112,7 +115,7 @@ func (w *Worker) dispatchActor(
 	// for the block afterwards.
 	callback, err := w.callbackFor(dc)
 	if err != nil {
-		return w.failAttempt(ctx, claimed, engine.StatusFailed, "configuration", err.Error())
+		return w.failAttempt(ctx, claimed, dc.ActorRowID, engine.StatusFailed, "configuration", err.Error())
 	}
 	req.Callback = callback
 
@@ -142,14 +145,14 @@ func (w *Worker) dispatchActor(
 	}
 
 	if !response.Async {
-		return w.completeFromResult(ctx, claimed, d, node, dc, response.Result, preRun, actorRowID)
+		return w.completeFromResult(ctx, claimed, d, node, dc, response.Result, preRun)
 	}
 	if node.PostRun != nil {
 		// See hooks.go's package doc for why async+post_run is refused here
 		// rather than run against a callback-delivered result.
 		return w.refuseAsyncPostRun(ctx, claimed, d, node, dc, preRun)
 	}
-	return w.park(ctx, claimed, d, node, dc, response.Accepted, actorRowID)
+	return w.park(ctx, claimed, d, node, dc, response.Accepted)
 }
 
 // callbackFor builds §13.1's callback block: where to POST, and a token that
@@ -210,10 +213,10 @@ func (w *Worker) callbackURL(attemptID string) string {
 // ledger delta).
 func (w *Worker) completeFromResult(
 	ctx context.Context, claimed postgres.ClaimedWork, d postgres.Dispatch, node *nodeSpec, dc DispatchContext,
-	result *actors.InvocationResult, preRun *hookRun, actorRowID string,
+	result *actors.InvocationResult, preRun *hookRun,
 ) error {
 	if result == nil {
-		return w.failAttempt(ctx, claimed, engine.StatusContractRejected, string(actors.ClassContract),
+		return w.failAttempt(ctx, claimed, dc.ActorRowID, engine.StatusContractRejected, string(actors.ClassContract),
 			"actor answered 200 with no result body")
 	}
 
@@ -233,7 +236,7 @@ func (w *Worker) completeFromResult(
 			// — silently keeping the agent's own outcome here would be
 			// exactly the unenforced-check gap h32 forbids. The agent's own
 			// proposed records still ride along; only the routing changes.
-			completion, err := w.completeTechnicalFailure(ctx, claimed, engine.StatusFailed, hookKindPostRun, post.detail, agentDelta)
+			completion, err := w.completeTechnicalFailure(ctx, claimed, dc.ActorRowID, engine.StatusFailed, hookKindPostRun, post.detail, agentDelta)
 			if err != nil {
 				return err
 			}
@@ -264,7 +267,7 @@ func (w *Worker) completeFromResult(
 		Output:      output,
 		LedgerDelta: agentDelta,
 		Usage:       result.Usage.ToEngine(),
-		ActorID:     actorRowID,
+		ActorID:     dc.ActorRowID,
 	})
 	if err != nil {
 		if isStale(err) {
@@ -305,7 +308,7 @@ func (w *Worker) completeFromInvocationError(
 	if !ok {
 		class = actors.ClassExecution
 	}
-	completion, err := w.completeTechnicalFailure(ctx, claimed, actors.TechStatusFor(class), string(class),
+	completion, err := w.completeTechnicalFailure(ctx, claimed, dc.ActorRowID, actors.TechStatusFor(class), string(class),
 		fmt.Sprintf("node %q invocation failed: %v", node.ID, invokeErr), nil)
 	if err != nil {
 		return err
@@ -330,10 +333,9 @@ func (w *Worker) park(
 	node *nodeSpec,
 	dc DispatchContext,
 	accepted *actors.AsyncAccepted,
-	actorRowID string,
 ) error {
 	if accepted == nil {
-		return w.failAttempt(ctx, claimed, engine.StatusContractRejected, string(actors.ClassContract),
+		return w.failAttempt(ctx, claimed, dc.ActorRowID, engine.StatusContractRejected, string(actors.ClassContract),
 			"actor answered 202 with no acceptance body")
 	}
 
@@ -349,7 +351,7 @@ func (w *Worker) park(
 		NodeID:                node.ID,
 		AttemptID:             dc.AttemptID,
 		ActorRef:              node.Uses,
-		ActorID:               actorRowID,
+		ActorID:               dc.ActorRowID,
 		InvocationID:          accepted.InvocationID,
 		HeartbeatAfterSeconds: accepted.HeartbeatAfterSeconds,
 		SupportsCancellation:  accepted.SupportsCancellation,
@@ -402,10 +404,10 @@ func (w *Worker) dispatchDecision(
 ) error {
 	outcome, matched, err := w.decisions.evaluateDecision(spec.Digest, node, d.RunInput, dc.Input)
 	if err != nil {
-		return w.failAttempt(ctx, claimed, engine.StatusFailed, "decision", err.Error())
+		return w.failAttempt(ctx, claimed, "", engine.StatusFailed, "decision", err.Error())
 	}
 	if !matched {
-		return w.failAttempt(ctx, claimed, engine.StatusFailed, "decision",
+		return w.failAttempt(ctx, claimed, "", engine.StatusFailed, "decision",
 			fmt.Sprintf("no select port of decision node %q matched; the workflow declares no answer for this data", node.ID))
 	}
 
@@ -453,12 +455,12 @@ func (w *Worker) dispatchSeam(
 		// CONFIGURATION gap rather than an unbuilt feature. Saying "not yet
 		// implemented" for something that is implemented but unconfigured
 		// sends an operator to the build plan instead of to their own config.
-		return w.failAttempt(ctx, claimed, engine.StatusFailed, "not_implemented",
+		return w.failAttempt(ctx, claimed, "", engine.StatusFailed, "not_implemented",
 			fmt.Sprintf("node %q is a %s node and this worker has no %s dispatcher registered; %s",
 				dc.NodeID, kind, capability, seamRemedy(kind)))
 	}
 	if seamErr != nil {
-		return w.failAttempt(ctx, claimed, engine.StatusFailed, kind,
+		return w.failAttempt(ctx, claimed, "", engine.StatusFailed, kind,
 			fmt.Sprintf("node %q %s dispatch failed: %v", dc.NodeID, kind, seamErr))
 	}
 
@@ -468,11 +470,12 @@ func (w *Worker) dispatchSeam(
 		// released capacity. The seam's own handle stands in for the actor's
 		// invocation id.
 		// Seam dispatches (code/runner paths) attribute at their own
-		// completion sites; no actor row resolution happened here.
+		// completion sites; no actor row resolution happened here, so
+		// dc.ActorRowID is still "" and park records no attribution.
 		return w.park(ctx, claimed, d, node, dc, &actors.AsyncAccepted{
 			InvocationID:          result.AsyncRef,
 			HeartbeatAfterSeconds: 0,
-		}, "")
+		})
 	}
 
 	var delta []ledger.Record
@@ -481,7 +484,7 @@ func (w *Worker) dispatchSeam(
 			Records []ledger.Record `json:"records"`
 		}
 		if err := json.Unmarshal(result.LedgerDelta, &records); err != nil {
-			return w.failAttempt(ctx, claimed, engine.StatusContractRejected, string(actors.ClassContract),
+			return w.failAttempt(ctx, claimed, "", engine.StatusContractRejected, string(actors.ClassContract),
 				fmt.Sprintf("node %q %s dispatch proposed a ledger delta that is not a records document: %v",
 					dc.NodeID, kind, err))
 		}

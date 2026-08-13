@@ -181,6 +181,21 @@ export async function mockRunsBoardApi(page: Page): Promise<void> {
       await route.fulfill(json({ items: [], ledger_version: 0 }));
       return;
     }
+    // The shared cross-run stream (task t30, issue #46): honestly empty by
+    // default — every board test below that doesn't override this route
+    // gets "nothing new yet" rather than a 404 the EventSource would retry
+    // against forever.
+    if (path === "/v1alpha1/events") {
+      await route.fulfill({
+        status: 200,
+        headers: {
+          "content-type": "text/event-stream",
+          "cache-control": "no-cache",
+        },
+        body: "",
+      });
+      return;
+    }
 
     await route.fulfill({
       status: 404,

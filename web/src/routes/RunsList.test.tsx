@@ -1,11 +1,12 @@
-import { beforeEach, describe, expect, it, vi } from "vitest";
-import { render, screen, waitFor, within } from "@testing-library/react";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { act, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { MemoryRouter, useLocation } from "react-router-dom";
 import RunsList from "./RunsList";
 import { ApiError, listRuns } from "../api/client";
 import { BOARD_RUNS } from "../fixtures/runs-board-fixture";
-import { resetAgentState } from "../agent-state/store";
+import { getAgentState, resetAgentState } from "../agent-state/store";
+import { resetSharedEventsForTests } from "../hooks/useSharedEvents";
 
 vi.mock("../api/client", async (importOriginal) => {
   const actual = await importOriginal<typeof import("../api/client")>();
@@ -13,6 +14,57 @@ vi.mock("../api/client", async (importOriginal) => {
 });
 
 const mockListRuns = vi.mocked(listRuns);
+
+/** A minimal fake of the shared cross-run EventSource (mirrors Mesh.test.tsx). */
+class FakeEventSource {
+  static instances: FakeEventSource[] = [];
+  url: string;
+  readyState = 0;
+  onopen: (() => void) | null = null;
+  onmessage: ((event: { data: string; lastEventId: string }) => void) | null = null;
+  onerror: (() => void) | null = null;
+  private listeners = new Map<
+    string,
+    Array<(event: { data: string; lastEventId: string }) => void>
+  >();
+
+  constructor(url: string) {
+    this.url = url;
+    FakeEventSource.instances.push(this);
+  }
+
+  addEventListener(
+    type: string,
+    listener: (event: { data: string; lastEventId: string }) => void,
+  ) {
+    const list = this.listeners.get(type) ?? [];
+    list.push(listener);
+    this.listeners.set(type, list);
+  }
+
+  close() {
+    this.readyState = 2;
+  }
+
+  open() {
+    this.readyState = 1;
+    this.onopen?.();
+  }
+
+  emit(type: string, data: Record<string, unknown>, id: string) {
+    const envelope = {
+      id,
+      source: "nodes",
+      specversion: "1.0",
+      type,
+      time: "2026-08-13T00:00:00Z",
+      datacontenttype: "application/json",
+      data,
+    };
+    const event = { data: JSON.stringify(envelope), lastEventId: id };
+    for (const listener of this.listeners.get(type) ?? []) listener(event);
+  }
+}
 
 function LocationProbe() {
   const location = useLocation();
@@ -232,5 +284,108 @@ describe("RunsList time-range filter (server-side, issue #23)", () => {
     expect(
       screen.queryByRole("link", { name: BOARD_RUNS[1].id }),
     ).not.toBeInTheDocument();
+  });
+});
+
+describe("RunsList auto-refresh (issue #46, task t30)", () => {
+  beforeEach(() => {
+    resetSharedEventsForTests();
+    FakeEventSource.instances = [];
+    vi.stubGlobal("EventSource", FakeEventSource);
+  });
+
+  afterEach(() => {
+    resetSharedEventsForTests();
+    vi.unstubAllGlobals();
+  });
+
+  it("refetches on a run-lifecycle event, staying stale-while-revalidate: no loading regression, no nulled table", async () => {
+    mockListRuns.mockResolvedValueOnce({ items: BOARD_RUNS });
+    renderList();
+    await waitFor(() => expect(screen.getByRole("table")).toBeInTheDocument());
+    await waitFor(() => expect(getAgentState().status).toBe("ready"));
+
+    const source = FakeEventSource.instances[0];
+    act(() => source.open());
+
+    // The reload fetch's own promise stays pending until this test resolves
+    // it, so the assertions below observe the view mid-refetch.
+    let resolveReload: ((value: { items: typeof BOARD_RUNS }) => void) | undefined;
+    mockListRuns.mockImplementationOnce(
+      () =>
+        new Promise((resolve) => {
+          resolveReload = resolve;
+        }),
+    );
+
+    act(() => {
+      source.emit("dev.culture.nodes.run.completed", { run_id: BOARD_RUNS[0].id }, "01EVT1");
+    });
+
+    // The debounced reload fires (the first reload after mount schedules
+    // with no delay, same as Mesh's attribution refresh); wait for the
+    // second `listRuns` call to actually start.
+    await waitFor(() => expect(mockListRuns).toHaveBeenCalledTimes(2));
+
+    // The reload fetch is now in flight — the original rows and agent-state
+    // must still be exactly as they were (stale-while-revalidate).
+    expect(screen.getByRole("table")).toBeInTheDocument();
+    expect(screen.queryByText("Loading runs…")).not.toBeInTheDocument();
+    expect(getAgentState().status).toBe("ready");
+    for (const run of BOARD_RUNS) {
+      expect(screen.getByRole("link", { name: run.id })).toBeInTheDocument();
+    }
+
+    const updated = [{ ...BOARD_RUNS[0], state: "completed" as const }];
+    await act(async () => {
+      resolveReload?.({ items: updated });
+    });
+
+    await waitFor(() =>
+      expect(
+        screen.queryByRole("link", { name: BOARD_RUNS[1].id }),
+      ).not.toBeInTheDocument(),
+    );
+    expect(screen.getByRole("link", { name: updated[0].id })).toBeInTheDocument();
+    expect(getAgentState().status).toBe("ready");
+  });
+
+  it("debounces a burst of simultaneous events into a single refetch", async () => {
+    mockListRuns.mockResolvedValueOnce({ items: BOARD_RUNS });
+    renderList();
+    await waitFor(() => expect(screen.getByRole("table")).toBeInTheDocument());
+
+    const source = FakeEventSource.instances[0];
+    act(() => source.open());
+    mockListRuns.mockClear();
+    mockListRuns.mockResolvedValue({ items: BOARD_RUNS });
+
+    act(() => {
+      source.emit("dev.culture.nodes.run.completed", { run_id: "a" }, "01EVT1");
+      source.emit("dev.culture.nodes.run.failed", { run_id: "b" }, "01EVT2");
+      source.emit("dev.culture.nodes.run.cancelled", { run_id: "c" }, "01EVT3");
+    });
+
+    await waitFor(() => expect(mockListRuns).toHaveBeenCalledTimes(1));
+    // Give any accidental second refetch a chance to have started too.
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    expect(mockListRuns).toHaveBeenCalledTimes(1);
+  });
+
+  it("ignores an event type this view did not subscribe to", async () => {
+    mockListRuns.mockResolvedValueOnce({ items: BOARD_RUNS });
+    renderList();
+    await waitFor(() => expect(screen.getByRole("table")).toBeInTheDocument());
+
+    const source = FakeEventSource.instances[0];
+    act(() => source.open());
+    mockListRuns.mockClear();
+
+    act(() => {
+      source.emit("dev.culture.nodes.attempt.started", { run_id: "a" }, "01EVT1");
+    });
+    await new Promise((resolve) => setTimeout(resolve, 20));
+
+    expect(mockListRuns).not.toHaveBeenCalled();
   });
 });

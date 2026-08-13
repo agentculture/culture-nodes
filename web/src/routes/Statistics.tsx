@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { setAgentState } from "../agent-state/store";
 import { ApiError, listNodeRuns, listRuns } from "../api/client";
 import type { NodeRunListItem, Run } from "../api/types";
@@ -8,7 +8,22 @@ import TimeRangeFilter from "../components/TimeRangeFilter";
 import UsageSummary from "../components/UsageSummary";
 import { computeCategoryStats, computeRunStats, groupUsageByRun } from "../domain/stats";
 import { formatCacheRatio, formatCost, formatTokenCount } from "../domain/usage";
+import { useSharedEvents, type SharedEventType } from "../hooks/useSharedEvents";
 import { useTimeRange } from "../hooks/useTimeRange";
+
+/**
+ * The events that can move usage totals: an attempt reporting usage on
+ * completion, or on failure (issue #46/c2's fabricated-zeros fix records a
+ * failed attempt's real usage too, once it ships). A stable module-level
+ * reference, as useSharedEvents requires.
+ */
+const STATISTICS_EVENT_TYPES = [
+  "dev.culture.nodes.attempt.completed",
+  "dev.culture.nodes.node-run.failed",
+] as const satisfies readonly SharedEventType[];
+
+/** Mirrors the Mesh view's attribution-refresh discipline (Mesh.tsx). */
+const REFRESH_DEBOUNCE_MS = 4000;
 
 /**
  * The Statistics view (task t6): jobs cost/usage totals, and average/median
@@ -39,6 +54,54 @@ export function Statistics() {
   const [nodeRuns, setNodeRuns] = useState<NodeRunListItem[] | null>(null);
   const [runsById, setRunsById] = useState<Record<string, Run>>({});
   const [error, setError] = useState<ApiError | null>(null);
+  const [reloadKey, setReloadKey] = useState(0);
+  const reloadTimer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
+  const lastReload = useRef(0);
+
+  const scheduleReload = useCallback(() => {
+    if (reloadTimer.current) return;
+    const elapsed = Date.now() - lastReload.current;
+    const wait = Math.max(0, REFRESH_DEBOUNCE_MS - elapsed);
+    reloadTimer.current = setTimeout(() => {
+      reloadTimer.current = undefined;
+      lastReload.current = Date.now();
+      setReloadKey((key) => key + 1);
+    }, wait);
+  }, []);
+
+  useEffect(
+    () => () => {
+      if (reloadTimer.current) clearTimeout(reloadTimer.current);
+    },
+    [],
+  );
+
+  useSharedEvents(STATISTICS_EVENT_TYPES, scheduleReload);
+
+  // Walks every page for the window (see the class doc above) — pulled out
+  // to a stable callback so both the initial load and the SSE-triggered
+  // refresh below share the exact same bounded-pagination walk.
+  const fetchAllNodeRuns = useCallback(
+    async (signal: AbortSignal): Promise<NodeRunListItem[]> => {
+      const items: NodeRunListItem[] = [];
+      let cursor: string | undefined;
+      // Bounded rather than an unconditional while(true): a pathological
+      // server that never stops returning next_cursor cannot hang this view
+      // forever. 1000 pages is far past any realistic window.
+      for (let page = 0; page < 1000; page++) {
+        const result = await listNodeRuns(signal, {
+          updated_since: since,
+          updated_until: until,
+          cursor,
+        });
+        items.push(...result.items);
+        if (!result.next_cursor) break;
+        cursor = result.next_cursor;
+      }
+      return items;
+    },
+    [since, until],
+  );
 
   useEffect(() => {
     const controller = new AbortController();
@@ -51,26 +114,7 @@ export function Statistics() {
         ? cause
         : new ApiError(0, String(cause), "check the browser console");
 
-    async function fetchAllNodeRuns(): Promise<NodeRunListItem[]> {
-      const items: NodeRunListItem[] = [];
-      let cursor: string | undefined;
-      // Bounded rather than an unconditional while(true): a pathological
-      // server that never stops returning next_cursor cannot hang this view
-      // forever. 1000 pages is far past any realistic window.
-      for (let page = 0; page < 1000; page++) {
-        const result = await listNodeRuns(controller.signal, {
-          updated_since: since,
-          updated_until: until,
-          cursor,
-        });
-        items.push(...result.items);
-        if (!result.next_cursor) break;
-        cursor = result.next_cursor;
-      }
-      return items;
-    }
-
-    fetchAllNodeRuns()
+    fetchAllNodeRuns(controller.signal)
       .then((items) => {
         if (controller.signal.aborted) return;
         setNodeRuns(items);
@@ -83,7 +127,7 @@ export function Statistics() {
         setAgentState({ status: "ready", run: null });
       });
     return () => controller.abort();
-  }, [since, until]);
+  }, [fetchAllNodeRuns]);
 
   // The category join (task t5 pattern, same as JobsTimeline): a separate,
   // non-blocking fetch of GET /v1alpha1/runs for the same window. Its
@@ -103,6 +147,35 @@ export function Statistics() {
       });
     return () => controller.abort();
   }, [since, until]);
+
+  // The SSE-triggered background refresh (issue #46): skips the very first
+  // render (reloadKey === 0, already handled by the effect above). Walks
+  // the same bounded pagination and refreshes the category join alongside
+  // it — never nulls `nodeRuns`, never touches agent-state.
+  useEffect(() => {
+    if (reloadKey === 0) return;
+    const controller = new AbortController();
+    Promise.all([
+      fetchAllNodeRuns(controller.signal),
+      listRuns(controller.signal, { updated_since: since, updated_until: until }),
+    ])
+      .then(([items, list]) => {
+        if (controller.signal.aborted) return;
+        setNodeRuns(items);
+        setRunsById(Object.fromEntries(list.items.map((run) => [run.id, run])));
+        setError(null);
+      })
+      .catch((cause: unknown) => {
+        if (controller.signal.aborted) return;
+        setError(
+          cause instanceof ApiError
+            ? cause
+            : new ApiError(0, String(cause), "check the browser console"),
+        );
+      });
+    return () => controller.abort();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [reloadKey]);
 
   const runUsage = nodeRuns !== null ? groupUsageByRun(nodeRuns) : null;
   const stats = runUsage !== null ? computeRunStats(runUsage) : null;

@@ -1,11 +1,12 @@
-import { beforeEach, describe, expect, it, vi } from "vitest";
-import { render, screen, waitFor, within } from "@testing-library/react";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { act, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { MemoryRouter, useLocation } from "react-router-dom";
 import RunsBoard from "./RunsBoard";
 import { ApiError, listRuns } from "../api/client";
 import { BOARD_RUNS } from "../fixtures/runs-board-fixture";
 import { resetAgentState, getAgentState } from "../agent-state/store";
+import { resetSharedEventsForTests } from "../hooks/useSharedEvents";
 
 vi.mock("../api/client", async (importOriginal) => {
   const actual = await importOriginal<typeof import("../api/client")>();
@@ -13,6 +14,57 @@ vi.mock("../api/client", async (importOriginal) => {
 });
 
 const mockListRuns = vi.mocked(listRuns);
+
+/** A minimal fake of the shared cross-run EventSource (mirrors Mesh.test.tsx). */
+class FakeEventSource {
+  static instances: FakeEventSource[] = [];
+  url: string;
+  readyState = 0;
+  onopen: (() => void) | null = null;
+  onmessage: ((event: { data: string; lastEventId: string }) => void) | null = null;
+  onerror: (() => void) | null = null;
+  private listeners = new Map<
+    string,
+    Array<(event: { data: string; lastEventId: string }) => void>
+  >();
+
+  constructor(url: string) {
+    this.url = url;
+    FakeEventSource.instances.push(this);
+  }
+
+  addEventListener(
+    type: string,
+    listener: (event: { data: string; lastEventId: string }) => void,
+  ) {
+    const list = this.listeners.get(type) ?? [];
+    list.push(listener);
+    this.listeners.set(type, list);
+  }
+
+  close() {
+    this.readyState = 2;
+  }
+
+  open() {
+    this.readyState = 1;
+    this.onopen?.();
+  }
+
+  emit(type: string, data: Record<string, unknown>, id: string) {
+    const envelope = {
+      id,
+      source: "nodes",
+      specversion: "1.0",
+      type,
+      time: "2026-08-13T00:00:00Z",
+      datacontenttype: "application/json",
+      data,
+    };
+    const event = { data: JSON.stringify(envelope), lastEventId: id };
+    for (const listener of this.listeners.get(type) ?? []) listener(event);
+  }
+}
 
 function LocationProbe() {
   const location = useLocation();
@@ -242,5 +294,103 @@ describe("RunsBoard time-range filter (server-side, issue #23)", () => {
     expect(
       screen.getByText(`${kept[0].id.slice(0, 20)}…`),
     ).toBeInTheDocument();
+  });
+});
+
+describe("RunsBoard auto-refresh (issue #46, task t30)", () => {
+  beforeEach(() => {
+    resetSharedEventsForTests();
+    FakeEventSource.instances = [];
+    vi.stubGlobal("EventSource", FakeEventSource);
+  });
+
+  afterEach(() => {
+    resetSharedEventsForTests();
+    vi.unstubAllGlobals();
+  });
+
+  it("refetches on a run-lifecycle event, staying stale-while-revalidate: no loading regression, no nulled columns", async () => {
+    mockListRuns.mockResolvedValueOnce({ items: BOARD_RUNS });
+    renderBoard();
+    await waitFor(() =>
+      expect(document.querySelector("#runs-board-columns")).toBeInTheDocument(),
+    );
+    await waitFor(() => expect(getAgentState().status).toBe("ready"));
+
+    const source = FakeEventSource.instances[0];
+    act(() => source.open());
+
+    let resolveReload: ((value: { items: typeof BOARD_RUNS }) => void) | undefined;
+    mockListRuns.mockImplementationOnce(
+      () =>
+        new Promise((resolve) => {
+          resolveReload = resolve;
+        }),
+    );
+
+    act(() => {
+      source.emit("dev.culture.nodes.run.completed", { run_id: BOARD_RUNS[0].id }, "01EVT1");
+    });
+
+    await waitFor(() => expect(mockListRuns).toHaveBeenCalledTimes(2));
+
+    // The reload fetch is in flight — the board must still show every
+    // original card and agent-state must stay "ready" (stale-while-revalidate).
+    expect(document.querySelector("#runs-board-columns")).toBeInTheDocument();
+    expect(screen.queryByText("Loading runs…")).not.toBeInTheDocument();
+    expect(getAgentState().status).toBe("ready");
+
+    await act(async () => {
+      resolveReload?.({ items: [BOARD_RUNS[0]] });
+    });
+
+    await waitFor(() =>
+      expect(
+        screen.queryByText(`${BOARD_RUNS[1].id.slice(0, 20)}…`),
+      ).not.toBeInTheDocument(),
+    );
+    expect(getAgentState().status).toBe("ready");
+  });
+
+  it("debounces a burst of simultaneous events into a single refetch", async () => {
+    mockListRuns.mockResolvedValueOnce({ items: BOARD_RUNS });
+    renderBoard();
+    await waitFor(() =>
+      expect(document.querySelector("#runs-board-columns")).toBeInTheDocument(),
+    );
+
+    const source = FakeEventSource.instances[0];
+    act(() => source.open());
+    mockListRuns.mockClear();
+    mockListRuns.mockResolvedValue({ items: BOARD_RUNS });
+
+    act(() => {
+      source.emit("dev.culture.nodes.run.completed", { run_id: "a" }, "01EVT1");
+      source.emit("dev.culture.nodes.run.failed", { run_id: "b" }, "01EVT2");
+      source.emit("dev.culture.nodes.run.cancelled", { run_id: "c" }, "01EVT3");
+    });
+
+    await waitFor(() => expect(mockListRuns).toHaveBeenCalledTimes(1));
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    expect(mockListRuns).toHaveBeenCalledTimes(1);
+  });
+
+  it("ignores an event type this view did not subscribe to", async () => {
+    mockListRuns.mockResolvedValueOnce({ items: BOARD_RUNS });
+    renderBoard();
+    await waitFor(() =>
+      expect(document.querySelector("#runs-board-columns")).toBeInTheDocument(),
+    );
+
+    const source = FakeEventSource.instances[0];
+    act(() => source.open());
+    mockListRuns.mockClear();
+
+    act(() => {
+      source.emit("dev.culture.nodes.attempt.started", { run_id: "a" }, "01EVT1");
+    });
+    await new Promise((resolve) => setTimeout(resolve, 20));
+
+    expect(mockListRuns).not.toHaveBeenCalled();
   });
 });

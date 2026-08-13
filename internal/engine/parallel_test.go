@@ -797,3 +797,49 @@ func TestEndNodeWithActiveSiblingsFailsTheRun(t *testing.T) {
 		t.Errorf("committed run state = %s, want failed", got)
 	}
 }
+
+// --- T3: a split that selects nothing is a routing failure ----------------
+
+// TestSplitWithNoEligibleEdgesFailsTheRun is the runtime half of review point
+// D6. A parallel node with no DECLARED split edge is a compiler refusal
+// (graph.parallel_without_split_edge, pinned in internal/compiler's
+// diagnostics fixtures); a declared split whose guards all evaluate false at
+// run time is the ordinary no-eligible-edge routing failure, because a split
+// that selects nothing has not fanned out zero branches — it has failed to
+// route, exactly as any other unrouted outcome does.
+func TestSplitWithNoEligibleEdgesFailsTheRun(t *testing.T) {
+	f := newFixture(t, "parallel-all-guarded.workflow.yaml")
+	run := f.createRun(`{}`)
+
+	unrouted := f.splitOf(run)
+	if unrouted.RunState != engine.RunFailed {
+		t.Fatalf("run state = %s, want failed", unrouted.RunState)
+	}
+	if unrouted.Bound != nil {
+		t.Errorf("bound = %+v, want none — this is a routing failure, not a bound", unrouted.Bound)
+	}
+	if unrouted.Split != nil {
+		t.Errorf("a split that selected nothing reported %+v, want no SplitResult", unrouted.Split)
+	}
+	if unrouted.Diagnostic == "" {
+		t.Error("the no-eligible-edge failure carried no diagnostic")
+	}
+	if got := f.tokenGroupCount(run.ID); got != 0 {
+		t.Errorf("token_groups rows = %d, want 0 — no group is recorded for a split that never happened", got)
+	}
+	if got := f.activeTokens(run.ID); got != 0 {
+		t.Errorf("active tokens = %d, want 0", got)
+	}
+	if !contains(unrouted.EventTypes, engine.TypeRunFailed) {
+		t.Errorf("events = %v, want one of type %s", unrouted.EventTypes, engine.TypeRunFailed)
+	}
+
+	// And the guard-satisfying direction still works from the same
+	// definition, so the failure above is about the guards, not the fixture.
+	ok := newFixture(t, "parallel-all-guarded.workflow.yaml")
+	okRun := ok.createRun(`{"lint":true,"test":true}`)
+	split := ok.splitOf(okRun)
+	if split.Split == nil || split.Split.Cardinality != 2 {
+		t.Fatalf("split = %+v, want cardinality 2", split.Split)
+	}
+}

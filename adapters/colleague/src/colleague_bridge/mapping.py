@@ -178,6 +178,10 @@ def usage_from_task_result(task_result: dict[str, Any] | None) -> dict[str, Any]
     (docs/contract.md); the bridge never estimates cost, so `cost`/`currency`
     are always null — an actor that does not price its work says so with
     null rather than a zero that reads as free (protocol.go's own docstring).
+
+    Contract v1 exposes only prompt/completion/total counts. Cache, reasoning,
+    model, and thread fields are therefore omitted, never zero-filled: no
+    measurement is an absent fact, not a measured zero.
     """
     usage = (task_result or {}).get("usage") or {}
     return {
@@ -186,6 +190,16 @@ def usage_from_task_result(task_result: dict[str, Any] | None) -> dict[str, Any]
         "cost": None,
         "currency": None,
     }
+
+
+def _attach_termination_reason(
+    payload: dict[str, Any], task_result: dict[str, Any] | None
+) -> dict[str, Any]:
+    """Carry colleague's reported status as the provider termination reason."""
+    status = (task_result or {}).get("status")
+    if isinstance(status, str) and status:
+        payload["termination_reason"] = status
+    return payload
 
 
 def declared_result_override(task_result):
@@ -323,24 +337,26 @@ def sync_response(
         # never fabricated zeros.
         if task_result is not None:
             body["usage"] = usage_from_task_result(task_result)
-        return SyncResponse(status_code=500, body=body)
+        return SyncResponse(
+            status_code=500, body=_attach_termination_reason(body, task_result)
+        )
 
     declared = declared_result_override(task_result)
-    return SyncResponse(
-        status_code=200,
-        body={
-            "outcome": declared[0] if declared else classification.outcome,
-            "output": declared[1] if declared else output_from_task_result(task_result),
-            "ledger_delta": {
-                "records": [
-                    claim_record(task_result, ctx, actor_id=actor_id, created_at=created_at)
-                ]
-            },
-            "artifact_refs": [],
-            "continuation_ref": None,
-            "usage": usage_from_task_result(task_result),
-            "workspace_measured": measured,
+    body = {
+        "outcome": declared[0] if declared else classification.outcome,
+        "output": declared[1] if declared else output_from_task_result(task_result),
+        "ledger_delta": {
+            "records": [
+                claim_record(task_result, ctx, actor_id=actor_id, created_at=created_at)
+            ]
         },
+        "artifact_refs": [],
+        "continuation_ref": None,
+        "usage": usage_from_task_result(task_result),
+        "workspace_measured": measured,
+    }
+    return SyncResponse(
+        status_code=200, body=_attach_termination_reason(body, task_result)
     )
 
 
@@ -396,21 +412,23 @@ def terminal_event(
         # usage-less rather than reporting fabricated zeros.
         if task_result is not None:
             payload["usage"] = usage_from_task_result(task_result)
-        return TerminalEvent(kind="failed", payload=payload)
+        return TerminalEvent(
+            kind="failed", payload=_attach_termination_reason(payload, task_result)
+        )
 
     _declared = declared_result_override(task_result)
-    return TerminalEvent(
-        kind="completed",
-        payload={
-            "outcome": _declared[0] if _declared else classification.outcome,
-            "output": _declared[1] if _declared else output_from_task_result(task_result),
-            "ledger_delta": {
-                "records": [
-                    claim_record(task_result, ctx, actor_id=actor_id, created_at=created_at)
-                ]
-            },
-            "artifact_refs": [],
-            "usage": usage_from_task_result(task_result),
-            "workspace_measured": measured,
+    payload = {
+        "outcome": _declared[0] if _declared else classification.outcome,
+        "output": _declared[1] if _declared else output_from_task_result(task_result),
+        "ledger_delta": {
+            "records": [
+                claim_record(task_result, ctx, actor_id=actor_id, created_at=created_at)
+            ]
         },
+        "artifact_refs": [],
+        "usage": usage_from_task_result(task_result),
+        "workspace_measured": measured,
+    }
+    return TerminalEvent(
+        kind="completed", payload=_attach_termination_reason(payload, task_result)
     )

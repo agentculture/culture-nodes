@@ -29,8 +29,13 @@ SCRATCH_REPO = Path(
 #: door involved), so the test suite explicitly disarms it via
 #: `COLLEAGUE_LOBES_URL` for speed and determinism — a production deployment
 #: with a real lobes gateway would instead point `colleague_env` at it (see
-#: README.md's config reference).
-_DISARM_LOBES_ENV = {"COLLEAGUE_LOBES_URL": "http://127.0.0.1:1/v1"}
+#: README.md's config reference). `COLLEAGUE_THREE_TIER=false` is equally
+#: important: a machine-wide config may arm role resolution, which would make
+#: the supposedly-offline mock integration suite depend on that dead gateway.
+_DISARM_LOBES_ENV = {
+    "COLLEAGUE_LOBES_URL": "http://127.0.0.1:1/v1",
+    "COLLEAGUE_THREE_TIER": "false",
+}
 
 
 def _colleague_bin() -> str | None:

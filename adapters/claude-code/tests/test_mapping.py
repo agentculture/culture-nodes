@@ -149,14 +149,40 @@ def test_crashed_session_never_success():
 # ---------------------------------------------------------------------------
 
 
-def test_usage_maps_tokens_and_passes_through_real_cost():
-    usage = mapping.usage_from_result(_success_result())
-    assert usage == {"input_tokens": 100, "output_tokens": 40, "cost": 0.0123, "currency": "USD"}
+def test_usage_maps_cache_model_session_and_passes_through_real_cost():
+    usage = mapping.usage_from_result(
+        _success_result(
+            model="claude-opus-4-1",
+            usage={
+                "input_tokens": 100,
+                "cache_read_input_tokens": 70,
+                "cache_creation_input_tokens": 20,
+                "output_tokens": 40,
+            },
+        )
+    )
+    assert usage == {
+        "input_tokens": 100,
+        "output_tokens": 40,
+        "cost": 0.0123,
+        "currency": "USD",
+        "cached_input_tokens": 70,
+        "model": "claude-opus-4-1",
+        "thread_id": "sess-abc",
+    }
+    assert usage["cached_input_tokens"] != 90
 
 
 def test_usage_defaults_to_zero_and_null_cost_when_absent():
     usage = mapping.usage_from_result({"type": "result"})
     assert usage == {"input_tokens": 0, "output_tokens": 0, "cost": None, "currency": None}
+
+
+def test_usage_maps_single_model_from_model_usage_when_no_direct_model_field():
+    usage = mapping.usage_from_result(
+        _success_result(modelUsage={"claude-sonnet-4-5": {"inputTokens": 100}})
+    )
+    assert usage["model"] == "claude-sonnet-4-5"
 
 
 def test_output_carries_result_text_as_summary():
@@ -220,6 +246,17 @@ def test_sync_response_success_is_200_with_outcome_and_output():
     assert r.body["output"]["summary"] == "did the thing"
     assert r.body["continuation_ref"] is None
     assert r.body["artifact_refs"] == []
+
+
+def test_sync_response_maps_claude_stop_reason_beside_usage():
+    r = mapping.sync_response(
+        _success_result(stop_reason="end_turn"),
+        CTX,
+        default_success_outcome="completed",
+        actor_id="a",
+        created_at="now",
+    )
+    assert r.body["termination_reason"] == "end_turn"
 
 
 def test_sync_response_error_is_execution_failure_not_200():
@@ -293,6 +330,30 @@ def test_terminal_event_success_is_completed_kind():
     assert ev.kind == "completed"
     assert ev.payload["outcome"] == "completed"
     assert ev.payload["ledger_delta"]["records"][0]["authority"] == "proposed"
+
+
+def test_terminal_completion_maps_claude_stop_reason_beside_usage():
+    ev = mapping.terminal_event(
+        _success_result(stop_reason="end_turn"),
+        CTX,
+        default_success_outcome="completed",
+        actor_id="a",
+        created_at="now",
+    )
+    assert ev.kind == "completed"
+    assert ev.payload["termination_reason"] == "end_turn"
+
+
+def test_terminal_failure_maps_claude_stop_reason_beside_usage():
+    ev = mapping.terminal_event(
+        _error_during_execution_result(stop_reason="tool_error"),
+        CTX,
+        default_success_outcome="completed",
+        actor_id="a",
+        created_at="now",
+    )
+    assert ev.kind == "failed"
+    assert ev.payload["termination_reason"] == "tool_error"
 
 
 def test_terminal_event_error_is_failed_kind_with_execution_class():
@@ -503,6 +564,7 @@ def test_sync_response_failure_carries_usage_from_terminal_result():
         "output_tokens": 0,
         "cost": 0.0001,
         "currency": "USD",
+        "thread_id": "sess-err",
     }
 
 
@@ -520,6 +582,7 @@ def test_sync_response_undeclared_incomplete_failure_carries_usage():
         "output_tokens": 400,
         "cost": 0.05,
         "currency": "USD",
+        "thread_id": "sess-partial",
     }
 
 
@@ -558,6 +621,7 @@ def test_terminal_event_failed_carries_usage_from_terminal_result():
         "output_tokens": 0,
         "cost": 0.0001,
         "currency": "USD",
+        "thread_id": "sess-err",
     }
 
 
@@ -575,6 +639,7 @@ def test_terminal_event_undeclared_incomplete_failure_carries_usage():
         "output_tokens": 400,
         "cost": 0.05,
         "currency": "USD",
+        "thread_id": "sess-partial",
     }
 
 

@@ -130,6 +130,9 @@ def test_missing_task_result_entirely_is_an_execution_failure():
 def test_usage_maps_prompt_and_completion_tokens_cost_and_currency_are_null():
     usage = mapping.usage_from_task_result(_ok_result())
     assert usage == {"input_tokens": 10, "output_tokens": 5, "cost": None, "currency": None}
+    assert "cached_input_tokens" not in usage
+    assert usage.get("cached_input_tokens") is None
+    assert "reasoning_tokens" not in usage
 
 
 def test_usage_defaults_to_zero_when_absent():
@@ -196,6 +199,7 @@ def test_sync_response_ok_is_200_with_outcome_and_output():
     )
     assert r.status_code == 200
     assert r.body["outcome"] == "completed"
+    assert r.body["termination_reason"] == "ok"
     assert r.body["output"]["summary"] == "did the thing"
     assert r.body["continuation_ref"] is None
     assert r.body["artifact_refs"] == []
@@ -267,6 +271,7 @@ def test_terminal_event_ok_is_completed_kind():
     )
     assert ev.kind == "completed"
     assert ev.payload["outcome"] == "completed"
+    assert ev.payload["termination_reason"] == "ok"
     assert ev.payload["ledger_delta"]["records"][0]["authority"] == "proposed"
 
 
@@ -464,7 +469,14 @@ def test_sync_response_failure_carries_usage_from_task_result():
     # control plane's actors client parses exactly this shape out of a non-2xx
     # response (usageFromErrorBody in internal/actors/client.go), so a renamed
     # or nested key would silently cost failed attempts their accounting.
-    assert set(r.body) == {"error", "class", "workspace_measured", "usage"}
+    assert set(r.body) == {
+        "error",
+        "class",
+        "workspace_measured",
+        "usage",
+        "termination_reason",
+    }
+    assert r.body["termination_reason"] == "error"
     assert r.body["usage"] == {
         "input_tokens": 1,
         "output_tokens": 0,
@@ -520,6 +532,7 @@ def test_terminal_event_failed_carries_usage_from_task_result():
         created_at="now",
     )
     assert ev.kind == "failed"
+    assert ev.payload["termination_reason"] == "error"
     assert ev.payload["usage"] == {
         "input_tokens": 1,
         "output_tokens": 0,

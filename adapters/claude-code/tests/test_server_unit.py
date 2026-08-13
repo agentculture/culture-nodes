@@ -179,7 +179,13 @@ def test_sync_dispatch_maps_success_result_to_200(bridge_url, monkeypatch):
     assert status == 200
     assert body["outcome"] == "completed"
     assert body["output"]["summary"] == "did it"
-    assert body["usage"] == {"input_tokens": 1, "output_tokens": 2, "cost": 0.01, "currency": "USD"}
+    assert body["usage"] == {
+        "input_tokens": 1,
+        "output_tokens": 2,
+        "cost": 0.01,
+        "currency": "USD",
+        "thread_id": "sess-1",
+    }
     assert body["ledger_delta"]["records"][0]["authority"] == "proposed"
 
 

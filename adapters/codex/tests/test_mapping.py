@@ -130,14 +130,52 @@ def test_missing_task_result_entirely_is_an_execution_failure():
 # ---------------------------------------------------------------------------
 
 
-def test_usage_maps_input_and_output_tokens_cost_and_currency_are_null():
-    usage = mapping.usage_from_task_result(_ok_result())
-    assert usage == {"input_tokens": 10, "output_tokens": 5, "cost": None, "currency": None}
+def test_usage_maps_extended_codex_telemetry_with_exact_grounded_cache_counts():
+    usage = mapping.usage_from_task_result(
+        _ok_result(
+            usage={
+                "input_tokens": 13880,
+                "cached_input_tokens": 9984,
+                "output_tokens": 5,
+                "reasoning_output_tokens": 0,
+            },
+            model="gpt-5.6-codex",
+        )
+    )
+    assert usage == {
+        "input_tokens": 13880,
+        "output_tokens": 5,
+        "cost": None,
+        "currency": None,
+        "cached_input_tokens": 9984,
+        "reasoning_tokens": 0,
+        "model": "gpt-5.6-codex",
+        "thread_id": "019fe54f-8e7b-7940-943c-1728fd3a7c6b",
+    }
 
 
-def test_usage_defaults_to_zero_when_absent():
-    usage = mapping.usage_from_task_result({"status": "ok"})
-    assert usage == {"input_tokens": 0, "output_tokens": 0, "cost": None, "currency": None}
+def test_usage_is_absent_when_codex_reported_no_counts_never_fabricated_zeros():
+    assert mapping.usage_from_task_result({"status": "error", "usage": {}}) is None
+
+
+def test_completed_response_round_trips_grounded_13880_input_9984_cached():
+    response = mapping.sync_response(
+        _ok_result(
+            usage={
+                "input_tokens": 13880,
+                "cached_input_tokens": 9984,
+                "output_tokens": 5,
+                "reasoning_output_tokens": 0,
+            }
+        ),
+        CTX,
+        default_success_outcome="completed",
+        actor_id="a",
+        created_at="now",
+    )
+
+    assert response.body["usage"]["input_tokens"] == 13880
+    assert response.body["usage"]["cached_input_tokens"] == 9984
 
 
 def test_output_carries_summary_and_changed_files():
@@ -487,6 +525,7 @@ def test_sync_response_failure_carries_usage_from_task_result():
         "output_tokens": 0,
         "cost": None,
         "currency": None,
+        "thread_id": "019fe54f-cb2c-7780-9316-46ecb958a6ed",
     }
 
 
@@ -504,7 +543,22 @@ def test_sync_response_undeclared_incomplete_failure_carries_usage():
         "output_tokens": 400,
         "cost": None,
         "currency": None,
+        "thread_id": "019fe553-362a-7191-aa66-6c03191830b1",
     }
+
+
+def test_sync_turn_failed_without_usage_emits_no_usage_block_or_zero_counts():
+    r = mapping.sync_response(
+        _error_result(usage={}, termination_reason="provider_rejected"),
+        CTX,
+        default_success_outcome="completed",
+        actor_id="a",
+        created_at="now",
+    )
+
+    assert r.status_code == 500
+    assert "usage" not in r.body
+    assert r.body["termination_reason"] == "provider_rejected"
 
 
 def test_sync_response_crash_emits_no_usage_key():
@@ -528,6 +582,21 @@ def test_sync_response_timeout_emits_no_usage_key():
     assert "usage" not in r.body
 
 
+def test_sync_timeout_retains_usage_reported_before_incomplete_stop():
+    r = mapping.sync_response(
+        _incomplete_result(usage={"input_tokens": 55, "output_tokens": 2}),
+        CTX,
+        default_success_outcome="completed",
+        actor_id="a",
+        created_at="now",
+        timed_out=True,
+    )
+
+    assert r.status_code == 408
+    assert r.body["usage"]["input_tokens"] == 55
+    assert r.body["usage"]["output_tokens"] == 2
+
+
 def test_terminal_event_failed_carries_usage_from_task_result():
     ev = mapping.terminal_event(
         _error_result(),
@@ -542,6 +611,7 @@ def test_terminal_event_failed_carries_usage_from_task_result():
         "output_tokens": 0,
         "cost": None,
         "currency": None,
+        "thread_id": "019fe54f-cb2c-7780-9316-46ecb958a6ed",
     }
 
 
@@ -559,7 +629,22 @@ def test_terminal_event_undeclared_incomplete_failure_carries_usage():
         "output_tokens": 400,
         "cost": None,
         "currency": None,
+        "thread_id": "019fe553-362a-7191-aa66-6c03191830b1",
     }
+
+
+def test_terminal_turn_failed_without_usage_emits_reason_but_no_usage_block():
+    ev = mapping.terminal_event(
+        _error_result(usage={}, termination_reason="provider_rejected"),
+        CTX,
+        default_success_outcome="completed",
+        actor_id="a",
+        created_at="now",
+    )
+
+    assert ev.kind == "failed"
+    assert "usage" not in ev.payload
+    assert ev.payload["termination_reason"] == "provider_rejected"
 
 
 def test_terminal_event_crash_emits_no_usage_key():
@@ -581,3 +666,18 @@ def test_terminal_event_timeout_emits_no_usage_key():
     )
     assert ev.kind == "failed"
     assert "usage" not in ev.payload
+
+
+def test_terminal_timeout_retains_usage_reported_before_incomplete_stop():
+    ev = mapping.terminal_event(
+        _incomplete_result(usage={"input_tokens": 55, "output_tokens": 2}),
+        CTX,
+        default_success_outcome="completed",
+        actor_id="a",
+        created_at="now",
+        timed_out=True,
+    )
+
+    assert ev.kind == "failed"
+    assert ev.payload["usage"]["input_tokens"] == 55
+    assert ev.payload["usage"]["output_tokens"] == 2

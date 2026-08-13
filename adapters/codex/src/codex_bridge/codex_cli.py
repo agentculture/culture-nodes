@@ -107,10 +107,12 @@ def parse_session(stdout: str) -> dict[str, Any] | None:
     """
     saw_any_json = False
     thread_id: str | None = None
+    model: str | None = None
     messages: list[str] = []
     changed_files: list[str] = []
     usage: dict[str, Any] = {}
     error_message: str | None = None
+    termination_reason: str | None = None
     terminal_status: str | None = None  # None | "ok" | "error"
 
     for line in stdout.splitlines():
@@ -126,6 +128,28 @@ def parse_session(stdout: str) -> dict[str, Any] | None:
         saw_any_json = True
 
         kind = event.get("type")
+
+        # Usage can accompany a failed turn, and newer event-stream shapes
+        # may publish a running total before a terminal event. Keep the most
+        # recent non-empty provider report regardless of event kind: that
+        # preserves failed-turn accounting and also lets a transcript that
+        # ends incomplete retain counts already emitted before it stopped.
+        reported_usage = event.get("usage")
+        if isinstance(reported_usage, dict) and reported_usage:
+            usage = reported_usage
+
+        # Do not infer the model from argv/config: only provider-reported
+        # stream metadata belongs in usage telemetry. A model nested in the
+        # usage report and a top-level event model are both honest sources.
+        reported_model = event.get("model")
+        if not isinstance(reported_model, str) or not reported_model:
+            reported_model = (
+                reported_usage.get("model")
+                if isinstance(reported_usage, dict)
+                else None
+            )
+        if isinstance(reported_model, str) and reported_model:
+            model = reported_model
 
         if kind == "thread.started":
             thread_id = event.get("thread_id")
@@ -162,11 +186,16 @@ def parse_session(stdout: str) -> dict[str, Any] | None:
 
         if kind == _TERMINAL_OK:
             terminal_status = "ok"
-            usage = event.get("usage") or {}
+            reason = event.get("reason") or event.get("stop_reason")
+            if isinstance(reason, str) and reason:
+                termination_reason = reason
             continue
 
         if kind == _TERMINAL_FAILED:
             terminal_status = "error"
+            reason = event.get("reason") or event.get("stop_reason")
+            if isinstance(reason, str) and reason:
+                termination_reason = reason
             err = event.get("error")
             if isinstance(err, dict) and err.get("message"):
                 error_message = str(err["message"])
@@ -187,6 +216,8 @@ def parse_session(stdout: str) -> dict[str, Any] | None:
             "usage": usage,
             "task_id": thread_id,
             "error": None,
+            "model": model,
+            "termination_reason": termination_reason,
         }
 
     if terminal_status == "error":
@@ -197,6 +228,8 @@ def parse_session(stdout: str) -> dict[str, Any] | None:
             "usage": usage,
             "task_id": thread_id,
             "error": error_message or "codex reported a turn failure",
+            "model": model,
+            "termination_reason": termination_reason,
         }
 
     # No terminal event was ever seen: killed, crashed, or the bridge's own
@@ -208,6 +241,8 @@ def parse_session(stdout: str) -> dict[str, Any] | None:
         "usage": usage,
         "task_id": thread_id,
         "error": None,
+        "model": model,
+        "termination_reason": termination_reason,
     }
 
 

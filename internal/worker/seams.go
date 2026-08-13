@@ -101,6 +101,13 @@ type SeamResult struct {
 	AsyncRef string
 	// AsyncDeadline is when the async dispatch must have reported by.
 	AsyncDeadline time.Time
+	// AsyncSignal names the external signal a wait seam's async answer
+	// parks on instead of a timer (until.signal, task t10, issue #39):
+	// non-empty, parkWait routes the park to a durable signal subscription
+	// (Store.StartDurableSignalWait) — with deliberately NO deadline, since
+	// an undelivered signal leaves the run parked and inspectable rather
+	// than timed out — instead of to a wait timer. Only a wait seam sets it.
+	AsyncSignal string
 }
 
 // RunnerDispatcher executes a `code` node through the §13.7 runner boundary.

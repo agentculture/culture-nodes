@@ -5,23 +5,27 @@ import (
 	"context"
 	"encoding/json"
 	"net/http"
+	"net/http/httptest"
 	"strings"
 	"testing"
 	"time"
 
 	"github.com/agentculture/culture-nodes/internal/actors"
+	"github.com/agentculture/culture-nodes/internal/api"
 	"github.com/agentculture/culture-nodes/internal/engine"
 	"github.com/agentculture/culture-nodes/internal/scheduler"
 	"github.com/agentculture/culture-nodes/internal/store/postgres/pgtest"
 	"github.com/agentculture/culture-nodes/internal/worker"
 )
 
-// Durable wait tests (issue #39, task t9): a `wait` node's until.duration
-// parks the run on a §12.7 wait timer with NO lease held, the scheduler's
-// timer fire is what wakes it, and the resumed completion goes through the
-// engine's ordinary §12.5 transaction — which is what keeps the §9.7 loop
-// bounds enforced across the park. until.signal is refused loudly until the
-// event surface lands (build plan t10).
+// Durable wait tests (issue #39, tasks t9 + t10): a `wait` node's
+// until.duration parks the run on a §12.7 wait timer with NO lease held,
+// the scheduler's timer fire is what wakes it, and the resumed completion
+// goes through the engine's ordinary §12.5 transaction — which is what
+// keeps the §9.7 loop bounds enforced across the park. until.signal takes
+// the same walk with a signal subscription where the timer would be and the
+// authenticated POST /v1alpha1/events delivery where the scheduler would
+// be (t10, spec decision c35).
 
 // refuseActor is a harness actor handler for workflows that must never
 // invoke an actor at all: every wait workflow here is agent-free, so a
@@ -208,41 +212,174 @@ func TestWaitInsideCycleStillEnforcesLoopBounds(t *testing.T) {
 	}
 }
 
-// Acceptance criterion 4: until.signal is refused with a documented error
-// naming the event surface as the follow-up — a diagnosed technical
-// failure, never a silent stub and never an invented completion.
-func TestWaitUntilSignalIsRefusedNotStubbed(t *testing.T) {
+// signalSubscriptionRow reads the run's single signal subscription (status,
+// event name), failing if there is not exactly one.
+func signalSubscriptionRow(t *testing.T, h *harness, runID string) (status, eventName string) {
+	t.Helper()
+	rows, err := h.store.Pool().Query(h.ctx,
+		`SELECT status, event_name FROM signal_subscriptions WHERE run_id = $1`, runID)
+	if err != nil {
+		t.Fatalf("read signal subscriptions: %v", err)
+	}
+	defer rows.Close()
+	n := 0
+	for rows.Next() {
+		if err := rows.Scan(&status, &eventName); err != nil {
+			t.Fatalf("scan signal subscription: %v", err)
+		}
+		n++
+	}
+	if err := rows.Err(); err != nil {
+		t.Fatalf("read signal subscriptions: %v", err)
+	}
+	if n != 1 {
+		t.Fatalf("signal subscriptions for run = %d, want exactly 1", n)
+	}
+	return status, eventName
+}
+
+// postSignalEvent posts to the API server's POST /v1alpha1/events with the
+// given bearer token ("" for no Authorization header), returning the status
+// code.
+func postSignalEvent(t *testing.T, url, token, body string) int {
+	t.Helper()
+	req, err := http.NewRequest(http.MethodPost, url+"/v1alpha1/events", strings.NewReader(body))
+	if err != nil {
+		t.Fatalf("new request: %v", err)
+	}
+	req.Header.Set("Content-Type", "application/json")
+	if token != "" {
+		req.Header.Set("Authorization", "Bearer "+token)
+	}
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatalf("POST /v1alpha1/events: %v", err)
+	}
+	defer resp.Body.Close()
+	return resp.StatusCode
+}
+
+// Acceptance criterion for t10 (issue #39): a wait node's until.signal
+// parks the run durably — no lease, no timer, a pending signal
+// subscription — an unauthenticated delivery is refused and resumes
+// nothing, and an authenticated POST /v1alpha1/events delivery is what
+// wakes it, the run completing through its normal edges with the resuming
+// event folded into the wait node's output.
+func TestWaitSignalParksDurablyAndEventDeliveryResumesIt(t *testing.T) {
+	const eventSecret = "test-only-event-secret-not-for-production"
+
 	h := newHarness(t, refuseActor)
+	apiSrv, err := api.NewServer(h.store, h.ns.ID, api.WithEventTokenSecret(eventSecret))
+	if err != nil {
+		t.Fatalf("api.NewServer: %v", err)
+	}
+	ts := httptest.NewServer(apiSrv.Handler())
+	t.Cleanup(ts.Close)
+
 	run := h.createRun("waitsignal.workflow.yaml", `{}`)
 
+	// The dispatch parks: work item leaves 'leased' for 'waiting'.
+	h.runUntil(20*time.Second, func() bool { return h.workItemStates(run.ID)["pause"] == "waiting" })
+
+	// No lease held, node run waiting_external, run live — the timer park's
+	// exact discipline — with a pending subscription where the timer would
+	// be, and NO timer armed.
+	var noLease bool
+	if err := h.store.Pool().QueryRow(h.ctx, `
+		SELECT wi.lease_owner IS NULL AND wi.lease_expires_at IS NULL
+		FROM work_items AS wi JOIN node_runs AS nr ON nr.id = wi.node_run_id
+		WHERE nr.run_id = $1 AND nr.node_key = 'pause'
+	`, run.ID).Scan(&noLease); err != nil {
+		t.Fatalf("read parked work item: %v", err)
+	}
+	if !noLease {
+		t.Fatal("parked signal wait still holds a lease; a durable wait must release worker capacity")
+	}
+	var nodeRunStatus string
+	if err := h.store.Pool().QueryRow(h.ctx,
+		`SELECT status FROM node_runs WHERE run_id = $1 AND node_key = 'pause'`, run.ID,
+	).Scan(&nodeRunStatus); err != nil {
+		t.Fatalf("read node run: %v", err)
+	}
+	if nodeRunStatus != "waiting_external" {
+		t.Errorf("parked node run status = %q, want waiting_external", nodeRunStatus)
+	}
+	if status, name := signalSubscriptionRow(t, h, run.ID); status != "pending" || name != "green-light" {
+		t.Fatalf("subscription while parked = (%s, %q), want (pending, green-light)", status, name)
+	}
+	if statuses := waitTimerStatuses(t, h, run.ID); len(statuses) != 0 {
+		t.Fatalf("wait timers for a signal wait = %v, want none", statuses)
+	}
+
+	// Acceptance criterion 2: unauthenticated delivery refused — and the
+	// run stays parked.
+	if code := postSignalEvent(t, ts.URL, "", `{"name":"green-light"}`); code != http.StatusUnauthorized {
+		t.Fatalf("unauthenticated delivery = %d, want 401", code)
+	}
+	if code := postSignalEvent(t, ts.URL, "wrong-token", `{"name":"green-light"}`); code != http.StatusUnauthorized {
+		t.Fatalf("wrongly authenticated delivery = %d, want 401", code)
+	}
+	if status, _ := signalSubscriptionRow(t, h, run.ID); status != "pending" {
+		t.Fatalf("subscription after refused deliveries = %s, want still pending", status)
+	}
+
+	// The authenticated delivery is what wakes the run.
+	if code := postSignalEvent(t, ts.URL, eventSecret,
+		`{"name":"green-light","payload":{"go":true},"emitter":"ops"}`); code != http.StatusCreated {
+		t.Fatalf("authenticated delivery = %d, want 201", code)
+	}
 	h.runUntil(20*time.Second, func() bool { return h.run(run.ID).State.Terminal() })
 
-	if state := h.run(run.ID).State; state != engine.RunFailed {
-		t.Fatalf("run state = %s, want failed", state)
+	if state := h.run(run.ID).State; state != engine.RunCompleted {
+		t.Fatalf("run state = %s, want completed (worker errors: %v)", state, h.workerErrors())
 	}
+	var outcome string
+	if err := h.store.Pool().QueryRow(h.ctx,
+		`SELECT outcome FROM node_runs WHERE run_id = $1 AND node_key = 'pause'`, run.ID,
+	).Scan(&outcome); err != nil {
+		t.Fatalf("read node run outcome: %v", err)
+	}
+	if outcome != "completed" {
+		t.Errorf("wait node outcome = %q, want completed", outcome)
+	}
+	if status, _ := signalSubscriptionRow(t, h, run.ID); status != "fired" {
+		t.Errorf("subscription after resume = %s, want fired", status)
+	}
+
+	// The wait node's output carries the resuming event — name, emitter,
+	// payload — so downstream bindings can read what actually woke the run.
 	var result []byte
 	if err := h.store.Pool().QueryRow(h.ctx, `
 		SELECT a.result FROM attempts AS a JOIN node_runs AS nr ON nr.id = a.node_run_id
-		WHERE nr.run_id = $1 AND nr.node_key = 'pause'
+		WHERE nr.run_id = $1 AND nr.node_key = 'pause' AND a.status = 'succeeded'
 	`, run.ID).Scan(&result); err != nil {
 		t.Fatalf("read attempt result: %v", err)
 	}
-	if !bytes.Contains(result, []byte("until.signal")) || !bytes.Contains(result, []byte("event")) {
-		t.Errorf("attempt result = %s, want the refusal to name until.signal and the event surface", result)
+	var resumedOutput struct {
+		Event struct {
+			Name    string `json:"name"`
+			Emitter string `json:"emitter"`
+			Payload struct {
+				Go bool `json:"go"`
+			} `json:"payload"`
+		} `json:"event"`
+		CompletedAt string `json:"completed_at"`
+	}
+	if err := json.Unmarshal(result, &resumedOutput); err != nil {
+		t.Fatalf("decode attempt result %s: %v", result, err)
+	}
+	if resumedOutput.Event.Name != "green-light" || resumedOutput.Event.Emitter != "ops" ||
+		!resumedOutput.Event.Payload.Go || resumedOutput.CompletedAt == "" {
+		t.Errorf("attempt result = %s, want the resuming event (green-light, ops, payload.go=true) and a completed_at stamp", result)
 	}
 
-	// No timer was armed and nothing is parked: the refusal completed the
-	// work item through the normal failure path.
-	if statuses := waitTimerStatuses(t, h, run.ID); len(statuses) != 0 {
-		t.Errorf("wait timers = %v, want none for a refused signal wait", statuses)
-	}
-	if got := h.workItemStates(run.ID)["pause"]; got != "completed" {
-		t.Errorf("work item state = %q, want completed", got)
+	if got := h.invocations(); len(got) != 0 {
+		t.Errorf("an agent-free signal wait workflow invoked an actor %d times", len(got))
 	}
 }
 
-// The until block's validation is pure and needs no store: signal refusals
-// and shape errors are diagnosed before any timer lookup.
+// The until block's validation is pure and needs no store: shape errors are
+// diagnosed before any timer or subscription lookup.
 func TestDispatchWaitValidatesUntilShapes(t *testing.T) {
 	d := worker.NewTimerWaitDispatcher(nil, nil)
 	ctx := context.Background()
@@ -252,9 +389,9 @@ func TestDispatchWaitValidatesUntilShapes(t *testing.T) {
 		until string
 		want  []string
 	}{
-		"signal names the follow-up":  {`{"signal":"green-light"}`, []string{"until.signal", "event"}},
 		"empty object":                {`{}`, []string{"exactly one"}},
 		"duration and timestamp both": {`{"duration":"5m","timestamp":"2030-01-01T00:00:00Z"}`, []string{"exactly one"}},
+		"duration and signal both":    {`{"duration":"5m","signal":"green-light"}`, []string{"exactly one"}},
 		"malformed duration":          {`{"duration":"soon"}`, []string{"not a duration"}},
 		"malformed timestamp":         {`{"timestamp":"tomorrow"}`, []string{"RFC 3339"}},
 		"missing block":               {``, []string{"no until block"}},

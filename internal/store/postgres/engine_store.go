@@ -565,9 +565,9 @@ INSERT INTO attempts (
 	result, started_at, completed_at,
 	usage_input_tokens, usage_output_tokens, usage_cost, usage_currency,
 	usage_cached_input_tokens, usage_reasoning_tokens, usage_model, usage_thread_id,
-	termination_reason
+	termination_reason, continuation_ref
 )
-VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19)
+VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20)
 `
 
 // InsertAttempt records one dispatch attempt's result. The
@@ -585,6 +585,11 @@ VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $
 // termination_reason is written from attempt.TerminationReason, NOT from
 // the usage block, because an attempt can carry one with no usage block at
 // all (ADR 0009).
+//
+// continuation_ref (migrations/0018_attempt_continuation_ref.sql) is written
+// the same way from attempt.ContinuationRef: NULL means the actor offered no
+// handle for continuing its conversation, which is not the same fact as the
+// usage block's usage_thread_id (ADR 0010).
 func (eq engineQueries) InsertAttempt(ctx context.Context, attempt engine.Attempt) error {
 	var result any
 	if len(attempt.Result) > 0 {
@@ -614,6 +619,7 @@ func (eq engineQueries) InsertAttempt(ctx context.Context, attempt engine.Attemp
 		inputTokens, outputTokens, cost, currency,
 		cachedInputTokens, reasoningTokens, usageModel, usageThreadID,
 		textPtrFromNullable(attempt.TerminationReason),
+		textPtrFromNullable(attempt.ContinuationRef),
 	)
 	if err != nil {
 		return fmt.Errorf("postgres: engine: InsertAttempt: %w", err)
@@ -641,7 +647,7 @@ func (eq engineQueries) Attempts(ctx context.Context, nodeRunID string) ([]engin
 		       fencing_token, result, started_at, completed_at,
 		       usage_input_tokens, usage_output_tokens, usage_cost, usage_currency,
 		       usage_cached_input_tokens, usage_reasoning_tokens, usage_model,
-		       usage_thread_id, termination_reason
+		       usage_thread_id, termination_reason, continuation_ref
 		FROM attempts
 		WHERE node_run_id = $1
 		ORDER BY attempt_number
@@ -671,13 +677,14 @@ func (eq engineQueries) Attempts(ctx context.Context, nodeRunID string) ([]engin
 			usageModel        pgtype.Text
 			usageThreadID     pgtype.Text
 			terminationReason pgtype.Text
+			continuationRef   pgtype.Text
 		)
 		if err := rows.Scan(
 			&attempt.ID, &attempt.NamespaceID, &attempt.NodeRunID, &number, &actorID,
 			&status, &fencingToken, &result, &startedAt, &completedAt,
 			&usageInputTokens, &usageOutputTokens, &usageCost, &usageCurrency,
 			&usageCachedInput, &usageReasoning, &usageModel, &usageThreadID,
-			&terminationReason,
+			&terminationReason, &continuationRef,
 		); err != nil {
 			return nil, fmt.Errorf("postgres: engine: Attempts: scan: %w", err)
 		}
@@ -714,6 +721,10 @@ func (eq engineQueries) Attempts(ctx context.Context, nodeRunID string) ([]engin
 		// Read outside the usage block on purpose: termination_reason is
 		// non-NULL on attempts whose usage columns are all NULL (ADR 0009).
 		attempt.TerminationReason = textPtrFromPg(terminationReason)
+		// Outside it for the same reason, and distinct from the block's own
+		// usage_thread_id: this is the handle a later dispatch resumes with,
+		// not a measurement of where the usage accrued (ADR 0010).
+		attempt.ContinuationRef = textPtrFromPg(continuationRef)
 		attempts = append(attempts, attempt)
 	}
 	if err := rows.Err(); err != nil {

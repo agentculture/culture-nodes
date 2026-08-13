@@ -63,6 +63,26 @@ type Callback struct {
 }
 
 // InvocationRequest is the §13.1 request body.
+//
+// ContinuationRef extends §13.1 additively
+// (docs/adr/0010-continuation-ref-on-request.md, on ADR 0008's and ADR
+// 0009's precedent for §13.2): it is the handle a PRIOR attempt returned in
+// InvocationResult.ContinuationRef, handed back so this turn can continue
+// that conversation instead of starting a fresh one. §8 ("Explicit
+// continuation") is the reason it is a wire field at all — a session is
+// passed explicitly or it does not exist, and there is no invisible shared
+// conversation for a bridge to find on its own.
+//
+// It carries §13.2's own field name on purpose. There is one PRD vocabulary
+// word for one fact — the provider-side conversation a turn belongs to — and
+// the direction comes from the message rather than a second name: on a
+// request it is the ref to continue FROM, on a result the ref the actor
+// offers to continue WITH.
+//
+// Absent stays absent: the key is omitted entirely when there is no prior
+// ref, never sent as null or "". A bridge's "was I given a session" check is
+// key presence, and an empty string is a value a bridge could mistake for a
+// handle.
 type InvocationRequest struct {
 	ProtocolVersion string          `json:"protocol_version"`
 	RunID           string          `json:"run_id"`
@@ -75,6 +95,7 @@ type InvocationRequest struct {
 	Input           json.RawMessage `json:"input"`
 	ArtifactRefs    []string        `json:"artifact_refs"`
 	ContextRefs     []string        `json:"context_refs"`
+	ContinuationRef *string         `json:"continuation_ref,omitempty"`
 	Deadline        *time.Time      `json:"deadline,omitempty"`
 	Callback        Callback        `json:"callback"`
 }
@@ -302,6 +323,16 @@ type CompletedPayload struct {
 	LedgerDelta  *LedgerDelta    `json:"ledger_delta"`
 	ArtifactRefs []string        `json:"artifact_refs"`
 	Usage        *Usage          `json:"usage"`
+	// ContinuationRef is InvocationResult's field, arriving on §13.4's
+	// terminal event (ADR 0010 §2). Its absence here was the sharper half
+	// of the gap that ADR closes: a long session is precisely the one that
+	// answers asynchronously, so a handle only the synchronous body could
+	// carry was unreachable exactly where continuation is worth most.
+	//
+	// FailedPayload deliberately has no twin of this field: a ref is a
+	// claim that a resumable conversation exists, and a bridge reporting a
+	// failed turn is the least reliable position from which to make it.
+	ContinuationRef *string `json:"continuation_ref,omitempty"`
 	// TerminationReason is InvocationResult's field, for the same reason an
 	// actor that finished late reports the same Usage block: the answer is
 	// the same kind of answer whichever path carried it.

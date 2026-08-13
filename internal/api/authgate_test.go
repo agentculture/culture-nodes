@@ -52,6 +52,12 @@ func TestBatchMutatingRoutesRefuseUnauthenticated(t *testing.T) {
 			`{"instruction":"x","actor_ref":"actor://company/x@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","repo":"/tmp/x"}`},
 		{"human decision (pre-batch reference)", http.MethodPost, "/v1alpha1/human-tasks/ht_x/decision",
 			`{"outcome":"approved"}`},
+		// Later addition, same posture: clearing a capacity pause (t9)
+		// restores exactly the standing registration granted, so it rides
+		// the registration secret and belongs in this gate. The 401 must
+		// come BEFORE the actor lookup — an unauthenticated caller learns
+		// nothing about which actor ids exist.
+		{"resume actor / clear capacity pause (t9)", http.MethodPost, "/v1alpha1/actors/act_x/resume", `{}`},
 	}
 
 	for _, route := range mutating {

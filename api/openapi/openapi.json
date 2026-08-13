@@ -36,6 +36,9 @@
           "actor_key": {
             "type": "string"
           },
+          "availability": {
+            "$ref": "#/components/schemas/ActorAvailability"
+          },
           "capabilities": {
             "description": "Declared capabilities, as the row's own JSON value."
           },
@@ -69,6 +72,61 @@
           "kind",
           "protocol",
           "created_at"
+        ],
+        "type": "object"
+      },
+      "ActorAvailability": {
+        "description": "The capacity circuit breaker's state for this actor (task t9, migration 0020's `actor_availability` table). Absent entirely when the actor has never been paused — which is a different fact from a pause that has lapsed, and the two are deliberately distinguishable: a lapsed or cleared pause still renders, with `paused: false`.\nKeyed by `actor_key`, so every revision of one identity reports the same availability: provider capacity belongs to the identity, not to one append-only registration revision. The pause is a DEADLINE, not a flag — `paused` is computed server-side against the database's own clock, so horizontally-scaled workers and API readers cannot disagree about it.",
+        "properties": {
+          "cleared_at": {
+            "description": "Present only when an operator ended the pause early (POST /v1alpha1/actors/{id}/resume), which is what keeps \"it expired\" and \"a human let it back in\" distinguishable afterwards.",
+            "format": "date-time",
+            "type": "string"
+          },
+          "cleared_by": {
+            "type": "string"
+          },
+          "detail": {
+            "description": "One human line naming what happened.",
+            "type": "string"
+          },
+          "paused": {
+            "description": "Whether the pause is still in force right now. False means the deadline passed or an operator cleared it; the rest of this block is then the history of the pause that ended.",
+            "type": "boolean"
+          },
+          "paused_until": {
+            "description": "When the actor becomes (or became) dispatchable again.",
+            "format": "date-time",
+            "type": "string"
+          },
+          "reason": {
+            "description": "The §13.5 error class that tripped the breaker — `capacity_exhausted` today.",
+            "type": "string"
+          },
+          "retry_after_seconds": {
+            "description": "The provider's own Retry-After hint, in seconds. Absent when it named none — never `0`, which would read as \"retry immediately\". The worker caps how long a hint may actually pause an actor; this is the unclamped value the provider sent.",
+            "type": "integer"
+          },
+          "tripped_at": {
+            "format": "date-time",
+            "type": "string"
+          },
+          "tripped_by_attempt_id": {
+            "type": "string"
+          },
+          "tripped_by_node_run_id": {
+            "type": "string"
+          },
+          "tripped_by_run_id": {
+            "description": "The dispatch that discovered the exhaustion, so \"why is this paused\" is answerable from the actor surface alone rather than by correlating timestamps against the event log.",
+            "type": "string"
+          }
+        },
+        "required": [
+          "paused",
+          "paused_until",
+          "reason",
+          "tripped_at"
         ],
         "type": "object"
       },
@@ -1105,6 +1163,16 @@
         ],
         "type": "object"
       },
+      "ResumeActorRequest": {
+        "description": "POST /v1alpha1/actors/{id}/resume' body (task t9). Entirely optional: no body, an empty body, and `{}` all mean \"an operator did this and did not say who\", recorded as `cleared_by: operator` rather than as an empty attribution.",
+        "properties": {
+          "cleared_by": {
+            "description": "Who is clearing the pause, recorded on the availability row. Defaults to `operator`.",
+            "type": "string"
+          }
+        },
+        "type": "object"
+      },
       "ReviewCommitResult": {
         "properties": {
           "ledger_version": {
@@ -1661,6 +1729,73 @@
           }
         },
         "summary": "Fetch one actor row by id.",
+        "tags": [
+          "actors"
+        ]
+      }
+    },
+    "/v1alpha1/actors/{id}/resume": {
+      "post": {
+        "description": "Task t9: the reversibility half of the capacity circuit breaker. When a dispatch to an actor fails with the `capacity_exhausted` §13.5 class, the worker marks that actor unavailable until a deadline and defers — never fails — work addressed to it. This operation ends that pause early, so an operator who knows better (the quota reset, the bridge was misreporting, the limit did not apply to this project) can overrule the automatic classification without touching the database.\nThe pause is keyed by `actor_key`, not by this row's id, so resuming any revision of an identity resumes the identity — provider capacity belongs to the identity, not to one append-only registration revision.\nClearing an actor that is not currently paused is 200 with the actor's current state, not an error: the caller's intent (\"this actor should be dispatchable\") is already satisfied, and two operators racing to clear one pause should both succeed.\nWork items already deferred become claimable again within the worker's deferral horizon (at most a few minutes), not instantaneously: a deferral pushes `work_items.available_at` forward, and the horizon is bounded precisely so an early clear cannot go unnoticed for the whole pause.\nLike actor registration on this same noun — and unlike the rest of this authless-by-phase-1-design API (spec decision c45) — it requires the actor-registration bearer token, deliberately the SAME secret (`NODES_ACTOR_REGISTRATION_TOKEN_SECRET`): registration is what grants an endpoint the standing to be dispatched real work, and clearing a pause restores exactly that standing.",
+        "operationId": "resumeActor",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ResumeActorRequest"
+              }
+            }
+          },
+          "required": false
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Actor"
+                }
+              }
+            },
+            "description": "The actor row, with its availability block reflecting the cleared pause."
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "description": "No bearer token was presented, it does not match the configured registration secret, or no secret is configured at all."
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "description": "No actor with this id."
+          }
+        },
+        "security": [
+          {
+            "actorRegistrationBearerAuth": []
+          }
+        ],
+        "summary": "Clear a capacity pause early, making the actor dispatchable again.",
         "tags": [
           "actors"
         ]

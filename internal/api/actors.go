@@ -4,6 +4,7 @@ import (
 	"crypto/sha256"
 	"crypto/subtle"
 	"encoding/json"
+	"io"
 	"net/http"
 	"sort"
 	"strings"
@@ -28,6 +29,64 @@ type ActorOut struct {
 	Capabilities json.RawMessage `json:"capabilities,omitempty"`
 	Metadata     json.RawMessage `json:"metadata,omitempty"`
 	CreatedAt    time.Time       `json:"created_at"`
+	// Availability is the capacity circuit breaker's state for this actor
+	// KEY (task t9, migration 0020) — absent when this actor has never been
+	// paused. It is deliberately keyed by actor_key rather than by this
+	// row's id, so every revision of one identity reports the same
+	// availability: provider capacity belongs to the identity, not to one
+	// append-only registration revision.
+	Availability *ActorAvailabilityOut `json:"availability,omitempty"`
+}
+
+// ActorAvailabilityOut is one actor_availability row rendered for the
+// actors read surface (task t9, honesty condition h38: "visible with reason
+// and until-when, and clearable without touching the database").
+//
+// Paused is the answer to the only question a caller usually has, computed
+// server-side against the database's clock rather than left to a client to
+// derive from PausedUntil and its own — the same reason
+// postgres.Store.ActivePause compares in SQL. The row is still rendered when
+// Paused is false: an actor whose pause lapsed or was cleared should say so,
+// which is a different fact from an actor that was never paused (that one
+// carries no availability block at all).
+type ActorAvailabilityOut struct {
+	Paused      bool      `json:"paused"`
+	PausedUntil time.Time `json:"paused_until"`
+	// Reason is the §13.5 error class that tripped the breaker
+	// ("capacity_exhausted").
+	Reason string `json:"reason"`
+	// RetryAfterSeconds is the provider's own Retry-After hint, omitted when
+	// it named none — never rendered as 0, which would read as "retry
+	// immediately".
+	RetryAfterSeconds *int32    `json:"retry_after_seconds,omitempty"`
+	Detail            string    `json:"detail,omitempty"`
+	TrippedAt         time.Time `json:"tripped_at"`
+	// The dispatch that discovered the exhaustion, so "why is this paused"
+	// is answerable without correlating timestamps against the event log.
+	TrippedByRunID     string `json:"tripped_by_run_id,omitempty"`
+	TrippedByNodeRunID string `json:"tripped_by_node_run_id,omitempty"`
+	TrippedByAttemptID string `json:"tripped_by_attempt_id,omitempty"`
+	// ClearedAt/ClearedBy are present only when an operator ended the pause
+	// early, which is what keeps "it expired" and "a human let it back in"
+	// distinguishable after the fact.
+	ClearedAt *time.Time `json:"cleared_at,omitempty"`
+	ClearedBy string     `json:"cleared_by,omitempty"`
+}
+
+func actorAvailabilityOut(pause postgres.ActorPause, now time.Time) *ActorAvailabilityOut {
+	return &ActorAvailabilityOut{
+		Paused:             pause.Paused(now),
+		PausedUntil:        pause.PausedUntil,
+		Reason:             pause.Reason,
+		RetryAfterSeconds:  pause.RetryAfterSeconds,
+		Detail:             pause.Detail,
+		TrippedAt:          pause.TrippedAt,
+		TrippedByRunID:     pause.TrippedByRunID,
+		TrippedByNodeRunID: pause.TrippedByNodeRunID,
+		TrippedByAttemptID: pause.TrippedByAttemptID,
+		ClearedAt:          pause.ClearedAt,
+		ClearedBy:          pause.ClearedBy,
+	}
 }
 
 func actorOut(a postgres.Actor) ActorOut {
@@ -44,6 +103,16 @@ func actorOut(a postgres.Actor) ActorOut {
 	}
 }
 
+// actorOutWithAvailability is actorOut plus the breaker state for this
+// actor's key, when there is one.
+func actorOutWithAvailability(a postgres.Actor, pause postgres.ActorPause, ok bool, now time.Time) ActorOut {
+	out := actorOut(a)
+	if ok {
+		out.Availability = actorAvailabilityOut(pause, now)
+	}
+	return out
+}
+
 // ActorListOut is components.schemas.ActorList.
 type ActorListOut struct {
 	Items []ActorOut `json:"items"`
@@ -55,13 +124,23 @@ type ActorListOut struct {
 // handleRegisterActor below (task t13), which replaced the raw-SQL-only
 // deploy/prod/register-actor.sh lane (issue #8).
 func (s *Server) handleListActors(w http.ResponseWriter, r *http.Request) error {
-	actors, err := s.engineStore.ListActors(r.Context())
+	ctx := r.Context()
+	actors, err := s.engineStore.ListActors(ctx)
 	if err != nil {
 		return internalError(err)
 	}
+	// One query for every availability row rather than one per actor: the
+	// list renders every revision of every key, and an actor_key's pause is
+	// the same row for all of them (task t9).
+	pauses, err := s.engineStore.ActorPauses(ctx)
+	if err != nil {
+		return internalError(err)
+	}
+	now := time.Now().UTC()
 	out := make([]ActorOut, len(actors))
 	for i, a := range actors {
-		out[i] = actorOut(a)
+		pause, ok := pauses[a.ActorKey]
+		out[i] = actorOutWithAvailability(a, pause, ok, now)
 	}
 	writeJSON(w, http.StatusOK, ActorListOut{Items: out})
 	return nil
@@ -69,11 +148,89 @@ func (s *Server) handleListActors(w http.ResponseWriter, r *http.Request) error 
 
 // handleGetActor is GET /v1alpha1/actors/{id}.
 func (s *Server) handleGetActor(w http.ResponseWriter, r *http.Request) error {
-	a, err := s.engineStore.GetActor(r.Context(), r.PathValue("id"))
+	ctx := r.Context()
+	a, err := s.engineStore.GetActor(ctx, r.PathValue("id"))
 	if err != nil {
 		return classify(err)
 	}
-	writeJSON(w, http.StatusOK, actorOut(a))
+	pause, ok, err := s.engineStore.ActorPauseFor(ctx, a.ActorKey)
+	if err != nil {
+		return internalError(err)
+	}
+	writeJSON(w, http.StatusOK, actorOutWithAvailability(a, pause, ok, time.Now().UTC()))
+	return nil
+}
+
+// resumeActorRequest is components.schemas.ResumeActorRequest (task t9):
+// who is clearing the pause. It is optional — an operator at a shell should
+// not be blocked from unblocking their fleet over a provenance field — and
+// defaults to a value that says exactly that rather than naming nobody.
+type resumeActorRequest struct {
+	ClearedBy string `json:"cleared_by"`
+}
+
+// defaultClearedBy is what an unattributed clear records. It is a real
+// statement ("an operator through this API"), not an empty string, so the
+// cleared_by column never has to be read as "unknown, possibly automatic".
+const defaultClearedBy = "operator"
+
+// handleResumeActor is POST /v1alpha1/actors/{id}/resume (task t9, honesty
+// condition h38): end a capacity pause early, without touching the database.
+//
+// It is the reversibility half of the circuit breaker. The breaker's whole
+// job is to refuse dispatch to an actor an automated classification believes
+// is exhausted; an operator who knows better — the quota reset early, the
+// bridge was misreporting, the limit was per-project and this run is not on
+// it — must be able to overrule it through the same surface they read it
+// from. Clearing an actor that is not paused is 200 with the current state,
+// not an error: the operator's intent ("this actor should be dispatchable")
+// is already satisfied, and two operators racing to clear one pause should
+// both succeed.
+//
+// Like actor registration on this same noun — and unlike the rest of this
+// authless-by-phase-1-design API (spec decision c45) — it requires the
+// actor-registration bearer token, and deliberately the SAME secret rather
+// than a new one: registration is what grants an endpoint the standing to be
+// dispatched real work, and clearing a pause is restoring exactly that
+// standing.
+func (s *Server) handleResumeActor(w http.ResponseWriter, r *http.Request) error {
+	if err := s.requireActorRegistrationAuth(r); err != nil {
+		return err
+	}
+
+	ctx := r.Context()
+	a, err := s.engineStore.GetActor(ctx, r.PathValue("id"))
+	if err != nil {
+		return classify(err)
+	}
+
+	// The body is optional in full: no body, an empty body, and `{}` all
+	// mean "an operator did this and did not say who".
+	req := resumeActorRequest{}
+	if r.Body != nil {
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil && err != io.EOF {
+			return badRequest(
+				"send no body, or a JSON body matching ResumeActorRequest: {cleared_by?}",
+				"decode request body: %v", err)
+		}
+	}
+	clearedBy := strings.TrimSpace(req.ClearedBy)
+	if clearedBy == "" {
+		clearedBy = defaultClearedBy
+	}
+
+	if _, _, err := s.engineStore.ClearActorPause(ctx, a.ActorKey, clearedBy); err != nil {
+		return internalError(err)
+	}
+
+	// Re-read rather than render the clear's own return value: an actor with
+	// no pause at all has nothing to return from the clear, and this way one
+	// response shape covers both cases.
+	pause, ok, err := s.engineStore.ActorPauseFor(ctx, a.ActorKey)
+	if err != nil {
+		return internalError(err)
+	}
+	writeJSON(w, http.StatusOK, actorOutWithAvailability(a, pause, ok, time.Now().UTC()))
 	return nil
 }
 

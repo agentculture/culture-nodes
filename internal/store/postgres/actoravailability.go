@@ -307,6 +307,75 @@ func (s *Store) ClearActorPause(ctx context.Context, namespaceID, actorKey, clea
 	return pause, true, nil
 }
 
+// The namespace-scoped mirror of the three methods above, for the read/write
+// API surface (internal/api/actors.go). They are the same statements against
+// the same table; only the namespace binding differs -- engineQueries carries
+// it, *Store takes it as an argument.
+
+// ActorPauses returns every actor in this namespace that carries an
+// availability row, whether or not its pause is still in force, keyed by
+// actor key.
+//
+// Unlike ListActivePauses it does NOT filter to live pauses, because the
+// actors read surface renders both: a paused actor needs its reason and
+// deadline, and an actor whose pause has lapsed or been cleared needs to say
+// so rather than look like one that was never paused at all. Each row's
+// Paused() answers which it is.
+func (eq engineQueries) ActorPauses(ctx context.Context) (map[string]ActorPause, error) {
+	rows, err := eq.q.Query(ctx,
+		`SELECT `+actorPauseColumns+` FROM actor_availability WHERE namespace_id = $1 ORDER BY actor_key`,
+		eq.namespaceID)
+	if err != nil {
+		return nil, fmt.Errorf("postgres: engine: ActorPauses: %w", err)
+	}
+	defer rows.Close()
+
+	out := map[string]ActorPause{}
+	for rows.Next() {
+		pause, err := scanActorPause(rows)
+		if err != nil {
+			return nil, fmt.Errorf("postgres: engine: ActorPauses: scan: %w", err)
+		}
+		out[pause.ActorKey] = pause
+	}
+	return out, rows.Err()
+}
+
+// ActorPauseFor returns one actor key's availability row, live or historical.
+func (eq engineQueries) ActorPauseFor(ctx context.Context, actorKey string) (ActorPause, bool, error) {
+	if actorKey == "" {
+		return ActorPause{}, false, fmt.Errorf("postgres: engine: ActorPauseFor: actorKey is required")
+	}
+	pause, err := scanActorPause(eq.q.QueryRow(ctx,
+		`SELECT `+actorPauseColumns+` FROM actor_availability WHERE namespace_id = $1 AND actor_key = $2`,
+		eq.namespaceID, actorKey))
+	if err != nil {
+		if isNoRows(err) {
+			return ActorPause{}, false, nil
+		}
+		return ActorPause{}, false, fmt.Errorf("postgres: engine: ActorPauseFor %s: %w", actorKey, err)
+	}
+	return pause, true, nil
+}
+
+// ClearActorPause ends an actor's pause early in this namespace, reporting
+// (zero, false, nil) when it was not paused -- a no-op, not a failure, so an
+// operator may safely repeat the call and two operators racing to clear the
+// same pause both succeed.
+func (eq engineQueries) ClearActorPause(ctx context.Context, actorKey, clearedBy string) (ActorPause, bool, error) {
+	if actorKey == "" {
+		return ActorPause{}, false, fmt.Errorf("postgres: engine: ClearActorPause: actorKey is required")
+	}
+	pause, err := scanActorPause(eq.q.QueryRow(ctx, clearActorPauseSQL, eq.namespaceID, actorKey, textOrNull(clearedBy)))
+	if err != nil {
+		if isNoRows(err) {
+			return ActorPause{}, false, nil
+		}
+		return ActorPause{}, false, fmt.Errorf("postgres: engine: ClearActorPause %s: %w", actorKey, err)
+	}
+	return pause, true, nil
+}
+
 func scanActorPause(row interface{ Scan(dest ...any) error }) (ActorPause, error) {
 	var (
 		p                                 ActorPause

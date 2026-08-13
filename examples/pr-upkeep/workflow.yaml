@@ -150,12 +150,12 @@ spec:
             url = ("https://raw.githubusercontent.com/agentculture/culture-nodes/"
                    "29eacc81c89474e667bb751f13da151aca91bed6/examples/pr-upkeep/sweep.py")
             exec(compile(urllib.request.urlopen(url).read().decode(), "sweep.py", "exec"))
-        # egress-allowlist is the DECLARED intent (sonarcloud.io +
-        # api.github.com only), but headspace-cli 0.11.0 supports only a
-        # disabled/enabled network posture and the runner boundary honestly
-        # rejects the allowlist request (live run 01KZXACT0E81R8QE8CSWNC3ET2,
-        # deviation d2). `full` is the working posture until headspace grows
-        # an allowlist; tightening back is tracked in the deviation record.
+        # DECLARED intent: network: egress-allowlist (sonarcloud.io +
+        # api.github.com only). Headspace-cli 0.11.0 supports only disabled/
+        # enabled network posture, so the runner boundary honestly rejects
+        # egress-allowlist as rejected_input (issue #50). `full` is the
+        # working posture until headspace ships allowlist support; restore
+        # network: egress-allowlist and add a runner conformance fixture then.
         network: full
         allowedOutputPaths: []
       contract:

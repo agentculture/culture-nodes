@@ -23,11 +23,11 @@ flow can propose, fix, and review — it can never merge.
     └── backoff (wait 30m) ◀──sweep_broken── triage
 ```
 
-- **sweep** (code node, `network: egress-allowlist`) runs
-  [`sweep.py`](sweep.py) through the runner boundary: SonarCloud's issues
-  API (unresolved issues for this repo's component key) plus the Qodo
-  `Code Review` comments on this repo's open PRs, parsed into one
-  prioritised work-item list. Its one routable domain fact is the **exit
+- **sweep** (code node, declared intent: `network: egress-allowlist` per
+  issue #50) runs [`sweep.py`](sweep.py) through the runner boundary:
+  SonarCloud's issues API (unresolved issues for this repo's component key)
+  plus the Qodo `Code Review` comments on this repo's open PRs, parsed into
+  one prioritised work-item list. Its one routable domain fact is the **exit
   code** — a code node's persisted output is runner metadata, not stdout —
   so `0` means work found, `10` (`EXIT_EMPTY`) means a clean empty sweep,
   and anything else means the sweep itself broke.
@@ -149,8 +149,13 @@ run ends, re-invoke the driver for the next cycle.
 
 - The sweep operation expects the extractor at `/opt/pr-upkeep/sweep.py`
   inside the pinned `python:3.12-slim` image — bake it in or bind-mount it
-  when registering the runner. Egress allowlist: `sonarcloud.io`,
-  `api.github.com`.
+  when registering the runner. **Egress: DECLARED intent is `network:
+  egress-allowlist` (sonarcloud.io + api.github.com only).** Headspace-cli
+  0.11.0 supports only disabled/enabled network posture, so the boundary
+  honestly rejects the allowlist as `rejected_input` (issue #50). The
+  workflow runs with `network: full` until headspace ships allowlist support;
+  restore `network: egress-allowlist` and add a runner conformance fixture
+  then. No proxy workaround lands in the control plane (spec claim c29).
 - `company/human-ops` is the human-inbox bridge README's registration
   example (`kind=human`, same append-only actor revisions as every agent).
 - The `uses:` digests are the same referenced identities the sibling

@@ -79,12 +79,17 @@ type Options struct {
 	CallbackBaseURL string
 
 	// Runner, Human, and Waiter are the seams for code, approval, and wait
-	// nodes. A nil seam makes its kind a diagnosed failure rather than a
-	// silent success (see seams.go). Human is expected to stay nil in every
-	// real deployment: an approval node never produces a work item for this
-	// worker to dispatch in the first place (task t6's engine-side park,
-	// internal/engine/humantask.go), so there is nothing legitimate for a
-	// HumanDispatcher to do — see HumanDispatcher's doc comment in seams.go.
+	// nodes. A nil Runner or Human makes its kind a diagnosed failure rather
+	// than a silent success (see seams.go). Waiter is different: a nil value
+	// gets the production timer-backed dispatcher (wait.go's
+	// TimerWaitDispatcher) wired in by New, because durable waits need
+	// nothing deployment-specific — only the store and the clock the worker
+	// already holds; set it only to substitute a custom implementation.
+	// Human is expected to stay nil in every real deployment: an approval
+	// node never produces a work item for this worker to dispatch in the
+	// first place (task t6's engine-side park, internal/engine/humantask.go),
+	// so there is nothing legitimate for a HumanDispatcher to do — see
+	// HumanDispatcher's doc comment in seams.go.
 	Runner RunnerDispatcher
 	Human  HumanDispatcher
 	Waiter WaitDispatcher
@@ -225,6 +230,9 @@ func New(db *postgres.Store, eng *engine.Engine, opts Options) (*Worker, error) 
 	}
 	if opts.NewID == nil {
 		opts.NewID = idstore.NewULID
+	}
+	if opts.Waiter == nil {
+		opts.Waiter = NewTimerWaitDispatcher(db, opts.Now)
 	}
 
 	callbacks, err := postgres.NewCallbackStore(db, opts.NamespaceID)

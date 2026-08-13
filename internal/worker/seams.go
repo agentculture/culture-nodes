@@ -10,12 +10,17 @@ import (
 
 // The dispatch seams for node kinds this worker does not execute directly.
 //
-// `code` and `wait` are genuinely pending: a `code` node needs the
-// headspace-cli runner boundary (§13.7) and a `wait` node needs durable wait
-// semantics on top of §12.7's timers, and RunnerDispatcher / WaitDispatcher
-// are the extension points those later tasks fill in. Each is declared here
-// as an interface the worker will use if one is registered, and each is a
-// hard, diagnosed failure when none is.
+// `code` was genuinely pending when this file was written (a `code` node
+// needs the headspace-cli runner boundary, §13.7) and now has two
+// implementations of its own (code.go, runnerasync.go); RunnerDispatcher
+// remains the higher-level override seam. `wait` gained its production
+// implementation in issue #39's t9: wait.go's TimerWaitDispatcher is wired
+// in by New whenever Options.Waiter is nil, parking until.duration /
+// until.timestamp on §12.7's durable wait timers (until.signal stays an
+// explicit refusal until the event surface lands — build plan t10). Each
+// seam is declared here as an interface the worker will use if one is
+// registered, and — for Runner and Human — a hard, diagnosed failure when
+// none is.
 //
 // `approval` is different, and HumanDispatcher's own doc comment below says
 // why: task t6 gave approval nodes a different mechanism entirely (an
@@ -163,6 +168,10 @@ type HumanDispatcher interface {
 // `until` is the IR's wait block verbatim: a duration, a timestamp, or a
 // named signal. A duration or timestamp is a durable timer; a signal is an
 // external event. Both are asynchronous by nature.
+//
+// The production implementation is wait.go's TimerWaitDispatcher, which New
+// wires in when Options.Waiter is nil; this interface remains the
+// substitution point for a custom implementation.
 type WaitDispatcher interface {
 	// DispatchWait arms the node's resume condition.
 	DispatchWait(ctx context.Context, dc DispatchContext, until json.RawMessage) (SeamResult, error)

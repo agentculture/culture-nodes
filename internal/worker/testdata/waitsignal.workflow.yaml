@@ -1,0 +1,49 @@
+# A wait node on until.signal, which the timer-backed wait dispatcher
+# explicitly refuses until the first-class event surface lands (build plan
+# t10, issue #39). The test asserts the refusal is a diagnosed technical
+# failure naming that follow-up — never a silent stub, never an invented
+# completion.
+apiVersion: nodes.culture.dev/v1alpha1
+kind: Workflow
+
+metadata:
+  name: worker-wait-signal
+  version: 1.0.0
+  ownerRef: team/platform-ai
+
+spec:
+  entry: pause
+
+  contract:
+    input:
+      schema:
+        type: object
+    output:
+      schema: {}
+
+  limits:
+    maxDuration: 1h
+    maxTransitions: 8
+    maxVisitsPerNode: 4
+    maxParallelTokens: 1
+
+  ledger:
+    schemaVersion: nodes.culture.dev/ledger/v1alpha1
+    maxRecordsPerNode: 10
+
+  nodes:
+    pause:
+      kind: wait
+      ownerRef: team/platform-ai
+      until:
+        signal: green-light
+
+    finish:
+      kind: end
+      ownerRef: team/platform-ai
+      output:
+        from: /run/input
+
+  edges:
+    - from: pause.completed
+      to: finish

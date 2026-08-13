@@ -458,3 +458,121 @@ def test_terminal_event_carries_workspace_measured_on_failure_and_timeout():
         workspace_measured=_REAL_MEASUREMENT,
     )
     assert timed_out.payload["workspace_measured"] == _REAL_MEASUREMENT
+
+
+# ---------------------------------------------------------------------------
+# usage on failure (issue #32, task t4): a failed session still burned real
+# tokens. When a parseable terminal result exists, its API-reported usage
+# rides the failure body/payload; the result-less crash and timeout branches
+# stay usage-less — no key at all, never fabricated zeros.
+# ---------------------------------------------------------------------------
+
+
+def test_sync_response_failure_carries_usage_from_task_result():
+    r = mapping.sync_response(
+        _error_result(),
+        CTX,
+        default_success_outcome="completed",
+        actor_id="a",
+        created_at="now",
+    )
+    assert r.status_code == 500
+    assert r.body["usage"] == {
+        "input_tokens": 1,
+        "output_tokens": 0,
+        "cost": None,
+        "currency": None,
+    }
+
+
+def test_sync_response_undeclared_incomplete_failure_carries_usage():
+    r = mapping.sync_response(
+        _incomplete_result(usage={"input_tokens": 900, "output_tokens": 400}),
+        CTX,
+        default_success_outcome="completed",
+        actor_id="a",
+        created_at="now",
+    )
+    assert r.status_code == 500
+    assert r.body["usage"] == {
+        "input_tokens": 900,
+        "output_tokens": 400,
+        "cost": None,
+        "currency": None,
+    }
+
+
+def test_sync_response_crash_emits_no_usage_key():
+    r = mapping.sync_response(
+        None, CTX, default_success_outcome="completed", actor_id="a", created_at="now"
+    )
+    assert r.status_code == 500
+    assert "usage" not in r.body
+
+
+def test_sync_response_timeout_emits_no_usage_key():
+    r = mapping.sync_response(
+        None,
+        CTX,
+        default_success_outcome="completed",
+        actor_id="a",
+        created_at="now",
+        timed_out=True,
+    )
+    assert r.status_code == 408
+    assert "usage" not in r.body
+
+
+def test_terminal_event_failed_carries_usage_from_task_result():
+    ev = mapping.terminal_event(
+        _error_result(),
+        CTX,
+        default_success_outcome="completed",
+        actor_id="a",
+        created_at="now",
+    )
+    assert ev.kind == "failed"
+    assert ev.payload["usage"] == {
+        "input_tokens": 1,
+        "output_tokens": 0,
+        "cost": None,
+        "currency": None,
+    }
+
+
+def test_terminal_event_undeclared_incomplete_failure_carries_usage():
+    ev = mapping.terminal_event(
+        _incomplete_result(usage={"input_tokens": 900, "output_tokens": 400}),
+        CTX,
+        default_success_outcome="completed",
+        actor_id="a",
+        created_at="now",
+    )
+    assert ev.kind == "failed"
+    assert ev.payload["usage"] == {
+        "input_tokens": 900,
+        "output_tokens": 400,
+        "cost": None,
+        "currency": None,
+    }
+
+
+def test_terminal_event_crash_emits_no_usage_key():
+    ev = mapping.terminal_event(
+        None, CTX, default_success_outcome="completed", actor_id="a", created_at="now"
+    )
+    assert ev.kind == "failed"
+    assert "usage" not in ev.payload
+
+
+def test_terminal_event_timeout_emits_no_usage_key():
+    ev = mapping.terminal_event(
+        None,
+        CTX,
+        default_success_outcome="completed",
+        actor_id="a",
+        created_at="now",
+        timed_out=True,
+    )
+    assert ev.kind == "failed"
+    assert "usage" not in ev.payload

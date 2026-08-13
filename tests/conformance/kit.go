@@ -254,6 +254,45 @@ func (s *suite) checkSyncResultShape(t *testing.T) {
 			t.Errorf("usage reports negative token counts: %+v", usage)
 		}
 	}
+	assertWorkspaceMeasured(t, resp.Result.WorkspaceMeasured, "the synchronous result")
+}
+
+// assertWorkspaceMeasured checks the shape of a `workspace_measured` block
+// when the actor reports one (issue #33a; the bridge backends attach it to
+// every terminal wire shape). The block is optional in the protocol, so an
+// absent block passes; a present one must be an object that says whether it
+// measured, and one that says it did NOT measure must not dress the answer
+// up as an empty diff — `measured:false` with null facts is the only honest
+// unmeasured shape, and it must survive the wire verbatim.
+func assertWorkspaceMeasured(t *testing.T, raw json.RawMessage, where string) {
+	t.Helper()
+	if len(raw) == 0 {
+		return
+	}
+	var block struct {
+		Measured     *bool           `json:"measured"`
+		ChangedFiles []string        `json:"changed_files"`
+		Diffstat     json.RawMessage `json:"diffstat"`
+	}
+	if err := json.Unmarshal(raw, &block); err != nil {
+		t.Errorf("%s carries a workspace_measured block that is not a JSON object: %v\nblock: %s", where, err, raw)
+		return
+	}
+	if block.Measured == nil {
+		t.Errorf("%s carries a workspace_measured block with no boolean `measured`; "+
+			"whether the workspace was measured is the one fact the block exists to state\nblock: %s", where, raw)
+		return
+	}
+	if !*block.Measured {
+		if len(block.ChangedFiles) != 0 {
+			t.Errorf("%s reports measured:false but lists changed_files %v; an unmeasured workspace has no "+
+				"measured facts to report", where, block.ChangedFiles)
+		}
+		if len(block.Diffstat) != 0 && string(block.Diffstat) != "null" {
+			t.Errorf("%s reports measured:false but carries diffstat %s; an unmeasured workspace must not be "+
+				"rendered as a diff, empty or otherwise", where, block.Diffstat)
+		}
+	}
 }
 
 // §20.3: an actor that has already accepted an Idempotency-Key returns the
@@ -367,6 +406,7 @@ func (s *suite) assertTerminalPayload(t *testing.T, terminal actors.CallbackEven
 		if payload.Outcome == "" {
 			t.Error("the completed event declares no domain outcome")
 		}
+		assertWorkspaceMeasured(t, payload.WorkspaceMeasured, "the completed event")
 	case actors.EventFailed:
 		var payload actors.FailedPayload
 		if len(terminal.Payload) > 0 {
@@ -375,6 +415,7 @@ func (s *suite) assertTerminalPayload(t *testing.T, terminal actors.CallbackEven
 		if payload.Class != "" && !payload.Class.Valid() {
 			t.Errorf("failed event declares class %q, which is not one of §13.5's classes", payload.Class)
 		}
+		assertWorkspaceMeasured(t, payload.WorkspaceMeasured, "the failed event")
 	}
 }
 

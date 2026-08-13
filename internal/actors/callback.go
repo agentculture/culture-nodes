@@ -683,7 +683,7 @@ func completionFor(inv PendingInvocation, ev CallbackEvent) (engine.CompletionRe
 		}
 		req.TechStatus = engine.StatusSucceeded
 		req.Outcome = outcome
-		req.Output = payload.Output
+		req.Output = MergeWorkspaceMeasured(payload.Output, payload.WorkspaceMeasured)
 		if payload.LedgerDelta != nil {
 			req.LedgerDelta = append([]ledger.Record(nil), payload.LedgerDelta.Records...)
 		}
@@ -700,7 +700,11 @@ func completionFor(inv PendingInvocation, ev CallbackEvent) (engine.CompletionRe
 			class = ClassExecution
 		}
 		req.TechStatus = TechStatusFor(class)
-		req.Output = failureOutput(class, payload.Message, payload.Detail)
+		// The failure diagnostic and the workspace measurement are different
+		// facts about the same attempt: the session failed, AND the bridge
+		// measured (or honestly could not measure) what it left behind.
+		req.Output = MergeWorkspaceMeasured(
+			failureOutput(class, payload.Message, payload.Detail), payload.WorkspaceMeasured)
 		req.Usage = payload.Usage.ToEngine()
 		return req, ""
 	}

@@ -43,6 +43,9 @@ WORKFLOW_FILE="$SCRIPT_DIR/workflow.yaml"
 
 BASE_URL="${NODES_API_URL:-http://thor:18080}"
 REPO="${PR_UPKEEP_REPO:-/home/spark/git/culture-nodes}"
+# The review actor (codex on thor) has its own allowlisted checkout of the
+# SAME repository — per-host path, single-repo flow unchanged (cycle-4 403).
+REVIEW_REPO="${PR_UPKEEP_REVIEW_REPO:-/home/thor/git/culture-nodes-agent}"
 FIX_INSTRUCTION="${FIX_INSTRUCTION:-Take the TOP item of the prioritised sweep report bound as sweepReport (its artifact refs carry the full JSON list). Work only that one item: implement the fix on a branch and open or update a PR for it. Never merge anything. Summarise what you changed and name the PR.}"
 REVIEW_INSTRUCTION="${REVIEW_INSTRUCTION:-Read-only independent review of the fix described in fixReport, against the fix node evidence records (fixEvidence) and the run evidence trail (runEvidence). Verdict approve or changes_required with findings. Analysis only: change nothing.}"
 PARK_INSTRUCTION="${PARK_INSTRUCTION:-The sweep found no unresolved SonarCloud issues and no open Qodo findings. Decide: resume (sweep again now) or done (end this run).}"
@@ -90,10 +93,12 @@ echo "published: workflow_key=$(jq -r '.workflow_key' <<<"$publish_payload") dig
 log "POST /v1alpha1/runs (create) -- ONE upkeep cycle-bundle, BILLABLE per iteration"
 run_input=$(jq -n \
 	--arg repo "$REPO" \
+	--arg review_repo "$REVIEW_REPO" \
 	--arg fix_instruction "$FIX_INSTRUCTION" \
 	--arg review_instruction "$REVIEW_INSTRUCTION" \
 	--arg park_instruction "$PARK_INSTRUCTION" \
 	'{repo: $repo,
+	  review_repo: $review_repo,
 	  fix_instruction: $fix_instruction,
 	  review_instruction: $review_instruction,
 	  review_sandbox: "read-only",

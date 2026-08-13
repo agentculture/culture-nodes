@@ -70,13 +70,20 @@ spec:
     input:
       schema:
         type: object
-        required: [repo, fix_instruction, review_instruction, review_sandbox, park_instruction]
+        required: [repo, review_repo, fix_instruction, review_instruction, review_sandbox, park_instruction]
         additionalProperties: false
         properties:
           # The one repo this flow works on (claim c26): the fix/review
           # bridges refuse an invocation naming a non-allowlisted repo, and
           # the sweep script hard-codes its own component key besides.
           repo:
+            type: string
+            minLength: 1
+          # The review actor lives on a different host with its own
+          # allowlisted checkout (found live: cycle 4's review got 403
+          # handing thor's codex bridge a spark path). Same repository,
+          # per-host path.
+          review_repo:
             type: string
             minLength: 1
           fix_instruction:
@@ -264,7 +271,7 @@ spec:
       input:
         bindings:
           instruction: /run/input/review_instruction
-          repo: /run/input/repo
+          repo: /run/input/review_repo
           sandbox: /run/input/review_sandbox
           fixReport: /nodes/fix/output
           fixEvidence: /nodes/fix/evidence

@@ -88,7 +88,10 @@ func (w *Worker) parkExhausted(ctx context.Context, claimed postgres.ClaimedWork
 		node.ID, MaxDispatchAttempts, MaxDispatchAttempts, claimed.ID, dc.NodeRunID)
 
 	w.cancelPendingInvocation(ctx, claimed, node, detail)
-	return w.failAttempt(ctx, claimed, engine.StatusFailed, dispatchBudgetClass, detail)
+	// The budget check fires before this dispatch resolved anything, so the
+	// exhausted attempt is unattributed ("" → NULL actor_id) — the earlier
+	// dispatches that spent the budget each carry their own attribution.
+	return w.failAttempt(ctx, claimed, "", engine.StatusFailed, dispatchBudgetClass, detail)
 }
 
 // cancelPendingInvocation asks the actor to stop whatever an earlier dispatch

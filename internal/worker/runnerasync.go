@@ -231,7 +231,7 @@ func (w *Worker) dispatchRunnerService(
 ) error {
 	callback, err := w.runnerCallbackFor(dc, operation.OperationID)
 	if err != nil {
-		return w.failAttempt(ctx, claimed, engine.StatusFailed, "configuration", err.Error())
+		return w.failAttempt(ctx, claimed, w.codeRunnerActorID(), engine.StatusFailed, "configuration", err.Error())
 	}
 
 	accepted, err := w.opts.RunnerService.Client.Dispatch(ctx, identity, operation, callback)
@@ -542,10 +542,13 @@ func (w *Worker) commitRunnerTerminal(ctx context.Context, op postgres.RunnerOpe
 		// The result could not be mapped onto this node's contract at all.
 		// That is a contract problem, not a claim about what the operation
 		// did — and the raw Result is still recorded below, so it stays
-		// inspectable.
+		// inspectable. The attribution is the same code-runner identity the
+		// mappable branch stamps: whichever way the mapping went, this was
+		// that runner's operation.
 		req.TechStatus = engine.StatusContractRejected
 		req.Output = diagnosticOutput("runner",
 			fmt.Sprintf("node %q result could not be mapped onto a completion: %v", op.NodeID, buildErr))
+		req.ActorID = w.codeRunnerActorID()
 	} else {
 		req.TechStatus = completion.TechStatus
 		req.Outcome = completion.Outcome

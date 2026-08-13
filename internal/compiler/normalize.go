@@ -23,8 +23,12 @@ func (c *compilation) normalize() (*IR, error) {
 		Spec: irSpec{
 			Entry:    doc.Spec.Entry,
 			Contract: doc.Spec.Contract,
-			Limits:   expandLimits(doc.Spec.Limits),
-			Ledger:   expandLedgerLimits(doc.Spec.Ledger),
+			Limits: expandLimits(doc.Spec.Limits),
+			// Carried, never expanded: an absent budget stays absent all the
+			// way into the digest, so a run pins "unbudgeted" as a fact
+			// rather than pinning a ceiling the compiler invented.
+			Budget: doc.Spec.Budget,
+			Ledger: expandLedgerLimits(doc.Spec.Ledger),
 			Nodes:    doc.Spec.Nodes,
 			Edges:    normalizeEdges(doc.Spec.Edges),
 		},

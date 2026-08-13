@@ -80,6 +80,12 @@ const (
 	CodePolicyImageUnpinned     = "policy.image_unpinned"
 	CodePolicyShellRequested    = "policy.shell_requested"
 
+	// Budget (task t11, spec claim c6). The declared economic limits are a
+	// policy-level statement about spend, so their diagnostics live beside
+	// the other policy codes.
+	CodeBudgetNotPositive = "budget.not_positive"
+	CodeBudgetEmpty       = "budget.empty"
+
 	// Parallel/join (issue #43, parallel-tokens design §8).
 	CodeGraphParallelNoSplitEdge   = "graph.parallel_without_split_edge"
 	CodeGraphJoinNoIncomingEdge    = "graph.join_without_incoming_edge"

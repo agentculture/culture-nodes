@@ -33,6 +33,7 @@ type spec struct {
 	Entry        string           `json:"entry"`
 	Contract     workflowContract `json:"contract"`
 	Limits       *limits          `json:"limits,omitempty"`
+	Budget       *budget          `json:"budget,omitempty"`
 	Ledger       *ledgerLimits    `json:"ledger,omitempty"`
 	Nodes        map[string]*node `json:"nodes"`
 	Edges        []edge           `json:"edges"`
@@ -64,6 +65,49 @@ type limits struct {
 // never be able to speak.
 func (l *limits) bounded() bool {
 	return l != nil && (l.MaxTransitions != nil || l.MaxVisitsPerNode != nil)
+}
+
+// budget is the declared ECONOMIC contract of a workflow (PRD §9.7's
+// "optional agent token or cost budget"; task t11, spec claim c6).
+//
+// It is a sibling of `limits` rather than a member of it because the two
+// answer different questions and fail differently. A limit bounds the SHAPE
+// of an execution — how many transitions, how long, how many tokens — and
+// exceeding one is a bound failure the engine raises. A budget bounds what an
+// execution may SPEND, and exceeding one is a refusal the workflow author
+// routes (OutcomeBudgetExhausted).
+//
+// Both fields are pointers, and the whole block is a pointer, because absence
+// is meaningful here in a way it is not for `limits`: normalization expands
+// default limits so the IR always carries bounds, and deliberately expands
+// NOTHING here. A workflow that declares no budget is unbudgeted, which is a
+// statement, and inventing a ceiling for it would refuse work nobody
+// restricted.
+type budget struct {
+	// MaxSessions bounds how many NEW provider sessions one run may start.
+	// It counts COLD STARTS: an attempt dispatched carrying a prior
+	// continuation ref (ADR 0010) continues a session that was already paid
+	// for and charges nothing. See internal/worker/budget.go for the whole
+	// argument — a workstream of N turns on one warm session that counted N
+	// would exhaust exactly the budget it was designed to conserve.
+	MaxSessions *int `json:"maxSessions,omitempty"`
+	// MaxUncachedInput bounds the input tokens one run may send that the
+	// provider did NOT serve from its cache, summed over every attempt that
+	// reported usage (usage_input_tokens - usage_cached_input_tokens,
+	// migrations 0012/0017). An attempt that reported input tokens but no
+	// cached figure charges its input IN FULL: a backend that reports no
+	// cache telemetry is not a backend with a 0% cache hit rate, and the
+	// budget spends what it can prove was uncached rather than a discount it
+	// cannot see (docs/adr/0009-usage-telemetry-extension.md's honesty rule
+	// applied to a decision instead of to storage).
+	MaxUncachedInput *int64 `json:"maxUncachedInput,omitempty"`
+}
+
+// declared reports whether the block says anything at all. A `budget: {}` is
+// refused rather than read as "unbudgeted": an author who wrote the key meant
+// to bound something.
+func (b *budget) declared() bool {
+	return b != nil && (b.MaxSessions != nil || b.MaxUncachedInput != nil)
 }
 
 type ledgerLimits struct {
@@ -288,7 +332,11 @@ type irSpec struct {
 	Entry    string           `json:"entry"`
 	Contract workflowContract `json:"contract"`
 	Limits   limits           `json:"limits"`
-	Ledger   ledgerLimits     `json:"ledger"`
+	// Budget is carried through unchanged and omitted entirely when the
+	// author declared none — the one spec block normalization does not
+	// expand. See the budget type for why.
+	Budget *budget      `json:"budget,omitempty"`
+	Ledger ledgerLimits `json:"ledger"`
 	Nodes    map[string]*node `json:"nodes"`
 	Edges    []irEdge         `json:"edges"`
 }

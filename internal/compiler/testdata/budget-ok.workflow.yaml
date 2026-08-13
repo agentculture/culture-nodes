@@ -1,0 +1,72 @@
+# A declared economic budget beside the functional limits (task t11, spec
+# claim c6 / honesty h5; PRD §9.7's "optional agent token or cost budget").
+#
+# The `budget_exhausted` edge is the point of the fixture: a refusal the
+# control plane produces before it dispatches is routable, so the author
+# decides what an unfunded wave does instead of discovering exhaustion as a
+# provider error mid-run.
+apiVersion: nodes.culture.dev/v1alpha1
+kind: Workflow
+
+metadata:
+  name: budget-declared
+  version: 1.0.0
+  ownerRef: team/platform-ai
+
+spec:
+  entry: start
+
+  contract:
+    input:
+      schemaRef: ./contracts/in.schema.json
+    output:
+      schemaRef: ./contracts/out.schema.json
+
+  budget:
+    maxSessions: 3
+    maxUncachedInput: 500000
+
+  nodes:
+    start:
+      kind: agent
+      ownerRef: team/platform-ai
+      uses: actor://company/start@sha256:aaaaaa
+      contract:
+        outcomes:
+          completed:
+            schemaRef: ./contracts/start.schema.json
+      input:
+        from: /run/input
+
+    unfunded:
+      kind: agent
+      ownerRef: team/platform-ai
+      uses: actor://company/cheap@sha256:bbbbbb
+      contract:
+        outcomes:
+          completed:
+            schemaRef: ./contracts/start.schema.json
+      input:
+        from: /run/input
+
+    finish:
+      kind: end
+      ownerRef: team/platform-ai
+      output:
+        from: /nodes/start/output
+
+    stopped:
+      kind: end
+      ownerRef: team/platform-ai
+      output:
+        from: /nodes/unfunded/output
+
+  edges:
+    - from: start.completed
+      to: finish
+
+    - from: start.budget_exhausted
+      to: unfunded
+
+    - from: unfunded.completed
+      to: stopped

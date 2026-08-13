@@ -52,6 +52,25 @@ func (w *Worker) dispatchActor(
 		return w.parkExhausted(ctx, claimed, node, dc)
 	}
 
+	// The run's DECLARED economic budget, checked at the same site and for
+	// the same reason — nothing outside the control plane has been touched
+	// yet, and this is the last moment that is true. One lookup answers both
+	// "which session would this be" and "what ref does the request carry",
+	// so the thing charged for and the thing sent cannot disagree. Unlike
+	// the dispatch cap above it neither fails nor defers: an unfundable
+	// dispatch is REFUSED and routed on the edge the author declared. See
+	// budget.go's second half.
+	session := w.planSession(ctx, node, dc)
+	unfunded, err := w.unfunded(ctx, spec, node, dc, session)
+	if err != nil {
+		// The budget could not be read. Neither spending nor refusing is
+		// honest on a transient error, so the lease recovers this claim.
+		return err
+	}
+	if unfunded != "" {
+		return w.refuseUnfunded(ctx, claimed, node, dc, unfunded)
+	}
+
 	// The capacity circuit breaker, checked at the same site and for the same
 	// reason as the budget: it is the last point at which nothing outside the
 	// control plane has been touched yet. Unlike the budget it DEFERS rather
@@ -101,7 +120,11 @@ func (w *Worker) dispatchActor(
 	// failed dispatch is still this actor's dispatch and the retry-burn
 	// measure must see it. A registry that cannot answer (StaticRegistry,
 	// a vanished row) yields "" — unattributed, never a dispatch failure.
-	dc.ActorRowID = w.actorRowID(ctx, node.Uses)
+	//
+	// It comes from the session plan resolved above rather than a second
+	// lookup: one resolution, one answer, and no window in which the budget
+	// charged one identity while the attempt recorded another.
+	dc.ActorRowID = session.ActorRowID
 
 	req := actors.InvocationRequest{
 		ProtocolVersion: actors.ProtocolVersion,
@@ -113,7 +136,7 @@ func (w *Worker) dispatchActor(
 		Workflow:        actors.WorkflowRef{Name: spec.Name, VersionDigest: spec.Digest},
 		Node:            actors.NodeRef{ID: node.ID, ContractDigest: node.ContractDigest},
 		Input:           dc.Input,
-		ContinuationRef: w.priorContinuationRef(ctx, dc),
+		ContinuationRef: session.ContinuationRef,
 	}
 	if !dc.Deadline.IsZero() {
 		deadline := dc.Deadline.UTC()
@@ -128,6 +151,18 @@ func (w *Worker) dispatchActor(
 		return w.failAttempt(ctx, claimed, dc.ActorRowID, engine.StatusFailed, "configuration", err.Error())
 	}
 	req.Callback = callback
+
+	// The last thing before the wire: charge the session this invocation is
+	// about to open, if it opens one. It is deliberately recorded BEFORE the
+	// call rather than after a successful return — see budget.go's
+	// chargeSession and migration 0023 for why over-counting a dispatch that
+	// dies in transport is the safe direction, and why a failure here stops
+	// the dispatch instead of proceeding uncounted.
+	if session.ColdStart() {
+		if err := w.chargeSession(ctx, spec, node, dc); err != nil {
+			return err
+		}
+	}
 
 	// The invocation is bounded by the node's own deadline: a synchronous
 	// actor that blows through its declared timeout is a timeout, and the

@@ -335,10 +335,10 @@ type irSpec struct {
 	// Budget is carried through unchanged and omitted entirely when the
 	// author declared none — the one spec block normalization does not
 	// expand. See the budget type for why.
-	Budget *budget      `json:"budget,omitempty"`
-	Ledger ledgerLimits `json:"ledger"`
-	Nodes    map[string]*node `json:"nodes"`
-	Edges    []irEdge         `json:"edges"`
+	Budget *budget          `json:"budget,omitempty"`
+	Ledger ledgerLimits     `json:"ledger"`
+	Nodes  map[string]*node `json:"nodes"`
+	Edges  []irEdge         `json:"edges"`
 }
 
 // irEdge keeps the authored `from` string and adds its decomposition, so the

@@ -701,6 +701,7 @@ func completionFor(inv PendingInvocation, ev CallbackEvent) (engine.CompletionRe
 		}
 		req.TechStatus = TechStatusFor(class)
 		req.Output = failureOutput(class, payload.Message, payload.Detail)
+		req.Usage = payload.Usage.ToEngine()
 		return req, ""
 	}
 

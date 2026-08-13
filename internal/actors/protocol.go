@@ -94,12 +94,13 @@ type Usage struct {
 // it reaches storage: the engine cannot import this package (this package
 // already imports engine, for the Completer interface and CompletionRequest
 // its callback commit path uses), so the engine declares an independent
-// Usage type and this is the one seam that translates into it. Both
-// completion paths that carry a Usage block convert through it —
+// Usage type and this is the one seam that translates into it. Every
+// completion path that carries a Usage block converts through it —
 // internal/worker/dispatch.go's synchronous completeFromResult (on an
 // InvocationResult.Usage) and this package's own commitTerminal, by way of
-// completionFor (on a CompletedPayload.Usage) — so a nil Usage always
-// becomes a nil engine.Usage, never a fabricated zero block.
+// completionFor (on a CompletedPayload.Usage or a FailedPayload.Usage) — so
+// a nil Usage always becomes a nil engine.Usage, never a fabricated zero
+// block.
 func (u *Usage) ToEngine() *engine.Usage {
 	if u == nil {
 		return nil
@@ -247,10 +248,16 @@ type CompletedPayload struct {
 // error classes as the actor classified it; an unrecognized or absent class
 // is treated as an execution failure, which is the honest default for "the
 // actor ran and something went wrong" .
+//
+// Usage is optional (ADR 0008's amendment to §13.2): a bridge that still
+// holds a terminal result when the work fails reports the tokens it burned;
+// a crash or timeout that left no result omits the block entirely, and the
+// attempt's usage stays NULL rather than a fabricated zero.
 type FailedPayload struct {
 	Class   ErrorClass `json:"class"`
 	Message string     `json:"message"`
 	Detail  string     `json:"detail,omitempty"`
+	Usage   *Usage     `json:"usage,omitempty"`
 }
 
 // AcceptedPayload is the body of an `accepted` event. It may restate the

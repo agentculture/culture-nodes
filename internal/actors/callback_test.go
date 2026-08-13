@@ -429,6 +429,81 @@ func TestCallbackCompletedWithoutUsageStaysNil(t *testing.T) {
 	}
 }
 
+// A `failed` callback's optional §13.2 Usage block persists on the failed
+// attempt row exactly as a completed one's does: a session that burned real
+// tokens before failing is billable work, and ADR 0008's amendment to §13.2
+// exists so that burn is counted instead of dropped at the protocol boundary.
+func TestCallbackFailedPersistsUsage(t *testing.T) {
+	f := newAsyncFixture(t)
+
+	cost := 0.07
+	currency := "USD"
+	payload, _ := json.Marshal(actors.FailedPayload{
+		Class:   actors.ClassExecution,
+		Message: "the session crashed after doing real work",
+		Usage: &actors.Usage{
+			InputTokens:  210,
+			OutputTokens: 89,
+			Cost:         &cost,
+			Currency:     &currency,
+		},
+	})
+
+	result := f.handle(actors.CallbackEvent{
+		EventID: "ev-failed-usage", Sequence: 1, Kind: actors.EventFailed, Payload: payload,
+	})
+	if result.Disposition != actors.DispositionCommitted {
+		t.Fatalf("failed disposition = %s (%s), want committed", result.Disposition, result.Diagnostic)
+	}
+
+	attempts, err := f.engine.Store().Attempts(f.ctx, f.nodeRunID)
+	if err != nil {
+		t.Fatalf("read attempts: %v", err)
+	}
+	if len(attempts) != 1 {
+		t.Fatalf("attempts = %d, want 1", len(attempts))
+	}
+	usage := attempts[0].Usage
+	if usage == nil {
+		t.Fatal("Usage = nil, want the reported §13.2 block persisted on the failed attempt")
+	}
+	if usage.InputTokens != 210 || usage.OutputTokens != 89 {
+		t.Errorf("tokens = %d/%d, want 210/89", usage.InputTokens, usage.OutputTokens)
+	}
+	if usage.Cost == nil || *usage.Cost != cost {
+		t.Errorf("cost = %v, want %v", usage.Cost, cost)
+	}
+	if usage.Currency == nil || *usage.Currency != currency {
+		t.Errorf("currency = %v, want %v", usage.Currency, currency)
+	}
+}
+
+// A `failed` callback that reports no usage leaves the attempt's usage NULL —
+// never a fabricated zero block (the migration-0012 stance): a crash that
+// reported nothing is an unreported attempt, not a free one.
+func TestCallbackFailedWithoutUsageStaysNil(t *testing.T) {
+	f := newAsyncFixture(t)
+
+	payload, _ := json.Marshal(actors.FailedPayload{
+		Class:   actors.ClassTimeout,
+		Message: "no terminal result survived",
+	})
+	result := f.handle(actors.CallbackEvent{
+		EventID: "ev-failed-no-usage", Sequence: 1, Kind: actors.EventFailed, Payload: payload,
+	})
+	if result.Disposition != actors.DispositionCommitted {
+		t.Fatalf("failed disposition = %s (%s), want committed", result.Disposition, result.Diagnostic)
+	}
+
+	attempts, err := f.engine.Store().Attempts(f.ctx, f.nodeRunID)
+	if err != nil {
+		t.Fatalf("read attempts: %v", err)
+	}
+	if attempts[0].Usage != nil {
+		t.Errorf("Usage = %+v, want nil for a failed event that reported none", attempts[0].Usage)
+	}
+}
+
 // §13.4: "repeated callbacks are idempotent". A redelivery of the same event
 // id is recorded as a duplicate and changes nothing — including not
 // completing the attempt a second time.

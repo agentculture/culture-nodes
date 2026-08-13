@@ -47,7 +47,7 @@ REPO="${PR_UPKEEP_REPO:-/home/spark/git/culture-nodes}"
 # SAME repository — per-host path, single-repo flow unchanged (cycle-4 403).
 REVIEW_REPO="${PR_UPKEEP_REVIEW_REPO:-/home/thor/git/culture-nodes-agent}"
 FIX_INSTRUCTION="${FIX_INSTRUCTION:-Take the TOP item of the prioritised sweep report bound as sweepReport (its artifact refs carry the full JSON list). Work only that one item: implement the fix on a branch and open or update a PR for it. Never merge anything. Summarise what you changed and name the PR.}"
-REVIEW_INSTRUCTION="${REVIEW_INSTRUCTION:-Read-only independent review of the fix described in fixReport, against the fix node evidence records (fixEvidence) and the run evidence trail (runEvidence). Verdict approve or changes_required with findings. Analysis only: change nothing.}"
+REVIEW_INSTRUCTION="${REVIEW_INSTRUCTION:-Read-only independent review of the fix described in fixReport (see the Bound inputs block below for fixReport, fixEvidence, and runEvidence). Analysis only: change nothing. Your FINAL message must be exactly one JSON object matching the contract: {\"verdict\": \"approve\"|\"changes_required\", \"findings\": [{\"title\": string, \"detail\": string}]} — findings may be empty only with verdict approve.}"
 PARK_INSTRUCTION="${PARK_INSTRUCTION:-The sweep found no unresolved SonarCloud issues and no open Qodo findings. Decide: resume (sweep again now) or done (end this run).}"
 
 log() { printf '\n>>> %s\n' "$*"; }

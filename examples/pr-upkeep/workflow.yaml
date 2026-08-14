@@ -1,7 +1,8 @@
 # The PR-upkeep loop (plan task t21, spec claims c15/c26, honesty h21):
-# culture-nodes sweeps its OWN quality debt — unresolved SonarCloud issues
-# plus open Qodo findings on open PRs — and works the list one item at a
-# time through a human-gated fix/review cycle. The flow holds zero merge
+# culture-nodes sweeps its OWN quality debt — unresolved SonarCloud issues,
+# open Qodo findings on open PRs, and failed CI check runs on those PRs'
+# head commits (issue #61) — and works the list one item at a time through
+# a human-gated fix/review cycle. The flow holds zero merge
 # credentials: `approved` on the human gate MEANS the human already merged
 # the PR themselves (see README.md, "the human-merges rule").
 #

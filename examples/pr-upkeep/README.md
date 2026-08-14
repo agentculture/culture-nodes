@@ -1,10 +1,11 @@
 # pr-upkeep — the loop that keeps this repo's own quality debt worked
 
 Plan task t21 (spec claims c15/c26, honesty condition h21): culture-nodes
-uses itself to sweep its **own** unresolved SonarCloud issues and open Qodo
-PR findings, and works the resulting list one item at a time through a
-human-gated fix/review cycle. Every loop iteration passes a person; the
-flow can propose, fix, and review — it can never merge.
+uses itself to sweep its **own** unresolved SonarCloud issues, open Qodo
+PR findings and failed CI check runs, and works the resulting list one item
+at a time through a human-gated fix/review cycle. Every loop iteration
+passes a person; the flow can propose, fix, and review — it can never
+merge.
 
 ## The graph
 
@@ -31,9 +32,10 @@ below for why.
 
 - **sweep** (code node, declared intent: `network: egress-allowlist` per
   issue #50) runs [`sweep.py`](sweep.py) through the runner boundary:
-  SonarCloud's issues API (unresolved issues for this repo's component key)
-  plus the Qodo `Code Review` comments on this repo's open PRs, parsed into
-  one prioritised work-item list. Its one routable domain fact is the **exit
+  SonarCloud's issues API (unresolved issues for this repo's component key),
+  the Qodo `Code Review` comments on this repo's open PRs, and the **failed
+  CI check runs** on those PRs' head commits (issue #61), parsed into one
+  prioritised work-item list. Its one routable domain fact is the **exit
   code** — a code node's persisted output is runner metadata, not stdout —
   so `0` means work found, `10` (`EXIT_EMPTY`) means a clean empty sweep,
   and anything else means the sweep itself broke.
@@ -224,6 +226,50 @@ against **recorded** fixtures:
   resolved/dismissed findings, so the tests exercise the open-finding path
   by stripping the `✓ Resolved` / `✗ Dismissed` / `<s>` markers from the
   same recorded bodies — which is exactly the shape of an open finding.
+- `fixtures/github-check-runs-pr60.json` — the live check-runs response for
+  PR #60's head commit `67672519`, recorded 2026-08-14. This is the exact
+  payload issue #61 was filed on: a red `lint` job the two-source sweep
+  could not see, beside a **passing** `SonarCloud Code Analysis` check.
+- `fixtures/github-check-runs-pr60-sonar-gate-failed.json` — the same
+  recording with the SonarCloud check's quality gate flipped to failed, so
+  one payload carries a failed Sonar-named check **and** a failed non-Sonar
+  check and the skip below is provable. It is derived rather than recorded
+  because culture-nodes has never had a red SonarCloud check run in its
+  recorded history (checked across the last 60 commits on main on
+  2026-08-14: two failing check runs, both `github-actions`). Exactly three
+  fields differ from the verbatim recording — `conclusion`, `output.title`,
+  `output.summary` on that one check run — and a test asserts that rather
+  than leaving the provenance as prose.
+
+### The check-runs source (issue #61)
+
+A red CI check is neither a SonarCloud issue nor a Qodo review body, so the
+two-source sweep reported *nothing* for PR #60 while its `lint` job sat
+red. The third source reads
+`GET /repos/{repo}/commits/{head_sha}/check-runs` for each swept PR — the
+same `MAX_PRS_PER_SWEEP`-capped set the other two per-PR queries use, one
+more request per PR, no new host and no new credential. Three decisions
+worth stating here:
+
+- **Sonar-named checks are skipped** (matched on the check name *and* the
+  `sonarqubecloud` app slug, so a renamed check is still caught). A red
+  quality gate is not separate work from the issues that made it red, and
+  those already arrive through the Sonar feed carrying a rule, a file and a
+  line — where the check run carries only "the gate failed".
+- **Severity maps onto the existing ladder**, not a fourth vocabulary: a
+  failed required check takes `CRITICAL` (rank 1, the HIGH/CRITICAL band),
+  a failed optional one takes `MEDIUM` (rank 2).
+- **Required-ness is declared, not read.** The check-runs API does not
+  report it, and `GET /repos/{repo}/branches/main/protection` answers 404
+  *Branch not protected* for this repo (checked 2026-08-14), so
+  `REQUIRED_CHECKS` names the three merge gates CLAUDE.md documents
+  (`test`, `lint`, `version-check`). Override with
+  `PR_UPKEEP_REQUIRED_CHECKS`; when branch protection does land, that
+  declared list should be replaced by the protection API's own answer.
+
+Only *completed* check runs with a `failure`, `timed_out` or
+`action_required` conclusion become work. `cancelled` deliberately does
+not: a cancelled run is a superseded or interrupted job, not a finding.
 
 Run them with the normal suite:
 

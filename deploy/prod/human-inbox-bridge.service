@@ -34,7 +34,7 @@ After=network-online.target
 # config from credential.
 EnvironmentFile=%h/.culture-nodes/human-inbox-bridge.env
 EnvironmentFile=%h/.culture-nodes/human-inbox.env
-ExecStart=%h/.local/bin/uv run --directory %h/git/culture-nodes-agent/adapters/human-inbox human-inbox-bridge serve
+ExecStart=%h/.local/bin/human-inbox-bridge serve
 Restart=always
 RestartSec=5
 

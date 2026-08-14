@@ -170,12 +170,42 @@ deploy_codex_bridge "$HOST"
 # kind=human bridge + its GitHub merge tracker) ---------------------------
 # One logical human actor (company/human-ops), so this lane is THOR ONLY --
 # a second bridge/tracker pair on orin would just race the same GitHub PRs
-# and the same inbox tasks against the same actor row. Host-resident
-# Python, run with `uv run --directory` against the SAME
-# archive-independent ~/git/culture-nodes-agent checkout the codex-bridge
-# lane above already provisions and fast-forwards -- adapters/human-inbox
-# has zero third-party runtime dependencies (dependencies = []), so this
-# needs no separate `uv tool install` step the way the codex bridge does.
+# and the same inbox tasks against the same actor row. Host-resident Python,
+# installed as a uv tool the way the codex bridge is -- see the long comment
+# at the install step for why running it out of the agent checkout was wrong.
+
+# assert_unit_healthy <host> <unit>
+#
+# Waits for a user unit to reach active AND STAY there. The staying part is
+# the point: a unit whose process dies immediately spends its life in
+# `activating (auto-restart)`, and a naive one-shot `is-active` check taken
+# between restarts can catch it mid-start and call that success. The tracker
+# crash-looped 6272 times on thor while the deploy reported clean.
+assert_unit_healthy() { # host unit
+  local host=$1 unit=$2
+  ssh "$host" "export XDG_RUNTIME_DIR=/run/user/\$(id -u)
+for i in \$(seq 1 15); do
+  [ \"\$(systemctl --user is-active $unit || true)\" = active ] && break
+  sleep 2
+done
+if [ \"\$(systemctl --user is-active $unit || true)\" != active ]; then
+  echo '$unit failed to become active:' >&2
+  systemctl --user --no-pager -n 20 status $unit >&2 || true
+  exit 1
+fi
+# Active once proves it started; active still, after a restart interval, is
+# what proves it is running rather than flapping.
+before=\$(systemctl --user show $unit -p NRestarts --value)
+sleep 8
+after=\$(systemctl --user show $unit -p NRestarts --value)
+if [ \"\$before\" != \"\$after\" ] || [ \"\$(systemctl --user is-active $unit || true)\" != active ]; then
+  echo \"$unit is restarting in a loop (NRestarts \$before -> \$after) — it starts and dies:\" >&2
+  journalctl --user -u $unit -n 30 --no-pager >&2 || true
+  exit 1
+fi
+echo \"$unit: active (NRestarts \$after)\""
+}
+
 deploy_human_inbox() { # host
   local host=$1
   case "$host" in
@@ -196,15 +226,38 @@ deploy_human_inbox() { # host
   say "ensuring uv on $host (human-inbox lane)"
   ssh "$host" 'bash -lc "command -v uv >/dev/null || curl -LsSf https://astral.sh/uv/install.sh | sh"'
 
-  # Resolve uv's REAL absolute path on the target and substitute it into the
-  # units at install time. Found live on thor: uv was already on PATH at
-  # /snap/bin/uv, so the ensure-step above correctly did nothing — and the
-  # units, which hardcoded %h/.local/bin/uv, then died with 203/EXEC. A
-  # systemd ExecStart takes no PATH lookup, so the unit must carry the path
-  # the host actually has, not the one the installer would have created.
-  UV_BIN=$(ssh "$host" 'bash -lc "command -v uv"' | tr -d '\r')
-  [ -n "$UV_BIN" ] || { echo "uv not found on $host after the ensure step" >&2; return 1; }
-  say "human-inbox units will exec uv at $UV_BIN on $host"
+  # Install the adapter as a uv TOOL, exactly as the codex-bridge lane does
+  # and for a second reason on top of that one.
+  #
+  # The first reason is archive independence: `uv tool install` copies the
+  # package into its own venv, so the units keep serving after the next
+  # deploy's `rm -rf $REMOTE_DIR` removes the tree they were built from.
+  #
+  # The second was found live on thor. These units used to exec
+  # `uv run --directory ~/git/culture-nodes-agent/adapters/human-inbox`, and
+  # that checkout is the CODEX AGENT WORKSPACE — the lane above fast-forwards
+  # it to its upstream tracking branch, which is main. So deploying a branch
+  # installed units that exec code living only on that branch, out of a
+  # checkout pinned to another one. The tracker died on
+  # `No module named human_inbox_bridge.tracker` and systemd restarted it
+  # 6272 times over nine hours while merge-as-action silently did nothing. An
+  # agent workspace and a deployment artifact source are different things and
+  # must not be the same directory.
+  say "installing the human-inbox adapter as a uv tool on $host (archive-independent)"
+  ssh "$host" "bash -lc 'command -v uv >/dev/null || curl -LsSf https://astral.sh/uv/install.sh | sh; \$HOME/.local/bin/uv tool install --force ./$REMOTE_DIR/adapters/human-inbox || uv tool install --force ./$REMOTE_DIR/adapters/human-inbox'"
+
+  # Resolve the REAL absolute paths of the installed console scripts and
+  # substitute them into the units at install time. A systemd ExecStart takes
+  # no PATH lookup, so the unit must carry the path this host actually has —
+  # the same lesson %h/.local/bin/uv taught when thor turned out to keep uv at
+  # /snap/bin/uv and the units died with 203/EXEC.
+  BRIDGE_BIN=$(ssh "$host" 'bash -lc "command -v human-inbox-bridge"' | tr -d '\r')
+  TRACKER_BIN=$(ssh "$host" 'bash -lc "command -v human-inbox-tracker"' | tr -d '\r')
+  [ -n "$BRIDGE_BIN" ] && [ -n "$TRACKER_BIN" ] || {
+    echo "human-inbox console scripts not on PATH on $host after uv tool install (bridge='$BRIDGE_BIN' tracker='$TRACKER_BIN')" >&2
+    return 1
+  }
+  say "human-inbox units will exec $BRIDGE_BIN and $TRACKER_BIN on $host"
 
   say "installing human-inbox non-secret config on $host"
   # Same generate-absolute-paths-at-install-time technique runner.env and
@@ -224,16 +277,16 @@ deploy_human_inbox() { # host
 
   say "installing human-inbox-bridge systemd user unit on $host"
   ssh "$host" "loginctl enable-linger \$(id -un) 2>/dev/null || true"
-  ssh "$host" "export XDG_RUNTIME_DIR=/run/user/\$(id -u); mkdir -p ~/.config/systemd/user && sed \"s#%h/.local/bin/uv#$UV_BIN#\" $REMOTE_DIR/deploy/prod/human-inbox-bridge.service > ~/.config/systemd/user/human-inbox-bridge.service && systemctl --user daemon-reload && systemctl --user restart human-inbox-bridge && systemctl --user enable human-inbox-bridge"
-  ssh "$host" 'export XDG_RUNTIME_DIR=/run/user/$(id -u); for i in $(seq 1 15); do st=$(systemctl --user is-active human-inbox-bridge || true); [ "$st" = active ] && { echo "human-inbox-bridge: active"; exit 0; }; sleep 2; done; echo "human-inbox-bridge failed to become active:"; systemctl --user --no-pager -n 10 status human-inbox-bridge; exit 1'
+  ssh "$host" "export XDG_RUNTIME_DIR=/run/user/\$(id -u); mkdir -p ~/.config/systemd/user && sed \"s#%h/.local/bin/human-inbox-bridge#$BRIDGE_BIN#\" $REMOTE_DIR/deploy/prod/human-inbox-bridge.service > ~/.config/systemd/user/human-inbox-bridge.service && systemctl --user daemon-reload && systemctl --user restart human-inbox-bridge && systemctl --user enable human-inbox-bridge"
+  assert_unit_healthy "$host" human-inbox-bridge
 
   # GITHUB_TOKEN is optional: the public-repository lane polls anonymously at
   # half the 60/hour ceiling (the quota is per source IP, so the tracker must
   # leave room for whatever else on this host talks to GitHub), while a token
   # selects the 5,000/hour authenticated lane. Both install the same unit.
   say "installing human-inbox-tracker systemd user unit on $host"
-  ssh "$host" "export XDG_RUNTIME_DIR=/run/user/\$(id -u); mkdir -p ~/.config/systemd/user && sed \"s#%h/.local/bin/uv#$UV_BIN#\" $REMOTE_DIR/deploy/prod/human-inbox-tracker.service > ~/.config/systemd/user/human-inbox-tracker.service && systemctl --user daemon-reload && systemctl --user restart human-inbox-tracker && systemctl --user enable human-inbox-tracker"
-  ssh "$host" 'export XDG_RUNTIME_DIR=/run/user/$(id -u); for i in $(seq 1 15); do st=$(systemctl --user is-active human-inbox-tracker || true); [ "$st" = active ] && { echo "human-inbox-tracker: active"; exit 0; }; sleep 2; done; echo "human-inbox-tracker failed to become active:"; systemctl --user --no-pager -n 10 status human-inbox-tracker; exit 1'
+  ssh "$host" "export XDG_RUNTIME_DIR=/run/user/\$(id -u); mkdir -p ~/.config/systemd/user && sed \"s#%h/.local/bin/human-inbox-tracker#$TRACKER_BIN#\" $REMOTE_DIR/deploy/prod/human-inbox-tracker.service > ~/.config/systemd/user/human-inbox-tracker.service && systemctl --user daemon-reload && systemctl --user restart human-inbox-tracker && systemctl --user enable human-inbox-tracker"
+  assert_unit_healthy "$host" human-inbox-tracker
 }
 
 case "$HOST" in

@@ -112,7 +112,7 @@ func TestHumanInboxDeployLaneInstallsAndStartsBridgeUnit(t *testing.T) {
 		{"systemctl --user daemon-reload", "the daemon-reload after installing the unit"},
 		{"systemctl --user restart human-inbox-bridge", "the restart (so a re-deploy picks up changes)"},
 		{"systemctl --user enable human-inbox-bridge", "the enable (so the bridge survives a reboot)"},
-		{"is-active human-inbox-bridge", "the wait-active poll"},
+		{`assert_unit_healthy "$host" human-inbox-bridge`, "the health assertion (wait-active plus a stays-active recheck)"},
 	} {
 		if !strings.Contains(script, want.needle) {
 			t.Errorf("deploy.sh has no %q — %s is missing from the human-inbox-bridge lane", want.needle, want.why)
@@ -145,7 +145,7 @@ func TestHumanInboxDeployLaneInstallsTrackerWithoutGitHubToken(t *testing.T) {
 		{"~/.config/systemd/user/human-inbox-tracker.service", "the tracker unit file install"},
 		{"systemctl --user restart human-inbox-tracker", "the tracker restart"},
 		{"systemctl --user enable human-inbox-tracker", "the tracker enable"},
-		{"is-active human-inbox-tracker", "the tracker wait-active poll"},
+		{`assert_unit_healthy "$host" human-inbox-tracker`, "the tracker health assertion"},
 	} {
 		if !strings.Contains(script, want.needle) {
 			t.Errorf("deploy.sh has no %q — %s is missing from the human-inbox-tracker lane", want.needle, want.why)
@@ -186,5 +186,61 @@ func TestHumanInboxDeployLaneNeverInterpolatesTokenIntoSSHArgv(t *testing.T) {
 	}
 	if checked == 0 {
 		t.Fatal("no ssh invocation found in deploy_human_inbox; this test is not proving anything")
+	}
+}
+
+// TestDeployLaneInstallsTheAdapterAsAUvTool pins the fix for a live incident.
+//
+// The units used to exec `uv run --directory ~/git/culture-nodes-agent/...`,
+// which is the codex AGENT WORKSPACE — a checkout the codex-bridge lane
+// fast-forwards to main. Deploying a branch therefore installed units whose
+// code was not in the directory they ran from: the tracker crash-looped 6272
+// times over nine hours on `No module named human_inbox_bridge.tracker`, and
+// merge-as-action was silently dead the whole time.
+func TestDeployLaneInstallsTheAdapterAsAUvTool(t *testing.T) {
+	script := deployScriptText(t)
+
+	if !strings.Contains(script, "uv tool install --force ./$REMOTE_DIR/adapters/human-inbox") {
+		t.Error("deploy.sh does not `uv tool install` the human-inbox adapter — without it the units have no console script to exec, and running from a source tree reintroduces the branch-pinning bug")
+	}
+	// Scan executable lines only. The comment above the install step recounts
+	// this incident on purpose, and that prose naming the old path must not
+	// read as the bug still being present.
+	for i, line := range strings.Split(script, "\n") {
+		if strings.HasPrefix(strings.TrimSpace(line), "#") {
+			continue
+		}
+		if strings.Contains(line, "git/culture-nodes-agent/adapters/human-inbox") {
+			t.Errorf("deploy.sh:%d still points the human-inbox lane at ~/git/culture-nodes-agent — that checkout tracks main, not the deployed branch: %s", i+1, strings.TrimSpace(line))
+		}
+	}
+}
+
+// TestUnitHealthAssertionCatchesACrashLoop pins the second half of the same
+// incident: the deploy reported success while the unit was restarting every
+// five seconds. Reaching `active` once is not proof — a fast-failing process
+// spends its life in activating/auto-restart, and a single is-active probe
+// can land in a start window.
+func TestUnitHealthAssertionCatchesACrashLoop(t *testing.T) {
+	script := deployScriptText(t)
+
+	idx := strings.Index(script, "assert_unit_healthy() {")
+	if idx == -1 {
+		t.Fatal("deploy.sh defines no assert_unit_healthy() helper")
+	}
+	end := strings.Index(script[idx:], "\ndeploy_human_inbox() {")
+	if end == -1 {
+		t.Fatal("could not bound the assert_unit_healthy() body")
+	}
+	body := script[idx : idx+end]
+
+	if !strings.Contains(body, "NRestarts") {
+		t.Error("assert_unit_healthy never reads NRestarts — it cannot distinguish a running unit from one that restarts every few seconds")
+	}
+	if !strings.Contains(body, "journalctl") {
+		t.Error("assert_unit_healthy does not dump the journal on failure — the operator needs the actual error, not just a status line")
+	}
+	if strings.Count(body, "is-active") < 2 {
+		t.Error("assert_unit_healthy probes is-active only once; it must re-check after an interval to catch a flapping unit")
 	}
 }

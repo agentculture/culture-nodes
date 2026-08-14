@@ -39,7 +39,7 @@ Wants=human-inbox-bridge.service
 [Service]
 EnvironmentFile=%h/.culture-nodes/human-inbox-tracker.env
 EnvironmentFile=%h/.culture-nodes/human-inbox.env
-ExecStart=%h/.local/bin/uv run --directory %h/git/culture-nodes-agent/adapters/human-inbox python -m human_inbox_bridge.tracker
+ExecStart=%h/.local/bin/human-inbox-tracker
 Restart=always
 RestartSec=5
 

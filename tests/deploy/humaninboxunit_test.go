@@ -61,19 +61,41 @@ func (uf humanInboxUnitFile) first(key string) (string, bool) {
 
 // --- human-inbox-bridge.service ---------------------------------------
 
-func TestHumanInboxBridgeUnitRunsViaUvRunAgainstAgentCheckout(t *testing.T) {
+// assertNotRunFromAgentCheckout is the regression guard for a live incident.
+//
+// These units used to exec `uv run --directory ~/git/culture-nodes-agent/...`.
+// That directory is the CODEX AGENT WORKSPACE, and the codex-bridge lane
+// fast-forwards it to its upstream tracking branch — main. So deploying any
+// branch installed units that exec code living only on that branch, out of a
+// checkout pinned to a different one. The tracker died on
+// `No module named human_inbox_bridge.tracker` and systemd restarted it 6272
+// times over nine hours while merge-as-action silently did nothing.
+//
+// An agent workspace and a deployment artifact source are different things.
+// The units must exec a console script installed by `uv tool install`, which
+// copies the package into its own venv and is therefore independent of both
+// the archive and anybody's checked-out branch.
+func assertNotRunFromAgentCheckout(t *testing.T, unit, execStart string) {
+	t.Helper()
+	if strings.Contains(execStart, "culture-nodes-agent") {
+		t.Errorf("%s ExecStart=%q execs out of the codex agent checkout — that directory tracks main, so a branch deploy installs a unit whose code is not there", unit, execStart)
+	}
+	if strings.Contains(execStart, "uv run") {
+		t.Errorf("%s ExecStart=%q runs `uv run` against a source tree; it must exec a uv-tool-installed console script so the unit survives the next deploy's rm -rf and does not depend on a checkout's branch", unit, execStart)
+	}
+	if !strings.HasPrefix(execStart, "/") && !strings.HasPrefix(execStart, "%h/") {
+		t.Errorf("%s ExecStart=%q is not an absolute (or %%h-rooted) path; a systemd ExecStart takes no PATH lookup", unit, execStart)
+	}
+}
+
+func TestHumanInboxBridgeUnitRunsAnInstalledConsoleScript(t *testing.T) {
 	uf := loadHumanInboxUnitFile(t, "human-inbox-bridge.service")
 
 	execStart, ok := uf.first("ExecStart")
 	if !ok {
 		t.Fatal("human-inbox-bridge.service declares no ExecStart=")
 	}
-	if !strings.Contains(execStart, ".local/bin/uv run") {
-		t.Errorf("ExecStart=%q does not run via an absolute-path `uv run` (must not rely on PATH inside a systemd --user unit)", execStart)
-	}
-	if !strings.Contains(execStart, "--directory") || !strings.Contains(execStart, "git/culture-nodes-agent/adapters/human-inbox") {
-		t.Errorf("ExecStart=%q does not run --directory against the shared ~/git/culture-nodes-agent/adapters/human-inbox checkout", execStart)
-	}
+	assertNotRunFromAgentCheckout(t, "human-inbox-bridge.service", execStart)
 	if !strings.Contains(execStart, "human-inbox-bridge serve") {
 		t.Errorf("ExecStart=%q does not invoke the `human-inbox-bridge serve` console script", execStart)
 	}
@@ -124,8 +146,8 @@ func TestHumanInboxTrackerUnitRunsTrackerModuleContinuously(t *testing.T) {
 	if !ok {
 		t.Fatal("human-inbox-tracker.service declares no ExecStart=")
 	}
-	if !strings.Contains(execStart, "human_inbox_bridge.tracker") {
-		t.Errorf("ExecStart=%q does not run the human_inbox_bridge.tracker module", execStart)
+	if !strings.Contains(execStart, "human-inbox-tracker") {
+		t.Errorf("ExecStart=%q does not invoke the `human-inbox-tracker` console script", execStart)
 	}
 	// The unit runs the tracker in its own continuous poll-loop mode, not
 	// the one-shot --once probe: a systemd Restart=always PERSISTENT unit
@@ -134,8 +156,22 @@ func TestHumanInboxTrackerUnitRunsTrackerModuleContinuously(t *testing.T) {
 	if strings.Contains(execStart, "--once") {
 		t.Errorf("ExecStart=%q passes --once; task t34 chose a persistent unit (the tracker's own internal poll loop), not a --once timer", execStart)
 	}
-	if !strings.Contains(execStart, "--directory") || !strings.Contains(execStart, "git/culture-nodes-agent/adapters/human-inbox") {
-		t.Errorf("ExecStart=%q does not run --directory against the shared ~/git/culture-nodes-agent/adapters/human-inbox checkout", execStart)
+	assertNotRunFromAgentCheckout(t, "human-inbox-tracker.service", execStart)
+}
+
+// TestTrackerConsoleScriptIsDeclared closes the loop the unit alone cannot:
+// the unit may name a console script that the package never publishes, which
+// is a 203/EXEC at runtime and green in every file-parsing test.
+func TestTrackerConsoleScriptIsDeclared(t *testing.T) {
+	repoRoot := filepath.Dir(filepath.Dir(codexBridgeDir(t)))
+	body, err := os.ReadFile(filepath.Join(repoRoot, "adapters", "human-inbox", "pyproject.toml"))
+	if err != nil {
+		t.Fatalf("reading the human-inbox pyproject: %v", err)
+	}
+	for _, script := range []string{"human-inbox-bridge =", "human-inbox-tracker ="} {
+		if !strings.Contains(string(body), script) {
+			t.Errorf("adapters/human-inbox/pyproject.toml declares no [project.scripts] entry %q — the systemd unit execs a binary uv tool install would never create", script)
+		}
 	}
 }
 

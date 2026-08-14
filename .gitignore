@@ -246,3 +246,6 @@ skills.local.yaml
 # accidentally-committed build artifact (removed in phase-2); keep it out
 /nodes
 /test-results/
+
+# Session worktrees created by the harness — never part of the repo.
+.claude/worktrees/

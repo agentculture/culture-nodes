@@ -102,10 +102,16 @@ only as an eidetic `/remember` note.
 
 - **Billable + guarded.** `assign`/`create` dispatch real agent sessions
   (ChatGPT quota today). They refuse without `--yes` / `NODES_OP_YES=1`.
-- **Sandbox reality (issue #18).** codex sessions on thor/orin currently
-  cannot exec shell commands in ANY sandbox mode (bwrap userns limits) —
-  they read files and reason. Assign analysis/reading tasks; don't expect
-  `git` output until #18 is fixed.
+- **Sandbox reality (issues #18 / #63).** codex sessions on thor/orin **can
+  now exec shell commands**, including in a `read-only` sandbox. The blocker
+  was the host AppArmor userns restriction, not codex: with
+  `kernel.apparmor_restrict_unprivileged_userns=0` applied and persisted on
+  all three hosts, run `01M00AM5NME6TZ1PXDG4A454HE` executed `git log`,
+  `git status`, `pwd` and `ls` and returned real output. The **write path is
+  still unproven** — that probe was read-only, so `--sandbox workspace-write`
+  landing an `apply_patch` has not been demonstrated since the fix. Assign
+  analysis and reading freely; treat write dispatches as unverified until one
+  succeeds.
 - **Results are claims, not evidence.** A session's report lands as a
   `proposed` ledger claim attributed to its registered actor. Confirming it
   is a human's job; treat the summary exactly as you'd treat a colleague's

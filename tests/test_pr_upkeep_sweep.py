@@ -212,4 +212,142 @@ class TestPrioritise:
         assert report["items"][0]["severity"] == "BLOCKER"
         assert sweep.exit_code_for(items) == 0
         assert sweep.exit_code_for([]) == sweep.EXIT_EMPTY
+
+
+class TestSonarWorkItemsPrContext:
+    """The gap that made a live sweep miss PR #70's nine issues: SonarCloud
+    answers a plain componentKeys query with main-branch results only, so
+    findings need their PR analysis context named explicitly."""
+
+    def test_main_branch_items_carry_no_pr(self, sonar_payload):
+        items = sweep.sonar_work_items(sonar_payload)
+        assert all(item["pr"] is None for item in items)
+
+    def test_pr_scoped_items_carry_the_queried_pr(self, sonar_payload):
+        items = sweep.sonar_work_items(sonar_payload, pr=70)
+        assert items  # the fixture is non-empty
+        assert all(item["pr"] == 70 for item in items)
+
+    def test_fetch_sonar_issues_url_names_the_pull_request_param(self, monkeypatch):
+        seen = []
+        monkeypatch.setattr(sweep, "_get_json", lambda url, token=None: seen.append(url) or {})
+        sweep.fetch_sonar_issues()
+        sweep.fetch_sonar_issues(pr=70)
+        assert "pullRequest=" not in seen[0]
+        assert seen[0].startswith(sweep.SONAR_ISSUES_URL.split("?")[0])
+        assert "pullRequest=70" in seen[1]
+
+
+class TestDedupeSonarItems:
+    def test_no_collision_keeps_every_item(self, sonar_payload):
+        main_items = sweep.sonar_work_items(sonar_payload)
+        deduped = sweep.dedupe_sonar_items(main_items)
+        assert deduped == main_items
+
+    def test_same_key_on_main_and_a_pr_collapses_to_the_pr_scoped_entry(self, sonar_payload):
+        main_items = sweep.sonar_work_items(sonar_payload)
+        # Simulate the SAME underlying issue also showing up on a PR-scoped
+        # query (identical key, transiently visible on both around a merge).
+        pr_items = sweep.sonar_work_items(sonar_payload, pr=70)
+        deduped = sweep.dedupe_sonar_items(main_items + pr_items)
+        assert len(deduped) == len(main_items)
+        assert all(item["pr"] == 70 for item in deduped)
+
+    def test_same_fingerprint_different_key_still_collapses(self, sonar_payload):
+        # SonarCloud's key-stability across analysis contexts is not
+        # guaranteed (module docstring's stated assumption); the fallback
+        # (rule, file, line, title) fingerprint must catch this case too.
+        main_items = sweep.sonar_work_items(sonar_payload)
+        one = dict(main_items[0])
+        one["id"] = "AZ-a-totally-different-key"
+        one["pr"] = 70
+        deduped = sweep.dedupe_sonar_items(main_items + [one])
+        assert len(deduped) == len(main_items)
+        matching = [item for item in deduped if item["rule"] == one["rule"]]
+        assert len(matching) == 1
+        assert matching[0]["pr"] == 70
+
+    def test_genuinely_distinct_findings_all_survive(self, sonar_payload):
+        pr_items = sweep.sonar_work_items(sonar_payload, pr=70)
+        other_pr_item = dict(pr_items[0])
+        other_pr_item["id"] = "AZ-different-key-on-a-different-pr"
+        other_pr_item["rule"] = "python:S9999-not-a-real-rule"
+        other_pr_item["pr"] = 71
+        deduped = sweep.dedupe_sonar_items(pr_items + [other_pr_item])
+        assert len(deduped) == len(pr_items) + 1
+
+
+class TestFetchOpenPullNumbers:
+    def test_extracts_sorted_numbers_ignoring_malformed_entries(self, monkeypatch):
+        pulls = [{"number": 42}, {"number": "not-an-int"}, {}, {"number": 7}]
+        monkeypatch.setattr(sweep, "_get_json", lambda url, token=None: pulls)
+        numbers = sweep.fetch_open_pull_numbers(None)
+        assert numbers == [42, 7]  # unsorted; main() sorts before capping
+
+
+class TestMaxPrsPerSweepCap:
+    def test_default_cap_applies_without_the_env_override(self, monkeypatch):
+        monkeypatch.delenv("PR_UPKEEP_MAX_PRS_PER_SWEEP", raising=False)
+        assert sweep._max_prs_per_sweep() == sweep.MAX_PRS_PER_SWEEP
+
+    def test_env_override_is_honored(self, monkeypatch):
+        monkeypatch.setenv("PR_UPKEEP_MAX_PRS_PER_SWEEP", "3")
+        assert sweep._max_prs_per_sweep() == 3
+
+    def test_invalid_or_non_positive_override_falls_back_to_the_default(self, monkeypatch):
+        monkeypatch.setenv("PR_UPKEEP_MAX_PRS_PER_SWEEP", "not-a-number")
+        assert sweep._max_prs_per_sweep() == sweep.MAX_PRS_PER_SWEEP
+        monkeypatch.setenv("PR_UPKEEP_MAX_PRS_PER_SWEEP", "0")
+        assert sweep._max_prs_per_sweep() == sweep.MAX_PRS_PER_SWEEP
+
+    def test_main_sweeps_only_the_capped_prs_and_logs_the_rest(
+        self, monkeypatch, capsys, sonar_payload
+    ):
+        monkeypatch.setenv("PR_UPKEEP_MAX_PRS_PER_SWEEP", "2")
+        monkeypatch.setenv("GITHUB_TOKEN", "")
+        monkeypatch.setattr(sweep, "fetch_open_pull_numbers", lambda token: [70, 42, 35])
+
+        sonar_calls = []
+
+        def fake_fetch_sonar(pr=None):
+            sonar_calls.append(pr)
+            return {"issues": []} if pr is not None else sonar_payload
+
+        monkeypatch.setattr(sweep, "fetch_sonar_issues", fake_fetch_sonar)
+
+        qodo_calls = []
+
+        def fake_fetch_qodo(token, pr_numbers):
+            qodo_calls.append(list(pr_numbers))
+            return [], []
+
+        monkeypatch.setattr(sweep, "fetch_open_pr_comments", fake_fetch_qodo)
+
+        exit_code = sweep.main()
+
+        # Sorted ascending, capped at 2: 35 and 42 swept, 70 dropped.
+        assert sonar_calls == [None, 35, 42]
+        assert qodo_calls == [[35, 42]]
+        assert exit_code == 0  # the main-branch fixture still has 4 items
+
+        stderr = capsys.readouterr().err
+        assert "1 open PR(s)" in stderr
+        assert "[70]" in stderr
+        assert "PR_UPKEEP_MAX_PRS_PER_SWEEP" in stderr
+
+    def test_main_logs_nothing_when_every_open_pr_fits_under_the_cap(
+        self, monkeypatch, capsys, sonar_payload
+    ):
+        monkeypatch.delenv("PR_UPKEEP_MAX_PRS_PER_SWEEP", raising=False)
+        monkeypatch.setenv("GITHUB_TOKEN", "")
+        monkeypatch.setattr(sweep, "fetch_open_pull_numbers", lambda token: [35])
+        monkeypatch.setattr(
+            sweep,
+            "fetch_sonar_issues",
+            lambda pr=None: {"issues": []} if pr is not None else sonar_payload,
+        )
+        monkeypatch.setattr(sweep, "fetch_open_pr_comments", lambda token, pr_numbers: ([], []))
+
+        sweep.main()
+        assert capsys.readouterr().err == ""
         assert sweep.EXIT_EMPTY == 10

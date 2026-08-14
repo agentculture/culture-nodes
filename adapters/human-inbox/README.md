@@ -267,11 +267,22 @@ The tracker contract:
   behave exactly as today — purely manual.
 
 The `observe` value is a free-form object; the tracker interprets the
-`kind` field to select the right external check. Today the only
-supported kind is `github_pr_merged`. That declaration also accepts
-`repo: owner/name`; when absent, the tracker uses its configured default
-repository. A task-level `input.success_outcome` is used when present;
-otherwise this observation kind reports its unambiguous `merged` outcome.
+`kind` field to select the right external check. Two kinds are supported:
+`github_pr_merged` (t16, merge-as-action) and `github_pr_reply` (issue #71,
+the pr-upkeep decision node). Both accept `repo: owner/name`; when absent,
+the tracker uses its configured default repository.
+
+`github_pr_merged`: a task-level `input.success_outcome` is used when
+present; otherwise this observation kind reports its unambiguous `merged`
+outcome.
+
+`github_pr_reply`: three outcomes, all optionally renamed per-task via
+`answered_outcome`/`merged_outcome`/`dropped_outcome` in the `observe`
+block (defaulting to those three literal names) — a qualifying reply
+submits the answered outcome, the PR being merged submits the merged
+outcome, and the PR closing unmerged submits the dropped outcome. See
+"The github_pr_reply observation kind" below for the full contract and its
+rate-budget arithmetic.
 
 ### Running the GitHub merge tracker
 
@@ -305,6 +316,7 @@ uv run python -m human_inbox_bridge.tracker --once
 | `HUMAN_INBOX_TRACKER_POLL_SECONDS` | `60` | Requested delay between cycles; clamped to the active lane's minimum safe cadence (60 seconds anonymous, 0.72 seconds authenticated) |
 | `HUMAN_INBOX_TRACKER_GITHUB_REQUEST_BUDGET` | `50` | Requested maximum unique PR GETs per cycle (`0` disables GitHub requests); clamped so `budget × 3600 / poll_seconds` cannot exceed the active lane's hourly ceiling |
 | `HUMAN_INBOX_TRACKER_HTTP_TIMEOUT_SECONDS` | `30` | Timeout for each GitHub GET and bridge POST |
+| `HUMAN_INBOX_TRACKER_REPLY_IGNORED_LOGINS` | unset | Comma-separated extra GitHub logins the `github_pr_reply` "which reply counts" rule ignores, ALWAYS unioned with the built-in default (`qodo-code-review[bot]`) — an operator cannot accidentally re-admit it |
 
 At the defaults, anonymous mode makes at most one request per cycle and
 rotates that request fairly across distinct watched PRs. Authenticated mode
@@ -331,6 +343,78 @@ the bridge actor origin; this attribution does not claim runner-observed
 authority. A submission without the marker follows the original
 `human-submission` mapping unchanged, even when its task has an `observe`
 declaration.
+
+### The github_pr_reply observation kind (issue #71)
+
+`examples/pr-upkeep`'s decision node (`human-answers-review`) parks on
+`observe: {kind: github_pr_reply, pr: ...}` — the SAME park/observe/
+auto-submit shape `github_pr_merged` uses, generalized to a PR THREAD
+rather than only a PR's merge state, with three possible auto-submitted
+outcomes instead of one.
+
+**Which reply counts.** GitHub's own `since` query parameter on
+`GET /repos/{repo}/issues/{pr}/comments` already scopes every fetch to
+comments posted strictly after the task's OWN `created_at` (the moment the
+question was parked) — a comment from before the question was asked can
+never qualify, full stop. The only remaining filter is authorship: a
+comment counts when its author is not one of the flow's own automated
+identities (`DEFAULT_REPLY_IGNORED_LOGINS`, extended via
+`HUMAN_INBOX_TRACKER_REPLY_IGNORED_LOGINS`). No content marker (no
+"approve:" prefix or similar) is required — the question was JUST posted
+on this specific PR, so the next human comment on the thread IS the answer
+in context. This is a deliberate choice over a marker convention: a marker
+makes a person's ordinary reply invisible to the tracker unless they
+remember the exact incantation, whereas freshness + authorship already
+rules out the "resumes on an unrelated thanks" failure mode the reply
+observable has to avoid — an unrelated aside would need a non-bot author,
+posted strictly after the question, on this exact PR, which in practice
+only the person actually answering does.
+
+**Terminal states release the wait.** Before checking for a reply, the
+tracker checks the PR's own state (the SAME `GET /repos/{repo}/pulls/{pr}`
+call `github_pr_merged` uses): `merged: true` submits the merged outcome
+immediately (the strongest possible answer — the human merged instead of
+replying) and `state: closed` (unmerged) submits the dropped outcome
+(the run must not wait forever on a dead PR). Both are ONE-request checks
+that short-circuit before ever calling the comments endpoint.
+
+**Rate-budget arithmetic.** `github_pr_reply` shares ONE GitHub request
+budget with `github_pr_merged` — `github_request_budget` is not raised and
+`poll_seconds` is not shortened for this kind. Anonymous-lane worst case
+(no `GITHUB_TOKEN`, `HUMAN_INBOX_TRACKER_RATE_UTILIZATION` at its default
+0.5): `TrackerConfig.__post_init__`'s clamp yields `poll_seconds=120`,
+`github_request_budget=1` — one GitHub request every 120 seconds, 30
+requests/hour against the 60/hour anonymous ceiling, and that arithmetic
+does not change no matter how many `(kind, repo, pr)` groups — merge OR
+reply — are pending; a new kind only adds entrants to the SAME
+round-robin queue sharing that one request per cycle. What DOES change is
+detection latency: a reply-kind group's full check (terminal-state GET,
+then a comments GET when the PR is still open) costs up to TWO of those
+per-cycle budget units versus a merge-kind group's one, so at budget=1 an
+open reply-kind group needs at least two cycles (up to ~240s) to complete
+one full pass. `MergeTracker._check_reply_group` degrades by SKIPPING the
+comments call rather than partially spending past the budget when only one
+unit remains — the group just waits for the next cycle. Reply-kind groups
+are checked BEFORE merge-kind groups each cycle (a human is actively
+blocked on a reply-kind group, whereas a merge-kind group's human can act
+at their own pace) — this reprioritises the same fixed budget, it does not
+grow it. `tests/test_tracker.py`'s
+`test_reply_groups_are_checked_before_merge_groups_share_the_same_budget`
+pins this ordering, and the `test_reply_group_does_not_spend_a_second_
+request_when_budget_is_one` /
+`test_qualifying_reply_completes_with_answered_outcome` pair pin the
+1-vs-2-request costs.
+
+An automatic submit for this kind carries a matching `observed` marker —
+`{"collection_method": "github_pr_reply", "reference": "<comment URL>"}`
+for a reply, `{"collection_method": "github_pr_merged", "merge_commit":
+"<sha>"}` for a merge (reusing the SAME collection method and field
+`github_pr_merged` already uses), or `{"collection_method":
+"github_pr_closed", "reference": "<PR URL>"}` for an unmerged close. The
+server's `mapping.py` validates each collection method against its own
+required-field set (`merge_commit` for `github_pr_merged`, `reference` for
+`github_pr_reply`/`github_pr_closed`) — adding a new collection method is
+a one-line addition to that map, not a bespoke validation branch.
 
 ## Nudge transport
 

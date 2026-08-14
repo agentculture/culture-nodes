@@ -23,7 +23,7 @@ import time
 import urllib.error
 import urllib.parse
 import urllib.request
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Any, Callable
 
 from human_inbox_bridge.config import Config, ConfigError
@@ -38,6 +38,29 @@ logger = logging.getLogger("human_inbox_bridge.tracker")
 
 GITHUB_API = "https://api.github.com"
 OBSERVATION_KIND = "github_pr_merged"
+
+#: issue #71 — the pr-upkeep decision node's observable. A task declaring
+#: this kind is watching one PR thread for a human's answer to a question
+#: the flow posted there, exactly the way OBSERVATION_KIND watches for a
+#: merge. See `reply_observation_for` and `qualifying_reply` for the
+#: "which reply counts" rule, and the MergeTracker.run_cycle docstring for
+#: the shared-budget arithmetic that keeps this kind inside t35's ceiling.
+REPLY_OBSERVATION_KIND = "github_pr_reply"
+
+#: issue #71 — the decision node's OTHER terminal path: the PR closed
+#: without merging while a question was still pending. Distinct from
+#: REPLY_OBSERVATION_KIND's collection_method so the ledger record is
+#: honest about which fact was actually observed.
+CLOSED_OBSERVATION_KIND = "github_pr_closed"
+
+#: GitHub logins the reply-detector never treats as a human answer. The
+#: flow's own automation (the Qodo review bot; whatever identity posts the
+#: decision question itself) shares the same PR thread it is now watching,
+#: so authorship — not content — is the filter. Extend via
+#: HUMAN_INBOX_TRACKER_REPLY_IGNORED_LOGINS; this default is always kept in
+#: the union (an operator cannot accidentally re-admit the review bot).
+DEFAULT_REPLY_IGNORED_LOGINS = frozenset({"qodo-code-review[bot]"})
+
 ANONYMOUS_REQUESTS_PER_HOUR = 60
 AUTHENTICATED_REQUESTS_PER_HOUR = 5_000
 
@@ -85,6 +108,12 @@ class TrackerConfig:
     nudge_global_throttle_seconds: float = 10.0
     nudge_escalation_after_seconds: float = 600.0
     rate_utilization: float = DEFAULT_RATE_UTILIZATION
+    #: issue #71 — logins the reply-kind "which reply counts" rule ignores.
+    #: Always includes DEFAULT_REPLY_IGNORED_LOGINS regardless of what the
+    #: environment adds (see from_env).
+    reply_ignored_logins: frozenset[str] = field(
+        default_factory=lambda: DEFAULT_REPLY_IGNORED_LOGINS
+    )
 
     def __post_init__(self) -> None:
         """Clamp cadence and budget to the active GitHub API lane.
@@ -152,6 +181,12 @@ class TrackerConfig:
         rate_utilization = _float_env(
             env, "HUMAN_INBOX_TRACKER_RATE_UTILIZATION", DEFAULT_RATE_UTILIZATION
         )
+        extra_ignored = {
+            login.strip()
+            for login in env.get("HUMAN_INBOX_TRACKER_REPLY_IGNORED_LOGINS", "").split(",")
+            if login.strip()
+        }
+        reply_ignored_logins = DEFAULT_REPLY_IGNORED_LOGINS | frozenset(extra_ignored)
         if poll_seconds <= 0:
             raise TrackerConfigError("HUMAN_INBOX_TRACKER_POLL_SECONDS must be greater than zero")
         if request_budget < 0:
@@ -190,6 +225,7 @@ class TrackerConfig:
             nudge_escalation_after_seconds=_float_env(
                 env, "DISCORD_NUDGE_ESCALATION_AFTER_SECONDS", 600.0
             ),
+            reply_ignored_logins=reply_ignored_logins,
         )
 
 
@@ -243,6 +279,60 @@ def observation_for(task: HumanTask, default_repo: str | None) -> Observation | 
     return Observation(repo=repo.strip(), pr=pr, outcome=outcome or "merged")
 
 
+@dataclass(frozen=True)
+class ReplyObservation:
+    """A parsed `observe: {kind: github_pr_reply, ...}` declaration.
+
+    Three outcomes because a decision node genuinely has three ways to stop
+    waiting (issue #71): a qualifying reply lands (``answered_outcome``),
+    the PR is merged out from under the question (``merged_outcome`` — the
+    strongest possible "yes" a human can give), or the PR closes unmerged
+    (``dropped_outcome`` — the run must not wait forever on a dead PR).
+    """
+
+    repo: str
+    pr: int
+    since: str
+    answered_outcome: str
+    merged_outcome: str
+    dropped_outcome: str
+
+
+def _clean_outcome(value: object, default: str) -> str:
+    return value.strip() if isinstance(value, str) and value.strip() else default
+
+
+def reply_observation_for(task: HumanTask, default_repo: str | None) -> ReplyObservation | None:
+    """Return the declared reply observation on a pending task, if complete.
+
+    Mirrors `observation_for`'s shape exactly (undeclared/malformed stays
+    manual-only). ``since`` is read from the task's OWN `created_at` — the
+    moment the decision parked, i.e. the moment the question went up on the
+    PR — never from caller input, so a task cannot be declared with a
+    backdated watermark that scoops up an unrelated older comment.
+    """
+    raw = task.extra_input.get("observe")
+    if not isinstance(raw, dict) or raw.get("kind") != REPLY_OBSERVATION_KIND:
+        return None
+
+    pr = raw.get("pr")
+    if isinstance(pr, bool) or not isinstance(pr, int) or pr <= 0:
+        return None
+    repo = raw.get("repo") or task.extra_input.get("repo") or default_repo
+    if not _valid_repo(repo):
+        return None
+
+    since = task.created_at.strip() if isinstance(task.created_at, str) else ""
+    return ReplyObservation(
+        repo=repo.strip(),
+        pr=pr,
+        since=since,
+        answered_outcome=_clean_outcome(raw.get("answered_outcome"), "answered"),
+        merged_outcome=_clean_outcome(raw.get("merged_outcome"), "merged"),
+        dropped_outcome=_clean_outcome(raw.get("dropped_outcome"), "dropped"),
+    )
+
+
 def fetch_github_pull(repo: str, pr: int, *, token: str, timeout_seconds: float) -> dict[str, Any]:
     """GET one pull request, authenticating only when a token is present."""
     url = f"{GITHUB_API}/repos/{repo}/pulls/{pr}"
@@ -283,6 +373,122 @@ def submit_observation(
             "collection_method": OBSERVATION_KIND,
             "merge_commit": merge_commit,
         },
+    }
+    task_id = urllib.parse.quote(task.invocation_id, safe="")
+    url = f"{bridge_url.rstrip('/')}/inbox/tasks/{task_id}/submit"
+    headers = {"Content-Type": "application/json"}
+    if bridge_token:
+        headers["Authorization"] = f"Bearer {bridge_token}"
+    request = urllib.request.Request(  # noqa: S310 - operator-configured sibling bridge
+        url,
+        data=json.dumps(submission).encode("utf-8"),
+        method="POST",
+        headers=headers,
+    )
+    with urllib.request.urlopen(  # nosec B310 - operator-configured sibling bridge URL
+        request, timeout=timeout_seconds
+    ) as response:  # noqa: S310
+        data = json.load(response)
+    if not isinstance(data, dict):
+        raise ValueError("bridge submit response was not a JSON object")
+    return data
+
+
+def fetch_github_issue_comments(
+    repo: str, pr: int, *, since: str, token: str, timeout_seconds: float
+) -> list[dict[str, Any]]:
+    """GET the issue-comment thread on one PR, GitHub's own `since` filter
+    scoping the response to comments posted after the decision was parked.
+
+    Costs one GitHub request, same as `fetch_github_pull` — this call and
+    that one TOGETHER are what a reply-kind group's full check costs (see
+    MergeTracker._check_reply_group's arithmetic note).
+    """
+    query = {"per_page": "100"}
+    if since:
+        query["since"] = since
+    url = f"{GITHUB_API}/repos/{repo}/issues/{pr}/comments?{urllib.parse.urlencode(query)}"
+    headers = {
+        "Accept": "application/vnd.github+json",
+        "User-Agent": "culture-nodes-human-inbox-tracker",
+        "X-GitHub-Api-Version": "2022-11-28",
+    }
+    if token:
+        headers["Authorization"] = f"Bearer {token}"
+    request = urllib.request.Request(  # noqa: S310 - fixed GitHub API host
+        url,
+        headers=headers,
+    )
+    with urllib.request.urlopen(  # nosec B310 - request has a fixed GitHub HTTPS origin
+        request, timeout=timeout_seconds
+    ) as response:  # noqa: S310
+        data = json.load(response)
+    if not isinstance(data, list):
+        raise ValueError("GitHub issue comments response was not a JSON array")
+    return data
+
+
+def qualifying_reply(
+    comments: list[dict[str, Any]], *, ignored_logins: frozenset[str]
+) -> dict[str, Any] | None:
+    """The first comment (oldest first, GitHub's default order) that counts
+    as the human's answer — the "which reply counts" rule issue #71 asks
+    for, stated and justified here rather than left implicit.
+
+    Two filters, both structural rather than content-based:
+
+    1. **Freshness** — the caller already scoped the fetch to
+       `since=<task.created_at>` (see `reply_observation_for`), so every
+       comment this function sees was posted strictly after the decision
+       node asked its question. No comment from BEFORE the question can
+       ever qualify.
+    2. **Authorship** — the comment's author must not be one of the flow's
+       own automated identities (DEFAULT_REPLY_IGNORED_LOGINS plus any
+       operator-configured additions). The flow's own posted question is
+       itself a comment on this same thread; without this filter the
+       tracker would immediately "reply to itself".
+
+    Deliberately NOT a content/marker rule: requiring a magic prefix like
+    "approve:" would make a human's ordinary PR reply invisible to the
+    tracker unless they remembered the incantation. Given (1) and (2), the
+    next human comment on a thread that JUST received a question IS the
+    answer in context — there is no other reason for a person to comment on
+    this specific PR at this specific moment. This is what keeps the flow
+    from resuming on an unrelated "thanks": an unrelated aside would have to
+    be posted by a non-bot author strictly after the question, on THIS PR,
+    which in practice only the person answering the question does.
+    """
+    for comment in comments:
+        login = (comment.get("user") or {}).get("login", "")
+        if login in ignored_logins:
+            continue
+        body = comment.get("body")
+        if not isinstance(body, str) or not body.strip():
+            continue
+        return comment
+    return None
+
+
+def submit_reply_observation(
+    bridge_url: str,
+    bridge_token: str,
+    task: HumanTask,
+    outcome: str,
+    note: str,
+    collection_method: str,
+    observed_extra: dict[str, str],
+    *,
+    timeout_seconds: float,
+) -> dict[str, Any]:
+    """Submit one observed PR-thread answer through the bridge's
+    authenticated surface. Mirrors `submit_observation`'s shape, generalized
+    to the collection methods `mapping.py` accepts alongside
+    `github_pr_merged` (`github_pr_reply`'s `reference`, `github_pr_closed`'s
+    `reference`)."""
+    submission = {
+        "outcome": outcome,
+        "note": note,
+        "observed": {"collection_method": collection_method, **observed_extra},
     }
     task_id = urllib.parse.quote(task.invocation_id, safe="")
     url = f"{bridge_url.rstrip('/')}/inbox/tasks/{task_id}/submit"
@@ -360,6 +566,8 @@ class MergeTracker:
         *,
         github_fetch: GithubFetch = fetch_github_pull,
         bridge_submit: BridgeSubmit = submit_observation,
+        reply_fetch: Callable[..., list[dict[str, Any]]] = fetch_github_issue_comments,
+        reply_submit: Callable[..., dict[str, Any]] = submit_reply_observation,
         nudge_cfg: object | None = None,
         clock: Callable[[], float] = time.time,
     ) -> None:
@@ -370,21 +578,67 @@ class MergeTracker:
         self.store = TaskStore(cfg.state_dir, create=False)
         self.github_fetch = github_fetch
         self.bridge_submit = bridge_submit
+        self.reply_fetch = reply_fetch
+        self.reply_submit = reply_submit
         self.nudge_cfg = nudge_cfg
         self.clock = clock
         self._github_backoff_until = 0.0
         self._next_group_index = 0
+        self._next_reply_group_index = 0
 
     def run_cycle(self) -> CycleResult:
+        """One poll cycle over both observation kinds, sharing ONE GitHub
+        request budget (issue #71's rate-headroom requirement: a new
+        observable kind must not multiply requests per cycle).
+
+        Reply-kind groups are checked BEFORE merge-kind groups. This is a
+        deliberate priority choice, not an extra allowance: a reply-kind
+        group has a HUMAN actively blocked on it (the decision node is
+        parked, mid-conversation, on a question the flow just asked),
+        whereas a merge-kind group's human already has the PR to merge at
+        their own pace. Checking reply groups first means, when the shared
+        per-cycle budget is tight, it is spent on the more time-sensitive
+        wait first — it does NOT raise `github_request_budget` or shorten
+        `poll_seconds`, so the planned hourly request rate is unchanged
+        (see TrackerConfig.__post_init__'s clamp, which this ordering does
+        not touch).
+
+        The arithmetic (t35's ceiling, DEFAULT_RATE_UTILIZATION=0.5): in the
+        worst case — anonymous lane, GITHUB_TOKEN unset — the clamp yields
+        poll_seconds=120 and github_request_budget=1, i.e. ONE GitHub
+        request per 120s cycle, 30 requests/hour against the 60/hour
+        anonymous ceiling, REGARDLESS of how many (kind, repo, pr) groups
+        are pending — adding REPLY_OBSERVATION_KIND groups only adds more
+        entrants to the SAME round-robin queue sharing that one request,
+        never more requests per hour. A reply-kind group's FULL check
+        (terminal-state GET via `github_fetch`, then a comments GET via
+        `reply_fetch` when the PR is still open) costs up to two of those
+        budget units, so at budget=1 an open reply-kind group takes at
+        least two cycles (up to ~240s) to complete one full check pass —
+        slower detection than a merge-kind group's one-call check, an
+        explicit and accepted trade-off for staying inside the same
+        ceiling, not a silent overrun. `_check_reply_group` degrades
+        gracefully when the second call would exceed the remaining budget:
+        it leaves the group pending rather than spending past the cap.
+        """
         pending = self.store.list(status=STATUS_PENDING)
         grouped: dict[tuple[str, int], list[tuple[HumanTask, Observation]]] = {}
+        reply_grouped: dict[tuple[str, int], list[tuple[HumanTask, ReplyObservation]]] = {}
         eligible = 0
         for task in pending:
             observation = observation_for(task, self.cfg.default_repo)
-            if observation is None:
+            if observation is not None:
+                eligible += 1
+                grouped.setdefault((observation.repo, observation.pr), []).append(
+                    (task, observation)
+                )
                 continue
-            eligible += 1
-            grouped.setdefault((observation.repo, observation.pr), []).append((task, observation))
+            reply_observation = reply_observation_for(task, self.cfg.default_repo)
+            if reply_observation is not None:
+                eligible += 1
+                reply_grouped.setdefault(
+                    (reply_observation.repo, reply_observation.pr), []
+                ).append((task, reply_observation))
 
         github_requests = 0
         submissions = 0
@@ -405,6 +659,30 @@ class MergeTracker:
             )
         else:
             self._github_backoff_until = 0.0
+
+        reply_items = list(reply_grouped.items())
+        if reply_items:
+            start = self._next_reply_group_index % len(reply_items)
+            reply_items = reply_items[start:] + reply_items[:start]
+
+        for (repo, pr), tasks in reply_items:
+            if rate_limited:
+                break
+            if github_requests >= self.cfg.github_request_budget:
+                budget_exhausted = True
+                break
+            used, submitted, became_rate_limited = self._check_reply_group(
+                repo,
+                pr,
+                tasks,
+                budget_remaining=self.cfg.github_request_budget - github_requests,
+            )
+            github_requests += used
+            submissions += submitted
+            self._next_reply_group_index += 1
+            if became_rate_limited:
+                rate_limited = True
+                break
 
         for (repo, pr), tasks in grouped_items:
             if rate_limited:
@@ -515,6 +793,173 @@ class MergeTracker:
             rate_limited=rate_limited,
             retry_after_seconds=max(0.0, self._github_backoff_until - self.clock()),
         )
+
+    def _check_reply_group(
+        self,
+        repo: str,
+        pr: int,
+        tasks: list[tuple[HumanTask, ReplyObservation]],
+        *,
+        budget_remaining: int,
+    ) -> tuple[int, int, bool]:
+        """Check one (repo, pr) reply-kind group. Returns
+        ``(requests_used, submissions, became_rate_limited)``.
+
+        Terminal states are checked first and, when found, cost exactly ONE
+        request (merged/closed both short-circuit before the comments
+        call). Only a still-open PR spends the second request, and only
+        when the remaining budget allows it — see run_cycle's docstring for
+        the arithmetic this degrades against.
+        """
+        if budget_remaining <= 0:
+            return 0, 0, False
+
+        try:
+            pull = self.github_fetch(
+                repo, pr, token=self.cfg.github_token, timeout_seconds=self.cfg.http_timeout_seconds
+            )
+        except urllib.error.HTTPError as exc:
+            backoff_until, message = _github_rate_limit_backoff(
+                exc, now=self.clock(), fallback_seconds=self.cfg.poll_seconds
+            )
+            if backoff_until is not None:
+                self._github_backoff_until = backoff_until
+                logger.warning(
+                    "GitHub rate limit exhausted in %s lane while checking reply state for "
+                    "%s#%d; backing off for %.0f second(s) until reset%s",
+                    self.cfg.github_lane,
+                    repo,
+                    pr,
+                    max(0.0, backoff_until - self.clock()),
+                    f" ({message})" if message else "",
+                )
+                return 1, 0, True
+            logger.warning("GitHub reply-state check failed for %s#%d: HTTP %d", repo, pr, exc.code)
+            return 1, 0, False
+        except (urllib.error.URLError, TimeoutError, OSError, ValueError) as exc:
+            logger.warning("GitHub reply-state check failed for %s#%d: %s", repo, pr, exc)
+            return 1, 0, False
+
+        submissions = 0
+        if pull.get("merged") is True:
+            merge_commit = pull.get("merge_commit_sha")
+            merge_commit = merge_commit.strip() if isinstance(merge_commit, str) else ""
+            if not merge_commit:
+                logger.warning("merged PR %s#%d did not name a merge commit", repo, pr)
+                return 1, 0, False
+            for task, obs in tasks:
+                if self._submit_reply(
+                    task,
+                    obs.merged_outcome,
+                    f"observed {repo}#{pr} merged at commit {merge_commit} while a decision "
+                    "was pending",
+                    OBSERVATION_KIND,
+                    {"merge_commit": merge_commit},
+                ):
+                    submissions += 1
+            return 1, submissions, False
+
+        if pull.get("state") == "closed":
+            reference = pull.get("html_url") or f"https://github.com/{repo}/pull/{pr}"
+            for task, obs in tasks:
+                if self._submit_reply(
+                    task,
+                    obs.dropped_outcome,
+                    f"observed {repo}#{pr} closed without merging while a decision was pending",
+                    CLOSED_OBSERVATION_KIND,
+                    {"reference": reference},
+                ):
+                    submissions += 1
+            return 1, submissions, False
+
+        # Still open: a second request, budget permitting, looks for a
+        # qualifying reply. Every task in the group watches the same PR, so
+        # the earliest `since` is the honest "question asked" watermark for
+        # the whole group.
+        if budget_remaining < 2:
+            return 1, 0, False
+        since = min((obs.since for _task, obs in tasks if obs.since), default="")
+        try:
+            comments = self.reply_fetch(
+                repo,
+                pr,
+                since=since,
+                token=self.cfg.github_token,
+                timeout_seconds=self.cfg.http_timeout_seconds,
+            )
+        except urllib.error.HTTPError as exc:
+            backoff_until, message = _github_rate_limit_backoff(
+                exc, now=self.clock(), fallback_seconds=self.cfg.poll_seconds
+            )
+            if backoff_until is not None:
+                self._github_backoff_until = backoff_until
+                logger.warning(
+                    "GitHub rate limit exhausted in %s lane while checking reply comments for "
+                    "%s#%d; backing off for %.0f second(s) until reset%s",
+                    self.cfg.github_lane,
+                    repo,
+                    pr,
+                    max(0.0, backoff_until - self.clock()),
+                    f" ({message})" if message else "",
+                )
+                return 2, 0, True
+            logger.warning(
+                "GitHub reply-comment check failed for %s#%d: HTTP %d", repo, pr, exc.code
+            )
+            return 2, 0, False
+        except (urllib.error.URLError, TimeoutError, OSError, ValueError) as exc:
+            logger.warning("GitHub reply-comment check failed for %s#%d: %s", repo, pr, exc)
+            return 2, 0, False
+
+        reply = qualifying_reply(comments, ignored_logins=self.cfg.reply_ignored_logins)
+        if reply is None:
+            return 2, 0, False
+        reference = reply.get("html_url") or f"https://github.com/{repo}/pull/{pr}"
+        for task, obs in tasks:
+            if self._submit_reply(
+                task,
+                obs.answered_outcome,
+                f"observed a reply on {repo}#{pr}",
+                REPLY_OBSERVATION_KIND,
+                {"reference": reference},
+            ):
+                submissions += 1
+        return 2, submissions, False
+
+    def _submit_reply(
+        self,
+        task: HumanTask,
+        outcome: str,
+        note: str,
+        collection_method: str,
+        observed_extra: dict[str, str],
+    ) -> bool:
+        try:
+            self.reply_submit(
+                self.cfg.bridge_url,
+                self.cfg.bridge_token,
+                task,
+                outcome,
+                note,
+                collection_method,
+                observed_extra,
+                timeout_seconds=self.cfg.http_timeout_seconds,
+            )
+        except urllib.error.HTTPError as exc:
+            # A 409 means a human or another tracker completed it after this
+            # cycle's read. That race is already resolved.
+            exc.read()
+            if exc.code == 409:
+                logger.info("task %s was already completed", task.invocation_id)
+            else:
+                logger.warning(
+                    "bridge submit failed for task %s: HTTP %d", task.invocation_id, exc.code
+                )
+            return False
+        except (urllib.error.URLError, TimeoutError, OSError, ValueError) as exc:
+            logger.warning("bridge submit failed for task %s: %s", task.invocation_id, exc)
+            return False
+        return True
 
     def run_forever(self) -> None:
         while True:

@@ -5,11 +5,47 @@
 # credentials: `approved` on the human gate MEANS the human already merged
 # the PR themselves (see README.md, "the human-merges rule").
 #
-# The cycle: sweep -> triage -> fix -> review -> human-approves-pr, with
-# `approved` looping back to sweep for the next item, `changes_required`
-# looping back to fix, an empty sweep parking on a kind=human actor node
-# (the between-items park, task t12's human-inbox bridge), and a broken
-# sweep backing off on a wait node (task t9) before retrying.
+# The cycle: sweep -> triage -> fix -> review, then review's two verdicts
+# diverge: `approve` goes straight to the merge assignment
+# (human-merges-pr), `changes_required` goes to a genuine decision
+# (ask-pr-question -> notify-decision-pending -> human-answers-review)
+# because the flow cannot itself judge whether the reviewer's findings hold
+# up. `human-answers-review.merged` and `.answered` both loop back into the
+# cycle; `.dropped` ends the run. An empty sweep returns straight to
+# `backoff` (task t9's durable wait) and re-sweeps; a broken sweep uses the
+# SAME wait node before retrying. Every human interaction in this graph is
+# now a real-world artifact the tracker observes (merge, reply, or PR
+# closure) — see the "Idle vs blocked" note below.
+#
+# Idle vs blocked (issue #71, the operator's design decision on #71):
+# `human-prepares-next-item` used to conflate two different states behind
+# one generic "resume/done" park — "nothing to do right now" (idle) and "I
+# need a person to judge something" (blocked) — which is why an idle loop
+# and a blocked loop looked identical and neither could be woken by a newly
+# arrived PR (issue #72 was the deploy-split prerequisite that made this
+# observable in production). The fix removes the node outright:
+#
+#  * IDLE stops being a human task. `triage.empty` now returns to `sweep`
+#    via `backoff` — the SAME 30-minute durable wait `sweep_broken` already
+#    used — instead of parking on a person. Nobody is "assigned" an idle
+#    repository, and `sweep` is now both the loop's entry AND its resting
+#    place. This is issue #71's Option C, deliberately re-scoped: it is no
+#    longer a stopgap sitting beside a human park, it IS the idle path.
+#  * BLOCKED gets a real decision, wired from `review.changes_required`
+#    (the one point in this graph where the flow has a specific question it
+#    cannot answer itself): `ask-pr-question` posts the review's findings as
+#    a PR comment (the question belongs where the review conversation
+#    already lives), `notify-decision-pending` announces to Discord that a
+#    decision is pending (adapters/notify, issue #68 — the notification
+#    says a decision is waiting, the PR holds the substance), and
+#    `human-answers-review` parks on an `observe: {kind: github_pr_reply}`
+#    declaration — exactly the shape `human-merges-pr` already uses for
+#    `github_pr_merged`, generalized in adapters/human-inbox's tracker
+#    (issue #71's tracker.py changes; see that adapter's README for the
+#    rate-budget arithmetic and the "which reply counts" rule). A PR that
+#    gets merged or closed while the question is pending is ALSO an
+#    observable — `human-answers-review.merged` / `.dropped` — so a question
+#    posted to a PR that is later merged or closed does not wait forever.
 #
 # Authoring decisions worth stating outright:
 #
@@ -33,15 +69,21 @@
 #     keeps codex sessions analysis-only, so the run-input contract below
 #     pins `review_sandbox` to the literal "read-only".
 #
-#  3. `human-approves-pr` declares `changes_required` as an EXPLICIT
-#     contract outcome next to the approval kind's implied
-#     approved/rejected/expired: the compiler merges contract and implied
-#     outcomes into the human task's allowed_outcomes, so the person at
-#     the gate can answer "changes required" as a first-class domain
-#     outcome that follows its own edge back to fix — not as a `rejected`
-#     overload. `rejected` here means "drop this item, end the run";
-#     `expired` is left unrouted on the delivery-loop precedent (a
-#     decision nobody made has no edge to follow).
+#  3. `ask-pr-question` reuses the FIX actor (`company/developer`), not a
+#     new identity: it is the only actor in this flow with an established
+#     GitHub write credential (it already opens/updates PRs), and the
+#     review actor stays read-only per issue #18. `human-answers-review`
+#     declares THREE outcomes because a decision node genuinely has three
+#     ways to stop waiting: `answered` (a qualifying reply — loops back to
+#     `fix` for another pass, mirroring the old changes_required->fix
+#     edge), `merged` (the human just merged the PR instead of replying —
+#     the strongest possible "yes", loops back to `sweep` like
+#     `human-merges-pr.merged` does), and `dropped` (the PR closed unmerged,
+#     auto-observed, OR a manual override — ends the run, mirroring the old
+#     rejected->finish edge). `answered`/`merged`/`dropped` are all AUTO
+#     outcomes except `dropped`'s manual lane, which — like
+#     `human-merges-pr` — always remains available (README's "override
+#     lanes stay intact").
 #
 #  4. Acceptance blocks use `enforce: observe` (this pass of issue #37):
 #     every check verdict lands as a derived record without touching
@@ -70,7 +112,7 @@ spec:
     input:
       schema:
         type: object
-        required: [repo, review_repo, fix_instruction, review_instruction, review_sandbox, park_instruction, merge_instruction]
+        required: [repo, review_repo, fix_instruction, review_instruction, review_sandbox, ask_instruction, notify_title, notify_description, await_reply_instruction, merge_instruction]
         additionalProperties: false
         properties:
           # The one repo this flow works on (claim c26): the fix/review
@@ -98,7 +140,26 @@ spec:
           review_sandbox:
             type: string
             const: read-only
-          park_instruction:
+          # What ask-pr-question tells the fix actor to post as a PR
+          # comment when review comes back changes_required (issue #71: the
+          # question belongs in the review thread, not a second inbox).
+          ask_instruction:
+            type: string
+            minLength: 1
+          # notify-decision-pending's Discord message is deliberately
+          # STATIC text, not per-PR detail: "the notification says a
+          # decision is waiting, the PR holds the substance" (the operator's
+          # design decision on issue #71) — the reader follows the PR link
+          # in the ask-pr-question comment for the actual question.
+          notify_title:
+            type: string
+            minLength: 1
+          notify_description:
+            type: string
+            minLength: 1
+          # human-answers-review's park instruction — what it is durably
+          # waiting for (a PR reply, or the PR's own terminal state).
+          await_reply_instruction:
             type: string
             minLength: 1
           merge_instruction:
@@ -109,10 +170,12 @@ spec:
         type: object
 
   # Bounded for a few loop iterations (PRD §9.7): sweep is re-entered by
-  # `approved` (next item), by the human park's `resume`, and by the
-  # backoff wait after a broken sweep, so it gets the deepest headroom;
-  # fix is re-entered by the gate's `changes_required`. maxDuration is
-  # human-timescale because two nodes in the cycle wait on people.
+  # `human-merges-pr.merged` and `human-answers-review.merged` (next item),
+  # and by `backoff` after EITHER an empty sweep (issue #71: idle is no
+  # longer a human task) or a broken one, so it gets the deepest headroom;
+  # fix is re-entered by `human-answers-review.answered`. maxDuration is
+  # human-timescale because the flow parks on people at both
+  # human-merges-pr and human-answers-review.
   limits:
     maxDuration: 168h
     maxTransitions: 64
@@ -265,8 +328,11 @@ spec:
     # records (/nodes/fix/evidence, task t7) beside the run-wide evidence
     # projection (task t6), and the fix node's self-reported output —
     # labelled as a completion claim, not verified fact (PRD §10.4).
-    # BOTH verdicts route to the human gate: every loop-back through the
-    # billable fix actor passes a person first.
+    # BOTH verdicts reach a human: `approve` becomes an active merge
+    # assignment (human-merges-pr), `changes_required` becomes a genuine
+    # decision (ask-pr-question -> notify-decision-pending ->
+    # human-answers-review, issue #71) — every loop-back through the
+    # billable fix actor passes a person first, either way.
     review:
       kind: agent
       ownerRef: team/quality
@@ -332,31 +398,6 @@ spec:
           maxAttempts: 2
           backoff: exponential
 
-    # The gate. The person here reads the review's verdict and the real
-    # PR, and their `approved` is a statement of FACT: "I merged it" —
-    # the flow itself holds no merge credential, so the approval act and
-    # the merge act are the same person's same decision (README.md).
-    # `changes_required` is declared as an explicit contract outcome so it
-    # lands in the task's allowed_outcomes next to the implied vocabulary.
-    human-approves-pr:
-      kind: approval
-      ownerRef: team/platform-ai
-      decisionSchemaRef: ./contracts/pr-approval-decision.schema.json
-      approverRef: group/platform-ai-approvers
-      deadline: 72h
-      input:
-        from: /nodes/review/output
-      contract:
-        outcomes:
-          changes_required:
-            schema:
-              type: object
-              required: [notes]
-              properties:
-                notes:
-                  type: string
-                  minLength: 1
-
     # The merge task (user decision, cycle 6 refinement): a PR that is
     # through review with no pending fixes becomes an ACTIVE assignment on
     # the kind=human actor — "merge this PR" lands in the person's inbox as
@@ -401,34 +442,130 @@ spec:
         retry:
           maxAttempts: 1
 
-    # The between-items park (task t12): an agent-kind node whose actor is
-    # registered kind=human through the human-inbox bridge — the run parks
-    # durably (no lease, no worker) until the person answers through the
-    # inbox, exactly the section-13 lifecycle every agent actor follows.
-    # company/human-ops is the bridge README's registration example. The
-    # long timeout is task t11's human-timescale deadline, authored per
-    # node — no actor-kind branching anywhere.
-    human-prepares-next-item:
+    # The question, posted where the review conversation already lives
+    # (issue #71, replacing human-prepares-next-item's generic park for the
+    # "blocked on a judgement" case). Reuses the FIX actor
+    # (company/developer): it is the only actor in this flow with an
+    # established GitHub write credential (it already opens/updates this
+    # exact PR), so posting a comment on it needs no new identity. The
+    # review actor stays read-only per issue #18 and could not do this.
+    ask-pr-question:
+      kind: agent
+      ownerRef: team/developer-experience
+      uses: actor://company/developer@sha256:3333333333333333333333333333333333333333333333333333333333333333
+      input:
+        bindings:
+          instruction: /run/input/ask_instruction
+          repo: /run/input/repo
+          pr: /nodes/fix/output/pr_number
+          reviewVerdict: /nodes/review/output
+      contract:
+        input:
+          schema:
+            type: object
+            required: [instruction, repo]
+        outcomes:
+          posted:
+            schema:
+              type: object
+              properties:
+                comment_url:
+                  type: string
+      ledger:
+        propose: [claim, result]
+      policy:
+        timeout: 10m
+        retry:
+          maxAttempts: 2
+          backoff: exponential
+
+    # The announcement (issue #68's adapters/notify, declared step with a
+    # ledger record). Deliberately says only that a decision is PENDING —
+    # "the notification says a decision is waiting, the PR holds the
+    # substance" (the operator's design decision on issue #71) — so
+    # notify_title/notify_description are static per-run text, not a
+    # per-PR composition the binding surface cannot build (bindings resolve
+    # JSON pointers, not templated strings). require_delivery is left
+    # unbound (defaults false): a dead or unconfigured webhook must not
+    # stall this flow — the PARK on human-answers-review is the real gate,
+    # not the notification.
+    notify-decision-pending:
+      kind: agent
+      ownerRef: team/platform-ai
+      uses: actor://company/notify-discord@sha256:7777777777777777777777777777777777777777777777777777777777777777
+      input:
+        bindings:
+          title: /run/input/notify_title
+          description: /run/input/notify_description
+      contract:
+        input:
+          schema:
+            type: object
+            required: [title, description]
+        outcomes:
+          sent:
+            schema:
+              type: object
+              properties:
+                delivered:
+                  type: boolean
+                status_code:
+                  type: [integer, "null"]
+      ledger:
+        propose: [claim]
+      policy:
+        timeout: 30s
+        retry:
+          maxAttempts: 1
+
+    # The wait. An agent-kind node on the SAME kind=human actor
+    # human-merges-pr uses (company/human-ops, task t12's bridge), parked on
+    # `observe: {kind: github_pr_reply}` — the tracker's NEW observation
+    # kind (issue #71's adapters/human-inbox/src/human_inbox_bridge/
+    # tracker.py changes). Three outcomes because there are three genuine
+    # ways to stop waiting, all auto-observed except dropped's manual lane:
+    #   * answered — a qualifying PR reply landed; loops back to `fix` for
+    #     another pass (mirrors the old human-approves-pr.changes_required
+    #     edge).
+    #   * merged   — the human merged the PR instead of replying, the
+    #     strongest possible answer; loops back to `sweep`, same as
+    #     human-merges-pr.merged.
+    #   * dropped  — the PR closed unmerged while the question sat unread
+    #     (auto-observed, so a question on a dead PR does not wait forever),
+    #     or a manual override; ends the run (mirrors the old
+    #     human-approves-pr.rejected edge).
+    # The long timeout matches human-merges-pr's human-timescale deadline.
+    human-answers-review:
       kind: agent
       ownerRef: team/platform-ai
       uses: actor://company/human-ops@sha256:8888888888888888888888888888888888888888888888888888888888888888
       input:
         bindings:
-          instruction: /run/input/park_instruction
-          sweepReport: /nodes/sweep/output
+          instruction: /run/input/await_reply_instruction
+          reviewVerdict: /nodes/review/output
+          questionPosted: /nodes/ask-pr-question/output
+          observe:
+            kind: github_pr_reply
+            pr: /nodes/fix/output/pr_number
       contract:
         input:
           schema:
             type: object
             required: [instruction]
         outcomes:
-          resume:
+          answered:
             schema:
               type: object
               properties:
                 note:
                   type: string
-          done:
+          merged:
+            schema:
+              type: object
+              properties:
+                note:
+                  type: string
+          dropped:
             schema:
               type: object
               properties:
@@ -437,13 +574,16 @@ spec:
       ledger:
         propose: [claim]
       policy:
-        timeout: 72h
+        timeout: 168h
         retry:
           maxAttempts: 1
 
-    # A broken sweep waits before retrying (task t9's durable wait timer):
-    # transient API weather should not burn a maxVisitsPerNode slot every
-    # few seconds. The park is durable — no lease held while waiting.
+    # The idle/broken wait (task t9's durable wait timer), now doing double
+    # duty (issue #71): a genuinely BROKEN sweep waits before retrying so
+    # transient API weather does not burn a maxVisitsPerNode slot every few
+    # seconds, and an EMPTY sweep (idle — nothing to do) waits here too
+    # instead of parking on a person. The park is durable — no lease held
+    # while waiting, either way.
     backoff:
       kind: wait
       ownerRef: team/platform-ai
@@ -469,8 +609,13 @@ spec:
 
     - from: triage.items
       to: fix
+    # issue #71: idle is no longer a human task. An empty sweep returns to
+    # `backoff` — the SAME wait node a broken sweep uses — and re-sweeps
+    # in 30m, exactly like sweep_broken below. Nobody is "assigned" an idle
+    # repository, and this is what makes `sweep` both the loop's start and
+    # its resting place.
     - from: triage.empty
-      to: human-prepares-next-item
+      to: backoff
     - from: triage.sweep_broken
       to: backoff
 
@@ -482,32 +627,33 @@ spec:
 
     # A clean review verdict becomes an ACTIVE merge assignment on the
     # human actor (user decision: "waiting for merge" is work in a
-    # person's inbox, not a passive gate); changes_required still passes
-    # the approval gate so a loop-back through the billable fix actor is
-    # never decided by an agent alone.
+    # person's inbox, not a passive gate); changes_required goes to a
+    # genuine decision (issue #71) instead of a second inbox — the question
+    # posts to the PR that review just examined.
     - from: review.approve
       to: human-merges-pr
     - from: review.changes_required
-      to: human-approves-pr
+      to: ask-pr-question
     - from: human-merges-pr.merged
       to: sweep
     - from: human-merges-pr.dropped
       to: finish
 
-    # approved = "I merged the PR myself" -> sweep the next item.
-    - from: human-approves-pr.approved
-      to: sweep
-    # changes_required follows its own edge back to fix, notes in the
-    # ledger's decision history for the next pass.
-    - from: human-approves-pr.changes_required
-      to: fix
-    # rejected = drop this item, end the run with the sweep report.
-    - from: human-approves-pr.rejected
-      to: finish
-    # `expired` is deliberately unrouted (delivery-loop precedent): a
-    # decision nobody made has no edge to follow.
+    - from: ask-pr-question.posted
+      to: notify-decision-pending
+    - from: notify-decision-pending.sent
+      to: human-answers-review
 
-    - from: human-prepares-next-item.resume
+    # answered = a qualifying PR reply landed -> back to fix for another
+    # pass, notes carried in the ledger's decision history.
+    - from: human-answers-review.answered
+      to: fix
+    # merged = the human merged the PR instead of replying, the strongest
+    # possible answer -> sweep the next item, same as human-merges-pr.
+    - from: human-answers-review.merged
       to: sweep
-    - from: human-prepares-next-item.done
+    # dropped = the PR closed unmerged (auto-observed, so a pending
+    # question never waits on a dead PR) or a manual override -> end the
+    # run with the sweep report.
+    - from: human-answers-review.dropped
       to: finish

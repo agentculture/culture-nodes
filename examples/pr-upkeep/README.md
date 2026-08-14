@@ -7,6 +7,51 @@ at a time through a human-gated fix/review cycle. Every loop iteration
 passes a person; the flow can propose, fix, and review — it can never
 merge.
 
+## Deployment configuration
+
+Everything this example needs from the world outside its graph, and where
+each value comes from. Loading it into a deployment that is not this one
+means supplying these — it never means editing `workflow.yaml`.
+
+| Value | Where it comes from |
+| --- | --- |
+| `repo`, `review_repo` | **Run input.** Two per-host working directories: `repo` is where the fix actor works, `review_repo` is the review actor's own allowlisted checkout on its own machine. Neither is the work under review — that crosses as `handoff` (see "The cross-machine handoff"). |
+| `fix_instruction`, `review_instruction`, `ask_instruction`, `await_reply_instruction`, `merge_instruction`, `notify_title`, `notify_description`, `review_sandbox` | **Run input.** The words each actor is given, authored per run; [`driver.sh`](driver.sh) carries this deployment's defaults and every one is overridable by an environment variable it documents. |
+| `actor://company/developer` | **Actor registry.** The fix lane, and the only identity here holding a GitHub write credential. |
+| `actor://company/codex-thor` | **Actor registry.** The review lane — deliberately a different backend *and* host from the fix lane. The `thor` in the id is a registry key naming a role, not a hostname you must own: `internal/worker/registry.go` resolves the identity against your actors table (with the `@sha256` revision suffix stripped), so you register the same id against your own endpoint. |
+| `actor://company/human-ops` | **Actor registry.** The `kind=human` inbox bridge. |
+| `actor://company/notify-discord` | **Actor registry.** The notify adapter (issue #68). |
+| `runner://headspace/docker` | **Runner registry.** The code-node runner boundary the sweep dispatches through. |
+| `PR_UPKEEP_SWEEP_SOURCE_URL` | **Granted environment value** on the sweep operation. Where `sweep.py` is fetched from at dispatch time. |
+| `PR_UPKEEP_SWEEP_SOURCE_SHA256` | **Granted environment value.** The sha256 those fetched bytes must have; the bootstrap refuses to execute anything else. |
+| `PR_UPKEEP_MAX_PRS_PER_SWEEP`, `PR_UPKEEP_REQUIRED_CHECKS`, `GITHUB_TOKEN` | **Process environment of the sweep**, all optional except the token's effect on rate limits. Documented at their constants in `sweep.py`. |
+| `SONAR_COMPONENT_KEY`, `GITHUB_REPO` | **Pinned in `sweep.py`, on purpose** — see below. This is *the one value a new operator changes*, and they change it in their own copy of the script. |
+
+The granted environment values are the ones a reader cannot trace from the
+document alone: they resolve in the worker process that dispatches the
+operation, and the runner boundary refuses the operation **by name** when
+one is unset (`internal/runners/headspace/bridge.go`'s `resolveEnv`). That
+is why they are named in the workflow's own header as well as here.
+
+Until task t16 the sweep's script came from a `raw.githubusercontent` URL
+pinned to one org, one commit and one path. A third party who loaded this
+example got a graph that silently fetched and executed *our* bytes — a
+supply-chain property, not a portability wart. Fork `sweep.py`, publish your
+copy, and grant its URL and digest:
+
+```bash
+sha256sum examples/pr-upkeep/sweep.py   # the value for PR_UPKEEP_SWEEP_SOURCE_SHA256
+```
+
+Both values are resolved by the **runner** process, from its own
+environment — see [`deploy/prod/README.md`](../../deploy/prod/README.md)'s
+"Granted environment values" for where they live on this deployment and how
+`deploy.sh` re-grants them.
+
+A digest mismatch, or either value unset, exits nonzero — which `triage`
+reads as `sweep_broken` and routes to the backoff wait, like any other
+broken sweep. The `0` / `10` / other exit-code contract is untouched.
+
 ## The graph
 
 Issue #71 removed the between-items human park: idle is no longer a human
@@ -200,7 +245,20 @@ terms:
 ## The single-repo boundary (claim c26)
 
 This flow works on culture-nodes and nothing else. The repo is hard-coded,
-not configured per run:
+not configured per run — and that is the point rather than an oversight. It
+is a **blast-radius boundary**: `fetch_open_pulls` walks *every* open PR on
+the repo and reads each one's comments and check runs, so a repo taken from
+run input would aim that enumeration wherever a caller pointed it, on a
+credential the script did not choose. Pinned in code, re-pointing it is an
+edit someone makes deliberately in a fork.
+
+So it stays pinned, and it is **the one value a new operator changes** to
+run this example against their own repo: edit the two constants in your
+copy of `sweep.py` — the copy `PR_UPKEEP_SWEEP_SOURCE_URL` points at — and
+nothing else. Both halves are stated at the constants themselves, and
+`tests/test_pr_upkeep_sweep.py`'s `TestTheSweptRepoIsPinnedAndSaysSo`
+asserts that the pin is real (plain literals, no environment value able to
+re-point it) *and* that this note still exists.
 
 - `sweep.py` pins `SONAR_COMPONENT_KEY` and `GITHUB_REPO` to this repo —
   the single configuration mention of the SonarCloud component key:
@@ -419,9 +477,11 @@ on: `scripts/validate-examples.sh` and `tests/lint/examplescompile_test.go`
 
 ## Operational notes
 
-- The sweep operation expects the extractor at `/opt/pr-upkeep/sweep.py`
-  inside the pinned `python:3.12-slim` image — bake it in or bind-mount it
-  when registering the runner. **Egress: DECLARED intent is `network:
+- The sweep operation **fetches** the extractor at dispatch time from the
+  URL its deployment grants and verifies its sha256 before executing it (see
+  "Deployment configuration"); the pinned `python:3.12-slim` image needs
+  nothing baked in, since the script is stdlib-only. **Egress: DECLARED
+  intent is `network:
   egress-allowlist` (sonarcloud.io + api.github.com only).** Headspace-cli
   0.11.0 supports only disabled/enabled network posture, so the boundary
   honestly rejects the allowlist as `rejected_input` (issue #50). The

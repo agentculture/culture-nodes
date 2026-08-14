@@ -21,6 +21,36 @@
 # instead of an interactive skill invocation. See README.md for the full
 # reasoning, the binding this example actually uses (and why), and the
 # honesty conditions it satisfies and does not.
+#
+# Deployment configuration (task t16) — what this graph needs from outside
+# it, and where each value comes from. The fleet names in the prose above
+# are PROVENANCE (which backends this deployment registered these ids
+# against); nothing below requires them.
+#
+#   RUN INPUT (the run's input document; examples/independent-review/
+#   input.json is a complete one):
+#     repo                     what both actors work on.
+#     build_instruction,
+#     review_instruction       the words each node's actor is given.
+#     review_success_outcome   which branch a given run exercises.
+#
+#   ACTOR REGISTRY (an id in `uses:`, resolved by
+#   internal/worker/registry.go against this deployment's actors table with
+#   the @sha256 revision suffix stripped):
+#     actor://company/developer    the build lane.
+#     actor://company/codex-thor   the review lane.
+#   The load-bearing property is that these two ids are DIFFERENT and
+#   resolve to different model families -- that is the whole pattern. Which
+#   ids, and which backends behind them, is a deployment's choice: register
+#   any two that differ and the example still says what it says.
+#
+#   THE DEPLOYMENT'S IMAGE REGISTRY: the workspace-snapshot hook operation
+#   below is pinned to `registry.example/workspace-snapshot@sha256:...` -- a
+#   placeholder domain (RFC 2606's reserved `.example`), deliberately not a
+#   real one. Point it at your own image; keep the digest pin.
+#
+#   The `ship-review` approval node places on no actor: the engine parks its
+#   token and a person resumes it through the decision endpoint.
 apiVersion: nodes.culture.dev/v1alpha1
 kind: Workflow
 

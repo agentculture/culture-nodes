@@ -53,6 +53,14 @@ import pytest
 EXAMPLE_DIR = Path(__file__).resolve().parents[1] / "examples" / "pr-upkeep"
 FIXTURES = EXAMPLE_DIR / "fixtures"
 
+#: Task t16's third acceptance criterion, as one phrase asserted in both
+#: places the criterion names — beside the constant, and in the example's
+#: README. Keeping it a single string here means a rewording is one edit and
+#: a DELETION is a failing test, which is the point: the swept repo staying
+#: hard-coded is a deliberate blast-radius boundary, and a deliberate boundary
+#: that nobody wrote down is indistinguishable from an unexplained constant.
+OPERATOR_CHANGE_PHRASE = "the one value a new operator changes"
+
 
 def _load_sweep():
     spec = importlib.util.spec_from_file_location("pr_upkeep_sweep", EXAMPLE_DIR / "sweep.py")
@@ -628,6 +636,136 @@ class TestStdlibOnlyImports:
             root for root in roots if root != "__future__" and root not in sys.stdlib_module_names
         }
         assert non_stdlib == set()
+
+
+class TestTheSweptRepoIsPinnedAndSaysSo:
+    """Task t16, criterion 3, which only LOOKS like a contradiction.
+
+    Hard-coding the swept repo is a deliberate blast-radius boundary: this
+    sweep must not generalise to arbitrary repos, and that stays. What t16
+    changes is that the boundary becomes VISIBLE — stated at the constant and
+    named in the README as the one value a new operator changes — instead of
+    being an unexplained constant a reader has to reverse-engineer.
+
+    So these tests assert both halves: the pin is real (a plain literal, with
+    nothing in the module able to override it from the environment), and the
+    pin is documented in both places the criterion names.
+    """
+
+    #: Every environment value the sweep is allowed to read. An exact set, not
+    #: a subset: the whole point of the boundary is that no environment value
+    #: re-points the swept repo, and "we only added one more" is exactly the
+    #: change that should have to be made deliberately, in a diff that edits
+    #: this line and says why.
+    ALLOWED_ENVIRONMENT_READS = {
+        "GITHUB_TOKEN",
+        "PR_UPKEEP_MAX_PRS_PER_SWEEP",
+        "PR_UPKEEP_REQUIRED_CHECKS",
+    }
+
+    @staticmethod
+    def _source():
+        return (EXAMPLE_DIR / "sweep.py").read_text()
+
+    def _constant_assignment(self, name):
+        """sweep.py's module-level assignment node for `name`."""
+        for node in ast.parse(self._source()).body:
+            targets = getattr(node, "targets", [])
+            if isinstance(node, ast.Assign) and any(
+                isinstance(target, ast.Name) and target.id == name for target in targets
+            ):
+                return node
+        raise AssertionError(f"sweep.py declares no module-level {name}")
+
+    @staticmethod
+    def _prose(text):
+        """Wrapped prose as one line, so an assertion about a phrase is not
+        really an assertion about where the author's line breaks fell."""
+        return " ".join(text.replace("#", " ").split())
+
+    @classmethod
+    def _preceding_comment_block(cls, source, needle):
+        """The contiguous run of `#` comment lines directly above `needle`,
+        normalised to a single line of prose."""
+        lines = source.splitlines()
+        for index, line in enumerate(lines):
+            if line.startswith(needle):
+                block = []
+                cursor = index - 1
+                while cursor >= 0 and lines[cursor].lstrip().startswith("#"):
+                    block.append(lines[cursor])
+                    cursor -= 1
+                return cls._prose("\n".join(reversed(block)))
+        raise AssertionError(f"sweep.py has no line starting with {needle!r}")
+
+    def test_both_constants_are_plain_pinned_literals(self):
+        for name, value in (
+            ("SONAR_COMPONENT_KEY", "agentculture_culture-nodes"),
+            ("GITHUB_REPO", "agentculture/culture-nodes"),
+        ):
+            node = self._constant_assignment(name)
+            assert isinstance(node.value, ast.Constant), (
+                f"{name} is not a plain string literal. A value assembled at import time "
+                "is a value something can re-point, and the blast-radius boundary is "
+                "supposed to be un-re-pointable (claim c26)."
+            )
+            assert node.value.value == value
+            assert getattr(sweep, name) == value
+
+    def test_no_environment_value_can_re_point_the_swept_repo(self):
+        names = set()
+        for node in ast.walk(ast.parse(self._source())):
+            if isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute):
+                target = node.func.value
+                if (
+                    node.func.attr in {"get", "getenv"}
+                    and node.args
+                    and isinstance(node.args[0], ast.Constant)
+                    and isinstance(target, ast.Attribute)
+                    and target.attr == "environ"
+                ):
+                    names.add(node.args[0].value)
+            elif isinstance(node, ast.Subscript):
+                target = node.value
+                if (
+                    isinstance(target, ast.Attribute)
+                    and target.attr == "environ"
+                    and isinstance(node.slice, ast.Constant)
+                ):
+                    names.add(node.slice.value)
+        assert names == self.ALLOWED_ENVIRONMENT_READS, (
+            "the sweep reads environment values this test does not sanction. If a new "
+            "one is legitimate, add it above deliberately — and if it names a repo or a "
+            "component key, it is the boundary this example refuses to make configurable."
+        )
+
+    def test_the_pin_is_explained_where_the_pin_is(self):
+        block = self._preceding_comment_block(self._source(), "SONAR_COMPONENT_KEY =")
+        assert "blast radius" in block.lower(), (
+            "the comment above the constants does not say WHY they stay hard-coded. "
+            "Without the reason, a later reader reasonably reads a pinned repo as an "
+            "oversight and 'fixes' it into run input."
+        )
+        assert OPERATOR_CHANGE_PHRASE in block, (
+            f"the comment above the constants does not name them as {OPERATOR_CHANGE_PHRASE!r}; "
+            "a reader who forks this example has to guess what to edit."
+        )
+
+    def test_the_readme_names_the_same_one_value(self):
+        readme = (EXAMPLE_DIR / "README.md").read_text()
+        assert OPERATOR_CHANGE_PHRASE in self._prose(readme)
+        for name in ("SONAR_COMPONENT_KEY", "GITHUB_REPO"):
+            assert name in readme, f"the README never names {name}"
+
+    def test_the_readme_carries_the_deployment_configuration_section(self):
+        # Criterion 2 for this example: every environment-specific value is
+        # pointed at, with its source named. The workflow's granted
+        # environment values are the ones a reader cannot otherwise trace —
+        # they resolve in the worker process's environment, not in the file.
+        readme = (EXAMPLE_DIR / "README.md").read_text()
+        assert "## Deployment configuration" in readme
+        for ref in ("PR_UPKEEP_SWEEP_SOURCE_URL", "PR_UPKEEP_SWEEP_SOURCE_SHA256"):
+            assert ref in readme, f"the README never names the granted value {ref}"
 
 
 class TestExitCodeBranches:

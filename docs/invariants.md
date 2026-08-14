@@ -1,8 +1,9 @@
 # Invariant gates
 
 Invariants 1 and 2 below are batch-wide promises enforced by one source
-sweep; [invariant 3](#invariant-3--every-committed-example-compiles-73) is a
-later, differently-shaped gate over the `examples/` tree. All of them run
+sweep; [invariant 3](#invariant-3--every-committed-example-compiles-73) and
+[invariant 4](#invariant-4--every-committed-example-is-portable-t16) are
+later, differently-shaped gates over the `examples/` tree. All of them run
 under the ordinary `go test ./...`.
 
 Two batch-wide promises from the attempts-evidence-humans-loops spec
@@ -128,6 +129,41 @@ state issue #73 describes.
 
 Run it locally with `scripts/validate-examples.sh` (set `NODES_BIN` to reuse
 an already-built binary).
+
+## Invariant 4 — Every committed example is portable (t16)
+
+Invariant 3 asks whether an example *compiles*. This one asks whether a
+deployment that is not ours can actually **load** it. A committed demo is
+read and copied by third parties; one that quietly assumes our fleet is a
+demo that fails for everyone else, and — in the case this invariant was
+written for — one that quietly ran our code on their machines.
+
+An environment-specific value reaches a graph through exactly three named
+sources, and nothing else:
+
+| Source | Shape in the graph | Who supplies it |
+| --- | --- | --- |
+| Run input | a `/run/input/...` pointer, property declared in `spec.contract.input` | the run's input document |
+| Actor / runner registry | an `actor://` or `runner://` id in `uses:` | the deployment's actors table, resolved by `internal/worker/registry.go` with the `@sha256` revision suffix stripped |
+| Granted environment values | an `environmentRefs` name on a code operation | the worker process that dispatches it; `internal/runners/headspace/bridge.go`'s `resolveEnv` refuses the operation **by name** when one is unset |
+
+Everything else in a graph is deployment-independent. A hostname, an
+address, a filesystem path or a source URL may appear in a **comment**,
+where it is provenance — "this deployment observed the 403 on thor" is worth
+keeping — and never in a **value**, where it is a requirement the loader
+cannot satisfy.
+
+| Layer | What it enforces |
+| --- | --- |
+| `tests/lint/exampleportability_test.go` | Reads each committed document (not the compiled IR — what a third party copies is the document). No value may carry a hostname, an IPv4 address, an absolute host path, or an absolute URL; `uses:` identities are the one exception, being registry keys. Every registry id and every `environmentRefs` name must be named in that file's own `Deployment configuration` block, since those are the values that resolve *outside* the document. And no code operation's `argv` may contain a URL at all. |
+| `tests/test_pr_upkeep_sweep.py::TestTheSweptRepoIsPinnedAndSaysSo` | The one deliberate exception, both halves. `sweep.py`'s `SONAR_COMPONENT_KEY` and `GITHUB_REPO` stay hard-coded — a blast-radius boundary, since the sweep walks every open PR on the repo it names — and the test asserts the pin is *real* (plain literals; the module's set of environment reads is exact and repo-free) and that it is *documented*, at the constant and in the example's README, as the one value a new operator changes. |
+
+The sharpest thing this invariant catches is not portability at all. Before
+t16, `examples/pr-upkeep/workflow.yaml`'s sweep node fetched its script from
+a `raw.githubusercontent` URL pinned to one org, one commit and one path: a
+third party who loaded the demo got a graph that silently fetched and
+executed *our* bytes. The source is now a granted value the deployment
+chooses, verified against a granted sha256 before anything runs.
 
 ## Extending an allowlist
 

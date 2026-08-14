@@ -16,8 +16,8 @@
 # lists "parallel, join, foreach, or subworkflow execution" under things
 # explicitly NOT in scope yet, and spec.entry names exactly one starting
 # node — there is no fan-out node kind this schema can express today. So
-# codex-thor runs first (it is spec.entry), and its `completed` outcome
-# edges into codex-orin; codex-orin's `completed` outcome edges into
+# codex-first runs first (it is spec.entry), and its `completed` outcome
+# edges into codex-second; codex-second's `completed` outcome edges into
 # `finish`. Both nodes still each get their own proposed ledger claim
 # attributed to their own actor, which is what the acceptance criterion
 # (issue #14 h1) actually requires — it does not require wall-clock overlap.
@@ -36,6 +36,35 @@
 # character placeholders below are exactly as arbitrary as
 # self-hosting-loop's own (`1111...`, `2222...`, etc.), just distinguished
 # per node here.
+#
+# Deployment configuration (task t16) — what this graph needs from outside
+# it, and where each value comes from. This example used to name THIS
+# deployment's machines in its own vocabulary: node ids `codex-thor` /
+# `codex-orin` and run-input properties `thor_repo` / `orin_repo`. Nothing
+# in the graph required those hosts — the placement is in `uses:` — so the
+# names did nothing but tell a reader their fleet was wrong. The graph now
+# says what it actually means: a FIRST codex actor and a SECOND one.
+#
+#   RUN INPUT (the run's input document; run-smoke.sh builds one):
+#     first_repo, second_repo   each actor's own working directory ON ITS
+#                               OWN HOST. Two properties rather than one
+#                               because a path is meaningful on exactly one
+#                               machine (issue #74) and these two nodes are
+#                               deliberately on two.
+#     instruction, sandbox, success_outcome
+#                               what each session is asked to do, and the
+#                               read-only posture the codex bridge enforces.
+#
+#   ACTOR REGISTRY (an id in `uses:`, resolved by
+#   internal/worker/registry.go against this deployment's actors table with
+#   the @sha256 revision suffix stripped):
+#     actor://company/codex-thor    the first registered codex actor.
+#     actor://company/codex-orin    the second, on a different machine.
+#   Those ids carry this deployment's machine names because that is what we
+#   registered them as; they are registry KEYS, not hostnames a loader must
+#   own. What the smoke proves is that TWO DISTINCT registered codex actors
+#   each complete a node and each write their own claim — register any two
+#   ids you like against your own endpoints and the proof is the same one.
 apiVersion: nodes.culture.dev/v1alpha1
 kind: Workflow
 
@@ -45,13 +74,13 @@ metadata:
   ownerRef: team/platform-ai
 
 spec:
-  entry: codex-thor
+  entry: codex-first
 
   contract:
     input:
       schema:
         type: object
-        required: [instruction, sandbox, success_outcome, thor_repo, orin_repo]
+        required: [instruction, sandbox, success_outcome, first_repo, second_repo]
         properties:
           instruction:
             type: string
@@ -59,9 +88,9 @@ spec:
             type: string
           success_outcome:
             type: string
-          thor_repo:
+          first_repo:
             type: string
-          orin_repo:
+          second_repo:
             type: string
     output:
       schema:
@@ -80,14 +109,14 @@ spec:
   nodes:
     # Entry node. Placed on company/codex-thor by `uses`, per
     # internal/worker/registry.go's actor-key resolution.
-    codex-thor:
+    codex-first:
       kind: agent
       ownerRef: team/platform-ai
       uses: actor://company/codex-thor@sha256:1111111111111111111111111111111111111111111111111111111111111a
       input:
         bindings:
           instruction: /run/input/instruction
-          repo: /run/input/thor_repo
+          repo: /run/input/first_repo
           sandbox: /run/input/sandbox
           success_outcome: /run/input/success_outcome
       contract:
@@ -124,14 +153,14 @@ spec:
           backoff: none
 
     # Second hop of the chain. Placed on company/codex-orin.
-    codex-orin:
+    codex-second:
       kind: agent
       ownerRef: team/platform-ai
       uses: actor://company/codex-orin@sha256:2222222222222222222222222222222222222222222222222222222222222b
       input:
         bindings:
           instruction: /run/input/instruction
-          repo: /run/input/orin_repo
+          repo: /run/input/second_repo
           sandbox: /run/input/sandbox
           success_outcome: /run/input/success_outcome
       contract:
@@ -159,10 +188,10 @@ spec:
       kind: end
       ownerRef: team/platform-ai
       output:
-        from: /nodes/codex-orin/output
+        from: /nodes/codex-second/output
 
   edges:
-    - from: codex-thor.completed
-      to: codex-orin
-    - from: codex-orin.completed
+    - from: codex-first.completed
+      to: codex-second
+    - from: codex-second.completed
       to: finish

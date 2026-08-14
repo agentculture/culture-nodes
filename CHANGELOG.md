@@ -5,6 +5,21 @@ All notable changes to this project will be documented in this file.
 Format follows [Keep a Changelog](https://keepachangelog.com/). This project
 adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.19.0] - 2026-08-14
+
+### Added
+
+- Invariant 4 — every committed example is portable: `tests/lint/exampleportability_test.go` refuses a graph value that names a hostname, address, absolute host path or URL, requires every `actor://`/`runner://` id and `environmentRefs` name to be documented in that file's own `Deployment configuration` block, and forbids a URL in any code operation's argv (task t16)
+- A `Deployment configuration` block in all eleven example workflows, naming every value that resolves outside the document and where it comes from
+- `tests/test_pr_upkeep_sweep.py::TestTheSweptRepoIsPinnedAndSaysSo` — the swept repo's pin is real (plain literals, an exact and repo-free set of environment reads) and documented at the constant and in the README
+- `deploy/prod/deploy.sh` re-grants `PR_UPKEEP_SWEEP_SOURCE_URL`/`PR_UPKEEP_SWEEP_SOURCE_SHA256` to the runner env when the deploying operator sets them
+
+### Changed
+
+- examples/pr-upkeep's sweep node no longer fetches its script from a raw.githubusercontent URL pinned to one org and commit; the source and its expected sha256 are granted environment values the deployment supplies, and the bootstrap refuses bytes whose digest does not match (task t16). The 0/10/other exit-code contract is unchanged
+- examples/codex-smoke-pair renames node ids `codex-thor`/`codex-orin` to `codex-first`/`codex-second` and run inputs `thor_repo`/`orin_repo` to `first_repo`/`second_repo`; actor placement stays on the registered `company/codex-thor`/`company/codex-orin` ids. `run-smoke.sh`'s `THOR_REPO`/`ORIN_REPO` become `FIRST_REPO`/`SECOND_REPO`
+- `tests/deploy/codexsmoke_test.go` asserts node id and actor id separately instead of deriving one from the other
+
 ## [0.18.2] - 2026-08-14
 
 ### Added

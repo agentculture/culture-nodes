@@ -53,6 +53,27 @@ ssh "$HOST" 'umask 077; mkdir -p ~/.culture-nodes/bin ~/.culture-nodes/runner-st
   echo "NODES_RUNNER_HEADSPACE_PROFILES=sha256:57cd7c3a7a273101a6485ba99423ee568157882804b1124b4dd04266317710de=python3.12"
   echo "NODES_RUNNER_HEADSPACE_BIN=$HOME/.local/bin/headspace"
 } > ~/.culture-nodes/runner.env'
+
+# examples/pr-upkeep's sweep node names its script source as a granted
+# environment value rather than baking a URL into the graph (task t16), so
+# WHOSE code that node runs is a property of this deployment. The runner
+# boundary resolves environment_refs from its OWN process environment
+# (internal/runners/headspace/bridge.go), which for a systemd unit means
+# runner.env -- and the block above REWRITES that file on every deploy, so
+# these two have to be re-granted here rather than hand-added once.
+#
+# Unset is a legitimate state, not a misconfiguration: it means this host
+# does not run the pr-upkeep sweep, and the boundary refuses that one
+# operation by name instead of quietly fetching somebody else's script.
+if [ -n "${PR_UPKEEP_SWEEP_SOURCE_URL:-}" ] && [ -n "${PR_UPKEEP_SWEEP_SOURCE_SHA256:-}" ]; then
+	ssh "$HOST" "umask 077; { \
+		echo 'PR_UPKEEP_SWEEP_SOURCE_URL=${PR_UPKEEP_SWEEP_SOURCE_URL}'; \
+		echo 'PR_UPKEEP_SWEEP_SOURCE_SHA256=${PR_UPKEEP_SWEEP_SOURCE_SHA256}'; \
+	} >> ~/.culture-nodes/runner.env"
+	say "granted the pr-upkeep sweep source to the runner on $HOST"
+else
+	say "PR_UPKEEP_SWEEP_SOURCE_URL/_SHA256 unset: pr-upkeep's sweep is not configured on $HOST (see examples/pr-upkeep/README.md)"
+fi
 ssh "$HOST" "loginctl enable-linger \$(id -un) 2>/dev/null || true"
 ssh "$HOST" "export XDG_RUNTIME_DIR=/run/user/\$(id -u); mkdir -p ~/.config/systemd/user && cp $REMOTE_DIR/deploy/prod/nodes-runner.service ~/.config/systemd/user/ && systemctl --user daemon-reload && systemctl --user restart nodes-runner && systemctl --user enable nodes-runner"
 ssh "$HOST" 'export XDG_RUNTIME_DIR=/run/user/$(id -u); for i in $(seq 1 15); do st=$(systemctl --user is-active nodes-runner || true); [ "$st" = active ] && { echo "runner: active"; exit 0; }; sleep 2; done; echo "runner failed to become active:"; systemctl --user --no-pager -n 10 status nodes-runner; exit 1'

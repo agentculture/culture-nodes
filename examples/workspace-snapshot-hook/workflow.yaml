@@ -36,6 +36,25 @@
 # TestPostRunWorkspaceSnapshotEvidenceIsAppendedNotAgentDelta proves the
 # worker/ledger half of that claim against an in-process fake runner shaped
 # the way a snapshot-capable runner would answer.
+#
+# Deployment configuration (task t16) — what this graph needs from outside
+# it, and where each value comes from:
+#
+#   RUN INPUT (the run's input document):
+#     instruction   what the review node's actor is asked to do.
+#
+#   ACTOR REGISTRY (an id in `uses:`, resolved by
+#   internal/worker/registry.go against this deployment's actors table with
+#   the @sha256 revision suffix stripped):
+#     actor://company/developer   the review node's actor.
+#
+#   THE DEPLOYMENT'S IMAGE REGISTRY: the post_run hook's operation is pinned
+#   to `registry.example/policy-checks@sha256:...` -- a placeholder domain
+#   (RFC 2606's reserved `.example`), deliberately not a real one, because
+#   the policy check a team runs is theirs. Point it at your own image; the
+#   digest pin is the part to keep. The hook itself names no `uses:` and no
+#   environmentRefs: a hook dispatches through the runner the worker already
+#   has, and this one's argv is self-contained.
 apiVersion: nodes.culture.dev/v1alpha1
 kind: Workflow
 

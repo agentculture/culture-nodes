@@ -79,6 +79,27 @@ the binary, the env file, and the unit. The runner's bearer secret lives
 in `~/.culture-nodes/runner.secret` on each machine, mirrored to the
 operator's `~/.culture-nodes/runner-secret.<host>` for registry entries.
 
+### Granted environment values (`environment_refs`)
+
+A code operation can *name* an environment value it needs; the runner
+resolves the name from its **own** process environment and refuses the
+operation by name when it is unset. Values therefore live in
+`~/.culture-nodes/runner.env` on the runner host — and because `deploy.sh`
+rewrites that file every deploy, it also re-grants them, reading them from
+the deploying operator's environment:
+
+```bash
+PR_UPKEEP_SWEEP_SOURCE_URL=https://…/sweep.py \
+PR_UPKEEP_SWEEP_SOURCE_SHA256=$(sha256sum examples/pr-upkeep/sweep.py | cut -d' ' -f1) \
+  deploy/prod/deploy.sh thor
+```
+
+Those two are `examples/pr-upkeep`'s sweep script source and its expected
+digest (task t16): the workflow names *that it needs a script*, this
+deployment decides *whose*. Leave them unset on a host that does not run the
+pr-upkeep loop — the sweep is then refused there by name, which is the
+correct answer and not a silent fallback to someone else's code.
+
 ## The runner registry (NODES_RUNNER_SERVICES_FILE)
 
 A worker only dispatches code over the network when

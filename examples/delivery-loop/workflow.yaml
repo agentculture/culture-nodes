@@ -47,6 +47,32 @@
 # (PRD §13.7). The default e2e run executes it through a scripted fake Runner;
 # the `e2elive` variant executes this same operation through the real
 # headspace-cli Docker bridge.
+#
+# Deployment configuration (task t16) — what this graph needs from outside
+# it, and where each value comes from:
+#
+#   RUN INPUT (the run's input document; examples/delivery-loop/input.json
+#   is a complete one):
+#     request      the work to deliver, authored per run.
+#     repository   which repository it concerns. A plain identifier the
+#                  actors interpret, not a path on any particular host.
+#
+#   ACTOR / RUNNER REGISTRY (an id in `uses:`, resolved by
+#   internal/worker/registry.go against this deployment's actors table with
+#   the @sha256 revision suffix stripped -- register the SAME ids against
+#   your own endpoints):
+#     actor://company/intake       the intake node.
+#     actor://company/planner      the planning node.
+#     actor://company/developer    the build node.
+#     actor://company/verifier     the verification node.
+#     runner://headspace/docker    the runner boundary the `test` code node
+#                                  dispatches through; WHERE that runner is
+#                                  lives in the deployment's runner services
+#                                  file (see examples/placement-proof).
+#
+#   The `human-review` approval node places on no actor at all: the engine
+#   parks its token by writing a human_tasks row, and a person resumes it
+#   through the decision endpoint. There is nothing to register for it.
 apiVersion: nodes.culture.dev/v1alpha1
 kind: Workflow
 

@@ -5,6 +5,22 @@
 # entry "placement-proof/probe" pointing at spark's runner service, once at
 # thor's — zero changes to this file between the runs. Placement lives in
 # the deployment's NODES_RUNNER_SERVICES_FILE, never in the workflow.
+#
+# Deployment configuration (task t16) — what this graph needs from outside
+# it. There is exactly one entry, which is the proof:
+#
+#   RUNNER REGISTRY (an id in `uses:`):
+#     runner://headspace/docker   the runner boundary this node dispatches
+#                                 through. WHERE that runner is lives in the
+#                                 deployment's NODES_RUNNER_SERVICES_FILE,
+#                                 so re-pointing this node at another
+#                                 machine is a registry edit, not a graph
+#                                 edit -- proven live by running the SAME
+#                                 published digest against two different
+#                                 runner services.
+#
+#   The node takes no run input at all, and the image is pinned by digest,
+#   so there is nothing else for a loader to supply.
 apiVersion: nodes.culture.dev/v1alpha1
 kind: Workflow
 

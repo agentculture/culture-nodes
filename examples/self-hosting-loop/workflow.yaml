@@ -11,6 +11,30 @@
 #      the claude bridge maps success to one declared outcome, so branch
 #      selection between ship and rework belongs to the human reviewing the
 #      real diff — approved ships, rejected loops back to build.
+#
+# Deployment configuration (task t16) — what this graph needs from outside
+# it, and where each value comes from:
+#
+#   RUN INPUT (the run's input document):
+#     repo                 the working directory on whichever host each
+#                          agent actor is registered on. The claude-code
+#                          bridge refuses an invocation naming a repo
+#                          outside its OWN allowlist, so this value is
+#                          agreed between the run and the actor -- never
+#                          something the engine decides.
+#     intake_instruction, plan_instruction, build_instruction,
+#     verify_instruction   the words each node's actor is given, per run.
+#
+#   ACTOR / RUNNER REGISTRY (an id in `uses:`, resolved by
+#   internal/worker/registry.go against this deployment's actors table):
+#     actor://company/intake       the intake node.
+#     actor://company/planner      the planning node.
+#     actor://company/developer    the build node.
+#     actor://company/verifier     the verification node.
+#     runner://headspace/docker    the runner boundary for the code node.
+#
+#   The `ship-review` approval node places on no actor: the engine parks its
+#   token and a person resumes it through the decision endpoint.
 apiVersion: nodes.culture.dev/v1alpha1
 kind: Workflow
 

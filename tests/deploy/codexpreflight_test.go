@@ -252,7 +252,14 @@ func TestPreflightReadsConfigPathFromEnv(t *testing.T) {
 
 	script := preflightScriptPath(t)
 	cmd := exec.Command(script)
-	cmd.Env = append(os.Environ(), "CODEX_BRIDGE_CONFIG="+configPath)
+	// Same PATH prepend runPreflight does, for the same reason: check 7
+	// probes a real host capability, and a CI runner that cannot create a
+	// user namespace would fail this test on the machine rather than on the
+	// CODEX_BRIDGE_CONFIG fallback it is here to cover. Any test that builds
+	// its own command instead of calling runPreflight must repeat this.
+	cmd.Env = append(os.Environ(),
+		"PATH="+dir+string(os.PathListSeparator)+os.Getenv("PATH"),
+		"CODEX_BRIDGE_CONFIG="+configPath)
 	var outBuf, errBuf bytes.Buffer
 	cmd.Stdout = &outBuf
 	cmd.Stderr = &errBuf

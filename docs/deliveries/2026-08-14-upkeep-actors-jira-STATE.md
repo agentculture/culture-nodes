@@ -1,11 +1,17 @@
 # upkeep-actors-jira — mid-cycle state (pre-compaction handoff)
 
+> **Superseded for reporting purposes.** The cycle's accountability artifact is
+> [`2026-08-14-upkeep-actors-jira.md`](2026-08-14-upkeep-actors-jira.md) — the
+> delivery summary (plan task t18), with all eighteen tasks accounted for and
+> every claim carrying evidence. This file is kept because it holds the
+> operational diagnosis and the hard-won cautions the summary does not repeat.
+
 Written 2026-08-14 as a compaction checkpoint. Everything here is recoverable
 from disk, git, GitHub or the ledger — this file is the index, not the source.
 
 ## Where the work lives
 
-- branch: `upkeep/scope-spec-plan`, HEAD `0c9d62e` (not yet pushed, no PR open)
+- branch: `upkeep/scope-spec-plan`, pushed; PR [#85](https://github.com/agentculture/culture-nodes/pull/85)
 - spec: `docs/specs/2026-08-14-upkeep-actors-jira.md` (converged, challenged, re-exported)
 - plan: `docs/plans/2026-08-14-upkeep-actors-jira.md` (18 tasks, 5 waves, 69/69 targets)
 - frame/plan state: `.devague/frames/` + `.devague/plans/upkeep-actors-jira.json`
@@ -32,23 +38,22 @@ from disk, git, GitHub or the ledger — this file is the index, not the source.
 | t16 | merged `032c01b` | committed demos are portable; sweep source is a granted value (#48). Graded 5 |
 | t15 | merged `0c9d62e` | preflight capability surface on all four bridges (#67). Graded 4, see #83 |
 | — | committed `3332057` | **operator lane:** preflight check 7 + provisioning docs (#63), closing its last gap |
-| **t12** | **running** | run `01M00KDG9C1WW2638PTCNVPP3G`, worktree `upkeep-t12` |
-| t17 | blocked on a deploy | three pr-upkeep items through the merge gate — see below |
-| t18 | not started | delivery summary (`/summarize-delivery`) |
+| t12 | merged `f4f2757` | post-deploy credential audit (#69 item 2). Graded 5 — found orin's missing token live |
+| — | committed `a5438a3` | **operator lane:** the claude actor token now reaches orin too |
+| t17 | **partial** | the sweep works again and a cycle completed, but 0 items reached the merge gate — blocked by #79 |
+| t18 | delivered | the delivery summary beside this file |
 
 ## Immediate next actions
 
-1. Gate-merge t12 when it lands: **tests before AND after**, then
-   `git worktree remove` and `nodes-op grade <run> --rating N --notes ...`.
-   Its worktree is `/home/spark/git/.worktrees.culture-nodes/upkeep-t12/`.
-   A failed run needs `--actor actor_claude_developer_D0ANYDJHVDXB3FXY`
-   because grade cannot discover an actor without a succeeded attempt.
-2. **Deploy thor + orin** — the operator's decision, taken 2026-08-14: deploy
-   *after* t12 lands so the new post-deploy credential audit is exercised on a
-   real deploy. The deploy must set `PR_UPKEEP_SWEEP_SOURCE_URL` and
-   `PR_UPKEEP_SWEEP_SOURCE_SHA256`, or t16's sweep is refused by name.
-3. Then t17 (run pr-upkeep for real), then t18.
-4. PR at the END — operator decision, recorded as deviation `d1`.
+All plan tasks are done and the PR is open. What remains is not this cycle's:
+
+1. Land PR #85 once its checks are green.
+2. **#79 is the one blocker left on the pr-upkeep loop.** Everything else in
+   it works now; see the delivery summary and the live evidence on the issue.
+3. Re-running the loop needs `PR_UPKEEP_SWEEP_SOURCE_URL` /
+   `_SHA256` re-granted, pinned to whatever commit serves the intended
+   `sweep.py` — `deploy.sh` rewrites `runner.env` every deploy, so the grant
+   must be supplied to the deploy, not hand-edited afterwards.
 
 ## Why pr-upkeep has 16 runs and 1 completion (the t17 diagnosis)
 
@@ -59,7 +64,13 @@ different causes**, and two are already resolved:
 |---|---|---|
 | `NODES_CODE_RUNNER_REVISION` was `1`, not a `sha256:` digest, so the runner boundary refused every code dispatch with a 400 | `sweep`, cascading to `triage` ("no succeeded attempt, so it has no output") | **resolved** — the running worker carries the correct digest since its 09:26 restart |
 | `policy_denied` / 401 | `review`, `sweep` | **resolved** — the destroyed `NODES_ACTOR_CLAUDE_TOKEN`; t11 fixes the cause |
-| the sweep's script source is now a granted environment value | `sweep` | **open by design** — t16 made it so; thor's `runner.env` grants neither key, so post-t16 pr-upkeep refuses the sweep *by name*. This is the correct behaviour, and it is what the deploy above must supply |
+| the sweep's script source is now a granted environment value | `sweep` | **resolved** — thor was redeployed with `PR_UPKEEP_SWEEP_SOURCE_URL`/`_SHA256` pinned to commit `0abf042`, whose bytes were digest-matched against the local file first |
+
+A fourth cause was found only once the first three were cleared, and it is the
+one still open: the sweep exits 0 having found work, but a code node's
+persisted output is runner metadata, and no artifact ingest route is mounted —
+so the item list never reaches `fix`. That is **#79**, now the single remaining
+blocker, with live evidence attached to the issue.
 
 A caution that cost time: the worker image is distroless and has no
 `printenv`, so `docker exec … printenv | grep` returns empty and reads as
@@ -69,12 +80,14 @@ A caution that cost time: the worker image is distroless and has no
 
 They are different measures and the plan uses both. Do not merge them.
 
-- **Items through the pr-upkeep loop** (t17's metric): baseline **1**, still
-  **1**. `select wv.workflow_key, count(*) filter (where r.status='completed')
+- **Items through the pr-upkeep loop** (t17's metric): baseline **1**. Workflow
+  completions went to **2**, but the second terminated at `handoff-blocked`, so
+  items driven to a merged PR are **still 1**.
+  `select wv.workflow_key, count(*) filter (where r.status='completed')
   from runs r join workflow_versions wv on wv.id = r.workflow_version_id
   where wv.workflow_key='pr-upkeep' group by 1`
 - **Plan tasks executed through the engine this cycle** (t18's metric):
-  **14 runs, 14 distinct tasks, 12 completed**.
+  **14 runs, 14 distinct tasks, 13 completed**.
   `select count(*), count(distinct category), count(*) filter (where
   status='completed') from runs where category like 'upkeep-%'`
 

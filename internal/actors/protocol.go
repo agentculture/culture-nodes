@@ -24,6 +24,17 @@ const ProtocolVersion = "1.0"
 // actor's base URL.
 const InvocationPath = "/v1/invocations"
 
+// CapabilitiesPath is where an actor MAY serve the capability surface it
+// advertises in its registration (issue #67, task t15) — the host facts
+// internal/preflight composes, verbatim, into the briefing a gated dispatch
+// holds for. It is not a PRD §13 path and nothing in the engine's dispatch
+// path calls it: the surface reaches the control plane through the actor's
+// registration, and this route exists so an operator writing that
+// registration can read the facts off the host that measured them instead of
+// writing down what they believe about it. An actor that serves nothing here
+// is a conformant actor.
+const CapabilitiesPath = "/v1/capabilities"
+
 // CallbackEventsPathFormat builds the callback URL §13.1 hands the actor,
 // relative to the control plane's public base URL. §13.1's example is
 // "https://nodes.example/v1/attempts/att_01J/events".

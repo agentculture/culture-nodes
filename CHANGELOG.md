@@ -5,6 +5,12 @@ All notable changes to this project will be documented in this file.
 Format follows [Keep a Changelog](https://keepachangelog.com/). This project
 adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.20.2] - 2026-08-14
+
+### Added
+
+- docs/deliveries/2026-08-14-upkeep-actors-jira.md — the delivery summary for this cycle (plan task t18). All eighteen plan tasks accounted for as delivered/partial/blocked, the approved d1 deviation quoted as the recorded ground truth, every delivery claim carrying a resolvable evidence pointer, and t17 reported partial rather than rounded up: pr-upkeep completions went 1 to 2 but items driven to a merged PR remain at 1 against a target of three, blocked by the artifact ingest gap in issue 79
+
 ## [0.20.1] - 2026-08-14
 
 ### Added

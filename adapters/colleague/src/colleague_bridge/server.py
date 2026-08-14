@@ -105,11 +105,15 @@ class Handler(BaseHTTPRequestHandler):
     def bridge(self) -> Bridge:
         return self.server.bridge  # type: ignore[attr-defined]
 
-    def _write_json(self, status: int, body: dict[str, Any]) -> None:
+    def _write_json(
+        self, status: int, body: dict[str, Any], *, extra_headers: dict[str, str] | None = None
+    ) -> None:
         payload = json.dumps(body).encode("utf-8")
         self.send_response(status)
         self.send_header("Content-Type", "application/json")
         self.send_header("Content-Length", str(len(payload)))
+        for name, value in (extra_headers or {}).items():
+            self.send_header(name, value)
         self.end_headers()
         try:
             self.wfile.write(payload)
@@ -291,6 +295,17 @@ class Handler(BaseHTTPRequestHandler):
             "model",
             "success_outcome",
             "permission_mode",
+            # t5: session_key (spec claim c3's eventual workstream key,
+            # ADR 0010 §4) and continuation_ref both stay out of the
+            # Bound-inputs block so neither ever reaches the model as
+            # prompt text. This bridge never actually ACTS on either (it
+            # has no resume verb — mapping.py always returns
+            # continuation_ref: null, issue #62), but a value it ignores
+            # must still be excluded, not merely unused: forwarding it
+            # into the prompt anyway would leak a transport-layer secret
+            # (session_key) or a stale handle into the session text.
+            "session_key",
+            "continuation_ref",
         }
         _extras = {k: v for k, v in raw_input.items() if k not in _transport_keys}
         if _extras:
@@ -413,7 +428,13 @@ class Handler(BaseHTTPRequestHandler):
         self.bridge.idempotency.put(
             idem_key, response.status_code, response.body, request_fingerprint=instruction
         )
-        self._write_json(response.status_code, response.body)
+        # capacity_exhausted's delay (t5, deviation d4) rides the HTTP
+        # Retry-After header, never the JSON body — internal/actors/
+        # client.go reads it from exactly that header and nowhere else.
+        extra_headers = None
+        if response.retry_after_seconds is not None:
+            extra_headers = {"Retry-After": str(max(0, round(response.retry_after_seconds)))}
+        self._write_json(response.status_code, response.body, extra_headers=extra_headers)
 
     def _dispatch_async(
         self,

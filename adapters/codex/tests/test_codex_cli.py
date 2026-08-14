@@ -181,6 +181,63 @@ def test_sandbox_modes_are_the_three_codex_declares():
 
 
 # ---------------------------------------------------------------------------
+# _common_argv() resume wiring (task t5, acceptance #1): codex resumes via
+# its own `exec resume <SESSION_ID>` subcommand — verified against
+# `codex exec resume --help` on codex-cli 0.147.0 (PATH) while building
+# this: unlike plain `exec`, `resume` accepts neither `-C`/`--cd` nor
+# `-s`/`--sandbox`, so a resumed dispatch's argv shape is genuinely
+# different, not just `exec` with an extra flag appended.
+# ---------------------------------------------------------------------------
+
+
+def test_common_argv_resume_uses_the_resume_subcommand_with_no_cd_or_sandbox():
+    argv = codex_cli._common_argv(
+        "keep going",
+        "/repo",
+        model=None,
+        sandbox="workspace-write",
+        continuation_ref="0000-thread-1",
+    )
+    assert argv == ["exec", "resume", "0000-thread-1", "--json", "keep going"]
+    assert "-C" not in argv
+    assert "--sandbox" not in argv
+    assert "/repo" not in argv
+
+
+def test_common_argv_resume_includes_model_when_given():
+    argv = codex_cli._common_argv(
+        "keep going",
+        "/repo",
+        model="gpt-5-codex",
+        sandbox="workspace-write",
+        continuation_ref="0000-thread-1",
+    )
+    assert argv == ["exec", "resume", "0000-thread-1", "--json", "-m", "gpt-5-codex", "keep going"]
+
+
+def test_common_argv_without_continuation_ref_is_unchanged_cold_start():
+    argv = codex_cli._common_argv("do the thing", "/repo", model=None, sandbox="workspace-write")
+    assert argv == ["exec", "--json", "--sandbox", "workspace-write", "-C", "/repo", "do the thing"]
+    assert "resume" not in argv
+
+
+def test_run_sync_passes_continuation_ref_through_to_resume_argv(monkeypatch, fake_codex, tmp_path):
+    """End-to-end through run_sync's own argv assembly — pins that the
+    parameter actually reaches the subprocess boundary."""
+    captured = {}
+    real_popen = codex_cli.subprocess.Popen
+
+    def spy_popen(argv, **kwargs):
+        captured["argv"] = argv
+        return real_popen(argv, **kwargs)
+
+    monkeypatch.setattr(codex_cli.subprocess, "Popen", spy_popen)
+    cfg = _cfg(fake_codex, tmp_path, behavior="ok")
+    codex_cli.run_sync(cfg, "resume me", str(tmp_path), continuation_ref="thread-resume-xyz")
+    assert captured["argv"][1:4] == ["exec", "resume", "thread-resume-xyz"]
+
+
+# ---------------------------------------------------------------------------
 # parse_session(): JSONL transcript -> TaskResult-shaped dict
 # ---------------------------------------------------------------------------
 

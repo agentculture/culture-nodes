@@ -89,6 +89,80 @@ def test_error_status_without_error_message_still_reports_execution_failure():
     assert c.error_class == mapping.CLASS_EXECUTION
 
 
+# ---------------------------------------------------------------------------
+# classify() — capacity_exhausted (task t5, deviation d4): the engine-side
+# class already existed (internal/actors/errors.go, t8/t9); nothing on the
+# codex bridge side ever declared it, so a quota/rate/session-limit refusal
+# fell into plain execution and never tripped the capacity breaker.
+# ---------------------------------------------------------------------------
+
+
+def test_rate_limit_error_text_classifies_as_capacity_exhausted():
+    c = mapping.classify(
+        _error_result(
+            error='{"type":"error","status":429,"error":{"type":"rate_limit_error",'
+            '"message":"Rate limit reached"}}'
+        ),
+        CTX,
+        default_success_outcome="completed",
+    )
+    assert c.domain is False
+    assert c.error_class == mapping.CLASS_CAPACITY_EXHAUSTED
+
+
+def test_ordinary_error_status_is_still_plain_execution_not_capacity_exhausted():
+    c = mapping.classify(_error_result(), CTX, default_success_outcome="completed")
+    assert c.error_class == mapping.CLASS_EXECUTION
+    assert c.error_class != mapping.CLASS_CAPACITY_EXHAUSTED
+
+
+def test_capacity_exhausted_extracts_a_named_retry_after_delay():
+    c = mapping.classify(
+        _error_result(error="rate_limit_error: retry after 90 seconds"),
+        CTX,
+        default_success_outcome="completed",
+    )
+    assert c.error_class == mapping.CLASS_CAPACITY_EXHAUSTED
+    assert c.retry_after_seconds == 90.0
+
+
+def test_capacity_exhausted_without_a_named_delay_reports_none_not_zero():
+    c = mapping.classify(
+        _error_result(error="quota exhausted for this billing period"),
+        CTX,
+        default_success_outcome="completed",
+    )
+    assert c.error_class == mapping.CLASS_CAPACITY_EXHAUSTED
+    assert c.retry_after_seconds is None
+
+
+def test_terminal_event_capacity_exhausted_is_failed_kind_with_the_class():
+    ev = mapping.terminal_event(
+        _error_result(error="session limit reached, try again later"),
+        CTX,
+        default_success_outcome="completed",
+        actor_id="a",
+        created_at="now",
+    )
+    assert ev.kind == "failed"
+    assert ev.payload["class"] == mapping.CLASS_CAPACITY_EXHAUSTED
+    assert "retry_after_seconds" not in ev.payload
+
+
+def test_sync_response_capacity_exhausted_surfaces_retry_after_on_the_response_not_the_body():
+    r = mapping.sync_response(
+        _error_result(error="rate_limit_error: retry after 30 seconds"),
+        CTX,
+        default_success_outcome="completed",
+        actor_id="a",
+        created_at="now",
+    )
+    assert r.status_code == 500
+    assert r.body["class"] == mapping.CLASS_CAPACITY_EXHAUSTED
+    assert r.retry_after_seconds == 30.0
+    assert "retry_after_seconds" not in r.body
+
+
 def test_incomplete_without_declared_outcome_is_execution_failure_never_success():
     c = mapping.classify(_incomplete_result(), CTX, default_success_outcome="completed")
     assert c.domain is False
@@ -238,8 +312,21 @@ def test_sync_response_ok_is_200_with_outcome_and_output():
     assert r.status_code == 200
     assert r.body["outcome"] == "completed"
     assert r.body["output"]["summary"] == "did the thing"
-    assert r.body["continuation_ref"] is None
+    # t5: codex's own captured thread id (task_id) IS the continuation_ref
+    # the bridge offers back — a hardcoded None here was the bug t5 fixed.
+    assert r.body["continuation_ref"] == "019fe54f-8e7b-7940-943c-1728fd3a7c6b"
     assert r.body["artifact_refs"] == []
+
+
+def test_sync_response_continuation_ref_is_none_when_codex_reported_no_task_id():
+    r = mapping.sync_response(
+        _ok_result(task_id=None),
+        CTX,
+        default_success_outcome="completed",
+        actor_id="a",
+        created_at="now",
+    )
+    assert r.body["continuation_ref"] is None
 
 
 def test_sync_response_error_is_execution_failure_not_200():
@@ -323,6 +410,28 @@ def test_terminal_event_ok_is_completed_kind():
     assert ev.kind == "completed"
     assert ev.payload["outcome"] == "completed"
     assert ev.payload["ledger_delta"]["records"][0]["authority"] == "proposed"
+
+
+def test_terminal_event_completed_payload_carries_continuation_ref():
+    """Acceptance: 'the async terminal payload carries continuation_ref'
+    (ADR 0010 §2) — the seed for this task never touched codex at all."""
+    ev = mapping.terminal_event(
+        _ok_result(task_id="thread-async-1"),
+        CTX,
+        default_success_outcome="completed",
+        actor_id="a",
+        created_at="now",
+    )
+    assert ev.kind == "completed"
+    assert ev.payload["continuation_ref"] == "thread-async-1"
+
+
+def test_terminal_event_failed_payload_has_no_continuation_ref_key():
+    ev = mapping.terminal_event(
+        _error_result(), CTX, default_success_outcome="completed", actor_id="a", created_at="now"
+    )
+    assert ev.kind == "failed"
+    assert "continuation_ref" not in ev.payload
 
 
 def test_terminal_event_error_is_failed_kind_with_execution_class():

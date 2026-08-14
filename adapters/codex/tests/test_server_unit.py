@@ -153,7 +153,7 @@ def test_unknown_sandbox_is_400(bridge_url):
 def test_sync_dispatch_maps_ok_result_to_200(bridge_url, monkeypatch):
     base, cfg, repo = bridge_url
 
-    def fake_run_sync(cfg_, instruction, repo_, *, model, sandbox):
+    def fake_run_sync(cfg_, instruction, repo_, *, model, sandbox, continuation_ref=None):
         return codex_cli.SyncRunResult(
             exit_code=0,
             stdout="",
@@ -188,6 +188,151 @@ def test_sync_dispatch_maps_ok_result_to_200(bridge_url, monkeypatch):
     assert body["ledger_delta"]["records"][0]["authority"] == "proposed"
 
 
+def test_sync_dispatch_reads_top_level_continuation_ref_and_resumes(bridge_url, monkeypatch):
+    """§13.1's continuation_ref is a TOP-LEVEL request field (a sibling of
+    run_id), not nested inside `input` — see server.py's own comment for
+    why the fallback read exists. This test pins the real wire shape end to
+    end: a top-level continuation_ref reaches codex_cli.run_sync."""
+    base, cfg, repo = bridge_url
+    captured = {}
+
+    def fake_run_sync(cfg_, instruction, repo_, *, model, sandbox, continuation_ref=None):
+        captured["continuation_ref"] = continuation_ref
+        return codex_cli.SyncRunResult(
+            exit_code=0,
+            stdout="",
+            stderr="",
+            task_result={
+                "task_id": "t",
+                "status": "ok",
+                "summary": "resumed",
+                "changed_files": [],
+                "usage": {},
+                "error": None,
+            },
+            timed_out=False,
+        )
+
+    monkeypatch.setattr(codex_cli, "run_sync", fake_run_sync)
+    payload = _invocation_body(str(repo))
+    payload["continuation_ref"] = "thread-prior-999"
+    headers = {**_auth_header(cfg), "Idempotency-Key": "att_resume"}
+    status, _body = _request(base, server.INVOCATIONS_PATH, body=payload, headers=headers)
+    assert status == 200
+    assert captured["continuation_ref"] == "thread-prior-999"
+
+
+def test_sync_dispatch_without_a_prior_ref_dispatches_cold(bridge_url, monkeypatch):
+    base, cfg, repo = bridge_url
+    captured = {}
+
+    def fake_run_sync(cfg_, instruction, repo_, *, model, sandbox, continuation_ref=None):
+        captured["continuation_ref"] = continuation_ref
+        return codex_cli.SyncRunResult(
+            exit_code=0,
+            stdout="",
+            stderr="",
+            task_result={
+                "task_id": "t",
+                "status": "ok",
+                "summary": "cold",
+                "changed_files": [],
+                "usage": {},
+                "error": None,
+            },
+            timed_out=False,
+        )
+
+    monkeypatch.setattr(codex_cli, "run_sync", fake_run_sync)
+    headers = {**_auth_header(cfg), "Idempotency-Key": "att_cold"}
+    status, _body = _request(
+        base, server.INVOCATIONS_PATH, body=_invocation_body(str(repo)), headers=headers
+    )
+    assert status == 200
+    assert captured["continuation_ref"] is None
+
+
+def test_session_key_and_continuation_ref_never_appear_in_the_prompt_text(bridge_url, monkeypatch):
+    """Acceptance: session_key never appears in the prompt text handed to
+    the model — same guarantee as claude-code-bridge's own test, exercised
+    here through codex's own request-handling ladder."""
+    base, cfg, repo = bridge_url
+    captured = {}
+
+    def fake_run_sync(cfg_, instruction, repo_, *, model, sandbox, continuation_ref=None):
+        captured["instruction"] = instruction
+        return codex_cli.SyncRunResult(
+            exit_code=0,
+            stdout="",
+            stderr="",
+            task_result={
+                "task_id": "t",
+                "status": "ok",
+                "summary": "ok",
+                "changed_files": [],
+                "usage": {},
+                "error": None,
+            },
+            timed_out=False,
+        )
+
+    monkeypatch.setattr(codex_cli, "run_sync", fake_run_sync)
+    payload = _invocation_body(
+        str(repo),
+        session_key="actor:repo:workstream-secret",
+        continuation_ref="thread-should-not-leak",
+        fixReport={"summary": "a real bound input"},
+    )
+    headers = {**_auth_header(cfg), "Idempotency-Key": "att_transport_keys"}
+    status, _body = _request(base, server.INVOCATIONS_PATH, body=payload, headers=headers)
+    assert status == 200
+    assert "actor:repo:workstream-secret" not in captured["instruction"]
+    assert "thread-should-not-leak" not in captured["instruction"]
+    assert "a real bound input" in captured["instruction"]
+
+
+def test_sync_capacity_exhausted_failure_is_500_with_retry_after_header(bridge_url, monkeypatch):
+    """Acceptance: a quota/rate-limit CLI failure maps to capacity_exhausted
+    (deviation d4), exercised through the real HTTP response including the
+    Retry-After header internal/actors/client.go reads the delay from."""
+    base, cfg, repo = bridge_url
+
+    def fake_run_sync(cfg_, instruction, repo_, *, model, sandbox, continuation_ref=None):
+        return codex_cli.SyncRunResult(
+            exit_code=1,
+            stdout="",
+            stderr="",
+            task_result={
+                "task_id": "t",
+                "status": "error",
+                "summary": "",
+                "changed_files": [],
+                "usage": {},
+                "error": "rate_limit_error: retry after 45 seconds",
+            },
+            timed_out=False,
+        )
+
+    monkeypatch.setattr(codex_cli, "run_sync", fake_run_sync)
+    headers = {**_auth_header(cfg), "Idempotency-Key": "att_capacity"}
+    req = urllib.request.Request(
+        base + server.INVOCATIONS_PATH,
+        data=json.dumps(_invocation_body(str(repo))).encode("utf-8"),
+        method="POST",
+        headers=headers,
+    )
+    try:
+        with urllib.request.urlopen(req, timeout=10) as resp:  # pragma: no cover - never 2xx here
+            status, resp_headers = resp.status, resp.headers
+            resp_body = json.loads(resp.read().decode("utf-8"))
+    except urllib.error.HTTPError as exc:
+        status, resp_headers = exc.code, exc.headers
+        resp_body = json.loads(exc.read().decode("utf-8"))
+    assert status == 500
+    assert resp_body["class"] == "capacity_exhausted"
+    assert resp_headers.get("Retry-After") == "45"
+
+
 def test_sync_dispatch_maps_crashed_incomplete_session_to_execution_failure_never_success(
     bridge_url, monkeypatch
 ):
@@ -198,7 +343,7 @@ def test_sync_dispatch_maps_crashed_incomplete_session_to_execution_failure_neve
     exemption."""
     base, cfg, repo = bridge_url
 
-    def fake_run_sync(cfg_, instruction, repo_, *, model, sandbox):
+    def fake_run_sync(cfg_, instruction, repo_, *, model, sandbox, continuation_ref=None):
         return codex_cli.SyncRunResult(
             exit_code=0,  # deliberately 0 — mirrors the real grounded SIGTERM case
             stdout="",
@@ -229,7 +374,7 @@ def test_sync_dispatch_maps_crash_before_any_output_to_execution_failure(bridge_
     all (task_result is None) is also never success."""
     base, cfg, repo = bridge_url
 
-    def fake_run_sync(cfg_, instruction, repo_, *, model, sandbox):
+    def fake_run_sync(cfg_, instruction, repo_, *, model, sandbox, continuation_ref=None):
         return codex_cli.SyncRunResult(
             exit_code=1, stdout="", stderr="segfault or similar", task_result=None, timed_out=False
         )
@@ -250,7 +395,7 @@ def test_idempotent_replay_returns_the_same_response_without_recalling_codex(
     base, cfg, repo = bridge_url
     calls = []
 
-    def fake_run_sync(cfg_, instruction, repo_, *, model, sandbox):
+    def fake_run_sync(cfg_, instruction, repo_, *, model, sandbox, continuation_ref=None):
         calls.append(instruction)
         return codex_cli.SyncRunResult(
             exit_code=0,
@@ -285,7 +430,7 @@ def test_validation_failure_is_not_cached_for_replay(bridge_url, monkeypatch):
     status1, body1 = _request(base, server.INVOCATIONS_PATH, body=payload, headers=headers)
     assert status1 == 400
 
-    def fake_run_sync(cfg_, instruction, repo_, *, model, sandbox):
+    def fake_run_sync(cfg_, instruction, repo_, *, model, sandbox, continuation_ref=None):
         return codex_cli.SyncRunResult(
             exit_code=0,
             stdout="",
@@ -323,6 +468,7 @@ def test_async_dispatch_returns_202_and_delivers_accepted_then_completed(bridge_
             callback_url,
             callback_token,
             heartbeat_after_seconds,
+            continuation_ref=None,
         ):
             from codex_bridge.callbacks import CallbackConfig, CallbackEmitter
 
@@ -372,6 +518,9 @@ def test_async_dispatch_returns_202_and_delivers_accepted_then_completed(bridge_
         assert completed["sequence"] > accepted["sequence"]
         assert completed["payload"]["outcome"] == "completed"
         assert completed["payload"]["ledger_delta"]["records"][0]["authority"] == "proposed"
+        # Acceptance: "the async terminal payload carries continuation_ref"
+        # — codex's own captured thread id (task_id) IS the ref.
+        assert completed["payload"]["continuation_ref"] == "async123"
     finally:
         receiver.close()
 

@@ -68,6 +68,7 @@ a real measurement.
 
 from __future__ import annotations
 
+import re
 from dataclasses import dataclass
 from typing import Any
 
@@ -80,10 +81,66 @@ SUBTYPE_ERROR_MAX_TURNS = "error_max_turns"
 
 #: §13.5 error classes this module ever produces (a strict subset of
 #: internal/actors.ErrorClass — the bridge only ever originates the classes
-#: an actor is positioned to know about).
+#: an actor is positioned to know about). capacity_exhausted joined the set
+#: in task t5 (deviation d4): the engine-side class already existed
+#: (internal/actors/errors.go, task t8/t9), but nothing on the bridge side
+#: ever declared it, so a quota/rate/session-limit refusal fell into
+#: CLASS_EXECUTION indistinguishably from any other failure and never
+#: tripped the capacity circuit breaker (internal/worker/breaker.go).
 CLASS_EXECUTION = "execution"
 CLASS_TIMEOUT = "timeout"
 CLASS_ACTOR_REJECTED_INPUT = "actor_rejected_input"
+CLASS_CAPACITY_EXHAUSTED = "capacity_exhausted"
+
+#: Case-insensitive substrings that name a provider-side capacity refusal
+#: (quota, rate limit, or session limit) rather than an ordinary execution
+#: failure. Claude's headless CLI hands this bridge only free text (the
+#: `result` field of an errored `type: "result"` message) — there is no
+#: structured error code of Anthropic's own to switch on here — so this
+#: stays a best-effort match against the Anthropic API's own published
+#: error-type vocabulary (`rate_limit_error`, `overloaded_error`) plus the
+#: everyday phrasing an operator would recognise. `internal/actors/
+#: errors_test.go`'s own fixtures ("quota exhausted", "session limit
+#: reached") are a subset of what this list catches, not the whole of it —
+#: this module is stricter about naming the mechanism (§13.5's
+#: capacity_exhausted class) than the engine test fixtures happen to be.
+_CAPACITY_SIGNALS = (
+    "rate_limit_error",
+    "rate limit",
+    "usage limit",
+    "quota",
+    "too many requests",
+    "overloaded_error",
+    "session limit",
+    " 429",
+    "429 ",
+)
+
+#: Best-effort extraction of a provider-named delay ("retry after 120
+#: seconds", "retry-after: 90s") out of failure text. Deliberately narrow:
+#: an unrecognised phrasing yields no match rather than a guess, and
+#: `capacityPauseUntil` in worker/breaker.go already has an honest default
+#: pause for the "no delay named" case — this bridge does not need to
+#: invent one.
+_RETRY_AFTER_RE = re.compile(r"retry[- ]after[:\s]+(\d+(?:\.\d+)?)\s*(?:s|sec|second)?s?\b", re.I)
+
+
+def _is_capacity_exhausted(*texts: str) -> bool:
+    lowered = " ".join(t.lower() for t in texts if t)
+    return any(signal in lowered for signal in _CAPACITY_SIGNALS)
+
+
+def _capacity_retry_after_seconds(*texts: str) -> float | None:
+    for text in texts:
+        if not text:
+            continue
+        m = _RETRY_AFTER_RE.search(text)
+        if m:
+            try:
+                return float(m.group(1))
+            except ValueError:
+                return None
+    return None
 
 
 @dataclass(frozen=True)
@@ -108,6 +165,9 @@ class InvocationContext:
     #: turn-budget-exhausted run is reported as an execution failure
     #: instead — never as a silent success.
     incomplete_outcome: str | None = None
+    #: A prior session handle to resume (from the engine's
+    #: `continuation_ref` on the InvocationRequest). `None` means cold-start.
+    continuation_ref: str | None = None
 
 
 @dataclass(frozen=True)
@@ -123,6 +183,13 @@ class Classification:
     message: str | None = None
     #: The §13.5 error class, set iff `domain` is False.
     error_class: str | None = None
+    #: The delay claude's own error text named, when `error_class ==
+    #: CLASS_CAPACITY_EXHAUSTED` and one was recognised — None otherwise
+    #: (never zero: zero would read as "retry immediately", which is
+    #: exactly the cascade issue #48 diagnosed). `sync_response` surfaces
+    #: this as the HTTP `Retry-After` header, the one channel
+    #: `internal/actors/client.go` actually reads it from.
+    retry_after_seconds: float | None = None
 
 
 def classify(
@@ -168,7 +235,21 @@ def classify(
     # bridge has never seen, or is_error=true with subtype=success — a
     # combination the CLI should never produce, but this module never
     # trusts is_error and subtype to agree without checking both) is a
-    # domain-less execution failure.
+    # domain-less failure. Before defaulting it to execution, check whether
+    # claude's own result text names a provider capacity refusal (t5,
+    # deviation d4): claude has no separate wire signal for "the provider
+    # said no because of quota", it only ever surfaces that as ordinary
+    # result text, so text-matching against the known vocabulary is the
+    # only way this bridge can tell the two apart.
+    text = str(result.get("result") or "")
+    if _is_capacity_exhausted(text, str(subtype or "")):
+        return Classification(
+            domain=False,
+            message=f"claude reported a provider capacity refusal: {text or subtype!r}",
+            error_class=CLASS_CAPACITY_EXHAUSTED,
+            retry_after_seconds=_capacity_retry_after_seconds(text),
+        )
+
     return Classification(
         domain=False,
         message=f"claude reported subtype={subtype!r} is_error={is_error!r}",
@@ -339,10 +420,22 @@ def claim_record(
 
 @dataclass(frozen=True)
 class SyncResponse:
-    """What the bridge answers to a synchronous invocation."""
+    """What the bridge answers to a synchronous invocation.
+
+    *retry_after_seconds* is NOT part of `body` — it rides beside it. The
+    control plane reads a capacity refusal's delay from the HTTP
+    `Retry-After` header (`internal/actors/client.go`'s
+    `parseRetryAfter(resp.Header.Get("Retry-After"), ...)`), never from the
+    JSON body, so this field exists only so `server.py` can set that header;
+    adding it to `body` instead would be inventing a wire key nothing reads
+    (and would break the exact-key-set contract
+    `test_sync_response_failure_carries_usage_from_terminal_result` pins on
+    the 500 body).
+    """
 
     status_code: int
     body: dict[str, Any]
+    retry_after_seconds: float | None = None
 
 
 def sync_response(
@@ -390,9 +483,12 @@ def sync_response(
         if result is not None:
             body["usage"] = usage_from_result(result)
         return SyncResponse(
-            status_code=500, body=_attach_termination_reason(body, result)
+            status_code=500,
+            body=_attach_termination_reason(body, result),
+            retry_after_seconds=classification.retry_after_seconds,
         )
 
+    r = result or {}
     _declared = declared_result_override(result)
     body = {
         "outcome": _declared[0] if _declared else classification.outcome,
@@ -401,13 +497,11 @@ def sync_response(
             "records": [claim_record(result, ctx, actor_id=actor_id, created_at=created_at)]
         },
         "artifact_refs": [],
-        "continuation_ref": None,
+        "continuation_ref": r.get("session_id") if isinstance(r.get("session_id"), str) else None,
         "usage": usage_from_result(result),
         "workspace_measured": measured,
     }
-    return SyncResponse(
-        status_code=200, body=_attach_termination_reason(body, result)
-    )
+    return SyncResponse(status_code=200, body=_attach_termination_reason(body, result))
 
 
 @dataclass(frozen=True)
@@ -462,10 +556,16 @@ def terminal_event(
         # usage-less rather than reporting fabricated zeros.
         if result is not None:
             payload["usage"] = usage_from_result(result)
-        return TerminalEvent(
-            kind="failed", payload=_attach_termination_reason(payload, result)
-        )
+        # NOTE: unlike sync_response, there is no retry_after_seconds here.
+        # FailedPayload (internal/actors/protocol.go) has no such field —
+        # ADR 0010 deliberately did not extend it, and adding one now would
+        # be inventing a wire key the engine's callback decoder never reads
+        # (worker/breaker.go's own docstring names this the known gap: only
+        # the synchronous dispatch path trips the capacity breaker today).
+        # "class": "capacity_exhausted" alone still rides through, honestly.
+        return TerminalEvent(kind="failed", payload=_attach_termination_reason(payload, result))
 
+    r = result or {}
     _declared = declared_result_override(result)
     payload = {
         "outcome": _declared[0] if _declared else classification.outcome,
@@ -474,9 +574,8 @@ def terminal_event(
             "records": [claim_record(result, ctx, actor_id=actor_id, created_at=created_at)]
         },
         "artifact_refs": [],
+        "continuation_ref": r.get("session_id") if isinstance(r.get("session_id"), str) else None,
         "usage": usage_from_result(result),
         "workspace_measured": measured,
     }
-    return TerminalEvent(
-        kind="completed", payload=_attach_termination_reason(payload, result)
-    )
+    return TerminalEvent(kind="completed", payload=_attach_termination_reason(payload, result))

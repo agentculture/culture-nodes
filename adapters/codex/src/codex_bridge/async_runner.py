@@ -125,6 +125,7 @@ class AsyncRunner:
         callback_url: str,
         callback_token: str,
         heartbeat_after_seconds: int,
+        continuation_ref: str | None = None,
     ) -> str:
         """Spawn `codex exec` in the background and return its invocation
         id immediately. Raises `codex_cli.SpawnError` if the subprocess
@@ -140,9 +141,20 @@ class AsyncRunner:
         before it, instead — the same "as close as possible to the actual
         subprocess spawn" bracketing, just wired at the point this
         architecture actually spawns the child.
+
+        *continuation_ref* (task t5): threaded straight through to
+        `codex_cli.spawn` — the async path is the one long, therefore
+        resume-worth-it, sessions actually take.
         """
         handle = workspace.begin(repo)
-        proc = codex_cli.spawn(self._cfg, instruction, repo, model=model, sandbox=sandbox)
+        proc = codex_cli.spawn(
+            self._cfg,
+            instruction,
+            repo,
+            model=model,
+            sandbox=sandbox,
+            continuation_ref=continuation_ref,
+        )
         invocation_id = uuid.uuid4().hex
         inv = AsyncInvocation(
             invocation_id=invocation_id, proc=proc, ctx=ctx, workspace_handle=handle

@@ -46,6 +46,7 @@ a real measurement.
 
 from __future__ import annotations
 
+import re
 from dataclasses import dataclass
 from typing import Any
 
@@ -57,10 +58,53 @@ STATUS_INCOMPLETE = "incomplete"
 
 #: §13.5 error classes this module ever produces (a strict subset of
 #: internal/actors.ErrorClass — the bridge only ever originates the classes
-#: an actor is positioned to know about).
+#: an actor is positioned to know about). capacity_exhausted joined the set
+#: in task t5 (deviation d4) — see claude_code_bridge.mapping's identical
+#: constant for the full rationale (engine side already existed, t8/t9;
+#: nothing on the bridge side ever declared it).
 CLASS_EXECUTION = "execution"
 CLASS_TIMEOUT = "timeout"
 CLASS_ACTOR_REJECTED_INPUT = "actor_rejected_input"
+CLASS_CAPACITY_EXHAUSTED = "capacity_exhausted"
+
+#: Mirrors claude_code_bridge.mapping._CAPACITY_SIGNALS exactly. colleague
+#: may itself be fronting any number of upstream providers depending on
+#: deployment (docs/contract.md), so this bridge has even less structure to
+#: go on than claude/codex — `TaskResult.error` free text is genuinely the
+#: only signal available, making the same text-matching approach the
+#: honest option here too, not a downgrade from a more precise mechanism
+#: this bridge chose not to use.
+_CAPACITY_SIGNALS = (
+    "rate_limit_error",
+    "rate limit",
+    "usage limit",
+    "quota",
+    "too many requests",
+    "overloaded_error",
+    "session limit",
+    " 429",
+    "429 ",
+)
+
+_RETRY_AFTER_RE = re.compile(r"retry[- ]after[:\s]+(\d+(?:\.\d+)?)\s*(?:s|sec|second)?s?\b", re.I)
+
+
+def _is_capacity_exhausted(*texts: str) -> bool:
+    lowered = " ".join(t.lower() for t in texts if t)
+    return any(signal in lowered for signal in _CAPACITY_SIGNALS)
+
+
+def _capacity_retry_after_seconds(*texts: str) -> float | None:
+    for text in texts:
+        if not text:
+            continue
+        m = _RETRY_AFTER_RE.search(text)
+        if m:
+            try:
+                return float(m.group(1))
+            except ValueError:
+                return None
+    return None
 
 
 @dataclass(frozen=True)
@@ -102,6 +146,10 @@ class Classification:
     message: str | None = None
     #: The §13.5 error class, set iff `domain` is False.
     error_class: str | None = None
+    #: The delay colleague's own error text named, when `error_class ==
+    #: CLASS_CAPACITY_EXHAUSTED` and one was recognised — None otherwise.
+    #: Mirrors claude_code_bridge.mapping.Classification's own field.
+    retry_after_seconds: float | None = None
 
 
 def classify(
@@ -140,6 +188,18 @@ def classify(
         )
 
     if status == STATUS_ERROR:
+        # t5 (deviation d4): before defaulting to plain execution, check
+        # whether colleague's own error text names a provider capacity
+        # refusal — see the module-level _CAPACITY_SIGNALS comment for why
+        # text-matching is the only channel this bridge has.
+        error_text = str(task_result.get("error") or "")
+        if _is_capacity_exhausted(error_text):
+            return Classification(
+                domain=False,
+                message=error_text or "colleague reported a provider capacity refusal",
+                error_class=CLASS_CAPACITY_EXHAUSTED,
+                retry_after_seconds=_capacity_retry_after_seconds(error_text),
+            )
         return Classification(
             domain=False,
             message=task_result.get("error") or "colleague reported status=error",
@@ -287,10 +347,18 @@ def claim_record(
 
 @dataclass(frozen=True)
 class SyncResponse:
-    """What the bridge answers to a synchronous invocation."""
+    """What the bridge answers to a synchronous invocation.
+
+    *retry_after_seconds* is NOT part of `body` — see
+    claude_code_bridge.mapping.SyncResponse's identical field for why: the
+    control plane reads a capacity refusal's delay from the HTTP
+    Retry-After header only (internal/actors/client.go), and server.py is
+    the one place that turns this field into that header.
+    """
 
     status_code: int
     body: dict[str, Any]
+    retry_after_seconds: float | None = None
 
 
 def sync_response(
@@ -338,7 +406,9 @@ def sync_response(
         if task_result is not None:
             body["usage"] = usage_from_task_result(task_result)
         return SyncResponse(
-            status_code=500, body=_attach_termination_reason(body, task_result)
+            status_code=500,
+            body=_attach_termination_reason(body, task_result),
+            retry_after_seconds=classification.retry_after_seconds,
         )
 
     declared = declared_result_override(task_result)
@@ -346,18 +416,21 @@ def sync_response(
         "outcome": declared[0] if declared else classification.outcome,
         "output": declared[1] if declared else output_from_task_result(task_result),
         "ledger_delta": {
-            "records": [
-                claim_record(task_result, ctx, actor_id=actor_id, created_at=created_at)
-            ]
+            "records": [claim_record(task_result, ctx, actor_id=actor_id, created_at=created_at)]
         },
         "artifact_refs": [],
+        # t5: colleague has no resume verb of its own to capture a session
+        # handle from (docs/contract.md's TaskResult carries none) — this
+        # `None` is a permanent, honest null, not a placeholder waiting on
+        # wiring the way claude/codex's continuation_ref was. Upstream
+        # support for a resumable colleague session is tracked in this
+        # repo's issue #62; when/if that lands, this is the line that
+        # changes.
         "continuation_ref": None,
         "usage": usage_from_task_result(task_result),
         "workspace_measured": measured,
     }
-    return SyncResponse(
-        status_code=200, body=_attach_termination_reason(body, task_result)
-    )
+    return SyncResponse(status_code=200, body=_attach_termination_reason(body, task_result))
 
 
 @dataclass(frozen=True)
@@ -412,6 +485,9 @@ def terminal_event(
         # usage-less rather than reporting fabricated zeros.
         if task_result is not None:
             payload["usage"] = usage_from_task_result(task_result)
+        # No retry_after_seconds here: FailedPayload (protocol.go) has no
+        # such field — see claude_code_bridge.mapping.terminal_event's
+        # identical comment for the full reasoning.
         return TerminalEvent(
             kind="failed", payload=_attach_termination_reason(payload, task_result)
         )
@@ -421,14 +497,16 @@ def terminal_event(
         "outcome": _declared[0] if _declared else classification.outcome,
         "output": _declared[1] if _declared else output_from_task_result(task_result),
         "ledger_delta": {
-            "records": [
-                claim_record(task_result, ctx, actor_id=actor_id, created_at=created_at)
-            ]
+            "records": [claim_record(task_result, ctx, actor_id=actor_id, created_at=created_at)]
         },
         "artifact_refs": [],
+        # t5/issue #62: same permanent, honest null as sync_response's own
+        # continuation_ref — ADR 0010 §2 extended CompletedPayload with
+        # this field for the two backends that can actually offer a
+        # handle; colleague still cannot, so it says so explicitly rather
+        # than omitting the key silently.
+        "continuation_ref": None,
         "usage": usage_from_task_result(task_result),
         "workspace_measured": measured,
     }
-    return TerminalEvent(
-        kind="completed", payload=_attach_termination_reason(payload, task_result)
-    )
+    return TerminalEvent(kind="completed", payload=_attach_termination_reason(payload, task_result))

@@ -112,11 +112,15 @@ class Handler(BaseHTTPRequestHandler):
     def bridge(self) -> Bridge:
         return self.server.bridge  # type: ignore[attr-defined]
 
-    def _write_json(self, status: int, body: dict[str, Any]) -> None:
+    def _write_json(
+        self, status: int, body: dict[str, Any], *, extra_headers: dict[str, str] | None = None
+    ) -> None:
         payload = json.dumps(body).encode("utf-8")
         self.send_response(status)
         self.send_header("Content-Type", "application/json")
         self.send_header("Content-Length", str(len(payload)))
+        for name, value in (extra_headers or {}).items():
+            self.send_header(name, value)
         self.end_headers()
         try:
             self.wfile.write(payload)
@@ -296,6 +300,16 @@ class Handler(BaseHTTPRequestHandler):
             "model",
             "success_outcome",
             "permission_mode",
+            # t5: session_key (spec claim c3's eventual workstream key,
+            # ADR 0010 §4) and continuation_ref both stay out of the
+            # Bound-inputs block so neither ever reaches the model as
+            # prompt text. continuation_ref itself is a TOP-LEVEL §13.1
+            # request field per internal/actors/protocol.go (read from
+            # `body`, not `raw_input`, below) — it is listed here only as a
+            # defensive belt-and-suspenders exclusion for a caller that
+            # nests it in `input` anyway.
+            "session_key",
+            "continuation_ref",
         }
         _extras = {k: v for k, v in raw_input.items() if k not in _transport_keys}
         if _extras:
@@ -372,6 +386,11 @@ class Handler(BaseHTTPRequestHandler):
 
         success_outcome = raw_input.get("success_outcome") or None
         incomplete_outcome = raw_input.get("incomplete_outcome") or None
+        # §13.1's continuation_ref is a top-level request field (a sibling
+        # of run_id/node_run_id/attempt_id), mirroring how those are read
+        # from `body` two lines below — not nested inside `input`. The
+        # `raw_input.get(...)` fallback is defensive only.
+        continuation_ref = body.get("continuation_ref") or raw_input.get("continuation_ref") or None
 
         ctx = mapping.InvocationContext(
             run_id=str(body.get("run_id") or ""),
@@ -379,6 +398,7 @@ class Handler(BaseHTTPRequestHandler):
             attempt_id=body.get("attempt_id") or None,
             success_outcome=success_outcome,
             incomplete_outcome=incomplete_outcome,
+            continuation_ref=continuation_ref,
         )
 
         if decide_async(cfg, force_async=force_async, max_steps=max_steps):
@@ -401,7 +421,14 @@ class Handler(BaseHTTPRequestHandler):
         # to the moment codex is actually spawned, so head_before/status
         # bracket the session rather than the whole request-handling ladder.
         handle = workspace.begin(repo)
-        result = codex_cli.run_sync(cfg, instruction, repo, model=model, sandbox=sandbox)
+        result = codex_cli.run_sync(
+            cfg,
+            instruction,
+            repo,
+            model=model,
+            sandbox=sandbox,
+            continuation_ref=ctx.continuation_ref,
+        )
         response = mapping.sync_response(
             result.task_result,
             ctx,
@@ -420,7 +447,13 @@ class Handler(BaseHTTPRequestHandler):
         self.bridge.idempotency.put(
             idem_key, response.status_code, response.body, request_fingerprint=instruction
         )
-        self._write_json(response.status_code, response.body)
+        # capacity_exhausted's delay (t5, deviation d4) rides the HTTP
+        # Retry-After header, never the JSON body — internal/actors/
+        # client.go reads it from exactly that header and nowhere else.
+        extra_headers = None
+        if response.retry_after_seconds is not None:
+            extra_headers = {"Retry-After": str(max(0, round(response.retry_after_seconds)))}
+        self._write_json(response.status_code, response.body, extra_headers=extra_headers)
 
     def _dispatch_async(
         self,
@@ -452,6 +485,7 @@ class Handler(BaseHTTPRequestHandler):
                 repo=repo,
                 model=model,
                 sandbox=sandbox,
+                continuation_ref=ctx.continuation_ref,
                 ctx=ctx,
                 callback_url=callback_url,
                 callback_token=callback_token,

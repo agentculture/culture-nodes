@@ -64,13 +64,41 @@ _TERMINAL_OK = "turn.completed"
 _TERMINAL_FAILED = "turn.failed"
 
 
-def _common_argv(instruction: str, repo: str, *, model: str | None, sandbox: str) -> list[str]:
+def _common_argv(
+    instruction: str,
+    repo: str,
+    *,
+    model: str | None,
+    sandbox: str,
+    continuation_ref: str | None = None,
+) -> list[str]:
     """The `codex exec` argv this bridge generates, minus the binary name
     itself (`Config.codex_bin` is prepended by the caller). Mirrors
     `colleague_cli._common_argv`'s role in that module: the ONE place the
     real command line is assembled, so a test can assert the exact
     argument list without spawning anything.
+
+    *continuation_ref* (task t5): codex's own resume verb is a SEPARATE
+    subcommand, `codex exec resume <SESSION_ID> [PROMPT]`
+    (`codex exec resume --help`, verified against codex-cli 0.147.0 on
+    PATH while building this) — not a flag layered onto plain `exec`. Its
+    flag surface is narrower than `exec`'s own: no `-C`/`--cd` and no
+    `-s`/`--sandbox` — a resumed session already knows its working
+    directory and sandbox policy from when it first started, so passing
+    either would be asserting something resume does not accept (confirmed
+    against the real binary's own `--help`, which lists neither for the
+    `resume` subcommand). `-C repo` remains unnecessary for another reason
+    too: the subprocess itself is spawned with `cwd=repo` (see `run_sync`/
+    `spawn`), so the OS-level working directory is right either way — `-C`
+    is codex's own internal echo of that fact for a fresh session, not the
+    only way this bridge controls it.
     """
+    if continuation_ref:
+        argv = ["exec", "resume", continuation_ref, "--json"]
+        if model:
+            argv += ["-m", model]
+        argv.append(instruction)
+        return argv
     argv = ["exec", "--json", "--sandbox", sandbox, "-C", repo]
     if model:
         argv += ["-m", model]
@@ -144,9 +172,7 @@ def parse_session(stdout: str) -> dict[str, Any] | None:
         reported_model = event.get("model")
         if not isinstance(reported_model, str) or not reported_model:
             reported_model = (
-                reported_usage.get("model")
-                if isinstance(reported_usage, dict)
-                else None
+                reported_usage.get("model") if isinstance(reported_usage, dict) else None
             )
         if isinstance(reported_model, str) and reported_model:
             model = reported_model
@@ -264,6 +290,7 @@ def run_sync(
     *,
     model: str | None = None,
     sandbox: str | None = None,
+    continuation_ref: str | None = None,
 ) -> SyncRunResult:
     """Run `codex exec ...` in the foreground and wait for it to finish.
 
@@ -276,7 +303,13 @@ def run_sync(
     """
     argv = [
         cfg.codex_bin,
-        *_common_argv(instruction, repo, model=model, sandbox=sandbox or cfg.default_sandbox),
+        *_common_argv(
+            instruction,
+            repo,
+            model=model,
+            sandbox=sandbox or cfg.default_sandbox,
+            continuation_ref=continuation_ref,
+        ),
     ]
 
     proc = subprocess.Popen(  # noqa: S603 - the sanctioned subprocess boundary
@@ -329,6 +362,7 @@ def spawn(
     *,
     model: str | None = None,
     sandbox: str | None = None,
+    continuation_ref: str | None = None,
 ) -> subprocess.Popen:
     """Start `codex exec ...` in the background and return the live
     `Popen` handle immediately (near-instant — `Popen` never blocks on the
@@ -342,10 +376,20 @@ def spawn(
     async runner can read this process's stdout pipe as it streams and
     terminate it directly for cancellation, with no file-based
     control-plane convention to mirror.
+
+    *continuation_ref* (task t5): threaded through the same way `run_sync`
+    does — the async path is the one long, therefore resume-worth-it,
+    sessions actually take.
     """
     argv = [
         cfg.codex_bin,
-        *_common_argv(instruction, repo, model=model, sandbox=sandbox or cfg.default_sandbox),
+        *_common_argv(
+            instruction,
+            repo,
+            model=model,
+            sandbox=sandbox or cfg.default_sandbox,
+            continuation_ref=continuation_ref,
+        ),
     ]
     try:
         return subprocess.Popen(  # noqa: S603 - the sanctioned subprocess boundary

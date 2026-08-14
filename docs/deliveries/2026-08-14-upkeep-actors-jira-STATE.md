@@ -5,7 +5,7 @@ from disk, git, GitHub or the ledger — this file is the index, not the source.
 
 ## Where the work lives
 
-- branch: `upkeep/scope-spec-plan`, HEAD `9aeba35` (not yet pushed, no PR open)
+- branch: `upkeep/scope-spec-plan`, HEAD `0c9d62e` (not yet pushed, no PR open)
 - spec: `docs/specs/2026-08-14-upkeep-actors-jira.md` (converged, challenged, re-exported)
 - plan: `docs/plans/2026-08-14-upkeep-actors-jira.md` (18 tasks, 5 waves, 69/69 targets)
 - frame/plan state: `.devague/frames/` + `.devague/plans/upkeep-actors-jira.json`
@@ -28,22 +28,55 @@ from disk, git, GitHub or the ledger — this file is the index, not the source.
 | t10 | merged `10675a1` | deploy placement + assertion; **deployed** (see below) |
 | t13 | merged `58a903d` | `handoff_unavailable` domain outcome (#74 criterion 3) |
 | t14 | merged `9aeba35` | clarify-then-commit gate, engine side (#67) |
-| **t11** | **run completed, NOT merged** | run `01M00HD3YZK3TPP2XBWVSP1JJX`, worktree `upkeep-t11` |
-| **t15** | **running** | run `01M00HD42V6J2NNSA6E2NZTR0K`, worktree `upkeep-t15` |
-| **t16** | **running** | run `01M00HD46AVGWVF9W369X902FA`, worktree `upkeep-t16` |
-| t12 | not started | post-deploy credential audit (#69 item 2), depends t11 |
-| t17 | not started | three pr-upkeep items through the merge gate |
+| t11 | merged `1e84a3f` | prod.env merges, never rewrites; `remove-secret.sh` (#69 item 1). Graded 5 |
+| t16 | merged `032c01b` | committed demos are portable; sweep source is a granted value (#48). Graded 5 |
+| t15 | merged `0c9d62e` | preflight capability surface on all four bridges (#67). Graded 4, see #83 |
+| — | committed `3332057` | **operator lane:** preflight check 7 + provisioning docs (#63), closing its last gap |
+| **t12** | **running** | run `01M00KDG9C1WW2638PTCNVPP3G`, worktree `upkeep-t12` |
+| t17 | blocked on a deploy | three pr-upkeep items through the merge gate — see below |
 | t18 | not started | delivery summary (`/summarize-delivery`) |
 
 ## Immediate next actions
 
-1. Gate-merge t11, t15, t16 as they land: **tests before AND after**, then
+1. Gate-merge t12 when it lands: **tests before AND after**, then
    `git worktree remove` and `nodes-op grade <run> --rating N --notes ...`.
-   Worktrees are `/home/spark/git/.worktrees.culture-nodes/upkeep-<task>/`.
+   Its worktree is `/home/spark/git/.worktrees.culture-nodes/upkeep-t12/`.
    A failed run needs `--actor actor_claude_developer_D0ANYDJHVDXB3FXY`
    because grade cannot discover an actor without a succeeded attempt.
-2. Then t12, t17, t18.
-3. PR at the END — operator decision, recorded as deviation `d1`.
+2. **Deploy thor + orin** — the operator's decision, taken 2026-08-14: deploy
+   *after* t12 lands so the new post-deploy credential audit is exercised on a
+   real deploy. The deploy must set `PR_UPKEEP_SWEEP_SOURCE_URL` and
+   `PR_UPKEEP_SWEEP_SOURCE_SHA256`, or t16's sweep is refused by name.
+3. Then t17 (run pr-upkeep for real), then t18.
+4. PR at the END — operator decision, recorded as deviation `d1`.
+
+## Why pr-upkeep has 16 runs and 1 completion (the t17 diagnosis)
+
+Measured from thor's postgres, not inferred. The 13 failures are **three
+different causes**, and two are already resolved:
+
+| cause | where | state |
+|---|---|---|
+| `NODES_CODE_RUNNER_REVISION` was `1`, not a `sha256:` digest, so the runner boundary refused every code dispatch with a 400 | `sweep`, cascading to `triage` ("no succeeded attempt, so it has no output") | **resolved** — the running worker carries the correct digest since its 09:26 restart |
+| `policy_denied` / 401 | `review`, `sweep` | **resolved** — the destroyed `NODES_ACTOR_CLAUDE_TOKEN`; t11 fixes the cause |
+| the sweep's script source is now a granted environment value | `sweep` | **open by design** — t16 made it so; thor's `runner.env` grants neither key, so post-t16 pr-upkeep refuses the sweep *by name*. This is the correct behaviour, and it is what the deploy above must supply |
+
+A caution that cost time: the worker image is distroless and has no
+`printenv`, so `docker exec … printenv | grep` returns empty and reads as
+"the variable is unset". Use `docker inspect -f '{{range .Config.Env}}…'`.
+
+## The two counts, kept separate
+
+They are different measures and the plan uses both. Do not merge them.
+
+- **Items through the pr-upkeep loop** (t17's metric): baseline **1**, still
+  **1**. `select wv.workflow_key, count(*) filter (where r.status='completed')
+  from runs r join workflow_versions wv on wv.id = r.workflow_version_id
+  where wv.workflow_key='pr-upkeep' group by 1`
+- **Plan tasks executed through the engine this cycle** (t18's metric):
+  **14 runs, 14 distinct tasks, 12 completed**.
+  `select count(*), count(distinct category), count(*) filter (where
+  status='completed') from runs where category like 'upkeep-%'`
 
 ## Deployment already performed
 
@@ -72,8 +105,11 @@ verified by running `bwrap --unshare-user`, not by reading the sysctl back.
 - **Two of nine batch items were already delivered** when the cycle started
   (#71 partly, #73's example half). t1 exists because of that; re-verify
   before implementing.
-- **#73 now looks closable** — both halves shipped (t5 CI gate, t6 literal
-  binding). Confirm the example reads as a declaration before claiming it.
+- **#73 is closed.** Both halves shipped (t5's CI gate, t6's literal binding);
+  verified that `examples/pr-upkeep/workflow.yaml` binds the observable as
+  `observe: {literal: {kind: github_pr_merged}}` with the per-cycle `pr`
+  number kept as a separate pointer, so the declaration is readable in the
+  graph rather than only compiling.
 
 ## Issues filed this cycle
 
@@ -86,16 +122,23 @@ verified by running `bwrap --unshare-user`, not by reading the sysctl back.
 | #80 | Continuation: resume a node under a declared continuation condition |
 | #81 | Author nodes/flows from text via an agent node |
 | #82 | A node deadline does not stop the actor session |
+| #83 | The capability surface reads two sysctls instead of probing, so it can advertise a sandbox mode the host cannot deliver |
 
-Ten issues were also **closed** with evidence citations (41, 43, 45, 46, 47,
-49, 56, 64, 65, 68); 54, 48 and 66 left open with written reasons.
+Ten issues were **closed** with evidence citations (41, 43, 45, 46, 47, 49,
+56, 64, 65, 68); 54, 48 and 66 left open with written reasons. **#73** was
+closed afterwards on the merged t5 + t6 implementation. **#63** now has both
+halves — the provisioning docs it asked for and a preflight check that
+enforces them — and is ready to close once this branch merges.
 
-## Dogfooding count (the t17 metric)
+## Correction to an earlier version of this file
 
-Baseline at cycle start: **1**. Query it the same way both times —
-`select count(distinct category) from runs where category like 'upkeep-%'`
-against thor's postgres. At this checkpoint: **13 distinct plan tasks**
-dispatched through the engine.
+An earlier draft gave one query — `count(distinct category) … like 'upkeep-%'`
+— for a baseline of 1. That conflated the two measures now separated under
+"The two counts, kept separate" above. That query counts *this cycle's plan
+tasks*, and would have returned 0 at cycle start, not 1; the baseline of 1 is
+completions of the **pr-upkeep workflow**, which is a different query against
+a different table. Use the two queries above, and record which one any stated
+number came from.
 
 ## Actor quality, so far
 

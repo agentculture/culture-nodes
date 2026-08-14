@@ -25,6 +25,17 @@ the script's stdout):
   routes `failed`, and triage sends it to the backoff wait instead of
   inventing an empty result.
 
+SonarCloud sees the MAIN branch only unless a query names a `pullRequest`
+(found live: `?componentKeys=...&resolved=false` alone answered `total: 0`
+against this repo while nine real issues sat on open PR #70's own analysis
+context — three `python:S3516` BLOCKERs among them). The sweep queries BOTH:
+the main-branch surface (unchanged) PLUS one `&pullRequest=<n>` query per
+currently open PR, so a PR's own findings are visible before it merges —
+the concrete gap that made a "clean" sweep miss PR #70's nine issues
+entirely. See `MAX_PRS_PER_SWEEP` for the request-budget bound and
+`dedupe_sonar_items` for how a finding that shows up on more than one query
+in the same sweep collapses to one work item.
+
 Dependencies: Python 3.12 stdlib only, mirroring the reference bridges'
 no-PyPI-graph constraint. Unit tests: tests/test_pr_upkeep_sweep.py runs
 the parsing functions against recorded fixtures (see fixtures/).
@@ -33,19 +44,49 @@ the parsing functions against recorded fixtures (see fixtures/).
 from __future__ import annotations
 
 import json
+import os
 import re
 import sys
 import urllib.error
 import urllib.request
 
-# The one repo this sweep is allowed to look at (spec claim c26).
+# The one repo this sweep is allowed to look at (spec claim c26). PR
+# enumeration below stays scoped to OPEN PRs on this exact repo — it does
+# not generalise to arbitrary repos.
 SONAR_COMPONENT_KEY = "agentculture_culture-nodes"
 GITHUB_REPO = "agentculture/culture-nodes"
 
 SONAR_ISSUES_URL = (
     "https://sonarcloud.io/api/issues/search" "?componentKeys={key}&resolved=false&ps=100"
 )
+#: Per-PR analysis context (SonarCloud's `pullRequest` query param) — the
+#: surface the plain SONAR_ISSUES_URL query cannot see (see module
+#: docstring). Findings from this query carry `pr` so a downstream fix node
+#: knows where to push and which thread to answer.
+SONAR_PR_ISSUES_URL = (
+    "https://sonarcloud.io/api/issues/search"
+    "?componentKeys={key}&resolved=false&pullRequest={pr}&ps=100"
+)
 GITHUB_API = "https://api.github.com"
+
+#: Upper bound on open PRs swept per cycle, for BOTH the SonarCloud
+#: per-PR query above and the existing Qodo per-PR comment fetch below —
+#: one shared cap so the two stay consistent instead of drifting.
+#:
+#: Assumption, stated rather than guessed: SonarCloud does not publish a
+#: request-rate ceiling as precise as GitHub's (t35's tracker arithmetic
+#: does not transfer here), so this cap bounds worst-case SonarCloud calls
+#: per sweep to `1 (main) + min(open_pr_count, cap)` regardless of how many
+#: PRs this repo has open, rather than trying to plan against an unknown
+#: number. 10 is deliberately conservative: a sweep is dispatched once per
+#: human-gated loop iteration (hours apart, never a tight poll), not run
+#: continuously like the GitHub merge tracker, so headroom matters less
+#: than a hard, predictable ceiling. Override with
+#: PR_UPKEEP_MAX_PRS_PER_SWEEP. PRs beyond the cap are NOT swept this
+#: cycle — main() logs which ones were dropped rather than truncating
+#: silently, and a dropped PR's issues surface on a later cycle once one of
+#: the swept PRs closes or the cap is raised.
+MAX_PRS_PER_SWEEP = 10
 
 #: Exit code for a clean sweep that found no work. Deliberately not 0 and
 #: not 1: the triage decision node tells "nothing to do" apart from "the
@@ -119,11 +160,15 @@ def severity_rank(severity: str) -> int:
     return _SEVERITY_RANK.get(severity.upper(), len(_SEVERITY_RANK))
 
 
-def sonar_work_items(payload: dict) -> list[dict]:
+def sonar_work_items(payload: dict, *, pr: int | None = None) -> list[dict]:
     """SonarCloud issues-search response -> work items.
 
     Keeps only issues whose status still needs work and strips the
-    component key prefix so `file` is repo-relative.
+    component key prefix so `file` is repo-relative. `pr` names the PR
+    analysis context the caller queried (None for the main-branch query) —
+    stamped onto every item so a downstream fix node knows where to push
+    and which thread to answer; a finding with no PR context is not
+    actionable by the fix lane the way a Qodo finding already is.
     """
     items = []
     for issue in payload.get("issues", []):
@@ -135,6 +180,7 @@ def sonar_work_items(payload: dict) -> list[dict]:
             {
                 "source": "sonarcloud",
                 "id": issue.get("key", ""),
+                "pr": pr,
                 "severity": issue.get("severity", ""),
                 "kind": issue.get("type", ""),
                 "rule": issue.get("rule", ""),
@@ -145,6 +191,59 @@ def sonar_work_items(payload: dict) -> list[dict]:
             }
         )
     return items
+
+
+def dedupe_sonar_items(items: list[dict]) -> list[dict]:
+    """Collapse SonarCloud findings that appear more than once in the SAME
+    sweep — the main-branch query and one or more per-PR queries can name
+    the same underlying finding (e.g. a PR's own issue, and the same code
+    transiently visible on main around a merge). A work item that
+    reappears every cycle only because it was double-counted within one
+    sweep is noise; a work item that reappears because it is genuinely
+    still unresolved is real, ongoing work and is meant to keep showing up
+    (the existing `resolved=false` filter above is what tells the two
+    apart across cycles — this function only dedupes WITHIN one).
+
+    Two passes, because SonarCloud's key-stability across analysis contexts
+    (main vs. a specific PR) is not documented precisely enough to trust
+    exclusively — this is a stated assumption, not a verified guarantee:
+
+    1. Exact `id` (SonarCloud's own issue key), the strong signal when it
+       holds across contexts.
+    2. A ``(rule, file, line, title)`` fingerprint, the fallback for the
+       case a PR-scoped analysis and the main-branch analysis mint
+       DIFFERENT keys for what a human would call the same finding.
+
+    On a collision, the PR-scoped entry wins: it names an actionable fix
+    target (push here, answer this thread) that a main-scoped entry does
+    not.
+    """
+    ordered: list[dict] = []
+    by_key: dict[str, int] = {}
+    by_fingerprint: dict[tuple, int] = {}
+
+    for item in items:
+        key = item.get("id") or ""
+        fingerprint = (
+            item.get("rule", ""),
+            item.get("file", ""),
+            item.get("line"),
+            item.get("title", ""),
+        )
+        index = by_key.get(key) if key else None
+        if index is None:
+            index = by_fingerprint.get(fingerprint)
+        if index is None:
+            by_key[key] = len(ordered)
+            by_fingerprint[fingerprint] = len(ordered)
+            ordered.append(item)
+            continue
+        existing = ordered[index]
+        if existing.get("pr") is None and item.get("pr") is not None:
+            ordered[index] = item
+            by_key[key] = index
+            by_fingerprint[fingerprint] = index
+    return ordered
 
 
 def qodo_counts(body: str) -> dict:
@@ -284,17 +383,28 @@ def _get_json(url: str, token: str | None = None):
         return json.load(response)
 
 
-def fetch_sonar_issues() -> dict:
-    return _get_json(SONAR_ISSUES_URL.format(key=SONAR_COMPONENT_KEY))
+def fetch_sonar_issues(pr: int | None = None) -> dict:
+    """The main-branch query when `pr` is None, else that same PR's own
+    analysis context (see module docstring for why both are needed)."""
+    if pr is None:
+        return _get_json(SONAR_ISSUES_URL.format(key=SONAR_COMPONENT_KEY))
+    return _get_json(SONAR_PR_ISSUES_URL.format(key=SONAR_COMPONENT_KEY, pr=pr))
 
 
-def fetch_open_pr_comments(token: str | None) -> tuple[list[str], list[int]]:
-    """Qodo review bodies for every open PR, with their PR numbers."""
+def fetch_open_pull_numbers(token: str | None) -> list[int]:
+    """Every currently open PR's number, unfiltered. The cap lives with the
+    caller (`main`) so the SAME swept set feeds both the SonarCloud per-PR
+    query and the Qodo per-PR comment fetch below, one request per PR each,
+    rather than two independently-capped (and possibly diverging) sets."""
     pulls = _get_json(f"{GITHUB_API}/repos/{GITHUB_REPO}/pulls?state=open&per_page=50", token)
+    return [pull.get("number") for pull in pulls if isinstance(pull.get("number"), int)]
+
+
+def fetch_open_pr_comments(token: str | None, pr_numbers: list[int]) -> tuple[list[str], list[int]]:
+    """Qodo review bodies for the given (already-capped) open PR numbers."""
     bodies: list[str] = []
     numbers: list[int] = []
-    for pull in pulls:
-        number = pull.get("number")
+    for number in pr_numbers:
         comments = _get_json(
             f"{GITHUB_API}/repos/{GITHUB_REPO}/issues/{number}/comments" "?per_page=100",
             token,
@@ -305,14 +415,40 @@ def fetch_open_pr_comments(token: str | None) -> tuple[list[str], list[int]]:
     return bodies, numbers
 
 
-def main() -> int:
-    import os
+def _max_prs_per_sweep() -> int:
+    raw = os.environ.get("PR_UPKEEP_MAX_PRS_PER_SWEEP")
+    if raw is None:
+        return MAX_PRS_PER_SWEEP
+    try:
+        value = int(raw)
+    except ValueError:
+        return MAX_PRS_PER_SWEEP
+    return value if value > 0 else MAX_PRS_PER_SWEEP
 
+
+def main() -> int:
     token = os.environ.get("GITHUB_TOKEN")
+    max_prs = _max_prs_per_sweep()
     try:
         sonar_items = sonar_work_items(fetch_sonar_issues())
-        qodo_bodies, pr_numbers = fetch_open_pr_comments(token)
-        qodo_items = qodo_work_items(qodo_bodies, pr_numbers)
+
+        open_prs = sorted(fetch_open_pull_numbers(token))
+        swept_prs, dropped_prs = open_prs[:max_prs], open_prs[max_prs:]
+        if dropped_prs:
+            print(
+                f"pr-upkeep sweep: {len(dropped_prs)} open PR(s) exceed the "
+                f"{max_prs}-PR-per-sweep cap and were NOT swept this cycle: "
+                f"{dropped_prs} (raise PR_UPKEEP_MAX_PRS_PER_SWEEP or wait "
+                "for a swept PR to close)",
+                file=sys.stderr,
+            )
+
+        for pr in swept_prs:
+            sonar_items.extend(sonar_work_items(fetch_sonar_issues(pr=pr), pr=pr))
+        sonar_items = dedupe_sonar_items(sonar_items)
+
+        qodo_bodies, qodo_pr_numbers = fetch_open_pr_comments(token, swept_prs)
+        qodo_items = qodo_work_items(qodo_bodies, qodo_pr_numbers)
     except (urllib.error.URLError, TimeoutError, json.JSONDecodeError) as exc:
         print(f"sweep failed: {exc}", file=sys.stderr)
         return 1

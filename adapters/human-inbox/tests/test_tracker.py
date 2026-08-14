@@ -452,6 +452,310 @@ def test_observation_accepts_task_repo_and_declared_success_outcome():
     )
 
 
+# --- reply-kind observations (issue #71) --------------------------------
+#
+# The pr-upkeep decision node posts a question to a PR, notifies Discord it
+# is pending, and parks on `observe: {kind: github_pr_reply, ...}` — the
+# SAME park/observe/auto-submit shape github_pr_merged already proves, with
+# three exits instead of one: a qualifying human reply, the PR getting
+# merged anyway, or the PR closing unmerged. See tracker.py's
+# `run_cycle`/`_check_reply_group` docstrings for the shared-budget
+# arithmetic these tests pin.
+
+
+def test_qualifying_reply_completes_with_answered_outcome(live):
+    base, cfg, receiver = live
+    _, accepted = _invoke(
+        base,
+        receiver,
+        idem_key="att_reply_54",
+        observe={"kind": "github_pr_reply", "repo": "agentculture/culture-nodes", "pr": 54},
+    )
+    assert receiver.wait_for_kind("accepted", timeout=10.0) is not None
+
+    open_pr = _fixture("github_pr_open.json")
+    comments = [
+        {
+            "id": 1,
+            "user": {"login": "orinach"},
+            "body": "changes look fine, proceed",
+            "html_url": "https://github.com/agentculture/culture-nodes/pull/54#comment-1",
+        }
+    ]
+
+    poller = tracker.MergeTracker(
+        _tracker_config(base, cfg, poll_seconds=60.0),
+        github_fetch=lambda *a, **k: open_pr,
+        reply_fetch=lambda *a, **k: comments,
+    )
+    result = poller.run_cycle()
+    assert result.github_requests == 2  # state check + comments check
+    assert result.submissions == 1
+
+    completed = receiver.wait_for_kind("completed", timeout=10.0)
+    assert completed is not None
+    assert completed["payload"]["outcome"] == "answered"
+    record = completed["payload"]["ledger_delta"]["records"][0]
+    assert record["authority"] == "proposed"
+    assert record["data"]["kind"] == "observed-submission"
+    assert record["data"]["collection_method"] == "github_pr_reply"
+    assert record["data"]["reference"] == comments[0]["html_url"]
+    assert TaskStore(cfg.state_dir).get(accepted["invocation_id"]).status == STATUS_COMPLETED
+
+
+def test_bot_authored_comment_is_not_a_qualifying_reply(live):
+    base, cfg, receiver = live
+    _, accepted = _invoke(
+        base,
+        receiver,
+        idem_key="att_reply_bot",
+        observe={"kind": "github_pr_reply", "repo": "agentculture/culture-nodes", "pr": 54},
+    )
+    assert receiver.wait_for_kind("accepted", timeout=10.0) is not None
+
+    comments = [
+        {"id": 1, "user": {"login": "qodo-code-review[bot]"}, "body": "nice job overall"},
+    ]
+    poller = tracker.MergeTracker(
+        _tracker_config(base, cfg, poll_seconds=60.0),
+        github_fetch=lambda *a, **k: _fixture("github_pr_open.json"),
+        reply_fetch=lambda *a, **k: comments,
+    )
+    result = poller.run_cycle()
+    assert result.submissions == 0
+    assert TaskStore(cfg.state_dir).get(accepted["invocation_id"]).status == STATUS_PENDING
+    assert receiver.wait_for_kind("completed", timeout=0.1) is None
+
+
+def test_reply_fetch_is_scoped_since_the_task_was_parked(live):
+    """GitHub's own `since` filter is the freshness half of "which reply
+    counts": a comment posted before the question went up can never
+    qualify, because the tracker never even asks GitHub for it."""
+    base, cfg, receiver = live
+    _, accepted = _invoke(
+        base,
+        receiver,
+        idem_key="att_reply_since",
+        observe={"kind": "github_pr_reply", "repo": "agentculture/culture-nodes", "pr": 54},
+    )
+    assert receiver.wait_for_kind("accepted", timeout=10.0) is not None
+    parked_created_at = TaskStore(cfg.state_dir).get(accepted["invocation_id"]).created_at
+    assert parked_created_at
+
+    seen_since = []
+
+    def reply_fetch(repo, pr, *, since, **kwargs):
+        seen_since.append(since)
+        return []
+
+    poller = tracker.MergeTracker(
+        _tracker_config(base, cfg, poll_seconds=60.0),
+        github_fetch=lambda *a, **k: _fixture("github_pr_open.json"),
+        reply_fetch=reply_fetch,
+    )
+    poller.run_cycle()
+    assert seen_since == [parked_created_at]
+
+
+def test_merged_pr_releases_a_pending_reply_wait(live):
+    base, cfg, receiver = live
+    _, accepted = _invoke(
+        base,
+        receiver,
+        idem_key="att_reply_merged",
+        observe={"kind": "github_pr_reply", "repo": "agentculture/culture-nodes", "pr": 54},
+    )
+    assert receiver.wait_for_kind("accepted", timeout=10.0) is not None
+
+    poller = tracker.MergeTracker(
+        _tracker_config(base, cfg),
+        github_fetch=lambda *a, **k: _fixture("github_pr_merged.json"),
+        reply_fetch=lambda *a, **k: pytest.fail("comments fetched after a terminal merge state"),
+    )
+    result = poller.run_cycle()
+    assert result.github_requests == 1  # terminal state short-circuits the comments call
+    assert result.submissions == 1
+
+    completed = receiver.wait_for_kind("completed", timeout=10.0)
+    assert completed["payload"]["outcome"] == "merged"
+    record = completed["payload"]["ledger_delta"]["records"][0]
+    assert record["data"]["collection_method"] == "github_pr_merged"
+    assert record["data"]["merge_commit"] == _fixture("github_pr_merged.json")["merge_commit_sha"]
+
+
+def test_closed_unmerged_pr_releases_a_pending_reply_wait_as_dropped(live):
+    base, cfg, receiver = live
+    _, accepted = _invoke(
+        base,
+        receiver,
+        idem_key="att_reply_closed",
+        observe={"kind": "github_pr_reply", "repo": "agentculture/culture-nodes", "pr": 55},
+    )
+    assert receiver.wait_for_kind("accepted", timeout=10.0) is not None
+
+    poller = tracker.MergeTracker(
+        _tracker_config(base, cfg),
+        github_fetch=lambda *a, **k: _fixture("github_pr_closed_unmerged.json"),
+        reply_fetch=lambda *a, **k: pytest.fail("comments fetched after a terminal close state"),
+    )
+    result = poller.run_cycle()
+    assert result.github_requests == 1
+    assert result.submissions == 1
+
+    completed = receiver.wait_for_kind("completed", timeout=10.0)
+    assert completed["payload"]["outcome"] == "dropped"
+    record = completed["payload"]["ledger_delta"]["records"][0]
+    assert record["data"]["collection_method"] == "github_pr_closed"
+    assert record["data"]["reference"]
+
+
+def test_reply_group_does_not_spend_a_second_request_when_budget_is_one(tmp_path):
+    """The shared-budget degrade: an open PR's comment check is skipped
+    (not attempted, not partially charged) when only one unit remains."""
+    store = TaskStore(tmp_path / "state")
+    store.save(
+        HumanTask(
+            invocation_id="hit_reply_1",
+            status=STATUS_PENDING,
+            created_at="2026-08-13T00:00:00+00:00",
+            extra_input={
+                "observe": {
+                    "kind": "github_pr_reply",
+                    "repo": "agentculture/culture-nodes",
+                    "pr": 54,
+                }
+            },
+        )
+    )
+    poller = tracker.MergeTracker(
+        tracker.TrackerConfig(
+            state_dir=str(tmp_path / "state"), github_token="github-secret", github_request_budget=1
+        ),
+        github_fetch=lambda *a, **k: _fixture("github_pr_open.json"),
+        reply_fetch=lambda *a, **k: pytest.fail("comments fetched despite exhausted budget"),
+    )
+    result = poller.run_cycle()
+    assert result.github_requests == 1
+    assert result.submissions == 0
+
+
+def test_reply_groups_are_checked_before_merge_groups_share_the_same_budget(tmp_path):
+    """Issue #71: a human is actively blocked on a reply-kind group, so it
+    gets first claim on the cycle's shared budget over a merge-kind group —
+    without the budget itself growing (still `github_request_budget` total
+    GitHub requests this cycle, merge and reply combined)."""
+    store = TaskStore(tmp_path / "state")
+    store.save(
+        HumanTask(
+            invocation_id="hit_merge_1",
+            status=STATUS_PENDING,
+            created_at="2026-08-13T00:00:01+00:00",
+            extra_input={
+                "observe": {
+                    "kind": "github_pr_merged",
+                    "repo": "agentculture/culture-nodes",
+                    "pr": 10,
+                }
+            },
+        )
+    )
+    store.save(
+        HumanTask(
+            invocation_id="hit_reply_1",
+            status=STATUS_PENDING,
+            created_at="2026-08-13T00:00:00+00:00",
+            extra_input={
+                "observe": {
+                    "kind": "github_pr_reply",
+                    "repo": "agentculture/culture-nodes",
+                    "pr": 54,
+                }
+            },
+        )
+    )
+    merge_requests = []
+    poller = tracker.MergeTracker(
+        tracker.TrackerConfig(
+            state_dir=str(tmp_path / "state"), github_token="github-secret", github_request_budget=1
+        ),
+        github_fetch=lambda repo, pr, **k: merge_requests.append(pr) or _fixture(
+            "github_pr_open.json"
+        ),
+        reply_fetch=lambda *a, **k: [],
+    )
+    result = poller.run_cycle()
+    # The whole budget (1) went to the reply group's terminal-state check;
+    # the merge-kind group waits for the next cycle.
+    assert merge_requests == [54]
+    assert result.github_requests == 1
+    assert result.budget_exhausted is True
+
+
+def test_reply_observation_ignores_malformed_declarations():
+    task = HumanTask(
+        invocation_id="hit_1",
+        created_at="2026-08-13T00:00:00+00:00",
+        extra_input={"observe": {"kind": "github_pr_reply", "pr": "not-an-int"}},
+    )
+    assert tracker.reply_observation_for(task, "agentculture/culture-nodes") is None
+
+    task2 = HumanTask(
+        invocation_id="hit_2",
+        created_at="2026-08-13T00:00:00+00:00",
+        extra_input={"observe": {"kind": "something_else", "pr": 1}},
+    )
+    assert tracker.reply_observation_for(task2, "agentculture/culture-nodes") is None
+
+
+def test_reply_observation_accepts_custom_outcome_names():
+    task = HumanTask(
+        invocation_id="hit_1",
+        created_at="2026-08-13T00:00:00+00:00",
+        extra_input={
+            "observe": {
+                "kind": "github_pr_reply",
+                "repo": "agentculture/culture-nodes",
+                "pr": 54,
+                "answered_outcome": "resolved",
+                "merged_outcome": "shipped",
+                "dropped_outcome": "abandoned",
+            }
+        },
+    )
+    obs = tracker.reply_observation_for(task, None)
+    assert obs == tracker.ReplyObservation(
+        repo="agentculture/culture-nodes",
+        pr=54,
+        since="2026-08-13T00:00:00+00:00",
+        answered_outcome="resolved",
+        merged_outcome="shipped",
+        dropped_outcome="abandoned",
+    )
+
+
+def test_qualifying_reply_helper_skips_ignored_authors_and_empty_bodies():
+    comments = [
+        {"user": {"login": "qodo-code-review[bot]"}, "body": "automated finding"},
+        {"user": {"login": "orinach"}, "body": "   "},
+        {"user": {"login": "orinach"}, "body": "looks good, ship it"},
+    ]
+    reply = tracker.qualifying_reply(comments, ignored_logins=tracker.DEFAULT_REPLY_IGNORED_LOGINS)
+    assert reply is not None
+    assert reply["body"] == "looks good, ship it"
+
+
+def test_default_reply_ignored_logins_are_always_included_with_env_additions():
+    cfg = tracker.TrackerConfig.from_env(
+        {"HUMAN_INBOX_TRACKER_REPLY_IGNORED_LOGINS": "pr-upkeep-fix-bot"}
+    )
+    assert cfg.reply_ignored_logins == frozenset({"qodo-code-review[bot]", "pr-upkeep-fix-bot"})
+
+
+def test_default_reply_ignored_logins_without_env_override():
+    cfg = tracker.TrackerConfig.from_env({})
+    assert cfg.reply_ignored_logins == tracker.DEFAULT_REPLY_IGNORED_LOGINS
+
+
 # --- rate headroom -----------------------------------------------------
 #
 # The first cut of the lane clamp planned to spend GitHub's whole hourly

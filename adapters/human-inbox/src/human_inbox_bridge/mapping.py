@@ -16,10 +16,13 @@ Two deliberate divergences from the agent bridges, both honesty rules:
   append path a human-origin record may carry `proposed` and nothing
   stronger (`internal/ledger/authority.go` `checkHumanAuthority`):
   confirmation and rejection are review transactions (PRD §10.8), not
-  callback payloads. Manual submissions use `human-submission`; the merge
-  tracker uses an explicit, validated `observed` marker to select the
-  `observed-submission` sibling and attach its collection method + merge
-  commit. Neither path changes origin or authority.
+  callback payloads. Manual submissions use `human-submission`; the tracker
+  (merge OR reply/terminal-state observations, issue #71) uses an explicit,
+  validated `observed` marker to select the `observed-submission` sibling
+  and attach its collection method plus that method's own evidence field
+  (`merge_commit` for `github_pr_merged`, `reference` for
+  `github_pr_reply`/`github_pr_closed`). Neither path changes origin or
+  authority.
 
 There is also no `classify` ladder here: the human names the domain outcome
 explicitly in the submission, so the mapping never infers one. A submission
@@ -35,6 +38,20 @@ from typing import Any
 #: §13.5 error classes this bridge ever originates.
 CLASS_EXECUTION = "execution"
 CLASS_ACTOR_REJECTED_INPUT = "actor_rejected_input"
+
+#: The tracker collection methods this bridge accepts inside a submission's
+#: `observed` marker, and the ONE extra evidence field each requires beyond
+#: `collection_method` itself. `github_pr_merged` is t16's original merge
+#: observation; `github_pr_reply` and `github_pr_closed` are issue #71's
+#: decision-node observations (a qualifying PR reply, and the PR closing
+#: unmerged while a question was pending, respectively). Adding a kind here
+#: is the ONLY change needed to accept a new tracker observation shape —
+#: `submission_error` and `claim_record` are both generic over this map.
+_OBSERVED_REQUIRED_FIELDS: dict[str, frozenset[str]] = {
+    "github_pr_merged": frozenset({"merge_commit"}),
+    "github_pr_reply": frozenset({"reference"}),
+    "github_pr_closed": frozenset({"reference"}),
+}
 
 
 @dataclass(frozen=True)
@@ -68,13 +85,21 @@ def submission_error(body: dict[str, Any]) -> str | None:
         observed = body["observed"]
         if not isinstance(observed, dict):
             return "observed must be a JSON object when present"
-        if set(observed) != {"collection_method", "merge_commit"}:
-            return "observed must contain exactly collection_method and merge_commit"
-        if observed.get("collection_method") != "github_pr_merged":
-            return "observed.collection_method must be github_pr_merged"
-        merge_commit = observed.get("merge_commit")
-        if not isinstance(merge_commit, str) or not merge_commit.strip():
-            return "observed.merge_commit must be a non-empty string"
+        collection_method = observed.get("collection_method")
+        required = _OBSERVED_REQUIRED_FIELDS.get(collection_method)
+        if required is None:
+            return "observed.collection_method must be one of: " + ", ".join(
+                sorted(_OBSERVED_REQUIRED_FIELDS)
+            )
+        if set(observed) != {"collection_method"} | required:
+            return (
+                f"observed for collection_method {collection_method!r} must contain "
+                f"exactly collection_method and {sorted(required)}"
+            )
+        for field_name in required:
+            value = observed.get(field_name)
+            if not isinstance(value, str) or not value.strip():
+                return f"observed.{field_name} must be a non-empty string"
     return None
 
 
@@ -112,12 +137,16 @@ def claim_record(
         "outcome": submission.get("outcome"),
     }
     if is_observed:
-        # submission_error has already pinned this marker to the one
-        # observation method this bridge understands. Keep authority and
-        # origin unchanged: this is honest attribution inside a proposed
-        # bridge claim, not runner-origin observed authority.
+        # submission_error has already pinned this marker to one of the
+        # collection methods _OBSERVED_REQUIRED_FIELDS understands, and
+        # validated its one extra evidence field. Keep authority and origin
+        # unchanged: this is honest attribution inside a proposed bridge
+        # claim, not runner-origin observed authority.
         data["collection_method"] = observed["collection_method"]
-        data["merge_commit"] = observed["merge_commit"].strip()
+        for field_name, value in observed.items():
+            if field_name == "collection_method":
+                continue
+            data[field_name] = value.strip() if isinstance(value, str) else value
 
     return {
         "id": "",

@@ -1,0 +1,229 @@
+# The newsletter-decompose proof workflow (task t24, issue #45).
+#
+# Task t22 proved the generic decompose pipeline — document to claims (with
+# sources) to connected decisions and actions to a verified end — on a
+# code-repo domain (devague plan import). This workflow is instance two,
+# proving the SAME pipeline on a domain that has nothing to do with code:
+# web scope -> claims -> article plan -> written drafts -> verify.
+#
+# Nothing here is code-repo vocabulary. There is no "PR", "commit", "repo",
+# or "branch" anywhere in this file or in the node kinds it uses (`agent`
+# and `end`, the same two kinds every other example workflow composes from):
+# genericity is proven by using nothing domain-specific, not by asserting it
+# in a comment.
+#
+#   scope  — reads the run's topic, scopes real sources (a web search in the
+#            live proof), and proposes one `claim` record PER finding, each
+#            carrying `data.sources` (schemas/ledger/claim.schema.json's
+#            documented `sources` property, added by this task).
+#   plan   — reads the run's claims and proposes one `decision` (an article
+#            to write) per claim it plans around, connected to that claim
+#            through the decision record's own `provenance_refs` — the exact
+#            mechanism internal/devague's MapPlanShow already uses to connect
+#            a task to the claims it `covers` (plan_show.go's
+#            coveredClaimRefs). No new engine surface: ProvenanceRefs already
+#            carries this for any record type.
+#   write  — reads the planned decisions and proposes one `result` record per
+#            written draft.
+#   verify — the verification node the pipeline ends on. It reads the run's
+#            claims and decisions and proposes an `evidence` record stating
+#            whether every claim is sourced and every decision is motivated
+#            — the "asks a model" half of the ledger authority model
+#            (CLAUDE.md: a verification node that computes a check produces
+#            `derived`, one that asks a model produces `proposed`). The
+#            deterministic half of that same check is
+#            internal/ledger.VerifyClaimChain, run over this exact run's
+#            ledger by `nodes chain-verify` — a pure, generic function this
+#            task adds, not wired into engine dispatch, matching
+#            internal/devague's own "pure function in, Append is a caller
+#            concern" precedent.
+apiVersion: nodes.culture.dev/v1alpha1
+kind: Workflow
+
+metadata:
+  name: newsletter-decompose
+  version: 1.0.0
+  ownerRef: team/platform-ai
+
+spec:
+  entry: scope
+
+  contract:
+    input:
+      schema:
+        type: object
+        required: [topic]
+        additionalProperties: false
+        properties:
+          topic:
+            type: string
+            minLength: 1
+    output:
+      schema:
+        type: object
+        required: [verdict]
+        properties:
+          verdict:
+            type: string
+
+  limits:
+    maxDuration: 1h
+    maxTransitions: 16
+    maxVisitsPerNode: 3
+    maxParallelTokens: 1
+
+  ledger:
+    schemaVersion: nodes.culture.dev/ledger/v1alpha1
+    maxRecordsPerNode: 20
+
+  nodes:
+    # Scopes the topic into sourced claims. Every claim this node proposes
+    # must carry data.sources — the honesty condition (h19) this whole
+    # workflow exists to demonstrate.
+    scope:
+      kind: agent
+      ownerRef: team/platform-ai
+      uses: actor://company/newsletter-scout@sha256:1111111111111111111111111111111111111111111111111111111111111111
+      input:
+        from: /run/input
+      contract:
+        input:
+          schema:
+            type: object
+            required: [topic]
+        outcomes:
+          completed:
+            schema:
+              type: object
+              required: [summary, claim_ids]
+              properties:
+                summary:
+                  type: string
+                # The ids scope minted on its own proposed claim records —
+                # PRD §11.2 resolves a downstream binding by walking INTO a
+                # node's output (e.g. /nodes/scope/output/claim_ids), so
+                # `plan` reads these directly rather than through a
+                # projection scoped to a different record type.
+                claim_ids:
+                  type: array
+                  items:
+                    type: string
+      ledger:
+        propose: [claim, assumption, question]
+      policy:
+        timeout: 10m
+        retry:
+          maxAttempts: 2
+          backoff: exponential
+
+    # Plans one article per claim worth writing about, connecting each
+    # decision to the claim that motivates it through provenance_refs.
+    plan:
+      kind: agent
+      ownerRef: team/platform-ai
+      uses: actor://company/newsletter-editor@sha256:2222222222222222222222222222222222222222222222222222222222222222
+      input:
+        from: /nodes/scope/output
+      contract:
+        outcomes:
+          completed:
+            schema:
+              type: object
+              required: [articles]
+              properties:
+                articles:
+                  type: array
+                  items:
+                    type: object
+      ledger:
+        read: [current_scope]
+        propose: [decision, task]
+      policy:
+        timeout: 10m
+        retry:
+          maxAttempts: 2
+
+    # Writes the planned articles.
+    write:
+      kind: agent
+      ownerRef: team/platform-ai
+      uses: actor://company/newsletter-writer@sha256:3333333333333333333333333333333333333333333333333333333333333333
+      input:
+        bindings:
+          articles: /nodes/plan/output
+          readyTasks: /ledger/projections/ready_tasks
+      contract:
+        outcomes:
+          completed:
+            schema:
+              type: object
+              required: [drafts]
+              properties:
+                drafts:
+                  type: array
+      ledger:
+        read: [ready_tasks]
+        propose: [result]
+      policy:
+        timeout: 15m
+        retry:
+          maxAttempts: 2
+
+    # The verification node the pipeline ends on. `changes_required` loops
+    # back to `write`, bounded by spec.limits.maxVisitsPerNode — the same
+    # domain-outcome loop shape examples/delivery-loop's verify.changes_required
+    # edge uses.
+    verify:
+      kind: agent
+      ownerRef: team/platform-ai
+      uses: actor://company/newsletter-verifier@sha256:4444444444444444444444444444444444444444444444444444444444444444
+      input:
+        bindings:
+          drafts: /nodes/write/output
+          claims: /ledger/projections/current_scope
+          decisions: /ledger/projections/decision_history
+      contract:
+        outcomes:
+          passed:
+            schema:
+              type: object
+              required: [verdict]
+              properties:
+                verdict:
+                  type: string
+          changes_required:
+            schema:
+              type: object
+              required: [verdict]
+              properties:
+                verdict:
+                  type: string
+      ledger:
+        read: [current_scope, decision_history]
+        propose: [evidence]
+      policy:
+        timeout: 10m
+        retry:
+          maxAttempts: 2
+
+    finish:
+      kind: end
+      ownerRef: team/platform-ai
+      output:
+        from: /nodes/verify/output
+
+  edges:
+    - from: scope.completed
+      to: plan
+
+    - from: plan.completed
+      to: write
+
+    - from: write.completed
+      to: verify
+
+    - from: verify.passed
+      to: finish
+
+    - from: verify.changes_required
+      to: write

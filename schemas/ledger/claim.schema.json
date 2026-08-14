@@ -28,6 +28,28 @@
         },
         "rationale": {
           "type": "string"
+        },
+        "sources": {
+          "type": "array",
+          "description": "Where this claim's content came from — a web page, a document, a person, a prior ledger record. Generic to every domain the decompose pipeline (task t24, issue #45) runs on: a claim decomposed from a code plan may cite none, a claim scoped from the web should cite at least one. internal/ledger's VerifyClaimChain reads this property to check that a claim is sourced; the property is documentary like every other Phase-0 payload field, so an existing claim record with no sources stays valid, it is simply reported unsourced.",
+          "items": {
+            "type": "object",
+            "properties": {
+              "url": {
+                "type": "string"
+              },
+              "title": {
+                "type": "string"
+              },
+              "retrieved_at": {
+                "type": "string",
+                "format": "date-time"
+              },
+              "note": {
+                "type": "string"
+              }
+            }
+          }
         }
       }
     }

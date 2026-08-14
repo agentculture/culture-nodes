@@ -24,14 +24,15 @@ var explainCatalog = map[string]string{
 	"cli":          explainCLI,
 	"cli overview": explainCLI,
 
-	"serve":       explainServe,
-	"scheduler":   explainScheduler,
-	"worker":      explainWorker,
-	"all":         explainAll,
-	"validate":    explainValidate,
-	"run":         explainRun,
-	"plan-import": explainPlanImport,
-	"inspect":     explainStubMode("inspect", "inspect ledger records for a run"),
+	"serve":        explainServe,
+	"scheduler":    explainScheduler,
+	"worker":       explainWorker,
+	"all":          explainAll,
+	"validate":     explainValidate,
+	"run":          explainRun,
+	"plan-import":  explainPlanImport,
+	"chain-verify": explainChainVerify,
+	"inspect":      explainStubMode("inspect", "inspect ledger records for a run"),
 }
 
 const explainRoot = `# nodes
@@ -51,6 +52,7 @@ docs/initial-design/.
 - ` + "`nodes validate <file>`" + ` — compile a workflow and report diagnostics.
 - ` + "`nodes run`" + ` — create a first-class ad-hoc run from an instruction.
 - ` + "`nodes plan-import`" + ` — import an external plan's faithful view (task t22).
+- ` + "`nodes chain-verify`" + ` — check a run's claim/decision chain (task t24).
 
 ## Process modes
 

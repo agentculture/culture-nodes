@@ -8,9 +8,11 @@ Mirrors the two invariants ``steward doctor`` verifies for a mesh agent:
   (``claude`` → ``CLAUDE.md``, ``colleague`` → ``AGENTS.colleague.md``,
   ``acp`` → ``AGENTS.md``, ``gemini`` → ``GEMINI.md``).
 
-Plus a **skills-present** check (the vendored ``.claude/skills/`` kit) and a
+Plus a **skills-present** check (the vendored ``.claude/skills/`` kit), a
 **nodes_api_reachable** check (a ``GET /v1alpha1/healthz`` probe against the
-resolved API URL — see :mod:`culture_nodes.api_client`). Read-only.
+resolved API URL — see :mod:`culture_nodes.api_client`), and an
+**unprivileged_userns** check (whether a bwrap-backed actor sandbox can start
+on this host at all). Read-only.
 
 Reports the rubric-shaped contract
 ``{healthy, checks: [{id, passed, severity, message, remediation}]}`` so the
@@ -25,6 +27,7 @@ unreachable API is reported (with a remediation) but never fails ``doctor``.
 from __future__ import annotations
 
 import argparse
+from pathlib import Path
 
 from culture_nodes.api_client import add_api_url_argument, probe_health, resolve_base_url
 from culture_nodes.cli._commands.whoami import find_culture_yaml, read_agent_fields
@@ -94,6 +97,68 @@ def _identity_checks(cfg) -> list[dict[str, object]]:
     return checks
 
 
+#: sysctl → the value that means "restricted". Ubuntu's AppArmor gate (24.04+)
+#: and the older Debian-family knob; either set against us breaks bwrap.
+_USERNS_SYSCTLS = (
+    ("/proc/sys/kernel/apparmor_restrict_unprivileged_userns", "1"),
+    ("/proc/sys/kernel/unprivileged_userns_clone", "0"),
+)
+
+
+def _userns_check(probes: tuple[tuple[str, str], ...] = _USERNS_SYSCTLS) -> dict[str, object]:
+    """Report whether unprivileged user namespaces are available.
+
+    Not an identity invariant — an environment one, and it is here because a
+    dispatched actor otherwise learns it the expensive way. Codex's
+    ``--sandbox workspace-write`` confines file writes with a bubblewrap
+    helper; where the kernel refuses unprivileged user namespaces that helper
+    cannot start, so *every* ``apply_patch`` fails while shell commands still
+    run unconfined. The actor reads fine, writes nothing, and burns a session
+    retrying patches before anyone notices. Ubuntu 24.04 ships the restriction
+    on by default, which is how this reached three hosts at once.
+
+    Read-only and stdlib-only: the sysctls are the fact, so read them rather
+    than shelling out to ``bwrap`` to find out. ``probes`` is injectable so
+    tests can assert the logic on both kinds of kernel rather than on
+    whichever one happens to be running the suite.
+    """
+    blockers = []
+    for path, blocking_value in probes:
+        try:
+            value = Path(path).read_text().strip()
+        except OSError:
+            # Absent knob means this kernel does not restrict here.
+            continue
+        if value == blocking_value:
+            blockers.append(f"{Path(path).name}={value}")
+
+    available = not blockers
+    return {
+        "id": "unprivileged_userns",
+        "passed": available,
+        "severity": "warning",
+        "message": (
+            "unprivileged user namespaces available — bwrap-backed actor sandboxes work"
+            if available
+            else (
+                "unprivileged user namespaces restricted (" + ", ".join(blockers) + ") — "
+                "a bwrap-backed sandbox cannot start here, so codex "
+                "--sandbox workspace-write silently loses ALL file writes "
+                "while still running shell commands unconfined"
+            )
+        ),
+        "remediation": (
+            ""
+            if available
+            else (
+                "dispatch codex actors on this host with --sandbox danger-full-access and "
+                "isolate with a git worktree or container instead; or grant bwrap an AppArmor "
+                "profile. Never assume --sandbox workspace-write is enforcing here"
+            )
+        ),
+    }
+
+
 def _diagnose(base_url: str) -> dict[str, object]:
     cfg = find_culture_yaml()
     if cfg is None:
@@ -131,6 +196,10 @@ def _diagnose(base_url: str) -> dict[str, object]:
             ),
         }
     )
+
+    # 4. unprivileged_userns: an environment fact a dispatched actor needs
+    # BEFORE it picks a sandbox mode, not after it has wasted a session.
+    checks.append(_userns_check())
 
     healthy = all(c["passed"] for c in checks if c["severity"] == "error")
     return {"healthy": healthy, "checks": checks}

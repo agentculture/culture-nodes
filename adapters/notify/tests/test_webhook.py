@@ -63,11 +63,25 @@ def test_resolve_webhook_reads_process_environ_by_default(monkeypatch):
 # -- is_http_url / is_discord_url ---------------------------------------------
 
 
+# A Discord webhook URL embeds its own token, so plain http to a real host
+# would put the credential on the wire in cleartext. https is required
+# everywhere except loopback, where the hermetic tests run and nothing leaves
+# the machine. Mirrors internal/notify's TestIsHTTPURL exactly.
 @pytest.mark.parametrize(
     "url,expected",
     [
         ("https://discord.com/api/webhooks/1/a", True),
-        ("http://discord.com/api/webhooks/1/a", True),
+        ("HTTPS://DISCORD.COM/api/webhooks/1/a", True),
+        ("http://discord.com/api/webhooks/1/a", False),
+        ("http://127.0.0.1:8080/hook", True),
+        ("http://[::1]:8080/hook", True),
+        ("http://localhost:8080/hook", True),
+        ("http://LOCALHOST:8080/hook", True),
+        # Only a literal loopback name or IP is exempt. Resolving a hostname
+        # would let a name pointing at 127.0.0.1 today authorize cleartext
+        # and repoint tomorrow.
+        ("http://localhost.evil.example/hook", False),
+        ("http://127.0.0.1.evil.example/hook", False),
         ("ftp://discord.com/api/webhooks/1/a", False),
         ("not a url at all", False),
         ("", False),

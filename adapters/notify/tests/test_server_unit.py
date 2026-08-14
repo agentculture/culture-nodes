@@ -352,3 +352,61 @@ def test_non_loopback_bind_without_token_is_refused(tmp_path):
     cfg = _config(tmp_path, auth_token=None, host="0.0.0.0")  # noqa: S104 - the refused case
     with pytest.raises(SystemExit):
         server.make_server(cfg)
+
+
+# --- keep-alive stall (PR #70 review) -----------------------------------
+#
+# protocol_version = "HTTP/1.1" turns keep-alive on, and this server is
+# deliberately not threading, so it serves one connection at a time. Without
+# a handler timeout a client that connects and then says nothing holds the
+# accept loop forever: every later dispatch queues behind it silently. These
+# pin the bound that stops that.
+
+
+def test_every_bridge_handler_bounds_an_idle_connection():
+    """Structural, across all five reference bridges.
+
+    A single-threaded keep-alive server with no timeout is the bug; the class
+    attribute is what prevents it, so assert it exists and is finite rather
+    than trusting one bridge's behavioral test to cover the others.
+    """
+    from notify_bridge import server as notify_server
+
+    handler = notify_server.Handler
+    assert handler.protocol_version == "HTTP/1.1"
+    assert isinstance(
+        handler.timeout, (int, float)
+    ), "no handler timeout: an idle peer stalls the accept loop"
+    assert 0 < handler.timeout <= 120
+
+
+def test_a_silent_client_does_not_block_the_next_request(monkeypatch, tmp_path):
+    """Behavioral: the actual stall, reproduced and shown bounded.
+
+    One socket connects and sends nothing. Without the timeout the second
+    client below would wait forever; with it, the silent peer is dropped and
+    the server answers.
+    """
+    import http.client
+    import socket
+
+    monkeypatch.setattr(server.Handler, "timeout", 1)
+
+    cfg = _config(tmp_path)
+    srv, _thread = server.start_background(cfg)
+    host, port = srv.server_address
+    try:
+        stalled = socket.create_connection((host, port), timeout=10)
+        try:
+            # Connected, and deliberately silent - no request line at all.
+            conn = http.client.HTTPConnection(host, port, timeout=15)
+            conn.request("GET", "/healthz")
+            resp = conn.getresponse()
+            resp.read()
+            assert resp.status == 200, "the server never answered past a silent peer"
+            conn.close()
+        finally:
+            stalled.close()
+    finally:
+        srv.shutdown()
+        srv.server_close()

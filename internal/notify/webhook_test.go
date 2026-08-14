@@ -246,10 +246,18 @@ func TestPostContextAlreadyCanceledIsFailed(t *testing.T) {
 }
 
 func TestIsHTTPURL(t *testing.T) {
+	// A Discord webhook URL embeds its own token, so plain http to a real
+	// host would put the credential on the wire in cleartext. https is
+	// required everywhere except loopback, which the hermetic httptest
+	// pattern needs and where nothing leaves the machine.
 	cases := map[string]bool{
-		"http://example.com":         true,
 		"https://example.com":        true,
 		"HTTPS://EXAMPLE.COM":        true,
+		"http://example.com":         false,
+		"http://127.0.0.1:8080/hook": true,
+		"http://[::1]:8080/hook":     true,
+		"http://localhost:8080/hook": true,
+		"http://LOCALHOST:8080/hook": true,
 		"ftp://example.com":          false,
 		"":                           false,
 		"a-schemeless-relative-path": false,
@@ -257,6 +265,21 @@ func TestIsHTTPURL(t *testing.T) {
 	for rawURL, want := range cases {
 		if got := notify.IsHTTPURL(rawURL); got != want {
 			t.Errorf("IsHTTPURL(%q) = %v, want %v", rawURL, got, want)
+		}
+	}
+}
+
+func TestIsHTTPURLDoesNotResolveHostnamesToAuthorizeCleartext(t *testing.T) {
+	// Only the literal name "localhost" and literal loopback IPs are
+	// exempt. Resolving a hostname here would let a name that points at
+	// 127.0.0.1 today authorize cleartext, and repoint tomorrow.
+	for _, rawURL := range []string{
+		"http://localhost.evil.example/hook",
+		"http://127.0.0.1.evil.example/hook",
+		"http://not-localhost/hook",
+	} {
+		if notify.IsHTTPURL(rawURL) {
+			t.Errorf("IsHTTPURL(%q) = true; a hostname that is not literally loopback must not authorize plain http", rawURL)
 		}
 	}
 }

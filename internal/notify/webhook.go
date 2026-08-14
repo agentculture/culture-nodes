@@ -3,6 +3,7 @@ package notify
 import (
 	"bytes"
 	"context"
+	"net"
 	"net/http"
 	"net/url"
 	"os"
@@ -91,16 +92,49 @@ var httpClient = &http.Client{
 	},
 }
 
-// IsHTTPURL reports whether rawURL has an http or https scheme — the only
-// schemes Post ever sends a request to. Malformed URLs report false, not
-// an error: a bad URL is exactly the case this guard exists to catch.
+// IsHTTPURL reports whether Post may send a request to rawURL: https
+// anywhere, and plain http ONLY to a loopback host. Malformed URLs report
+// false, not an error: a bad URL is exactly the case this guard exists to
+// catch.
+//
+// The https requirement is not generic hygiene. A Discord webhook URL
+// *embeds its own credential* — the token is a path segment — so posting one
+// over plain http puts the credential, and the message, on the wire in
+// cleartext for anything between here and the host. There is no
+// authenticated-but-unencrypted mode to fall back to; the URL is the secret.
+//
+// Loopback keeps its exemption because the hermetic test pattern this package
+// is built around (a local httptest server, no network) has no TLS and needs
+// none: nothing leaves the machine, so there is nothing to intercept. That
+// exemption is what lets the tests exercise the real transport instead of a
+// mock of it.
 func IsHTTPURL(rawURL string) bool {
 	parsed, err := url.Parse(rawURL)
 	if err != nil {
 		return false
 	}
-	scheme := strings.ToLower(parsed.Scheme)
-	return scheme == "http" || scheme == "https"
+	switch strings.ToLower(parsed.Scheme) {
+	case "https":
+		return true
+	case "http":
+		return isLoopbackHost(parsed.Hostname())
+	default:
+		return false
+	}
+}
+
+// isLoopbackHost reports whether host names this machine. A hostname other
+// than "localhost" is deliberately NOT resolved — a DNS lookup here would let
+// a name that currently resolves to 127.0.0.1 authorize cleartext, and change
+// its mind later.
+func isLoopbackHost(host string) bool {
+	if strings.EqualFold(host, "localhost") {
+		return true
+	}
+	if ip := net.ParseIP(host); ip != nil {
+		return ip.IsLoopback()
+	}
+	return false
 }
 
 // IsDiscordURL reports whether rawURL is a Discord webhook endpoint:

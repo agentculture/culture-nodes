@@ -24,6 +24,7 @@ not reinvented, matching that package field for field:
 from __future__ import annotations
 
 import enum
+import ipaddress
 import os
 import urllib.error
 import urllib.request
@@ -40,6 +41,9 @@ POST_TIMEOUT_SECONDS = 5.0
 
 #: Identifies this transport in the (non-secret) request headers it sends.
 #: Names neither the URL nor the run/node it is notifying about.
+#: Cap on the response bytes read purely to close the socket cleanly.
+_MAX_DRAIN_BYTES = 64 * 1024
+
 USER_AGENT = "culture-nodes-notify-bridge/1"
 
 #: The set of hosts a Discord webhook URL can use. Matches devex's
@@ -88,16 +92,53 @@ def resolve_webhook(env: dict[str, str] | None = None) -> tuple[str, bool]:
     return "", False
 
 
+def _is_loopback_host(host: str) -> bool:
+    """Whether *host* names this machine.
+
+    A hostname other than "localhost" is deliberately NOT resolved: a DNS
+    lookup here would let a name that currently points at 127.0.0.1
+    authorize cleartext, and repoint later.
+    """
+    if host.lower() == "localhost":
+        return True
+    try:
+        return ipaddress.ip_address(host).is_loopback
+    except ValueError:
+        return False
+
+
 def is_http_url(raw_url: str) -> bool:
-    """Reports whether raw_url has an http or https scheme -- the only
-    schemes `post()` ever sends a request to. A malformed URL reports
+    """Reports whether `post()` may send a request to raw_url: https
+    anywhere, plain http ONLY to a loopback host. A malformed URL reports
     False, not an error: a bad URL is exactly the case this guard exists
-    to catch."""
+    to catch.
+
+    The https requirement is not generic hygiene. A Discord webhook URL
+    *embeds its own credential* -- the token is a path segment -- so posting
+    one over plain http puts the credential, and the message, on the wire in
+    cleartext. There is no authenticated-but-unencrypted mode to fall back
+    to; the URL is the secret.
+
+    Loopback keeps its exemption so the hermetic tests can drive the real
+    transport against a local server instead of mocking it. Nothing leaves
+    the machine there, so there is nothing to intercept.
+
+    Mirrors `internal/notify`'s IsHTTPURL exactly -- the two must not drift.
+    """
     try:
         parsed = urlsplit(raw_url)
     except ValueError:
         return False
-    return parsed.scheme.lower() in ("http", "https")
+    scheme = parsed.scheme.lower()
+    if scheme == "https":
+        return True
+    if scheme != "http":
+        return False
+    try:
+        host = parsed.hostname or ""
+    except ValueError:
+        return False
+    return _is_loopback_host(host)
 
 
 def is_discord_url(raw_url: str) -> bool:
@@ -167,6 +208,16 @@ def post(raw_url: str, body: bytes) -> tuple[PostResult, int | None]:
         # disabled by _NoRedirect.
         with _opener.open(req, timeout=POST_TIMEOUT_SECONDS) as resp:  # nosec B310
             status = resp.status
+            # Drain before closing. The body is never used -- Discord's
+            # response tells us nothing a status code does not -- but an
+            # undrained socket is closed mid-response, which costs the peer a
+            # reset instead of a clean finish. Bounded, because a fail-open
+            # notifier must not be turned into a slow-loris target by a
+            # webhook host that streams forever.
+            try:
+                resp.read(_MAX_DRAIN_BYTES)
+            except OSError:
+                pass
     except urllib.error.HTTPError as exc:
         # Includes a refused 3xx redirect (raised as an HTTPError by
         # urllib once _NoRedirect declines to follow it) and any 4xx/5xx.

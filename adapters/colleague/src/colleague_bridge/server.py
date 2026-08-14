@@ -99,6 +99,22 @@ class BridgeHTTPServer(HTTPServer):
 
 class Handler(BaseHTTPRequestHandler):
     server_version = "colleague-bridge/0.1"
+    #: Bound how long one connection may hold this single-threaded server.
+    #:
+    #: protocol_version = "HTTP/1.1" turns keep-alive ON, and this server is
+    #: deliberately NOT a ThreadingHTTPServer (see the module docstring), so
+    #: it serves exactly one connection at a time. Without a timeout, a client
+    #: that opens a socket and then says nothing holds the accept loop
+    #: forever and every subsequent dispatch waits behind it — no error, no
+    #: log, just a bridge that stops answering.
+    #:
+    #: BaseHTTPRequestHandler turns a read timeout into close_connection, so
+    #: an idle peer is dropped rather than served badly. It bounds the gap
+    #: BETWEEN requests on a kept-alive connection, not the work itself:
+    #: dispatch runs after the request line is read, so a slow model turn is
+    #: unaffected.
+    timeout = 30
+
     protocol_version = "HTTP/1.1"
 
     # -- stdlib plumbing --------------------------------------------------

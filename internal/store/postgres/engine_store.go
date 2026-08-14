@@ -571,9 +571,10 @@ INSERT INTO attempts (
 	result, started_at, completed_at,
 	usage_input_tokens, usage_output_tokens, usage_cost, usage_currency,
 	usage_cached_input_tokens, usage_reasoning_tokens, usage_model, usage_thread_id,
-	termination_reason, continuation_ref
+	termination_reason, continuation_ref,
+	preserve_branch, preserve_pushed, preserve_remote
 )
-VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20)
+VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22, $23)
 `
 
 // InsertAttempt records one dispatch attempt's result. The
@@ -596,6 +597,13 @@ VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $
 // the same way from attempt.ContinuationRef: NULL means the actor offered no
 // handle for continuing its conversation, which is not the same fact as the
 // usage block's usage_thread_id (ADR 0010).
+//
+// preserve_branch/preserve_pushed/preserve_remote
+// (migrations/0025_attempt_preserve_branch.sql) are written from
+// attempt.Preserve the same way: nil leaves all three NULL. Preserve is
+// never partially written — engine.Preserve carries no independently-
+// nullable sub-fields the way Usage's extended columns do, so either all
+// three are set together (from a real, committed branch) or none are.
 func (eq engineQueries) InsertAttempt(ctx context.Context, attempt engine.Attempt) error {
 	var result any
 	if len(attempt.Result) > 0 {
@@ -618,6 +626,16 @@ func (eq engineQueries) InsertAttempt(ctx context.Context, attempt engine.Attemp
 		usageModel = textPtrFromNullable(attempt.Usage.Model)
 		usageThreadID = textPtrFromNullable(attempt.Usage.ThreadID)
 	}
+	var (
+		preserveBranch pgtype.Text
+		preservePushed pgtype.Bool
+		preserveRemote pgtype.Text
+	)
+	if attempt.Preserve != nil {
+		preserveBranch = textOrNull(attempt.Preserve.Branch)
+		preservePushed = pgtype.Bool{Bool: attempt.Preserve.Pushed, Valid: true}
+		preserveRemote = textOrNull(attempt.Preserve.Remote)
+	}
 	_, err := eq.q.Exec(ctx, insertAttemptSQL,
 		attempt.ID, eq.namespaceID, attempt.NodeRunID, int32(attempt.Number),
 		textOrNull(attempt.ActorID), string(attempt.Status), attempt.FencingToken,
@@ -626,6 +644,7 @@ func (eq engineQueries) InsertAttempt(ctx context.Context, attempt engine.Attemp
 		cachedInputTokens, reasoningTokens, usageModel, usageThreadID,
 		textPtrFromNullable(attempt.TerminationReason),
 		textPtrFromNullable(attempt.ContinuationRef),
+		preserveBranch, preservePushed, preserveRemote,
 	)
 	if err != nil {
 		return fmt.Errorf("postgres: engine: InsertAttempt: %w", err)
@@ -653,7 +672,8 @@ func (eq engineQueries) Attempts(ctx context.Context, nodeRunID string) ([]engin
 		       fencing_token, result, started_at, completed_at,
 		       usage_input_tokens, usage_output_tokens, usage_cost, usage_currency,
 		       usage_cached_input_tokens, usage_reasoning_tokens, usage_model,
-		       usage_thread_id, termination_reason, continuation_ref
+		       usage_thread_id, termination_reason, continuation_ref,
+		       preserve_branch, preserve_pushed, preserve_remote
 		FROM attempts
 		WHERE node_run_id = $1
 		ORDER BY attempt_number
@@ -684,6 +704,9 @@ func (eq engineQueries) Attempts(ctx context.Context, nodeRunID string) ([]engin
 			usageThreadID     pgtype.Text
 			terminationReason pgtype.Text
 			continuationRef   pgtype.Text
+			preserveBranch    pgtype.Text
+			preservePushed    pgtype.Bool
+			preserveRemote    pgtype.Text
 		)
 		if err := rows.Scan(
 			&attempt.ID, &attempt.NamespaceID, &attempt.NodeRunID, &number, &actorID,
@@ -691,6 +714,7 @@ func (eq engineQueries) Attempts(ctx context.Context, nodeRunID string) ([]engin
 			&usageInputTokens, &usageOutputTokens, &usageCost, &usageCurrency,
 			&usageCachedInput, &usageReasoning, &usageModel, &usageThreadID,
 			&terminationReason, &continuationRef,
+			&preserveBranch, &preservePushed, &preserveRemote,
 		); err != nil {
 			return nil, fmt.Errorf("postgres: engine: Attempts: scan: %w", err)
 		}
@@ -731,6 +755,17 @@ func (eq engineQueries) Attempts(ctx context.Context, nodeRunID string) ([]engin
 		// usage_thread_id: this is the handle a later dispatch resumes with,
 		// not a measurement of where the usage accrued (ADR 0010).
 		attempt.ContinuationRef = textPtrFromPg(continuationRef)
+		// preserve_branch is what "this attempt has a preserve branch to
+		// show" means (InsertAttempt always writes all three columns
+		// together, never partially) — the same single-column presence
+		// pattern usage_input_tokens uses above.
+		if preserveBranch.Valid {
+			attempt.Preserve = &engine.Preserve{
+				Branch: preserveBranch.String,
+				Pushed: preservePushed.Bool,
+				Remote: textOrEmpty(preserveRemote),
+			}
+		}
 		attempts = append(attempts, attempt)
 	}
 	if err := rows.Err(); err != nil {

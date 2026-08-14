@@ -444,6 +444,10 @@ func (w *Worker) completeFromInvocationError(
 			// The provider's reason for ending the turn, which an error
 			// body can carry with no usage block at all (ADR 0009).
 			TerminationReason: actors.TerminationReasonOf(invokeErr),
+			// The bridge's own report of what preserve-on-failure did
+			// (task t25/t26, issue #49) on this synchronous failure's
+			// error body, nil unless it actually committed a branch.
+			Preserve: actors.PreserveOf(invokeErr).ToEngine(),
 		})
 	if err != nil {
 		return err

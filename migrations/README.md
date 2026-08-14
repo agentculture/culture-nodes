@@ -176,6 +176,23 @@ Numbered SQL migrations for the authoritative PostgreSQL store (prd-spec
   source system's own status verbatim and are never translated into a
   ledger authority value (see `internal/devague/deviations.go`'s
   `MapDeviations` doc comment for that reasoning in full).
+- `0025_attempt_preserve_branch.sql` — expand-only: adds nullable
+  `attempts.preserve_branch`, `preserve_pushed`, `preserve_remote` (task t26
+  of the economy-discord-graphs plan, issue #49, spec claim c32 / honesty
+  h21), carrying task t25's bridge-minted preserve-on-failure branch past
+  the worker process that first reads it — t25 stopped at the bridge,
+  attaching the outcome only to the failed event/error body. `preserve_branch`
+  is written only when the bridge's `preserve.PreserveResult.committed` is
+  true (a minted-but-never-committed name names nothing that exists in any
+  repository); `preserve_pushed` distinguishes a branch that reached the
+  configured remote from one that exists only in the bridge host's local
+  object database (the expected common case today — bridge-host push
+  credentials are unverified); `preserve_remote` is informational only and
+  is never combined with the branch to fabricate a forge URL — a clickable
+  link on the run detail page may only come from operator-set configuration
+  (`web/README.md`'s `VITE_PRESERVE_BRANCH_URL_TEMPLATE`). All three are
+  written together or not at all (`InsertAttempt`), so `preserve_pushed`/
+  `preserve_remote` are never non-NULL while `preserve_branch` is NULL.
 
 ## Policy
 

@@ -552,6 +552,11 @@ type actorTelemetry struct {
 	Usage             *engine.Usage
 	TerminationReason *string
 	ContinuationRef   *string
+	// Preserve is task t25/t26's bridge-reported preserve-on-failure branch
+	// (issue #49), nil when the actor reported none — the far more common
+	// case, since a bridge only preserves on a genuine technical failure
+	// that left workspace changes behind.
+	Preserve *engine.Preserve
 }
 
 // completeTechnicalFailure is failAttempt's twin for a caller that needs the
@@ -582,6 +587,7 @@ func (w *Worker) completeTechnicalFailure(
 		Usage:             telemetry.Usage,
 		TerminationReason: telemetry.TerminationReason,
 		ContinuationRef:   telemetry.ContinuationRef,
+		Preserve:          telemetry.Preserve,
 		ActorID:           actorID,
 	})
 	if err != nil {

@@ -307,6 +307,9 @@ func (c *completion) recordAttempt(ctx context.Context) error {
 		// recorded so a LATER dispatch to the same actor can pass it back
 		// (ADR 0010). Absent stays absent — nothing here invents one.
 		ContinuationRef: c.req.ContinuationRef,
+		// The bridge's own report of what preserve-on-failure did (task
+		// t25/t26, issue #49), nil on every attempt that reported none.
+		Preserve: c.req.Preserve,
 	}); err != nil {
 		return err
 	}

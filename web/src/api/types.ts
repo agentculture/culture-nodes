@@ -130,6 +130,34 @@ export interface Attempt {
   result?: unknown;
   started_at: string;
   completed_at?: string;
+  /**
+   * Task t26 (issue #49, spec claim c32 / honesty h21): the branch name a
+   * bridge's preserve-on-failure plumbing commit (task t25) actually
+   * created a ref for. Present only on an attempt whose bridge committed
+   * one — most attempts, including every successful one, carry none; a
+   * minted-but-never-committed name is never reported here (see
+   * migrations/0025_attempt_preserve_branch.sql). Read `preserve_branch`
+   * as the presence check — `preserve_pushed`/`preserve_remote` are only
+   * ever populated alongside it.
+   */
+  preserve_branch?: string;
+  /**
+   * Whether `preserve_branch` reached the bridge's configured remote
+   * (`true`) or exists only in the bridge host's local object database
+   * (`false` — the expected common case today, since bridge-host push
+   * credentials are unverified). A reader must be able to tell the two
+   * apart, so this is always an explicit boolean when `preserve_branch` is
+   * present, never inferred from its absence.
+   */
+  preserve_pushed?: boolean;
+  /**
+   * The remote name (e.g. "origin") the bridge attempted or reached the
+   * push against. Informational only — NEVER combined with
+   * `preserve_branch` client-side to construct a forge URL; a clickable
+   * link may only come from configuration the operator actually set (see
+   * domain/preserve.ts).
+   */
+  preserve_remote?: string;
 }
 
 export type NodeRunState =

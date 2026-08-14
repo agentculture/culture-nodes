@@ -12,9 +12,11 @@ itself is the record of what happened.
 from __future__ import annotations
 
 import argparse
+import json
 import logging
 import sys
 
+from notify_bridge import capabilities, preflight
 from notify_bridge.config import Config, ConfigError
 from notify_bridge.server import serve_forever
 
@@ -32,6 +34,20 @@ def _build_parser() -> argparse.ArgumentParser:
     serve.add_argument("--host", default=None, help="Override the bind host.")
     serve.add_argument("--port", type=int, default=None, help="Override the bind port.")
     serve.add_argument("-v", "--verbose", action="store_true", help="Enable debug logging.")
+    # On the `serve` subparser rather than at top level because this
+    # bridge's CLI is subcommand-shaped (the sibling bridges take bare
+    # flags, and their --print-capabilities is bare to match). The document
+    # it prints is identical on all four.
+    serve.add_argument(
+        "--print-capabilities",
+        action="store_true",
+        help=(
+            "Print this host's preflight capability surface (issue #67) as the JSON an actor "
+            "registration carries in `capabilities`, then exit without serving. The running "
+            "bridge serves the same document at GET /v1/capabilities; this flag is for "
+            "registering an actor before its bridge has ever started."
+        ),
+    )
 
     return parser
 
@@ -50,6 +66,9 @@ def _cmd_serve(args: argparse.Namespace) -> int:
         cfg.host = args.host
     if args.port is not None:
         cfg.port = args.port
+    if args.print_capabilities:
+        print(json.dumps(preflight.capability_block(capabilities.host_facts(cfg)), indent=2))
+        return 0
     serve_forever(cfg)
     return 0
 

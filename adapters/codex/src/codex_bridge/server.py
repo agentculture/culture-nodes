@@ -27,6 +27,10 @@ Routes:
   a caller that prefers the REST-conventional verb; not exercised by the
   conformance kit's client, which only ever calls the `/cancel` path above.
 * ``GET /healthz`` — operational convenience, no protocol meaning.
+* ``GET /v1/capabilities`` — the preflight capability surface this bridge
+  advertises (issue #67, task t15): the measured host facts an actor
+  registration carries in ``capabilities``. Authenticated; optional in the
+  protocol, so an actor that serves nothing here is still conformant.
 """
 
 from __future__ import annotations
@@ -43,7 +47,7 @@ from http.server import BaseHTTPRequestHandler, HTTPServer
 from pathlib import Path
 from typing import Any
 
-from codex_bridge import codex_cli, mapping, preserve, workspace
+from codex_bridge import capabilities, codex_cli, mapping, preflight, preserve, workspace
 from codex_bridge.async_runner import AsyncRunner
 from codex_bridge.config import Config
 from codex_bridge.idempotency import IdempotencyStore
@@ -207,10 +211,33 @@ class Handler(BaseHTTPRequestHandler):
     # -- HTTP verbs --------------------------------------------------------
 
     def do_GET(self) -> None:  # noqa: N802 - stdlib naming
-        if self.path == "/healthz":
-            self._write_json(200, {"status": "ok"})
+        try:
+            if self.path == "/healthz":
+                self._write_json(200, {"status": "ok"})
+                return
+            if self.path == preflight.CAPABILITIES_PATH:
+                self._handle_capabilities()
+                return
+            self._write_json(404, {"error": "not found"})
+        except Exception:  # noqa: BLE001 - the server must answer, never crash
+            logger.exception("unhandled error handling GET %s", self.path)
+            self._write_json(
+                500, {"error": "internal bridge error", "class": mapping.CLASS_EXECUTION}
+            )
+
+    def _handle_capabilities(self) -> None:
+        """Serve this bridge's preflight capability surface (issue #67, task
+        t15) — measured now, on this host, not read back from a config file.
+
+        Authenticated like the invocation route: the block names a hostname
+        and real filesystem paths, so `/healthz` stays the only
+        unauthenticated route. Advertising is all a bridge does here; the
+        gate that reads it is per-actor, default-off, and entirely
+        engine-side (`internal/preflight`).
+        """
+        if not self._require_auth():
             return
-        self._write_json(404, {"error": "not found"})
+        self._write_json(200, preflight.capability_block(capabilities.host_facts(self.bridge.cfg)))
 
     def do_POST(self) -> None:  # noqa: N802 - stdlib naming
         try:

@@ -188,6 +188,48 @@ Point the process at a config file with
 | `incomplete_outcome` | no | Domain outcome reported for `subtype: "error_max_turns"`, **only if the node declares one here**. Absent: reported as an execution failure, never as success. |
 | `async` | no | Force sync (`false`) or async (`true`) dispatch, overriding the step-budget threshold. |
 
+## Preflight capability surface (issue #67)
+
+This bridge measures the host it dispatches on and serves the result at
+`GET /v1/capabilities` (authenticated, like the invocation route), or prints
+the same document without a server:
+
+```bash
+uv run claude-code-bridge --print-capabilities
+curl -sH "Authorization: Bearer $CLAUDE_CODE_BRIDGE_AUTH_TOKEN" http://127.0.0.1:8086/v1/capabilities
+```
+
+The document is exactly what an actor registration carries in
+`capabilities`. What claude-code contributes to it:
+
+| Fact | Where it comes from |
+|---|---|
+| `sandbox_modes` | The `--permission-mode` values that survive headless dispatch: `acceptEdits`, `bypassPermissions` |
+| `sandbox_modes_unavailable` | `plan` and `default` — this bridge allocates no TTY, so a mode that can stop for an approval waits forever for one nobody can give |
+| `default_sandbox_mode` | `permission_mode` |
+| `confinement` | **none** — `claude -p` takes no sandbox flag and runs with this bridge process's own privileges |
+| `commit_policy` | The `preserve_on_failure` / `preserve_push` / `preserve_remote` policy in force |
+| `writable_paths` | `repo_allowlist` — `[]` means this bridge writes nowhere |
+
+`confinement` is stated separately from the mode list on purpose: a reader
+who sees `bypassPermissions` under a key called `sandbox_modes` can mistake
+a prompting policy for a confinement boundary. On this backend the only
+boundary is the repo allowlist, enforced by this bridge before dispatch
+rather than by the kernel during it.
+
+The protocol is engine-side and the facts are bridge-side. The shared,
+byte-identical `preflight.py` in every bridge holds the protocol, the agreed
+key set and the measurement helpers; `capabilities.py` holds only what THIS
+backend measures. `tests/lint/preflightsurface_test.go` fails the build if
+those two ever swap roles. The full contract is
+[`api/actor-protocol/README.md`](../../api/actor-protocol/README.md); the
+engine half (the gate, the derived briefing, the acknowledgement, `nodes
+dispatch confirm`) is `internal/preflight`.
+
+Advertising changes nothing on its own: the gate that reads the surface is
+per-actor and default-off, and this bridge dispatches exactly as it did
+before whether or not an operator ever registers the block.
+
 ## Trust model: `proposed`-only
 
 Identical stance to `adapters/colleague`: this bridge **never emits

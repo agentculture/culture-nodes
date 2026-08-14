@@ -3,10 +3,14 @@ package conformance
 import (
 	"context"
 	"encoding/json"
+	"io"
+	"net/http"
+	"strings"
 	"testing"
 	"time"
 
 	"github.com/agentculture/culture-nodes/internal/actors"
+	"github.com/agentculture/culture-nodes/internal/preflight"
 	"github.com/agentculture/culture-nodes/internal/store"
 )
 
@@ -150,6 +154,71 @@ func Run(t *testing.T, cfg Config) {
 	t.Run("asynchronous-acceptance-and-callbacks", s.checkAsyncFlow)
 	t.Run("cancellation-endpoint", s.checkCancellation)
 	t.Run("contract-failure-classification", s.checkContractFailure)
+	t.Run("capability-surface", s.checkCapabilitySurface)
+}
+
+// Issue #67, task t15: the preflight capability surface, if the actor serves
+// one.
+//
+// Optional on purpose, and the skip is the interesting half: an actor that
+// serves nothing at `actors.CapabilitiesPath` is fully conformant and its
+// dispatch is unaffected, which is the task's second acceptance criterion
+// stated as a protocol property rather than a promise about today's code.
+// What is NOT optional is the shape: a bridge that advertises must advertise
+// the document `internal/preflight.ParseSurface` accepts, because the engine
+// composes that block verbatim into a briefing an actor acknowledges before
+// its first billable turn — a surface only this actor's own code understands
+// would be a second protocol.
+func (s *suite) checkCapabilitySurface(t *testing.T) {
+	ctx, cancel := s.ctx(t)
+	defer cancel()
+
+	url := strings.TrimSuffix(s.cfg.Endpoint, "/") + actors.CapabilitiesPath
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
+	if err != nil {
+		t.Fatalf("build capability request: %v", err)
+	}
+	if s.cfg.AuthToken != "" {
+		req.Header.Set("Authorization", "Bearer "+s.cfg.AuthToken)
+	}
+
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Skipf("the actor serves no capability surface (%v); its dispatch is unaffected", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode == http.StatusNotFound || resp.StatusCode == http.StatusMethodNotAllowed {
+		t.Skipf("the actor serves no capability surface (%d at %s); its dispatch is unaffected",
+			resp.StatusCode, actors.CapabilitiesPath)
+	}
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("the capability surface answered %d; serve 200 with the advertised block, or "+
+			"404 if this actor advertises nothing", resp.StatusCode)
+	}
+
+	body, err := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
+	if err != nil {
+		t.Fatalf("read the capability surface: %v", err)
+	}
+	var document map[string]json.RawMessage
+	if err := json.Unmarshal(body, &document); err != nil {
+		t.Fatalf("the capability surface is not a JSON object: %v", err)
+	}
+	if _, ok := document[preflight.CapabilityKey]; !ok {
+		t.Fatalf("the capability surface carries no %q block; it is registered as "+
+			"capabilities.%s, so anything else here reaches the control plane as nothing",
+			preflight.CapabilityKey, preflight.CapabilityKey)
+	}
+
+	// The engine's own parser, run against what the actor served: whatever it
+	// refuses here it would refuse at registration, where the operator is the
+	// one who has to work out why.
+	if _, ok, err := preflight.ParseSurface(body); err != nil {
+		t.Fatalf("the advertised surface is one internal/preflight refuses: %v", err)
+	} else if !ok {
+		t.Fatal("the advertised surface parsed as absent; a served block must be a readable one")
+	}
 }
 
 // newInvocation builds a §13.1 request with a fresh attempt id and a callback

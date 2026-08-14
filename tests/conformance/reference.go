@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"github.com/agentculture/culture-nodes/internal/actors"
+	"github.com/agentculture/culture-nodes/internal/preflight"
 )
 
 // ReferenceActor is a correct, minimal PRD §13 actor.
@@ -49,6 +50,13 @@ type ReferenceActor struct {
 	// refusing receiver from being retried forever.
 	callbackRetries int
 
+	// muteCapabilities makes this actor serve nothing at
+	// actors.CapabilitiesPath, which is what a bridge that advertises no
+	// preflight capability surface looks like on the wire. Issue #67 makes
+	// the surface optional, so the kit must pass either way — see
+	// WithoutCapabilitySurface.
+	muteCapabilities bool
+
 	// allowCallback validates a parsed callback URL before any request is
 	// made to it. Posting to the invocation's callback.url IS the §13.4
 	// protocol, but an actor should still refuse plainly hostile targets;
@@ -78,6 +86,17 @@ func NewReferenceActor(authToken string) *ReferenceActor {
 	return a
 }
 
+// WithoutCapabilitySurface makes the actor advertise no preflight capability
+// surface (issue #67, task t15): the same correct §13 actor, serving 404
+// where the optional surface would be. It exists so the kit's own suite can
+// hold the task's second acceptance criterion — a bridge that does not
+// advertise the surface is unaffected — rather than only asserting the
+// advertising case and assuming the other.
+func (a *ReferenceActor) WithoutCapabilitySurface() *ReferenceActor {
+	a.muteCapabilities = true
+	return a
+}
+
 // URL is the actor's base URL.
 func (a *ReferenceActor) URL() string { return a.server.URL }
 
@@ -90,6 +109,8 @@ func (a *ReferenceActor) serve(w http.ResponseWriter, r *http.Request) {
 		a.invoke(w, r)
 	case r.Method == http.MethodPost && strings.HasSuffix(r.URL.Path, "/cancel"):
 		a.cancel(w, r)
+	case r.Method == http.MethodGet && r.URL.Path == actors.CapabilitiesPath && !a.muteCapabilities:
+		a.capabilities(w, r)
 	default:
 		http.Error(w, "not found", http.StatusNotFound)
 	}
@@ -201,6 +222,32 @@ func (a *ReferenceActor) record(key string, status int, body any, w http.Respons
 // cancel implements §13.6. It is best-effort by design: the actor records the
 // instruction and answers, and the control plane's state does not depend on
 // what it does next.
+// capabilities serves the optional preflight capability surface (issue #67,
+// task t15) the way a bridge does: authenticated like the invocation route,
+// and carrying only facts this actor can actually state about its own host.
+//
+// The reference actor runs no work at all, so its host block is the smallest
+// honest one — which is the point of having it here. It shows an adapter
+// author that "advertise only what you measured" is a shape the kit accepts,
+// not a standard that demands a long list.
+func (a *ReferenceActor) capabilities(w http.ResponseWriter, r *http.Request) {
+	if a.authToken != "" && bearer(r) != a.authToken {
+		writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "a scoped workload token is required"})
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{
+		preflight.CapabilityKey: map[string]any{
+			"protocol_version": preflight.ProtocolVersion,
+			"host": map[string]any{
+				"hostname":       "conformance-reference-actor",
+				"confinement":    "no session: the reference actor runs no work at all",
+				"commit_policy":  "no workspace: nothing here is committed, preserved or harvested",
+				"writable_paths": []string{},
+			},
+		},
+	})
+}
+
 func (a *ReferenceActor) cancel(w http.ResponseWriter, r *http.Request) {
 	if a.authToken != "" && bearer(r) != a.authToken {
 		writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "a scoped workload token is required"})

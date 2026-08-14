@@ -5,6 +5,21 @@ All notable changes to this project will be documented in this file.
 Format follows [Keep a Changelog](https://keepachangelog.com/). This project
 adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.19.0] - 2026-08-14
+
+### Added
+
+- The preflight capability surface on all four bridges (task t15, issue #67, the all-backends rule): `claude-code`, `codex`, `colleague` and `notify` each measure the host they dispatch on and advertise it through the SAME protocol shape task t14 built engine-side. The facts are the ones a dispatched task actually depends on — which sandbox modes truly work here, what the commit/harvest policy in force is, and which paths the bridge allowlists
+- `preflight.py`, one module carrying the protocol, the agreed `host` key set and the measurement helpers, **byte-identical in all four bridges**. Everything backend-specific — and only that — lives in each bridge's own `capabilities.py`. The split is not a convention: `tests/lint/preflightsurface_test.go` fails the build if the shared module diverges between bridges, if a bridge implements half the surface, or if a `capabilities.py` starts re-declaring the document's shape. A per-bridge protocol is the duplication that let `resolve_actor_row_id` ship as the same bug in three deploy lanes
+- Measured, not nominal: `sandbox_modes_unavailable` reports a mode this host cannot actually deliver, with the reason. codex's `read-only`/`workspace-write` confinement rests on a bubblewrap helper backed by unprivileged user namespaces, so where the kernel restricts them (#18/#63 — requested on three hosts, every file write silently lost, shell commands still running unconfined) the surface says so instead of echoing the config. claude-code reports `plan`/`default` as unavailable because headless dispatch allocates no TTY
+- A `confinement` fact on every advertising bridge, stating plainly what actually confines a session — including "nothing", which is the truth for claude-code (`--permission-mode` governs asking, not reaching) and colleague (a throwaway worktree bounds where changes land, not what is reachable)
+- `GET /v1/capabilities` on each advertising bridge (`internal/actors.CapabilitiesPath`), authenticated like the invocation route, plus `--print-capabilities` for registering an actor before its bridge has ever started. Neither is on the engine's dispatch path: the surface reaches the control plane through the actor's registration, and these exist so an operator reads the facts off the host that measured them
+- `tests/conformance` grew an optional capability-surface check: an actor that advertises must advertise the document `internal/preflight.ParseSurface` accepts, and one that advertises nothing SKIPS rather than fails. `TestAnActorThatAdvertisesNoCapabilitySurfaceIsStillConformant` runs the whole kit against a muted reference actor, so the task's second acceptance criterion — a bridge that does not advertise leaves its actor dispatching exactly as before — is a tested property rather than a promise. `adapters/human-inbox` is the live subject: it advertises nothing and is unchanged
+
+### Changed
+
+- `api/actor-protocol/README.md` documents the agreed `host` keys in a table, the measured-not-nominal rule with the #18/#63 evidence behind it, and where a bridge's surface comes from; each advertising bridge's README states the facts THAT backend contributes and why
+
 ## [0.18.0] - 2026-08-14
 
 ### Added

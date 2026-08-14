@@ -151,6 +151,8 @@ local variable that `mapping.py` never receives at all.
   generic actor client never has to special-case this bridge.
 * `GET /healthz` — operational convenience, no protocol meaning, the only
   unauthenticated route.
+* `GET /v1/capabilities` — the preflight capability surface (issue #67),
+  authenticated. Optional in the protocol; see the section below.
 
 ## Configuration
 
@@ -174,6 +176,52 @@ top of it. **The webhook URL is not a config field** — see "Trust model".
 With neither webhook env var set, every send resolves to `PostResult.DISABLED`
 — the default (`require_delivery` absent) still reports `sent`; the run
 stays green with no webhook configured at all.
+
+## Preflight capability surface (issue #67)
+
+This bridge measures the host it dispatches on and serves the result at
+`GET /v1/capabilities` (authenticated, like the invocation route), or prints
+the same document without a server:
+
+```bash
+uv run notify-bridge serve --print-capabilities
+curl -sH "Authorization: Bearer $NOTIFY_BRIDGE_AUTH_TOKEN" http://127.0.0.1:8088/v1/capabilities
+```
+
+(The flag sits on the `serve` subcommand because this bridge's CLI is
+subcommand-shaped; the sibling bridges take it bare. The document is
+identical on all four.)
+
+notify contributes the least of any bridge, which is the useful part: it
+opens no session, spawns no subprocess and touches no checkout, so the two
+sandbox keys are **absent** rather than empty — there are no confinement
+modes to report where nothing runs, and an empty list would claim a
+measurement of a session that does not exist. What remains still matters:
+
+| Fact | Value |
+|---|---|
+| `hostname` | The host this bridge runs on |
+| `confinement` | `no session:` one outbound HTTPS POST in-process, no agent, no shell |
+| `commit_policy` | `no workspace:` nothing is written, committed, preserved or harvested |
+| `writable_paths` | `[]` — this bridge writes nowhere |
+
+The webhook URL is not a host fact and never will be. A capability surface
+is a document that leaves this host and lands in a ledger record; the URL is
+read exactly once, at POST time, by `webhook.resolve_webhook` (see "Trust
+model"), and a test asserts no rendered surface can carry it.
+
+The protocol is engine-side and the facts are bridge-side. The shared,
+byte-identical `preflight.py` in every bridge holds the protocol, the agreed
+key set and the measurement helpers; `capabilities.py` holds only what THIS
+backend measures. `tests/lint/preflightsurface_test.go` fails the build if
+those two ever swap roles. The full contract is
+[`api/actor-protocol/README.md`](../../api/actor-protocol/README.md); the
+engine half (the gate, the derived briefing, the acknowledgement, `nodes
+dispatch confirm`) is `internal/preflight`.
+
+Advertising changes nothing on its own: the gate that reads the surface is
+per-actor and default-off, and this bridge dispatches exactly as it did
+before whether or not an operator ever registers the block.
 
 ## Registering the actor
 

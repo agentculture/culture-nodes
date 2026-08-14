@@ -289,6 +289,61 @@ deploy_human_inbox() { # host
   assert_unit_healthy "$host" human-inbox-tracker
 }
 
+# --- notify actor bridge lane (issue #68) ---------------------------------
+# THOR ONLY, like the human-inbox lane and for the same reason: one logical
+# notification actor. A second bridge on orin would be a second identity
+# posting into the same channel.
+#
+# This bridge is the ONLY thing here that both speaks the actor protocol and
+# holds the webhook URL. It reads that URL from prod.env — the file the
+# notifier container already uses — rather than a copy of its own, so the
+# secret keeps one custody point.
+deploy_notify() { # host
+  local host=$1
+  case "$host" in
+    thor*) ;;
+    *) say "notify bridge is thor-only (one logical notify actor) -- skipping on $host"; return 0 ;;
+  esac
+
+  ssh "$host" 'test -f ~/.culture-nodes/prod.env' || {
+    say "WARNING: ~/.culture-nodes/prod.env missing on $host — skipping the notify bridge (it reads CULTURE_NODES_WEBHOOK_URL from there)"
+    return 0
+  }
+  ssh "$host" 'grep -q "^CULTURE_NODES_WEBHOOK_URL=." ~/.culture-nodes/prod.env' || {
+    say "WARNING: no CULTURE_NODES_WEBHOOK_URL in ~/.culture-nodes/prod.env on $host — skipping the notify bridge (a bridge with no webhook would accept dispatches and drop every message)"
+    return 0
+  }
+
+  say "installing the notify adapter as a uv tool on $host (archive-independent)"
+  ssh "$host" "bash -lc 'command -v uv >/dev/null || curl -LsSf https://astral.sh/uv/install.sh | sh; \$HOME/.local/bin/uv tool install --force ./$REMOTE_DIR/adapters/notify || uv tool install --force ./$REMOTE_DIR/adapters/notify'"
+
+  NOTIFY_BIN=$(ssh "$host" 'bash -lc "command -v notify-bridge"' | tr -d '\r')
+  [ -n "$NOTIFY_BIN" ] || { echo "notify-bridge console script not on PATH on $host after uv tool install" >&2; return 1; }
+  say "notify unit will exec $NOTIFY_BIN on $host"
+
+  # This lane CONSUMES the bearer token; it never mints one. Secret material
+  # is install-secrets.sh's alone (a boundary two deploy-lane tests enforce),
+  # and there is a second reason here: the control plane holds the matching
+  # value, so a token re-minted on every deploy would silently break dispatch.
+  ssh "$host" 'test -s ~/.culture-nodes/notify.env' || {
+    say "WARNING: ~/.culture-nodes/notify.env missing on $host — skipping the notify bridge (run deploy/prod/install-secrets.sh, then deploy.sh again, to enable workflow-step notifications)"
+    return 0
+  }
+
+  say "installing notify non-secret config on $host"
+  ssh "$host" 'umask 077; mkdir -p ~/.culture-nodes
+{ echo "NOTIFY_BRIDGE_HOST=0.0.0.0"
+  echo "NOTIFY_BRIDGE_PORT=8088"
+  echo "NOTIFY_BRIDGE_STATE_DIR=$HOME/.culture-nodes/notify-state"
+  echo "NOTIFY_BRIDGE_ACTOR_ID=company/notify-discord"
+} > ~/.culture-nodes/notify-bridge.env'
+
+  say "installing notify-bridge systemd user unit on $host"
+  ssh "$host" "loginctl enable-linger \$(id -un) 2>/dev/null || true"
+  ssh "$host" "export XDG_RUNTIME_DIR=/run/user/\$(id -u); mkdir -p ~/.config/systemd/user && sed \"s#%h/.local/bin/notify-bridge#$NOTIFY_BIN#\" $REMOTE_DIR/deploy/prod/notify-bridge.service > ~/.config/systemd/user/notify-bridge.service && systemctl --user daemon-reload && systemctl --user restart notify-bridge && systemctl --user enable notify-bridge"
+  assert_unit_healthy "$host" notify-bridge
+}
+
 case "$HOST" in
   thor*)
     say "starting thor control plane"
@@ -305,6 +360,7 @@ case "$HOST" in
     # API, so standing them up first only means they start against a stack
     # that is still restarting.
     deploy_human_inbox "$HOST"
+    deploy_notify "$HOST"
     say "thor deploy complete (namespace $NS)"
     ;;
   orin*)

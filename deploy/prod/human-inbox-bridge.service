@@ -7,14 +7,12 @@
 # bridge on orin would just create a second inbox racing the same tasks
 # against the same actor row.
 #
-# Host-resident Python, run with `uv run` beside the SAME
-# archive-independent ~/git/culture-nodes-agent checkout the codex-bridge
-# lane already provisions and keeps fast-forwarded (see deploy.sh's
-# deploy_codex_bridge / CODEX_AGENT_CHECKOUT_REMOTE) — reused here rather
-# than inventing a second package-install mechanism, since
-# adapters/human-inbox has zero third-party runtime dependencies
-# (dependencies = []) and ships no console-script entry point for its
-# sibling tracker module, only for the bridge itself.
+# Host-resident Python, execing the console script `uv tool install` copied
+# into its own venv. It used to run `uv run --directory` against the shared
+# ~/git/culture-nodes-agent checkout — but that is the codex AGENT WORKSPACE,
+# which the codex-bridge lane fast-forwards to main, so a branch deploy
+# installed units whose code was not in the directory they ran from. The
+# tracker crash-looped 6272 times on that before it was found.
 #
 # Installed by deploy.sh's human-inbox lane to
 # ~/.config/systemd/user/human-inbox-bridge.service.

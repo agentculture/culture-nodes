@@ -6,7 +6,7 @@
   "deviations": [
     {
       "id": "d1",
-      "what": "colleague CAN resume upstream: colleague 1.56.0 ships 'colleague work --continue ID|last' (upstream #167), contradicting t5's premise that colleague resume needs an upstream feature \u2014 t5's colleague leg becomes real bridge resume support, filed as issue #62 (implement in-cycle if capacity allows, else first follow-up); the 'null ref + upstream request' fallback is superseded",
+      "what": "colleague CAN resume upstream: colleague 1.56.0 ships 'colleague work --continue ID|last' (upstream #167), contradicting t5's premise that colleague resume needs an upstream feature — t5's colleague leg becomes real bridge resume support, filed as issue #62 (implement in-cycle if capacity allows, else first follow-up); the 'null ref + upstream request' fallback is superseded",
       "task_ref": "t5",
       "reason": "operator correction during wave-1 execution; verified against the installed colleague CLI (--continue flag present in work --help)",
       "affects": [
@@ -46,7 +46,7 @@
     },
     {
       "id": "d4",
-      "what": "Scope addition to t5: task t8 shipped the capacity_exhausted error class but flagged that NO bridge emits it, leaving the class unreachable from real providers \u2014 a gap the plan assigns to no task. t5 (the all-backends bridge task) picks it up: each bridge classifies its backend's quota/session-limit failure and declares class capacity_exhausted in the error body, so t9's circuit breaker has something real to trip on.",
+      "what": "Scope addition to t5: task t8 shipped the capacity_exhausted error class but flagged that NO bridge emits it, leaving the class unreachable from real providers — a gap the plan assigns to no task. t5 (the all-backends bridge task) picks it up: each bridge classifies its backend's quota/session-limit failure and declares class capacity_exhausted in the error body, so t9's circuit breaker has something real to trip on.",
       "task_ref": "t5",
       "reason": "gap flagged in t8's own completion report; without it the breaker is untestable against real provider limits",
       "affects": [
@@ -54,12 +54,14 @@
         "t9"
       ],
       "origin": "llm",
-      "status": "proposed",
-      "classification": "acceptable"
+      "status": "approved",
+      "classification": "acceptable",
+      "decided_by": "user",
+      "decided_note": "confirmed by the operator after both halves shipped: the engine class and actor_availability table in t9, the per-bridge classification and Retry-After in t5"
     },
     {
       "id": "d5",
-      "what": "Operator decision: run the merge tracker unauthenticated against the public repo for now. That is not possible as built \u2014 tracker.py raises TrackerConfigError('GITHUB_TOKEN is required') and deploy.sh skips the unit without a token, so the shipped t16 tracker cannot run in the very configuration the operator chose. Adding task t35: make GITHUB_TOKEN optional (unauthenticated polling for public repos, honest rate-limit handling at the 60/hr anonymous ceiling), and install the unit without a token.",
+      "what": "Operator decision: run the merge tracker unauthenticated against the public repo for now. That is not possible as built — tracker.py raises TrackerConfigError('GITHUB_TOKEN is required') and deploy.sh skips the unit without a token, so the shipped t16 tracker cannot run in the very configuration the operator chose. Adding task t35: make GITHUB_TOKEN optional (unauthenticated polling for public repos, honest rate-limit handling at the 60/hr anonymous ceiling), and install the unit without a token.",
       "task_ref": "t16",
       "reason": "user chose the public-repo path when asked what GITHUB_TOKEN was needed for; the repo is public so PR merge state is readable anonymously",
       "affects": [

@@ -1,0 +1,44 @@
+# systemd user unit for the notify actor bridge (adapters/notify, issue #68)
+# — a kind=agent actor-protocol bridge that posts a message to the Discord
+# webhook when a workflow dispatches a node to it.
+#
+# It exists as an ACTOR rather than an engine node kind because the PRD
+# boundary rule is that the control-plane process holds no Discord egress.
+# That is the same rule that made the run-lifecycle notifier an out-of-process
+# daemon, and a `kind: notify` node executed by the worker would undo it. This
+# unit is therefore the only thing on the host that both speaks the actor
+# protocol and holds the webhook URL.
+#
+# Deployed on THOR ONLY, for the same reason the human-inbox bridge is: one
+# logical notification actor (company/notify-discord). A second bridge on orin
+# would be a second identity posting to the same channel.
+#
+# Installed by deploy.sh's notify lane to
+# ~/.config/systemd/user/notify-bridge.service, execing the console script
+# `uv tool install` copied into its own venv — never `uv run` against a source
+# tree, which is how the human-inbox units ended up running code from a
+# checkout pinned to main and crash-looped 6272 times.
+#
+#   systemctl --user daemon-reload
+#   systemctl --user enable --now notify-bridge
+#   journalctl --user -u notify-bridge -f
+
+[Unit]
+Description=Culture Nodes notify actor bridge (kind=agent, posts to Discord)
+After=network-online.target
+
+[Service]
+# Non-secret config (host/port/state dir/actor id) rides one EnvironmentFile;
+# the two secrets ride separately-installed ones — the bridge's own bearer
+# token, and prod.env for CULTURE_NODES_WEBHOOK_URL. The webhook URL is read
+# from the file the notifier container already uses rather than copied into a
+# second place: one secret, one custody point.
+EnvironmentFile=%h/.culture-nodes/notify-bridge.env
+EnvironmentFile=%h/.culture-nodes/notify.env
+EnvironmentFile=%h/.culture-nodes/prod.env
+ExecStart=%h/.local/bin/notify-bridge serve
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=default.target

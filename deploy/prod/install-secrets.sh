@@ -264,3 +264,54 @@ GITHUB_TOKEN=${GITHUB_TOKEN}"
   return "$rc"
 }
 install_human_inbox_env "$THOR"
+
+# --- notify actor bridge bearer token (issue #68) -------------------------
+#
+# The notify bridge is a kind=agent actor the worker dispatches to, so the
+# token has TWO custody points that must agree: the bridge reads it from
+# ~/.culture-nodes/notify.env, and the worker reads the same value from
+# prod.env under the name the actor row's metadata points at
+# (NODES_ACTOR_NOTIFY_TOKEN -- internal/worker/registry.go's authTokenEnvOf).
+# Both are written here, from one generated value, because a rotation that
+# updated only one side would leave every notify dispatch failing
+# authentication with nothing obviously wrong on either host.
+#
+# Same refuse-by-default posture as every other lane: an existing token is
+# KEPT unless FORCE_NOTIFY=1, since re-minting it silently breaks dispatch.
+NOTIFY_BRIDGE_AUTH_TOKEN=$(openssl rand -base64 32)
+
+install_notify_env() { # host
+  local host=$1 rc=0
+  printf 'NOTIFY_BRIDGE_AUTH_TOKEN=%s\n' "$NOTIFY_BRIDGE_AUTH_TOKEN" \
+    | ssh "$host" "FORCE=${FORCE_NOTIFY:-0}; "'umask 077; mkdir -p ~/.culture-nodes; if [ -e ~/.culture-nodes/notify.env ] && [ "$FORCE" != "1" ]; then echo "keeping existing notify.env (set FORCE_NOTIFY=1 to rotate)" >&2; exit 3; fi; cat > ~/.culture-nodes/notify.env' || rc=$?
+  if [ "$rc" -eq 3 ]; then echo "kept existing notify.env on $host"; fi
+  if [ "$rc" -ne 0 ] && [ "$rc" -ne 3 ]; then return "$rc"; fi
+
+  # Mirror whatever token the bridge ENDED UP with -- which is the existing
+  # one when the guard above kept it, not the value just generated.
+  ssh "$host" 'set -e
+tok=$(grep "^NOTIFY_BRIDGE_AUTH_TOKEN=" ~/.culture-nodes/notify.env | cut -d= -f2-)
+[ -n "$tok" ] || { echo "notify.env carries no NOTIFY_BRIDGE_AUTH_TOKEN" >&2; exit 1; }
+touch ~/.culture-nodes/prod.env; chmod 600 ~/.culture-nodes/prod.env
+python3 - "$tok" <<PY
+import os, sys
+path = os.path.expanduser("~/.culture-nodes/prod.env")
+token = sys.argv[1]
+line = "NODES_ACTOR_NOTIFY_TOKEN=" + token
+lines = open(path).read().splitlines()
+if any(l.startswith("NODES_ACTOR_NOTIFY_TOKEN=") for l in lines):
+    if line in lines:
+        print("control-plane copy of the notify token already matches")
+    else:
+        lines = [line if l.startswith("NODES_ACTOR_NOTIFY_TOKEN=") else l for l in lines]
+        open(path, "w").write("\n".join(lines) + "\n")
+        print("re-synced the control-plane copy of the notify token")
+else:
+    lines.append(line)
+    open(path, "w").write("\n".join(lines) + "\n")
+    print("installed the control-plane copy of the notify token")
+PY'
+  echo "notify bridge token in place on $host (bridge + control-plane copies agree)"
+  return 0
+}
+install_notify_env "$THOR"

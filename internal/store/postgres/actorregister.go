@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 
+	"github.com/agentculture/culture-nodes/internal/preflight"
 	"github.com/agentculture/culture-nodes/internal/store"
 )
 
@@ -37,6 +38,21 @@ type RegisterActorParams struct {
 // claiming one revision — the caller retries, the ledger-style append-only
 // shape stays intact.
 func (eq engineQueries) RegisterActor(ctx context.Context, p RegisterActorParams) (Actor, error) {
+	// Task t14 / issue #67, acceptance criterion 3: enabling the
+	// clarify-then-commit gate for an actor whose registration advertises no
+	// capability surface is refused HERE, when the actor is registered,
+	// rather than discovered later by a run that stalls against a gate
+	// nothing can satisfy.
+	//
+	// The same check runs in the API handler, which renders it as a 400 with
+	// the remediation; this one covers every caller that does not go through
+	// that handler, and migration 0026's CHECK constraint covers raw SQL. An
+	// actor that does not enable the gate is never refused for anything
+	// here — the surface is only load-bearing once something depends on it.
+	if err := preflight.CheckConfiguration(p.Capabilities, p.Metadata); err != nil {
+		return Actor{}, fmt.Errorf("postgres: engine: RegisterActor %s: %w", p.ActorKey, err)
+	}
+
 	capabilities := p.Capabilities
 	if len(capabilities) == 0 {
 		capabilities = json.RawMessage(`{}`)

@@ -122,7 +122,7 @@
     },
     "recordType": {
       "type": "string",
-      "description": "MVP record types (PRD §10.2), plus `grade` -- a domain record type registered additively (issue #28 item 1) that does not redefine core authority semantics.",
+      "description": "MVP record types (PRD §10.2), plus the domain record types registered additively after them -- `grade` (issue #28 item 1) and the clarify-then-commit gate's `dispatch_preflight`/`dispatch_acknowledgement` pair (issue #67) -- none of which redefine core authority semantics.",
       "enum": [
         "announcement",
         "claim",
@@ -134,7 +134,9 @@
         "evidence",
         "result",
         "review",
-        "grade"
+        "grade",
+        "dispatch_preflight",
+        "dispatch_acknowledgement"
       ]
     },
     "authority": {

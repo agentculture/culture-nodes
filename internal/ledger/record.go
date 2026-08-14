@@ -43,6 +43,21 @@ const (
 	// producer/authority matrix, extended by two grade-specific rules (see
 	// RuleGradeNeverObservedOrDerived and RuleNoSelfGrade in errors.go).
 	RecordGrade RecordType = "grade"
+	// RecordDispatchPreflight is the clarify-then-commit gate's briefing
+	// (issue #67, task t14): the operating facts a dispatch depends on,
+	// composed by the engine from the actor's advertised host capabilities
+	// and the task declaration, handed over BEFORE the first billable turn.
+	// It is registered additively after the PRD §10.2 MVP set, like
+	// RecordGrade, and carries derived authority only (see
+	// RulePreflightDerivedOnly).
+	RecordDispatchPreflight RecordType = "dispatch_preflight"
+	// RecordDispatchAcknowledgement is the actor's answer to a
+	// RecordDispatchPreflight: the second, separate action that commits the
+	// dispatch. It is the actor's own claim to have been told and to have
+	// understood — proposed authority only, never derived (see
+	// RuleAcknowledgementNeverDerived), because an acknowledgement nobody
+	// made is not an acknowledgement.
+	RecordDispatchAcknowledgement RecordType = "dispatch_acknowledgement"
 )
 
 // RecordTypes returns the registered record types: the PRD §10.2 MVP set in
@@ -52,6 +67,7 @@ func RecordTypes() []RecordType {
 		RecordAnnouncement, RecordClaim, RecordAssumption, RecordQuestion,
 		RecordTask, RecordDecision, RecordSuccessSignal, RecordEvidence,
 		RecordResult, RecordReview, RecordGrade,
+		RecordDispatchPreflight, RecordDispatchAcknowledgement,
 	}
 }
 

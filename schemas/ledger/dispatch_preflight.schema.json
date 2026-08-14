@@ -1,0 +1,162 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://nodes.culture.dev/schemas/ledger/dispatch_preflight.schema.json",
+  "title": "Ledger record: dispatch preflight",
+  "description": "The clarify-then-commit gate's briefing (issue #67, task t14): the operating facts a dispatch depends on, composed by the engine from the actor's ADVERTISED host capabilities plus the task declaration, and handed over before the actor's first billable turn. It generalizes deploy/prod/install-secrets.sh's single-use windowed confirmation from danger to understanding, and keeps that protocol's load-bearing properties: the document is composed at `verdict: hold`, it states what does not proceed and why, and it expires. It carries `derived` authority and nothing else -- it is a deterministic function of state nobody in this record asserted, which is exactly what makes it derivable; the ledger append layer refuses every other authority for this type (RulePreflightDerivedOnly). The host block is the BRIDGE's own advertisement, copied verbatim: the engine states who said it and when, and never re-renders or supplements a fact it did not measure.",
+  "allOf": [
+    {
+      "$ref": "envelope.schema.json"
+    }
+  ],
+  "required": [
+    "record_type"
+  ],
+  "properties": {
+    "record_type": {
+      "const": "dispatch_preflight"
+    },
+    "data": {
+      "type": "object",
+      "$comment": "Unlike the Phase 0 record types, the core fields are required rather than documentary: a preflight that states no facts would refuse a dispatch in order to tell the actor nothing.",
+      "required": [
+        "verdict",
+        "protocol_version",
+        "task",
+        "host_capabilities",
+        "refusal",
+        "expires_at"
+      ],
+      "properties": {
+        "verdict": {
+          "const": "hold",
+          "description": "Always `hold` on a composed preflight, exactly like the confirmation file's default verdict line. Composing a briefing never authorizes anything; the acknowledgement is a separate action by a different party, recorded as its own `dispatch_acknowledgement` record."
+        },
+        "protocol_version": {
+          "type": "string",
+          "minLength": 1,
+          "description": "The gate protocol version the control plane composed this document under."
+        },
+        "capability_protocol_version": {
+          "type": "string",
+          "minLength": 1,
+          "description": "The version of the capability surface the bridge advertised, as the bridge stated it. Recorded beside the gate's own version because they can legitimately differ."
+        },
+        "task": {
+          "type": "object",
+          "description": "The task declaration half of the composition: what the engine knows about the dispatch this preflight is for. Every field comes from the pinned definition or the run's own state -- nothing here is supplied by the actor being briefed.",
+          "required": [
+            "run_id",
+            "node_id",
+            "actor_key"
+          ],
+          "properties": {
+            "run_id": {
+              "type": "string",
+              "minLength": 1
+            },
+            "node_run_id": {
+              "type": "string",
+              "minLength": 1
+            },
+            "node_id": {
+              "type": "string",
+              "minLength": 1
+            },
+            "node_kind": {
+              "type": "string",
+              "minLength": 1
+            },
+            "actor_ref": {
+              "type": "string",
+              "minLength": 1,
+              "description": "The node's `uses` reference, as authored."
+            },
+            "actor_key": {
+              "type": "string",
+              "minLength": 1,
+              "description": "The actor identity the reference resolves to."
+            },
+            "actor_id": {
+              "type": "string",
+              "minLength": 1,
+              "description": "The actors-table row id, present only when the registry could answer. Absent means unattributed, never a fabricated id."
+            },
+            "workflow": {
+              "type": "string",
+              "minLength": 1
+            },
+            "workflow_digest": {
+              "type": "string",
+              "minLength": 1,
+              "description": "The immutable definition this run pinned, so an acknowledgement is against a graph that cannot have changed since."
+            },
+            "deadline": {
+              "type": "string",
+              "format": "date-time",
+              "description": "The attempt deadline, when the node declares one. Absent means the node declared none."
+            }
+          }
+        },
+        "host_capabilities": {
+          "type": "object",
+          "description": "The bridge's advertised host facts, verbatim -- which sandbox modes actually work on this host, the commit/harvest policy in force for the lane, which paths the task may write, and whatever else the backend measured. Deliberately unconstrained: the facts are backend-specific while the protocol is not, and a typed shape here would either constrain four backends to one backend's idea of a host or drift into a union of everything. An empty object is a real answer -- a bridge whose facts went missing between registration and dispatch says so rather than having content invented for it."
+        },
+        "expected_result": {
+          "type": "object",
+          "description": "What `done` must look like for the operator to accept this dispatch.",
+          "properties": {
+            "outcomes": {
+              "type": "array",
+              "items": {
+                "type": "string",
+                "minLength": 1
+              },
+              "description": "The domain outcomes the node's contract declares."
+            },
+            "contract_digest": {
+              "type": "string",
+              "minLength": 1
+            },
+            "note": {
+              "type": "string",
+              "minLength": 1
+            }
+          }
+        },
+        "acknowledgement": {
+          "type": "object",
+          "description": "How the reader commits the second, separate action. Both a verb and an endpoint are stated because the two readers differ: a human or an operator agent reaches for the verb, a bridge for the endpoint.",
+          "properties": {
+            "verb": {
+              "type": "string",
+              "minLength": 1
+            },
+            "endpoint": {
+              "type": "string",
+              "minLength": 1
+            },
+            "verdict": {
+              "type": "string",
+              "minLength": 1,
+              "description": "The verdict an acknowledgement carries to commit the dispatch."
+            }
+          }
+        },
+        "refusal": {
+          "type": "string",
+          "minLength": 1,
+          "description": "What does not proceed, and why -- the property inherited from the destructive-confirmation file, which names what breaks rather than merely asking for a keystroke. It states that the actor has not been invoked, that the acknowledgement is single-use, and when the window closes."
+        },
+        "issued_at": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "expires_at": {
+          "type": "string",
+          "format": "date-time",
+          "description": "When this preflight stops being acknowledgeable. A stale briefing must not authorize today's dispatch -- the same reason the confirmation-file protocol is windowed."
+        }
+      }
+    }
+  }
+}

@@ -126,6 +126,21 @@ func (b Budget) Declared() bool {
 // other policy denial.
 const OutcomeBudgetExhausted = "budget_exhausted"
 
+// OutcomePreflightUnacknowledged is the second reserved refusal name
+// (compiler.OutcomePreflightUnacknowledged, kept in step): a dispatch whose
+// clarify-then-commit preflight was never acknowledged inside its window
+// (task t14, issue #67).
+//
+// It is the same KIND of thing as OutcomeBudgetExhausted and is treated
+// identically — no contract declares it, no actor produces it, the control
+// plane produces it before invoking anything, and the refused attempt's
+// technical status is `policy_denied`. It is a separate NAME for the reason
+// that one is: an author who wants "nobody acknowledged the briefing" to
+// reach a human, or a different actor, or a summarise-and-stop node needs to
+// distinguish it from "we ran out of money" and from every other policy
+// denial.
+const OutcomePreflightUnacknowledged = "preflight_unacknowledged"
+
 // LedgerLimits are the workflow-level ledger bounds (PRD §10.7).
 type LedgerLimits struct {
 	SchemaVersion     string

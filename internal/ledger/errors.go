@@ -79,6 +79,19 @@ const (
 	// measured) or derived authority (a deterministic producer computes
 	// values, it does not hold opinions), regardless of origin.
 	RuleGradeNeverObservedOrDerived = "grade_never_observed_or_derived"
+	// RulePreflightDerivedOnly — a dispatch preflight is a deterministic
+	// composition of advertised host state and the task declaration, so it
+	// carries derived authority and nothing else. A producer that merely
+	// ASSERTS a briefing has not composed one — and an actor proposing its
+	// own preflight would be writing the briefing it then acknowledges,
+	// which is the self-promotion rule (PRD §10.4) wearing a different coat.
+	RulePreflightDerivedOnly = "preflight_derived_only"
+	// RuleAcknowledgementNeverDerived — an acknowledgement is the ACTOR's
+	// own claim to have been told and understood. No deterministic producer
+	// computes it: an engine deriving one would be manufacturing the very
+	// evidence the clarify-then-commit gate exists to create, turning "the
+	// actor was told" back into the assumption it replaced.
+	RuleAcknowledgementNeverDerived = "acknowledgement_never_derived"
 	// RuleNoSelfGrade — a grade whose grading origin actor equals the
 	// evaluated actor is refused: the self-promotion rule (PRD §10.4 "no
 	// actor promotes its own proposal") extended to opinion records. No

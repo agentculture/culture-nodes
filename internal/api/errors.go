@@ -10,6 +10,7 @@ import (
 	"github.com/agentculture/culture-nodes/internal/contracts"
 	"github.com/agentculture/culture-nodes/internal/engine"
 	"github.com/agentculture/culture-nodes/internal/ledger"
+	"github.com/agentculture/culture-nodes/internal/preflight"
 	"github.com/agentculture/culture-nodes/internal/store/postgres"
 )
 
@@ -112,6 +113,17 @@ func classify(err error) *apiError {
 	var authorityErr *ledger.AuthorityError
 	if errors.As(err, &authorityErr) {
 		return badRequest("the producer named in origin may not write this record's authority; see PRD §10.4", "%v", err)
+	}
+
+	// A registration that configures the clarify-then-commit gate in a way
+	// the actor cannot satisfy (task t14, issue #67). It is a caller-caused
+	// refusal like every other case here, and it carries its OWN
+	// remediation — internal/preflight states what to do about each shape,
+	// and a generic line here would be strictly less useful than the one
+	// the refusal already wrote.
+	var configErr *preflight.ConfigError
+	if errors.As(err, &configErr) {
+		return badRequest(configErr.Remediation, "%v", err)
 	}
 
 	// A ledger.Append(...) call built from a caller's request (task t16's

@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"math/rand/v2"
+	"strings"
 	"testing"
 
 	"github.com/agentculture/culture-nodes/internal/ledger"
@@ -465,19 +466,42 @@ func randomAgentRecord(t *testing.T, rng *rand.Rand) ledger.Record {
 
 // minimalPayload returns a schema-valid `data` payload for recordType. Every
 // Phase 0 record type's payload is documentary and optional, so `{}`
-// satisfies it; `grade` is the one type with required fields (rating,
-// rationale, evaluated_actor_id), so it needs an actual minimal payload. The
+// satisfies it; the additively-registered types (`grade`, and the
+// clarify-then-commit gate's `dispatch_preflight` /
+// `dispatch_acknowledgement`) require their core fields, so each needs an
+// actual minimal payload here.
+//
+// Supplying one matters for a reason beyond convenience: schema validation
+// runs BEFORE the authority matrix (Ledger.appendThrough), so a payload that
+// failed its schema would make an authority property test report a schema
+// violation instead of the rule refusal it exists to pin. The grade payload's
 // evaluated actor is a fixture id no test origin ever writes as, so this
-// helper never accidentally trips the self-grade refusal for a test whose
-// point is a different rule entirely.
+// helper never accidentally trips the self-grade refusal either.
 func minimalPayload(recordType ledger.RecordType) map[string]any {
-	if recordType != ledger.RecordGrade {
+	switch recordType {
+	case ledger.RecordGrade:
+		return map[string]any{
+			"rating":             3,
+			"rationale":          "Minimal payload for a property test that is not about grade content.",
+			"evaluated_actor_id": "actor_property_fixture_evaluated",
+		}
+	case ledger.RecordDispatchPreflight:
+		return map[string]any{
+			"verdict":           "hold",
+			"protocol_version":  "1.0",
+			"task":              map[string]any{"run_id": testRunID, "node_id": "build", "actor_key": "company/fixture"},
+			"host_capabilities": map[string]any{"hostname": "property-fixture-host"},
+			"refusal":           "Minimal payload for a property test that is not about preflight content.",
+			"expires_at":        "2026-08-14T12:15:00Z",
+		}
+	case ledger.RecordDispatchAcknowledgement:
+		return map[string]any{
+			"verdict":          "proceed",
+			"preflight_ref":    "ledger_00000000000000000000000001",
+			"preflight_digest": "sha256:" + strings.Repeat("0", 64),
+		}
+	default:
 		return map[string]any{}
-	}
-	return map[string]any{
-		"rating":             3,
-		"rationale":          "Minimal payload for a property test that is not about grade content.",
-		"evaluated_actor_id": "actor_property_fixture_evaluated",
 	}
 }
 

@@ -247,10 +247,29 @@ where an external tracker reads it to watch for real-world completion.
 input:
   bindings:
     instruction: /run/input/merge_instruction
-    prNumber: /nodes/fix/output
+    # Which PR: per-cycle data, so a pointer at whatever produced it.
+    pr: /nodes/fix/output/pr_number
+    # What is being watched: a declaration, so a literal (issue #73).
     observe:
-      kind: github_pr_merged
-      pr: /nodes/fix/output/pr_number   # or a literal: pr: 42
+      literal:
+        kind: github_pr_merged
+```
+
+A binding value is either a JSON Pointer or a `literal:` — never a pointer
+*inside* a literal, which would be the template language PRD §11.2 forbids.
+So the observation kind and the PR number are declared separately, and the
+tracker reads `pr` from the `observe` block when it is there and from the
+task's own input otherwise. Both of these are equivalent:
+
+```yaml
+observe:
+  literal: {kind: github_pr_merged, pr: 42}   # a fixed PR, all inline
+```
+
+```yaml
+pr: /nodes/fix/output/pr_number               # a PR the run produced
+observe:
+  literal: {kind: github_pr_merged}
 ```
 
 The tracker contract:
@@ -269,8 +288,11 @@ The tracker contract:
 The `observe` value is a free-form object; the tracker interprets the
 `kind` field to select the right external check. Two kinds are supported:
 `github_pr_merged` (t16, merge-as-action) and `github_pr_reply` (issue #71,
-the pr-upkeep decision node). Both accept `repo: owner/name`; when absent,
-the tracker uses its configured default repository.
+the pr-upkeep decision node). Both accept `repo: owner/name` and `pr:
+<number>`; when either is absent from the block the tracker falls back to
+the task's own input of the same name, and `repo` falls back once more to
+the tracker's configured default repository. A task with no PR number from
+either source stays on the manual lane.
 
 `github_pr_merged`: a task-level `input.success_outcome` is used when
 present; otherwise this observation kind reports its unambiguous `merged`
@@ -318,7 +340,7 @@ uv run python -m human_inbox_bridge.tracker --once
 | `HUMAN_INBOX_TRACKER_BRIDGE_URL` | loopback + bridge config's `port` | Sibling bridge base URL |
 | `HUMAN_INBOX_BRIDGE_AUTH_TOKEN` | bridge config's `auth_token` | Bearer token for the bridge submit surface |
 | `HUMAN_INBOX_TRACKER_CONTROL_PLANE_URL` | unset | Control-plane base URL for the startup identity check below. Unset **disables the check** and logs a warning naming what is then unguarded |
-| `HUMAN_INBOX_TRACKER_DEFAULT_REPO` | unset | Fallback GitHub `owner/repository` when `observe.repo` is absent |
+| `HUMAN_INBOX_TRACKER_DEFAULT_REPO` | unset | Fallback GitHub `owner/repository` when neither `observe.repo` nor the task's own `repo` input is a valid one |
 | `HUMAN_INBOX_TRACKER_POLL_SECONDS` | `60` | Requested delay between cycles; clamped to the active lane's minimum safe cadence (60 seconds anonymous, 0.72 seconds authenticated) |
 | `HUMAN_INBOX_TRACKER_GITHUB_REQUEST_BUDGET` | `50` | Requested maximum unique PR GETs per cycle (`0` disables GitHub requests); clamped so `budget × 3600 / poll_seconds` cannot exceed the active lane's hourly ceiling |
 | `HUMAN_INBOX_TRACKER_HTTP_TIMEOUT_SECONDS` | `30` | Timeout for each GitHub GET and bridge POST |

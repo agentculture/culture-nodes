@@ -1,6 +1,7 @@
 package compiler
 
 import (
+	"bytes"
 	"encoding/json"
 	"fmt"
 )
@@ -164,8 +165,68 @@ type nodeContract struct {
 }
 
 type inputBinding struct {
-	From     string            `json:"from,omitempty"`
-	Bindings map[string]string `json:"bindings,omitempty"`
+	From     string                  `json:"from,omitempty"`
+	Bindings map[string]bindingValue `json:"bindings,omitempty"`
+}
+
+// bindingLiteralKey is the wrapper an author writes to declare a literal. It
+// is spelled out rather than inferred because inference is exactly what issue
+// #73's design guidance forbids: a bare string is always a pointer, so the two
+// forms can never be confused for one another.
+const bindingLiteralKey = "literal"
+
+// bindingValue is one entry of a node's `bindings` map — either a JSON Pointer
+// into run, node, or ledger data, or a value declared inline in the graph text
+// (issue #73, option A). It mirrors schemas/workflow/workflow.schema.json's
+// #/$defs/bindingValue, which is the shape's single source of truth.
+//
+// A literal exists so an author reading ONLY the workflow can name what a node
+// observes. The pointer form remains the only way to move data that a run
+// produces; a literal is a constant, fixed at publish time and addressed by the
+// workflow's content digest along with everything else the author wrote.
+//
+// Literal holds raw bytes rather than a decoded `any` so the value round-trips
+// into the IR as written: the normalized IR's bytes are what the content digest
+// addresses, and a decode/re-encode through `any` would make the digest depend
+// on this package's marshalling rather than on the document.
+type bindingValue struct {
+	Pointer string
+	Literal json.RawMessage
+}
+
+// isLiteral reports whether the author declared a literal. It asks about the
+// literal rather than about an empty pointer because `{literal: ""}` and
+// `{literal: null}` are both legitimate declared values.
+func (v bindingValue) isLiteral() bool { return v.Literal != nil }
+
+func (v *bindingValue) UnmarshalJSON(data []byte) error {
+	data = bytes.TrimSpace(data)
+	if len(data) > 0 && data[0] == '"' {
+		var pointer string
+		if err := json.Unmarshal(data, &pointer); err != nil {
+			return err
+		}
+		*v = bindingValue{Pointer: pointer}
+		return nil
+	}
+
+	var members map[string]json.RawMessage
+	if err := json.Unmarshal(data, &members); err != nil {
+		return fmt.Errorf("a binding value is a JSON Pointer string or a {%s: ...} object", bindingLiteralKey)
+	}
+	literal, ok := members[bindingLiteralKey]
+	if !ok || len(members) != 1 {
+		return fmt.Errorf("a binding value object declares exactly one member, %q", bindingLiteralKey)
+	}
+	*v = bindingValue{Literal: literal}
+	return nil
+}
+
+func (v bindingValue) MarshalJSON() ([]byte, error) {
+	if v.isLiteral() {
+		return json.Marshal(map[string]json.RawMessage{bindingLiteralKey: v.Literal})
+	}
+	return json.Marshal(v.Pointer)
 }
 
 type outputBinding struct {

@@ -166,29 +166,6 @@ spec:
           merge_instruction:
             type: string
             minLength: 1
-          # The two observables, supplied as run input until #73 lands a
-          # literal binding shape. Objects, not pointers: the tracker reads
-          # them verbatim out of the bridge's stored task.
-          merge_observe:
-            type: object
-            required: [kind]
-            properties:
-              kind:
-                type: string
-              pr:
-                type: integer
-              repo:
-                type: string
-          reply_observe:
-            type: object
-            required: [kind]
-            properties:
-              kind:
-                type: string
-              pr:
-                type: integer
-              repo:
-                type: string
     output:
       schema:
         type: object
@@ -438,18 +415,37 @@ spec:
           instruction: /run/input/merge_instruction
           fixReport: /nodes/fix/output
           reviewVerdict: /nodes/review/output
-          # Issue #73: a binding value must be a JSON-Pointer STRING, so the
-          # observable rides run input as a whole object rather than being
-          # written inline. The nested-literal form this used to carry never
-          # compiled. The pointer form is what the live merge-as-action proof
-          # actually used; #73 tracks restoring the declaration to the graph
-          # text via a typed literal binding.
-          observe: /run/input/merge_observe
+          # WHICH pull request, per cycle: the one the fix node just opened
+          # or updated. The tracker reads `pr` from the observe block when it
+          # is there and from the task's own input otherwise, the same
+          # fallback it has always applied to `repo`.
+          pr: /nodes/fix/output/pr_number
+          # WHAT this node is waiting for, declared in the graph text (issue
+          # #73's typed literal binding). A literal is a constant fixed at
+          # publish time, which is exactly right for the observation KIND and
+          # exactly wrong for the PR number above — so the two are declared
+          # separately rather than smuggling a pointer inside a literal,
+          # which would be the template language PRD §11.2 forbids.
+          observe:
+            literal:
+              kind: github_pr_merged
       contract:
         input:
           schema:
             type: object
             required: [instruction]
+            properties:
+              instruction:
+                type: string
+              pr:
+                type: integer
+              observe:
+                type: object
+                required: [kind]
+                properties:
+                  kind:
+                    type: string
+                    const: github_pr_merged
         outcomes:
           merged:
             schema:
@@ -572,13 +568,29 @@ spec:
           instruction: /run/input/await_reply_instruction
           reviewVerdict: /nodes/review/output
           questionPosted: /nodes/ask-pr-question/output
-          # Same pointer form as human-merges-pr above, same reason (#73).
-          observe: /run/input/reply_observe
+          # Same split as human-merges-pr above, same reason (#73): which PR
+          # is per-cycle data, what is being watched is a declaration.
+          pr: /nodes/fix/output/pr_number
+          observe:
+            literal:
+              kind: github_pr_reply
       contract:
         input:
           schema:
             type: object
             required: [instruction]
+            properties:
+              instruction:
+                type: string
+              pr:
+                type: integer
+              observe:
+                type: object
+                required: [kind]
+                properties:
+                  kind:
+                    type: string
+                    const: github_pr_reply
         outcomes:
           answered:
             schema:

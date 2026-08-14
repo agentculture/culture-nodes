@@ -219,6 +219,16 @@ func embeddedSchemaNames() ([]string, error) {
 	return names, nil
 }
 
+// Violations flattens a library validation error into this package's located,
+// deduplicated violations. It is exported for callers that compile a schema
+// themselves rather than reaching one through a Validator — the compiler's
+// literal-binding check validates against an inline node contract, and its
+// diagnostics should locate a failure exactly the way every other schema
+// diagnostic in this codebase does.
+func Violations(err *jsonschema.ValidationError) []Violation {
+	return violationsOf(err)
+}
+
 // violationsOf flattens the library's error tree to its leaves — the specific
 // failures — and drops the structural nodes above them, which restate rather
 // than locate.

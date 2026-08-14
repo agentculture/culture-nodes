@@ -128,10 +128,10 @@ func TestResolveNodeInputFromPointer(t *testing.T) {
 
 func TestResolveNodeInputBindingsMap(t *testing.T) {
 	got, err := resolveNodeInput(context.Background(), testSources(t), &inputBinding{
-		Bindings: map[string]string{
-			"request":    "/run/input",
-			"score":      "/nodes/analyze/output/score",
-			"readyTasks": "/ledger/projections/ready_tasks",
+		Bindings: map[string]bindingValue{
+			"request":    {Pointer: "/run/input"},
+			"score":      {Pointer: "/nodes/analyze/output/score"},
+			"readyTasks": {Pointer: "/ledger/projections/ready_tasks"},
 		},
 	})
 	if err != nil {

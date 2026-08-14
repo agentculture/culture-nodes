@@ -518,6 +518,30 @@ def _valid_repo(repo: object) -> bool:
     return isinstance(repo, str) and _REPO_RE.fullmatch(repo.strip()) is not None
 
 
+def _observed_pr(raw: dict[str, Any], task: HumanTask) -> int | None:
+    """Return which pull request an observation watches, or None.
+
+    The `observe` block says WHAT is being watched; the PR number says which
+    one, and the two do not have the same lifetime. Culture Nodes declares
+    the kind as a literal binding written into the workflow text (issue #73)
+    and that literal is fixed at publish time, so a workflow that loops over
+    one PR after another binds the number separately — from the node that
+    just opened the PR. `pr` is therefore read from the observation first and
+    from the task's own input otherwise, exactly the fallback `repo` has
+    always had. A declaration that supplies neither stays on the manual lane,
+    and a value that is not a positive integer is malformed wherever it came
+    from: the fallback widens where the number may come from, never what
+    counts as one.
+    """
+    for candidate in (raw.get("pr"), task.extra_input.get("pr")):
+        if candidate is None:
+            continue
+        if isinstance(candidate, bool) or not isinstance(candidate, int) or candidate <= 0:
+            return None
+        return candidate
+    return None
+
+
 def observation_for(task: HumanTask, default_repo: str | None) -> Observation | None:
     """Return the supported declaration on a pending task, if it is complete.
 
@@ -530,8 +554,8 @@ def observation_for(task: HumanTask, default_repo: str | None) -> Observation | 
     if not isinstance(raw, dict) or raw.get("kind") != OBSERVATION_KIND:
         return None
 
-    pr = raw.get("pr")
-    if isinstance(pr, bool) or not isinstance(pr, int) or pr <= 0:
+    pr = _observed_pr(raw, task)
+    if pr is None:
         return None
     repo = raw.get("repo") or task.extra_input.get("repo") or default_repo
     if not _valid_repo(repo):
@@ -578,8 +602,8 @@ def reply_observation_for(task: HumanTask, default_repo: str | None) -> ReplyObs
     if not isinstance(raw, dict) or raw.get("kind") != REPLY_OBSERVATION_KIND:
         return None
 
-    pr = raw.get("pr")
-    if isinstance(pr, bool) or not isinstance(pr, int) or pr <= 0:
+    pr = _observed_pr(raw, task)
+    if pr is None:
         return None
     repo = raw.get("repo") or task.extra_input.get("repo") or default_repo
     if not _valid_repo(repo):

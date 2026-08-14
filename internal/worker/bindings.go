@@ -15,11 +15,17 @@ import (
 //
 // §11.2 is emphatic about what this is and is not: "use JSON Pointer for
 // direct data movement… do not invent a template language for field
-// interpolation." So a binding is an RFC 6901 pointer, resolution is a read,
-// and there is no expression evaluation anywhere in this file. A binding that
-// does not resolve is an error, never a silently-empty value — an actor
-// handed `{}` where it expected the run input would fail in a much more
-// confusing place than here.
+// interpolation." So a binding that moves data is an RFC 6901 pointer,
+// resolution is a read, and there is no expression evaluation anywhere in this
+// file. A binding that does not resolve is an error, never a silently-empty
+// value — an actor handed `{}` where it expected the run input would fail in a
+// much more confusing place than here.
+//
+// A named binding may also be a declared LITERAL (issue #73): a constant the
+// author wrote into the graph so a reader of the workflow text can see what a
+// node observes without chasing it through run input. That is still not a
+// template language — a literal interpolates nothing, resolves by copy, and
+// consults none of the surfaces below.
 //
 // # The four surfaces, and what each actually reads
 //
@@ -98,7 +104,15 @@ func resolveNodeInput(ctx context.Context, src bindingSources, binding *inputBin
 
 	members := make(map[string]json.RawMessage, len(names))
 	for _, name := range names {
-		value, err := resolvePointer(ctx, src, binding.Bindings[name])
+		// A literal is a value the author wrote into the graph, so this is a
+		// copy rather than a read: it consults no surface and cannot fail for
+		// a runtime reason (issue #73). The compiler already checked it
+		// against the node's input contract.
+		if value := binding.Bindings[name]; value.isLiteral() {
+			members[name] = value.Literal
+			continue
+		}
+		value, err := resolvePointer(ctx, src, binding.Bindings[name].Pointer)
 		if err != nil {
 			return nil, fmt.Errorf("binding %q: %w", name, err)
 		}

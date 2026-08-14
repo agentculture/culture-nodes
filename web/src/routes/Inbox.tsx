@@ -12,7 +12,11 @@ import {
   getDecisionToken,
   setDecisionToken,
 } from "../api/decision-token";
-import type { HumanTask, HumanTaskDecisionResult } from "../api/types";
+import type {
+  HumanTask,
+  HumanTaskBinding,
+  HumanTaskDecisionResult,
+} from "../api/types";
 import AuthorityChip from "../components/AuthorityChip";
 import ErrorNotice from "../components/ErrorNotice";
 import StatusChip from "../components/StatusChip";
@@ -255,6 +259,16 @@ function shortDigest(digest: string): string {
   return digest.length > 21 ? `${digest.slice(0, 20)}…` : digest;
 }
 
+/**
+ * Render one context ref the way the workflow declares it: a pointer as the
+ * pointer, a literal (issue #73) as the declared value. A literal is shown
+ * rather than summarised because it is the whole reason the shape exists — the
+ * reader should be able to name what the task observes.
+ */
+function renderBinding(ref: HumanTaskBinding): string {
+  return typeof ref === "string" ? ref : JSON.stringify(ref.literal);
+}
+
 function PendingTaskCard({
   task,
   token,
@@ -413,7 +427,7 @@ function PendingTaskCard({
                   {Object.entries(request.context_refs.bindings).map(
                     ([name, ref]) => (
                       <li key={name}>
-                        {name}: <code>{ref}</code>
+                        {name}: <code>{renderBinding(ref)}</code>
                       </li>
                     ),
                   )}

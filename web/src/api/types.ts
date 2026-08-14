@@ -411,11 +411,17 @@ export interface ApiErrorBody {
  * shown, so every field is optional except the audit's node id, and a
  * renderer must not fabricate what is absent (e.g. never invent a deadline).
  */
+/**
+ * One named binding, exactly as authored: a JSON Pointer string, or a literal
+ * declared inline in the workflow text (issue #73).
+ */
+export type HumanTaskBinding = string | { literal: unknown };
+
 export interface HumanTaskContextRefs {
   /** A single input pointer, exactly as authored. */
   from?: string;
   /** Named input bindings, exactly as authored. */
-  bindings?: Record<string, string>;
+  bindings?: Record<string, HumanTaskBinding>;
 }
 
 /** PRD §9.9 "audit identity" not already on the task row's own columns. */

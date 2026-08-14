@@ -505,7 +505,7 @@
     },
     "inputBinding": {
       "type": "object",
-      "description": "Either a whole-value move (`from`) or named field bindings, each a JSON Pointer (PRD §11.2).",
+      "description": "Either a whole-value move (`from`, always a JSON Pointer) or named field bindings, each of which is a pointer or a declared literal (PRD §11.2, issue #73).",
       "additionalProperties": false,
       "minProperties": 1,
       "properties": {
@@ -516,8 +516,32 @@
           "type": "object",
           "minProperties": 1,
           "additionalProperties": {
-            "$ref": "#/$defs/pointer"
+            "$ref": "#/$defs/bindingValue"
           }
+        }
+      }
+    },
+    "bindingValue": {
+      "description": "One named binding: a JSON Pointer into run, node, or ledger data, or a literal declared inline (issue #73, option A). A bare string is ALWAYS a pointer and a literal is ALWAYS wrapped, so the two can never be confused — this is not a template language (PRD §11.2), and a literal interpolates nothing. A literal exists so an author reading only the workflow text can name what a node observes; the compiler checks it against the node's own input contract, and it is fixed at publish time and addressed by the workflow's content digest like everything else the author wrote.",
+      "oneOf": [
+        {
+          "$ref": "#/$defs/pointer"
+        },
+        {
+          "$ref": "#/$defs/literalBinding"
+        }
+      ]
+    },
+    "literalBinding": {
+      "type": "object",
+      "description": "A binding value declared inline. `literal` may be any JSON value, including null, an empty string, and a nested object.",
+      "required": [
+        "literal"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "literal": {
+          "$comment": "Deliberately unconstrained: what a literal may contain is the receiving node's contract to state, not this schema's."
         }
       }
     },

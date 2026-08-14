@@ -60,6 +60,7 @@ const (
 	CodeContractBindingMalformed   = "contract.binding_malformed"
 	CodeContractBindingUnresolved  = "contract.binding_unresolved"
 	CodeContractBindingNodeUnknown = "contract.binding_node_unknown"
+	CodeContractLiteralInvalid     = "contract.literal_invalid"
 	CodeContractCELInvalid         = "contract.cel_invalid"
 	CodeContractCELNotBoolean      = "contract.cel_not_boolean"
 

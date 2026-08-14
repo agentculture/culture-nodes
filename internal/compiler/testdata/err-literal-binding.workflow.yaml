@@ -1,0 +1,61 @@
+# A literal the node's own input contract refuses. The value is fully known at
+# publish time, so the compiler can say so now rather than at the first
+# dispatch — `pr` is declared an integer and the literal supplies a string.
+apiVersion: nodes.culture.dev/v1alpha1
+kind: Workflow
+
+metadata:
+  name: bad-literal-binding
+  version: 1.0.0
+  ownerRef: team/platform-ai
+
+spec:
+  entry: start
+
+  contract:
+    input:
+      schemaRef: ./contracts/in.schema.json
+    output:
+      schemaRef: ./contracts/out.schema.json
+
+  nodes:
+    start:
+      kind: agent
+      ownerRef: team/platform-ai
+      uses: actor://company/start@sha256:aaaaaa
+      contract:
+        input:
+          schema:
+            type: object
+            required: [observe]
+            additionalProperties: false
+            properties:
+              observe:
+                type: object
+                required: [kind]
+                properties:
+                  kind:
+                    type: string
+                  pr:
+                    type: integer
+        outcomes:
+          completed:
+            schemaRef: ./contracts/start.schema.json
+      input:
+        bindings:
+          observe:
+            literal:
+              kind: github_pr_merged
+              pr: "42"
+          stray:
+            literal: unexpected
+
+    finish:
+      kind: end
+      ownerRef: team/platform-ai
+      output:
+        from: /nodes/start/output
+
+  edges:
+    - from: start.completed
+      to: finish

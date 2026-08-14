@@ -1,6 +1,7 @@
 package worker
 
 import (
+	"bytes"
 	"encoding/json"
 	"fmt"
 	"sort"
@@ -165,13 +166,63 @@ type codeOperationSpec struct {
 }
 
 type inputBinding struct {
-	From     string            `json:"from,omitempty"`
-	Bindings map[string]string `json:"bindings,omitempty"`
+	From     string                  `json:"from,omitempty"`
+	Bindings map[string]bindingValue `json:"bindings,omitempty"`
 }
 
 // declared reports whether the node declares any input binding at all.
 func (b *inputBinding) declared() bool {
 	return b != nil && (b.From != "" || len(b.Bindings) > 0)
+}
+
+// bindingLiteralKey is the wrapper the authoring schema uses to declare a
+// literal binding value.
+const bindingLiteralKey = "literal"
+
+// bindingValue is one entry of a node's `bindings` map: a JSON Pointer into
+// run, node, or ledger data, or a literal declared in the graph text (issue
+// #73). It mirrors schemas/workflow/workflow.schema.json's #/$defs/bindingValue.
+//
+// This decode is deliberately this package's own rather than a shared type with
+// internal/compiler — the same reason parsePointer is duplicated here. The
+// compiler's verdict and the worker's behavior have to agree, and they only
+// genuinely agree if each side reads the IR for itself and a test proves the
+// two land in the same place (TestWorkerDecodesTheCompilersLiteralIR).
+//
+// Decode only: the worker reads the IR and never writes one, so there is no
+// MarshalJSON here. The compiler owns the encoding, because the encoding is
+// what the content digest addresses.
+type bindingValue struct {
+	Pointer string
+	Literal json.RawMessage
+}
+
+// isLiteral reports whether this value is a declared literal rather than a
+// pointer. It asks about the literal, not about an empty pointer, because
+// `{literal: ""}` and `{literal: null}` are both legitimate declared values.
+func (v bindingValue) isLiteral() bool { return v.Literal != nil }
+
+func (v *bindingValue) UnmarshalJSON(data []byte) error {
+	data = bytes.TrimSpace(data)
+	if len(data) > 0 && data[0] == '"' {
+		var pointer string
+		if err := json.Unmarshal(data, &pointer); err != nil {
+			return err
+		}
+		*v = bindingValue{Pointer: pointer}
+		return nil
+	}
+
+	var members map[string]json.RawMessage
+	if err := json.Unmarshal(data, &members); err != nil {
+		return fmt.Errorf("a binding value is a JSON Pointer string or a {%s: ...} object", bindingLiteralKey)
+	}
+	literal, ok := members[bindingLiteralKey]
+	if !ok || len(members) != 1 {
+		return fmt.Errorf("a binding value object declares exactly one member, %q", bindingLiteralKey)
+	}
+	*v = bindingValue{Literal: literal}
+	return nil
 }
 
 type selectPort struct {

@@ -1,0 +1,133 @@
+# The notify-message proof workflow (issue #68's acceptance bullet: "an
+# example workflow sends a message through the actor and the run records
+# it").
+#
+# One agent node, `notify`, whose actor is `adapters/notify` -- the
+# stdlib-only bridge that posts a workflow-declared message to a Discord
+# webhook and reports the delivery as a `proposed` ledger claim. The
+# control-plane process never sees the webhook URL: the bridge holds
+# `CULTURE_NODES_WEBHOOK_URL` outside the deployment, exactly the way
+# `adapters/human-inbox` holds `GITHUB_TOKEN` outside it.
+#
+# `require_delivery` is bound from the run's own input rather than
+# hard-coded, so the SAME workflow demonstrates both authoring modes
+# (issue #68's "Fail-open, and the interesting exception"):
+#
+#  * `require_delivery: false` (the default) -- `notify` always reports
+#    the `sent` domain outcome, whatever the webhook said back. A dead or
+#    unconfigured webhook still leaves this run green.
+#  * `require_delivery: true` -- a non-2xx (or no webhook at all) reports
+#    `delivery_failed` instead, a DECLARED domain outcome with its own
+#    edge below (`escalate`) -- never an engine failure.
+apiVersion: nodes.culture.dev/v1alpha1
+kind: Workflow
+
+metadata:
+  name: notify-message
+  version: 1.0.0
+  ownerRef: team/platform-ai
+
+spec:
+  entry: notify
+
+  contract:
+    input:
+      schema:
+        type: object
+        required: [title, description]
+        additionalProperties: false
+        properties:
+          title:
+            type: string
+            minLength: 1
+          description:
+            type: string
+            minLength: 1
+          # Authored per-run, never actor-kind special-casing (issue #68's
+          # design section): absent/false is the fail-open default.
+          require_delivery:
+            type: boolean
+            default: false
+    output:
+      schema:
+        type: object
+
+  limits:
+    maxDuration: 5m
+    maxTransitions: 4
+    maxVisitsPerNode: 1
+    maxParallelTokens: 1
+
+  ledger:
+    schemaVersion: nodes.culture.dev/ledger/v1alpha1
+    maxRecordsPerNode: 10
+
+  nodes:
+    # An ordinary kind: agent node -- the ACTOR is the notify bridge. No
+    # engine-side branching on `kind: notify` exists anywhere; dispatch
+    # never reads what a node's actor happens to be, exactly the pattern
+    # examples/pr-upkeep's human-inbox node and internal/actors/
+    # neutrality_test.go already establish for other actor kinds.
+    notify:
+      kind: agent
+      ownerRef: team/platform-ai
+      uses: actor://company/notify-discord@sha256:7777777777777777777777777777777777777777777777777777777777777777
+      input:
+        bindings:
+          title: /run/input/title
+          description: /run/input/description
+          require_delivery: /run/input/require_delivery
+      contract:
+        input:
+          schema:
+            type: object
+            required: [title, description]
+        outcomes:
+          sent:
+            schema:
+              type: object
+              properties:
+                delivered:
+                  type: boolean
+                status_code:
+                  type: [integer, "null"]
+          # A declared domain outcome (issue #68: "the same shape
+          # `budget_exhausted` took in task t11") -- only reachable when
+          # the run's own input set require_delivery: true.
+          delivery_failed:
+            schema:
+              type: object
+              properties:
+                delivered:
+                  type: boolean
+                status_code:
+                  type: [integer, "null"]
+      ledger:
+        propose: [claim]
+      policy:
+        timeout: 30s
+        retry:
+          maxAttempts: 1
+
+    finish:
+      kind: end
+      ownerRef: team/platform-ai
+      output:
+        from: /nodes/notify/output
+
+    # Reached only when require_delivery was authored true AND the send
+    # failed -- a real fallback edge a workflow author can build on
+    # (page a human, retry via a different channel, ...). This example
+    # just ends the run naming the failure so the run detail page shows
+    # the routed domain outcome distinctly from the happy path.
+    escalate:
+      kind: end
+      ownerRef: team/platform-ai
+      output:
+        from: /nodes/notify/output
+
+  edges:
+    - from: notify.sent
+      to: finish
+    - from: notify.delivery_failed
+      to: escalate

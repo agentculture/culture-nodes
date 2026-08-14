@@ -176,6 +176,52 @@ type LedgerDelta struct {
 	Records []ledger.Record `json:"records"`
 }
 
+// Preserve is the bridge-reported outcome of preserve-on-failure (task t25,
+// issue #49): an additive "preserve" key a bridge attaches to a failed
+// event's payload or a failed sync invocation's error body, the same way
+// ADR 0008/0009/0010 attached usage/termination-reason/continuation-ref.
+// It is not part of §13.2/§13.4 as the PRD wrote them; every one of the
+// three adapters under adapters/ (PRD §9.5: this package speaks one
+// provider-neutral protocol, so which adapters those are is not this
+// file's concern) produces it field-for-field from its own bridge-side
+// `preserve.PreserveResult.to_dict()`.
+//
+// It is a bridge's own claim about what IT did on ITS host — not observed
+// evidence (PRD §10.4): nothing on this path promotes it to an
+// authoritative ledger record, and the branch existing at all is only ever
+// as true as the bridge's own report. Task t26 persists Branch/Pushed/
+// Remote onto the attempt row (migrations/0025) and returns them from the
+// API; Attempted/Committed/Commit/Reason are read here for completeness
+// with the bridge's own dataclass but travel no further than this decode —
+// see ToEngine's gating for exactly which facts are trusted onto the row.
+type Preserve struct {
+	Attempted bool    `json:"attempted"`
+	Committed bool    `json:"committed"`
+	Branch    *string `json:"branch"`
+	Commit    *string `json:"commit"`
+	Pushed    bool    `json:"pushed"`
+	LocalOnly bool    `json:"local_only"`
+	Remote    *string `json:"remote"`
+	Reason    *string `json:"reason"`
+}
+
+// ToEngine converts a bridge-reported Preserve block into the engine's own
+// copy of it, nil unless the bridge reports a REAL, committed branch: a
+// minted-but-uncommitted branch name (Committed false — a plumbing
+// failure) names nothing that exists in any git repository, and carrying it
+// onto the attempt row would show a reader a link to nowhere. Branch being
+// present but empty is treated the same as absent for the same reason.
+func (p *Preserve) ToEngine() *engine.Preserve {
+	if p == nil || !p.Committed || p.Branch == nil || *p.Branch == "" {
+		return nil
+	}
+	out := &engine.Preserve{Branch: *p.Branch, Pushed: p.Pushed}
+	if p.Remote != nil {
+		out.Remote = *p.Remote
+	}
+	return out
+}
+
 // InvocationResult is the §13.2 synchronous result body (HTTP 200).
 //
 // WorkspaceMeasured is the bridge-measured workspace block (issue #33a,
@@ -380,6 +426,11 @@ type CompletedPayload struct {
 // what the PROVIDER said about how the turn ended. A failed turn is the
 // case where the two differ most — and, per ADR 0009, the case where a
 // reason most often exists with no usage block to carry it.
+//
+// Preserve is optional the same way WorkspaceMeasured is: a bridge attaches
+// it only when preserve-on-failure actually ran (task t25's own gate — never
+// on a domain outcome, only a genuine technical failure), so most failed
+// events carry none.
 type FailedPayload struct {
 	Class             ErrorClass      `json:"class"`
 	Message           string          `json:"message"`
@@ -387,6 +438,7 @@ type FailedPayload struct {
 	Usage             *Usage          `json:"usage,omitempty"`
 	TerminationReason *string         `json:"termination_reason,omitempty"`
 	WorkspaceMeasured json.RawMessage `json:"workspace_measured,omitempty"`
+	Preserve          *Preserve       `json:"preserve,omitempty"`
 }
 
 // Signal event scopes. A `run`-scoped emission is delivered as a fact about

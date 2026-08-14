@@ -332,7 +332,8 @@ func (s *Server) runNodeRuns(ctx context.Context, runID string) ([]NodeRunOut, e
 	}
 
 	attemptRows, err := s.Store.Pool().Query(ctx, `
-		SELECT a.id, a.node_run_id, a.attempt_number, a.actor_id, a.status, a.fencing_token, a.result, a.started_at, a.completed_at
+		SELECT a.id, a.node_run_id, a.attempt_number, a.actor_id, a.status, a.fencing_token, a.result, a.started_at, a.completed_at,
+		       a.preserve_branch, a.preserve_pushed, a.preserve_remote
 		FROM attempts a JOIN node_runs nr ON nr.id = a.node_run_id
 		WHERE nr.run_id = $1
 		ORDER BY a.node_run_id, a.attempt_number`, runID)
@@ -343,14 +344,18 @@ func (s *Server) runNodeRuns(ctx context.Context, runID string) ([]NodeRunOut, e
 
 	for attemptRows.Next() {
 		var (
-			a            AttemptOut
-			actorID      pgtype.Text
-			fencingToken pgtype.Int8
-			result       []byte
-			startedAt    pgtype.Timestamptz
-			completedAt  pgtype.Timestamptz
+			a              AttemptOut
+			actorID        pgtype.Text
+			fencingToken   pgtype.Int8
+			result         []byte
+			startedAt      pgtype.Timestamptz
+			completedAt    pgtype.Timestamptz
+			preserveBranch pgtype.Text
+			preservePushed pgtype.Bool
+			preserveRemote pgtype.Text
 		)
-		if err := attemptRows.Scan(&a.ID, &a.NodeRunID, &a.AttemptNumber, &actorID, &a.Status, &fencingToken, &result, &startedAt, &completedAt); err != nil {
+		if err := attemptRows.Scan(&a.ID, &a.NodeRunID, &a.AttemptNumber, &actorID, &a.Status, &fencingToken, &result, &startedAt, &completedAt,
+			&preserveBranch, &preservePushed, &preserveRemote); err != nil {
 			return nil, fmt.Errorf("api: run %s: list attempts: scan: %w", runID, err)
 		}
 		a.ActorID = textOrEmpty(actorID)
@@ -362,6 +367,14 @@ func (s *Server) runNodeRuns(ctx context.Context, runID string) ([]NodeRunOut, e
 		if completedAt.Valid {
 			completed := completedAt.Time
 			a.CompletedAt = &completed
+		}
+		// preserve_branch is the presence check (migrations/0025's own
+		// header): pushed/remote are only ever written alongside it.
+		if preserveBranch.Valid {
+			a.PreserveBranch = preserveBranch.String
+			pushed := preservePushed.Bool
+			a.PreservePushed = &pushed
+			a.PreserveRemote = textOrEmpty(preserveRemote)
 		}
 
 		idx, ok := byID[a.NodeRunID]

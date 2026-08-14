@@ -1863,6 +1863,29 @@ components:
         completed_at:
           type: string
           format: date-time
+        preserve_branch:
+          type: string
+          description: >-
+            The branch name a bridge's preserve-on-failure plumbing commit
+            (task t25, issue #49) actually created a ref for. Present only
+            on an attempt whose bridge committed one -- most attempts,
+            including every successful one, carry no such branch. A minted
+            but never-committed name is never reported here.
+        preserve_pushed:
+          type: boolean
+          description: >-
+            Whether preserve_branch reached the bridge's configured remote
+            (true) or exists only in the bridge host's local object
+            database (false, the expected common case today -- bridge-host
+            push credentials are unverified). Present only alongside
+            preserve_branch.
+        preserve_remote:
+          type: string
+          description: >-
+            The remote name (e.g. "origin") the bridge attempted or reached
+            the push against. Informational only -- never combined with
+            preserve_branch to construct a forge URL; a client-side link
+            may only come from configuration the operator actually set.
 
     NodeRun:
       type: object

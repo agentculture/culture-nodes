@@ -896,6 +896,10 @@ func completionFor(inv PendingInvocation, ev CallbackEvent) (engine.CompletionRe
 		// §13.5 class the control plane assigned it and can arrive with no
 		// usage block at all (ADR 0009).
 		req.TerminationReason = payload.TerminationReason
+		// The bridge's own report of what preserve-on-failure did (task
+		// t25/t26), nil unless it actually committed a branch — see
+		// Preserve.ToEngine's gating.
+		req.Preserve = payload.Preserve.ToEngine()
 		return req, ""
 	}
 

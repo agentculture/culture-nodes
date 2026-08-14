@@ -7,9 +7,25 @@ import {
 } from "../domain/success-signal";
 import type { GraphNode } from "../domain/graph";
 import { NODE_STATE_LABEL, type NodeExecution } from "../domain/run-state";
+import { preserveBranchInfo } from "../domain/preserve";
 import AuthorityChip from "./AuthorityChip";
 import StatusChip from "./StatusChip";
 import UsageSummary from "./UsageSummary";
+
+/**
+ * Task t26 (issue #49, spec claim c32 / honesty h21): an operator-set forge
+ * URL template for linking a PUSHED preserve branch, e.g.
+ * `https://github.com/org/repo/tree/{branch}` — `{branch}` is substituted
+ * with the branch name. Read once at module load, the same way vite.config.ts
+ * reads `NODES_API` from the environment. Unset by default: with no
+ * template configured, a pushed branch still renders (as plain text, plus
+ * "pushed to <remote>"), it is simply not a clickable link — see
+ * web/README.md. Never derived from `preserve_remote`: a link may only come
+ * from configuration the operator actually set, never a guess from a
+ * remote's name.
+ */
+const PRESERVE_BRANCH_URL_TEMPLATE = import.meta.env
+  .VITE_PRESERVE_BRANCH_URL_TEMPLATE;
 
 export interface NodeDetailPanelProps {
   node: GraphNode;
@@ -170,27 +186,64 @@ export function NodeDetailPanel({
                 <th scope="col">actor</th>
                 <th scope="col">started</th>
                 <th scope="col">duration</th>
+                <th scope="col">preserve</th>
               </tr>
             </thead>
             <tbody>
-              {execution.attempts.map((attempt) => (
-                <tr key={attempt.id} data-attempt-id={attempt.id}>
-                  <th scope="row">{attempt.attempt_number}</th>
-                  <td data-attempt-status={attempt.status}>{attempt.status}</td>
-                  <td>
-                    <code>{attempt.actor_id ?? "—"}</code>
-                  </td>
-                  <td>
-                    {/* Clock time in the cell, the full instant in the title
-                        and in dateTime — the panel is narrow, the record is
-                        not truncated. */}
-                    <time dateTime={attempt.started_at} title={attempt.started_at}>
-                      {clockTime(attempt.started_at)}
-                    </time>
-                  </td>
-                  <td>{duration(attempt.started_at, attempt.completed_at)}</td>
-                </tr>
-              ))}
+              {execution.attempts.map((attempt) => {
+                const preserve = preserveBranchInfo(
+                  attempt,
+                  PRESERVE_BRANCH_URL_TEMPLATE,
+                );
+                return (
+                  <tr key={attempt.id} data-attempt-id={attempt.id}>
+                    <th scope="row">{attempt.attempt_number}</th>
+                    <td data-attempt-status={attempt.status}>{attempt.status}</td>
+                    <td>
+                      <code>{attempt.actor_id ?? "—"}</code>
+                    </td>
+                    <td>
+                      {/* Clock time in the cell, the full instant in the title
+                          and in dateTime — the panel is narrow, the record is
+                          not truncated. */}
+                      <time dateTime={attempt.started_at} title={attempt.started_at}>
+                        {clockTime(attempt.started_at)}
+                      </time>
+                    </td>
+                    <td>{duration(attempt.started_at, attempt.completed_at)}</td>
+                    <td data-preserve-branch={preserve?.branch}>
+                      {preserve ? (
+                        <span
+                          className="detail-panel__preserve"
+                          data-preserve-status={
+                            preserve.pushed ? "pushed" : "local-only"
+                          }
+                        >
+                          {preserve.href ? (
+                            <a
+                              href={preserve.href}
+                              target="_blank"
+                              rel="noreferrer"
+                              className="detail-panel__preserve-link"
+                            >
+                              <code>{preserve.branch}</code>
+                            </a>
+                          ) : (
+                            <code>{preserve.branch}</code>
+                          )}
+                          <span className="detail-panel__preserve-status">
+                            {preserve.pushed
+                              ? `↗ pushed${preserve.remote ? ` to ${preserve.remote}` : ""}`
+                              : "⌁ local-only"}
+                          </span>
+                        </span>
+                      ) : (
+                        "—"
+                      )}
+                    </td>
+                  </tr>
+                );
+              })}
             </tbody>
           </table>
         </div>

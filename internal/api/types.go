@@ -231,16 +231,27 @@ type TokenOut struct {
 }
 
 // AttemptOut is one dispatch attempt, as documented in components.schemas.Attempt.
+//
+// PreserveBranch/PreservePushed/PreserveRemote (task t26, issue #49, spec
+// claim c32 / honesty h21; migrations/0025_attempt_preserve_branch.sql) are
+// task t25's bridge-minted preserve-on-failure branch, present only on an
+// attempt whose bridge actually committed one — most attempts, including
+// every successful one, carry none. PreserveBranch is the presence check:
+// PreservePushed/PreserveRemote are only ever populated alongside it (see
+// the migration's own header), so a reader checks PreserveBranch first.
 type AttemptOut struct {
-	ID            string          `json:"id"`
-	NodeRunID     string          `json:"node_run_id"`
-	AttemptNumber int             `json:"attempt_number"`
-	ActorID       string          `json:"actor_id,omitempty"`
-	Status        string          `json:"status"`
-	FencingToken  int64           `json:"fencing_token,omitempty"`
-	Result        json.RawMessage `json:"result,omitempty"`
-	StartedAt     time.Time       `json:"started_at"`
-	CompletedAt   *time.Time      `json:"completed_at,omitempty"`
+	ID             string          `json:"id"`
+	NodeRunID      string          `json:"node_run_id"`
+	AttemptNumber  int             `json:"attempt_number"`
+	ActorID        string          `json:"actor_id,omitempty"`
+	Status         string          `json:"status"`
+	FencingToken   int64           `json:"fencing_token,omitempty"`
+	Result         json.RawMessage `json:"result,omitempty"`
+	StartedAt      time.Time       `json:"started_at"`
+	CompletedAt    *time.Time      `json:"completed_at,omitempty"`
+	PreserveBranch string          `json:"preserve_branch,omitempty"`
+	PreservePushed *bool           `json:"preserve_pushed,omitempty"`
+	PreserveRemote string          `json:"preserve_remote,omitempty"`
 }
 
 // NodeRunOut is one node run with its attempts nested, as documented in

@@ -202,6 +202,14 @@ type InvocationError struct {
 	// §13.5 classification of the failure, the reason is the provider's
 	// statement about the turn.
 	TerminationReason *string
+	// Preserve is the bridge-reported preserve-on-failure outcome (task
+	// t25/t26, issue #49) attached to the same error body Usage and
+	// TerminationReason come from, nil when the actor attached none —
+	// either preserve-on-failure never ran, or it ran and had nothing to
+	// commit. It is decoded from the full response body for the same
+	// reason Usage is: the truncated Body capture must not cost a real
+	// preserve branch its record.
+	Preserve *Preserve
 	// Requests is how many HTTP requests were spent before giving up.
 	Requests int
 	// Err is the underlying transport or decode error, if any.
@@ -277,6 +285,21 @@ func TerminationReasonOf(err error) *string {
 	var invErr *InvocationError
 	if errors.As(err, &invErr) {
 		return invErr.TerminationReason
+	}
+	return nil
+}
+
+// PreserveOf is UsageOf's sibling for the preserve-on-failure block (task
+// t25/t26): it extracts the bridge's reported preserve outcome from a
+// classified invocation failure's error body, nil when err is not one or
+// when its body carried none. The worker threads it onto the failed
+// attempt beside usage and termination reason, so a synchronous bridge
+// failure's preserve branch is not dropped at the sync failure path the
+// way ADR 0010's continuation ref once was before task t4.
+func PreserveOf(err error) *Preserve {
+	var invErr *InvocationError
+	if errors.As(err, &invErr) {
+		return invErr.Preserve
 	}
 	return nil
 }

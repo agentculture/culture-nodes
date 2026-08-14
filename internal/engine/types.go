@@ -303,6 +303,47 @@ type Attempt struct {
 	// can honestly report either without the other, and neither is derived
 	// from the other (ADR 0009 §1).
 	ContinuationRef *string
+	// Preserve is task t25/t26's bridge-reported preserve-on-failure branch
+	// (issue #49), nil on every attempt that reports none — every
+	// successful attempt, and a failed one whose bridge had nothing to
+	// commit or ran with preserve-on-failure disabled. See the Preserve
+	// type's own doc comment for what NULL on the row means.
+	Preserve *Preserve
+}
+
+// Preserve is one attempt's bridge-reported preserve-on-failure outcome
+// (task t25/t26, issue #49; migrations/0025_attempt_preserve_branch.sql).
+// It is deliberately a small, engine-native mirror of
+// internal/actors.Preserve rather than that package's own type — the
+// engine cannot import internal/actors (actors already imports engine) —
+// and it carries only the facts task t26 actually persists: a
+// minted-and-committed branch name, whether it reached the configured
+// remote, and which remote that was.
+//
+// It is never constructed for a branch that was only minted, never
+// committed (internal/actors.Preserve.ToEngine gates on Committed) — a
+// name with no git ref behind it names nothing that exists in any
+// repository, and persisting one would show an operator a link to nowhere.
+//
+// It is a bridge's own claim about what IT did on ITS own host, not
+// observed evidence (PRD §10.4): nothing on this path writes an
+// `observed`-authority ledger record from it.
+type Preserve struct {
+	// Branch is the branch name the bridge's plumbing commit actually
+	// created a local ref for.
+	Branch string
+	// Pushed is true when that branch reached Remote, false when the
+	// commit exists only in the bridge host's local object database — the
+	// expected common case today, since bridge-host push credentials are
+	// unverified (the plan's risk register). A reader must be able to tell
+	// the two apart: Pushed is exactly that distinction, never inferred.
+	Pushed bool
+	// Remote is the remote name the bridge attempted (or reached) the push
+	// against, e.g. "origin" — informational only. It is NEVER combined
+	// with Branch to construct a forge URL on this path: a link may only
+	// come from configuration the operator actually set (see web/README.md
+	// on VITE_PRESERVE_BRANCH_URL_TEMPLATE), never a guess from this name.
+	Remote string
 }
 
 // Usage is the §13.2 telemetry block as the engine persists it. It mirrors
@@ -450,6 +491,11 @@ type CompletionRequest struct {
 	// offered is never invented, and NULL there means "not reported", never
 	// "the session ended" (ADR 0010).
 	ContinuationRef *string
+
+	// Preserve is task t25/t26's bridge-reported preserve-on-failure branch
+	// (issue #49), nil when the actor reported none. Like Usage it rides
+	// straight onto the attempt row with no derivation.
+	Preserve *Preserve
 }
 
 // RejectionKind names which contract refused a completion.

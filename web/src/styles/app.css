@@ -942,6 +942,25 @@ button.timeline__node {
   border-bottom: 1px solid var(--line-soft);
 }
 
+/* Preserve-branch cell (task t26): a pushed branch's status label and a
+   local-only one share the same icon+word treatment as every other status
+   in this UI (PRD §8.8 — never colour alone), so this adds no new colours. */
+.detail-panel__preserve {
+  display: flex;
+  flex-direction: column;
+  gap: 0.15rem;
+  white-space: normal;
+}
+
+.detail-panel__preserve-status {
+  color: var(--ink-soft);
+  font-size: 0.9em;
+}
+
+.detail-panel__preserve-link {
+  overflow-wrap: anywhere;
+}
+
 .detail-panel__ledger,
 .detail-panel__evidence {
   list-style: none;

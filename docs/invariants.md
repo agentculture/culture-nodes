@@ -1,5 +1,10 @@
 # Invariant gates
 
+Invariants 1 and 2 below are batch-wide promises enforced by one source
+sweep; [invariant 3](#invariant-3--every-committed-example-compiles-73) is a
+later, differently-shaped gate over the `examples/` tree. All of them run
+under the ordinary `go test ./...`.
+
 Two batch-wide promises from the attempts-evidence-humans-loops spec
 (`docs/specs/2026-08-13-attempts-evidence-humans-loops.md`) are gated
 mechanically by `internal/invariants/invariants_test.go` — a pure source
@@ -97,10 +102,33 @@ sweep; refused at append time by `internal/ledger/authority.go` otherwise).
 | `internal/worker/hooks.go` | Validator-origin writer: assurance-hook rejection reviews |
 | `internal/devague/deliverables.go` | Engine-origin writer: devague delivery-summary derivation (pre-batch) |
 
+## Invariant 3 — Every committed example compiles (#73)
+
+`examples/pr-upkeep/workflow.yaml` shipped an authoring convention that had
+never compiled. The mechanism worked (the observable rode run input as a
+pointer, proven live); the *documented shape* — a nested object under
+`bindings` — was schema-invalid, and nothing noticed because nothing ever
+compiled the examples. Task t5 closes the recurrence half.
+
+Two layers, deliberately different in kind:
+
+| Layer | What it enforces |
+| --- | --- |
+| `scripts/validate-examples.sh` | Runs `nodes validate` — the verb an author runs by hand — over every `examples/**/*.yaml`. No control plane: compilation is offline, and `NODES_DATABASE_URL` is scrubbed from each invocation so that stays true by construction. Exits 1 on a non-compiling example, 2 if it finds no files at all. |
+| `tests/lint/examplescompile_test.go` | Compiles the same set in-process through `internal/compiler` (so `go test ./...` is red too), and locks the CI wiring: a job runs the script, declares no service containers or database env, and — the subtle half — `.github/workflows/go.yml`'s `paths` filters list `examples/**`, so the change that breaks an example is the change that runs the gate. |
+
+Both refuse to pass vacuously: the script exits 2 on an empty file list, and
+the test fails below `exampleWorkflowFloor` discovered files. A gate reporting
+a clean sweep over zero files is how this check would rot back into the
+state issue #73 describes.
+
+Run it locally with `scripts/validate-examples.sh` (set `NODES_BIN` to reuse
+an already-built binary).
+
 ## Extending an allowlist
 
-A failing gate on a file you just added means one of two things, and the
-failure message says which:
+Applies to invariants 1 and 2. A failing gate on a file you just added means
+one of two things, and the failure message says which:
 
 1. The write belongs behind an existing boundary — observed evidence
    through `internal/runners`, confirmation through `ledger.CommitReview`,

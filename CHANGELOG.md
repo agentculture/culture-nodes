@@ -10,6 +10,7 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 ### Added
 
 - Spec and plan for the upkeep-actors-jira cycle: nine work items across the four pr-upkeep upkeep bugs (#71-#74), the notifier and sweep fixes (#61, #66), the clarify-then-commit gate (#67), credential-rotation safety (#69 items 1-2), and demo portability — scoped, challenged and planned through the devague chain
+- CI gate that compiles every workflow under `examples/` (task t5, issue #73's recurrence half): `scripts/validate-examples.sh` runs `nodes validate` over each `examples/**/*.yaml` with no control plane, wired as the `examples compile` job in `.github/workflows/go.yml`; `tests/lint/examplescompile_test.go` mirrors the compile check in-process and additionally locks the job's wiring — that it exists, needs no database, and is triggered by a change under `examples/`
 - Issue #76: the Jira Cloud node-loop, scoped in full (auth shape verified live, rate budget measured, boundaries and portability settled, empty-backlog blocker on live proof recorded) and deliberately deferred out of this batch
 
 ### Changed

@@ -9,6 +9,8 @@ on:
       - "go.sum"
       - "schemas/**"
       - "migrations/**"
+      - "examples/**"
+      - "scripts/validate-examples.sh"
       - ".github/workflows/go.yml"
   push:
     branches: [main]
@@ -18,6 +20,8 @@ on:
       - "go.sum"
       - "schemas/**"
       - "migrations/**"
+      - "examples/**"
+      - "scripts/validate-examples.sh"
       - ".github/workflows/go.yml"
 
 jobs:
@@ -37,3 +41,22 @@ jobs:
       - run: go vet ./...
 
       - run: go test ./...
+
+  # Issue #73's recurrence half: compile every workflow under examples/, so a
+  # non-compiling example cannot ship again. Separate from `build` so its
+  # verdict is legible on its own -- "the examples are broken" is a different
+  # message than "the code is broken". Needs no control plane: `nodes validate`
+  # compiles offline through internal/compiler.
+  examples:
+    name: examples compile
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+
+      - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5
+        with:
+          go-version-file: go.mod
+
+      - run: scripts/validate-examples.sh

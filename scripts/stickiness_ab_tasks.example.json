@@ -1,0 +1,8 @@
+[
+  {"id": "q1", "instruction": "Reply with exactly this text and nothing else: STICKINESS-CHECK-1. Do not read, write, search, or modify any files; do not run any commands."},
+  {"id": "q2", "instruction": "Reply with exactly this text and nothing else: STICKINESS-CHECK-2. Do not read, write, search, or modify any files; do not run any commands."},
+  {"id": "q3", "instruction": "Reply with exactly this text and nothing else: STICKINESS-CHECK-3. Do not read, write, search, or modify any files; do not run any commands."},
+  {"id": "q4", "instruction": "Reply with exactly this text and nothing else: STICKINESS-CHECK-4. Do not read, write, search, or modify any files; do not run any commands."},
+  {"id": "q5", "instruction": "Reply with exactly this text and nothing else: STICKINESS-CHECK-5. Do not read, write, search, or modify any files; do not run any commands."},
+  {"id": "q6", "instruction": "Reply with exactly this text and nothing else: STICKINESS-CHECK-6. Do not read, write, search, or modify any files; do not run any commands."}
+]

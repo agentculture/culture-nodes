@@ -5,6 +5,16 @@ All notable changes to this project will be documented in this file.
 Format follows [Keep a Changelog](https://keepachangelog.com/). This project
 adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.20.1] - 2026-08-14
+
+### Added
+
+- tests/deploy/claudetokenplacement_test.go derives the hosts that must receive the claude actor token from the compose files that declare it, rather than from a hard-coded pair of names, so a third host is covered by construction
+
+### Fixed
+
+- install-secrets.sh relays the externally-issued NODES_ACTOR_CLAUDE_TOKEN to BOTH hosts, not thor alone. compose.orin.yml declares the variable for its worker, but the lane only ever called install_claude_actor_token "$THOR", so orin was left answering 401 policy_denied on every claude node dispatched to it with no deploy step saying so. Found by task t12s credential audit on its first live run and confirmed on both hosts before fixing: orins prod.env carries no NODES_ACTOR_CLAUDE_TOKEN while its running worker still holds one in memory, so the loss was invisible until the next container recreate. The neighbouring codex lanes already install to both hosts through update_actor_token_line for exactly this reason — either worker may dispatch either actor
+
 ## [0.20.0] - 2026-08-14
 
 ### Added

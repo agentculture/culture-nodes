@@ -445,4 +445,15 @@ else:
     print("installed the control-plane copy of the claude actor token")
 PY'
 }
+# BOTH hosts, not just thor. Either worker may dispatch either actor, so
+# each needs every actor credential its compose file declares — which is why
+# the codex lanes above call update_actor_token_line, whose whole body is a
+# loop over both hosts. This lane installed to thor alone until task t12's
+# credential audit reported NODES_ACTOR_CLAUDE_TOKEN missing from orin's
+# prod.env on its first live run, while compose.orin.yml declared it: orin's
+# worker would answer 401 policy_denied on every claude node dispatched to
+# it, and no deploy would say so. tests/deploy/claudetokenplacement_test.go
+# derives the required hosts from the compose files, so a third host is
+# covered without editing the test.
 install_claude_actor_token "$THOR"
+install_claude_actor_token "$ORIN"

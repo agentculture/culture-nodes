@@ -19,6 +19,15 @@
           "type": "string"
         }
       },
+      "PlanImportID": {
+        "description": "The plan import snapshot's id.",
+        "in": "path",
+        "name": "id",
+        "required": true,
+        "schema": {
+          "type": "string"
+        }
+      },
       "RunID": {
         "description": "The run id.",
         "in": "path",
@@ -1226,6 +1235,189 @@
         ],
         "type": "object"
       },
+      "PlanImport": {
+        "description": "GET /v1alpha1/plan-imports/{id}' and the 201 body of POST /v1alpha1/plan-imports (task t22): one immutable import snapshot. Deliberately not a work-ledger record — see migrations/0024_plan_imports.sql.",
+        "properties": {
+          "deviations": {
+            "items": {
+              "$ref": "#/components/schemas/PlanImportDeviation"
+            },
+            "type": "array"
+          },
+          "id": {
+            "type": "string"
+          },
+          "imported_at": {
+            "format": "date-time",
+            "type": "string"
+          },
+          "slug": {
+            "description": "The source plan's own slug. NOT unique: re-importing the same slug creates a new, independent snapshot row.",
+            "type": "string"
+          },
+          "source_digest": {
+            "description": "sha256 digest of the raw imported bytes.",
+            "type": "string"
+          },
+          "source_slug": {
+            "description": "The source document/frame this plan was decomposed from (devague `frame_slug`).",
+            "type": "string"
+          },
+          "source_status": {
+            "description": "The source system's own plan-level status verbatim.",
+            "type": "string"
+          },
+          "tasks": {
+            "items": {
+              "$ref": "#/components/schemas/PlanImportTask"
+            },
+            "type": "array"
+          },
+          "title": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "slug",
+          "title",
+          "source_slug",
+          "source_status",
+          "source_digest",
+          "imported_at",
+          "tasks",
+          "deviations"
+        ],
+        "type": "object"
+      },
+      "PlanImportDeviation": {
+        "description": "One execution-time deviation of an imported plan snapshot.",
+        "properties": {
+          "affects": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          },
+          "classification": {
+            "description": "Optional source-recorded classification, when present.",
+            "type": "string"
+          },
+          "deviation_ref": {
+            "description": "The source system's own deviation id, e.g. devague's `d1`.",
+            "type": "string"
+          },
+          "origin_kind": {
+            "description": "The issue #45 \"system knows\" (llm -\u003e agent) vs \"user reports\" (user -\u003e human) split, preserved verbatim from the source.",
+            "enum": [
+              "human",
+              "agent"
+            ],
+            "type": "string"
+          },
+          "reason": {
+            "type": "string"
+          },
+          "source_status": {
+            "description": "The source system's own deviation status verbatim (devague: `proposed` | `approved` | `rejected` — note `approved`, not `confirmed`) — never translated into a ledger authority value.",
+            "type": "string"
+          },
+          "task_ref": {
+            "description": "The plan task this deviation relates to.",
+            "type": "string"
+          },
+          "what": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "deviation_ref",
+          "what",
+          "task_ref",
+          "reason",
+          "affects",
+          "origin_kind",
+          "source_status"
+        ],
+        "type": "object"
+      },
+      "PlanImportRequest": {
+        "description": "POST /v1alpha1/plan-imports' body (task t22). `plan_show` is the exact object `devague plan show --json` prints (or an equivalent document from another source system — this surface is domain-agnostic, task t24 exercises a non-code one). `deviations`, when present, is the exact object `.devague/deliveries/\u003cslug\u003e.json` holds on disk, and its `plan_slug` must equal `plan_show.slug`.",
+        "properties": {
+          "deviations": {
+            "description": "Execution-time deviations from the confirmed plan, each carrying its origin (`user` or `llm` — the issue #45 \"system knows\" vs \"user reports\" split).",
+            "type": "object"
+          },
+          "plan_show": {
+            "description": "The faithful per-task plan view: per-task status and REAL dependency edges, never a wave approximation.",
+            "type": "object"
+          }
+        },
+        "required": [
+          "plan_show"
+        ],
+        "type": "object"
+      },
+      "PlanImportTask": {
+        "description": "One task of an imported plan snapshot.",
+        "properties": {
+          "acceptance_criteria": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          },
+          "covers": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          },
+          "depends_on": {
+            "description": "REAL per-task dependency edges: other tasks' `task_ref` values in this same plan import, exactly as the source recorded them — never widened to \"everything in the previous wave\".",
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          },
+          "instruction": {
+            "type": "string"
+          },
+          "origin_kind": {
+            "description": "The ledger producer kind the source's own origin maps to (devague `user` -\u003e `human`, `llm` -\u003e `agent`).",
+            "enum": [
+              "human",
+              "agent"
+            ],
+            "type": "string"
+          },
+          "source_status": {
+            "description": "The source system's own per-task decision status verbatim (devague: `proposed` | `confirmed` | `rejected`) — never translated into a ledger authority value.",
+            "type": "string"
+          },
+          "summary": {
+            "type": "string"
+          },
+          "task_ref": {
+            "description": "The source system's own task id, e.g. devague's `t3`.",
+            "type": "string"
+          },
+          "wave": {
+            "description": "Computed LOCALLY at import time via topological layering over depends_on — the source system does not emit this field itself. Absent for a rejected task, which occupies no wave.",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "task_ref",
+          "summary",
+          "origin_kind",
+          "source_status",
+          "depends_on",
+          "acceptance_criteria",
+          "covers"
+        ],
+        "type": "object"
+      },
       "Projection": {
         "properties": {
           "digest": {
@@ -2419,6 +2611,84 @@
         ]
       }
     },
+    "/v1alpha1/plan-imports": {
+      "post": {
+        "description": "Task t22 (issue #45): decodes `plan_show` (the exact object `devague plan show --json` prints — or an equivalent document from a different source system, since this surface is domain-agnostic) and the optional `deviations` (the exact object `.devague/deliveries/\u003cslug\u003e.json` holds on disk), and persists a new immutable snapshot: the plan plus every task's REAL per-task status and dependency edges, plus every deviation carrying its origin.\n\nNothing here is the append-only work ledger (`internal/ledger`) — see `migrations/0024_plan_imports.sql` for why. Every import is its own row; re-importing the same `plan_show.slug` creates a new, independent snapshot rather than overwriting the previous one.\n\nA malformed `plan_show` or `deviations` document — a missing slug, a task with no id, a dependency edge naming a task this plan does not have, a dependency cycle, an unrecognised origin/status, a `deviations.plan_slug` that does not match `plan_show.slug` — is refused with 400 in the documented Error shape, naming what is wrong; nothing is ever partially imported.",
+        "operationId": "importPlan",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/PlanImportRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PlanImport"
+                }
+              }
+            },
+            "description": "The imported plan snapshot."
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "description": "plan_show or deviations is missing or malformed."
+          }
+        },
+        "summary": "Import an external plan's faithful view, with its deviations.",
+        "tags": [
+          "plan-imports"
+        ]
+      }
+    },
+    "/v1alpha1/plan-imports/{id}": {
+      "get": {
+        "operationId": "getPlanImport",
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/PlanImportID"
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PlanImport"
+                }
+              }
+            },
+            "description": "The imported plan snapshot."
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "description": "No plan import with this id."
+          }
+        },
+        "summary": "Fetch one imported plan snapshot, with its tasks and deviations.",
+        "tags": [
+          "plan-imports"
+        ]
+      }
+    },
     "/v1alpha1/readyz": {
       "get": {
         "operationId": "readyz",
@@ -3311,6 +3581,10 @@
     {
       "description": "Registered actor identities and their aggregate stats (task t15). Read-only — registering an actor stays deploy/prod/register-actor.sh (issue #8).",
       "name": "actors"
+    },
+    {
+      "description": "Import an external plan (task t22, issue #45): the generic decompose-pipeline surface — devague's `plan show --json` and `.devague/deliveries/*.json` are instance one, a non-code document (task t24) is instance two. Carries real per-task status and dependency edges (never a wave approximation) and every deviation's origin (the issue's \"system knows\" llm vs \"user reports\" user split). Durable, but deliberately not the work ledger — see migrations/0024_plan_imports.sql.",
+      "name": "plan-imports"
     },
     {
       "description": "Liveness and readiness probes.",

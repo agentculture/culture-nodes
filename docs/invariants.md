@@ -81,6 +81,7 @@ new writer hiding as a reader is what a looser sweep would miss.
 | `internal/ledger/projection.go` | Reader: folds confirmed decisions into live state |
 | `internal/api/grades.go` | Sanctioned writer: a human grading directly lands confirmed |
 | `internal/devague/claims.go` | Pre-batch import mapper: mirrors decisions humans already recorded in devague frames |
+| `internal/devague/deviations.go` | Pre-batch import mapper (task t22): mirrors devague deviation approvals into review records, the same split claims.go uses for claims |
 
 ### `AuthorityDerived` — deterministic producers only
 

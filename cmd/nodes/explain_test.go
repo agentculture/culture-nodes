@@ -25,6 +25,7 @@ func TestResolveExplainKnownPaths(t *testing.T) {
 		{"all"},
 		{"validate"},
 		{"run"},
+		{"plan-import"},
 		{"inspect"},
 	}
 	for _, path := range cases {

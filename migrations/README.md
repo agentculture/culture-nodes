@@ -156,6 +156,27 @@ Numbered SQL migrations for the authoritative PostgreSQL store (prd-spec
   inside one transaction that row-locks each scope it consults and writes all
   of them or none; a refusal writes nothing at all.
 
+- `0024_plan_imports.sql` — expand-only: adds three new tables,
+  `plan_imports`, `plan_import_tasks`, `plan_import_deviations` (task t22 of
+  the economy-discord-graphs plan; issue #45, spec claims c10/c15, honesty
+  h7/h11), the durable home for an imported external plan's per-task status,
+  REAL dependency edges, computed wave layering, and deviations (with their
+  origin — issue #45's "system knows" llm vs "user reports" user split).
+  Deliberately NOT `ledger_records`: an import is not scoped to a run the
+  way `ledger_records.run_id` requires, and it is not the evidentiary work
+  ledger the PRD's immutable-by-trigger guarantee governs — see the
+  migration file's own header for the full reasoning. Every import is its
+  own row, inserted once (no UPDATE path is exposed at all); re-importing
+  the same plan slug is a new row, read back by
+  `(namespace_id, slug) ORDER BY imported_at DESC`, never an overwrite.
+  `wave_index` is computed locally at import time from the real dependency
+  edges (topological layering, `internal/devague`'s `planTaskWaves`) —
+  devague's own `plan show --json` does not emit it; it is NULL for a
+  rejected task, which occupies no wave. `source_status` columns carry the
+  source system's own status verbatim and are never translated into a
+  ledger authority value (see `internal/devague/deviations.go`'s
+  `MapDeviations` doc comment for that reasoning in full).
+
 ## Policy
 
 Migrations are additive-first (expand-contract). See

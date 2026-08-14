@@ -45,6 +45,9 @@ Workflows:
 Runs:
   run                create a first-class ad-hoc run from an instruction
 
+Plan import:
+  plan-import        import an external plan's faithful view (--plan, --deviations)
+
 Process modes:
   serve  scheduler  worker  all
 
@@ -93,6 +96,7 @@ func commands() map[string]handlerFunc {
 	m["worker"] = cmdWorker
 	m["scheduler"] = cmdScheduler
 	m["run"] = cmdRun
+	m["plan-import"] = cmdPlanImport
 	return m
 }
 

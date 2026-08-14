@@ -294,50 +294,60 @@ func TestNoExampleGraphValueNamesADeployment(t *testing.T) {
 // block a reader finds without knowing the codebase.
 func TestEveryExampleDocumentsItsDeploymentConfiguration(t *testing.T) {
 	root := repoRoot(t)
-
 	for _, rel := range discoverExampleWorkflows(t, root) {
-		raw, err := os.ReadFile(filepath.Join(root, rel))
-		if err != nil {
-			t.Errorf("%s: cannot read: %v", rel, err)
-			continue
-		}
+		t.Run(rel, func(t *testing.T) { assertDeploymentConfigDocumented(t, root, rel) })
+	}
+}
 
-		var comments strings.Builder
-		for _, line := range strings.Split(string(raw), "\n") {
-			_, comment := splitYAMLComment(line)
-			if comment != "" {
-				comments.WriteString(comment)
-				comments.WriteByte('\n')
-			}
-		}
-		prose := comments.String()
+// assertDeploymentConfigDocumented checks ONE example. Split out of the loop
+// so each example's checks read flat, and so a failure names the example as a
+// subtest rather than only inside the message.
+func assertDeploymentConfigDocumented(t *testing.T, root, rel string) {
+	t.Helper()
 
-		if !strings.Contains(prose, deploymentConfigHeading) {
-			t.Errorf("%s carries no %q block. Every value in this graph that resolves "+
-				"OUTSIDE the document -- a registry id, a granted environment value -- has "+
-				"to be nameable by a reader who has only the file (task t16).",
-				rel, deploymentConfigHeading)
-			continue
-		}
+	raw, err := os.ReadFile(filepath.Join(root, rel))
+	if err != nil {
+		t.Fatalf("%s: cannot read: %v", rel, err)
+	}
+	prose := yamlCommentProse(string(raw))
 
-		doc := loadPortable(t, root, rel)
-		for _, id := range doc.registryIDs() {
-			if !strings.Contains(prose, id) {
-				t.Errorf("%s places a node on %s but never names it in its %q block. "+
-					"That id is the actor/runner registry KEY a different deployment "+
-					"registers against its own endpoint -- undocumented, it reads as a "+
-					"host the loader must own.", rel, id, deploymentConfigHeading)
-			}
-		}
-		for _, ref := range doc.environmentRefs() {
-			if !strings.Contains(prose, ref) {
-				t.Errorf("%s grants environment value %s to an operation but never names "+
-					"it in its %q block. The runner boundary refuses the operation by name "+
-					"when it is unset, and a loader cannot set a name nobody wrote down.",
-					rel, ref, deploymentConfigHeading)
-			}
+	if !strings.Contains(prose, deploymentConfigHeading) {
+		t.Fatalf("%s carries no %q block. Every value in this graph that resolves "+
+			"OUTSIDE the document -- a registry id, a granted environment value -- has "+
+			"to be nameable by a reader who has only the file (task t16).",
+			rel, deploymentConfigHeading)
+	}
+
+	doc := loadPortable(t, root, rel)
+	for _, id := range doc.registryIDs() {
+		if !strings.Contains(prose, id) {
+			t.Errorf("%s places a node on %s but never names it in its %q block. "+
+				"That id is the actor/runner registry KEY a different deployment "+
+				"registers against its own endpoint -- undocumented, it reads as a "+
+				"host the loader must own.", rel, id, deploymentConfigHeading)
 		}
 	}
+	for _, ref := range doc.environmentRefs() {
+		if !strings.Contains(prose, ref) {
+			t.Errorf("%s grants environment value %s to an operation but never names "+
+				"it in its %q block. The runner boundary refuses the operation by name "+
+				"when it is unset, and a loader cannot set a name nobody wrote down.",
+				rel, ref, deploymentConfigHeading)
+		}
+	}
+}
+
+// yamlCommentProse returns every comment in a YAML document, one per line —
+// the prose a reader of the file alone would see.
+func yamlCommentProse(raw string) string {
+	var comments strings.Builder
+	for _, line := range strings.Split(raw, "\n") {
+		if _, comment := splitYAMLComment(line); comment != "" {
+			comments.WriteString(comment)
+			comments.WriteByte('\n')
+		}
+	}
+	return comments.String()
 }
 
 // TestNoCodeOperationFetchesCodeFromAPinnedURL locks the sharpest finding of

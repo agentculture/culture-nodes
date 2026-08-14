@@ -5,6 +5,21 @@ All notable changes to this project will be documented in this file.
 Format follows [Keep a Changelog](https://keepachangelog.com/). This project
 adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.21.0] - 2026-08-14
+
+### Added
+
+- tests/test_dispatch.py — the nodes dispatch CLI surface (pending/show/confirm) had no tests: task t14 shipped it while its session was being cut off by the node deadline (#82). Covers the query it forwards, the briefing printed in full rather than digested, an absent note being an absent key rather than an empty string, the gates own refusal relayed verbatim, and byte-exact --json passthrough on all three verbs
+- internal/api: a test that a HUMAN actor may still acknowledge on a bridges behalf, recorded with human origin and proposed authority. That path existed in code but was never covered, and the security fix above had to preserve it rather than close it
+
+### Changed
+
+- Five test functions refactored below the S3776 cognitive-complexity ceiling by lifting subtest bodies out of their loops and closures, plus one S8193 unnecessary variable declaration. Behaviour unchanged; each split is named for the property it asserts
+
+### Fixed
+
+- SECURITY: POST /v1alpha1/preflights/{id}/acknowledge bound an acknowledgement to no particular actor. Any registered agent could acknowledge any preflight, and because the worker consumes any acknowledged row, the gated dispatch then proceeded to an actor that never saw the briefing — which is the one thing the clarify-then-commit gate exists to prevent. The route is deliberately unauthenticated like the other ordinary routes, so this binding is the only integrity check available. An AGENT must now be the actor the preflight was issued for, matched on the rows resolved actor id when it has one so a re-registered actor reusing a key cannot answer for its predecessor. Reported by Qodo on PR #85
+
 ## [0.20.2] - 2026-08-14
 
 ### Added

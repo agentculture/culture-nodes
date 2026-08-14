@@ -213,6 +213,8 @@ func (s *Server) handleAcknowledgePreflight(w http.ResponseWriter, r *http.Reque
 		// understanding is a claim about somebody else, which is exactly the
 		// kind of statement the ledger keeps unpromoted.
 		origin = ledger.OriginHuman
+	} else if err := requireAddressedActor(row, actor); err != nil {
+		return err
 	}
 
 	now := time.Now().UTC()
@@ -272,4 +274,40 @@ func (s *Server) handleAcknowledgePreflight(w http.ResponseWriter, r *http.Reque
 	}
 	writeJSON(w, http.StatusOK, out)
 	return nil
+}
+
+// requireAddressedActor binds an AGENT's acknowledgement to the actor the
+// briefing was addressed to.
+//
+// This route is unauthenticated, like the other ordinary routes, so this
+// check is the only thing standing between "the addressed actor read the
+// briefing" and "somebody sent a POST". Without it any registered agent can
+// answer any preflight, the worker consumes the acknowledged row, and the
+// dispatch proceeds to an actor that never saw the document — which is
+// precisely what the gate exists to prevent.
+//
+// Human actors are deliberately NOT bound: an operator acknowledging on a
+// bridge's behalf is a supported path, and its record already says what it
+// is by carrying human origin with proposed authority (a claim about
+// somebody else's understanding, kept unpromoted). Binding humans here would
+// close that door instead of the open one.
+//
+// The row's actor id is the strong binding and is preferred whenever it is
+// set: it is the registry row the dispatch actually resolved to, so a
+// re-registered actor reusing a key cannot answer for its predecessor. The
+// actor key is the fallback for a row addressed by key alone.
+func requireAddressedActor(row postgres.Preflight, actor postgres.Actor) error {
+	if row.ActorID != "" {
+		if actor.ID == row.ActorID {
+			return nil
+		}
+	} else if actor.ActorKey == row.ActorKey {
+		return nil
+	}
+	return conflict(
+		"acknowledge as the actor this briefing was issued for ("+row.ActorKey+
+			"), or as a registered human actor vouching on its behalf",
+		"preflight %s was issued for actor %s, and cannot be acknowledged by %s: an acknowledgement "+
+			"is the addressed actor's own claim to have read the briefing",
+		row.ID, row.ActorKey, actor.ActorKey)
 }

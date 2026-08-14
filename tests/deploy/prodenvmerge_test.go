@@ -260,35 +260,8 @@ func TestProdEnvRotationPreservesExternallyIssuedKeys(t *testing.T) {
 		path := c.prodEnvPath(t, host)
 		env := readEnvFile(t, path)
 		env.assertNoDuplicateKeys(t, path)
-
-		for key, want := range accretedKeys {
-			got, present := env.values[key]
-			if !present {
-				t.Errorf("%s: rotation DESTROYED %s — the rotation owns no value for that key and must leave it alone", host, key)
-				continue
-			}
-			if got != want {
-				t.Errorf("%s: rotation rewrote %s to %q, want the untouched %q", host, key, got, want)
-			}
-		}
-
-		// The rotation must still do its job on the keys it does own.
-		for _, key := range []string{
-			"POSTGRES_PASSWORD", "MINIO_ROOT_PASSWORD",
-			"NODES_HUMAN_DECISION_TOKEN_SECRET", "NODES_CALLBACK_TOKEN_SECRET",
-			"NODES_RUNNER_SECRET",
-		} {
-			got := env.values[key]
-			if strings.HasPrefix(got, "old-generated-") {
-				t.Errorf("%s: %s still holds the pre-rotation value %q; a confirmed rotation must replace the secrets it generates", host, key, got)
-			}
-			if !hexSecret.MatchString(got) {
-				t.Errorf("%s: %s = %q, want a freshly generated 32-byte hex secret", host, key, got)
-			}
-		}
-		if got := env.values["NODES_CALLBACK_BASE_URL"]; got != "http://thor:18080" {
-			t.Errorf("%s: NODES_CALLBACK_BASE_URL = %q, want the generated block's value", host, got)
-		}
+		assertAccretedKeysSurvived(t, host, env)
+		assertGeneratedKeysWereRotated(t, host, env)
 	}
 
 	// Both hosts hold their OWN runner secret, not one value merged twice.
@@ -296,6 +269,47 @@ func TestProdEnvRotationPreservesExternallyIssuedKeys(t *testing.T) {
 	orin := readEnvFile(t, c.prodEnvPath(t, "orin"))
 	if thor.values["NODES_RUNNER_SECRET"] == orin.values["NODES_RUNNER_SECRET"] {
 		t.Error("thor and orin ended up with the same NODES_RUNNER_SECRET; each host's runner bearer is per-host")
+	}
+}
+
+// assertAccretedKeysSurvived is the half of the rotation contract this whole
+// file exists for: the keys the rotation does NOT own must come out
+// byte-identical. A missing one is the incident (NODES_ACTOR_CLAUDE_TOKEN
+// destroyed by a FORCE rotation), so it is reported as destruction by name.
+func assertAccretedKeysSurvived(t *testing.T, host string, env envFile) {
+	t.Helper()
+	for key, want := range accretedKeys {
+		got, present := env.values[key]
+		if !present {
+			t.Errorf("%s: rotation DESTROYED %s — the rotation owns no value for that key and must leave it alone", host, key)
+			continue
+		}
+		if got != want {
+			t.Errorf("%s: rotation rewrote %s to %q, want the untouched %q", host, key, got, want)
+		}
+	}
+}
+
+// assertGeneratedKeysWereRotated is the other half: merging is not an excuse
+// to stop rotating. Every key the lane generates must hold a fresh secret,
+// and the generated block's own non-secret values must still be written.
+func assertGeneratedKeysWereRotated(t *testing.T, host string, env envFile) {
+	t.Helper()
+	for _, key := range []string{
+		"POSTGRES_PASSWORD", "MINIO_ROOT_PASSWORD",
+		"NODES_HUMAN_DECISION_TOKEN_SECRET", "NODES_CALLBACK_TOKEN_SECRET",
+		"NODES_RUNNER_SECRET",
+	} {
+		got := env.values[key]
+		if strings.HasPrefix(got, "old-generated-") {
+			t.Errorf("%s: %s still holds the pre-rotation value %q; a confirmed rotation must replace the secrets it generates", host, key, got)
+		}
+		if !hexSecret.MatchString(got) {
+			t.Errorf("%s: %s = %q, want a freshly generated 32-byte hex secret", host, key, got)
+		}
+	}
+	if got := env.values["NODES_CALLBACK_BASE_URL"]; got != "http://thor:18080" {
+		t.Errorf("%s: NODES_CALLBACK_BASE_URL = %q, want the generated block's value", host, got)
 	}
 }
 
@@ -507,7 +521,7 @@ func TestRemoveSecretAddsThenRemovesAKey(t *testing.T) {
 	if !strings.Contains(out, "NODES_ACTOR_CLAUDE_TOKEN") {
 		t.Errorf("the dry run does not name the key it would remove; output:\n%s", out)
 	}
-	if got := readEnvFile(t, c.prodEnvPath(t, "thor")).values["NODES_ACTOR_CLAUDE_TOKEN"]; got != relayed {
+	if readEnvFile(t, c.prodEnvPath(t, "thor")).values["NODES_ACTOR_CLAUDE_TOKEN"] != relayed {
 		t.Error("the dry run removed the key anyway; removal must take an explicit --yes")
 	}
 

@@ -217,6 +217,79 @@ func TestAcknowledgingRequiresAKnownActor(t *testing.T) {
 	requireStatus(t, resp, body, http.StatusBadRequest)
 }
 
+// An acknowledgement must come from the actor the briefing was ADDRESSED to.
+//
+// The route is deliberately unauthenticated, like the other ordinary routes,
+// so the binding between the acknowledging actor and the preflight's intended
+// one is the only integrity check standing between "the addressed actor read
+// this" and "somebody sent a POST". Without it a second registered actor —
+// any of them — can satisfy the gate, the worker consumes the acknowledged
+// row, and the dispatch proceeds to an actor that never saw the briefing.
+// That is the whole thing the gate exists to prevent, so it is a refusal
+// rather than a warning.
+func TestAcknowledgingOnBehalfOfADifferentActorIsRefused(t *testing.T) {
+	f := newFixture(t)
+	addressed := f.insertActor("fixer")
+	bystander := f.insertActor("reviewer")
+	row := seedPreflight(t, f, addressed, preflight.DefaultWindow)
+
+	resp, body := doJSON(t, f.client, http.MethodPost, f.url("/v1alpha1/preflights/"+row.ID+"/acknowledge"),
+		acknowledgeReq{ActorID: bystander, Verdict: preflight.VerdictProceed}, nil)
+	requireStatus(t, resp, body, http.StatusConflict)
+
+	// The refusal must leave the briefing answerable by the actor it was
+	// meant for — a rejected impersonation must not burn the single use.
+	var detail apipkg.PreflightOut
+	resp, body = doJSON(t, f.client, http.MethodGet, f.url("/v1alpha1/preflights/"+row.ID), nil, &detail)
+	requireStatus(t, resp, body, http.StatusOK)
+	if detail.Acknowledged {
+		t.Fatal("a refused acknowledgement marked the preflight answered; the addressed actor can no longer acknowledge it")
+	}
+
+	var out apipkg.PreflightOut
+	resp, body = doJSON(t, f.client, http.MethodPost, f.url("/v1alpha1/preflights/"+row.ID+"/acknowledge"),
+		acknowledgeReq{ActorID: addressed, Verdict: preflight.VerdictProceed}, &out)
+	requireStatus(t, resp, body, http.StatusOK)
+	if !out.Acknowledged {
+		t.Error("the addressed actor could not acknowledge after a bystander was refused")
+	}
+}
+
+// The binding above must not close the door it was not aimed at: a HUMAN
+// actor acknowledging on a bridge's behalf is a supported path, and the
+// record already says what it is by carrying human origin with proposed
+// authority — a claim about somebody else's understanding, kept unpromoted.
+//
+// Only agents are bound to the addressed identity. Binding humans too would
+// leave an operator unable to unblock a bridge that cannot answer for itself.
+func TestAHumanActorMayAcknowledgeOnABridgesBehalf(t *testing.T) {
+	f := newFixture(t)
+	addressed := f.insertActor("fixer")
+	operator := f.insertActorKind("operator", "human")
+	row := seedPreflight(t, f, addressed, preflight.DefaultWindow)
+
+	var out apipkg.PreflightOut
+	resp, body := doJSON(t, f.client, http.MethodPost, f.url("/v1alpha1/preflights/"+row.ID+"/acknowledge"),
+		acknowledgeReq{ActorID: operator, Verdict: preflight.VerdictProceed, Note: "unblocking by hand"}, &out)
+	requireStatus(t, resp, body, http.StatusOK)
+	if !out.Acknowledged {
+		t.Fatal("a human operator could not acknowledge on the bridge's behalf")
+	}
+
+	rec, err := f.api.Ledger.Record(context.Background(), out.AcknowledgementRecordID)
+	if err != nil {
+		t.Fatalf("read acknowledgement record: %v", err)
+	}
+	if rec.Origin.Kind != ledger.OriginHuman {
+		t.Errorf("origin kind = %q, want %q — the record must say a human vouched rather than read as the actor's own claim",
+			rec.Origin.Kind, ledger.OriginHuman)
+	}
+	if rec.Authority != ledger.AuthorityProposed {
+		t.Errorf("authority = %q, want %q — vouching for somebody else's understanding stays unpromoted",
+			rec.Authority, ledger.AuthorityProposed)
+	}
+}
+
 // Acceptance criterion 3 at the API door: the refusal is a 400 naming what to
 // do, not a 500 from a constraint violation.
 func TestRegisteringAGatedActorWithoutASurfaceIsRefused(t *testing.T) {

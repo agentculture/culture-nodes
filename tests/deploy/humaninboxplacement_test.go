@@ -355,23 +355,33 @@ func TestColocationAssertionRefusesEverySplit(t *testing.T) {
 		},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			files := matchedEnvFiles()
-			if tc.mutate != nil {
-				tc.mutate(&files)
-			}
-			out, code := runColocationAssertion(t, files, tc.endpoint)
-			if code == 0 || strings.Contains(out, "ASSERTION_PASSED") {
-				t.Fatalf("the assertion accepted a split deployment (exit %d): %s", code, out)
-			}
-			if !strings.Contains(out, "SPLIT DEPLOYMENT REFUSED") {
-				t.Errorf("refusal is not loud: output names no SPLIT DEPLOYMENT REFUSED: %s", out)
-			}
-			for _, name := range tc.names {
-				if !strings.Contains(out, name) {
-					t.Errorf("refusal never names %q — an operator cannot see both sides of the disagreement: %s", name, out)
-				}
-			}
+			assertSplitIsRefused(t, tc.endpoint, tc.mutate, tc.names)
 		})
+	}
+}
+
+// assertSplitIsRefused drives the colocation assertion with one deliberately
+// split configuration and requires it to refuse loudly, naming every value in
+// names. Lifted out of the table's subtest closure so the checks are a flat
+// list rather than nested inside both the table loop and the closure.
+func assertSplitIsRefused(t *testing.T, endpoint string, mutate func(*placementEnvFiles), names []string) {
+	t.Helper()
+
+	files := matchedEnvFiles()
+	if mutate != nil {
+		mutate(&files)
+	}
+	out, code := runColocationAssertion(t, files, endpoint)
+	if code == 0 || strings.Contains(out, "ASSERTION_PASSED") {
+		t.Fatalf("the assertion accepted a split deployment (exit %d): %s", code, out)
+	}
+	if !strings.Contains(out, "SPLIT DEPLOYMENT REFUSED") {
+		t.Errorf("refusal is not loud: output names no SPLIT DEPLOYMENT REFUSED: %s", out)
+	}
+	for _, name := range names {
+		if !strings.Contains(out, name) {
+			t.Errorf("refusal never names %q — an operator cannot see both sides of the disagreement: %s", name, out)
+		}
 	}
 }
 

@@ -207,37 +207,48 @@ func TestThePythonAndGoHalvesAgreeOnTheProtocol(t *testing.T) {
 // helper in another, and the two disagree about what this host does.
 func TestABridgeAdvertisesTheSurfaceCompletelyOrNotAtAll(t *testing.T) {
 	for _, pkg := range discoverAdapterPackages(t) {
-		t.Run(pkg.adapter, func(t *testing.T) {
-			hasShared := pkg.has(t, sharedModule)
-			hasBackend := pkg.has(t, backendModule)
-			if !hasShared && !hasBackend {
-				t.Skipf("adapters/%s advertises no capability surface, and dispatches exactly as "+
-					"it did before task t15", pkg.adapter)
-			}
-			if hasShared != hasBackend {
-				t.Fatalf("adapters/%s ships one half of the surface (%s=%v, %s=%v): the protocol "+
-					"without the facts advertises nothing, and the facts without the protocol are "+
-					"a second dialect", pkg.adapter, sharedModule, hasShared, backendModule, hasBackend)
-			}
+		t.Run(pkg.adapter, func(t *testing.T) { assertSurfaceIsWholeOrAbsent(t, pkg) })
+	}
+}
 
-			server := pkg.read(t, "server.py")
-			if !strings.Contains(server, "preflight.CAPABILITIES_PATH") {
-				t.Errorf("adapters/%s serves no route at preflight.CAPABILITIES_PATH: an operator "+
-					"registering this actor cannot read the facts off the host that has them",
-					pkg.adapter)
-			}
-			if !strings.Contains(server, "capabilities.host_facts") {
-				t.Errorf("adapters/%s does not build its surface from %s.host_facts",
-					pkg.adapter, backendModule)
-			}
+// assertSurfaceIsWholeOrAbsent is guard 3's body for ONE adapter. It lives
+// outside the subtest closure so the checks read as a flat list rather than
+// nested two deep inside a loop.
+func assertSurfaceIsWholeOrAbsent(t *testing.T, pkg adapterPackage) {
+	t.Helper()
 
-			main := pkg.read(t, "__main__.py")
-			if !strings.Contains(main, "--print-capabilities") {
-				t.Errorf("adapters/%s has no --print-capabilities flag: registering an actor "+
-					"before its bridge has ever started would mean hand-writing host facts",
-					pkg.adapter)
-			}
-		})
+	hasShared := pkg.has(t, sharedModule)
+	hasBackend := pkg.has(t, backendModule)
+	if !hasShared && !hasBackend {
+		t.Skipf("adapters/%s advertises no capability surface, and dispatches exactly as "+
+			"it did before task t15", pkg.adapter)
+	}
+	if hasShared != hasBackend {
+		t.Fatalf("adapters/%s ships one half of the surface (%s=%v, %s=%v): the protocol "+
+			"without the facts advertises nothing, and the facts without the protocol are "+
+			"a second dialect", pkg.adapter, sharedModule, hasShared, backendModule, hasBackend)
+	}
+
+	server := pkg.read(t, "server.py")
+	requireContains(t, server, "preflight.CAPABILITIES_PATH",
+		fmt.Sprintf("adapters/%s serves no route at preflight.CAPABILITIES_PATH: an operator "+
+			"registering this actor cannot read the facts off the host that has them", pkg.adapter))
+	requireContains(t, server, "capabilities.host_facts",
+		fmt.Sprintf("adapters/%s does not build its surface from %s.host_facts",
+			pkg.adapter, backendModule))
+
+	requireContains(t, pkg.read(t, "__main__.py"), "--print-capabilities",
+		fmt.Sprintf("adapters/%s has no --print-capabilities flag: registering an actor "+
+			"before its bridge has ever started would mean hand-writing host facts", pkg.adapter))
+}
+
+// requireContains reports msg when haystack lacks needle. It exists so a run
+// of "this file must mention that symbol" checks stays a flat list of calls
+// instead of a stack of near-identical if blocks.
+func requireContains(t *testing.T, haystack, needle, msg string) {
+	t.Helper()
+	if !strings.Contains(haystack, needle) {
+		t.Error(msg)
 	}
 }
 

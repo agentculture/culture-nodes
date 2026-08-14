@@ -359,21 +359,13 @@ var scrubbedFixturePaths = []string{
 func TestCredentialLintCoversTheScrubbedFixtures(t *testing.T) {
 	repoRoot := repoRoot(t)
 
-	scannable := map[string]bool{}
+	scannable := scannableCommittedPaths(t, repoRoot)
 	examples, adapterTests := 0, 0
-	for _, rel := range committedFiles(t, repoRoot) {
-		if skipCommittedPath(rel) {
-			continue
-		}
-		content, readErr := os.ReadFile(filepath.Join(repoRoot, filepath.FromSlash(rel)))
-		if readErr != nil || isBinaryContent(content) {
-			continue
-		}
-		scannable[rel] = true
+	for rel := range scannable {
 		if strings.HasPrefix(rel, "examples/") {
 			examples++
 		}
-		if segments := strings.Split(rel, "/"); len(segments) > 3 && segments[0] == "adapters" && segments[2] == "tests" {
+		if isAdapterTestPath(rel) {
 			adapterTests++
 		}
 	}
@@ -391,6 +383,33 @@ func TestCredentialLintCoversTheScrubbedFixtures(t *testing.T) {
 		t.Error("no committed file under adapters/*/tests was scanned; task t3 requires the walk to cover adapter test fixtures")
 	}
 	t.Logf("scanned %d committed files under examples/ and %d under adapters/*/tests", examples, adapterTests)
+}
+
+// scannableCommittedPaths is the set of committed paths the credential lint
+// actually reads: skip-listed paths and binaries drop out. Split from its
+// caller so the "did the walk reach what it must" assertions read as a flat
+// list rather than sitting under the walk's own filtering.
+func scannableCommittedPaths(t *testing.T, repoRoot string) map[string]bool {
+	t.Helper()
+	scannable := map[string]bool{}
+	for _, rel := range committedFiles(t, repoRoot) {
+		if skipCommittedPath(rel) {
+			continue
+		}
+		content, readErr := os.ReadFile(filepath.Join(repoRoot, filepath.FromSlash(rel)))
+		if readErr != nil || isBinaryContent(content) {
+			continue
+		}
+		scannable[rel] = true
+	}
+	return scannable
+}
+
+// isAdapterTestPath reports whether rel is a fixture under adapters/*/tests —
+// one of the two trees task t3 requires the walk to cover.
+func isAdapterTestPath(rel string) bool {
+	segments := strings.Split(rel, "/")
+	return len(segments) > 3 && segments[0] == "adapters" && segments[2] == "tests"
 }
 
 // committedFiles returns every path in the git index, repo-relative and

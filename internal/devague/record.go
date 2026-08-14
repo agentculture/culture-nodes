@@ -33,9 +33,34 @@ func reviewIDForClaim(frameSlug, claimID string) string {
 }
 
 // recordIDForTask is the deterministic id of the record a plan task maps to
-// (see MapPlanWaves).
+// (see MapPlanWaves and MapPlanShow). Both functions key a task the same
+// way deliberately: they describe the SAME logical task from two different
+// devague views, so importing both over the same plan is a genuine id
+// collision -- InsertRecord's uniqueness (records are immutable and never
+// rewritten) is what refuses that, rather than either mapping silently
+// drifting from the other.
 func recordIDForTask(planSlug, taskID string) string {
 	return idPrefix + planSlug + "_" + taskID
+}
+
+// recordIDForDeviation is the deterministic id of the record a delivery
+// deviation maps to (see MapDeviations).
+func recordIDForDeviation(planSlug, deviationID string) string {
+	return idPrefix + planSlug + "_" + deviationID
+}
+
+// reviewIDForTask is the deterministic id of the review record confirming
+// or rejecting a task's record, when devague recorded a decision (see
+// MapPlanShow, the plan_show.go twin of reviewIDForClaim).
+func reviewIDForTask(planSlug, taskID string) string {
+	return recordIDForTask(planSlug, taskID) + "_review"
+}
+
+// reviewIDForDeviation is the deterministic id of the review record
+// confirming or rejecting a deviation's record, when devague recorded a
+// decision (see MapDeviations).
+func reviewIDForDeviation(planSlug, deviationID string) string {
+	return recordIDForDeviation(planSlug, deviationID) + "_review"
 }
 
 // recordIDForSignal is the deterministic id of the record the nth (1-based)

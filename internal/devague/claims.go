@@ -94,7 +94,7 @@ func MapFrameClaims(showJSON []byte) ([]ledger.Record, error) {
 			ledger.Origin{Kind: ledger.OriginHuman, ActorID: actorIDFor(ledger.OriginHuman)},
 			authority,
 			ledger.NullableID(recID),
-			reviewData(verdict, recID, claim.Status),
+			reviewData("claim", verdict, recID, claim.Status),
 			[]string{recID},
 		)
 		if err != nil {
@@ -197,14 +197,18 @@ func claimData(frameSlug string, c frameClaim) map[string]any {
 	}
 }
 
-// reviewData is the review record's payload. Its property names follow
-// review.schema.json's PRD §10.8 vocabulary (verdict, reviewed_refs) so the
-// record reads like any other review the ledger runtime would append.
-func reviewData(verdict, targetID, devagueStatus string) map[string]any {
+// reviewData is the review record's payload, shared by every Map* function
+// in this package that emits the base-record/review-record split (claims,
+// plan tasks, deviations). Its property names follow review.schema.json's
+// PRD §10.8 vocabulary (verdict, reviewed_refs) so the record reads like any
+// other review the ledger runtime would append. kind names what was
+// reviewed ("claim", "task", "deviation") so the comment reads correctly
+// regardless of which Map* function called it.
+func reviewData(kind, verdict, targetID, devagueStatus string) map[string]any {
 	return map[string]any{
 		"verdict":       verdict,
 		"reviewed_refs": []string{targetID},
-		"comment":       "imported from a devague claim recorded as " + devagueStatus,
+		"comment":       "imported from a devague " + kind + " recorded as " + devagueStatus,
 		"devague": map[string]any{
 			"source": "devague",
 			"status": devagueStatus,

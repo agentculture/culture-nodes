@@ -1,0 +1,44 @@
+{
+  "plan_slug": "t22fixture",
+  "schema_version": 1,
+  "created": "2026-08-14T05:14:01Z",
+  "updated": "2026-08-14T05:14:12Z",
+  "deviations": [
+    {
+      "id": "d1",
+      "what": "Swapped t3's approach after a live capability check",
+      "task_ref": "t3",
+      "reason": "verified against the installed toolchain; the original approach was infeasible",
+      "affects": [
+        "t3",
+        "c4"
+      ],
+      "origin": "user",
+      "status": "approved",
+      "classification": "acceptable"
+    },
+    {
+      "id": "d2",
+      "what": "Propose folding t4 into t1's scope",
+      "task_ref": "t4",
+      "reason": "found while scoping t4; t1 already produces most of what t4 needs",
+      "affects": [
+        "t4",
+        "t1"
+      ],
+      "origin": "llm",
+      "status": "proposed",
+      "classification": "needs-follow-up"
+    },
+    {
+      "id": "d3",
+      "what": "Considered dropping t2 entirely",
+      "task_ref": "t2",
+      "reason": "explored during planning; ultimately t2's output is still needed",
+      "affects": [],
+      "origin": "llm",
+      "status": "rejected",
+      "classification": null
+    }
+  ]
+}

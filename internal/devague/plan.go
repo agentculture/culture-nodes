@@ -154,7 +154,27 @@ func coveredClaimRefs(planSlug string, covers []string) []string {
 // isClaimID reports whether id has devague's claim-id shape "c" followed by
 // one or more digits (as opposed to an honesty-condition id, "h...").
 func isClaimID(id string) bool {
-	if len(id) < 2 || id[0] != 'c' {
+	return hasIDShape(id, 'c')
+}
+
+// isTaskID reports whether id has devague's task-id shape "t" followed by
+// one or more digits. Used by plan_show.go (dependency edges) and
+// deviations.go (task_ref / id-shaped affects entries) -- both need to tell
+// "this names a plan task" apart from a frame claim/honesty id or free-form
+// prose, the same distinction isClaimID draws for claims.
+func isTaskID(id string) bool {
+	return hasIDShape(id, 't')
+}
+
+// hasIDShape reports whether id is exactly one letter followed by one or
+// more digits -- the shape every devague-generated id uses (t3 tasks, c14
+// claims, h5 honesty conditions, d1 deviations; devague/cli/_commands/
+// deviate.py's own _ID_SHAPED_RE draws the identical distinction for
+// --affects refs). isClaimID/isTaskID are thin wrappers naming which letter
+// they each require, so a caller reads "is this a claim id" / "is this a
+// task id" rather than a bare regex-shaped predicate.
+func hasIDShape(id string, letter byte) bool {
+	if len(id) < 2 || id[0] != letter {
 		return false
 	}
 	for _, r := range id[1:] {

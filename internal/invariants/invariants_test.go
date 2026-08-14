@@ -225,12 +225,13 @@ var authorityAllowlists = []struct {
 			"(internal/api/grades.go — a human grading directly is their own confirmation, admitted by " +
 			"checkHumanAuthority). No actor promotes its own proposal.",
 		files: map[string]string{
-			"internal/ledger/record.go":     "vocabulary: defines the Authority constants",
-			"internal/ledger/authority.go":  "append-time enforcement: confirmed/rejected only inside review transactions (plus the human-grade carve-out)",
-			"internal/ledger/ledger.go":     "THE writer: Verdict.authority maps CommitReview verdicts to confirmed/rejected review records",
-			"internal/ledger/projection.go": "reader: projections fold confirmed decisions into live state",
-			"internal/api/grades.go":        "sanctioned writer: human-grader direct grade lands confirmed (the c16 precedent)",
-			"internal/devague/claims.go":    "pre-batch import mapper: mirrors decisions humans already recorded in devague frames into review records",
+			"internal/ledger/record.go":      "vocabulary: defines the Authority constants",
+			"internal/ledger/authority.go":   "append-time enforcement: confirmed/rejected only inside review transactions (plus the human-grade carve-out)",
+			"internal/ledger/ledger.go":      "THE writer: Verdict.authority maps CommitReview verdicts to confirmed/rejected review records",
+			"internal/ledger/projection.go":  "reader: projections fold confirmed decisions into live state",
+			"internal/api/grades.go":         "sanctioned writer: human-grader direct grade lands confirmed (the c16 precedent)",
+			"internal/devague/claims.go":     "pre-batch import mapper: mirrors decisions humans already recorded in devague frames into review records",
+			"internal/devague/deviations.go": "pre-batch import mapper: mirrors devague deviation approvals into review records (task t22) — the same base-record/review-record split claims.go uses for claims, evaluated against this exact invariant in the function's own doc comment",
 		},
 	},
 	{

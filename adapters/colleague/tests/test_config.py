@@ -4,7 +4,6 @@ import json
 import os
 
 import pytest
-
 from colleague_bridge.config import Config, ConfigError
 
 
@@ -14,6 +13,26 @@ def test_defaults_are_safe_when_unconfigured():
     assert cfg.repo_allowed("/anywhere") is False
     assert cfg.auth_token is None
     assert cfg.colleague_bin == "colleague"
+    # t6 (c44/h37): sane defaults for the session-key concurrency guard —
+    # serialized on, exactly one in-flight invocation per session_key.
+    assert cfg.session_concurrency_enabled is True
+    assert cfg.max_inflight_per_session_key == 1
+
+
+def test_session_concurrency_env_parsing():
+    cfg = Config.load(
+        env={
+            "COLLEAGUE_BRIDGE_SESSION_CONCURRENCY_ENABLED": "false",
+            "COLLEAGUE_BRIDGE_MAX_INFLIGHT_PER_SESSION_KEY": "3",
+        }
+    )
+    assert cfg.session_concurrency_enabled is False
+    assert cfg.max_inflight_per_session_key == 3
+
+
+def test_max_inflight_per_session_key_env_rejects_garbage():
+    with pytest.raises(ConfigError):
+        Config.load(env={"COLLEAGUE_BRIDGE_MAX_INFLIGHT_PER_SESSION_KEY": "many"})
 
 
 def test_repo_allowlist_from_env_is_pathsep_joined(tmp_path):

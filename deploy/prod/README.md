@@ -68,6 +68,54 @@ and it writes no backup — a `.bak` beside `prod.env` would be a second
 unmanaged copy of live credentials. Restart whatever reads the file
 afterwards: a running container still holds the removed value in memory.
 
+### The post-deploy credential audit
+
+Merging fixed the mechanism that ate `NODES_ACTOR_CLAUDE_TOKEN`.
+`audit-credentials.sh` is the **detector** for whatever eats a key next — a
+hand edit, a restore from an older copy, a lane that was never taught to
+install a key on this host. `deploy.sh` runs it **last**, after the stack is
+up, on both lanes:
+
+```bash
+./audit-credentials.sh thor      # 0 = complete, 1 = a required key is gone
+```
+
+It compares the env keys **this host's compose file declares** against what
+`~/.culture-nodes/prod.env` on that host contains, and puts every key in one
+of three classes:
+
+| class | meaning | audit behaviour |
+|---|---|---|
+| `required` | the service cannot work without it | **fails the audit** when absent or empty |
+| `optional` | absence is a legitimate choice that *closes a feature* rather than breaking one (`DISCORD_WEBHOOK_URL`, the closed-by-default bearer secrets, the runner-service placement keys) | reported, never a failure |
+| `unknown` | present in `prod.env`, declared by no compose file (`NODES_RUNNER_SECRET` is one on both hosts) | reported and **left alone** — `prod.env` legitimately carries keys compose never mentions; `remove-secret.sh` is the deliberate removal path |
+
+The declared set is **read from `compose.thor.yml` and `compose.orin.yml`**,
+never from a list in the script, so it cannot drift from what compose
+actually substitutes (`$${VAR}` is compose's escape for the container's own
+shell and is correctly ignored). Compose also decides most of the
+classification by itself: `${KEY:?…}` is required by construction and
+`${KEY:-value}` works without the key by construction. The hand-classified
+half is only the keys compose says nothing about — `${KEY:-}`, the shape
+every credential has, including the one the incident destroyed — and it
+lives in exactly one place, `audit_classification()` in
+`audit-credentials.sh`, one entry per key with the reason it is where it is.
+A compose-declared key with an open default that nobody classified is
+reported as unclassified and treated as required until someone writes down
+which it is.
+
+Values never leave the host: the remote command emits `KEY<TAB>set|empty`,
+so the audit reports key **names** only and no credential reaches an argv or
+a log line. `tests/deploy/credentialaudit_test.go` runs the real script
+against a stub `ssh` under a per-host `HOME` and pins all of it, including
+the fixture that is missing one required key.
+
+Known gap this surfaced on its first run: **`NODES_ACTOR_CLAUDE_TOKEN` is
+not installed on orin.** `install-secrets.sh`'s relay lane targets `$THOR`
+only, while `compose.orin.yml` declares the variable — so orin's worker
+401s on any claude node run it claims. The audit reports it; installing it
+is a change to `install-secrets.sh` that has not been made.
+
 ## The runner is a host process (deviation d2)
 
 `cmd/nodes-runner` runs under a **systemd user unit**

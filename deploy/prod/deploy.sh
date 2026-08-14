@@ -518,6 +518,12 @@ case "$HOST" in
     # other than this deploy's target.
     deploy_human_inbox
     deploy_notify "$HOST"
+    # LAST, on purpose: the audit reports on the environment this deploy
+    # actually shipped, so it runs after every lane above has had its say. It
+    # is a detector, not a gate — the stack is already up when it speaks, and
+    # a non-zero exit here means an operator hears about a missing credential
+    # now instead of 18 hours later from a 401 (issue #69 item 2).
+    "$SCRIPT_DIR/audit-credentials.sh" "$HOST"
     say "thor deploy complete (namespace $NS)"
     ;;
   orin*)
@@ -529,6 +535,9 @@ case "$HOST" in
     ssh "$HOST" "grep -q '^THOR_IP=' ~/.culture-nodes/prod.env && sed -i 's/^THOR_IP=.*/THOR_IP=$THOR_IP/' ~/.culture-nodes/prod.env || echo THOR_IP=$THOR_IP >> ~/.culture-nodes/prod.env"
     ssh "$HOST" "grep -q '^NODES_NAMESPACE_ID=' ~/.culture-nodes/prod.env && sed -i 's/^NODES_NAMESPACE_ID=.*/NODES_NAMESPACE_ID=$NS/' ~/.culture-nodes/prod.env || echo NODES_NAMESPACE_ID=$NS >> ~/.culture-nodes/prod.env"
     ssh "$HOST" "cd $REMOTE_DIR/deploy/prod && docker compose --env-file ~/.culture-nodes/prod.env -f compose.orin.yml up -d --build"
+    # Same detector, same reason, against compose.orin.yml's own declared set
+    # (see the thor lane's comment).
+    "$SCRIPT_DIR/audit-credentials.sh" "$HOST"
     say "orin deploy complete (worker joined namespace $NS)"
     ;;
   *)

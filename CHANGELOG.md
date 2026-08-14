@@ -5,6 +5,16 @@ All notable changes to this project will be documented in this file.
 Format follows [Keep a Changelog](https://keepachangelog.com/). This project
 adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.20.0] - 2026-08-14
+
+### Added
+
+- `deploy/prod/audit-credentials.sh` — a post-deploy credential audit (task t12, issue #69 item 2). It compares the env keys this host's compose file declares against what `~/.culture-nodes/prod.env` actually contains, classifies every key as **required**, **optional** (absent by legitimate choice, closing a feature rather than breaking one) or **unknown** (in `prod.env`, declared by no compose file), and exits non-zero when a required key is missing or empty. `deploy.sh` runs it **last** on both the thor and orin lanes, so a deploy no longer ends without ever checking that the environment it shipped is complete
+- The detector half of the incident t11 fixed the cause of: a `FORCE` rotation destroyed `NODES_ACTOR_CLAUDE_TOKEN` and nothing reported it for ~18 hours, because the running worker held the token in memory until its next restart. Merging stopped that mechanism; this catches whatever removes a key next
+- The declared set is **read** from `compose.thor.yml` and `compose.orin.yml`, never from a list that could drift (`$${VAR}`, compose's escape for the container's own shell, is correctly ignored). Compose decides most of the classification itself — `${KEY:?}` is required by construction, `${KEY:-value}` works without the key by construction — so the hand-classified half covers only the keys compose leaves open (`${KEY:-}`, the shape every credential has), in one place with a comment per entry saying why it is where it is. An unclassified declared key is reported and treated as required until someone writes down which it is
+- Unknown keys are reported and **left untouched**: `prod.env` legitimately carries keys compose never mentions (`NODES_RUNNER_SECRET` on both hosts today), and `remove-secret.sh` remains the deliberate removal path
+- Key names only. The remote command emits `KEY<TAB>set|empty`, so no credential value is printed, logged, or placed in an argv. `tests/deploy/credentialaudit_test.go` runs the real script against a stub `ssh` under a per-host `HOME` — including a fixture missing one required key — rather than asserting on the script's source text
+
 ## [0.19.0] - 2026-08-14
 
 ### Added

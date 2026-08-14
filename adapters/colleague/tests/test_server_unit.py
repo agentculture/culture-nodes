@@ -8,6 +8,7 @@ path end to end."""
 from __future__ import annotations
 
 import json
+import subprocess
 import urllib.error
 import urllib.request
 from http.client import HTTPConnection
@@ -409,6 +410,74 @@ def test_async_dispatch_returns_202_and_delivers_accepted_then_completed(bridge_
         receiver.close()
 
 
+def test_async_dispatch_preserves_workspace_changes_on_a_real_failure(bridge_url, monkeypatch):
+    """t25 (c26/h17, c41/h34): the async equivalent of the sync wiring test
+    above — a "failed" terminal event carries the preserve outcome, never
+    the "completed" one, and the uncommitted edit really lands on the
+    minted branch."""
+    base, cfg, repo = bridge_url
+    subprocess.run(["git", "init", "-q"], cwd=repo, check=True)
+    subprocess.run(["git", "config", "user.email", "t@t"], cwd=repo, check=True)
+    subprocess.run(["git", "config", "user.name", "t"], cwd=repo, check=True)
+    (repo / "README.md").write_text("# scratch\n")
+    subprocess.run(["git", "add", "README.md"], cwd=repo, check=True)
+    subprocess.run(["git", "commit", "-q", "-m", "init"], cwd=repo, check=True)
+    (repo / "note.txt").write_text("left behind by the failed async session\n")
+
+    receiver = FakeCallbackReceiver()
+    try:
+
+        def fake_spawn_background(cfg_, instruction, repo_, *, role, max_steps, mode):
+            return colleague_cli.BackgroundStart(
+                handle_id="bg_preserve",
+                pid=999999,
+                log_dir=".colleague/background/bg_preserve/",
+                flight="bg_preserve",
+            )
+
+        monkeypatch.setattr(colleague_cli, "spawn_background", fake_spawn_background)
+        monkeypatch.setattr(colleague_cli, "is_pid_alive", lambda pid: False)
+        monkeypatch.setattr(
+            colleague_cli,
+            "read_background_result",
+            lambda repo_, handle_id: {
+                "task_id": handle_id,
+                "status": "error",
+                "summary": "",
+                "changed_files": [],
+                "usage": {},
+                "error": "fake async failure",
+            },
+        )
+
+        payload = _invocation_body(str(repo))
+        payload["input"]["async"] = True
+        payload["callback"] = {"url": receiver.url, "token": "cbtok"}
+        headers = {**_auth_header(cfg), "Idempotency-Key": "att_preserve_async"}
+        status, body = _request(base, server.INVOCATIONS_PATH, body=payload, headers=headers)
+        assert status == 202, body
+
+        failed = receiver.wait_for_kind("failed")
+        assert failed is not None
+        preserve_block = failed["payload"]["preserve"]
+        assert preserve_block["attempted"] is True
+        assert preserve_block["committed"] is True
+        assert preserve_block["pushed"] is False
+        assert preserve_block["local_only"] is True
+        assert preserve_block["branch"]
+
+        show = subprocess.run(
+            ["git", "show", "--stat", preserve_block["commit"]],
+            cwd=repo,
+            check=True,
+            capture_output=True,
+            text=True,
+        ).stdout
+        assert "note.txt" in show
+    finally:
+        receiver.close()
+
+
 def test_async_missing_callback_is_400(bridge_url):
     base, cfg, repo = bridge_url
     payload = _invocation_body(str(repo))
@@ -483,6 +552,62 @@ def test_unauthenticated_bridge_allows_requests_without_a_token(tmp_path):
     finally:
         srv.shutdown()
         srv.server_close()
+
+
+def test_sync_dispatch_preserves_workspace_changes_on_a_real_failure(bridge_url, monkeypatch):
+    """t25 (c26/h17, c41/h34), wired end to end over the real HTTP surface:
+    a genuine execution failure (never a domain outcome) gets the
+    uncommitted edit left in the repo preserved on a code-minted branch,
+    and the failure body records pushed False / local_only True since no
+    remote is configured here."""
+    base, cfg, repo = bridge_url
+    subprocess.run(["git", "init", "-q"], cwd=repo, check=True)
+    subprocess.run(["git", "config", "user.email", "t@t"], cwd=repo, check=True)
+    subprocess.run(["git", "config", "user.name", "t"], cwd=repo, check=True)
+    (repo / "README.md").write_text("# scratch\n")
+    subprocess.run(["git", "add", "README.md"], cwd=repo, check=True)
+    subprocess.run(["git", "commit", "-q", "-m", "init"], cwd=repo, check=True)
+    (repo / "note.txt").write_text("left behind by the failed session\n")
+
+    def fake_run_sync(cfg_, instruction, repo_, *, role, max_steps, mode):
+        return colleague_cli.SyncRunResult(
+            exit_code=1,
+            stdout="",
+            stderr="",
+            task_result={
+                "task_id": "abc",
+                "status": "error",
+                "summary": "",
+                "changed_files": [],
+                "artifacts_path": None,
+                "usage": {"prompt_tokens": 1, "completion_tokens": 0, "total_tokens": 1},
+                "error": "fake failure",
+            },
+            timed_out=False,
+        )
+
+    monkeypatch.setattr(colleague_cli, "run_sync", fake_run_sync)
+    headers = {**_auth_header(cfg), "Idempotency-Key": "att_preserve_sync"}
+    status, body = _request(
+        base, server.INVOCATIONS_PATH, body=_invocation_body(str(repo)), headers=headers
+    )
+    assert status == 500, body
+    preserve_block = body["preserve"]
+    assert preserve_block["attempted"] is True
+    assert preserve_block["committed"] is True
+    assert preserve_block["pushed"] is False
+    assert preserve_block["local_only"] is True
+    assert preserve_block["branch"]
+    assert preserve_block["commit"]
+
+    show = subprocess.run(
+        ["git", "show", "--stat", preserve_block["commit"]],
+        cwd=repo,
+        check=True,
+        capture_output=True,
+        text=True,
+    ).stdout
+    assert "note.txt" in show
 
 
 def test_connection_reuse_keep_alive(bridge_url):

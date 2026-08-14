@@ -36,7 +36,7 @@ from http.server import BaseHTTPRequestHandler, HTTPServer
 from pathlib import Path
 from typing import Any
 
-from colleague_bridge import colleague_cli, mapping, workspace
+from colleague_bridge import colleague_cli, mapping, preserve, workspace
 from colleague_bridge.async_runner import AsyncRunner
 from colleague_bridge.config import Config
 from colleague_bridge.idempotency import IdempotencyStore
@@ -472,6 +472,7 @@ class Handler(BaseHTTPRequestHandler):
             # literal queue) may claim it instead of forking.
             if held:
                 self.bridge.session_registry.release(session_key, idem_key)
+        measured = workspace.measure(handle)
         response = mapping.sync_response(
             result.task_result,
             ctx,
@@ -479,8 +480,28 @@ class Handler(BaseHTTPRequestHandler):
             actor_id=cfg.actor_id,
             created_at=_now_iso(),
             timed_out=result.timed_out,
-            workspace_measured=workspace.measure(handle),
+            workspace_measured=measured,
         )
+        # t25 (c26/h17, c41/h34): a genuine technical failure (never a
+        # domain outcome — mapping.sync_response only ever answers 200 for
+        # one) gets its workspace changes preserved on a branch, bridge-side,
+        # before this response ever reaches the caller. Gated on the status
+        # THIS response already carries, never on this module's own reading
+        # of colleague's result.
+        if response.status_code != 200:
+            preserve_result = preserve.preserve_on_failure(
+                repo,
+                measured,
+                enabled=cfg.preserve_on_failure,
+                push=cfg.preserve_push,
+                remote=cfg.preserve_remote,
+                branch_prefix=cfg.preserve_branch_prefix,
+                run_id=ctx.run_id,
+                node_run_id=ctx.node_run_id,
+                attempt_id=ctx.attempt_id,
+                reason=str(response.body.get("error") or "bridge reported a non-success status"),
+            )
+            response.body["preserve"] = preserve_result.to_dict()
         # A real dispatch happened (colleague was actually invoked) — durably
         # remember the outcome so a redelivered attempt replays it instead of
         # running colleague a second time (PRD §20.3). A pre-dispatch

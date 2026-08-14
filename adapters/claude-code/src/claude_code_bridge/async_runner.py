@@ -33,7 +33,7 @@ from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from typing import Any
 
-from claude_code_bridge import claude_cli, flightfiles, mapping, workspace
+from claude_code_bridge import claude_cli, flightfiles, mapping, preserve, workspace
 from claude_code_bridge.callbacks import CallbackConfig, CallbackEmitter
 from claude_code_bridge.config import Config
 from claude_code_bridge.session_registry import SessionRegistry
@@ -184,6 +184,24 @@ class AsyncRunner:
             detail="" if timed_out else detail,
             workspace_measured=measured,
         )
+        # t25 (c26/h17, c41/h34): the async equivalent of server.py's sync
+        # hook — a "failed" terminal event (never "completed", which is the
+        # only other kind terminal_event ever produces) gets its workspace
+        # changes preserved on a branch before the terminal callback fires.
+        if ev.kind == "failed":
+            preserve_result = preserve.preserve_on_failure(
+                inv.workspace_handle.repo,
+                measured,
+                enabled=self._cfg.preserve_on_failure,
+                push=self._cfg.preserve_push,
+                remote=self._cfg.preserve_remote,
+                branch_prefix=self._cfg.preserve_branch_prefix,
+                run_id=inv.ctx.run_id,
+                node_run_id=inv.ctx.node_run_id,
+                attempt_id=inv.ctx.attempt_id,
+                reason=str(ev.payload.get("message") or "bridge reported an asynchronous failure"),
+            )
+            ev.payload["preserve"] = preserve_result.to_dict()
         emitter.send(ev.kind, ev.payload)
         with self._lock:
             inv.done = True

@@ -10,6 +10,7 @@ codex)."""
 from __future__ import annotations
 
 import json
+import subprocess
 import urllib.error
 import urllib.request
 from http.client import HTTPConnection
@@ -602,6 +603,61 @@ def test_unauthenticated_bridge_allows_requests_without_a_token(tmp_path):
     finally:
         srv.shutdown()
         srv.server_close()
+
+
+def test_sync_dispatch_preserves_workspace_changes_on_a_real_failure(bridge_url, monkeypatch):
+    """t25 (c26/h17, c41/h34), wired end to end over the real HTTP surface:
+    a genuine execution failure (never a domain outcome) gets the
+    uncommitted edit left in the repo preserved on a code-minted branch,
+    and the failure body records pushed False / local_only True since no
+    remote is configured here."""
+    base, cfg, repo = bridge_url
+    subprocess.run(["git", "init", "-q"], cwd=repo, check=True)
+    subprocess.run(["git", "config", "user.email", "t@t"], cwd=repo, check=True)
+    subprocess.run(["git", "config", "user.name", "t"], cwd=repo, check=True)
+    (repo / "README.md").write_text("# scratch\n")
+    subprocess.run(["git", "add", "README.md"], cwd=repo, check=True)
+    subprocess.run(["git", "commit", "-q", "-m", "init"], cwd=repo, check=True)
+    (repo / "note.txt").write_text("left behind by the failed session\n")
+
+    def fake_run_sync(cfg_, instruction, repo_, *, model, sandbox, continuation_ref=None):
+        return codex_cli.SyncRunResult(
+            exit_code=1,
+            stdout="",
+            stderr="",
+            task_result={
+                "task_id": "t",
+                "status": "error",
+                "summary": "",
+                "changed_files": [],
+                "usage": {},
+                "error": "fake failure",
+            },
+            timed_out=False,
+        )
+
+    monkeypatch.setattr(codex_cli, "run_sync", fake_run_sync)
+    headers = {**_auth_header(cfg), "Idempotency-Key": "att_preserve_sync"}
+    status, body = _request(
+        base, server.INVOCATIONS_PATH, body=_invocation_body(str(repo)), headers=headers
+    )
+    assert status == 500, body
+    preserve_block = body["preserve"]
+    assert preserve_block["attempted"] is True
+    assert preserve_block["committed"] is True
+    assert preserve_block["pushed"] is False
+    assert preserve_block["local_only"] is True
+    assert preserve_block["branch"]
+    assert preserve_block["commit"]
+
+    show = subprocess.run(
+        ["git", "show", "--stat", preserve_block["commit"]],
+        cwd=repo,
+        check=True,
+        capture_output=True,
+        text=True,
+    ).stdout
+    assert "note.txt" in show
 
 
 def test_connection_reuse_keep_alive(bridge_url):

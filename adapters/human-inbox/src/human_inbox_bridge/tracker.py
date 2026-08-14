@@ -4,8 +4,13 @@ The tracker has deliberately narrow custody and reach: it reads pending
 task files from the bridge's durable store, calls GitHub with
 optional ``GITHUB_TOKEN`` authentication, and submits an observed result
 through the bridge's own HTTP inbox surface. It never uses a callback
-credential and never calls the Culture Nodes control plane directly;
-callback delivery remains the bridge server's job.
+credential; callback delivery remains the bridge server's job.
+
+It touches the Culture Nodes control plane exactly once, at startup, and
+only to READ: `verify_bridge_serves_actor` resolves the configured actor's
+registered `endpoint_ref` and refuses to run when that endpoint is not the
+bridge this tracker submits to (issue #72). Nothing in a poll cycle calls
+the control plane.
 
 Run continuously with ``python -m human_inbox_bridge.tracker`` or execute
 one cycle with ``python -m human_inbox_bridge.tracker --once``.
@@ -14,10 +19,12 @@ one cycle with ``python -m human_inbox_bridge.tracker --once``.
 from __future__ import annotations
 
 import argparse
+import ipaddress
 import json
 import logging
 import os
 import re
+import socket
 import sys
 import time
 import urllib.error
@@ -91,12 +98,29 @@ class TrackerConfigError(Exception):
     """Raised when the tracker environment cannot produce a safe config."""
 
 
+class BridgeIdentityError(TrackerConfigError):
+    """Raised when the bridge this tracker submits to does not serve the
+    actor it observes (issue #72) — or when that cannot be established.
+
+    A TrackerConfigError subclass because it is exactly that: a deployment
+    whose configuration cannot be run safely, refused at startup rather
+    than half-run.
+    """
+
+
 @dataclass(frozen=True)
 class TrackerConfig:
     state_dir: str = ".human-inbox-bridge-state"
     bridge_url: str = "http://127.0.0.1:8087"
     bridge_token: str = ""
     github_token: str = ""
+    #: The bridge's own `actor_id` (Config.actor_id) — the actor_key whose
+    #: registered endpoint the startup identity check resolves.
+    actor_id: str = ""
+    #: Base URL of the Culture Nodes control plane, read ONCE at startup for
+    #: that check. Empty disables it; see `verify_bridge_serves_actor` for
+    #: what that costs.
+    control_plane_url: str = ""
     default_repo: str | None = None
     poll_seconds: float = 60.0
     github_request_budget: int = 50
@@ -208,6 +232,10 @@ class TrackerConfig:
                 f"http://127.0.0.1:{bridge_cfg.port}",
             ).rstrip("/"),
             bridge_token=bridge_cfg.auth_token or "",
+            actor_id=bridge_cfg.actor_id,
+            control_plane_url=env.get("HUMAN_INBOX_TRACKER_CONTROL_PLANE_URL", "")
+            .strip()
+            .rstrip("/"),
             github_token=github_token,
             default_repo=default_repo,
             poll_seconds=poll_seconds,
@@ -227,6 +255,241 @@ class TrackerConfig:
             ),
             reply_ignored_logins=reply_ignored_logins,
         )
+
+
+# --- startup identity check (issue #72) --------------------------------
+#
+# Why this is a refusal and not a warning: the bridge's idempotency store is
+# per-bridge and file-based — one JSON file per key under Config.state_dir —
+# so it can only deduplicate submissions that pass through the SAME bridge
+# process's state directory. Two bridges serving one actor do not see each
+# other's replays at all. "One logical human inbox" is therefore enforced by
+# deployment convention, and this check is the only mechanism that can
+# notice the convention has been broken. A tracker that keeps running
+# against the wrong bridge submits observations no store can dedupe.
+
+
+@dataclass(frozen=True)
+class ActorEndpoint:
+    """The live registration row for one actor_key: its newest revision."""
+
+    actor_key: str
+    revision: int
+    endpoint_ref: str
+
+
+def fetch_actors(control_plane_url: str, *, timeout_seconds: float) -> list[dict[str, Any]]:
+    """GET every registered actor row from the control plane.
+
+    Unauthenticated on purpose: `GET /v1alpha1/actors` is the read-only half
+    of the actors noun (spec decision c45 — only registration and human
+    decisions carry a bearer token), and this tracker holds no control-plane
+    credential of any kind.
+    """
+    url = f"{control_plane_url.rstrip('/')}/v1alpha1/actors"
+    request = urllib.request.Request(  # noqa: S310 - operator-configured control plane
+        url,
+        headers={
+            "Accept": "application/json",
+            "User-Agent": "culture-nodes-human-inbox-tracker",
+        },
+    )
+    with urllib.request.urlopen(  # nosec B310 - operator-configured control-plane URL
+        request, timeout=timeout_seconds
+    ) as response:  # noqa: S310
+        data = json.load(response)
+    items = data.get("items") if isinstance(data, dict) else None
+    if not isinstance(items, list):
+        raise ValueError("control-plane actor list response had no 'items' array")
+    return [item for item in items if isinstance(item, dict)]
+
+
+def newest_actor_revision(items: list[dict[str, Any]], actor_key: str) -> ActorEndpoint | None:
+    """The highest-revision row for *actor_key*, or None if it has none.
+
+    Actor identity is append-only: an endpoint move appends a new revision
+    rather than updating the old row, so the newest revision — not any row
+    that happens to match — is the one this tracker must agree with.
+    """
+    newest: ActorEndpoint | None = None
+    for item in items:
+        if item.get("actor_key") != actor_key:
+            continue
+        revision = item.get("revision")
+        if isinstance(revision, bool) or not isinstance(revision, int):
+            continue
+        endpoint = item.get("endpoint_ref")
+        candidate = ActorEndpoint(
+            actor_key=actor_key,
+            revision=revision,
+            endpoint_ref=endpoint if isinstance(endpoint, str) else "",
+        )
+        if newest is None or candidate.revision > newest.revision:
+            newest = candidate
+    return newest
+
+
+def _numeric_addresses(host: str) -> list[ipaddress.IPv4Address | ipaddress.IPv6Address]:
+    """*host* as IP addresses: itself when it is already a literal, its DNS
+    answers otherwise. A name that does not resolve yields nothing, which
+    the caller treats as "not local" (and so, fails closed)."""
+    try:
+        return [ipaddress.ip_address(host)]
+    except ValueError:
+        pass
+    try:
+        infos = socket.getaddrinfo(host, None, proto=socket.IPPROTO_TCP)
+    except (OSError, UnicodeError):
+        return []
+    resolved = []
+    for info in infos:
+        try:
+            resolved.append(ipaddress.ip_address(info[4][0]))
+        except ValueError:  # pragma: no cover - getaddrinfo returns literals
+            continue
+    return resolved
+
+
+def _is_local_address(host: str) -> bool:
+    """Whether *host* is an address this machine itself answers on.
+
+    Loopback is trivially local. For anything else, a UDP socket is
+    *connected* to the address — which sends no packet — and its source
+    address inspected: the kernel picks the destination itself as the source
+    only when the destination is one of this host's own addresses. That is
+    what makes `http://127.0.0.1:8090` and the actor row's
+    `http://192.168.1.157:8090` recognisable as the same bridge on the host
+    that owns .157, and NOT the same bridge anywhere else.
+    """
+    for address in _numeric_addresses(host):
+        if address.is_loopback:
+            return True
+        family = socket.AF_INET6 if address.version == 6 else socket.AF_INET
+        try:
+            with socket.socket(family, socket.SOCK_DGRAM) as probe:
+                probe.settimeout(0.1)
+                # Discard port; connect(2) on a UDP socket sends nothing, it
+                # only asks the kernel to pick a source address.
+                probe.connect((str(address), 9))
+                if ipaddress.ip_address(probe.getsockname()[0]) == address:
+                    return True
+        except (OSError, ValueError):
+            # No route to the address (or no such interface). Unresolvable
+            # is not local — the caller fails closed on that, by design.
+            continue
+    return False
+
+
+def _host_port(url: str) -> tuple[str, int]:
+    """Split an endpoint into the pair that identifies a bridge process.
+
+    Scheme is deliberately NOT part of the identity: two schemes reaching
+    the same host and port are the same listening process, and the port
+    comparison already separates the cases where they are not.
+    """
+    parsed = urllib.parse.urlsplit(url.strip())
+    if parsed.scheme not in ("http", "https") or not parsed.hostname:
+        raise ValueError(f"{url!r} is not an http(s) URL with a host")
+    port = parsed.port or (443 if parsed.scheme == "https" else 80)
+    return parsed.hostname.lower(), port
+
+
+def verify_bridge_serves_actor(
+    cfg: TrackerConfig,
+    *,
+    actor_fetch: Callable[..., list[dict[str, Any]]] | None = None,
+    is_local_address: Callable[[str], bool] | None = None,
+) -> ActorEndpoint | None:
+    """Refuse to start unless this tracker's bridge is the actor's bridge.
+
+    Returns the resolved registration row, or None when no control plane is
+    configured and the check was skipped. Raises `BridgeIdentityError` for
+    every other unhappy path — including an unreachable control plane, since
+    an unverified identity is not a verified one and the systemd unit
+    restarts (an outage costs retries, not an unguarded window).
+
+    Both seams default to the module-level implementations and are resolved
+    at call time rather than bound as defaults, so a test can monkeypatch
+    either without reaching past `main`.
+    """
+    fetch = fetch_actors if actor_fetch is None else actor_fetch
+    is_local = _is_local_address if is_local_address is None else is_local_address
+
+    if not cfg.control_plane_url:
+        logger.warning(
+            "no control plane configured (HUMAN_INBOX_TRACKER_CONTROL_PLANE_URL): starting "
+            "WITHOUT checking that %s is the bridge registered for actor %r. The bridge's "
+            "idempotency store is per-bridge and file-based, so it cannot deduplicate "
+            "submissions made through a second bridge serving the same actor — this check is "
+            "the only guard against that, and it is now inactive",
+            cfg.bridge_url,
+            cfg.actor_id,
+        )
+        return None
+
+    try:
+        items = fetch(cfg.control_plane_url, timeout_seconds=cfg.http_timeout_seconds)
+    except (urllib.error.URLError, TimeoutError, OSError, ValueError) as exc:
+        raise BridgeIdentityError(
+            f"cannot resolve actor {cfg.actor_id!r} from the control plane at "
+            f"{cfg.control_plane_url}: {exc}. Refusing to start: an unverified bridge identity "
+            "is not a verified one, and the per-bridge idempotency store cannot deduplicate a "
+            "split deployment"
+        ) from exc
+
+    registered = newest_actor_revision(items, cfg.actor_id)
+    if registered is None:
+        raise BridgeIdentityError(
+            f"the control plane at {cfg.control_plane_url} has no actor registered under "
+            f"{cfg.actor_id!r}, so this tracker cannot confirm that its bridge "
+            f"({cfg.bridge_url}) serves the actor it observes. Set HUMAN_INBOX_BRIDGE_ACTOR_ID "
+            "to the registered actor_key, or register the actor first"
+        )
+
+    try:
+        actor_host, actor_port = _host_port(registered.endpoint_ref)
+    except ValueError as exc:
+        raise BridgeIdentityError(
+            f"actor {registered.actor_key!r} (revision {registered.revision}) is registered "
+            f"with an endpoint this tracker cannot compare against its own bridge "
+            f"({cfg.bridge_url}): {exc}"
+        ) from exc
+    try:
+        bridge_host, bridge_port = _host_port(cfg.bridge_url)
+    except ValueError as exc:
+        raise BridgeIdentityError(
+            f"HUMAN_INBOX_TRACKER_BRIDGE_URL is not usable as a bridge endpoint: {exc}"
+        ) from exc
+
+    # The port must always agree — a second bridge on this same host is a
+    # second idempotency store, not this actor's inbox. Given that, two host
+    # spellings are the same machine when they name the same address, or
+    # when they are BOTH addresses of the machine this tracker runs on
+    # (which is what makes a loopback bridge_url and the actor row's LAN
+    # address recognisable as one bridge, and only on the host that owns it).
+    same_bridge = actor_port == bridge_port and (
+        actor_host == bridge_host
+        or bool(set(_numeric_addresses(actor_host)) & set(_numeric_addresses(bridge_host)))
+        or (is_local(actor_host) and is_local(bridge_host))
+    )
+    if not same_bridge:
+        raise BridgeIdentityError(
+            f"this tracker submits to {cfg.bridge_url}, but actor {registered.actor_key!r} "
+            f"(revision {registered.revision}) is registered at {registered.endpoint_ref} — "
+            "a different bridge. Refusing to start: the bridge idempotency store is per-bridge "
+            "and file-based, so two bridges serving one actor cannot deduplicate each other's "
+            "submissions. Run this tracker on the host serving the actor, or point "
+            "HUMAN_INBOX_TRACKER_BRIDGE_URL at the registered endpoint"
+        )
+
+    logger.info(
+        "bridge identity confirmed: %s serves actor %s (revision %d, registered %s)",
+        cfg.bridge_url,
+        registered.actor_key,
+        registered.revision,
+        registered.endpoint_ref,
+    )
+    return registered
 
 
 @dataclass(frozen=True)
@@ -636,9 +899,9 @@ class MergeTracker:
             reply_observation = reply_observation_for(task, self.cfg.default_repo)
             if reply_observation is not None:
                 eligible += 1
-                reply_grouped.setdefault(
-                    (reply_observation.repo, reply_observation.pr), []
-                ).append((task, reply_observation))
+                reply_grouped.setdefault((reply_observation.repo, reply_observation.pr), []).append(
+                    (task, reply_observation)
+                )
 
         github_requests = 0
         submissions = 0
@@ -1202,6 +1465,11 @@ def main(argv: list[str] | None = None) -> int:
     )
     try:
         cfg = TrackerConfig.from_env()
+        # Before any polling: the bridge this tracker will submit through
+        # must be the one the control plane dispatches this actor's work to.
+        # BridgeIdentityError is a TrackerConfigError — a deployment that
+        # cannot be run safely, refused rather than half-run.
+        verify_bridge_serves_actor(cfg)
     except TrackerConfigError as exc:
         print(f"error: {exc}", file=sys.stderr)
         return 2

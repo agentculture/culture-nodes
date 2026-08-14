@@ -60,7 +60,7 @@ func TestGitHubCredentialAndAPIIsolation(t *testing.T) {
 	repoRoot := repoRoot(t)
 	scanned := 0
 	violations := 0
-	var violations_list []string
+	var violationsList []string
 
 	// Walk internal/ and cmd/ only
 	for _, packageRoot := range []string{"internal", "cmd"} {
@@ -85,7 +85,7 @@ func TestGitHubCredentialAndAPIIsolation(t *testing.T) {
 				}
 				return nil
 			}
-			return checkGoFileForGitHubRef(t, path, rel, &scanned, &violations, &violations_list)
+			return checkGoFileForGitHubRef(t, path, rel, &scanned, &violations, &violationsList)
 		})
 		if walkErr != nil {
 			t.Fatalf("walk %s: %v", packagePath, walkErr)
@@ -96,7 +96,7 @@ func TestGitHubCredentialAndAPIIsolation(t *testing.T) {
 		t.Fatal("the GitHub isolation lint scanned no files in internal/ or cmd/; it is not proving anything")
 	}
 
-	for _, violation := range violations_list {
+	for _, violation := range violationsList {
 		t.Error(violation)
 	}
 
@@ -107,7 +107,7 @@ func TestGitHubCredentialAndAPIIsolation(t *testing.T) {
 // checkGoFileForGitHubRef applies the isolation rule to one regular file:
 // non-test .go files in internal/ and cmd/ must not contain patterns
 // suggesting GitHub credential handling or API calls.
-func checkGoFileForGitHubRef(t *testing.T, path, rel string, scanned, violations *int, violations_list *[]string) error {
+func checkGoFileForGitHubRef(t *testing.T, path, rel string, scanned, violations *int, violationsList *[]string) error {
 	t.Helper()
 	if !strings.HasSuffix(path, ".go") || strings.HasSuffix(path, "_test.go") {
 		return nil
@@ -128,7 +128,7 @@ func checkGoFileForGitHubRef(t *testing.T, path, rel string, scanned, violations
 				"%s: contains %q, which suggests GitHub credential/API usage. "+
 					"GitHub code must live in adapters/human-inbox, not the control-plane process. (%s)",
 				rel, match, gitHubControlPlaneBoundary)
-			*violations_list = append(*violations_list, violation)
+			*violationsList = append(*violationsList, violation)
 		}
 	}
 	return nil

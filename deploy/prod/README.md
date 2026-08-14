@@ -399,27 +399,75 @@ A healthy startup line reads `nodes-notifier consuming http://api:8080
 (default), webhook enabled)` — `webhook disabled` means the secret above
 is not yet installed.
 
-## human-inbox actor bridge + merge tracker (thor only — task t34)
+## human-inbox actor bridge + merge tracker (task t34; host derivation, t10)
 
 `adapters/human-inbox` (task t16) is a `kind=human` actor-protocol bridge:
 culture-nodes invocations park as durable inbox tasks until a person (or
 the sibling GitHub merge tracker) submits a result. Reference config
-surface: `adapters/human-inbox/README.md`. Deployed as **two host
-systemd user units on thor only** — one logical human actor
-(`company/human-ops`), unlike codex's per-host actors, so a second copy
-on orin would just race the same GitHub PRs and the same inbox tasks
-against the same actor row.
+surface: `adapters/human-inbox/README.md`. Deployed as **two host systemd
+user units, always together, on the host serving `company/human-ops`** —
+one logical human actor, unlike codex's per-host actors, so a second copy
+anywhere would race the same GitHub PRs and the same inbox tasks against
+the same actor row.
+
+### Which host they go to (issue #72)
+
+**Derived from the actor's registration, never declared.** `deploy.sh`
+and `install-secrets.sh` both source `actor-placement.sh`, which reads
+`GET /v1alpha1/actors`, takes `company/human-ops`'s newest revision, and
+uses that row's `endpoint_ref` for the host to deploy to, the port the
+bridge binds, and the `actors(id)` the bridge stamps as
+`origin.actor_id`. One registry read, so those values cannot come from
+different revisions.
+
+This lane used to say *thor only*, in a comment, in three files, while
+the actor was registered at another machine's address. The engine
+dispatches to the registration — so human tasks parked on the bridge
+there while the tracker on the declared host watched its own empty state
+directory and logged `pending=0` for as long as anyone left it running.
+Nothing failed; two config values that had to agree were agreeing only by
+luck.
+
+Two mechanisms now hold the pairing, and both are needed:
+
+- **Deploy time.** `assert_human_inbox_colocated` runs after the env
+  files are written and before either unit is installed. It reads back
+  what was actually written on the host and refuses the deploy — loudly,
+  naming both sides — if the host does not answer on the registered
+  address, if the bridge port is not the registered port, if the tracker
+  points at another bridge or another state directory, if the bridge's
+  and tracker's `HUMAN_INBOX_BRIDGE_ACTOR_ID` values are swapped, or if
+  the tracker's startup check is left disarmed.
+- **Runtime.** The tracker resolves the same registration at startup and
+  exits non-zero when its bridge is not the actor's bridge (task t8,
+  `verify_bridge_serves_actor`). `deploy.sh` writes
+  `HUMAN_INBOX_TRACKER_CONTROL_PLANE_URL` precisely so this check is
+  armed; unset, it degrades to a warning and the split runs silently
+  again.
+
+A wrong deploy that never starts is still a wrong deploy, and a right
+deploy that nothing rechecks drifts on the next endpoint move.
+
+If the actor is not registered yet, both scripts install **nothing** and
+say so: a pair deployed to a guessed host is the defect, a pair not
+deployed is a reported gap. `HUMAN_INBOX_HOST=<address>` overrides the
+lookup in `install-secrets.sh` for bootstrapping a host before its actor
+row exists; `NODES_API_URL` (default `http://thor:18080`) points both
+scripts at the control plane.
+
+`deploy/prod/actor-placement.sh` also runs its command locally rather
+than over ssh when the resolved address belongs to the machine running
+the deploy — a normal arrangement (an actor served by the operator's own
+box), and one where ssh'ing to yourself may not be configured at all.
 
 ### Architecture
 
 - `human-inbox-bridge.service` — the bridge server (`human-inbox-bridge
   serve`), always installed and started.
 - `human-inbox-tracker.service` — the GitHub merge tracker
-  (`python -m human_inbox_bridge.tracker`), installed and started **only
-  when `GITHUB_TOKEN` was actually supplied** to `install-secrets.sh`
-  (see below); absent it, deploy.sh leaves this unit uninstalled with a
-  warning rather than starting it into an immediate `TrackerConfigError`
-  crash loop. Manual submission through the bridge works either way.
+  (`human-inbox-tracker`), installed and started **unconditionally**
+  beside the bridge. `GITHUB_TOKEN` selects the authenticated polling
+  lane; without one the tracker polls public repositories anonymously.
 - Both units are **persistent, `Restart=always` services**, not a
   `--once` timer: the tracker's own module docstring documents both a
   continuous mode and a one-shot `--once` probe, and the continuous mode
@@ -427,14 +475,15 @@ against the same actor row.
   (`HUMAN_INBOX_TRACKER_POLL_SECONDS`, default 60s) with a per-cycle
   GitHub request budget — wrapping `--once` in a systemd timer would just
   reimplement that same interval as a second, redundant schedule.
-- Both run `uv run --directory` against the **same**
-  archive-independent `~/git/culture-nodes-agent` checkout the
-  codex-bridge lane above already provisions and keeps fast-forwarded
-  (`deploy_codex_bridge` / `CODEX_AGENT_CHECKOUT_REMOTE`) — reused here
-  rather than a second package-install mechanism, since
-  `adapters/human-inbox` has zero third-party runtime dependencies
-  (`dependencies = []`) and its tracker module has no console-script
-  entry point of its own to `uv tool install`.
+- Both exec console scripts installed by `uv tool install`, which copies
+  the package into its own venv — so the units keep serving after the
+  next deploy's `rm -rf` removes the tree they were built from. They used
+  to `uv run --directory` against the `~/git/culture-nodes-agent` codex
+  agent workspace, a checkout the codex-bridge lane fast-forwards to
+  main: deploying a branch installed units whose code was not in the
+  directory they ran from, and the tracker crash-looped 6272 times over
+  nine hours on `No module named human_inbox_bridge.tracker`. An agent
+  workspace and a deployment artifact source are different things.
 
 ### Install, deploy, verify
 
@@ -446,33 +495,44 @@ GITHUB_TOKEN='ghp_…' \
   ./install-secrets.sh   # + human-inbox lane: HUMAN_INBOX_BRIDGE_AUTH_TOKEN
                           # generated locally like the codex-bridge tokens;
                           # GITHUB_TOKEN relayed as-is if set; both land in
-                          # ~/.culture-nodes/human-inbox.env on thor, 0600
-./deploy.sh thor          # + human-inbox lane: bridge unit always;
-                           # tracker unit only if GITHUB_TOKEN landed
+                          # ~/.culture-nodes/human-inbox.env (0600) on the
+                          # host serving company/human-ops
+./deploy.sh thor          # + human-inbox lane: bridge AND tracker, together,
+                           # on that same derived host — which may not be the
+                           # host named on this command line
 
-# verify:
-ssh thor 'systemctl --user status human-inbox-bridge'
-ssh thor 'systemctl --user status human-inbox-tracker'   # may be absent — see above
-ssh thor 'journalctl --user -u human-inbox-bridge -n 50'
+# verify (on the host the lane reported deploying to):
+ssh <human-ops-host> 'systemctl --user status human-inbox-bridge'
+ssh <human-ops-host> 'systemctl --user status human-inbox-tracker'
+ssh <human-ops-host> 'journalctl --user -u human-inbox-tracker -n 50'
 ```
+
+A healthy tracker start logs `bridge identity confirmed: <url> serves
+actor company/human-ops (revision N, registered <endpoint>)`. A refusal
+names both endpoints and exits non-zero — see
+`adapters/human-inbox/README.md`'s "Startup identity check".
 
 ### Registering the `company/human-ops` actor
 
-Not part of this task's plumbing (an operator/DB step, per
-`adapters/human-inbox/README.md`'s own "Registering a `kind=human`
-actor" section): once the bridge is active, register it against thor's
-Postgres the same append-only way `register-actor.sh` registers codex
-actors, naming `HUMAN_INBOX_BRIDGE_AUTH_TOKEN` as the
-`metadata.auth_token_env` and the bridge's bound address
-(`http://<thor-lan-ip>:8087`) as `endpoint_ref`.
+An operator/DB step, per `adapters/human-inbox/README.md`'s own
+"Registering a `kind=human` actor" section — but note that it is what
+DECIDES the deployment, not a formality after it. `register-actor.sh`
+appends a revision the same way it does for codex actors, naming
+`HUMAN_INBOX_BRIDGE_AUTH_TOKEN` as the `metadata.auth_token_env` and the
+bridge's bound address (`http://<lan-ip>:<port>`) as `endpoint_ref`.
+
+Moving the bridge to another machine is therefore a re-registration
+followed by a deploy — never an edit to a host name in this repo. The
+next `deploy.sh` follows the new endpoint, and any pair left behind on
+the old host refuses to start rather than double-serving the actor.
 
 ### Secrets this task adds to install-secrets.sh
 
 | Env var | Installed as | Source | Host(s) |
 | --- | --- | --- | --- |
 | `CULTURE_NODES_WEBHOOK_URL` / `DISCORD_WEBHOOK_URL` | a line in `prod.env` | relayed from the operator's own shell environment when set; never fabricated | thor only |
-| `HUMAN_INBOX_BRIDGE_AUTH_TOKEN` | `~/.culture-nodes/human-inbox.env` (0600) | generated locally (`openssl rand -base64 32`), like the codex-bridge tokens | thor only |
-| `GITHUB_TOKEN` | `~/.culture-nodes/human-inbox.env` (0600) | relayed from the operator's own shell environment when set; never fabricated | thor only |
+| `HUMAN_INBOX_BRIDGE_AUTH_TOKEN` | `~/.culture-nodes/human-inbox.env` (0600) | generated locally (`openssl rand -base64 32`), like the codex-bridge tokens | the host serving `company/human-ops` |
+| `GITHUB_TOKEN` | `~/.culture-nodes/human-inbox.env` (0600) | relayed from the operator's own shell environment when set; never fabricated | the host serving `company/human-ops` |
 
 All three follow the same discipline as every other secret in this file:
 stdin over ssh, never argv; `FORCE=1` required to overwrite an existing

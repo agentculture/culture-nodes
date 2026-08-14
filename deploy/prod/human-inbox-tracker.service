@@ -18,8 +18,18 @@
 # a long-running poller the operator wants back regardless of how it
 # exited, not only on a nonzero exit.
 #
-# THOR ONLY, same reasoning as the sibling bridge unit's header comment:
-# one logical human actor, so one tracker.
+# One logical human actor, so one tracker — and it runs on the same host as
+# the bridge it reads, because it reads that bridge's parked tasks off the
+# LOCAL FILESYSTEM (HUMAN_INBOX_TRACKER_STATE_DIR). Co-location is the
+# mechanism here, not a preference.
+#
+# This header used to name a host. It named the wrong one: the actor was
+# registered at another machine's address, so the engine parked human tasks
+# on the bridge there while the tracker watched an empty directory (issue
+# #72). deploy.sh now derives the host from the actor's registered
+# endpoint_ref, and the tracker itself resolves that same registration at
+# startup and exits non-zero when its bridge is not the actor's bridge —
+# the two halves of one invariant.
 #
 # Installed by deploy.sh's human-inbox lane to
 # ~/.config/systemd/user/human-inbox-tracker.service whether or not the

@@ -12,6 +12,7 @@ package deploytest
 import (
 	"os"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"testing"
 )
@@ -209,6 +210,25 @@ func TestHumanInboxTrackerUnitCarriesSecretsOnlyViaEnvironmentFile(t *testing.T)
 		t.Error("human-inbox-tracker.service declares a literal Environment= line; secrets must ride EnvironmentFile only")
 	}
 	assertNoTokenLiteral(t, "human-inbox-tracker.service", uf.raw)
+}
+
+// TestHumanInboxUnitsDeclareNoHost is task t10's pin on the unit files.
+//
+// Both headers used to say THOR ONLY. That was not a harmless comment: it was
+// the same claim deploy.sh and install-secrets.sh encoded in code, and it was
+// false — company/human-ops was registered at another machine's address the
+// whole time (issue #72). These units are host-agnostic artifacts; which host
+// they land on is derived from the actor's registration at deploy time, so
+// naming a host here can only ever be a claim that goes stale silently.
+func TestHumanInboxUnitsDeclareNoHost(t *testing.T) {
+	// Whole words only: "mirroring" is not a claim about a host.
+	hostWord := regexp.MustCompile(`(?i)\b(thor|orin)\b`)
+	for _, filename := range []string{"human-inbox-bridge.service", "human-inbox-tracker.service"} {
+		uf := loadHumanInboxUnitFile(t, filename)
+		if m := hostWord.FindString(uf.raw); m != "" {
+			t.Errorf("%s names the host %q; the unit is installed wherever the actor's registered endpoint says, so a host name here is a claim nothing keeps true", filename, m)
+		}
+	}
 }
 
 func TestHumanInboxTrackerUnitWantsTheBridgeUnit(t *testing.T) {

@@ -157,19 +157,28 @@ func TestInstallSecretsRelaysGitHubTokenWithoutFabricating(t *testing.T) {
 	}
 }
 
+// humanInboxRemoteBlockPattern is remoteBlockPattern widened to the dispatch
+// form task t10 introduced: the human-inbox lane no longer ssh's to a
+// declared host, it hands its command to actor_host_exec, which runs it
+// locally when the actor's registered address belongs to this machine and
+// over ssh otherwise. The credential discipline the blocks below assert is
+// identical either way -- what changed is only which machine the command
+// lands on.
+var humanInboxRemoteBlockPattern = regexp.MustCompile(`(?:ssh|actor_host_exec)\s+"\$\w+"\s+(?:"[^"]*"\s*)?'([^']*)'`)
+
 // humanInboxEnvBlocks returns the single-quoted remote command strings of
-// every ssh invocation that writes human-inbox.env, mirroring
+// every invocation that writes human-inbox.env, mirroring
 // codexsecrets_test.go's codexBridgeEnvBlocks helper.
 func humanInboxEnvBlocks(t *testing.T, script string) []string {
 	t.Helper()
 	var blocks []string
-	for _, m := range remoteBlockPattern.FindAllStringSubmatch(script, -1) {
+	for _, m := range humanInboxRemoteBlockPattern.FindAllStringSubmatch(script, -1) {
 		if strings.Contains(m[1], "human-inbox.env") {
 			blocks = append(blocks, m[1])
 		}
 	}
 	if len(blocks) == 0 {
-		t.Fatal("no ssh remote-command block writing human-inbox.env found")
+		t.Fatal("no remote-command block writing human-inbox.env found")
 	}
 	return blocks
 }
@@ -203,17 +212,32 @@ func TestInstallSecretsHumanInboxEnvRefusesOverwriteWithoutForce(t *testing.T) {
 	}
 }
 
-// TestInstallSecretsHumanInboxOnlyReachesThor asserts install_human_inbox_env
-// is only ever called for $THOR -- one logical human actor, thor-only,
-// matching deploy.sh's own deploy_human_inbox gate.
-func TestInstallSecretsHumanInboxOnlyReachesThor(t *testing.T) {
+// TestInstallSecretsHumanInboxFollowsTheActorRegistration is task t10's half
+// of issue #72 on the secrets side.
+//
+// This lane used to install the bridge token on $THOR because a comment said
+// the bridge was thor-only, while company/human-ops was registered at another
+// machine's address. The bearer token has to land on the host that actually
+// runs the bridge, and the registration is the only artifact that says which
+// host that is -- so the lane derives it rather than naming one.
+func TestInstallSecretsHumanInboxFollowsTheActorRegistration(t *testing.T) {
 	script := readInstallSecrets(t)
 
-	if !strings.Contains(script, `install_human_inbox_env "$THOR"`) {
-		t.Error(`install-secrets.sh does not call install_human_inbox_env "$THOR"`)
+	if !strings.Contains(script, "actor-placement.sh") {
+		t.Fatal("install-secrets.sh does not source deploy/prod/actor-placement.sh; it has no shared way to resolve where the human-inbox bridge runs")
 	}
-	if strings.Contains(script, `install_human_inbox_env "$ORIN"`) {
-		t.Error(`install-secrets.sh calls install_human_inbox_env "$ORIN"; the human-inbox bridge is thor-only (one logical human actor)`)
+	if !strings.Contains(script, "actor_registration") && !strings.Contains(script, "human_inbox_secret_host") {
+		t.Error("install-secrets.sh never resolves the human-inbox host from the actor registry")
+	}
+	for _, hardcoded := range []string{`install_human_inbox_env "$THOR"`, `install_human_inbox_env "$ORIN"`} {
+		if strings.Contains(script, hardcoded) {
+			t.Errorf("install-secrets.sh calls %s — the bridge token belongs on the host serving company/human-ops, which is a registration fact, not a name written here", hardcoded)
+		}
+	}
+	// Refusing to guess is the point: an unresolvable registration must skip
+	// the lane with a message, never fall back to a default host.
+	if !strings.Contains(script, "HUMAN_INBOX_ACTOR_KEY") {
+		t.Error("install-secrets.sh names no HUMAN_INBOX_ACTOR_KEY — the actor whose host is being resolved should be legible and overridable")
 	}
 }
 
@@ -227,6 +251,12 @@ func TestInstallSecretsHumanInboxTokenNeverRidesSSHArgv(t *testing.T) {
 	checked := 0
 	for i, line := range lines {
 		idx := strings.Index(line, "ssh")
+		if idx == -1 {
+			// The human-inbox lane dispatches through actor_host_exec (task
+			// t10), which is ssh whenever the actor's host is another
+			// machine — so its argv is held to the same rule.
+			idx = strings.Index(line, "actor_host_exec")
+		}
 		if idx == -1 {
 			continue
 		}

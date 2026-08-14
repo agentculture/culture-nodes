@@ -16,6 +16,14 @@ The tracker is a small stdlib-only Python process living beside the
 human-inbox bridge in `adapters/human-inbox`. It runs **outside the
 culture-nodes deployment**, as a systemd user unit on the bridge host.
 
+"The bridge host" is not a machine this repo names. `deploy.sh` resolves the
+human actor's registered `endpoint_ref` and installs the bridge and the
+tracker together on whichever host serves it — so the commands below still
+say `thor`, because that is the control plane being deployed, while the two
+human-inbox units land wherever `company/human-ops` is registered. The deploy
+refuses if those would come apart, and the tracker refuses to start if they
+already have (issue #72; `deploy/prod/README.md` has the full account).
+
 That placement is deliberate and load-bearing: **the control plane holds no
 GitHub credential and never calls the GitHub API.** A CI gate enforces it
 (`tests/lint/github_isolation_test.go` scans `internal/` and `cmd/`). If you

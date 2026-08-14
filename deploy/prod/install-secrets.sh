@@ -14,6 +14,13 @@
 # than gate access.
 set -euo pipefail
 
+SCRIPT_DIR=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
+# Shared with deploy.sh: which host serves an actor is resolved in exactly one
+# place, so a secret can never be installed on a host the deploy will not use
+# (issue #72).
+# shellcheck source=deploy/prod/actor-placement.sh
+. "$SCRIPT_DIR/actor-placement.sh"
+
 THOR=${1:-thor}
 ORIN=${2:-orin}
 
@@ -233,8 +240,7 @@ else
   echo "CULTURE_NODES_WEBHOOK_URL/DISCORD_WEBHOOK_URL not set in this script's own environment — skipping (nodes-notifier will run with webhook delivery disabled until this is installed)" >&2
 fi
 
-# --- human-inbox bridge + tracker secrets (thor only — one logical human
-# actor, task t34) ----------------------------------------------------------
+# --- human-inbox bridge + tracker secrets (task t34; host derivation, t10) --
 # HUMAN_INBOX_BRIDGE_AUTH_TOKEN is a bearer token generated locally exactly
 # like the codex-bridge tokens above — nothing a human chooses, just a
 # credential this script mints and installs, same FORCE=1 rotation guard.
@@ -242,7 +248,33 @@ fi
 # fabricated here: relayed only when the operator already exported it into
 # this script's own environment. Left unset, deploy.sh still installs the
 # tracker and it uses GitHub's anonymous public-repository lane.
+#
+# WHICH HOST gets them is derived, not declared. This lane used to install the
+# bridge token on $THOR because a comment said the bridge was thor-only, while
+# company/human-ops was registered at another machine's address entirely
+# (issue #72) — so the token landed on a host that ran no bridge, and the host
+# that did run one was never provisioned by this script at all. The bearer
+# token belongs wherever the bridge runs, and the actor's registration is the
+# only artifact that says where that is. deploy.sh resolves it the same way,
+# through the same library, so the secret and the unit cannot disagree.
+HUMAN_INBOX_ACTOR_KEY=${HUMAN_INBOX_ACTOR_KEY:-company/human-ops}
 HUMAN_INBOX_BRIDGE_AUTH_TOKEN=$(openssl rand -base64 32)
+
+# human_inbox_secret_host — the host serving HUMAN_INBOX_ACTOR_KEY.
+#
+# HUMAN_INBOX_HOST overrides it for the bootstrap case only: on a brand-new
+# cluster there is no control plane to ask and no actor row to ask about, and
+# an operator who knows where the bridge will run can say so. Everything else
+# resolves from the registry, and an unresolvable actor installs nothing.
+human_inbox_secret_host() {
+  if [ -n "${HUMAN_INBOX_HOST:-}" ]; then
+    printf '%s' "$HUMAN_INBOX_HOST"
+    return 0
+  fi
+  local registration
+  registration=$(actor_registration "$HUMAN_INBOX_ACTOR_KEY") || return 1
+  endpoint_address "$(printf '%s' "$registration" | cut -d'|' -f3)"
+}
 
 install_human_inbox_env() { # host
   local host=$1 rc=0
@@ -252,7 +284,7 @@ install_human_inbox_env() { # host
 GITHUB_TOKEN=${GITHUB_TOKEN}"
   fi
   # shellcheck disable=SC2029 # the remote path is deliberately remote
-  printf '%s\n' "$content" | ssh "$host" "FORCE=${FORCE_HUMAN_INBOX:-0}; "'umask 077; mkdir -p ~/.culture-nodes; if [ -e ~/.culture-nodes/human-inbox.env ] && [ "$FORCE" != "1" ]; then echo "keeping existing human-inbox.env (set FORCE=1 to rotate)" >&2; exit 3; fi; cat > ~/.culture-nodes/human-inbox.env' || rc=$?
+  printf '%s\n' "$content" | actor_host_exec "$host" "FORCE=${FORCE_HUMAN_INBOX:-0}; "'umask 077; mkdir -p ~/.culture-nodes; if [ -e ~/.culture-nodes/human-inbox.env ] && [ "$FORCE" != "1" ]; then echo "keeping existing human-inbox.env (set FORCE=1 to rotate)" >&2; exit 3; fi; cat > ~/.culture-nodes/human-inbox.env' || rc=$?
   if [ "$rc" -eq 3 ]; then echo "kept existing human-inbox.env on $host"; return 0; fi
   if [ "$rc" -eq 0 ]; then
     if [ -n "${GITHUB_TOKEN:-}" ]; then
@@ -263,7 +295,14 @@ GITHUB_TOKEN=${GITHUB_TOKEN}"
   fi
   return "$rc"
 }
-install_human_inbox_env "$THOR"
+
+HUMAN_INBOX_TARGET=$(human_inbox_secret_host) || HUMAN_INBOX_TARGET=""
+if [ -n "$HUMAN_INBOX_TARGET" ]; then
+  echo "$HUMAN_INBOX_ACTOR_KEY is served at $HUMAN_INBOX_TARGET — installing the human-inbox bridge secret there"
+  install_human_inbox_env "$HUMAN_INBOX_TARGET"
+else
+  echo "$HUMAN_INBOX_ACTOR_KEY does not resolve in the actor registry at $NODES_API_URL — skipping the human-inbox bridge secret rather than installing it on a guessed host. Register the actor (deploy/prod/register-actor.sh) and re-run, or set HUMAN_INBOX_HOST=<address> to bootstrap a host before its actor row exists" >&2
+fi
 
 # --- notify actor bridge bearer token (issue #68) -------------------------
 #

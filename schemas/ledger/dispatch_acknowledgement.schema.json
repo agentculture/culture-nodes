@@ -1,0 +1,53 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://nodes.culture.dev/schemas/ledger/dispatch_acknowledgement.schema.json",
+  "title": "Ledger record: dispatch acknowledgement",
+  "description": "The actor's answer to a `dispatch_preflight` (issue #67, task t14): the second, separate action that commits a gated dispatch. It is the actor's own claim to have been told the operating facts and to have understood them -- a completion-claim-shaped statement, never evidence that it understood -- so it carries `proposed` authority and nothing else, and the ledger append layer refuses a derived one under any origin (RuleAcknowledgementNeverDerived): an engine that could derive an acknowledgement could clear its own gate. It names the preflight it answers BY DIGEST as well as by id, so `the actor acknowledged this briefing` cannot later be true of a different briefing.",
+  "allOf": [
+    {
+      "$ref": "envelope.schema.json"
+    }
+  ],
+  "required": [
+    "record_type"
+  ],
+  "properties": {
+    "record_type": {
+      "const": "dispatch_acknowledgement"
+    },
+    "data": {
+      "type": "object",
+      "required": [
+        "verdict",
+        "preflight_ref",
+        "preflight_digest"
+      ],
+      "properties": {
+        "verdict": {
+          "const": "proceed",
+          "description": "The edit that turns the preflight's `hold` into a commitment, keeping the confirmation-file protocol's vocabulary. Only `proceed` is admitted today: an actor that cannot proceed has no verdict to record here, it simply does not acknowledge and the dispatch is refused when the window closes."
+        },
+        "preflight_ref": {
+          "type": "string",
+          "minLength": 1,
+          "description": "The id of the `dispatch_preflight` record being acknowledged."
+        },
+        "preflight_digest": {
+          "type": "string",
+          "pattern": "^sha256:[0-9a-f]{64}$",
+          "description": "The content digest of that preflight record. The id alone would say WHICH briefing was acknowledged; the digest says WHAT it said, which is the half that has to survive for the record to be worth anything."
+        },
+        "acknowledged_by": {
+          "type": "string",
+          "minLength": 1,
+          "description": "The actor identity the acknowledgement is recorded for. Distinct from the envelope's `origin.actor_id`, which is the producer that wrote the record -- an operator may acknowledge on a bridge's behalf, and the two identities must stay separable when they do."
+        },
+        "note": {
+          "type": "string",
+          "minLength": 1,
+          "description": "Free text from the acknowledging party. Documentary: a note is not a second verdict."
+        }
+      }
+    }
+  }
+}

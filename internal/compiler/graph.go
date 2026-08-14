@@ -100,15 +100,16 @@ func (c *compilation) checkGraph() {
 				c.add(LevelError, base+"/from", CodeGraphEdgeFromEndNode,
 					fmt.Sprintf("node %q is an end node and produces the workflow result; it has no outgoing edges", fromNode),
 					"remove the edge, or change the node's kind if the run should continue")
-			case outcome == OutcomeBudgetExhausted && !budgetGuardedKinds[source.Kind]:
-				// The refusal name is reserved but not universal: only a
-				// kind whose dispatch the budget guards can ever produce it.
+			case refusalOutcomes[outcome] && !dispatchGuardedKinds[source.Kind]:
+				// A refusal name is reserved but not universal: only a kind
+				// whose dispatch the control plane guards can ever produce
+				// one.
 				c.add(LevelError, base+"/from", CodeGraphOutcomeUndeclared,
-					fmt.Sprintf("node %q is kind %q, whose dispatch the economic budget does not guard, so it can never produce outcome %q",
-						fromNode, source.Kind, OutcomeBudgetExhausted),
-					fmt.Sprintf("route %q only from an agent or action.http node; the budget is enforced at the actor-dispatch site",
-						OutcomeBudgetExhausted))
-			case outcome == OutcomeBudgetExhausted:
+					fmt.Sprintf("node %q is kind %q, whose dispatch the control plane does not guard, so it can never produce outcome %q",
+						fromNode, source.Kind, outcome),
+					fmt.Sprintf("route %q only from an agent or action.http node; refusals are produced at the actor-dispatch site",
+						outcome))
+			case refusalOutcomes[outcome]:
 				// Routable on a guarded kind without being declared anywhere,
 				// exactly like a technical status.
 			case !technicalStatuses[outcome] && !contains(declaredOutcomes(source), outcome):

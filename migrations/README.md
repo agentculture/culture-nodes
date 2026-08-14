@@ -193,6 +193,26 @@ Numbered SQL migrations for the authoritative PostgreSQL store (prd-spec
   (`web/README.md`'s `VITE_PRESERVE_BRANCH_URL_TEMPLATE`). All three are
   written together or not at all (`InsertAttempt`), so `preserve_pushed`/
   `preserve_remote` are never non-NULL while `preserve_branch` is NULL.
+- `0026_dispatch_preflights.sql` — expand-only: adds `dispatch_preflights`
+  (the clarify-then-commit gate's durable state, issue #67 / task t14) plus
+  the `actors_preflight_gate_requires_surface` CHECK constraint. The gate's
+  *evidence* is two ledger records — a derived `dispatch_preflight` and a
+  proposed `dispatch_acknowledgement` — but ledger records are immutable,
+  and the protocol this generalizes (`deploy/prod/install-secrets.sh`'s
+  windowed confirmation file) is **single-use**: this table is where
+  "consumed" becomes a transactional fact, so exactly one dispatch can ride
+  one acknowledgement. Rows are keyed per **node run**, not per attempt,
+  because the gate runs before any attempt exists. The CHECK constraint is
+  the third door on acceptance criterion 3: `internal/preflight`'s
+  `CheckConfiguration` refuses a gate-without-surface registration at the
+  API handler and at `RegisterActor`, and this covers raw SQL. It is `NOT
+  VALID` (no rescan of existing rows — none can violate it, since this
+  migration introduces the concept) and deliberately narrower than the Go
+  check: only a literal JSON `true` under `metadata.preflight_gate.enabled`
+  enables the gate, matching `preflight.ParseGate`, so the two never
+  disagree about which rows they are talking about. An N-1 binary ignores
+  both changes safely — it never inserts a preflight row, and it never
+  writes a `preflight_gate` block for the constraint to refuse.
 
 ## Policy
 

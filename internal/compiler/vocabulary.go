@@ -53,13 +53,33 @@ var technicalStatuses = map[string]bool{
 // edge under this name (internal/engine/complete.go's failOrRetry).
 const OutcomeBudgetExhausted = "budget_exhausted"
 
-// budgetGuardedKinds are the kinds whose dispatch the economic budget can
-// refuse, and therefore the only kinds an OutcomeBudgetExhausted edge may
-// originate from. They are the kinds internal/worker/dispatch.go's
-// dispatchActor handles: the enforcement site guards provider sessions, and
-// an edge from a code or approval node's `budget_exhausted` would be a route
-// that can never fire.
-var budgetGuardedKinds = map[string]bool{
+// OutcomePreflightUnacknowledged is the second reserved refusal name (task
+// t14, issue #67; engine.OutcomePreflightUnacknowledged, kept in step): the
+// control plane refused a dispatch because the actor never acknowledged the
+// clarify-then-commit preflight composed for it inside the window.
+//
+// Everything said above about `budget_exhausted` applies verbatim — no
+// contract declares it, no actor produces it, the attempt's technical status
+// is `policy_denied`, and it exists as a separate NAME so an author can send
+// "nobody confirmed the briefing" somewhere different from "we ran out of
+// money".
+const OutcomePreflightUnacknowledged = "preflight_unacknowledged"
+
+// refusalOutcomes are the reserved names a dispatch the CONTROL PLANE
+// refused routes under. They share one rule because they share one shape:
+// produced before dispatch, declared by nobody, routable from a guarded kind
+// without appearing in any contract.
+var refusalOutcomes = map[string]bool{
+	OutcomeBudgetExhausted:         true,
+	OutcomePreflightUnacknowledged: true,
+}
+
+// dispatchGuardedKinds are the kinds whose dispatch the control plane can
+// refuse, and therefore the only kinds a refusal edge may originate from.
+// They are the kinds internal/worker/dispatch.go's dispatchActor handles:
+// the enforcement sites guard provider sessions, and an edge from a code or
+// approval node's `budget_exhausted` would be a route that can never fire.
+var dispatchGuardedKinds = map[string]bool{
 	KindAgent:      true,
 	KindActionHTTP: true,
 }

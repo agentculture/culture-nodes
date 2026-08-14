@@ -44,6 +44,7 @@ Sanctioned kind-aware file (the only allowed match):
 | File | Why it may branch on actor kind |
 | --- | --- |
 | `internal/api/grades.go` | Grade authority follows the grader's registered kind: a human grading directly is their own confirmation; an agent grading is a proposal. Outside dispatch — the c16 precedent. |
+| `internal/api/preflights.go` | A clarify-then-commit acknowledgement's ledger **origin** follows the acknowledging actor's registered kind — `agent` when a bridge answers for itself, `human` when an operator answers on its behalf (issue #67, task t14). The authority is `proposed` either way, so the kind decides who the record says produced it, never what the control plane does with it; the gate's dispatch-side half (`internal/worker/clarifygate.go`) reads no kind at all. |
 
 ## Invariant 2 — The ledger authority ladder (spec c17, honesty h15)
 
@@ -101,6 +102,7 @@ sweep; refused at append time by `internal/ledger/authority.go` otherwise).
 | `internal/worker/successsignal.go` | Validator-origin writer: mechanical `success_signal` evaluation (t18) |
 | `internal/worker/hooks.go` | Validator-origin writer: assurance-hook rejection reviews |
 | `internal/devague/deliverables.go` | Engine-origin writer: devague delivery-summary derivation (pre-batch) |
+| `internal/preflight/records.go` | Engine-origin writer: the clarify-then-commit gate's briefing (issue #67, task t14) — a deterministic composition of the host capabilities a bridge advertised and the pinned task declaration, computed by the engine and asserted by nobody |
 
 ## Invariant 3 — Every committed example compiles (#73)
 

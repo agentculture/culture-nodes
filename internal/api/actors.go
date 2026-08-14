@@ -345,7 +345,11 @@ func (s *Server) handleRegisterActor(w http.ResponseWriter, r *http.Request) err
 		Metadata:     req.Metadata,
 	})
 	if err != nil {
-		return internalError(err)
+		// classify renders a clarify-then-commit gate misconfiguration
+		// (preflight.ConfigError, raised by RegisterActor before it writes
+		// anything) as a 400 carrying its own remediation, and everything
+		// else as the 500 it is.
+		return classify(err)
 	}
 	writeJSON(w, http.StatusCreated, actorOut(a))
 	return nil

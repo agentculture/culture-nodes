@@ -5,6 +5,21 @@ All notable changes to this project will be documented in this file.
 Format follows [Keep a Changelog](https://keepachangelog.com/). This project
 adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.18.0] - 2026-08-14
+
+### Added
+
+- Cross-machine handoff contract on `examples/pr-upkeep/workflow.yaml` (task t13, issue #74): `fix.completed` now requires a portable `handoff: {kind: artifact, ref: "artifact://<namespace>/<id>"}` handle whose ref is pattern-constrained, so it cannot silently become a filesystem path again. The engine's own outcome-schema validation (`internal/engine/complete.go`'s `checkOutput`) is what enforces it — a fix that produced no handle cannot report `completed`
+- `fix.handoff_unavailable`, the named honest failure: a fix host that cannot publish its work reports a domain outcome carrying `missing_capability` from a closed set (`artifact_publish`, `workspace_export`, `handoff_too_large`) instead of letting the run die as an HTTP 403 on the review host, where the error names authorization and the cause is topology
+- `handoff-blocked` terminal node, which `fix.handoff_unavailable` routes to. It carries the fix node's output (where `missing_capability` lives) as the run's output rather than `finish`'s sweep report, which would bury the one fact that explains the stop
+- `tests/lint/crosshosthandoff_test.go` locks all four invariants against the committed document: the required artifact-shaped handle, the closed capability enum, that `handoff_unavailable` reaches only a terminal node and never `review`, and that `review` binds and requires the handle rather than sharing the fix actor's repo pointer
+
+### Changed
+
+- `review` reads the work under review through `handoff: /nodes/fix/output/handoff` and requires it in its input contract; its `review_repo` is now documented as only the working directory thor's codex bridge allowlists, never the source of the work under review
+- `examples/pr-upkeep/driver.sh` states the handoff contract in the fix and review instructions — the fix session must declare its own result JSON (a default envelope carries no handle and would be contract_rejected) and is given the named way out rather than left to improvise a fabricated ref
+- `examples/pr-upkeep/README.md` documents the cross-machine handoff, the live 403 in run 01KZZSGSWH11J7R7P4V2HPTZZQ that motivated it, why a git ref is not available on the host that must produce the handle, and — plainly — that the artifact content path is not wired yet
+
 ## [0.17.0] - 2026-08-14
 
 ### Added

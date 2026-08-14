@@ -48,6 +48,48 @@
 #    observable — `human-answers-review.merged` / `.dropped` — so a question
 #    posted to a PR that is later merged or closed does not wait forever.
 #
+# The fix -> review handoff (issue #74, task t13):
+# `fix` and `review` are deliberately DIFFERENT actors on DIFFERENT machines
+# — company/developer on spark, company/codex-thor on thor. A filesystem path
+# is not portable across that boundary, and this graph used to hand one over
+# anyway: run 01KZZSGSWH11J7R7P4V2HPTZZQ fixed and committed b01608c on spark,
+# then died at `review` with `auth_or_policy` HTTP 403 from thor's codex
+# bridge, which had correctly refused a spark path that is outside its
+# allowlist and does not exist on thor at all. The graph asked for something
+# incoherent, and the error named authorization when the cause was topology.
+#
+# What travels now is a HANDLE, not a location: `fix.completed` must carry
+# `handoff.ref`, an `artifact://<namespace>/<id>` reference which by
+# construction "never carries or implies a filesystem path"
+# (internal/artifacts/doc.go) and resolves through the artifact store from
+# any host. `review` binds it (`handoff: /nodes/fix/output/handoff`) and
+# requires it; its own `review_repo` is now only the working directory the
+# codex bridge allowlists on thor, never the work under review.
+#
+# Why not a git ref (#74's option 1, the issue's own recommendation): a probe
+# of the spark bridge host settled it — origin is HTTPS not SSH, no SSH key
+# is authorised for GitHub, there is no git credential.helper, and the
+# running bridge process carries neither GH_TOKEN nor GITHUB_TOKEN. The host
+# that must produce the handle cannot push, so a pushed branch is not a
+# handle it can offer. `handoff.kind` is an enum with one member today so
+# adding `git_ref` later, once a bridge host holds a credential, is visibly
+# additive rather than a reinterpretation of the field.
+#
+# WHAT IS NOT WIRED YET, stated plainly so nobody reads this graph as more
+# finished than it is: internal/artifacts (Store, Router, the Postgres and
+# S3 drivers, migrations 0004/0006) is a complete library with ZERO
+# production callers. There is no artifact ingest or fetch endpoint on the
+# control plane's HTTP surface, no bridge uploads bytes, and
+# InvocationResult.artifact_refs is accepted on the wire and then dropped.
+# So today every fix host lands on `handoff_unavailable` with
+# `missing_capability: artifact_publish` — which is the true answer, and a
+# far better one than reviewing thor's own checkout and calling it a review
+# of spark's work. The remaining work is the content path: an artifact
+# ingest/fetch endpoint, bridge-side publish/resolve in all backends
+# (all-backends rule), and persisting actor-reported artifact refs so
+# /nodes/<id>/artifacts can become a bindable surface (it is refused by both
+# internal/compiler/contract.go and internal/worker/bindings.go today).
+#
 # Authoring decisions worth stating outright:
 #
 #  1. `triage` routes on /nodes/sweep/output's `exit_code`. A code node's
@@ -280,6 +322,12 @@ spec:
     # and opens or updates a PR — it never merges one. decision_history
     # carries the human gate's changes_required notes back into the loop's
     # later passes.
+    #
+    # It also PUBLISHES its work as a portable handle (issue #74): the review
+    # actor is on another machine, so `repo` below — spark's checkout — is
+    # where this node works and nothing the next node can read. See the
+    # `completed`/`handoff_unavailable` contracts and this file's header for
+    # what crosses the boundary and what happens when it cannot.
     fix:
       kind: agent
       ownerRef: team/developer-experience
@@ -297,12 +345,82 @@ spec:
             type: object
             required: [instruction, repo]
         outcomes:
+          # A completed fix MUST carry a portable handle (issue #74). `repo`
+          # above is where this actor WORKS; it is meaningless on any other
+          # host, so it can never be what the review lane reads. `handoff` is
+          # the thing that crosses: an artifact reference, which by
+          # construction "never carries or implies a filesystem path"
+          # (internal/artifacts/doc.go) and resolves through the store rather
+          # than through a directory that happens to exist on spark.
+          #
+          # It is REQUIRED rather than optional on purpose. The engine
+          # validates a completion against this schema
+          # (internal/engine/complete.go's checkOutput), so a fix session that
+          # produced no handle cannot report `completed` at all — it is
+          # contract_rejected at the FIX node, where the cause is, instead of
+          # sailing on to a review node that will fail somewhere else. A
+          # session that genuinely cannot produce one says so by name, through
+          # the `handoff_unavailable` outcome below.
           completed:
             schema:
               type: object
-              required: [summary]
+              required: [summary, handoff]
               properties:
                 summary:
+                  type: string
+                handoff:
+                  type: object
+                  required: [kind, ref]
+                  properties:
+                    # One kind today, declared as an enum rather than a bare
+                    # string so a second kind (a pushed git ref, #74's option
+                    # 1, once a bridge host has a credential for one) is an
+                    # additive change a reader can see coming.
+                    kind:
+                      type: string
+                      enum: [artifact]
+                    ref:
+                      type: string
+                      pattern: "^artifact://[^/]+/.+$"
+                    # What the handle contains, so the review lane knows what
+                    # it is opening without unpacking it first.
+                    media_type:
+                      type: string
+          # The honest failure (issue #74, task t13's criterion 3). A fix host
+          # that cannot publish its work as an artifact has ONE correct answer,
+          # and it is a domain outcome, not a technical error and emphatically
+          # not somebody else's 403.
+          #
+          # The history this exists to prevent: run 01KZZSGSWH11J7R7P4V2HPTZZQ
+          # fixed and committed b01608c on spark, then died at `review` with
+          # `auth_or_policy` HTTP 403 from thor's codex bridge. The bridge was
+          # correct — it was handed a spark path outside its allowlist that
+          # does not exist on thor — but the error named AUTHORIZATION when the
+          # cause was TOPOLOGY, which is the single worst place for a reader to
+          # start debugging.
+          #
+          # `missing_capability` is a CLOSED enum so the answer is a name a
+          # dashboard can group by, not a sentence someone has to interpret:
+          #   artifact_publish   — the host has no way to put bytes in the
+          #                        artifact store (no ingest endpoint reachable
+          #                        from it, no credential, store unconfigured).
+          #                        This is the state of the world TODAY: see
+          #                        the "What is not wired yet" note in this
+          #                        file's header.
+          #   workspace_export   — the host could not produce the bundle at all
+          #                        (git plumbing failed, nothing to export).
+          #   handoff_too_large  — the work exceeds what this lane may move.
+          handoff_unavailable:
+            schema:
+              type: object
+              required: [summary, missing_capability, detail]
+              properties:
+                summary:
+                  type: string
+                missing_capability:
+                  type: string
+                  enum: [artifact_publish, workspace_export, handoff_too_large]
+                detail:
                   type: string
       ledger:
         read: [decision_history]
@@ -334,6 +452,11 @@ spec:
     # decision (ask-pr-question -> notify-decision-pending ->
     # human-answers-review, issue #71) — every loop-back through the
     # billable fix actor passes a person first, either way.
+    #
+    # It reads the work under review through the fix lane's `handoff` handle
+    # (issue #74), never through a path: this node runs on thor and the fix
+    # lane runs on spark, and the only reason it is reachable at all is that
+    # `fix.completed` could not have been reported without producing one.
     review:
       kind: agent
       ownerRef: team/quality
@@ -341,8 +464,18 @@ spec:
       input:
         bindings:
           instruction: /run/input/review_instruction
+          # WHERE this session runs — the review host's OWN allowlisted
+          # checkout, which the codex bridge requires and resolves against its
+          # allowlist. It is a working directory, NOT the work under review:
+          # that checkout knows nothing about what the fix lane just did on a
+          # different machine (issue #74).
           repo: /run/input/review_repo
           sandbox: /run/input/review_sandbox
+          # WHAT is under review — the fix lane's portable handle. This is the
+          # binding that replaced "hand the other host your path", and it is
+          # the only one of review's inputs that carries the fix lane's actual
+          # work across the machine boundary.
+          handoff: /nodes/fix/output/handoff
           fixReport: /nodes/fix/output
           fixEvidence: /nodes/fix/evidence
           runEvidence: /ledger/projections/evidence
@@ -350,7 +483,12 @@ spec:
         input:
           schema:
             type: object
-            required: [instruction, repo, sandbox]
+            # `handoff` is required for the same reason `fix.completed`
+            # requires it: an optional handle is one a dispatch can proceed
+            # without, and a review that proceeds without it reviews its own
+            # host's checkout — the wrong tree, silently, which is worse than
+            # the 403 it replaced.
+            required: [instruction, repo, sandbox, handoff]
         outcomes:
           approve:
             schema:
@@ -637,6 +775,31 @@ spec:
       output:
         from: /nodes/sweep/output
 
+    # Where `fix.handoff_unavailable` ends (issue #74). A missing HOST
+    # capability is not something any other node in this graph can resolve:
+    # no amount of reviewing, asking or waiting gives the fix host an artifact
+    # store. So the run ends, and it ends carrying the FIX node's output
+    # rather than `finish`'s sweep report — that output is where
+    # `missing_capability` lives, and a terminal run whose output does not
+    # name why it stopped is the same illegible failure this whole change is
+    # about.
+    #
+    # It is a separate `end` node rather than a route into `finish` for
+    # exactly that reason: `finish` outputs the sweep report, which would
+    # bury the one fact that matters here.
+    #
+    # No notification node sits in front of it deliberately: the notify actor
+    # takes static per-run text (see notify-decision-pending), so it could
+    # announce that something stopped but not WHICH capability is missing —
+    # and adding two more run-input fields to say less than the run output
+    # already says is not a trade worth making. An operator reads the named
+    # outcome on the run.
+    handoff-blocked:
+      kind: end
+      ownerRef: team/platform-ai
+      output:
+        from: /nodes/fix/output
+
   edges:
     # Both sweep outcomes are domain answers headed for triage: `passed`
     # is exit 0 (work found), `failed` is any nonzero exit — the sentinel
@@ -663,6 +826,12 @@ spec:
 
     - from: fix.completed
       to: review
+    # The honest failure never reaches review (issue #74). Routing a fix that
+    # produced no portable handle into the review node is precisely what
+    # turned a topology problem into an HTTP 403 on another machine; the run
+    # stops here instead, naming the capability that is missing.
+    - from: fix.handoff_unavailable
+      to: handoff-blocked
 
     # A clean review verdict becomes an ACTIVE merge assignment on the
     # human actor (user decision: "waiting for merge" is work in a

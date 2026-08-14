@@ -28,6 +28,11 @@ below for why.
     └────────────────────────┘        sweep         finish        ask-pr-question
     ▲                                                                       ▲
     └── backoff (wait 30m) ◀──sweep_broken── triage         review.changes_required ──┘
+
+  fix ──handoff_unavailable──▶ handoff-blocked   (issue #74: the fix host has
+                                                  no portable handle to hand
+                                                  the review host; the run
+                                                  ends naming the capability)
 ```
 
 - **sweep** (code node, declared intent: `network: egress-allowlist` per
@@ -47,14 +52,20 @@ below for why.
   takes the top item, fixes it on a branch, and opens/updates a PR. Its
   bindings carry the sweep report and the sweep node's own observed
   evidence (`/nodes/sweep/evidence`), plus the ledger's decision history so
-  a `changes_required` verdict reaches the next pass.
+  a `changes_required` verdict reaches the next pass. It must also publish
+  its work as a **portable handle** — see [the cross-machine
+  handoff](#the-cross-machine-handoff-issue-74) — and has a named way to
+  say it cannot: the `handoff_unavailable` outcome.
 - **review** (agent node, `company/codex-thor` — a different model family
   and bridge than fix, on the independent-review pattern) is **read-only**
   (issue #18: codex sessions are analysis-only; the run-input contract pins
   `review_sandbox` to the literal `read-only`, so a writable review run is
-  unpublishable). It binds the fix node's self-reported output, the fix
-  node's own evidence records (`/nodes/fix/evidence` — the node-run-scoped
-  surface task t7 made resolvable) and the run-wide evidence projection
+  unpublishable). It reads the work under review through the fix lane's
+  `handoff` handle, never through a path; its own `review_repo` is only the
+  working directory thor's bridge allowlists. It also binds the fix node's
+  self-reported output, the fix node's own evidence records
+  (`/nodes/fix/evidence` — the node-run-scoped surface task t7 made
+  resolvable) and the run-wide evidence projection
   (`/ledger/projections/evidence`, task t6). Both verdicts reach a human:
   `approve` becomes an active merge assignment, `changes_required` becomes
   a genuine decision — no agent alone re-triggers the billable fix actor.
@@ -206,6 +217,77 @@ not configured per run:
 - the `repo` run input is the local checkout path the fix/review bridges
   allowlist; a run naming a non-allowlisted repo is refused by the bridges
   themselves.
+
+## The cross-machine handoff (issue #74)
+
+`fix` and `review` are deliberately different actors — that is the whole
+independent-review pattern — and different actor increasingly means
+**different machine**: `company/developer` is the spark claude-code bridge,
+`company/codex-thor` is the codex bridge on thor. A filesystem path does not
+survive that boundary, and this graph used to hand one across it anyway.
+
+What it looked like, in run `01KZZSGSWH11J7R7P4V2HPTZZQ`:
+
+```text
+sweep   completed  passed
+triage  completed  items
+fix     completed  completed     <- real session on spark, committed b01608c
+review  failed     auth_or_policy (HTTP 403): actor answered Forbidden
+```
+
+The bridge was right. It was handed `/home/spark/git/.worktrees.culture-nodes/upkeep-fix`,
+which is outside thor's allowlist and does not exist on thor at all. The
+problem is that the error names **authorization** when the cause is
+**topology** — which points a reader at credentials and away from the actual
+defect.
+
+Three things changed, and the invariants are locked by
+[`tests/lint/crosshosthandoff_test.go`](../../tests/lint/crosshosthandoff_test.go):
+
+1. **`fix.completed` requires a handle.** Its contract requires
+   `handoff: {kind: artifact, ref: "artifact://<namespace>/<id>"}`, and the
+   ref is pattern-constrained so it cannot quietly become a path again. An
+   artifact reference "never carries or implies a filesystem path"
+   ([`internal/artifacts/doc.go`](../../internal/artifacts/doc.go)) — it
+   resolves through the store from any host. Because the engine validates a
+   completion against the outcome schema
+   ([`internal/engine/complete.go`](../../internal/engine/complete.go)'s
+   `checkOutput`), a fix that produced no handle **cannot report
+   `completed`**. This is enforced, not advised.
+2. **A fix host that cannot produce one says so, by name.** The
+   `handoff_unavailable` domain outcome requires a `missing_capability` from
+   a closed set — `artifact_publish`, `workspace_export`,
+   `handoff_too_large` — so the answer is a name, not a sentence to
+   interpret.
+3. **That outcome never reaches `review`.** It routes to the terminal
+   `handoff-blocked` node, which carries the fix node's output (where
+   `missing_capability` lives) as the run's output. `finish` would have
+   buried it under the sweep report.
+
+**Why not a git ref**, which is [issue #74](https://github.com/agentculture/culture-nodes/issues/74)'s
+own recommendation and would reuse task t25's preserve-branch machinery: a
+probe of the spark bridge host settled it. `origin` is HTTPS not SSH, no SSH
+key is authorised for GitHub, there is no `credential.helper`, and the
+running bridge process carries neither `GH_TOKEN` nor `GITHUB_TOKEN`. The
+host that must produce the handle cannot push. `handoff.kind` is an enum
+with one member today so that adding `git_ref` later — once a bridge host
+holds a credential — is visibly additive.
+
+**What is not wired yet.** [`internal/artifacts`](../../internal/artifacts/)
+is a complete library (Store, Router, Postgres and S3 drivers, migrations
+0004/0006) with **zero production callers**. There is no artifact ingest or
+fetch endpoint on the control plane's HTTP surface, no bridge publishes
+bytes, and `InvocationResult.artifact_refs` is accepted on the wire and then
+dropped. So today every fix host lands on `handoff_unavailable` with
+`missing_capability: artifact_publish`. That is the true state of the
+system, and a far better answer than reviewing thor's own checkout and
+calling it a review of spark's work. Remaining for the content path: an
+ingest/fetch endpoint, bridge-side publish and resolve across all backends
+(the all-backends rule), and persisting actor-reported artifact refs so
+`/nodes/<id>/artifacts` can become a bindable surface — it is refused today
+by both [`internal/compiler/contract.go`](../../internal/compiler/contract.go)
+and [`internal/worker/bindings.go`](../../internal/worker/bindings.go), and
+those two verdicts must change together.
 
 ## The extractor and its fixtures
 

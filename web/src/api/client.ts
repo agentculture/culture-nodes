@@ -5,6 +5,8 @@ import type {
   HumanTaskList,
   LedgerRecords,
   NodeRunList,
+  PlanImport,
+  PlanImportSummaryList,
   Projection,
   RunList,
   RunState,
@@ -300,6 +302,26 @@ export const decideHumanTask = (
 /** GET /v1alpha1/actors (task t15): every registered actor row. */
 export const listActors = (signal?: AbortSignal) =>
   getJson<ActorList>("/actors", signal);
+
+/**
+ * `GET /v1alpha1/plan-imports?slug=` (task t23): every import snapshot of
+ * one plan, most recent first — `items[0]` is "the current one". `slug` is
+ * required (there is no cross-slug listing; see openapi.yaml's
+ * listPlanImports).
+ */
+export const listPlanImports = (slug: string, signal?: AbortSignal) =>
+  getJson<PlanImportSummaryList>(
+    `/plan-imports${toQueryString({ slug })}`,
+    signal,
+  );
+
+/**
+ * `GET /v1alpha1/plan-imports/{id}` (task t22): one full plan-import
+ * snapshot — every task's real status/dependency edges and every
+ * deviation, with its origin.
+ */
+export const getPlanImport = (id: string, signal?: AbortSignal) =>
+  getJson<PlanImport>(`/plan-imports/${encodeURIComponent(id)}`, signal);
 
 /**
  * The cross-run SSE endpoint's URL (task t17, `GET /v1alpha1/events`), with

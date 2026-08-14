@@ -82,6 +82,22 @@ describe("Header node graphs link (task t28)", () => {
   });
 });
 
+describe("Header plan link (task t23)", () => {
+  it("routes to /plan and marks it active there", () => {
+    renderHeader(["/plan"]);
+    const plan = screen.getByRole("link", { name: "Plan" });
+    expect(plan).toHaveAttribute("href", "/plan");
+    expect(plan).toHaveClass("is-active");
+  });
+
+  it("stays marked active on a specific plan slug URL", () => {
+    renderHeader(["/plan/economy-discord-graphs"]);
+    expect(screen.getByRole("link", { name: "Plan" })).toHaveClass(
+      "is-active",
+    );
+  });
+});
+
 describe("Header active view marking", () => {
   it("marks the current view's link with is-active and no other", () => {
     renderHeader(["/board"]);

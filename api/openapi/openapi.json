@@ -1358,6 +1358,58 @@
         ],
         "type": "object"
       },
+      "PlanImportSummary": {
+        "description": "One row of GET /v1alpha1/plan-imports?slug= (task t23): the same plan-level fields PlanImport carries, without `tasks`/`deviations` — those are read one snapshot at a time via GET /v1alpha1/plan-imports/{id}.",
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "imported_at": {
+            "format": "date-time",
+            "type": "string"
+          },
+          "slug": {
+            "type": "string"
+          },
+          "source_digest": {
+            "type": "string"
+          },
+          "source_slug": {
+            "type": "string"
+          },
+          "source_status": {
+            "type": "string"
+          },
+          "title": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "slug",
+          "title",
+          "source_slug",
+          "source_status",
+          "source_digest",
+          "imported_at"
+        ],
+        "type": "object"
+      },
+      "PlanImportSummaryList": {
+        "properties": {
+          "items": {
+            "description": "Most recent `imported_at` first.",
+            "items": {
+              "$ref": "#/components/schemas/PlanImportSummary"
+            },
+            "type": "array"
+          }
+        },
+        "required": [
+          "items"
+        ],
+        "type": "object"
+      },
       "PlanImportTask": {
         "description": "One task of an imported plan snapshot.",
         "properties": {
@@ -2612,6 +2664,47 @@
       }
     },
     "/v1alpha1/plan-imports": {
+      "get": {
+        "description": "Task t23 (issue #45): every `plan_imports` row for the given `slug`, newest `imported_at` first — how a dashboard finds \"the current state\" of a plan (`items[0]`) without this endpoint guessing at a supersedes relationship the schema deliberately does not model (see `migrations/0024_plan_imports.sql`). `slug` is required; unlike `GET /v1alpha1/workflows`, there is no cross-slug \"every imported plan\" listing. Each item is the lightweight summary shape (no `tasks`/`deviations` — those are read one snapshot at a time via `GET /v1alpha1/plan-imports/{id}`, since an empty array here would misread as \"zero tasks\" rather than \"not fetched on this path\").",
+        "operationId": "listPlanImports",
+        "parameters": [
+          {
+            "description": "The source plan's own slug (devague's `plan_show.slug`).",
+            "in": "query",
+            "name": "slug",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PlanImportSummaryList"
+                }
+              }
+            },
+            "description": "Every import snapshot with this slug, most recent first."
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "description": "slug is missing."
+          }
+        },
+        "summary": "List a plan's import snapshots by slug, most recent first.",
+        "tags": [
+          "plan-imports"
+        ]
+      },
       "post": {
         "description": "Task t22 (issue #45): decodes `plan_show` (the exact object `devague plan show --json` prints — or an equivalent document from a different source system, since this surface is domain-agnostic) and the optional `deviations` (the exact object `.devague/deliveries/\u003cslug\u003e.json` holds on disk), and persists a new immutable snapshot: the plan plus every task's REAL per-task status and dependency edges, plus every deviation carrying its origin.\n\nNothing here is the append-only work ledger (`internal/ledger`) — see `migrations/0024_plan_imports.sql` for why. Every import is its own row; re-importing the same `plan_show.slug` creates a new, independent snapshot rather than overwriting the previous one.\n\nA malformed `plan_show` or `deviations` document — a missing slug, a task with no id, a dependency edge naming a task this plan does not have, a dependency cycle, an unrecognised origin/status, a `deviations.plan_slug` that does not match `plan_show.slug` — is refused with 400 in the documented Error shape, naming what is wrong; nothing is ever partially imported.",
         "operationId": "importPlan",

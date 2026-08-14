@@ -234,3 +234,76 @@ func TestImportPlan_ReimportIsANewSnapshot(t *testing.T) {
 		t.Fatalf("source_digest differs across two imports of byte-identical content: %q vs %q", first.SourceDigest, second.SourceDigest)
 	}
 }
+
+// planImportSummaryWire is components.schemas.PlanImportSummary.
+type planImportSummaryWire struct {
+	ID           string `json:"id"`
+	Slug         string `json:"slug"`
+	Title        string `json:"title"`
+	SourceSlug   string `json:"source_slug"`
+	SourceStatus string `json:"source_status"`
+	SourceDigest string `json:"source_digest"`
+	ImportedAt   string `json:"imported_at"`
+}
+
+type planImportSummaryListWire struct {
+	Items []planImportSummaryWire `json:"items"`
+}
+
+// TestListPlanImports_MostRecentFirst is task t23's list-by-slug route
+// (GET /v1alpha1/plan-imports?slug=), added because t22 deliberately left
+// it out: a dashboard needs "every snapshot of this plan, newest first" to
+// find the current one without guessing at a supersedes chain the schema
+// does not model.
+func TestListPlanImports_MostRecentFirst(t *testing.T) {
+	f := newFixture(t)
+
+	req := planImportRequestWire{PlanShow: readDevagueTestdata(t, "plan-show.json")}
+	var first, second planImportWire
+	resp1, body1 := doJSON(t, f.client, http.MethodPost, f.url("/v1alpha1/plan-imports"), req, &first)
+	requireStatus(t, resp1, body1, http.StatusCreated)
+	resp2, body2 := doJSON(t, f.client, http.MethodPost, f.url("/v1alpha1/plan-imports"), req, &second)
+	requireStatus(t, resp2, body2, http.StatusCreated)
+
+	var list planImportSummaryListWire
+	listResp, listBody := doJSON(t, f.client, http.MethodGet, f.url("/v1alpha1/plan-imports?slug=t22fixture"), nil, &list)
+	requireStatus(t, listResp, listBody, http.StatusOK)
+
+	if len(list.Items) != 2 {
+		t.Fatalf("got %d items, want 2", len(list.Items))
+	}
+	if list.Items[0].ID != second.ID || list.Items[1].ID != first.ID {
+		t.Fatalf("list order = [%s, %s], want the more recent import (%s) first",
+			list.Items[0].ID, list.Items[1].ID, second.ID)
+	}
+	for _, item := range list.Items {
+		if item.Slug != "t22fixture" || item.SourceDigest == "" {
+			t.Fatalf("summary item missing plan-level fields: %+v", item)
+		}
+	}
+}
+
+// TestListPlanImports_UnknownSlugIsEmpty proves an unimported slug is an
+// honest empty list, not a 404 — the same "nothing found yet" reading a
+// dashboard's empty state renders for.
+func TestListPlanImports_UnknownSlugIsEmpty(t *testing.T) {
+	f := newFixture(t)
+
+	var list planImportSummaryListWire
+	resp, body := doJSON(t, f.client, http.MethodGet, f.url("/v1alpha1/plan-imports?slug=never-imported"), nil, &list)
+	requireStatus(t, resp, body, http.StatusOK)
+	if len(list.Items) != 0 {
+		t.Fatalf("got %d items for an unimported slug, want 0", len(list.Items))
+	}
+}
+
+// TestListPlanImports_MissingSlugIsRefused proves the required-parameter
+// case is a domain refusal (400) naming what is wrong, never a panic and
+// never a silent "every plan" listing this schema has no basis for.
+func TestListPlanImports_MissingSlugIsRefused(t *testing.T) {
+	f := newFixture(t)
+
+	resp, body := doJSON(t, f.client, http.MethodGet, f.url("/v1alpha1/plan-imports"), nil, nil)
+	requireStatus(t, resp, body, http.StatusBadRequest)
+	decodeAPIError(t, body)
+}

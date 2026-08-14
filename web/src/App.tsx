@@ -14,6 +14,7 @@ import JobsTimeline from "./routes/JobsTimeline";
 import LedgerView from "./routes/LedgerView";
 import Mesh from "./routes/Mesh";
 import NodeGraphs from "./routes/NodeGraphs";
+import PlanView from "./routes/PlanView";
 import RunView from "./routes/RunView";
 import RunsBoard from "./routes/RunsBoard";
 import RunsList from "./routes/RunsList";
@@ -46,6 +47,8 @@ export function App() {
           <Route path="/mesh" element={<Mesh />} />
           <Route path="/stats" element={<Statistics />} />
           <Route path="/graphs" element={<NodeGraphs />} />
+          <Route path="/plan" element={<PlanView />} />
+          <Route path="/plan/:slug" element={<PlanView />} />
           {/* The old Workflows tab's URL — old links/bookmarks survive by
               landing on the sub-tab that renders the same content the
               route used to (task t28, issue #56). */}

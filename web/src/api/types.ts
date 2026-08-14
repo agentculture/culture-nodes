@@ -460,3 +460,84 @@ export interface HumanTaskDecisionResult {
   run_state: string;
   run_output?: unknown;
 }
+
+/**
+ * The ledger-producer kind a plan-import row's `origin_kind` carries (task
+ * t22/t23, issue #45): devague's own `user`/`llm` origin, translated to the
+ * same `human`/`agent` vocabulary `LedgerRecord.origin.kind` uses elsewhere
+ * — this is the issue's "the system knows" (agent/llm) vs "the user
+ * reports" (human/user) split, and the entire reason task t23 exists.
+ */
+export type PlanImportOriginKind = "human" | "agent";
+
+/** One task of an imported plan snapshot (components.schemas.PlanImportTask). */
+export interface PlanImportTask {
+  task_ref: string;
+  summary: string;
+  instruction?: string;
+  origin_kind: PlanImportOriginKind;
+  /**
+   * The source system's own per-task decision status verbatim (devague:
+   * `proposed` | `confirmed` | `rejected`) — never a ledger authority
+   * value, but deliberately spelled so a `LedgerAuthorityValue`-shaped
+   * chip renders it correctly unmodified (see routes/PlanView.tsx).
+   */
+  source_status: string;
+  /** REAL per-task dependency edges — other `task_ref`s in this plan. */
+  depends_on: string[];
+  /** Absent for a rejected task, which occupies no wave. */
+  wave?: number;
+  acceptance_criteria: string[];
+  covers: string[];
+}
+
+/** One deviation of an imported plan snapshot (components.schemas.PlanImportDeviation). */
+export interface PlanImportDeviation {
+  deviation_ref: string;
+  what: string;
+  task_ref: string;
+  reason: string;
+  affects: string[];
+  origin_kind: PlanImportOriginKind;
+  /** devague: `proposed` | `approved` | `rejected` — note `approved`, not `confirmed`. */
+  source_status: string;
+  classification?: string;
+}
+
+/**
+ * One full plan-import snapshot (components.schemas.PlanImport, task t22):
+ * `GET /v1alpha1/plan-imports/{id}`'s body and the 201 body of `POST
+ * /v1alpha1/plan-imports`. Deliberately not a ledger record — see
+ * `migrations/0024_plan_imports.sql`.
+ */
+export interface PlanImport {
+  id: string;
+  slug: string;
+  title: string;
+  source_slug: string;
+  source_status: string;
+  source_digest: string;
+  imported_at: string;
+  tasks: PlanImportTask[];
+  deviations: PlanImportDeviation[];
+}
+
+/**
+ * One row of `GET /v1alpha1/plan-imports?slug=` (components.schemas.
+ * PlanImportSummary, task t23): the plan-level fields only — no
+ * `tasks`/`deviations`, since those are unpopulated on this path (an empty
+ * array here would misread as "zero tasks" rather than "not fetched").
+ */
+export interface PlanImportSummary {
+  id: string;
+  slug: string;
+  title: string;
+  source_slug: string;
+  source_status: string;
+  source_digest: string;
+  imported_at: string;
+}
+
+export interface PlanImportSummaryList {
+  items: PlanImportSummary[];
+}

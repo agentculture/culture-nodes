@@ -24,6 +24,8 @@ import (
 	"time"
 
 	"github.com/jackc/pgx/v5/pgxpool"
+	"github.com/minio/minio-go/v7"
+	"github.com/minio/minio-go/v7/pkg/credentials"
 )
 
 // StartPostgres starts postgres:17-alpine detached with Docker (choosing
@@ -109,7 +111,7 @@ func StartMinIO(ctx context.Context) (endpoint, accessKey, secretKey string, sto
 	}
 	endpoint = fmt.Sprintf("127.0.0.1:%s", port)
 
-	if waitErr := waitForMinIO(ctx, endpoint, 45*time.Second); waitErr != nil {
+	if waitErr := waitForMinIO(ctx, endpoint, rootUser, rootPassword, 45*time.Second); waitErr != nil {
 		stopFn()
 		return "", "", "", nil, fmt.Errorf("minio container %s did not become ready: %w", name, waitErr)
 	}
@@ -172,28 +174,65 @@ func pingPostgresOnce(ctx context.Context, url string) error {
 	return pool.Ping(connectCtx)
 }
 
-func waitForMinIO(ctx context.Context, endpoint string, timeout time.Duration) error {
+// waitForMinIO blocks until MinIO can actually serve an S3 operation.
+//
+// It deliberately does NOT stop at /minio/health/live. That endpoint reports
+// LIVENESS — the process is up and answering HTTP — which MinIO satisfies
+// well before it can serve object requests. A caller that proceeds on
+// liveness alone races initialization and gets:
+//
+//	check bucket nodes-artifacts-test-...: Server not initialized yet, please try again.
+//
+// which is what flaked three artifacts/s3 tests in CI. Liveness is kept as
+// the cheap first gate (it fails fast while the container is still starting),
+// then the loop performs a REAL S3 call — the same capability the tests need,
+// rather than a proxy for it. Waiting on the thing you are about to use is
+// the only probe that cannot lie.
+func waitForMinIO(ctx context.Context, endpoint, accessKey, secretKey string, timeout time.Duration) error {
 	healthURL := fmt.Sprintf("http://%s/minio/health/live", endpoint)
 	client := &http.Client{Timeout: 2 * time.Second}
 
 	deadline := time.Now().Add(timeout)
 	var lastErr error
 	for time.Now().Before(deadline) {
-		req, err := http.NewRequestWithContext(ctx, http.MethodGet, healthURL, nil)
-		if err != nil {
-			return fmt.Errorf("build health request: %w", err)
-		}
-		resp, reqErr := client.Do(req)
-		if reqErr == nil {
-			_ = resp.Body.Close()
-			if resp.StatusCode == http.StatusOK {
-				return nil
-			}
-			lastErr = fmt.Errorf("health check: status %d", resp.StatusCode)
-		} else {
-			lastErr = reqErr
+		lastErr = probeMinIOOnce(ctx, client, healthURL, endpoint, accessKey, secretKey)
+		if lastErr == nil {
+			return nil
 		}
 		time.Sleep(300 * time.Millisecond)
 	}
 	return lastErr
+}
+
+// probeMinIOOnce is one liveness check followed by one real S3 operation.
+func probeMinIOOnce(ctx context.Context, client *http.Client, healthURL, endpoint, accessKey, secretKey string) error {
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, healthURL, nil)
+	if err != nil {
+		return fmt.Errorf("build health request: %w", err)
+	}
+	resp, reqErr := client.Do(req)
+	if reqErr != nil {
+		return reqErr
+	}
+	_ = resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		return fmt.Errorf("health check: status %d", resp.StatusCode)
+	}
+
+	// Liveness passed; now prove the server will actually answer S3. Any
+	// bucket name works — BucketExists on an absent bucket is a successful
+	// call returning false, while an uninitialized server errors instead.
+	cl, err := minio.New(endpoint, &minio.Options{
+		Creds:  credentials.NewStaticV4(accessKey, secretKey, ""),
+		Secure: false,
+	})
+	if err != nil {
+		return fmt.Errorf("minio client: %w", err)
+	}
+	callCtx, cancel := context.WithTimeout(ctx, 2*time.Second)
+	defer cancel()
+	if _, err := cl.BucketExists(callCtx, "nodes-readiness-probe"); err != nil {
+		return fmt.Errorf("s3 not serving yet: %w", err)
+	}
+	return nil
 }

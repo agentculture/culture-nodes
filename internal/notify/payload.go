@@ -98,24 +98,36 @@ func BuildMessage(rawURL string, payload Payload) ([]byte, error) {
 	return json.Marshal(buildGenericMessage(payload))
 }
 
+// buildDiscordMessage renders p as one embed. An empty Actor is omitted
+// entirely — from the description's parenthetical and from the field list
+// — rather than rendered blank: a code-node or wait-node run legitimately
+// has no agent actor, and "absent" and "empty" are different facts, only
+// one of which is worth a line (issue #66).
 func buildDiscordMessage(p Payload) discordMessage {
 	title := trim(fmt.Sprintf("%s — %s", p.Workflow, p.Event), maxTitleChars)
-	description := trim(fmt.Sprintf("Run %s reached %s (actor: %s)", p.RunID, p.Event, p.Actor), maxDescriptionChars)
+	description := fmt.Sprintf("Run %s reached %s", p.RunID, p.Event)
+	if p.Actor != "" {
+		description += fmt.Sprintf(" (actor: %s)", p.Actor)
+	}
 	content := trim(fmt.Sprintf("%s: %s", p.Workflow, p.Event), maxTitleChars)
+
+	fields := []discordEmbedField{
+		{Name: "Run", Value: p.RunID, Inline: true},
+		{Name: "Workflow", Value: p.Workflow, Inline: true},
+		{Name: "Event", Value: p.Event, Inline: true},
+	}
+	if p.Actor != "" {
+		fields = append(fields, discordEmbedField{Name: "Actor", Value: p.Actor, Inline: true})
+	}
+	fields = append(fields, discordEmbedField{Name: "Dashboard", Value: p.DashboardLink, Inline: false})
 
 	return discordMessage{
 		Content: content,
 		Embeds: []discordEmbed{
 			{
 				Title:       title,
-				Description: description,
-				Fields: []discordEmbedField{
-					{Name: "Run", Value: p.RunID, Inline: true},
-					{Name: "Workflow", Value: p.Workflow, Inline: true},
-					{Name: "Event", Value: p.Event, Inline: true},
-					{Name: "Actor", Value: p.Actor, Inline: true},
-					{Name: "Dashboard", Value: p.DashboardLink, Inline: false},
-				},
+				Description: trim(description, maxDescriptionChars),
+				Fields:      fields,
 			},
 		},
 	}
@@ -123,12 +135,15 @@ func buildDiscordMessage(p Payload) discordMessage {
 
 // genericMessage is the flat-JSON shape sent to a non-Discord webhook
 // receiver. Field names are snake_case to match the wire convention this
-// codebase's other JSON APIs use (see internal/api).
+// codebase's other JSON APIs use (see internal/api). Actor is omitempty
+// for the same reason the Discord embed drops a blank actor field: a
+// receiver should be able to tell "this run has no agent actor" from "this
+// actor's name is the empty string".
 type genericMessage struct {
 	RunID         string `json:"run_id"`
 	Workflow      string `json:"workflow"`
 	Event         string `json:"event"`
-	Actor         string `json:"actor"`
+	Actor         string `json:"actor,omitempty"`
 	DashboardLink string `json:"dashboard_link"`
 }
 

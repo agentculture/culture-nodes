@@ -6,13 +6,14 @@
 // # Composition, not modification
 //
 // This package composes two things it never changes: the control plane's
-// public HTTP surface (GET /v1alpha1/events, GET /v1alpha1/runs/{id} --
-// read over plain net/http, no Go-level dependency on internal/api,
-// internal/engine, or internal/worker) and internal/notify's already-built,
-// already-tested webhook transport (ResolveWebhook/BuildMessage/Post,
-// composed here through the single Notify entry point). Everything new in
-// this package is the SSE consumer (sse.go), the durable cursor
-// (cursor.go), the run-detail fetch (rundetail.go), the lifecycle filter
+// public HTTP surface (GET /v1alpha1/events, GET /v1alpha1/runs/{id}, GET
+// /v1alpha1/workflows/{digest} -- read over plain net/http, no Go-level
+// dependency on internal/api, internal/engine, or internal/worker) and
+// internal/notify's already-built, already-tested webhook transport
+// (ResolveWebhook/BuildMessage/Post, composed here through the single
+// Notify entry point). Everything new in this package is the SSE consumer
+// (sse.go), the durable cursor (cursor.go), the run-detail fetch and the
+// cached digest->workflow-name lookup (rundetail.go), the lifecycle filter
 // (lifecycle.go), and the glue between one committed event and one
 // notify.Payload (daemon.go).
 //

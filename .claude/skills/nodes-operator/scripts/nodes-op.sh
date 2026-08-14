@@ -51,7 +51,8 @@ usage: nodes-op.sh <verb> [args]
             --yes                                  (required: this bills a session)
   actors                       registered actors (requires `ssh thor`)
 
-Actors known to `assign`: codex-thor, codex-orin (repo allowlists are per-host).
+Actors known to `assign`: codex-thor, codex-orin, developer (repo allowlists are per-host;
+`--repo <path>` pins one dispatch to an isolated worktree).
 EOF
   exit 1
 }
@@ -159,6 +160,7 @@ create)
     case "$1" in
       --yes) ASSUME_YES=1; shift;;
       --category) category="$2"; shift 2;;
+      --repo) repo_override="$2"; shift 2;;
       *) echo "nodes-op: unknown create option $1" >&2; exit 1;;
     esac
   done
@@ -195,6 +197,7 @@ grade)
       --actor) actor="$2"; shift 2;;
       --as) as_actor="$2"; shift 2;;
       --category) category="$2"; shift 2;;
+      --repo) repo_override="$2"; shift 2;;
       --node-run-ref) node_run_ref="$2"; shift 2;;
       --attempt-ref) attempt_ref="$2"; shift 2;;
       *) echo "nodes-op: unknown grade option $1" >&2; exit 1;;
@@ -254,9 +257,9 @@ print(d.get("id", ""), d.get("authority", ""), origin.get("kind", ""),
       "rating=" + str(data.get("rating", "")), "actor=" + str(data.get("evaluated_actor_id", "")))'
   ;;
 assign)
-  actor="${1:?usage: assign <codex-thor|codex-orin> \"instruction\" [opts]}"; shift
+  actor="${1:?usage: assign <codex-thor|codex-orin|developer> \"instruction\" [opts]}"; shift
   instruction="${1:?assign needs an instruction}"; shift
-  sandbox=read-only; timeout=15m; retries=1; outcome=completed; watch=1; category=""
+  sandbox=read-only; timeout=15m; retries=1; outcome=completed; watch=1; category=""; repo_override=""
   while [ $# -gt 0 ]; do
     case "$1" in
       --sandbox) sandbox="$2"; shift 2;;
@@ -264,6 +267,7 @@ assign)
       --retries) retries="$2"; shift 2;;
       --outcome) outcome="$2"; shift 2;;
       --category) category="$2"; shift 2;;
+      --repo) repo_override="$2"; shift 2;;
       --no-watch) watch=0; shift;;
       --yes) ASSUME_YES=1; shift;;
       *) echo "nodes-op: unknown assign option $1" >&2; exit 1;;
@@ -272,8 +276,13 @@ assign)
   case "$actor" in
     codex-thor) ref="actor://company/codex-thor@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"; repo=/home/thor/git/culture-nodes-agent;;
     codex-orin) ref="actor://company/codex-orin@sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"; repo=/home/orin/git/culture-nodes-agent;;
-    *) echo "nodes-op: unknown actor '$actor' (codex-thor|codex-orin)" >&2; exit 1;;
+    developer) ref="actor://company/developer@sha256:3333333333333333333333333333333333333333333333333333333333333333"; repo=/home/spark/git/culture-nodes;;
+    *) echo "nodes-op: unknown actor '$actor' (codex-thor|codex-orin|developer)" >&2; exit 1;;
   esac
+  # --repo pins a dispatch to one isolated worktree; the bridge's own
+  # repo_allowlist is the real gate (exact-match), so an unlisted path is
+  # refused by the actor rather than trusted here.
+  [ -n "$repo_override" ] && repo="$repo_override"
   need_yes
   wf=$(mktemp); trap 'rm -f "$wf" "$wf.json"' EXIT
   [[ "$outcome" =~ ^[a-z][a-z0-9_]*$ ]] || { echo "nodes-op: --outcome must match the workflow schema outcomeName pattern ^[a-z][a-z0-9_]*$ (got '$outcome')" >&2; exit 1; }

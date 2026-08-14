@@ -5,7 +5,7 @@
   "schema_version": 4,
   "status": "exported",
   "created": "2026-08-14T13:20:34Z",
-  "updated": "2026-08-14T13:29:06Z",
+  "updated": "2026-08-14T13:44:46Z",
   "targets": [
     {
       "id": "c1",
@@ -879,6 +879,14 @@
       "text": "#67 is the batch's largest item \u2014 an engine protocol plus a capability surface on four bridges \u2014 and the challenge pass raised its cost estimate; it is the first candidate to drop if the cycle runs long",
       "kind": "follow_up",
       "task_id": "t14",
+      "resolved": false,
+      "resolution": ""
+    },
+    {
+      "id": "r5",
+      "text": "t9 VERDICT (probe complete): the spark bridge service CANNOT push. origin is HTTPS not SSH, no SSH key is authorised for GitHub (Permission denied (publickey)), spark has no git credential.helper, and the running bridge process carries no GH_TOKEN or GITHUB_TOKEN in its environment. Therefore t13 takes the ARTIFACT fallback per the q7 decision, not git refs. Consequence beyond this batch: t25's preserve-branch push leg has been silently local-only on spark, so any delivery claim that a failed node's work is reachable by a pushed branch is false on this host",
+      "kind": "out_of_scope",
+      "task_id": "t13",
       "resolved": false,
       "resolution": ""
     }

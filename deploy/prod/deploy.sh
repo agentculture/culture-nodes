@@ -174,6 +174,28 @@ deploy_codex_bridge "$HOST"
 # installed as a uv tool the way the codex bridge is -- see the long comment
 # at the install step for why running it out of the agent checkout was wrong.
 
+# resolve_actor_row_id <actor_key>
+#
+# Echoes the newest registered actors(id) for a key, or nothing.
+#
+# A bridge reports `origin.actor_id` on the ledger claim it emits, and
+# ledger_records.origin_actor_id is a FOREIGN KEY into actors(id) — so the
+# bridge must carry the ROW ID, never the human-readable actor_key. Get that
+# wrong and the actor does its real work, answers correctly, and every
+# terminal commit then rolls back on a foreign-key violation. Nothing about
+# the symptom points at identity.
+#
+# The codex lane learned this live and inlined the lookup; its comment records
+# the incident ("the default codex-bridge id looped the first smoke run").
+# Then the human-inbox lane shipped `company/human-ops` and the notify lane
+# shipped `company/notify-discord`, both keys, both broken the same way —
+# which is what an inlined fix rather than a shared one buys you. Hence this
+# helper, and hence the deploy-lane test asserting no lane hardcodes a key.
+resolve_actor_row_id() { # actor_key
+  local actor_key=$1
+  ssh thor "cd $REMOTE_DIR/deploy/prod 2>/dev/null && docker compose --env-file ~/.culture-nodes/prod.env -f compose.thor.yml exec -T postgres psql -U nodes -d nodes -Atc \"SELECT id FROM actors WHERE actor_key = '$actor_key' ORDER BY revision DESC LIMIT 1\"" 2>/dev/null | tr -d '\r' || true
+}
+
 # assert_unit_healthy <host> <unit>
 #
 # Waits for a user unit to reach active AND STAY there. The staying part is
@@ -259,6 +281,13 @@ deploy_human_inbox() { # host
   }
   say "human-inbox units will exec $BRIDGE_BIN and $TRACKER_BIN on $host"
 
+  HUMAN_ACTOR_ID=$(resolve_actor_row_id "company/human-ops")
+  if [ -z "$HUMAN_ACTOR_ID" ]; then
+    say "WARNING: no registered actor row for company/human-ops yet — the bridge would report an actor_key as origin.actor_id and every terminal commit would roll back on the ledger FK; run deploy/prod/register-actor.sh and re-deploy"
+    HUMAN_ACTOR_ID=company/human-ops
+  else
+    say "human-inbox bridge origin.actor_id set to registered row $HUMAN_ACTOR_ID"
+  fi
   say "installing human-inbox non-secret config on $host"
   # Same generate-absolute-paths-at-install-time technique runner.env and
   # codex-bridge.json use: $HOME expands on the TARGET, so
@@ -268,7 +297,7 @@ deploy_human_inbox() { # host
 { echo "HUMAN_INBOX_BRIDGE_HOST=0.0.0.0"
   echo "HUMAN_INBOX_BRIDGE_PORT=8087"
   echo "HUMAN_INBOX_BRIDGE_STATE_DIR=$HOME/.culture-nodes/human-inbox-state"
-  echo "HUMAN_INBOX_BRIDGE_ACTOR_ID=company/human-ops"
+  echo "HUMAN_INBOX_BRIDGE_ACTOR_ID='"$HUMAN_ACTOR_ID"'"
 } > ~/.culture-nodes/human-inbox-bridge.env
 { echo "HUMAN_INBOX_TRACKER_STATE_DIR=$HOME/.culture-nodes/human-inbox-state"
   echo "HUMAN_INBOX_TRACKER_BRIDGE_URL=http://127.0.0.1:8087"
@@ -330,12 +359,18 @@ deploy_notify() { # host
     return 0
   }
 
+  NOTIFY_ACTOR_ID=$(resolve_actor_row_id "company/notify-discord")
+  if [ -z "$NOTIFY_ACTOR_ID" ]; then
+    say "WARNING: no registered actor row for company/notify-discord yet — skipping the notify bridge (it would report an actor_key as origin.actor_id and every terminal commit would roll back on the ledger FK); run deploy/prod/register-actor.sh and re-deploy"
+    return 0
+  fi
+  say "notify bridge origin.actor_id set to registered row $NOTIFY_ACTOR_ID"
   say "installing notify non-secret config on $host"
   ssh "$host" 'umask 077; mkdir -p ~/.culture-nodes
 { echo "NOTIFY_BRIDGE_HOST=0.0.0.0"
   echo "NOTIFY_BRIDGE_PORT=8088"
   echo "NOTIFY_BRIDGE_STATE_DIR=$HOME/.culture-nodes/notify-state"
-  echo "NOTIFY_BRIDGE_ACTOR_ID=company/notify-discord"
+  echo "NOTIFY_BRIDGE_ACTOR_ID='"$NOTIFY_ACTOR_ID"'"
 } > ~/.culture-nodes/notify-bridge.env'
 
   say "installing notify-bridge systemd user unit on $host"

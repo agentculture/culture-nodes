@@ -244,3 +244,43 @@ func TestUnitHealthAssertionCatchesACrashLoop(t *testing.T) {
 		t.Error("assert_unit_healthy probes is-active only once; it must re-check after an interval to catch a flapping unit")
 	}
 }
+
+// TestBridgeLanesResolveActorRowIdsNotKeys pins a bug that shipped twice.
+//
+// A bridge stamps `origin.actor_id` on the ledger claim it emits, and
+// ledger_records.origin_actor_id is a FOREIGN KEY into actors(id). Give a
+// bridge the human-readable actor_key instead of the row id and the actor
+// does its real work, answers correctly, and every terminal commit then
+// rolls back on a foreign-key violation — a symptom that points nowhere near
+// identity.
+//
+// The codex lane hit this live and fixed it inline. The human-inbox lane then
+// shipped `company/human-ops` and the notify lane shipped
+// `company/notify-discord`, both keys, both broken the same way, because the
+// fix was inlined rather than shared. The notify one was caught by an actual
+// live run:
+//
+//	violates foreign key constraint "ledger_records_origin_actor_id_fkey"
+//
+// Both lanes now resolve through resolve_actor_row_id.
+func TestBridgeLanesResolveActorRowIdsNotKeys(t *testing.T) {
+	script := deployScriptText(t)
+
+	if !strings.Contains(script, "resolve_actor_row_id() {") {
+		t.Fatal("deploy.sh defines no resolve_actor_row_id helper; each bridge lane resolving its own row id inline is exactly how this bug shipped twice")
+	}
+
+	for _, lane := range []struct{ envVar, actorKey string }{
+		{"HUMAN_INBOX_BRIDGE_ACTOR_ID", "company/human-ops"},
+		{"NOTIFY_BRIDGE_ACTOR_ID", "company/notify-discord"},
+	} {
+		// The assignment that writes the env file must not hardcode the key.
+		bad := lane.envVar + "=" + lane.actorKey
+		if strings.Contains(script, bad) {
+			t.Errorf("deploy.sh writes %q — that is an actor_key, but ledger_records.origin_actor_id references actors(id); resolve it with resolve_actor_row_id", bad)
+		}
+		if !strings.Contains(script, `resolve_actor_row_id "`+lane.actorKey+`"`) {
+			t.Errorf("no resolve_actor_row_id call for %q — the lane cannot know its registered row id", lane.actorKey)
+		}
+	}
+}

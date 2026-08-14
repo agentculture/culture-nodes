@@ -43,6 +43,8 @@ _ENV_STRING_FIELDS = {
     "COLLEAGUE_BRIDGE_HOST": "host",
     "COLLEAGUE_BRIDGE_DEFAULT_SUCCESS_OUTCOME": "default_success_outcome",
     "COLLEAGUE_BRIDGE_ACTOR_ID": "actor_id",
+    "COLLEAGUE_BRIDGE_PRESERVE_BRANCH_PREFIX": "preserve_branch_prefix",
+    "COLLEAGUE_BRIDGE_PRESERVE_REMOTE": "preserve_remote",
 }
 _ENV_INT_FIELDS = {
     "COLLEAGUE_BRIDGE_PORT": "port",
@@ -65,6 +67,8 @@ _ENV_BOOL_FIELDS = {
     "COLLEAGUE_BRIDGE_OPEN_PR": "open_pr",
     "COLLEAGUE_BRIDGE_ALLOW_DIRTY": "allow_dirty",
     "COLLEAGUE_BRIDGE_SESSION_CONCURRENCY_ENABLED": "session_concurrency_enabled",
+    "COLLEAGUE_BRIDGE_PRESERVE_ON_FAILURE": "preserve_on_failure",
+    "COLLEAGUE_BRIDGE_PRESERVE_PUSH": "preserve_push",
 }
 
 #: `COLLEAGUE_BRIDGE_REPO_ALLOWLIST` is a `os.pathsep`-joined list of
@@ -133,6 +137,25 @@ class Config:
     #: Domain outcome used for a `status: ok` TaskResult when the
     #: invocation's `input.success_outcome` is absent.
     default_success_outcome: str = "completed"
+
+    # --- preserve-on-failure (task t25, issue #49) ----------------------
+    #: Commit-on-failure toggle: when a node's dispatch ends in a genuine
+    #: technical failure (never a domain outcome), the bridge preserves the
+    #: workspace's changes on a freshly minted branch via git plumbing (see
+    #: `preserve.py`'s module docstring). Off means "never attempt it" —
+    #: e.g. for a bridge host where preservation is deliberately unwanted.
+    preserve_on_failure: bool = True
+    #: Prefix for the code-minted preserve branch name.
+    preserve_branch_prefix: str = "preserve/"
+    #: Push-or-local: when True (the default), a preserve commit is pushed
+    #: best-effort to `preserve_remote`; when the push fails or this is
+    #: False, the commit stays local-only — an ordinary recorded outcome
+    #: (task t25's own risk register: bridge-host push credentials for
+    #: thor/orin are unverified), never an error.
+    preserve_push: bool = True
+    #: The remote a preserve branch is pushed to, when `preserve_push` is
+    #: True.
+    preserve_remote: str = "origin"
 
     # --- HTTP surface ----------------------------------------------------
     host: str = "127.0.0.1"
@@ -229,6 +252,10 @@ _FILE_FIELDS = {
     "max_inflight_per_session_key": int,
     "session_concurrency_enabled": bool,
     "default_success_outcome": str,
+    "preserve_on_failure": bool,
+    "preserve_branch_prefix": str,
+    "preserve_push": bool,
+    "preserve_remote": str,
     "host": str,
     "port": int,
     "auth_token": str,

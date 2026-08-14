@@ -1,0 +1,9 @@
+[flake8]
+# Match black's line length so flake8 and black agree (mirrors the sibling
+# adapters -- this adapter is a separate uv project and does not inherit
+# the repo root's .flake8).
+max-line-length = 100
+
+# E203: whitespace before ':' -- conflicts with black's slice formatting.
+# W503: line break before binary operator -- black does the opposite (W504-style).
+extend-ignore = E203, W503

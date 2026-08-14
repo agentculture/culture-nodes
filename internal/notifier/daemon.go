@@ -94,12 +94,16 @@ func (c Config) normalize() (Config, error) {
 // cross-run event feed, a Cursor durably tracking position and delivery,
 // and a lifecycle filter feeding internal/notify.Notify.
 type Daemon struct {
-	cfg        Config
-	cursor     *Cursor
-	stream     *http.Client
-	detail     *http.Client
-	journal    notify.JournalFunc
-	diagnostic func(string)
+	cfg    Config
+	cursor *Cursor
+	stream *http.Client
+	detail *http.Client
+	// workflowKeys memoizes digest -> workflow key for the life of the
+	// process; the mapping is immutable, so no expiry is needed (see
+	// workflowKeyCache in rundetail.go).
+	workflowKeys *workflowKeyCache
+	journal      notify.JournalFunc
+	diagnostic   func(string)
 }
 
 // Option configures a Daemon at construction (NewDaemon).
@@ -139,8 +143,9 @@ func NewDaemon(cfg Config, cursor *Cursor, opts ...Option) (*Daemon, error) {
 		// stream has no client-side timeout: it holds one long-lived SSE
 		// connection whose lifetime is governed by Run's ctx, not by a
 		// fixed deadline.
-		stream: &http.Client{},
-		detail: &http.Client{Timeout: normalized.HTTPTimeout},
+		stream:       &http.Client{},
+		detail:       &http.Client{Timeout: normalized.HTTPTimeout},
+		workflowKeys: newWorkflowKeyCache(),
 	}
 	for _, opt := range opts {
 		opt(d)
@@ -278,14 +283,18 @@ func (d *Daemon) handleFrame(ctx context.Context, f Frame) error {
 		detail = runDetail{RunID: runID}
 	}
 
-	payload := notify.Payload{
-		RunID:         detail.RunID,
-		Workflow:      detail.WorkflowDigest,
-		Event:         f.Type,
-		Actor:         detail.Actor,
-		DashboardLink: strings.TrimRight(d.cfg.DashboardBase, "/") + "/runs/" + runID,
+	// Resolve the digest to the workflow's human-readable name, cached
+	// across events (the mapping is immutable). Fail-open for the same
+	// reason as above, one degree softer: a name is legibility, not
+	// correctness, so a failed lookup just leaves the notification showing
+	// the digest it would have shown before this lookup existed.
+	if key, keyErr := d.workflowKeys.lookup(ctx, d.detail, d.cfg.APIBase, detail.WorkflowDigest); keyErr != nil {
+		d.diagnosef("nodes-notifier: workflow-name lookup failed for event %s (digest %s): %v", f.ID, detail.WorkflowDigest, keyErr)
+	} else {
+		detail.WorkflowKey = key
 	}
-	notify.Notify(ctx, payload, d.journal)
+
+	notify.Notify(ctx, detail.payload(f.Type, d.cfg.DashboardBase), d.journal)
 	return nil
 }
 

@@ -40,6 +40,15 @@
 // traces back to one of Payload's five fields or a static label, never to
 // anything else.
 //
+// # Absent is not empty
+//
+// A field with no value is omitted rather than rendered blank: a run with
+// no agent actor (a code node, a wait node) produces a message with no
+// actor field at all -- no dangling "(actor: )", no empty embed field, no
+// "actor" key in the generic body (issue #66). "This run has no agent
+// actor" and "this actor's name is the empty string" are different facts,
+// and a receiver should be able to tell them apart.
+//
 // # Hermetic tests, by construction
 //
 // TestMain (testmain_test.go) unsets CULTURE_NODES_WEBHOOK_URL and

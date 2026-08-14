@@ -1,0 +1,47 @@
+# systemd user unit for the human-inbox GitHub merge tracker
+# (adapters/human-inbox/src/human_inbox_bridge/tracker.py, task t16's
+# sibling process). Auto-submits a parked inbox task the moment its
+# declared observable ("kind: github_pr_merged") reports a real merge —
+# manual submission through the bridge always remains available regardless.
+#
+# Deployed as a SECOND PERSISTENT UNIT beside human-inbox-bridge.service,
+# not a `--once` timer: the tracker's own module docstring names both
+# modes ("Run continuously with `python -m human_inbox_bridge.tracker` or
+# execute one cycle with `--once`"), and the continuous mode already
+# implements its own bounded poll loop (HUMAN_INBOX_TRACKER_POLL_SECONDS,
+# default 60s) with a lane-derived per-cycle GitHub request budget — one
+# request/cycle under the anonymous 60/hour ceiling by default, or up to
+# the configured budget under the authenticated 5,000/hour ceiling.
+# Wrapping `--once` in a systemd timer would just reimplement that same
+# interval as a second, redundant schedule. Restart=always mirrors
+# codex-bridge.service:
+# a long-running poller the operator wants back regardless of how it
+# exited, not only on a nonzero exit.
+#
+# THOR ONLY, same reasoning as the sibling bridge unit's header comment:
+# one logical human actor, so one tracker.
+#
+# Installed by deploy.sh's human-inbox lane to
+# ~/.config/systemd/user/human-inbox-tracker.service whether or not the
+# optional GITHUB_TOKEN was installed into ~/.culture-nodes/human-inbox.env.
+# With no token it reads public PRs anonymously; with an externally issued
+# token it authenticates for private repositories or higher cadence.
+#
+#   systemctl --user daemon-reload
+#   systemctl --user enable --now human-inbox-tracker
+#   journalctl --user -u human-inbox-tracker -f
+
+[Unit]
+Description=Culture Nodes human-inbox GitHub merge tracker (auto-submit on PR merge)
+After=network-online.target human-inbox-bridge.service
+Wants=human-inbox-bridge.service
+
+[Service]
+EnvironmentFile=%h/.culture-nodes/human-inbox-tracker.env
+EnvironmentFile=%h/.culture-nodes/human-inbox.env
+ExecStart=%h/.local/bin/human-inbox-tracker
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=default.target

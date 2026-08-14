@@ -1,11 +1,31 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { setAgentState } from "../agent-state/store";
 import { ApiError, listNodeRuns, listRuns } from "../api/client";
 import type { NodeRunListItem, Run } from "../api/types";
 import ErrorNotice from "../components/ErrorNotice";
 import JobsTable from "../components/JobsTable";
 import TimeRangeFilter from "../components/TimeRangeFilter";
+import { useSharedEvents, type SharedEventType } from "../hooks/useSharedEvents";
 import { useTimeRange } from "../hooks/useTimeRange";
+
+/**
+ * Every node-run/attempt lifecycle event that can change a row this view
+ * renders — a stable module-level reference, as useSharedEvents requires
+ * (issue #46).
+ */
+const JOBS_EVENT_TYPES = [
+  "dev.culture.nodes.node-run.ready",
+  "dev.culture.nodes.attempt.started",
+  "dev.culture.nodes.actor.accepted",
+  "dev.culture.nodes.attempt.completed",
+  "dev.culture.nodes.node-run.failed",
+  "dev.culture.nodes.attempt.retry-scheduled",
+  "dev.culture.nodes.runner.operation-completed",
+  "dev.culture.nodes.contract.rejected",
+] as const satisfies readonly SharedEventType[];
+
+/** Mirrors the Mesh view's attribution-refresh discipline (Mesh.tsx). */
+const REFRESH_DEBOUNCE_MS = 4000;
 
 /**
  * The jobs timeline (task t15): every node run across every run, newest
@@ -39,6 +59,29 @@ export function JobsTimeline() {
   const [error, setError] = useState<ApiError | null>(null);
   const [loadingMore, setLoadingMore] = useState(false);
   const [runsById, setRunsById] = useState<Record<string, Run>>({});
+  const [reloadKey, setReloadKey] = useState(0);
+  const reloadTimer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
+  const lastReload = useRef(0);
+
+  const scheduleReload = useCallback(() => {
+    if (reloadTimer.current) return;
+    const elapsed = Date.now() - lastReload.current;
+    const wait = Math.max(0, REFRESH_DEBOUNCE_MS - elapsed);
+    reloadTimer.current = setTimeout(() => {
+      reloadTimer.current = undefined;
+      lastReload.current = Date.now();
+      setReloadKey((key) => key + 1);
+    }, wait);
+  }, []);
+
+  useEffect(
+    () => () => {
+      if (reloadTimer.current) clearTimeout(reloadTimer.current);
+    },
+    [],
+  );
+
+  useSharedEvents(JOBS_EVENT_TYPES, scheduleReload);
 
   // Page one: refetched whenever the range changes. Pagination state resets
   // with it — a new range means a new result set, not more of the old one.
@@ -93,6 +136,40 @@ export function JobsTimeline() {
       });
     return () => controller.abort();
   }, [since, until]);
+
+  // The SSE-triggered background refresh (issue #46): skips the very first
+  // render (reloadKey === 0, already handled by the two effects above).
+  // Re-fetches page one for the current range and the name/category join
+  // alongside it — never nulls `items`, never touches agent-state. A
+  // refresh deliberately replaces `nextCursor` with the fresh page's own,
+  // which means any additional pages a user had "Load more"-d in are
+  // dropped in favor of an honest re-synced page one, rather than trying to
+  // merge server-side inserts into an already-paginated view.
+  useEffect(() => {
+    if (reloadKey === 0) return;
+    const controller = new AbortController();
+    Promise.all([
+      listNodeRuns(controller.signal, { updated_since: since, updated_until: until }),
+      listRuns(controller.signal, { updated_since: since, updated_until: until }),
+    ])
+      .then(([page, list]) => {
+        if (controller.signal.aborted) return;
+        setItems(page.items);
+        setNextCursor(page.next_cursor);
+        setRunsById(Object.fromEntries(list.items.map((run) => [run.id, run])));
+        setError(null);
+      })
+      .catch((cause: unknown) => {
+        if (controller.signal.aborted) return;
+        setError(
+          cause instanceof ApiError
+            ? cause
+            : new ApiError(0, String(cause), "check the browser console"),
+        );
+      });
+    return () => controller.abort();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [reloadKey]);
 
   const loadMore = useCallback(() => {
     if (!nextCursor) return;

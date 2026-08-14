@@ -36,10 +36,11 @@ from http.server import BaseHTTPRequestHandler, HTTPServer
 from pathlib import Path
 from typing import Any
 
-from colleague_bridge import colleague_cli, mapping, workspace
+from colleague_bridge import colleague_cli, mapping, preserve, workspace
 from colleague_bridge.async_runner import AsyncRunner
 from colleague_bridge.config import Config
 from colleague_bridge.idempotency import IdempotencyStore
+from colleague_bridge.session_registry import SessionRegistry
 
 logger = logging.getLogger("colleague_bridge.server")
 
@@ -67,6 +68,10 @@ class Bridge:
         self.cfg = cfg
         self.idempotency = IdempotencyStore(cfg.state_dir)
         self.async_runner = AsyncRunner(cfg)
+        # t6 (c44/h37): exactly one in-flight invocation per session_key;
+        # a concurrent collision forks cold rather than interleaving turns
+        # on one provider thread — see session_registry.py's docstring.
+        self.session_registry = SessionRegistry(max_inflight=cfg.max_inflight_per_session_key)
 
 
 def decide_async(cfg: Config, *, force_async: bool | None, max_steps: int | None) -> bool:
@@ -94,6 +99,22 @@ class BridgeHTTPServer(HTTPServer):
 
 class Handler(BaseHTTPRequestHandler):
     server_version = "colleague-bridge/0.1"
+    #: Bound how long one connection may hold this single-threaded server.
+    #:
+    #: protocol_version = "HTTP/1.1" turns keep-alive ON, and this server is
+    #: deliberately NOT a ThreadingHTTPServer (see the module docstring), so
+    #: it serves exactly one connection at a time. Without a timeout, a client
+    #: that opens a socket and then says nothing holds the accept loop
+    #: forever and every subsequent dispatch waits behind it — no error, no
+    #: log, just a bridge that stops answering.
+    #:
+    #: BaseHTTPRequestHandler turns a read timeout into close_connection, so
+    #: an idle peer is dropped rather than served badly. It bounds the gap
+    #: BETWEEN requests on a kept-alive connection, not the work itself:
+    #: dispatch runs after the request line is read, so a slow model turn is
+    #: unaffected.
+    timeout = 30
+
     protocol_version = "HTTP/1.1"
 
     # -- stdlib plumbing --------------------------------------------------
@@ -105,11 +126,15 @@ class Handler(BaseHTTPRequestHandler):
     def bridge(self) -> Bridge:
         return self.server.bridge  # type: ignore[attr-defined]
 
-    def _write_json(self, status: int, body: dict[str, Any]) -> None:
+    def _write_json(
+        self, status: int, body: dict[str, Any], *, extra_headers: dict[str, str] | None = None
+    ) -> None:
         payload = json.dumps(body).encode("utf-8")
         self.send_response(status)
         self.send_header("Content-Type", "application/json")
         self.send_header("Content-Length", str(len(payload)))
+        for name, value in (extra_headers or {}).items():
+            self.send_header(name, value)
         self.end_headers()
         try:
             self.wfile.write(payload)
@@ -291,6 +316,17 @@ class Handler(BaseHTTPRequestHandler):
             "model",
             "success_outcome",
             "permission_mode",
+            # t5: session_key (spec claim c3's eventual workstream key,
+            # ADR 0010 §4) and continuation_ref both stay out of the
+            # Bound-inputs block so neither ever reaches the model as
+            # prompt text. This bridge never actually ACTS on either (it
+            # has no resume verb — mapping.py always returns
+            # continuation_ref: null, issue #62), but a value it ignores
+            # must still be excluded, not merely unused: forwarding it
+            # into the prompt anyway would leak a transport-layer secret
+            # (session_key) or a stale handle into the session text.
+            "session_key",
+            "continuation_ref",
         }
         _extras = {k: v for k, v in raw_input.items() if k not in _transport_keys}
         if _extras:
@@ -360,6 +396,16 @@ class Handler(BaseHTTPRequestHandler):
         mode = raw_input.get("mode") or None
         success_outcome = raw_input.get("success_outcome") or None
         incomplete_outcome = raw_input.get("incomplete_outcome") or None
+        session_key = raw_input.get("session_key") or None
+        if session_key is not None and not isinstance(session_key, str):
+            self._write_json(
+                400,
+                {
+                    "error": "input.session_key must be a string",
+                    "class": mapping.CLASS_ACTOR_REJECTED_INPUT,
+                },
+            )
+            return
 
         ctx = mapping.InvocationContext(
             run_id=str(body.get("run_id") or ""),
@@ -369,13 +415,61 @@ class Handler(BaseHTTPRequestHandler):
             incomplete_outcome=incomplete_outcome,
         )
 
+        # §13.1's continuation_ref is a TOP-LEVEL request field, a sibling of
+        # run_id/node_run_id/attempt_id — not nested under `input`. Reading it
+        # from `input` would mean every real engine dispatch silently ran cold
+        # while looking correct, which is the bug t5 fixed in the other two
+        # bridges.
+        continuation_ref = body.get("continuation_ref") or raw_input.get("continuation_ref") or None
+
+        # t6 (c44/h37): exactly one in-flight invocation per session_key.
+        # `held` is True iff THIS invocation claimed the slot and therefore
+        # owes it a `release()`; `forked` is True iff another invocation
+        # already held it. A fork must ALSO drop the continuation_ref —
+        # deviation d1 gave colleague a real resume handle, so forking while
+        # still passing `--continue` would put two turns on one work item,
+        # exactly what the session guard exists to prevent.
+        held = False
+        forked = False
+        if cfg.session_concurrency_enabled and session_key:
+            held = self.bridge.session_registry.acquire(session_key, idem_key)
+            forked = not held
+            if forked:
+                # Deliberately cold. Resuming here would put a second turn on
+                # a work item another invocation is mid-way through — the
+                # exact interleaving the guard exists to prevent.
+                continuation_ref = None
+
         if decide_async(cfg, force_async=force_async, max_steps=max_steps):
             self._dispatch_async(
-                idem_key, body, ctx, instruction, resolved_repo, role, max_steps, mode
+                idem_key,
+                body,
+                ctx,
+                instruction,
+                resolved_repo,
+                role,
+                max_steps,
+                mode,
+                session_key=session_key,
+                held=held,
+                forked=forked,
+                continuation_ref=continuation_ref,
             )
             return
 
-        self._dispatch_sync(idem_key, ctx, instruction, resolved_repo, role, max_steps, mode)
+        self._dispatch_sync(
+            idem_key,
+            ctx,
+            instruction,
+            resolved_repo,
+            role,
+            max_steps,
+            mode,
+            session_key=session_key,
+            held=held,
+            forked=forked,
+            continuation_ref=continuation_ref,
+        )
 
     def _dispatch_sync(
         self,
@@ -386,15 +480,35 @@ class Handler(BaseHTTPRequestHandler):
         role: str | None,
         max_steps: int | None,
         mode: str | None,
+        *,
+        session_key: str | None = None,
+        held: bool = False,
+        forked: bool = False,
+        continuation_ref: str | None = None,
     ) -> None:
         cfg = self.bridge.cfg
         # t10: capture the workspace's starting point as close as possible
         # to the moment colleague is actually spawned, so head_before/status
         # bracket the session rather than the whole request-handling ladder.
         handle = workspace.begin(repo)
-        result = colleague_cli.run_sync(
-            cfg, instruction, repo, role=role, max_steps=max_steps, mode=mode
-        )
+        try:
+            result = colleague_cli.run_sync(
+                cfg,
+                instruction,
+                repo,
+                role=role,
+                max_steps=max_steps,
+                mode=mode,
+                continuation_ref=continuation_ref,
+            )
+        finally:
+            # t6 (c44/h37): the provider call is over (successfully or
+            # not) — release the session_key slot so the NEXT invocation
+            # for it (queued behind this one in wall-clock time, not in a
+            # literal queue) may claim it instead of forking.
+            if held:
+                self.bridge.session_registry.release(session_key, idem_key)
+        measured = workspace.measure(handle)
         response = mapping.sync_response(
             result.task_result,
             ctx,
@@ -402,8 +516,28 @@ class Handler(BaseHTTPRequestHandler):
             actor_id=cfg.actor_id,
             created_at=_now_iso(),
             timed_out=result.timed_out,
-            workspace_measured=workspace.measure(handle),
+            workspace_measured=measured,
         )
+        # t25 (c26/h17, c41/h34): a genuine technical failure (never a
+        # domain outcome — mapping.sync_response only ever answers 200 for
+        # one) gets its workspace changes preserved on a branch, bridge-side,
+        # before this response ever reaches the caller. Gated on the status
+        # THIS response already carries, never on this module's own reading
+        # of colleague's result.
+        if response.status_code != 200:
+            preserve_result = preserve.preserve_on_failure(
+                repo,
+                measured,
+                enabled=cfg.preserve_on_failure,
+                push=cfg.preserve_push,
+                remote=cfg.preserve_remote,
+                branch_prefix=cfg.preserve_branch_prefix,
+                run_id=ctx.run_id,
+                node_run_id=ctx.node_run_id,
+                attempt_id=ctx.attempt_id,
+                reason=str(response.body.get("error") or "bridge reported a non-success status"),
+            )
+            response.body["preserve"] = preserve_result.to_dict()
         # A real dispatch happened (colleague was actually invoked) — durably
         # remember the outcome so a redelivered attempt replays it instead of
         # running colleague a second time (PRD §20.3). A pre-dispatch
@@ -413,7 +547,17 @@ class Handler(BaseHTTPRequestHandler):
         self.bridge.idempotency.put(
             idem_key, response.status_code, response.body, request_fingerprint=instruction
         )
-        self._write_json(response.status_code, response.body)
+        # capacity_exhausted's delay (t5, deviation d4) rides the HTTP
+        # Retry-After header, never the JSON body — internal/actors/
+        # client.go reads it from exactly that header and nowhere else.
+        extra_headers = {}
+        if response.retry_after_seconds is not None:
+            extra_headers["Retry-After"] = str(max(0, round(response.retry_after_seconds)))
+        # t6 (c44/h37): a fork must be observable on the wire, not merely
+        # inferred after the fact — see session_registry.py.
+        if forked:
+            extra_headers["X-Session-Fork"] = "1"
+        self._write_json(response.status_code, response.body, extra_headers=extra_headers or None)
 
     def _dispatch_async(
         self,
@@ -425,12 +569,19 @@ class Handler(BaseHTTPRequestHandler):
         role: str | None,
         max_steps: int | None,
         mode: str | None,
+        *,
+        session_key: str | None = None,
+        held: bool = False,
+        forked: bool = False,
+        continuation_ref: str | None = None,
     ) -> None:
         cfg = self.bridge.cfg
         callback = body.get("callback") or {}
         callback_url = callback.get("url") if isinstance(callback, dict) else None
         callback_token = callback.get("token") if isinstance(callback, dict) else None
         if not callback_url or not callback_token:
+            if held:
+                self.bridge.session_registry.release(session_key, idem_key)
             self._write_json(
                 400,
                 {
@@ -448,9 +599,17 @@ class Handler(BaseHTTPRequestHandler):
         handle = workspace.begin(repo)
         try:
             start = colleague_cli.spawn_background(
-                cfg, instruction, repo, role=role, max_steps=max_steps, mode=mode
+                cfg,
+                instruction,
+                repo,
+                role=role,
+                max_steps=max_steps,
+                mode=mode,
+                continuation_ref=continuation_ref,
             )
         except colleague_cli.BackgroundDispatchError as exc:
+            if held:
+                self.bridge.session_registry.release(session_key, idem_key)
             self._write_json(
                 503,
                 {
@@ -467,7 +626,11 @@ class Handler(BaseHTTPRequestHandler):
             "supports_cancellation": True,
         }
         self.bridge.idempotency.put(idem_key, 202, accepted_body, request_fingerprint=instruction)
-        self._write_json(202, accepted_body)
+        # t6 (c44/h37): observable on the wire even for the fast 202 path —
+        # see session_registry.py and _dispatch_sync's matching header.
+        self._write_json(
+            202, accepted_body, extra_headers={"X-Session-Fork": "1"} if forked else None
+        )
 
         self.bridge.async_runner.start(
             start=start,
@@ -477,6 +640,13 @@ class Handler(BaseHTTPRequestHandler):
             callback_token=callback_token,
             heartbeat_after_seconds=cfg.heartbeat_after_seconds,
             workspace_handle=handle,
+            # t6 (c44/h37): the background poller releases this
+            # session_key's slot once colleague's turn actually finishes —
+            # None here whenever `held` is False (no slot to release,
+            # forked or unserialized).
+            session_registry=self.bridge.session_registry if held else None,
+            session_key=session_key if held else None,
+            session_holder=idem_key,
         )
 
 

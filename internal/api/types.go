@@ -140,9 +140,23 @@ func runOut(r engine.Run, usage postgres.UsageRollup, meta runMetadata) RunOut {
 //     per-currency, never summed into one misleading number.
 //   - When no attempt in scope reported a cost at all, neither Cost,
 //     Currency, nor CostByCurrency is set.
+//   - CachedInputTokens/ReasoningTokens (ADR 0009, task t2) sum
+//     postgres.UsageRollup's own fields the same way InputTokens/OutputTokens
+//     do: an attempt that reported tokens but no cache telemetry at all
+//     contributes nothing to CachedInputTokens, never a fabricated zero
+//     counted as "measured 0% cached" — see UsageRollup's doc comment. They
+//     are NOT independently gated by their own reported/not-reported count;
+//     AttemptsReported/AttemptsNotReported remains the one coverage signal,
+//     per the ADR's explicit instruction not to invent a second sentinel.
+//   - CacheRatio is CachedInputTokens/InputTokens, computed only when
+//     InputTokens > 0 — never a fabricated 0/0 ratio when nothing in scope
+//     reported any input tokens at all. Omitted (nil) in that case.
 type UsageOut struct {
 	InputTokens         int64             `json:"input_tokens"`
 	OutputTokens        int64             `json:"output_tokens"`
+	CachedInputTokens   int64             `json:"cached_input_tokens"`
+	ReasoningTokens     int64             `json:"reasoning_tokens"`
+	CacheRatio          *float64          `json:"cache_ratio,omitempty"`
 	Cost                *float64          `json:"cost,omitempty"`
 	Currency            string            `json:"currency,omitempty"`
 	CostByCurrency      []CurrencyCostOut `json:"cost_by_currency,omitempty"`
@@ -166,8 +180,14 @@ func usageOut(r postgres.UsageRollup) *UsageOut {
 	out := &UsageOut{
 		InputTokens:         r.InputTokens,
 		OutputTokens:        r.OutputTokens,
+		CachedInputTokens:   r.CachedInputTokens,
+		ReasoningTokens:     r.ReasoningTokens,
 		AttemptsReported:    r.AttemptsReported,
 		AttemptsNotReported: r.AttemptsNotReported,
+	}
+	if r.InputTokens > 0 {
+		ratio := float64(r.CachedInputTokens) / float64(r.InputTokens)
+		out.CacheRatio = &ratio
 	}
 	switch len(r.Cost) {
 	case 0:
@@ -192,26 +212,46 @@ type RunListOut struct {
 }
 
 // TokenOut is one control token, as documented in components.schemas.Token.
+//
+// A token has a parent OR an origin event OR neither (the entry token) —
+// never both. OriginEventID is how a run-detail surface renders an
+// event-pickup token honestly: it is a ROOT, because nothing in this run
+// handed it control, but it is an explained root rather than an orphan
+// (issue #43, review finding D4). A consumer that draws the ancestry tree
+// must therefore tolerate several roots per run and label the ones carrying
+// origin_event_id with the fact that created them.
 type TokenOut struct {
 	ID            string     `json:"id"`
 	NodeID        string     `json:"node_id"`
 	State         string     `json:"state"`
 	ParentTokenID string     `json:"parent_token_id,omitempty"`
+	OriginEventID string     `json:"origin_event_id,omitempty"`
 	CreatedAt     time.Time  `json:"created_at"`
 	ConsumedAt    *time.Time `json:"consumed_at,omitempty"`
 }
 
 // AttemptOut is one dispatch attempt, as documented in components.schemas.Attempt.
+//
+// PreserveBranch/PreservePushed/PreserveRemote (task t26, issue #49, spec
+// claim c32 / honesty h21; migrations/0025_attempt_preserve_branch.sql) are
+// task t25's bridge-minted preserve-on-failure branch, present only on an
+// attempt whose bridge actually committed one — most attempts, including
+// every successful one, carry none. PreserveBranch is the presence check:
+// PreservePushed/PreserveRemote are only ever populated alongside it (see
+// the migration's own header), so a reader checks PreserveBranch first.
 type AttemptOut struct {
-	ID            string          `json:"id"`
-	NodeRunID     string          `json:"node_run_id"`
-	AttemptNumber int             `json:"attempt_number"`
-	ActorID       string          `json:"actor_id,omitempty"`
-	Status        string          `json:"status"`
-	FencingToken  int64           `json:"fencing_token,omitempty"`
-	Result        json.RawMessage `json:"result,omitempty"`
-	StartedAt     time.Time       `json:"started_at"`
-	CompletedAt   *time.Time      `json:"completed_at,omitempty"`
+	ID             string          `json:"id"`
+	NodeRunID      string          `json:"node_run_id"`
+	AttemptNumber  int             `json:"attempt_number"`
+	ActorID        string          `json:"actor_id,omitempty"`
+	Status         string          `json:"status"`
+	FencingToken   int64           `json:"fencing_token,omitempty"`
+	Result         json.RawMessage `json:"result,omitempty"`
+	StartedAt      time.Time       `json:"started_at"`
+	CompletedAt    *time.Time      `json:"completed_at,omitempty"`
+	PreserveBranch string          `json:"preserve_branch,omitempty"`
+	PreservePushed *bool           `json:"preserve_pushed,omitempty"`
+	PreserveRemote string          `json:"preserve_remote,omitempty"`
 }
 
 // NodeRunOut is one node run with its attempts nested, as documented in

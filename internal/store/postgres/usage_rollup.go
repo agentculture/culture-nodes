@@ -38,6 +38,25 @@ type UsageRollup struct {
 	InputTokens  int64
 	OutputTokens int64
 
+	// CachedInputTokens/ReasoningTokens sum migrations/0017's extended
+	// columns (usage_cached_input_tokens, usage_reasoning_tokens) over the
+	// same attempts InputTokens/OutputTokens sums -- NOT a second,
+	// independently-scoped population. Each of those two columns is
+	// independently nullable *within* a reported block (docs/adr/
+	// 0009-usage-telemetry-extension.md): an attempt that reported
+	// input/output tokens but no cache telemetry at all has NULL here, and
+	// SQL's SUM already does exactly the right thing with that -- it
+	// contributes nothing, the same way an entirely-unreported attempt
+	// contributes nothing to InputTokens. There is deliberately no second
+	// "how many attempts reported cache telemetry" sentinel alongside
+	// AttemptsReported/AttemptsNotReported: the ADR's honesty rule is about
+	// not fabricating a per-attempt zero, not about tracking a second
+	// coverage count for every optional column that could ever be added.
+	// A consumer computing a cache ratio must still gate on InputTokens > 0
+	// (never divide by a zero denominator into a fabricated ratio).
+	CachedInputTokens int64
+	ReasoningTokens   int64
+
 	// AttemptsReported counts the attempts InputTokens/OutputTokens summed.
 	// AttemptsNotReported counts every other attempt in scope: one that
 	// completed (successfully or not) with no Usage block reported at all.
@@ -116,12 +135,18 @@ func (eq engineQueries) usageRollup(ctx context.Context, whereSQL, scopeID strin
 		SELECT
 			COALESCE(SUM(usage_input_tokens), 0),
 			COALESCE(SUM(usage_output_tokens), 0),
+			COALESCE(SUM(usage_cached_input_tokens), 0),
+			COALESCE(SUM(usage_reasoning_tokens), 0),
 			COUNT(*) FILTER (WHERE usage_input_tokens IS NOT NULL)::int,
 			COUNT(*) FILTER (WHERE usage_input_tokens IS NULL)::int
 		FROM attempts
 		WHERE `+whereSQL,
 		scopeID,
-	).Scan(&rollup.InputTokens, &rollup.OutputTokens, &rollup.AttemptsReported, &rollup.AttemptsNotReported)
+	).Scan(
+		&rollup.InputTokens, &rollup.OutputTokens,
+		&rollup.CachedInputTokens, &rollup.ReasoningTokens,
+		&rollup.AttemptsReported, &rollup.AttemptsNotReported,
+	)
 	if err != nil {
 		return UsageRollup{}, fmt.Errorf("totals: %w", err)
 	}
@@ -170,6 +195,8 @@ func (eq engineQueries) NodeRunUsages(ctx context.Context, nodeRunIDs []string) 
 		SELECT node_run_id,
 			COALESCE(SUM(usage_input_tokens), 0),
 			COALESCE(SUM(usage_output_tokens), 0),
+			COALESCE(SUM(usage_cached_input_tokens), 0),
+			COALESCE(SUM(usage_reasoning_tokens), 0),
 			COUNT(*) FILTER (WHERE usage_input_tokens IS NOT NULL)::int,
 			COUNT(*) FILTER (WHERE usage_input_tokens IS NULL)::int
 		FROM attempts
@@ -185,7 +212,11 @@ func (eq engineQueries) NodeRunUsages(ctx context.Context, nodeRunIDs []string) 
 			nodeRunID string
 			rollup    UsageRollup
 		)
-		if err := rows.Scan(&nodeRunID, &rollup.InputTokens, &rollup.OutputTokens, &rollup.AttemptsReported, &rollup.AttemptsNotReported); err != nil {
+		if err := rows.Scan(
+			&nodeRunID, &rollup.InputTokens, &rollup.OutputTokens,
+			&rollup.CachedInputTokens, &rollup.ReasoningTokens,
+			&rollup.AttemptsReported, &rollup.AttemptsNotReported,
+		); err != nil {
 			rows.Close()
 			return nil, fmt.Errorf("postgres: engine: NodeRunUsages: totals: scan: %w", err)
 		}

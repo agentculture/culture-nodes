@@ -86,6 +86,75 @@ def test_error_status_without_error_message_still_reports_execution_failure():
     assert c.error_class == mapping.CLASS_EXECUTION
 
 
+# ---------------------------------------------------------------------------
+# classify() — capacity_exhausted (task t5, deviation d4): same engine-side
+# class as the other two bridges (internal/actors/errors.go, t8/t9);
+# colleague's own error text is the only signal this bridge has to detect
+# it from (docs/contract.md's TaskResult carries no structured error code).
+# ---------------------------------------------------------------------------
+
+
+def test_rate_limit_error_text_classifies_as_capacity_exhausted():
+    c = mapping.classify(
+        _error_result(error="engine raised: rate_limit_error: too many requests"),
+        CTX,
+        default_success_outcome="completed",
+    )
+    assert c.domain is False
+    assert c.error_class == mapping.CLASS_CAPACITY_EXHAUSTED
+
+
+def test_ordinary_error_is_still_plain_execution_not_capacity_exhausted():
+    c = mapping.classify(_error_result(), CTX, default_success_outcome="completed")
+    assert c.error_class == mapping.CLASS_EXECUTION
+    assert c.error_class != mapping.CLASS_CAPACITY_EXHAUSTED
+
+
+def test_capacity_exhausted_extracts_a_named_retry_after_delay():
+    c = mapping.classify(
+        _error_result(error="quota exhausted, retry after 60 seconds"),
+        CTX,
+        default_success_outcome="completed",
+    )
+    assert c.error_class == mapping.CLASS_CAPACITY_EXHAUSTED
+    assert c.retry_after_seconds == 60.0
+
+
+def test_capacity_exhausted_without_a_named_delay_reports_none_not_zero():
+    c = mapping.classify(
+        _error_result(error="session limit reached"), CTX, default_success_outcome="completed"
+    )
+    assert c.error_class == mapping.CLASS_CAPACITY_EXHAUSTED
+    assert c.retry_after_seconds is None
+
+
+def test_sync_response_capacity_exhausted_surfaces_retry_after_on_the_response_not_the_body():
+    r = mapping.sync_response(
+        _error_result(error="rate_limit_error: retry after 15 seconds"),
+        CTX,
+        default_success_outcome="completed",
+        actor_id="a",
+        created_at="now",
+    )
+    assert r.status_code == 500
+    assert r.body["class"] == mapping.CLASS_CAPACITY_EXHAUSTED
+    assert r.retry_after_seconds == 15.0
+    assert "retry_after_seconds" not in r.body
+
+
+def test_terminal_event_capacity_exhausted_is_failed_kind_with_the_class():
+    ev = mapping.terminal_event(
+        _error_result(error="usage limit reached"),
+        CTX,
+        default_success_outcome="completed",
+        actor_id="a",
+        created_at="now",
+    )
+    assert ev.kind == "failed"
+    assert ev.payload["class"] == mapping.CLASS_CAPACITY_EXHAUSTED
+    assert "retry_after_seconds" not in ev.payload
+
+
 def test_incomplete_without_declared_outcome_is_execution_failure_never_success():
     c = mapping.classify(_incomplete_result(), CTX, default_success_outcome="completed")
     assert c.domain is False
@@ -130,6 +199,9 @@ def test_missing_task_result_entirely_is_an_execution_failure():
 def test_usage_maps_prompt_and_completion_tokens_cost_and_currency_are_null():
     usage = mapping.usage_from_task_result(_ok_result())
     assert usage == {"input_tokens": 10, "output_tokens": 5, "cost": None, "currency": None}
+    assert "cached_input_tokens" not in usage
+    assert usage.get("cached_input_tokens") is None
+    assert "reasoning_tokens" not in usage
 
 
 def test_usage_defaults_to_zero_when_absent():
@@ -196,9 +268,45 @@ def test_sync_response_ok_is_200_with_outcome_and_output():
     )
     assert r.status_code == 200
     assert r.body["outcome"] == "completed"
+    assert r.body["termination_reason"] == "ok"
     assert r.body["output"]["summary"] == "did the thing"
-    assert r.body["continuation_ref"] is None
+    # Deviation d1: colleague DOES resume (`work --continue`), so this is a
+    # real handle — _ok_result's work-item id, offered back for the next turn.
+    assert r.body["continuation_ref"] == "abc123"
     assert r.body["artifact_refs"] == []
+
+
+def test_sync_response_continuation_ref_is_the_colleague_work_item_id():
+    """Deviation d1 superseded t5's null here.
+
+    t5 shipped `continuation_ref: None` for colleague on the premise that it
+    had no resume verb. It does: `colleague work --continue ID|last`
+    (upstream #167), present in the installed CLI's own --help. The work-item
+    id on TaskResult IS that handle, so this bridge now offers a real one
+    like claude's session_id and codex's thread_id."""
+    r = mapping.sync_response(
+        _ok_result(task_id="abc123"),
+        CTX,
+        default_success_outcome="completed",
+        actor_id="a",
+        created_at="now",
+    )
+    assert r.body["continuation_ref"] == "abc123"
+
+
+def test_sync_response_continuation_ref_is_none_when_there_is_no_work_item_id():
+    """An absent or blank id must be a null, never an empty string: a
+    falsy-but-present handle would make the engine believe a resumable
+    session exists and dispatch `--continue ""`."""
+    for bad in (None, "", "   "):
+        r = mapping.sync_response(
+            _ok_result(task_id=bad),
+            CTX,
+            default_success_outcome="completed",
+            actor_id="a",
+            created_at="now",
+        )
+        assert r.body["continuation_ref"] is None, bad
 
 
 def test_sync_response_error_is_execution_failure_not_200():
@@ -267,7 +375,22 @@ def test_terminal_event_ok_is_completed_kind():
     )
     assert ev.kind == "completed"
     assert ev.payload["outcome"] == "completed"
+    assert ev.payload["termination_reason"] == "ok"
     assert ev.payload["ledger_delta"]["records"][0]["authority"] == "proposed"
+
+
+def test_terminal_event_completed_payload_carries_the_work_item_id():
+    """The async twin: ADR 0010 §2's CompletedPayload field is now populated
+    for all three backends rather than two (deviation d1)."""
+    ev = mapping.terminal_event(
+        _ok_result(task_id="abc123"),
+        CTX,
+        default_success_outcome="completed",
+        actor_id="a",
+        created_at="now",
+    )
+    assert ev.kind == "completed"
+    assert ev.payload["continuation_ref"] == "abc123"
 
 
 def test_terminal_event_error_is_failed_kind_with_execution_class():
@@ -464,7 +587,14 @@ def test_sync_response_failure_carries_usage_from_task_result():
     # control plane's actors client parses exactly this shape out of a non-2xx
     # response (usageFromErrorBody in internal/actors/client.go), so a renamed
     # or nested key would silently cost failed attempts their accounting.
-    assert set(r.body) == {"error", "class", "workspace_measured", "usage"}
+    assert set(r.body) == {
+        "error",
+        "class",
+        "workspace_measured",
+        "usage",
+        "termination_reason",
+    }
+    assert r.body["termination_reason"] == "error"
     assert r.body["usage"] == {
         "input_tokens": 1,
         "output_tokens": 0,
@@ -520,6 +650,7 @@ def test_terminal_event_failed_carries_usage_from_task_result():
         created_at="now",
     )
     assert ev.kind == "failed"
+    assert ev.payload["termination_reason"] == "error"
     assert ev.payload["usage"] == {
         "input_tokens": 1,
         "output_tokens": 0,

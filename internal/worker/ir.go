@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/agentculture/culture-nodes/internal/contracts"
+	"github.com/agentculture/culture-nodes/internal/engine"
 )
 
 // The worker's view of the normalized IR.
@@ -28,7 +29,14 @@ type workflowSpec struct {
 	Digest  string
 	Name    string
 	Version string
-	Nodes   map[string]*nodeSpec
+	// Budget is the declared economic contract this definition pins (task
+	// t11, spec claim c6). Zero on a field means the author bounded nothing
+	// on that axis; the compiler refuses an authored 0, so a zero here can
+	// only ever mean absent. It is engine.Budget rather than a fourth
+	// hand-rolled struct because the value is the same value the engine
+	// loads — only the decoding is per package (see this file's header).
+	Budget engine.Budget
+	Nodes  map[string]*nodeSpec
 }
 
 // nodeSpec is the worker's view of one node.
@@ -67,6 +75,9 @@ type nodeSpec struct {
 	ApproverRef string
 	// Until is a wait node's resume condition, carried verbatim.
 	Until json.RawMessage
+	// JoinPolicy is a join node's barrier policy (all | any | quorum),
+	// echoed into the joined output so downstream guards can read it.
+	JoinPolicy string
 	// PreRun/PostRun are the node's declared code hooks (task t14, spec claim
 	// c37), nil when the node declares neither. The compiler's checkNodeHooks
 	// already refused any node but an agent from declaring one, so the worker
@@ -175,6 +186,13 @@ type irDocument struct {
 		Version string `json:"version"`
 	} `json:"metadata"`
 	Spec struct {
+		// Budget is a pointer because the compiler expands no defaults for
+		// it: an absent block is the IR saying "unbudgeted", not an omission
+		// to fill in.
+		Budget *struct {
+			MaxSessions      *int   `json:"maxSessions"`
+			MaxUncachedInput *int64 `json:"maxUncachedInput"`
+		} `json:"budget"`
 		Nodes map[string]*irNode `json:"nodes"`
 	} `json:"spec"`
 }
@@ -189,7 +207,10 @@ type irNode struct {
 	ApproverRef string          `json:"approverRef"`
 	Deadline    string          `json:"deadline"`
 	Until       json.RawMessage `json:"until"`
-	Policy      *struct {
+	Join        *struct {
+		Policy string `json:"policy"`
+	} `json:"join"`
+	Policy *struct {
 		Timeout string `json:"timeout"`
 	} `json:"policy"`
 	PreRun *struct {
@@ -213,6 +234,14 @@ func loadWorkflowSpec(digest string, ir []byte) (*workflowSpec, error) {
 		Name:    doc.Metadata.Name,
 		Version: doc.Metadata.Version,
 		Nodes:   make(map[string]*nodeSpec, len(doc.Spec.Nodes)),
+	}
+	if b := doc.Spec.Budget; b != nil {
+		if b.MaxSessions != nil {
+			spec.Budget.MaxSessions = *b.MaxSessions
+		}
+		if b.MaxUncachedInput != nil {
+			spec.Budget.MaxUncachedInput = *b.MaxUncachedInput
+		}
 	}
 	for id, raw := range doc.Spec.Nodes {
 		node, err := decodeNode(id, raw)
@@ -238,6 +267,9 @@ func decodeNode(id string, raw *irNode) (*nodeSpec, error) {
 		ApproverRef: raw.ApproverRef,
 		Until:       raw.Until,
 		Acceptance:  raw.Acceptance,
+	}
+	if raw.Join != nil {
+		node.JoinPolicy = raw.Join.Policy
 	}
 	if raw.PreRun != nil {
 		node.PreRun = &hookSpec{Operation: raw.PreRun.Operation}

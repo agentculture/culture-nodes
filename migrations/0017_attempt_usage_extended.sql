@@ -1,0 +1,58 @@
+-- 0017_attempt_usage_extended.sql
+--
+-- Expand-only: widens 0012's per-attempt telemetry on `attempts` with the
+-- five facts the cache economics of a run depend on and that nothing in the
+-- Go tree could record before (docs/adr/0009-usage-telemetry-extension.md,
+-- which amends prd-spec §13.2 the additive way ADR 0008 amended it for
+-- usage on the `failed` event):
+--
+--   * usage_cached_input_tokens / usage_reasoning_tokens -- token counts an
+--     actor reports beside input/output and 0012 had no column for. Some
+--     actors report both (issue #47's 9984-of-13880 cached input is the
+--     pinned fixture), some report cache reads only, and some expose no
+--     cache telemetry at all.
+--   * usage_model -- WHICH model produced those counts. Tokens are not
+--     comparable, and not priceable, across models, so a rollup that sums
+--     them without knowing the model is summing different units.
+--   * usage_thread_id -- the provider-side thread/session the turn's usage
+--     accrued on, which is what makes "this workstream reused one warm
+--     session" measurable rather than assumed. It is telemetry, NOT the
+--     resume handle: the handle the engine passes back to a bridge is
+--     `continuation_ref` (task t4), a separate field with a separate life
+--     cycle, and neither is derived from the other.
+--   * termination_reason -- how the turn ended as the provider reported it
+--     ("max_output_tokens", "context window exceeded", a cancellation, ...).
+--
+-- All five are nullable with no default and nothing is backfilled, for
+-- 0012's reason exactly: an attempt that reported none of this stays NULL
+-- end to end. NULL means "not reported", never zero and never "free" -- an
+-- actor with no cache telemetry is honestly unmeasurable, and zero-filling
+-- it would fabricate a 0% cache ratio that reads as a measured fact.
+--
+-- 0012's sentinel is unchanged: `usage_input_tokens IS NOT NULL` still means
+-- "this attempt reported usage". The four new usage_* columns are each
+-- independently nullable *within* a reported block (a bridge may report
+-- token counts and no model, or a model and no cache counts), so none of
+-- them may be used as a presence check for the block as a whole.
+--
+-- termination_reason deliberately carries no `usage_` prefix, because it is
+-- deliberately not part of the §13.2 usage block: a turn can know why it
+-- ended while holding no parseable usage at all (a cancellation, an
+-- output-cap stop with no final result object). Had the reason travelled
+-- inside the usage block, recording it would have forced a usage block --
+-- and therefore fabricated zero token counts -- onto exactly those
+-- attempts, breaking the sentinel above. It is a sibling of the usage
+-- block on the wire and on the attempt row, not a member of it (ADR 0009).
+--
+-- N-1 compatibility (docs/adr/0002-migration-policy.md): a binary built
+-- before this migration existed still inserts attempts with its original
+-- fixed column list (internal/store/postgres/engine_store.go's
+-- insertAttemptSQL names every column explicitly, never `INSERT INTO
+-- attempts ...` bare) and still selects with its original column list, so
+-- five new nullable columns with no default change nothing it reads or
+-- writes.
+ALTER TABLE attempts ADD COLUMN usage_cached_input_tokens BIGINT;
+ALTER TABLE attempts ADD COLUMN usage_reasoning_tokens BIGINT;
+ALTER TABLE attempts ADD COLUMN usage_model TEXT;
+ALTER TABLE attempts ADD COLUMN usage_thread_id TEXT;
+ALTER TABLE attempts ADD COLUMN termination_reason TEXT;

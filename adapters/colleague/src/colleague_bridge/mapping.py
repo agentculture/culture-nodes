@@ -46,6 +46,7 @@ a real measurement.
 
 from __future__ import annotations
 
+import re
 from dataclasses import dataclass
 from typing import Any
 
@@ -57,10 +58,53 @@ STATUS_INCOMPLETE = "incomplete"
 
 #: §13.5 error classes this module ever produces (a strict subset of
 #: internal/actors.ErrorClass — the bridge only ever originates the classes
-#: an actor is positioned to know about).
+#: an actor is positioned to know about). capacity_exhausted joined the set
+#: in task t5 (deviation d4) — see claude_code_bridge.mapping's identical
+#: constant for the full rationale (engine side already existed, t8/t9;
+#: nothing on the bridge side ever declared it).
 CLASS_EXECUTION = "execution"
 CLASS_TIMEOUT = "timeout"
 CLASS_ACTOR_REJECTED_INPUT = "actor_rejected_input"
+CLASS_CAPACITY_EXHAUSTED = "capacity_exhausted"
+
+#: Mirrors claude_code_bridge.mapping._CAPACITY_SIGNALS exactly. colleague
+#: may itself be fronting any number of upstream providers depending on
+#: deployment (docs/contract.md), so this bridge has even less structure to
+#: go on than claude/codex — `TaskResult.error` free text is genuinely the
+#: only signal available, making the same text-matching approach the
+#: honest option here too, not a downgrade from a more precise mechanism
+#: this bridge chose not to use.
+_CAPACITY_SIGNALS = (
+    "rate_limit_error",
+    "rate limit",
+    "usage limit",
+    "quota",
+    "too many requests",
+    "overloaded_error",
+    "session limit",
+    " 429",
+    "429 ",
+)
+
+_RETRY_AFTER_RE = re.compile(r"retry[- ]after[:\s]+(\d+(?:\.\d+)?)\s*(?:s|sec|second)?s?\b", re.I)
+
+
+def _is_capacity_exhausted(*texts: str) -> bool:
+    lowered = " ".join(t.lower() for t in texts if t)
+    return any(signal in lowered for signal in _CAPACITY_SIGNALS)
+
+
+def _capacity_retry_after_seconds(*texts: str) -> float | None:
+    for text in texts:
+        if not text:
+            continue
+        m = _RETRY_AFTER_RE.search(text)
+        if m:
+            try:
+                return float(m.group(1))
+            except ValueError:
+                return None
+    return None
 
 
 @dataclass(frozen=True)
@@ -102,6 +146,10 @@ class Classification:
     message: str | None = None
     #: The §13.5 error class, set iff `domain` is False.
     error_class: str | None = None
+    #: The delay colleague's own error text named, when `error_class ==
+    #: CLASS_CAPACITY_EXHAUSTED` and one was recognised — None otherwise.
+    #: Mirrors claude_code_bridge.mapping.Classification's own field.
+    retry_after_seconds: float | None = None
 
 
 def classify(
@@ -140,6 +188,18 @@ def classify(
         )
 
     if status == STATUS_ERROR:
+        # t5 (deviation d4): before defaulting to plain execution, check
+        # whether colleague's own error text names a provider capacity
+        # refusal — see the module-level _CAPACITY_SIGNALS comment for why
+        # text-matching is the only channel this bridge has.
+        error_text = str(task_result.get("error") or "")
+        if _is_capacity_exhausted(error_text):
+            return Classification(
+                domain=False,
+                message=error_text or "colleague reported a provider capacity refusal",
+                error_class=CLASS_CAPACITY_EXHAUSTED,
+                retry_after_seconds=_capacity_retry_after_seconds(error_text),
+            )
         return Classification(
             domain=False,
             message=task_result.get("error") or "colleague reported status=error",
@@ -178,6 +238,10 @@ def usage_from_task_result(task_result: dict[str, Any] | None) -> dict[str, Any]
     (docs/contract.md); the bridge never estimates cost, so `cost`/`currency`
     are always null — an actor that does not price its work says so with
     null rather than a zero that reads as free (protocol.go's own docstring).
+
+    Contract v1 exposes only prompt/completion/total counts. Cache, reasoning,
+    model, and thread fields are therefore omitted, never zero-filled: no
+    measurement is an absent fact, not a measured zero.
     """
     usage = (task_result or {}).get("usage") or {}
     return {
@@ -186,6 +250,16 @@ def usage_from_task_result(task_result: dict[str, Any] | None) -> dict[str, Any]
         "cost": None,
         "currency": None,
     }
+
+
+def _attach_termination_reason(
+    payload: dict[str, Any], task_result: dict[str, Any] | None
+) -> dict[str, Any]:
+    """Carry colleague's reported status as the provider termination reason."""
+    status = (task_result or {}).get("status")
+    if isinstance(status, str) and status:
+        payload["termination_reason"] = status
+    return payload
 
 
 def declared_result_override(task_result):
@@ -215,6 +289,22 @@ def declared_result_override(task_result):
     output = parsed.get("output")
     if isinstance(outcome, str) and outcome and isinstance(output, dict):
         return outcome, output
+    return None
+
+
+def continuation_ref_from_task_result(task_result: dict[str, Any] | None) -> str | None:
+    """colleague's work-item id, the handle `work --continue` accepts.
+
+    Returns None rather than an empty string when the id is absent or not a
+    string: a falsy-but-present handle would make the engine believe a
+    resumable session exists and dispatch `--continue ""`, which is worse
+    than an honest cold start.
+    """
+    if not isinstance(task_result, dict):
+        return None
+    task_id = task_result.get("task_id")
+    if isinstance(task_id, str) and task_id.strip():
+        return task_id
     return None
 
 
@@ -273,10 +363,18 @@ def claim_record(
 
 @dataclass(frozen=True)
 class SyncResponse:
-    """What the bridge answers to a synchronous invocation."""
+    """What the bridge answers to a synchronous invocation.
+
+    *retry_after_seconds* is NOT part of `body` — see
+    claude_code_bridge.mapping.SyncResponse's identical field for why: the
+    control plane reads a capacity refusal's delay from the HTTP
+    Retry-After header only (internal/actors/client.go), and server.py is
+    the one place that turns this field into that header.
+    """
 
     status_code: int
     body: dict[str, Any]
+    retry_after_seconds: float | None = None
 
 
 def sync_response(
@@ -323,25 +421,32 @@ def sync_response(
         # never fabricated zeros.
         if task_result is not None:
             body["usage"] = usage_from_task_result(task_result)
-        return SyncResponse(status_code=500, body=body)
+        return SyncResponse(
+            status_code=500,
+            body=_attach_termination_reason(body, task_result),
+            retry_after_seconds=classification.retry_after_seconds,
+        )
 
     declared = declared_result_override(task_result)
-    return SyncResponse(
-        status_code=200,
-        body={
-            "outcome": declared[0] if declared else classification.outcome,
-            "output": declared[1] if declared else output_from_task_result(task_result),
-            "ledger_delta": {
-                "records": [
-                    claim_record(task_result, ctx, actor_id=actor_id, created_at=created_at)
-                ]
-            },
-            "artifact_refs": [],
-            "continuation_ref": None,
-            "usage": usage_from_task_result(task_result),
-            "workspace_measured": measured,
+    body = {
+        "outcome": declared[0] if declared else classification.outcome,
+        "output": declared[1] if declared else output_from_task_result(task_result),
+        "ledger_delta": {
+            "records": [claim_record(task_result, ctx, actor_id=actor_id, created_at=created_at)]
         },
-    )
+        "artifact_refs": [],
+        # colleague's own work-item id IS the resume handle: `colleague work
+        # --continue ID|last` (upstream #167) seeds a new run from a prior
+        # item. t5 shipped a null here on the premise that colleague had no
+        # resume verb; approved deviation d1 corrected that by pointing at
+        # the installed CLI's --help, so this is now a real handle like
+        # claude's session_id and codex's thread_id. Issue #62 tracked the
+        # feature request and is answered by the CLI already having it.
+        "continuation_ref": continuation_ref_from_task_result(task_result),
+        "usage": usage_from_task_result(task_result),
+        "workspace_measured": measured,
+    }
+    return SyncResponse(status_code=200, body=_attach_termination_reason(body, task_result))
 
 
 @dataclass(frozen=True)
@@ -396,21 +501,25 @@ def terminal_event(
         # usage-less rather than reporting fabricated zeros.
         if task_result is not None:
             payload["usage"] = usage_from_task_result(task_result)
-        return TerminalEvent(kind="failed", payload=payload)
+        # No retry_after_seconds here: FailedPayload (protocol.go) has no
+        # such field — see claude_code_bridge.mapping.terminal_event's
+        # identical comment for the full reasoning.
+        return TerminalEvent(
+            kind="failed", payload=_attach_termination_reason(payload, task_result)
+        )
 
     _declared = declared_result_override(task_result)
-    return TerminalEvent(
-        kind="completed",
-        payload={
-            "outcome": _declared[0] if _declared else classification.outcome,
-            "output": _declared[1] if _declared else output_from_task_result(task_result),
-            "ledger_delta": {
-                "records": [
-                    claim_record(task_result, ctx, actor_id=actor_id, created_at=created_at)
-                ]
-            },
-            "artifact_refs": [],
-            "usage": usage_from_task_result(task_result),
-            "workspace_measured": measured,
+    payload = {
+        "outcome": _declared[0] if _declared else classification.outcome,
+        "output": _declared[1] if _declared else output_from_task_result(task_result),
+        "ledger_delta": {
+            "records": [claim_record(task_result, ctx, actor_id=actor_id, created_at=created_at)]
         },
-    )
+        "artifact_refs": [],
+        # Same real handle as sync_response's — ADR 0010 §2's field, now
+        # populated for all three backends rather than two (deviation d1).
+        "continuation_ref": continuation_ref_from_task_result(task_result),
+        "usage": usage_from_task_result(task_result),
+        "workspace_measured": measured,
+    }
+    return TerminalEvent(kind="completed", payload=_attach_termination_reason(payload, task_result))

@@ -1,0 +1,1278 @@
+{
+  "slug": "economy-discord-graphs",
+  "title": "economy-discord-graphs",
+  "frame_slug": "economy-discord-graphs",
+  "schema_version": 4,
+  "status": "exported",
+  "created": "2026-08-13T16:24:16Z",
+  "updated": "2026-08-13T19:16:10Z",
+  "targets": [
+    {
+      "id": "c1",
+      "kind": "announcement",
+      "text": "Culture Nodes runs economically and legibly: runs post live updates to Discord as devex does; model actors keep warm sessions and measurable cache economics; dispatch is budget-aware so a build never starves the operator's own Claude window; bigger work packages route to codex actors by default; a human's real-world action (merging the PR) completes their task without a second submission; failed nodes preserve their changes; and the dashboard self-refreshes with a living Node Graphs tab",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "h24",
+      "kind": "honesty",
+      "text": "the announcement holds only if every one of the seven workstreams ships with its mechanical success signal (c38) \u2014 a partial batch renders as partial delivery, never as the announced whole",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "c2",
+      "kind": "requirement",
+      "text": "Cache/usage telemetry first (#48 item 4, #47 item 2): attempts gain nullable usage_cached_input_tokens, usage_reasoning_tokens, usage_model, usage_thread_id, termination_reason via an expand-only migration on 0012's precedent; the change lands in five layers \u2014 migration, actors.Usage+ToEngine+engine.Usage (internal/actors/protocol.go:85-114), insertAttemptSQL + usage rollups + actorstats, API types + openapi.yaml Usage component, web usage domain \u2014 and the protocol's PRD-mirroring rule means \u00a713.2 needs an ADR-style amendment (ADR-0008 precedent)",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "h1",
+      "kind": "honesty",
+      "text": "usage rows persist cached_input_tokens for codex attempts and cache_ratio is computable from stats; backends reporting no cache fields (colleague) stay NULL \u2014 never zero-filled",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "c3",
+      "kind": "requirement",
+      "text": "Session stickiness (#48 item 3, #47 item 1): continuation_ref exists only on InvocationResult (internal/actors/protocol.go:143) and completeFromResult silently drops it (internal/worker/dispatch.go:214-303) \u2014 stickiness adds it to InvocationRequest and CompletedPayload, persists it per attempt, and dispatchActor passes the prior ref for the same session key (actor+repo+workstream)",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "h2",
+      "kind": "honesty",
+      "text": "a second node turn with the same session key reaches the bridge with the prior continuation_ref populated, and a resumed session shows measurably lower uncached input than a cold one on the same task",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "c4",
+      "kind": "requirement",
+      "text": "Capacity circuit breaker (#48 item 1): a quota/session-limit class is missing from \u00a713.5 (internal/actors/errors.go:20-47 maps provider limits to execution or auth_or_policy); Retry-After is parsed then discarded in-attempt (client.go:225); the breaker's paused-until state needs a NEW mutable table because actors rows are append-only by contract (actorstats.go:13-23), and enforcement defers work_items.available_at at the dispatch site (dispatch.go:51 area) instead of failing the attempt",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "h3",
+      "kind": "honesty",
+      "text": "a forced quota/rate/session-limit failure pauses the actor \u2014 no further dispatch reaches it until the pause expires \u2014 verified by a test observing deferred available_at, not a failed-attempt cascade",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "c5",
+      "kind": "requirement",
+      "text": "Pacing (#48 item 2) is greenfield: the worker loop is deliberately anti-pacing (a backlog drains at dispatch speed, internal/worker/worker.go:284-286) and workers scale horizontally, so a global or per-actor dispatch-rate control must be durable (DB-backed token bucket / next-dispatch-at), not an in-memory limiter",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "h4",
+      "kind": "honesty",
+      "text": "an operator-declared session rate is honored across horizontally-scaled workers (durable state, not per-process memory), and a backlog demonstrably drains no faster than the declared rate",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "c6",
+      "kind": "requirement",
+      "text": "Economic contract (#48 item 5): the only budget today is the hardcoded MaxDispatchAttempts=3 dispatch-count cap (internal/worker/worker.go:41, budget.go:65-67) \u2014 budget.max_sessions / max_uncached_input become declared workflow limits (schema + engine.Limits + run pinning) enforced at the same pre-invoke site budget.go argues for",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "h5",
+      "kind": "honesty",
+      "text": "a workflow declaring budget.max_sessions is refused at dispatch when the budget cannot fund the next session, recorded as a domain outcome \u2014 never discovered as provider exhaustion mid-wave",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "c7",
+      "kind": "requirement",
+      "text": "Discord updates ship as an out-of-process notifier daemon consuming the existing cross-run SSE feed (GET /v1alpha1/events, internal/api/events.go:183-272) and fetching human-readable detail via the read API; the control-plane process gains no Discord egress (PRD boundary rule; events carry IDs not content per internal/events/doc.go:16-25)",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "h6",
+      "kind": "honesty",
+      "text": "run-lifecycle events reach the webhook with zero Discord code or webhook URL inside the control-plane process, and a webhook outage never stalls dispatch or the SSE feed",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "c10",
+      "kind": "requirement",
+      "text": "Implement-plan mode (#45) needs an ingestion path that does not exist: internal/devague is a pure JSON-to-ledger mapper with zero production callers (no HTTP route, no CLI verb, no store) \u2014 assigning the system a plan means an import surface + durable plan/wave/task state + dashboard projection, with MapPlanWaves' wave-layering (depends_on = whole previous wave, plan.go:42-51) as the dependency shape",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "h7",
+      "kind": "honesty",
+      "text": "a devague plan can be handed to the system and appears in the dashboard with per-task status, with nothing in the ingestion path hardcoding code-repo semantics (it is instance one of the c30 generic pipeline)",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "c11",
+      "kind": "requirement",
+      "text": "Merge-as-action (#54) targets the human-inbox bridge path (Path B), not engine approval nodes: the cited live task hit_76b9a865c6132b12 is a bridge task, and the bridge already persists every non-instruction input key verbatim (extra_input, adapters/human-inbox/src/human_inbox_bridge/server.py:369) \u2014 so a declared observe: {kind: github_pr_merged, pr: N} bound into the node's input arrives and persists with zero bridge ingest changes",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "h8",
+      "kind": "honesty",
+      "text": "a human task carrying observe: github_pr_merged completes when the PR merges with no manual submit, and the ledger record names the merge commit with observed-by-tracker attribution",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "c12",
+      "kind": "requirement",
+      "text": "The merge-observer lives inside or beside the human-inbox bridge, matching spec decision c34 (the tracker that nudges is the tracker that observes): the bridge runs outside the deployment, already holds the persisted attempt-scoped HMAC callback token a days-later terminal callback needs (token TTL 15m, bridge persists it \u2014 internal/actors/token.go:35, store.py:5-12), and is stdlib-only \u2014 it would become the first bridge holding a third-party credential (GITHUB_TOKEN)",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "h9",
+      "kind": "honesty",
+      "text": "the tracker runs outside the control-plane deployment, is the only component holding the GitHub credential, and delivers the terminal callback using the bridge's persisted attempt-scoped token",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "c13",
+      "kind": "boundary",
+      "text": "The control plane never gains a GitHub credential or calls api.github.com (PRD: the control plane should not materialize provider credentials, prd-spec.md:1646; only GitHub caller today is examples/pr-upkeep/sweep.py through the runner boundary) \u2014 and #54 explicitly revises the pr-upkeep README's human-merges rule section, so that doc is edited as part of the work, never silently contradicted",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "h25",
+      "kind": "honesty",
+      "text": "grep for github credentials/api.github.com in the control-plane process stays empty after the batch, and the pr-upkeep README's human-merges section is visibly rewritten to name observed merges",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "c14",
+      "kind": "requirement",
+      "text": "Manual submit stays as the override lane (#54): tasks with no declared observable keep the inbox submit surface unchanged, covering dropped and merge-without-PR cases",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "h10",
+      "kind": "honesty",
+      "text": "a task with no declared observable behaves exactly as today, and the manual submit path still works on observed tasks (dropped / merge-without-PR cases)",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "c15",
+      "kind": "requirement",
+      "text": "Implement-plan mode (#45) reads the faithful plan view: devague plan show --json carries per-task status and real dependency edges, which nothing consumes today (MapPlanWaves deliberately reads the lossy waves view \u2014 internal/devague/plan.go:20-52); deviations already have a data model with origin user|llm and status proposed|approved (.devague/deliveries/*.json) \u2014 exactly the issue's system-knows vs user-reports split \u2014 but internal/devague has no MapDeviations and no API or web surface exposes plans",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "h11",
+      "kind": "honesty",
+      "text": "the plan view renders per-task status and real dependency edges from plan show --json (not the lossy waves view), and deviations render with origin user vs llm visibly distinguished",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "c16",
+      "kind": "requirement",
+      "text": "Discord updates port devex's proven webhook design (~120 lines) into the culture-nodes notifier: env-resolved webhook URL (never in config files \u2014 the URL embeds a token), Discord-embed payload with defensive trims, one bounded 5s POST, no retries, no redirects, strictly fail-open, outcomes journaled WITHOUT ever recording the URL or payload (devex core/webhook.py + pr/scripts/_webhook.py); devex is the only webhook POST implementation across all sibling repos and it is Python \u2014 this is a port, not an import",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "h12",
+      "kind": "honesty",
+      "text": "the notifier resolves its webhook URL from env only, posts fail-open with a bounded timeout and no retries, and journals outcomes without ever recording the URL or payload",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "c19",
+      "kind": "requirement",
+      "text": "Node Graphs tab (#56) replaces the Workflows tab (web/src/components/Header.tsx:64-66, routes/Workflows.tsx) with sub-tabs Nodes / Node Graphs / Active Graphs \u2014 the app's first sub-tab set, copying RunView's aria-pressed segmented-toggle prior art (RunView.tsx:347-367) with URL-param-driven selection for bookmarkability; the /workflows/new authoring entry point must stay reachable, and the rename touches Header.test.tsx and web/e2e/workflows.spec.ts pins",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "h13",
+      "kind": "honesty",
+      "text": "the Node Graphs tab replaces Workflows with Nodes / Node Graphs / Active Graphs sub-tabs, /workflows/new authoring stays reachable, and every existing web e2e + webglass gate stays green",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "c21",
+      "kind": "boundary",
+      "text": "New visualizations obey the culture-design contract: colors only from the pinned TERMINAL_PALETTE/TERMINAL_GROUND/NODE_KIND_PALETTE (scripts/check-culture-design.mjs pins every hex to agentculture/org sources), tokens.css stays byte-frozen, any canvas view publishes a machine-readable #agent-state mirror (webglass cannot see canvas), prefers-reduced-motion renders one static frame, and honesty condition h14 holds \u2014 everything drawn traces to a committed API row, no canned data, no decorative traffic",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "h26",
+      "kind": "honesty",
+      "text": "scripts/check-culture-design.mjs passes against the pinned org sources on the new tab, and the webglass gate (agent-state ready + zero page errors) stays green",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "c22",
+      "kind": "requirement",
+      "text": "Dashboard auto-refresh (#46): Mesh and RunView are already SSE-live; the other seven views are fetch-on-mount with zero polling and no refresh button anywhere \u2014 the fix generalizes the existing idioms (Inbox's reloadKey re-run counter, the cross-run SSE feed whose ?runs= scoping api/client.ts does not yet expose) rather than naive intervals, and must preserve the load conventions: AbortController on every fetch, agent-state 'ready' meaning initial-load-settled, stale-while-revalidate (never null a rendered list back to loading)",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "h14",
+      "kind": "honesty",
+      "text": "every dashboard view reflects new server state without a browser refresh, with stale-while-revalidate preserved \u2014 no rendered list ever nulls back to a loading state",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "c24",
+      "kind": "requirement",
+      "text": "Session resume is an all-backends change with per-backend mechanics (#47/#48): continuation_ref is hardcoded None in ALL THREE bridges (claude-code mapping.py:370, codex mapping.py:354, colleague mapping.py:340 \u2014 issue #47 understates it) and exists only on the sync 200 body while async terminal payloads omit the key entirely, yet async is the path long sessions take; claude resumes via --resume with the captured session id (already durable as claude_session_id), codex via 'codex exec resume' with the thread id (already parsed), colleague has NO resume verb in its pinned contract \u2014 an upstream colleague feature, not a bridge change; and a session_key passed via input today would be injected verbatim into the prompt's Bound-inputs block, so stickiness needs a new transport key in all three servers",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "h15",
+      "kind": "honesty",
+      "text": "claude and codex bridges resume real sessions via their native handles on both sync and async paths; colleague honestly reports no continuation (never a fabricated ref) until upstream support exists \u2014 the all-backends rule is satisfied by explicit per-backend behavior, not pretended parity",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "c25",
+      "kind": "requirement",
+      "text": "Fix fabricated codex usage on failure: codex captures usage only from turn.completed (codex_cli.py:163-166), so turn.failed and incomplete paths leave usage empty and the issue-#32 failed-attempt branch emits input_tokens:0/output_tokens:0 \u2014 fabricated zeros for sessions that burned real tokens, and failed sessions are exactly the burn #47 diagnosed; the cached_input_tokens/reasoning_output_tokens drop is pinned in the codex fixture with issue #47's exact numbers (13880/9984), while colleague's contract exposes no cache telemetry at all \u2014 its cache_ratio is honestly unmeasurable",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "h16",
+      "kind": "honesty",
+      "text": "a failed codex turn either reports its real usage or reports none (counted in attempts_not_reported) \u2014 fabricated zeros are impossible by construction and pinned by a test",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "c26",
+      "kind": "requirement",
+      "text": "Preserve-changes-on-failure (#49) lives bridge-side and needs explicit policy: workspace.py (byte-identical across the three bridges) is measurement-only \u2014 no worktree, clone, branch, commit, or stash anywhere \u2014 and bridges run in the operator's live allowlisted checkout, so preservation means committing/branching in that live tree (config knobs: commit-on-failure toggle, branch prefix, push-or-local); the post_run hook lane cannot cover it because async agent dispatch refuses post_run outright (internal/worker/hooks.go:358-383), and the all-backends asymmetry is real: colleague commits partial WIP on SIGTERM upstream, claude/codex leave uncommitted edits sitting in the tree; a dead bridge preserves nothing (in-process invocation registry)",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "h17",
+      "kind": "honesty",
+      "text": "a failed node with workspace changes leaves a commit whose message names the failure reason; when push succeeds the branch is on the remote, when push fails the local commit still exists and the run records which happened",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "c28",
+      "kind": "requirement",
+      "text": "Node granularity and actor routing (#47 item 3, the 'pass on bigger tasks / better utilize codex' ask): model nodes become work packages sized to amortize bootstrap \u2014 one persistent session with many ledgered sub-actions, not one cold session per plan task (this cycle's wave-0 tasks averaged ~25k output tokens on top of a repeated cold bootstrap) \u2014 and the split-plan lane routes big analysis/build packages to codex actors by default per the lane-cost ladder in #48's comment, keeping the operator's Claude window (one meter, many lanes: interactive session, local subagents, and claude-code bridge sessions share ONE subscription pool) for operator work; deterministic/code nodes stay microscopic",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "h18",
+      "kind": "honesty",
+      "text": "the split-plan lane declares expected model-session count per wave against the remaining window before fan-out, work packages amortize bootstrap across a shared warm session, and big analysis/build packages default to codex actors",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "c29",
+      "kind": "boundary",
+      "text": "Issue #50 is blocked upstream, not here: headspace-cli 0.11.0 supports only disabled/enabled network posture, and the runner boundary already rejects egress-allowlist honestly as rejected_input; culture-nodes' side of the fix is only to restore 'network: egress-allowlist' on the pr-upkeep sweep and pin a conformance fixture once headspace ships the allowlist \u2014 no control-plane workaround (proxy-in-process) is built in the meantime",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "h27",
+      "kind": "honesty",
+      "text": "culture-nodes ships no in-process network proxy; the sweep's declared egress-allowlist intent stays documented in the workflow comment until headspace lands it, then a conformance fixture pins the round-trip",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "c30",
+      "kind": "requirement",
+      "text": "Generic decompose pipeline (#45 reframed): the system supports splitting any source document into claims with tracked sources (the devague method productized), then splitting claims into connected decisions/actions, executing them, and verifying at the end \u2014 domain-agnostic (code, design, document writing, newsletter: scope from web -> claims -> article plan -> write -> verify); devague-plan import is one instance of this pipeline, and #45 builds on #43's split/join rather than shipping sequentially",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "h19",
+      "kind": "honesty",
+      "text": "the decompose pipeline runs end-to-end on at least one non-code domain (e.g. newsletter: web scope -> claims -> article plan -> write -> verify) with sources tracked at every step and a verification pass at the end",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "c31",
+      "kind": "requirement",
+      "text": "Node Graphs aliveness spec (#56): WebGPU is deferred by human decision, but the tab must still be stunning and feel alive on the Canvas-2D/React-Flow substrate \u2014 a faint breathing halo marks an active graph, periodic actions (heartbeat/cron checks) render visibly, all within the existing reduced-motion, agent-state-mirror, and h14 no-decorative-traffic constraints; the graph catalog derives client-side from published workflow IRs",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "h20",
+      "kind": "honesty",
+      "text": "an active graph shows a faint breathing halo and periodic actions render visibly; prefers-reduced-motion gets a static frame; the agent-state mirror stays complete; every rendered pulse traces to a committed API row (h14 \u2014 no decorative traffic)",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "c32",
+      "kind": "requirement",
+      "text": "Preserve-on-failure (#49) is commit-and-push to a recoverable branch: on node failure the bridge commits changes with the failure reason to a unique, pre-agreed branch (web-accessible on the remote), the branch name is generated by code, written to the DB, and reflected on the dashboard \u2014 recovery is possible and the operator always knows where what is; local-only commit remains the fallback when push is impossible",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "h21",
+      "kind": "honesty",
+      "text": "the preserve branch name is minted by code, stored in the DB, shown on the run detail page, and web-accessible on the remote after a successful push",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "c33",
+      "kind": "requirement",
+      "text": "Run-lifecycle Discord updates reuse DISCORD_WEBHOOK_URL (the steward discord-notify channel) for now, via a CULTURE_NODES_WEBHOOK_URL-style env resolve falling back to it",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "h22",
+      "kind": "honesty",
+      "text": "updates arrive on the DISCORD_WEBHOOK_URL channel and moving to a dedicated channel later is an env-only change",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "c34",
+      "kind": "requirement",
+      "text": "Observed-merge attribution (#54, decided): the tracker completes the task via the existing bridge submit path with a proposed claim carrying data.kind observed-submission and collection_method github_pr_merged plus the merge commit \u2014 honest attribution without touching the authority model or the agent-nodes-never-declare-observe compiler invariant; upgrade path recorded: graduate to runner-origin observed evidence with a RunnerManifest once manifest-bound producer registration exists",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "h23",
+      "kind": "honesty",
+      "text": "observed submissions land as proposed claims with data.kind observed-submission and collection_method github_pr_merged; no compiler or authority-model invariant changes; the runner-origin upgrade path is recorded in the exported spec",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "c35",
+      "kind": "audience",
+      "text": "Operators of the control plane (Ori and mesh operators, now also reachable via the Discord channel), workflow authors, the actor fleet (claude-code/codex/colleague bridges on spark/thor/orin plus human actors on the inbox bridge), dashboard viewers, and the per-actor analytics consumers of #28",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "h28",
+      "kind": "honesty",
+      "text": "each named audience receives at least one shipped surface: operators get Discord updates + budget controls, authors get budget/observe contract fields, the fleet gets stickiness + honest usage, dashboard viewers get auto-refresh + Node Graphs, analytics gets cache telemetry",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "c36",
+      "kind": "after_state",
+      "text": "After shipping: every run announces its lifecycle in Discord without anyone opening the dashboard; model actors resume warm sessions and the cache economics are measurable per attempt; dispatch paces itself through the session window and trips a capacity breaker instead of cascading failed billable sessions; big work packages route to codex actors by default, preserving the operator's Claude window; a human who merges a PR is done \u2014 the system observes the merge and completes the task; a failed node leaves its changes on a pushed, DB-recorded, dashboard-visible branch; and the dashboard self-refreshes with a Node Graphs tab where active graphs visibly breathe",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "h29",
+      "kind": "honesty",
+      "text": "every after-state clause cross-maps to a confirmed requirement and a c38 signal; any orphan clause is cut or demoted at spec review",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "c37",
+      "kind": "why_it_matters",
+      "text": "The attempts-evidence-humans-loops build proved the constraint has moved: the live fan-out exhausted the Claude 5-hour session window mid-wave (cold-session tax on ~14 bridge builds), the operator manually relayed a merge the human had already performed, and every status check required opening or refreshing the dashboard \u2014 economics and legibility, not features, now bound what the system can dogfood",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "h30",
+      "kind": "honesty",
+      "text": "the pain is cited from the recorded live build (deviation d1, issues #47/#48 diagnosis), not asserted \u2014 if the next dogfood cycle still exhausts the window mid-wave, this batch failed its own why",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "c38",
+      "kind": "success_signal",
+      "text": "Mechanical, per-workstream: (1) a run completion posts to the Discord channel with no Discord code in the control plane; (2) stats expose cache_ratio and a resumed session shows measurably lower uncached input than a cold one; (3) a forced provider-limit failure pauses the actor \u2014 zero further dispatches until the pause expires \u2014 instead of a failure cascade; (4) a workflow declaring budget.max_sessions is refused at dispatch when unfundable, as a domain outcome; (5) merging a live PR completes its human task with an observed-submission claim naming the merge commit, no manual submit; (6) a failed node's changes are reachable via a branch link on the run detail page; (7) every dashboard view reflects new server state without a browser refresh; (8) the Node Graphs tab renders nodes/graphs/active-graphs derived from workflow IRs with a breathing active indicator, all web gates green",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "h31",
+      "kind": "honesty",
+      "text": "every signal is mechanically checkable (a test, a rendered element, a posted message, a ledger record) \u2014 none requires trusting an agent's completion claim",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "c39",
+      "kind": "requirement",
+      "text": "Notifier resilience: the Discord daemon keeps a durable last-event-id cursor and dedups on the outbox's stable event ids (delivery is at-least-once by design, internal/events/relay.go:58-68; the SSE surface already accepts ?from= for exactly this) \u2014 a notifier restart never silently drops or double-posts a run's lifecycle",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "h32",
+      "kind": "honesty",
+      "text": "killing and restarting the notifier mid-run produces exactly one Discord post per lifecycle event \u2014 verified by a restart test against the recorded journal",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "c40",
+      "kind": "boundary",
+      "text": "The notifier posts minimal metadata only \u2014 run id, workflow name, state, actor, and a dashboard link \u2014 never ledger records, node output, instructions, or diffs: run content is not public-by-default the way devex's PR titles are, and the events-carry-IDs-not-content rule (internal/events/doc.go:16-25) extends to what leaves for Discord",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "h33",
+      "kind": "honesty",
+      "text": "no Discord payload field is populated from ledger record data, node output, or workflow input \u2014 pinned by the payload-shaping unit tests",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "c41",
+      "kind": "requirement",
+      "text": "Preservation never disturbs the live tree: the #49 commit is built with git plumbing (write the index to a tree object, commit-tree with the failure reason, update-ref the preserve branch) so HEAD, the index, the working tree, and any concurrently-running warm session in the same checkout are untouched \u2014 bridges share the operator's live checkout (workspace.py dispatches cwd=repo), so a checkout/branch-switch approach would corrupt concurrent work",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "h34",
+      "kind": "honesty",
+      "text": "after a preserve commit, git status/HEAD/index in the operator checkout are byte-identical to the pre-preserve state, and a concurrently parked session's next turn sees no tree change it didn't make",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "c42",
+      "kind": "requirement",
+      "text": "Telemetry gates stickiness (#47's explicit ordering): before session reuse becomes default behavior, run the A/B the diagnosis prescribes \u2014 ten representative tasks through fresh sessions vs one resumed thread, comparing uncached input, cached input, session count, failures, wall time \u2014 because provider cache TTLs mean a resumed long-history session can cost MORE than a cold start; stickiness ships config-gated and flips on only with measured benefit",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "h35",
+      "kind": "honesty",
+      "text": "the A/B comparison exists as a recorded artifact before stickiness defaults on; if resumed sessions do not measurably reduce uncached input, stickiness stays opt-in and the spec's economics claims are re-examined",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "c43",
+      "kind": "requirement",
+      "text": "Pacing is reset-clock-aware (#48 comment item 5): session windows reset on a fixed clock, so the control is 'spread N sessions across the REMAINING window', not a naive fixed rate \u2014 the pacing config carries the window reset anchor and the scheduler computes remaining capacity from it",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "h36",
+      "kind": "honesty",
+      "text": "a wave started mid-window demonstrably schedules fewer sessions than the same wave started at reset, matching remaining-window arithmetic",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "c44",
+      "kind": "requirement",
+      "text": "Warm sessions serialize per session key: exactly one in-flight invocation per continuation ref \u2014 concurrent work items sharing a session_key either queue behind the active turn or deliberately fork a fresh session (recorded as such), because codex exec resume / claude --resume assume single-threaded conversations and the bridges' async runners spawn unbounded today",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "h37",
+      "kind": "honesty",
+      "text": "two simultaneous dispatches with the same session key never produce interleaved turns on one provider thread \u2014 pinned by a bridge test",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "c45",
+      "kind": "requirement",
+      "text": "Breaker and pacing decisions are observable and reversible: pausing an actor emits an engine event (visible on the dashboard and in Discord), the paused-until state renders on the actors surface, and an operator can clear a pause early via the API/CLI \u2014 budget.go's own argument (a silent skip 'stays ready forever and nothing anywhere records why') applies to the breaker exactly",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "h38",
+      "kind": "honesty",
+      "text": "a tripped breaker is diagnosable from the dashboard alone within one glance (which actor, why, until when) and clearable without touching the database",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "c47",
+      "kind": "requirement",
+      "text": "The observe declaration maps observed states to outcomes explicitly, and v1 auto-completes only the merged state (observe: {kind: github_pr_merged, pr: N} -> outcome merged): a PR closed without merging stays on the manual lane (the operator decides dropped vs retry), because #54's own override list names dropped and merge-without-PR as human-judgment cases \u2014 the tracker never guesses an outcome from an ambiguous external state",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "h40",
+      "kind": "honesty",
+      "text": "a PR closed unmerged does NOT auto-complete its task; only the merged state produces an automatic submission \u2014 pinned by a tracker test",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "c48",
+      "kind": "requirement",
+      "text": "Auto-refresh shares one event stream: the app opens a single app-wide EventSource (a shared provider/context over the cross-run feed) that views subscribe to, instead of each view opening its own \u2014 browsers cap concurrent connections per origin (6 on HTTP/1.1), and Mesh + RunView already hold two; per-view EventSources across seven more views would starve the cap in multi-tab use",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "h41",
+      "kind": "honesty",
+      "text": "opening every dashboard view across two tabs holds at most one SSE connection per tab, and view-level subscriptions attach/detach without reconnecting the stream",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "c49",
+      "kind": "requirement",
+      "text": "Parallel tokens ship in full (#43, per q8): the engine honors limits.maxParallelTokens, transition plans grow multi-edge splits and join barriers with per-token bounds, and event-driven continuation lands whole \u2014 a node emits events non-blocking mid-execution and any subscribed node picks them up, including as splits; the c9 groundwork (token parent links, multi-waiter signal_subscriptions) is the substrate, and event-then-subscription replay (the 0016 documented gap) is closed as part of this",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "h42",
+      "kind": "honesty",
+      "text": "a workflow declaring maxParallelTokens > 1 demonstrably runs concurrent tokens through a split and reconverges at a join with bounds enforced, and an event emitted mid-execution resumes a waiter that subscribed AFTER emission (replay closed) \u2014 both pinned by engine tests",
+      "deferred": false,
+      "deferred_reason": ""
+    }
+  ],
+  "tasks": [
+    {
+      "id": "t1",
+      "summary": "Extend attempt usage: expand-only migration adding usage_cached_input_tokens, usage_reasoning_tokens, usage_model, usage_thread_id, termination_reason; actors.Usage + ToEngine + engine.Usage; insertAttemptSQL params; ADR amending PRD section 13.2",
+      "origin": "llm",
+      "status": "confirmed",
+      "acceptance_criteria": [
+        "migration applies over N-1 rows with no backfill and a round-trip test persists and reads all five new fields as nullable",
+        "ADR committed citing the ADR-0008 precedent for protocol-field additions"
+      ],
+      "deps": [],
+      "covers": [
+        "c2"
+      ],
+      "instruction": ""
+    },
+    {
+      "id": "t2",
+      "summary": "Expose extended usage: usage rollups, NodeRunUsages, and actor stats aggregate the new fields; openapi Usage component + API types; web usage domain computes and renders cache_ratio in Statistics",
+      "origin": "llm",
+      "status": "confirmed",
+      "acceptance_criteria": [
+        "run detail and actor stats responses include cached_input_tokens and a computable cache_ratio, rendered in the web Statistics view",
+        "web mergeUsage mirrors the server aggregation rules for the new fields (unit test)"
+      ],
+      "deps": [
+        "t1"
+      ],
+      "covers": [
+        "c2",
+        "h1"
+      ],
+      "instruction": ""
+    },
+    {
+      "id": "t3",
+      "summary": "Bridge usage honesty (all three backends): emit cached_input, reasoning, model, thread or session id, and termination reason where the backend reports them; codex captures usage from failed and incomplete turns; truly absent usage emits NO block, never zeros; colleague cache fields stay null",
+      "origin": "llm",
+      "status": "confirmed",
+      "acceptance_criteria": [
+        "codex fixture round-trips cached_input_tokens 9984 of 13880 into the completed payload",
+        "a codex turn.failed test shows either real usage or an absent block counted as attempts_not_reported \u2014 zero-filled usage is unrepresentable",
+        "colleague mapping test pins cache fields as null, not zero"
+      ],
+      "deps": [
+        "t1"
+      ],
+      "covers": [
+        "c25",
+        "h16",
+        "h1"
+      ],
+      "instruction": ""
+    },
+    {
+      "id": "t4",
+      "summary": "Engine continuation carriage: continuation_ref lands on InvocationRequest and CompletedPayload, persists per attempt, and dispatchActor populates the prior ref for the same session key",
+      "origin": "llm",
+      "status": "confirmed",
+      "acceptance_criteria": [
+        "engine test: the next attempt's request carries the ref the prior completion returned; absent refs dispatch clean",
+        "async completion persists the ref on the attempt row"
+      ],
+      "deps": [
+        "t1"
+      ],
+      "covers": [
+        "c3"
+      ],
+      "instruction": ""
+    },
+    {
+      "id": "t5",
+      "summary": "Bridge session resume (all three backends): claude resumes with its captured session id, codex with its exec resume verb; the ref returns on sync AND async terminal payloads; session_key becomes a transport key excluded from Bound-inputs injection in all three servers; colleague honestly returns a null ref and an upstream feature request is filed",
+      "origin": "llm",
+      "status": "confirmed",
+      "acceptance_criteria": [
+        "per-bridge test pins the resume argv given a prior ref, and the async terminal payload carries continuation_ref",
+        "transport-key test proves session_key never appears in the prompt text",
+        "colleague bridge returns ref null and the upstream issue link is recorded"
+      ],
+      "deps": [
+        "t3",
+        "t4"
+      ],
+      "covers": [
+        "c24",
+        "h15",
+        "h2"
+      ],
+      "instruction": ""
+    },
+    {
+      "id": "t6",
+      "summary": "Session-key serialization and bridge concurrency config: exactly one in-flight invocation per session key (concurrent same-key work queues or deliberately forks, recorded as such); in-flight caps join the shared bridge config surface",
+      "origin": "llm",
+      "status": "confirmed",
+      "acceptance_criteria": [
+        "two simultaneous same-key dispatches never interleave turns on one provider thread (bridge test)",
+        "concurrency config keys parse with sane defaults in all three bridges"
+      ],
+      "deps": [
+        "t5"
+      ],
+      "covers": [
+        "c44",
+        "h37"
+      ],
+      "instruction": ""
+    },
+    {
+      "id": "t7",
+      "summary": "Stickiness A/B gate: ten representative tasks through fresh sessions vs one resumed thread; comparison artifact (uncached input, cached input, sessions, failures, wall time) recorded; stickiness stays opt-in until the artifact shows uncached-input reduction",
+      "origin": "llm",
+      "status": "confirmed",
+      "acceptance_criteria": [
+        "comparison artifact committed with the five measured columns and a verdict",
+        "default-on is config-gated on the artifact's verdict"
+      ],
+      "deps": [
+        "t2",
+        "t5"
+      ],
+      "covers": [
+        "c42",
+        "h35",
+        "h2"
+      ],
+      "instruction": ""
+    },
+    {
+      "id": "t8",
+      "summary": "Capacity error class: section 13.5 gains capacity_exhausted; provider quota, rate, and session-limit failures classify to it; the class and Retry-After persist on the attempt instead of being discarded in-attempt",
+      "origin": "llm",
+      "status": "confirmed",
+      "acceptance_criteria": [
+        "classification tests map provider-limit response shapes to capacity_exhausted",
+        "the attempt row carries the error class and any Retry-After value"
+      ],
+      "deps": [],
+      "covers": [
+        "c4"
+      ],
+      "instruction": ""
+    },
+    {
+      "id": "t9",
+      "summary": "Circuit breaker: new mutable actor_availability table (actors stays append-only); dispatch-site check defers work_items.available_at instead of failing the attempt; pause emits an engine event; paused state renders on the actors API; manual clear via API and CLI",
+      "origin": "llm",
+      "status": "confirmed",
+      "acceptance_criteria": [
+        "a forced provider-limit failure pauses the actor and zero further dispatches reach it until expiry (worker + store test)",
+        "the pause is visible on the actors surface with reason and until-when, and clearable without touching the database"
+      ],
+      "deps": [
+        "t8",
+        "t4"
+      ],
+      "covers": [
+        "c4",
+        "h3",
+        "c45",
+        "h38"
+      ],
+      "instruction": ""
+    },
+    {
+      "id": "t10",
+      "summary": "Pacing: durable dispatch-rate state (per actor and global) consulted at the dispatch site, honored identically across horizontally-scaled workers; reset-clock arithmetic spreads sessions across the remaining window",
+      "origin": "llm",
+      "status": "confirmed",
+      "acceptance_criteria": [
+        "two worker processes sharing one database jointly honor a declared rate (integration test)",
+        "a wave started mid-window schedules per remaining-window arithmetic (unit test)"
+      ],
+      "deps": [
+        "t9"
+      ],
+      "covers": [
+        "c5",
+        "h4",
+        "c43",
+        "h36"
+      ],
+      "instruction": ""
+    },
+    {
+      "id": "t11",
+      "summary": "Budget contract: budget.max_sessions and max_uncached_input as declared workflow limits (schema, engine.Limits, run pinning); pre-invoke enforcement refuses unfundable dispatch as a routable domain outcome; counting charges cold session starts, not resumed warm turns",
+      "origin": "llm",
+      "status": "confirmed",
+      "acceptance_criteria": [
+        "a workflow declaring an unfundable wave is refused at dispatch as a domain outcome that routes an edge (worker test)",
+        "a warm workstream of N node turns consumes 1 from max_sessions, not N (engine test)"
+      ],
+      "deps": [
+        "t9"
+      ],
+      "covers": [
+        "c6",
+        "h5"
+      ],
+      "instruction": ""
+    },
+    {
+      "id": "t12",
+      "summary": "Routing and granularity guidance: the split-plan lane and nodes-operator skill document work-package node sizing, a per-wave model-session-count declaration against the remaining window, and the codex-first default for big analysis and build packages",
+      "origin": "llm",
+      "status": "confirmed",
+      "acceptance_criteria": [
+        "assign-to-workforce and nodes-operator guidance updated; the split-plan template carries a session-count-per-wave declaration"
+      ],
+      "deps": [],
+      "covers": [
+        "c28",
+        "h18"
+      ],
+      "instruction": ""
+    },
+    {
+      "id": "t13",
+      "summary": "Webhook layer (Go port of devex's design): env resolve CULTURE_NODES_WEBHOOK_URL falling back to DISCORD_WEBHOOK_URL; minimal-metadata Discord embed (run id, workflow, state, actor, dashboard link only); one bounded 5s fail-open POST, no retries, no redirects; outcomes journaled without URL or payload; hermetic test pattern with a separate TEST env var",
+      "origin": "llm",
+      "status": "confirmed",
+      "acceptance_criteria": [
+        "payload-shaping tests prove no embed field derives from ledger records, node output, or workflow input",
+        "the live-network test gates on a separate TEST url env var and an autouse fixture unsets production vars for the whole suite"
+      ],
+      "deps": [],
+      "covers": [
+        "c16",
+        "h12",
+        "c33",
+        "h22",
+        "c40",
+        "h33"
+      ],
+      "instruction": ""
+    },
+    {
+      "id": "t14",
+      "summary": "Discord notifier daemon: out-of-process SSE consumer over the cross-run events feed with a durable last-event-id cursor and stable-id dedup; human-readable detail fetched via the read API; zero control-plane changes",
+      "origin": "llm",
+      "status": "confirmed",
+      "acceptance_criteria": [
+        "kill-and-restart mid-run posts exactly one Discord message per lifecycle event (restart test over the journal)",
+        "the daemon builds and runs without any control-plane code change"
+      ],
+      "deps": [
+        "t13"
+      ],
+      "covers": [
+        "c7",
+        "h6",
+        "c39",
+        "h32"
+      ],
+      "instruction": ""
+    },
+    {
+      "id": "t15",
+      "summary": "Observable declaration: authoring convention binds an observe block (kind github_pr_merged, pr number) into the human-task node's input; example workflow updated; the tracker contract documented",
+      "origin": "llm",
+      "status": "confirmed",
+      "acceptance_criteria": [
+        "a declared observable round-trips into the bridge's stored extra_input untouched (bridge test)",
+        "the example workflow carries the declaration bound from a prior node's output"
+      ],
+      "deps": [],
+      "covers": [
+        "c11",
+        "h8"
+      ],
+      "instruction": ""
+    },
+    {
+      "id": "t16",
+      "summary": "Merge tracker beside the human-inbox bridge: stdlib-only poller holding GITHUB_TOKEN, watches declared observables, auto-submits ONLY the merged state through the existing submit surface as an observed-submission claim (collection_method github_pr_merged, merge commit named); closed-unmerged and undeclared tasks stay manual; manual submit still works on observed tasks",
+      "origin": "llm",
+      "status": "confirmed",
+      "acceptance_criteria": [
+        "a merged PR completes its task with the observed-submission claim naming the merge commit (tracker test on recorded fixtures)",
+        "a PR closed without merging does not auto-complete",
+        "manual submission on an observed task succeeds unchanged"
+      ],
+      "deps": [
+        "t15"
+      ],
+      "covers": [
+        "c12",
+        "h9",
+        "c34",
+        "h23",
+        "c47",
+        "h40",
+        "c14",
+        "h10"
+      ],
+      "instruction": ""
+    },
+    {
+      "id": "t17",
+      "summary": "Human-merges doc revision and credential gate: rewrite the pr-upkeep README's human-merges section to define approved as the observed merge; add a gate proving the control-plane process holds no GitHub credential and never calls the GitHub API",
+      "origin": "llm",
+      "status": "confirmed",
+      "acceptance_criteria": [
+        "the README section is rewritten to name observed merges",
+        "a grep gate over control-plane sources finds no GitHub credential or api.github.com caller"
+      ],
+      "deps": [
+        "t16"
+      ],
+      "covers": [
+        "c13",
+        "h25"
+      ],
+      "instruction": ""
+    },
+    {
+      "id": "t18",
+      "summary": "Nudge transport: one discord-bot-cli thread per parked human attempt (create + mention), tracker-owned cadence with its own throttle, reply relay via channel-messages polling; severity color, username, and timestamp embed vocabulary lifted from steward's discord-notify",
+      "origin": "llm",
+      "status": "confirmed",
+      "acceptance_criteria": [
+        "a parked human attempt produces one thread and one nudge post (fixture test)",
+        "a reply posted in-thread is relayed to the run as a progress update"
+      ],
+      "deps": [
+        "t16"
+      ],
+      "covers": [],
+      "instruction": ""
+    },
+    {
+      "id": "t19",
+      "summary": "Parallel-tokens design pass (issue 43 in full): multi-edge transition plans, join-barrier node-run state, per-token bounds, signal replay and catch-up, and the mid-execution emission surface \u2014 an ADR-grade design doc with the engine test matrix",
+      "origin": "llm",
+      "status": "confirmed",
+      "acceptance_criteria": [
+        "design doc committed enumerating state transitions, bound semantics, and the test matrix",
+        "an independent review (ask-colleague) is recorded against the doc"
+      ],
+      "deps": [],
+      "covers": [
+        "c49"
+      ],
+      "instruction": ""
+    },
+    {
+      "id": "t20",
+      "summary": "Split/join engine implementation: maxParallelTokens honored, multi-edge splits, join barriers, per-token bounds enforced",
+      "origin": "llm",
+      "status": "confirmed",
+      "acceptance_criteria": [
+        "a workflow declaring maxParallelTokens above 1 runs concurrent tokens through a split and reconverges at a join with bounds enforced (engine tests)"
+      ],
+      "deps": [
+        "t19"
+      ],
+      "covers": [
+        "c49",
+        "h42"
+      ],
+      "instruction": ""
+    },
+    {
+      "id": "t21",
+      "summary": "Event-driven continuation: any-node event pickup, non-blocking mid-execution emission, and replay/catch-up closing the migration-0016 event-then-subscription gap",
+      "origin": "llm",
+      "status": "confirmed",
+      "acceptance_criteria": [
+        "an event emitted BEFORE its subscription still resumes the late subscriber (replay test)",
+        "a node emits an event mid-execution and keeps working (emission test)"
+      ],
+      "deps": [
+        "t20"
+      ],
+      "covers": [
+        "c49",
+        "h42"
+      ],
+      "instruction": ""
+    },
+    {
+      "id": "t22",
+      "summary": "Plan ingestion: MapPlanShow (per-task status and real dependency edges) and MapDeviations (origin user or llm) join internal/devague; an import API and CLI verb; durable plan, wave, and task state",
+      "origin": "llm",
+      "status": "confirmed",
+      "acceptance_criteria": [
+        "an imported plan round-trips with per-task status and real dep edges \u2014 not the lossy waves view (round-trip test)",
+        "deviations import carrying their origin; malformed plans are refused with a hint"
+      ],
+      "deps": [
+        "t10"
+      ],
+      "covers": [
+        "c10",
+        "h7",
+        "c15",
+        "h11"
+      ],
+      "instruction": ""
+    },
+    {
+      "id": "t23",
+      "summary": "Implement-Plan dashboard view: plan, waves, and task status over the ledger-projection substrate; deviations render with origin user vs llm visibly distinguished using the AuthorityChip vocabulary",
+      "origin": "llm",
+      "status": "confirmed",
+      "acceptance_criteria": [
+        "the plan view renders tasks, waves, and deviations from a fixture with the origin distinction visible (vitest + e2e)"
+      ],
+      "deps": [
+        "t22"
+      ],
+      "covers": [
+        "c10",
+        "h7",
+        "c15",
+        "h11"
+      ],
+      "instruction": ""
+    },
+    {
+      "id": "t24",
+      "summary": "Generic decompose pipeline: document to claims (with sources) to connected decisions and actions to end verification, as engine surfaces; proven end-to-end on a non-code domain \u2014 a newsletter run from web scope through claims and an article plan to written, verified output with sources tracked throughout",
+      "origin": "llm",
+      "status": "confirmed",
+      "acceptance_criteria": [
+        "the non-code demo run completes with a source on every claim and a verification node at the end, recorded as a delivery artifact"
+      ],
+      "deps": [
+        "t21",
+        "t22"
+      ],
+      "covers": [
+        "c30",
+        "h19"
+      ],
+      "instruction": ""
+    },
+    {
+      "id": "t25",
+      "summary": "Preserve-on-failure (bridge-side, all three backends): a plumbing commit \u2014 write the tree, commit-tree with the failure reason, update-ref the preserve branch \u2014 that never touches HEAD, the index, or the working tree; push best-effort; the failure payload records pushed-vs-local-only",
+      "origin": "llm",
+      "status": "confirmed",
+      "acceptance_criteria": [
+        "after a preserve commit, git status, HEAD, and the index are byte-identical to the pre-preserve state (test)",
+        "the preserve commit message carries the failure reason; a failed push leaves the local commit and records local-only"
+      ],
+      "deps": [
+        "t6"
+      ],
+      "covers": [
+        "c26",
+        "h17",
+        "c41",
+        "h34"
+      ],
+      "instruction": ""
+    },
+    {
+      "id": "t26",
+      "summary": "Preserve branch surfacing: branch name minted by code, persisted on the attempt row (migration), returned by the API, rendered as a link on the run detail page",
+      "origin": "llm",
+      "status": "confirmed",
+      "acceptance_criteria": [
+        "a failed run's detail page links the preserve branch; the DB row carries the branch name (store + web test)"
+      ],
+      "deps": [
+        "t25",
+        "t22"
+      ],
+      "covers": [
+        "c32",
+        "h21"
+      ],
+      "instruction": ""
+    },
+    {
+      "id": "t27",
+      "summary": "Shared event stream in the web app: one app-wide EventSource provider that views subscribe to and detach from without reconnecting; the runs-scoping query parameter exposed in the API client",
+      "origin": "llm",
+      "status": "confirmed",
+      "acceptance_criteria": [
+        "opening every view holds exactly one SSE connection per tab (fixture assertion)",
+        "subscribe and detach cycles never reconnect the stream (unit test)"
+      ],
+      "deps": [],
+      "covers": [
+        "c48",
+        "h41"
+      ],
+      "instruction": ""
+    },
+    {
+      "id": "t28",
+      "summary": "Node Graphs tab shell: replace the Workflows tab with Node Graphs; sub-tabs Nodes, Node Graphs, Active Graphs on the aria-pressed segmented pattern with URL-param state; the authoring entry stays reachable; Header and e2e pins updated",
+      "origin": "llm",
+      "status": "confirmed",
+      "acceptance_criteria": [
+        "the nav renders Node Graphs with three working sub-tabs and /workflows/new stays reachable",
+        "Header tests and the workflows e2e spec are updated and green"
+      ],
+      "deps": [],
+      "covers": [
+        "c19",
+        "h13"
+      ],
+      "instruction": ""
+    },
+    {
+      "id": "t29",
+      "summary": "Cross-workflow graph catalog: a pure domain parser derives node definitions and graph groupings from published workflow IRs client-side \u2014 no new API surface",
+      "origin": "llm",
+      "status": "confirmed",
+      "acceptance_criteria": [
+        "catalog derivation is unit-tested from the workflows fixture: distinct node definitions and per-workflow graph groupings",
+        "no new HTTP endpoint is introduced"
+      ],
+      "deps": [],
+      "covers": [],
+      "instruction": ""
+    },
+    {
+      "id": "t30",
+      "summary": "Auto-refresh across views: generalize the reload-trigger idiom over the shared event stream to Runs, Board, Jobs, Inbox, Statistics, Ledger, and the Node Graphs sub-tabs; load conventions preserved \u2014 AbortController on every fetch, ready means initial-load-settled, stale-while-revalidate",
+      "origin": "llm",
+      "status": "confirmed",
+      "acceptance_criteria": [
+        "each view reflects a new server event without a browser refresh (e2e with the SSE fixture)",
+        "no view nulls a rendered list back to loading during a refetch"
+      ],
+      "deps": [
+        "t27",
+        "t28"
+      ],
+      "covers": [
+        "c22",
+        "h14"
+      ],
+      "instruction": ""
+    },
+    {
+      "id": "t31",
+      "summary": "Active Graphs aliveness: a faint breathing halo on graphs with active tokens and visible periodic-action pulses driven by real SSE events; reduced-motion renders one static frame; the agent-state mirror stays complete; the culture-design check passes",
+      "origin": "llm",
+      "status": "confirmed",
+      "acceptance_criteria": [
+        "the halo renders only for graphs whose runs hold active tokens (fixture test); every pulse traces to a committed event",
+        "reduced-motion renders a static frame; check-culture-design and the webglass gates stay green"
+      ],
+      "deps": [
+        "t27",
+        "t28",
+        "t29"
+      ],
+      "covers": [
+        "c31",
+        "h20",
+        "c21",
+        "h26"
+      ],
+      "instruction": ""
+    },
+    {
+      "id": "t32",
+      "summary": "Headspace allowlist watch: keep the no-proxy boundary; the sweep's declared egress-allowlist intent stays documented in the workflow; when headspace ships the allowlist, restore it on the sweep and pin a runner conformance fixture",
+      "origin": "llm",
+      "status": "confirmed",
+      "acceptance_criteria": [
+        "no proxy code exists in the control plane; the sweep workflow documents the declared intent and the tracked upstream follow-up"
+      ],
+      "deps": [],
+      "covers": [
+        "c29",
+        "h27"
+      ],
+      "instruction": ""
+    },
+    {
+      "id": "t33",
+      "summary": "Delivery verification: map each of the eight success signals to mechanical evidence; produce the audience-to-surface map and the after-state cross-map; cite the recorded live-build pain (deviation d1, issues 47 and 48) in the delivery summary",
+      "origin": "llm",
+      "status": "confirmed",
+      "acceptance_criteria": [
+        "the delivery summary maps every signal to its evidence, every audience to a shipped surface, and every after-state clause to a requirement \u2014 orphans cut or demoted"
+      ],
+      "deps": [
+        "t7",
+        "t11",
+        "t12",
+        "t14",
+        "t16",
+        "t17",
+        "t18",
+        "t21",
+        "t24",
+        "t26",
+        "t30",
+        "t31",
+        "t32"
+      ],
+      "covers": [
+        "c1",
+        "h24",
+        "c35",
+        "h28",
+        "c36",
+        "h29",
+        "c37",
+        "h30",
+        "c38",
+        "h31"
+      ],
+      "instruction": ""
+    },
+    {
+      "id": "t34",
+      "summary": "Deploy-lane wiring for the two new daemons: nodes-notifier as a compose service on thor (env-configured API base, cursor file on a persistent volume, DISCORD_WEBHOOK_URL via install-secrets.sh) and the human-inbox bridge + merge tracker as host units beside the codex bridge (GITHUB_TOKEN custody); deploy docs updated",
+      "origin": "llm",
+      "status": "confirmed",
+      "acceptance_criteria": [
+        "deploy/prod/deploy.sh thor brings up the notifier and the tracker alongside the control plane, and deploy/prod/README.md documents their env and secret requirements",
+        "a real run completion on thor posts exactly one message to the configured Discord channel (live smoke, recorded)",
+        "secrets reach both daemons via install-secrets.sh, never argv and never a committed file (park v1/v3 closed for the prod host)"
+      ],
+      "deps": [
+        "t14",
+        "t16"
+      ],
+      "covers": [],
+      "instruction": ""
+    },
+    {
+      "id": "t35",
+      "summary": "Merge tracker runs unauthenticated against public repos: GITHUB_TOKEN becomes optional, anonymous polling honors the 60/hr anonymous ceiling (back off on 403 rate-limit with the reset header rather than hammering), the token still upgrades the ceiling when present, and deploy.sh installs the tracker unit with or without it",
+      "origin": "llm",
+      "status": "proposed",
+      "acceptance_criteria": [
+        "the tracker starts and completes a poll cycle with no GITHUB_TOKEN set, against a public repo fixture",
+        "a 403 rate-limit response backs off to the reset time instead of retrying immediately, pinned by a test",
+        "deploy.sh installs the tracker unit when GITHUB_TOKEN is absent, and the unit's docs say which ceiling applies"
+      ],
+      "deps": [
+        "t16",
+        "t34"
+      ],
+      "covers": [],
+      "instruction": ""
+    }
+  ],
+  "risks": [
+    {
+      "id": "r1",
+      "text": "Bridge-host push credentials unverified: the preserve push leg assumes thor and orin service environments hold a writable git credential \u2014 never checked; local-commit fallback carries until ops confirms",
+      "kind": "unknown_nonblocking",
+      "task_id": "t25",
+      "resolved": false,
+      "resolution": ""
+    },
+    {
+      "id": "r2",
+      "text": "Daemon placement and secret custody: where the notifier and merge tracker run (thor beside the API vs spark) is undecided; webhook URL and bot token live in an interactive shell today",
+      "kind": "unknown_nonblocking",
+      "task_id": "t14",
+      "resolved": false,
+      "resolution": ""
+    },
+    {
+      "id": "r3",
+      "text": "Full split/join is the largest engine change since phase 0; the design pass may surface schema or state-model needs beyond the current groundwork",
+      "kind": "unknown_nonblocking",
+      "task_id": "t20",
+      "resolved": false,
+      "resolution": ""
+    },
+    {
+      "id": "r4",
+      "text": "Colleague upstream resume support has no committed timeline; stickiness ships two-backends-real, one-backend-honest until it lands",
+      "kind": "unknown_nonblocking",
+      "task_id": "t5",
+      "resolved": false,
+      "resolution": ""
+    },
+    {
+      "id": "r5",
+      "text": "GitHub API rate limits bound the merge tracker's polling cadence across many parked tasks; cadence needs a budget before the tracker scales",
+      "kind": "unknown_nonblocking",
+      "task_id": "t16",
+      "resolved": false,
+      "resolution": ""
+    }
+  ]
+}

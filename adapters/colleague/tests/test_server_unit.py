@@ -8,6 +8,7 @@ path end to end."""
 from __future__ import annotations
 
 import json
+import subprocess
 import urllib.error
 import urllib.request
 from http.client import HTTPConnection
@@ -152,7 +153,7 @@ def test_unknown_role_is_400(bridge_url):
 def test_sync_dispatch_maps_ok_result_to_200(bridge_url, monkeypatch):
     base, cfg, repo = bridge_url
 
-    def fake_run_sync(cfg_, instruction, repo_, *, role, max_steps, mode):
+    def fake_run_sync(cfg_, instruction, repo_, *, role, max_steps, mode, continuation_ref=None):
         return colleague_cli.SyncRunResult(
             exit_code=0,
             stdout="",
@@ -182,12 +183,96 @@ def test_sync_dispatch_maps_ok_result_to_200(bridge_url, monkeypatch):
     assert body["ledger_delta"]["records"][0]["authority"] == "proposed"
 
 
+def test_session_key_and_continuation_ref_never_appear_in_the_prompt_text(bridge_url, monkeypatch):
+    """Acceptance: session_key never appears in the prompt text handed to
+    the model. colleague never acts on continuation_ref (it always returns
+    a null ref, issue #62), but a value it ignores must still be excluded
+    from the Bound-inputs block, not merely unused."""
+    base, cfg, repo = bridge_url
+    captured = {}
+
+    def fake_run_sync(cfg_, instruction, repo_, *, role, max_steps, mode, continuation_ref=None):
+        captured["instruction"] = instruction
+        return colleague_cli.SyncRunResult(
+            exit_code=0,
+            stdout="",
+            stderr="",
+            task_result={
+                "task_id": "abc",
+                "status": "ok",
+                "summary": "ok",
+                "changed_files": [],
+                "artifacts_path": None,
+                "usage": {"prompt_tokens": 1, "completion_tokens": 1, "total_tokens": 2},
+                "error": None,
+            },
+            timed_out=False,
+        )
+
+    monkeypatch.setattr(colleague_cli, "run_sync", fake_run_sync)
+    payload = _invocation_body(
+        str(repo),
+        session_key="actor:repo:workstream-secret",
+        continuation_ref="should-not-leak",
+        fixReport={"summary": "a real bound input"},
+    )
+    headers = {**_auth_header(cfg), "Idempotency-Key": "att_transport_keys"}
+    status, _body = _request(base, server.INVOCATIONS_PATH, body=payload, headers=headers)
+    assert status == 200
+    assert "actor:repo:workstream-secret" not in captured["instruction"]
+    assert "should-not-leak" not in captured["instruction"]
+    assert "a real bound input" in captured["instruction"]
+
+
+def test_sync_capacity_exhausted_failure_is_500_with_retry_after_header(bridge_url, monkeypatch):
+    """Acceptance: a quota/rate-limit CLI failure maps to capacity_exhausted
+    (deviation d4), exercised through the real HTTP response including the
+    Retry-After header internal/actors/client.go reads the delay from."""
+    base, cfg, repo = bridge_url
+
+    def fake_run_sync(cfg_, instruction, repo_, *, role, max_steps, mode, continuation_ref=None):
+        return colleague_cli.SyncRunResult(
+            exit_code=1,
+            stdout="",
+            stderr="",
+            task_result={
+                "task_id": "abc",
+                "status": "error",
+                "summary": "",
+                "changed_files": [],
+                "artifacts_path": None,
+                "usage": {"prompt_tokens": 1, "completion_tokens": 0, "total_tokens": 1},
+                "error": "rate_limit_error: retry after 45 seconds",
+            },
+            timed_out=False,
+        )
+
+    monkeypatch.setattr(colleague_cli, "run_sync", fake_run_sync)
+    headers = {**_auth_header(cfg), "Idempotency-Key": "att_capacity"}
+    req = urllib.request.Request(
+        base + server.INVOCATIONS_PATH,
+        data=json.dumps(_invocation_body(str(repo))).encode("utf-8"),
+        method="POST",
+        headers=headers,
+    )
+    try:
+        with urllib.request.urlopen(req, timeout=10) as resp:  # pragma: no cover - never 2xx here
+            status, resp_headers = resp.status, resp.headers
+            resp_body = json.loads(resp.read().decode("utf-8"))
+    except urllib.error.HTTPError as exc:
+        status, resp_headers = exc.code, exc.headers
+        resp_body = json.loads(exc.read().decode("utf-8"))
+    assert status == 500
+    assert resp_body["class"] == "capacity_exhausted"
+    assert resp_headers.get("Retry-After") == "45"
+
+
 def test_sync_dispatch_maps_incomplete_without_declaration_to_execution_failure(
     bridge_url, monkeypatch
 ):
     base, cfg, repo = bridge_url
 
-    def fake_run_sync(cfg_, instruction, repo_, *, role, max_steps, mode):
+    def fake_run_sync(cfg_, instruction, repo_, *, role, max_steps, mode, continuation_ref=None):
         return colleague_cli.SyncRunResult(
             exit_code=2,
             stdout="",
@@ -218,7 +303,7 @@ def test_idempotent_replay_returns_the_same_response_without_recalling_colleague
     base, cfg, repo = bridge_url
     calls = []
 
-    def fake_run_sync(cfg_, instruction, repo_, *, role, max_steps, mode):
+    def fake_run_sync(cfg_, instruction, repo_, *, role, max_steps, mode, continuation_ref=None):
         calls.append(instruction)
         return colleague_cli.SyncRunResult(
             exit_code=0,
@@ -253,7 +338,7 @@ def test_validation_failure_is_not_cached_for_replay(bridge_url, monkeypatch):
     status1, body1 = _request(base, server.INVOCATIONS_PATH, body=payload, headers=headers)
     assert status1 == 400
 
-    def fake_run_sync(cfg_, instruction, repo_, *, role, max_steps, mode):
+    def fake_run_sync(cfg_, instruction, repo_, *, role, max_steps, mode, continuation_ref=None):
         return colleague_cli.SyncRunResult(
             exit_code=0,
             stdout="",
@@ -280,7 +365,9 @@ def test_async_dispatch_returns_202_and_delivers_accepted_then_completed(bridge_
     receiver = FakeCallbackReceiver()
     try:
 
-        def fake_spawn_background(cfg_, instruction, repo_, *, role, max_steps, mode):
+        def fake_spawn_background(
+            cfg_, instruction, repo_, *, role, max_steps, mode, continuation_ref=None
+        ):
             return colleague_cli.BackgroundStart(
                 handle_id="bg123",
                 pid=999999,
@@ -325,6 +412,76 @@ def test_async_dispatch_returns_202_and_delivers_accepted_then_completed(bridge_
         receiver.close()
 
 
+def test_async_dispatch_preserves_workspace_changes_on_a_real_failure(bridge_url, monkeypatch):
+    """t25 (c26/h17, c41/h34): the async equivalent of the sync wiring test
+    above — a "failed" terminal event carries the preserve outcome, never
+    the "completed" one, and the uncommitted edit really lands on the
+    minted branch."""
+    base, cfg, repo = bridge_url
+    subprocess.run(["git", "init", "-q"], cwd=repo, check=True)
+    subprocess.run(["git", "config", "user.email", "t@t"], cwd=repo, check=True)
+    subprocess.run(["git", "config", "user.name", "t"], cwd=repo, check=True)
+    (repo / "README.md").write_text("# scratch\n")
+    subprocess.run(["git", "add", "README.md"], cwd=repo, check=True)
+    subprocess.run(["git", "commit", "-q", "-m", "init"], cwd=repo, check=True)
+    (repo / "note.txt").write_text("left behind by the failed async session\n")
+
+    receiver = FakeCallbackReceiver()
+    try:
+
+        def fake_spawn_background(
+            cfg_, instruction, repo_, *, role, max_steps, mode, continuation_ref=None
+        ):
+            return colleague_cli.BackgroundStart(
+                handle_id="bg_preserve",
+                pid=999999,
+                log_dir=".colleague/background/bg_preserve/",
+                flight="bg_preserve",
+            )
+
+        monkeypatch.setattr(colleague_cli, "spawn_background", fake_spawn_background)
+        monkeypatch.setattr(colleague_cli, "is_pid_alive", lambda pid: False)
+        monkeypatch.setattr(
+            colleague_cli,
+            "read_background_result",
+            lambda repo_, handle_id: {
+                "task_id": handle_id,
+                "status": "error",
+                "summary": "",
+                "changed_files": [],
+                "usage": {},
+                "error": "fake async failure",
+            },
+        )
+
+        payload = _invocation_body(str(repo))
+        payload["input"]["async"] = True
+        payload["callback"] = {"url": receiver.url, "token": "cbtok"}
+        headers = {**_auth_header(cfg), "Idempotency-Key": "att_preserve_async"}
+        status, body = _request(base, server.INVOCATIONS_PATH, body=payload, headers=headers)
+        assert status == 202, body
+
+        failed = receiver.wait_for_kind("failed")
+        assert failed is not None
+        preserve_block = failed["payload"]["preserve"]
+        assert preserve_block["attempted"] is True
+        assert preserve_block["committed"] is True
+        assert preserve_block["pushed"] is False
+        assert preserve_block["local_only"] is True
+        assert preserve_block["branch"]
+
+        show = subprocess.run(
+            ["git", "show", "--stat", preserve_block["commit"]],
+            cwd=repo,
+            check=True,
+            capture_output=True,
+            text=True,
+        ).stdout
+        assert "note.txt" in show
+    finally:
+        receiver.close()
+
+
 def test_async_missing_callback_is_400(bridge_url):
     base, cfg, repo = bridge_url
     payload = _invocation_body(str(repo))
@@ -339,7 +496,9 @@ def test_async_missing_callback_is_400(bridge_url):
 def test_async_dispatch_failure_is_503(bridge_url, monkeypatch):
     base, cfg, repo = bridge_url
 
-    def fake_spawn_background(cfg_, instruction, repo_, *, role, max_steps, mode):
+    def fake_spawn_background(
+        cfg_, instruction, repo_, *, role, max_steps, mode, continuation_ref=None
+    ):
         raise colleague_cli.BackgroundDispatchError("boom", stderr="engine unreachable")
 
     monkeypatch.setattr(colleague_cli, "spawn_background", fake_spawn_background)
@@ -399,6 +558,62 @@ def test_unauthenticated_bridge_allows_requests_without_a_token(tmp_path):
     finally:
         srv.shutdown()
         srv.server_close()
+
+
+def test_sync_dispatch_preserves_workspace_changes_on_a_real_failure(bridge_url, monkeypatch):
+    """t25 (c26/h17, c41/h34), wired end to end over the real HTTP surface:
+    a genuine execution failure (never a domain outcome) gets the
+    uncommitted edit left in the repo preserved on a code-minted branch,
+    and the failure body records pushed False / local_only True since no
+    remote is configured here."""
+    base, cfg, repo = bridge_url
+    subprocess.run(["git", "init", "-q"], cwd=repo, check=True)
+    subprocess.run(["git", "config", "user.email", "t@t"], cwd=repo, check=True)
+    subprocess.run(["git", "config", "user.name", "t"], cwd=repo, check=True)
+    (repo / "README.md").write_text("# scratch\n")
+    subprocess.run(["git", "add", "README.md"], cwd=repo, check=True)
+    subprocess.run(["git", "commit", "-q", "-m", "init"], cwd=repo, check=True)
+    (repo / "note.txt").write_text("left behind by the failed session\n")
+
+    def fake_run_sync(cfg_, instruction, repo_, *, role, max_steps, mode, continuation_ref=None):
+        return colleague_cli.SyncRunResult(
+            exit_code=1,
+            stdout="",
+            stderr="",
+            task_result={
+                "task_id": "abc",
+                "status": "error",
+                "summary": "",
+                "changed_files": [],
+                "artifacts_path": None,
+                "usage": {"prompt_tokens": 1, "completion_tokens": 0, "total_tokens": 1},
+                "error": "fake failure",
+            },
+            timed_out=False,
+        )
+
+    monkeypatch.setattr(colleague_cli, "run_sync", fake_run_sync)
+    headers = {**_auth_header(cfg), "Idempotency-Key": "att_preserve_sync"}
+    status, body = _request(
+        base, server.INVOCATIONS_PATH, body=_invocation_body(str(repo)), headers=headers
+    )
+    assert status == 500, body
+    preserve_block = body["preserve"]
+    assert preserve_block["attempted"] is True
+    assert preserve_block["committed"] is True
+    assert preserve_block["pushed"] is False
+    assert preserve_block["local_only"] is True
+    assert preserve_block["branch"]
+    assert preserve_block["commit"]
+
+    show = subprocess.run(
+        ["git", "show", "--stat", preserve_block["commit"]],
+        cwd=repo,
+        check=True,
+        capture_output=True,
+        text=True,
+    ).stdout
+    assert "note.txt" in show
 
 
 def test_connection_reuse_keep_alive(bridge_url):

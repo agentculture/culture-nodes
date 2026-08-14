@@ -153,7 +153,7 @@ def test_unknown_role_is_400(bridge_url):
 def test_sync_dispatch_maps_success_result_to_200(bridge_url, monkeypatch):
     base, cfg, repo = bridge_url
 
-    def fake_run_sync(cfg_, instruction, repo_, *, role, max_steps, model):
+    def fake_run_sync(cfg_, instruction, repo_, *, role, max_steps, model, continuation_ref=None):
         return claude_cli.SyncRunResult(
             exit_code=0,
             stdout="",
@@ -179,8 +179,122 @@ def test_sync_dispatch_maps_success_result_to_200(bridge_url, monkeypatch):
     assert status == 200
     assert body["outcome"] == "completed"
     assert body["output"]["summary"] == "did it"
-    assert body["usage"] == {"input_tokens": 1, "output_tokens": 2, "cost": 0.01, "currency": "USD"}
+    assert body["usage"] == {
+        "input_tokens": 1,
+        "output_tokens": 2,
+        "cost": 0.01,
+        "currency": "USD",
+        "thread_id": "sess-1",
+    }
     assert body["ledger_delta"]["records"][0]["authority"] == "proposed"
+
+
+def test_sync_dispatch_reads_top_level_continuation_ref_and_resumes(bridge_url, monkeypatch):
+    """§13.1's continuation_ref (internal/actors/protocol.go's
+    InvocationRequest) is a TOP-LEVEL request field, a sibling of run_id —
+    NOT nested inside `input` (the seed this task inherited read it from
+    the wrong place, which would have made a real engine's continuation_ref
+    silently dispatch cold every time). This test pins the real wire shape
+    end to end: a top-level continuation_ref reaches claude_cli.run_sync."""
+    base, cfg, repo = bridge_url
+    captured = {}
+
+    def fake_run_sync(cfg_, instruction, repo_, *, role, max_steps, model, continuation_ref=None):
+        captured["continuation_ref"] = continuation_ref
+        return claude_cli.SyncRunResult(
+            exit_code=0,
+            stdout="",
+            stderr="",
+            task_result={
+                "type": "result",
+                "subtype": "success",
+                "is_error": False,
+                "session_id": "sess-1",
+                "result": "resumed",
+            },
+            timed_out=False,
+        )
+
+    monkeypatch.setattr(claude_cli, "run_sync", fake_run_sync)
+    payload = _invocation_body(str(repo))
+    payload["continuation_ref"] = "sess-prior-999"  # top-level, per §13.1
+    headers = {**_auth_header(cfg), "Idempotency-Key": "att_resume"}
+    status, body = _request(base, server.INVOCATIONS_PATH, body=payload, headers=headers)
+    assert status == 200
+    assert captured["continuation_ref"] == "sess-prior-999"
+
+
+def test_sync_dispatch_without_a_prior_ref_dispatches_cold(bridge_url, monkeypatch):
+    base, cfg, repo = bridge_url
+    captured = {}
+
+    def fake_run_sync(cfg_, instruction, repo_, *, role, max_steps, model, continuation_ref=None):
+        captured["continuation_ref"] = continuation_ref
+        return claude_cli.SyncRunResult(
+            exit_code=0,
+            stdout="",
+            stderr="",
+            task_result={
+                "type": "result",
+                "subtype": "success",
+                "is_error": False,
+                "session_id": "sess-1",
+                "result": "cold",
+            },
+            timed_out=False,
+        )
+
+    monkeypatch.setattr(claude_cli, "run_sync", fake_run_sync)
+    headers = {**_auth_header(cfg), "Idempotency-Key": "att_cold"}
+    status, _body = _request(
+        base, server.INVOCATIONS_PATH, body=_invocation_body(str(repo)), headers=headers
+    )
+    assert status == 200
+    assert captured["continuation_ref"] is None
+
+
+def test_session_key_and_continuation_ref_never_appear_in_the_prompt_text(bridge_url, monkeypatch):
+    """Acceptance: 'session_key never appears in the prompt text handed to
+    the model.' Both session_key and continuation_ref are transport keys —
+    even when a caller nests them inside `input` (which the real wire shape
+    never does for continuation_ref, but this bridge's own extras-forwarding
+    block is defensive regardless — see server.py's own comment), neither
+    may leak into the instruction text claude actually receives."""
+    base, cfg, repo = bridge_url
+    captured = {}
+
+    def fake_run_sync(cfg_, instruction, repo_, *, role, max_steps, model, continuation_ref=None):
+        captured["instruction"] = instruction
+        return claude_cli.SyncRunResult(
+            exit_code=0,
+            stdout="",
+            stderr="",
+            task_result={
+                "type": "result",
+                "subtype": "success",
+                "is_error": False,
+                "session_id": "sess-1",
+                "result": "ok",
+            },
+            timed_out=False,
+        )
+
+    monkeypatch.setattr(claude_cli, "run_sync", fake_run_sync)
+    payload = _invocation_body(
+        str(repo),
+        session_key="actor:repo:workstream-secret",
+        continuation_ref="sess-should-not-leak",
+        fixReport={"summary": "a real bound input"},
+    )
+    headers = {**_auth_header(cfg), "Idempotency-Key": "att_transport_keys"}
+    status, _body = _request(base, server.INVOCATIONS_PATH, body=payload, headers=headers)
+    assert status == 200
+    assert "actor:repo:workstream-secret" not in captured["instruction"]
+    assert "sess-should-not-leak" not in captured["instruction"]
+    # The negative control: a genuine bound input still DOES get forwarded,
+    # proving the exclusion is specific to the transport keys, not a bug
+    # that dropped the whole Bound-inputs block.
+    assert "a real bound input" in captured["instruction"]
 
 
 def test_sync_dispatch_maps_incomplete_without_declaration_to_execution_failure(
@@ -189,7 +303,7 @@ def test_sync_dispatch_maps_incomplete_without_declaration_to_execution_failure(
     """incomplete-never-success, exercised through the HTTP surface."""
     base, cfg, repo = bridge_url
 
-    def fake_run_sync(cfg_, instruction, repo_, *, role, max_steps, model):
+    def fake_run_sync(cfg_, instruction, repo_, *, role, max_steps, model, continuation_ref=None):
         return claude_cli.SyncRunResult(
             exit_code=1,
             stdout="",
@@ -221,7 +335,7 @@ def test_sync_dispatch_maps_crashed_session_to_execution_failure_never_success(
     parseable task_result at all) must never become a 200."""
     base, cfg, repo = bridge_url
 
-    def fake_run_sync(cfg_, instruction, repo_, *, role, max_steps, model):
+    def fake_run_sync(cfg_, instruction, repo_, *, role, max_steps, model, continuation_ref=None):
         return claude_cli.SyncRunResult(
             exit_code=1,
             stdout="garbage, not json",
@@ -246,7 +360,7 @@ def test_idempotent_replay_returns_the_same_response_without_recalling_claude(
     base, cfg, repo = bridge_url
     calls = []
 
-    def fake_run_sync(cfg_, instruction, repo_, *, role, max_steps, model):
+    def fake_run_sync(cfg_, instruction, repo_, *, role, max_steps, model, continuation_ref=None):
         calls.append(instruction)
         return claude_cli.SyncRunResult(
             exit_code=0,
@@ -281,7 +395,7 @@ def test_validation_failure_is_not_cached_for_replay(bridge_url, monkeypatch):
     status1, body1 = _request(base, server.INVOCATIONS_PATH, body=payload, headers=headers)
     assert status1 == 400
 
-    def fake_run_sync(cfg_, instruction, repo_, *, role, max_steps, model):
+    def fake_run_sync(cfg_, instruction, repo_, *, role, max_steps, model, continuation_ref=None):
         return claude_cli.SyncRunResult(
             exit_code=0,
             stdout="",
@@ -309,7 +423,9 @@ def test_async_dispatch_returns_202_and_delivers_accepted_then_completed(bridge_
     try:
         handle_id = "cc_bg123"
 
-        def fake_spawn_background(cfg_, instruction, repo_, *, role, max_steps, model):
+        def fake_spawn_background(
+            cfg_, instruction, repo_, *, role, max_steps, model, continuation_ref=None
+        ):
             # The async runner's poller tails flightfiles.feed_path(state_dir,
             # handle_id) directly (see async_runner.py) — write the terminal
             # `type: "result"` record there up front so the fake behaves
@@ -353,8 +469,102 @@ def test_async_dispatch_returns_202_and_delivers_accepted_then_completed(bridge_
         assert completed["sequence"] > accepted["sequence"]
         assert completed["payload"]["outcome"] == "completed"
         assert completed["payload"]["ledger_delta"]["records"][0]["authority"] == "proposed"
+        # Acceptance: "the async terminal payload carries continuation_ref"
+        # — the seed only ever wired this onto the SYNC body.
+        assert completed["payload"]["continuation_ref"] == handle_id
     finally:
         receiver.close()
+
+
+def test_async_dispatch_passes_continuation_ref_through_to_spawn_background(
+    bridge_url, monkeypatch
+):
+    """The async resume half of acceptance #1: a prior ref must reach
+    `spawn_background` too, not just `run_sync` — the async path is the one
+    long (and therefore resume-worth-it) sessions actually take."""
+    base, cfg, repo = bridge_url
+    receiver = FakeCallbackReceiver()
+    captured = {}
+    try:
+        handle_id = "cc_bg_resume"
+
+        def fake_spawn_background(
+            cfg_, instruction, repo_, *, role, max_steps, model, continuation_ref=None
+        ):
+            captured["continuation_ref"] = continuation_ref
+            feed = flightfiles.feed_path(cfg_.state_dir, handle_id)
+            feed.parent.mkdir(parents=True, exist_ok=True)
+            feed.write_text(
+                json.dumps(
+                    {
+                        "type": "result",
+                        "subtype": "success",
+                        "is_error": False,
+                        "session_id": handle_id,
+                        "result": "resumed async",
+                    }
+                )
+                + "\n"
+            )
+            return claude_cli.BackgroundStart(handle_id=handle_id, pid=999999, log_path=str(feed))
+
+        monkeypatch.setattr(claude_cli, "spawn_background", fake_spawn_background)
+        monkeypatch.setattr(claude_cli, "is_pid_alive", lambda pid: False)
+
+        payload = _invocation_body(str(repo))
+        payload["input"]["async"] = True
+        payload["continuation_ref"] = "sess-prior-async-1"
+        payload["callback"] = {"url": receiver.url, "token": "cbtok"}
+        headers = {**_auth_header(cfg), "Idempotency-Key": "att_async_resume"}
+        status, _body = _request(base, server.INVOCATIONS_PATH, body=payload, headers=headers)
+        assert status == 202
+        receiver.wait_for_kind("completed")
+        assert captured["continuation_ref"] == "sess-prior-async-1"
+    finally:
+        receiver.close()
+
+
+def test_sync_capacity_exhausted_failure_is_500_with_retry_after_header(bridge_url, monkeypatch):
+    """Acceptance: a quota/rate-limit CLI failure maps to capacity_exhausted
+    (deviation d4), and — since internal/actors/client.go reads the delay
+    from the HTTP Retry-After header, never the JSON body — that header is
+    actually set on the wire, exercised through the real HTTP response
+    rather than only at the mapping layer."""
+    base, cfg, repo = bridge_url
+
+    def fake_run_sync(cfg_, instruction, repo_, *, role, max_steps, model, continuation_ref=None):
+        return claude_cli.SyncRunResult(
+            exit_code=1,
+            stdout="",
+            stderr="",
+            task_result={
+                "type": "result",
+                "subtype": "error_during_execution",
+                "is_error": True,
+                "session_id": "sess-cap",
+                "result": "rate_limit_error: retry after 45 seconds",
+            },
+            timed_out=False,
+        )
+
+    monkeypatch.setattr(claude_cli, "run_sync", fake_run_sync)
+    headers = {**_auth_header(cfg), "Idempotency-Key": "att_capacity"}
+    req = urllib.request.Request(
+        base + server.INVOCATIONS_PATH,
+        data=json.dumps(_invocation_body(str(repo))).encode("utf-8"),
+        method="POST",
+        headers=headers,
+    )
+    try:
+        with urllib.request.urlopen(req, timeout=10) as resp:  # pragma: no cover - never 2xx here
+            status, resp_headers = resp.status, resp.headers
+            resp_body = json.loads(resp.read().decode("utf-8"))
+    except urllib.error.HTTPError as exc:
+        status, resp_headers = exc.code, exc.headers
+        resp_body = json.loads(exc.read().decode("utf-8"))
+    assert status == 500
+    assert resp_body["class"] == "capacity_exhausted"
+    assert resp_headers.get("Retry-After") == "45"
 
 
 def test_async_missing_callback_is_400(bridge_url):
@@ -371,7 +581,9 @@ def test_async_missing_callback_is_400(bridge_url):
 def test_async_dispatch_failure_is_503(bridge_url, monkeypatch):
     base, cfg, repo = bridge_url
 
-    def fake_spawn_background(cfg_, instruction, repo_, *, role, max_steps, model):
+    def fake_spawn_background(
+        cfg_, instruction, repo_, *, role, max_steps, model, continuation_ref=None
+    ):
         raise claude_cli.BackgroundDispatchError("boom", stderr="engine unreachable")
 
     monkeypatch.setattr(claude_cli, "spawn_background", fake_spawn_background)
@@ -388,7 +600,7 @@ def test_sync_dispatch_below_pinned_minimum_is_refused_with_honest_error(bridge_
     version-gate refusal is an actor_unavailable 503 naming both versions."""
     base, cfg, repo = bridge_url
 
-    def fake_run_sync(cfg_, instruction, repo_, *, role, max_steps, model):
+    def fake_run_sync(cfg_, instruction, repo_, *, role, max_steps, model, continuation_ref=None):
         raise claude_cli.UnsupportedClaudeVersionError(
             detected="2.0.5 (Claude Code)", minimum="2.1.220"
         )
@@ -407,7 +619,9 @@ def test_sync_dispatch_below_pinned_minimum_is_refused_with_honest_error(bridge_
 def test_async_dispatch_below_pinned_minimum_is_refused_with_honest_error(bridge_url, monkeypatch):
     base, cfg, repo = bridge_url
 
-    def fake_spawn_background(cfg_, instruction, repo_, *, role, max_steps, model):
+    def fake_spawn_background(
+        cfg_, instruction, repo_, *, role, max_steps, model, continuation_ref=None
+    ):
         raise claude_cli.UnsupportedClaudeVersionError(
             detected="2.0.5 (Claude Code)", minimum="2.1.220"
         )

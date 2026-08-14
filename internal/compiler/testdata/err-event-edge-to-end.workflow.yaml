@@ -1,0 +1,49 @@
+# An `onEvent` edge pointed at an end node (issue #43): refused at publish.
+# A run must not COMPLETE as a side effect of an event being delivered —
+# completion resolves the workflow's output and, under the parallel-tokens
+# design, has to be able to prove no sibling token is still live (D7). An
+# event that could end a run from the outside races both guarantees.
+apiVersion: nodes.culture.dev/v1alpha1
+kind: Workflow
+
+metadata:
+  name: err-event-edge-to-end
+  version: 1.0.0
+  ownerRef: team/platform-ai
+
+spec:
+  entry: work
+
+  contract:
+    input:
+      schema:
+        type: object
+    output:
+      schema:
+        type: object
+
+  nodes:
+    work:
+      kind: agent
+      ownerRef: team/platform-ai
+      uses: actor://company/worker@sha256:aaaaaa
+      input:
+        from: /run/input
+      contract:
+        outcomes:
+          completed:
+            schema:
+              type: object
+
+    finish:
+      kind: end
+      ownerRef: team/platform-ai
+      output:
+        from: /nodes/work/output
+
+  edges:
+    - from: work.completed
+      to: finish
+
+    - onEvent: abandon
+      to: finish

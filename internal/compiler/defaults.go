@@ -14,8 +14,11 @@ const (
 	DefaultMaxTransitions = 64
 	// DefaultMaxVisitsPerNode bounds how often one node runs in one run.
 	DefaultMaxVisitsPerNode = 8
-	// DefaultMaxParallelTokens is 1 because MVP execution is sequential
-	// (PRD §9.8): the model supports splitting, the engine does not yet.
+	// DefaultMaxParallelTokens is 1 so parallelism stays opt-in (PRD §9.8):
+	// the engine honors splits and joins (issue #43), but a workflow that
+	// never declares the limit gets a cap of one active token, which makes
+	// any split in it a bound failure at runtime. Adding a `parallel` node
+	// must not be enough to acquire concurrency the author never asked for.
 	DefaultMaxParallelTokens = 1
 
 	// DefaultLedgerSchemaVersion pins the work-ledger vocabulary a workflow

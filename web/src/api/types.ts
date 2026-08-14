@@ -25,10 +25,20 @@ export type RunState =
  * list, whenever more than one currency was seen. Never derive a currency
  * that was not reported — that is c35/h27's other half, and applies to every
  * renderer of this type.
+ *
+ * `cached_input_tokens`/`reasoning_tokens` (task t2, ADR 0009) sum the same
+ * way `input_tokens`/`output_tokens` do: an attempt that reported tokens
+ * but no cache telemetry at all contributes nothing, never a fabricated
+ * zero. `cache_ratio` (`cached_input_tokens / input_tokens`) is present
+ * only when `input_tokens > 0` — omitted, not a fabricated 0, when nothing
+ * in scope reported any input tokens.
  */
 export interface Usage {
   input_tokens: number;
   output_tokens: number;
+  cached_input_tokens: number;
+  reasoning_tokens: number;
+  cache_ratio?: number;
   cost?: number;
   currency?: string;
   cost_by_currency?: CurrencyCost[];
@@ -120,6 +130,34 @@ export interface Attempt {
   result?: unknown;
   started_at: string;
   completed_at?: string;
+  /**
+   * Task t26 (issue #49, spec claim c32 / honesty h21): the branch name a
+   * bridge's preserve-on-failure plumbing commit (task t25) actually
+   * created a ref for. Present only on an attempt whose bridge committed
+   * one — most attempts, including every successful one, carry none; a
+   * minted-but-never-committed name is never reported here (see
+   * migrations/0025_attempt_preserve_branch.sql). Read `preserve_branch`
+   * as the presence check — `preserve_pushed`/`preserve_remote` are only
+   * ever populated alongside it.
+   */
+  preserve_branch?: string;
+  /**
+   * Whether `preserve_branch` reached the bridge's configured remote
+   * (`true`) or exists only in the bridge host's local object database
+   * (`false` — the expected common case today, since bridge-host push
+   * credentials are unverified). A reader must be able to tell the two
+   * apart, so this is always an explicit boolean when `preserve_branch` is
+   * present, never inferred from its absence.
+   */
+  preserve_pushed?: boolean;
+  /**
+   * The remote name (e.g. "origin") the bridge attempted or reached the
+   * push against. Informational only — NEVER combined with
+   * `preserve_branch` client-side to construct a forge URL; a clickable
+   * link may only come from configuration the operator actually set (see
+   * domain/preserve.ts).
+   */
+  preserve_remote?: string;
 }
 
 export type NodeRunState =
@@ -449,4 +487,85 @@ export interface HumanTaskDecisionResult {
   next_human_task_id?: string;
   run_state: string;
   run_output?: unknown;
+}
+
+/**
+ * The ledger-producer kind a plan-import row's `origin_kind` carries (task
+ * t22/t23, issue #45): devague's own `user`/`llm` origin, translated to the
+ * same `human`/`agent` vocabulary `LedgerRecord.origin.kind` uses elsewhere
+ * — this is the issue's "the system knows" (agent/llm) vs "the user
+ * reports" (human/user) split, and the entire reason task t23 exists.
+ */
+export type PlanImportOriginKind = "human" | "agent";
+
+/** One task of an imported plan snapshot (components.schemas.PlanImportTask). */
+export interface PlanImportTask {
+  task_ref: string;
+  summary: string;
+  instruction?: string;
+  origin_kind: PlanImportOriginKind;
+  /**
+   * The source system's own per-task decision status verbatim (devague:
+   * `proposed` | `confirmed` | `rejected`) — never a ledger authority
+   * value, but deliberately spelled so a `LedgerAuthorityValue`-shaped
+   * chip renders it correctly unmodified (see routes/PlanView.tsx).
+   */
+  source_status: string;
+  /** REAL per-task dependency edges — other `task_ref`s in this plan. */
+  depends_on: string[];
+  /** Absent for a rejected task, which occupies no wave. */
+  wave?: number;
+  acceptance_criteria: string[];
+  covers: string[];
+}
+
+/** One deviation of an imported plan snapshot (components.schemas.PlanImportDeviation). */
+export interface PlanImportDeviation {
+  deviation_ref: string;
+  what: string;
+  task_ref: string;
+  reason: string;
+  affects: string[];
+  origin_kind: PlanImportOriginKind;
+  /** devague: `proposed` | `approved` | `rejected` — note `approved`, not `confirmed`. */
+  source_status: string;
+  classification?: string;
+}
+
+/**
+ * One full plan-import snapshot (components.schemas.PlanImport, task t22):
+ * `GET /v1alpha1/plan-imports/{id}`'s body and the 201 body of `POST
+ * /v1alpha1/plan-imports`. Deliberately not a ledger record — see
+ * `migrations/0024_plan_imports.sql`.
+ */
+export interface PlanImport {
+  id: string;
+  slug: string;
+  title: string;
+  source_slug: string;
+  source_status: string;
+  source_digest: string;
+  imported_at: string;
+  tasks: PlanImportTask[];
+  deviations: PlanImportDeviation[];
+}
+
+/**
+ * One row of `GET /v1alpha1/plan-imports?slug=` (components.schemas.
+ * PlanImportSummary, task t23): the plan-level fields only — no
+ * `tasks`/`deviations`, since those are unpopulated on this path (an empty
+ * array here would misread as "zero tasks" rather than "not fetched").
+ */
+export interface PlanImportSummary {
+  id: string;
+  slug: string;
+  title: string;
+  source_slug: string;
+  source_status: string;
+  source_digest: string;
+  imported_at: string;
+}
+
+export interface PlanImportSummaryList {
+  items: PlanImportSummary[];
 }

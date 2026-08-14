@@ -149,8 +149,17 @@ activemq-data/
 
 # Environments
 .env
+.env.*
+!.env.example
 .envrc
 .venv
+
+# Editor swap/backup files — a .env.swp holds the same secrets the .env
+# does, in plaintext, and is created automatically the moment someone
+# opens one in vim.
+*.swp
+*.swo
+*~
 env/
 venv/
 ENV/
@@ -237,3 +246,6 @@ skills.local.yaml
 # accidentally-committed build artifact (removed in phase-2); keep it out
 /nodes
 /test-results/
+
+# Session worktrees created by the harness — never part of the repo.
+.claude/worktrees/

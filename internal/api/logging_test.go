@@ -171,6 +171,9 @@ func (f *fakeCallbackStore) ReparkResumedWork(ctx context.Context, inv actors.Pe
 func (f *fakeCallbackStore) CloseInvocation(ctx context.Context, attemptID, state string) error {
 	return nil
 }
+func (f *fakeCallbackStore) EmitSignalEvent(ctx context.Context, inv actors.PendingInvocation, in actors.EmitSignalInput) (actors.EmitSignalResult, error) {
+	return actors.EmitSignalResult{}, nil
+}
 func (f *fakeCallbackStore) ResumeWaitingWork(ctx context.Context, inv actors.PendingInvocation, lease time.Duration) error {
 	return nil
 }

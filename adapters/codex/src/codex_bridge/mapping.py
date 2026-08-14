@@ -53,6 +53,7 @@ a real measurement.
 
 from __future__ import annotations
 
+import re
 from dataclasses import dataclass
 from typing import Any
 
@@ -64,10 +65,53 @@ STATUS_INCOMPLETE = "incomplete"
 
 #: §13.5 error classes this module ever produces (a strict subset of
 #: internal/actors.ErrorClass — the bridge only ever originates the classes
-#: an actor is positioned to know about).
+#: an actor is positioned to know about). capacity_exhausted joined the set
+#: in task t5 (deviation d4) — see claude_code_bridge.mapping's identical
+#: constant for the full rationale (engine side already existed, t8/t9;
+#: nothing on the bridge side ever declared it).
 CLASS_EXECUTION = "execution"
 CLASS_TIMEOUT = "timeout"
 CLASS_ACTOR_REJECTED_INPUT = "actor_rejected_input"
+CLASS_CAPACITY_EXHAUSTED = "capacity_exhausted"
+
+#: Mirrors claude_code_bridge.mapping._CAPACITY_SIGNALS exactly (the same
+#: provider-side vocabulary; codex hands this bridge the same kind of free
+#: text — `turn.failed`'s `error.message`, or a standalone `error` event's
+#: `message` — rather than a structured error code, so the same
+#: text-matching approach applies). Not shared code (each bridge is its own
+#: stdlib-only package, per the all-backends rule duplicating rather than
+#: cross-importing), but deliberately identical in content.
+_CAPACITY_SIGNALS = (
+    "rate_limit_error",
+    "rate limit",
+    "usage limit",
+    "quota",
+    "too many requests",
+    "overloaded_error",
+    "session limit",
+    " 429",
+    "429 ",
+)
+
+_RETRY_AFTER_RE = re.compile(r"retry[- ]after[:\s]+(\d+(?:\.\d+)?)\s*(?:s|sec|second)?s?\b", re.I)
+
+
+def _is_capacity_exhausted(*texts: str) -> bool:
+    lowered = " ".join(t.lower() for t in texts if t)
+    return any(signal in lowered for signal in _CAPACITY_SIGNALS)
+
+
+def _capacity_retry_after_seconds(*texts: str) -> float | None:
+    for text in texts:
+        if not text:
+            continue
+        m = _RETRY_AFTER_RE.search(text)
+        if m:
+            try:
+                return float(m.group(1))
+            except ValueError:
+                return None
+    return None
 
 
 @dataclass(frozen=True)
@@ -94,6 +138,12 @@ class InvocationContext:
     #: incomplete or crashed run is reported as an execution failure
     #: instead — never as a silent success.
     incomplete_outcome: str | None = None
+    #: A prior session handle to resume (from the engine's top-level
+    #: `continuation_ref` on the InvocationRequest — §13.1,
+    #: internal/actors/protocol.go). `None` means cold-start. Mirrors
+    #: `claude_code_bridge.mapping.InvocationContext.continuation_ref`
+    #: field for field (task t5).
+    continuation_ref: str | None = None
 
 
 @dataclass(frozen=True)
@@ -109,6 +159,10 @@ class Classification:
     message: str | None = None
     #: The §13.5 error class, set iff `domain` is False.
     error_class: str | None = None
+    #: The delay codex's own error text named, when `error_class ==
+    #: CLASS_CAPACITY_EXHAUSTED` and one was recognised — None otherwise.
+    #: Mirrors claude_code_bridge.mapping.Classification's own field.
+    retry_after_seconds: float | None = None
 
 
 def classify(
@@ -148,6 +202,20 @@ def classify(
         )
 
     if status == STATUS_ERROR:
+        # t5 (deviation d4): before defaulting to plain execution, check
+        # whether codex's own error text names a provider capacity
+        # refusal — codex has no separate wire signal for "the provider
+        # said no because of quota", `turn.failed`'s error.message and the
+        # standalone `error` event's message are the only channel
+        # (codex_cli.parse_session captures both into task_result["error"]).
+        error_text = str(task_result.get("error") or "")
+        if _is_capacity_exhausted(error_text):
+            return Classification(
+                domain=False,
+                message=error_text or "codex reported a provider capacity refusal",
+                error_class=CLASS_CAPACITY_EXHAUSTED,
+                retry_after_seconds=_capacity_retry_after_seconds(error_text),
+            )
         return Classification(
             domain=False,
             message=task_result.get("error") or "codex reported a turn failure",
@@ -179,23 +247,70 @@ def _default_workspace_measured() -> dict[str, Any]:
     }
 
 
-def usage_from_task_result(task_result: dict[str, Any] | None) -> dict[str, Any]:
-    """Map codex's own `usage` (input/output tokens) onto §13.2 `Usage`.
+def usage_from_task_result(task_result: dict[str, Any] | None) -> dict[str, Any] | None:
+    """Map provider-reported codex usage onto §13.2 `Usage`.
 
-    codex's usage is exact, API-reported token accounting (the
-    `turn.completed` event's own `usage` field); the bridge never estimates
-    cost, so `cost`/`currency` are always null — an actor that does not
-    price its work says so with null rather than a zero that reads as
-    "free" (protocol.go's own docstring, matching colleague-bridge's own
-    stance).
+    Input and output are the block-presence sentinel. If either count was
+    not reported, returning ``None`` makes it structurally impossible for a
+    caller to manufacture the old 0/0 block. Real zero counts remain real
+    because presence is checked with ``is None``, never truthiness.
+
+    Codex does not price its own work here, so `cost`/`currency` stay null.
+    Cache reads, reasoning output, model metadata, and the provider thread
+    are independently optional within an otherwise real usage block.
     """
-    usage = (task_result or {}).get("usage") or {}
-    return {
-        "input_tokens": int(usage.get("input_tokens") or 0),
-        "output_tokens": int(usage.get("output_tokens") or 0),
+    task = task_result or {}
+    usage = task.get("usage") or {}
+    input_tokens = usage.get("input_tokens")
+    output_tokens = usage.get("output_tokens")
+    if input_tokens is None or output_tokens is None:
+        return None
+
+    mapped: dict[str, Any] = {
+        "input_tokens": int(input_tokens),
+        "output_tokens": int(output_tokens),
         "cost": None,
         "currency": None,
     }
+
+    cached_input_tokens = usage.get("cached_input_tokens")
+    if cached_input_tokens is not None:
+        mapped["cached_input_tokens"] = int(cached_input_tokens)
+
+    reasoning_tokens = usage.get("reasoning_output_tokens")
+    if reasoning_tokens is not None:
+        mapped["reasoning_tokens"] = int(reasoning_tokens)
+
+    model = task.get("model")
+    if isinstance(model, str) and model:
+        mapped["model"] = model
+
+    thread_id = task.get("task_id")
+    if isinstance(thread_id, str) and thread_id:
+        mapped["thread_id"] = thread_id
+
+    return mapped
+
+
+def _attach_provider_telemetry(
+    payload: dict[str, Any], task_result: dict[str, Any] | None
+) -> dict[str, Any]:
+    """Attach independently optional usage and termination telemetry.
+
+    Keeping this single seam for success and failure payloads is what makes
+    the no-fabricated-zeros rule structural: no caller decides that a parsed
+    result is enough to imply usage. Only ``usage_from_task_result`` can add
+    that block, and it returns ``None`` until both required counts exist.
+    """
+    usage = usage_from_task_result(task_result)
+    if usage is not None:
+        payload["usage"] = usage
+
+    reason = (task_result or {}).get("termination_reason")
+    if isinstance(reason, str) and reason:
+        payload["termination_reason"] = reason
+
+    return payload
 
 
 def declared_result_override(task_result):
@@ -287,10 +402,18 @@ def claim_record(
 
 @dataclass(frozen=True)
 class SyncResponse:
-    """What the bridge answers to a synchronous invocation."""
+    """What the bridge answers to a synchronous invocation.
+
+    *retry_after_seconds* is NOT part of `body` — see
+    claude_code_bridge.mapping.SyncResponse's identical field for why: the
+    control plane reads a capacity refusal's delay from the HTTP
+    Retry-After header only (internal/actors/client.go), and server.py is
+    the one place that turns this field into that header.
+    """
 
     status_code: int
     body: dict[str, Any]
+    retry_after_seconds: float | None = None
 
 
 def sync_response(
@@ -315,14 +438,12 @@ def sync_response(
     )
 
     if timed_out:
-        return SyncResponse(
-            status_code=408,
-            body={
-                "error": "codex did not finish within the bridge's sync timeout",
-                "class": CLASS_TIMEOUT,
-                "workspace_measured": measured,
-            },
-        )
+        body = {
+            "error": "codex did not finish within the bridge's sync timeout",
+            "class": CLASS_TIMEOUT,
+            "workspace_measured": measured,
+        }
+        return SyncResponse(status_code=408, body=_attach_provider_telemetry(body, task_result))
 
     classification = classify(task_result, ctx, default_success_outcome=default_success_outcome)
     if not classification.domain:
@@ -331,31 +452,31 @@ def sync_response(
             "class": classification.error_class,
             "workspace_measured": measured,
         }
-        # Issue #32: a failed session still burned real tokens. When codex
-        # produced a parseable terminal result, its API-reported usage rides
-        # the failure body; a result-less crash stays usage-less — absent,
-        # never fabricated zeros.
-        if task_result is not None:
-            body["usage"] = usage_from_task_result(task_result)
-        return SyncResponse(status_code=500, body=body)
+        # Usage and the provider reason are independent: a failed turn can
+        # report either one without forcing the other into existence.
+        return SyncResponse(
+            status_code=500,
+            body=_attach_provider_telemetry(body, task_result),
+            retry_after_seconds=classification.retry_after_seconds,
+        )
 
     declared = declared_result_override(task_result)
-    return SyncResponse(
-        status_code=200,
-        body={
-            "outcome": declared[0] if declared else classification.outcome,
-            "output": declared[1] if declared else output_from_task_result(task_result),
-            "ledger_delta": {
-                "records": [
-                    claim_record(task_result, ctx, actor_id=actor_id, created_at=created_at)
-                ]
-            },
-            "artifact_refs": [],
-            "continuation_ref": None,
-            "usage": usage_from_task_result(task_result),
-            "workspace_measured": measured,
+    task_id = (task_result or {}).get("task_id")
+    body = {
+        "outcome": declared[0] if declared else classification.outcome,
+        "output": declared[1] if declared else output_from_task_result(task_result),
+        "ledger_delta": {
+            "records": [claim_record(task_result, ctx, actor_id=actor_id, created_at=created_at)]
         },
-    )
+        "artifact_refs": [],
+        # t5: codex's own thread id (captured by codex_cli.parse_session
+        # from the `thread.started` event) IS the continuation_ref this
+        # bridge offers back — the seed for this task never touched codex
+        # at all, so this hardcoded None was still standing.
+        "continuation_ref": task_id if isinstance(task_id, str) and task_id else None,
+        "workspace_measured": measured,
+    }
+    return SyncResponse(status_code=200, body=_attach_provider_telemetry(body, task_result))
 
 
 @dataclass(frozen=True)
@@ -387,14 +508,14 @@ def terminal_event(
     )
 
     if timed_out:
+        payload = {
+            "class": CLASS_TIMEOUT,
+            "message": "codex did not finish within the bridge's async wait bound",
+            "detail": detail,
+            "workspace_measured": measured,
+        }
         return TerminalEvent(
-            kind="failed",
-            payload={
-                "class": CLASS_TIMEOUT,
-                "message": "codex did not finish within the bridge's async wait bound",
-                "detail": detail,
-                "workspace_measured": measured,
-            },
+            kind="failed", payload=_attach_provider_telemetry(payload, task_result)
         )
 
     classification = classify(task_result, ctx, default_success_outcome=default_success_outcome)
@@ -405,26 +526,29 @@ def terminal_event(
             "detail": detail,
             "workspace_measured": measured,
         }
-        # Issue #32: same rule as sync_response — real usage from a parseable
-        # terminal result rides the failed payload; a result-less crash stays
-        # usage-less rather than reporting fabricated zeros.
-        if task_result is not None:
-            payload["usage"] = usage_from_task_result(task_result)
-        return TerminalEvent(kind="failed", payload=payload)
+        # No retry_after_seconds here: FailedPayload (protocol.go) has no
+        # such field, and adding one would be inventing a wire key the
+        # engine's callback decoder never reads (worker/breaker.go's own
+        # docstring names this the known gap — only the synchronous path
+        # trips the capacity breaker today). "class": "capacity_exhausted"
+        # still rides through honestly via classification.error_class.
+        return TerminalEvent(
+            kind="failed", payload=_attach_provider_telemetry(payload, task_result)
+        )
 
     _declared = declared_result_override(task_result)
-    return TerminalEvent(
-        kind="completed",
-        payload={
-            "outcome": _declared[0] if _declared else classification.outcome,
-            "output": _declared[1] if _declared else output_from_task_result(task_result),
-            "ledger_delta": {
-                "records": [
-                    claim_record(task_result, ctx, actor_id=actor_id, created_at=created_at)
-                ]
-            },
-            "artifact_refs": [],
-            "usage": usage_from_task_result(task_result),
-            "workspace_measured": measured,
+    task_id = (task_result or {}).get("task_id")
+    payload = {
+        "outcome": _declared[0] if _declared else classification.outcome,
+        "output": _declared[1] if _declared else output_from_task_result(task_result),
+        "ledger_delta": {
+            "records": [claim_record(task_result, ctx, actor_id=actor_id, created_at=created_at)]
         },
-    )
+        "artifact_refs": [],
+        # t5/ADR 0010 §2: CompletedPayload mirrors the sync body's own
+        # continuation_ref — the async path is the one long sessions
+        # actually take, so this is the field that matters most.
+        "continuation_ref": task_id if isinstance(task_id, str) and task_id else None,
+        "workspace_measured": measured,
+    }
+    return TerminalEvent(kind="completed", payload=_attach_provider_telemetry(payload, task_result))

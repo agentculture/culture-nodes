@@ -31,7 +31,34 @@ timeline, its ledger, and enough node detail to check what actually happened.
 Node detail (contract digest, owner, kind, attempts with status and timing,
 the node run's ledger delta, evidence refs) opens from a node — click, or
 Enter with the node focused — into a side panel that closes on Escape and
-hands focus back where it came from.
+hands focus back where it came from. An attempt whose bridge preserved
+workspace changes on failure (task t25, issue #49) shows its **preserve
+branch** in that same table: pushed and local-only render distinguishably
+(`↗ pushed to <remote>` vs `⌁ local-only`, PRD §8.8's icon+word rule —
+never colour alone), and a local-only branch is never rendered as a link —
+see `VITE_PRESERVE_BRANCH_URL_TEMPLATE` below for when a pushed one is.
+
+## Configuration
+
+- **`NODES_API`** (dev-server only, read in `vite.config.ts` from the
+  process environment, not `import.meta.env`) — the control-plane origin
+  the dev proxy forwards `/v1alpha1` to. Defaults to
+  `http://127.0.0.1:8080`.
+- **`VITE_PRESERVE_BRANCH_URL_TEMPLATE`** (build-time, `import.meta.env`,
+  task t26 / issue #49) — an optional forge URL template for linking a
+  **pushed** preserve-on-failure branch on the run detail page, e.g.
+  `https://github.com/org/repo/tree/{branch}`; `{branch}` is substituted
+  with the branch name (percent-encoded). Unset by default: with no
+  template configured, a pushed branch still renders — as plain text plus
+  a "pushed to `<remote>`" label — it is simply not a clickable link. A
+  **local-only** branch (the expected common case today — bridge-host push
+  credentials are unverified) is **never** linked regardless of this
+  setting: it exists on the bridge host and nowhere else, and a link would
+  claim a forge page exists when it does not. This value is never derived
+  from the branch's reported remote name — a link may only come from
+  configuration the operator actually set (see
+  `src/domain/preserve.ts`). Set it in `web/.env.local` (gitignored) or the
+  deployment's build environment, per Vite's own `.env` conventions.
 
 ## Design layer
 

@@ -52,6 +52,45 @@ func (w *Worker) dispatchActor(
 		return w.parkExhausted(ctx, claimed, node, dc)
 	}
 
+	// The run's DECLARED economic budget, checked at the same site and for
+	// the same reason — nothing outside the control plane has been touched
+	// yet, and this is the last moment that is true. One lookup answers both
+	// "which session would this be" and "what ref does the request carry",
+	// so the thing charged for and the thing sent cannot disagree. Unlike
+	// the dispatch cap above it neither fails nor defers: an unfundable
+	// dispatch is REFUSED and routed on the edge the author declared. See
+	// budget.go's second half.
+	session := w.planSession(ctx, node, dc)
+	unfunded, err := w.unfunded(ctx, spec, node, dc, session)
+	if err != nil {
+		// The budget could not be read. Neither spending nor refusing is
+		// honest on a transient error, so the lease recovers this claim.
+		return err
+	}
+	if unfunded != "" {
+		return w.refuseUnfunded(ctx, claimed, node, dc, unfunded)
+	}
+
+	// The capacity circuit breaker, checked at the same site and for the same
+	// reason as the budget: it is the last point at which nothing outside the
+	// control plane has been touched yet. Unlike the budget it DEFERS rather
+	// than fails — a paused actor is a statement about the provider, not a
+	// verdict on this work. See breaker.go for the whole argument.
+	if pause, paused := w.activePauseFor(ctx, node); paused {
+		return w.deferForPause(ctx, claimed, node, dc, pause)
+	}
+
+	// Dispatch pacing, the breaker's sibling and one step behind it (task
+	// t10). Behind it deliberately: an actor the provider has already refused
+	// must not spend a slot of a rate that exists to keep the provider from
+	// refusing us. Like the breaker it DEFERS — see pacing.go for why a
+	// declared rate is a statement about the clock rather than a verdict on
+	// the work, and why the slot is consumed here rather than immediately
+	// before the invocation.
+	if decision, allowed := w.consumeDispatchSlot(ctx, node); !allowed {
+		return w.deferForPacing(ctx, claimed, node, dc, decision)
+	}
+
 	if w.opts.Registry == nil {
 		return w.failAttempt(ctx, claimed, "", engine.StatusFailed, "configuration",
 			"this worker has no actor registry configured, so it cannot resolve an endpoint to invoke")
@@ -92,7 +131,11 @@ func (w *Worker) dispatchActor(
 	// failed dispatch is still this actor's dispatch and the retry-burn
 	// measure must see it. A registry that cannot answer (StaticRegistry,
 	// a vanished row) yields "" — unattributed, never a dispatch failure.
-	dc.ActorRowID = w.actorRowID(ctx, node.Uses)
+	//
+	// It comes from the session plan resolved above rather than a second
+	// lookup: one resolution, one answer, and no window in which the budget
+	// charged one identity while the attempt recorded another.
+	dc.ActorRowID = session.ActorRowID
 
 	req := actors.InvocationRequest{
 		ProtocolVersion: actors.ProtocolVersion,
@@ -104,6 +147,7 @@ func (w *Worker) dispatchActor(
 		Workflow:        actors.WorkflowRef{Name: spec.Name, VersionDigest: spec.Digest},
 		Node:            actors.NodeRef{ID: node.ID, ContractDigest: node.ContractDigest},
 		Input:           dc.Input,
+		ContinuationRef: session.ContinuationRef,
 	}
 	if !dc.Deadline.IsZero() {
 		deadline := dc.Deadline.UTC()
@@ -118,6 +162,18 @@ func (w *Worker) dispatchActor(
 		return w.failAttempt(ctx, claimed, dc.ActorRowID, engine.StatusFailed, "configuration", err.Error())
 	}
 	req.Callback = callback
+
+	// The last thing before the wire: charge the session this invocation is
+	// about to open, if it opens one. It is deliberately recorded BEFORE the
+	// call rather than after a successful return — see budget.go's
+	// chargeSession and migration 0023 for why over-counting a dispatch that
+	// dies in transport is the safe direction, and why a failure here stops
+	// the dispatch instead of proceeding uncounted.
+	if session.ColdStart() {
+		if err := w.chargeSession(ctx, spec, node, dc); err != nil {
+			return err
+		}
+	}
 
 	// The invocation is bounded by the node's own deadline: a synchronous
 	// actor that blows through its declared timeout is a timeout, and the
@@ -153,6 +209,41 @@ func (w *Worker) dispatchActor(
 		return w.refuseAsyncPostRun(ctx, claimed, d, node, dc, preRun)
 	}
 	return w.park(ctx, claimed, d, node, dc, response.Accepted)
+}
+
+// priorContinuationRef is §13.1's continuation_ref for this dispatch: the
+// handle the most recent prior attempt AGAINST THIS ACTOR, IN THIS RUN,
+// offered — nil when there is none (task t4,
+// docs/adr/0010-continuation-ref-on-request.md).
+//
+// The scope is narrower than spec claim c3's eventual session key (actor +
+// repo + workstream), and narrow on purpose. A workstream outlives a run, so
+// keying on one needs the declared transport key all three bridges must
+// exclude from their Bound-inputs block (task t5) and the per-key
+// serialization that keeps two dispatches from interleaving turns on one
+// provider thread (task t6). Neither exists yet, and resuming a conversation
+// nothing declared it wanted resumed is worse than paying for a cold one. So
+// this reads run + actor, and says so.
+//
+// Best-effort by construction: a lookup that fails is reported and the
+// dispatch proceeds cold. A cold session costs more and is never wrong;
+// failing a dispatch because an optimization could not be looked up would be.
+// An unattributed dispatch (no resolved actor row id) looks up nothing —
+// there is no identity whose conversation this would be.
+func (w *Worker) priorContinuationRef(ctx context.Context, dc DispatchContext) *string {
+	if dc.ActorRowID == "" {
+		return nil
+	}
+	ref, ok, err := w.db.LatestContinuationRef(ctx, dc.RunID, dc.ActorRowID)
+	if err != nil {
+		w.report(fmt.Errorf("worker: run %s: look up prior continuation ref for actor %s: %w",
+			dc.RunID, dc.ActorRowID, err))
+		return nil
+	}
+	if !ok {
+		return nil
+	}
+	return &ref
 }
 
 // callbackFor builds §13.1's callback block: where to POST, and a token that
@@ -239,7 +330,16 @@ func (w *Worker) completeFromResult(
 			// and so does the result's reported usage (issue #32): the
 			// invocation itself succeeded and burned real tokens regardless
 			// of what the hook could not verify.
-			completion, err := w.completeTechnicalFailure(ctx, claimed, dc.ActorRowID, engine.StatusFailed, hookKindPostRun, post.detail, agentDelta, result.Usage.ToEngine())
+			completion, err := w.completeTechnicalFailure(ctx, claimed, dc.ActorRowID, engine.StatusFailed, hookKindPostRun, post.detail, agentDelta,
+				actorTelemetry{
+					Usage:             result.Usage.ToEngine(),
+					TerminationReason: result.TerminationReason,
+					// The invocation itself happened and its session still
+					// exists, whatever the hook could not verify about the
+					// work — dropping the handle here would re-open the
+					// silent drop ADR 0010 closes.
+					ContinuationRef: result.ContinuationRef,
+				})
 			if err != nil {
 				return err
 			}
@@ -274,7 +374,15 @@ func (w *Worker) completeFromResult(
 		Output:      actors.MergeWorkspaceMeasured(output, result.WorkspaceMeasured),
 		LedgerDelta: agentDelta,
 		Usage:       result.Usage.ToEngine(),
-		ActorID:     dc.ActorRowID,
+		// Beside the usage, never inside it: a turn that ended for a
+		// knowable reason may have reported no usage block (ADR 0009).
+		TerminationReason: result.TerminationReason,
+		// The handle §13.2 lets the actor offer for continuing this
+		// conversation. It was read off the wire and dropped here before
+		// task t4 (spec scope entry s3), which is why every node turn
+		// started a cold session.
+		ContinuationRef: result.ContinuationRef,
+		ActorID:         dc.ActorRowID,
 	})
 	if err != nil {
 		if isStale(err) {
@@ -331,12 +439,29 @@ func (w *Worker) completeFromInvocationError(
 	}
 	completion, err := w.completeTechnicalFailure(ctx, claimed, dc.ActorRowID, actors.TechStatusFor(class), string(class),
 		fmt.Sprintf("node %q invocation failed: %v", node.ID, invokeErr),
-		nil, actors.UsageOf(invokeErr).ToEngine())
+		nil, actorTelemetry{
+			Usage: actors.UsageOf(invokeErr).ToEngine(),
+			// The provider's reason for ending the turn, which an error
+			// body can carry with no usage block at all (ADR 0009).
+			TerminationReason: actors.TerminationReasonOf(invokeErr),
+			// The bridge's own report of what preserve-on-failure did
+			// (task t25/t26, issue #49) on this synchronous failure's
+			// error body, nil unless it actually committed a branch.
+			Preserve: actors.PreserveOf(invokeErr).ToEngine(),
+		})
 	if err != nil {
 		return err
 	}
 	w.appendHookEvidence(ctx, completion, preRun)
 	w.recordHookOperations(ctx, d.NamespaceID, completion.AttemptID, preRun, nil)
+	// Task t9: a provider-capacity failure is the one class whose right
+	// response lives above the attempt (see actors.ErrorClass.Retryable's
+	// note). The failed attempt is already committed; this marks the ACTOR
+	// unavailable so the next twelve work items queued for it are not each
+	// spent discovering the same wall. Best-effort — see tripCapacityBreaker.
+	if class == actors.ClassCapacityExhausted {
+		w.tripCapacityBreaker(ctx, claimed, node, dc, invokeErr)
+	}
 	return nil
 }
 

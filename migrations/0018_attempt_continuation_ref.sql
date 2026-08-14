@@ -1,0 +1,47 @@
+-- 0018_attempt_continuation_ref.sql
+--
+-- Expand-only: one nullable column on `attempts` for the continuation
+-- handle §13.2 lets an actor offer at the end of a turn
+-- (docs/adr/0010-continuation-ref-on-request.md, which amends §13.1 and
+-- §13.4 additively the way ADR 0008 and ADR 0009 amended §13.2).
+--
+-- WHAT IT IS. `continuation_ref` is the provider-side handle a bridge hands
+-- back so a LATER dispatch can continue the same conversation instead of
+-- starting a fresh one -- a claude session id, a codex thread id, whatever
+-- the backend's own resume verb takes. It is opaque to the control plane:
+-- nothing here parses it, derives from it, or attributes meaning to its
+-- shape.
+--
+-- WHY IT NEEDED A COLUMN. The field existed on the wire and nowhere else.
+-- internal/worker/dispatch.go read it off the §13.2 result and dropped it,
+-- so a handle captured by one worker process died with that process, and
+-- nothing could ever pass it back. Every node turn therefore started a cold
+-- session and re-paid for context the provider already held cached (issue
+-- #47).
+--
+-- WHAT NULL MEANS. Not reported -- never "the session ended", never "" (an
+-- empty string is a value a bridge could mistake for a handle; NULL is
+-- not). A resumable conversation nobody told us about is indistinguishable
+-- from none, and the conservative reading is the honest one: dispatch cold.
+-- Nothing is backfilled, and no default is set, for exactly 0012's and
+-- 0017's reason.
+--
+-- NOT usage_thread_id. 0017 added `usage_thread_id`, and the two are
+-- deliberately separate columns with separate lives (ADR 0009 §1, ADR 0010
+-- §4): the thread id is TELEMETRY about where a turn's usage accrued, the
+-- continuation ref is the HANDLE a later dispatch resumes with. Neither is
+-- derived from the other, and a backend can honestly report one without the
+-- other.
+--
+-- NOT EVIDENCE. The value is actor-reported, like the usage block beside it.
+-- Nothing on this path writes an `observed`-authority ledger record from it,
+-- and no surface may present it as proof that a session was reused -- that
+-- is what `usage_thread_id` measures.
+--
+-- N-1 compatibility (docs/adr/0002-migration-policy.md): a binary built
+-- before this migration still inserts attempts with its original fixed
+-- column list (internal/store/postgres/engine_store.go's insertAttemptSQL
+-- names every column explicitly, never a bare `INSERT INTO attempts ...`)
+-- and still selects with its original column list, so one new nullable
+-- column with no default changes nothing it reads or writes.
+ALTER TABLE attempts ADD COLUMN continuation_ref TEXT;

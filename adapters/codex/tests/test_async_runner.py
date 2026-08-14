@@ -13,6 +13,8 @@ colleague-bridge's `flightfiles.write_stop`).
 
 from __future__ import annotations
 
+import subprocess
+
 from codex_bridge import mapping
 from codex_bridge.async_runner import AsyncRunner
 from codex_bridge.config import Config
@@ -86,6 +88,57 @@ def test_error_session_delivers_failed_terminal_event(fake_codex, tmp_path):
         assert terminal is not None
         assert terminal["kind"] == "failed"
         assert terminal["payload"]["class"] == mapping.CLASS_EXECUTION
+    finally:
+        receiver.close()
+
+
+def test_error_session_preserves_workspace_changes_on_failure(fake_codex, tmp_path):
+    """t25 (c26/h17, c41/h34): the async equivalent of
+    `test_server_unit.py`'s sync wiring test — a `failed` terminal event
+    (never `completed`) carries the preserve outcome, and the uncommitted
+    edit left in the repo really does land on the minted branch."""
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    subprocess.run(["git", "init", "-q"], cwd=repo, check=True)
+    subprocess.run(["git", "config", "user.email", "t@t"], cwd=repo, check=True)
+    subprocess.run(["git", "config", "user.name", "t"], cwd=repo, check=True)
+    (repo / "README.md").write_text("# scratch\n")
+    subprocess.run(["git", "add", "README.md"], cwd=repo, check=True)
+    subprocess.run(["git", "commit", "-q", "-m", "init"], cwd=repo, check=True)
+    (repo / "note.txt").write_text("left behind by the failed async session\n")
+
+    cfg = _cfg(fake_codex, tmp_path, behavior="error", preserve_push=False)
+    runner = AsyncRunner(cfg)
+    receiver = FakeCallbackReceiver()
+    try:
+        ctx = mapping.InvocationContext(run_id="r1", node_run_id="nr1", attempt_id="a1")
+        runner.start(
+            instruction="say hi",
+            repo=str(repo),
+            model=None,
+            sandbox=None,
+            ctx=ctx,
+            callback_url=receiver.url,
+            callback_token="tok",
+            heartbeat_after_seconds=cfg.heartbeat_after_seconds,
+        )
+        terminal = receiver.wait_for_kind("failed", timeout=10)
+        assert terminal is not None
+        preserve_block = terminal["payload"]["preserve"]
+        assert preserve_block["attempted"] is True
+        assert preserve_block["committed"] is True
+        assert preserve_block["pushed"] is False
+        assert preserve_block["local_only"] is True
+        assert preserve_block["branch"]
+
+        show = subprocess.run(
+            ["git", "show", "--stat", preserve_block["commit"]],
+            cwd=repo,
+            check=True,
+            capture_output=True,
+            text=True,
+        ).stdout
+        assert "note.txt" in show
     finally:
         receiver.close()
 

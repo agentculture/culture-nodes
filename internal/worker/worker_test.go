@@ -50,9 +50,14 @@ type harness struct {
 	errs     []error
 }
 
-func newHarness(t *testing.T, actorHandler func(h *harness, w http.ResponseWriter, req actors.InvocationRequest)) *harness {
+// harnessOption tunes the worker.Options the harness builds, for the fields
+// a test cares about and the defaults do not cover (task t10's pacing is the
+// first). It is variadic so every existing call site is unchanged.
+type harnessOption func(*worker.Options)
+
+func newHarness(t *testing.T, actorHandler func(h *harness, w http.ResponseWriter, req actors.InvocationRequest), opts ...harnessOption) *harness {
 	t.Helper()
-	return newClockedHarness(t, nil, actorHandler)
+	return newClockedHarness(t, nil, actorHandler, opts...)
 }
 
 // newClockedHarness is newHarness with an injected wall clock, shared by the
@@ -60,7 +65,7 @@ func newHarness(t *testing.T, actorHandler func(h *harness, w http.ResponseWrite
 // — dispatch deadlines). A nil clock means real time. It exists for the
 // human-timescale tests (task t11): simulating a multi-day park means moving
 // this clock, never sleeping.
-func newClockedHarness(t *testing.T, now func() time.Time, actorHandler func(h *harness, w http.ResponseWriter, req actors.InvocationRequest)) *harness {
+func newClockedHarness(t *testing.T, now func() time.Time, actorHandler func(h *harness, w http.ResponseWriter, req actors.InvocationRequest), opts ...harnessOption) *harness {
 	t.Helper()
 	s := pgtest.RequireStore(t, testStore)
 
@@ -131,7 +136,7 @@ func newClockedHarness(t *testing.T, now func() time.Time, actorHandler func(h *
 		"actor://company/analyzer":    {URL: h.actorServer.URL},
 		"actor://company/long-runner": {URL: h.actorServer.URL},
 	}
-	wk, err := worker.New(s, eng, worker.Options{
+	workerOpts := worker.Options{
 		WorkerID:          "worker-" + t.Name(),
 		NamespaceID:       ns.ID,
 		ClaimBatch:        4,
@@ -147,7 +152,11 @@ func newClockedHarness(t *testing.T, now func() time.Time, actorHandler func(h *
 			h.errs = append(h.errs, err)
 			h.mu.Unlock()
 		},
-	})
+	}
+	for _, opt := range opts {
+		opt(&workerOpts)
+	}
+	wk, err := worker.New(s, eng, workerOpts)
 	if err != nil {
 		t.Fatalf("worker.New: %v", err)
 	}

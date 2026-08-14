@@ -1,0 +1,80 @@
+# Two split branches traversing one SHARED node (parallel-tokens design §5.2,
+# test T15): maxVisitsPerNode is run-scoped in v1, so two branches each
+# legitimately visiting `shared` once count two visits against the same
+# budget. This file pins that as intended behaviour rather than an accident —
+# an author of a fan-in-heavy graph must budget maxVisitsPerNode >= the
+# expected fan-out. The per-token-lineage alternative is design open item O5.
+#
+# maxVisitsPerNode is 2 here, exactly the fan-out, so the run completes; a
+# test lowering it to 1 sees the whole split refused as a bound failure.
+apiVersion: nodes.culture.dev/v1alpha1
+kind: Workflow
+
+metadata:
+  name: engine-parallel-shared
+  version: 1.0.0
+  ownerRef: team/platform-ai
+
+spec:
+  entry: fan
+
+  contract:
+    input:
+      schema:
+        type: object
+    output:
+      schema:
+        type: object
+
+  limits:
+    maxDuration: 1h
+    maxTransitions: 32
+    maxVisitsPerNode: 2
+    maxParallelTokens: 4
+
+  ledger:
+    schemaVersion: nodes.culture.dev/ledger/v1alpha1
+    maxRecordsPerNode: 10
+
+  nodes:
+    fan:
+      kind: parallel
+      ownerRef: team/platform-ai
+
+    shared:
+      kind: agent
+      ownerRef: team/platform-ai
+      uses: actor://company/shared@sha256:111111
+      input:
+        from: /run/input
+      contract:
+        outcomes:
+          done:
+            schema:
+              type: object
+
+    gather:
+      kind: join
+      ownerRef: team/platform-ai
+      join:
+        policy: all
+
+    finish:
+      kind: end
+      ownerRef: team/platform-ai
+      output:
+        from: /nodes/gather/output
+
+  edges:
+    - from: fan.split
+      to: shared
+
+    - from: fan.split
+      to: shared
+      when: "true"
+
+    - from: shared.done
+      to: gather
+
+    - from: gather.joined
+      to: finish

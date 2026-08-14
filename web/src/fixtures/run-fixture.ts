@@ -144,6 +144,8 @@ const t = (minute: number, second = 0) =>
 export const RUN_USAGE: Usage = {
   input_tokens: 14900,
   output_tokens: 4600,
+  cached_input_tokens: 0,
+  reasoning_tokens: 0,
   cost: 0.93,
   currency: "USD",
   attempts_reported: 5,
@@ -323,6 +325,8 @@ export const NODE_RUN_USAGE_ITEMS: NodeRunListItem[] = [
     usage: {
       input_tokens: 1200,
       output_tokens: 300,
+      cached_input_tokens: 0,
+      reasoning_tokens: 0,
       attempts_reported: 1,
       attempts_not_reported: 0,
     },
@@ -340,6 +344,8 @@ export const NODE_RUN_USAGE_ITEMS: NodeRunListItem[] = [
     usage: {
       input_tokens: 3600,
       output_tokens: 900,
+      cached_input_tokens: 0,
+      reasoning_tokens: 0,
       attempts_reported: 1,
       attempts_not_reported: 0,
     },
@@ -357,6 +363,8 @@ export const NODE_RUN_USAGE_ITEMS: NodeRunListItem[] = [
     usage: {
       input_tokens: 5200,
       output_tokens: 1800,
+      cached_input_tokens: 3900,
+      reasoning_tokens: 150,
       cost: 0.52,
       currency: "USD",
       attempts_reported: 1,
@@ -376,6 +384,8 @@ export const NODE_RUN_USAGE_ITEMS: NodeRunListItem[] = [
     usage: {
       input_tokens: 800,
       output_tokens: 200,
+      cached_input_tokens: 0,
+      reasoning_tokens: 0,
       attempts_reported: 1,
       attempts_not_reported: 0,
     },
@@ -393,6 +403,8 @@ export const NODE_RUN_USAGE_ITEMS: NodeRunListItem[] = [
     usage: {
       input_tokens: 4100,
       output_tokens: 1400,
+      cached_input_tokens: 0,
+      reasoning_tokens: 0,
       cost: 0.41,
       currency: "USD",
       attempts_reported: 1,
@@ -411,6 +423,8 @@ export const NODE_RUN_USAGE_ITEMS: NodeRunListItem[] = [
     usage: {
       input_tokens: 0,
       output_tokens: 0,
+      cached_input_tokens: 0,
+      reasoning_tokens: 0,
       attempts_reported: 0,
       attempts_not_reported: 1,
     },

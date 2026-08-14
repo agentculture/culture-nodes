@@ -2,9 +2,13 @@ import { describe, expect, it, vi } from "vitest";
 import { render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import NodeDetailPanel from "./NodeDetailPanel";
-import type { LedgerRecord, Usage } from "../api/types";
+import type { Attempt, LedgerRecord, Usage } from "../api/types";
 import { parseWorkflowGraph } from "../domain/graph";
-import { executionFromRunView, idleExecution } from "../domain/run-state";
+import {
+  executionFromRunView,
+  idleExecution,
+  type NodeExecution,
+} from "../domain/run-state";
 import { LEDGER_RECORDS, RUN_VIEW, WORKFLOW_IR } from "../fixtures/run-fixture";
 
 const graph = parseWorkflowGraph(WORKFLOW_IR);
@@ -48,6 +52,123 @@ describe("NodeDetailPanel", () => {
     expect(table).toHaveAttribute("id", "node-detail-attempts");
     expect(screen.getByText("succeeded")).toBeInTheDocument();
     expect(screen.getByText("dispatched")).toBeInTheDocument();
+  });
+
+  describe("preserve branch (task t26)", () => {
+    // Synthetic executions built directly (bypassing RUN_VIEW, which has no
+    // failed attempt in its fixture) — NodeExecution is a plain interface,
+    // and this keeps the assertion focused on preserve rendering alone.
+    function failedAttempt(overrides: Partial<Attempt> = {}): Attempt {
+      return {
+        id: "att-preserve-1",
+        node_run_id: "nr-preserve",
+        attempt_number: 1,
+        status: "failed",
+        started_at: "2026-08-13T10:00:00Z",
+        completed_at: "2026-08-13T10:04:00Z",
+        ...overrides,
+      };
+    }
+
+    function executionWith(attempt: Attempt): NodeExecution {
+      return {
+        nodeId: "build",
+        state: "failed",
+        nodeRuns: [],
+        attempts: [attempt],
+        visits: 1,
+      };
+    }
+
+    it("shows no preserve branch for an attempt that reported none", () => {
+      const { container } = render(
+        <NodeDetailPanel
+          node={graph.nodes.find((n) => n.id === "build")!}
+          execution={executionWith(failedAttempt())}
+          ledger={[]}
+          onClose={vi.fn()}
+        />,
+      );
+      const row = container.querySelector('[data-attempt-id="att-preserve-1"]')!;
+      expect(row).toHaveTextContent("—");
+      expect(row.querySelector("[data-preserve-status]")).toBeNull();
+    });
+
+    it("renders a pushed branch as pushed, distinguishable from local-only", () => {
+      render(
+        <NodeDetailPanel
+          node={graph.nodes.find((n) => n.id === "build")!}
+          execution={executionWith(
+            failedAttempt({
+              preserve_branch: "preserve/run-01J-att-01K",
+              preserve_pushed: true,
+              preserve_remote: "origin",
+            }),
+          )}
+          ledger={[]}
+          onClose={vi.fn()}
+        />,
+      );
+      const status = screen.getByText(/pushed to origin/);
+      expect(status.classList.contains("detail-panel__preserve-status")).toBe(
+        true,
+      );
+      expect(
+        status.closest("[data-preserve-status]"),
+      ).toHaveAttribute("data-preserve-status", "pushed");
+      expect(screen.getByText("preserve/run-01J-att-01K")).toBeInTheDocument();
+    });
+
+    it("links a pushed branch when a forge URL template is configured", () => {
+      render(
+        <NodeDetailPanel
+          node={graph.nodes.find((n) => n.id === "build")!}
+          execution={executionWith(
+            failedAttempt({
+              preserve_branch: "preserve/run-01J-att-01K",
+              preserve_pushed: true,
+              preserve_remote: "origin",
+            }),
+          )}
+          ledger={[]}
+          onClose={vi.fn()}
+        />,
+      );
+      // Whether a link renders depends on VITE_PRESERVE_BRANCH_URL_TEMPLATE
+      // at build time (see NodeDetailPanel's module-level constant) — this
+      // suite runs with none configured, so the branch renders as plain
+      // text, never a link. See preserve.test.ts for the link-construction
+      // logic itself, exercised directly with a template argument.
+      const cell = screen
+        .getByText("preserve/run-01J-att-01K")
+        .closest("td")!;
+      expect(cell.querySelector("a")).toBeNull();
+    });
+
+    it("renders a local-only branch as local-only, never as a link", () => {
+      render(
+        <NodeDetailPanel
+          node={graph.nodes.find((n) => n.id === "build")!}
+          execution={executionWith(
+            failedAttempt({
+              preserve_branch: "preserve/run-01J-att-01L",
+              preserve_pushed: false,
+              preserve_remote: "origin",
+            }),
+          )}
+          ledger={[]}
+          onClose={vi.fn()}
+        />,
+      );
+      const status = screen.getByText(/local-only/);
+      expect(
+        status.closest("[data-preserve-status]"),
+      ).toHaveAttribute("data-preserve-status", "local-only");
+      const cell = screen
+        .getByText("preserve/run-01J-att-01L")
+        .closest("td")!;
+      expect(cell.querySelector("a")).toBeNull();
+    });
   });
 
   it("shows the ledger delta for this node run only", () => {
@@ -221,6 +342,8 @@ describe("NodeDetailPanel", () => {
       const usage: Usage = {
         input_tokens: 12300,
         output_tokens: 4100,
+        cached_input_tokens: 0,
+        reasoning_tokens: 0,
         cost: 0.42,
         currency: "USD",
         attempts_reported: 1,
@@ -237,6 +360,8 @@ describe("NodeDetailPanel", () => {
       const usage: Usage = {
         input_tokens: 0,
         output_tokens: 0,
+        cached_input_tokens: 0,
+        reasoning_tokens: 0,
         attempts_reported: 0,
         attempts_not_reported: 1,
       };

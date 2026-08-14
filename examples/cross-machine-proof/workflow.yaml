@@ -1,0 +1,110 @@
+# Cross-machine live proof: the control plane and the agent that does the
+# work are on DIFFERENT machines.
+#
+# thor runs the control plane (api, worker, scheduler, Postgres, the
+# dashboard). This workflow's one agent node dispatches to
+# `company/developer`, whose registered endpoint is spark's address --
+# 192.168.1.157:8088 -- so the run is scheduled on thor, executed on spark,
+# and rendered on thor's dashboard.
+#
+# What that demonstrates, and why it is worth a run rather than an assertion:
+# nothing in the engine knows or cares where an actor lives. An actor row is
+# an endpoint, dispatch is an HTTP call to it, and the callback comes back
+# over the network with an attempt-scoped token. So the fleet can be spread
+# across machines -- spark for the claude bridges, orin for its codex actor,
+# thor for the control plane -- without the control plane growing any
+# per-machine knowledge. The dashboard's work and the node agents' work are
+# genuinely separable.
+#
+# Deliberately tiny. The point is the topology, not the answer, and a small
+# prompt keeps a real provider session cheap.
+apiVersion: nodes.culture.dev/v1alpha1
+kind: Workflow
+
+metadata:
+  name: cross-machine-proof
+  version: 1.0.0
+  ownerRef: team/platform-ai
+
+spec:
+  entry: ask
+
+  contract:
+    input:
+      schema:
+        type: object
+        required: [instruction, repo]
+        properties:
+          instruction:
+            type: string
+            minLength: 1
+          # The claude-code bridge requires a repo and checks it against its
+          # own allowlist -- an actor deciding what it will act on, which the
+          # engine neither knows nor overrides.
+          repo:
+            type: string
+            minLength: 1
+    output:
+      schema:
+        type: object
+
+  limits:
+    maxDuration: 10m
+    maxTransitions: 4
+    maxVisitsPerNode: 1
+    maxParallelTokens: 1
+
+  ledger:
+    schemaVersion: nodes.culture.dev/ledger/v1alpha1
+    maxRecordsPerNode: 10
+
+  nodes:
+    ask:
+      kind: agent
+      ownerRef: team/platform-ai
+      # company/developer's actor row points at spark. The engine resolves an
+      # endpoint; it never resolves a host.
+      uses: actor://company/developer@sha256:7777777777777777777777777777777777777777777777777777777777777777
+      input:
+        bindings:
+          instruction: /run/input/instruction
+          repo: /run/input/repo
+      contract:
+        outcomes:
+          # `completed` is the claude-code bridge's own default success
+          # outcome name (config.default_success_outcome). The engine does not
+          # invent outcome names for an actor; the actor declares them and the
+          # workflow must route the ones it actually emits. Declaring `done`
+          # here instead produced a contract_rejected attempt whose payload
+          # nonetheless carried the real answer — the work had succeeded.
+          completed:
+            schema:
+              type: object
+          failed:
+            schema:
+              type: object
+      policy:
+        timeout: 5m
+        retry:
+          maxAttempts: 1
+          backoff: none
+      ledger:
+        propose: [claim]
+
+    finish:
+      kind: end
+      ownerRef: team/platform-ai
+      output:
+        from: /nodes/ask/output
+
+    give-up:
+      kind: end
+      ownerRef: team/platform-ai
+      output:
+        from: /nodes/ask/output
+
+  edges:
+    - from: ask.completed
+      to: finish
+    - from: ask.failed
+      to: give-up

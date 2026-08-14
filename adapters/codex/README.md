@@ -94,6 +94,35 @@ forwarded to `codex`. Duration is instead bounded purely by
 `sync_timeout_seconds`/`async_wait_seconds` + a cooperative SIGTERM, exactly
 like colleague-bridge's own timeout fallback (see below).
 
+## Session resume (task t5)
+
+When a request carries a top-level `continuation_ref` (§13.1,
+`internal/actors/protocol.go` — a sibling of `run_id`, NOT nested inside
+`input`), this bridge resumes that prior session with codex's own
+**separate subcommand**, `codex exec resume <continuation_ref> --json
+[-m <model>] "<instruction>"` — verified against `codex exec resume
+--help` on codex-cli 0.147.0. `resume`'s flag surface is narrower than
+plain `exec`'s: it accepts neither `-C`/`--cd` nor `-s`/`--sandbox` (a
+resumed session already knows its working directory and sandbox policy
+from when it first started), so a resumed dispatch's argv is not simply
+`exec` with `resume` inserted. On a successful turn, codex's own captured
+thread id (`thread.started`'s `thread_id`) rides back as `continuation_ref`
+in both the §13.2 result body and the §13.4 `completed` event.
+
+`session_key` and `continuation_ref` are both **transport keys**: neither
+is ever forwarded into the instruction text handed to codex.
+
+## Capacity refusals (task t5, deviation d4)
+
+When codex's own `turn.failed` error text (or a standalone `error` event's
+message) names a provider-side quota, rate-limit, or session-limit
+refusal, this bridge classifies the failure `capacity_exhausted` (§13.5)
+instead of plain `execution`, and sets an HTTP `Retry-After` header on the
+synchronous failure response when the text names a delay. See
+`adapters/claude-code/README.md`'s identical section for the full
+rationale — this bridge's own `_CAPACITY_SIGNALS` list is deliberately
+kept in step with that one.
+
 ## What a codex session's JSONL looks like (grounding evidence)
 
 This bridge's classification rules were built against real output from an

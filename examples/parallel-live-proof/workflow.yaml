@@ -1,0 +1,87 @@
+# Live proof for issue #43's split/join, run against the production pair.
+#
+# Deliberately wait-only: two scheduler-driven `wait` branches, zero agent
+# and zero code nodes (the deployed worker carries no runner dispatcher), so the run exercises the new parallel-token
+# engine path (task t20) and the Discord notifier (t13/t14) without spending
+# a single model session. The two branches sleep for different durations so
+# the join barrier genuinely has to wait for the slower one rather than
+# reconvening two instant completions.
+#
+# What it proves live, in one run:
+#   * limits.maxParallelTokens > 1 is honored — two tokens exist at once
+#   * a `join` with policy `all` reconvenes both branches
+#   * the dashboard's Active Graphs halo has real concurrent tokens to draw
+#   * run lifecycle events reach Discord with no control-plane egress
+apiVersion: nodes.culture.dev/v1alpha1
+kind: Workflow
+
+metadata:
+  name: parallel-live-proof
+  version: 1.0.0
+  ownerRef: team/platform-ai
+
+spec:
+  entry: fan
+
+  contract:
+    input:
+      schema:
+        type: object
+    output:
+      schema:
+        type: object
+
+  limits:
+    maxDuration: 30m
+    maxTransitions: 16
+    maxVisitsPerNode: 2
+    maxParallelTokens: 4
+
+  ledger:
+    schemaVersion: nodes.culture.dev/ledger/v1alpha1
+    maxRecordsPerNode: 10
+
+  nodes:
+    fan:
+      kind: parallel
+      ownerRef: team/platform-ai
+
+    quick:
+      kind: wait
+      ownerRef: team/platform-ai
+      until:
+        duration: 25s
+
+    slow:
+      kind: wait
+      ownerRef: team/platform-ai
+      until:
+        duration: 90s
+
+    gather:
+      kind: join
+      ownerRef: team/platform-ai
+      join:
+        policy: all
+
+    finish:
+      kind: end
+      ownerRef: team/platform-ai
+      output:
+        from: /nodes/gather/output
+
+  edges:
+    - from: fan.split
+      to: quick
+
+    - from: fan.split
+      to: slow
+
+    - from: quick.completed
+      to: gather
+
+    - from: slow.completed
+      to: gather
+
+    - from: gather.joined
+      to: finish

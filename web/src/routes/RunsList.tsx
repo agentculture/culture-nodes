@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { Link } from "react-router-dom";
 import { ApiError, listRuns } from "../api/client";
 import type { Run } from "../api/types";
@@ -7,7 +7,25 @@ import CategoryChip from "../components/CategoryChip";
 import ErrorNotice from "../components/ErrorNotice";
 import TimeRangeFilter from "../components/TimeRangeFilter";
 import { runDisplayName } from "../domain/usage";
+import { useSharedEvents, type SharedEventType } from "../hooks/useSharedEvents";
 import { useTimeRange } from "../hooks/useTimeRange";
+
+/**
+ * Every run-lifecycle event that can change a row this table renders (its
+ * `state` column) or its place in the `updated_at` ordering — a stable
+ * module-level reference, as useSharedEvents requires (issue #46).
+ */
+const RUNS_LIST_EVENT_TYPES = [
+  "dev.culture.nodes.run.created",
+  "dev.culture.nodes.run.waiting",
+  "dev.culture.nodes.run.completed",
+  "dev.culture.nodes.run.failed",
+  "dev.culture.nodes.run.cancelled",
+  "dev.culture.nodes.run.bounded",
+] as const satisfies readonly SharedEventType[];
+
+/** Mirrors the Mesh view's attribution-refresh discipline (Mesh.tsx). */
+const REFRESH_DEBOUNCE_MS = 4000;
 
 /**
  * The run list — the entry point into the Run view (PRD §8.6 Operations, in
@@ -19,11 +37,43 @@ import { useTimeRange } from "../hooks/useTimeRange";
  * scoping, never a client-side re-slice of an already-fetched list. The
  * list sorts by `updated_at` to match its own ordering statement (and the
  * other two views).
+ *
+ * Auto-refresh (issue #46, task t30): a run-lifecycle event on the shared
+ * cross-run stream schedules a debounced background refetch via
+ * `reloadKey`. The reload effect below is deliberately a *second* effect
+ * from the initial-load/range-change one: a range change is a deliberate
+ * "start over" (resets to the loading state — the `runs === null` gate
+ * below, review finding on #27), but an SSE-triggered refresh must never
+ * regress `runs` to null or agent-state back to "loading" — stale-while-
+ * revalidate holds the rendered table until the fresh rows arrive.
  */
 export function RunsList() {
   const { since, until, applyRange } = useTimeRange();
   const [runs, setRuns] = useState<Run[] | null>(null);
   const [error, setError] = useState<ApiError | null>(null);
+  const [reloadKey, setReloadKey] = useState(0);
+  const reloadTimer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
+  const lastReload = useRef(0);
+
+  const scheduleReload = useCallback(() => {
+    if (reloadTimer.current) return;
+    const elapsed = Date.now() - lastReload.current;
+    const wait = Math.max(0, REFRESH_DEBOUNCE_MS - elapsed);
+    reloadTimer.current = setTimeout(() => {
+      reloadTimer.current = undefined;
+      lastReload.current = Date.now();
+      setReloadKey((key) => key + 1);
+    }, wait);
+  }, []);
+
+  useEffect(
+    () => () => {
+      if (reloadTimer.current) clearTimeout(reloadTimer.current);
+    },
+    [],
+  );
+
+  useSharedEvents(RUNS_LIST_EVENT_TYPES, scheduleReload);
 
   useEffect(() => {
     const controller = new AbortController();
@@ -58,6 +108,35 @@ export function RunsList() {
       });
     return () => controller.abort();
   }, [since, until]);
+
+  // The SSE-triggered background refresh (issue #46): fires only after the
+  // initial load (reloadKey === 0 is that first render, already handled
+  // above). Never nulls `runs`, never touches agent-state — a failed
+  // refresh keeps the last honest rows and reports the error alongside.
+  useEffect(() => {
+    if (reloadKey === 0) return;
+    const controller = new AbortController();
+    listRuns(controller.signal, {
+      sort: "updated_at",
+      updated_since: since,
+      updated_until: until,
+    })
+      .then((list) => {
+        if (controller.signal.aborted) return;
+        setRuns(list.items);
+        setError(null);
+      })
+      .catch((cause: unknown) => {
+        if (controller.signal.aborted) return;
+        setError(
+          cause instanceof ApiError
+            ? cause
+            : new ApiError(0, String(cause), "check the browser console"),
+        );
+      });
+    return () => controller.abort();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [reloadKey]);
 
   return (
     <section className="view-rail runs-list">

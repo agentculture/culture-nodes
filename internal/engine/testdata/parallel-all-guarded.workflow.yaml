@@ -1,0 +1,122 @@
+# A split whose edges are ALL guarded (parallel-tokens design §3.1, test T3):
+# when the run input satisfies none of them, the eligible set is empty and the
+# split selects nothing.
+#
+# That is the ordinary no-eligible-edge routing failure every other unrouted
+# outcome produces — a split that selects nothing has not "fanned out zero
+# branches", it has failed to route — and it is a DIFFERENT failure from a
+# parallel node with no declared split edge at all, which the compiler refuses
+# at publish time (graph.parallel_without_split_edge; design review point D6).
+apiVersion: nodes.culture.dev/v1alpha1
+kind: Workflow
+
+metadata:
+  name: engine-parallel-all-guarded
+  version: 1.0.0
+  ownerRef: team/platform-ai
+
+spec:
+  entry: fan
+
+  contract:
+    input:
+      schema:
+        type: object
+        properties:
+          lint:
+            type: boolean
+          slow:
+            type: boolean
+          test:
+            type: boolean
+    output:
+      schema:
+        type: object
+
+  limits:
+    maxDuration: 1h
+    maxTransitions: 32
+    maxVisitsPerNode: 8
+    maxParallelTokens: 4
+
+  ledger:
+    schemaVersion: nodes.culture.dev/ledger/v1alpha1
+    maxRecordsPerNode: 10
+
+  nodes:
+    fan:
+      kind: parallel
+      ownerRef: team/platform-ai
+
+    lint:
+      kind: agent
+      ownerRef: team/quality-platform
+      uses: actor://company/linter@sha256:111111
+      input:
+        from: /run/input
+      contract:
+        outcomes:
+          clean:
+            schema:
+              type: object
+
+    test:
+      kind: agent
+      ownerRef: team/quality-platform
+      uses: actor://company/tester@sha256:222222
+      input:
+        from: /run/input
+      contract:
+        outcomes:
+          passed:
+            schema:
+              type: object
+
+    slow:
+      kind: agent
+      ownerRef: team/quality-platform
+      uses: actor://company/slowpoke@sha256:333333
+      input:
+        from: /run/input
+      contract:
+        outcomes:
+          done:
+            schema:
+              type: object
+
+    gather:
+      kind: join
+      ownerRef: team/platform-ai
+      join:
+        policy: all
+
+    finish:
+      kind: end
+      ownerRef: team/platform-ai
+      output:
+        from: /nodes/gather/output
+
+  edges:
+    - from: fan.split
+      to: lint
+      when: has(input.lint) && input.lint
+
+    - from: fan.split
+      to: slow
+      when: has(input.slow) && input.slow
+
+    - from: fan.split
+      to: test
+      when: has(input.test) && input.test
+
+    - from: lint.clean
+      to: gather
+
+    - from: test.passed
+      to: gather
+
+    - from: slow.done
+      to: gather
+
+    - from: gather.joined
+      to: finish

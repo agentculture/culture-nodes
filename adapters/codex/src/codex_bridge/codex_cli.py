@@ -64,13 +64,41 @@ _TERMINAL_OK = "turn.completed"
 _TERMINAL_FAILED = "turn.failed"
 
 
-def _common_argv(instruction: str, repo: str, *, model: str | None, sandbox: str) -> list[str]:
+def _common_argv(
+    instruction: str,
+    repo: str,
+    *,
+    model: str | None,
+    sandbox: str,
+    continuation_ref: str | None = None,
+) -> list[str]:
     """The `codex exec` argv this bridge generates, minus the binary name
     itself (`Config.codex_bin` is prepended by the caller). Mirrors
     `colleague_cli._common_argv`'s role in that module: the ONE place the
     real command line is assembled, so a test can assert the exact
     argument list without spawning anything.
+
+    *continuation_ref* (task t5): codex's own resume verb is a SEPARATE
+    subcommand, `codex exec resume <SESSION_ID> [PROMPT]`
+    (`codex exec resume --help`, verified against codex-cli 0.147.0 on
+    PATH while building this) — not a flag layered onto plain `exec`. Its
+    flag surface is narrower than `exec`'s own: no `-C`/`--cd` and no
+    `-s`/`--sandbox` — a resumed session already knows its working
+    directory and sandbox policy from when it first started, so passing
+    either would be asserting something resume does not accept (confirmed
+    against the real binary's own `--help`, which lists neither for the
+    `resume` subcommand). `-C repo` remains unnecessary for another reason
+    too: the subprocess itself is spawned with `cwd=repo` (see `run_sync`/
+    `spawn`), so the OS-level working directory is right either way — `-C`
+    is codex's own internal echo of that fact for a fresh session, not the
+    only way this bridge controls it.
     """
+    if continuation_ref:
+        argv = ["exec", "resume", continuation_ref, "--json"]
+        if model:
+            argv += ["-m", model]
+        argv.append(instruction)
+        return argv
     argv = ["exec", "--json", "--sandbox", sandbox, "-C", repo]
     if model:
         argv += ["-m", model]
@@ -107,10 +135,12 @@ def parse_session(stdout: str) -> dict[str, Any] | None:
     """
     saw_any_json = False
     thread_id: str | None = None
+    model: str | None = None
     messages: list[str] = []
     changed_files: list[str] = []
     usage: dict[str, Any] = {}
     error_message: str | None = None
+    termination_reason: str | None = None
     terminal_status: str | None = None  # None | "ok" | "error"
 
     for line in stdout.splitlines():
@@ -126,6 +156,26 @@ def parse_session(stdout: str) -> dict[str, Any] | None:
         saw_any_json = True
 
         kind = event.get("type")
+
+        # Usage can accompany a failed turn, and newer event-stream shapes
+        # may publish a running total before a terminal event. Keep the most
+        # recent non-empty provider report regardless of event kind: that
+        # preserves failed-turn accounting and also lets a transcript that
+        # ends incomplete retain counts already emitted before it stopped.
+        reported_usage = event.get("usage")
+        if isinstance(reported_usage, dict) and reported_usage:
+            usage = reported_usage
+
+        # Do not infer the model from argv/config: only provider-reported
+        # stream metadata belongs in usage telemetry. A model nested in the
+        # usage report and a top-level event model are both honest sources.
+        reported_model = event.get("model")
+        if not isinstance(reported_model, str) or not reported_model:
+            reported_model = (
+                reported_usage.get("model") if isinstance(reported_usage, dict) else None
+            )
+        if isinstance(reported_model, str) and reported_model:
+            model = reported_model
 
         if kind == "thread.started":
             thread_id = event.get("thread_id")
@@ -162,11 +212,16 @@ def parse_session(stdout: str) -> dict[str, Any] | None:
 
         if kind == _TERMINAL_OK:
             terminal_status = "ok"
-            usage = event.get("usage") or {}
+            reason = event.get("reason") or event.get("stop_reason")
+            if isinstance(reason, str) and reason:
+                termination_reason = reason
             continue
 
         if kind == _TERMINAL_FAILED:
             terminal_status = "error"
+            reason = event.get("reason") or event.get("stop_reason")
+            if isinstance(reason, str) and reason:
+                termination_reason = reason
             err = event.get("error")
             if isinstance(err, dict) and err.get("message"):
                 error_message = str(err["message"])
@@ -187,6 +242,8 @@ def parse_session(stdout: str) -> dict[str, Any] | None:
             "usage": usage,
             "task_id": thread_id,
             "error": None,
+            "model": model,
+            "termination_reason": termination_reason,
         }
 
     if terminal_status == "error":
@@ -197,6 +254,8 @@ def parse_session(stdout: str) -> dict[str, Any] | None:
             "usage": usage,
             "task_id": thread_id,
             "error": error_message or "codex reported a turn failure",
+            "model": model,
+            "termination_reason": termination_reason,
         }
 
     # No terminal event was ever seen: killed, crashed, or the bridge's own
@@ -208,6 +267,8 @@ def parse_session(stdout: str) -> dict[str, Any] | None:
         "usage": usage,
         "task_id": thread_id,
         "error": None,
+        "model": model,
+        "termination_reason": termination_reason,
     }
 
 
@@ -229,6 +290,7 @@ def run_sync(
     *,
     model: str | None = None,
     sandbox: str | None = None,
+    continuation_ref: str | None = None,
 ) -> SyncRunResult:
     """Run `codex exec ...` in the foreground and wait for it to finish.
 
@@ -241,7 +303,13 @@ def run_sync(
     """
     argv = [
         cfg.codex_bin,
-        *_common_argv(instruction, repo, model=model, sandbox=sandbox or cfg.default_sandbox),
+        *_common_argv(
+            instruction,
+            repo,
+            model=model,
+            sandbox=sandbox or cfg.default_sandbox,
+            continuation_ref=continuation_ref,
+        ),
     ]
 
     proc = subprocess.Popen(  # noqa: S603 - the sanctioned subprocess boundary
@@ -294,6 +362,7 @@ def spawn(
     *,
     model: str | None = None,
     sandbox: str | None = None,
+    continuation_ref: str | None = None,
 ) -> subprocess.Popen:
     """Start `codex exec ...` in the background and return the live
     `Popen` handle immediately (near-instant — `Popen` never blocks on the
@@ -307,10 +376,20 @@ def spawn(
     async runner can read this process's stdout pipe as it streams and
     terminate it directly for cancellation, with no file-based
     control-plane convention to mirror.
+
+    *continuation_ref* (task t5): threaded through the same way `run_sync`
+    does — the async path is the one long, therefore resume-worth-it,
+    sessions actually take.
     """
     argv = [
         cfg.codex_bin,
-        *_common_argv(instruction, repo, model=model, sandbox=sandbox or cfg.default_sandbox),
+        *_common_argv(
+            instruction,
+            repo,
+            model=model,
+            sandbox=sandbox or cfg.default_sandbox,
+            continuation_ref=continuation_ref,
+        ),
     ]
     try:
         return subprocess.Popen(  # noqa: S603 - the sanctioned subprocess boundary

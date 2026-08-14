@@ -1,0 +1,49 @@
+-- 0025_attempt_preserve_branch.sql
+--
+-- Expand-only: three nullable columns on `attempts` carrying task t25's
+-- bridge-minted preserve-on-failure branch (issue #49, spec claim c32 /
+-- honesty h21, docs/plans/2026-08-13-economy-discord-graphs.md task t26).
+-- Task t25 (adapters/{claude-code,codex,colleague}/src/*/preserve.py) mints
+-- the branch, commits to it with git plumbing, and pushes it best-effort —
+-- but stopped at the bridge, attaching the outcome only to the failed
+-- event/error body a worker process reads and drops. This migration is
+-- what makes that outcome durable past the worker process that first saw
+-- it, so it can be returned by the API and rendered on the run detail page.
+--
+-- preserve_branch: the branch name t25's `preserve.mint_branch_name` minted
+--   AND t25 actually created a local git ref for
+--   (adapters/*/src/*/preserve.py's PreserveResult.branch, persisted ONLY
+--   when PreserveResult.committed is true). A minted-but-never-committed
+--   name (a plumbing failure) names nothing that exists in any repository
+--   and is never carried past the bridge — see
+--   internal/actors.Preserve.ToEngine's gating.
+-- preserve_pushed: true when that branch made it onto the configured
+--   remote, false when the plumbing commit exists only in the bridge
+--   host's local object database (the expected common case today — bridge-
+--   host push credentials are unverified, per the plan's risk register).
+--   Always non-NULL exactly when preserve_branch is non-NULL, and NULL
+--   otherwise; InsertAttempt never writes one without the other.
+-- preserve_remote: the remote name (e.g. "origin") the bridge attempted or
+--   reached the push against. Informational only — the run detail page
+--   never combines it with preserve_branch to fabricate a forge URL; a
+--   clickable link may only come from configuration the operator actually
+--   set (web/README.md's VITE_PRESERVE_BRANCH_URL_TEMPLATE), never a guess
+--   from this column.
+--
+-- NULL means "no preserve branch to show for this attempt" — preserve-on-
+-- failure disabled by bridge configuration, a workspace with nothing to
+-- preserve, a successful attempt (preserve-on-failure only ever fires on a
+-- genuine technical failure, never a domain outcome), or a plumbing
+-- failure that left no committed ref. Nothing is backfilled and no default
+-- is set, for the same reason 0012/0017/0018 name.
+--
+-- N-1 compatibility (docs/adr/0002-migration-policy.md): a binary built
+-- before this migration still inserts/selects attempts with its original
+-- fixed column list (internal/store/postgres/engine_store.go's
+-- insertAttemptSQL and Attempts query both name every column explicitly,
+-- never a bare `SELECT *`/`INSERT INTO attempts ...`), so these three new
+-- nullable columns with no default change nothing an older binary reads or
+-- writes.
+ALTER TABLE attempts ADD COLUMN preserve_branch TEXT;
+ALTER TABLE attempts ADD COLUMN preserve_pushed BOOLEAN;
+ALTER TABLE attempts ADD COLUMN preserve_remote TEXT;

@@ -4,6 +4,12 @@ dist/
 coverage/
 .vite/
 
+# Vite's own local-override convention (task t26's
+# VITE_PRESERVE_BRANCH_URL_TEMPLATE and any future local env override) —
+# never committed, per Vite's documented .env.local semantics.
+.env.local
+.env.*.local
+
 # Playwright
 /test-results/
 /playwright-report/

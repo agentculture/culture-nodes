@@ -1,6 +1,6 @@
 [project]
 name = "culture-nodes-human-inbox-bridge"
-version = "0.1.0"
+version = "0.2.0"
 description = "Reference actor-protocol bridge for kind=human actors: parks Culture Nodes invocations as durable inbox tasks and completes them through the standard authenticated callback when a human submits a result. Runs OUTSIDE the culture-nodes deployment."
 readme = "README.md"
 license = "Apache-2.0"
@@ -25,6 +25,10 @@ Issues = "https://github.com/agentculture/culture-nodes/issues"
 
 [project.scripts]
 human-inbox-bridge = "human_inbox_bridge.__main__:main"
+# The tracker gets a console script for the same reason the bridge has one:
+# `uv tool install` can then copy both into a standalone venv, so the systemd
+# units do not exec out of a git checkout whose branch nobody controls.
+human-inbox-tracker = "human_inbox_bridge.tracker:main"
 
 [build-system]
 requires = ["hatchling"]

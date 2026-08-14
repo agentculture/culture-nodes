@@ -30,11 +30,16 @@ import (
 // CEL variables available to an edge guard (PRD §11.2), matching the
 // compiler's environment exactly: input is the run input, output is the
 // deciding node's output for the outcome being routed, outcome is that
-// outcome's name.
+// outcome's name, and event is the delivered signal event an `onEvent` edge's
+// guard filters on (issue #43). The two environments must stay identical —
+// the compiler proves a guard compiles, this rebuilds it from the pinned IR,
+// and a variable in one and not the other would make a published workflow
+// fail at run time.
 const (
 	celVarInput   = "input"
 	celVarOutput  = "output"
 	celVarOutcome = "outcome"
+	celVarEvent   = "event"
 )
 
 // Workflow is a normalized workflow IR prepared for execution: guards
@@ -48,6 +53,7 @@ type Workflow struct {
 
 	Entry  string
 	Limits Limits
+	Budget Budget
 	Ledger LedgerLimits
 
 	Nodes map[string]*Node
@@ -76,6 +82,49 @@ type Limits struct {
 	MaxVisitsPerNode  int
 	MaxParallelTokens int
 }
+
+// Budget is the workflow's declared ECONOMIC contract (PRD §9.7's "optional
+// agent token or cost budget"; task t11, spec claim c6). Zero on a field
+// means the author declared no bound on that axis — never "zero allowed",
+// which the compiler refuses outright so the two readings can never collide
+// here.
+//
+// It is separate from Limits because the two fail differently. Exceeding a
+// limit is a bound the engine raises against the run; exceeding a budget is a
+// refusal the AUTHOR routes (OutcomeBudgetExhausted), decided before anything
+// is dispatched. The budget travels in the pinned IR with everything else, so
+// the enforcement site reads what this run agreed to rather than a live
+// setting that may have moved since it started.
+type Budget struct {
+	// MaxSessions bounds the NEW provider sessions one run may start —
+	// cold starts only. A dispatch carrying a prior continuation ref (ADR
+	// 0010) continues a session already paid for and charges nothing; see
+	// internal/worker/budget.go for why counting warm turns would make the
+	// budget fight the stickiness it exists beside.
+	MaxSessions int
+	// MaxUncachedInput bounds the input tokens one run may send that the
+	// provider did not serve from cache, summed over the attempts that
+	// reported usage. An attempt reporting no cached figure charges its
+	// input in full — absent cache telemetry is not a demonstrated cache
+	// hit.
+	MaxUncachedInput int64
+}
+
+// Declared reports whether the workflow bounded anything economically.
+func (b Budget) Declared() bool {
+	return b.MaxSessions > 0 || b.MaxUncachedInput > 0
+}
+
+// OutcomeBudgetExhausted is the reserved name a dispatch refused for want of
+// budget routes under (compiler.OutcomeBudgetExhausted, kept in step).
+//
+// It is not one of §3.4's technical statuses and no node contract declares
+// it: no actor produces it, the control plane does, before invoking anything.
+// The refused attempt's technical status is `policy_denied` — a declared
+// policy denied the dispatch — and this is the name the edge is looked up
+// under, so an author can distinguish "the budget refused this" from every
+// other policy denial.
+const OutcomeBudgetExhausted = "budget_exhausted"
 
 // LedgerLimits are the workflow-level ledger bounds (PRD §10.7).
 type LedgerLimits struct {
@@ -126,6 +175,30 @@ type Node struct {
 	DecisionSchemaRef string
 	ApproverRef       string
 	Deadline          time.Duration
+
+	// JoinPolicy and JoinQuorum are a join node's barrier policy (issue
+	// #43): all | any | quorum, with JoinQuorum meaningful only under
+	// quorum. Empty/zero for every other kind.
+	JoinPolicy string
+	JoinQuorum int
+}
+
+// joinThreshold is how many arrivals fire this join node's barrier for a
+// group of the given cardinality. The second return is false when the
+// barrier can never fire — a quorum larger than the realized cardinality,
+// which guarded split edges make reachable at runtime even though the
+// authored edge count satisfied it (design §4.2/§4.3: the compiler can only
+// validate quorum >= 1 statically; an unsatisfiable barrier resolves loudly,
+// never as a silent hang).
+func (n *Node) joinThreshold(cardinality int) (int, bool) {
+	switch n.JoinPolicy {
+	case JoinPolicyAny:
+		return 1, cardinality >= 1
+	case JoinPolicyQuorum:
+		return n.JoinQuorum, n.JoinQuorum >= 1 && n.JoinQuorum <= cardinality
+	default: // "all", and hand-built IR that declared nothing
+		return cardinality, cardinality >= 1
+	}
 }
 
 // declaresOutcome reports whether name is an outcome this node can produce.
@@ -156,14 +229,37 @@ type RetryPolicy struct {
 	Backoff     string
 }
 
-// Edge is one eligible transition, with its guard compiled.
+// Edge is one eligible transition, with its guard compiled. Its source is
+// either a node outcome (FromNode/FromOutcome, the ordinary case) or a named
+// external event (OnEvent, issue #43's event routes — design D9). Exactly one
+// of the two is set: the compiler's schema makes it a oneOf, and every
+// consumer here reads OnEvent != "" as "this is an event edge".
+//
+// planTransition needs no special case for them: it filters on
+// `edge.FromNode != in.NodeID`, and an event edge's FromNode is empty, so no
+// node completion can ever select one.
 type Edge struct {
 	From        string
 	FromNode    string
 	FromOutcome string
+	OnEvent     string
 	To          string
 	When        string
 	Guard       cel.Program
+}
+
+// EventEdges are the workflow's `onEvent` edges, in normalized order — what
+// CreateRun materializes as the run's durable event routes. Several edges may
+// name one event: that is the pickup split (design D9), and it needs no extra
+// machinery because one delivery simply matches every one of them.
+func (w *Workflow) EventEdges() []Edge {
+	var out []Edge
+	for _, e := range w.Edges {
+		if e.OnEvent != "" {
+			out = append(out, e)
+		}
+	}
+	return out
 }
 
 // LoadWorkflow decodes a normalized IR document and prepares it for
@@ -193,6 +289,7 @@ func LoadWorkflow(digest string, ir []byte) (*Workflow, error) {
 		Version: doc.Metadata.Version,
 		Entry:   doc.Spec.Entry,
 		Limits:  limits,
+		Budget:  decodeBudget(doc.Spec.Budget),
 		Ledger: LedgerLimits{
 			SchemaVersion:     doc.Spec.Ledger.SchemaVersion,
 			MaxRecordsPerNode: valueOr(doc.Spec.Ledger.MaxRecordsPerNode, 0),
@@ -225,8 +322,18 @@ func LoadWorkflow(digest string, ir []byte) (*Workflow, error) {
 		return fail("%v", err)
 	}
 	for i, e := range doc.Spec.Edges {
-		edge := Edge{From: e.From, FromNode: e.FromNode, FromOutcome: e.FromOutcome, To: e.To, When: e.When}
-		if edge.FromNode == "" || edge.FromOutcome == "" {
+		edge := Edge{
+			From: e.From, FromNode: e.FromNode, FromOutcome: e.FromOutcome,
+			OnEvent: e.OnEvent, To: e.To, When: e.When,
+		}
+		switch {
+		case edge.OnEvent != "":
+			// An event edge is sourced by a name, not by a node outcome. Its
+			// target still has to exist — the run materializes a route at it.
+			if _, ok := wf.Nodes[edge.To]; !ok {
+				return fail("event edge %d (onEvent %q) targets node %q, which the IR does not declare", i, edge.OnEvent, edge.To)
+			}
+		case edge.FromNode == "" || edge.FromOutcome == "":
 			return fail("edge %d (%q) is not decomposed into node and outcome", i, e.From)
 		}
 		if edge.When != "" {
@@ -263,6 +370,13 @@ type irDocument struct {
 			MaxVisitsPerNode  *int   `json:"maxVisitsPerNode"`
 			MaxParallelTokens *int   `json:"maxParallelTokens"`
 		} `json:"limits"`
+		// A pointer, unlike Limits: the compiler expands no defaults here,
+		// so an absent block is the IR saying "unbudgeted" rather than an
+		// omission to fill in.
+		Budget *struct {
+			MaxSessions      *int   `json:"maxSessions"`
+			MaxUncachedInput *int64 `json:"maxUncachedInput"`
+		} `json:"budget"`
 		Ledger struct {
 			SchemaVersion     string `json:"schemaVersion"`
 			MaxRecordsPerNode *int   `json:"maxRecordsPerNode"`
@@ -272,6 +386,7 @@ type irDocument struct {
 			From        string `json:"from"`
 			FromNode    string `json:"fromNode"`
 			FromOutcome string `json:"fromOutcome"`
+			OnEvent     string `json:"onEvent"`
 			To          string `json:"to"`
 			When        string `json:"when"`
 		} `json:"edges"`
@@ -318,6 +433,13 @@ type irNode struct {
 	DecisionSchemaRef string `json:"decisionSchemaRef"`
 	ApproverRef       string `json:"approverRef"`
 	Deadline          string `json:"deadline"`
+
+	// Join mirrors a join node's barrier policy block (#/$defs/joinConfig),
+	// carried into the IR verbatim.
+	Join *struct {
+		Policy string `json:"policy"`
+		Quorum *int   `json:"quorum"`
+	} `json:"join"`
 }
 
 func decodeNode(id string, raw *irNode) (*Node, error) {
@@ -354,6 +476,10 @@ func decodeNode(id string, raw *irNode) (*Node, error) {
 			return nil, fmt.Errorf("deadline %q is not a duration: %w", raw.Deadline, err)
 		}
 		node.Deadline = deadline
+	}
+	if raw.Join != nil {
+		node.JoinPolicy = raw.Join.Policy
+		node.JoinQuorum = valueOr(raw.Join.Quorum, 0)
 	}
 	if raw.Ledger != nil {
 		node.Propose = append([]string(nil), raw.Ledger.Propose...)
@@ -413,6 +539,27 @@ func decodeLimits(raw struct {
 	return limits, nil
 }
 
+// decodeBudget reads the optional economic block. An absent block, and an
+// absent field within one, are both "no bound on this axis" — zero, which
+// every enforcement site tests with `> 0`. The compiler has already refused
+// an authored 0, so a zero here can only ever mean absent.
+func decodeBudget(raw *struct {
+	MaxSessions      *int   `json:"maxSessions"`
+	MaxUncachedInput *int64 `json:"maxUncachedInput"`
+}) Budget {
+	if raw == nil {
+		return Budget{}
+	}
+	budget := Budget{}
+	if raw.MaxSessions != nil {
+		budget.MaxSessions = *raw.MaxSessions
+	}
+	if raw.MaxUncachedInput != nil {
+		budget.MaxUncachedInput = *raw.MaxUncachedInput
+	}
+	return budget
+}
+
 func valueOr(p *int, fallback int) int {
 	if p == nil {
 		return fallback
@@ -467,6 +614,7 @@ func newCELEnv() (*cel.Env, error) {
 		cel.Variable(celVarInput, cel.DynType),
 		cel.Variable(celVarOutput, cel.DynType),
 		cel.Variable(celVarOutcome, cel.DynType),
+		cel.Variable(celVarEvent, cel.DynType),
 	)
 	if err != nil {
 		return nil, fmt.Errorf("build CEL environment: %w", err)

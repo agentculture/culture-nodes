@@ -240,7 +240,11 @@ func NewServer(store *postgres.Store, namespaceID string, opts ...Option) (*Serv
 	if err != nil {
 		return nil, err
 	}
-	callbackStore, err := postgres.NewCallbackStore(store, namespaceID)
+	// The callback store is given the engine so a mid-execution `signal`
+	// emission (issue #43, design D11) fires this namespace's event routes as
+	// well as its signal waits — an emission that could wake a parked wait but
+	// not a standing route would be half a feature.
+	callbackStore, err := postgres.NewCallbackStore(store, namespaceID, postgres.WithEventPickup(eng))
 	if err != nil {
 		return nil, err
 	}
@@ -272,6 +276,14 @@ func NewServer(store *postgres.Store, namespaceID string, opts ...Option) (*Serv
 			return nil, err
 		}
 		s.Engine = eng
+		// The callback store's pickup runner must be the SAME engine the rest
+		// of the server uses, or an emission would pick up through an
+		// uninstrumented one.
+		callbackStore, err := postgres.NewCallbackStore(store, namespaceID, postgres.WithEventPickup(eng))
+		if err != nil {
+			return nil, err
+		}
+		s.callbackStore = callbackStore
 	}
 	return s, nil
 }
@@ -309,6 +321,13 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("GET /v1alpha1/actors", s.wrap(s.handleListActors))
 	mux.HandleFunc("GET /v1alpha1/actors/{id}", s.wrap(s.handleGetActor))
 	mux.HandleFunc("GET /v1alpha1/actors/{id}/stats", s.wrap(s.handleGetActorStats))
+	mux.HandleFunc("POST /v1alpha1/actors/{id}/resume", s.wrap(s.handleResumeActor))
+
+	mux.HandleFunc("GET /v1alpha1/dispatch-rates", s.wrap(s.handleListDispatchRates))
+
+	mux.HandleFunc("POST /v1alpha1/plan-imports", s.wrap(s.handleImportPlan))
+	mux.HandleFunc("GET /v1alpha1/plan-imports", s.wrap(s.handleListPlanImports))
+	mux.HandleFunc("GET /v1alpha1/plan-imports/{id}", s.wrap(s.handleGetPlanImport))
 
 	mux.HandleFunc("POST /v1alpha1/runs/{id}/reviews", s.wrap(s.handleCreateReview))
 	mux.HandleFunc("POST /v1alpha1/reviews/{id}/commit", s.wrap(s.handleCommitReview))

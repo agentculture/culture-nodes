@@ -65,3 +65,48 @@ def test_read_background_result_parses_the_child_stdout_log(tmp_path):
     (log_dir / "stdout.log").write_text('{"status": "ok", "task_id": "abc123"}\n')
     result = colleague_cli.read_background_result(tmp_path, "abc123")
     assert result == {"status": "ok", "task_id": "abc123"}
+
+
+# --- resume (deviation d1) ---------------------------------------------
+#
+# Task t5 shipped colleague's continuation_ref as a permanent null on the
+# premise that colleague had no resume verb. It does — `colleague work
+# --continue ID|last` (upstream #167) — and approved deviation d1 declared
+# t5's null fallback superseded. These pin the corrected behavior so the
+# null cannot quietly return.
+
+
+def _argv_for(continuation_ref):
+    return colleague_cli._common_argv(
+        "do the thing",
+        "/repo",
+        role=None,
+        max_steps=None,
+        mode=None,
+        open_pr=False,
+        allow_dirty=False,
+        continuation_ref=continuation_ref,
+    )
+
+
+def test_common_argv_resumes_with_a_prior_work_item_id():
+    argv = _argv_for("wk_abc123")
+    assert "--continue" in argv
+    assert argv[argv.index("--continue") + 1] == "wk_abc123"
+
+
+def test_common_argv_omits_continue_entirely_when_there_is_no_prior_ref():
+    """Absence must mean a cold start, never `--continue` with an empty
+    value — colleague would resolve that as a missing work item."""
+    argv = _argv_for(None)
+    assert "--continue" not in argv
+    assert "" not in argv
+
+
+def test_resume_keeps_the_instruction_and_repo_positional_shape():
+    """`--continue` seeds from a prior item but still takes an instruction;
+    it is not a replacement for the positional argument."""
+    argv = _argv_for("wk_abc123")
+    assert argv[0] == "work"
+    assert argv[1] == "do the thing"
+    assert argv[argv.index("--repo") + 1] == "/repo"

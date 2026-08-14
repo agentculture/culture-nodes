@@ -22,6 +22,11 @@ import {
   WORKFLOWS_RUNS,
 } from "../../src/fixtures/workflows-fixture";
 import {
+  ACTIVE_EVENTS,
+  activeEventsAsSse,
+  ACTIVE_NODE_RUNS,
+} from "../../src/fixtures/active-graphs-fixture";
+import {
   INVALID_VALIDATION,
   INVALID_YAML_SOURCE,
   PUBLISHED_VERSION,
@@ -40,6 +45,13 @@ export { RUN_ID, WORKFLOW_DIGEST };
 export { BOARD_RUNS };
 export { JOB_RUNS_CURSOR, JOB_RUNS_NAMED_RUNS, JOB_RUNS_PAGE_1, JOB_RUNS_PAGE_2 };
 export { WORKFLOW_VERSIONS, WORKFLOWS_RUNS };
+export {
+  ACTIVE_EVENTS_TOTAL,
+  ACTIVE_LAST_EVENT_ID,
+  ACTIVE_NODE_ID,
+  ACTIVE_PULSES_TOTAL,
+  ACTIVE_RUN_ID,
+} from "../../src/fixtures/active-graphs-fixture";
 export { INVALID_YAML_SOURCE, PUBLISHED_VERSION };
 export {
   STATS_CURSOR,
@@ -179,6 +191,21 @@ export async function mockRunsBoardApi(page: Page): Promise<void> {
     }
     if (boardRun && path === `/v1alpha1/runs/${boardRun.id}/ledger`) {
       await route.fulfill(json({ items: [], ledger_version: 0 }));
+      return;
+    }
+    // The shared cross-run stream (task t30, issue #46): honestly empty by
+    // default — every board test below that doesn't override this route
+    // gets "nothing new yet" rather than a 404 the EventSource would retry
+    // against forever.
+    if (path === "/v1alpha1/events") {
+      await route.fulfill({
+        status: 200,
+        headers: {
+          "content-type": "text/event-stream",
+          "cache-control": "no-cache",
+        },
+        body: "",
+      });
       return;
     }
 
@@ -340,21 +367,31 @@ export async function mockStatisticsApi(page: Page): Promise<void> {
 }
 
 /**
- * Serve the Workflows view's slice of `/v1alpha1` (task t8): `GET
- * /v1alpha1/workflows` returns WORKFLOW_VERSIONS (two workflow_keys, three
- * versions total) and `GET /v1alpha1/runs?sort=updated_at` returns
- * WORKFLOWS_RUNS — no server-side filter by workflow, exactly the two
- * documented operations this task is scoped to. Every fixture run's own
- * `run_id` resolves through `/v1alpha1/runs/{id}` (a minimal RunView) too,
- * so following a card's recent-run link doesn't 404.
+ * Serve the Node Graphs tab's "Node Graphs" sub-tab (task t8, re-homed under
+ * task t28's tab shell): `GET /v1alpha1/workflows` returns WORKFLOW_VERSIONS
+ * (two workflow_keys, three versions total) and `GET
+ * /v1alpha1/runs?sort=updated_at` returns WORKFLOWS_RUNS — no server-side
+ * filter by workflow, exactly the two documented operations this task is
+ * scoped to. Every fixture run's own `run_id` resolves through
+ * `/v1alpha1/runs/{id}` (a minimal RunView) too, so following a card's
+ * recent-run link doesn't 404.
+ *
+ * The Nodes sub-tab (task t29's catalog, rendered by t31) derives from the
+ * same workflows listing. The Active Graphs sub-tab (task t31) additionally
+ * reads `GET /v1alpha1/node-runs` (ACTIVE_NODE_RUNS: one running row on the
+ * one non-terminal run) and the cross-run SSE stream `GET /v1alpha1/events`
+ * (ACTIVE_EVENTS: one committed event on the known run — a visible pulse —
+ * and one naming a run the view never loaded, which must be a no-op, h14).
+ * The events route honours both resume spellings exactly like mockMeshApi.
  */
-export async function mockWorkflowsApi(page: Page): Promise<void> {
+export async function mockNodeGraphsApi(page: Page): Promise<void> {
   const runViewById = new Map<string, RunView>(
     WORKFLOWS_RUNS.map((run) => [run.id, { run, tokens: [], node_runs: [] }]),
   );
 
   await page.route("**/v1alpha1/**", async (route) => {
-    const url = new URL(route.request().url());
+    const request = route.request();
+    const url = new URL(request.url());
     const path = decodeURIComponent(url.pathname);
 
     if (path === "/v1alpha1/workflows") {
@@ -363,6 +400,24 @@ export async function mockWorkflowsApi(page: Page): Promise<void> {
     }
     if (path === "/v1alpha1/runs") {
       await route.fulfill(json({ items: WORKFLOWS_RUNS }));
+      return;
+    }
+    if (path === "/v1alpha1/node-runs") {
+      await route.fulfill(json({ items: ACTIVE_NODE_RUNS }));
+      return;
+    }
+    if (path === "/v1alpha1/events") {
+      const headers = await request.allHeaders();
+      const from = headers["last-event-id"] ?? url.searchParams.get("from") ?? "";
+      const pending = ACTIVE_EVENTS.filter((event) => event.id > from);
+      await route.fulfill({
+        status: 200,
+        headers: {
+          "content-type": "text/event-stream",
+          "cache-control": "no-cache",
+        },
+        body: activeEventsAsSse(pending),
+      });
       return;
     }
 
@@ -554,6 +609,71 @@ export async function mockMeshApi(page: Page): Promise<void> {
   });
 }
 
+import {
+  PLAN_IMPORT,
+  PLAN_IMPORT_SUMMARIES,
+  PLAN_SLUG,
+} from "../../src/fixtures/plan-fixture";
+
+export { PLAN_IMPORT, PLAN_SLUG };
+
+/**
+ * Serve the Plan view's slice of `/v1alpha1` (task t23): `GET
+ * /v1alpha1/plan-imports?slug=` answers PLAN_IMPORT_SUMMARIES (two
+ * snapshots, most recent first) for PLAN_SLUG and an empty list for any
+ * other slug, and `GET /v1alpha1/plan-imports/{id}` resolves the most
+ * recent snapshot's full tasks/deviations — the same fixture
+ * src/routes/PlanView.test.tsx exercises via mocked client calls, served
+ * here over the real network-mocked route instead.
+ */
+export async function mockPlanApi(page: Page): Promise<void> {
+  await page.route("**/v1alpha1/**", async (route) => {
+    const url = new URL(route.request().url());
+    const path = decodeURIComponent(url.pathname);
+
+    if (path === "/v1alpha1/plan-imports") {
+      const slug = url.searchParams.get("slug");
+      await route.fulfill(
+        json({ items: slug === PLAN_SLUG ? PLAN_IMPORT_SUMMARIES : [] }),
+      );
+      return;
+    }
+    if (path === `/v1alpha1/plan-imports/${PLAN_IMPORT.id}`) {
+      await route.fulfill(json(PLAN_IMPORT));
+      return;
+    }
+    // The one spec that reaches the Plan view via the header link starts
+    // on the Runs list — honestly empty, and the shared app-wide SSE
+    // stream (task t27) is served the same "nothing new yet" empty body
+    // every other mock*Api here answers it with, so it never retries.
+    if (path === "/v1alpha1/runs") {
+      await route.fulfill(json({ items: [] }));
+      return;
+    }
+    if (path === "/v1alpha1/events") {
+      await route.fulfill({
+        status: 200,
+        headers: {
+          "content-type": "text/event-stream",
+          "cache-control": "no-cache",
+        },
+        body: "",
+      });
+      return;
+    }
+
+    await route.fulfill({
+      status: 404,
+      contentType: "application/json",
+      body: JSON.stringify({
+        code: 1,
+        message: `no fixture route for ${path}`,
+        remediation: "add it to e2e/fixtures/api.ts",
+      }),
+    });
+  });
+}
+
 /** The parsed contents of the page's `#agent-state` node. */
 export async function readAgentState(page: Page): Promise<{
   status: string;
@@ -599,6 +719,16 @@ export async function readAgentState(page: Page): Promise<{
     actor_count: number;
     run_count: number;
     edge_count: number;
+    connection: string;
+    last_event_id: string | null;
+    events_total: number;
+    pulses_total: number;
+    reduced_motion: boolean;
+  } | null;
+  active_graphs?: {
+    graph_count: number;
+    active_run_count: number;
+    active_node_count: number;
     connection: string;
     last_event_id: string | null;
     events_total: number;

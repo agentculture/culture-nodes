@@ -16,8 +16,13 @@ Two deliberate divergences from the agent bridges, both honesty rules:
   append path a human-origin record may carry `proposed` and nothing
   stronger (`internal/ledger/authority.go` `checkHumanAuthority`):
   confirmation and rejection are review transactions (PRD §10.8), not
-  callback payloads. The human's submission is their claim about what they
-  did; the run's approval surface is where anything gets confirmed.
+  callback payloads. Manual submissions use `human-submission`; the tracker
+  (merge OR reply/terminal-state observations, issue #71) uses an explicit,
+  validated `observed` marker to select the `observed-submission` sibling
+  and attach its collection method plus that method's own evidence field
+  (`merge_commit` for `github_pr_merged`, `reference` for
+  `github_pr_reply`/`github_pr_closed`). Neither path changes origin or
+  authority.
 
 There is also no `classify` ladder here: the human names the domain outcome
 explicitly in the submission, so the mapping never infers one. A submission
@@ -34,6 +39,20 @@ from typing import Any
 CLASS_EXECUTION = "execution"
 CLASS_ACTOR_REJECTED_INPUT = "actor_rejected_input"
 
+#: The tracker collection methods this bridge accepts inside a submission's
+#: `observed` marker, and the ONE extra evidence field each requires beyond
+#: `collection_method` itself. `github_pr_merged` is t16's original merge
+#: observation; `github_pr_reply` and `github_pr_closed` are issue #71's
+#: decision-node observations (a qualifying PR reply, and the PR closing
+#: unmerged while a question was pending, respectively). Adding a kind here
+#: is the ONLY change needed to accept a new tracker observation shape —
+#: `submission_error` and `claim_record` are both generic over this map.
+_OBSERVED_REQUIRED_FIELDS: dict[str, frozenset[str]] = {
+    "github_pr_merged": frozenset({"merge_commit"}),
+    "github_pr_reply": frozenset({"reference"}),
+    "github_pr_closed": frozenset({"reference"}),
+}
+
 
 @dataclass(frozen=True)
 class InvocationContext:
@@ -46,7 +65,7 @@ class InvocationContext:
 
 
 def submission_error(body: dict[str, Any]) -> str | None:
-    """Validate a human submission `{outcome, output?, note?}`.
+    """Validate a submission `{outcome, output?, note?, observed?}`.
 
     Returns a human-readable refusal, or None when the submission is
     acceptable. `outcome` is required and never defaulted (see module
@@ -62,6 +81,25 @@ def submission_error(body: dict[str, Any]) -> str | None:
     note = body.get("note")
     if note is not None and not isinstance(note, str):
         return "note must be a string when present"
+    if "observed" in body:
+        observed = body["observed"]
+        if not isinstance(observed, dict):
+            return "observed must be a JSON object when present"
+        collection_method = observed.get("collection_method")
+        required = _OBSERVED_REQUIRED_FIELDS.get(collection_method)
+        if required is None:
+            return "observed.collection_method must be one of: " + ", ".join(
+                sorted(_OBSERVED_REQUIRED_FIELDS)
+            )
+        if set(observed) != {"collection_method"} | required:
+            return (
+                f"observed for collection_method {collection_method!r} must contain "
+                f"exactly collection_method and {sorted(required)}"
+            )
+        for field_name in required:
+            value = observed.get(field_name)
+            if not isinstance(value, str) or not value.strip():
+                return f"observed.{field_name} must be a non-empty string"
     return None
 
 
@@ -80,6 +118,36 @@ def claim_record(
     the human case. The engine re-checks authority on append regardless of
     what is claimed here.
     """
+    observed = submission.get("observed")
+    is_observed = isinstance(observed, dict)
+    data = {
+        # The ledger schema requires a non-empty statement. A submitter
+        # who put their prose in output.note (or sent no note at all)
+        # must not produce an engine-side contract_rejected on an
+        # otherwise-valid human decision (found live: run
+        # 01KZXD609QRFHWS8YQ6MRZ1Y0F failed on an empty statement), so
+        # the statement falls back through output.note to a generated
+        # sentence naming the outcome — never empty.
+        "statement": (
+            submission.get("note")
+            or (submission.get("output") or {}).get("note")
+            or f"human submitted outcome {submission.get('outcome')}"
+        ),
+        "kind": "observed-submission" if is_observed else "human-submission",
+        "outcome": submission.get("outcome"),
+    }
+    if is_observed:
+        # submission_error has already pinned this marker to one of the
+        # collection methods _OBSERVED_REQUIRED_FIELDS understands, and
+        # validated its one extra evidence field. Keep authority and origin
+        # unchanged: this is honest attribution inside a proposed bridge
+        # claim, not runner-origin observed authority.
+        data["collection_method"] = observed["collection_method"]
+        for field_name, value in observed.items():
+            if field_name == "collection_method":
+                continue
+            data[field_name] = value.strip() if isinstance(value, str) else value
+
     return {
         "id": "",
         "schema_version": "nodes.culture.dev/ledger/v1alpha1",
@@ -90,22 +158,7 @@ def claim_record(
         "origin": {"kind": "human", "actor_id": actor_id},
         "authority": "proposed",
         "subject_ref": None,
-        "data": {
-            # The ledger schema requires a non-empty statement. A submitter
-            # who put their prose in output.note (or sent no note at all)
-            # must not produce an engine-side contract_rejected on an
-            # otherwise-valid human decision (found live: run
-            # 01KZXD609QRFHWS8YQ6MRZ1Y0F failed on an empty statement), so
-            # the statement falls back through output.note to a generated
-            # sentence naming the outcome — never empty.
-            "statement": (
-                submission.get("note")
-                or (submission.get("output") or {}).get("note")
-                or f"human submitted outcome {submission.get('outcome')}"
-            ),
-            "kind": "human-submission",
-            "outcome": submission.get("outcome"),
-        },
+        "data": data,
         "provenance_refs": [],
         "supersedes": None,
         "created_at": created_at,

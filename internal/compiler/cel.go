@@ -15,10 +15,20 @@ import (
 //   - input    the run input (whatever /run/input holds)
 //   - output   the deciding node's output for the outcome being routed
 //   - outcome  the domain outcome name that produced this transition
+//   - event    the delivered signal event on an `onEvent` edge (issue #43)
+//
+// `event` ({name, payload, emitter}) is declared in the one shared
+// environment rather than a second event-only one, because the engine has to
+// rebuild the identical environment from the IR after a restart and two
+// environments would be two chances to drift. On a node-outcome transition it
+// evaluates as an empty map, so a guard that reaches into it reports "no such
+// key" — a guard failure, which does not match — rather than matching on
+// nothing.
 const (
 	CELVarInput   = "input"
 	CELVarOutput  = "output"
 	CELVarOutcome = "outcome"
+	CELVarEvent   = "event"
 )
 
 // newCELEnv builds the compile-time environment. A failure here is an internal
@@ -28,6 +38,7 @@ func newCELEnv() (*cel.Env, error) {
 		cel.Variable(CELVarInput, cel.DynType),
 		cel.Variable(CELVarOutput, cel.DynType),
 		cel.Variable(CELVarOutcome, cel.DynType),
+		cel.Variable(CELVarEvent, cel.DynType),
 	)
 	if err != nil {
 		return nil, fmt.Errorf("compiler: build CEL environment: %w", err)
@@ -44,8 +55,8 @@ func (c *compilation) compileCEL(path, expression string) {
 	if issues != nil && issues.Err() != nil {
 		c.add(LevelError, path, CodeContractCELInvalid,
 			fmt.Sprintf("CEL expression does not compile: %s", firstIssueLine(issues.Err())),
-			fmt.Sprintf("fix the expression; the declared variables are %s, %s and %s",
-				CELVarInput, CELVarOutput, CELVarOutcome))
+			fmt.Sprintf("fix the expression; the declared variables are %s, %s, %s and %s",
+				CELVarInput, CELVarOutput, CELVarOutcome, CELVarEvent))
 		return
 	}
 

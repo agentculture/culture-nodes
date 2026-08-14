@@ -492,3 +492,38 @@ def test_non_loopback_bind_without_token_is_refused(tmp_path):
     cfg = _config(tmp_path, auth_token=None, host="0.0.0.0")  # noqa: S104 - the refused case
     with pytest.raises(SystemExit):
         server.make_server(cfg)
+
+
+# -- observable-declaration convention (t15 / c11 / h8) ----------------------
+
+
+def test_observe_input_key_rounds_trips_verbatim_in_extra_input(bridge, receiver):
+    """A non-instruction input key (e.g. ``observe``) persists verbatim in
+    ``extra_input`` and is returned on the task GET — the bridge does not
+    strip or transform it (server.py line 369: ``extra_input={k: v for k, v
+    in raw_input.items() if k != "instruction"}``)."""
+    base, cfg = bridge
+    observe_payload = {
+        "kind": "github_pr_merged",
+        "pr": 42,
+    }
+    body = _invocation_body(receiver, instruction="merge the PR", observe=observe_payload)
+    status, accepted_body = _request(
+        base,
+        server.INVOCATIONS_PATH,
+        body=body,
+        headers={**AUTH, "Idempotency-Key": "att_observe"},
+    )
+    assert status == 202
+    invocation_id = accepted_body["invocation_id"]
+
+    # The task's extra_input carries observe verbatim.
+    task = TaskStore(cfg.state_dir).get(invocation_id)
+    assert task is not None
+    assert task.extra_input == {"observe": observe_payload}
+
+    # The inbox GET also returns it (public_dict includes extra_input).
+    status, listing = _request(base, "/inbox/tasks?status=pending", method="GET", headers=AUTH)
+    assert status == 200
+    task_dict = next(t for t in listing["tasks"] if t["invocation_id"] == invocation_id)
+    assert task_dict["extra_input"] == {"observe": observe_payload}

@@ -1,0 +1,66 @@
+# The bound half of event-driven continuation (issue #43, design D13): the
+# same single-event pickup as event-pickup.workflow.yaml, declared with the
+# tightest possible envelope — one concurrent token, one visit per node. A run
+# of this workflow is already at its maxParallelTokens cap while its entry
+# node is working, so a delivered event has no headroom to pick up, and the
+# refusal must leave the run healthy rather than fail it.
+apiVersion: nodes.culture.dev/v1alpha1
+kind: Workflow
+
+metadata:
+  name: event-pickup-capped
+  version: 1.0.0
+  ownerRef: team/platform-ai
+
+spec:
+  entry: work
+
+  contract:
+    input:
+      schema:
+        type: object
+    output:
+      schema:
+        type: object
+
+  limits:
+    maxDuration: 1h
+    maxTransitions: 8
+    maxVisitsPerNode: 1
+    maxParallelTokens: 1
+
+  nodes:
+    work:
+      kind: agent
+      ownerRef: team/platform-ai
+      uses: actor://company/worker@sha256:aaaaaa
+      input:
+        from: /run/input
+      contract:
+        outcomes:
+          completed:
+            schema:
+              type: object
+
+    notify:
+      kind: agent
+      ownerRef: team/platform-ai
+      uses: actor://company/notifier@sha256:bbbbbb
+      contract:
+        outcomes:
+          completed:
+            schema:
+              type: object
+
+    finish:
+      kind: end
+      ownerRef: team/platform-ai
+      output:
+        from: /nodes/work/output
+
+  edges:
+    - from: work.completed
+      to: finish
+
+    - onEvent: review-requested
+      to: notify

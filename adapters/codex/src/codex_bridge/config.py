@@ -53,6 +53,8 @@ _ENV_STRING_FIELDS = {
     "CODEX_BRIDGE_HOST": "host",
     "CODEX_BRIDGE_DEFAULT_SUCCESS_OUTCOME": "default_success_outcome",
     "CODEX_BRIDGE_ACTOR_ID": "actor_id",
+    "CODEX_BRIDGE_PRESERVE_BRANCH_PREFIX": "preserve_branch_prefix",
+    "CODEX_BRIDGE_PRESERVE_REMOTE": "preserve_remote",
 }
 _ENV_INT_FIELDS = {
     "CODEX_BRIDGE_PORT": "port",
@@ -60,6 +62,7 @@ _ENV_INT_FIELDS = {
     "CODEX_BRIDGE_DEFAULT_MAX_STEPS": "default_max_steps",
     "CODEX_BRIDGE_HEARTBEAT_AFTER_SECONDS": "heartbeat_after_seconds",
     "CODEX_BRIDGE_CALLBACK_MAX_RETRIES": "callback_max_retries",
+    "CODEX_BRIDGE_MAX_INFLIGHT_PER_SESSION_KEY": "max_inflight_per_session_key",
 }
 _ENV_FLOAT_FIELDS = {
     "CODEX_BRIDGE_POLL_INTERVAL_SECONDS": "poll_interval_seconds",
@@ -70,6 +73,9 @@ _ENV_FLOAT_FIELDS = {
 }
 _ENV_BOOL_FIELDS = {
     "CODEX_BRIDGE_ALWAYS_ASYNC": "always_async",
+    "CODEX_BRIDGE_SESSION_CONCURRENCY_ENABLED": "session_concurrency_enabled",
+    "CODEX_BRIDGE_PRESERVE_ON_FAILURE": "preserve_on_failure",
+    "CODEX_BRIDGE_PRESERVE_PUSH": "preserve_push",
 }
 
 #: `CODEX_BRIDGE_REPO_ALLOWLIST` is a `os.pathsep`-joined list of absolute
@@ -120,10 +126,43 @@ class Config:
     #: escape hatch the task names.
     always_async: bool = False
 
+    # --- session-key concurrency (t6, c44/h37) --------------------------
+    #: How many invocations may hold one `input.session_key`'s in-flight
+    #: slot at once before a further concurrent arrival forks (dispatches
+    #: cold, ignoring the `continuation_ref` it carried). See
+    #: `session_registry.py`'s module docstring for the fork-vs-queue
+    #: argument. 1 means "exactly one in-flight invocation per session
+    #: key" — the acceptance criterion's own phrasing.
+    max_inflight_per_session_key: int = 1
+    #: Kill-switch back to t5's unserialized behaviour (every invocation
+    #: dispatches with its `continuation_ref` as given, session_key
+    #: collisions included) — for an operator who needs to rule this
+    #: mechanism out while diagnosing something else.
+    session_concurrency_enabled: bool = True
+
     # --- outcome vocabulary ---------------------------------------------
     #: Domain outcome used for a `status: ok` TaskResult when the
     #: invocation's `input.success_outcome` is absent.
     default_success_outcome: str = "completed"
+
+    # --- preserve-on-failure (task t25, issue #49) ----------------------
+    #: Commit-on-failure toggle: when a node's dispatch ends in a genuine
+    #: technical failure (never a domain outcome), the bridge preserves the
+    #: workspace's changes on a freshly minted branch via git plumbing (see
+    #: `preserve.py`'s module docstring). Off means "never attempt it" —
+    #: e.g. for a bridge host where preservation is deliberately unwanted.
+    preserve_on_failure: bool = True
+    #: Prefix for the code-minted preserve branch name.
+    preserve_branch_prefix: str = "preserve/"
+    #: Push-or-local: when True (the default), a preserve commit is pushed
+    #: best-effort to `preserve_remote`; when the push fails or this is
+    #: False, the commit stays local-only — an ordinary recorded outcome
+    #: (task t25's own risk register: bridge-host push credentials for
+    #: thor/orin are unverified), never an error.
+    preserve_push: bool = True
+    #: The remote a preserve branch is pushed to, when `preserve_push` is
+    #: True.
+    preserve_remote: str = "origin"
 
     # --- HTTP surface ----------------------------------------------------
     host: str = "127.0.0.1"
@@ -218,7 +257,13 @@ _FILE_FIELDS = {
     "sync_max_steps": int,
     "default_max_steps": int,
     "always_async": bool,
+    "max_inflight_per_session_key": int,
+    "session_concurrency_enabled": bool,
     "default_success_outcome": str,
+    "preserve_on_failure": bool,
+    "preserve_branch_prefix": str,
+    "preserve_push": bool,
+    "preserve_remote": str,
     "host": str,
     "port": int,
     "auth_token": str,

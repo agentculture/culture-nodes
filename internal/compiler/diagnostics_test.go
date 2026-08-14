@@ -175,6 +175,59 @@ func TestDeliberateErrorFixtures(t *testing.T) {
 				{LevelError, "/spec/nodes/build/acceptance/enforce", CodeStructureSchema},
 			},
 		},
+		{
+			// Issue #43, parallel-tokens design D7: completing a run at an
+			// end node reachable inside a split would strand the sibling
+			// branches. The runtime keeps a loud guard for hand-built IRs,
+			// but the authoring answer belongs here.
+			name: "end node reachable inside a split",
+			file: "err-end-inside-split.workflow.yaml",
+			want: []wantDiag{
+				{LevelError, "/spec/nodes/finish", CodeGraphEndInsideSplit},
+			},
+		},
+		{
+			// D7's dual: a barrier's identity is (run, node, token group),
+			// and a token that never passed a parallel node carries no group.
+			name: "join node reachable outside any split",
+			file: "err-join-outside-split.workflow.yaml",
+			want: []wantDiag{
+				{LevelError, "/spec/nodes/gather", CodeGraphJoinOutsideSplit},
+			},
+		},
+		{
+			// Four independent split/join shape errors, reported as four
+			// verdicts rather than one cascade. graph.parallel_without_split_edge
+			// is the COMPILE-time "no declared edge from fan.split", which is
+			// a different failure from the engine's runtime no-eligible-edge
+			// diagnostic when every declared guard evaluates false (design
+			// review point D6). orphan-gather's missing policy is reported
+			// twice on the ownerRef precedent: the schema's if/then says the
+			// property is absent, the contract level says the barrier has no
+			// policy.
+			name: "parallel and join structural shape",
+			file: "err-parallel-join-shape.workflow.yaml",
+			want: []wantDiag{
+				{LevelError, "/spec/nodes/fan", CodeGraphParallelNoSplitEdge},
+				{LevelError, "/spec/nodes/fan/contract", CodeContractRouterWithContract},
+				{LevelError, "/spec/nodes/orphan-gather", CodeGraphJoinNoIncomingEdge},
+				{LevelError, "/spec/nodes/orphan-gather", CodeGraphNodeUnreachable},
+				{LevelError, "/spec/nodes/orphan-gather/join", CodeContractJoinPolicyMissing},
+				{LevelError, "/spec/nodes/orphan-gather/join", CodeStructureSchema},
+				{LevelError, "/spec/nodes/work/join", CodeContractJoinMisplaced},
+			},
+		},
+		{
+			// The policy/quorum pairing the JSON Schema cannot state: quorum
+			// is required under policy quorum and meaningless under the other
+			// two.
+			name: "join policy and quorum disagree",
+			file: "err-join-policy.workflow.yaml",
+			want: []wantDiag{
+				{LevelError, "/spec/nodes/all-gather/join/quorum", CodeContractJoinPolicyInvalid},
+				{LevelError, "/spec/nodes/quorum-gather/join/quorum", CodeContractJoinPolicyInvalid},
+			},
+		},
 	}
 
 	for _, tc := range cases {

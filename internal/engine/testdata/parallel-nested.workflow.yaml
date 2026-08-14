@@ -1,0 +1,129 @@
+# Nested split/join (parallel-tokens design §3.3 propagation, test T14).
+#
+#   outer ─┬─> plain ────────────────────────────────┐
+#          └─> inner ─┬─> left  ──┐                  │
+#                     └─> right ──┴─> inner-gather ───┴─> outer-gather -> finish
+#
+# The inner split's group records the outer group as its parent. When
+# inner-gather fires, its post-join token re-enters the OUTER group — which is
+# exactly the group outer-gather counts against, so the outer barrier sees two
+# arrivals (plain and inner-gather) for its cardinality of two.
+apiVersion: nodes.culture.dev/v1alpha1
+kind: Workflow
+
+metadata:
+  name: engine-parallel-nested
+  version: 1.0.0
+  ownerRef: team/platform-ai
+
+spec:
+  entry: outer
+
+  contract:
+    input:
+      schema:
+        type: object
+    output:
+      schema:
+        type: object
+
+  limits:
+    maxDuration: 1h
+    maxTransitions: 32
+    maxVisitsPerNode: 8
+    maxParallelTokens: 6
+
+  ledger:
+    schemaVersion: nodes.culture.dev/ledger/v1alpha1
+    maxRecordsPerNode: 10
+
+  nodes:
+    outer:
+      kind: parallel
+      ownerRef: team/platform-ai
+
+    inner:
+      kind: parallel
+      ownerRef: team/platform-ai
+
+    plain:
+      kind: agent
+      ownerRef: team/platform-ai
+      uses: actor://company/plain@sha256:111111
+      input:
+        from: /run/input
+      contract:
+        outcomes:
+          done:
+            schema:
+              type: object
+
+    left:
+      kind: agent
+      ownerRef: team/platform-ai
+      uses: actor://company/left@sha256:222222
+      input:
+        from: /run/input
+      contract:
+        outcomes:
+          done:
+            schema:
+              type: object
+
+    right:
+      kind: agent
+      ownerRef: team/platform-ai
+      uses: actor://company/right@sha256:333333
+      input:
+        from: /run/input
+      contract:
+        outcomes:
+          done:
+            schema:
+              type: object
+
+    inner-gather:
+      kind: join
+      ownerRef: team/platform-ai
+      join:
+        policy: all
+
+    outer-gather:
+      kind: join
+      ownerRef: team/platform-ai
+      join:
+        policy: all
+
+    finish:
+      kind: end
+      ownerRef: team/platform-ai
+      output:
+        from: /nodes/outer-gather/output
+
+  edges:
+    - from: outer.split
+      to: plain
+
+    - from: outer.split
+      to: inner
+
+    - from: inner.split
+      to: left
+
+    - from: inner.split
+      to: right
+
+    - from: left.done
+      to: inner-gather
+
+    - from: right.done
+      to: inner-gather
+
+    - from: inner-gather.joined
+      to: outer-gather
+
+    - from: plain.done
+      to: outer-gather
+
+    - from: outer-gather.joined
+      to: finish

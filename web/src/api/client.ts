@@ -5,6 +5,8 @@ import type {
   HumanTaskList,
   LedgerRecords,
   NodeRunList,
+  PlanImport,
+  PlanImportSummaryList,
   Projection,
   RunList,
   RunState,
@@ -302,6 +304,26 @@ export const listActors = (signal?: AbortSignal) =>
   getJson<ActorList>("/actors", signal);
 
 /**
+ * `GET /v1alpha1/plan-imports?slug=` (task t23): every import snapshot of
+ * one plan, most recent first — `items[0]` is "the current one". `slug` is
+ * required (there is no cross-slug listing; see openapi.yaml's
+ * listPlanImports).
+ */
+export const listPlanImports = (slug: string, signal?: AbortSignal) =>
+  getJson<PlanImportSummaryList>(
+    `/plan-imports${toQueryString({ slug })}`,
+    signal,
+  );
+
+/**
+ * `GET /v1alpha1/plan-imports/{id}` (task t22): one full plan-import
+ * snapshot — every task's real status/dependency edges and every
+ * deviation, with its origin.
+ */
+export const getPlanImport = (id: string, signal?: AbortSignal) =>
+  getJson<PlanImport>(`/plan-imports/${encodeURIComponent(id)}`, signal);
+
+/**
  * The cross-run SSE endpoint's URL (task t17, `GET /v1alpha1/events`), with
  * the resume point applied. Unlike the per-run stream the cursor here is
  * the events table's own ULID primary key, not a per-run sequence — see
@@ -309,10 +331,22 @@ export const listActors = (signal?: AbortSignal) =>
  * first-connection rule as runEventsUrl: EventSource cannot set a
  * Last-Event-ID header before its first connect, so the API accepts the
  * same cursor as `?from=`.
+ *
+ * `runs` is the server's optional scope-down filter (task t27, c48/h41's
+ * sibling requirement; internal/api/events.go:294-313's `runsFilterParam`):
+ * an explicit `?runs=id,id` list narrows the feed to those runs instead of
+ * the default active-runs+lifecycle set. Absent or empty means "no explicit
+ * filter" on both ends — the query param is omitted entirely rather than
+ * sent empty, matching the server's own empty-means-absent parsing.
  */
-export function meshEventsUrl(from?: string): string {
+export function meshEventsUrl(from?: string, runs?: readonly string[]): string {
   const base = `${API_ROOT}/events`;
-  return from ? `${base}?from=${encodeURIComponent(from)}` : base;
+  const params: string[] = [];
+  if (from) params.push(`from=${encodeURIComponent(from)}`);
+  if (runs && runs.length > 0) {
+    params.push(`runs=${runs.map(encodeURIComponent).join(",")}`);
+  }
+  return params.length > 0 ? `${base}?${params.join("&")}` : base;
 }
 
 /** The SSE endpoint's URL, with the resume point applied. */

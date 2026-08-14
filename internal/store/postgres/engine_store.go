@@ -354,15 +354,21 @@ func (eq engineQueries) Run(ctx context.Context, runID string) (engine.Run, erro
 }
 
 const insertTokenSQL = `
-INSERT INTO tokens (id, namespace_id, run_id, node_key, state, parent_token_id, created_at)
-VALUES ($1, $2, $3, $4, $5, $6, $7)
+INSERT INTO tokens (id, namespace_id, run_id, node_key, state, parent_token_id, group_id, origin_event_id, created_at)
+VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
 `
 
-// InsertToken records a control token at a node.
+// InsertToken records a control token at a node. group_id is NULL for a
+// token outside any split (migrations/0019) — the same value every pre-split
+// row already carries — and origin_event_id is NULL for every token except
+// one an event pickup created (migrations/0021): a pickup token has no parent
+// token to point at, so it names the fact that created it instead (review
+// finding D4).
 func (eq engineQueries) InsertToken(ctx context.Context, token engine.Token) error {
 	_, err := eq.q.Exec(ctx, insertTokenSQL,
 		token.ID, eq.namespaceID, token.RunID, token.NodeID, string(token.State),
-		textOrNull(token.ParentTokenID), tsOrNow(token.CreatedAt),
+		textOrNull(token.ParentTokenID), textOrNull(token.GroupID),
+		textOrNull(token.OriginEventID), tsOrNow(token.CreatedAt),
 	)
 	if err != nil {
 		return fmt.Errorf("postgres: engine: InsertToken: %w", err)
@@ -563,42 +569,82 @@ const insertAttemptSQL = `
 INSERT INTO attempts (
 	id, namespace_id, node_run_id, attempt_number, actor_id, status, fencing_token,
 	result, started_at, completed_at,
-	usage_input_tokens, usage_output_tokens, usage_cost, usage_currency
+	usage_input_tokens, usage_output_tokens, usage_cost, usage_currency,
+	usage_cached_input_tokens, usage_reasoning_tokens, usage_model, usage_thread_id,
+	termination_reason, continuation_ref,
+	preserve_branch, preserve_pushed, preserve_remote
 )
-VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14)
+VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22, $23)
 `
 
 // InsertAttempt records one dispatch attempt's result. The
 // attempts(node_run_id, attempt_number) unique constraint means a duplicate
 // completion is a constraint violation rather than a second silent row.
 //
-// The four usage_* columns (migrations/0012_attempt_usage.sql) are written
-// straight from attempt.Usage with no derivation: a nil Usage leaves all
-// four NULL, and a non-nil one preserves Cost/Currency's own independent
-// nullability rather than coercing an unpriced attempt's cost to 0 — see
-// engine.Usage's doc comment for why 0 would be a lie ("free") that null
-// is not.
+// The usage_* columns (migrations/0012_attempt_usage.sql and its extension
+// 0017_attempt_usage_extended.sql) are written straight from attempt.Usage
+// with no derivation: a nil Usage leaves every one of them NULL, and a
+// non-nil one preserves each optional field's own independent nullability
+// rather than coercing an unpriced attempt's cost to 0 or a cache-blind
+// backend's cached-input count to 0 — see engine.Usage's doc comment for
+// why 0 would be a lie ("free", "0% cached") that null is not.
+//
+// termination_reason is written from attempt.TerminationReason, NOT from
+// the usage block, because an attempt can carry one with no usage block at
+// all (ADR 0009).
+//
+// continuation_ref (migrations/0018_attempt_continuation_ref.sql) is written
+// the same way from attempt.ContinuationRef: NULL means the actor offered no
+// handle for continuing its conversation, which is not the same fact as the
+// usage block's usage_thread_id (ADR 0010).
+//
+// preserve_branch/preserve_pushed/preserve_remote
+// (migrations/0025_attempt_preserve_branch.sql) are written from
+// attempt.Preserve the same way: nil leaves all three NULL. Preserve is
+// never partially written — engine.Preserve carries no independently-
+// nullable sub-fields the way Usage's extended columns do, so either all
+// three are set together (from a real, committed branch) or none are.
 func (eq engineQueries) InsertAttempt(ctx context.Context, attempt engine.Attempt) error {
 	var result any
 	if len(attempt.Result) > 0 {
 		result = []byte(attempt.Result)
 	}
 	var (
-		inputTokens, outputTokens pgtype.Int8
-		cost                      pgtype.Float8
-		currency                  pgtype.Text
+		inputTokens, outputTokens          pgtype.Int8
+		cost                               pgtype.Float8
+		currency                           pgtype.Text
+		cachedInputTokens, reasoningTokens pgtype.Int8
+		usageModel, usageThreadID          pgtype.Text
 	)
 	if attempt.Usage != nil {
 		inputTokens = int8FromPtr(&attempt.Usage.InputTokens)
 		outputTokens = int8FromPtr(&attempt.Usage.OutputTokens)
 		cost = float8FromPtr(attempt.Usage.Cost)
 		currency = textPtrFromNullable(attempt.Usage.Currency)
+		cachedInputTokens = int8FromPtr(attempt.Usage.CachedInputTokens)
+		reasoningTokens = int8FromPtr(attempt.Usage.ReasoningTokens)
+		usageModel = textPtrFromNullable(attempt.Usage.Model)
+		usageThreadID = textPtrFromNullable(attempt.Usage.ThreadID)
+	}
+	var (
+		preserveBranch pgtype.Text
+		preservePushed pgtype.Bool
+		preserveRemote pgtype.Text
+	)
+	if attempt.Preserve != nil {
+		preserveBranch = textOrNull(attempt.Preserve.Branch)
+		preservePushed = pgtype.Bool{Bool: attempt.Preserve.Pushed, Valid: true}
+		preserveRemote = textOrNull(attempt.Preserve.Remote)
 	}
 	_, err := eq.q.Exec(ctx, insertAttemptSQL,
 		attempt.ID, eq.namespaceID, attempt.NodeRunID, int32(attempt.Number),
 		textOrNull(attempt.ActorID), string(attempt.Status), attempt.FencingToken,
 		result, tsOrNow(attempt.StartedAt), tsOrNow(attempt.CompletedAt),
 		inputTokens, outputTokens, cost, currency,
+		cachedInputTokens, reasoningTokens, usageModel, usageThreadID,
+		textPtrFromNullable(attempt.TerminationReason),
+		textPtrFromNullable(attempt.ContinuationRef),
+		preserveBranch, preservePushed, preserveRemote,
 	)
 	if err != nil {
 		return fmt.Errorf("postgres: engine: InsertAttempt: %w", err)
@@ -624,7 +670,10 @@ func (eq engineQueries) Attempts(ctx context.Context, nodeRunID string) ([]engin
 	rows, err := eq.q.Query(ctx, `
 		SELECT id, namespace_id, node_run_id, attempt_number, actor_id, status,
 		       fencing_token, result, started_at, completed_at,
-		       usage_input_tokens, usage_output_tokens, usage_cost, usage_currency
+		       usage_input_tokens, usage_output_tokens, usage_cost, usage_currency,
+		       usage_cached_input_tokens, usage_reasoning_tokens, usage_model,
+		       usage_thread_id, termination_reason, continuation_ref,
+		       preserve_branch, preserve_pushed, preserve_remote
 		FROM attempts
 		WHERE node_run_id = $1
 		ORDER BY attempt_number
@@ -649,11 +698,23 @@ func (eq engineQueries) Attempts(ctx context.Context, nodeRunID string) ([]engin
 			usageOutputTokens pgtype.Int8
 			usageCost         pgtype.Float8
 			usageCurrency     pgtype.Text
+			usageCachedInput  pgtype.Int8
+			usageReasoning    pgtype.Int8
+			usageModel        pgtype.Text
+			usageThreadID     pgtype.Text
+			terminationReason pgtype.Text
+			continuationRef   pgtype.Text
+			preserveBranch    pgtype.Text
+			preservePushed    pgtype.Bool
+			preserveRemote    pgtype.Text
 		)
 		if err := rows.Scan(
 			&attempt.ID, &attempt.NamespaceID, &attempt.NodeRunID, &number, &actorID,
 			&status, &fencingToken, &result, &startedAt, &completedAt,
 			&usageInputTokens, &usageOutputTokens, &usageCost, &usageCurrency,
+			&usageCachedInput, &usageReasoning, &usageModel, &usageThreadID,
+			&terminationReason, &continuationRef,
+			&preserveBranch, &preservePushed, &preserveRemote,
 		); err != nil {
 			return nil, fmt.Errorf("postgres: engine: Attempts: scan: %w", err)
 		}
@@ -677,6 +738,32 @@ func (eq engineQueries) Attempts(ctx context.Context, nodeRunID string) ([]engin
 				OutputTokens: int8PtrValueOrZero(usageOutputTokens),
 				Cost:         float8PtrFromPg(usageCost),
 				Currency:     textPtrFromPg(usageCurrency),
+				// migrations/0017's four extended columns are independently
+				// nullable *within* a reported block, so each reads back on
+				// its own: a bridge that reported tokens but no cache
+				// counts yields nil, never 0.
+				CachedInputTokens: int8PtrFromPg(usageCachedInput),
+				ReasoningTokens:   int8PtrFromPg(usageReasoning),
+				Model:             textPtrFromPg(usageModel),
+				ThreadID:          textPtrFromPg(usageThreadID),
+			}
+		}
+		// Read outside the usage block on purpose: termination_reason is
+		// non-NULL on attempts whose usage columns are all NULL (ADR 0009).
+		attempt.TerminationReason = textPtrFromPg(terminationReason)
+		// Outside it for the same reason, and distinct from the block's own
+		// usage_thread_id: this is the handle a later dispatch resumes with,
+		// not a measurement of where the usage accrued (ADR 0010).
+		attempt.ContinuationRef = textPtrFromPg(continuationRef)
+		// preserve_branch is what "this attempt has a preserve branch to
+		// show" means (InsertAttempt always writes all three columns
+		// together, never partially) — the same single-column presence
+		// pattern usage_input_tokens uses above.
+		if preserveBranch.Valid {
+			attempt.Preserve = &engine.Preserve{
+				Branch: preserveBranch.String,
+				Pushed: preservePushed.Bool,
+				Remote: textOrEmpty(preserveRemote),
 			}
 		}
 		attempts = append(attempts, attempt)
@@ -700,9 +787,14 @@ func int8PtrValueOrZero(v pgtype.Int8) int64 {
 	return v.Int64
 }
 
-// TransitionCount is how many transitions the run has taken. Every transition
-// creates exactly one node run and the entry node run is not a transition, so
-// the count is the node-run count less one.
+// TransitionCount is how many transitions the run has taken, derived as
+// "node runs created after entry": every transition creates exactly one node
+// run — a K-way split is K transitions creating K node runs — with one
+// documented exception (parallel-tokens design §5.2): join arrivals after
+// the first create no node run, so a K-way join contributes K transitions'
+// worth of routing but only 1 to this count. That undercount is intentional
+// — an arrival does no dispatchable work, and the §9.7 limit exists to
+// bound work.
 func (eq engineQueries) TransitionCount(ctx context.Context, runID string) (int, error) {
 	var count int32
 	err := eq.q.QueryRow(ctx,

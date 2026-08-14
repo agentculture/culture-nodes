@@ -45,9 +45,10 @@ from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from typing import Any
 
-from codex_bridge import codex_cli, mapping, workspace
+from codex_bridge import codex_cli, mapping, preserve, workspace
 from codex_bridge.callbacks import CallbackConfig, CallbackEmitter
 from codex_bridge.config import Config
+from codex_bridge.session_registry import SessionRegistry
 
 logger = logging.getLogger("codex_bridge.async_runner")
 
@@ -104,6 +105,13 @@ class AsyncInvocation:
     started_at: float = field(default_factory=time.monotonic)
     done: bool = False
     cancel_requested: bool = False
+    #: t6 (c44/h37): the session_key slot this invocation holds, and the
+    #: registry to release it from once codex's turn actually finishes.
+    #: Both None when this invocation forked or session serialization
+    #: found no session_key to track — nothing to release either way.
+    session_registry: SessionRegistry | None = None
+    session_key: str | None = None
+    session_holder: str | None = None
 
 
 class AsyncRunner:
@@ -125,6 +133,10 @@ class AsyncRunner:
         callback_url: str,
         callback_token: str,
         heartbeat_after_seconds: int,
+        continuation_ref: str | None = None,
+        session_registry: SessionRegistry | None = None,
+        session_key: str | None = None,
+        session_holder: str | None = None,
     ) -> str:
         """Spawn `codex exec` in the background and return its invocation
         id immediately. Raises `codex_cli.SpawnError` if the subprocess
@@ -140,12 +152,29 @@ class AsyncRunner:
         before it, instead — the same "as close as possible to the actual
         subprocess spawn" bracketing, just wired at the point this
         architecture actually spawns the child.
+
+        *continuation_ref* (task t5): threaded straight through to
+        `codex_cli.spawn` — the async path is the one long, therefore
+        resume-worth-it, sessions actually take.
         """
         handle = workspace.begin(repo)
-        proc = codex_cli.spawn(self._cfg, instruction, repo, model=model, sandbox=sandbox)
+        proc = codex_cli.spawn(
+            self._cfg,
+            instruction,
+            repo,
+            model=model,
+            sandbox=sandbox,
+            continuation_ref=continuation_ref,
+        )
         invocation_id = uuid.uuid4().hex
         inv = AsyncInvocation(
-            invocation_id=invocation_id, proc=proc, ctx=ctx, workspace_handle=handle
+            invocation_id=invocation_id,
+            proc=proc,
+            ctx=ctx,
+            workspace_handle=handle,
+            session_registry=session_registry,
+            session_key=session_key,
+            session_holder=session_holder,
         )
         with self._lock:
             self._invocations[invocation_id] = inv
@@ -202,7 +231,16 @@ class AsyncRunner:
             },
         )
 
-        stdout_text, timed_out = self._stream_until_done(inv, emitter, heartbeat_after_seconds)
+        try:
+            stdout_text, timed_out = self._stream_until_done(inv, emitter, heartbeat_after_seconds)
+        finally:
+            # t6 (c44/h37): codex's own turn is over (successfully,
+            # failed, or timed out) — release the session_key slot the
+            # instant the PROVIDER call itself is done, not after the
+            # (possibly slow/retried) terminal callback below, so the next
+            # same-key arrival stops forking as soon as it honestly can.
+            if inv.session_registry is not None:
+                inv.session_registry.release(inv.session_key, inv.session_holder)
         task_result = codex_cli.parse_session(stdout_text)
 
         # t10: measured AFTER the session ends, against the snapshot taken
@@ -219,6 +257,24 @@ class AsyncRunner:
             timed_out=timed_out,
             workspace_measured=measured,
         )
+        # t25 (c26/h17, c41/h34): the async equivalent of server.py's sync
+        # hook — a "failed" terminal event (never "completed", which is the
+        # only other kind terminal_event ever produces) gets its workspace
+        # changes preserved on a branch before the terminal callback fires.
+        if ev.kind == "failed":
+            preserve_result = preserve.preserve_on_failure(
+                inv.workspace_handle.repo,
+                measured,
+                enabled=self._cfg.preserve_on_failure,
+                push=self._cfg.preserve_push,
+                remote=self._cfg.preserve_remote,
+                branch_prefix=self._cfg.preserve_branch_prefix,
+                run_id=inv.ctx.run_id,
+                node_run_id=inv.ctx.node_run_id,
+                attempt_id=inv.ctx.attempt_id,
+                reason=str(ev.payload.get("message") or "bridge reported an asynchronous failure"),
+            )
+            ev.payload["preserve"] = preserve_result.to_dict()
         emitter.send(ev.kind, ev.payload)
         with self._lock:
             inv.done = True

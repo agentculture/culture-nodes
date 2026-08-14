@@ -12,6 +12,8 @@ const (
 	KindDecision   = "decision"
 	KindApproval   = "approval"
 	KindWait       = "wait"
+	KindParallel   = "parallel"
+	KindJoin       = "join"
 	KindEnd        = "end"
 )
 
@@ -33,6 +35,35 @@ var technicalStatuses = map[string]bool{
 	"contract_rejected": true,
 }
 
+// OutcomeBudgetExhausted is the reserved name a refused dispatch routes under
+// (task t11, spec claim c6 / honesty h5).
+//
+// It sits in the same family as the technical statuses above and for the same
+// reason: no node contract can declare it, because no ACTOR produces it. The
+// control plane produces it, before dispatching, when the run's declared
+// `spec.budget` cannot fund the next provider session. PRD §3.4's rule — do
+// not use technical failure to represent an expected outcome — is exactly why
+// it is not folded into `failed`: an author who declared a budget expects to
+// be refused eventually, and wants that refusal to follow an edge (a cheaper
+// actor, a human, a summarise-and-stop node) rather than to end the run.
+//
+// It is NOT a technical status: §3.4's list is closed and this is not on it.
+// The engine records the refused attempt's technical status as
+// `policy_denied` — a declared policy denied the dispatch — and routes the
+// edge under this name (internal/engine/complete.go's failOrRetry).
+const OutcomeBudgetExhausted = "budget_exhausted"
+
+// budgetGuardedKinds are the kinds whose dispatch the economic budget can
+// refuse, and therefore the only kinds an OutcomeBudgetExhausted edge may
+// originate from. They are the kinds internal/worker/dispatch.go's
+// dispatchActor handles: the enforcement site guards provider sessions, and
+// an edge from a code or approval node's `budget_exhausted` would be a route
+// that can never fire.
+var budgetGuardedKinds = map[string]bool{
+	KindAgent:      true,
+	KindActionHTTP: true,
+}
+
 // impliedOutcomes are the outcomes a node kind offers without declaring them in
 // a contract. An approval node's ports come from the human decision, not from
 // an actor's output schema (PRD §9.9), so the PRD §11.1 example routes
@@ -40,6 +71,12 @@ var technicalStatuses = map[string]bool{
 var impliedOutcomes = map[string][]string{
 	KindApproval: {"approved", "expired", "rejected"},
 	KindWait:     {"completed"},
+	// A parallel node's `split` and a join node's `joined` are engine-shaped
+	// routing outcomes (issue #43, parallel-tokens design §3.1/§4.1): the
+	// nodes do no domain work and carry no contract block, so their one
+	// outcome each is implied by the kind exactly like a wait's `completed`.
+	KindParallel: {"split"},
+	KindJoin:     {"joined"},
 }
 
 // ledgerProjections is the standard projection vocabulary (PRD §10.9). It is

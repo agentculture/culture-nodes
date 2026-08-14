@@ -11,10 +11,10 @@ test.beforeEach(async ({ page }) => {
   await mockAuthoringApi(page);
 });
 
-test("the Workflows view links to the authoring surface, and back", async ({
+test("the Node Graphs view links to the authoring surface, and back", async ({
   page,
 }) => {
-  await page.goto("/workflows");
+  await page.goto("/graphs?tab=graphs");
   await expect
     .poll(async () => (await readAgentState(page)).status)
     .toBe("ready");

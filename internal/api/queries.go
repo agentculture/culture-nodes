@@ -258,7 +258,7 @@ func (s *Server) listRuns(ctx context.Context, p listRunsParams) ([]RunOut, erro
 // runTokens returns every token of a run, oldest first.
 func (s *Server) runTokens(ctx context.Context, runID string) ([]TokenOut, error) {
 	rows, err := s.Store.Pool().Query(ctx, `
-		SELECT id, node_key, state, parent_token_id, created_at, consumed_at
+		SELECT id, node_key, state, parent_token_id, origin_event_id, created_at, consumed_at
 		FROM tokens WHERE run_id = $1 ORDER BY created_at, id`, runID)
 	if err != nil {
 		return nil, fmt.Errorf("api: run %s: list tokens: %w", runID, err)
@@ -270,13 +270,15 @@ func (s *Server) runTokens(ctx context.Context, runID string) ([]TokenOut, error
 		var (
 			t             TokenOut
 			parentTokenID pgtype.Text
+			originEventID pgtype.Text
 			createdAt     pgtype.Timestamptz
 			consumedAt    pgtype.Timestamptz
 		)
-		if err := rows.Scan(&t.ID, &t.NodeID, &t.State, &parentTokenID, &createdAt, &consumedAt); err != nil {
+		if err := rows.Scan(&t.ID, &t.NodeID, &t.State, &parentTokenID, &originEventID, &createdAt, &consumedAt); err != nil {
 			return nil, fmt.Errorf("api: run %s: list tokens: scan: %w", runID, err)
 		}
 		t.ParentTokenID = textOrEmpty(parentTokenID)
+		t.OriginEventID = textOrEmpty(originEventID)
 		t.CreatedAt = tsOrZero(createdAt)
 		if consumedAt.Valid {
 			consumed := consumedAt.Time
@@ -330,7 +332,8 @@ func (s *Server) runNodeRuns(ctx context.Context, runID string) ([]NodeRunOut, e
 	}
 
 	attemptRows, err := s.Store.Pool().Query(ctx, `
-		SELECT a.id, a.node_run_id, a.attempt_number, a.actor_id, a.status, a.fencing_token, a.result, a.started_at, a.completed_at
+		SELECT a.id, a.node_run_id, a.attempt_number, a.actor_id, a.status, a.fencing_token, a.result, a.started_at, a.completed_at,
+		       a.preserve_branch, a.preserve_pushed, a.preserve_remote
 		FROM attempts a JOIN node_runs nr ON nr.id = a.node_run_id
 		WHERE nr.run_id = $1
 		ORDER BY a.node_run_id, a.attempt_number`, runID)
@@ -341,14 +344,18 @@ func (s *Server) runNodeRuns(ctx context.Context, runID string) ([]NodeRunOut, e
 
 	for attemptRows.Next() {
 		var (
-			a            AttemptOut
-			actorID      pgtype.Text
-			fencingToken pgtype.Int8
-			result       []byte
-			startedAt    pgtype.Timestamptz
-			completedAt  pgtype.Timestamptz
+			a              AttemptOut
+			actorID        pgtype.Text
+			fencingToken   pgtype.Int8
+			result         []byte
+			startedAt      pgtype.Timestamptz
+			completedAt    pgtype.Timestamptz
+			preserveBranch pgtype.Text
+			preservePushed pgtype.Bool
+			preserveRemote pgtype.Text
 		)
-		if err := attemptRows.Scan(&a.ID, &a.NodeRunID, &a.AttemptNumber, &actorID, &a.Status, &fencingToken, &result, &startedAt, &completedAt); err != nil {
+		if err := attemptRows.Scan(&a.ID, &a.NodeRunID, &a.AttemptNumber, &actorID, &a.Status, &fencingToken, &result, &startedAt, &completedAt,
+			&preserveBranch, &preservePushed, &preserveRemote); err != nil {
 			return nil, fmt.Errorf("api: run %s: list attempts: scan: %w", runID, err)
 		}
 		a.ActorID = textOrEmpty(actorID)
@@ -360,6 +367,14 @@ func (s *Server) runNodeRuns(ctx context.Context, runID string) ([]NodeRunOut, e
 		if completedAt.Valid {
 			completed := completedAt.Time
 			a.CompletedAt = &completed
+		}
+		// preserve_branch is the presence check (migrations/0025's own
+		// header): pushed/remote are only ever written alongside it.
+		if preserveBranch.Valid {
+			a.PreserveBranch = preserveBranch.String
+			pushed := preservePushed.Bool
+			a.PreservePushed = &pushed
+			a.PreserveRemote = textOrEmpty(preserveRemote)
 		}
 
 		idx, ok := byID[a.NodeRunID]

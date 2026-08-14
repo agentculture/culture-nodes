@@ -1,0 +1,60 @@
+[project]
+name = "culture-nodes-notify-bridge"
+version = "0.1.0"
+description = "Actor-protocol bridge that posts a workflow-declared message to a Discord webhook (issue #68). Runs OUTSIDE the culture-nodes deployment; the control-plane process never sees the webhook URL."
+readme = "README.md"
+license = "Apache-2.0"
+requires-python = ">=3.12"
+authors = [{name = "AgentCulture"}]
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Programming Language :: Python :: 3.12",
+    "License :: OSI Approved :: Apache Software License",
+    "Topic :: Software Development",
+    "Intended Audience :: Developers",
+]
+# Stdlib-only runtime deps (mirrors adapters/human-inbox, adapters/colleague,
+# adapters/claude-code's shared reference constraint): the bridge talks HTTP
+# via http.server/urllib and holds no other state -- nothing here may grow a
+# PyPI dependency graph.
+dependencies = []
+
+[project.urls]
+Homepage = "https://github.com/agentculture/culture-nodes"
+Issues = "https://github.com/agentculture/culture-nodes/issues"
+
+[project.scripts]
+notify-bridge = "notify_bridge.__main__:main"
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/notify_bridge"]
+
+[dependency-groups]
+dev = [
+    "pytest>=8.0",
+    "bandit>=1.7.5",
+    "flake8>=6.1",
+    "isort>=5.12.0",
+    "black>=23.7.0",
+]
+
+[tool.isort]
+profile = "black"
+line_length = 100
+known_first_party = ["notify_bridge"]
+
+[tool.black]
+line-length = 100
+target-version = ["py312"]
+
+[tool.bandit]
+exclude_dirs = ["tests"]
+skips = ["B101"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-ra"

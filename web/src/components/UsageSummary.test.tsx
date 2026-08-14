@@ -8,6 +8,8 @@ describe("UsageSummary", () => {
     const usage: Usage = {
       input_tokens: 12300,
       output_tokens: 4100,
+      cached_input_tokens: 0,
+      reasoning_tokens: 0,
       attempts_reported: 2,
       attempts_not_reported: 0,
     };
@@ -22,6 +24,8 @@ describe("UsageSummary", () => {
     const noCost: Usage = {
       input_tokens: 10,
       output_tokens: 5,
+      cached_input_tokens: 0,
+      reasoning_tokens: 0,
       attempts_reported: 1,
       attempts_not_reported: 0,
     };
@@ -37,6 +41,8 @@ describe("UsageSummary", () => {
     const usage: Usage = {
       input_tokens: 10,
       output_tokens: 5,
+      cached_input_tokens: 0,
+      reasoning_tokens: 0,
       cost: 3,
       attempts_reported: 1,
       attempts_not_reported: 0,
@@ -50,6 +56,8 @@ describe("UsageSummary", () => {
     const usage: Usage = {
       input_tokens: 10,
       output_tokens: 5,
+      cached_input_tokens: 0,
+      reasoning_tokens: 0,
       cost_by_currency: [
         { currency: "USD", cost: 1.5 },
         { currency: "EUR", cost: 2 },
@@ -67,6 +75,8 @@ describe("UsageSummary", () => {
     const usage: Usage = {
       input_tokens: 0,
       output_tokens: 0,
+      cached_input_tokens: 0,
+      reasoning_tokens: 0,
       attempts_reported: 0,
       attempts_not_reported: 3,
     };
@@ -84,6 +94,8 @@ describe("UsageSummary", () => {
     const usage: Usage = {
       input_tokens: 0,
       output_tokens: 0,
+      cached_input_tokens: 0,
+      reasoning_tokens: 0,
       attempts_reported: 1,
       attempts_not_reported: 0,
     };
@@ -99,6 +111,8 @@ describe("UsageSummary", () => {
     const usage: Usage = {
       input_tokens: 100,
       output_tokens: 50,
+      cached_input_tokens: 0,
+      reasoning_tokens: 0,
       attempts_reported: 1,
       attempts_not_reported: 2,
     };
@@ -110,6 +124,8 @@ describe("UsageSummary", () => {
     const usage: Usage = {
       input_tokens: 5200,
       output_tokens: 1800,
+      cached_input_tokens: 0,
+      reasoning_tokens: 0,
       cost: 0.52,
       currency: "USD",
       attempts_reported: 1,
@@ -132,6 +148,8 @@ describe("UsageSummary", () => {
     const usage: Usage = {
       input_tokens: 100,
       output_tokens: 50,
+      cached_input_tokens: 0,
+      reasoning_tokens: 0,
       attempts_reported: 3,
       attempts_not_reported: 0,
     };
@@ -143,6 +161,8 @@ describe("UsageSummary", () => {
     const usage: Usage = {
       input_tokens: 0,
       output_tokens: 0,
+      cached_input_tokens: 0,
+      reasoning_tokens: 0,
       attempts_reported: 0,
       attempts_not_reported: 2,
     };
@@ -164,6 +184,8 @@ describe("UsageSummary", () => {
     const usage: Usage = {
       input_tokens: 100,
       output_tokens: 50,
+      cached_input_tokens: 0,
+      reasoning_tokens: 0,
       attempts_reported: 1,
       attempts_not_reported: 0,
     };
@@ -175,6 +197,8 @@ describe("UsageSummary", () => {
     const usage: Usage = {
       input_tokens: 0,
       output_tokens: 0,
+      cached_input_tokens: 0,
+      reasoning_tokens: 0,
       attempts_reported: 0,
       attempts_not_reported: 1,
     };

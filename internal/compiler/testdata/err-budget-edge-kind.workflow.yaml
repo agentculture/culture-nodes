@@ -1,0 +1,55 @@
+# `budget_exhausted` routed from a node the budget does not guard.
+#
+# The economic budget is checked at the actor-dispatch site (agent and
+# action.http, internal/worker/budget.go), so an edge from a code node's
+# `budget_exhausted` is an edge that can never fire. A dead route in a
+# workflow about money is exactly the kind of thing an author should hear
+# about at compile time.
+apiVersion: nodes.culture.dev/v1alpha1
+kind: Workflow
+
+metadata:
+  name: budget-edge-kind
+  version: 1.0.0
+  ownerRef: team/platform-ai
+
+spec:
+  entry: verify
+
+  contract:
+    input:
+      schemaRef: ./contracts/in.schema.json
+    output:
+      schemaRef: ./contracts/out.schema.json
+
+  budget:
+    maxSessions: 2
+
+  nodes:
+    verify:
+      kind: code
+      ownerRef: team/platform-ai
+      uses: runner://headspace@sha256:cccccc
+      contract:
+        outcomes:
+          passed:
+            schemaRef: ./contracts/start.schema.json
+      input:
+        from: /run/input
+      operation:
+        image: registry.example/verify@sha256:dddddd
+        argv: [./verify.sh]
+        network: none
+
+    finish:
+      kind: end
+      ownerRef: team/platform-ai
+      output:
+        from: /nodes/verify/output
+
+  edges:
+    - from: verify.passed
+      to: finish
+
+    - from: verify.budget_exhausted
+      to: finish

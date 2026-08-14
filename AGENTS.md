@@ -7,8 +7,18 @@ production host (thor/orin), not a local dev clone.
 ## Sandbox and scope
 
 - Sessions default to a **read-only** sandbox. Write access is granted only
-  when the dispatched task explicitly requests `workspace-write` — don't
-  assume it.
+  when the dispatched task explicitly requests it — don't assume it.
+- **On these hosts `workspace-write` grants no writes at all.** thor, orin and
+  spark all run with `kernel.apparmor_restrict_unprivileged_userns=1`
+  (the Ubuntu 24.04 default), so the bubblewrap helper that confines file
+  writes cannot start. Codex does not fail on that — it prints one warning,
+  keeps running shell commands *unconfined*, and fails every `apply_patch`
+  with `bwrap: setting up uid map: Permission denied`. The result reads like a
+  code problem and is not one. **Do not retry the patch.** Say the sandbox
+  cannot write and stop; the operator must re-dispatch with
+  `--sandbox danger-full-access`, where the isolation comes from your git
+  worktree rather than from the flag. Run `uv run nodes doctor` to see this
+  host's verdict (`unprivileged_userns`) before you start work.
 - Never `git commit` or `git push` from a session. Any diff you produce is
   harvested by the human operator afterward; leave changes uncommitted in
   the working tree.

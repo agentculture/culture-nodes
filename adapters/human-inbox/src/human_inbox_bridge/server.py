@@ -25,7 +25,7 @@ Human surface (same server, same bearer token):
 
 * ``GET /inbox/tasks[?status=pending]`` — list tasks (callback credentials
   redacted).
-* ``POST /inbox/tasks/<id>/submit`` — body ``{outcome, output?, note?}``;
+* ``POST /inbox/tasks/<id>/submit`` — body ``{outcome, output?, note?, observed?}``;
   delivers the terminal ``completed`` event through the standard
   authenticated callback path and marks the task completed only when the
   delivery was accepted. A failed delivery leaves the task pending so the
@@ -108,6 +108,22 @@ class BridgeHTTPServer(HTTPServer):
 
 class Handler(BaseHTTPRequestHandler):
     server_version = "human-inbox-bridge/0.1"
+    #: Bound how long one connection may hold this single-threaded server.
+    #:
+    #: protocol_version = "HTTP/1.1" turns keep-alive ON, and this server is
+    #: deliberately NOT a ThreadingHTTPServer (see the module docstring), so
+    #: it serves exactly one connection at a time. Without a timeout, a client
+    #: that opens a socket and then says nothing holds the accept loop
+    #: forever and every subsequent dispatch waits behind it — no error, no
+    #: log, just a bridge that stops answering.
+    #:
+    #: BaseHTTPRequestHandler turns a read timeout into close_connection, so
+    #: an idle peer is dropped rather than served badly. It bounds the gap
+    #: BETWEEN requests on a kept-alive connection, not the work itself:
+    #: dispatch runs after the request line is read, so a slow model turn is
+    #: unaffected.
+    timeout = 30
+
     protocol_version = "HTTP/1.1"
 
     # -- stdlib plumbing --------------------------------------------------
@@ -492,6 +508,11 @@ class Handler(BaseHTTPRequestHandler):
             "note": body.get("note"),
             "submitted_at": task.completed_at,
         }
+        if "observed" in body:
+            # Preserve the validated tracker marker in the durable audit
+            # trail. Manual submissions omit it and retain their exact
+            # historical stored shape.
+            task.submission["observed"] = body["observed"]
         self.bridge.tasks.save(task)
         self._write_json(
             200,

@@ -75,6 +75,124 @@ Numbered SQL migrations for the authoritative PostgreSQL store (prd-spec
   attribution per-actor stats read; without it every async attempt was
   invisible to `GET /v1alpha1/actors/{id}/stats` (found live by the t20
   success-signal run).
+- `0017_attempt_usage_extended.sql` — expand-only: adds
+  `attempts.usage_cached_input_tokens`, `usage_reasoning_tokens`,
+  `usage_model`, `usage_thread_id`, and `termination_reason` (task t1 of the
+  economy-discord-graphs plan), the extended §13.2 telemetry
+  `docs/adr/0009-usage-telemetry-extension.md` amends the PRD with. All five
+  are nullable with no default and nothing is backfilled, exactly as in
+  `0012`. `usage_input_tokens IS NOT NULL` remains the "this attempt
+  reported usage" sentinel — the four new `usage_*` columns are each
+  independently nullable *within* a reported block, so none of them may
+  stand in for it. NULL still means "not reported", never zero: an actor
+  whose contract exposes no cache telemetry is honestly unmeasurable rather
+  than measured at 0%. `termination_reason` carries no
+  `usage_` prefix on purpose — a turn can know why it ended while holding no
+  parseable usage at all, so it is a sibling of the usage block rather than
+  a member of it (see the migration header and ADR 0009).
+- `0018_attempt_continuation_ref.sql` — expand-only: adds nullable
+  `attempts.continuation_ref` (task t4 of the economy-discord-graphs plan),
+  the §13.2 handle an actor offers for continuing the conversation a turn
+  had, which `docs/adr/0010-continuation-ref-on-request.md` also adds to
+  §13.1's request and §13.4's `completed` event. The value is opaque —
+  nothing parses it or derives from it — and NULL means "no handle
+  reported", never "the session ended" and never `''` (an empty string is a
+  value a bridge could mistake for a handle). It is deliberately NOT
+  `usage_thread_id` from `0017`: that column is telemetry about where a
+  turn's usage accrued, this one is the handle a later dispatch resumes
+  with, and neither is derived from the other.
+- `0020_actor_availability.sql` — expand-only: adds the mutable
+  `actor_availability` table (task t9 of the economy-discord-graphs plan,
+  issue #48 item 1), the capacity circuit breaker's durable paused-until
+  state. It is a NEW table rather than a column on `actors` because actor
+  identity is append-only by contract (`0001`, restated in
+  `internal/store/postgres/actorstats.go`): a pause is mutable and
+  short-lived, and recording one as a new identity revision would be a lie
+  about the actor's registration. It is keyed by `(namespace_id,
+  actor_key)`, not by `actors.id`, because provider capacity belongs to the
+  identity rather than to one revision of its registration — and because the
+  dispatch site always has the actor key while the actors-table row id is
+  best-effort. `paused_until` in the past means "history", never "paused":
+  every read compares against `now()` rather than treating row presence as a
+  pause. `retry_after_seconds` is NULL when the provider named no
+  Retry-After — never `0`, which would read as "retry immediately".
+  Concurrent trips are an idempotent upsert that keeps the LATER
+  `paused_until`, so a race may extend a pause and never shorten one.
+- `0023_run_sessions.sql` — expand-only: adds the `run_sessions` table (task
+  t11 of the economy-discord-graphs plan, issue #48 item 5), the session
+  ledger `budget.maxSessions` is spent against. One row per NEW provider
+  session a run opened — a COLD START — and deliberately not one per
+  dispatch: a dispatch carrying a prior `continuation_ref` (`0018`)
+  continues a conversation already paid for and writes nothing, because a
+  warm workstream of N turns that counted N would always exhaust the budget
+  it was designed to conserve. It is a new table rather than a column on
+  `attempts` because the cold/warm fact is known by the WORKER at dispatch
+  time while an attempts row is written by the engine at completion time
+  (and, for an async invocation, in another process entirely), and because
+  `attempts` holds rows for kinds that never touch a provider at all. Keyed
+  by the §13.1 protocol attempt id, so a re-entered dispatch charges once.
+  The row is written immediately BEFORE the invocation and therefore
+  over-counts a dispatch that dies in transport — the conservative
+  direction, since a budget that under-counts spends money the author
+  forbade.
+
+- `0022_dispatch_rate_state.sql` — expand-only: adds the mutable
+  `dispatch_rate_state` table (task t10 of the economy-discord-graphs plan,
+  issue #48 item 2), the dispatch pacing control's durable rate state. It is
+  in the database rather than in a worker's memory because workers scale
+  horizontally ("several processes may run one each",
+  `internal/worker/worker.go`) and N in-process limiters enforce N times the
+  declared rate. Keyed by `(namespace_id, scope, scope_key)` — `global` with
+  an empty key for the installation's own session rate, `actor` plus an
+  `actor_key` for one actor's — following `0020`'s reasoning that a rate
+  belongs to the actor identity rather than to one append-only registration
+  revision. `window_started_at` says which session window `dispatched`
+  counts, so a window roll is a comparison and never a sweep: a row from an
+  older window has consumed nothing in this one. `window_anchor`,
+  `window_seconds` and `limit_per_window` are recorded for the operator read
+  surface (`GET /v1alpha1/dispatch-rates`), not for the next decision — the
+  deciding worker carries its own configuration
+  (`NODES_DISPATCH_RATE_*`, `cmd/nodes/pacing.go`). Every decision happens
+  inside one transaction that row-locks each scope it consults and writes all
+  of them or none; a refusal writes nothing at all.
+
+- `0024_plan_imports.sql` — expand-only: adds three new tables,
+  `plan_imports`, `plan_import_tasks`, `plan_import_deviations` (task t22 of
+  the economy-discord-graphs plan; issue #45, spec claims c10/c15, honesty
+  h7/h11), the durable home for an imported external plan's per-task status,
+  REAL dependency edges, computed wave layering, and deviations (with their
+  origin — issue #45's "system knows" llm vs "user reports" user split).
+  Deliberately NOT `ledger_records`: an import is not scoped to a run the
+  way `ledger_records.run_id` requires, and it is not the evidentiary work
+  ledger the PRD's immutable-by-trigger guarantee governs — see the
+  migration file's own header for the full reasoning. Every import is its
+  own row, inserted once (no UPDATE path is exposed at all); re-importing
+  the same plan slug is a new row, read back by
+  `(namespace_id, slug) ORDER BY imported_at DESC`, never an overwrite.
+  `wave_index` is computed locally at import time from the real dependency
+  edges (topological layering, `internal/devague`'s `planTaskWaves`) —
+  devague's own `plan show --json` does not emit it; it is NULL for a
+  rejected task, which occupies no wave. `source_status` columns carry the
+  source system's own status verbatim and are never translated into a
+  ledger authority value (see `internal/devague/deviations.go`'s
+  `MapDeviations` doc comment for that reasoning in full).
+- `0025_attempt_preserve_branch.sql` — expand-only: adds nullable
+  `attempts.preserve_branch`, `preserve_pushed`, `preserve_remote` (task t26
+  of the economy-discord-graphs plan, issue #49, spec claim c32 / honesty
+  h21), carrying task t25's bridge-minted preserve-on-failure branch past
+  the worker process that first reads it — t25 stopped at the bridge,
+  attaching the outcome only to the failed event/error body. `preserve_branch`
+  is written only when the bridge's `preserve.PreserveResult.committed` is
+  true (a minted-but-never-committed name names nothing that exists in any
+  repository); `preserve_pushed` distinguishes a branch that reached the
+  configured remote from one that exists only in the bridge host's local
+  object database (the expected common case today — bridge-host push
+  credentials are unverified); `preserve_remote` is informational only and
+  is never combined with the branch to fabricate a forge URL — a clickable
+  link on the run detail page may only come from operator-set configuration
+  (`web/README.md`'s `VITE_PRESERVE_BRANCH_URL_TEMPLATE`). All three are
+  written together or not at all (`InsertAttempt`), so `preserve_pushed`/
+  `preserve_remote` are never non-NULL while `preserve_branch` is NULL.
 
 ## Policy
 

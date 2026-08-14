@@ -24,9 +24,13 @@ func (c *compilation) normalize() (*IR, error) {
 			Entry:    doc.Spec.Entry,
 			Contract: doc.Spec.Contract,
 			Limits:   expandLimits(doc.Spec.Limits),
-			Ledger:   expandLedgerLimits(doc.Spec.Ledger),
-			Nodes:    doc.Spec.Nodes,
-			Edges:    normalizeEdges(doc.Spec.Edges),
+			// Carried, never expanded: an absent budget stays absent all the
+			// way into the digest, so a run pins "unbudgeted" as a fact
+			// rather than pinning a ceiling the compiler invented.
+			Budget: doc.Spec.Budget,
+			Ledger: expandLedgerLimits(doc.Spec.Ledger),
+			Nodes:  doc.Spec.Nodes,
+			Edges:  normalizeEdges(doc.Spec.Edges),
 		},
 	}
 
@@ -217,6 +221,13 @@ func stampSchemaDigest(source *schemaSource) error {
 
 // normalizeEdges decomposes each edge and sorts the list, so two documents
 // that differ only in the order they list edges compile to one digest.
+//
+// Event edges (issue #43) carry no node source, so their FromNode/FromOutcome
+// stay empty and they sort by their event name instead. Empty sorts first, so
+// every node edge precedes every event edge and the relative order of the
+// node edges — which is what first-match-wins reads — is exactly what it was
+// before event edges existed. A workflow with no event edges therefore
+// normalizes to the same bytes, and pins the same digest, as it did before.
 func normalizeEdges(edges []edge) []irEdge {
 	out := make([]irEdge, 0, len(edges))
 	for _, e := range edges {
@@ -225,11 +236,15 @@ func normalizeEdges(edges []edge) []irEdge {
 			From:        e.From,
 			FromNode:    fromNode,
 			FromOutcome: outcome,
+			OnEvent:     e.OnEvent,
 			To:          e.To,
 			When:        e.When,
 		})
 	}
 	sort.SliceStable(out, func(i, j int) bool {
+		if out[i].OnEvent != out[j].OnEvent {
+			return out[i].OnEvent < out[j].OnEvent
+		}
 		if out[i].FromNode != out[j].FromNode {
 			return out[i].FromNode < out[j].FromNode
 		}

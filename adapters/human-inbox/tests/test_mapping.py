@@ -88,3 +88,115 @@ def test_submission_error_bad_note():
 def test_submission_error_accepts_a_valid_submission():
     assert mapping.submission_error({"outcome": "ok"}) is None
     assert mapping.submission_error({"outcome": "ok", "output": {"a": 1}, "note": "fine"}) is None
+
+
+def test_submission_error_validates_observed_marker():
+    assert (
+        mapping.submission_error(
+            {
+                "outcome": "merged",
+                "observed": {
+                    "collection_method": "github_pr_merged",
+                    "merge_commit": "abc123",
+                },
+            }
+        )
+        is None
+    )
+    assert mapping.submission_error({"outcome": "merged", "observed": True}) is not None
+    assert (
+        mapping.submission_error(
+            {
+                "outcome": "merged",
+                "observed": {"collection_method": "github_pr_merged", "merge_commit": ""},
+            }
+        )
+        is not None
+    )
+
+
+def test_submission_error_validates_reply_observed_marker():
+    """issue #71: the decision node's github_pr_reply/github_pr_closed
+    collection methods, alongside github_pr_merged — same generic gate,
+    each method's own one required evidence field (`reference`)."""
+    assert (
+        mapping.submission_error(
+            {
+                "outcome": "answered",
+                "observed": {
+                    "collection_method": "github_pr_reply",
+                    "reference": "https://github.com/agentculture/culture-nodes/pull/54#c1",
+                },
+            }
+        )
+        is None
+    )
+    assert (
+        mapping.submission_error(
+            {
+                "outcome": "dropped",
+                "observed": {
+                    "collection_method": "github_pr_closed",
+                    "reference": "https://github.com/agentculture/culture-nodes/pull/55",
+                },
+            }
+        )
+        is None
+    )
+    # Missing the method's required field.
+    assert (
+        mapping.submission_error(
+            {"outcome": "answered", "observed": {"collection_method": "github_pr_reply"}}
+        )
+        is not None
+    )
+    # Empty required field.
+    assert (
+        mapping.submission_error(
+            {
+                "outcome": "answered",
+                "observed": {"collection_method": "github_pr_reply", "reference": ""},
+            }
+        )
+        is not None
+    )
+    # Unknown collection method is refused, not silently accepted.
+    assert (
+        mapping.submission_error(
+            {
+                "outcome": "answered",
+                "observed": {"collection_method": "something_else", "reference": "x"},
+            }
+        )
+        is not None
+    )
+    # A method's field under a DIFFERENT method's key is refused (no
+    # cross-method field aliasing).
+    assert (
+        mapping.submission_error(
+            {
+                "outcome": "answered",
+                "observed": {"collection_method": "github_pr_reply", "merge_commit": "abc123"},
+            }
+        )
+        is not None
+    )
+
+
+def test_claim_record_generalizes_over_collection_methods():
+    ev = mapping.completed_event(
+        {
+            "outcome": "answered",
+            "observed": {
+                "collection_method": "github_pr_reply",
+                "reference": "https://github.com/agentculture/culture-nodes/pull/54#c1",
+            },
+        },
+        _ctx(),
+        actor_id="ops/humans",
+        created_at="2026-08-13T00:00:00+00:00",
+    )
+    data = ev.payload["ledger_delta"]["records"][0]["data"]
+    assert data["kind"] == "observed-submission"
+    assert data["collection_method"] == "github_pr_reply"
+    assert data["reference"] == "https://github.com/agentculture/culture-nodes/pull/54#c1"

@@ -171,6 +171,14 @@ type Options struct {
 	// work item's lease will expire and another worker will retry it.
 	OnError func(error)
 
+	// Pacing declares the dispatch rates this worker holds itself to (task
+	// t10): a global session rate and per-actor rates, enforced at the
+	// dispatch site against durable state every worker shares. The zero
+	// value declares nothing, which is what every deployment that has not
+	// configured pacing gets — no rate rows, no transaction, and the
+	// dispatch path exactly as it was. See pacing.go.
+	Pacing PacingOptions
+
 	// Telemetry instruments the actor dispatch seam (task t19,
 	// internal/worker/dispatch.go's dispatchActor) through
 	// internal/telemetry. The zero value, a nil *telemetry.Provider, is a
@@ -406,6 +414,10 @@ func (w *Worker) dispatch(ctx context.Context, claimed postgres.ClaimedWork) err
 			}
 			return w.opts.Waiter.DispatchWait(ctx, dc, node.Until)
 		})
+	case kindParallel:
+		return w.dispatchParallel(ctx, claimed)
+	case kindJoin:
+		return w.dispatchJoin(ctx, claimed, node, dc)
 	case kindEnd:
 		// An end node produces the workflow result inside the engine's own
 		// transition transaction and is never enqueued. Reaching one here
@@ -414,6 +426,25 @@ func (w *Worker) dispatch(ctx context.Context, claimed postgres.ClaimedWork) err
 		return w.failAttempt(ctx, claimed, "", engine.StatusFailed, "definition",
 			fmt.Sprintf("node %q is an end node; end nodes are completed by the engine and never dispatched", node.ID))
 	default:
+		// An unknown kind stays a loud definition failure, which is a
+		// DECISION against the parallel-tokens design's open item O8 rather
+		// than an oversight. O8 proposed release-and-retry with backoff so an
+		// N-1 worker could not kill a run pinned to a workflow using kinds it
+		// has never heard of. Two things sank it:
+		//
+		//   * it cannot fix the hazard it names. An N-1 worker's behaviour is
+		//     fixed in the N-1 binary; only a worker released BEFORE the new
+		//     kind could benefit, and the same argument recurs at every
+		//     subsequent kind. The mitigation that does work is operational
+		//     and already available — do not publish workflows using a new
+		//     kind until the rollout completes. Migration 0019 is staged for
+		//     exactly that: expand-only, so an N-1 binary that never reads
+		//     token_groups or join_arrivals keeps working.
+		//   * it trades a loud failure for a silent hang. A genuinely bogus
+		//     kind (a hand-built IR, a typo in a pinned definition) would
+		//     recycle through the queue forever with nothing terminal to look
+		//     at, which is the opposite of what every other refusal in this
+		//     dispatcher does.
 		return w.failAttempt(ctx, claimed, "", engine.StatusFailed, "definition",
 			fmt.Sprintf("node %q declares kind %q, which this worker cannot dispatch", node.ID, node.Kind))
 	}
@@ -430,6 +461,8 @@ const (
 	kindDecision   = "decision"
 	kindApproval   = "approval"
 	kindWait       = "wait"
+	kindParallel   = "parallel"
+	kindJoin       = "join"
 	kindEnd        = "end"
 )
 
@@ -472,7 +505,16 @@ func (w *Worker) complete(ctx context.Context, claimed postgres.ClaimedWork, req
 	req.WorkerID = w.opts.WorkerID
 	req.FencingToken = claimed.FencingToken
 	req.Attempt = int(claimed.Attempt)
-	return w.engine.CompleteAttempt(ctx, req)
+	result, err := w.engine.CompleteAttempt(ctx, req)
+	if err != nil {
+		return result, err
+	}
+	// A completion that reaped sibling branches (issue #43: the losers of an
+	// any/quorum barrier, or every live branch when this completion ended the
+	// run) has already retired them transactionally. Telling their actors to
+	// stop is the best-effort, post-commit half — see branchcancel.go.
+	w.propagateBranchCancellations(ctx, result)
+	return result, nil
 }
 
 // failAttempt records a technical failure with a machine-readable diagnostic.
@@ -491,8 +533,30 @@ func (w *Worker) complete(ctx context.Context, claimed postgres.ClaimedWork, req
 // per-actor surfaces (retry burn in particular) must not lose it; a
 // pre-resolution refusal, conversely, must never guess one.
 func (w *Worker) failAttempt(ctx context.Context, claimed postgres.ClaimedWork, actorID string, status engine.TechStatus, class, detail string) error {
-	_, err := w.completeTechnicalFailure(ctx, claimed, actorID, status, class, detail, nil, nil)
+	_, err := w.completeTechnicalFailure(ctx, claimed, actorID, status, class, detail, nil, actorTelemetry{})
 	return err
+}
+
+// actorTelemetry is what an actor's own terminal report contributes to an
+// attempt row beyond its outcome: the §13.2 usage block and the provider's
+// termination reason. They travel as one parameter because they come from
+// one report, and stay separate fields because either can arrive without
+// the other — a cancelled or output-capped turn can name its reason while
+// holding no parseable usage at all, which is why the reason is not a field
+// of the usage block (docs/adr/0009-usage-telemetry-extension.md).
+// ContinuationRef is the third such fact (ADR 0010): the handle the actor
+// offered for continuing its conversation. It belongs here rather than
+// beside the outcome because a completion that records no outcome at all can
+// still have been produced by a session that exists and is resumable.
+type actorTelemetry struct {
+	Usage             *engine.Usage
+	TerminationReason *string
+	ContinuationRef   *string
+	// Preserve is task t25/t26's bridge-reported preserve-on-failure branch
+	// (issue #49), nil when the actor reported none — the far more common
+	// case, since a bridge only preserves on a genuine technical failure
+	// that left workspace changes behind.
+	Preserve *engine.Preserve
 }
 
 // completeTechnicalFailure is failAttempt's twin for a caller that needs the
@@ -503,24 +567,28 @@ func (w *Worker) failAttempt(ctx context.Context, claimed postgres.ClaimedWork, 
 // a post-run hook's verdict could not be trusted, so a technical failure
 // still records what the agent itself claimed.
 //
-// usage is the §13.2 block the actor reported for the failed work, nil when
-// it reported none (issue #32: a failed session still burned real tokens,
-// and a technical failure must not cost the attempt its accounting). Nil
-// persists as NULL — unreported, never fabricated zeros.
+// telemetry is what the actor's own terminal report contributes to the
+// failed attempt's row, zero when it reported nothing (issue #32: a failed
+// session still burned real tokens, and a technical failure must not cost
+// the attempt its accounting). Absent fields persist as NULL — unreported,
+// never fabricated zeros.
 //
 // The returned CompletionResult is the zero value when the completion turned
 // out stale (isStale(err)): nothing was committed here, so there is nothing
 // for a caller to key follow-up writes to, and the error is nil — a stale
 // completion is not a worker malfunction (see isStale).
 func (w *Worker) completeTechnicalFailure(
-	ctx context.Context, claimed postgres.ClaimedWork, actorID string, status engine.TechStatus, class, detail string, delta []ledger.Record, usage *engine.Usage,
+	ctx context.Context, claimed postgres.ClaimedWork, actorID string, status engine.TechStatus, class, detail string, delta []ledger.Record, telemetry actorTelemetry,
 ) (engine.CompletionResult, error) {
 	result, err := w.complete(ctx, claimed, engine.CompletionRequest{
-		TechStatus:  status,
-		Output:      diagnosticOutput(class, detail),
-		LedgerDelta: delta,
-		Usage:       usage,
-		ActorID:     actorID,
+		TechStatus:        status,
+		Output:            diagnosticOutput(class, detail),
+		LedgerDelta:       delta,
+		Usage:             telemetry.Usage,
+		TerminationReason: telemetry.TerminationReason,
+		ContinuationRef:   telemetry.ContinuationRef,
+		Preserve:          telemetry.Preserve,
+		ActorID:           actorID,
 	})
 	if err != nil {
 		if isStale(err) {

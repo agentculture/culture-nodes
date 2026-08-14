@@ -455,7 +455,7 @@ func (d *humanTaskDecision) transition(ctx context.Context, outcome string, stat
 		return d.failBound(ctx, plan.Bound, transitions)
 	case plan.Complete:
 		return d.completeRun(ctx, d.nodeRun.NodeID, transitions)
-	case plan.Edge == nil:
+	case len(plan.Targets) == 0:
 		return d.failRun(ctx, state, plan.Diagnostic)
 	default:
 		return d.advance(ctx, plan, transitions, visits)
@@ -467,21 +467,54 @@ func (d *humanTaskDecision) transition(ctx context.Context, outcome string, stat
 // approval node's decision may itself route straight into a further human
 // task, and that is not a special case here).
 func (d *humanTaskDecision) advance(ctx context.Context, plan transitionPlan, transitions int, visits map[string]int) error {
-	next := d.wf.Nodes[plan.NextNodeID]
+	target := plan.Targets[0] // an approval node is never a parallel node, so the plan is singular
+	next := d.wf.Nodes[target.NextNodeID]
 	if next == nil {
 		return &WorkflowError{
 			Digest: d.wf.Digest,
-			Detail: fmt.Sprintf("edge %q targets node %q, which the pinned definition does not declare", plan.Edge.From, plan.NextNodeID),
+			Detail: fmt.Sprintf("edge %q targets node %q, which the pinned definition does not declare", target.Edge.From, target.NextNodeID),
 		}
+	}
+	// Group propagation (parallel-tokens design §3.3): an approval node
+	// inside a split branch keeps its branch in the group.
+	sourceToken, err := d.tx.Token(ctx, d.nodeRun.TokenID)
+	if err != nil {
+		return err
+	}
+
+	if next.Kind == kindJoin {
+		// An approval node is a perfectly ordinary member of a split branch
+		// — "wait for a human on each branch, then reconvene" is the obvious
+		// use — so a human decision routes into a barrier through the SAME
+		// arrival implementation a worker completion does (parallel.go's
+		// joinTx), not a second copy that could count a group twice. An
+		// approval node is never a parallel node, so a decision never fans
+		// out; only the arrival half is reachable from here.
+		d.result.EdgeFrom = target.Edge.From
+		diagnostic, err := d.joinTx().arriveAtJoin(ctx, next, arrival{
+			TokenID: d.nodeRun.TokenID,
+			GroupID: sourceToken.GroupID,
+			Outcome: target.Edge.FromOutcome,
+			Output:  d.req.Response,
+			Edge:    target.Edge,
+		}, visits)
+		if err != nil {
+			return err
+		}
+		if diagnostic != "" {
+			return d.failRun(ctx, d.result.NodeRunState, diagnostic)
+		}
+		return d.finish(ctx)
 	}
 
 	token := Token{
 		ID:            d.engine.newID(),
 		NamespaceID:   d.run.NamespaceID,
 		RunID:         d.run.ID,
-		NodeID:        plan.NextNodeID,
+		NodeID:        target.NextNodeID,
 		State:         TokenActive,
 		ParentTokenID: d.nodeRun.TokenID,
+		GroupID:       sourceToken.GroupID,
 		CreatedAt:     d.now,
 	}
 	if err := d.tx.InsertToken(ctx, token); err != nil {
@@ -493,9 +526,9 @@ func (d *humanTaskDecision) advance(ctx context.Context, plan transitionPlan, tr
 		NamespaceID: d.run.NamespaceID,
 		RunID:       d.run.ID,
 		TokenID:     token.ID,
-		NodeID:      plan.NextNodeID,
+		NodeID:      target.NextNodeID,
 		State:       dispatchState(next.Kind),
-		VisitCount:  visits[plan.NextNodeID] + 1,
+		VisitCount:  visits[target.NextNodeID] + 1,
 		CreatedAt:   d.now,
 		UpdatedAt:   d.now,
 	}
@@ -505,7 +538,7 @@ func (d *humanTaskDecision) advance(ctx context.Context, plan transitionPlan, tr
 
 	d.result.NextNodeID = nodeRun.NodeID
 	d.result.NextNodeRunID = nodeRun.ID
-	d.result.EdgeFrom = plan.Edge.From
+	d.result.EdgeFrom = target.Edge.From
 	d.result.Transitions = transitions + 1
 
 	if err := d.emit(ctx, TypeTokenTransitioned, map[string]any{
@@ -513,9 +546,9 @@ func (d *humanTaskDecision) advance(ctx context.Context, plan transitionPlan, tr
 		"node_run_id":   nodeRun.ID,
 		"from_node":     d.nodeRun.NodeID,
 		"to_node":       nodeRun.NodeID,
-		"outcome":       plan.Edge.FromOutcome,
-		"edge":          plan.Edge.From,
-		"guard":         plan.Edge.When,
+		"outcome":       target.Edge.FromOutcome,
+		"edge":          target.Edge.From,
+		"guard":         target.Edge.When,
 		"from_token_id": d.nodeRun.TokenID,
 		"token_id":      token.ID,
 		"transition":    transitions + 1,
@@ -534,7 +567,7 @@ func (d *humanTaskDecision) advance(ctx context.Context, plan transitionPlan, tr
 		return d.completeRun(ctx, nodeRun.NodeID, transitions+1)
 	}
 
-	workID, humanTaskID, err := d.engine.dispatchNode(ctx, d.tx, next, d.run, nodeRun, plan.Edge.FromNode, plan.Edge.FromOutcome, d.now)
+	workID, humanTaskID, err := d.engine.dispatchNode(ctx, d.tx, next, d.run, nodeRun, target.Edge.FromNode, target.Edge.FromOutcome, d.now)
 	if err != nil {
 		return err
 	}
@@ -569,6 +602,19 @@ func (d *humanTaskDecision) advance(ctx context.Context, plan transitionPlan, tr
 }
 
 func (d *humanTaskDecision) completeRun(ctx context.Context, endNodeID string, transitions int) error {
+	// Design D7's defense in depth, the same guard completion.completeRun
+	// keeps: an end node reached with sibling tokens still active means a
+	// pinned IR the compiler's no-end-inside-a-split walk never saw.
+	active, err := d.tx.ActiveTokenCount(ctx, d.run.ID)
+	if err != nil {
+		return err
+	}
+	if active > 0 {
+		return d.failRun(ctx, d.result.NodeRunState, fmt.Sprintf(
+			"end node %q was reached with %d sibling token(s) still active; a run must not complete while branches are live (parallel-tokens design D7)",
+			endNodeID, active))
+	}
+
 	output, err := d.resolveRunOutput(ctx, endNodeID)
 	if err != nil {
 		var contractErr *ContractError
@@ -578,6 +624,12 @@ func (d *humanTaskDecision) completeRun(ctx context.Context, endNodeID string, t
 		return err
 	}
 
+	// The same route retirement completion.completeRun performs: a completed
+	// run stops observing, so no later delivery can create work in it
+	// (issue #43, design §6.1).
+	if _, err := d.tx.RetireEventRoutes(ctx, d.run.ID); err != nil {
+		return err
+	}
 	if err := d.tx.UpdateRunState(ctx, d.run.ID, RunCompleted, output); err != nil {
 		return err
 	}
@@ -603,6 +655,11 @@ func (d *humanTaskDecision) failRun(ctx context.Context, nodeRunState NodeRunSta
 	if err := d.tx.ConsumeToken(ctx, d.nodeRun.TokenID); err != nil {
 		return err
 	}
+	// Design D6, the same reap completion.failRun performs: a failed run
+	// must leave no live sibling branch behind to be re-dispatched.
+	if err := d.reapSiblings(ctx, "the run failed: "+detail); err != nil {
+		return err
+	}
 	if err := d.tx.UpdateRunState(ctx, d.run.ID, RunFailed, nil); err != nil {
 		return err
 	}
@@ -624,6 +681,9 @@ func (d *humanTaskDecision) failRun(ctx context.Context, nodeRunState NodeRunSta
 }
 
 func (d *humanTaskDecision) failBound(ctx context.Context, bound *BoundExceeded, transitions int) error {
+	if err := d.reapSiblings(ctx, fmt.Sprintf("the run was stopped by its %s bound", bound.Kind)); err != nil {
+		return err
+	}
 	if err := d.tx.UpdateRunState(ctx, d.run.ID, RunFailed, nil); err != nil {
 		return err
 	}

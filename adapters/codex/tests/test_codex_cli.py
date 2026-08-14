@@ -22,7 +22,7 @@ import json
 import sys
 
 import pytest
-from codex_bridge import codex_cli
+from codex_bridge import codex_cli, mapping
 from codex_bridge.config import Config
 
 OK_TRANSCRIPT = "\n".join(
@@ -181,6 +181,63 @@ def test_sandbox_modes_are_the_three_codex_declares():
 
 
 # ---------------------------------------------------------------------------
+# _common_argv() resume wiring (task t5, acceptance #1): codex resumes via
+# its own `exec resume <SESSION_ID>` subcommand — verified against
+# `codex exec resume --help` on codex-cli 0.147.0 (PATH) while building
+# this: unlike plain `exec`, `resume` accepts neither `-C`/`--cd` nor
+# `-s`/`--sandbox`, so a resumed dispatch's argv shape is genuinely
+# different, not just `exec` with an extra flag appended.
+# ---------------------------------------------------------------------------
+
+
+def test_common_argv_resume_uses_the_resume_subcommand_with_no_cd_or_sandbox():
+    argv = codex_cli._common_argv(
+        "keep going",
+        "/repo",
+        model=None,
+        sandbox="workspace-write",
+        continuation_ref="0000-thread-1",
+    )
+    assert argv == ["exec", "resume", "0000-thread-1", "--json", "keep going"]
+    assert "-C" not in argv
+    assert "--sandbox" not in argv
+    assert "/repo" not in argv
+
+
+def test_common_argv_resume_includes_model_when_given():
+    argv = codex_cli._common_argv(
+        "keep going",
+        "/repo",
+        model="gpt-5-codex",
+        sandbox="workspace-write",
+        continuation_ref="0000-thread-1",
+    )
+    assert argv == ["exec", "resume", "0000-thread-1", "--json", "-m", "gpt-5-codex", "keep going"]
+
+
+def test_common_argv_without_continuation_ref_is_unchanged_cold_start():
+    argv = codex_cli._common_argv("do the thing", "/repo", model=None, sandbox="workspace-write")
+    assert argv == ["exec", "--json", "--sandbox", "workspace-write", "-C", "/repo", "do the thing"]
+    assert "resume" not in argv
+
+
+def test_run_sync_passes_continuation_ref_through_to_resume_argv(monkeypatch, fake_codex, tmp_path):
+    """End-to-end through run_sync's own argv assembly — pins that the
+    parameter actually reaches the subprocess boundary."""
+    captured = {}
+    real_popen = codex_cli.subprocess.Popen
+
+    def spy_popen(argv, **kwargs):
+        captured["argv"] = argv
+        return real_popen(argv, **kwargs)
+
+    monkeypatch.setattr(codex_cli.subprocess, "Popen", spy_popen)
+    cfg = _cfg(fake_codex, tmp_path, behavior="ok")
+    codex_cli.run_sync(cfg, "resume me", str(tmp_path), continuation_ref="thread-resume-xyz")
+    assert captured["argv"][1:4] == ["exec", "resume", "thread-resume-xyz"]
+
+
+# ---------------------------------------------------------------------------
 # parse_session(): JSONL transcript -> TaskResult-shaped dict
 # ---------------------------------------------------------------------------
 
@@ -191,8 +248,24 @@ def test_parse_session_ok_transcript_is_status_ok():
     assert result["summary"] == "OK"
     assert result["task_id"] == "019fe54f-8e7b-7940-943c-1728fd3a7c6b"
     assert result["usage"]["input_tokens"] == 13880
+    assert result["usage"]["cached_input_tokens"] == 9984
     assert result["usage"]["output_tokens"] == 5
+    assert result["usage"]["reasoning_output_tokens"] == 0
     assert result["error"] is None
+
+
+def test_completed_fixture_round_trips_exact_cache_counts_to_protocol_payload():
+    result = codex_cli.parse_session(OK_TRANSCRIPT)
+    response = mapping.sync_response(
+        result,
+        mapping.InvocationContext(),
+        default_success_outcome="completed",
+        actor_id="a",
+        created_at="now",
+    )
+
+    assert response.body["usage"]["input_tokens"] == 13880
+    assert response.body["usage"]["cached_input_tokens"] == 9984
 
 
 def test_parse_session_error_transcript_is_status_error():
@@ -200,6 +273,91 @@ def test_parse_session_error_transcript_is_status_error():
     assert result["status"] == "error"
     assert "not supported" in result["error"]
     assert result["task_id"] == "019fe54f-cb2c-7780-9316-46ecb958a6ed"
+
+
+def test_failed_fixture_without_usage_round_trips_no_usage_block():
+    result = codex_cli.parse_session(ERROR_TRANSCRIPT)
+    response = mapping.sync_response(
+        result,
+        mapping.InvocationContext(),
+        default_success_outcome="completed",
+        actor_id="a",
+        created_at="now",
+    )
+
+    assert response.status_code == 500
+    assert "usage" not in response.body
+
+
+def test_parse_session_failed_turn_captures_reported_usage_and_reason():
+    transcript = "\n".join(
+        [
+            json.dumps({"type": "thread.started", "thread_id": "thread-failed"}),
+            json.dumps(
+                {
+                    "type": "turn.failed",
+                    "reason": "context_window_exceeded",
+                    "usage": {
+                        "input_tokens": 21,
+                        "cached_input_tokens": 13,
+                        "output_tokens": 8,
+                        "reasoning_output_tokens": 5,
+                    },
+                    "error": {"message": "context window exceeded"},
+                }
+            ),
+        ]
+    )
+
+    result = codex_cli.parse_session(transcript)
+
+    assert result["status"] == "error"
+    assert result["usage"] == {
+        "input_tokens": 21,
+        "cached_input_tokens": 13,
+        "output_tokens": 8,
+        "reasoning_output_tokens": 5,
+    }
+    assert result["termination_reason"] == "context_window_exceeded"
+
+
+def test_parse_session_captures_model_only_when_stream_reports_it():
+    transcript = "\n".join(
+        [
+            json.dumps({"type": "thread.started", "thread_id": "thread-model"}),
+            json.dumps({"type": "turn.started", "model": "gpt-5.6-codex"}),
+            json.dumps(
+                {
+                    "type": "turn.completed",
+                    "usage": {"input_tokens": 2, "output_tokens": 1},
+                }
+            ),
+        ]
+    )
+
+    result = codex_cli.parse_session(transcript)
+
+    assert result["model"] == "gpt-5.6-codex"
+
+
+def test_parse_session_incomplete_transcript_retains_interim_reported_usage():
+    transcript = "\n".join(
+        [
+            json.dumps({"type": "thread.started", "thread_id": "thread-incomplete"}),
+            json.dumps(
+                {
+                    "type": "item.completed",
+                    "usage": {"input_tokens": 34, "output_tokens": 3},
+                    "item": {"type": "agent_message", "text": "still working"},
+                }
+            ),
+        ]
+    )
+
+    result = codex_cli.parse_session(transcript)
+
+    assert result["status"] == "incomplete"
+    assert result["usage"] == {"input_tokens": 34, "output_tokens": 3}
 
 
 def test_parse_session_crashed_transcript_is_status_incomplete_never_ok():

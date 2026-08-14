@@ -33,6 +33,7 @@ type spec struct {
 	Entry        string           `json:"entry"`
 	Contract     workflowContract `json:"contract"`
 	Limits       *limits          `json:"limits,omitempty"`
+	Budget       *budget          `json:"budget,omitempty"`
 	Ledger       *ledgerLimits    `json:"ledger,omitempty"`
 	Nodes        map[string]*node `json:"nodes"`
 	Edges        []edge           `json:"edges"`
@@ -66,6 +67,49 @@ func (l *limits) bounded() bool {
 	return l != nil && (l.MaxTransitions != nil || l.MaxVisitsPerNode != nil)
 }
 
+// budget is the declared ECONOMIC contract of a workflow (PRD §9.7's
+// "optional agent token or cost budget"; task t11, spec claim c6).
+//
+// It is a sibling of `limits` rather than a member of it because the two
+// answer different questions and fail differently. A limit bounds the SHAPE
+// of an execution — how many transitions, how long, how many tokens — and
+// exceeding one is a bound failure the engine raises. A budget bounds what an
+// execution may SPEND, and exceeding one is a refusal the workflow author
+// routes (OutcomeBudgetExhausted).
+//
+// Both fields are pointers, and the whole block is a pointer, because absence
+// is meaningful here in a way it is not for `limits`: normalization expands
+// default limits so the IR always carries bounds, and deliberately expands
+// NOTHING here. A workflow that declares no budget is unbudgeted, which is a
+// statement, and inventing a ceiling for it would refuse work nobody
+// restricted.
+type budget struct {
+	// MaxSessions bounds how many NEW provider sessions one run may start.
+	// It counts COLD STARTS: an attempt dispatched carrying a prior
+	// continuation ref (ADR 0010) continues a session that was already paid
+	// for and charges nothing. See internal/worker/budget.go for the whole
+	// argument — a workstream of N turns on one warm session that counted N
+	// would exhaust exactly the budget it was designed to conserve.
+	MaxSessions *int `json:"maxSessions,omitempty"`
+	// MaxUncachedInput bounds the input tokens one run may send that the
+	// provider did NOT serve from its cache, summed over every attempt that
+	// reported usage (usage_input_tokens - usage_cached_input_tokens,
+	// migrations 0012/0017). An attempt that reported input tokens but no
+	// cached figure charges its input IN FULL: a backend that reports no
+	// cache telemetry is not a backend with a 0% cache hit rate, and the
+	// budget spends what it can prove was uncached rather than a discount it
+	// cannot see (docs/adr/0009-usage-telemetry-extension.md's honesty rule
+	// applied to a decision instead of to storage).
+	MaxUncachedInput *int64 `json:"maxUncachedInput,omitempty"`
+}
+
+// declared reports whether the block says anything at all. A `budget: {}` is
+// refused rather than read as "unbudgeted": an author who wrote the key meant
+// to bound something.
+func (b *budget) declared() bool {
+	return b != nil && (b.MaxSessions != nil || b.MaxUncachedInput != nil)
+}
+
 type ledgerLimits struct {
 	SchemaVersion     string `json:"schemaVersion,omitempty"`
 	MaxRecordsPerNode *int   `json:"maxRecordsPerNode,omitempty"`
@@ -92,6 +136,7 @@ type node struct {
 	Deadline          string       `json:"deadline,omitempty"`
 	Select            []selectPort `json:"select,omitempty"`
 	Until             *until       `json:"until,omitempty"`
+	Join              *joinConfig  `json:"join,omitempty"`
 
 	Presentation map[string]any `json:"presentation,omitempty"`
 
@@ -244,10 +289,31 @@ type until struct {
 	Signal    string `json:"signal,omitempty"`
 }
 
+// joinConfig mirrors schemas/workflow/workflow.schema.json's #/$defs/joinConfig
+// (issue #43): a join node's barrier policy. Quorum is a pointer so an omitted
+// value round-trips as omitted — checkParallelJoin enforces "required iff
+// policy == quorum" as value semantics the schema cannot state.
+type joinConfig struct {
+	Policy string `json:"policy"`
+	Quorum *int   `json:"quorum,omitempty"`
+}
+
+// Join policies the schema's enum admits.
+const (
+	JoinPolicyAll    = "all"
+	JoinPolicyAny    = "any"
+	JoinPolicyQuorum = "quorum"
+)
+
+// edge is one transition into a node. Its source is EITHER another node's
+// declared outcome (From, "<node>.<outcome>") or a named external event
+// (OnEvent) — the schema's oneOf makes it exactly one, and everything below
+// reads `OnEvent != ""` as "this is an event edge" (issue #43, design D9).
 type edge struct {
-	From string `json:"from"`
-	To   string `json:"to"`
-	When string `json:"when,omitempty"`
+	From    string `json:"from,omitempty"`
+	OnEvent string `json:"onEvent,omitempty"`
+	To      string `json:"to"`
+	When    string `json:"when,omitempty"`
 }
 
 // IR is the normalized representation the runtime executes (PRD §11.3).
@@ -266,17 +332,26 @@ type irSpec struct {
 	Entry    string           `json:"entry"`
 	Contract workflowContract `json:"contract"`
 	Limits   limits           `json:"limits"`
-	Ledger   ledgerLimits     `json:"ledger"`
-	Nodes    map[string]*node `json:"nodes"`
-	Edges    []irEdge         `json:"edges"`
+	// Budget is carried through unchanged and omitted entirely when the
+	// author declared none — the one spec block normalization does not
+	// expand. See the budget type for why.
+	Budget *budget          `json:"budget,omitempty"`
+	Ledger ledgerLimits     `json:"ledger"`
+	Nodes  map[string]*node `json:"nodes"`
+	Edges  []irEdge         `json:"edges"`
 }
 
 // irEdge keeps the authored `from` string and adds its decomposition, so the
-// engine never re-parses "<node>.<outcome>" at dispatch time.
+// engine never re-parses "<node>.<outcome>" at dispatch time. An event edge
+// carries OnEvent instead, and its From/FromNode/FromOutcome are empty — the
+// engine's edge selection filters on FromNode, so an event edge can never be
+// matched by a node completion, and the run's event routes are materialized
+// from exactly the edges that carry OnEvent.
 type irEdge struct {
-	From        string `json:"from"`
-	FromNode    string `json:"fromNode"`
-	FromOutcome string `json:"fromOutcome"`
+	From        string `json:"from,omitempty"`
+	FromNode    string `json:"fromNode,omitempty"`
+	FromOutcome string `json:"fromOutcome,omitempty"`
+	OnEvent     string `json:"onEvent,omitempty"`
 	To          string `json:"to"`
 	When        string `json:"when,omitempty"`
 }

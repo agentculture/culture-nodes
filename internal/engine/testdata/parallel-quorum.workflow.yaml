@@ -1,0 +1,115 @@
+# The `quorum` variant of the split/join slice: the barrier fires on the
+# SECOND arrival of a three-way split and reaps the third branch, exactly as
+# the `any` variant reaps two. Everything below the join block is identical to
+# parallel.workflow.yaml on purpose, so a test can compare the three policies
+# over one graph. A quorum above the realized cardinality (guards trimming the
+# split to one branch) is the unsatisfiable barrier the engine resolves
+# loudly rather than hanging on — design §4.3.
+apiVersion: nodes.culture.dev/v1alpha1
+kind: Workflow
+
+metadata:
+  name: engine-parallel-quorum
+  version: 1.0.0
+  ownerRef: team/platform-ai
+
+spec:
+  entry: fan
+
+  contract:
+    input:
+      schema:
+        type: object
+        properties:
+          slow:
+            type: boolean
+    output:
+      schema:
+        type: object
+
+  limits:
+    maxDuration: 1h
+    maxTransitions: 32
+    maxVisitsPerNode: 8
+    maxParallelTokens: 4
+
+  ledger:
+    schemaVersion: nodes.culture.dev/ledger/v1alpha1
+    maxRecordsPerNode: 10
+
+  nodes:
+    fan:
+      kind: parallel
+      ownerRef: team/platform-ai
+
+    lint:
+      kind: agent
+      ownerRef: team/quality-platform
+      uses: actor://company/linter@sha256:111111
+      input:
+        from: /run/input
+      contract:
+        outcomes:
+          clean:
+            schema:
+              type: object
+
+    test:
+      kind: agent
+      ownerRef: team/quality-platform
+      uses: actor://company/tester@sha256:222222
+      input:
+        from: /run/input
+      contract:
+        outcomes:
+          passed:
+            schema:
+              type: object
+
+    slow:
+      kind: agent
+      ownerRef: team/quality-platform
+      uses: actor://company/slowpoke@sha256:333333
+      input:
+        from: /run/input
+      contract:
+        outcomes:
+          done:
+            schema:
+              type: object
+
+    gather:
+      kind: join
+      ownerRef: team/platform-ai
+      join:
+        policy: quorum
+        quorum: 2
+
+    finish:
+      kind: end
+      ownerRef: team/platform-ai
+      output:
+        from: /nodes/gather/output
+
+  edges:
+    - from: fan.split
+      to: lint
+
+    - from: fan.split
+      to: slow
+      when: has(input.slow) && input.slow
+
+    - from: fan.split
+      to: test
+
+    - from: lint.clean
+      to: gather
+
+    - from: test.passed
+      to: gather
+
+    - from: slow.done
+      to: gather
+
+    - from: gather.joined
+      to: finish

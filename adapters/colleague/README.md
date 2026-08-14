@@ -137,6 +137,29 @@ bridge's own contract for it is:
 | `incomplete_outcome` | no | Domain outcome reported for `status: incomplete`, **only if the node declares one here**. Absent: an incomplete run is reported as an execution failure, never as success. |
 | `async` | no | Force sync (`false`) or async (`true`) dispatch, overriding the step-budget threshold. |
 
+## Session resume: honestly none yet (task t5)
+
+A request may carry a top-level `continuation_ref` (§13.1,
+`internal/actors/protocol.go`) or `session_key` — both are recognised as
+**transport keys** by this bridge (never forwarded into the instruction
+text handed to colleague) but neither is acted on: colleague has no resume
+verb of its own for this bridge to drive (`docs/contract.md`'s TaskResult
+carries no session/thread handle). Every `continuation_ref` this bridge
+returns — on both the §13.2 sync body and the §13.4 `completed` event — is
+therefore a permanent, honest `null`, not a placeholder waiting on wiring.
+Upstream support is tracked in this repo's issue #62; claude-code and
+codex, the two backends that DO have a resume verb, are covered in their
+own READMEs' "Session resume" sections.
+
+## Capacity refusals (task t5, deviation d4)
+
+When colleague's own `TaskResult.error` text names a provider-side quota,
+rate-limit, or session-limit refusal, this bridge classifies the failure
+`capacity_exhausted` (§13.5) instead of plain `execution`, and sets an
+HTTP `Retry-After` header on the synchronous failure response when the
+text names a delay. See `adapters/claude-code/README.md`'s identical
+section for the full rationale.
+
 ## Trust model: `proposed`-only
 
 This bridge **never emits `confirmed`/`observed`/`derived`** ledger

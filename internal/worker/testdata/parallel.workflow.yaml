@@ -1,0 +1,125 @@
+# The split/join slice the worker's end-to-end test drives (issue #43): a
+# `parallel` router fans out to two synchronous agent branches, and a `join`
+# barrier with policy `all` reconvenes them before the end node.
+#
+# It is the smallest workflow that exercises the two dispatch seams task t20
+# added beside kindWait: a parallel node run is claimed and completed
+# immediately with the kind-implied outcome `split` (the fan-out then happens
+# inside that completion's engine transaction), and a SATISFIED join node run
+# — which only becomes claimable when the barrier fires — is completed with
+# the kind-implied outcome `joined` and the design-D5 aggregated arrival
+# array the worker reads back out of join_arrivals.
+#
+# Both branches invoke the same actor, which is the collision D5's array
+# output exists for: keying arrivals by node id would be lossy here.
+apiVersion: nodes.culture.dev/v1alpha1
+kind: Workflow
+
+metadata:
+  name: worker-parallel-slice
+  version: 1.0.0
+  ownerRef: team/platform-ai
+
+spec:
+  entry: fan
+
+  contract:
+    input:
+      schema:
+        type: object
+        required: [subject]
+        properties:
+          subject:
+            type: string
+    output:
+      schema:
+        type: object
+
+  limits:
+    maxDuration: 1h
+    maxTransitions: 16
+    maxVisitsPerNode: 4
+    maxParallelTokens: 4
+
+  ledger:
+    schemaVersion: nodes.culture.dev/ledger/v1alpha1
+    maxRecordsPerNode: 10
+
+  nodes:
+    fan:
+      kind: parallel
+      ownerRef: team/platform-ai
+
+    lint:
+      kind: agent
+      ownerRef: team/quality-platform
+      uses: actor://company/analyzer@sha256:aaaaaa
+      input:
+        from: /run/input
+      contract:
+        outcomes:
+          completed:
+            schema:
+              type: object
+              required: [score]
+              properties:
+                score:
+                  type: number
+                summary:
+                  type: string
+      policy:
+        timeout: 2m
+        retry:
+          maxAttempts: 1
+          backoff: none
+
+    test:
+      kind: agent
+      ownerRef: team/quality-platform
+      uses: actor://company/analyzer@sha256:aaaaaa
+      input:
+        from: /run/input
+      contract:
+        outcomes:
+          completed:
+            schema:
+              type: object
+              required: [score]
+              properties:
+                score:
+                  type: number
+                summary:
+                  type: string
+      policy:
+        timeout: 2m
+        retry:
+          maxAttempts: 1
+          backoff: none
+
+    gather:
+      kind: join
+      ownerRef: team/platform-ai
+      join:
+        policy: all
+
+    finish:
+      kind: end
+      ownerRef: team/platform-ai
+      output:
+        from: /nodes/gather/output
+
+  edges:
+    - from: fan.split
+      to: lint
+
+    - from: fan.split
+      to: test
+
+    - from: lint.completed
+      to: gather
+
+    - from: test.completed
+      to: gather
+
+    - from: gather.joined
+      to: finish

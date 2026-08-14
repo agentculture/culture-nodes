@@ -1,0 +1,117 @@
+# The canonical split/join slice (issue #43, parallel-tokens design): a
+# `parallel` node fans one token out per eligible `fan.split` edge, three
+# agent branches run concurrently, and a `join` node with policy `all`
+# reconvenes them before the run may end.
+#
+# Two of the split edges are guarded so the same definition exercises both
+# set selection (D1) and discovered cardinality (D4): `slow` fires only when
+# the run input asks for it, so the realized fan-out is 2 or 3 depending on
+# the input the test creates the run with. The join counts against what the
+# split actually created, never against an authored branch count.
+apiVersion: nodes.culture.dev/v1alpha1
+kind: Workflow
+
+metadata:
+  name: engine-parallel-slice
+  version: 1.0.0
+  ownerRef: team/platform-ai
+
+spec:
+  entry: fan
+
+  contract:
+    input:
+      schema:
+        type: object
+        properties:
+          slow:
+            type: boolean
+    output:
+      schema:
+        type: object
+
+  limits:
+    maxDuration: 1h
+    maxTransitions: 32
+    maxVisitsPerNode: 8
+    maxParallelTokens: 4
+
+  ledger:
+    schemaVersion: nodes.culture.dev/ledger/v1alpha1
+    maxRecordsPerNode: 10
+
+  nodes:
+    fan:
+      kind: parallel
+      ownerRef: team/platform-ai
+
+    lint:
+      kind: agent
+      ownerRef: team/quality-platform
+      uses: actor://company/linter@sha256:111111
+      input:
+        from: /run/input
+      contract:
+        outcomes:
+          clean:
+            schema:
+              type: object
+
+    test:
+      kind: agent
+      ownerRef: team/quality-platform
+      uses: actor://company/tester@sha256:222222
+      input:
+        from: /run/input
+      contract:
+        outcomes:
+          passed:
+            schema:
+              type: object
+
+    slow:
+      kind: agent
+      ownerRef: team/quality-platform
+      uses: actor://company/slowpoke@sha256:333333
+      input:
+        from: /run/input
+      contract:
+        outcomes:
+          done:
+            schema:
+              type: object
+
+    gather:
+      kind: join
+      ownerRef: team/platform-ai
+      join:
+        policy: all
+
+    finish:
+      kind: end
+      ownerRef: team/platform-ai
+      output:
+        from: /nodes/gather/output
+
+  edges:
+    - from: fan.split
+      to: lint
+
+    - from: fan.split
+      to: slow
+      when: has(input.slow) && input.slow
+
+    - from: fan.split
+      to: test
+
+    - from: lint.clean
+      to: gather
+
+    - from: test.passed
+      to: gather
+
+    - from: slow.done
+      to: gather
+
+    - from: gather.joined
+      to: finish

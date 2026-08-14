@@ -103,6 +103,58 @@ type Tx interface {
 
 	InsertToken(ctx context.Context, token Token) error
 	ConsumeToken(ctx context.Context, tokenID string) error
+	// Token reads one token row — the completion's way to learn the consumed
+	// token's group so propagation (copy / stamp / re-enter parent) can
+	// follow the parallel-tokens design §3.3 rules.
+	Token(ctx context.Context, tokenID string) (Token, error)
+	// ActiveTokenCount is how many tokens the run currently has active. Read
+	// under the run's advisory lock it is exact, which is what makes the
+	// maxParallelTokens bound and the D7 stranded-sibling guard enforceable.
+	ActiveTokenCount(ctx context.Context, runID string) (int, error)
+
+	// InsertTokenGroup records one split's fan-out set; TokenGroup reads it
+	// back (the barrier needs the cardinality, the post-join token needs the
+	// parent group).
+	InsertTokenGroup(ctx context.Context, group TokenGroup) error
+	TokenGroup(ctx context.Context, groupID string) (TokenGroup, error)
+
+	// InsertJoinArrival appends one branch's arrival at a barrier, and
+	// JoinArrivalCount counts them. Counting a plain SELECT count(*) under
+	// the run's advisory lock is the whole race-free barrier (design §4.2):
+	// completions for a run serialize on the lock, so the arrival that
+	// reaches the threshold sees every prior arrival's committed row.
+	InsertJoinArrival(ctx context.Context, arrival JoinArrival) error
+	JoinArrivalCount(ctx context.Context, joinNodeRunID string) (int, error)
+	// OpenJoinBarrier locates the waiting_join node run for (run, node,
+	// group) — the barrier the arriving token's group reconvenes at — or
+	// ErrNotFound when this arrival is the first and must create it.
+	OpenJoinBarrier(ctx context.Context, runID, nodeKey, groupID string) (NodeRun, error)
+
+	// ReapRunState retires everything still live in a run except
+	// keepNodeRunID: consumes active tokens, cancels non-terminal node runs,
+	// cancels leasable work items, retires pending timers and signal
+	// subscriptions. It mirrors the API's cancel REAP inside the engine
+	// transaction (design D6: a terminal branch failure fails the run and
+	// must leave no re-dispatchable sibling state behind). It returns the
+	// cancelled node runs' ids.
+	ReapRunState(ctx context.Context, runID, keepNodeRunID string) ([]string, error)
+	// ReapGroupBranches is the group-scoped reap an any/quorum barrier fires
+	// (design §4.4): it retires the same state kinds, but only for tokens of
+	// groupID and its nested descendant groups, keeping keepTokenID (the
+	// barrier's own token). It returns the cancelled node runs' ids.
+	ReapGroupBranches(ctx context.Context, runID, groupID, keepTokenID string) ([]string, error)
+
+	// InsertEventRoute materializes one `onEvent` edge as a durable run-scoped
+	// pickup route (issue #43, design D9), and RetireEventRoutes retires every
+	// active route of a run when it reaches a terminal state — the same
+	// discipline pending timers and signal subscriptions already follow, for
+	// the same reason: a dead run must have nothing left that can create work
+	// in it. RetireEventRoutes returns how many rows it retired.
+	InsertEventRoute(ctx context.Context, route EventRoute) error
+	RetireEventRoutes(ctx context.Context, runID string) (int, error)
+	// ActiveEventRoutes lists a run's live pickup routes — what an inspection
+	// surface reads, and what a test asserts against.
+	ActiveEventRoutes(ctx context.Context, runID string) ([]EventRoute, error)
 
 	InsertNodeRun(ctx context.Context, nodeRun NodeRun) error
 	UpdateNodeRun(ctx context.Context, nodeRunID string, state NodeRunState, outcome string) error

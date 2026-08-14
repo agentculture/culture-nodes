@@ -61,6 +61,16 @@ tags:
       Registered actor identities and their aggregate stats (task t15).
       Read-only — registering an actor stays
       deploy/prod/register-actor.sh (issue #8).
+  - name: plan-imports
+    description: >-
+      Import an external plan (task t22, issue #45): the generic
+      decompose-pipeline surface — devague's `plan show --json` and
+      `.devague/deliveries/*.json` are instance one, a non-code document
+      (task t24) is instance two. Carries real per-task status and
+      dependency edges (never a wave approximation) and every deviation's
+      origin (the issue's "system knows" llm vs "user reports" user split).
+      Durable, but deliberately not the work ledger — see
+      migrations/0024_plan_imports.sql.
   - name: operations
     description: Liveness and readiness probes.
 
@@ -488,6 +498,77 @@ paths:
               schema:
                 $ref: '#/components/schemas/Error'
 
+  /v1alpha1/actors/{id}/resume:
+    post:
+      operationId: resumeActor
+      tags: [actors]
+      summary: Clear a capacity pause early, making the actor dispatchable again.
+      description: >-
+        Task t9: the reversibility half of the capacity circuit breaker.
+        When a dispatch to an actor fails with the `capacity_exhausted`
+        §13.5 class, the worker marks that actor unavailable until a
+        deadline and defers — never fails — work addressed to it. This
+        operation ends that pause early, so an operator who knows better
+        (the quota reset, the bridge was misreporting, the limit did not
+        apply to this project) can overrule the automatic classification
+        without touching the database.
+
+        The pause is keyed by `actor_key`, not by this row's id, so
+        resuming any revision of an identity resumes the identity —
+        provider capacity belongs to the identity, not to one append-only
+        registration revision.
+
+        Clearing an actor that is not currently paused is 200 with the
+        actor's current state, not an error: the caller's intent ("this
+        actor should be dispatchable") is already satisfied, and two
+        operators racing to clear one pause should both succeed.
+
+        Work items already deferred become claimable again within the
+        worker's deferral horizon (at most a few minutes), not
+        instantaneously: a deferral pushes `work_items.available_at`
+        forward, and the horizon is bounded precisely so an early clear
+        cannot go unnoticed for the whole pause.
+
+        Like actor registration on this same noun — and unlike the rest of
+        this authless-by-phase-1-design API (spec decision c45) — it
+        requires the actor-registration bearer token, deliberately the SAME
+        secret (`NODES_ACTOR_REGISTRATION_TOKEN_SECRET`): registration is
+        what grants an endpoint the standing to be dispatched real work,
+        and clearing a pause restores exactly that standing.
+      security:
+        - actorRegistrationBearerAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ResumeActorRequest'
+      responses:
+        '200':
+          description: The actor row, with its availability block reflecting the cleared pause.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Actor'
+        '401':
+          description: No bearer token was presented, it does not match the configured registration secret, or no secret is configured at all.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '404':
+          description: No actor with this id.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+
   /v1alpha1/actors/{id}/stats:
     get:
       operationId: getActorStats
@@ -524,6 +605,146 @@ paths:
                 $ref: '#/components/schemas/ActorStats'
         '404':
           description: No actor with this id.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+
+  /v1alpha1/dispatch-rates:
+    get:
+      operationId: listDispatchRates
+      tags: [actors]
+      summary: The declared dispatch rates and what each has consumed.
+      description: >-
+        Task t10 (issue #48 item 2): the pacing control's read surface. A
+        worker holds itself to a declared session rate — globally and per
+        actor — against durable state every worker shares (migration 0022's
+        `dispatch_rate_state`), because workers scale horizontally and an
+        in-process limiter would enforce one rate per process rather than
+        one rate.
+
+
+        This endpoint answers "why is this run sitting still" from the
+        operator's side: the rate being enforced, how much of the CURRENT
+        session window it has consumed, how much the rest of that window can
+        still absorb, and when the next dispatch may go. Per deferral, the
+        run's own event stream answers it too
+        (`dev.culture.nodes.dispatch.paced`).
+
+
+        A scope with no recorded state is absent rather than rendered as a
+        zeroed row: this surface reports what the workers have actually
+        enforced, not what an environment somewhere claims to have
+        configured. Read-only by design — a rate is the operator's own
+        declaration, and it is changed by changing the workers'
+        configuration (`NODES_DISPATCH_RATE_*`), not by an API that would
+        then disagree with it.
+      responses:
+        '200':
+          description: Every rate scope with recorded state in this namespace.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/DispatchRateList'
+
+  /v1alpha1/plan-imports:
+    post:
+      operationId: importPlan
+      tags: [plan-imports]
+      summary: Import an external plan's faithful view, with its deviations.
+      description: >-
+        Task t22 (issue #45): decodes `plan_show` (the exact object
+        `devague plan show --json` prints — or an equivalent document from a
+        different source system, since this surface is domain-agnostic) and
+        the optional `deviations` (the exact object
+        `.devague/deliveries/<slug>.json` holds on disk), and persists a new
+        immutable snapshot: the plan plus every task's REAL per-task status
+        and dependency edges, plus every deviation carrying its origin.
+
+
+        Nothing here is the append-only work ledger (`internal/ledger`) —
+        see `migrations/0024_plan_imports.sql` for why. Every import is its
+        own row; re-importing the same `plan_show.slug` creates a new,
+        independent snapshot rather than overwriting the previous one.
+
+
+        A malformed `plan_show` or `deviations` document — a missing slug, a
+        task with no id, a dependency edge naming a task this plan does not
+        have, a dependency cycle, an unrecognised origin/status, a
+        `deviations.plan_slug` that does not match `plan_show.slug` — is
+        refused with 400 in the documented Error shape, naming what is
+        wrong; nothing is ever partially imported.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/PlanImportRequest'
+      responses:
+        '201':
+          description: The imported plan snapshot.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PlanImport'
+        '400':
+          description: plan_show or deviations is missing or malformed.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+    get:
+      operationId: listPlanImports
+      tags: [plan-imports]
+      summary: List a plan's import snapshots by slug, most recent first.
+      description: >-
+        Task t23 (issue #45): every `plan_imports` row for the given `slug`,
+        newest `imported_at` first — how a dashboard finds "the current
+        state" of a plan (`items[0]`) without this endpoint guessing at a
+        supersedes relationship the schema deliberately does not model (see
+        `migrations/0024_plan_imports.sql`). `slug` is required; unlike
+        `GET /v1alpha1/workflows`, there is no cross-slug "every imported
+        plan" listing. Each item is the lightweight summary shape (no
+        `tasks`/`deviations` — those are read one snapshot at a time via
+        `GET /v1alpha1/plan-imports/{id}`, since an empty array here would
+        misread as "zero tasks" rather than "not fetched on this path").
+      parameters:
+        - name: slug
+          in: query
+          required: true
+          description: The source plan's own slug (devague's `plan_show.slug`).
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Every import snapshot with this slug, most recent first.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PlanImportSummaryList'
+        '400':
+          description: slug is missing.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+
+  /v1alpha1/plan-imports/{id}:
+    get:
+      operationId: getPlanImport
+      tags: [plan-imports]
+      summary: Fetch one imported plan snapshot, with its tasks and deviations.
+      parameters:
+        - $ref: '#/components/parameters/PlanImportID'
+      responses:
+        '200':
+          description: The imported plan snapshot.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PlanImport'
+        '404':
+          description: No plan import with this id.
           content:
             application/json:
               schema:
@@ -1186,6 +1407,13 @@ components:
       description: The workflow version's content digest.
       schema:
         type: string
+    PlanImportID:
+      name: id
+      in: path
+      required: true
+      description: The plan import snapshot's id.
+      schema:
+        type: string
     HumanTaskID:
       name: id
       in: path
@@ -1486,7 +1714,15 @@ components:
         `currency` are set together only when every cost-reporting
         attempt in scope agreed on one currency; `cost_by_currency` is set
         instead, as a list, whenever more than one currency was seen.
-      required: [input_tokens, output_tokens, attempts_reported, attempts_not_reported]
+      required:
+        [
+          input_tokens,
+          output_tokens,
+          cached_input_tokens,
+          reasoning_tokens,
+          attempts_reported,
+          attempts_not_reported,
+        ]
       properties:
         input_tokens:
           type: integer
@@ -1496,6 +1732,29 @@ components:
             contributes nothing here — never folded in as zero.
         output_tokens:
           type: integer
+        cached_input_tokens:
+          type: integer
+          description: >-
+            docs/adr/0009-usage-telemetry-extension.md: summed over
+            attempts that reported this field specifically. An attempt
+            that reported input/output tokens but no cache telemetry at
+            all (its contract exposes none) contributes nothing here —
+            never a fabricated zero standing in for "unmeasurable". This
+            is not gated by its own reported/not-reported count;
+            attempts_reported/attempts_not_reported below remains the one
+            coverage signal for the whole usage block.
+        reasoning_tokens:
+          type: integer
+          description: >-
+            docs/adr/0009-usage-telemetry-extension.md. Same aggregation
+            rule as cached_input_tokens.
+        cache_ratio:
+          type: number
+          description: >-
+            cached_input_tokens / input_tokens, present only when
+            input_tokens > 0. Never computed as a fabricated 0 when no
+            attempt in scope reported any input tokens (0/0 is undefined,
+            not zero) — absent in that case.
         cost:
           type: number
           description: >-
@@ -1564,6 +1823,14 @@ components:
           enum: [active, consumed]
         parent_token_id:
           type: string
+        origin_event_id:
+          type: string
+          description: >-
+            The signal event that created this token, set only on an event pickup (issue #43). A
+            pickup token has no parent token — nothing in the run handed it control, and the
+            emitter may be another run entirely — so it names the fact it came from instead. A
+            consumer drawing the ancestry tree must tolerate several roots per run and label the
+            ones carrying this field.
         created_at:
           type: string
           format: date-time
@@ -1596,6 +1863,29 @@ components:
         completed_at:
           type: string
           format: date-time
+        preserve_branch:
+          type: string
+          description: >-
+            The branch name a bridge's preserve-on-failure plumbing commit
+            (task t25, issue #49) actually created a ref for. Present only
+            on an attempt whose bridge committed one -- most attempts,
+            including every successful one, carry no such branch. A minted
+            but never-committed name is never reported here.
+        preserve_pushed:
+          type: boolean
+          description: >-
+            Whether preserve_branch reached the bridge's configured remote
+            (true) or exists only in the bridge host's local object
+            database (false, the expected common case today -- bridge-host
+            push credentials are unverified). Present only alongside
+            preserve_branch.
+        preserve_remote:
+          type: string
+          description: >-
+            The remote name (e.g. "origin") the bridge attempted or reached
+            the push against. Informational only -- never combined with
+            preserve_branch to construct a forge URL; a client-side link
+            may only come from configuration the operator actually set.
 
     NodeRun:
       type: object
@@ -1609,7 +1899,7 @@ components:
           type: string
         state:
           type: string
-          enum: [ready, leased, running, waiting_external, completed, failed, cancelled]
+          enum: [ready, leased, running, waiting_external, waiting_human, waiting_join, completed, failed, cancelled]
         outcome:
           type: string
         visit_count:
@@ -1655,7 +1945,7 @@ components:
             run's most recently dispatched attempt.
         state:
           type: string
-          enum: [ready, leased, running, waiting_external, completed, failed, cancelled]
+          enum: [ready, leased, running, waiting_external, waiting_human, waiting_join, completed, failed, cancelled]
         outcome:
           type: string
         created_at:
@@ -1999,6 +2289,35 @@ components:
                 type: string
               node_run_id:
                 type: string
+        picked_up:
+          type: array
+          description: >-
+            Every event route this delivery reached (issue #43). An admitted entry created a token
+            and a node run at the route's target; a refused entry created nothing and says why —
+            its guard declined, or the pickup would have taken the run past one of its spec.limits
+            bounds. A refused pickup is deliberately NOT a run failure: an external event must not
+            kill a healthy run because it arrived at a busy moment.
+          items:
+            type: object
+            required: [route_id, run_id, node_id, admitted]
+            properties:
+              route_id:
+                type: string
+              run_id:
+                type: string
+              node_id:
+                type: string
+              admitted:
+                type: boolean
+              token_id:
+                type: string
+              node_run_id:
+                type: string
+              refusal:
+                type: string
+                description: '"guard", "run_terminal", or the loop bound that had no headroom (max_parallel_tokens, max_visits_per_node, max_transitions).'
+              detail:
+                type: string
 
     DecideHumanTaskRequest:
       type: object
@@ -2083,6 +2402,365 @@ components:
         created_at:
           type: string
           format: date-time
+        availability:
+          $ref: '#/components/schemas/ActorAvailability'
+        dispatch_rate:
+          $ref: '#/components/schemas/DispatchRate'
+
+    ActorAvailability:
+      type: object
+      description: >-
+        The capacity circuit breaker's state for this actor (task t9,
+        migration 0020's `actor_availability` table). Absent entirely when
+        the actor has never been paused — which is a different fact from a
+        pause that has lapsed, and the two are deliberately distinguishable:
+        a lapsed or cleared pause still renders, with `paused: false`.
+
+        Keyed by `actor_key`, so every revision of one identity reports the
+        same availability: provider capacity belongs to the identity, not to
+        one append-only registration revision. The pause is a DEADLINE, not
+        a flag — `paused` is computed server-side against the database's own
+        clock, so horizontally-scaled workers and API readers cannot
+        disagree about it.
+      required: [paused, paused_until, reason, tripped_at]
+      properties:
+        paused:
+          type: boolean
+          description: >-
+            Whether the pause is still in force right now. False means the
+            deadline passed or an operator cleared it; the rest of this
+            block is then the history of the pause that ended.
+        paused_until:
+          type: string
+          format: date-time
+          description: When the actor becomes (or became) dispatchable again.
+        reason:
+          type: string
+          description: >-
+            The §13.5 error class that tripped the breaker —
+            `capacity_exhausted` today.
+        retry_after_seconds:
+          type: integer
+          description: >-
+            The provider's own Retry-After hint, in seconds. Absent when it
+            named none — never `0`, which would read as "retry immediately".
+            The worker caps how long a hint may actually pause an actor; this
+            is the unclamped value the provider sent.
+        detail:
+          type: string
+          description: One human line naming what happened.
+        tripped_at:
+          type: string
+          format: date-time
+        tripped_by_run_id:
+          type: string
+          description: >-
+            The dispatch that discovered the exhaustion, so "why is this
+            paused" is answerable from the actor surface alone rather than
+            by correlating timestamps against the event log.
+        tripped_by_node_run_id:
+          type: string
+        tripped_by_attempt_id:
+          type: string
+        cleared_at:
+          type: string
+          format: date-time
+          description: >-
+            Present only when an operator ended the pause early (POST
+            /v1alpha1/actors/{id}/resume), which is what keeps "it expired"
+            and "a human let it back in" distinguishable afterwards.
+        cleared_by:
+          type: string
+
+    DispatchRateList:
+      type: object
+      description: GET /v1alpha1/dispatch-rates' payload (task t10).
+      required: [items]
+      properties:
+        items:
+          type: array
+          items:
+            $ref: '#/components/schemas/DispatchRate'
+
+    DispatchRate:
+      type: object
+      description: >-
+        One dispatch-rate scope's declared rate and its standing in the
+        CURRENT session window (task t10, migration 0022's
+        `dispatch_rate_state`). On an actor payload it is that actor's own
+        rate, resolved by `actor_key` the way `availability` is, and absent
+        when no declared rate has ever admitted a dispatch to it.
+
+
+        `window_started_at`, `window_ends_at`, `dispatched` and `remaining`
+        are computed against the moment of the read, not read raw from the
+        row: session windows reset on a fixed clock, so a stored counter
+        belonging to a window that has already ended reports zero
+        consumption rather than showing last window's spending as though it
+        still constrained anything. `last_dispatch_at` and `updated_at` stay
+        raw row provenance, so that history is not lost either.
+      required:
+        [scope, limit_per_window, window_seconds, window_anchor,
+         window_started_at, window_ends_at, dispatched, remaining, updated_at]
+      properties:
+        scope:
+          type: string
+          description: >-
+            `global` (the whole installation's session rate) or `actor` (one
+            actor key's own).
+        scope_key:
+          type: string
+          description: The actor key for scope `actor`; absent for `global`.
+        limit_per_window:
+          type: integer
+          description: >-
+            Dispatches one window may admit, as the last worker to consume a
+            slot enforced it. Workers that disagree about the configured
+            rate show up here rather than being averaged away.
+        window_seconds:
+          type: integer
+          description: The session window's length.
+        window_anchor:
+          type: string
+          format: date-time
+          description: >-
+            The reset clock: an instant at which a window boundary falls.
+            Every boundary is this instant plus or minus a whole number of
+            windows, which is how horizontally-scaled workers agree on which
+            window they are in without exchanging a message.
+        window_started_at:
+          type: string
+          format: date-time
+          description: The start of the window this rate is in right now.
+        window_ends_at:
+          type: string
+          format: date-time
+          description: When that window resets and the budget returns.
+        dispatched:
+          type: integer
+          description: Dispatches admitted in the current window.
+        remaining:
+          type: integer
+          description: >-
+            How many more dispatches this scope may admit before the window
+            ends: the remaining-window capacity capped by the remaining
+            budget. It shrinks as the window runs out even when nothing has
+            been consumed, because the control spreads sessions across the
+            REMAINING window rather than at a rate that ignores when the
+            window ends (spec claim c43).
+        next_dispatch_at:
+          type: string
+          format: date-time
+          description: >-
+            The pace, made durable: the earliest instant the next dispatch
+            in this scope may go. Absent when nothing has dispatched yet.
+        last_dispatch_at:
+          type: string
+          format: date-time
+        updated_at:
+          type: string
+          format: date-time
+
+    PlanImportRequest:
+      type: object
+      description: >-
+        POST /v1alpha1/plan-imports' body (task t22). `plan_show` is the
+        exact object `devague plan show --json` prints (or an equivalent
+        document from another source system — this surface is
+        domain-agnostic, task t24 exercises a non-code one). `deviations`,
+        when present, is the exact object `.devague/deliveries/<slug>.json`
+        holds on disk, and its `plan_slug` must equal `plan_show.slug`.
+      required: [plan_show]
+      properties:
+        plan_show:
+          type: object
+          description: >-
+            The faithful per-task plan view: per-task status and REAL
+            dependency edges, never a wave approximation.
+        deviations:
+          type: object
+          description: >-
+            Execution-time deviations from the confirmed plan, each carrying
+            its origin (`user` or `llm` — the issue #45 "system knows" vs
+            "user reports" split).
+
+    PlanImportTask:
+      type: object
+      description: One task of an imported plan snapshot.
+      required:
+        [task_ref, summary, origin_kind, source_status, depends_on,
+         acceptance_criteria, covers]
+      properties:
+        task_ref:
+          type: string
+          description: The source system's own task id, e.g. devague's `t3`.
+        summary:
+          type: string
+        instruction:
+          type: string
+        origin_kind:
+          type: string
+          enum: [human, agent]
+          description: >-
+            The ledger producer kind the source's own origin maps to
+            (devague `user` -> `human`, `llm` -> `agent`).
+        source_status:
+          type: string
+          description: >-
+            The source system's own per-task decision status verbatim
+            (devague: `proposed` | `confirmed` | `rejected`) — never
+            translated into a ledger authority value.
+        depends_on:
+          type: array
+          items:
+            type: string
+          description: >-
+            REAL per-task dependency edges: other tasks' `task_ref` values
+            in this same plan import, exactly as the source recorded them —
+            never widened to "everything in the previous wave".
+        wave:
+          type: integer
+          description: >-
+            Computed LOCALLY at import time via topological layering over
+            depends_on — the source system does not emit this field itself.
+            Absent for a rejected task, which occupies no wave.
+        acceptance_criteria:
+          type: array
+          items:
+            type: string
+        covers:
+          type: array
+          items:
+            type: string
+
+    PlanImportDeviation:
+      type: object
+      description: One execution-time deviation of an imported plan snapshot.
+      required:
+        [deviation_ref, what, task_ref, reason, affects, origin_kind, source_status]
+      properties:
+        deviation_ref:
+          type: string
+          description: The source system's own deviation id, e.g. devague's `d1`.
+        what:
+          type: string
+        task_ref:
+          type: string
+          description: The plan task this deviation relates to.
+        reason:
+          type: string
+        affects:
+          type: array
+          items:
+            type: string
+        origin_kind:
+          type: string
+          enum: [human, agent]
+          description: >-
+            The issue #45 "system knows" (llm -> agent) vs "user reports"
+            (user -> human) split, preserved verbatim from the source.
+        source_status:
+          type: string
+          description: >-
+            The source system's own deviation status verbatim (devague:
+            `proposed` | `approved` | `rejected` — note `approved`, not
+            `confirmed`) — never translated into a ledger authority value.
+        classification:
+          type: string
+          description: Optional source-recorded classification, when present.
+
+    PlanImport:
+      type: object
+      description: >-
+        GET /v1alpha1/plan-imports/{id}' and the 201 body of POST
+        /v1alpha1/plan-imports (task t22): one immutable import snapshot.
+        Deliberately not a work-ledger record — see
+        migrations/0024_plan_imports.sql.
+      required:
+        [id, slug, title, source_slug, source_status, source_digest,
+         imported_at, tasks, deviations]
+      properties:
+        id:
+          type: string
+        slug:
+          type: string
+          description: >-
+            The source plan's own slug. NOT unique: re-importing the same
+            slug creates a new, independent snapshot row.
+        title:
+          type: string
+        source_slug:
+          type: string
+          description: >-
+            The source document/frame this plan was decomposed from
+            (devague `frame_slug`).
+        source_status:
+          type: string
+          description: The source system's own plan-level status verbatim.
+        source_digest:
+          type: string
+          description: sha256 digest of the raw imported bytes.
+        imported_at:
+          type: string
+          format: date-time
+        tasks:
+          type: array
+          items:
+            $ref: '#/components/schemas/PlanImportTask'
+        deviations:
+          type: array
+          items:
+            $ref: '#/components/schemas/PlanImportDeviation'
+
+    PlanImportSummary:
+      type: object
+      description: >-
+        One row of GET /v1alpha1/plan-imports?slug= (task t23): the same
+        plan-level fields PlanImport carries, without `tasks`/`deviations`
+        — those are read one snapshot at a time via GET
+        /v1alpha1/plan-imports/{id}.
+      required:
+        [id, slug, title, source_slug, source_status, source_digest, imported_at]
+      properties:
+        id:
+          type: string
+        slug:
+          type: string
+        title:
+          type: string
+        source_slug:
+          type: string
+        source_status:
+          type: string
+        source_digest:
+          type: string
+        imported_at:
+          type: string
+          format: date-time
+
+    PlanImportSummaryList:
+      type: object
+      required: [items]
+      properties:
+        items:
+          type: array
+          items:
+            $ref: '#/components/schemas/PlanImportSummary'
+          description: Most recent `imported_at` first.
+
+    ResumeActorRequest:
+      type: object
+      description: >-
+        POST /v1alpha1/actors/{id}/resume' body (task t9). Entirely
+        optional: no body, an empty body, and `{}` all mean "an operator did
+        this and did not say who", recorded as `cleared_by: operator` rather
+        than as an empty attribution.
+      properties:
+        cleared_by:
+          type: string
+          description: >-
+            Who is clearing the pause, recorded on the availability row.
+            Defaults to `operator`.
 
     ActorList:
       type: object

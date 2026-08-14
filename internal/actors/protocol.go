@@ -63,6 +63,26 @@ type Callback struct {
 }
 
 // InvocationRequest is the §13.1 request body.
+//
+// ContinuationRef extends §13.1 additively
+// (docs/adr/0010-continuation-ref-on-request.md, on ADR 0008's and ADR
+// 0009's precedent for §13.2): it is the handle a PRIOR attempt returned in
+// InvocationResult.ContinuationRef, handed back so this turn can continue
+// that conversation instead of starting a fresh one. §8 ("Explicit
+// continuation") is the reason it is a wire field at all — a session is
+// passed explicitly or it does not exist, and there is no invisible shared
+// conversation for a bridge to find on its own.
+//
+// It carries §13.2's own field name on purpose. There is one PRD vocabulary
+// word for one fact — the provider-side conversation a turn belongs to — and
+// the direction comes from the message rather than a second name: on a
+// request it is the ref to continue FROM, on a result the ref the actor
+// offers to continue WITH.
+//
+// Absent stays absent: the key is omitted entirely when there is no prior
+// ref, never sent as null or "". A bridge's "was I given a session" check is
+// key presence, and an empty string is a value a bridge could mistake for a
+// handle.
 type InvocationRequest struct {
 	ProtocolVersion string          `json:"protocol_version"`
 	RunID           string          `json:"run_id"`
@@ -75,6 +95,7 @@ type InvocationRequest struct {
 	Input           json.RawMessage `json:"input"`
 	ArtifactRefs    []string        `json:"artifact_refs"`
 	ContextRefs     []string        `json:"context_refs"`
+	ContinuationRef *string         `json:"continuation_ref,omitempty"`
 	Deadline        *time.Time      `json:"deadline,omitempty"`
 	Callback        Callback        `json:"callback"`
 }
@@ -82,11 +103,41 @@ type InvocationRequest struct {
 // Usage is the §13.2 telemetry block. Cost and Currency are pointers because
 // §13.2 shows both as nullable: an actor that does not price its work says so
 // with null rather than with a zero that reads as "free".
+//
+// CachedInputTokens, ReasoningTokens, Model, and ThreadID extend §13.2
+// additively (docs/adr/0009-usage-telemetry-extension.md, on ADR 0008's
+// precedent). Every one of them is a pointer for Cost and Currency's exact
+// reason: they are independently absent-able *within* a reported block. An
+// actor whose contract exposes no cache telemetry at all reports null, which
+// means "unmeasurable", where a 0 would claim a measured 0% cache ratio. The
+// two token-count fields keep §13.2's own casing convention
+// (`cached_input_tokens`, `reasoning_tokens`).
+//
+// InputTokens/OutputTokens stay plain int64: an actor that reports a usage
+// block at all reports those two, and `usage_input_tokens IS NOT NULL` is
+// what "this attempt reported usage" means downstream
+// (migrations/0012_attempt_usage.sql). Nothing here may be used as a
+// presence check for the block as a whole.
+//
+// The termination reason is deliberately NOT a field of this block — see
+// InvocationResult.TerminationReason.
 type Usage struct {
-	InputTokens  int64    `json:"input_tokens"`
-	OutputTokens int64    `json:"output_tokens"`
-	Cost         *float64 `json:"cost"`
-	Currency     *string  `json:"currency"`
+	InputTokens       int64    `json:"input_tokens"`
+	OutputTokens      int64    `json:"output_tokens"`
+	Cost              *float64 `json:"cost"`
+	Currency          *string  `json:"currency"`
+	CachedInputTokens *int64   `json:"cached_input_tokens,omitempty"`
+	ReasoningTokens   *int64   `json:"reasoning_tokens,omitempty"`
+	// Model is the model that produced these counts. Tokens are neither
+	// comparable nor priceable across models, so a rollup that sums them
+	// without it is summing different units.
+	Model *string `json:"model,omitempty"`
+	// ThreadID is the provider-side thread or session the usage accrued on
+	// — what makes "this workstream reused one warm session" measurable
+	// rather than assumed. It is telemetry, not a resume handle:
+	// InvocationResult.ContinuationRef is the handle the engine hands back
+	// to a bridge, and neither field is derived from the other.
+	ThreadID *string `json:"thread_id,omitempty"`
 }
 
 // ToEngine converts this §13.2 wire Usage block into the engine's own copy
@@ -106,10 +157,14 @@ func (u *Usage) ToEngine() *engine.Usage {
 		return nil
 	}
 	return &engine.Usage{
-		InputTokens:  u.InputTokens,
-		OutputTokens: u.OutputTokens,
-		Cost:         u.Cost,
-		Currency:     u.Currency,
+		InputTokens:       u.InputTokens,
+		OutputTokens:      u.OutputTokens,
+		Cost:              u.Cost,
+		Currency:          u.Currency,
+		CachedInputTokens: u.CachedInputTokens,
+		ReasoningTokens:   u.ReasoningTokens,
+		Model:             u.Model,
+		ThreadID:          u.ThreadID,
 	}
 }
 
@@ -119,6 +174,52 @@ func (u *Usage) ToEngine() *engine.Usage {
 // records here claim.
 type LedgerDelta struct {
 	Records []ledger.Record `json:"records"`
+}
+
+// Preserve is the bridge-reported outcome of preserve-on-failure (task t25,
+// issue #49): an additive "preserve" key a bridge attaches to a failed
+// event's payload or a failed sync invocation's error body, the same way
+// ADR 0008/0009/0010 attached usage/termination-reason/continuation-ref.
+// It is not part of §13.2/§13.4 as the PRD wrote them; every one of the
+// three adapters under adapters/ (PRD §9.5: this package speaks one
+// provider-neutral protocol, so which adapters those are is not this
+// file's concern) produces it field-for-field from its own bridge-side
+// `preserve.PreserveResult.to_dict()`.
+//
+// It is a bridge's own claim about what IT did on ITS host — not observed
+// evidence (PRD §10.4): nothing on this path promotes it to an
+// authoritative ledger record, and the branch existing at all is only ever
+// as true as the bridge's own report. Task t26 persists Branch/Pushed/
+// Remote onto the attempt row (migrations/0025) and returns them from the
+// API; Attempted/Committed/Commit/Reason are read here for completeness
+// with the bridge's own dataclass but travel no further than this decode —
+// see ToEngine's gating for exactly which facts are trusted onto the row.
+type Preserve struct {
+	Attempted bool    `json:"attempted"`
+	Committed bool    `json:"committed"`
+	Branch    *string `json:"branch"`
+	Commit    *string `json:"commit"`
+	Pushed    bool    `json:"pushed"`
+	LocalOnly bool    `json:"local_only"`
+	Remote    *string `json:"remote"`
+	Reason    *string `json:"reason"`
+}
+
+// ToEngine converts a bridge-reported Preserve block into the engine's own
+// copy of it, nil unless the bridge reports a REAL, committed branch: a
+// minted-but-uncommitted branch name (Committed false — a plumbing
+// failure) names nothing that exists in any git repository, and carrying it
+// onto the attempt row would show a reader a link to nowhere. Branch being
+// present but empty is treated the same as absent for the same reason.
+func (p *Preserve) ToEngine() *engine.Preserve {
+	if p == nil || !p.Committed || p.Branch == nil || *p.Branch == "" {
+		return nil
+	}
+	out := &engine.Preserve{Branch: *p.Branch, Pushed: p.Pushed}
+	if p.Remote != nil {
+		out.Remote = *p.Remote
+	}
+	return out
 }
 
 // InvocationResult is the §13.2 synchronous result body (HTTP 200).
@@ -135,6 +236,17 @@ type LedgerDelta struct {
 // actor-reported data, not observed evidence: it rides inside the node's
 // output (see MergeWorkspaceMeasured), and nothing on this path writes an
 // `observed`-authority ledger record from it.
+//
+// TerminationReason is how the turn ended as the provider reported it
+// ("max_output_tokens", a context-window stop, a cancellation, ...). It sits
+// BESIDE Usage rather than inside it, and the attempt column it lands in is
+// named `termination_reason` rather than `usage_termination_reason`, for one
+// reason (ADR 0009): a turn can know why it ended while holding no parseable
+// usage at all. Carrying the reason inside the §13.2 block would have forced
+// a usage block — and therefore fabricated zero token counts — onto exactly
+// those attempts, which is the fabrication migration 0012 and ADR 0008 were
+// written to make impossible. Absent stays absent: an actor that does not
+// report a reason omits the key and the column stays NULL.
 type InvocationResult struct {
 	Outcome           string          `json:"outcome"`
 	Output            json.RawMessage `json:"output"`
@@ -142,6 +254,7 @@ type InvocationResult struct {
 	ArtifactRefs      []string        `json:"artifact_refs"`
 	ContinuationRef   *string         `json:"continuation_ref"`
 	Usage             *Usage          `json:"usage"`
+	TerminationReason *string         `json:"termination_reason,omitempty"`
 	WorkspaceMeasured json.RawMessage `json:"workspace_measured,omitempty"`
 }
 
@@ -201,6 +314,19 @@ const (
 	EventProgress EventKind = "progress"
 	// EventArtifact announces an artifact reference.
 	EventArtifact EventKind = "artifact"
+	// EventSignal asks the control plane to append a signal event on the
+	// emitting attempt's behalf and deliver it (issue #43 task t21, design
+	// D11). It is NON-TERMINAL, and that is the whole feature: an agent node
+	// that needs a human answer, a sibling branch woken, or a downstream run
+	// nudged emits the event and KEEPS WORKING. The attempt's lease and
+	// fencing state are untouched — only terminal kinds commit workflow state
+	// — so emission can never complete or block the session that emitted it.
+	//
+	// The event it appends is actor-reported information, never observed
+	// evidence (PRD §10.4): its emitter is derived from the verified attempt
+	// context, never from the payload, so an actor cannot emit as somebody
+	// else.
+	EventSignal EventKind = "signal"
 	// EventCompleted is terminal: the actor produced a domain outcome.
 	EventCompleted EventKind = "completed"
 	// EventFailed is terminal: the dispatch itself failed.
@@ -222,11 +348,13 @@ func (k EventKind) Terminal() bool {
 	}
 }
 
-// Valid reports whether k is one of §13.4's kinds.
+// Valid reports whether k is one of §13.4's kinds, or the additive `signal`
+// kind this control plane extends the section with (design D11, the same way
+// ADR 0008/0009/0010 extended §13.2 additively).
 func (k EventKind) Valid() bool {
 	switch k {
 	case EventAccepted, EventHeartbeat, EventProgress, EventArtifact,
-		EventCompleted, EventFailed, EventBlocked:
+		EventCompleted, EventFailed, EventBlocked, EventSignal:
 		return true
 	default:
 		return false
@@ -256,6 +384,20 @@ type CompletedPayload struct {
 	LedgerDelta  *LedgerDelta    `json:"ledger_delta"`
 	ArtifactRefs []string        `json:"artifact_refs"`
 	Usage        *Usage          `json:"usage"`
+	// ContinuationRef is InvocationResult's field, arriving on §13.4's
+	// terminal event (ADR 0010 §2). Its absence here was the sharper half
+	// of the gap that ADR closes: a long session is precisely the one that
+	// answers asynchronously, so a handle only the synchronous body could
+	// carry was unreachable exactly where continuation is worth most.
+	//
+	// FailedPayload deliberately has no twin of this field: a ref is a
+	// claim that a resumable conversation exists, and a bridge reporting a
+	// failed turn is the least reliable position from which to make it.
+	ContinuationRef *string `json:"continuation_ref,omitempty"`
+	// TerminationReason is InvocationResult's field, for the same reason an
+	// actor that finished late reports the same Usage block: the answer is
+	// the same kind of answer whichever path carried it.
+	TerminationReason *string `json:"termination_reason,omitempty"`
 	// WorkspaceMeasured carries the same bridge-measured block
 	// InvocationResult does — an actor that finished late measured its
 	// workspace exactly like one that finished inline.
@@ -277,12 +419,50 @@ type CompletedPayload struct {
 // still have changed the workspace, and that fact is worth exactly as much
 // on a failure as on a success. A bridge that could not measure sends
 // `measured:false`; an actor that reports nothing omits the key.
+//
+// TerminationReason is optional and is emphatically not a duplicate of
+// Class: the class is how the CONTROL PLANE classifies the failure (§13.5,
+// one of a fixed set that decides retry and routing), while the reason is
+// what the PROVIDER said about how the turn ended. A failed turn is the
+// case where the two differ most — and, per ADR 0009, the case where a
+// reason most often exists with no usage block to carry it.
+//
+// Preserve is optional the same way WorkspaceMeasured is: a bridge attaches
+// it only when preserve-on-failure actually ran (task t25's own gate — never
+// on a domain outcome, only a genuine technical failure), so most failed
+// events carry none.
 type FailedPayload struct {
 	Class             ErrorClass      `json:"class"`
 	Message           string          `json:"message"`
 	Detail            string          `json:"detail,omitempty"`
 	Usage             *Usage          `json:"usage,omitempty"`
+	TerminationReason *string         `json:"termination_reason,omitempty"`
 	WorkspaceMeasured json.RawMessage `json:"workspace_measured,omitempty"`
+	Preserve          *Preserve       `json:"preserve,omitempty"`
+}
+
+// Signal event scopes. A `run`-scoped emission is delivered as a fact about
+// the emitting run (only that run's subscriptions and routes see it); a
+// `namespace`-scoped one is delivered namespace-wide, which is how one run's
+// node wakes another run.
+const (
+	SignalScopeRun       = "run"
+	SignalScopeNamespace = "namespace"
+)
+
+// SignalPayload is the body of a `signal` event: the name the control plane
+// appends the fact under, the free-form body, and how widely it is delivered.
+//
+// There is deliberately no emitter field. The emitter is derived from the
+// verified attempt context (callback.go's signalEmitter) precisely because
+// this is the one callback kind that writes a fact OTHER runs can act on —
+// letting the caller name itself would let any actor holding one attempt's
+// token emit as any node it liked.
+type SignalPayload struct {
+	Name    string          `json:"name"`
+	Payload json.RawMessage `json:"payload,omitempty"`
+	// Scope is "run" (the default when absent) or "namespace".
+	Scope string `json:"scope,omitempty"`
 }
 
 // AcceptedPayload is the body of an `accepted` event. It may restate the

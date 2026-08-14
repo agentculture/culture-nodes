@@ -449,3 +449,115 @@ def test_async_dispatch_measures_real_workspace_facts_around_the_session(tmp_pat
         receiver.close()
         srv.shutdown()
         srv.server_close()
+
+
+# ---------------------------------------------------------------------------
+# t25 (c26/h17, c41/h34): preserve-on-failure wired end to end
+# ---------------------------------------------------------------------------
+
+
+def test_sync_dispatch_preserves_workspace_changes_on_a_real_failure(tmp_path, monkeypatch):
+    """A genuine execution failure (never a domain outcome) over the real
+    HTTP surface: the failed session's uncommitted edit lands on a
+    code-minted preserve branch, and the failure body records it — pushed
+    False / local_only True, since no remote is configured here."""
+    monkeypatch.setenv("FAKE_CLAUDE_VERSION", "2.1.226")
+    monkeypatch.setenv("FAKE_CLAUDE_SUBTYPE", "error_during_execution")
+    monkeypatch.setenv("FAKE_CLAUDE_IS_ERROR", "1")
+    monkeypatch.setenv("FAKE_CLAUDE_RESULT_TEXT", "t25 simulated failure")
+    repo = tmp_path / "repo"
+    _git_init_repo(repo)
+    (repo / "note.txt").write_text("left behind by the failed session\n")
+
+    srv, cfg = _bridge(repo, tmp_path, preserve_push=False)
+    try:
+        host, port = srv.server_address
+        base = f"http://{host}:{port}"
+        headers = {
+            "Authorization": f"Bearer {cfg.auth_token}",
+            "Idempotency-Key": "att_preserve_sync",
+        }
+        body = _invocation_body(
+            repo,
+            instruction="fail on purpose (t25 sync)",
+            run_id="run_preserve_sync",
+            attempt_id="att_preserve_sync",
+            callback_url="http://127.0.0.1:1/unused",
+            callback_token="unused",
+        )
+        status, response = _request(base, server.INVOCATIONS_PATH, body=body, headers=headers)
+        assert status == 500, response
+        preserve_block = response["preserve"]
+        assert preserve_block["attempted"] is True
+        assert preserve_block["committed"] is True
+        assert preserve_block["pushed"] is False
+        assert preserve_block["local_only"] is True
+        assert preserve_block["branch"]
+        assert preserve_block["commit"]
+
+        show = subprocess.run(
+            ["git", "show", "--stat", preserve_block["commit"]],
+            cwd=repo,
+            check=True,
+            capture_output=True,
+            text=True,
+        ).stdout
+        assert "note.txt" in show
+        # The failed dispatch never moved the live checkout off its branch.
+        current_branch = subprocess.run(
+            ["git", "rev-parse", "--abbrev-ref", "HEAD"],
+            cwd=repo,
+            check=True,
+            capture_output=True,
+            text=True,
+        ).stdout.strip()
+        assert current_branch != preserve_block["branch"]
+    finally:
+        srv.shutdown()
+        srv.server_close()
+
+
+def test_async_dispatch_preserves_workspace_changes_on_a_real_failure(tmp_path, monkeypatch):
+    """The async equivalent: preserve rides the `failed` terminal callback
+    event, never the `completed` one."""
+    monkeypatch.setenv("FAKE_CLAUDE_VERSION", "2.1.226")
+    monkeypatch.setenv("FAKE_CLAUDE_SUBTYPE", "error_during_execution")
+    monkeypatch.setenv("FAKE_CLAUDE_IS_ERROR", "1")
+    monkeypatch.setenv("FAKE_CLAUDE_STREAM_DELAY", "0.02")
+    repo = tmp_path / "repo"
+    _git_init_repo(repo)
+    (repo / "note.txt").write_text("left behind by the failed async session\n")
+
+    srv, cfg = _bridge(repo, tmp_path, preserve_push=False)
+    receiver = FakeCallbackReceiver()
+    try:
+        host, port = srv.server_address
+        base = f"http://{host}:{port}"
+        headers = {
+            "Authorization": f"Bearer {cfg.auth_token}",
+            "Idempotency-Key": "att_preserve_async",
+        }
+        body = _invocation_body(
+            repo,
+            instruction="fail on purpose (t25 async)",
+            run_id="run_preserve_async",
+            attempt_id="att_preserve_async",
+            callback_url=receiver.url,
+            callback_token="async-preserve-token",
+            **{"async": True},
+        )
+        status, accepted = _request(base, server.INVOCATIONS_PATH, body=body, headers=headers)
+        assert status == 202, accepted
+
+        failed_event = receiver.wait_for_kind("failed", timeout=30)
+        assert failed_event is not None
+        preserve_block = failed_event["payload"]["preserve"]
+        assert preserve_block["attempted"] is True
+        assert preserve_block["committed"] is True
+        assert preserve_block["pushed"] is False
+        assert preserve_block["local_only"] is True
+        assert preserve_block["branch"]
+    finally:
+        receiver.close()
+        srv.shutdown()
+        srv.server_close()

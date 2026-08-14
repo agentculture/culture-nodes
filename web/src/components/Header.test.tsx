@@ -66,6 +66,38 @@ describe("Header mesh link (task t18)", () => {
   });
 });
 
+describe("Header node graphs link (task t28)", () => {
+  it("routes to /graphs and marks it active there", () => {
+    renderHeader(["/graphs"]);
+    const graphs = screen.getByRole("link", { name: "Node Graphs" });
+    expect(graphs).toHaveAttribute("href", "/graphs");
+    expect(graphs).toHaveClass("is-active");
+  });
+
+  it("stays marked active on a Node Graphs sub-tab URL", () => {
+    renderHeader(["/graphs?tab=active"]);
+    expect(screen.getByRole("link", { name: "Node Graphs" })).toHaveClass(
+      "is-active",
+    );
+  });
+});
+
+describe("Header plan link (task t23)", () => {
+  it("routes to /plan and marks it active there", () => {
+    renderHeader(["/plan"]);
+    const plan = screen.getByRole("link", { name: "Plan" });
+    expect(plan).toHaveAttribute("href", "/plan");
+    expect(plan).toHaveClass("is-active");
+  });
+
+  it("stays marked active on a specific plan slug URL", () => {
+    renderHeader(["/plan/economy-discord-graphs"]);
+    expect(screen.getByRole("link", { name: "Plan" })).toHaveClass(
+      "is-active",
+    );
+  });
+});
+
 describe("Header active view marking", () => {
   it("marks the current view's link with is-active and no other", () => {
     renderHeader(["/board"]);

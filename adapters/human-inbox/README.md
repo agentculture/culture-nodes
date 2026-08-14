@@ -69,7 +69,10 @@ Human surface (same server, same bearer token):
 
 * `GET /inbox/tasks?status=pending` — list tasks; callback credentials are
   redacted from every listing.
-* `POST /inbox/tasks/<id>/submit` — body `{outcome, output?, note?}`.
+* `POST /inbox/tasks/<id>/submit` — body `{outcome, output?, note?}` for a
+  manual submission. The sibling merge tracker adds a validated
+  `observed: {collection_method, merge_commit}` marker; manual clients do
+  not need to send it.
   `outcome` is required and never defaulted: a person who did not say what
   happened has not answered. `output` must be a JSON object when present
   (it is bound into the node's contract-shaped output).
@@ -231,6 +234,244 @@ uv run human-inbox-bridge serve --config bridge.json
 # or, without installing the console script:
 uv run python -m human_inbox_bridge serve
 ```
+
+## Observable-declaration convention (t15 / c11 / h8)
+
+A workflow node that targets a `kind=human` actor through this bridge can
+declare an **observable** in its input: any non-`instruction` key round-trips
+verbatim into the bridge's stored `extra_input` (server.py line 369:
+`extra_input={k: v for k, v in raw_input.items() if k != "instruction"}`),
+where an external tracker reads it to watch for real-world completion.
+
+```yaml
+input:
+  bindings:
+    instruction: /run/input/merge_instruction
+    prNumber: /nodes/fix/output
+    observe:
+      kind: github_pr_merged
+      pr: /nodes/fix/output/pr_number   # or a literal: pr: 42
+```
+
+The tracker contract:
+
+* **Auto-submit on merge only.** When the tracker observes the declared
+  observable reaching its target state (e.g. a `github_pr_merged` event
+  for the given PR), it calls the bridge's existing submit surface
+  (`POST /inbox/tasks/<id>/submit`) with the observed outcome — no human
+  intervention needed.
+* **Manual submit always remains.** A person can still submit the task
+  through the inbox surface at any time; the tracker's auto-submission
+  does not remove or block the manual path.
+* **Only declared observables are watched.** Tasks with no `observe` key
+  behave exactly as today — purely manual.
+
+The `observe` value is a free-form object; the tracker interprets the
+`kind` field to select the right external check. Two kinds are supported:
+`github_pr_merged` (t16, merge-as-action) and `github_pr_reply` (issue #71,
+the pr-upkeep decision node). Both accept `repo: owner/name`; when absent,
+the tracker uses its configured default repository.
+
+`github_pr_merged`: a task-level `input.success_outcome` is used when
+present; otherwise this observation kind reports its unambiguous `merged`
+outcome.
+
+`github_pr_reply`: three outcomes, all optionally renamed per-task via
+`answered_outcome`/`merged_outcome`/`dropped_outcome` in the `observe`
+block (defaulting to those three literal names) — a qualifying reply
+submits the answered outcome, the PR being merged submits the merged
+outcome, and the PR closing unmerged submits the dropped outcome. See
+"The github_pr_reply observation kind" below for the full contract and its
+rate-budget arithmetic.
+
+### Running the GitHub merge tracker
+
+The tracker is a separate stdlib-only process beside the bridge. It reads
+only `pending` task files from the same durable state directory, calls
+`GET /repos/{repo}/pulls/{number}` anonymously for public repositories or
+with `GITHUB_TOKEN` when one is present, and talks back only to the bridge's
+authenticated submit surface. It never calls the Culture Nodes control
+plane. `merged: true` plus a non-empty `merge_commit_sha` is the sole
+auto-submit state; `closed` with `merged: false`, malformed or unsupported
+declarations, and undeclared tasks stay manual.
+
+```bash
+# Optional: export GITHUB_TOKEN=... for private repositories or higher cadence
+export HUMAN_INBOX_BRIDGE_AUTH_TOKEN=...       # submit auth to the sibling bridge
+export HUMAN_INBOX_BRIDGE_STATE_DIR=.human-inbox-bridge-state
+export HUMAN_INBOX_TRACKER_DEFAULT_REPO=agentculture/culture-nodes
+
+uv run python -m human_inbox_bridge.tracker
+# operational/test probe: run exactly one bounded cycle
+uv run python -m human_inbox_bridge.tracker --once
+```
+
+| Env var | Default | Meaning |
+|---|---|---|
+| `GITHUB_TOKEN` | unset | Optional GitHub bearer token; unset selects anonymous public-repository polling (60 requests/hour), present selects authenticated polling (5,000 requests/hour) |
+| `HUMAN_INBOX_TRACKER_STATE_DIR` | bridge config's `state_dir` | Durable bridge state directory to scan read-only |
+| `HUMAN_INBOX_TRACKER_BRIDGE_URL` | loopback + bridge config's `port` | Sibling bridge base URL |
+| `HUMAN_INBOX_BRIDGE_AUTH_TOKEN` | bridge config's `auth_token` | Bearer token for the bridge submit surface |
+| `HUMAN_INBOX_TRACKER_DEFAULT_REPO` | unset | Fallback GitHub `owner/repository` when `observe.repo` is absent |
+| `HUMAN_INBOX_TRACKER_POLL_SECONDS` | `60` | Requested delay between cycles; clamped to the active lane's minimum safe cadence (60 seconds anonymous, 0.72 seconds authenticated) |
+| `HUMAN_INBOX_TRACKER_GITHUB_REQUEST_BUDGET` | `50` | Requested maximum unique PR GETs per cycle (`0` disables GitHub requests); clamped so `budget × 3600 / poll_seconds` cannot exceed the active lane's hourly ceiling |
+| `HUMAN_INBOX_TRACKER_HTTP_TIMEOUT_SECONDS` | `30` | Timeout for each GitHub GET and bridge POST |
+| `HUMAN_INBOX_TRACKER_REPLY_IGNORED_LOGINS` | unset | Comma-separated extra GitHub logins the `github_pr_reply` "which reply counts" rule ignores, ALWAYS unioned with the built-in default (`qodo-code-review[bot]`) — an operator cannot accidentally re-admit it |
+
+At the defaults, anonymous mode makes at most one request per cycle and
+rotates that request fairly across distinct watched PRs. Authenticated mode
+makes at most 50 per cycle. A GitHub rate-limit response backs off to the
+reported reset time and retries on the next cycle; a non-rate-limit `403` is
+logged separately as a permission problem.
+
+An automatic submit uses the task success outcome and a note naming the
+merge commit, plus this explicit marker:
+
+```json
+{
+  "observed": {
+    "collection_method": "github_pr_merged",
+    "merge_commit": "9f64f1bc75353f4b2e6b232f5668e338168b794e"
+  }
+}
+```
+
+The server validates that exact marker shape. Mapping then emits a
+`data.kind: "observed-submission"` claim carrying the collection method
+and merge commit. The record remains `authority: "proposed"` and retains
+the bridge actor origin; this attribution does not claim runner-observed
+authority. A submission without the marker follows the original
+`human-submission` mapping unchanged, even when its task has an `observe`
+declaration.
+
+### The github_pr_reply observation kind (issue #71)
+
+`examples/pr-upkeep`'s decision node (`human-answers-review`) parks on
+`observe: {kind: github_pr_reply, pr: ...}` — the SAME park/observe/
+auto-submit shape `github_pr_merged` uses, generalized to a PR THREAD
+rather than only a PR's merge state, with three possible auto-submitted
+outcomes instead of one.
+
+**Which reply counts.** GitHub's own `since` query parameter on
+`GET /repos/{repo}/issues/{pr}/comments` already scopes every fetch to
+comments posted strictly after the task's OWN `created_at` (the moment the
+question was parked) — a comment from before the question was asked can
+never qualify, full stop. The only remaining filter is authorship: a
+comment counts when its author is not one of the flow's own automated
+identities (`DEFAULT_REPLY_IGNORED_LOGINS`, extended via
+`HUMAN_INBOX_TRACKER_REPLY_IGNORED_LOGINS`). No content marker (no
+"approve:" prefix or similar) is required — the question was JUST posted
+on this specific PR, so the next human comment on the thread IS the answer
+in context. This is a deliberate choice over a marker convention: a marker
+makes a person's ordinary reply invisible to the tracker unless they
+remember the exact incantation, whereas freshness + authorship already
+rules out the "resumes on an unrelated thanks" failure mode the reply
+observable has to avoid — an unrelated aside would need a non-bot author,
+posted strictly after the question, on this exact PR, which in practice
+only the person actually answering does.
+
+**Terminal states release the wait.** Before checking for a reply, the
+tracker checks the PR's own state (the SAME `GET /repos/{repo}/pulls/{pr}`
+call `github_pr_merged` uses): `merged: true` submits the merged outcome
+immediately (the strongest possible answer — the human merged instead of
+replying) and `state: closed` (unmerged) submits the dropped outcome
+(the run must not wait forever on a dead PR). Both are ONE-request checks
+that short-circuit before ever calling the comments endpoint.
+
+**Rate-budget arithmetic.** `github_pr_reply` shares ONE GitHub request
+budget with `github_pr_merged` — `github_request_budget` is not raised and
+`poll_seconds` is not shortened for this kind. Anonymous-lane worst case
+(no `GITHUB_TOKEN`, `HUMAN_INBOX_TRACKER_RATE_UTILIZATION` at its default
+0.5): `TrackerConfig.__post_init__`'s clamp yields `poll_seconds=120`,
+`github_request_budget=1` — one GitHub request every 120 seconds, 30
+requests/hour against the 60/hour anonymous ceiling, and that arithmetic
+does not change no matter how many `(kind, repo, pr)` groups — merge OR
+reply — are pending; a new kind only adds entrants to the SAME
+round-robin queue sharing that one request per cycle. What DOES change is
+detection latency: a reply-kind group's full check (terminal-state GET,
+then a comments GET when the PR is still open) costs up to TWO of those
+per-cycle budget units versus a merge-kind group's one, so at budget=1 an
+open reply-kind group needs at least two cycles (up to ~240s) to complete
+one full pass. `MergeTracker._check_reply_group` degrades by SKIPPING the
+comments call rather than partially spending past the budget when only one
+unit remains — the group just waits for the next cycle. Reply-kind groups
+are checked BEFORE merge-kind groups each cycle (a human is actively
+blocked on a reply-kind group, whereas a merge-kind group's human can act
+at their own pace) — this reprioritises the same fixed budget, it does not
+grow it. `tests/test_tracker.py`'s
+`test_reply_groups_are_checked_before_merge_groups_share_the_same_budget`
+pins this ordering, and the `test_reply_group_does_not_spend_a_second_
+request_when_budget_is_one` /
+`test_qualifying_reply_completes_with_answered_outcome` pair pin the
+1-vs-2-request costs.
+
+An automatic submit for this kind carries a matching `observed` marker —
+`{"collection_method": "github_pr_reply", "reference": "<comment URL>"}`
+for a reply, `{"collection_method": "github_pr_merged", "merge_commit":
+"<sha>"}` for a merge (reusing the SAME collection method and field
+`github_pr_merged` already uses), or `{"collection_method":
+"github_pr_closed", "reference": "<PR URL>"}` for an unmerged close. The
+server's `mapping.py` validates each collection method against its own
+required-field set (`merge_commit` for `github_pr_merged`, `reference` for
+`github_pr_reply`/`github_pr_closed`) — adding a new collection method is
+a one-line addition to that map, not a bespoke validation branch.
+
+## Nudge transport
+
+When a human task sits in the inbox for too long, the tracker can **nudge**
+the person through a Discord channel instead of relying on the manual inbox
+surface.  Nudging is **opt-in**: it requires all four `DISCORD_NUDGE_*`
+environment variables to be set; without them the tracker behaves exactly as
+before.
+
+### How it works
+
+The tracker runs a nudge cycle after every merge-observation cycle.  For
+each pending task that has no nudge state yet, it calls
+`nudge.first_nudge()` which creates a **thread per task** in the configured
+Discord channel.  Subsequent cycles check the cadence:
+
+* **First nudge** — creates a new thread with the task instruction and
+  persists `thread_id`, `last_nudge_at`, `last_seen_message_id`, and
+  `escalation_level` in the task's `nudge_state`.
+* **Cadence nudge** — when `nudge_interval_seconds` has elapsed since the
+  last nudge, a follow-up message is posted in the existing thread.
+* **Escalation** — when `nudge_escalation_after_seconds` has elapsed since
+  the first nudge, the tracker escalates (levels 0 → 1 → 2), posting a
+  higher-priority message in the same thread.
+* **Reply polling** — after nudging, the tracker polls for new replies in
+  each thread.  A reply is relayed through the bridge's submit surface,
+  completing the task.
+
+The nudge cycle is **idempotent**: it never sends duplicate nudges for the
+same thread, and it never blocks the main merge observation path.  If the
+nudge module is unavailable (import error), the tracker silently skips
+nudging.
+
+### Thread-per-task model
+
+Each pending task gets its own Discord thread.  The thread is identified by
+`thread_id` stored in the task's `nudge_state` dict (persisted in the
+task's JSON file).  This means:
+
+* A person can reply in the thread and the tracker picks up the reply.
+* Multiple tasks never share a thread — no cross-talk.
+* A restart resumes from the persisted `thread_id`; no new threads are
+  created for tasks that already have one.
+
+### Configuration
+
+| Env var | Default | Meaning |
+|---|---|---|
+| `DISCORD_NUDGE_CHANNEL_ID` | unset | Discord channel to post nudges in (required for nudging) |
+| `DISCORD_NUDGE_BOT_TOKEN` | unset | Discord bot token (required for nudging) |
+| `DISCORD_NUDGE_INTERVAL_SECONDS` | `300` | Seconds between cadence nudges on the same thread |
+| `DISCORD_NUDGE_GLOBAL_THROTTLE_SECONDS` | `10` | Minimum wall-clock gap between any two nudge sends |
+| `DISCORD_NUDGE_ESCALATION_AFTER_SECONDS` | `600` | Seconds after first nudge before escalation kicks in |
+
+All five must be present for nudging to be enabled.  The channel ID and bot
+token are the gate: if either is empty, the tracker treats nudging as
+disabled and skips the nudge cycle entirely.
 
 ## Tests
 

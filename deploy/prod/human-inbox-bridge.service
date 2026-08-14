@@ -1,0 +1,40 @@
+# systemd user unit for the human-inbox actor bridge (adapters/human-inbox,
+# task t16) — a kind=human actor-protocol bridge that parks culture-nodes
+# invocations as durable inbox tasks until a person (or the sibling
+# human-inbox-tracker.service) submits a result. Deployed on THOR ONLY
+# (task t34): there is exactly one logical human actor
+# (company/human-ops), unlike codex's per-host actors, so a second
+# bridge on orin would just create a second inbox racing the same tasks
+# against the same actor row.
+#
+# Host-resident Python, execing the console script `uv tool install` copied
+# into its own venv. It used to run `uv run --directory` against the shared
+# ~/git/culture-nodes-agent checkout — but that is the codex AGENT WORKSPACE,
+# which the codex-bridge lane fast-forwards to main, so a branch deploy
+# installed units whose code was not in the directory they ran from. The
+# tracker crash-looped 6272 times on that before it was found.
+#
+# Installed by deploy.sh's human-inbox lane to
+# ~/.config/systemd/user/human-inbox-bridge.service.
+#
+#   systemctl --user daemon-reload
+#   systemctl --user enable --now human-inbox-bridge
+#   journalctl --user -u human-inbox-bridge -f
+
+[Unit]
+Description=Culture Nodes human-inbox actor bridge (kind=human, runner protocol)
+After=network-online.target
+
+[Service]
+# Non-secret config (host/port/state dir/actor id) rides one EnvironmentFile,
+# the bearer token rides a second, separately-installed one — mirroring
+# nodes-runner.env vs runner.secret and codex-bridge.env's own split of
+# config from credential.
+EnvironmentFile=%h/.culture-nodes/human-inbox-bridge.env
+EnvironmentFile=%h/.culture-nodes/human-inbox.env
+ExecStart=%h/.local/bin/human-inbox-bridge serve
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=default.target

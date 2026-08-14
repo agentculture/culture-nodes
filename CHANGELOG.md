@@ -5,6 +5,73 @@ All notable changes to this project will be documented in this file.
 Format follows [Keep a Changelog](https://keepachangelog.com/). This project
 adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.16.0] - 2026-08-14
+
+### Added
+
+- Session resume across all three bridges: claude via `--resume`, codex via
+  `exec resume`, colleague via `work --continue` (deviation d1). `session_key`
+  and `continuation_ref` are transport keys and never reach prompt text.
+- Session-key serialization: exactly one in-flight invocation per key. A
+  collision forks rather than queues and says so — `X-Session-Fork` header, a
+  registry event and a log line — so a spent session is never inferred.
+- Preserve-on-failure: a failed node's work is committed to a branch through
+  git plumbing against a scratch index, leaving HEAD, the index and the
+  working tree untouched. Surfaced on the attempt row (migration 0025), the
+  API and the run detail page, with pushed and local-only visibly different.
+- Plan ingestion: `MapPlanShow` (real dependency edges, not the lossy waves
+  view) and `MapDeviations` (origin user vs llm), a durable store (migration
+  0024), an import API and CLI verb, and the Implement-Plan dashboard view.
+- A domain-agnostic claim-chain verifier and `nodes chain-verify`, proving the
+  decompose pipeline generalizes beyond code.
+- The notify actor (#68): a workflow can send a message as a declared step,
+  with the webhook URL held outside the control plane and a CI gate proving it.
+- `nodes doctor` reports whether this host can start a bubblewrap sandbox at
+  all, so a dispatched actor learns it before spending a session.
+
+### Changed
+
+- The merge tracker's `GITHUB_TOKEN` is optional; the anonymous lane plans for
+  half of GitHub's per-IP ceiling rather than all of it.
+- Bridges classify provider quota and rate-limit failures as
+  `capacity_exhausted`, carrying Retry-After.
+
+### Fixed
+
+- Deploy installed human-inbox units that ran from the codex agent checkout —
+  a directory pinned to main — so the tracker crash-looped 6272 times over
+  nine hours while merge-as-action was silently dead.
+- Bridges reported an actor *key* where `ledger_records.origin_actor_id`
+  requires an actor *row id*, rolling back every terminal commit.
+- A deploy no longer reports success over a unit that is restarting in a loop.
+
+### Notes
+
+- Session stickiness stays **opt-in**: two live A/B runs measured 0.0%
+  uncached-input reduction. The mechanism works and was verified to resume;
+  the benefit did not appear in the metric. See
+  `docs/deliveries/2026-08-14-t7-stickiness-ab.md`.
+
+## [0.15.0] - 2026-08-13
+
+### Added
+
+- Extended attempt usage telemetry (migration 0017): cached-input, reasoning, model, thread and termination-reason fields carried protocol → engine → store → API → dashboard, with a cache-hit-rate tile in Statistics (ADR 0009).
+- `continuation_ref` carriage (migration 0018): the field lands on the invocation request and the completed payload, persists per attempt, and dispatch offers the prior ref back to the same actor within a run (ADR 0010).
+- Parallel tokens in full (migration 0019, issue #43): `parallel`/`join` node kinds, set-valued transition plans, token groups with race-free join-barrier counting, per-token bounds, sibling reaping with branch-cancel propagation, and `maxParallelTokens` finally honored.
+- `capacity_exhausted` error class (§13.5): body-declared, non-retryable in-attempt, with Retry-After surviving onto the terminal error.
+- `internal/notify` + `cmd/nodes-notifier`: a Discord webhook layer ported from devex's design and an out-of-process SSE consumer with a durable cursor, exactly-once delivery across restarts, and zero control-plane changes.
+- Human-inbox merge tracker (issue #54): declared observables ride the task input, a stdlib GitHub poller auto-submits only the merged state as an `observed-submission` claim naming the merge commit, and manual submission stays the override lane.
+- Node Graphs tab (issue #56) replacing Workflows: Nodes / Node Graphs / Active Graphs sub-tabs, a cross-workflow node catalog derived from published IRs, and Active Graphs with a breathing halo and committed-event pulses (reduced-motion safe, palette-pinned).
+- Dashboard auto-refresh (issue #46): one shared app-wide event stream with per-view subscriptions, stale-while-revalidate preserved across every view.
+- Deploy-lane wiring for the notifier and the human-inbox bridge + tracker on thor, with secret plumbing through `install-secrets.sh`.
+
+### Fixed
+
+- Bridge usage honesty across all three backends: cache/reasoning/model/thread telemetry is mapped where the backend reports it, and a codex turn that reports no usage now emits no usage block at all — fabricated `0/0` usage on failed turns is structurally impossible.
+- Inbox no longer regresses agent-state to `loading` on a decision-driven reload.
+- OpenAPI node-run status enums were missing `waiting_human` (pre-existing drift) alongside the new `waiting_join`.
+
 ## [0.14.1] - 2026-08-13
 
 ### Added

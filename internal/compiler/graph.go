@@ -59,8 +59,21 @@ func (c *compilation) checkGraph() {
 	// into a wave of "unreachable" noise.
 	adjacency := make(map[string][]string, len(nodes))
 
+	// eventTargets are the nodes an `onEvent` edge can create a token at
+	// (issue #43, design D9). They are reachability ROOTS beside the entry
+	// node: a node an event picks up is reached by the world, not by a path
+	// from the entry, and calling it unreachable would refuse exactly the
+	// graphs this feature exists to allow.
+	var eventTargets []string
+
 	for i, e := range c.doc.Spec.Edges {
 		base := "/spec/edges/" + strconv.Itoa(i)
+
+		if e.OnEvent != "" {
+			c.checkEventEdge(base, e, &eventTargets)
+			continue
+		}
+
 		fromNode, outcome, ok := splitEdgeFrom(e.From)
 		if !ok {
 			// The schema's `from` pattern already rejected this; saying so
@@ -87,6 +100,17 @@ func (c *compilation) checkGraph() {
 				c.add(LevelError, base+"/from", CodeGraphEdgeFromEndNode,
 					fmt.Sprintf("node %q is an end node and produces the workflow result; it has no outgoing edges", fromNode),
 					"remove the edge, or change the node's kind if the run should continue")
+			case outcome == OutcomeBudgetExhausted && !budgetGuardedKinds[source.Kind]:
+				// The refusal name is reserved but not universal: only a
+				// kind whose dispatch the budget guards can ever produce it.
+				c.add(LevelError, base+"/from", CodeGraphOutcomeUndeclared,
+					fmt.Sprintf("node %q is kind %q, whose dispatch the economic budget does not guard, so it can never produce outcome %q",
+						fromNode, source.Kind, OutcomeBudgetExhausted),
+					fmt.Sprintf("route %q only from an agent or action.http node; the budget is enforced at the actor-dispatch site",
+						OutcomeBudgetExhausted))
+			case outcome == OutcomeBudgetExhausted:
+				// Routable on a guarded kind without being declared anywhere,
+				// exactly like a technical status.
 			case !technicalStatuses[outcome] && !contains(declaredOutcomes(source), outcome):
 				c.add(LevelError, base+"/from", CodeGraphOutcomeUndeclared,
 					fmt.Sprintf("node %q does not declare outcome %q", fromNode, outcome),
@@ -106,7 +130,7 @@ func (c *compilation) checkGraph() {
 		return
 	}
 
-	reachable := reachableFrom(entry, adjacency)
+	reachable := reachableFrom(append([]string{entry}, eventTargets...), adjacency)
 
 	for _, id := range sortedKeys(nodes) {
 		if !reachable[id] {
@@ -145,10 +169,43 @@ func contains(haystack []string, needle string) bool {
 	return false
 }
 
-// reachableFrom walks the graph breadth-first from start.
-func reachableFrom(start string, adjacency map[string][]string) map[string]bool {
-	seen := map[string]bool{start: true}
-	queue := []string{start}
+// checkEventEdge validates one `onEvent` edge and records its target as a
+// reachability root. Two refusals, both structural:
+//
+//   - the target must exist, like any edge target;
+//   - the target must not be an `end` node. A run must not COMPLETE as a side
+//     effect of an event arriving: completion resolves the workflow's output
+//     and, with parallel tokens, has to be able to prove no sibling is still
+//     live (design D7). An event that could end a run from the outside would
+//     race both of those guarantees, and the honest place to say so is here.
+func (c *compilation) checkEventEdge(base string, e edge, eventTargets *[]string) {
+	target, ok := c.doc.Spec.Nodes[e.To]
+	if !ok {
+		c.add(LevelError, base+"/to", CodeGraphEdgeTargetUnknown,
+			fmt.Sprintf("event edge target %q is not declared in spec.nodes", e.To),
+			fmt.Sprintf("point the edge at one of: %s", strings.Join(sortedKeys(c.doc.Spec.Nodes), ", ")))
+		return
+	}
+	if target.Kind == KindEnd {
+		c.add(LevelError, base+"/to", CodeGraphEventEdgeToEnd,
+			fmt.Sprintf("event %q routes to end node %q; a run must not complete as a side effect of an event being delivered", e.OnEvent, e.To),
+			"route the event at a working node and let the run reach its end node through the graph")
+		return
+	}
+	*eventTargets = append(*eventTargets, e.To)
+}
+
+// reachableFrom walks the graph breadth-first from every root.
+func reachableFrom(roots []string, adjacency map[string][]string) map[string]bool {
+	seen := make(map[string]bool, len(roots))
+	queue := make([]string, 0, len(roots))
+	for _, root := range roots {
+		if seen[root] {
+			continue
+		}
+		seen[root] = true
+		queue = append(queue, root)
+	}
 	for len(queue) > 0 {
 		current := queue[0]
 		queue = queue[1:]

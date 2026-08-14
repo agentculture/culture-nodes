@@ -255,6 +255,15 @@ func (e *Engine) CreateRun(ctx context.Context, cw *compiler.CompiledWorkflow, i
 			return err
 		}
 
+		// The run's `onEvent` edges become durable pickup routes here, in the
+		// same transaction that creates the run: a committed run always has
+		// exactly the routes its definition declares, so there is no window
+		// in which a run exists but an event delivered to it finds nothing to
+		// match (issue #43, design D9).
+		if err := e.materializeEventRoutes(ctx, tx, wf, run, now); err != nil {
+			return err
+		}
+
 		// The entry node has no producing edge — dispatchNode's
 		// edgeFromNode/edgeFromOutcome are empty, matching what a human task
 		// created here has to say about what put the run there.

@@ -29,8 +29,8 @@
 #
 # Env overrides (all optional):
 #   NODES_API_URL           default: http://thor:18080
-#   THOR_REPO               default: /home/thor/git/culture-nodes-agent
-#   ORIN_REPO               default: /home/orin/git/culture-nodes-agent
+#   FIRST_REPO              default: /home/thor/git/culture-nodes-agent
+#   SECOND_REPO             default: /home/orin/git/culture-nodes-agent
 #   SMOKE_INSTRUCTION       default: read-only HEAD/README check (see below)
 #   SMOKE_SANDBOX           default: read-only
 #   SMOKE_SUCCESS_OUTCOME   default: completed
@@ -43,8 +43,8 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 WORKFLOW_FILE="$SCRIPT_DIR/smoke.workflow.yaml"
 
 BASE_URL="${NODES_API_URL:-http://thor:18080}"
-THOR_REPO="${THOR_REPO:-/home/thor/git/culture-nodes-agent}"
-ORIN_REPO="${ORIN_REPO:-/home/orin/git/culture-nodes-agent}"
+FIRST_REPO="${FIRST_REPO:-/home/thor/git/culture-nodes-agent}"
+SECOND_REPO="${SECOND_REPO:-/home/orin/git/culture-nodes-agent}"
 SMOKE_INSTRUCTION="${SMOKE_INSTRUCTION:-Report the repo HEAD commit (git rev-parse HEAD) and confirm you can read README.md. Make no changes.}"
 SMOKE_SANDBOX="${SMOKE_SANDBOX:-read-only}"
 SMOKE_SUCCESS_OUTCOME="${SMOKE_SUCCESS_OUTCOME:-completed}"
@@ -64,7 +64,7 @@ command -v jq >/dev/null 2>&1 || fail "jq is required"
 [ -f "$WORKFLOW_FILE" ] || fail "workflow file not found: $WORKFLOW_FILE"
 
 log "target API: $BASE_URL"
-log "thor_repo=$THOR_REPO orin_repo=$ORIN_REPO sandbox=$SMOKE_SANDBOX success_outcome=$SMOKE_SUCCESS_OUTCOME"
+log "first_repo=$FIRST_REPO second_repo=$SECOND_REPO sandbox=$SMOKE_SANDBOX success_outcome=$SMOKE_SUCCESS_OUTCOME"
 
 # --- validate ---------------------------------------------------------------
 log "POST /v1alpha1/workflows/validate"
@@ -96,9 +96,9 @@ run_input=$(jq -n \
 	--arg instruction "$SMOKE_INSTRUCTION" \
 	--arg sandbox "$SMOKE_SANDBOX" \
 	--arg success_outcome "$SMOKE_SUCCESS_OUTCOME" \
-	--arg thor_repo "$THOR_REPO" \
-	--arg orin_repo "$ORIN_REPO" \
-	'{instruction: $instruction, sandbox: $sandbox, success_outcome: $success_outcome, thor_repo: $thor_repo, orin_repo: $orin_repo}')
+	--arg first_repo "$FIRST_REPO" \
+	--arg second_repo "$SECOND_REPO" \
+	'{instruction: $instruction, sandbox: $sandbox, success_outcome: $success_outcome, first_repo: $first_repo, second_repo: $second_repo}')
 run_body=$(jq -n --arg digest "$workflow_digest" --argjson input "$run_input" '{workflow_digest: $digest, input: $input}')
 run_resp=$(curl -sS -w '\n%{http_code}' -H 'content-type: application/json' \
 	-d "$run_body" "${BASE_URL}/v1alpha1/runs")
@@ -142,10 +142,10 @@ echo "run ${run_id} reached terminal state: $final_state"
 log "node outcomes"
 jq -c '.node_runs[] | {node_id, state, outcome, attempts: (.attempts | map({actor_id, status}))}' <<<"$view_payload"
 
-thor_outcome=$(jq -r '.node_runs[] | select(.node_id == "codex-thor") | .outcome // "(none)"' <<<"$view_payload")
-orin_outcome=$(jq -r '.node_runs[] | select(.node_id == "codex-orin") | .outcome // "(none)"' <<<"$view_payload")
-echo "codex-thor outcome: $thor_outcome"
-echo "codex-orin outcome: $orin_outcome"
+first_outcome=$(jq -r '.node_runs[] | select(.node_id == "codex-first") | .outcome // "(none)"' <<<"$view_payload")
+second_outcome=$(jq -r '.node_runs[] | select(.node_id == "codex-second") | .outcome // "(none)"' <<<"$view_payload")
+echo "codex-first outcome: $first_outcome"
+echo "codex-second outcome: $second_outcome"
 
 # --- report the two proposed ledger claims --------------------------------
 log "GET /v1alpha1/runs/${run_id}/ledger -- proposed claims"
@@ -160,7 +160,7 @@ jq -c '.items[] | select(.record_type == "claim" and .authority == "proposed") |
 
 log "SMOKE COMPLETE"
 echo "run_id=$run_id final_state=$final_state workflow_digest=$workflow_digest"
-echo "codex-thor outcome=$thor_outcome codex-orin outcome=$orin_outcome proposed_claims=$claim_count"
+echo "codex-first outcome=$first_outcome codex-second outcome=$second_outcome proposed_claims=$claim_count"
 
 if [ "$final_state" != "completed" ]; then
 	fail "run did not complete cleanly (final_state=$final_state) -- see node outcomes and ledger output above for what actually happened"

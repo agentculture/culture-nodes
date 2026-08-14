@@ -37,6 +37,25 @@
 #            task adds, not wired into engine dispatch, matching
 #            internal/devague's own "pure function in, Append is a caller
 #            concern" precedent.
+#
+# Deployment configuration (task t16) — what this graph needs from outside
+# it, and where each value comes from:
+#
+#   RUN INPUT (the run's input document):
+#     topic   the subject to decompose, authored per run. It is the ONLY
+#             run input: everything else this pipeline works on, it
+#             produces, which is what makes the domain a property of the
+#             run rather than of the graph.
+#
+#   ACTOR REGISTRY (an id in `uses:`, resolved by
+#   internal/worker/registry.go against this deployment's actors table with
+#   the @sha256 revision suffix stripped):
+#     actor://company/newsletter-scout      the scope node.
+#     actor://company/newsletter-editor     the plan node.
+#     actor://company/newsletter-writer     the write node.
+#     actor://company/newsletter-verifier   the verify node.
+#   Four distinct ids because the four roles are distinct; a deployment
+#   registers them against whatever backends it has, on any host.
 apiVersion: nodes.culture.dev/v1alpha1
 kind: Workflow
 

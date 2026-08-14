@@ -14,7 +14,16 @@ The repo is HARD-CODED to culture-nodes and nothing else — spec claim c26.
 `SONAR_COMPONENT_KEY` below is the single grep-able mention of the
 SonarCloud component key in this example's configuration (the recorded
 fixtures under fixtures/ also contain the key, as data inside recorded API
-payloads, not as configuration).
+payloads, not as configuration). That pin is a deliberate blast-radius
+boundary and it is the one value a new operator changes; see the comment at
+the constants themselves for why it is a fork rather than a run input.
+
+The workflow does not ship this file inside its image. It fetches it at
+dispatch time from the URL its deployment grants
+(`PR_UPKEEP_SWEEP_SOURCE_URL`) and refuses bytes whose sha256 does not match
+the digest it also grants (`PR_UPKEEP_SWEEP_SOURCE_SHA256`), so a deployment
+that is not this one runs ITS copy of this script — with its own two
+constants — rather than ours (task t16).
 
 Exit-code contract (the workflow's `triage` decision node routes on
 `/nodes/sweep/output`'s `exit_code`, because a code node's persisted output
@@ -65,9 +74,21 @@ import sys
 import urllib.error
 import urllib.request
 
-# The one repo this sweep is allowed to look at (spec claim c26). PR
-# enumeration below stays scoped to OPEN PRs on this exact repo — it does
-# not generalise to arbitrary repos.
+# The one repo this sweep is allowed to look at (spec claim c26), and the
+# one value a new operator changes to point this example at their own — in
+# their own copy of this file, which is what the workflow's granted
+# PR_UPKEEP_SWEEP_SOURCE_URL fetches.
+#
+# These two stay HARD-CODED on purpose, and the purpose is a blast radius
+# boundary rather than an oversight. `fetch_open_pulls` below walks EVERY
+# open PR on this repo and reads each one's comments and check runs; a repo
+# taken from run input would point that enumeration at whatever a caller
+# named, on a credential this script did not choose. So the boundary is
+# pinned in code, where changing it is an edit someone makes deliberately in
+# a fork, not a field someone fills in at run time. Nothing in this module
+# may re-point it from the environment — tests/test_pr_upkeep_sweep.py's
+# TestTheSweptRepoIsPinnedAndSaysSo asserts exactly that, alongside the
+# presence of this note.
 SONAR_COMPONENT_KEY = "agentculture_culture-nodes"
 GITHUB_REPO = "agentculture/culture-nodes"
 

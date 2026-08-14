@@ -18,6 +18,27 @@
 #
 # Deliberately tiny. The point is the topology, not the answer, and a small
 # prompt keeps a real provider session cheap.
+#
+# Deployment configuration (task t16) — what this graph needs from outside
+# it, and where each value comes from. The machine names and the address
+# above are PROVENANCE: they record the topology this deployment ran the
+# proof on. None of them appears in a value below, which is the proof's
+# whole claim -- an actor lives wherever its registry row says, and this
+# document does not know.
+#
+#   RUN INPUT (the run's input document):
+#     instruction   what to ask, authored per run.
+#     repo          the working directory on whichever host the actor is
+#                   registered on. The claude-code bridge checks it against
+#                   its OWN allowlist -- an actor deciding what it will act
+#                   on, which the engine neither knows nor overrides.
+#
+#   ACTOR REGISTRY (an id in `uses:`, resolved by
+#   internal/worker/registry.go against this deployment's actors table):
+#     actor://company/developer   the agent that does the work. Its row
+#                                 carries the endpoint; on this deployment
+#                                 that endpoint is on another machine than
+#                                 the control plane, which is the point.
 apiVersion: nodes.culture.dev/v1alpha1
 kind: Workflow
 

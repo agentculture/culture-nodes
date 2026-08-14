@@ -45,6 +45,14 @@
 # Usage:
 #   CONFIRM_BILLABLE=yes ./driver.sh
 #
+# Deployment prerequisite this driver cannot supply (task t16): the sweep
+# node names its script source as a granted environment value, and those are
+# resolved by the RUNNER process, not by the run. So
+# PR_UPKEEP_SWEEP_SOURCE_URL and PR_UPKEEP_SWEEP_SOURCE_SHA256 must already
+# be in the runner's environment (deploy/prod/README.md, "Granted
+# environment values"); unset, the sweep is refused by name at the boundary
+# and this driver's run ends in `sweep_broken` -> backoff.
+#
 # Env overrides (all optional):
 #   NODES_API_URL          default: http://thor:18080
 #   PR_UPKEEP_REPO         default: /home/spark/git/culture-nodes

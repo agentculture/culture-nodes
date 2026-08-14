@@ -153,7 +153,7 @@ def test_unknown_role_is_400(bridge_url):
 def test_sync_dispatch_maps_ok_result_to_200(bridge_url, monkeypatch):
     base, cfg, repo = bridge_url
 
-    def fake_run_sync(cfg_, instruction, repo_, *, role, max_steps, mode):
+    def fake_run_sync(cfg_, instruction, repo_, *, role, max_steps, mode, continuation_ref=None):
         return colleague_cli.SyncRunResult(
             exit_code=0,
             stdout="",
@@ -191,7 +191,7 @@ def test_session_key_and_continuation_ref_never_appear_in_the_prompt_text(bridge
     base, cfg, repo = bridge_url
     captured = {}
 
-    def fake_run_sync(cfg_, instruction, repo_, *, role, max_steps, mode):
+    def fake_run_sync(cfg_, instruction, repo_, *, role, max_steps, mode, continuation_ref=None):
         captured["instruction"] = instruction
         return colleague_cli.SyncRunResult(
             exit_code=0,
@@ -230,7 +230,7 @@ def test_sync_capacity_exhausted_failure_is_500_with_retry_after_header(bridge_u
     Retry-After header internal/actors/client.go reads the delay from."""
     base, cfg, repo = bridge_url
 
-    def fake_run_sync(cfg_, instruction, repo_, *, role, max_steps, mode):
+    def fake_run_sync(cfg_, instruction, repo_, *, role, max_steps, mode, continuation_ref=None):
         return colleague_cli.SyncRunResult(
             exit_code=1,
             stdout="",
@@ -272,7 +272,7 @@ def test_sync_dispatch_maps_incomplete_without_declaration_to_execution_failure(
 ):
     base, cfg, repo = bridge_url
 
-    def fake_run_sync(cfg_, instruction, repo_, *, role, max_steps, mode):
+    def fake_run_sync(cfg_, instruction, repo_, *, role, max_steps, mode, continuation_ref=None):
         return colleague_cli.SyncRunResult(
             exit_code=2,
             stdout="",
@@ -303,7 +303,7 @@ def test_idempotent_replay_returns_the_same_response_without_recalling_colleague
     base, cfg, repo = bridge_url
     calls = []
 
-    def fake_run_sync(cfg_, instruction, repo_, *, role, max_steps, mode):
+    def fake_run_sync(cfg_, instruction, repo_, *, role, max_steps, mode, continuation_ref=None):
         calls.append(instruction)
         return colleague_cli.SyncRunResult(
             exit_code=0,
@@ -338,7 +338,7 @@ def test_validation_failure_is_not_cached_for_replay(bridge_url, monkeypatch):
     status1, body1 = _request(base, server.INVOCATIONS_PATH, body=payload, headers=headers)
     assert status1 == 400
 
-    def fake_run_sync(cfg_, instruction, repo_, *, role, max_steps, mode):
+    def fake_run_sync(cfg_, instruction, repo_, *, role, max_steps, mode, continuation_ref=None):
         return colleague_cli.SyncRunResult(
             exit_code=0,
             stdout="",
@@ -365,7 +365,9 @@ def test_async_dispatch_returns_202_and_delivers_accepted_then_completed(bridge_
     receiver = FakeCallbackReceiver()
     try:
 
-        def fake_spawn_background(cfg_, instruction, repo_, *, role, max_steps, mode):
+        def fake_spawn_background(
+            cfg_, instruction, repo_, *, role, max_steps, mode, continuation_ref=None
+        ):
             return colleague_cli.BackgroundStart(
                 handle_id="bg123",
                 pid=999999,
@@ -427,7 +429,9 @@ def test_async_dispatch_preserves_workspace_changes_on_a_real_failure(bridge_url
     receiver = FakeCallbackReceiver()
     try:
 
-        def fake_spawn_background(cfg_, instruction, repo_, *, role, max_steps, mode):
+        def fake_spawn_background(
+            cfg_, instruction, repo_, *, role, max_steps, mode, continuation_ref=None
+        ):
             return colleague_cli.BackgroundStart(
                 handle_id="bg_preserve",
                 pid=999999,
@@ -492,7 +496,9 @@ def test_async_missing_callback_is_400(bridge_url):
 def test_async_dispatch_failure_is_503(bridge_url, monkeypatch):
     base, cfg, repo = bridge_url
 
-    def fake_spawn_background(cfg_, instruction, repo_, *, role, max_steps, mode):
+    def fake_spawn_background(
+        cfg_, instruction, repo_, *, role, max_steps, mode, continuation_ref=None
+    ):
         raise colleague_cli.BackgroundDispatchError("boom", stderr="engine unreachable")
 
     monkeypatch.setattr(colleague_cli, "spawn_background", fake_spawn_background)
@@ -569,7 +575,7 @@ def test_sync_dispatch_preserves_workspace_changes_on_a_real_failure(bridge_url,
     subprocess.run(["git", "commit", "-q", "-m", "init"], cwd=repo, check=True)
     (repo / "note.txt").write_text("left behind by the failed session\n")
 
-    def fake_run_sync(cfg_, instruction, repo_, *, role, max_steps, mode):
+    def fake_run_sync(cfg_, instruction, repo_, *, role, max_steps, mode, continuation_ref=None):
         return colleague_cli.SyncRunResult(
             exit_code=1,
             stdout="",

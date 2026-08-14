@@ -270,20 +270,20 @@ def test_sync_response_ok_is_200_with_outcome_and_output():
     assert r.body["outcome"] == "completed"
     assert r.body["termination_reason"] == "ok"
     assert r.body["output"]["summary"] == "did the thing"
-    # t5/issue #62: colleague has no resume verb of its own — this null is
-    # permanent and honest, never a placeholder waiting on wiring.
-    assert r.body["continuation_ref"] is None
+    # Deviation d1: colleague DOES resume (`work --continue`), so this is a
+    # real handle — _ok_result's work-item id, offered back for the next turn.
+    assert r.body["continuation_ref"] == "abc123"
     assert r.body["artifact_refs"] == []
 
 
-def test_sync_response_continuation_ref_is_always_null_never_fabricated():
-    """Acceptance: 'the colleague bridge returns ref null'. Unlike
-    claude/codex (where a successful result carries a real session/thread
-    id this bridge could offer back), colleague's TaskResult has no such
-    field for this mapping layer to read even if it wanted to — proven here
-    by supplying a task_id (which DOES exist on TaskResult, for the ledger
-    claim) and confirming it never leaks into continuation_ref, the field
-    that would actually be interpreted as a resumable handle."""
+def test_sync_response_continuation_ref_is_the_colleague_work_item_id():
+    """Deviation d1 superseded t5's null here.
+
+    t5 shipped `continuation_ref: None` for colleague on the premise that it
+    had no resume verb. It does: `colleague work --continue ID|last`
+    (upstream #167), present in the installed CLI's own --help. The work-item
+    id on TaskResult IS that handle, so this bridge now offers a real one
+    like claude's session_id and codex's thread_id."""
     r = mapping.sync_response(
         _ok_result(task_id="abc123"),
         CTX,
@@ -291,7 +291,22 @@ def test_sync_response_continuation_ref_is_always_null_never_fabricated():
         actor_id="a",
         created_at="now",
     )
-    assert r.body["continuation_ref"] is None
+    assert r.body["continuation_ref"] == "abc123"
+
+
+def test_sync_response_continuation_ref_is_none_when_there_is_no_work_item_id():
+    """An absent or blank id must be a null, never an empty string: a
+    falsy-but-present handle would make the engine believe a resumable
+    session exists and dispatch `--continue ""`."""
+    for bad in (None, "", "   "):
+        r = mapping.sync_response(
+            _ok_result(task_id=bad),
+            CTX,
+            default_success_outcome="completed",
+            actor_id="a",
+            created_at="now",
+        )
+        assert r.body["continuation_ref"] is None, bad
 
 
 def test_sync_response_error_is_execution_failure_not_200():
@@ -364,11 +379,9 @@ def test_terminal_event_ok_is_completed_kind():
     assert ev.payload["ledger_delta"]["records"][0]["authority"] == "proposed"
 
 
-def test_terminal_event_completed_payload_continuation_ref_is_always_null():
-    """The async twin of the sync acceptance check: ADR 0010 §2 extended
-    CompletedPayload with continuation_ref for the two backends that can
-    offer a real handle; colleague still says an explicit, honest null
-    (issue #62) rather than omitting the key."""
+def test_terminal_event_completed_payload_carries_the_work_item_id():
+    """The async twin: ADR 0010 §2's CompletedPayload field is now populated
+    for all three backends rather than two (deviation d1)."""
     ev = mapping.terminal_event(
         _ok_result(task_id="abc123"),
         CTX,
@@ -377,7 +390,7 @@ def test_terminal_event_completed_payload_continuation_ref_is_always_null():
         created_at="now",
     )
     assert ev.kind == "completed"
-    assert ev.payload["continuation_ref"] is None
+    assert ev.payload["continuation_ref"] == "abc123"
 
 
 def test_terminal_event_error_is_failed_kind_with_execution_class():

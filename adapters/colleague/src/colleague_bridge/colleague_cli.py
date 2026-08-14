@@ -59,8 +59,17 @@ def _common_argv(
     mode: str | None,
     open_pr: bool,
     allow_dirty: bool,
+    continuation_ref: str | None = None,
 ) -> list[str]:
     argv = ["work", instruction, "--repo", repo, "--json"]
+    # Resume a prior work item when the engine sent its handle. colleague
+    # ships `work --continue ID|last` (upstream #167) and has since before
+    # this bridge was written — task t5 shipped a null ref here on the
+    # premise that it did not, which approved deviation d1 corrected by
+    # pointing at the installed CLI's own --help. Verified against
+    # colleague 1.56.0 before this was written, not assumed.
+    if continuation_ref:
+        argv += ["--continue", continuation_ref]
     if not open_pr:
         argv.append("--no-pr")
     if allow_dirty:
@@ -99,6 +108,7 @@ def run_sync(
     role: str | None = None,
     max_steps: int | None = None,
     mode: str | None = None,
+    continuation_ref: str | None = None,
 ) -> SyncRunResult:
     """Run `colleague work ...` in the foreground and wait for it to finish.
 
@@ -118,6 +128,7 @@ def run_sync(
             mode=mode,
             open_pr=cfg.open_pr,
             allow_dirty=cfg.allow_dirty,
+            continuation_ref=continuation_ref,
         ),
         "--no-watch",
     ]
@@ -200,6 +211,7 @@ def spawn_background(
     role: str | None = None,
     max_steps: int | None = None,
     mode: str | None = None,
+    continuation_ref: str | None = None,
 ) -> BackgroundStart:
     """Run `colleague work --background ...` and return its start payload.
 
@@ -219,6 +231,7 @@ def spawn_background(
             mode=mode,
             open_pr=cfg.open_pr,
             allow_dirty=cfg.allow_dirty,
+            continuation_ref=continuation_ref,
         ),
         "--background",
     ]

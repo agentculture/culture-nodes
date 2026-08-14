@@ -120,7 +120,9 @@ def test_concurrent_same_session_key_forks_the_second_invocation(concurrency_bri
         first_dispatched = threading.Event()
         release_first = threading.Event()
 
-        def fake_spawn_background(cfg_, instruction, repo_, *, role, max_steps, mode):
+        def fake_spawn_background(
+            cfg_, instruction, repo_, *, role, max_steps, mode, continuation_ref=None
+        ):
             with calls_lock:
                 idx = len(calls)
                 handle_id = f"bg_conc_{idx}"
@@ -242,7 +244,9 @@ def test_sequential_same_session_key_never_forks(concurrency_bridge, monkeypatch
     try:
         handle_counter = {"n": 0}
 
-        def fake_spawn_background(cfg_, instruction, repo_, *, role, max_steps, mode):
+        def fake_spawn_background(
+            cfg_, instruction, repo_, *, role, max_steps, mode, continuation_ref=None
+        ):
             idx = handle_counter["n"]
             handle_counter["n"] += 1
             handle_id = f"bg_seq_{idx}"

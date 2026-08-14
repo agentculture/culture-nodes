@@ -315,3 +315,53 @@ PY'
   return 0
 }
 install_notify_env "$THOR"
+
+# --- claude-code bridge token, relayed not minted --------------------------
+#
+# The claude-code bridges run on SPARK (company/intake, planner, developer,
+# verifier — their actor rows point at spark's address), while the control
+# plane runs on thor. That split is the point: the dashboard's machine and the
+# node agents' machines are deliberately separable, and the engine only ever
+# resolves an endpoint, never a host.
+#
+# It also means the credential is EXTERNALLY ISSUED — spark's bridge configs
+# already hold it, exactly as GITHUB_TOKEN is issued outside this script. So
+# this lane relays a value from its own environment and never invents one; a
+# generated token here would simply not match the four bridges and every
+# dispatch would 401.
+#
+# Found live: the actors were registered but this token was never installed,
+# so the first cross-machine run failed with
+#   auth_or_policy (HTTP 401): actor answered Unauthorized
+# — a run that reached spark, was refused, and reported honestly.
+#
+#   export NODES_ACTOR_CLAUDE_TOKEN=$(python3 -c "import json,os;print(json.load(open(os.path.expanduser('~/.config/culture-nodes-bridges/developer.json')))['auth_token'])")
+#   deploy/prod/install-secrets.sh thor
+install_claude_actor_token() { # host
+  local host=$1
+  if [ -z "${NODES_ACTOR_CLAUDE_TOKEN:-}" ]; then
+    echo "no NODES_ACTOR_CLAUDE_TOKEN in this script's environment — leaving the control plane's copy untouched (the spark claude bridges will keep answering 401 until it is relayed; see this lane's comment)"
+    return 0
+  fi
+  printf '%s' "$NODES_ACTOR_CLAUDE_TOKEN" | ssh "$host" 'set -e
+tok=$(cat)
+[ -n "$tok" ] || { echo "empty NODES_ACTOR_CLAUDE_TOKEN relayed" >&2; exit 1; }
+umask 077; touch ~/.culture-nodes/prod.env; chmod 600 ~/.culture-nodes/prod.env
+TOK="$tok" python3 - <<PY
+import os
+path = os.path.expanduser("~/.culture-nodes/prod.env")
+line = "NODES_ACTOR_CLAUDE_TOKEN=" + os.environ["TOK"]
+lines = open(path).read().splitlines()
+if line in lines:
+    print("control-plane copy of the claude actor token already matches")
+elif any(l.startswith("NODES_ACTOR_CLAUDE_TOKEN=") for l in lines):
+    lines = [line if l.startswith("NODES_ACTOR_CLAUDE_TOKEN=") else l for l in lines]
+    open(path, "w").write("\n".join(lines) + "\n")
+    print("re-synced the control-plane copy of the claude actor token")
+else:
+    lines.append(line)
+    open(path, "w").write("\n".join(lines) + "\n")
+    print("installed the control-plane copy of the claude actor token")
+PY'
+}
+install_claude_actor_token "$THOR"

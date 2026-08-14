@@ -292,6 +292,22 @@ def declared_result_override(task_result):
     return None
 
 
+def continuation_ref_from_task_result(task_result: dict[str, Any] | None) -> str | None:
+    """colleague's work-item id, the handle `work --continue` accepts.
+
+    Returns None rather than an empty string when the id is absent or not a
+    string: a falsy-but-present handle would make the engine believe a
+    resumable session exists and dispatch `--continue ""`, which is worse
+    than an honest cold start.
+    """
+    if not isinstance(task_result, dict):
+        return None
+    task_id = task_result.get("task_id")
+    if isinstance(task_id, str) and task_id.strip():
+        return task_id
+    return None
+
+
 def output_from_task_result(task_result: dict[str, Any] | None) -> dict[str, Any]:
     """Map the fields the task names: `{summary, changed_files, artifacts_path}`."""
     tr = task_result or {}
@@ -419,14 +435,14 @@ def sync_response(
             "records": [claim_record(task_result, ctx, actor_id=actor_id, created_at=created_at)]
         },
         "artifact_refs": [],
-        # t5: colleague has no resume verb of its own to capture a session
-        # handle from (docs/contract.md's TaskResult carries none) — this
-        # `None` is a permanent, honest null, not a placeholder waiting on
-        # wiring the way claude/codex's continuation_ref was. Upstream
-        # support for a resumable colleague session is tracked in this
-        # repo's issue #62; when/if that lands, this is the line that
-        # changes.
-        "continuation_ref": None,
+        # colleague's own work-item id IS the resume handle: `colleague work
+        # --continue ID|last` (upstream #167) seeds a new run from a prior
+        # item. t5 shipped a null here on the premise that colleague had no
+        # resume verb; approved deviation d1 corrected that by pointing at
+        # the installed CLI's --help, so this is now a real handle like
+        # claude's session_id and codex's thread_id. Issue #62 tracked the
+        # feature request and is answered by the CLI already having it.
+        "continuation_ref": continuation_ref_from_task_result(task_result),
         "usage": usage_from_task_result(task_result),
         "workspace_measured": measured,
     }
@@ -500,12 +516,9 @@ def terminal_event(
             "records": [claim_record(task_result, ctx, actor_id=actor_id, created_at=created_at)]
         },
         "artifact_refs": [],
-        # t5/issue #62: same permanent, honest null as sync_response's own
-        # continuation_ref — ADR 0010 §2 extended CompletedPayload with
-        # this field for the two backends that can actually offer a
-        # handle; colleague still cannot, so it says so explicitly rather
-        # than omitting the key silently.
-        "continuation_ref": None,
+        # Same real handle as sync_response's — ADR 0010 §2's field, now
+        # populated for all three backends rather than two (deviation d1).
+        "continuation_ref": continuation_ref_from_task_result(task_result),
         "usage": usage_from_task_result(task_result),
         "workspace_measured": measured,
     }

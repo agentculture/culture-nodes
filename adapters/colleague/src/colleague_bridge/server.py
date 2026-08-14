@@ -399,19 +399,30 @@ class Handler(BaseHTTPRequestHandler):
             incomplete_outcome=incomplete_outcome,
         )
 
+        # §13.1's continuation_ref is a TOP-LEVEL request field, a sibling of
+        # run_id/node_run_id/attempt_id — not nested under `input`. Reading it
+        # from `input` would mean every real engine dispatch silently ran cold
+        # while looking correct, which is the bug t5 fixed in the other two
+        # bridges.
+        continuation_ref = body.get("continuation_ref") or raw_input.get("continuation_ref") or None
+
         # t6 (c44/h37): exactly one in-flight invocation per session_key.
         # `held` is True iff THIS invocation claimed the slot and therefore
         # owes it a `release()`; `forked` is True iff another invocation
-        # already held it. Unlike claude-code/codex, this bridge has no
-        # `continuation_ref` to discard (colleague never resumes — issue
-        # #62; `ctx` carries no such field) — the fork still gets recorded
-        # and made observable, per session_registry.py's own docstring on
-        # why the guard applies here regardless.
+        # already held it. A fork must ALSO drop the continuation_ref —
+        # deviation d1 gave colleague a real resume handle, so forking while
+        # still passing `--continue` would put two turns on one work item,
+        # exactly what the session guard exists to prevent.
         held = False
         forked = False
         if cfg.session_concurrency_enabled and session_key:
             held = self.bridge.session_registry.acquire(session_key, idem_key)
             forked = not held
+            if forked:
+                # Deliberately cold. Resuming here would put a second turn on
+                # a work item another invocation is mid-way through — the
+                # exact interleaving the guard exists to prevent.
+                continuation_ref = None
 
         if decide_async(cfg, force_async=force_async, max_steps=max_steps):
             self._dispatch_async(
@@ -426,6 +437,7 @@ class Handler(BaseHTTPRequestHandler):
                 session_key=session_key,
                 held=held,
                 forked=forked,
+                continuation_ref=continuation_ref,
             )
             return
 
@@ -440,6 +452,7 @@ class Handler(BaseHTTPRequestHandler):
             session_key=session_key,
             held=held,
             forked=forked,
+            continuation_ref=continuation_ref,
         )
 
     def _dispatch_sync(
@@ -455,6 +468,7 @@ class Handler(BaseHTTPRequestHandler):
         session_key: str | None = None,
         held: bool = False,
         forked: bool = False,
+        continuation_ref: str | None = None,
     ) -> None:
         cfg = self.bridge.cfg
         # t10: capture the workspace's starting point as close as possible
@@ -463,7 +477,13 @@ class Handler(BaseHTTPRequestHandler):
         handle = workspace.begin(repo)
         try:
             result = colleague_cli.run_sync(
-                cfg, instruction, repo, role=role, max_steps=max_steps, mode=mode
+                cfg,
+                instruction,
+                repo,
+                role=role,
+                max_steps=max_steps,
+                mode=mode,
+                continuation_ref=continuation_ref,
             )
         finally:
             # t6 (c44/h37): the provider call is over (successfully or
@@ -537,6 +557,7 @@ class Handler(BaseHTTPRequestHandler):
         session_key: str | None = None,
         held: bool = False,
         forked: bool = False,
+        continuation_ref: str | None = None,
     ) -> None:
         cfg = self.bridge.cfg
         callback = body.get("callback") or {}
@@ -562,7 +583,13 @@ class Handler(BaseHTTPRequestHandler):
         handle = workspace.begin(repo)
         try:
             start = colleague_cli.spawn_background(
-                cfg, instruction, repo, role=role, max_steps=max_steps, mode=mode
+                cfg,
+                instruction,
+                repo,
+                role=role,
+                max_steps=max_steps,
+                mode=mode,
+                continuation_ref=continuation_ref,
             )
         except colleague_cli.BackgroundDispatchError as exc:
             if held:

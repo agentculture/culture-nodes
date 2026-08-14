@@ -223,6 +223,9 @@ var pythonFrontVerbs = []verbMapping{
 	{Verb: "human-tasks list", OperationID: "listHumanTasks", Note: "task t16, cmd/_commands/human_tasks.py."},
 	{Verb: "human-tasks get", OperationID: "getHumanTask", Note: "task t16, cmd/_commands/human_tasks.py."},
 	{Verb: "human-tasks decide", OperationID: "decideHumanTask", Note: "task t16, cmd/_commands/human_tasks.py; bearer-auth'd."},
+	{Verb: "dispatch pending", OperationID: "listPreflights", Note: "task t14 (issue #67), cli/_commands/dispatch.py."},
+	{Verb: "dispatch show", OperationID: "getPreflight", Note: "task t14 (issue #67), cli/_commands/dispatch.py."},
+	{Verb: "dispatch confirm", OperationID: "acknowledgePreflight", Note: "task t14 (issue #67), cli/_commands/dispatch.py; the confirm verb the gate's briefing points at."},
 }
 
 // documentedQueryParams names, per operationId, query parameters this

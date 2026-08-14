@@ -64,6 +64,7 @@ def _argv_has_json(argv: list[str] | None) -> bool:
 def _build_parser() -> argparse.ArgumentParser:
     from culture_nodes.cli._commands import actors as _actors_group
     from culture_nodes.cli._commands import cli as _cli_group
+    from culture_nodes.cli._commands import dispatch as _dispatch_group
     from culture_nodes.cli._commands import doctor as _doctor_cmd
     from culture_nodes.cli._commands import explain as _explain_cmd
     from culture_nodes.cli._commands import human_tasks as _human_tasks_group
@@ -106,6 +107,7 @@ def _build_parser() -> argparse.ArgumentParser:
     _ledger_group.register(sub)
     _review_group.register(sub)
     _human_tasks_group.register(sub)
+    _dispatch_group.register(sub)
     # Register your own noun groups here:
     #   from culture_nodes.cli._commands import my_noun as _my_noun_group
     #   _my_noun_group.register(sub)

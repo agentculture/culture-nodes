@@ -5,6 +5,22 @@ All notable changes to this project will be documented in this file.
 Format follows [Keep a Changelog](https://keepachangelog.com/). This project
 adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.18.0] - 2026-08-14
+
+### Added
+
+- The clarify-then-commit gate, engine side (task t14, issue #67): a dispatched actor is briefed BEFORE its first billable turn, and a second, separate action commits the dispatch. It generalizes `deploy/prod/install-secrets.sh`'s single-use windowed destructive-confirmation protocol from danger to understanding, keeping every property that made it work — the composed briefing holds (`verdict: hold`), it states what does not proceed, the acknowledgement is single-use, and it expires
+- Two additively-registered ledger record types with their schemas: `dispatch_preflight` (`derived` — a deterministic composition of the host capabilities a bridge advertised and the pinned task declaration, refused at any other authority by the new `preflight_derived_only` rule) and `dispatch_acknowledgement` (`proposed` by the actor, never derived under any origin — `acknowledgement_never_derived`, so an engine cannot clear its own gate). An acknowledgement names the briefing by id AND content digest
+- `internal/preflight`: the protocol in one place — the capability surface a bridge advertises (`capabilities.preflight`), the per-actor gate configuration (`metadata.preflight_gate`), the deterministic document composer, and the two record builders both the dispatch site and the confirm verb use. Protocol in the engine, facts from the bridges: a per-bridge protocol was rejected as four implementations of one contract
+- Migration `0026_dispatch_preflights.sql` (expand-only): the `dispatch_preflights` table, where single-use becomes a transactional fact that immutable ledger records cannot express, plus the `actors_preflight_gate_requires_surface` CHECK constraint. An N-1 binary ignores both safely
+- `GET /v1alpha1/preflights`, `GET /v1alpha1/preflights/{id}` and `POST /v1alpha1/preflights/{id}/acknowledge`, with the `nodes dispatch pending|show|confirm` verbs over them. `show` prints the briefing in full: a confirm without a show is a keystroke, not an acknowledgement
+- `preflight_unacknowledged`, a second reserved refusal outcome beside `budget_exhausted` (issue #67's fourth open question, answered yes): a dispatch whose window closes unacknowledged is REFUSED rather than deferred forever, and a workflow author may declare an edge from it
+
+### Changed
+
+- Enabling the gate for an actor that advertises no capability surface is refused at CONFIGURATION time at all three doors — `POST /v1alpha1/actors` (400 with a remediation), `RegisterActor`, and raw SQL (the migration's CHECK). The gate is per-actor and DEFAULT-OFF: an actor whose registration says nothing about it, or a registry that cannot answer the question at all, dispatches exactly as before
+- `internal/invariants` deliberately extends two allowlists, recorded in `docs/invariants.md`: `internal/api/preflights.go` reads an actor's registered kind to decide an acknowledgement's ledger ORIGIN (the grades-API precedent, outside dispatch), and `internal/preflight/records.go` writes engine-origin `derived` authority for the briefing composition
+
 ## [0.17.0] - 2026-08-14
 
 ### Added

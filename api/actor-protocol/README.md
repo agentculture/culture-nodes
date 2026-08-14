@@ -69,6 +69,64 @@ workflow node's `uses:` reference binds to it by that row's id. See
 `deploy/compose/README.md`'s colleague-bridge section for a worked local
 example.
 
+## The preflight capability surface (issue #67, task t14)
+
+An actor may advertise, in its **registration** (`actors.capabilities`), the
+host facts a dispatched task depends on. The control plane composes them —
+verbatim — into the briefing an actor is handed before its first billable
+turn:
+
+```json
+{
+  "preflight": {
+    "protocol_version": "1.0",
+    "host": {
+      "hostname": "build-host-1",
+      "sandbox_modes": ["read-only"],
+      "commit_policy": "harvest: the session never runs git commit; the operator harvests the diff",
+      "writable_paths": ["/srv/work/checkout"]
+    }
+  }
+}
+```
+
+`protocol_version` is the version this control plane speaks
+(`internal/preflight.ProtocolVersion`). `host` is **deliberately open**: the
+facts are backend-specific while the protocol is not, so the engine carries
+the block unchanged, states who advertised it and when, and never
+re-renders, supplements, or interprets a fact it did not measure. The keys
+above are the ones the bridges agree to use where they apply — a bridge that
+cannot measure one omits it rather than guessing.
+
+The **protocol is engine-side, the facts are bridge-side**, and that split is
+a recorded decision: a per-bridge protocol would be four implementations of
+one contract, which is exactly the duplication that let one bug ship three
+times in three lanes. A bridge's whole obligation is to advertise this block;
+everything else — composing the briefing, holding the dispatch, the ledger
+records, the confirm verb, the single-use windowed refusal — is the engine's.
+
+Advertising the surface changes nothing on its own. The gate is **per-actor
+and default-off**, turned on by the operator in the same registration's
+`metadata`:
+
+```json
+{ "preflight_gate": { "enabled": true, "window_seconds": 900 } }
+```
+
+Enabling it for an actor that advertises no surface is refused **when the
+actor is registered** (HTTP 400 from `POST /v1alpha1/actors`, an error from
+`RegisterActor`, and a CHECK constraint for raw SQL — migration 0026), never
+discovered later by a run that stalls against a gate nothing can satisfy.
+
+Once enabled, a dispatch to that actor is held until the briefing is
+acknowledged through `POST /v1alpha1/preflights/{id}/acknowledge` (or
+`nodes dispatch confirm <id>`). The acknowledgement is a `proposed` record
+by the acknowledging actor — an actor saying it understood is a claim, not
+evidence, exactly like every other thing an actor reports. It is single-use
+and windowed; a dispatch whose window closes unacknowledged is refused
+before anything is invoked, routing under the `preflight_unacknowledged`
+outcome.
+
 ## Not covered here
 
 - Cost budgets and quota negotiation (PRD Phase 4).

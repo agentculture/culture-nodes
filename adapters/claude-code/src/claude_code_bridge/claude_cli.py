@@ -346,6 +346,7 @@ def spawn_background(
     role: str | None = None,
     max_steps: int | None = None,
     model: str | None = None,
+    continuation_ref: str | None = None,
 ) -> BackgroundStart:
     """Start `claude -p ... --output-format stream-json` as a detached
     background process and return immediately with its handle.
@@ -356,6 +357,13 @@ def spawn_background(
     bridge does not currently re-attach to it (no acceptance criterion here
     requires that — see README.md), but the child itself is not killed by
     the bridge going away either.
+
+    *continuation_ref* (task t5): the async path resumes exactly the same
+    way the sync path does (`run_sync`) — a long-running turn is precisely
+    the one most likely to answer asynchronously, so leaving this parameter
+    off `spawn_background` would have made resume unreachable on the path
+    that needs it most (ADR 0010's own framing of the gap it closed for the
+    *result* side of this same asymmetry).
     """
     ensure_supported_version(cfg)
 
@@ -373,6 +381,7 @@ def spawn_background(
             max_steps=max_steps,
             model=model or (cfg.model or None),
             verbose=True,
+            continuation_ref=continuation_ref,
         ),
     ]
 

@@ -86,6 +86,75 @@ def test_error_status_without_error_message_still_reports_execution_failure():
     assert c.error_class == mapping.CLASS_EXECUTION
 
 
+# ---------------------------------------------------------------------------
+# classify() — capacity_exhausted (task t5, deviation d4): same engine-side
+# class as the other two bridges (internal/actors/errors.go, t8/t9);
+# colleague's own error text is the only signal this bridge has to detect
+# it from (docs/contract.md's TaskResult carries no structured error code).
+# ---------------------------------------------------------------------------
+
+
+def test_rate_limit_error_text_classifies_as_capacity_exhausted():
+    c = mapping.classify(
+        _error_result(error="engine raised: rate_limit_error: too many requests"),
+        CTX,
+        default_success_outcome="completed",
+    )
+    assert c.domain is False
+    assert c.error_class == mapping.CLASS_CAPACITY_EXHAUSTED
+
+
+def test_ordinary_error_is_still_plain_execution_not_capacity_exhausted():
+    c = mapping.classify(_error_result(), CTX, default_success_outcome="completed")
+    assert c.error_class == mapping.CLASS_EXECUTION
+    assert c.error_class != mapping.CLASS_CAPACITY_EXHAUSTED
+
+
+def test_capacity_exhausted_extracts_a_named_retry_after_delay():
+    c = mapping.classify(
+        _error_result(error="quota exhausted, retry after 60 seconds"),
+        CTX,
+        default_success_outcome="completed",
+    )
+    assert c.error_class == mapping.CLASS_CAPACITY_EXHAUSTED
+    assert c.retry_after_seconds == 60.0
+
+
+def test_capacity_exhausted_without_a_named_delay_reports_none_not_zero():
+    c = mapping.classify(
+        _error_result(error="session limit reached"), CTX, default_success_outcome="completed"
+    )
+    assert c.error_class == mapping.CLASS_CAPACITY_EXHAUSTED
+    assert c.retry_after_seconds is None
+
+
+def test_sync_response_capacity_exhausted_surfaces_retry_after_on_the_response_not_the_body():
+    r = mapping.sync_response(
+        _error_result(error="rate_limit_error: retry after 15 seconds"),
+        CTX,
+        default_success_outcome="completed",
+        actor_id="a",
+        created_at="now",
+    )
+    assert r.status_code == 500
+    assert r.body["class"] == mapping.CLASS_CAPACITY_EXHAUSTED
+    assert r.retry_after_seconds == 15.0
+    assert "retry_after_seconds" not in r.body
+
+
+def test_terminal_event_capacity_exhausted_is_failed_kind_with_the_class():
+    ev = mapping.terminal_event(
+        _error_result(error="usage limit reached"),
+        CTX,
+        default_success_outcome="completed",
+        actor_id="a",
+        created_at="now",
+    )
+    assert ev.kind == "failed"
+    assert ev.payload["class"] == mapping.CLASS_CAPACITY_EXHAUSTED
+    assert "retry_after_seconds" not in ev.payload
+
+
 def test_incomplete_without_declared_outcome_is_execution_failure_never_success():
     c = mapping.classify(_incomplete_result(), CTX, default_success_outcome="completed")
     assert c.domain is False
@@ -201,8 +270,28 @@ def test_sync_response_ok_is_200_with_outcome_and_output():
     assert r.body["outcome"] == "completed"
     assert r.body["termination_reason"] == "ok"
     assert r.body["output"]["summary"] == "did the thing"
+    # t5/issue #62: colleague has no resume verb of its own — this null is
+    # permanent and honest, never a placeholder waiting on wiring.
     assert r.body["continuation_ref"] is None
     assert r.body["artifact_refs"] == []
+
+
+def test_sync_response_continuation_ref_is_always_null_never_fabricated():
+    """Acceptance: 'the colleague bridge returns ref null'. Unlike
+    claude/codex (where a successful result carries a real session/thread
+    id this bridge could offer back), colleague's TaskResult has no such
+    field for this mapping layer to read even if it wanted to — proven here
+    by supplying a task_id (which DOES exist on TaskResult, for the ledger
+    claim) and confirming it never leaks into continuation_ref, the field
+    that would actually be interpreted as a resumable handle."""
+    r = mapping.sync_response(
+        _ok_result(task_id="abc123"),
+        CTX,
+        default_success_outcome="completed",
+        actor_id="a",
+        created_at="now",
+    )
+    assert r.body["continuation_ref"] is None
 
 
 def test_sync_response_error_is_execution_failure_not_200():
@@ -273,6 +362,22 @@ def test_terminal_event_ok_is_completed_kind():
     assert ev.payload["outcome"] == "completed"
     assert ev.payload["termination_reason"] == "ok"
     assert ev.payload["ledger_delta"]["records"][0]["authority"] == "proposed"
+
+
+def test_terminal_event_completed_payload_continuation_ref_is_always_null():
+    """The async twin of the sync acceptance check: ADR 0010 §2 extended
+    CompletedPayload with continuation_ref for the two backends that can
+    offer a real handle; colleague still says an explicit, honest null
+    (issue #62) rather than omitting the key."""
+    ev = mapping.terminal_event(
+        _ok_result(task_id="abc123"),
+        CTX,
+        default_success_outcome="completed",
+        actor_id="a",
+        created_at="now",
+    )
+    assert ev.kind == "completed"
+    assert ev.payload["continuation_ref"] is None
 
 
 def test_terminal_event_error_is_failed_kind_with_execution_class():

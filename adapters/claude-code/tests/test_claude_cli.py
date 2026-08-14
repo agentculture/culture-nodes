@@ -78,6 +78,59 @@ def test_is_pid_alive_false_for_a_pid_that_almost_certainly_does_not_exist():
 
 
 # ---------------------------------------------------------------------------
+# _common_argv() resume wiring (task t5, acceptance #1): a prior
+# continuation_ref pins the exact `--resume <id>` argv; its absence leaves
+# argv exactly as it was before t5 (cold start, no --resume at all).
+# ---------------------------------------------------------------------------
+
+
+def test_common_argv_adds_resume_flag_with_a_prior_continuation_ref():
+    argv = claude_cli._common_argv(
+        "keep going",
+        output_format="json",
+        permission_mode="bypassPermissions",
+        role=None,
+        max_steps=None,
+        model=None,
+        continuation_ref="sess-prior-1",
+    )
+    assert "--resume" in argv
+    assert argv[argv.index("--resume") + 1] == "sess-prior-1"
+
+
+def test_common_argv_omits_resume_without_a_prior_continuation_ref():
+    argv = claude_cli._common_argv(
+        "start fresh",
+        output_format="json",
+        permission_mode="bypassPermissions",
+        role=None,
+        max_steps=None,
+        model=None,
+    )
+    assert "--resume" not in argv
+
+
+def test_run_sync_passes_continuation_ref_through_to_resume_argv(monkeypatch, tmp_path):
+    """End-to-end through run_sync's own argv assembly (not just
+    _common_argv in isolation) — pins that the parameter actually reaches
+    the subprocess boundary, closing the gap the seed left: `continuation_ref`
+    was accepted as a keyword argument but never threaded into anything that
+    called `_common_argv` with it from a real dispatch."""
+    captured = {}
+    real_popen = claude_cli.subprocess.Popen
+
+    def spy_popen(argv, **kwargs):
+        captured["argv"] = argv
+        return real_popen(argv, **kwargs)
+
+    monkeypatch.setattr(claude_cli.subprocess, "Popen", spy_popen)
+    cfg = _cfg()
+    claude_cli.run_sync(cfg, "resume me", str(tmp_path), continuation_ref="sess-resume-xyz")
+    assert "--resume" in captured["argv"]
+    assert captured["argv"][captured["argv"].index("--resume") + 1] == "sess-resume-xyz"
+
+
+# ---------------------------------------------------------------------------
 # role_is_known
 # ---------------------------------------------------------------------------
 

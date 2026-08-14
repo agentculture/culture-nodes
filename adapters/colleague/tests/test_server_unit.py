@@ -182,6 +182,90 @@ def test_sync_dispatch_maps_ok_result_to_200(bridge_url, monkeypatch):
     assert body["ledger_delta"]["records"][0]["authority"] == "proposed"
 
 
+def test_session_key_and_continuation_ref_never_appear_in_the_prompt_text(bridge_url, monkeypatch):
+    """Acceptance: session_key never appears in the prompt text handed to
+    the model. colleague never acts on continuation_ref (it always returns
+    a null ref, issue #62), but a value it ignores must still be excluded
+    from the Bound-inputs block, not merely unused."""
+    base, cfg, repo = bridge_url
+    captured = {}
+
+    def fake_run_sync(cfg_, instruction, repo_, *, role, max_steps, mode):
+        captured["instruction"] = instruction
+        return colleague_cli.SyncRunResult(
+            exit_code=0,
+            stdout="",
+            stderr="",
+            task_result={
+                "task_id": "abc",
+                "status": "ok",
+                "summary": "ok",
+                "changed_files": [],
+                "artifacts_path": None,
+                "usage": {"prompt_tokens": 1, "completion_tokens": 1, "total_tokens": 2},
+                "error": None,
+            },
+            timed_out=False,
+        )
+
+    monkeypatch.setattr(colleague_cli, "run_sync", fake_run_sync)
+    payload = _invocation_body(
+        str(repo),
+        session_key="actor:repo:workstream-secret",
+        continuation_ref="should-not-leak",
+        fixReport={"summary": "a real bound input"},
+    )
+    headers = {**_auth_header(cfg), "Idempotency-Key": "att_transport_keys"}
+    status, _body = _request(base, server.INVOCATIONS_PATH, body=payload, headers=headers)
+    assert status == 200
+    assert "actor:repo:workstream-secret" not in captured["instruction"]
+    assert "should-not-leak" not in captured["instruction"]
+    assert "a real bound input" in captured["instruction"]
+
+
+def test_sync_capacity_exhausted_failure_is_500_with_retry_after_header(bridge_url, monkeypatch):
+    """Acceptance: a quota/rate-limit CLI failure maps to capacity_exhausted
+    (deviation d4), exercised through the real HTTP response including the
+    Retry-After header internal/actors/client.go reads the delay from."""
+    base, cfg, repo = bridge_url
+
+    def fake_run_sync(cfg_, instruction, repo_, *, role, max_steps, mode):
+        return colleague_cli.SyncRunResult(
+            exit_code=1,
+            stdout="",
+            stderr="",
+            task_result={
+                "task_id": "abc",
+                "status": "error",
+                "summary": "",
+                "changed_files": [],
+                "artifacts_path": None,
+                "usage": {"prompt_tokens": 1, "completion_tokens": 0, "total_tokens": 1},
+                "error": "rate_limit_error: retry after 45 seconds",
+            },
+            timed_out=False,
+        )
+
+    monkeypatch.setattr(colleague_cli, "run_sync", fake_run_sync)
+    headers = {**_auth_header(cfg), "Idempotency-Key": "att_capacity"}
+    req = urllib.request.Request(
+        base + server.INVOCATIONS_PATH,
+        data=json.dumps(_invocation_body(str(repo))).encode("utf-8"),
+        method="POST",
+        headers=headers,
+    )
+    try:
+        with urllib.request.urlopen(req, timeout=10) as resp:  # pragma: no cover - never 2xx here
+            status, resp_headers = resp.status, resp.headers
+            resp_body = json.loads(resp.read().decode("utf-8"))
+    except urllib.error.HTTPError as exc:
+        status, resp_headers = exc.code, exc.headers
+        resp_body = json.loads(exc.read().decode("utf-8"))
+    assert status == 500
+    assert resp_body["class"] == "capacity_exhausted"
+    assert resp_headers.get("Retry-After") == "45"
+
+
 def test_sync_dispatch_maps_incomplete_without_declaration_to_execution_failure(
     bridge_url, monkeypatch
 ):

@@ -77,6 +77,38 @@ bridge's own `AsyncRunner` tails for progress — see `flightfiles.py`'s
 module docstring for the full mechanics and how this differs from
 colleague's native flight control plane.
 
+## Session resume (task t5)
+
+When a request carries a top-level `continuation_ref` (§13.1,
+`internal/actors/protocol.go` — a sibling of `run_id`, NOT nested inside
+`input`), this bridge resumes that prior session with `claude -p ...
+--resume <continuation_ref>` on both the sync and async dispatch paths. On
+a successful turn, claude's own reported `session_id` rides back as
+`continuation_ref` in the §13.2 result body AND the §13.4 `completed`
+callback event, so a later attempt against the same actor can resume it in
+turn (the engine side that wires this end to end is task t4/ADR 0010).
+
+`session_key` — the eventual workstream key spec claim c3 targets (ADR
+0010 §4) — and `continuation_ref` are both **transport keys**: neither is
+ever forwarded into the instruction text handed to claude, even if a
+caller nests either inside `input` instead of sending `continuation_ref`
+at the top level as the real wire shape does.
+
+## Capacity refusals (task t5, deviation d4)
+
+When claude's own failure text names a provider-side quota, rate-limit, or
+session-limit refusal (matched against the Anthropic API's own error
+vocabulary — `rate_limit_error`, `overloaded_error` — plus everyday
+phrasing like "usage limit"/"quota"/"session limit"), this bridge
+classifies the failure `capacity_exhausted` (§13.5) instead of plain
+`execution`, and — when the text names a delay ("retry after N
+seconds") — sets an HTTP `Retry-After` header on the synchronous failure
+response (`internal/actors/client.go` reads the delay from exactly that
+header, never the JSON body). The control-plane side of this — pausing
+dispatch to the actor until the delay elapses — is the capacity circuit
+breaker (`internal/worker/breaker.go`, task t9); this bridge's job is only
+the honest classification.
+
 `--permission-mode` matters specifically because headless dispatch has no
 TTY to answer an interactive permission prompt: `Config.permission_mode`
 (default `"bypassPermissions"`) must be a mode that never blocks on one.

@@ -145,6 +145,109 @@ def test_crashed_session_never_success():
 
 
 # ---------------------------------------------------------------------------
+# classify() — capacity_exhausted (task t5, deviation d4): a provider quota
+# / rate-limit / session-limit refusal is a distinct §13.5 class from an
+# ordinary execution failure, so the capacity circuit breaker
+# (internal/worker/breaker.go, task t9) can pause the actor instead of the
+# node cascading into a string of failed attempts against a wall that has
+# not moved (issue #48).
+# ---------------------------------------------------------------------------
+
+
+def test_rate_limit_error_text_classifies_as_capacity_exhausted():
+    c = mapping.classify(
+        _error_during_execution_result(
+            result="API error: rate_limit_error: Number of request tokens has exceeded "
+            "your per-minute rate limit"
+        ),
+        CTX,
+        default_success_outcome="completed",
+    )
+    assert c.domain is False
+    assert c.error_class == mapping.CLASS_CAPACITY_EXHAUSTED
+
+
+def test_usage_limit_text_classifies_as_capacity_exhausted():
+    c = mapping.classify(
+        _error_during_execution_result(result="Claude AI usage limit reached for this session"),
+        CTX,
+        default_success_outcome="completed",
+    )
+    assert c.error_class == mapping.CLASS_CAPACITY_EXHAUSTED
+
+
+def test_ordinary_failure_text_is_still_plain_execution_not_capacity_exhausted():
+    """The negative half of the acceptance criterion: an unrelated failure
+    must NOT be misclassified as capacity_exhausted just because something
+    went wrong."""
+    c = mapping.classify(
+        _error_during_execution_result(result="tool call failed: file not found"),
+        CTX,
+        default_success_outcome="completed",
+    )
+    assert c.error_class == mapping.CLASS_EXECUTION
+    assert c.error_class != mapping.CLASS_CAPACITY_EXHAUSTED
+
+
+def test_capacity_exhausted_extracts_a_named_retry_after_delay():
+    c = mapping.classify(
+        _error_during_execution_result(
+            result="rate_limit_error: too many requests, please retry after 120 seconds"
+        ),
+        CTX,
+        default_success_outcome="completed",
+    )
+    assert c.error_class == mapping.CLASS_CAPACITY_EXHAUSTED
+    assert c.retry_after_seconds == 120.0
+
+
+def test_capacity_exhausted_without_a_named_delay_reports_none_not_zero():
+    c = mapping.classify(
+        _error_during_execution_result(result="quota exhausted for this billing period"),
+        CTX,
+        default_success_outcome="completed",
+    )
+    assert c.error_class == mapping.CLASS_CAPACITY_EXHAUSTED
+    assert c.retry_after_seconds is None
+
+
+def test_sync_response_capacity_exhausted_surfaces_retry_after_on_the_response_not_the_body():
+    """internal/actors/client.go reads Retry-After from the HTTP header
+    only — server.py is the one that turns this into the actual header
+    (test_server_unit.py covers that HTTP-level wiring); this test pins the
+    contract at the mapping layer: the delay rides the SyncResponse object,
+    and the JSON body's key set is untouched (matching the exact-set pin in
+    test_sync_response_failure_carries_usage_from_terminal_result)."""
+    r = mapping.sync_response(
+        _error_during_execution_result(
+            result="rate_limit_error: retry after 30 seconds", session_id="sess-cap"
+        ),
+        CTX,
+        default_success_outcome="completed",
+        actor_id="a",
+        created_at="now",
+    )
+    assert r.status_code == 500
+    assert r.body["class"] == mapping.CLASS_CAPACITY_EXHAUSTED
+    assert r.retry_after_seconds == 30.0
+    assert "retry_after_seconds" not in r.body
+
+
+def test_terminal_event_capacity_exhausted_is_failed_kind_with_the_class():
+    ev = mapping.terminal_event(
+        _error_during_execution_result(result="session limit reached, try again later"),
+        CTX,
+        default_success_outcome="completed",
+        actor_id="a",
+        created_at="now",
+    )
+    assert ev.kind == "failed"
+    assert ev.payload["class"] == mapping.CLASS_CAPACITY_EXHAUSTED
+    # No new wire key: FailedPayload (protocol.go) has no retry_after field.
+    assert "retry_after_seconds" not in ev.payload
+
+
+# ---------------------------------------------------------------------------
 # usage / output mapping
 # ---------------------------------------------------------------------------
 
@@ -244,8 +347,23 @@ def test_sync_response_success_is_200_with_outcome_and_output():
     assert r.status_code == 200
     assert r.body["outcome"] == "completed"
     assert r.body["output"]["summary"] == "did the thing"
-    assert r.body["continuation_ref"] is None
+    # t5: claude's own captured session_id IS the continuation_ref the
+    # bridge offers back (ADR 0010 §2/§13.2) — a hardcoded None here would
+    # be the exact bug t5 fixed (session resume was captured but never
+    # actually returned on the sync body).
+    assert r.body["continuation_ref"] == "sess-abc"
     assert r.body["artifact_refs"] == []
+
+
+def test_sync_response_continuation_ref_is_none_when_claude_reported_no_session_id():
+    r = mapping.sync_response(
+        _success_result(session_id=None),
+        CTX,
+        default_success_outcome="completed",
+        actor_id="a",
+        created_at="now",
+    )
+    assert r.body["continuation_ref"] is None
 
 
 def test_sync_response_maps_claude_stop_reason_beside_usage():
@@ -330,6 +448,37 @@ def test_terminal_event_success_is_completed_kind():
     assert ev.kind == "completed"
     assert ev.payload["outcome"] == "completed"
     assert ev.payload["ledger_delta"]["records"][0]["authority"] == "proposed"
+
+
+def test_terminal_event_completed_payload_carries_continuation_ref():
+    """Acceptance: 'the async terminal payload carries continuation_ref' —
+    ADR 0010 §2 extended CompletedPayload with exactly this field because
+    the asynchronous path is the one long sessions actually take; the seed
+    this task inherited only ever wired this onto the SYNC body."""
+    ev = mapping.terminal_event(
+        _success_result(session_id="sess-async-1"),
+        CTX,
+        default_success_outcome="completed",
+        actor_id="a",
+        created_at="now",
+    )
+    assert ev.kind == "completed"
+    assert ev.payload["continuation_ref"] == "sess-async-1"
+
+
+def test_terminal_event_failed_payload_has_no_continuation_ref_key():
+    """ADR 0010 §2: FailedPayload deliberately gains no continuation_ref —
+    a bridge reporting a failed turn is the least reliable position from
+    which to claim a resumable conversation exists."""
+    ev = mapping.terminal_event(
+        _error_during_execution_result(),
+        CTX,
+        default_success_outcome="completed",
+        actor_id="a",
+        created_at="now",
+    )
+    assert ev.kind == "failed"
+    assert "continuation_ref" not in ev.payload
 
 
 def test_terminal_completion_maps_claude_stop_reason_beside_usage():

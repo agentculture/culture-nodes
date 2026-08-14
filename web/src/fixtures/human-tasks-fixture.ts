@@ -27,7 +27,12 @@ export const PENDING_TASK: HumanTask = {
     allowed_outcomes: ["approved", "changes_required", "rejected"],
     context_refs: {
       from: "nodes.build.output",
-      bindings: { diff: "nodes.build.output.diff" },
+      bindings: {
+        diff: "nodes.build.output.diff",
+        // A literal binding (issue #73): the declaration lives in the
+        // workflow text, so the task shows the value rather than a pointer.
+        observe: { literal: { kind: "github_pr_merged", pr: 42 } },
+      },
     },
     audit: {
       node_id: "release-signoff",

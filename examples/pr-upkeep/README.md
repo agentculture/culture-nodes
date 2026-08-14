@@ -302,20 +302,38 @@ manual overrides happen in the web `/inbox` or via
 driver for the next cycle — issue #71 means that is rarer now, since an
 empty sweep re-sweeps on its own instead of ending the run.
 
-**Known gap, pre-dating issue #71:** `nodes validate` currently reports
-errors on `human-merges-pr` AND `human-answers-review`'s `observe:`
-bindings — both bind a NESTED object (`{kind: ..., pr: ...}`) where
-`schemas/workflow/workflow.schema.json`'s `inputBinding.bindings` requires
-every value to be a single JSON-Pointer STRING. This is not new: the
-identical shape already existed on `human-merges-pr` before this pass (task
-t16) and was verified present on the pre-#71 workflow.yaml too. Every OTHER
-part of the redesigned graph compiles clean — swapping both `observe:`
-blocks for a placeholder pointer during a local sanity check produces
-`valid: pr-upkeep 1.0.0 (0 errors, 0 warnings)`. Closing this gap needs a
-compiler/schema change (e.g. a typed literal-with-embedded-pointer binding
-shape) outside issue #71/#72's scope; it affects the ALREADY-SHIPPED merge
-observable exactly as much as the new reply observable, so it is worth its
-own issue rather than a silent workaround here.
+### How the observable is declared (issue #73, closed)
+
+Both `human-merges-pr` and `human-answers-review` declare what they are
+waiting for **in the graph text**, as a typed literal binding:
+
+```yaml
+input:
+  bindings:
+    instruction: /run/input/merge_instruction
+    pr: /nodes/fix/output/pr_number
+    observe:
+      literal:
+        kind: github_pr_merged
+```
+
+The split is the point. A binding value is either a JSON Pointer (a read
+from run, node, or ledger data) or a `literal:` (a constant the author
+wrote), and the two are never confused because a bare string is always a
+pointer. The observation **kind** is a declaration and never changes, so it
+is a literal; **which PR** is per-cycle data produced by the `fix` node, so
+it is a pointer. A pointer cannot be smuggled inside a literal — that would
+be the template language PRD §11.2 forbids — so the tracker reads `pr` from
+the `observe` block when it is there and from the task's own input
+otherwise, the same fallback it has always applied to `repo`.
+
+This is the shape the convention was always documented as having. Until
+issue #73 landed the compiler refused it, and the workflow shipped the
+observable as a whole object riding run input instead — which compiled, but
+meant an author read the graph and could not see what the node watched. Two
+guards keep the documented shape and the compilable shape the same from now
+on: `scripts/validate-examples.sh` and `tests/lint/examplescompile_test.go`
+(see [docs/invariants.md](../../docs/invariants.md), invariant 3).
 
 ## Operational notes
 

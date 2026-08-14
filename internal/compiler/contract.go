@@ -2,6 +2,8 @@ package compiler
 
 import (
 	"bytes"
+	"encoding/json"
+	"errors"
 	"fmt"
 	"strconv"
 	"strings"
@@ -166,7 +168,7 @@ func (c *compilation) checkSchemaSource(path string, source *schemaSource) {
 	if source == nil || source.Schema == nil {
 		return
 	}
-	if err := compileInlineSchema(source.Schema); err != nil {
+	if _, err := compileInlineSchema(source.Schema); err != nil {
 		c.add(LevelError, path+"/schema", CodeContractSchemaInvalid,
 			fmt.Sprintf("inline schema is not a usable JSON Schema Draft 2020-12 document: %v", err),
 			"fix the schema, or move it to a file and reference it with schemaRef")
@@ -175,36 +177,45 @@ func (c *compilation) checkSchemaSource(path string, source *schemaSource) {
 
 // compileInlineSchema round-trips the decoded schema through canonical JSON so
 // the compiler validates exactly the bytes it will digest, then compiles it.
-func compileInlineSchema(schema map[string]any) error {
+// The compiled schema is returned for the callers that go on to validate
+// something against it (checkNodeLiterals); checkSchemaSource wants only the
+// verdict.
+func compileInlineSchema(schema map[string]any) (*jsonschema.Schema, error) {
 	canonical, err := contracts.CanonicalJSON(schema)
 	if err != nil {
-		return err
+		return nil, err
 	}
 	doc, err := jsonschema.UnmarshalJSON(bytes.NewReader(canonical))
 	if err != nil {
-		return err
+		return nil, err
 	}
 	compiler := jsonschema.NewCompiler()
 	compiler.DefaultDraft(jsonschema.Draft2020)
 	const inlineURI = "https://nodes.culture.dev/inline/schema.json"
 	if err := compiler.AddResource(inlineURI, doc); err != nil {
-		return err
+		return nil, err
 	}
-	if _, err := compiler.Compile(inlineURI); err != nil {
-		return err
-	}
-	return nil
+	return compiler.Compile(inlineURI)
 }
 
-// checkNodeBindings validates every JSON Pointer the node uses to move data.
+// checkNodeBindings validates every JSON Pointer the node uses to move data,
+// and every literal it declares in their place (issue #73).
 func (c *compilation) checkNodeBindings(base string, n *node) {
 	if n.Input != nil {
+		// input.from is a whole-value move and stays pointer-only: a literal
+		// there would be a node whose entire input is a constant, which is a
+		// fixture rather than a workflow step.
 		if n.Input.From != "" {
 			c.checkBinding(base+"/input/from", n.Input.From)
 		}
 		for _, key := range sortedKeys(n.Input.Bindings) {
-			c.checkBinding(pointerJoin(base+"/input/bindings", key), n.Input.Bindings[key])
+			value := n.Input.Bindings[key]
+			if value.isLiteral() {
+				continue
+			}
+			c.checkBinding(pointerJoin(base+"/input/bindings", key), value.Pointer)
 		}
+		c.checkNodeLiterals(base, n)
 	}
 	if n.Output != nil && n.Output.From != "" {
 		c.checkBinding(base+"/output/from", n.Output.From)
@@ -212,6 +223,97 @@ func (c *compilation) checkNodeBindings(base string, n *node) {
 	if n.Operation != nil && n.Operation.WorkspaceRef != "" {
 		c.checkWorkspaceRef(base+"/operation/workspaceRef", n.Operation.WorkspaceRef)
 	}
+}
+
+// literalCheckBlockers are top-level keywords that make a node input schema's
+// verdict on one member depend on members the compiler cannot see. A literal is
+// known at publish time but its pointer-bound siblings are not, so under a
+// combinator the "which branch applies" question has no answer yet and a
+// failure reported here could be a branch the full payload would never take.
+// Rather than guess, the literal check stands down for such a schema and the
+// contract is enforced where it always was — at dispatch, against the whole
+// resolved payload.
+var literalCheckBlockers = []string{
+	"allOf", "anyOf", "oneOf", "not", "if",
+	"$ref", "dependentSchemas", "dependentRequired",
+}
+
+// checkNodeLiterals validates each declared literal against the node's own
+// input contract. This is what makes a literal worth more than an opaque blob:
+// the value is fully known at publish time, so a literal the node itself
+// refuses is a publish-time error rather than a first-dispatch surprise.
+//
+// One literal is checked at a time, as a single-member object, and only the
+// violations located inside that member are reported. Members supplied by
+// pointer bindings do not exist yet, so a `required` verdict over the whole
+// payload would be an error about data the author did move — just not here.
+// Everything the contract says about the member's own SHAPE still applies,
+// including an `additionalProperties: false` that forbids the member outright.
+func (c *compilation) checkNodeLiterals(base string, n *node) {
+	if n.Contract == nil || n.Contract.Input == nil || n.Contract.Input.Schema == nil {
+		return
+	}
+	literals := make([]string, 0, len(n.Input.Bindings))
+	for _, key := range sortedKeys(n.Input.Bindings) {
+		if n.Input.Bindings[key].isLiteral() {
+			literals = append(literals, key)
+		}
+	}
+	if len(literals) == 0 {
+		return
+	}
+	for _, blocker := range literalCheckBlockers {
+		if _, ok := n.Contract.Input.Schema[blocker]; ok {
+			return
+		}
+	}
+
+	schema, err := compileInlineSchema(n.Contract.Input.Schema)
+	if err != nil {
+		// checkSchemaSource already reported the unusable schema with its own
+		// pointer; there is nothing to check a literal against.
+		return
+	}
+	for _, key := range literals {
+		literalPath := pointerJoin(base+"/input/bindings", key) + "/" + bindingLiteralKey
+		for _, violation := range literalViolations(schema, key, n.Input.Bindings[key].Literal) {
+			c.add(LevelError, literalPath+violation.Pointer, CodeContractLiteralInvalid,
+				fmt.Sprintf("literal binding %q does not satisfy the node's input contract: %s", key, violation.Message),
+				"correct the literal, or widen the node's contract.input schema to admit it")
+		}
+	}
+}
+
+// literalViolations validates {key: literal} against the node input schema and
+// keeps only the failures located inside `key`.
+func literalViolations(schema *jsonschema.Schema, key string, literal json.RawMessage) []contracts.Violation {
+	instance, err := json.Marshal(map[string]json.RawMessage{key: literal})
+	if err != nil {
+		return nil
+	}
+	doc, err := jsonschema.UnmarshalJSON(bytes.NewReader(instance))
+	if err != nil {
+		return nil
+	}
+	err = schema.Validate(doc)
+	if err == nil {
+		return nil
+	}
+	var schemaErr *jsonschema.ValidationError
+	if !errors.As(err, &schemaErr) {
+		return nil
+	}
+
+	prefix := "/" + escapePointerToken(key)
+	var out []contracts.Violation
+	for _, violation := range contracts.Violations(schemaErr) {
+		if violation.Pointer != prefix && !strings.HasPrefix(violation.Pointer, prefix+"/") {
+			continue
+		}
+		violation.Pointer = strings.TrimPrefix(violation.Pointer, prefix)
+		out = append(out, violation)
+	}
+	return out
 }
 
 // checkBinding decides whether a data-binding pointer is well-formed and

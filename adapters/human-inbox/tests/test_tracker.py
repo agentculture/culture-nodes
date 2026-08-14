@@ -452,6 +452,46 @@ def test_observation_accepts_task_repo_and_declared_success_outcome():
     )
 
 
+def test_observation_reads_pr_from_task_input_when_the_declaration_omits_it():
+    """The `observe` block says WHAT is watched; `pr` says which one.
+
+    Issue #73's literal binding is fixed at publish time, so a looping
+    workflow declares the observation kind inline and binds the PR number
+    from the node that produced it. `pr` therefore falls back to the task's
+    own input exactly as `repo` always has.
+    """
+    task = HumanTask(
+        invocation_id="hit_1",
+        extra_input={
+            "pr": 61,
+            "observe": {"kind": "github_pr_merged"},
+        },
+    )
+    assert tracker.observation_for(task, "agentculture/culture-nodes") == tracker.Observation(
+        repo="agentculture/culture-nodes", pr=61, outcome="merged"
+    )
+
+
+def test_observation_prefers_the_declared_pr_over_the_task_input():
+    task = HumanTask(
+        invocation_id="hit_1",
+        extra_input={
+            "pr": 61,
+            "observe": {"kind": "github_pr_merged", "pr": 54},
+        },
+    )
+    observation = tracker.observation_for(task, "agentculture/culture-nodes")
+    assert observation is not None and observation.pr == 54
+
+
+def test_observation_without_any_pr_stays_on_the_manual_lane():
+    task = HumanTask(
+        invocation_id="hit_1",
+        extra_input={"observe": {"kind": "github_pr_merged"}},
+    )
+    assert tracker.observation_for(task, "agentculture/culture-nodes") is None
+
+
 # --- reply-kind observations (issue #71) --------------------------------
 #
 # The pr-upkeep decision node posts a question to a PR, notifies Discord it
@@ -704,6 +744,34 @@ def test_reply_observation_ignores_malformed_declarations():
         extra_input={"observe": {"kind": "something_else", "pr": 1}},
     )
     assert tracker.reply_observation_for(task2, "agentculture/culture-nodes") is None
+
+    # A task-input `pr` that is not a positive integer is malformed too — the
+    # fallback widens where the number may come from, never what counts as one.
+    task3 = HumanTask(
+        invocation_id="hit_3",
+        created_at="2026-08-13T00:00:00+00:00",
+        extra_input={"pr": True, "observe": {"kind": "github_pr_reply"}},
+    )
+    assert tracker.reply_observation_for(task3, "agentculture/culture-nodes") is None
+
+
+def test_reply_observation_reads_pr_from_task_input():
+    """Same `pr` fallback as the merge kind, for the same reason (#73)."""
+    task = HumanTask(
+        invocation_id="hit_1",
+        created_at="2026-08-13T00:00:00+00:00",
+        extra_input={"pr": 61, "observe": {"kind": "github_pr_reply"}},
+    )
+    assert tracker.reply_observation_for(task, "agentculture/culture-nodes") == (
+        tracker.ReplyObservation(
+            repo="agentculture/culture-nodes",
+            pr=61,
+            since="2026-08-13T00:00:00+00:00",
+            answered_outcome="answered",
+            merged_outcome="merged",
+            dropped_outcome="dropped",
+        )
+    )
 
 
 def test_reply_observation_accepts_custom_outcome_names():

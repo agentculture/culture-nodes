@@ -108,7 +108,9 @@ sweep; refused at append time by `internal/ledger/authority.go` otherwise).
 never compiled. The mechanism worked (the observable rode run input as a
 pointer, proven live); the *documented shape* — a nested object under
 `bindings` — was schema-invalid, and nothing noticed because nothing ever
-compiled the examples. Task t5 closes the recurrence half.
+compiled the examples. Task t5 closes the recurrence half; task t6 gave the
+convention a shape that does compile (`#/$defs/bindingValue`'s `literal:`
+wrapper), so the documented and the compilable form are now the same one.
 
 Two layers, deliberately different in kind:
 

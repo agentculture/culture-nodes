@@ -225,6 +225,12 @@ describe("Inbox pending task rendering", () => {
     // Context refs and the audit trail.
     expect(scoped.getByText("nodes.build.output")).toBeInTheDocument();
     expect(scoped.getByText("nodes.build.output.diff")).toBeInTheDocument();
+    // A literal binding renders as the declared value, not as a pointer and
+    // not as "[object Object]" — naming what the task observes is the whole
+    // reason the shape exists (issue #73).
+    expect(
+      scoped.getByText('{"kind":"github_pr_merged","pr":42}'),
+    ).toBeInTheDocument();
     expect(scoped.getByText("release-signoff")).toBeInTheDocument();
     expect(scoped.getByText(/build → succeeded/)).toBeInTheDocument();
     // The run link goes to the existing Run view.

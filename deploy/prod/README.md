@@ -227,6 +227,46 @@ records, `s` cites its scope-exploration entries). Reference config surface:
   endpoint would fail resolution from inside the container the way
   `THOR_IP` resolution already exists to avoid above (c20, h18).
 
+### Unprivileged user namespaces (issue #63)
+
+**A fresh Ubuntu 24.04 host cannot run a codex actor until this is
+changed.** Codex sandboxes every shell command it runs inside a user
+namespace, built with bubblewrap. Ubuntu 24.04 ships
+`kernel.apparmor_restrict_unprivileged_userns=1`, which blocks unprivileged
+user-namespace creation outright — so the actor registers, dispatches,
+accepts work, and then fails every command it tries to run, after the turn
+is already spent. Nothing about the error says "host provisioning": it
+surfaces as a bridge or runner fault and is neither.
+
+This fleet takes the blunt option, deliberately and with its cost stated:
+
+```bash
+echo 'kernel.apparmor_restrict_unprivileged_userns = 0' \
+  | sudo tee /etc/sysctl.d/60-culture-nodes-userns.conf
+sudo sysctl --system
+```
+
+Applied and persisted on spark, thor and orin. The cost is real: this
+restores pre-24.04 behaviour for *every* local process, re-exposing a
+kernel attack surface that has historically carried local-root CVEs. On
+these single-tenant LAN machines that is a smaller cost than on a shared
+host, but it is not zero. The better option — a scoped AppArmor profile
+granting `userns` to `bwrap` alone — stays open; none is installed today.
+Disabling the codex sandbox instead (`--sandbox danger-full-access`) is
+rejected: it widens the agent's blast radius to everything the invoking
+user can touch, to work around a sandbox bug.
+
+**Verify by capability, never by reading the sysctl back.** The value says
+what was configured; only the probe says what works:
+
+```bash
+bwrap --unshare-user --unshare-net --ro-bind / / /bin/true && echo "bwrap userns: OK"
+```
+
+`codex-preflight.sh` runs exactly this probe as its check 7, and the
+bridge unit runs the preflight as `ExecStartPre` — so a host in this state
+fails to start its bridge instead of accepting work it cannot do.
+
 ### Install, deploy, verify
 
 Extends the one-time setup above with a bridge lane:

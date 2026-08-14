@@ -31,6 +31,9 @@
 #   4. every repo_allowlist entry is a real git checkout
 #   5. state_dir exists (created if absent) and is writable
 #   6. a non-loopback host requires auth_token to be set
+#   7. the host can create an unprivileged user namespace — codex sandboxes
+#      every shell command inside one, and a host that cannot build one
+#      accepts work and then fails it (issue #63)
 #
 # On success, prints exactly one line to stdout: the measured codex
 # version, e.g. "preflight: ok codex-cli 0.147.0".
@@ -203,6 +206,55 @@ case "$HOST" in
       echo "preflight: host is non-loopback ($HOST) but auth_token is not set (config or CODEX_BRIDGE_AUTH_TOKEN)" >&2
       exit 1
     fi
+    ;;
+esac
+
+# --- 7. the host can create an unprivileged user namespace (issue #63) -----
+# The only check here about the MACHINE rather than the config file, and the
+# one that catches the failure that does not look like its own cause: codex
+# sandboxes every shell command it runs inside a user namespace, so a host
+# that cannot create one gets an actor that registers, accepts dispatched
+# work, and then fails each command it tries — after the turn is spent. The
+# error surfaces as a bridge or runner problem and is neither.
+#
+# Ubuntu 24.04 ships kernel.apparmor_restrict_unprivileged_userns=1, which
+# is exactly that state, so every fresh host in this fleet starts broken
+# until it is provisioned otherwise. See deploy/prod/README.md,
+# "Unprivileged user namespaces".
+#
+# Probed by capability, never by reading the sysctl back: the sysctl is one
+# of several things that can block a namespace (a seccomp filter, a
+# container's own restrictions, a missing bwrap), and its value says what
+# was configured rather than what works. bwrap is preferred because it is
+# the exact mechanism codex uses; `unshare` is the fallback that probes the
+# same kernel capability one layer down.
+USERNS_PROBE=""
+if command -v bwrap >/dev/null 2>&1; then
+  USERNS_PROBE="bwrap"
+elif command -v unshare >/dev/null 2>&1; then
+  USERNS_PROBE="unshare"
+fi
+case "$USERNS_PROBE" in
+  bwrap)
+    if ! bwrap --unshare-user --unshare-net --ro-bind / / /bin/true >/dev/null 2>&1; then
+      echo "preflight: bwrap cannot create a user namespace — codex would register, accept work, then fail every shell command it runs (issue #63)" >&2
+      echo "preflight: on Ubuntu 24.04 this is kernel.apparmor_restrict_unprivileged_userns=1; see deploy/prod/README.md 'Unprivileged user namespaces'" >&2
+      exit 1
+    fi
+    ;;
+  unshare)
+    if ! unshare --user --map-root-user true >/dev/null 2>&1; then
+      echo "preflight: this host cannot create a user namespace — codex would register, accept work, then fail every shell command it runs (issue #63)" >&2
+      echo "preflight: on Ubuntu 24.04 this is kernel.apparmor_restrict_unprivileged_userns=1; see deploy/prod/README.md 'Unprivileged user namespaces'" >&2
+      exit 1
+    fi
+    ;;
+  *)
+    # Neither probe tool is installed, so the capability was not measured.
+    # Saying so is the honest outcome: passing silently would report a
+    # readiness this script never established, and failing would invent a
+    # provisioning policy for a host shape this fleet does not have.
+    echo "preflight: note — neither bwrap nor unshare is installed, so user-namespace creation was NOT probed (issue #63)" >&2
     ;;
 esac
 

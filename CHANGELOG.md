@@ -5,6 +5,13 @@ All notable changes to this project will be documented in this file.
 Format follows [Keep a Changelog](https://keepachangelog.com/). This project
 adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.18.2] - 2026-08-14
+
+### Added
+
+- codex-preflight.sh check 7: the host can create an unprivileged user namespace (issue #63). Codex sandboxes every shell command it runs inside a user namespace, so a host that cannot build one gets an actor that registers, dispatches, accepts work, and then fails every command it tries — after the turn is spent, and surfacing as a bridge or runner fault that it is not. The bridge unit already runs the preflight as ExecStartPre, so a host in that state now fails to start its bridge instead of accepting work it cannot do. Probed by capability (bwrap, falling back to unshare), never by reading the sysctl back: the value says what was configured, the probe says what works. When neither tool is installed the script says the capability was NOT probed rather than reporting a readiness it never established
+- deploy/prod/README.md gains an "Unprivileged user namespaces" section — the provisioning step issue #63 asked to be written down. It states the chosen option (kernel.apparmor_restrict_unprivileged_userns=0, persisted in /etc/sysctl.d/60-culture-nodes-userns.conf on spark, thor and orin), its real cost (pre-24.04 behaviour for every local process, a kernel surface that has carried local-root CVEs), the better option left open (a scoped AppArmor profile granting userns to bwrap alone), and the rejected one (disabling the codex sandbox to work around a sandbox bug)
+
 ## [0.18.1] - 2026-08-14
 
 ### Fixed

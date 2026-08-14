@@ -106,6 +106,39 @@ func writeFakeCodex(t *testing.T, dir string) string {
 	return path
 }
 
+// fakeBwrapScript is a controllable stand-in for bubblewrap, the mechanism
+// codex uses to sandbox every shell command it runs. FAKE_BWRAP_BEHAVIOR
+// picks between the two host states that matter:
+//
+//   - "ok" (the default) -- the namespace is created, exit 0.
+//   - "blocked" -- exit 1 with bwrap's own uid-map message, byte-for-byte
+//     what Ubuntu 24.04 produces with
+//     kernel.apparmor_restrict_unprivileged_userns=1 (issue #63).
+//
+// Faking it is what makes the check-7 tests deterministic. The real host's
+// answer is a property of the machine `go test` happens to run on -- a
+// GitHub runner and a provisioned thor answer differently -- so a test that
+// probed the real bwrap would assert on the CI image, not on the script.
+const fakeBwrapScript = `#!/usr/bin/env bash
+if [ "${FAKE_BWRAP_BEHAVIOR:-ok}" = "blocked" ]; then
+  echo "bwrap: setting up uid map: Permission denied" >&2
+  exit 1
+fi
+exit 0
+`
+
+// writeFakeBwrap writes fakeBwrapScript to dir/bwrap and marks it
+// executable. runPreflight prepends dir to PATH, so this shadows any real
+// bubblewrap on the machine running the tests.
+func writeFakeBwrap(t *testing.T, dir string) string {
+	t.Helper()
+	path := filepath.Join(dir, "bwrap")
+	if err := os.WriteFile(path, []byte(fakeBwrapScript), 0o755); err != nil {
+		t.Fatalf("write fake bwrap: %v", err)
+	}
+	return path
+}
+
 // gitCheckout creates a real git repo at dir/name and returns its path --
 // the positive fixture for the repo_allowlist check.
 func gitCheckout(t *testing.T, dir, name string) string {
@@ -151,11 +184,17 @@ func writeConfig(t *testing.T, dir string, cfg preflightConfig) string {
 // runPreflight runs codex-preflight.sh with the given config path and
 // extra environment (appended to os.Environ()), returning combined stdout
 // and stderr separately plus the process error (non-nil on non-zero exit).
+//
+// It PREPENDS the config's own directory to PATH so a fake `bwrap` written
+// there (writeFakeBwrap) shadows the real one for check 7. Prepending, not
+// replacing: the script still needs git, python3, sed and friends from the
+// ambient PATH, and every other check depends on them.
 func runPreflight(t *testing.T, configPath string, extraEnv ...string) (stdout, stderr string, err error) {
 	t.Helper()
 	script := preflightScriptPath(t)
 	cmd := exec.Command(script, configPath)
-	cmd.Env = append(os.Environ(), extraEnv...)
+	env := append(os.Environ(), "PATH="+filepath.Dir(configPath)+string(os.PathListSeparator)+os.Getenv("PATH"))
+	cmd.Env = append(env, extraEnv...)
 	var outBuf, errBuf bytes.Buffer
 	cmd.Stdout = &outBuf
 	cmd.Stderr = &errBuf
@@ -167,9 +206,15 @@ func runPreflight(t *testing.T, configPath string, extraEnv ...string) (stdout, 
 // that answers everything "ok", a real git checkout for the sole allowlist
 // entry, and a writable state dir -- the success-path fixture each refusal
 // test then mutates exactly one field of.
+//
+// It also drops a passing fake bwrap into dir, which runPreflight puts
+// first on PATH. That keeps every OTHER test's success path a statement
+// about the config it was handed rather than about whether the machine
+// running `go test` allows unprivileged user namespaces.
 func baseConfig(t *testing.T, dir string) preflightConfig {
 	t.Helper()
 	fakeCodex := writeFakeCodex(t, dir)
+	writeFakeBwrap(t, dir)
 	repo := gitCheckout(t, dir, "repo")
 	return preflightConfig{
 		CodexBin:      fakeCodex,
@@ -414,6 +459,66 @@ func requireFailure(t *testing.T, err error, stderr, wantSubstr string) {
 }
 
 // ---------------------------------------------------------------------------
+// Check 7: the host can create an unprivileged user namespace (issue #63)
+// ---------------------------------------------------------------------------
+
+// TestPreflightRefusesWhenUserNamespacesAreBlocked is the check that would
+// have caught issue #63 before a single billable session was dispatched.
+//
+// The failure it guards against is not a bridge bug and does not look like
+// one: on Ubuntu 24.04, kernel.apparmor_restrict_unprivileged_userns=1
+// blocks unprivileged user-namespace creation, so bubblewrap cannot build
+// the sandbox codex runs every shell command inside. The actor registers,
+// accepts dispatched work, and then fails each command it tries to run --
+// after the turn is spent. Preflight is the last free place to find out.
+func TestPreflightRefusesWhenUserNamespacesAreBlocked(t *testing.T) {
+	dir := t.TempDir()
+	cfg := baseConfig(t, dir)
+	configPath := writeConfig(t, dir, cfg)
+
+	_, stderr, err := runPreflight(t, configPath, "FAKE_BWRAP_BEHAVIOR=blocked")
+	requireFailure(t, err, stderr, "cannot create a user namespace")
+}
+
+// TestPreflightUsernsRefusalNamesTheRemedy asserts the refusal carries the
+// sysctl by name. A message that only says "bwrap failed" sends an operator
+// to the bridge, the runner, or codex itself -- the three places the fault
+// is NOT -- which is exactly the wrong-layer hunt #63 records.
+func TestPreflightUsernsRefusalNamesTheRemedy(t *testing.T) {
+	dir := t.TempDir()
+	cfg := baseConfig(t, dir)
+	configPath := writeConfig(t, dir, cfg)
+
+	_, stderr, err := runPreflight(t, configPath, "FAKE_BWRAP_BEHAVIOR=blocked")
+	if err == nil {
+		t.Fatalf("expected non-zero exit, got success; stderr=%s", stderr)
+	}
+	if !strings.Contains(stderr, "kernel.apparmor_restrict_unprivileged_userns") {
+		t.Errorf("stderr = %q, want it to name the sysctl an operator has to change", stderr)
+	}
+}
+
+// TestPreflightUsernsProbeIsNonBillable holds check 7 to the same contract
+// as the rest of the script: the probe runs bwrap, never codex. The fake
+// codex exits 1 with a marker on any invocation outside --version and
+// login status, so a probe that reached for `codex exec` to test the
+// sandbox would surface here as a failed run rather than as a passing test
+// and a consumed turn.
+func TestPreflightUsernsProbeIsNonBillable(t *testing.T) {
+	dir := t.TempDir()
+	cfg := baseConfig(t, dir)
+	configPath := writeConfig(t, dir, cfg)
+
+	stdout, stderr, err := runPreflight(t, configPath)
+	if err != nil {
+		t.Fatalf("expected success, got error %v\nstdout=%q stderr=%q", err, stdout, stderr)
+	}
+	if strings.Contains(stdout+stderr, "fake-codex: unexpected invocation") {
+		t.Errorf("check 7 invoked codex; output = %q", stdout+stderr)
+	}
+}
+
+// ---------------------------------------------------------------------------
 // Distinctness of refusal messages across all six classes
 // ---------------------------------------------------------------------------
 
@@ -453,6 +558,7 @@ func TestPreflightRefusalMessagesAreAllDistinct(t *testing.T) {
 			cfg.Host = "0.0.0.0"
 			cfg.AuthToken = ""
 		}},
+		{name: "user namespaces blocked", env: []string{"FAKE_BWRAP_BEHAVIOR=blocked"}},
 	}
 
 	seen := map[string]string{}

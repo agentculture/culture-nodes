@@ -6,12 +6,30 @@
 #
 # Usage: install-secrets.sh [thor-host] [orin-host]
 # Idempotent per machine: refuses to overwrite an existing prod.env unless
-# FORCE=1, so a re-deploy never silently rotates a live database password.
-# The codex-bridge lane (~/.culture-nodes/codex-bridge.env) carries the
-# same FORCE=1 guard so a re-run never silently rotates a live bridge
-# token either; the NODES_ACTOR_CODEX_*_TOKEN lines it adds to prod.env
-# are updated in place (or appended) instead, since they mirror rather
-# than gate access.
+# FORCE_PROD=1, so a re-deploy never silently rotates a live database
+# password. The codex-bridge lane (~/.culture-nodes/codex-bridge.env)
+# carries its own FORCE_CODEX=1 guard so a re-run never silently rotates a
+# live bridge token either; the NODES_ACTOR_CODEX_*_TOKEN lines it adds to
+# prod.env are updated in place (or appended) instead, since they mirror
+# rather than gate access.
+#
+# EVERY prod.env write in this file MERGES KEY BY KEY (task t11, issue #69
+# item 1). prod.env holds two populations: the six secrets this script
+# generates, and roughly eight more that accrete afterwards —
+# NODES_NAMESPACE_ID and THOR_IP from deploy.sh, NODES_ACTOR_*_TOKEN from
+# this script's own later lanes and from actor registration,
+# DISCORD_WEBHOOK_URL and NODES_ACTOR_CLAUDE_TOKEN relayed from outside.
+# The prod lane used to `cat >` the whole file from the generated block, so
+# an authorized rotation deleted the second population without saying so:
+# a FORCE=1 rotation destroyed NODES_ACTOR_CLAUDE_TOKEN and the failure
+# stayed latent for ~18 hours (company/developer succeeded at 13:03, then
+# answered 401 policy_denied at 06:42 the next morning, after a restart).
+# A rotation now replaces only the keys it actually generates.
+#
+# Merging means nothing here can DELETE a key, which would leave prod.env
+# able only to grow. deploy/prod/remove-secret.sh is the explicit removal
+# path: it names one key, shows the redacted line it would drop, and takes
+# a --yes to act.
 set -euo pipefail
 
 SCRIPT_DIR=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
@@ -91,6 +109,29 @@ EOF
 
 gen() { openssl rand -hex 32; }
 
+# PROD_ENV_MERGE -- the remote half of every prod.env write in this file.
+#
+# It reads KEY=VALUE lines from its own stdin and, for each one, replaces
+# that key's line in ~/.culture-nodes/prod.env if it is already there and
+# appends it if it is not. Keys nobody sent are not touched, which is the
+# whole point: prod.env accretes keys from deploy.sh, from actor
+# registration, and from token relays, and a lane that rewrites the file
+# from its own block deletes all of them (see this script's header).
+#
+# It lives in ONE variable rather than being pasted into each lane. The
+# idiom was already here — the single-key actor-token helpers below used
+# it — and pasting a third copy is how the copies start disagreeing: the
+# trailing-newline guard on the line below was missing from the pasted
+# copies, so appending a key to a hand-edited file whose last line had no
+# newline concatenated the new assignment onto the old value and destroyed
+# it (tests/deploy/prodenvmerge_test.go pins that case).
+#
+# Single-quoted on purpose: $line, ${k} and the command substitution are
+# for the remote shell to expand, not this one. Expanding "$PROD_ENV_MERGE"
+# into an ssh argv does not re-scan them.
+# shellcheck disable=SC2016 # the expansions are deliberately remote
+PROD_ENV_MERGE='touch ~/.culture-nodes/prod.env; chmod 600 ~/.culture-nodes/prod.env; if [ -s ~/.culture-nodes/prod.env ] && [ -n "$(tail -c1 ~/.culture-nodes/prod.env)" ]; then echo >> ~/.culture-nodes/prod.env; fi; while IFS= read -r line; do k=${line%%=*}; [ -z "$k" ] && continue; if grep -q "^${k}=" ~/.culture-nodes/prod.env; then sed -i "s|^${k}=.*|${line}|" ~/.culture-nodes/prod.env; else printf "%s\n" "$line" >> ~/.culture-nodes/prod.env; fi; done'
+
 POSTGRES_PASSWORD=$(gen)
 MINIO_ROOT_PASSWORD=$(gen)
 NODES_HUMAN_DECISION_TOKEN_SECRET=$(gen)
@@ -105,7 +146,8 @@ install_env() { # host, content-producing function
   if [ "${FORCE_PROD:-0}" = "1" ]; then
     require_destructive_confirmation "prod-env" "$host" \
 "Rotates POSTGRES_PASSWORD, MINIO_ROOT_PASSWORD, NODES_HUMAN_DECISION_TOKEN_SECRET
-and NODES_CALLBACK_TOKEN_SECRET on ${host}.
+and NODES_CALLBACK_TOKEN_SECRET on ${host}. Only those keys: every other line
+of prod.env is merged around, not overwritten.
 
 - PostgreSQL keeps the password from its initdb, so the new value will NOT
   authenticate until the role is altered to match: the api/worker/scheduler
@@ -118,7 +160,7 @@ and NODES_CALLBACK_TOKEN_SECRET on ${host}.
   # ssh does not forward env vars, so a bare ${FORCE:-0} inside the
   # single-quoted remote script would always read 0 on the target.
   # shellcheck disable=SC2029 # the remote path is deliberately remote
-  printf '%s\n' "$content" | ssh "$host" "FORCE=${FORCE_PROD:-0}; "'umask 077; mkdir -p ~/.culture-nodes; if [ -e ~/.culture-nodes/prod.env ] && [ "$FORCE" != "1" ]; then echo "keeping existing prod.env (set FORCE=1 to rotate)" >&2; exit 3; fi; cat > ~/.culture-nodes/prod.env' || rc=$?
+  printf '%s\n' "$content" | ssh "$host" "FORCE=${FORCE_PROD:-0}; "'umask 077; mkdir -p ~/.culture-nodes; if [ -e ~/.culture-nodes/prod.env ] && [ "$FORCE" != "1" ]; then echo "keeping existing prod.env (set FORCE_PROD=1 to rotate)" >&2; exit 3; fi; '"$PROD_ENV_MERGE" || rc=$?
   # exit 3 is the keep-existing refusal — a re-run on a provisioned host
   # must continue to the later lanes (codex tokens), not abort here.
   if [ "$rc" -eq 3 ]; then echo "kept existing prod.env on $host"; return 0; fi
@@ -191,7 +233,7 @@ update_actor_token_line() { # key, value — update-in-place or append into BOTH
   for host in "$THOR" "$ORIN"; do
     # shellcheck disable=SC2029 # the remote path is deliberately remote
     printf '%s=%s\n' "$key" "$value" \
-      | ssh "$host" 'umask 077; mkdir -p ~/.culture-nodes; touch ~/.culture-nodes/prod.env; while IFS= read -r line; do key=${line%%=*}; [ -z "$key" ] && continue; if grep -q "^${key}=" ~/.culture-nodes/prod.env; then sed -i "s|^${key}=.*|${line}|" ~/.culture-nodes/prod.env; else printf "%s\n" "$line" >> ~/.culture-nodes/prod.env; fi; done'
+      | ssh "$host" 'umask 077; mkdir -p ~/.culture-nodes; '"$PROD_ENV_MERGE"
     echo "installed $key into prod.env on $host"
   done
 }
@@ -200,7 +242,7 @@ update_env_line_on_host() { # host, key, value — update-in-place or append int
   local host=$1 key=$2 value=$3
   # shellcheck disable=SC2029 # the remote path is deliberately remote
   printf '%s=%s\n' "$key" "$value" \
-    | ssh "$host" 'umask 077; mkdir -p ~/.culture-nodes; touch ~/.culture-nodes/prod.env; while IFS= read -r line; do k=${line%%=*}; [ -z "$k" ] && continue; if grep -q "^${k}=" ~/.culture-nodes/prod.env; then sed -i "s|^${k}=.*|${line}|" ~/.culture-nodes/prod.env; else printf "%s\n" "$line" >> ~/.culture-nodes/prod.env; fi; done'
+    | ssh "$host" 'umask 077; mkdir -p ~/.culture-nodes; '"$PROD_ENV_MERGE"
   echo "installed $key into prod.env on $host"
 }
 

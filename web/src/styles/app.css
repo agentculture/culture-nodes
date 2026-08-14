@@ -1380,6 +1380,108 @@ button.timeline__node {
   color: var(--ink);
 }
 
+/* ---------- Plan view (task t23, issue #45) ----------
+
+   Waves reuse .workflow-card's frame verbatim (same "one card per grouped
+   thing" shape the Node Graphs cards use). The origin chip
+   (.plan-origin) is deliberately laid out beside its own text label
+   (domain/plan.ts's ORIGIN_LABEL) rather than alone — the chip vocabulary
+   is reused for a different axis than ledger authority (see
+   authorityForOrigin's doc comment), so the word alongside it keeps that
+   honest even before a reader has internalised the mapping. */
+
+.plan-view__slug-form {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  margin: 0.75rem 0 1.25rem;
+}
+
+.plan-view__slug-form label {
+  font-size: var(--ac-type-meta);
+  color: var(--ink-soft);
+}
+
+.plan-view__head {
+  margin-bottom: 1.25rem;
+}
+
+.plan-waves {
+  display: flex;
+  flex-direction: column;
+  gap: 1rem;
+  margin-bottom: 1.5rem;
+}
+
+.plan-wave h4 {
+  margin: 0 0 0.6rem;
+  font-size: var(--ac-type-meta);
+  letter-spacing: var(--ac-tracking-caps);
+  text-transform: uppercase;
+  color: var(--ink-soft);
+  font-weight: 640;
+}
+
+.plan-wave--unscheduled {
+  border-style: dashed;
+}
+
+.plan-task-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(16rem, 1fr));
+  gap: 0.75rem;
+}
+
+.plan-task {
+  border: 1px solid var(--line-soft);
+  border-radius: var(--radius);
+  padding: 0.6rem 0.75rem;
+}
+
+.plan-task__head {
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+  flex-wrap: wrap;
+  margin-bottom: 0.35rem;
+}
+
+.plan-task__ref {
+  font-weight: 640;
+}
+
+.plan-task__summary {
+  margin: 0 0 0.35rem;
+  font-size: var(--ac-type-ui);
+}
+
+.plan-task__deps {
+  margin: 0;
+  font-size: var(--ac-type-meta);
+}
+
+.plan-deviation__what {
+  margin: 0 0 0.2rem;
+}
+
+.plan-deviation__reason {
+  margin: 0;
+  font-size: var(--ac-type-meta);
+}
+
+.plan-origin {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.4rem;
+}
+
+.plan-origin__label {
+  font-size: var(--ac-type-meta);
+}
+
 /* ---------- Active Graphs sub-tab (task t31, c31/h20) ----------
 
    Each alive graph is a .workflow-card-framed section around a React Flow

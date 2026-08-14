@@ -609,6 +609,71 @@ export async function mockMeshApi(page: Page): Promise<void> {
   });
 }
 
+import {
+  PLAN_IMPORT,
+  PLAN_IMPORT_SUMMARIES,
+  PLAN_SLUG,
+} from "../../src/fixtures/plan-fixture";
+
+export { PLAN_IMPORT, PLAN_SLUG };
+
+/**
+ * Serve the Plan view's slice of `/v1alpha1` (task t23): `GET
+ * /v1alpha1/plan-imports?slug=` answers PLAN_IMPORT_SUMMARIES (two
+ * snapshots, most recent first) for PLAN_SLUG and an empty list for any
+ * other slug, and `GET /v1alpha1/plan-imports/{id}` resolves the most
+ * recent snapshot's full tasks/deviations — the same fixture
+ * src/routes/PlanView.test.tsx exercises via mocked client calls, served
+ * here over the real network-mocked route instead.
+ */
+export async function mockPlanApi(page: Page): Promise<void> {
+  await page.route("**/v1alpha1/**", async (route) => {
+    const url = new URL(route.request().url());
+    const path = decodeURIComponent(url.pathname);
+
+    if (path === "/v1alpha1/plan-imports") {
+      const slug = url.searchParams.get("slug");
+      await route.fulfill(
+        json({ items: slug === PLAN_SLUG ? PLAN_IMPORT_SUMMARIES : [] }),
+      );
+      return;
+    }
+    if (path === `/v1alpha1/plan-imports/${PLAN_IMPORT.id}`) {
+      await route.fulfill(json(PLAN_IMPORT));
+      return;
+    }
+    // The one spec that reaches the Plan view via the header link starts
+    // on the Runs list — honestly empty, and the shared app-wide SSE
+    // stream (task t27) is served the same "nothing new yet" empty body
+    // every other mock*Api here answers it with, so it never retries.
+    if (path === "/v1alpha1/runs") {
+      await route.fulfill(json({ items: [] }));
+      return;
+    }
+    if (path === "/v1alpha1/events") {
+      await route.fulfill({
+        status: 200,
+        headers: {
+          "content-type": "text/event-stream",
+          "cache-control": "no-cache",
+        },
+        body: "",
+      });
+      return;
+    }
+
+    await route.fulfill({
+      status: 404,
+      contentType: "application/json",
+      body: JSON.stringify({
+        code: 1,
+        message: `no fixture route for ${path}`,
+        remediation: "add it to e2e/fixtures/api.ts",
+      }),
+    });
+  });
+}
+
 /** The parsed contents of the page's `#agent-state` node. */
 export async function readAgentState(page: Page): Promise<{
   status: string;

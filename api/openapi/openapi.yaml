@@ -693,6 +693,41 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/Error'
+    get:
+      operationId: listPlanImports
+      tags: [plan-imports]
+      summary: List a plan's import snapshots by slug, most recent first.
+      description: >-
+        Task t23 (issue #45): every `plan_imports` row for the given `slug`,
+        newest `imported_at` first — how a dashboard finds "the current
+        state" of a plan (`items[0]`) without this endpoint guessing at a
+        supersedes relationship the schema deliberately does not model (see
+        `migrations/0024_plan_imports.sql`). `slug` is required; unlike
+        `GET /v1alpha1/workflows`, there is no cross-slug "every imported
+        plan" listing. Each item is the lightweight summary shape (no
+        `tasks`/`deviations` — those are read one snapshot at a time via
+        `GET /v1alpha1/plan-imports/{id}`, since an empty array here would
+        misread as "zero tasks" rather than "not fetched on this path").
+      parameters:
+        - name: slug
+          in: query
+          required: true
+          description: The source plan's own slug (devague's `plan_show.slug`).
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Every import snapshot with this slug, most recent first.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PlanImportSummaryList'
+        '400':
+          description: slug is missing.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
 
   /v1alpha1/plan-imports/{id}:
     get:
@@ -2653,6 +2688,42 @@ components:
           type: array
           items:
             $ref: '#/components/schemas/PlanImportDeviation'
+
+    PlanImportSummary:
+      type: object
+      description: >-
+        One row of GET /v1alpha1/plan-imports?slug= (task t23): the same
+        plan-level fields PlanImport carries, without `tasks`/`deviations`
+        — those are read one snapshot at a time via GET
+        /v1alpha1/plan-imports/{id}.
+      required:
+        [id, slug, title, source_slug, source_status, source_digest, imported_at]
+      properties:
+        id:
+          type: string
+        slug:
+          type: string
+        title:
+          type: string
+        source_slug:
+          type: string
+        source_status:
+          type: string
+        source_digest:
+          type: string
+        imported_at:
+          type: string
+          format: date-time
+
+    PlanImportSummaryList:
+      type: object
+      required: [items]
+      properties:
+        items:
+          type: array
+          items:
+            $ref: '#/components/schemas/PlanImportSummary'
+          description: Most recent `imported_at` first.
 
     ResumeActorRequest:
       type: object

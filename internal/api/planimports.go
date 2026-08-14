@@ -218,3 +218,73 @@ func (s *Server) handleGetPlanImport(w http.ResponseWriter, r *http.Request) err
 	writeJSON(w, http.StatusOK, planImportOutFrom(pi))
 	return nil
 }
+
+// planImportSummaryOut is components.schemas.PlanImportSummary -- the
+// lightweight row GET /v1alpha1/plan-imports?slug= lists (task t23,
+// internal/store/postgres.ListPlanImports' "Tasks/deviations are not
+// populated" contract). It deliberately carries no `tasks`/`deviations`
+// field at all -- not an empty array -- because postgres.PlanImport's Tasks
+// and Deviations are simply unpopulated on this path (nil slices), and
+// rendering `"tasks": []` here would read as "this plan has zero tasks",
+// which is not what was measured. A caller that wants the real task/
+// deviation set calls GET /v1alpha1/plan-imports/{id} for the one snapshot
+// it cares about (planImportOutFrom, the full-snapshot shape).
+type planImportSummaryOut struct {
+	ID           string    `json:"id"`
+	Slug         string    `json:"slug"`
+	Title        string    `json:"title"`
+	SourceSlug   string    `json:"source_slug"`
+	SourceStatus string    `json:"source_status"`
+	SourceDigest string    `json:"source_digest"`
+	ImportedAt   time.Time `json:"imported_at"`
+}
+
+func planImportSummaryOutFrom(pi postgres.PlanImport) planImportSummaryOut {
+	return planImportSummaryOut{
+		ID:           pi.ID,
+		Slug:         pi.Slug,
+		Title:        pi.Title,
+		SourceSlug:   pi.SourceSlug,
+		SourceStatus: pi.SourceStatus,
+		SourceDigest: pi.SourceDigest,
+		ImportedAt:   pi.ImportedAt,
+	}
+}
+
+// planImportSummaryListOut is components.schemas.PlanImportSummaryList.
+type planImportSummaryListOut struct {
+	Items []planImportSummaryOut `json:"items"`
+}
+
+// handleListPlanImports is GET /v1alpha1/plan-imports?slug=<slug> (task
+// t23): every import snapshot with the given slug, most recent first --
+// postgres.ListPlanImports' own ordering (`ORDER BY imported_at DESC`), so
+// `items[0]` is always "the current one" for a dashboard view that wants
+// the latest state without guessing at a supersedes relationship the
+// schema deliberately does not model (migrations/0024_plan_imports.sql).
+//
+// `slug` is required: unlike GET /v1alpha1/workflows (whose `workflow_key`
+// filter is optional because an unfiltered listing is still a meaningful
+// "every workflow" answer), there is no cross-slug "every imported plan"
+// concept in this schema, and returning one by silently picking a default
+// slug would be a guess this handler has no basis for making.
+func (s *Server) handleListPlanImports(w http.ResponseWriter, r *http.Request) error {
+	slug := r.URL.Query().Get("slug")
+	if slug == "" {
+		return badRequest(
+			"pass ?slug=<the plan's slug> — there is no cross-slug listing",
+			"slug query parameter is required")
+	}
+
+	imports, err := s.engineStore.ListPlanImports(r.Context(), slug)
+	if err != nil {
+		return classify(err)
+	}
+
+	out := make([]planImportSummaryOut, 0, len(imports))
+	for _, pi := range imports {
+		out = append(out, planImportSummaryOutFrom(pi))
+	}
+	writeJSON(w, http.StatusOK, planImportSummaryListOut{Items: out})
+	return nil
+}

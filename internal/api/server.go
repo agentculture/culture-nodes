@@ -326,6 +326,7 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("GET /v1alpha1/dispatch-rates", s.wrap(s.handleListDispatchRates))
 
 	mux.HandleFunc("POST /v1alpha1/plan-imports", s.wrap(s.handleImportPlan))
+	mux.HandleFunc("GET /v1alpha1/plan-imports", s.wrap(s.handleListPlanImports))
 	mux.HandleFunc("GET /v1alpha1/plan-imports/{id}", s.wrap(s.handleGetPlanImport))
 
 	mux.HandleFunc("POST /v1alpha1/runs/{id}/reviews", s.wrap(s.handleCreateReview))

@@ -1,8 +1,8 @@
 // Package deploytest (see compose_test.go's doc comment). This file is
 // task t34's: static checks over deploy/prod/deploy.sh's human-inbox lane
-// -- the block that installs the human-inbox-bridge unit (always) and the
-// human-inbox-tracker unit (conditionally, gated on GITHUB_TOKEN being
-// present in the secrets file install-secrets.sh writes), thor-only.
+// -- the block that installs the human-inbox bridge and merge tracker units
+// on thor. The tracker is unconditional once the shared bridge secret file
+// exists: GITHUB_TOKEN only selects authenticated versus anonymous polling.
 //
 // These are text assertions over the script itself, the same "cheaper and
 // more honest as static checks" call codexdeploylane_test.go makes for
@@ -120,18 +120,26 @@ func TestHumanInboxDeployLaneInstallsAndStartsBridgeUnit(t *testing.T) {
 	}
 }
 
-// TestHumanInboxDeployLaneGatesTrackerOnGitHubToken asserts the tracker
-// unit is installed/started only when GITHUB_TOKEN was actually installed
-// into human-inbox.env -- otherwise it is left uninstalled with a clear
-// warning, rather than started into an immediate crash loop.
-func TestHumanInboxDeployLaneGatesTrackerOnGitHubToken(t *testing.T) {
+// TestHumanInboxDeployLaneInstallsTrackerWithoutGitHubToken pins t35's
+// public-repository lane: the tracker install/start sequence is not nested
+// behind any inspection of GITHUB_TOKEN.
+func TestHumanInboxDeployLaneInstallsTrackerWithoutGitHubToken(t *testing.T) {
 	script := deployScriptText(t)
 
-	if !strings.Contains(script, "GITHUB_TOKEN") {
-		t.Fatal("deploy.sh's human-inbox lane never references GITHUB_TOKEN")
+	fnIdx := strings.Index(script, "deploy_human_inbox() {")
+	if fnIdx == -1 {
+		t.Fatal("no deploy_human_inbox() function definition found")
 	}
-	if !regexp.MustCompile(`grep -q "\^GITHUB_TOKEN=\.?" [^\n']*human-inbox\.env`).MatchString(script) {
-		t.Error(`deploy.sh does not grep human-inbox.env for a non-empty GITHUB_TOKEN= line before installing the tracker unit`)
+	callIdx := strings.Index(script[fnIdx+1:], `deploy_human_inbox "$HOST"`)
+	if callIdx == -1 {
+		t.Fatal("no deploy_human_inbox call site found")
+	}
+	body := script[fnIdx : fnIdx+1+callIdx]
+	if strings.Contains(body, "grep -q \"^GITHUB_TOKEN=") {
+		t.Error("deploy_human_inbox still gates the tracker unit on a non-empty GITHUB_TOKEN")
+	}
+	if strings.Contains(body, "skipping human-inbox-tracker") {
+		t.Error("deploy_human_inbox still has a no-token path that skips the tracker unit")
 	}
 	for _, want := range []struct{ needle, why string }{
 		{"~/.config/systemd/user/human-inbox-tracker.service", "the tracker unit file install"},
@@ -142,9 +150,6 @@ func TestHumanInboxDeployLaneGatesTrackerOnGitHubToken(t *testing.T) {
 		if !strings.Contains(script, want.needle) {
 			t.Errorf("deploy.sh has no %q — %s is missing from the human-inbox-tracker lane", want.needle, want.why)
 		}
-	}
-	if !strings.Contains(script, "WARNING") || !strings.Contains(script, "skipping human-inbox-tracker") {
-		t.Error("deploy.sh does not warn and skip the tracker unit when GITHUB_TOKEN is absent")
 	}
 }
 

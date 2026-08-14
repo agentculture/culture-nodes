@@ -184,11 +184,10 @@ deploy_human_inbox() { # host
   esac
 
   # A missing human-inbox.env skips this lane rather than failing the deploy:
-  # the bridge and tracker are optional daemons beside the control plane, and
-  # an absent optional secret must never block the control plane from
+  # the bridge and tracker need their shared bridge auth token, and an absent
+  # optional daemon secret file must never block the control plane from
   # shipping (found live — the hard exit here aborted the whole thor deploy
-  # before the compose step ever ran). Same posture the GITHUB_TOKEN branch
-  # below already takes.
+  # before the compose step ever ran).
   ssh "$host" 'test -f ~/.culture-nodes/human-inbox.env' || {
     say "WARNING: ~/.culture-nodes/human-inbox.env missing on $host — skipping the human-inbox bridge and tracker (run deploy/prod/install-secrets.sh, then deploy.sh again, to enable human nodes and auto-submit-on-merge)"
     return 0
@@ -228,17 +227,13 @@ deploy_human_inbox() { # host
   ssh "$host" "export XDG_RUNTIME_DIR=/run/user/\$(id -u); mkdir -p ~/.config/systemd/user && sed \"s#%h/.local/bin/uv#$UV_BIN#\" $REMOTE_DIR/deploy/prod/human-inbox-bridge.service > ~/.config/systemd/user/human-inbox-bridge.service && systemctl --user daemon-reload && systemctl --user restart human-inbox-bridge && systemctl --user enable human-inbox-bridge"
   ssh "$host" 'export XDG_RUNTIME_DIR=/run/user/$(id -u); for i in $(seq 1 15); do st=$(systemctl --user is-active human-inbox-bridge || true); [ "$st" = active ] && { echo "human-inbox-bridge: active"; exit 0; }; sleep 2; done; echo "human-inbox-bridge failed to become active:"; systemctl --user --no-pager -n 10 status human-inbox-bridge; exit 1'
 
-  # GITHUB_TOKEN is an externally issued credential install-secrets.sh
-  # never fabricates (see its own comment) -- absent, leave the tracker
-  # uninstalled rather than start it into an immediate TrackerConfigError
-  # crash loop. Manual submission through the bridge works either way.
-  if ssh "$host" 'grep -q "^GITHUB_TOKEN=." ~/.culture-nodes/human-inbox.env 2>/dev/null'; then
-    say "installing human-inbox-tracker systemd user unit on $host"
-    ssh "$host" "export XDG_RUNTIME_DIR=/run/user/\$(id -u); mkdir -p ~/.config/systemd/user && sed \"s#%h/.local/bin/uv#$UV_BIN#\" $REMOTE_DIR/deploy/prod/human-inbox-tracker.service > ~/.config/systemd/user/human-inbox-tracker.service && systemctl --user daemon-reload && systemctl --user restart human-inbox-tracker && systemctl --user enable human-inbox-tracker"
-    ssh "$host" 'export XDG_RUNTIME_DIR=/run/user/$(id -u); for i in $(seq 1 15); do st=$(systemctl --user is-active human-inbox-tracker || true); [ "$st" = active ] && { echo "human-inbox-tracker: active"; exit 0; }; sleep 2; done; echo "human-inbox-tracker failed to become active:"; systemctl --user --no-pager -n 10 status human-inbox-tracker; exit 1'
-  else
-    say "WARNING: GITHUB_TOKEN not installed in ~/.culture-nodes/human-inbox.env on $host — skipping human-inbox-tracker unit (manual submission through the bridge still works; re-run install-secrets.sh with GITHUB_TOKEN set, then deploy.sh again, to enable auto-submit-on-merge)"
-  fi
+  # GITHUB_TOKEN is optional: the public-repository lane polls anonymously at
+  # half the 60/hour ceiling (the quota is per source IP, so the tracker must
+  # leave room for whatever else on this host talks to GitHub), while a token
+  # selects the 5,000/hour authenticated lane. Both install the same unit.
+  say "installing human-inbox-tracker systemd user unit on $host"
+  ssh "$host" "export XDG_RUNTIME_DIR=/run/user/\$(id -u); mkdir -p ~/.config/systemd/user && sed \"s#%h/.local/bin/uv#$UV_BIN#\" $REMOTE_DIR/deploy/prod/human-inbox-tracker.service > ~/.config/systemd/user/human-inbox-tracker.service && systemctl --user daemon-reload && systemctl --user restart human-inbox-tracker && systemctl --user enable human-inbox-tracker"
+  ssh "$host" 'export XDG_RUNTIME_DIR=/run/user/$(id -u); for i in $(seq 1 15); do st=$(systemctl --user is-active human-inbox-tracker || true); [ "$st" = active ] && { echo "human-inbox-tracker: active"; exit 0; }; sleep 2; done; echo "human-inbox-tracker failed to become active:"; systemctl --user --no-pager -n 10 status human-inbox-tracker; exit 1'
 }
 
 case "$HOST" in

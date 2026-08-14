@@ -34,7 +34,9 @@ credentials.
    touched — they stay purely manual.
 3. Asks GitHub whether each declared PR is merged
    (`GET /repos/{owner}/{repo}/pulls/{n}`), grouping duplicate watches into
-   one request and stopping at a per-cycle request budget.
+   one request and stopping at a lane-derived per-cycle request budget.
+   When the budget is smaller than the watch set, cycles rotate through the
+   distinct PRs so later entries cannot starve.
 4. On `merged: true`, submits through the bridge's own submit surface with an
    observed marker, producing a `proposed` claim carrying
    `collection_method: github_pr_merged` and the merge commit SHA.
@@ -48,18 +50,54 @@ For a public repository, PR merge state is readable anonymously. No token,
 no secret, nothing to rotate.
 
 The cost is rate limit: GitHub allows **60 requests per hour** for
-unauthenticated calls, per source IP. In practice that is fine for a handful
-of parked tasks — one request per watched PR per cycle, deduplicated — and
-tight if you watch many PRs on a short cadence. Size the cadence against the
-ceiling:
+unauthenticated calls, per source IP. A handful of parked tasks remains
+workable because duplicate watches share a request and the enforced budget
+rotates across distinct PRs. Size the desired cadence against the ceiling:
 
 ```text
 requests/hour  ≈  (distinct PRs watched)  ×  (3600 / poll_seconds)
 ```
 
-With the default cadence and a couple of open merge gates you are far under
-60. With 10 PRs on a 60-second cadence you would need 600, and you must
-either slow the cadence or use Path B.
+That is the raw demand before the tracker applies its budget. For example,
+two PRs every five minutes use about 24 requests/hour. Ten PRs every 60
+seconds would demand 600, so the anonymous lane cannot poll all ten every
+cycle.
+
+The tracker enforces the active lane rather than trusting that configuration
+is safe — and it plans for a **fraction** of the ceiling, not all of it:
+
+```text
+planned_per_hour =  lane_requests_per_hour * rate_utilization   # default 0.5
+cadence_floor    =  3600 / planned_per_hour
+poll_seconds     =  max(configured_poll_seconds, cadence_floor)
+request_budget   =  min(configured_budget,
+                        floor(planned_per_hour * poll_seconds / 3600))
+```
+
+The headroom is not caution for its own sake. GitHub counts the anonymous
+quota **per source IP**, so the tracker shares it with your `gh` CLI, deploy
+scripts, and anything else on that host — none of which it can see. And its
+cycle clock drifts against GitHub's hourly reset window, so a plan that
+exactly fills the ceiling puts two cycles' requests inside one window at the
+boundary. Planning for the last request is planning to be refused.
+
+Concretely, on defaults:
+
+| lane | poll | budget/cycle | planned | ceiling |
+|---|---|---|---|---|
+| anonymous | 120s | 1 | 30/hr | 60/hr |
+| authenticated | 60s | 41 | 2460/hr | 5000/hr |
+
+The anonymous lane therefore detects a merge within about two minutes rather
+than one. That is the price of the headroom, and a human merge gate can pay
+it. On a host you know to be a sole tenant, reclaim the full ceiling with
+`HUMAN_INBOX_TRACKER_RATE_UTILIZATION=1.0` (values outside `0 < x <= 1` are
+refused at startup with a hint).
+
+That makes the no-token defaults 60 seconds and one distinct PR per cycle.
+If several PRs are watched, the tracker rotates that single request between
+them. The token lane keeps the 60-second cadence and configured budget of 50
+(3,000 requests/hour at continuous saturation, below its 5,000/hour ceiling).
 
 Install nothing extra:
 
@@ -101,7 +139,7 @@ deploy/prod/install-secrets.sh thor
 ```
 
 It lands in `~/.culture-nodes/human-inbox.env` on the host, mode `0600`,
-read only by the tracker unit.
+read only by the human-inbox units.
 
 Beware the obvious typo: the variable must be exactly `GITHUB_TOKEN`. A
 misspelled key is silently ignored and the tracker simply behaves as if no
@@ -156,9 +194,10 @@ a measuring runner and does not claim to be.
 
 | Symptom | Likely cause |
 |---|---|
-| Tracker unit absent after deploy | No `GITHUB_TOKEN` installed, on a build where the deploy lane still requires one (see issue #64) |
+| Tracker unit absent after deploy | The shared `human-inbox.env` was absent, so deploy skipped both optional human-inbox units; run `install-secrets.sh`, then deploy again |
 | Tracker starts, nothing ever auto-completes | The task carries no `observe` block, or the PR is closed-unmerged (never auto-completes by design) |
-| `403` with a rate-limit message | Anonymous 60/hr ceiling hit — slow the cadence or move to Path B |
+| `403` logged as rate-limit exhaustion | The active lane's quota was exhausted; the tracker logs the reset delay, backs off, and retries on the next cycle. Slow the cadence or move to Path B if it recurs |
+| `403` logged as permission denied | This is not quota exhaustion: the repository may now be private, or the configured token lacks **Pull requests: Read** |
 | Task completes but the claim says `human-submission` | It was submitted manually, not observed — the marker is what distinguishes them |
 | Control plane trying to call GitHub | A real bug: the credential belongs only to the tracker. `tests/lint/github_isolation_test.go` should have caught it |
 

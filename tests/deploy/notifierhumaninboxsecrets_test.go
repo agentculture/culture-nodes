@@ -134,8 +134,8 @@ func TestInstallSecretsGeneratesHumanInboxBridgeToken(t *testing.T) {
 
 // TestInstallSecretsRelaysGitHubTokenWithoutFabricating asserts
 // GITHUB_TOKEN is only ever relayed from this script's own environment,
-// never generated -- there is no way to locally mint a valid GitHub
-// credential.
+// never generated -- and remains optional because public PRs are readable
+// through the anonymous tracker lane.
 func TestInstallSecretsRelaysGitHubTokenWithoutFabricating(t *testing.T) {
 	script := readInstallSecrets(t)
 
@@ -148,6 +148,12 @@ func TestInstallSecretsRelaysGitHubTokenWithoutFabricating(t *testing.T) {
 	}
 	if !strings.Contains(script, `${GITHUB_TOKEN:-}`) {
 		t.Error("install-secrets.sh does not read GITHUB_TOKEN from its own environment with an empty-safe default")
+	}
+	if strings.Contains(script, "tracker auto-submit stays disabled") || strings.Contains(script, "leaves the tracker unit uninstalled") {
+		t.Error("install-secrets.sh still describes a missing GITHUB_TOKEN as disabling the tracker")
+	}
+	if !strings.Contains(script, "tracker uses anonymous public-repository polling") {
+		t.Error("install-secrets.sh does not report the no-token anonymous tracker lane")
 	}
 }
 

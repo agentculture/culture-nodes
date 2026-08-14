@@ -167,7 +167,7 @@ func TestHumanInboxTrackerUnitCarriesSecretsOnlyViaEnvironmentFile(t *testing.T)
 	}
 	joined := strings.Join(envFiles, " ")
 	if !strings.Contains(joined, "human-inbox.env") {
-		t.Errorf("EnvironmentFile directives %v do not reference human-inbox.env (carries GITHUB_TOKEN + HUMAN_INBOX_BRIDGE_AUTH_TOKEN)", envFiles)
+		t.Errorf("EnvironmentFile directives %v do not reference human-inbox.env (carries HUMAN_INBOX_BRIDGE_AUTH_TOKEN and optional GITHUB_TOKEN)", envFiles)
 	}
 	if _, ok := uf.values["Environment"]; ok {
 		t.Error("human-inbox-tracker.service declares a literal Environment= line; secrets must ride EnvironmentFile only")

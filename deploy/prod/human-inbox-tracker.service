@@ -9,9 +9,12 @@
 # modes ("Run continuously with `python -m human_inbox_bridge.tracker` or
 # execute one cycle with `--once`"), and the continuous mode already
 # implements its own bounded poll loop (HUMAN_INBOX_TRACKER_POLL_SECONDS,
-# default 60s) with a per-cycle GitHub request budget — wrapping `--once`
-# in a systemd timer would just reimplement that same interval as a
-# second, redundant schedule. Restart=always mirrors codex-bridge.service:
+# default 60s) with a lane-derived per-cycle GitHub request budget — one
+# request/cycle under the anonymous 60/hour ceiling by default, or up to
+# the configured budget under the authenticated 5,000/hour ceiling.
+# Wrapping `--once` in a systemd timer would just reimplement that same
+# interval as a second, redundant schedule. Restart=always mirrors
+# codex-bridge.service:
 # a long-running poller the operator wants back regardless of how it
 # exited, not only on a nonzero exit.
 #
@@ -19,12 +22,10 @@
 # one logical human actor, so one tracker.
 #
 # Installed by deploy.sh's human-inbox lane to
-# ~/.config/systemd/user/human-inbox-tracker.service — and only when
-# GITHUB_TOKEN was actually installed into ~/.culture-nodes/human-inbox.env
-# by install-secrets.sh (an externally issued credential this repo never
-# fabricates); absent it, deploy.sh leaves this unit uninstalled rather
-# than starting it into an immediate TrackerConfigError crash loop, and
-# manual submission through the bridge still works either way.
+# ~/.config/systemd/user/human-inbox-tracker.service whether or not the
+# optional GITHUB_TOKEN was installed into ~/.culture-nodes/human-inbox.env.
+# With no token it reads public PRs anonymously; with an externally issued
+# token it authenticates for private repositories or higher cadence.
 #
 #   systemctl --user daemon-reload
 #   systemctl --user enable --now human-inbox-tracker

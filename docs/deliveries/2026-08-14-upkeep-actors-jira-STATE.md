@@ -87,8 +87,8 @@ verified by running `bwrap --unshare-user`, not by reading the sysctl back.
 | #81 | Author nodes/flows from text via an agent node |
 | #82 | A node deadline does not stop the actor session |
 
-Ten issues were also **closed** with evidence citations (#41 #43 #45 #46 #47
-#49 #56 #64 #65 #68); #54, #48 and #66 left open with written reasons.
+Ten issues were also **closed** with evidence citations (41, 43, 45, 46, 47,
+49, 56, 64, 65, 68); 54, 48 and 66 left open with written reasons.
 
 ## Dogfooding count (the t17 metric)
 

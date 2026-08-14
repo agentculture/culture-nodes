@@ -19,8 +19,54 @@ natively on each aarch64 target.
 `install-secrets.sh` never passes a secret through argv — everything rides
 ssh stdin into mode-0600 files (the credential discipline cited from
 reachy-mini-cli's ssh module). It refuses to overwrite an existing
-`prod.env` unless `FORCE=1`, so re-deploys never silently rotate the live
-database password.
+`prod.env` unless `FORCE_PROD=1`, so re-deploys never silently rotate the
+live database password, and each other lane has its own `FORCE_*` switch
+(`FORCE_RUNNER`, `FORCE_CODEX`, `FORCE_NOTIFY`, `FORCE_HUMAN_INBOX`) so
+authorizing one rotation cannot authorize another.
+
+## prod.env is merged, never rewritten
+
+`prod.env` holds two populations of keys: the six secrets
+`install-secrets.sh` generates, and the ones that accrete afterwards —
+`NODES_NAMESPACE_ID` and `THOR_IP` written by `deploy.sh`,
+`NODES_ACTOR_CODEX_*_TOKEN` / `NODES_ACTOR_NOTIFY_TOKEN` written by later
+lanes of the same script, and `NODES_ACTOR_CLAUDE_TOKEN` /
+`DISCORD_WEBHOOK_URL` relayed in from outside.
+
+Every write **merges key by key**: an existing key's line is replaced in
+place, an unknown key is appended, and nothing else in the file is touched.
+All three lanes that write the file share one `PROD_ENV_MERGE` definition,
+because the copies had already drifted — only one of them normalised a
+missing trailing newline, and appending to a hand-edited file without one
+concatenated the new key onto the previous value.
+The prod lane used to write the whole file from its generated block, so an
+authorized rotation deleted the second population without saying so — a
+`FORCE=1` rotation destroyed `NODES_ACTOR_CLAUDE_TOKEN` and the breakage
+stayed latent for ~18 hours, because the running worker kept the token in
+memory until its next restart (`company/developer` succeeded at 13:03, then
+answered `policy_denied` / 401 at 06:42 the next morning). Merge semantics
+are pinned by `tests/deploy/prodenvmerge_test.go`, which rotates for real
+with an externally-issued key present and looks for it afterwards.
+
+### Removing a key
+
+Merging means no deploy lane can delete a line, so removal is its own
+explicit act — otherwise `prod.env` could only ever grow, and a dead
+credential would be indistinguishable from a live one:
+
+```bash
+./remove-secret.sh NODES_ACTOR_CLAUDE_TOKEN thor          # dry run: shows the
+                                                          # line, value redacted
+./remove-secret.sh NODES_ACTOR_CLAUDE_TOKEN --yes thor    # actually removes it
+```
+
+Hosts default to `thor orin`; `ENV_FILE=<name>` targets another file in
+`~/.culture-nodes` (e.g. `codex-bridge.env`). It is a dry run until `--yes`,
+it never prints a value, it refuses any key name that is not
+`[A-Za-z_][A-Za-z0-9_]*` (a pattern here would delete lines nobody named),
+and it writes no backup — a `.bak` beside `prod.env` would be a second
+unmanaged copy of live credentials. Restart whatever reads the file
+afterwards: a running container still holds the removed value in memory.
 
 ## The runner is a host process (deviation d2)
 
@@ -286,7 +332,7 @@ Skipping the reset does not corrupt anything — it blocks the *next*
 **token rotation.**
 
 ```bash
-FORCE=1 ./install-secrets.sh   # generates fresh tokens; refuses without FORCE=1
+FORCE_CODEX=1 ./install-secrets.sh   # fresh bridge tokens; refuses without it
 ./deploy.sh thor                # picks up the refreshed prod.env
 ./deploy.sh orin
 ssh thor 'systemctl --user restart codex-bridge'
@@ -535,5 +581,5 @@ the old host refuses to start rather than double-serving the actor.
 | `GITHUB_TOKEN` | `~/.culture-nodes/human-inbox.env` (0600) | relayed from the operator's own shell environment when set; never fabricated | the host serving `company/human-ops` |
 
 All three follow the same discipline as every other secret in this file:
-stdin over ssh, never argv; `FORCE=1` required to overwrite an existing
-value; nothing committed to this repo.
+stdin over ssh, never argv; that lane's own `FORCE_*` switch required to
+overwrite an existing value; nothing committed to this repo.

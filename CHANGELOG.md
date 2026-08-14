@@ -5,6 +5,19 @@ All notable changes to this project will be documented in this file.
 Format follows [Keep a Changelog](https://keepachangelog.com/). This project
 adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.18.1] - 2026-08-14
+
+### Fixed
+
+- Credential rotation MERGES instead of replacing (task t11, issue #69 item 1): `deploy/prod/install-secrets.sh`'s prod lane was the one place that wrote `~/.culture-nodes/prod.env` wholesale (`cat >` from its generated block), while the file holds two populations — the six secrets the script generates, and roughly eight more that accrete afterwards (`NODES_NAMESPACE_ID` and `THOR_IP` from `deploy.sh`, `NODES_ACTOR_CODEX_*_TOKEN` / `NODES_ACTOR_NOTIFY_TOKEN` from the script's own later lanes, `NODES_ACTOR_CLAUDE_TOKEN` and `DISCORD_WEBHOOK_URL` relayed from outside). An authorized rotation deleted the second population silently. This is observed, not theorised: a `FORCE=1` rotation destroyed `NODES_ACTOR_CLAUDE_TOKEN` and nothing reported it for ~18 hours, because the running worker held the token in memory until its next restart (`company/developer` succeeded at 13:03, then answered `policy_denied` / 401 at 06:42 the next morning)
+- The prod lane now reuses the key-by-key merge idiom the file's own single-key helpers already used — replace the key's line if present, append it otherwise — rather than a second mechanism that would have to be kept in agreement with the first by hand. It is hoisted into one `PROD_ENV_MERGE` definition all three prod.env-writing lanes reference, because those pasted copies had already drifted: only one of them held a guard for a file whose last line has no trailing newline, so appending a key to a hand-edited prod.env concatenated the new assignment onto the previous value and destroyed it. Same failure class as the wholesale rewrite, found by the test written for it. The FORCE_PROD guard and its windowed destructive-confirmation protocol are unchanged — merging is not permission to rotate
+- Stale `FORCE=1` references in `deploy/prod/README.md` now name the per-lane switch that actually exists (`FORCE_PROD`, `FORCE_CODEX`); the old text would have had an operator authorize a rotation with a variable no lane reads
+
+### Added
+
+- `deploy/prod/remove-secret.sh`, the explicit removal path merge-only makes necessary (spec claim c58): merging alone would trade a silent-destruction bug for a file that can only ever grow, leaving a rotated-away actor token indistinguishable from a live one. It removes ONE named key from `~/.culture-nodes/prod.env` (or another `ENV_FILE` there) on the named hosts, is a dry run until `--yes`, prints the line it would drop with the value redacted, refuses any key name outside `[A-Za-z_][A-Za-z0-9_]*` so a pattern cannot delete lines nobody named, and writes no backup — a `.bak` beside `prod.env` would be a second unmanaged copy of live credentials
+- `tests/deploy/prodenvmerge_test.go`: behavioral, not textual. It runs `install-secrets.sh` for real against a stub `ssh` that executes each remote command under a per-host `HOME`, so the merge is proven by what the file contains afterwards — a confirmed rotation performed with an externally-issued `NODES_ACTOR_CLAUDE_TOKEN` present finds it still there (honesty condition h32), a key added through the relay lane and then removed through `remove-secret.sh` is gone with its neighbours intact (h37), a fresh host still gets the whole generated block, and an unforced re-run still changes nothing
+
 ## [0.18.0] - 2026-08-14
 
 ### Added

@@ -48,6 +48,9 @@ Runs:
 Plan import:
   plan-import        import an external plan's faithful view (--plan, --deviations)
 
+Decompose pipeline:
+  chain-verify       check a run's claim/decision chain (--run)
+
 Process modes:
   serve  scheduler  worker  all
 
@@ -97,6 +100,7 @@ func commands() map[string]handlerFunc {
 	m["scheduler"] = cmdScheduler
 	m["run"] = cmdRun
 	m["plan-import"] = cmdPlanImport
+	m["chain-verify"] = cmdChainVerify
 	return m
 }
 

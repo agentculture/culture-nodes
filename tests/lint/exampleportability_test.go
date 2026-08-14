@@ -347,9 +347,17 @@ func TestEveryExampleDocumentsItsDeploymentConfiguration(t *testing.T) {
 func TestNoCodeOperationFetchesCodeFromAPinnedURL(t *testing.T) {
 	root := repoRoot(t)
 
+	// Counted so this cannot report a clean sweep over zero argvs. Unlike the
+	// line-scanning guards, this one reads DECODED operations, so a rename in
+	// the schema (or a typo in portableOperation's tags) would silently turn
+	// it into decoration -- the same failure mode exampleWorkflowFloor exists
+	// to catch one level up.
+	scanned := 0
+
 	for _, rel := range discoverExampleWorkflows(t, root) {
 		doc := loadPortable(t, root, rel)
 		for label, op := range doc.operations() {
+			scanned += len(op.Argv)
 			for i, arg := range op.Argv {
 				loc := sourceURLPattern.FindStringIndex(arg)
 				if loc == nil {
@@ -366,6 +374,16 @@ func TestNoCodeOperationFetchesCodeFromAPinnedURL(t *testing.T) {
 					rel, label, i, strings.TrimSpace(arg[loc[0]:end]))
 			}
 		}
+	}
+
+	// The committed examples carry several code operations (pr-upkeep's
+	// sweep, delivery-loop's and self-hosting-loop's test nodes,
+	// placement-proof's probe, workspace-snapshot-hook's hook). A run that
+	// found no argv at all decoded nothing.
+	if scanned < 5 {
+		t.Fatalf("scanned %d argv element(s) across every example operation, want at "+
+			"least 5 -- operation decoding is broken, and a URL guard over zero argvs "+
+			"passes vacuously", scanned)
 	}
 }
 

@@ -54,7 +54,8 @@ def test_actors_list_renders_the_pause(fake_api, capsys) -> None:
     out = capsys.readouterr().out
     assert rc == 0
     assert "PAUSED until 2026-08-13T18:00:00Z (capacity_exhausted)" in out
-    assert "company/verifier" in out and "available" in out
+    assert "company/verifier" in out
+    assert "available" in out
 
 
 def test_actors_list_paused_only_filters(fake_api, capsys) -> None:

@@ -38,7 +38,8 @@ import pytest
 
 _SCRIPT_PATH = Path(__file__).resolve().parents[1] / "scripts" / "stickiness_ab.py"
 _spec = importlib.util.spec_from_file_location("stickiness_ab", _SCRIPT_PATH)
-assert _spec is not None and _spec.loader is not None
+assert _spec is not None
+assert _spec.loader is not None
 stickiness_ab = importlib.util.module_from_spec(_spec)
 # Registered in sys.modules BEFORE exec: dataclasses (this module's own
 # `@dataclass` fields use `from __future__ import annotations`) resolves a
@@ -161,8 +162,12 @@ def test_summarize_requires_cache_convention_to_be_given_explicitly():
     # No silently-safe default: which convention applies is a fact about
     # the BACKEND being measured, and guessing wrong makes the headline
     # number wrong while still looking like a real measurement.
+    # Built outside the raises block so only `summarize` can satisfy it —
+    # a TypeError out of `_record` would otherwise pass this test for the
+    # wrong reason.
+    records = [_record("t1", "cold")]
     with pytest.raises(TypeError):
-        summarize([_record("t1", "cold")], arm="cold")
+        summarize(records, arm="cold")
 
 
 # --------------------------------------------------------------------------

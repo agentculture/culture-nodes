@@ -311,9 +311,16 @@ func TestNewsletterDecomposeRunsEndToEndWithRealSourcedContent(t *testing.T) {
 		t.Fatalf("read ledger: %v", err)
 	}
 
-	// h19's own acceptance bullet, checked exactly the way `nodes
-	// chain-verify` checks it against a live run: every claim sourced, every
-	// decision motivated.
+	assertClaimChainIsSourcedAndMotivated(t, records)
+	assertVerifyEvidenceStaysProposed(t, records)
+	assertEveryClaimCarriesItsSourceURL(t, records)
+}
+
+// assertClaimChainIsSourcedAndMotivated checks h19's own acceptance bullet,
+// exactly the way `nodes chain-verify` checks it against a live run: every
+// claim sourced, every decision motivated.
+func assertClaimChainIsSourcedAndMotivated(t *testing.T, records []ledger.Record) {
+	t.Helper()
 	verdict := ledger.VerifyClaimChain(records)
 	if !verdict.Passed {
 		t.Fatalf("VerifyClaimChain = %+v, want passed: this run's claims are real and sourced", verdict)
@@ -334,10 +341,13 @@ func TestNewsletterDecomposeRunsEndToEndWithRealSourcedContent(t *testing.T) {
 			t.Errorf("decision %s = %+v, want motivated", m.RecordID, m)
 		}
 	}
+}
 
-	// A verification node that asks a model produces `proposed` (CLAUDE.md's
-	// ledger authority model) — the verify node's own evidence record must
-	// never claim more than that.
+// assertVerifyEvidenceStaysProposed checks that a verification node which asks
+// a model produces `proposed` (CLAUDE.md's ledger authority model) — the verify
+// node's own evidence record must never claim more than that.
+func assertVerifyEvidenceStaysProposed(t *testing.T, records []ledger.Record) {
+	t.Helper()
 	var evidenceCount int
 	for _, rec := range records {
 		if rec.RecordType != ledger.RecordEvidence {
@@ -354,9 +364,13 @@ func TestNewsletterDecomposeRunsEndToEndWithRealSourcedContent(t *testing.T) {
 	if evidenceCount != 1 {
 		t.Fatalf("evidence records = %d, want 1", evidenceCount)
 	}
+}
 
-	// Every source URL a real web search returned actually made it into the
-	// ledger's own claim payloads — the content is real, not a placeholder.
+// assertEveryClaimCarriesItsSourceURL checks that every source URL a real web
+// search returned actually made it into the ledger's own claim payloads — the
+// content is real, not a placeholder.
+func assertEveryClaimCarriesItsSourceURL(t *testing.T, records []ledger.Record) {
+	t.Helper()
 	for _, c := range newsletterClaims {
 		found := false
 		for _, rec := range records {

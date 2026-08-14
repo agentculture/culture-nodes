@@ -240,9 +240,8 @@ fi
 # credential this script mints and installs, same FORCE=1 rotation guard.
 # GITHUB_TOKEN is externally issued (a GitHub PAT/App token) and is never
 # fabricated here: relayed only when the operator already exported it into
-# this script's own environment. Left unset, deploy.sh installs the bridge
-# unit (manual submission keeps working) but leaves the tracker unit
-# uninstalled rather than starting it into an immediate crash loop.
+# this script's own environment. Left unset, deploy.sh still installs the
+# tracker and it uses GitHub's anonymous public-repository lane.
 HUMAN_INBOX_BRIDGE_AUTH_TOKEN=$(openssl rand -base64 32)
 
 install_human_inbox_env() { # host
@@ -259,7 +258,7 @@ GITHUB_TOKEN=${GITHUB_TOKEN}"
     if [ -n "${GITHUB_TOKEN:-}" ]; then
       echo "installed ~/.culture-nodes/human-inbox.env on $host (with GITHUB_TOKEN)"
     else
-      echo "installed ~/.culture-nodes/human-inbox.env on $host (no GITHUB_TOKEN in this script's environment — tracker auto-submit stays disabled until a re-run with it set)"
+      echo "installed ~/.culture-nodes/human-inbox.env on $host (no GITHUB_TOKEN — tracker uses anonymous public-repository polling)"
     fi
   fi
   return "$rc"

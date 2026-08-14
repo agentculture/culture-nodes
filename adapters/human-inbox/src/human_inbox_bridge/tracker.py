@@ -2,10 +2,10 @@
 
 The tracker has deliberately narrow custody and reach: it reads pending
 task files from the bridge's durable store, calls GitHub with
-``GITHUB_TOKEN``, and submits an observed result through the bridge's own
-HTTP inbox surface. It never uses a callback credential and never calls
-the Culture Nodes control plane directly; callback delivery remains the
-bridge server's job.
+optional ``GITHUB_TOKEN`` authentication, and submits an observed result
+through the bridge's own HTTP inbox surface. It never uses a callback
+credential and never calls the Culture Nodes control plane directly;
+callback delivery remains the bridge server's job.
 
 Run continuously with ``python -m human_inbox_bridge.tracker`` or execute
 one cycle with ``python -m human_inbox_bridge.tracker --once``.
@@ -38,6 +38,29 @@ logger = logging.getLogger("human_inbox_bridge.tracker")
 
 GITHUB_API = "https://api.github.com"
 OBSERVATION_KIND = "github_pr_merged"
+ANONYMOUS_REQUESTS_PER_HOUR = 60
+AUTHENTICATED_REQUESTS_PER_HOUR = 5_000
+
+#: Fraction of GitHub's hourly ceiling the tracker will plan to consume.
+#:
+#: Planning for the whole ceiling is planning to be rate-limited. Two reasons,
+#: and the anonymous lane feels both hardest because 60/hour leaves no room to
+#: absorb either:
+#:
+#: 1. The anonymous quota is counted **per source IP**, not per process. The
+#:    tracker shares its host with the operator's ``gh`` CLI, deploy scripts
+#:    and anything else that touches api.github.com — none of which the
+#:    tracker can see or account for.
+#: 2. Our cycle clock and GitHub's hourly reset window are independent. Even
+#:    alone and exactly at the limit, drift between the two puts two cycles'
+#:    worth of requests inside one of GitHub's windows at the boundary.
+#:
+#: Half is a deliberate choice rather than a tuned one: it survives an equally
+#: busy co-tenant on the same IP. The cost is detection latency (the anonymous
+#: lane polls every 120s instead of 60s), which a human merge gate can afford.
+#: Override with HUMAN_INBOX_TRACKER_RATE_UTILIZATION when the host is known to
+#: be a sole tenant.
+DEFAULT_RATE_UTILIZATION = 0.5
 _REPO_RE = re.compile(r"^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$")
 
 
@@ -61,6 +84,48 @@ class TrackerConfig:
     nudge_interval_seconds: float = 300.0
     nudge_global_throttle_seconds: float = 10.0
     nudge_escalation_after_seconds: float = 600.0
+    rate_utilization: float = DEFAULT_RATE_UTILIZATION
+
+    def __post_init__(self) -> None:
+        """Clamp cadence and budget to the active GitHub API lane.
+
+        GitHub's limits are hourly, while the tracker is configured per
+        cycle. Applying the same ceiling at construction time keeps direct
+        callers and environment-loaded production config honest alike.
+
+        The plan targets a *fraction* of the ceiling, never the whole of it —
+        see DEFAULT_RATE_UTILIZATION for why spending the last request is
+        planning to be refused.
+        """
+        if not 0.0 < self.rate_utilization <= 1.0:
+            raise TrackerConfigError(
+                f"rate_utilization must be >0 and <=1 (got {self.rate_utilization!r}) — "
+                "it is the fraction of GitHub's hourly ceiling the tracker plans to use; "
+                "set HUMAN_INBOX_TRACKER_RATE_UTILIZATION to a value in that range"
+            )
+        requests_per_hour = self.github_requests_per_hour * self.rate_utilization
+        minimum_poll_seconds = 3600.0 / requests_per_hour
+        effective_poll_seconds = max(self.poll_seconds, minimum_poll_seconds)
+        safe_cycle_budget = max(
+            1,
+            int(requests_per_hour * effective_poll_seconds / 3600.0),
+        )
+        object.__setattr__(self, "poll_seconds", effective_poll_seconds)
+        object.__setattr__(
+            self,
+            "github_request_budget",
+            min(self.github_request_budget, safe_cycle_budget),
+        )
+
+    @property
+    def github_lane(self) -> str:
+        return "authenticated" if self.github_token else "anonymous"
+
+    @property
+    def github_requests_per_hour(self) -> int:
+        if self.github_token:
+            return AUTHENTICATED_REQUESTS_PER_HOUR
+        return ANONYMOUS_REQUESTS_PER_HOUR
 
     @classmethod
     def from_env(cls, env: dict[str, str] | None = None) -> "TrackerConfig":
@@ -70,8 +135,6 @@ class TrackerConfig:
         except ConfigError as exc:
             raise TrackerConfigError(str(exc)) from exc
         github_token = env.get("GITHUB_TOKEN", "").strip()
-        if not github_token:
-            raise TrackerConfigError("GITHUB_TOKEN is required")
 
         default_repo = (
             env.get("HUMAN_INBOX_TRACKER_DEFAULT_REPO")
@@ -86,6 +149,9 @@ class TrackerConfig:
         poll_seconds = _float_env(env, "HUMAN_INBOX_TRACKER_POLL_SECONDS", 60.0)
         request_budget = _int_env(env, "HUMAN_INBOX_TRACKER_GITHUB_REQUEST_BUDGET", 50)
         timeout_seconds = _float_env(env, "HUMAN_INBOX_TRACKER_HTTP_TIMEOUT_SECONDS", 30.0)
+        rate_utilization = _float_env(
+            env, "HUMAN_INBOX_TRACKER_RATE_UTILIZATION", DEFAULT_RATE_UTILIZATION
+        )
         if poll_seconds <= 0:
             raise TrackerConfigError("HUMAN_INBOX_TRACKER_POLL_SECONDS must be greater than zero")
         if request_budget < 0:
@@ -112,6 +178,7 @@ class TrackerConfig:
             poll_seconds=poll_seconds,
             github_request_budget=request_budget,
             http_timeout_seconds=timeout_seconds,
+            rate_utilization=rate_utilization,
             # Nudge transport (opt-in: all four DISCORD_NUDGE_* vars must be
             # present for nudging to be enabled).
             nudge_channel_id=env.get("DISCORD_NUDGE_CHANNEL_ID", "").strip(),
@@ -140,6 +207,8 @@ class CycleResult:
     github_requests: int
     submissions: int
     budget_exhausted: bool
+    rate_limited: bool
+    retry_after_seconds: float
 
 
 GithubFetch = Callable[..., dict[str, Any]]
@@ -175,16 +244,18 @@ def observation_for(task: HumanTask, default_repo: str | None) -> Observation | 
 
 
 def fetch_github_pull(repo: str, pr: int, *, token: str, timeout_seconds: float) -> dict[str, Any]:
-    """GET one pull request using only stdlib urllib."""
+    """GET one pull request, authenticating only when a token is present."""
     url = f"{GITHUB_API}/repos/{repo}/pulls/{pr}"
+    headers = {
+        "Accept": "application/vnd.github+json",
+        "User-Agent": "culture-nodes-human-inbox-tracker",
+        "X-GitHub-Api-Version": "2022-11-28",
+    }
+    if token:
+        headers["Authorization"] = f"Bearer {token}"
     request = urllib.request.Request(  # noqa: S310 - fixed GitHub API host
         url,
-        headers={
-            "Accept": "application/vnd.github+json",
-            "Authorization": f"Bearer {token}",
-            "User-Agent": "culture-nodes-human-inbox-tracker",
-            "X-GitHub-Api-Version": "2022-11-28",
-        },
+        headers=headers,
     )
     with urllib.request.urlopen(  # nosec B310 - request has a fixed GitHub HTTPS origin
         request, timeout=timeout_seconds
@@ -233,6 +304,53 @@ def submit_observation(
     return data
 
 
+def _github_rate_limit_backoff(
+    exc: urllib.error.HTTPError,
+    *,
+    now: float,
+    fallback_seconds: float,
+) -> tuple[float | None, str]:
+    """Return a retry epoch only when GitHub identifies a quota response."""
+    try:
+        body = exc.read().decode("utf-8", errors="replace")
+    except (OSError, ValueError):
+        body = ""
+    try:
+        parsed = json.loads(body)
+    except (json.JSONDecodeError, TypeError):
+        parsed = None
+    message = parsed.get("message", "") if isinstance(parsed, dict) else body
+    message = message.strip() if isinstance(message, str) else ""
+
+    headers = exc.headers
+    remaining = headers.get("X-RateLimit-Remaining", "") if headers is not None else ""
+    reset = headers.get("X-RateLimit-Reset", "") if headers is not None else ""
+    retry_after = headers.get("Retry-After", "") if headers is not None else ""
+    lower_message = message.lower()
+    is_rate_limit = exc.code == 429 or remaining.strip() == "0" or bool(retry_after)
+    is_rate_limit = (
+        is_rate_limit or "rate limit" in lower_message or "abuse detection" in lower_message
+    )
+    if exc.code not in (403, 429) or not is_rate_limit:
+        return None, message
+
+    backoff_until = 0.0
+    try:
+        backoff_until = float(reset)
+    except (TypeError, ValueError):
+        pass
+    if backoff_until <= now:
+        try:
+            backoff_until = now + max(0.0, float(retry_after))
+        except (TypeError, ValueError):
+            backoff_until = 0.0
+    if backoff_until <= now:
+        # Secondary-limit responses do not always carry a reset epoch. One
+        # normal effective cycle is the smallest honest delay in that case.
+        backoff_until = now + fallback_seconds
+    return backoff_until, message
+
+
 class MergeTracker:
     """One poller over the bridge task store, with injectable HTTP seams."""
 
@@ -243,6 +361,7 @@ class MergeTracker:
         github_fetch: GithubFetch = fetch_github_pull,
         bridge_submit: BridgeSubmit = submit_observation,
         nudge_cfg: object | None = None,
+        clock: Callable[[], float] = time.time,
     ) -> None:
         self.cfg = cfg
         # The tracker is a reader of bridge-owned task files. In particular,
@@ -252,6 +371,9 @@ class MergeTracker:
         self.github_fetch = github_fetch
         self.bridge_submit = bridge_submit
         self.nudge_cfg = nudge_cfg
+        self.clock = clock
+        self._github_backoff_until = 0.0
+        self._next_group_index = 0
 
     def run_cycle(self) -> CycleResult:
         pending = self.store.list(status=STATUS_PENDING)
@@ -267,7 +389,26 @@ class MergeTracker:
         github_requests = 0
         submissions = 0
         budget_exhausted = False
-        for (repo, pr), tasks in grouped.items():
+        rate_limited = False
+        now = self.clock()
+        grouped_items = list(grouped.items())
+        if grouped_items:
+            start = self._next_group_index % len(grouped_items)
+            grouped_items = grouped_items[start:] + grouped_items[:start]
+
+        if self._github_backoff_until > now:
+            rate_limited = True
+            logger.info(
+                "GitHub rate-limit backoff active for %.0f more second(s); "
+                "watched PRs wait for the next cycle",
+                self._github_backoff_until - now,
+            )
+        else:
+            self._github_backoff_until = 0.0
+
+        for (repo, pr), tasks in grouped_items:
+            if rate_limited:
+                break
             if github_requests >= self.cfg.github_request_budget:
                 budget_exhausted = True
                 break
@@ -279,9 +420,42 @@ class MergeTracker:
                     token=self.cfg.github_token,
                     timeout_seconds=self.cfg.http_timeout_seconds,
                 )
+            except urllib.error.HTTPError as exc:
+                backoff_until, message = _github_rate_limit_backoff(
+                    exc,
+                    now=self.clock(),
+                    fallback_seconds=self.cfg.poll_seconds,
+                )
+                if backoff_until is not None:
+                    self._github_backoff_until = backoff_until
+                    rate_limited = True
+                    logger.warning(
+                        "GitHub rate limit exhausted in %s lane while checking %s#%d; "
+                        "backing off for %.0f second(s) until reset, then retrying next cycle%s",
+                        self.cfg.github_lane,
+                        repo,
+                        pr,
+                        max(0.0, backoff_until - self.clock()),
+                        f" ({message})" if message else "",
+                    )
+                    break
+                if exc.code == 403:
+                    logger.warning(
+                        "GitHub permission denied (not rate limited) in %s lane for %s#%d; "
+                        "the repository may be private or the token may lack Pull requests: Read",
+                        self.cfg.github_lane,
+                        repo,
+                        pr,
+                    )
+                else:
+                    logger.warning("GitHub check failed for %s#%d: HTTP %d", repo, pr, exc.code)
+                self._next_group_index += 1
+                continue
             except (urllib.error.URLError, TimeoutError, OSError, ValueError) as exc:
                 logger.warning("GitHub check failed for %s#%d: %s", repo, pr, exc)
+                self._next_group_index += 1
                 continue
+            self._next_group_index += 1
 
             # GitHub reports closed-unmerged PRs with merged=false. Only the
             # literal true state is unambiguous enough to leave the manual lane.
@@ -338,19 +512,22 @@ class MergeTracker:
             github_requests=github_requests,
             submissions=submissions,
             budget_exhausted=budget_exhausted,
+            rate_limited=rate_limited,
+            retry_after_seconds=max(0.0, self._github_backoff_until - self.clock()),
         )
 
     def run_forever(self) -> None:
         while True:
             result = self.run_cycle()
             logger.info(
-                "cycle: pending=%d eligible=%d github_requests=%d submissions=%d",
+                "cycle: pending=%d eligible=%d github_requests=%d submissions=%d rate_limited=%s",
                 result.pending_tasks,
                 result.eligible_tasks,
                 result.github_requests,
                 result.submissions,
+                result.rate_limited,
             )
-            time.sleep(self.cfg.poll_seconds)
+            time.sleep(max(self.cfg.poll_seconds, result.retry_after_seconds))
 
     def _run_nudge_cycle(self, pending: list[HumanTask]) -> None:
         """Run the nudge cadence for pending tasks that have nudge transport.
@@ -584,6 +761,16 @@ def main(argv: list[str] | None = None) -> int:
         print(f"error: {exc}", file=sys.stderr)
         return 2
 
+    startup_message = (
+        "GitHub polling lane=%s ceiling=%d requests/hour " "poll_seconds=%.1f request_budget=%d"
+    )
+    logger.info(
+        startup_message,
+        cfg.github_lane,
+        cfg.github_requests_per_hour,
+        cfg.poll_seconds,
+        cfg.github_request_budget,
+    )
     tracker = MergeTracker(cfg)
     try:
         if args.once:

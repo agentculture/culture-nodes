@@ -277,14 +277,15 @@ otherwise this observation kind reports its unambiguous `merged` outcome.
 
 The tracker is a separate stdlib-only process beside the bridge. It reads
 only `pending` task files from the same durable state directory, calls
-`GET /repos/{repo}/pulls/{number}` with `GITHUB_TOKEN`, and talks back only
-to the bridge's authenticated submit surface. It never calls the Culture
-Nodes control plane. `merged: true` plus a non-empty `merge_commit_sha` is
-the sole auto-submit state; `closed` with `merged: false`, malformed or
-unsupported declarations, and undeclared tasks stay manual.
+`GET /repos/{repo}/pulls/{number}` anonymously for public repositories or
+with `GITHUB_TOKEN` when one is present, and talks back only to the bridge's
+authenticated submit surface. It never calls the Culture Nodes control
+plane. `merged: true` plus a non-empty `merge_commit_sha` is the sole
+auto-submit state; `closed` with `merged: false`, malformed or unsupported
+declarations, and undeclared tasks stay manual.
 
 ```bash
-export GITHUB_TOKEN=...
+# Optional: export GITHUB_TOKEN=... for private repositories or higher cadence
 export HUMAN_INBOX_BRIDGE_AUTH_TOKEN=...       # submit auth to the sibling bridge
 export HUMAN_INBOX_BRIDGE_STATE_DIR=.human-inbox-bridge-state
 export HUMAN_INBOX_TRACKER_DEFAULT_REPO=agentculture/culture-nodes
@@ -296,14 +297,20 @@ uv run python -m human_inbox_bridge.tracker --once
 
 | Env var | Default | Meaning |
 |---|---|---|
-| `GITHUB_TOKEN` | required | GitHub bearer token held by the tracker process |
+| `GITHUB_TOKEN` | unset | Optional GitHub bearer token; unset selects anonymous public-repository polling (60 requests/hour), present selects authenticated polling (5,000 requests/hour) |
 | `HUMAN_INBOX_TRACKER_STATE_DIR` | bridge config's `state_dir` | Durable bridge state directory to scan read-only |
 | `HUMAN_INBOX_TRACKER_BRIDGE_URL` | loopback + bridge config's `port` | Sibling bridge base URL |
 | `HUMAN_INBOX_BRIDGE_AUTH_TOKEN` | bridge config's `auth_token` | Bearer token for the bridge submit surface |
 | `HUMAN_INBOX_TRACKER_DEFAULT_REPO` | unset | Fallback GitHub `owner/repository` when `observe.repo` is absent |
-| `HUMAN_INBOX_TRACKER_POLL_SECONDS` | `60` | Delay between complete poll cycles |
-| `HUMAN_INBOX_TRACKER_GITHUB_REQUEST_BUDGET` | `50` | Maximum unique PR GETs per cycle (`0` disables GitHub requests) |
+| `HUMAN_INBOX_TRACKER_POLL_SECONDS` | `60` | Requested delay between cycles; clamped to the active lane's minimum safe cadence (60 seconds anonymous, 0.72 seconds authenticated) |
+| `HUMAN_INBOX_TRACKER_GITHUB_REQUEST_BUDGET` | `50` | Requested maximum unique PR GETs per cycle (`0` disables GitHub requests); clamped so `budget × 3600 / poll_seconds` cannot exceed the active lane's hourly ceiling |
 | `HUMAN_INBOX_TRACKER_HTTP_TIMEOUT_SECONDS` | `30` | Timeout for each GitHub GET and bridge POST |
+
+At the defaults, anonymous mode makes at most one request per cycle and
+rotates that request fairly across distinct watched PRs. Authenticated mode
+makes at most 50 per cycle. A GitHub rate-limit response backs off to the
+reported reset time and retries on the next cycle; a non-rate-limit `403` is
+logged separately as a permission problem.
 
 An automatic submit uses the task success outcome and a note naming the
 merge commit, plus this explicit marker:

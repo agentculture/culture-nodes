@@ -83,6 +83,10 @@ services:
       NODES_ACTOR_CLAUDE_TOKEN: ${NODES_ACTOR_CLAUDE_TOKEN:-}
       NODES_ACTOR_CODEX_THOR_TOKEN: ${NODES_ACTOR_CODEX_THOR_TOKEN:-}
       NODES_ACTOR_CODEX_ORIN_TOKEN: ${NODES_ACTOR_CODEX_ORIN_TOKEN:-}
+      # The notify actor bridge (issue #68). Every actor token must be
+      # named here explicitly: the env-file reaches compose, not the
+      # container, so an unlisted token is simply absent at dispatch.
+      NODES_ACTOR_NOTIFY_TOKEN: ${NODES_ACTOR_NOTIFY_TOKEN:-}
       # The three bearer secrets the attempts-evidence-humans-loops batch
       # added (t13 registration, t10 event delivery, t19+t15 ad-hoc lane).
       # Optional on purpose: closed-by-default means an unset secret leaves
@@ -138,6 +142,10 @@ services:
       NODES_ACTOR_CLAUDE_TOKEN: ${NODES_ACTOR_CLAUDE_TOKEN:-}
       NODES_ACTOR_CODEX_THOR_TOKEN: ${NODES_ACTOR_CODEX_THOR_TOKEN:-}
       NODES_ACTOR_CODEX_ORIN_TOKEN: ${NODES_ACTOR_CODEX_ORIN_TOKEN:-}
+      # The notify actor bridge (issue #68). Every actor token must be
+      # named here explicitly: the env-file reaches compose, not the
+      # container, so an unlisted token is simply absent at dispatch.
+      NODES_ACTOR_NOTIFY_TOKEN: ${NODES_ACTOR_NOTIFY_TOKEN:-}
       NODES_RUNNER_SERVICES_FILE: ${NODES_RUNNER_SERVICES_FILE:-}
     volumes:
       - ~/.culture-nodes/runners:/etc/nodes-runners:ro

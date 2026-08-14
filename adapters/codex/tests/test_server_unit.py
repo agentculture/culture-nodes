@@ -469,6 +469,9 @@ def test_async_dispatch_returns_202_and_delivers_accepted_then_completed(bridge_
             callback_token,
             heartbeat_after_seconds,
             continuation_ref=None,
+            session_registry=None,
+            session_key=None,
+            session_holder=None,
         ):
             from codex_bridge.callbacks import CallbackConfig, CallbackEmitter
 

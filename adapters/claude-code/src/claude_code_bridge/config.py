@@ -45,6 +45,7 @@ _ENV_INT_FIELDS = {
     "CLAUDE_CODE_BRIDGE_DEFAULT_MAX_STEPS": "default_max_steps",
     "CLAUDE_CODE_BRIDGE_HEARTBEAT_AFTER_SECONDS": "heartbeat_after_seconds",
     "CLAUDE_CODE_BRIDGE_CALLBACK_MAX_RETRIES": "callback_max_retries",
+    "CLAUDE_CODE_BRIDGE_MAX_INFLIGHT_PER_SESSION_KEY": "max_inflight_per_session_key",
 }
 _ENV_FLOAT_FIELDS = {
     "CLAUDE_CODE_BRIDGE_POLL_INTERVAL_SECONDS": "poll_interval_seconds",
@@ -56,6 +57,7 @@ _ENV_FLOAT_FIELDS = {
 }
 _ENV_BOOL_FIELDS = {
     "CLAUDE_CODE_BRIDGE_ALWAYS_ASYNC": "always_async",
+    "CLAUDE_CODE_BRIDGE_SESSION_CONCURRENCY_ENABLED": "session_concurrency_enabled",
 }
 
 #: `CLAUDE_CODE_BRIDGE_REPO_ALLOWLIST` is a `os.pathsep`-joined list of
@@ -115,6 +117,20 @@ class Config:
     #: When set, every invocation is dispatched asynchronously regardless of
     #: the threshold or an `input.async` override.
     always_async: bool = False
+
+    # --- session-key concurrency (t6, c44/h37) --------------------------
+    #: How many invocations may hold one `input.session_key`'s in-flight
+    #: slot at once before a further concurrent arrival forks (dispatches
+    #: cold, ignoring the `continuation_ref` it carried). See
+    #: `session_registry.py`'s module docstring for the fork-vs-queue
+    #: argument. 1 means "exactly one in-flight invocation per session
+    #: key" — the acceptance criterion's own phrasing.
+    max_inflight_per_session_key: int = 1
+    #: Kill-switch back to t5's unserialized behaviour (every invocation
+    #: dispatches with its `continuation_ref` as given, session_key
+    #: collisions included) — for an operator who needs to rule this
+    #: mechanism out while diagnosing something else.
+    session_concurrency_enabled: bool = True
 
     # --- outcome vocabulary ---------------------------------------------
     #: Domain outcome used for a successful result when the invocation's
@@ -209,6 +225,8 @@ _FILE_FIELDS = {
     "sync_max_steps": int,
     "default_max_steps": int,
     "always_async": bool,
+    "max_inflight_per_session_key": int,
+    "session_concurrency_enabled": bool,
     "default_success_outcome": str,
     "host": str,
     "port": int,

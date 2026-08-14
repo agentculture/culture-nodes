@@ -48,6 +48,7 @@ from typing import Any
 from codex_bridge import codex_cli, mapping, workspace
 from codex_bridge.callbacks import CallbackConfig, CallbackEmitter
 from codex_bridge.config import Config
+from codex_bridge.session_registry import SessionRegistry
 
 logger = logging.getLogger("codex_bridge.async_runner")
 
@@ -104,6 +105,13 @@ class AsyncInvocation:
     started_at: float = field(default_factory=time.monotonic)
     done: bool = False
     cancel_requested: bool = False
+    #: t6 (c44/h37): the session_key slot this invocation holds, and the
+    #: registry to release it from once codex's turn actually finishes.
+    #: Both None when this invocation forked or session serialization
+    #: found no session_key to track — nothing to release either way.
+    session_registry: SessionRegistry | None = None
+    session_key: str | None = None
+    session_holder: str | None = None
 
 
 class AsyncRunner:
@@ -126,6 +134,9 @@ class AsyncRunner:
         callback_token: str,
         heartbeat_after_seconds: int,
         continuation_ref: str | None = None,
+        session_registry: SessionRegistry | None = None,
+        session_key: str | None = None,
+        session_holder: str | None = None,
     ) -> str:
         """Spawn `codex exec` in the background and return its invocation
         id immediately. Raises `codex_cli.SpawnError` if the subprocess
@@ -157,7 +168,13 @@ class AsyncRunner:
         )
         invocation_id = uuid.uuid4().hex
         inv = AsyncInvocation(
-            invocation_id=invocation_id, proc=proc, ctx=ctx, workspace_handle=handle
+            invocation_id=invocation_id,
+            proc=proc,
+            ctx=ctx,
+            workspace_handle=handle,
+            session_registry=session_registry,
+            session_key=session_key,
+            session_holder=session_holder,
         )
         with self._lock:
             self._invocations[invocation_id] = inv
@@ -214,7 +231,16 @@ class AsyncRunner:
             },
         )
 
-        stdout_text, timed_out = self._stream_until_done(inv, emitter, heartbeat_after_seconds)
+        try:
+            stdout_text, timed_out = self._stream_until_done(inv, emitter, heartbeat_after_seconds)
+        finally:
+            # t6 (c44/h37): codex's own turn is over (successfully,
+            # failed, or timed out) — release the session_key slot the
+            # instant the PROVIDER call itself is done, not after the
+            # (possibly slow/retried) terminal callback below, so the next
+            # same-key arrival stops forking as soon as it honestly can.
+            if inv.session_registry is not None:
+                inv.session_registry.release(inv.session_key, inv.session_holder)
         task_result = codex_cli.parse_session(stdout_text)
 
         # t10: measured AFTER the session ends, against the snapshot taken

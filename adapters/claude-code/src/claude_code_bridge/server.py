@@ -18,6 +18,7 @@ Routes:
 
 from __future__ import annotations
 
+import dataclasses
 import hmac
 import json
 import logging
@@ -33,6 +34,7 @@ from claude_code_bridge import claude_cli, mapping, workspace
 from claude_code_bridge.async_runner import AsyncRunner
 from claude_code_bridge.config import Config
 from claude_code_bridge.idempotency import IdempotencyStore
+from claude_code_bridge.session_registry import SessionRegistry
 
 logger = logging.getLogger("claude_code_bridge.server")
 
@@ -58,6 +60,10 @@ class Bridge:
         self.cfg = cfg
         self.idempotency = IdempotencyStore(cfg.state_dir)
         self.async_runner = AsyncRunner(cfg)
+        # t6 (c44/h37): exactly one in-flight invocation per session_key;
+        # a concurrent collision forks cold rather than interleaving turns
+        # on one provider thread — see session_registry.py's docstring.
+        self.session_registry = SessionRegistry(max_inflight=cfg.max_inflight_per_session_key)
 
 
 def decide_async(cfg: Config, *, force_async: bool | None, max_steps: int | None) -> bool:
@@ -353,6 +359,16 @@ class Handler(BaseHTTPRequestHandler):
         model = raw_input.get("model") or None
         success_outcome = raw_input.get("success_outcome") or None
         incomplete_outcome = raw_input.get("incomplete_outcome") or None
+        session_key = raw_input.get("session_key") or None
+        if session_key is not None and not isinstance(session_key, str):
+            self._write_json(
+                400,
+                {
+                    "error": "input.session_key must be a string",
+                    "class": mapping.CLASS_ACTOR_REJECTED_INPUT,
+                },
+            )
+            return
         # §13.1 (internal/actors/protocol.go's InvocationRequest) carries
         # continuation_ref as a TOP-LEVEL request field, a sibling of
         # run_id/node_run_id/attempt_id — NOT nested inside `input` the way
@@ -373,13 +389,49 @@ class Handler(BaseHTTPRequestHandler):
             continuation_ref=continuation_ref,
         )
 
+        # t6 (c44/h37): exactly one in-flight invocation per session_key.
+        # `held` is True iff THIS invocation claimed the slot and therefore
+        # owes it a `release()`; `forked` is True iff another invocation
+        # already held it, in which case this one dispatches cold
+        # (continuation_ref discarded) instead of interleaving a turn onto
+        # the same provider thread. See session_registry.py for the
+        # fork-vs-queue argument.
+        held = False
+        forked = False
+        if cfg.session_concurrency_enabled and session_key:
+            held = self.bridge.session_registry.acquire(session_key, idem_key)
+            forked = not held
+            if forked:
+                ctx = dataclasses.replace(ctx, continuation_ref=None)
+
         if decide_async(cfg, force_async=force_async, max_steps=max_steps):
             self._dispatch_async(
-                idem_key, body, ctx, instruction, resolved_repo, role, max_steps, model
+                idem_key,
+                body,
+                ctx,
+                instruction,
+                resolved_repo,
+                role,
+                max_steps,
+                model,
+                session_key=session_key,
+                held=held,
+                forked=forked,
             )
             return
 
-        self._dispatch_sync(idem_key, ctx, instruction, resolved_repo, role, max_steps, model)
+        self._dispatch_sync(
+            idem_key,
+            ctx,
+            instruction,
+            resolved_repo,
+            role,
+            max_steps,
+            model,
+            session_key=session_key,
+            held=held,
+            forked=forked,
+        )
 
     def _dispatch_sync(
         self,
@@ -390,6 +442,10 @@ class Handler(BaseHTTPRequestHandler):
         role: str | None,
         max_steps: int | None,
         model: str | None,
+        *,
+        session_key: str | None = None,
+        held: bool = False,
+        forked: bool = False,
     ) -> None:
         cfg = self.bridge.cfg
         # t10: capture the workspace's starting point as close as possible
@@ -416,6 +472,14 @@ class Handler(BaseHTTPRequestHandler):
             # a claim about the input itself.
             self._write_json(503, {"error": str(exc), "class": "actor_unavailable"})
             return
+        finally:
+            # t6 (c44/h37): the provider call is over (successfully or
+            # not) — release the session_key slot so the NEXT invocation
+            # for it (queued behind this one in wall-clock time, not in a
+            # literal queue) may use its continuation_ref as given instead
+            # of forking.
+            if held:
+                self.bridge.session_registry.release(session_key, idem_key)
         response = mapping.sync_response(
             result.task_result,
             ctx,
@@ -435,10 +499,15 @@ class Handler(BaseHTTPRequestHandler):
         # capacity_exhausted's delay (t5, deviation d4) rides the HTTP
         # Retry-After header, never the JSON body — internal/actors/
         # client.go reads it from exactly that header and nowhere else.
-        extra_headers = None
+        extra_headers = {}
         if response.retry_after_seconds is not None:
-            extra_headers = {"Retry-After": str(max(0, round(response.retry_after_seconds)))}
-        self._write_json(response.status_code, response.body, extra_headers=extra_headers)
+            extra_headers["Retry-After"] = str(max(0, round(response.retry_after_seconds)))
+        # t6 (c44/h37): a fork must be observable on the wire, not merely
+        # inferable from an unexpectedly-fresh continuation_ref — see
+        # session_registry.py.
+        if forked:
+            extra_headers["X-Session-Fork"] = "1"
+        self._write_json(response.status_code, response.body, extra_headers=extra_headers or None)
 
     def _dispatch_async(
         self,
@@ -450,12 +519,18 @@ class Handler(BaseHTTPRequestHandler):
         role: str | None,
         max_steps: int | None,
         model: str | None,
+        *,
+        session_key: str | None = None,
+        held: bool = False,
+        forked: bool = False,
     ) -> None:
         cfg = self.bridge.cfg
         callback = body.get("callback") or {}
         callback_url = callback.get("url") if isinstance(callback, dict) else None
         callback_token = callback.get("token") if isinstance(callback, dict) else None
         if not callback_url or not callback_token:
+            if held:
+                self.bridge.session_registry.release(session_key, idem_key)
             self._write_json(
                 400,
                 {
@@ -485,9 +560,13 @@ class Handler(BaseHTTPRequestHandler):
             claude_cli.UnsupportedClaudeVersionError,
             claude_cli.ClaudeVersionProbeError,
         ) as exc:
+            if held:
+                self.bridge.session_registry.release(session_key, idem_key)
             self._write_json(503, {"error": str(exc), "class": "actor_unavailable"})
             return
         except claude_cli.BackgroundDispatchError as exc:
+            if held:
+                self.bridge.session_registry.release(session_key, idem_key)
             self._write_json(
                 503,
                 {
@@ -504,7 +583,11 @@ class Handler(BaseHTTPRequestHandler):
             "supports_cancellation": True,
         }
         self.bridge.idempotency.put(idem_key, 202, accepted_body, request_fingerprint=instruction)
-        self._write_json(202, accepted_body)
+        # t6 (c44/h37): observable on the wire even for the fast 202 path —
+        # see session_registry.py and _dispatch_sync's matching header.
+        self._write_json(
+            202, accepted_body, extra_headers={"X-Session-Fork": "1"} if forked else None
+        )
 
         self.bridge.async_runner.start(
             start=start,
@@ -513,6 +596,13 @@ class Handler(BaseHTTPRequestHandler):
             callback_token=callback_token,
             heartbeat_after_seconds=cfg.heartbeat_after_seconds,
             workspace_handle=handle,
+            # t6 (c44/h37): the background poller releases this
+            # session_key's slot once claude's turn actually finishes —
+            # `session_registry`/`session_key` are None here whenever
+            # `held` is False (no slot to release, forked or unserialized).
+            session_registry=self.bridge.session_registry if held else None,
+            session_key=session_key if held else None,
+            session_holder=idem_key,
         )
 
 

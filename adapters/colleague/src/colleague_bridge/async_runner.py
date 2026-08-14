@@ -25,6 +25,7 @@ from typing import Any
 from colleague_bridge import colleague_cli, flightfiles, mapping, workspace
 from colleague_bridge.callbacks import CallbackConfig, CallbackEmitter
 from colleague_bridge.config import Config
+from colleague_bridge.session_registry import SessionRegistry
 
 logger = logging.getLogger("colleague_bridge.async_runner")
 
@@ -57,6 +58,13 @@ class AsyncInvocation:
     started_at: float = field(default_factory=time.monotonic)
     done: bool = False
     cancel_requested: bool = False
+    #: t6 (c44/h37): the session_key slot this invocation holds, and the
+    #: registry to release it from once colleague's turn actually
+    #: finishes. Both None when this invocation forked or session
+    #: serialization found no session_key to track.
+    session_registry: SessionRegistry | None = None
+    session_key: str | None = None
+    session_holder: str | None = None
 
 
 class AsyncRunner:
@@ -77,6 +85,9 @@ class AsyncRunner:
         callback_token: str,
         heartbeat_after_seconds: int,
         workspace_handle: workspace.WorkspaceHandle,
+        session_registry: SessionRegistry | None = None,
+        session_key: str | None = None,
+        session_holder: str | None = None,
     ) -> None:
         inv = AsyncInvocation(
             invocation_id=start.handle_id,
@@ -84,6 +95,9 @@ class AsyncRunner:
             pid=start.pid,
             ctx=ctx,
             workspace_handle=workspace_handle,
+            session_registry=session_registry,
+            session_key=session_key,
+            session_holder=session_holder,
         )
         with self._lock:
             self._invocations[start.handle_id] = inv
@@ -137,7 +151,16 @@ class AsyncRunner:
             },
         )
 
-        result, detail = self._poll_until_done(inv, emitter, heartbeat_after_seconds)
+        try:
+            result, detail = self._poll_until_done(inv, emitter, heartbeat_after_seconds)
+        finally:
+            # t6 (c44/h37): colleague's own turn is over (successfully,
+            # failed, or timed out) — release the session_key slot the
+            # instant the PROVIDER call itself is done, not after the
+            # (possibly slow/retried) terminal callback below, so the next
+            # same-key arrival stops forking as soon as it honestly can.
+            if inv.session_registry is not None:
+                inv.session_registry.release(inv.session_key, inv.session_holder)
 
         # t10: measured AFTER the session ends, against the snapshot taken
         # right before it started — this is what makes head_before/after

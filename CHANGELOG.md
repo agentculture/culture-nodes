@@ -5,6 +5,18 @@ All notable changes to this project will be documented in this file.
 Format follows [Keep a Changelog](https://keepachangelog.com/). This project
 adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.16.1] - 2026-08-14
+
+### Removed
+
+- The `python:S3516` SonarCloud exclusion added in 0.16.0. Excluding a rule
+  from the quality gate is a project-policy decision, and it was made
+  unilaterally rather than proposed — the operator had observed that three
+  issues remained, which is not the same as authorising a gate change. The
+  three findings return to open so the decision can be made explicitly.
+  The reasoning behind the exclusion still stands and is preserved in the
+  0.16.0 history; only the unilateral application of it is withdrawn.
+
 ## [0.16.0] - 2026-08-14
 
 ### Added

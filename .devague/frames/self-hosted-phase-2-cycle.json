@@ -135,7 +135,7 @@
     {
       "id": "c8",
       "kind": "assumption",
-      "text": "Credential distribution to production follows reachy-mini-cli PR #161's ssh pattern (reachy/discover/ssh.py): argv-only ssh plus a separate explicitly-confirmed ssh-copy-id authorize step, no typed secret through the tool; live probes show thor@thor accepts the current key (aarch64, claude + docker present) while orin@orin refuses it (publickey,password) \u2014 an authorize flow is a real prerequisite, not polish",
+      "text": "Credential distribution to production follows reachy-mini-cli PR #161's ssh pattern (reachy/discover/ssh.py): argv-only ssh plus a separate explicitly-confirmed ssh-copy-id authorize step, no typed secret through the tool; live probes show user@host accepts the current key (aarch64, claude + docker present) while user@host refuses it (publickey,password) \u2014 an authorize flow is a real prerequisite, not polish",
       "origin": "llm",
       "status": "confirmed",
       "honesty_conditions": [],
@@ -537,11 +537,11 @@
     },
     {
       "id": "v2",
-      "text": "orin's actual account layout and tooling: the probe used orin@orin and was refused at auth; whether claude/docker exist there is unverifiable until a key lands",
+      "text": "orin's actual account layout and tooling: the probe used user@host and was refused at auth; whether claude/docker exist there is unverifiable until a key lands",
       "kind": "unknown_nonblocking",
       "claim_id": null,
       "resolved": true,
-      "resolution": "ssh orin@orin now works (key landed mid-frame): aarch64, docker present, claude CLI NOT installed, and memory is tight \u2014 52 of 61 GiB used, ~8 GiB available \u2014 so orin runs a worker/runner fine but hosting claude-code actor sessions there needs an install and a memory budget check",
+      "resolution": "ssh user@host now works (key landed mid-frame): aarch64, docker present, claude CLI NOT installed, and memory is tight \u2014 52 of 61 GiB used, ~8 GiB available \u2014 so orin runs a worker/runner fine but hosting claude-code actor sessions there needs an install and a memory budget check",
       "resolution_claim_id": null
     },
     {
@@ -624,7 +624,7 @@
     },
     {
       "id": "s6",
-      "surface": "live ssh probes: thor@thor, orin@orin",
+      "surface": "live ssh probes: user@host, user@host",
       "finding": "thor reachable with the current key: aarch64, /usr/local/bin/claude and docker present; orin refused (publickey,password) \u2014 the production pair is half-provisioned today",
       "seeds": [
         "c7",
@@ -698,7 +698,7 @@
     },
     {
       "id": "s15",
-      "surface": "live ssh re-probe: orin@orin (key installed mid-frame)",
+      "surface": "live ssh re-probe: user@host (key installed mid-frame)",
       "finding": "orin reachable: aarch64, /usr/bin/docker present, no claude CLI, 52/61 GiB memory already used \u2014 worker/runner capable today; claude-code actor hosting needs install + memory headroom",
       "seeds": [
         "c7"
@@ -706,7 +706,7 @@
     },
     {
       "id": "s16",
-      "surface": "corrected probe: orin@orin via login shell",
+      "surface": "corrected probe: user@host via login shell",
       "finding": "claude 2.1.221 IS installed on orin (~/.local/bin/claude) \u2014 the earlier 'no claude CLI' finding was a non-login-shell PATH artifact, user-verified and re-probed with bash -lc; orin is actor-capable as well as worker-capable, memory headroom (~8 GiB free) remains the real constraint",
       "seeds": [
         "c7"

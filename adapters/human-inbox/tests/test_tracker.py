@@ -477,7 +477,7 @@ def test_qualifying_reply_completes_with_answered_outcome(live):
     comments = [
         {
             "id": 1,
-            "user": {"login": "orinach"},
+            "user": {"login": "human-reviewer"},
             "body": "changes look fine, proceed",
             "html_url": "https://github.com/agentculture/culture-nodes/pull/54#comment-1",
         }
@@ -736,8 +736,8 @@ def test_reply_observation_accepts_custom_outcome_names():
 def test_qualifying_reply_helper_skips_ignored_authors_and_empty_bodies():
     comments = [
         {"user": {"login": "qodo-code-review[bot]"}, "body": "automated finding"},
-        {"user": {"login": "orinach"}, "body": "   "},
-        {"user": {"login": "orinach"}, "body": "looks good, ship it"},
+        {"user": {"login": "human-reviewer"}, "body": "   "},
+        {"user": {"login": "human-reviewer"}, "body": "looks good, ship it"},
     ]
     reply = tracker.qualifying_reply(comments, ignored_logins=tracker.DEFAULT_REPLY_IGNORED_LOGINS)
     assert reply is not None

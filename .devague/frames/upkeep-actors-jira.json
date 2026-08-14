@@ -1,0 +1,1369 @@
+{
+  "slug": "upkeep-actors-jira",
+  "title": "upkeep-actors-jira",
+  "schema_version": 5,
+  "status": "exported",
+  "created": "2026-08-14T10:40:38Z",
+  "updated": "2026-08-14T13:18:20Z",
+  "claims": [
+    {
+      "id": "c1",
+      "kind": "announcement",
+      "text": "culture-nodes ships the upkeep-actors-jira cycle: every economy-discord-graphs issue whose delivery is evidenced is closed with that evidence cited, the pr-upkeep loop's four upkeep defects are fixed so a real PR flows sweep-to-merge without an operator nursing it, dispatched actors get a clarify-then-commit gate, credential rotation stops destroying keys it does not own, and every committed demo becomes loadable by a deployment that is not this one \u2014 with three of this cycle's pr-upkeep items running through culture-nodes rather than beside it. The Jira Cloud node-loop the frame was named for was scoped in full here and deliberately deferred to issue #76.",
+      "origin": "user",
+      "status": "confirmed",
+      "honesty_conditions": [
+        {
+          "id": "h19",
+          "text": "Every headline in the announcement is backed by a live artifact at the end of the cycle \u2014 a ledger-counted number for the three items, a completed cross-machine run, a self-completing human task, a CI job proven to fail on a broken example, and a Jira work item out of a sweep \u2014 and anything not achieved is recorded as not achieved rather than softened, the way signals 2 and 5 were last cycle",
+          "status": "confirmed",
+          "instruction": ""
+        }
+      ],
+      "hard_questions": [],
+      "links": [],
+      "instruction": "Treat each announcement clause as a coverage target; at cycle end record any clause not achieved as not achieved, the way signals 2 and 5 were handled last cycle",
+      "revisions": [
+        {
+          "text": "culture-nodes ships the upkeep-actors-jira cycle: every economy-discord-graphs issue whose delivery is evidenced is closed with that evidence cited, the pr-upkeep loop's four upkeep defects are fixed so a real PR flows sweep-to-merge without an operator nursing it, dispatched actors get a clarify-then-commit gate, and a second node-loop picks up Jira Cloud issues from the SCRUM backlog \u2014 with this cycle's own work packages running through culture-nodes rather than beside it.",
+          "kind": "announcement",
+          "reason": ""
+        }
+      ]
+    },
+    {
+      "id": "c2",
+      "kind": "requirement",
+      "text": "Issue hygiene: PR #70's body used a prose 'Closes the ten-issue batch: #41, #43, ...' form GitHub does not parse, so all ten (#41 #43 #45 #46 #47 #48 #49 #54 #56) plus #68 are still OPEN despite being delivered; this cycle closes each evidenced issue with a comment citing its row in docs/deliveries/2026-08-14-economy-discord-graphs.md",
+      "origin": "llm",
+      "status": "confirmed",
+      "honesty_conditions": [
+        {
+          "id": "h1",
+          "text": "Every issue closed this cycle names a specific artifact \u2014 a run id, file:line, migration number, or delivery-doc claim row \u2014 and no issue is closed on the strength of a merged PR alone",
+          "status": "confirmed",
+          "instruction": ""
+        }
+      ],
+      "hard_questions": [],
+      "links": [],
+      "instruction": "Close each delivered issue with 'gh issue close --comment' citing its delivery-doc claim row or the file:line proving it; already executed for ten issues \u2014 apply the same rule to any further closure",
+      "revisions": []
+    },
+    {
+      "id": "c3",
+      "kind": "boundary",
+      "text": "Closure is evidence-gated, not merge-gated: the delivery doc's claims table marks 'Merging a PR completes a human task' and 'Resuming reduces uncached input' as unverified, so #54 and #48's stickiness half do NOT close on this pass \u2014 they close when a live observation exists",
+      "origin": "llm",
+      "status": "confirmed",
+      "honesty_conditions": [
+        {
+          "id": "h20",
+          "text": "No issue closes this cycle without a named artifact, and #54 in particular closes only on a ledger record naming a merge commit",
+          "status": "confirmed",
+          "instruction": ""
+        }
+      ],
+      "hard_questions": [],
+      "links": [],
+      "instruction": "Before closing any issue, check the delivery doc's claims table: an 'unverified' row means the issue stays open until a live observation exists",
+      "revisions": []
+    },
+    {
+      "id": "c4",
+      "kind": "requirement",
+      "text": "#64 and #65 are verified delivered in tree \u2014 human_inbox_bridge/config.py no longer requires GITHUB_TOKEN, and compose.thor.yml:137-149 + compose.orin.yml:30-38 carry NODES_CODE_RUNNER_* and NODES_RUNNER_SERVICES_FILE \u2014 so both close with those citations",
+      "origin": "llm",
+      "status": "confirmed",
+      "honesty_conditions": [
+        {
+          "id": "h2",
+          "text": "Re-reading config.py and both compose files today still shows the token-optional path and all four runner env keys; the closure comments cite the tree, not the PR body",
+          "status": "confirmed",
+          "instruction": ""
+        }
+      ],
+      "hard_questions": [],
+      "links": [],
+      "instruction": "No implementation \u2014 verification is re-reading config.py and both compose files, already done and cited in the closure comments",
+      "revisions": []
+    },
+    {
+      "id": "c5",
+      "kind": "requirement",
+      "text": "#66 is NOT delivered: internal/notifier/rundetail.go still carries only workflow_digest with no digest-to-key lookup, so the Discord message still shows 64 hex characters where a human needs a name \u2014 it is live work this cycle, not a closure",
+      "origin": "llm",
+      "status": "confirmed",
+      "honesty_conditions": [
+        {
+          "id": "h3",
+          "text": "The notifier renders a workflow key resolved through a cached digest-to-key lookup, and a run with no agent actor produces a message carrying no actor field at all rather than an empty one",
+          "status": "confirmed",
+          "instruction": ""
+        }
+      ],
+      "hard_questions": [],
+      "links": [],
+      "instruction": "In internal/notifier, add a cached digest-to-workflow-key lookup against the workflows read API and render 'name (short-digest)'; omit the actor field entirely when empty rather than rendering it blank; extend rundetail_test.go",
+      "revisions": []
+    },
+    {
+      "id": "c6",
+      "kind": "requirement",
+      "text": "#73: schemas/workflow/workflow.schema.json's inputBinding.bindings sets additionalProperties to $defs/pointer (a string), so the object-literal observe convention cannot compile; move the examples to the proven pointer form now and land a typed literal binding after (the issue's option C)",
+      "origin": "llm",
+      "status": "rejected",
+      "honesty_conditions": [
+        {
+          "id": "h4",
+          "text": "examples/pr-upkeep/workflow.yaml validates with 0 errors against the live validate endpoint",
+          "status": "rejected",
+          "instruction": ""
+        }
+      ],
+      "hard_questions": [],
+      "links": [],
+      "instruction": "Rewrite the observe bindings in examples/pr-upkeep/workflow.yaml to the pointer form and supply the literal through run input; validate against the live endpoint expecting 0 errors",
+      "revisions": []
+    },
+    {
+      "id": "c7",
+      "kind": "requirement",
+      "text": "#73's recurrence half is the real acceptance: no job under .github/workflows references examples/, so a compile check over every workflow in examples/ is what prevents a non-compiling example shipping again \u2014 the example edit alone does not",
+      "origin": "llm",
+      "status": "confirmed",
+      "honesty_conditions": [
+        {
+          "id": "h5",
+          "text": "The CI job FAILS when a deliberately malformed example is committed \u2014 demonstrated once before merge, not assumed from a passing run",
+          "status": "confirmed",
+          "instruction": ""
+        }
+      ],
+      "hard_questions": [],
+      "links": [],
+      "instruction": "Add a CI job compiling every workflow under examples/ via the compiler package or the validate endpoint; prove it by deliberately breaking one example and observing the failure before merge",
+      "revisions": []
+    },
+    {
+      "id": "c8",
+      "kind": "assumption",
+      "text": "Option A (typed literal binding) is a four-site change, not a schema bump: schemas/workflow/workflow.schema.json, internal/compiler/model.go's inputBinding, internal/engine/workflow.go's InputBindings map[string]string (:162, :464), and internal/worker/bindings.go's resolveNodeInput",
+      "origin": "llm",
+      "status": "confirmed",
+      "honesty_conditions": [],
+      "hard_questions": [],
+      "links": [],
+      "instruction": "",
+      "revisions": []
+    },
+    {
+      "id": "c9",
+      "kind": "requirement",
+      "text": "#72: the live actor list on thor:18080 resolves company/human-ops to http://192.168.1.157:8090 (spark) while deploy/prod/install-secrets.sh:236 and human-inbox-bridge.service both declare the bridge and tracker 'thor only' \u2014 move the tracker to the actor's host AND make a tracker refuse to start when its bridge does not serve the actor it observes",
+      "origin": "llm",
+      "status": "confirmed",
+      "honesty_conditions": [
+        {
+          "id": "h6",
+          "text": "A tracker configured against a bridge that does not serve its actor exits non-zero at startup naming both the actor endpoint and its own bridge URL; and in production the tracker and the human-ops bridge resolve to the same host",
+          "status": "confirmed",
+          "instruction": ""
+        }
+      ],
+      "hard_questions": [],
+      "links": [],
+      "instruction": "Move the human-inbox tracker unit to the host serving company/human-ops in deploy/prod/deploy.sh; at startup resolve the configured actor's endpoint_ref from the control plane and exit non-zero when it does not match the tracker's own bridge URL; pin with a test",
+      "revisions": []
+    },
+    {
+      "id": "c10",
+      "kind": "requirement",
+      "text": "#74: examples/pr-upkeep/workflow.yaml binds fix to actor://company/developer (live endpoint 192.168.1.157:8088, spark) and review to actor://company/codex-thor (192.168.1.146:8086, thor) and then hands a filesystem path between them; the portable handle is a pushed git ref, reusing t25's preserve-branch plumbing rather than duplicating it",
+      "origin": "llm",
+      "status": "confirmed",
+      "honesty_conditions": [
+        {
+          "id": "h7",
+          "text": "A run whose fix and review actors sit on different hosts completes, and the review lane's report quotes content it could only have obtained by fetching the fix lane's ref",
+          "status": "confirmed",
+          "instruction": ""
+        }
+      ],
+      "hard_questions": [],
+      "links": [],
+      "instruction": "Replace the path binding between fix and review with a git ref: the fix lane pushes its branch through t25's write-tree/commit-tree/update-ref plumbing, and review binds the ref; document bare paths as same-host-only or refuse them at compile time",
+      "revisions": []
+    },
+    {
+      "id": "c11",
+      "kind": "assumption",
+      "text": "#71 is already substantially on main from b5cdc5b: workflow.yaml routes triage.empty to backoff ('issue #71: idle is no longer a human task') and tracker.py carries REPLY_OBSERVATION_KIND and CLOSED_OBSERVATION_KIND; what is absent everywhere in the tree is github_pr_opened \u2014 so #71's residual is only its new-PR trigger, option A or B",
+      "origin": "llm",
+      "status": "confirmed",
+      "honesty_conditions": [],
+      "hard_questions": [],
+      "links": [],
+      "instruction": "",
+      "revisions": []
+    },
+    {
+      "id": "c12",
+      "kind": "requirement",
+      "text": "#61: sweep.py's main() (:429-458) merges exactly two finding sources (sonar_work_items, qodo_work_items); a third from GET /repos/{repo}/commits/{sha}/check-runs is additive inside the same prioritise / build_report / exit_code_for shape and needs no new credential",
+      "origin": "llm",
+      "status": "confirmed",
+      "honesty_conditions": [
+        {
+          "id": "h8",
+          "text": "A recorded check-runs fixture yields work items carrying check name, PR number and details URL; Sonar-named checks are skipped so a quality-gate failure does not double-count; and the 0/10/other exit contract is unchanged",
+          "status": "confirmed",
+          "instruction": ""
+        }
+      ],
+      "hard_questions": [],
+      "links": [],
+      "instruction": "Add a check-runs source to sweep.py reading GET /repos/{repo}/commits/{sha}/check-runs per open PR; map required failures to HIGH/CRITICAL and optional to MEDIUM; skip Sonar-named checks to avoid double-counting; unit-test against a recorded fixture",
+      "revisions": []
+    },
+    {
+      "id": "c13",
+      "kind": "requirement",
+      "text": "The Jira node-loop is a new finding source inside a shipped skeleton, not a new engine capability: examples/pr-upkeep and examples/delivery-loop already prove sweep(code) -> triage(decision) -> work -> human gate -> backoff(wait) -> sweep, and the Jira backlog loop reuses it",
+      "origin": "llm",
+      "status": "rejected",
+      "honesty_conditions": [
+        {
+          "id": "h9",
+          "text": "The Jira workflow introduces no new node kind and no engine change \u2014 it compiles and runs on the shipped compiler exactly as pr-upkeep does",
+          "status": "rejected",
+          "instruction": ""
+        }
+      ],
+      "hard_questions": [],
+      "links": [],
+      "instruction": "",
+      "revisions": []
+    },
+    {
+      "id": "c14",
+      "kind": "boundary",
+      "text": "The Jira credential enters neither the control plane nor a bare code node: sweep.py's docstring states it holds no write credential of any kind, and #68 established that a credential-holding, real-world-acting step is an actor/bridge (adapters/notify, adapters/human-inbox) rather than a node kind \u2014 a Jira lane that transitions or comments follows that precedent",
+      "origin": "llm",
+      "status": "rejected",
+      "honesty_conditions": [],
+      "hard_questions": [],
+      "links": [],
+      "instruction": "",
+      "revisions": []
+    },
+    {
+      "id": "c15",
+      "kind": "assumption",
+      "text": "Jira Cloud REST v3 authenticates with HTTP Basic 'account-email:api-token', verified live: Basic answers 200 on /rest/api/3/myself while the same token sent as a Bearer answers 403. The credential in .env is therefore complete only when paired with an account email, so the sweep needs TWO config values (email + token) and both are supplied from the environment at runtime \u2014 neither is ever written into a spec, plan, example or committed file",
+      "origin": "llm",
+      "status": "rejected",
+      "honesty_conditions": [],
+      "hard_questions": [],
+      "links": [],
+      "instruction": "",
+      "revisions": [
+        {
+          "text": "Jira Cloud REST v3 authenticates with HTTP Basic email:api_token; .env carries JIRA_CLOUD_API_TOKEN alone with no account email and no site base URL, so the token as delivered cannot authenticate by itself, and zero Jira references exist anywhere in the tree today",
+          "kind": "assumption",
+          "reason": ""
+        },
+        {
+          "text": "[redacted on amend: this revision recorded a live auth probe result including an account email and accountId. Removed under the cycle's credential-custody boundary (c25) \u2014 committed artifacts carry no personal identifier. The surviving claim states the auth SHAPE, which is the part that is spec-relevant.]",
+          "kind": "assumption",
+          "reason": ""
+        }
+      ]
+    },
+    {
+      "id": "c16",
+      "kind": "boundary",
+      "text": "sweep.py's invariants hold for every new source: Python 3.12 stdlib only, the repo and SonarCloud component keys hardcoded (spec claim c26), and the 0 / 10 / other exit-code contract that the triage decision node routes on",
+      "origin": "llm",
+      "status": "confirmed",
+      "honesty_conditions": [
+        {
+          "id": "h21",
+          "text": "sweep.py imports nothing outside the Python 3.12 stdlib, and each of the exit-code contract's three branches is covered by a test",
+          "status": "confirmed",
+          "instruction": ""
+        }
+      ],
+      "hard_questions": [],
+      "links": [],
+      "instruction": "Any new finding source keeps sweep.py stdlib-only and leaves the 0/10/other exit contract untouched; add a test per exit branch",
+      "revisions": []
+    },
+    {
+      "id": "c17",
+      "kind": "non_goal",
+      "text": "No egress-allowlist work this cycle: the sweep node's operation declares network: full because headspace-cli 0.11.0 rejects egress-allowlist (#50), so the runner boundary honestly reports the gap rather than hiding it \u2014 the posture is documented, not fixed",
+      "origin": "llm",
+      "status": "confirmed",
+      "honesty_conditions": [],
+      "hard_questions": [],
+      "links": [],
+      "instruction": "Leave network: full in place and keep the declared-intent comment; revisit only when headspace ships allowlist support (#50)",
+      "revisions": [
+        {
+          "text": "No egress-allowlist work this cycle: the sweep node's operation declares network: full because headspace-cli 0.11.0 rejects egress-allowlist (#50), so a Jira host is a third allowlist entry that still cannot be expressed \u2014 the posture is documented, not fixed",
+          "kind": "non_goal",
+          "reason": ""
+        }
+      ]
+    },
+    {
+      "id": "c18",
+      "kind": "requirement",
+      "text": "#67's prior art is tests/deploy/destructiveconfirm_test.go's single-use windowed confirmation file; generalizing it from danger to understanding keeps that shape, and its ledger fit is preflight = derived, acknowledgement = proposed",
+      "origin": "llm",
+      "status": "confirmed",
+      "honesty_conditions": [
+        {
+          "id": "h10",
+          "text": "An actor's acknowledgement exists as a ledger record before its first billable turn, and a dispatch whose preflight was never acknowledged does not proceed",
+          "status": "confirmed",
+          "instruction": ""
+        }
+      ],
+      "hard_questions": [],
+      "links": [],
+      "instruction": "Implement the gate in the engine: a derived preflight record composed from host capabilities plus the task declaration, and an actor acknowledgement as a proposed ledger record via a dispatch confirm verb, single-use and windowed like the destructive-confirm protocol; bridges expose host capabilities only",
+      "revisions": []
+    },
+    {
+      "id": "c19",
+      "kind": "non_goal",
+      "text": "The ledger authority model does not bend for any of this: a notify send or a human-inbox submission reported by a bridge is a proposed claim, never observed \u2014 only facts a trusted runner or the merge tracker directly measured carry observed authority with a collection_method, and no actor promotes its own proposal",
+      "origin": "llm",
+      "status": "confirmed",
+      "honesty_conditions": [],
+      "hard_questions": [],
+      "links": [],
+      "instruction": "When adding any bridge-reported outcome, assert its ledger authority is proposed in a test rather than relying on review",
+      "revisions": [
+        {
+          "text": "The ledger authority model does not bend for any of this: a Jira transition or a notify send reported by a bridge is a proposed claim, never observed \u2014 only facts a trusted runner or the tracker directly measured carry observed authority with a collection_method",
+          "kind": "non_goal",
+          "reason": ""
+        }
+      ]
+    },
+    {
+      "id": "c20",
+      "kind": "requirement",
+      "text": "The dogfooding baseline is ONE, not zero, and the distinction matters: docs/deliveries/2026-08-14-dogfooding-baseline.md measured '0 of 35' counting only the batch's 35 PLAN TASKS, but a real pr-upkeep item did run through the engine in the same window \u2014 run 01KZZSGSWH11J7R7P4V2HPTZZQ swept, triaged and dispatched a fix that landed genuine SonarCloud fixes as commit b01608c on a spark actor, before its review leg 403'd on #74's cross-machine path. So the honest baseline is 1 out of 35, this cycle's target of three items completing the full loop is a real increase over a real number, and the count must come from a ledger query rather than session memory",
+      "origin": "llm",
+      "status": "confirmed",
+      "honesty_conditions": [
+        {
+          "id": "h11",
+          "text": "The count comes from a query over runs and attempts, not from session memory or commit prose",
+          "status": "confirmed",
+          "instruction": ""
+        },
+        {
+          "id": "h18",
+          "text": "The baseline and the end-of-cycle count are produced by the same ledger query over runs and attempts, so 'more than last cycle' compares like with like rather than one measured number against one remembered one",
+          "status": "confirmed",
+          "instruction": ""
+        }
+      ],
+      "hard_questions": [],
+      "links": [],
+      "instruction": "Write the ledger query counting real items through the engine; run it at cycle start to pin the baseline of one and again at cycle end; put both numbers in the delivery summary",
+      "revisions": [
+        {
+          "text": "The dogfooding target is measured from the ledger, not remembered: 0 of 35 plan tasks ran through culture-nodes last cycle (docs/deliveries/2026-08-14-dogfooding-baseline.md) and exactly one pr-upkeep item reached fix live (run 01KZZSGSWH11J7R7P4V2HPTZZQ, commit b01608c, whose review leg then 403'd on #74) \u2014 this cycle declares a count of items completing the full loop through the merge gate",
+          "kind": "requirement",
+          "reason": ""
+        }
+      ]
+    },
+    {
+      "id": "c21",
+      "kind": "assumption",
+      "text": "The fleet is live and available: thor:18080 answers healthz 200 with ten registered actors (codex-thor, codex-orin, developer, intake, planner, verifier, human-ops, notify-discord, operator-claude, and the headspace/docker runner), so routing this cycle's work packages through the engine is a scheduling choice rather than a provisioning one",
+      "origin": "llm",
+      "status": "confirmed",
+      "honesty_conditions": [],
+      "hard_questions": [],
+      "links": [],
+      "instruction": "",
+      "revisions": []
+    },
+    {
+      "id": "c22",
+      "kind": "requirement",
+      "text": "Batch scope is NINE work items, Jira excluded: the four upkeep bugs (#71 residual, #72, #73, #74), the two small verified-unfixed items (#61, #66), the clarify-then-commit gate (#67), #69 items 1-2 (rotation-merges-not-replaces, post-deploy credential audit), and demo portability across all eleven committed examples \u2014 plus a ledger-measured target of three pr-upkeep items completing the full loop through the merge gate. The Jira Cloud node-loop was scoped in this cycle and deliberately moved out to issue #76",
+      "origin": "llm",
+      "status": "confirmed",
+      "honesty_conditions": [
+        {
+          "id": "h12",
+          "text": "Every item in the declared scope either ships or is recorded as dropped, with a reason, in the delivery summary",
+          "status": "confirmed",
+          "instruction": ""
+        }
+      ],
+      "hard_questions": [],
+      "links": [],
+      "instruction": "Track the nine items as the plan's coverage targets; anything dropped is recorded with a reason in the delivery summary rather than quietly omitted",
+      "revisions": [
+        {
+          "text": "Batch scope is confirmed as eight work items: the four upkeep bugs (#71 residual, #72, #73, #74), the two small verified-unfixed items (#61, #66), the clarify-then-commit gate (#67), and #69 items 1-2 (rotation-merges-not-replaces, post-deploy credential audit) \u2014 plus the read-only Jira node-loop and a ledger-measured target of three pr-upkeep items through the merge gate",
+          "kind": "requirement",
+          "reason": ""
+        },
+        {
+          "text": "Batch scope is NINE work items plus the Jira lane: the four upkeep bugs (#71 residual, #72, #73, #74), the two small verified-unfixed items (#61, #66), the clarify-then-commit gate (#67), #69 items 1-2 (rotation-merges-not-replaces, post-deploy credential audit), and demo portability across all eleven committed examples \u2014 plus the read-only Jira node-loop and a ledger-measured target of three pr-upkeep items through the merge gate",
+          "kind": "requirement",
+          "reason": ""
+        }
+      ]
+    },
+    {
+      "id": "c23",
+      "kind": "requirement",
+      "text": "The Jira site is reachable and scoped small: SCRUM (My Software Team) is the only project, /rest/agile/1.0/board/1/backlog answers 200, and Jira publishes a per-request budget via x-ratelimit-limit: 350 \u2014 comfortably above the sweep's once-per-loop-iteration cadence, unlike GitHub's 60/hr anonymous ceiling",
+      "origin": "llm",
+      "status": "rejected",
+      "honesty_conditions": [
+        {
+          "id": "h13",
+          "text": "The sweep's worst-case request count per cycle is stated explicitly and stays inside the published rate ceiling with headroom",
+          "status": "rejected",
+          "instruction": ""
+        }
+      ],
+      "hard_questions": [],
+      "links": [],
+      "instruction": "",
+      "revisions": []
+    },
+    {
+      "id": "c24",
+      "kind": "assumption",
+      "text": "The SCRUM backlog is EMPTY today \u2014 a JQL 'order by created DESC' across the whole site returns zero issues \u2014 so the Jira loop can be built and unit-tested against recorded fixtures but cannot be live-proven until someone files backlog items; live proof is a separate gate from delivery",
+      "origin": "llm",
+      "status": "rejected",
+      "honesty_conditions": [],
+      "hard_questions": [],
+      "links": [],
+      "instruction": "",
+      "revisions": []
+    },
+    {
+      "id": "c25",
+      "kind": "boundary",
+      "text": "No credential, account identity or personal identifier is recorded in any committed artifact of this cycle: secrets are read from the environment at run time and appear in no spec, plan, frame, example workflow, argv or log line \u2014 the same custody rule tests/lint/webhookisolation_test.go and github_isolation_test.go already enforce for the webhook and GitHub credentials, extended to recorded test fixtures after four personal handles were found in committed ones",
+      "origin": "llm",
+      "status": "confirmed",
+      "honesty_conditions": [
+        {
+          "id": "h14",
+          "text": "A grep for credentials, account emails and personal handles over every committed path returns nothing, and the rule is enforced by a test rather than by reviewer attention",
+          "status": "confirmed",
+          "instruction": ""
+        }
+      ],
+      "hard_questions": [],
+      "links": [],
+      "instruction": "Add a tests/lint check that fails on credential and personal-identifier patterns across committed paths, mirroring webhookisolation_test.go",
+      "revisions": [
+        {
+          "text": "No credential, account identity or personal identifier is recorded in any committed artifact of this cycle: the Jira email and token, like every other secret, are read from the environment at run time and appear in no spec, plan, frame, example workflow, argv or log line \u2014 the same custody rule tests/lint/webhookisolation_test.go and github_isolation_test.go already enforce for the webhook and GitHub credentials",
+          "kind": "boundary",
+          "reason": ""
+        }
+      ]
+    },
+    {
+      "id": "c26",
+      "kind": "requirement",
+      "text": "Committed example flows are DEMOS others load and modify, not this deployment's private config: every environment-specific value an example carries \u2014 actor keys, endpoint IPs, hostnames, repo and component keys, site URLs, filesystem paths \u2014 must arrive as run input or as clearly-marked overridable config, never as an invisible constant only this deployment can satisfy",
+      "origin": "llm",
+      "status": "confirmed",
+      "honesty_conditions": [
+        {
+          "id": "h15",
+          "text": "Loading an example into a different deployment requires changing only documented configuration, never editing the graph; a reviewer can point at each environment-specific value and say where it comes from",
+          "status": "confirmed",
+          "instruction": ""
+        }
+      ],
+      "hard_questions": [],
+      "links": [],
+      "instruction": "Move every environment-specific value in examples/ to run input or documented config; where a value must stay pinned, document it at the constant as the one value a new operator changes",
+      "revisions": []
+    },
+    {
+      "id": "c27",
+      "kind": "assumption",
+      "text": "Audited: committed examples currently bake this deployment's topology. Nine of eleven example workflows name thor/orin/spark or 192.168.1.x endpoints; sweep.py pins GITHUB_REPO and SONAR_COMPONENT_KEY as module constants; and pr-upkeep's sweep node fetches its script from a raw.githubusercontent URL pinned to one org, commit and path. A third party loading these today gets a flow that cannot run and cannot easily be told why",
+      "origin": "llm",
+      "status": "confirmed",
+      "honesty_conditions": [],
+      "hard_questions": [],
+      "links": [],
+      "instruction": "",
+      "revisions": []
+    },
+    {
+      "id": "c28",
+      "kind": "requirement",
+      "text": "The Jira demo takes site host, project key and credentials from run input and environment, and ships with recorded fixtures so it is runnable and unit-testable by someone with no access to any particular Jira site \u2014 which is also the only way it can be tested at all while the backlog is empty",
+      "origin": "llm",
+      "status": "rejected",
+      "honesty_conditions": [
+        {
+          "id": "h16",
+          "text": "The Jira unit tests pass with no network access and no credential present",
+          "status": "rejected",
+          "instruction": ""
+        }
+      ],
+      "hard_questions": [],
+      "links": [],
+      "instruction": "",
+      "revisions": []
+    },
+    {
+      "id": "c29",
+      "kind": "requirement",
+      "text": "Recorded fixtures carry no real account identities: examples/pr-upkeep/fixtures/sonarcloud-issues.json's four assignee values and adapters/human-inbox/tests/test_tracker.py's three reply-author logins were personal handles in committed files and are now neutral placeholders, with both suites still green (31 and 144 passed)",
+      "origin": "llm",
+      "status": "confirmed",
+      "honesty_conditions": [
+        {
+          "id": "h17",
+          "text": "Both affected suites stay green after the scrub, and no committed fixture carries a real account identity",
+          "status": "confirmed",
+          "instruction": ""
+        }
+      ],
+      "hard_questions": [],
+      "links": [],
+      "instruction": "Already executed \u2014 fixtures scrubbed, both suites green; the durable part is the lint from c25",
+      "revisions": []
+    },
+    {
+      "id": "c30",
+      "kind": "boundary",
+      "text": "Hard-coding the swept repo stays a deliberate blast-radius boundary (the prior spec's claim c26 \u2014 the sweep must not generalise to arbitrary repos), but for a loadable demo that boundary has to be VISIBLE and documented as the one value a new operator must change, rather than an unexplained constant",
+      "origin": "llm",
+      "status": "confirmed",
+      "honesty_conditions": [
+        {
+          "id": "h22",
+          "text": "A new operator can find the one value to change from the README or a comment at the constant itself, without reading the parsing code",
+          "status": "confirmed",
+          "instruction": ""
+        }
+      ],
+      "hard_questions": [],
+      "links": [],
+      "instruction": "Keep the repo hardcoded but add a comment at the constant and a README line naming it as the single value to change",
+      "revisions": []
+    },
+    {
+      "id": "c31",
+      "kind": "audience",
+      "text": "The operator who watches this repo's PRs and the SCRUM backlog and today spawns a subagent because it is faster than dispatching through the engine; secondarily the workflow author declaring observables and cross-machine handoffs, and the third party who loads a committed demo flow into a deployment that is not this one",
+      "origin": "llm",
+      "status": "confirmed",
+      "honesty_conditions": [
+        {
+          "id": "h23",
+          "text": "At least one of this cycle's own work items is dispatched through the engine by the operator it is built for, not only by its author",
+          "status": "confirmed",
+          "instruction": ""
+        }
+      ],
+      "hard_questions": [],
+      "links": [],
+      "instruction": "",
+      "revisions": []
+    },
+    {
+      "id": "c32",
+      "kind": "after_state",
+      "text": "Three pr-upkeep items complete sweep-to-merge without an operator nursing the loop; a parked human task completes itself on merge; a workflow whose fix and review land on different machines finishes; every committed example compiles in CI and is loadable by someone who is not this deployment; a rotation preserves keys it does not own; and a dispatched actor is briefed before its first billable turn rather than corrected after it",
+      "origin": "llm",
+      "status": "confirmed",
+      "honesty_conditions": [
+        {
+          "id": "h24",
+          "text": "Every clause of the after-state maps to a success signal with a named artifact; a clause with no signal behind it is struck rather than carried",
+          "status": "confirmed",
+          "instruction": ""
+        }
+      ],
+      "hard_questions": [],
+      "links": [],
+      "instruction": "",
+      "revisions": [
+        {
+          "text": "Three pr-upkeep items complete sweep-to-merge without an operator nursing the loop; a Jira backlog item enters the same node-loop shape a PR finding does; a parked human task completes itself on merge; a workflow whose fix and review land on different machines finishes; every committed example compiles in CI and is loadable by someone who is not this deployment; and a dispatched actor is briefed before its first billable turn rather than corrected after it",
+          "kind": "after_state",
+          "reason": ""
+        }
+      ]
+    },
+    {
+      "id": "c33",
+      "kind": "before_state",
+      "text": "Today: exactly one real work item has gone through the engine (run 01KZZSGSWH11J7R7P4V2HPTZZQ \u2014 a pr-upkeep sweep that dispatched a fix landing actual SonarCloud fixes as commit b01608c), against 35 plan tasks in the last batch that went around it; that one item's review leg 403'd on a path that does not exist on the reviewing host, the observable authoring convention has never compiled, the merge tracker watches a host the actor is not on, credential rotation silently drops keys it does not own, and nine of eleven committed examples bake this deployment's topology",
+      "origin": "llm",
+      "status": "confirmed",
+      "honesty_conditions": [
+        {
+          "id": "h25",
+          "text": "Every 'today' statement is re-checkable against the tree or a run id at the start of the cycle, so drift is visible when the delivery summary compares",
+          "status": "confirmed",
+          "instruction": ""
+        }
+      ],
+      "hard_questions": [],
+      "links": [],
+      "instruction": "",
+      "revisions": [
+        {
+          "text": "Today: 0 of 35 plan tasks ran through the engine last cycle, exactly one pr-upkeep item reached fix live before its review leg 403'd on a path that does not exist on the reviewing host, the observable authoring convention has never compiled, the merge tracker watches a host the actor is not on, nine of eleven examples bake this deployment's topology, and there is no Jira surface in the tree at all",
+          "kind": "before_state",
+          "reason": ""
+        },
+        {
+          "text": "Today: exactly one real work item has gone through the engine (run 01KZZSGSWH11J7R7P4V2HPTZZQ \u2014 a pr-upkeep sweep that dispatched a fix landing actual SonarCloud fixes as commit b01608c), against 35 plan tasks in the last batch that went around it; that one item's review leg 403'd on a path that does not exist on the reviewing host, the observable authoring convention has never compiled, the merge tracker watches a host the actor is not on, nine of eleven examples bake this deployment's topology, and there is no Jira surface in the tree at all",
+          "kind": "before_state",
+          "reason": ""
+        }
+      ]
+    },
+    {
+      "id": "c34",
+      "kind": "why_it_matters",
+      "text": "The product proved itself but never built itself, and the honest reason is ergonomics: dispatching through culture-nodes is slower for the operator than spawning a subagent, so under a deadline the fast path wins. Each defect in this batch individually stops the loop from completing, so fixing them is what converts a demo into the path an operator actually reaches for",
+      "origin": "llm",
+      "status": "confirmed",
+      "honesty_conditions": [
+        {
+          "id": "h26",
+          "text": "The ergonomics claim is tested rather than asserted: the end-of-cycle count of real items through the engine is higher than the baseline of one",
+          "status": "confirmed",
+          "instruction": ""
+        }
+      ],
+      "hard_questions": [],
+      "links": [],
+      "instruction": "",
+      "revisions": []
+    },
+    {
+      "id": "c35",
+      "kind": "success_signal",
+      "text": "Three pr-upkeep items complete sweep -> fix -> review -> human-merges-pr, counted from the ledger rather than remembered",
+      "origin": "llm",
+      "status": "confirmed",
+      "honesty_conditions": [
+        {
+          "id": "h27",
+          "text": "The three are counted by a ledger query, and a partial completion is reported as partial rather than rounded up to a whole item",
+          "status": "confirmed",
+          "instruction": ""
+        }
+      ],
+      "hard_questions": [],
+      "links": [],
+      "instruction": "",
+      "revisions": []
+    },
+    {
+      "id": "c36",
+      "kind": "success_signal",
+      "text": "A workflow whose fix and review land on different machines completes, with review reading the fix lane's actual work through a portable handle instead of a filesystem path",
+      "origin": "llm",
+      "status": "confirmed",
+      "honesty_conditions": [
+        {
+          "id": "h28",
+          "text": "The review lane quotes content obtainable only by fetching the fix lane's ref, and the run's attempt rows name two different hosts",
+          "status": "confirmed",
+          "instruction": ""
+        }
+      ],
+      "hard_questions": [],
+      "links": [],
+      "instruction": "",
+      "revisions": []
+    },
+    {
+      "id": "c37",
+      "kind": "success_signal",
+      "text": "A human task parked with an observe declaration completes itself when the PR merges, with a ledger record naming the merge commit and its collection_method \u2014 closing the signal 5 that #70 could not close",
+      "origin": "llm",
+      "status": "confirmed",
+      "honesty_conditions": [
+        {
+          "id": "h29",
+          "text": "The ledger record names the merge commit and its collection_method, and the task's history shows no manual submit",
+          "status": "confirmed",
+          "instruction": ""
+        }
+      ],
+      "hard_questions": [],
+      "links": [],
+      "instruction": "",
+      "revisions": []
+    },
+    {
+      "id": "c38",
+      "kind": "success_signal",
+      "text": "Every workflow under examples/ compiles in CI, and a deliberately broken example fails that job \u2014 the check is proven by breaking it, not by passing once",
+      "origin": "llm",
+      "status": "confirmed",
+      "honesty_conditions": [
+        {
+          "id": "h30",
+          "text": "The job is proven by deliberately breaking one example and watching CI fail, before merge",
+          "status": "confirmed",
+          "instruction": ""
+        }
+      ],
+      "hard_questions": [],
+      "links": [],
+      "instruction": "",
+      "revisions": []
+    },
+    {
+      "id": "c39",
+      "kind": "success_signal",
+      "text": "A Jira backlog item surfaces as a prioritised work item from a sweep run against recorded fixtures, with site host, project key and credentials all supplied as configuration",
+      "origin": "llm",
+      "status": "rejected",
+      "honesty_conditions": [],
+      "hard_questions": [],
+      "links": [],
+      "instruction": "",
+      "revisions": []
+    },
+    {
+      "id": "c40",
+      "kind": "success_signal",
+      "text": "A tracker whose bridge does not serve the actor it watches refuses to start, instead of reporting pending=0 forever",
+      "origin": "llm",
+      "status": "confirmed",
+      "honesty_conditions": [
+        {
+          "id": "h31",
+          "text": "The refusal is exercised by a test that points a tracker at a bridge serving a different actor, not only by the production fix",
+          "status": "confirmed",
+          "instruction": ""
+        }
+      ],
+      "hard_questions": [],
+      "links": [],
+      "instruction": "",
+      "revisions": []
+    },
+    {
+      "id": "c41",
+      "kind": "success_signal",
+      "text": "A credential rotation preserves every key it does not own, proven by rotating with an externally-issued key present and finding it still there",
+      "origin": "llm",
+      "status": "confirmed",
+      "honesty_conditions": [
+        {
+          "id": "h32",
+          "text": "The proof rotates with an externally-issued key present in the file and finds that key still there afterwards",
+          "status": "confirmed",
+          "instruction": ""
+        }
+      ],
+      "hard_questions": [],
+      "links": [],
+      "instruction": "",
+      "revisions": []
+    },
+    {
+      "id": "c42",
+      "kind": "success_signal",
+      "text": "A Discord run notification names its workflow and omits fields that are legitimately empty",
+      "origin": "llm",
+      "status": "confirmed",
+      "honesty_conditions": [
+        {
+          "id": "h33",
+          "text": "A run with no agent actor produces a message carrying no actor field at all, and the workflow appears by name with the digest secondary",
+          "status": "confirmed",
+          "instruction": ""
+        }
+      ],
+      "hard_questions": [],
+      "links": [],
+      "instruction": "",
+      "revisions": []
+    },
+    {
+      "id": "c43",
+      "kind": "decision",
+      "text": "The Jira lane ships read-only this cycle: a finding source inside the existing sweep shape, no write credential, no new bridge. Write-back (transition, comment) is deliberately deferred and parked",
+      "origin": "llm",
+      "status": "rejected",
+      "honesty_conditions": [],
+      "hard_questions": [],
+      "links": [],
+      "instruction": "",
+      "revisions": []
+    },
+    {
+      "id": "c44",
+      "kind": "decision",
+      "text": "#73 follows its own recommendation C: the pointer form now so the examples compile, plus the CI example-compile gate that prevents recurrence, with the typed literal binding as the real fix",
+      "origin": "llm",
+      "status": "confirmed",
+      "honesty_conditions": [],
+      "hard_questions": [],
+      "links": [],
+      "instruction": "",
+      "revisions": []
+    },
+    {
+      "id": "c45",
+      "kind": "decision",
+      "text": "#71's residual is in scope: the backoff re-sweep already on main is the issue's own 'strictly worse' option C and does not close it \u2014 a github_pr_opened observable or an onEvent pickup route still lands",
+      "origin": "llm",
+      "status": "confirmed",
+      "honesty_conditions": [],
+      "hard_questions": [],
+      "links": [],
+      "instruction": "",
+      "revisions": []
+    },
+    {
+      "id": "c46",
+      "kind": "decision",
+      "text": "#67's gate splits along the all-backends rule: the PROTOCOL lives in the engine \u2014 the dispatch gate, the derived preflight record, the actor's proposed acknowledgement, and the confirm verb \u2014 while each bridge contributes only its own backend-specific host capabilities through a capability surface the engine composes. A per-bridge protocol was rejected as four implementations of one contract, the exact duplication that let resolve_actor_row_id ship as the same bug in three separate lanes; the prompt-composer-only option was rejected because it produces no ledger record, leaving 'the actor was told' an assumption rather than the evidence the issue exists to create",
+      "origin": "llm",
+      "status": "confirmed",
+      "honesty_conditions": [],
+      "hard_questions": [],
+      "links": [],
+      "instruction": "",
+      "revisions": []
+    },
+    {
+      "id": "c47",
+      "kind": "decision",
+      "text": "Demo portability ships IN this batch rather than as a follow-up issue: it pairs with #74 (a filesystem path between hosts is the extreme case of a non-portable value) and with #73's CI gate, which must load every example anyway. The cost is accepted knowingly \u2014 it touches all eleven example flows",
+      "origin": "llm",
+      "status": "confirmed",
+      "honesty_conditions": [],
+      "hard_questions": [],
+      "links": [],
+      "instruction": "",
+      "revisions": []
+    },
+    {
+      "id": "c48",
+      "kind": "non_goal",
+      "text": "The Jira Cloud node-loop is NOT in this cycle. It was fully scoped here \u2014 auth shape verified live, rate budget measured, boundaries and portability requirements settled, and the empty-backlog blocker on live proof identified \u2014 and all of it was carried into issue #76 so the next batch picks it up without re-investigating",
+      "origin": "llm",
+      "status": "confirmed",
+      "honesty_conditions": [],
+      "hard_questions": [],
+      "links": [],
+      "instruction": "Do not implement any Jira surface this cycle; issue #76 carries the full scope",
+      "revisions": []
+    },
+    {
+      "id": "c49",
+      "kind": "decision",
+      "text": "CHALLENGE FINDING: #73's headline defect is already fixed on main. examples/pr-upkeep/workflow.yaml binds observe through POINTERS (merge_observe, reply_observe declared as run-input schema properties at :171-185), and both validators agree it is clean \u2014 'nodes validate' returns rc=0 / 0 errors, and the live API returns valid:true with zero diagnostics. The issue's '2 errors, never validated since t15' was true when filed and is not true now, because PR #70's #71 redesign shipped option B. So claim c6 is a NO-OP: what remains of #73 is the CI gate (c7) and the typed literal binding that would restore the observable's visibility in the graph text",
+      "origin": "llm",
+      "status": "confirmed",
+      "honesty_conditions": [],
+      "hard_questions": [],
+      "links": [],
+      "instruction": "",
+      "revisions": []
+    },
+    {
+      "id": "c50",
+      "kind": "requirement",
+      "text": "CHALLENGE FINDING: this batch's issues were written against a tree PR #70 then changed, and two of nine items are already substantially delivered (#71's redesign, #73's example fix). Every item must be re-verified against main before it becomes a plan task, and an item found already delivered is closed with evidence rather than planned \u2014 otherwise the plan bills work that does not exist",
+      "origin": "llm",
+      "status": "confirmed",
+      "honesty_conditions": [
+        {
+          "id": "h34",
+          "text": "Each of the nine items is re-checked against main at plan time, and the check is recorded \u2014 an item found already delivered is closed with evidence instead of becoming a task",
+          "status": "confirmed",
+          "instruction": ""
+        }
+      ],
+      "hard_questions": [],
+      "links": [],
+      "instruction": "",
+      "revisions": []
+    },
+    {
+      "id": "c51",
+      "kind": "assumption",
+      "text": "CHALLENGE FINDING: #74's recommended git-ref handoff depends on a push credential nobody has verified on the host that must push. Probed live: spark \u2014 where the fix lane's company/developer actor runs \u2014 has gh auth via KEYRING and no git credential.helper, and a systemd user service typically cannot reach a keyring; thor has credential.helper=store and gh auth OK; orin has neither. The delivery doc already flagged the preserve push leg as unverified, and this spec now makes that unverified capability load-bearing for c10 and success signal c36",
+      "origin": "llm",
+      "status": "confirmed",
+      "honesty_conditions": [],
+      "hard_questions": [],
+      "links": [],
+      "instruction": "",
+      "revisions": []
+    },
+    {
+      "id": "c52",
+      "kind": "requirement",
+      "text": "The handoff mechanism must degrade honestly: if the fix lane cannot push, the run reports an explicit domain outcome naming the missing capability rather than failing as a 403 at the review node \u2014 the failure mode #74 exists to eliminate must not simply move one node later",
+      "origin": "llm",
+      "status": "confirmed",
+      "honesty_conditions": [
+        {
+          "id": "h35",
+          "text": "A run whose fix host cannot push produces a named domain outcome identifying the missing capability, demonstrated by disabling the credential deliberately",
+          "status": "confirmed",
+          "instruction": ""
+        }
+      ],
+      "hard_questions": [],
+      "links": [],
+      "instruction": "",
+      "revisions": []
+    },
+    {
+      "id": "c53",
+      "kind": "requirement",
+      "text": "#67's gate ships per-actor and default-off, turning on only for actors whose bridge advertises the capability surface: an engine-side gate that fails closed for every actor at once would stop all ten registered actors on the day it merges, and there is no preflight or acknowledgement surface anywhere in internal/ or cmd/ today for any of them to satisfy",
+      "origin": "llm",
+      "status": "confirmed",
+      "honesty_conditions": [
+        {
+          "id": "h36",
+          "text": "Enabling the gate for an actor whose bridge does not advertise the capability surface is refused at configuration time, and the ten existing actors keep dispatching unchanged on the day it merges",
+          "status": "confirmed",
+          "instruction": ""
+        }
+      ],
+      "hard_questions": [],
+      "links": [],
+      "instruction": "",
+      "revisions": []
+    },
+    {
+      "id": "c54",
+      "kind": "boundary",
+      "text": "#67's preflight and acknowledgement records follow ADR-0002's expand-only migration policy like every other ledger change \u2014 a new record type is an expand migration an older binary can ignore, never a contract that breaks N-1 compatibility",
+      "origin": "llm",
+      "status": "confirmed",
+      "honesty_conditions": [
+        {
+          "id": "h39",
+          "text": "Any new ledger record type this batch introduces is added by an expand migration an N-1 binary ignores safely, verified the way migrations 0017-0025 were",
+          "status": "confirmed",
+          "instruction": ""
+        }
+      ],
+      "hard_questions": [],
+      "links": [],
+      "instruction": "",
+      "revisions": []
+    },
+    {
+      "id": "c55",
+      "kind": "assumption",
+      "text": "CHALLENGE FINDING: the human-inbox idempotency store is per-bridge and file-based (one JSON file per key under Config.state_dir), so 'one logical human inbox' is enforced by deployment convention rather than by the store \u2014 two bridges serving one actor would not deduplicate each other's submissions. c9's startup identity check is therefore the ONLY mechanism standing between a split deployment and double submission, which raises its priority above a mere ergonomics fix",
+      "origin": "llm",
+      "status": "confirmed",
+      "honesty_conditions": [],
+      "hard_questions": [],
+      "links": [],
+      "instruction": "",
+      "revisions": []
+    },
+    {
+      "id": "c56",
+      "kind": "assumption",
+      "text": "CHALLENGE FINDING: the three-item target has almost no slack in its work supply. Probed live: ZERO open PRs and three unresolved SonarCloud issues on main. The Qodo feed and the per-PR Sonar query both need open PRs to return anything, and #61's new check-runs source needs open PRs with failing checks \u2014 so today's entire supply is three main-branch findings for a target of three items. The loop is partly self-feeding (this batch's own PR generates PR-scoped findings once open), but a plan that assumes work will be there is assuming, not measuring",
+      "origin": "llm",
+      "status": "confirmed",
+      "honesty_conditions": [],
+      "hard_questions": [],
+      "links": [],
+      "instruction": "",
+      "revisions": []
+    },
+    {
+      "id": "c57",
+      "kind": "decision",
+      "text": "#69 item 1 reuses a pattern that already exists in the same file: install-secrets.sh lines 187 and 196 already merge key-by-key (grep for the key, sed in place, else append), while only the prod lane at line 114 still does a wholesale 'cat > prod.env'. The fix is to apply the file's own existing idiom to the prod lane, not to invent a merge mechanism",
+      "origin": "llm",
+      "status": "confirmed",
+      "honesty_conditions": [],
+      "hard_questions": [],
+      "links": [],
+      "instruction": "",
+      "revisions": []
+    },
+    {
+      "id": "c58",
+      "kind": "requirement",
+      "text": "Merge-not-replace must not make deliberate key REMOVAL impossible: a key that should genuinely go away needs a documented, explicit removal path, or the rotation fix trades a silent-destruction bug for a file that can only ever grow",
+      "origin": "llm",
+      "status": "confirmed",
+      "honesty_conditions": [
+        {
+          "id": "h37",
+          "text": "Removing a key from prod.env through the documented path actually removes it, proven by a test that adds then removes one",
+          "status": "confirmed",
+          "instruction": ""
+        }
+      ],
+      "hard_questions": [],
+      "links": [],
+      "instruction": "",
+      "revisions": []
+    },
+    {
+      "id": "c59",
+      "kind": "requirement",
+      "text": "#73's remaining substance is the typed literal binding (its option A): a binding value may be a pointer string OR a declared literal object, so an author reads the graph and can see what a node observes. Today the observable lives in the run-input schema and the graph shows only a pointer \u2014 the visibility loss option B knowingly accepted, and the reason the convention was worth having",
+      "origin": "llm",
+      "status": "confirmed",
+      "honesty_conditions": [
+        {
+          "id": "h38",
+          "text": "An author reading only the workflow text can name what each human node observes, without opening the run-input schema",
+          "status": "confirmed",
+          "instruction": ""
+        }
+      ],
+      "hard_questions": [],
+      "links": [],
+      "instruction": "",
+      "revisions": []
+    },
+    {
+      "id": "c60",
+      "kind": "decision",
+      "text": "The batch ships as several smaller PRs opened early rather than one large PR, so per-PR SonarCloud and Qodo findings exist for the pr-upkeep loop to consume \u2014 the loop feeds itself on this cycle's own work, and the two PR-scoped finding sources that return nothing today actually get exercised",
+      "origin": "llm",
+      "status": "confirmed",
+      "honesty_conditions": [],
+      "hard_questions": [],
+      "links": [],
+      "instruction": "",
+      "revisions": []
+    },
+    {
+      "id": "c61",
+      "kind": "decision",
+      "text": "#74 is sequenced probe-first: verify whether the spark bridge SERVICE can push before committing to git refs; refs if it can (reusing t25's write-tree/commit-tree/update-ref plumbing), an artifact through the S3-compatible store if it cannot. The probe is a plan task, not an assumption",
+      "origin": "llm",
+      "status": "confirmed",
+      "honesty_conditions": [],
+      "hard_questions": [],
+      "links": [],
+      "instruction": "",
+      "revisions": []
+    }
+  ],
+  "open_vagueness": [
+    {
+      "id": "v1",
+      "text": "#67's placement is undecided in the issue itself: engine (every actor dispatch), bridges (per-backend, since the facts are backend-specific), or the dispatch prompt composer \u2014 the facts are backend-specific but the all-backends rule says the protocol must not be",
+      "kind": "unknown_blocking",
+      "claim_id": null,
+      "resolved": true,
+      "resolution": "Resolved: protocol in the engine, facts contributed by the bridges. See the decision claim capturing the reasoning and the two rejected alternatives.",
+      "resolution_claim_id": "c46"
+    },
+    {
+      "id": "v2",
+      "text": "Jira write-back custody: whether a Jira actor/bridge (the adapters/notify shape) is worth building this cycle, or the loop stays strictly read-only and a human moves the card",
+      "kind": "unknown_nonblocking",
+      "claim_id": null,
+      "resolved": true,
+      "resolution": "Moved to issue #76 along with the rest of the Jira lane; write-back custody is that issue's open question, not this cycle's.",
+      "resolution_claim_id": null
+    },
+    {
+      "id": "v3",
+      "text": "Jira priority vocabulary does not obviously map onto sweep.py's _SEVERITY_RANK, which unifies SonarCloud BLOCKER..INFO with Qodo High/Medium/Low; a third vocabulary either joins that rank or the Jira loop keeps its own ordering",
+      "kind": "unknown_nonblocking",
+      "claim_id": null,
+      "resolved": true,
+      "resolution": "Moved to issue #76; the Jira priority vs _SEVERITY_RANK mapping is recorded there as an open question to settle before the first fixture is recorded.",
+      "resolution_claim_id": null
+    },
+    {
+      "id": "v4",
+      "text": "Bridge staleness (#69 item 3) is NOT in this batch, yet a bridge silently running old code would invalidate any measurement this cycle makes \u2014 the four claude-code bridges ran four merged tasks behind for most of last cycle and nothing reported it",
+      "kind": "unknown_nonblocking",
+      "claim_id": null,
+      "resolved": false,
+      "resolution": "",
+      "resolution_claim_id": null
+    },
+    {
+      "id": "v5",
+      "text": "Whether the same keyring-vs-service credential gap also breaks t25's preserve-branch push leg on every bridge host \u2014 same root cause, separately unverified, and it would mean preserve-on-failure has been silently local-only in production",
+      "kind": "unknown_nonblocking",
+      "claim_id": null,
+      "resolved": false,
+      "resolution": "",
+      "resolution_claim_id": null
+    }
+  ],
+  "scope_entries": [
+    {
+      "id": "s1",
+      "surface": "PR #70 body + gh issue list (open state)",
+      "finding": "the prose 'Closes the ten-issue batch: #41, #43, ...' form is not parsed by GitHub, so ten delivered issues plus #68 are still open",
+      "seeds": [
+        "c2"
+      ]
+    },
+    {
+      "id": "s2",
+      "surface": "docs/deliveries/2026-08-14-economy-discord-graphs.md (Delivery Claims table)",
+      "finding": "two claims are explicitly marked unverified \u2014 signal 5 (merge completes a human task) and stickiness's uncached-input reduction (measured 0.0%, twice) \u2014 so those issues are not closable on merge evidence",
+      "seeds": [
+        "c3"
+      ]
+    },
+    {
+      "id": "s3",
+      "surface": "adapters/human-inbox/src/human_inbox_bridge/config.py + deploy/prod/compose.thor.yml:137-149 + compose.orin.yml:30-38",
+      "finding": "#64's token-optional path and #65's worker runner-service wiring are both present in tree; verified by reading the files rather than trusting the PR body",
+      "seeds": [
+        "c4"
+      ]
+    },
+    {
+      "id": "s4",
+      "surface": "internal/notifier/rundetail.go",
+      "finding": "still models only workflow_digest with no digest-to-key lookup, so #66's raw-digest legibility defect is unfixed and belongs in this cycle",
+      "seeds": [
+        "c5"
+      ]
+    },
+    {
+      "id": "s5",
+      "surface": "schemas/workflow/workflow.schema.json ($defs.inputBinding)",
+      "finding": "bindings.additionalProperties is $ref $defs/pointer, i.e. every binding value must be a JSON-Pointer string \u2014 the object-literal observe convention is schema-invalid exactly as #73 reports",
+      "seeds": [
+        "c6"
+      ]
+    },
+    {
+      "id": "s6",
+      "surface": ".github/workflows/ (adapter-claude-code, adapter-codex, deploy, go, publish, release, tests, web)",
+      "finding": "no job references examples/, so nothing compiles the shipped example workflows \u2014 this is why the defect survived from t15 to now",
+      "seeds": [
+        "c7"
+      ]
+    },
+    {
+      "id": "s7",
+      "surface": "internal/compiler/model.go:166 + internal/engine/workflow.go:162,464 + internal/worker/bindings.go:82 + internal/worker/ir.go:167",
+      "finding": "the binding value is typed as a string across compiler, engine and worker, so a literal-object binding is a four-site change",
+      "seeds": [
+        "c8"
+      ]
+    },
+    {
+      "id": "s8",
+      "surface": "live actor list at thor:18080/v1alpha1/actors vs deploy/prod/install-secrets.sh:236 and human-inbox-bridge.service",
+      "finding": "company/human-ops resolves to 192.168.1.157:8090 (spark) while both deploy artifacts declare the bridge and tracker thor-only \u2014 the split is observable in production right now",
+      "seeds": [
+        "c9"
+      ]
+    },
+    {
+      "id": "s9",
+      "surface": "examples/pr-upkeep/workflow.yaml (fix :305-358, review :359-430) vs the live actor endpoints",
+      "finding": "fix runs on company/developer at spark:8088 and review on company/codex-thor at thor:8086, and the workflow hands a filesystem path between them",
+      "seeds": [
+        "c10"
+      ]
+    },
+    {
+      "id": "s10",
+      "surface": "examples/pr-upkeep/workflow.yaml edges (:627-686) + adapters/human-inbox tracker.py:40-54 + a tree-wide grep for github_pr_opened",
+      "finding": "the #71 redesign already landed in b5cdc5b \u2014 triage.empty routes to backoff and the reply/closed observation kinds exist \u2014 while github_pr_opened appears nowhere, so only the new-PR trigger remains",
+      "seeds": [
+        "c11"
+      ]
+    },
+    {
+      "id": "s11",
+      "surface": "examples/pr-upkeep/sweep.py (main :429-458, prioritise :357, exit_code_for :373)",
+      "finding": "exactly two finding sources feed one prioritised list behind a 0/10/other exit contract; a check-runs source and a Jira source are both additive inside that shape",
+      "seeds": [
+        "c12"
+      ]
+    },
+    {
+      "id": "s12",
+      "surface": "examples/ (delivery-loop, self-hosting-loop, pr-upkeep, independent-review, cross-machine-proof, notify-message, parallel-live-proof, placement-proof, codex-smoke-pair, newsletter-decompose, workspace-snapshot-hook)",
+      "finding": "the node-loop skeleton is already shipped and proven, so a Jira loop is authoring work against existing engine capability",
+      "seeds": [
+        "c13"
+      ]
+    },
+    {
+      "id": "s13",
+      "surface": "adapters/notify + adapters/human-inbox (the credential-holding bridge precedent) vs sweep.py's no-write-credential docstring",
+      "finding": "a Jira lane that writes back is an actor outside the deployment, matching #68's reasoning, not a node kind inside the control plane",
+      "seeds": [
+        "c14"
+      ]
+    },
+    {
+      "id": "s14",
+      "surface": ".env (JIRA_CLOUD_API_TOKEN present) + a tree-wide grep for jira (zero hits)",
+      "finding": "the Jira surface is greenfield and the credential is incomplete for Basic auth \u2014 no email, no site base URL, no existing code to extend",
+      "seeds": [
+        "c15"
+      ]
+    },
+    {
+      "id": "s15",
+      "surface": "examples/pr-upkeep/workflow.yaml sweep node operation (:220-283) and issue #50",
+      "finding": "network: full is a documented honest fallback because headspace-cli 0.11.0 rejects egress-allowlist, so adding a Jira host changes nothing about the posture this cycle",
+      "seeds": [
+        "c17"
+      ]
+    },
+    {
+      "id": "s16",
+      "surface": "tests/deploy/destructiveconfirm_test.go + deploy/prod/install-secrets.sh confirmation protocol",
+      "finding": "the single-use windowed confirmation-file gate exists and is behaviorally pinned, so #67 generalizes a shipped mechanism rather than inventing one",
+      "seeds": [
+        "c18"
+      ]
+    },
+    {
+      "id": "s17",
+      "surface": "docs/deliveries/2026-08-14-dogfooding-baseline.md + run 01KZZSGSWH11J7R7P4V2HPTZZQ + thor:18080 healthz and actor list",
+      "finding": "0 of 35 tasks went through the engine last cycle and exactly one pr-upkeep item reached fix live; the fleet answering healthz with ten actors means the blocker is ergonomics, not capacity",
+      "seeds": [
+        "c20"
+      ]
+    },
+    {
+      "id": "s18",
+      "surface": "the Jira Cloud site (host from config) /rest/api/3/myself \u2014 read-only probe, Basic vs Bearer",
+      "finding": "a read-only auth probe settled the shape: Basic authenticates, the same token as Bearer is refused (403), so the missing config value is an account email alongside the token \u2014 the concrete account identity is deliberately not recorded here",
+      "seeds": [
+        "c15"
+      ]
+    },
+    {
+      "id": "s19",
+      "surface": "the Jira Cloud site (host from config) /rest/api/3/project/search, /rest/api/3/search/jql, /rest/agile/1.0/board/1/backlog \u2014 read-only probes",
+      "finding": "one project (SCRUM), board 1 backlog reachable, x-ratelimit-limit 350 per window, and zero issues on the entire site right now \u2014 so the loop can be unit-tested against fixtures but not live-proven until the backlog has content",
+      "seeds": [
+        "c23"
+      ]
+    },
+    {
+      "id": "s20",
+      "surface": "examples/ (all eleven flows) + examples/pr-upkeep/sweep.py:56-57 + workflow.yaml:236",
+      "finding": "committed demos bake this deployment's hosts, endpoints, org keys and a raw.githubusercontent URL pinned to one org and commit \u2014 portable-for-others is a real gap, not a hypothetical one",
+      "seeds": [
+        "c27"
+      ]
+    },
+    {
+      "id": "s21",
+      "surface": "examples/pr-upkeep/fixtures/sonarcloud-issues.json + adapters/human-inbox/tests/test_tracker.py + the qodo body fixtures",
+      "finding": "the sonarcloud fixture carried a personal SonarCloud assignee in four places and the tracker tests a personal GitHub login in three; assignee is parsed by neither sweep.py nor its tests, and the login only needed to be absent from the ignored set, so both were scrubbed without semantic loss (31 and 144 tests still pass)",
+      "seeds": [
+        "c29"
+      ]
+    },
+    {
+      "id": "s22",
+      "surface": "run 01KZZSGSWH11J7R7P4V2HPTZZQ vs docs/deliveries/2026-08-14-dogfooding-baseline.md",
+      "finding": "the '0 of 35' figure counts plan tasks only; one real pr-upkeep item DID execute through the engine and landed SonarCloud fixes as commit b01608c, so the true baseline is 1 out of 35 and the two numbers measure different populations \u2014 a distinction the next delivery summary has to keep straight",
+      "seeds": [
+        "c20"
+      ]
+    },
+    {
+      "id": "s23",
+      "surface": "challenge pass / counter-evidence lens: nodes validate + the live /v1alpha1/workflows/validate endpoint over all 11 committed examples",
+      "finding": "every example compiles clean today, including the one #73 reports as broken \u2014 the CLI and the live API agree (rc=0 / valid:true, 0 diagnostics), so #73's example half is already delivered",
+      "seeds": [
+        "c49"
+      ]
+    },
+    {
+      "id": "s24",
+      "surface": "challenge pass / hidden-dependency lens: gh auth status + git config credential.helper on spark, thor and orin",
+      "finding": "the pushing host for the fix lane (spark) has keyring-based gh auth and no credential helper, thor has store+auth, orin has neither \u2014 #74's recommended mechanism rests on an unverified capability on the one host that must use it",
+      "seeds": [
+        "c51"
+      ]
+    },
+    {
+      "id": "s25",
+      "surface": "challenge pass / containment lens: grep for preflight/acknowledgement across internal/ and cmd/",
+      "finding": "no preflight or acknowledgement surface exists for any of the ten registered actors, so an engine-side gate that fails closed would stop all dispatch on merge day",
+      "seeds": [
+        "c53"
+      ]
+    },
+    {
+      "id": "s26",
+      "surface": "challenge pass / concurrency lens: adapters/human-inbox/src/human_inbox_bridge/idempotency.py",
+      "finding": "the replay store is one JSON file per key under each bridge's own state_dir, so it cannot deduplicate across two bridges serving one actor \u2014 the tracker/actor identity check is the only real guard",
+      "seeds": [
+        "c55"
+      ]
+    },
+    {
+      "id": "s27",
+      "surface": "challenge pass / work-supply lens: gh pr list + SonarCloud issues API against this component",
+      "finding": "0 open PRs and 3 unresolved main-branch issues \u2014 the entire current supply equals the target, and both PR-scoped finding sources are empty until PRs exist",
+      "seeds": [
+        "c56"
+      ]
+    },
+    {
+      "id": "s28",
+      "surface": "challenge pass / reversibility + operations lens: deploy/prod/install-secrets.sh",
+      "finding": "lines 187 and 196 already merge key-by-key while only the prod lane at line 114 rewrites wholesale \u2014 the fix reuses the file's own idiom, but merge-only removes any path for deliberate key deletion",
+      "seeds": [
+        "c57"
+      ]
+    },
+    {
+      "id": "s29",
+      "surface": "challenge pass / CI-feasibility lens: cmd/nodes/validate through internal/compiler (CLEAN)",
+      "finding": "the compile gate needs no control plane \u2014 nodes validate compiles offline and all eleven examples pass, so the risk that c38's gate would require a live API does not exist; residual risk is only that CLI and API validation could diverge in future, which this pass found they do not today",
+      "seeds": []
+    },
+    {
+      "id": "s30",
+      "surface": "challenge pass / migration lens: migrations/ 0017-0025 + ADR-0002 (CLEAN)",
+      "finding": "the expand-only policy is intact and #67's new records fit it; no contract migration is implied by anything in this batch",
+      "seeds": []
+    }
+  ],
+  "lapses": []
+}

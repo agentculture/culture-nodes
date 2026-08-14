@@ -1,0 +1,886 @@
+{
+  "slug": "upkeep-actors-jira",
+  "title": "upkeep-actors-jira",
+  "frame_slug": "upkeep-actors-jira",
+  "schema_version": 4,
+  "status": "exported",
+  "created": "2026-08-14T13:20:34Z",
+  "updated": "2026-08-14T13:29:06Z",
+  "targets": [
+    {
+      "id": "c1",
+      "kind": "announcement",
+      "text": "culture-nodes ships the upkeep-actors-jira cycle: every economy-discord-graphs issue whose delivery is evidenced is closed with that evidence cited, the pr-upkeep loop's four upkeep defects are fixed so a real PR flows sweep-to-merge without an operator nursing it, dispatched actors get a clarify-then-commit gate, credential rotation stops destroying keys it does not own, and every committed demo becomes loadable by a deployment that is not this one \u2014 with three of this cycle's pr-upkeep items running through culture-nodes rather than beside it. The Jira Cloud node-loop the frame was named for was scoped in full here and deliberately deferred to issue #76.",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "h19",
+      "kind": "honesty",
+      "text": "Every headline in the announcement is backed by a live artifact at the end of the cycle \u2014 a ledger-counted number for the three items, a completed cross-machine run, a self-completing human task, a CI job proven to fail on a broken example, and a Jira work item out of a sweep \u2014 and anything not achieved is recorded as not achieved rather than softened, the way signals 2 and 5 were last cycle",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "c2",
+      "kind": "requirement",
+      "text": "Issue hygiene: PR #70's body used a prose 'Closes the ten-issue batch: #41, #43, ...' form GitHub does not parse, so all ten (#41 #43 #45 #46 #47 #48 #49 #54 #56) plus #68 are still OPEN despite being delivered; this cycle closes each evidenced issue with a comment citing its row in docs/deliveries/2026-08-14-economy-discord-graphs.md",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "h1",
+      "kind": "honesty",
+      "text": "Every issue closed this cycle names a specific artifact \u2014 a run id, file:line, migration number, or delivery-doc claim row \u2014 and no issue is closed on the strength of a merged PR alone",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "c3",
+      "kind": "boundary",
+      "text": "Closure is evidence-gated, not merge-gated: the delivery doc's claims table marks 'Merging a PR completes a human task' and 'Resuming reduces uncached input' as unverified, so #54 and #48's stickiness half do NOT close on this pass \u2014 they close when a live observation exists",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "h20",
+      "kind": "honesty",
+      "text": "No issue closes this cycle without a named artifact, and #54 in particular closes only on a ledger record naming a merge commit",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "c4",
+      "kind": "requirement",
+      "text": "#64 and #65 are verified delivered in tree \u2014 human_inbox_bridge/config.py no longer requires GITHUB_TOKEN, and compose.thor.yml:137-149 + compose.orin.yml:30-38 carry NODES_CODE_RUNNER_* and NODES_RUNNER_SERVICES_FILE \u2014 so both close with those citations",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "h2",
+      "kind": "honesty",
+      "text": "Re-reading config.py and both compose files today still shows the token-optional path and all four runner env keys; the closure comments cite the tree, not the PR body",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "c5",
+      "kind": "requirement",
+      "text": "#66 is NOT delivered: internal/notifier/rundetail.go still carries only workflow_digest with no digest-to-key lookup, so the Discord message still shows 64 hex characters where a human needs a name \u2014 it is live work this cycle, not a closure",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "h3",
+      "kind": "honesty",
+      "text": "The notifier renders a workflow key resolved through a cached digest-to-key lookup, and a run with no agent actor produces a message carrying no actor field at all rather than an empty one",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "c7",
+      "kind": "requirement",
+      "text": "#73's recurrence half is the real acceptance: no job under .github/workflows references examples/, so a compile check over every workflow in examples/ is what prevents a non-compiling example shipping again \u2014 the example edit alone does not",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "h5",
+      "kind": "honesty",
+      "text": "The CI job FAILS when a deliberately malformed example is committed \u2014 demonstrated once before merge, not assumed from a passing run",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "c9",
+      "kind": "requirement",
+      "text": "#72: the live actor list on thor:18080 resolves company/human-ops to http://192.168.1.157:8090 (spark) while deploy/prod/install-secrets.sh:236 and human-inbox-bridge.service both declare the bridge and tracker 'thor only' \u2014 move the tracker to the actor's host AND make a tracker refuse to start when its bridge does not serve the actor it observes",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "h6",
+      "kind": "honesty",
+      "text": "A tracker configured against a bridge that does not serve its actor exits non-zero at startup naming both the actor endpoint and its own bridge URL; and in production the tracker and the human-ops bridge resolve to the same host",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "c10",
+      "kind": "requirement",
+      "text": "#74: examples/pr-upkeep/workflow.yaml binds fix to actor://company/developer (live endpoint 192.168.1.157:8088, spark) and review to actor://company/codex-thor (192.168.1.146:8086, thor) and then hands a filesystem path between them; the portable handle is a pushed git ref, reusing t25's preserve-branch plumbing rather than duplicating it",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "h7",
+      "kind": "honesty",
+      "text": "A run whose fix and review actors sit on different hosts completes, and the review lane's report quotes content it could only have obtained by fetching the fix lane's ref",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "c12",
+      "kind": "requirement",
+      "text": "#61: sweep.py's main() (:429-458) merges exactly two finding sources (sonar_work_items, qodo_work_items); a third from GET /repos/{repo}/commits/{sha}/check-runs is additive inside the same prioritise / build_report / exit_code_for shape and needs no new credential",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "h8",
+      "kind": "honesty",
+      "text": "A recorded check-runs fixture yields work items carrying check name, PR number and details URL; Sonar-named checks are skipped so a quality-gate failure does not double-count; and the 0/10/other exit contract is unchanged",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "c16",
+      "kind": "boundary",
+      "text": "sweep.py's invariants hold for every new source: Python 3.12 stdlib only, the repo and SonarCloud component keys hardcoded (spec claim c26), and the 0 / 10 / other exit-code contract that the triage decision node routes on",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "h21",
+      "kind": "honesty",
+      "text": "sweep.py imports nothing outside the Python 3.12 stdlib, and each of the exit-code contract's three branches is covered by a test",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "c18",
+      "kind": "requirement",
+      "text": "#67's prior art is tests/deploy/destructiveconfirm_test.go's single-use windowed confirmation file; generalizing it from danger to understanding keeps that shape, and its ledger fit is preflight = derived, acknowledgement = proposed",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "h10",
+      "kind": "honesty",
+      "text": "An actor's acknowledgement exists as a ledger record before its first billable turn, and a dispatch whose preflight was never acknowledged does not proceed",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "c20",
+      "kind": "requirement",
+      "text": "The dogfooding baseline is ONE, not zero, and the distinction matters: docs/deliveries/2026-08-14-dogfooding-baseline.md measured '0 of 35' counting only the batch's 35 PLAN TASKS, but a real pr-upkeep item did run through the engine in the same window \u2014 run 01KZZSGSWH11J7R7P4V2HPTZZQ swept, triaged and dispatched a fix that landed genuine SonarCloud fixes as commit b01608c on a spark actor, before its review leg 403'd on #74's cross-machine path. So the honest baseline is 1 out of 35, this cycle's target of three items completing the full loop is a real increase over a real number, and the count must come from a ledger query rather than session memory",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "h11",
+      "kind": "honesty",
+      "text": "The count comes from a query over runs and attempts, not from session memory or commit prose",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "h18",
+      "kind": "honesty",
+      "text": "The baseline and the end-of-cycle count are produced by the same ledger query over runs and attempts, so 'more than last cycle' compares like with like rather than one measured number against one remembered one",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "c22",
+      "kind": "requirement",
+      "text": "Batch scope is NINE work items, Jira excluded: the four upkeep bugs (#71 residual, #72, #73, #74), the two small verified-unfixed items (#61, #66), the clarify-then-commit gate (#67), #69 items 1-2 (rotation-merges-not-replaces, post-deploy credential audit), and demo portability across all eleven committed examples \u2014 plus a ledger-measured target of three pr-upkeep items completing the full loop through the merge gate. The Jira Cloud node-loop was scoped in this cycle and deliberately moved out to issue #76",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "h12",
+      "kind": "honesty",
+      "text": "Every item in the declared scope either ships or is recorded as dropped, with a reason, in the delivery summary",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "c25",
+      "kind": "boundary",
+      "text": "No credential, account identity or personal identifier is recorded in any committed artifact of this cycle: secrets are read from the environment at run time and appear in no spec, plan, frame, example workflow, argv or log line \u2014 the same custody rule tests/lint/webhookisolation_test.go and github_isolation_test.go already enforce for the webhook and GitHub credentials, extended to recorded test fixtures after four personal handles were found in committed ones",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "h14",
+      "kind": "honesty",
+      "text": "A grep for credentials, account emails and personal handles over every committed path returns nothing, and the rule is enforced by a test rather than by reviewer attention",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "c26",
+      "kind": "requirement",
+      "text": "Committed example flows are DEMOS others load and modify, not this deployment's private config: every environment-specific value an example carries \u2014 actor keys, endpoint IPs, hostnames, repo and component keys, site URLs, filesystem paths \u2014 must arrive as run input or as clearly-marked overridable config, never as an invisible constant only this deployment can satisfy",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "h15",
+      "kind": "honesty",
+      "text": "Loading an example into a different deployment requires changing only documented configuration, never editing the graph; a reviewer can point at each environment-specific value and say where it comes from",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "c29",
+      "kind": "requirement",
+      "text": "Recorded fixtures carry no real account identities: examples/pr-upkeep/fixtures/sonarcloud-issues.json's four assignee values and adapters/human-inbox/tests/test_tracker.py's three reply-author logins were personal handles in committed files and are now neutral placeholders, with both suites still green (31 and 144 passed)",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "h17",
+      "kind": "honesty",
+      "text": "Both affected suites stay green after the scrub, and no committed fixture carries a real account identity",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "c30",
+      "kind": "boundary",
+      "text": "Hard-coding the swept repo stays a deliberate blast-radius boundary (the prior spec's claim c26 \u2014 the sweep must not generalise to arbitrary repos), but for a loadable demo that boundary has to be VISIBLE and documented as the one value a new operator must change, rather than an unexplained constant",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "h22",
+      "kind": "honesty",
+      "text": "A new operator can find the one value to change from the README or a comment at the constant itself, without reading the parsing code",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "c31",
+      "kind": "audience",
+      "text": "The operator who watches this repo's PRs and the SCRUM backlog and today spawns a subagent because it is faster than dispatching through the engine; secondarily the workflow author declaring observables and cross-machine handoffs, and the third party who loads a committed demo flow into a deployment that is not this one",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "h23",
+      "kind": "honesty",
+      "text": "At least one of this cycle's own work items is dispatched through the engine by the operator it is built for, not only by its author",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "c32",
+      "kind": "after_state",
+      "text": "Three pr-upkeep items complete sweep-to-merge without an operator nursing the loop; a parked human task completes itself on merge; a workflow whose fix and review land on different machines finishes; every committed example compiles in CI and is loadable by someone who is not this deployment; a rotation preserves keys it does not own; and a dispatched actor is briefed before its first billable turn rather than corrected after it",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "h24",
+      "kind": "honesty",
+      "text": "Every clause of the after-state maps to a success signal with a named artifact; a clause with no signal behind it is struck rather than carried",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "c33",
+      "kind": "before_state",
+      "text": "Today: exactly one real work item has gone through the engine (run 01KZZSGSWH11J7R7P4V2HPTZZQ \u2014 a pr-upkeep sweep that dispatched a fix landing actual SonarCloud fixes as commit b01608c), against 35 plan tasks in the last batch that went around it; that one item's review leg 403'd on a path that does not exist on the reviewing host, the observable authoring convention has never compiled, the merge tracker watches a host the actor is not on, credential rotation silently drops keys it does not own, and nine of eleven committed examples bake this deployment's topology",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "h25",
+      "kind": "honesty",
+      "text": "Every 'today' statement is re-checkable against the tree or a run id at the start of the cycle, so drift is visible when the delivery summary compares",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "c34",
+      "kind": "why_it_matters",
+      "text": "The product proved itself but never built itself, and the honest reason is ergonomics: dispatching through culture-nodes is slower for the operator than spawning a subagent, so under a deadline the fast path wins. Each defect in this batch individually stops the loop from completing, so fixing them is what converts a demo into the path an operator actually reaches for",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "h26",
+      "kind": "honesty",
+      "text": "The ergonomics claim is tested rather than asserted: the end-of-cycle count of real items through the engine is higher than the baseline of one",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "c35",
+      "kind": "success_signal",
+      "text": "Three pr-upkeep items complete sweep -> fix -> review -> human-merges-pr, counted from the ledger rather than remembered",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "h27",
+      "kind": "honesty",
+      "text": "The three are counted by a ledger query, and a partial completion is reported as partial rather than rounded up to a whole item",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "c36",
+      "kind": "success_signal",
+      "text": "A workflow whose fix and review land on different machines completes, with review reading the fix lane's actual work through a portable handle instead of a filesystem path",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "h28",
+      "kind": "honesty",
+      "text": "The review lane quotes content obtainable only by fetching the fix lane's ref, and the run's attempt rows name two different hosts",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "c37",
+      "kind": "success_signal",
+      "text": "A human task parked with an observe declaration completes itself when the PR merges, with a ledger record naming the merge commit and its collection_method \u2014 closing the signal 5 that #70 could not close",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "h29",
+      "kind": "honesty",
+      "text": "The ledger record names the merge commit and its collection_method, and the task's history shows no manual submit",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "c38",
+      "kind": "success_signal",
+      "text": "Every workflow under examples/ compiles in CI, and a deliberately broken example fails that job \u2014 the check is proven by breaking it, not by passing once",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "h30",
+      "kind": "honesty",
+      "text": "The job is proven by deliberately breaking one example and watching CI fail, before merge",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "c40",
+      "kind": "success_signal",
+      "text": "A tracker whose bridge does not serve the actor it watches refuses to start, instead of reporting pending=0 forever",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "h31",
+      "kind": "honesty",
+      "text": "The refusal is exercised by a test that points a tracker at a bridge serving a different actor, not only by the production fix",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "c41",
+      "kind": "success_signal",
+      "text": "A credential rotation preserves every key it does not own, proven by rotating with an externally-issued key present and finding it still there",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "h32",
+      "kind": "honesty",
+      "text": "The proof rotates with an externally-issued key present in the file and finds that key still there afterwards",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "c42",
+      "kind": "success_signal",
+      "text": "A Discord run notification names its workflow and omits fields that are legitimately empty",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "h33",
+      "kind": "honesty",
+      "text": "A run with no agent actor produces a message carrying no actor field at all, and the workflow appears by name with the digest secondary",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "c50",
+      "kind": "requirement",
+      "text": "CHALLENGE FINDING: this batch's issues were written against a tree PR #70 then changed, and two of nine items are already substantially delivered (#71's redesign, #73's example fix). Every item must be re-verified against main before it becomes a plan task, and an item found already delivered is closed with evidence rather than planned \u2014 otherwise the plan bills work that does not exist",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "h34",
+      "kind": "honesty",
+      "text": "Each of the nine items is re-checked against main at plan time, and the check is recorded \u2014 an item found already delivered is closed with evidence instead of becoming a task",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "c52",
+      "kind": "requirement",
+      "text": "The handoff mechanism must degrade honestly: if the fix lane cannot push, the run reports an explicit domain outcome naming the missing capability rather than failing as a 403 at the review node \u2014 the failure mode #74 exists to eliminate must not simply move one node later",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "h35",
+      "kind": "honesty",
+      "text": "A run whose fix host cannot push produces a named domain outcome identifying the missing capability, demonstrated by disabling the credential deliberately",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "c53",
+      "kind": "requirement",
+      "text": "#67's gate ships per-actor and default-off, turning on only for actors whose bridge advertises the capability surface: an engine-side gate that fails closed for every actor at once would stop all ten registered actors on the day it merges, and there is no preflight or acknowledgement surface anywhere in internal/ or cmd/ today for any of them to satisfy",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "h36",
+      "kind": "honesty",
+      "text": "Enabling the gate for an actor whose bridge does not advertise the capability surface is refused at configuration time, and the ten existing actors keep dispatching unchanged on the day it merges",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "c54",
+      "kind": "boundary",
+      "text": "#67's preflight and acknowledgement records follow ADR-0002's expand-only migration policy like every other ledger change \u2014 a new record type is an expand migration an older binary can ignore, never a contract that breaks N-1 compatibility",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "h39",
+      "kind": "honesty",
+      "text": "Any new ledger record type this batch introduces is added by an expand migration an N-1 binary ignores safely, verified the way migrations 0017-0025 were",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "c58",
+      "kind": "requirement",
+      "text": "Merge-not-replace must not make deliberate key REMOVAL impossible: a key that should genuinely go away needs a documented, explicit removal path, or the rotation fix trades a silent-destruction bug for a file that can only ever grow",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "h37",
+      "kind": "honesty",
+      "text": "Removing a key from prod.env through the documented path actually removes it, proven by a test that adds then removes one",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "c59",
+      "kind": "requirement",
+      "text": "#73's remaining substance is the typed literal binding (its option A): a binding value may be a pointer string OR a declared literal object, so an author reads the graph and can see what a node observes. Today the observable lives in the run-input schema and the graph shows only a pointer \u2014 the visibility loss option B knowingly accepted, and the reason the convention was worth having",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "h38",
+      "kind": "honesty",
+      "text": "An author reading only the workflow text can name what each human node observes, without opening the run-input schema",
+      "deferred": false,
+      "deferred_reason": ""
+    }
+  ],
+  "tasks": [
+    {
+      "id": "t1",
+      "summary": "Re-verify all nine batch items against main before any implementation starts",
+      "origin": "llm",
+      "status": "confirmed",
+      "acceptance_criteria": [
+        "Each of the nine items has a recorded verdict (real / partly delivered / already delivered) citing a file:line, run id or validator output",
+        "An item found already delivered is closed with evidence instead of becoming an implementation task"
+      ],
+      "deps": [],
+      "covers": [
+        "c50",
+        "h34"
+      ],
+      "instruction": "For each of #61 #66 #67 #69(items 1-2) #71 #72 #73 #74 and demo portability, re-run the check that established it: grep the tree, run nodes validate, or hit the live API. Record verdict + evidence in a short docs/ note. #71 and #73 are already known partly/mostly delivered \u2014 confirm and close rather than plan."
+    },
+    {
+      "id": "t2",
+      "summary": "Record the issue-hygiene closures already executed this cycle",
+      "origin": "llm",
+      "status": "confirmed",
+      "acceptance_criteria": [
+        "Ten delivered issues are closed, each comment naming a delivery-doc claim row or file:line",
+        "#54, #48 and #66 remain open, each carrying a written reason referencing the unverified claim or the tree check"
+      ],
+      "deps": [],
+      "covers": [
+        "c2",
+        "h1",
+        "c3",
+        "h20",
+        "c4",
+        "h2"
+      ],
+      "instruction": "Already executed this session: ten issues closed with citations, #54/#48/#66 commented. Verify the comments still read correctly and record the list in the delivery summary."
+    },
+    {
+      "id": "t3",
+      "summary": "Add a credential and personal-identifier lint gate under tests/lint",
+      "origin": "llm",
+      "status": "confirmed",
+      "acceptance_criteria": [
+        "The lint fails on a fixture containing an account email, an API token prefix or a personal handle",
+        "The lint passes over the current tree, and both the sweep and human-inbox suites stay green"
+      ],
+      "deps": [],
+      "covers": [
+        "c25",
+        "h14",
+        "c29",
+        "h17"
+      ],
+      "instruction": "Add tests/lint/credentialisolation_test.go mirroring webhookisolation_test.go and github_isolation_test.go. Patterns: account emails, ATATT/gho_/ghp_ token prefixes, known personal handles. Walk committed paths including examples/ fixtures and adapters/*/tests."
+    },
+    {
+      "id": "t4",
+      "summary": "Notifier renders the workflow name and omits legitimately empty fields (#66)",
+      "origin": "llm",
+      "status": "confirmed",
+      "acceptance_criteria": [
+        "A run detail with a known digest renders as 'name (short-digest)' via a cached digest-to-key lookup",
+        "A run with no agent actor produces a message carrying no actor field at all, asserted in rundetail_test.go"
+      ],
+      "deps": [],
+      "covers": [
+        "c5",
+        "h3",
+        "c42",
+        "h33"
+      ],
+      "instruction": "internal/notifier/rundetail.go carries only workflow_digest. Add a cached digest-to-key lookup against the workflows read API (the mapping is immutable, so the cache is safe), render 'name (short-digest)', and omit the actor field entirely when empty. Extend rundetail_test.go."
+    },
+    {
+      "id": "t5",
+      "summary": "CI job compiles every workflow under examples/ (#73's recurrence half)",
+      "origin": "llm",
+      "status": "confirmed",
+      "acceptance_criteria": [
+        "The job runs 'nodes validate' over every examples/**/*.yaml with no control plane and passes on the current tree",
+        "Deliberately breaking one example makes the job fail, demonstrated in the PR before merge"
+      ],
+      "deps": [],
+      "covers": [
+        "c7",
+        "h5",
+        "c38",
+        "h30"
+      ],
+      "instruction": "cmd/nodes validate compiles offline through internal/compiler \u2014 no control plane needed, verified: all eleven examples pass today. Add a CI job looping over examples/**/*.yaml. Prove the gate by breaking one example in the PR and showing the red job."
+    },
+    {
+      "id": "t6",
+      "summary": "Typed literal binding restores observable visibility in the graph text (#73 option A)",
+      "origin": "llm",
+      "status": "confirmed",
+      "acceptance_criteria": [
+        "A binding value may be a pointer string or a declared literal object, accepted by schema, compiler, engine and worker",
+        "An author reading only the workflow text can name what each human node observes; the pr-upkeep example is migrated back to the literal form and still validates"
+      ],
+      "deps": [],
+      "covers": [
+        "c59",
+        "h38"
+      ],
+      "instruction": "Four sites: schemas/workflow/workflow.schema.json ($defs.inputBinding.bindings), internal/compiler/model.go:166, internal/engine/workflow.go:162+464 (InputBindings map[string]string), internal/worker/bindings.go:82. Allow a binding value to be a pointer string OR a declared literal object; migrate examples/pr-upkeep back to the literal observe form."
+    },
+    {
+      "id": "t7",
+      "summary": "sweep.py gains failed CI check runs as a third finding source (#61)",
+      "origin": "llm",
+      "status": "confirmed",
+      "acceptance_criteria": [
+        "A recorded check-runs fixture yields work items carrying check name, PR number and details URL",
+        "Sonar-named checks are skipped so a quality-gate failure does not double-count, proven by a fixture containing both",
+        "sweep.py imports nothing outside the 3.12 stdlib and each of the three exit-code branches has a test"
+      ],
+      "deps": [],
+      "covers": [
+        "c12",
+        "h8",
+        "c16",
+        "h21"
+      ],
+      "instruction": "Add a check-runs source to examples/pr-upkeep/sweep.py reading GET /repos/{repo}/commits/{sha}/check-runs per open PR. Required failure to HIGH/CRITICAL, optional to MEDIUM. Skip Sonar-named checks (they already arrive via the Sonar feed). Record a fixture under fixtures/ and test in tests/test_pr_upkeep_sweep.py."
+    },
+    {
+      "id": "t8",
+      "summary": "Tracker refuses to start when its bridge does not serve the actor it observes (#72)",
+      "origin": "llm",
+      "status": "confirmed",
+      "acceptance_criteria": [
+        "A tracker pointed at a bridge serving a different actor exits non-zero naming both the actor endpoint and its own bridge URL",
+        "The refusal is exercised by a unit test, not only by the production fix"
+      ],
+      "deps": [],
+      "covers": [
+        "c9",
+        "h6",
+        "c40",
+        "h31"
+      ],
+      "instruction": "At tracker startup resolve the configured actor's endpoint_ref from the control plane and compare against the tracker's own bridge URL; exit non-zero naming both when they differ. Note the idempotency store is per-bridge and file-based, so it cannot dedupe across a split deployment \u2014 this check is the only guard."
+    },
+    {
+      "id": "t9",
+      "summary": "Probe whether the spark bridge SERVICE can push, and record the verdict",
+      "origin": "llm",
+      "status": "confirmed",
+      "acceptance_criteria": [
+        "The probe runs as the bridge's service identity, not an interactive shell, and its result is recorded with the command and output",
+        "The verdict selects git-ref handoff or artifact handoff for the #74 task, rather than leaving it assumed"
+      ],
+      "deps": [],
+      "covers": [],
+      "instruction": "Run as the bridge's systemd service identity, NOT an interactive shell. Probed already from a shell: spark has keyring gh auth and no credential.helper, thor has store+auth, orin has neither. The question is whether the service can reach the keyring. Record command and output; the verdict picks t13's mechanism."
+    },
+    {
+      "id": "t10",
+      "summary": "Deploy the human-inbox tracker to the host serving company/human-ops (#72)",
+      "origin": "llm",
+      "status": "confirmed",
+      "acceptance_criteria": [
+        "The tracker unit and the bridge it reads run on the same host, and the tracker starts without tripping the identity refusal",
+        "A human task parked with an observe declaration auto-completes on merge, its ledger record naming the merge commit and collection_method, with no manual submit in the task history"
+      ],
+      "deps": [
+        "t8"
+      ],
+      "covers": [
+        "c37",
+        "h29"
+      ],
+      "instruction": "deploy/prod/deploy.sh and install-secrets.sh currently pin the human-inbox bridge and tracker to thor while company/human-ops resolves to spark:8090. Move the tracker unit to the actor's host. Expect a parked task on the merged PR #70 to auto-complete once co-located \u2014 that closes last cycle's signal 5."
+    },
+    {
+      "id": "t11",
+      "summary": "Credential rotation merges instead of replacing, with an explicit removal path (#69 item 1)",
+      "origin": "llm",
+      "status": "confirmed",
+      "acceptance_criteria": [
+        "Rotating with an externally-issued key present in prod.env leaves that key untouched, proven by a test",
+        "Removing a key through the documented path actually removes it, proven by a test that adds then removes one",
+        "The prod lane reuses the key-by-key merge idiom already at install-secrets.sh:187,196 rather than a new mechanism"
+      ],
+      "deps": [
+        "t10"
+      ],
+      "covers": [
+        "c58",
+        "h37",
+        "c41",
+        "h32"
+      ],
+      "instruction": "install-secrets.sh:114 is the only wholesale 'cat > prod.env'; lines 187 and 196 already merge key-by-key (grep key, sed in place, else append). Apply that existing idiom to the prod lane, and add an explicit documented removal path so merge-only does not make the file append-only."
+    },
+    {
+      "id": "t12",
+      "summary": "Post-deploy credential audit classifies declared vs present keys (#69 item 2)",
+      "origin": "llm",
+      "status": "confirmed",
+      "acceptance_criteria": [
+        "The audit compares compose-declared env keys against prod.env and classifies each as required, optional-closed-by-default, or unknown",
+        "It runs at the end of deploy and fails loudly on a missing required key, proven against a fixture missing one"
+      ],
+      "deps": [
+        "t11"
+      ],
+      "covers": [],
+      "instruction": "Compare compose-declared env keys against prod.env at the end of deploy. Classify required / optional-closed-by-default / unknown; fail loudly on a missing required key. The manual version was about five lines of shell and found the missing token immediately."
+    },
+    {
+      "id": "t13",
+      "summary": "Portable handle replaces the filesystem path between fix and review (#74)",
+      "origin": "llm",
+      "status": "confirmed",
+      "acceptance_criteria": [
+        "A run whose fix and review actors sit on different hosts completes, the review lane quoting content obtainable only by fetching the fix lane's handle",
+        "The run's attempt rows name two different hosts",
+        "A fix host that cannot produce the handle yields a named domain outcome identifying the missing capability, not a 403 at the review node"
+      ],
+      "deps": [
+        "t9"
+      ],
+      "covers": [
+        "c10",
+        "h7",
+        "c52",
+        "h35",
+        "c36",
+        "h28"
+      ],
+      "instruction": "Gated on t9's verdict: git ref reusing t25's write-tree/commit-tree/update-ref plumbing if the service can push, else an artifact through the S3-compatible store. Either way the bare-path binding in examples/pr-upkeep/workflow.yaml goes away, and an unavailable handle must surface as a named domain outcome rather than a 403 at review."
+    },
+    {
+      "id": "t14",
+      "summary": "Clarify-then-commit gate: engine-side protocol, per-actor and default-off (#67)",
+      "origin": "llm",
+      "status": "confirmed",
+      "acceptance_criteria": [
+        "A derived preflight record and a proposed actor acknowledgement exist as ledger records before the first billable turn",
+        "A dispatch whose preflight was never acknowledged does not proceed",
+        "Enabling the gate for a bridge that does not advertise the capability surface is refused at configuration time, and the ten existing actors dispatch unchanged",
+        "Any new record type ships as an expand migration an N-1 binary ignores safely"
+      ],
+      "deps": [
+        "t6"
+      ],
+      "covers": [
+        "c18",
+        "h10",
+        "c53",
+        "h36",
+        "c54",
+        "h39"
+      ],
+      "instruction": "Protocol in the engine, facts from the bridges. Preflight is a derived record composed from host capabilities plus the task declaration; the acknowledgement is a proposed record from the actor via a dispatch confirm verb; single-use and windowed like tests/deploy/destructiveconfirm_test.go. Per-actor, default-off; enabling it for a bridge lacking the surface is refused at config time. Any new record type is an expand migration per ADR-0002."
+    },
+    {
+      "id": "t15",
+      "summary": "Capability surface on all four bridges (all-backends rule) (#67)",
+      "origin": "llm",
+      "status": "confirmed",
+      "acceptance_criteria": [
+        "claude-code, codex, colleague and notify each advertise host capabilities through the same protocol shape",
+        "A bridge that does not advertise the surface leaves its actor dispatching exactly as before"
+      ],
+      "deps": [
+        "t14"
+      ],
+      "covers": [],
+      "instruction": "All-backends rule: claude-code, codex, colleague and notify each advertise host capabilities through the identical protocol shape. Do NOT inline per-bridge logic \u2014 that is the duplication that let resolve_actor_row_id ship as the same bug in three lanes; share the helper."
+    },
+    {
+      "id": "t16",
+      "summary": "Committed demos become loadable by a deployment that is not this one",
+      "origin": "llm",
+      "status": "confirmed",
+      "acceptance_criteria": [
+        "Loading any example into a different deployment requires changing only documented configuration, never editing the graph",
+        "A reviewer can point at each environment-specific value and say where it comes from",
+        "The swept repo stays hardcoded but is documented at the constant and in the README as the one value a new operator changes"
+      ],
+      "deps": [
+        "t7",
+        "t13",
+        "t6"
+      ],
+      "covers": [
+        "c26",
+        "h15",
+        "c30",
+        "h22"
+      ],
+      "instruction": "Nine of eleven examples name thor/orin/spark or 192.168.1.x; sweep.py pins GITHUB_REPO and SONAR_COMPONENT_KEY; workflow.yaml:236 fetches its script from a raw.githubusercontent URL pinned to one org and commit. Move each to run input or documented config. The swept repo stays hardcoded as a blast-radius boundary but gets a comment at the constant and a README line."
+    },
+    {
+      "id": "t17",
+      "summary": "Three pr-upkeep items complete the full loop, counted from the ledger",
+      "origin": "llm",
+      "status": "confirmed",
+      "acceptance_criteria": [
+        "The cycle's work is opened as several smaller PRs early, so per-PR Sonar and Qodo findings exist for the sweep to consume",
+        "Baseline and final counts come from the SAME ledger query over runs and attempts, both recorded",
+        "Three items complete sweep to human-merges-pr; a partial completion is reported as partial, never rounded up"
+      ],
+      "deps": [
+        "t10",
+        "t13",
+        "t7"
+      ],
+      "covers": [
+        "c20",
+        "h11",
+        "h18",
+        "c35",
+        "h27"
+      ],
+      "instruction": "Open this cycle's work as several smaller PRs EARLY so per-PR Sonar and Qodo findings exist for the sweep \u2014 today there are 0 open PRs and only 3 main-branch findings, so supply is exactly the target with no slack. Write one ledger query and run it twice: once now for the baseline of one, once at cycle end."
+    },
+    {
+      "id": "t18",
+      "summary": "Delivery summary: planned versus actual, with every scope item accounted for",
+      "origin": "llm",
+      "status": "confirmed",
+      "acceptance_criteria": [
+        "Every one of the nine scope items either ships or is recorded as dropped with a reason",
+        "Each announcement clause and after-state clause maps to a named artifact, or is recorded as not achieved rather than softened",
+        "The end-of-cycle count of real items through the engine is stated against the baseline of one, from the same query"
+      ],
+      "deps": [
+        "t17",
+        "t16",
+        "t15",
+        "t12",
+        "t5",
+        "t4",
+        "t3",
+        "t2",
+        "t1"
+      ],
+      "covers": [
+        "c1",
+        "h19",
+        "c22",
+        "h12",
+        "c31",
+        "h23",
+        "c32",
+        "h24",
+        "c33",
+        "h25",
+        "c34",
+        "h26"
+      ],
+      "instruction": "Use the /summarize-delivery skill. Account for all nine scope items, map every announcement and after-state clause to a named artifact or record it as not achieved, and state the final engine-executed count against the baseline of one using t17's query."
+    }
+  ],
+  "risks": [
+    {
+      "id": "r1",
+      "text": "Bridge staleness is not in this batch, yet a bridge silently running old code invalidates any measurement the cycle makes \u2014 four claude-code bridges ran four merged tasks behind for most of last cycle and nothing reported it",
+      "kind": "unknown_nonblocking",
+      "task_id": null,
+      "resolved": false,
+      "resolution": ""
+    },
+    {
+      "id": "r2",
+      "text": "The same keyring-vs-service credential gap may mean t25's preserve-branch push leg has been silently local-only in production; unverified, and it would weaken a delivery claim already made",
+      "kind": "unknown_nonblocking",
+      "task_id": "t9",
+      "resolved": false,
+      "resolution": ""
+    },
+    {
+      "id": "r3",
+      "text": "Work supply for the three-item target is exactly three main-branch findings today with zero open PRs; if the early-PR mechanism does not generate PR-scoped findings, t17 cannot reach its number",
+      "kind": "unknown_nonblocking",
+      "task_id": "t17",
+      "resolved": false,
+      "resolution": ""
+    },
+    {
+      "id": "r4",
+      "text": "#67 is the batch's largest item \u2014 an engine protocol plus a capability surface on four bridges \u2014 and the challenge pass raised its cost estimate; it is the first candidate to drop if the cycle runs long",
+      "kind": "follow_up",
+      "task_id": "t14",
+      "resolved": false,
+      "resolution": ""
+    }
+  ]
+}

@@ -9,7 +9,7 @@
     {
       "id": "c1",
       "kind": "announcement",
-      "text": "Culture Nodes ships as an agent-first, agent-native workflow app: a Go control plane implementing the PRD's durable graph runtime, a react-flow web UI carrying the agentculture.org design system, and a Python agent-first CLI \u2014 with full CLI/API/Web parity, Docker-native packaging that deploys cleanly to k8s, AWS-backed SQS signaling over authoritative Postgres, and agent actors reachable through claude-agent-sdk, claude-agent-api, or colleague adapters behind the provider-neutral actor protocol",
+      "text": "Culture Nodes ships as an agent-first, agent-native workflow app: a Go control plane implementing the PRD's durable graph runtime, a react-flow web UI carrying the AgentCulture design system, and a Python agent-first CLI \u2014 with full CLI/API/Web parity, Docker-native packaging that deploys cleanly to k8s, AWS-backed SQS signaling over authoritative Postgres, and agent actors reachable through claude-agent-sdk, claude-agent-api, or colleague adapters behind the provider-neutral actor protocol",
       "origin": "user",
       "status": "confirmed",
       "honesty_conditions": [
@@ -165,7 +165,7 @@
     {
       "id": "c9",
       "kind": "requirement",
-      "text": "The web UI reuses agentculture.org's design system by extracting its tokens and graph components into one pinned web/src/culture-design boundary, with the exact source revision recorded in an ADR and visual regression fixtures \u2014 never copied by eye from the public site (prd-spec.md \u00a78.1, \u00a717.4; user: keep org design, feel, and assets)",
+      "text": "The web UI reuses the AgentCulture design system by extracting its tokens and graph components into one pinned web/src/culture-design boundary, with the exact source revision recorded in an ADR and visual regression fixtures \u2014 never copied by eye from the public site (prd-spec.md \u00a78.1, \u00a717.4; user: keep org design, feel, and assets)",
       "origin": "llm",
       "status": "confirmed",
       "honesty_conditions": [

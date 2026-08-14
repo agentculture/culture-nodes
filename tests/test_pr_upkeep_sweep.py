@@ -177,7 +177,7 @@ class TestQodoCommentFilter:
                 "body": "<h3>PR Summary by Qodo</h3>\n\nsummary prose",
             },
             {"user": {"login": "sonarqubecloud[bot]"}, "body": "## Quality Gate"},
-            {"user": {"login": "OriNachum"}, "body": "human comment"},
+            {"user": {"login": "human-reviewer"}, "body": "human comment"},
             {"user": {"login": "qodo-code-review[bot]"}, "body": qodo_pr42_body},
         ]
         bodies = sweep.qodo_review_bodies(comments)

@@ -8,7 +8,7 @@
 ## Context
 
 Culture Nodes' web UI (PRD §18, `docs/initial-design/culture-nodes-prd-spec.md`)
-needs to carry agentculture.org's design system rather than invent its own —
+needs to carry the AgentCulture design system rather than invent its own —
 the org site is the canonical visual identity for everything in the
 AgentCulture family, including this product. The org site
 (`/home/spark/git/org`, an Astro project at `site-astro/`) is developed

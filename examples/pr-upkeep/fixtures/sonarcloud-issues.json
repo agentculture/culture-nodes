@@ -72,7 +72,7 @@
       "message": "Refactor this method to not always return the same value.",
       "effort": "2min",
       "debt": "2min",
-      "assignee": "OriNachum-g2k3F@github",
+      "assignee": "maintainer@github",
       "tags": [
         "confusing",
         "design"
@@ -353,7 +353,7 @@
       "message": "Refactor this method to reduce its Cognitive Complexity from 19 to the 15 allowed.",
       "effort": "9min",
       "debt": "9min",
-      "assignee": "OriNachum-g2k3F@github",
+      "assignee": "maintainer@github",
       "tags": [
         "brain-overload"
       ],
@@ -493,7 +493,7 @@
       "message": "Refactor this method to reduce its Cognitive Complexity from 20 to the 15 allowed.",
       "effort": "10min",
       "debt": "10min",
-      "assignee": "OriNachum-g2k3F@github",
+      "assignee": "maintainer@github",
       "tags": [
         "brain-overload"
       ],
@@ -534,7 +534,7 @@
       "message": "Remove this unnecessary variable declaration and use the expression directly in the condition.",
       "effort": "5min",
       "debt": "5min",
-      "assignee": "OriNachum-g2k3F@github",
+      "assignee": "maintainer@github",
       "tags": [
         "go-idiom",
         "readability"

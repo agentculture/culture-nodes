@@ -5,6 +5,23 @@ All notable changes to this project will be documented in this file.
 Format follows [Keep a Changelog](https://keepachangelog.com/). This project
 adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.17.0] - 2026-08-14
+
+### Added
+
+- Spec and plan for the upkeep-actors-jira cycle: nine work items across the four pr-upkeep upkeep bugs (#71-#74), the notifier and sweep fixes (#61, #66), the clarify-then-commit gate (#67), credential-rotation safety (#69 items 1-2), and demo portability — scoped, challenged and planned through the devague chain
+- Issue #76: the Jira Cloud node-loop, scoped in full (auth shape verified live, rate budget measured, boundaries and portability settled, empty-backlog blocker on live proof recorded) and deliberately deferred out of this batch
+
+### Changed
+
+- Credential custody extended to recorded test fixtures: examples/pr-upkeep/fixtures/sonarcloud-issues.json and two test suites carried real account identities in committed files and now use neutral placeholders
+- ssh probe targets in devague frames and exported specs are recorded as the generic user@host form rather than named accounts
+- Design-system provenance is cited by project name rather than by domain in README, ADR-0001, guide, CHANGELOG and web/src/main.tsx
+
+### Fixed
+
+- Ten economy-discord-graphs issues that PR #70 delivered but left open (its body used a prose Closes form GitHub does not parse) are now closed with per-issue evidence citations; #54, #48 and #66 stay open with written reasons
+
 ## [0.16.1] - 2026-08-14
 
 ### Removed
@@ -384,7 +401,7 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - Runner boundary: registry-pinned IAM-scoped AWS Lambda adapter with honest per-field evidence completeness, and a headspace-cli subprocess bridge for local dev (real-Docker tested); pre-run/post-run code hooks around agent attempts (spec c37/h32)
 - Pod-agnostic artifact store (S3/MinIO + Postgres small-blob router), Postgres schema with expand-contract migrations and an N-1 compatibility harness
 - OpenAPI 3.1 REST API with SSE run events, CLI/Web parity harness, and the embedded web SPA (`-tags embedweb`)
-- React Flow web front: Run + Ledger read-only views carrying the agentculture.org design system (pinned org revision, dashed=proposed/solid=confirmed edges), full keyboard nav, reduced motion, webglass-testable #agent-state node
+- React Flow web front: Run + Ledger read-only views carrying the AgentCulture design system (pinned org revision, dashed=proposed/solid=confirmed edges), full keyboard nav, reduced motion, webglass-testable #agent-state node
 - Python CLI product verbs as thin API clients (workflow/run/ledger/review noun groups), zero engine logic, byte-exact --json passthrough
 - colleague reference bridge (`adapters/colleague`): actor protocol over `colleague work` subprocess, contract v1, conformance-kit-proven
 - devague conformance adapter: plan-waves/deliverables fixtures map to deterministic ledger projections

@@ -81,7 +81,7 @@
 ## Assumptions
 
 - Topology: this machine (spark) is dev; thor and orin are production, both running workers against one shared authoritative Postgres — two machines on the same DB imitate the k8s multi-pod topology with same/near-same config; deployment reuses deploy/compose per machine, no k8s/ECS required
-- Credential distribution to production follows reachy-mini-cli PR #161's ssh pattern (reachy/discover/ssh.py): argv-only ssh plus a separate explicitly-confirmed ssh-copy-id authorize step, no typed secret through the tool; live probes show thor@thor accepts the current key (aarch64, claude + docker present) while orin@orin refuses it (publickey,password) — an authorize flow is a real prerequisite, not polish
+- Credential distribution to production follows reachy-mini-cli PR #161's ssh pattern (reachy/discover/ssh.py): argv-only ssh plus a separate explicitly-confirmed ssh-copy-id authorize step, no typed secret through the tool; live probes show user@host accepts the current key (aarch64, claude + docker present) while user@host refuses it (publickey,password) — an authorize flow is a real prerequisite, not polish
 - codex-cli is installed on this machine (verified: codex-cli 0.144.6 on PATH) and serves as a testing/support actor — a second, independent CLI backend that can exercise the actor protocol alongside claude-code, proving provider-neutrality with two real external actors
 - Custom runners are distributed services behind a runner protocol (mirroring the actor protocol), never in-process: schemas/runner/\*.json — already runner-neutral — become the wire contract; the operation schema's refusal of check-policy-then-shell wrappers binds every implementation; the registry's Lambda/ARN-shaped FunctionIdentity needs a runner-neutral identity (pinned digest + endpoint); remote runners share c8's ssh/credential prerequisites
 - The fleet runs three different claude CLI versions today (spark 2.1.226, orin 2.1.221, thor 2.1.220 — live probes): the claude-code adapter checks a minimum CLI version at startup and refuses dispatch with an honest DispatchError on incompatible versions, so headless-flag drift across machines can never silently alter behavior
@@ -100,7 +100,7 @@
   - seeds: `c5`
 - `s5` — `culture_nodes/ Python front (t24)`: pure API client, zero deps, byte-exact --json passthrough, teken 26/26 strict — new endpoints and params must land here too or the parity delivery claim regresses
   - seeds: `c6`
-- `s6` — `live ssh probes: thor@thor, orin@orin`: thor reachable with the current key: aarch64, /usr/local/bin/claude and docker present; orin refused (publickey,password) — the production pair is half-provisioned today
+- `s6` — `live ssh probes: user@host, user@host`: thor reachable with the current key: aarch64, /usr/local/bin/claude and docker present; orin refused (publickey,password) — the production pair is half-provisioned today
   - seeds: `c7`, `c8`
 - `s7` — `../reachy-mini-cli PR #161 (reachy/discover/ssh.py)`: the cited credential pattern: argv-only ssh with HostKeyAlias, and key install isolated in a separate explicitly-confirmed ssh-copy-id authorize verb so no typed secret passes through the tool
   - seeds: `c8`
@@ -118,9 +118,9 @@
   - seeds: `c13`
 - `s14` — `internal/runners/{runner.go,registry.go} + schemas/runner/`: the Runner interface is one typed Execute method with no shell escape hatch and an honest DispatchError contract; operation/result schemas are runner-neutral by design and the operation schema explicitly refuses check-policy-then-shell wrappers; the registry's FunctionIdentity validates Lambda ARNs only, so network/custom runners need a runner-neutral registry identity
   - seeds: `c14`, `c15`
-- `s15` — `live ssh re-probe: orin@orin (key installed mid-frame)`: orin reachable: aarch64, /usr/bin/docker present, no claude CLI, 52/61 GiB memory already used — worker/runner capable today; claude-code actor hosting needs install + memory headroom
+- `s15` — `live ssh re-probe: user@host (key installed mid-frame)`: orin reachable: aarch64, /usr/bin/docker present, no claude CLI, 52/61 GiB memory already used — worker/runner capable today; claude-code actor hosting needs install + memory headroom
   - seeds: `c7`
-- `s16` — `corrected probe: orin@orin via login shell`: claude 2.1.221 IS installed on orin (~/.local/bin/claude) — the earlier 'no claude CLI' finding was a non-login-shell PATH artifact, user-verified and re-probed with bash -lc; orin is actor-capable as well as worker-capable, memory headroom (~8 GiB free) remains the real constraint
+- `s16` — `corrected probe: user@host via login shell`: claude 2.1.221 IS installed on orin (~/.local/bin/claude) — the earlier 'no claude CLI' finding was a non-login-shell PATH artifact, user-verified and re-probed with bash -lc; orin is actor-capable as well as worker-capable, memory headroom (~8 GiB free) remains the real constraint
   - seeds: `c7`
 - `s17` — `challenge pass / adjacent-systems lens: internal/worker/{code.go,doc.go,seams.go}`: CodeRunner.Execute holds and heartbeats the lease for the operation's whole duration while agent nodes park as `waiting_external` and resume via HandleCallback re-lease — the async runner protocol must adopt the park path or contradict c17
   - seeds: `c24`
@@ -154,4 +154,4 @@
 
 ## Resolved vagueness
 
-- [unknown_nonblocking] orin's actual account layout and tooling: the probe used orin@orin and was refused at auth; whether claude/docker exist there is unverifiable until a key lands — resolved: ssh orin@orin now works (key landed mid-frame): aarch64, docker present, claude CLI NOT installed, and memory is tight — 52 of 61 GiB used, ~8 GiB available — so orin runs a worker/runner fine but hosting claude-code actor sessions there needs an install and a memory budget check
+- [unknown_nonblocking] orin's actual account layout and tooling: the probe used user@host and was refused at auth; whether claude/docker exist there is unverifiable until a key lands — resolved: ssh user@host now works (key landed mid-frame): aarch64, docker present, claude CLI NOT installed, and memory is tight — 52 of 61 GiB used, ~8 GiB available — so orin runs a worker/runner fine but hosting claude-code actor sessions there needs an install and a memory budget check

@@ -5,6 +5,135 @@ All notable changes to this project will be documented in this file.
 Format follows [Keep a Changelog](https://keepachangelog.com/). This project
 adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.21.0] - 2026-08-14
+
+### Added
+
+- tests/test_dispatch.py — the nodes dispatch CLI surface (pending/show/confirm) had no tests: task t14 shipped it while its session was being cut off by the node deadline (#82). Covers the query it forwards, the briefing printed in full rather than digested, an absent note being an absent key rather than an empty string, the gates own refusal relayed verbatim, and byte-exact --json passthrough on all three verbs
+- internal/api: a test that a HUMAN actor may still acknowledge on a bridges behalf, recorded with human origin and proposed authority. That path existed in code but was never covered, and the security fix above had to preserve it rather than close it
+
+### Changed
+
+- Five test functions refactored below the S3776 cognitive-complexity ceiling by lifting subtest bodies out of their loops and closures, plus one S8193 unnecessary variable declaration. Behaviour unchanged; each split is named for the property it asserts
+
+### Fixed
+
+- SECURITY: POST /v1alpha1/preflights/{id}/acknowledge bound an acknowledgement to no particular actor. Any registered agent could acknowledge any preflight, and because the worker consumes any acknowledged row, the gated dispatch then proceeded to an actor that never saw the briefing — which is the one thing the clarify-then-commit gate exists to prevent. The route is deliberately unauthenticated like the other ordinary routes, so this binding is the only integrity check available. An AGENT must now be the actor the preflight was issued for, matched on the rows resolved actor id when it has one so a re-registered actor reusing a key cannot answer for its predecessor. Reported by Qodo on PR #85
+
+## [0.20.2] - 2026-08-14
+
+### Added
+
+- docs/deliveries/2026-08-14-upkeep-actors-jira.md — the delivery summary for this cycle (plan task t18). All eighteen plan tasks accounted for as delivered/partial/blocked, the approved d1 deviation quoted as the recorded ground truth, every delivery claim carrying a resolvable evidence pointer, and t17 reported partial rather than rounded up: pr-upkeep completions went 1 to 2 but items driven to a merged PR remain at 1 against a target of three, blocked by the artifact ingest gap in issue 79
+
+## [0.20.1] - 2026-08-14
+
+### Added
+
+- tests/deploy/claudetokenplacement_test.go derives the hosts that must receive the claude actor token from the compose files that declare it, rather than from a hard-coded pair of names, so a third host is covered by construction
+
+### Fixed
+
+- install-secrets.sh relays the externally-issued NODES_ACTOR_CLAUDE_TOKEN to BOTH hosts, not thor alone. compose.orin.yml declares the variable for its worker, but the lane only ever called install_claude_actor_token "$THOR", so orin was left answering 401 policy_denied on every claude node dispatched to it with no deploy step saying so. Found by task t12s credential audit on its first live run and confirmed on both hosts before fixing: orins prod.env carries no NODES_ACTOR_CLAUDE_TOKEN while its running worker still holds one in memory, so the loss was invisible until the next container recreate. The neighbouring codex lanes already install to both hosts through update_actor_token_line for exactly this reason — either worker may dispatch either actor
+
+## [0.20.0] - 2026-08-14
+
+### Added
+
+- `deploy/prod/audit-credentials.sh` — a post-deploy credential audit (task t12, issue #69 item 2). It compares the env keys this host's compose file declares against what `~/.culture-nodes/prod.env` actually contains, classifies every key as **required**, **optional** (absent by legitimate choice, closing a feature rather than breaking one) or **unknown** (in `prod.env`, declared by no compose file), and exits non-zero when a required key is missing or empty. `deploy.sh` runs it **last** on both the thor and orin lanes, so a deploy no longer ends without ever checking that the environment it shipped is complete
+- The detector half of the incident t11 fixed the cause of: a `FORCE` rotation destroyed `NODES_ACTOR_CLAUDE_TOKEN` and nothing reported it for ~18 hours, because the running worker held the token in memory until its next restart. Merging stopped that mechanism; this catches whatever removes a key next
+- The declared set is **read** from `compose.thor.yml` and `compose.orin.yml`, never from a list that could drift (`$${VAR}`, compose's escape for the container's own shell, is correctly ignored). Compose decides most of the classification itself — `${KEY:?}` is required by construction, `${KEY:-value}` works without the key by construction — so the hand-classified half covers only the keys compose leaves open (`${KEY:-}`, the shape every credential has), in one place with a comment per entry saying why it is where it is. An unclassified declared key is reported and treated as required until someone writes down which it is
+- Unknown keys are reported and **left untouched**: `prod.env` legitimately carries keys compose never mentions (`NODES_RUNNER_SECRET` on both hosts today), and `remove-secret.sh` remains the deliberate removal path
+- Key names only. The remote command emits `KEY<TAB>set|empty`, so no credential value is printed, logged, or placed in an argv. `tests/deploy/credentialaudit_test.go` runs the real script against a stub `ssh` under a per-host `HOME` — including a fixture missing one required key — rather than asserting on the script's source text
+
+## [0.19.0] - 2026-08-14
+
+### Added
+
+- Invariant 4 — every committed example is portable: `tests/lint/exampleportability_test.go` refuses a graph value that names a hostname, address, absolute host path or URL, requires every `actor://`/`runner://` id and `environmentRefs` name to be documented in that file's own `Deployment configuration` block, and forbids a URL in any code operation's argv (task t16)
+- A `Deployment configuration` block in all eleven example workflows, naming every value that resolves outside the document and where it comes from
+- `tests/test_pr_upkeep_sweep.py::TestTheSweptRepoIsPinnedAndSaysSo` — the swept repo's pin is real (plain literals, an exact and repo-free set of environment reads) and documented at the constant and in the README
+- `deploy/prod/deploy.sh` re-grants `PR_UPKEEP_SWEEP_SOURCE_URL`/`PR_UPKEEP_SWEEP_SOURCE_SHA256` to the runner env when the deploying operator sets them
+- The preflight capability surface on all four bridges (task t15, issue #67, the all-backends rule): `claude-code`, `codex`, `colleague` and `notify` each measure the host they dispatch on and advertise it through the SAME protocol shape task t14 built engine-side. The facts are the ones a dispatched task actually depends on — which sandbox modes truly work here, what the commit/harvest policy in force is, and which paths the bridge allowlists
+- `preflight.py`, one module carrying the protocol, the agreed `host` key set and the measurement helpers, **byte-identical in all four bridges**. Everything backend-specific — and only that — lives in each bridge's own `capabilities.py`. The split is not a convention: `tests/lint/preflightsurface_test.go` fails the build if the shared module diverges between bridges, if a bridge implements half the surface, or if a `capabilities.py` starts re-declaring the document's shape. A per-bridge protocol is the duplication that let `resolve_actor_row_id` ship as the same bug in three deploy lanes
+- Measured, not nominal: `sandbox_modes_unavailable` reports a mode this host cannot actually deliver, with the reason. codex's `read-only`/`workspace-write` confinement rests on a bubblewrap helper backed by unprivileged user namespaces, so where the kernel restricts them (#18/#63 — requested on three hosts, every file write silently lost, shell commands still running unconfined) the surface says so instead of echoing the config. claude-code reports `plan`/`default` as unavailable because headless dispatch allocates no TTY
+- A `confinement` fact on every advertising bridge, stating plainly what actually confines a session — including "nothing", which is the truth for claude-code (`--permission-mode` governs asking, not reaching) and colleague (a throwaway worktree bounds where changes land, not what is reachable)
+- `GET /v1/capabilities` on each advertising bridge (`internal/actors.CapabilitiesPath`), authenticated like the invocation route, plus `--print-capabilities` for registering an actor before its bridge has ever started. Neither is on the engine's dispatch path: the surface reaches the control plane through the actor's registration, and these exist so an operator reads the facts off the host that measured them
+- `tests/conformance` grew an optional capability-surface check: an actor that advertises must advertise the document `internal/preflight.ParseSurface` accepts, and one that advertises nothing SKIPS rather than fails. `TestAnActorThatAdvertisesNoCapabilitySurfaceIsStillConformant` runs the whole kit against a muted reference actor, so the task's second acceptance criterion — a bridge that does not advertise leaves its actor dispatching exactly as before — is a tested property rather than a promise. `adapters/human-inbox` is the live subject: it advertises nothing and is unchanged
+
+### Changed
+
+- examples/pr-upkeep's sweep node no longer fetches its script from a raw.githubusercontent URL pinned to one org and commit; the source and its expected sha256 are granted environment values the deployment supplies, and the bootstrap refuses bytes whose digest does not match (task t16). The 0/10/other exit-code contract is unchanged
+- examples/codex-smoke-pair renames node ids `codex-thor`/`codex-orin` to `codex-first`/`codex-second` and run inputs `thor_repo`/`orin_repo` to `first_repo`/`second_repo`; actor placement stays on the registered `company/codex-thor`/`company/codex-orin` ids. `run-smoke.sh`'s `THOR_REPO`/`ORIN_REPO` become `FIRST_REPO`/`SECOND_REPO`
+- `tests/deploy/codexsmoke_test.go` asserts node id and actor id separately instead of deriving one from the other
+- `api/actor-protocol/README.md` documents the agreed `host` keys in a table, the measured-not-nominal rule with the #18/#63 evidence behind it, and where a bridge's surface comes from; each advertising bridge's README states the facts THAT backend contributes and why
+
+## [0.18.2] - 2026-08-14
+
+### Added
+
+- codex-preflight.sh check 7: the host can create an unprivileged user namespace (issue #63). Codex sandboxes every shell command it runs inside a user namespace, so a host that cannot build one gets an actor that registers, dispatches, accepts work, and then fails every command it tries — after the turn is spent, and surfacing as a bridge or runner fault that it is not. The bridge unit already runs the preflight as ExecStartPre, so a host in that state now fails to start its bridge instead of accepting work it cannot do. Probed by capability (bwrap, falling back to unshare), never by reading the sysctl back: the value says what was configured, the probe says what works. When neither tool is installed the script says the capability was NOT probed rather than reporting a readiness it never established
+- deploy/prod/README.md gains an "Unprivileged user namespaces" section — the provisioning step issue #63 asked to be written down. It states the chosen option (kernel.apparmor_restrict_unprivileged_userns=0, persisted in /etc/sysctl.d/60-culture-nodes-userns.conf on spark, thor and orin), its real cost (pre-24.04 behaviour for every local process, a kernel surface that has carried local-root CVEs), the better option left open (a scoped AppArmor profile granting userns to bwrap alone), and the rejected one (disabling the codex sandbox to work around a sandbox bug)
+
+## [0.18.1] - 2026-08-14
+
+### Fixed
+
+- Credential rotation MERGES instead of replacing (task t11, issue #69 item 1): `deploy/prod/install-secrets.sh`'s prod lane was the one place that wrote `~/.culture-nodes/prod.env` wholesale (`cat >` from its generated block), while the file holds two populations — the six secrets the script generates, and roughly eight more that accrete afterwards (`NODES_NAMESPACE_ID` and `THOR_IP` from `deploy.sh`, `NODES_ACTOR_CODEX_*_TOKEN` / `NODES_ACTOR_NOTIFY_TOKEN` from the script's own later lanes, `NODES_ACTOR_CLAUDE_TOKEN` and `DISCORD_WEBHOOK_URL` relayed from outside). An authorized rotation deleted the second population silently. This is observed, not theorised: a `FORCE=1` rotation destroyed `NODES_ACTOR_CLAUDE_TOKEN` and nothing reported it for ~18 hours, because the running worker held the token in memory until its next restart (`company/developer` succeeded at 13:03, then answered `policy_denied` / 401 at 06:42 the next morning)
+- The prod lane now reuses the key-by-key merge idiom the file's own single-key helpers already used — replace the key's line if present, append it otherwise — rather than a second mechanism that would have to be kept in agreement with the first by hand. It is hoisted into one `PROD_ENV_MERGE` definition all three prod.env-writing lanes reference, because those pasted copies had already drifted: only one of them held a guard for a file whose last line has no trailing newline, so appending a key to a hand-edited prod.env concatenated the new assignment onto the previous value and destroyed it. Same failure class as the wholesale rewrite, found by the test written for it. The FORCE_PROD guard and its windowed destructive-confirmation protocol are unchanged — merging is not permission to rotate
+- Stale `FORCE=1` references in `deploy/prod/README.md` now name the per-lane switch that actually exists (`FORCE_PROD`, `FORCE_CODEX`); the old text would have had an operator authorize a rotation with a variable no lane reads
+
+### Added
+
+- `deploy/prod/remove-secret.sh`, the explicit removal path merge-only makes necessary (spec claim c58): merging alone would trade a silent-destruction bug for a file that can only ever grow, leaving a rotated-away actor token indistinguishable from a live one. It removes ONE named key from `~/.culture-nodes/prod.env` (or another `ENV_FILE` there) on the named hosts, is a dry run until `--yes`, prints the line it would drop with the value redacted, refuses any key name outside `[A-Za-z_][A-Za-z0-9_]*` so a pattern cannot delete lines nobody named, and writes no backup — a `.bak` beside `prod.env` would be a second unmanaged copy of live credentials
+- `tests/deploy/prodenvmerge_test.go`: behavioral, not textual. It runs `install-secrets.sh` for real against a stub `ssh` that executes each remote command under a per-host `HOME`, so the merge is proven by what the file contains afterwards — a confirmed rotation performed with an externally-issued `NODES_ACTOR_CLAUDE_TOKEN` present finds it still there (honesty condition h32), a key added through the relay lane and then removed through `remove-secret.sh` is gone with its neighbours intact (h37), a fresh host still gets the whole generated block, and an unforced re-run still changes nothing
+
+## [0.18.0] - 2026-08-14
+
+### Added
+
+- Cross-machine handoff contract on `examples/pr-upkeep/workflow.yaml` (task t13, issue #74): `fix.completed` now requires a portable `handoff: {kind: artifact, ref: "artifact://<namespace>/<id>"}` handle whose ref is pattern-constrained, so it cannot silently become a filesystem path again. The engine's own outcome-schema validation (`internal/engine/complete.go`'s `checkOutput`) is what enforces it — a fix that produced no handle cannot report `completed`
+- `fix.handoff_unavailable`, the named honest failure: a fix host that cannot publish its work reports a domain outcome carrying `missing_capability` from a closed set (`artifact_publish`, `workspace_export`, `handoff_too_large`) instead of letting the run die as an HTTP 403 on the review host, where the error names authorization and the cause is topology
+- `handoff-blocked` terminal node, which `fix.handoff_unavailable` routes to. It carries the fix node's output (where `missing_capability` lives) as the run's output rather than `finish`'s sweep report, which would bury the one fact that explains the stop
+- `tests/lint/crosshosthandoff_test.go` locks all four invariants against the committed document: the required artifact-shaped handle, the closed capability enum, that `handoff_unavailable` reaches only a terminal node and never `review`, and that `review` binds and requires the handle rather than sharing the fix actor's repo pointer
+- The clarify-then-commit gate, engine side (task t14, issue #67): a dispatched actor is briefed BEFORE its first billable turn, and a second, separate action commits the dispatch. It generalizes `deploy/prod/install-secrets.sh`'s single-use windowed destructive-confirmation protocol from danger to understanding, keeping every property that made it work — the composed briefing holds (`verdict: hold`), it states what does not proceed, the acknowledgement is single-use, and it expires
+- Two additively-registered ledger record types with their schemas: `dispatch_preflight` (`derived` — a deterministic composition of the host capabilities a bridge advertised and the pinned task declaration, refused at any other authority by the new `preflight_derived_only` rule) and `dispatch_acknowledgement` (`proposed` by the actor, never derived under any origin — `acknowledgement_never_derived`, so an engine cannot clear its own gate). An acknowledgement names the briefing by id AND content digest
+- `internal/preflight`: the protocol in one place — the capability surface a bridge advertises (`capabilities.preflight`), the per-actor gate configuration (`metadata.preflight_gate`), the deterministic document composer, and the two record builders both the dispatch site and the confirm verb use. Protocol in the engine, facts from the bridges: a per-bridge protocol was rejected as four implementations of one contract
+- Migration `0026_dispatch_preflights.sql` (expand-only): the `dispatch_preflights` table, where single-use becomes a transactional fact that immutable ledger records cannot express, plus the `actors_preflight_gate_requires_surface` CHECK constraint. An N-1 binary ignores both safely
+- `GET /v1alpha1/preflights`, `GET /v1alpha1/preflights/{id}` and `POST /v1alpha1/preflights/{id}/acknowledge`, with the `nodes dispatch pending|show|confirm` verbs over them. `show` prints the briefing in full: a confirm without a show is a keystroke, not an acknowledgement
+- `preflight_unacknowledged`, a second reserved refusal outcome beside `budget_exhausted` (issue #67's fourth open question, answered yes): a dispatch whose window closes unacknowledged is REFUSED rather than deferred forever, and a workflow author may declare an edge from it
+
+### Changed
+
+- `review` reads the work under review through `handoff: /nodes/fix/output/handoff` and requires it in its input contract; its `review_repo` is now documented as only the working directory thor's codex bridge allowlists, never the source of the work under review
+- `examples/pr-upkeep/driver.sh` states the handoff contract in the fix and review instructions — the fix session must declare its own result JSON (a default envelope carries no handle and would be contract_rejected) and is given the named way out rather than left to improvise a fabricated ref
+- `examples/pr-upkeep/README.md` documents the cross-machine handoff, the live 403 in run 01KZZSGSWH11J7R7P4V2HPTZZQ that motivated it, why a git ref is not available on the host that must produce the handle, and — plainly — that the artifact content path is not wired yet
+- Enabling the gate for an actor that advertises no capability surface is refused at CONFIGURATION time at all three doors — `POST /v1alpha1/actors` (400 with a remediation), `RegisterActor`, and raw SQL (the migration's CHECK). The gate is per-actor and DEFAULT-OFF: an actor whose registration says nothing about it, or a registry that cannot answer the question at all, dispatches exactly as before
+- `internal/invariants` deliberately extends two allowlists, recorded in `docs/invariants.md`: `internal/api/preflights.go` reads an actor's registered kind to decide an acknowledgement's ledger ORIGIN (the grades-API precedent, outside dispatch), and `internal/preflight/records.go` writes engine-origin `derived` authority for the briefing composition
+
+## [0.17.0] - 2026-08-14
+
+### Added
+
+- Spec and plan for the upkeep-actors-jira cycle: nine work items across the four pr-upkeep upkeep bugs (#71-#74), the notifier and sweep fixes (#61, #66), the clarify-then-commit gate (#67), credential-rotation safety (#69 items 1-2), and demo portability — scoped, challenged and planned through the devague chain
+- CI gate that compiles every workflow under `examples/` (task t5, issue #73's recurrence half): `scripts/validate-examples.sh` runs `nodes validate` over each `examples/**/*.yaml` with no control plane, wired as the `examples compile` job in `.github/workflows/go.yml`; `tests/lint/examplescompile_test.go` mirrors the compile check in-process and additionally locks the job's wiring — that it exists, needs no database, and is triggered by a change under `examples/`
+- Issue #76: the Jira Cloud node-loop, scoped in full (auth shape verified live, rate budget measured, boundaries and portability settled, empty-backlog blocker on live proof recorded) and deliberately deferred out of this batch
+- Typed literal bindings (task t6, issue #73's option A): a node's `bindings` value may now be a JSON Pointer string OR a declared `literal:`, accepted end to end by `schemas/workflow/workflow.schema.json` (`#/$defs/bindingValue`), the compiler, the engine and the worker. A bare string is always a pointer and a literal is always wrapped, so the two can never be confused — this is not a template language, and a literal interpolates nothing. The compiler validates each literal against the node's own `contract.input` schema, so a value the node refuses is a publish-time error (`contract.literal_invalid`) rather than a first-dispatch surprise
+- Literal bindings render in the web inbox's context refs as the declared value rather than a pointer, which is the point of the shape: a reader of the task can name what it observes
+
+### Changed
+
+- `examples/pr-upkeep/workflow.yaml` declares both observables in the graph text again (task t6): `human-merges-pr` and `human-answers-review` bind `observe: {literal: {kind: ...}}` beside `pr: /nodes/fix/output/pr_number`, and the `merge_observe`/`reply_observe` run-input properties they used to ride on are gone. The observation kind is a declaration and never changes; which PR is per-cycle data, so the two are declared separately rather than smuggling a pointer inside a literal
+- The human-inbox tracker reads an observation's `pr` from the `observe` block when it is there and from the task's own input otherwise — the same fallback it has always applied to `repo`. A value that is not a positive integer is still malformed wherever it came from, and a task with no PR number from either source still stays on the manual lane
+- Credential custody extended to recorded test fixtures: examples/pr-upkeep/fixtures/sonarcloud-issues.json and two test suites carried real account identities in committed files and now use neutral placeholders
+- ssh probe targets in devague frames and exported specs are recorded as the generic user@host form rather than named accounts
+- Design-system provenance is cited by project name rather than by domain in README, ADR-0001, guide, CHANGELOG and web/src/main.tsx
+
+### Fixed
+
+- The human-inbox bridge and its merge tracker now deploy to the host serving `company/human-ops` instead of a hardcoded thor (task t10, issue #72). `deploy/prod/actor-placement.sh` — shared by `deploy.sh` and `install-secrets.sh` — resolves the actor's newest registration and takes the deploy host, the bridge port and the `actors(id)` the bridge stamps as `origin.actor_id` from that one read, so they cannot come from different revisions. The engine dispatches to the registered endpoint, so a declared host was always a second value that had to agree with it by luck: tasks parked on the bridge at the registration while the tracker on the declared host watched an empty state directory and logged `pending=0`. `assert_human_inbox_colocated` now refuses the deploy, before either unit is installed, when the host does not answer on the registered address, the bridge port is not the registered one, the tracker points at another bridge or state directory, the bridge's and tracker's `HUMAN_INBOX_BRIDGE_ACTOR_ID` are swapped (one needs the row id for the ledger foreign key, the other the actor key for its own lookup), or the tracker's startup identity check is left disarmed. Both `THOR ONLY` unit-file comments are gone, and the placement library runs locally rather than over ssh when the resolved address is the deploying machine's own — which it is today, and which ssh-to-self would not have reached. Task t8's startup refusal is the runtime half of the same invariant; `HUMAN_INBOX_TRACKER_CONTROL_PLANE_URL` is now written so that half is actually armed
+- Ten economy-discord-graphs issues that PR #70 delivered but left open (its body used a prose Closes form GitHub does not parse) are now closed with per-issue evidence citations; #54, #48 and #66 stay open with written reasons
+
 ## [0.16.1] - 2026-08-14
 
 ### Removed
@@ -384,7 +513,7 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - Runner boundary: registry-pinned IAM-scoped AWS Lambda adapter with honest per-field evidence completeness, and a headspace-cli subprocess bridge for local dev (real-Docker tested); pre-run/post-run code hooks around agent attempts (spec c37/h32)
 - Pod-agnostic artifact store (S3/MinIO + Postgres small-blob router), Postgres schema with expand-contract migrations and an N-1 compatibility harness
 - OpenAPI 3.1 REST API with SSE run events, CLI/Web parity harness, and the embedded web SPA (`-tags embedweb`)
-- React Flow web front: Run + Ledger read-only views carrying the agentculture.org design system (pinned org revision, dashed=proposed/solid=confirmed edges), full keyboard nav, reduced motion, webglass-testable #agent-state node
+- React Flow web front: Run + Ledger read-only views carrying the AgentCulture design system (pinned org revision, dashed=proposed/solid=confirmed edges), full keyboard nav, reduced motion, webglass-testable #agent-state node
 - Python CLI product verbs as thin API clients (workflow/run/ledger/review noun groups), zero engine logic, byte-exact --json passthrough
 - colleague reference bridge (`adapters/colleague`): actor protocol over `colleague work` subprocess, contract v1, conformance-kit-proven
 - devague conformance adapter: plan-waves/deliverables fixtures map to deterministic ledger projections

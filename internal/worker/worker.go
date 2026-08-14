@@ -163,6 +163,23 @@ type Options struct {
 	// pinning for its hook runner leaves this empty.
 	HookRunnerRevision string
 
+	// DispatchGateActorID is the producer identity the clarify-then-commit
+	// gate's DERIVED preflight records are attributed to (task t14, issue
+	// #67). It defaults to preflight.DispatchGateActorID.
+	//
+	// Like HookRunnerName it must name a REGISTERED actor: ledger_records
+	// .origin_actor_id has a real foreign key to actors(id) (migration
+	// 0003), so the ledger attributes even a deterministic producer to an
+	// identity somebody registered rather than to a bare string. A
+	// deployment that turns the gate on for any actor registers this
+	// identity once, with kind `engine` and no endpoint_ref — it is a
+	// producer, never a dispatch target.
+	//
+	// It is a field rather than a constant because actors.id is a global
+	// primary key: two namespaces (or two test harnesses) cannot share one
+	// row, so the identity has to be nameable per deployment.
+	DispatchGateActorID string
+
 	// Now and NewID are the clock and the identifier factory.
 	Now   func() time.Time
 	NewID func() string

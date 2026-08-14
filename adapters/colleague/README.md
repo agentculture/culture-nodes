@@ -160,6 +160,45 @@ HTTP `Retry-After` header on the synchronous failure response when the
 text names a delay. See `adapters/claude-code/README.md`'s identical
 section for the full rationale.
 
+## Preflight capability surface (issue #67)
+
+This bridge measures the host it dispatches on and serves the result at
+`GET /v1/capabilities` (authenticated, like the invocation route), or prints
+the same document without a server:
+
+```bash
+uv run colleague-bridge --print-capabilities
+curl -sH "Authorization: Bearer $COLLEAGUE_BRIDGE_AUTH_TOKEN" http://127.0.0.1:8085/v1/capabilities
+```
+
+The document is exactly what an actor registration carries in
+`capabilities`. What colleague contributes to it:
+
+| Fact | Where it comes from |
+|---|---|
+| `sandbox_modes` | `["unsandboxed"]` — `colleague work` takes no sandbox flag and this bridge passes none |
+| `default_sandbox_mode` | `unsandboxed`, for the same reason |
+| `confinement` | **none** — colleague isolates each work item in a throwaway git worktree, which bounds where changes land but not what the session can reach |
+| `commit_policy` | The `preserve_on_failure` / `preserve_push` / `preserve_remote` policy, plus colleague's own clauses: `open_pr` (a completed work item publishes a branch and opens a PR, so "harvest" is only half the story) and `allow_dirty` (a dispatch does not require a clean worktree) |
+| `writable_paths` | `repo_allowlist` — `[]` means this bridge writes nowhere |
+
+A one-element `sandbox_modes` list is deliberate rather than an omitted key:
+"nothing confines a session here" is a fact a dispatched task depends on,
+where an absent key would say only that this bridge could not measure it.
+
+The protocol is engine-side and the facts are bridge-side. The shared,
+byte-identical `preflight.py` in every bridge holds the protocol, the agreed
+key set and the measurement helpers; `capabilities.py` holds only what THIS
+backend measures. `tests/lint/preflightsurface_test.go` fails the build if
+those two ever swap roles. The full contract is
+[`api/actor-protocol/README.md`](../../api/actor-protocol/README.md); the
+engine half (the gate, the derived briefing, the acknowledgement, `nodes
+dispatch confirm`) is `internal/preflight`.
+
+Advertising changes nothing on its own: the gate that reads the surface is
+per-actor and default-off, and this bridge dispatches exactly as it did
+before whether or not an operator ever registers the block.
+
 ## Trust model: `proposed`-only
 
 This bridge **never emits `confirmed`/`observed`/`derived`** ledger

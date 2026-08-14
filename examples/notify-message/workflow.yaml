@@ -19,6 +19,26 @@
 #  * `require_delivery: true` -- a non-2xx (or no webhook at all) reports
 #    `delivery_failed` instead, a DECLARED domain outcome with its own
 #    edge below (`escalate`) -- never an engine failure.
+#
+# Deployment configuration (task t16) — what this graph needs from outside
+# it, and where each value comes from:
+#
+#   RUN INPUT (the run's input document):
+#     title, description   the message itself, authored per run. Static text
+#                          rather than a composition: bindings resolve JSON
+#                          pointers, not templated strings.
+#     require_delivery     which of the two authoring modes above applies.
+#
+#   ACTOR REGISTRY (an id in `uses:`):
+#     actor://company/notify-discord   the notify bridge.
+#
+#   HELD BY THE ACTOR, never by this graph or the control plane: the webhook
+#   URL (`CULTURE_NODES_WEBHOOK_URL` in the bridge's own environment). It is
+#   deliberately not a run input and not an environmentRefs name here --
+#   the destination is the actor's property, the same way
+#   adapters/human-inbox holds GITHUB_TOKEN outside the deployment. Point
+#   this at your own Discord by configuring your bridge, not by editing the
+#   graph.
 apiVersion: nodes.culture.dev/v1alpha1
 kind: Workflow
 

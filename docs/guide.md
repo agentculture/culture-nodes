@@ -135,7 +135,7 @@ declared domain outcomes, not failures.
 ![The same run in dark mode](assets/run-view-dark.png)
 
 Dark mode follows `prefers-color-scheme`, using the design tokens pinned
-from agentculture.org (`web/src/culture-design/`, ADR 0001).
+from the AgentCulture project (`web/src/culture-design/`, ADR 0001).
 
 ![The node detail panel — contract digest, owner, attempts, ledger delta](assets/node-detail.png)
 

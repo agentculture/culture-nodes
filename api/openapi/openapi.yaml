@@ -61,6 +61,13 @@ tags:
       Registered actor identities and their aggregate stats (task t15).
       Read-only — registering an actor stays
       deploy/prod/register-actor.sh (issue #8).
+  - name: preflights
+    description: >-
+      The clarify-then-commit gate (task t14, issue #67): the briefing an
+      actor is handed before its first billable turn, and the second,
+      separate action that commits the dispatch. Per-actor and default-off —
+      an actor whose registration enables no gate is never briefed and never
+      waits.
   - name: plan-imports
     description: >-
       Import an external plan (task t22, issue #45): the generic
@@ -646,6 +653,149 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/DispatchRateList'
+
+  /v1alpha1/preflights:
+    get:
+      operationId: listPreflights
+      tags: [preflights]
+      summary: Dispatch preflights waiting to be acknowledged.
+      description: >-
+        Task t14 (issue #67): the clarify-then-commit gate's read surface. An
+        actor whose registration enables the gate
+        (`metadata.preflight_gate`) is briefed BEFORE its first billable
+        turn: the worker composes the operating facts its task depends on —
+        the host capabilities that actor's own bridge advertised, plus the
+        task declaration — appends them as a `derived` ledger record, and
+        defers the dispatch until the briefing is acknowledged.
+
+
+        This endpoint answers "is anything waiting on me". The issue also
+        goes onto the run's event stream
+        (`dev.culture.nodes.dispatch.preflight_issued`), but a bridge that
+        was not watching at that instant would otherwise never learn, so the
+        pending set is queryable. Only PENDING preflights are listed —
+        unconsumed, unanswered and unexpired; one preflight's own history
+        stays readable at its detail route.
+      parameters:
+        - name: actor_key
+          in: query
+          required: false
+          schema:
+            type: string
+          description: Narrow to one actor identity (e.g. `company/codex-thor`).
+        - name: limit
+          in: query
+          required: false
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 200
+            default: 50
+      responses:
+        '200':
+          description: The preflights waiting on an acknowledgement.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PreflightList'
+
+  /v1alpha1/preflights/{id}:
+    get:
+      operationId: getPreflight
+      tags: [preflights]
+      summary: One dispatch preflight, with the briefing it hands over.
+      description: >-
+        The row plus `document` — the briefing itself, read back from its
+        `dispatch_preflight` ledger record. An actor cannot acknowledge what
+        it cannot read, so the document is always part of the detail
+        response: the host capabilities as its bridge advertised them, the
+        task declaration, the expected terminal shape, and the refusal
+        stating what does not proceed until it is acknowledged.
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: The preflight.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Preflight'
+        '404':
+          description: No preflight with that id in this namespace.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+
+  /v1alpha1/preflights/{id}/acknowledge:
+    post:
+      operationId: acknowledgePreflight
+      tags: [preflights]
+      summary: Acknowledge a briefing, committing the gated dispatch.
+      description: >-
+        The second, separate action of clarify-then-commit. It appends the
+        acknowledging actor's `proposed` `dispatch_acknowledgement` record —
+        naming the briefing by id AND by content digest — and marks the row,
+        after which exactly ONE dispatch may ride it.
+
+
+        The properties are the ones
+        `deploy/prod/install-secrets.sh`'s destructive-confirmation protocol
+        established and this generalizes from danger to understanding: it is
+        SINGLE-USE (the next dispatch of that node needs its own briefing)
+        and WINDOWED (an acknowledgement made too long ago authorizes
+        nothing). Both refusals are 409s naming the state.
+
+
+        What it writes is a CLAIM, not evidence: an actor saying it
+        understood is a completion-claim-shaped statement, and nothing on
+        this path promotes it (PRD §10.4). `actor_id` names the actor the
+        acknowledgement is recorded FOR; the record's `origin` names the
+        producer that wrote it, so an operator acknowledging on a bridge's
+        behalf stays distinguishable afterwards.
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/AcknowledgePreflightRequest'
+      responses:
+        '200':
+          description: The acknowledged preflight.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Preflight'
+        '400':
+          description: actor_id is missing, or the verdict is not an acknowledgement.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '404':
+          description: No such preflight, or no such actor.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '409':
+          description: >-
+            The briefing was already answered, already spent, or its window
+            has closed.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
 
   /v1alpha1/plan-imports:
     post:
@@ -2471,6 +2621,109 @@ components:
             and "a human let it back in" distinguishable afterwards.
         cleared_by:
           type: string
+
+    Preflight:
+      type: object
+      description: >-
+        One clarify-then-commit briefing (task t14, issue #67; migration
+        0026's `dispatch_preflights`). `expired` is computed against the
+        server clock at read time, because the window — not the row's
+        existence — is the predicate everywhere in this feature.
+      required:
+        [id, run_id, node_run_id, node_id, actor_key, record_id, record_digest,
+         issued_at, expires_at, expired, acknowledged, consumed]
+      properties:
+        id:
+          type: string
+        run_id:
+          type: string
+        node_run_id:
+          type: string
+        node_id:
+          type: string
+        actor_key:
+          type: string
+          description: The actor identity this dispatch is addressed to.
+        actor_id:
+          type: string
+          description: >-
+            The actors-table row id, present only when the registry could
+            resolve one. Absent means unattributed, never a fabricated id.
+        record_id:
+          type: string
+          description: The `dispatch_preflight` ledger record stating the briefing.
+        record_digest:
+          type: string
+          description: >-
+            That record's content digest. An acknowledgement names it, so
+            "the actor acknowledged this briefing" cannot later be true of a
+            briefing whose content the reader never saw.
+        issued_at:
+          type: string
+          format: date-time
+        expires_at:
+          type: string
+          format: date-time
+        expired:
+          type: boolean
+        acknowledged:
+          type: boolean
+        acknowledged_at:
+          type: string
+          format: date-time
+        acknowledged_by:
+          type: string
+        acknowledgement_record_id:
+          type: string
+          description: The proposed `dispatch_acknowledgement` record carrying the claim.
+        consumed:
+          type: boolean
+          description: >-
+            True once a dispatch has ridden this briefing. Single-use: the
+            next dispatch of that node needs its own.
+        consumed_at:
+          type: string
+          format: date-time
+        consumed_by_attempt_id:
+          type: string
+        document:
+          type: object
+          description: >-
+            The briefing itself, as the derived ledger record carries it.
+            Present on the detail and acknowledge responses; omitted from
+            list items.
+
+    PreflightList:
+      type: object
+      description: GET /v1alpha1/preflights' payload (task t14).
+      required: [items]
+      properties:
+        items:
+          type: array
+          items:
+            $ref: '#/components/schemas/Preflight'
+
+    AcknowledgePreflightRequest:
+      type: object
+      description: POST /v1alpha1/preflights/{id}/acknowledge's body (task t14).
+      required: [actor_id]
+      properties:
+        actor_id:
+          type: string
+          description: >-
+            The registered actor this acknowledgement is recorded for. An
+            acknowledgement nobody is attributable for is a record of nobody
+            having understood anything, so it is required.
+        verdict:
+          type: string
+          enum: [proceed]
+          description: >-
+            Optional, and only `proceed` is admitted. An actor that cannot
+            proceed does not acknowledge; its dispatch is refused when the
+            window closes and routes under `preflight_unacknowledged`.
+        note:
+          type: string
+          description: Free text from the acknowledging party. Documentary.
 
     DispatchRateList:
       type: object

@@ -77,10 +77,17 @@ func TestCodexSmokePairCompilesWithoutErrors(t *testing.T) {
 
 // TestCodexSmokePairHasTwoCodexNodesOnEntryChain asserts the two nodes named
 // in the acceptance criteria exist, are agent-kind, and are wired into the
-// graph exactly as the workflow's own header comment describes: codex-thor
-// is the entry node, codex-orin follows it, both eventually reach a
+// graph exactly as the workflow's own header comment describes: codex-first
+// is the entry node, codex-second follows it, both eventually reach a
 // terminal node. It intentionally reads the normalized IR (post-defaulting)
 // rather than raw YAML, since the IR is what the runtime actually executes.
+//
+// Node id and actor id are asserted SEPARATELY (task t16). They used to be
+// the same string — node `codex-thor` on `actor://company/codex-thor` — which
+// read as if a graph had to be authored around this deployment's machine
+// names. It does not: the node id is the graph's own vocabulary, the actor id
+// is a registry key resolved per deployment, and the smoke's real claim is
+// that TWO DISTINCT registered codex actors each complete a node.
 func TestCodexSmokePairHasTwoCodexNodesOnEntryChain(t *testing.T) {
 	compiled, diags := compileCodexSmokeWorkflow(t)
 	if compiled == nil {
@@ -96,18 +103,18 @@ func TestCodexSmokePairHasTwoCodexNodesOnEntryChain(t *testing.T) {
 	}
 	unmarshalNormalized(t, compiled, &ir)
 
-	if ir.Spec.Entry != "codex-thor" {
-		t.Errorf("spec.entry = %q, want %q", ir.Spec.Entry, "codex-thor")
+	if ir.Spec.Entry != "codex-first" {
+		t.Errorf("spec.entry = %q, want %q", ir.Spec.Entry, "codex-first")
 	}
 
-	assertCodexAgentNode(t, ir.Spec.Nodes, "codex-thor")
-	assertCodexAgentNode(t, ir.Spec.Nodes, "codex-orin")
+	assertCodexAgentNode(t, ir.Spec.Nodes, "codex-first", "company/codex-thor")
+	assertCodexAgentNode(t, ir.Spec.Nodes, "codex-second", "company/codex-orin")
 
-	if !hasEdge(ir.Spec.Edges, "codex-thor.completed", "codex-orin") {
-		t.Error("no codex-thor.completed -> codex-orin edge in the compiled IR")
+	if !hasEdge(ir.Spec.Edges, "codex-first.completed", "codex-second") {
+		t.Error("no codex-first.completed -> codex-second edge in the compiled IR")
 	}
-	if !hasEdge(ir.Spec.Edges, "codex-orin.completed", "finish") {
-		t.Error("no codex-orin.completed -> finish edge in the compiled IR")
+	if !hasEdge(ir.Spec.Edges, "codex-second.completed", "finish") {
+		t.Error("no codex-second.completed -> finish edge in the compiled IR")
 	}
 }
 
@@ -125,8 +132,11 @@ type smokeIREdge struct {
 }
 
 // assertCodexAgentNode asserts the named node exists in the compiled IR, is
-// agent-kind, and `uses` a company/<id> actor reference pinned with @sha256:.
-func assertCodexAgentNode(t *testing.T, nodes map[string]smokeIRNode, id string) {
+// agent-kind, and is placed on the given actor registry id, pinned with
+// @sha256:. The actor id is a parameter rather than derived from the node id
+// because the two are different things: one is the graph's vocabulary, the
+// other is a key in a deployment's actors table (task t16).
+func assertCodexAgentNode(t *testing.T, nodes map[string]smokeIRNode, id, actorID string) {
 	t.Helper()
 	n, ok := nodes[id]
 	if !ok {
@@ -135,8 +145,8 @@ func assertCodexAgentNode(t *testing.T, nodes map[string]smokeIRNode, id string)
 	if n.Kind != "agent" {
 		t.Errorf("%s kind = %q, want %q", id, n.Kind, "agent")
 	}
-	if want := "actor://company/" + id + "@sha256:"; !strings.HasPrefix(n.Uses, want) {
-		t.Errorf("%s uses = %q, want a company/%s actor reference pinned with @sha256:", id, n.Uses, id)
+	if want := "actor://" + actorID + "@sha256:"; !strings.HasPrefix(n.Uses, want) {
+		t.Errorf("%s uses = %q, want a %s actor reference pinned with @sha256:", id, n.Uses, actorID)
 	}
 }
 
@@ -178,7 +188,7 @@ func TestCodexSmokePairNodesAreReadOnlyWithExplicitTimeout(t *testing.T) {
 	}
 	unmarshalNormalized(t, compiled, &ir)
 
-	for _, id := range []string{"codex-thor", "codex-orin"} {
+	for _, id := range []string{"codex-first", "codex-second"} {
 		n, ok := ir.Spec.Nodes[id]
 		if !ok {
 			t.Fatalf("no %s node in the compiled IR", id)

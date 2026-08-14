@@ -12,6 +12,13 @@
 #   * a `join` with policy `all` reconvenes both branches
 #   * the dashboard's Active Graphs halo has real concurrent tokens to draw
 #   * run lifecycle events reach Discord with no control-plane egress
+#
+# Deployment configuration (task t16): none. Every node here is
+# scheduler-driven -- parallel, wait, join, end -- so the graph places
+# nothing on an actor or a runner, takes no run input, and names no
+# environment value. Any deployment can publish and run this file as-is,
+# which is what makes it the cheapest possible check that a control plane is
+# alive and its parallel-token path works.
 apiVersion: nodes.culture.dev/v1alpha1
 kind: Workflow
 

@@ -115,16 +115,19 @@ type fakeControlPlane struct {
 	mu               sync.Mutex
 	events           []storedEvent
 	workflowDigest   map[string]string
-	maxFramesPerConn int // 0 = unbounded; >0 simulates a flaky connection that drops after N frames
+	workflowKey      map[string]string // digest -> human-readable workflow key
+	workflowHits     int               // GET /v1alpha1/workflows/{digest} count, for the cache assertion
+	maxFramesPerConn int               // 0 = unbounded; >0 simulates a flaky connection that drops after N frames
 	server           *httptest.Server
 }
 
 func newFakeControlPlane(t *testing.T) *fakeControlPlane {
 	t.Helper()
-	fcp := &fakeControlPlane{workflowDigest: map[string]string{}}
+	fcp := &fakeControlPlane{workflowDigest: map[string]string{}, workflowKey: map[string]string{}}
 	mux := http.NewServeMux()
 	mux.HandleFunc("/v1alpha1/events", fcp.handleEvents)
 	mux.HandleFunc("/v1alpha1/runs/", fcp.handleRunDetail)
+	mux.HandleFunc("/v1alpha1/workflows/", fcp.handleWorkflowVersion)
 	fcp.server = httptest.NewServer(mux)
 	t.Cleanup(fcp.server.Close)
 	return fcp
@@ -140,6 +143,36 @@ func (fcp *fakeControlPlane) setWorkflow(runID, digest string) {
 	fcp.mu.Lock()
 	defer fcp.mu.Unlock()
 	fcp.workflowDigest[runID] = digest
+}
+
+// setWorkflowKey makes a digest resolvable to a name through the fake's
+// workflows read API. A digest with no entry here 404s, standing in for a
+// control plane whose workflows surface is unreachable or does not know
+// the digest -- the daemon must still deliver, showing the digest.
+func (fcp *fakeControlPlane) setWorkflowKey(digest, key string) {
+	fcp.mu.Lock()
+	defer fcp.mu.Unlock()
+	fcp.workflowKey[digest] = key
+}
+
+func (fcp *fakeControlPlane) workflowLookups() int {
+	fcp.mu.Lock()
+	defer fcp.mu.Unlock()
+	return fcp.workflowHits
+}
+
+func (fcp *fakeControlPlane) handleWorkflowVersion(w http.ResponseWriter, r *http.Request) {
+	digest := strings.TrimPrefix(r.URL.Path, "/v1alpha1/workflows/")
+	fcp.mu.Lock()
+	fcp.workflowHits++
+	key := fcp.workflowKey[digest]
+	fcp.mu.Unlock()
+	if key == "" {
+		http.Error(w, `{"error": "no workflow version with that digest"}`, http.StatusNotFound)
+		return
+	}
+	w.Header().Set("Content-Type", "application/json")
+	_, _ = fmt.Fprintf(w, `{"id": "wfv_1", "workflow_key": %q, "version": 3, "digest": %q}`, key, digest)
 }
 
 func (fcp *fakeControlPlane) setMaxFramesPerConn(n int) {
@@ -271,6 +304,48 @@ func TestDaemonDeliversLifecycleEventsAndSkipsNoise(t *testing.T) {
 		if p.DashboardLink != "http://dashboard.example/runs/run-1" {
 			t.Errorf("DashboardLink = %q, want http://dashboard.example/runs/run-1", p.DashboardLink)
 		}
+	}
+}
+
+// TestDaemonRendersTheWorkflowNameAndCachesTheLookup is issue #66's first
+// finding proven through the daemon itself: when the workflows read API
+// can name the digest, every notification carries "name (short-digest)",
+// and the immutable digest->key mapping is fetched exactly once no matter
+// how many events that run produces. TestDaemonDeliversLifecycleEvents
+// AndSkipsNoise above covers the other side -- a digest the workflows
+// surface cannot name still delivers, showing the full digest.
+func TestDaemonRendersTheWorkflowNameAndCachesTheLookup(t *testing.T) {
+	const digest = "sha256:8d4c768f0bde3b02eea9d404046ff646b607a875d9063d13630787267f7d01ab"
+
+	t.Setenv(envPrimary, "")
+	fcp := newFakeControlPlane(t)
+	wc := newWebhookCapture(t)
+	t.Setenv(envPrimary, wc.server.URL)
+	fcp.setWorkflow("run-1", digest)
+	fcp.setWorkflow("run-2", digest) // same workflow version, a second run
+	fcp.setWorkflowKey(digest, "parallel-live-proof")
+
+	fcp.addEvent("00001", "dev.culture.nodes.run.created", "run-1")
+	fcp.addEvent("00002", "dev.culture.nodes.run.completed", "run-1")
+	fcp.addEvent("00003", "dev.culture.nodes.run.created", "run-2")
+
+	cursorPath := filepath.Join(t.TempDir(), "cursor.json")
+	d := newTestDaemon(t, fcp, cursorPath)
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	go func() { _ = d.Run(ctx) }()
+
+	waitFor(t, 3*time.Second, func() bool { return wc.count() >= 3 })
+	cancel()
+
+	for _, p := range wc.snapshot() {
+		if got, want := p.Workflow, "parallel-live-proof (8d4c768)"; got != want {
+			t.Errorf("Workflow = %q, want %q", got, want)
+		}
+	}
+	if got := fcp.workflowLookups(); got != 1 {
+		t.Errorf("workflows read API hit %d times for 3 notifications of 1 digest, want exactly 1 (cached)", got)
 	}
 }
 

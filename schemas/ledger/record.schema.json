@@ -169,6 +169,36 @@
       "then": {
         "$ref": "grade.schema.json"
       }
+    },
+    {
+      "if": {
+        "properties": {
+          "record_type": {
+            "const": "dispatch_preflight"
+          }
+        },
+        "required": [
+          "record_type"
+        ]
+      },
+      "then": {
+        "$ref": "dispatch_preflight.schema.json"
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "record_type": {
+            "const": "dispatch_acknowledgement"
+          }
+        },
+        "required": [
+          "record_type"
+        ]
+      },
+      "then": {
+        "$ref": "dispatch_acknowledgement.schema.json"
+      }
     }
   ]
 }

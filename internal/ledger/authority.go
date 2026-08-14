@@ -133,6 +133,9 @@ func checkAuthority(rec Record, o appendOptions) error {
 
 	switch rec.Origin.Kind {
 	case OriginAgent:
+		if rec.RecordType == RecordDispatchPreflight {
+			return fail(RulePreflightDerivedOnly, preflightDerivedOnlyDetail)
+		}
 		if rec.Authority != AuthorityProposed {
 			return fail(RuleAgentProposesOnly,
 				"agents may only propose; an agent saying it is done creates a completion claim, not verified evidence")
@@ -159,6 +162,15 @@ func checkAuthority(rec Record, o appendOptions) error {
 			return fail(RuleGradeNeverObservedOrDerived,
 				"a grade is an opinion record: a rating and rationale, never a value a deterministic producer derived")
 		}
+		if rec.RecordType == RecordDispatchAcknowledgement {
+			// The mirror of the grade rule above, and the one refusal that
+			// keeps the clarify-then-commit gate meaningful: every other
+			// origin's own rule already refuses a derived acknowledgement,
+			// and this is the only origin whose ordinary rule would admit
+			// one. An engine that could derive an acknowledgement could
+			// clear its own gate.
+			return fail(RuleAcknowledgementNeverDerived, acknowledgementNeverDerivedDetail)
+		}
 		return nil
 
 	default:
@@ -170,7 +182,27 @@ func checkAuthority(rec Record, o appendOptions) error {
 	}
 }
 
+// The two detail strings the dispatch-gate rules refuse with. They are
+// constants rather than literals at each site because the same refusal is
+// raised from more than one origin branch, and an operator comparing two
+// refusals should not have to wonder whether the difference in wording means
+// a difference in rule.
+const (
+	preflightDerivedOnlyDetail = "a dispatch preflight is composed deterministically from advertised host " +
+		"state and the task declaration; asserting one is not composing one, and a producer that proposes " +
+		"its own briefing is the actor promoting its own claim"
+	acknowledgementNeverDerivedDetail = "an acknowledgement is the actor's own claim to have been told and " +
+		"understood; deriving one would manufacture the evidence the gate exists to create"
+)
+
 func checkHumanAuthority(rec Record, o appendOptions, fail func(rule, detail string) *AuthorityError) error {
+	if rec.RecordType == RecordDispatchPreflight {
+		// A person restating a briefing has not derived one either. The
+		// human path is where this matters most: `proposed` is otherwise
+		// wide open to a human origin, so without this an operator could
+		// hand-write the document an actor then acknowledges.
+		return fail(RulePreflightDerivedOnly, preflightDerivedOnlyDetail)
+	}
 	switch rec.Authority {
 	case AuthorityProposed:
 		return nil

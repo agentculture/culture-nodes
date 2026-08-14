@@ -35,12 +35,17 @@ const (
 	SchemaLedgerReview        = "ledger/review.schema.json"
 	SchemaLedgerGrade         = "ledger/grade.schema.json"
 
+	SchemaLedgerDispatchPreflight       = "ledger/dispatch_preflight.schema.json"
+	SchemaLedgerDispatchAcknowledgement = "ledger/dispatch_acknowledgement.schema.json"
+
 	SchemaRunnerOperation = "runner/operation.schema.json"
 	SchemaRunnerResult    = "runner/result.schema.json"
 )
 
-// ledgerRecordTypes lists the MVP record types in PRD §10.2 order, plus
-// `grade`, registered additively after them (issue #28 item 1).
+// ledgerRecordTypes lists the MVP record types in PRD §10.2 order, followed
+// by the ones registered additively after them: `grade` (issue #28 item 1)
+// and the clarify-then-commit gate's `dispatch_preflight` /
+// `dispatch_acknowledgement` pair (issue #67, task t14).
 var ledgerRecordTypes = []string{
 	"announcement",
 	"claim",
@@ -53,6 +58,8 @@ var ledgerRecordTypes = []string{
 	"result",
 	"review",
 	"grade",
+	"dispatch_preflight",
+	"dispatch_acknowledgement",
 }
 
 // LedgerRecordTypes returns the registered work-ledger record types.
@@ -217,6 +224,16 @@ func embeddedSchemaNames() ([]string, error) {
 	}
 	sort.Strings(names)
 	return names, nil
+}
+
+// Violations flattens a library validation error into this package's located,
+// deduplicated violations. It is exported for callers that compile a schema
+// themselves rather than reaching one through a Validator — the compiler's
+// literal-binding check validates against an inline node contract, and its
+// diagnostics should locate a failure exactly the way every other schema
+// diagnostic in this codebase does.
+func Violations(err *jsonschema.ValidationError) []Violation {
+	return violationsOf(err)
 }
 
 // violationsOf flattens the library's error tree to its leaves — the specific

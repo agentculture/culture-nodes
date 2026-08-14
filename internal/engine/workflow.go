@@ -126,6 +126,21 @@ func (b Budget) Declared() bool {
 // other policy denial.
 const OutcomeBudgetExhausted = "budget_exhausted"
 
+// OutcomePreflightUnacknowledged is the second reserved refusal name
+// (compiler.OutcomePreflightUnacknowledged, kept in step): a dispatch whose
+// clarify-then-commit preflight was never acknowledged inside its window
+// (task t14, issue #67).
+//
+// It is the same KIND of thing as OutcomeBudgetExhausted and is treated
+// identically — no contract declares it, no actor produces it, the control
+// plane produces it before invoking anything, and the refused attempt's
+// technical status is `policy_denied`. It is a separate NAME for the reason
+// that one is: an author who wants "nobody acknowledged the briefing" to
+// reach a human, or a different actor, or a summarise-and-stop node needs to
+// distinguish it from "we ran out of money" and from every other policy
+// denial.
+const OutcomePreflightUnacknowledged = "preflight_unacknowledged"
+
 // LedgerLimits are the workflow-level ledger bounds (PRD §10.7).
 type LedgerLimits struct {
 	SchemaVersion     string
@@ -158,8 +173,11 @@ type Node struct {
 	// artifact references" (PRD §9.9) rather than an actor payload, because
 	// the engine still does not resolve bindings into dispatch payloads (see
 	// this package's doc comment) — it records the reference, not the value.
+	// A binding that declares a LITERAL (issue #73) carries the declared value
+	// itself, which is a reference in the only sense that matters here: it is
+	// what the author wrote, unchanged.
 	InputFrom     string
-	InputBindings map[string]string
+	InputBindings map[string]InputBinding
 
 	Propose    []string
 	Observe    []string
@@ -181,6 +199,64 @@ type Node struct {
 	// quorum. Empty/zero for every other kind.
 	JoinPolicy string
 	JoinQuorum int
+}
+
+// bindingLiteralKey is the wrapper the authoring schema uses to declare a
+// literal binding value.
+const bindingLiteralKey = "literal"
+
+// InputBinding is one entry of a node's `bindings` map: a JSON Pointer into
+// run, node, or ledger data, or a literal declared in the graph text (issue
+// #73). It mirrors schemas/workflow/workflow.schema.json's
+// #/$defs/bindingValue.
+//
+// Like parsePointer in this package, the decode is the engine's own rather than
+// a type shared with internal/compiler and internal/worker: each layer reads
+// the IR for itself, and tests on each side prove the three readings land in
+// the same place. A shared type would make that agreement an assumption instead
+// of a check.
+type InputBinding struct {
+	// Pointer is the RFC 6901 pointer the author wrote as a bare string.
+	Pointer string
+	// Literal is the declared value's JSON, non-nil exactly when the author
+	// wrapped it in `{literal: ...}`. Raw bytes, so the value the human task
+	// shows is byte-for-byte the value the workflow digest addresses.
+	Literal json.RawMessage
+}
+
+// IsLiteral reports whether this binding declares a literal rather than a
+// pointer. It asks about the literal, not about an empty pointer, because
+// `{literal: ""}` and `{literal: null}` are both legitimate declared values.
+func (b InputBinding) IsLiteral() bool { return b.Literal != nil }
+
+func (b *InputBinding) UnmarshalJSON(data []byte) error {
+	data = bytes.TrimSpace(data)
+	if len(data) > 0 && data[0] == '"' {
+		var pointer string
+		if err := json.Unmarshal(data, &pointer); err != nil {
+			return err
+		}
+		*b = InputBinding{Pointer: pointer}
+		return nil
+	}
+
+	var members map[string]json.RawMessage
+	if err := json.Unmarshal(data, &members); err != nil {
+		return fmt.Errorf("a binding value is a JSON Pointer string or a {%s: ...} object", bindingLiteralKey)
+	}
+	literal, ok := members[bindingLiteralKey]
+	if !ok || len(members) != 1 {
+		return fmt.Errorf("a binding value object declares exactly one member, %q", bindingLiteralKey)
+	}
+	*b = InputBinding{Literal: literal}
+	return nil
+}
+
+func (b InputBinding) MarshalJSON() ([]byte, error) {
+	if b.IsLiteral() {
+		return json.Marshal(map[string]json.RawMessage{bindingLiteralKey: b.Literal})
+	}
+	return json.Marshal(b.Pointer)
 }
 
 // joinThreshold is how many arrivals fire this join node's barrier for a
@@ -407,8 +483,8 @@ type irNode struct {
 		Outcomes map[string]*irSchemaSource `json:"outcomes"`
 	} `json:"contract"`
 	Input *struct {
-		From     string            `json:"from"`
-		Bindings map[string]string `json:"bindings"`
+		From     string                  `json:"from"`
+		Bindings map[string]InputBinding `json:"bindings"`
 	} `json:"input"`
 	Output *struct {
 		From string `json:"from"`
@@ -461,7 +537,7 @@ func decodeNode(id string, raw *irNode) (*Node, error) {
 	if raw.Input != nil {
 		node.InputFrom = raw.Input.From
 		if len(raw.Input.Bindings) > 0 {
-			node.InputBindings = make(map[string]string, len(raw.Input.Bindings))
+			node.InputBindings = make(map[string]InputBinding, len(raw.Input.Bindings))
 			for k, v := range raw.Input.Bindings {
 				node.InputBindings[k] = v
 			}

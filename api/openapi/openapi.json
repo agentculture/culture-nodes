@@ -39,6 +39,30 @@
       }
     },
     "schemas": {
+      "AcknowledgePreflightRequest": {
+        "description": "POST /v1alpha1/preflights/{id}/acknowledge's body (task t14).",
+        "properties": {
+          "actor_id": {
+            "description": "The registered actor this acknowledgement is recorded for. An acknowledgement nobody is attributable for is a record of nobody having understood anything, so it is required.",
+            "type": "string"
+          },
+          "note": {
+            "description": "Free text from the acknowledging party. Documentary.",
+            "type": "string"
+          },
+          "verdict": {
+            "description": "Optional, and only `proceed` is admitted. An actor that cannot proceed does not acknowledge; its dispatch is refused when the window closes and routes under `preflight_unacknowledged`.",
+            "enum": [
+              "proceed"
+            ],
+            "type": "string"
+          }
+        },
+        "required": [
+          "actor_id"
+        ],
+        "type": "object"
+      },
       "Actor": {
         "description": "One `actors` table row (task t15). Actor identity is append-only: a capability or endpoint change is a new row (a new `revision`), never an update to an existing one. `capabilities` and `metadata` are rendered verbatim — neither column ever holds a credential (`metadata.auth_token_env`, when set, names the environment variable a worker reads a token from, never the token value itself), so there is nothing to redact.",
         "properties": {
@@ -1482,6 +1506,109 @@
         ],
         "type": "object"
       },
+      "Preflight": {
+        "description": "One clarify-then-commit briefing (task t14, issue #67; migration 0026's `dispatch_preflights`). `expired` is computed against the server clock at read time, because the window — not the row's existence — is the predicate everywhere in this feature.",
+        "properties": {
+          "acknowledged": {
+            "type": "boolean"
+          },
+          "acknowledged_at": {
+            "format": "date-time",
+            "type": "string"
+          },
+          "acknowledged_by": {
+            "type": "string"
+          },
+          "acknowledgement_record_id": {
+            "description": "The proposed `dispatch_acknowledgement` record carrying the claim.",
+            "type": "string"
+          },
+          "actor_id": {
+            "description": "The actors-table row id, present only when the registry could resolve one. Absent means unattributed, never a fabricated id.",
+            "type": "string"
+          },
+          "actor_key": {
+            "description": "The actor identity this dispatch is addressed to.",
+            "type": "string"
+          },
+          "consumed": {
+            "description": "True once a dispatch has ridden this briefing. Single-use: the next dispatch of that node needs its own.",
+            "type": "boolean"
+          },
+          "consumed_at": {
+            "format": "date-time",
+            "type": "string"
+          },
+          "consumed_by_attempt_id": {
+            "type": "string"
+          },
+          "document": {
+            "description": "The briefing itself, as the derived ledger record carries it. Present on the detail and acknowledge responses; omitted from list items.",
+            "type": "object"
+          },
+          "expired": {
+            "type": "boolean"
+          },
+          "expires_at": {
+            "format": "date-time",
+            "type": "string"
+          },
+          "id": {
+            "type": "string"
+          },
+          "issued_at": {
+            "format": "date-time",
+            "type": "string"
+          },
+          "node_id": {
+            "type": "string"
+          },
+          "node_run_id": {
+            "type": "string"
+          },
+          "record_digest": {
+            "description": "That record's content digest. An acknowledgement names it, so \"the actor acknowledged this briefing\" cannot later be true of a briefing whose content the reader never saw.",
+            "type": "string"
+          },
+          "record_id": {
+            "description": "The `dispatch_preflight` ledger record stating the briefing.",
+            "type": "string"
+          },
+          "run_id": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "run_id",
+          "node_run_id",
+          "node_id",
+          "actor_key",
+          "record_id",
+          "record_digest",
+          "issued_at",
+          "expires_at",
+          "expired",
+          "acknowledged",
+          "consumed"
+        ],
+        "type": "object"
+      },
+      "PreflightList": {
+        "description": "GET /v1alpha1/preflights' payload (task t14).",
+        "properties": {
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/Preflight"
+            },
+            "type": "array"
+          }
+        },
+        "required": [
+          "items"
+        ],
+        "type": "object"
+      },
       "Projection": {
         "properties": {
           "digest": {
@@ -2794,6 +2921,164 @@
         ]
       }
     },
+    "/v1alpha1/preflights": {
+      "get": {
+        "description": "Task t14 (issue #67): the clarify-then-commit gate's read surface. An actor whose registration enables the gate (`metadata.preflight_gate`) is briefed BEFORE its first billable turn: the worker composes the operating facts its task depends on — the host capabilities that actor's own bridge advertised, plus the task declaration — appends them as a `derived` ledger record, and defers the dispatch until the briefing is acknowledged.\n\nThis endpoint answers \"is anything waiting on me\". The issue also goes onto the run's event stream (`dev.culture.nodes.dispatch.preflight_issued`), but a bridge that was not watching at that instant would otherwise never learn, so the pending set is queryable. Only PENDING preflights are listed — unconsumed, unanswered and unexpired; one preflight's own history stays readable at its detail route.",
+        "operationId": "listPreflights",
+        "parameters": [
+          {
+            "description": "Narrow to one actor identity (e.g. `company/codex-thor`).",
+            "in": "query",
+            "name": "actor_key",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "limit",
+            "required": false,
+            "schema": {
+              "default": 50,
+              "maximum": 200,
+              "minimum": 1,
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PreflightList"
+                }
+              }
+            },
+            "description": "The preflights waiting on an acknowledgement."
+          }
+        },
+        "summary": "Dispatch preflights waiting to be acknowledged.",
+        "tags": [
+          "preflights"
+        ]
+      }
+    },
+    "/v1alpha1/preflights/{id}": {
+      "get": {
+        "description": "The row plus `document` — the briefing itself, read back from its `dispatch_preflight` ledger record. An actor cannot acknowledge what it cannot read, so the document is always part of the detail response: the host capabilities as its bridge advertised them, the task declaration, the expected terminal shape, and the refusal stating what does not proceed until it is acknowledged.",
+        "operationId": "getPreflight",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Preflight"
+                }
+              }
+            },
+            "description": "The preflight."
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "description": "No preflight with that id in this namespace."
+          }
+        },
+        "summary": "One dispatch preflight, with the briefing it hands over.",
+        "tags": [
+          "preflights"
+        ]
+      }
+    },
+    "/v1alpha1/preflights/{id}/acknowledge": {
+      "post": {
+        "description": "The second, separate action of clarify-then-commit. It appends the acknowledging actor's `proposed` `dispatch_acknowledgement` record — naming the briefing by id AND by content digest — and marks the row, after which exactly ONE dispatch may ride it.\n\nThe properties are the ones `deploy/prod/install-secrets.sh`'s destructive-confirmation protocol established and this generalizes from danger to understanding: it is SINGLE-USE (the next dispatch of that node needs its own briefing) and WINDOWED (an acknowledgement made too long ago authorizes nothing). Both refusals are 409s naming the state.\n\nWhat it writes is a CLAIM, not evidence: an actor saying it understood is a completion-claim-shaped statement, and nothing on this path promotes it (PRD §10.4). `actor_id` names the actor the acknowledgement is recorded FOR; the record's `origin` names the producer that wrote it, so an operator acknowledging on a bridge's behalf stays distinguishable afterwards.",
+        "operationId": "acknowledgePreflight",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/AcknowledgePreflightRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Preflight"
+                }
+              }
+            },
+            "description": "The acknowledged preflight."
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "description": "actor_id is missing, or the verdict is not an acknowledgement."
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "description": "No such preflight, or no such actor."
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "description": "The briefing was already answered, already spent, or its window has closed."
+          }
+        },
+        "summary": "Acknowledge a briefing, committing the gated dispatch.",
+        "tags": [
+          "preflights"
+        ]
+      }
+    },
     "/v1alpha1/readyz": {
       "get": {
         "operationId": "readyz",
@@ -3686,6 +3971,10 @@
     {
       "description": "Registered actor identities and their aggregate stats (task t15). Read-only — registering an actor stays deploy/prod/register-actor.sh (issue #8).",
       "name": "actors"
+    },
+    {
+      "description": "The clarify-then-commit gate (task t14, issue #67): the briefing an actor is handed before its first billable turn, and the second, separate action that commits the dispatch. Per-actor and default-off — an actor whose registration enables no gate is never briefed and never waits.",
+      "name": "preflights"
     },
     {
       "description": "Import an external plan (task t22, issue #45): the generic decompose-pipeline surface — devague's `plan show --json` and `.devague/deliveries/*.json` are instance one, a non-code document (task t24) is instance two. Carries real per-task status and dependency edges (never a wave approximation) and every deviation's origin (the issue's \"system knows\" llm vs \"user reports\" user split). Durable, but deliberately not the work ledger — see migrations/0024_plan_imports.sql.",

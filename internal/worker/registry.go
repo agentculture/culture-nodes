@@ -8,6 +8,7 @@ import (
 	"os"
 	"strings"
 
+	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
 
 	"github.com/agentculture/culture-nodes/internal/actors"
@@ -180,6 +181,44 @@ func (r *DBRegistry) ActorRowID(ctx context.Context, ref string) (string, error)
 		return "", fmt.Errorf("worker: actor row for %q: %w: %v", ref, ErrUnknownActor, err)
 	}
 	return id, nil
+}
+
+// PreflightConfig returns an actor's registered `capabilities` and
+// `metadata` documents verbatim — the two halves the clarify-then-commit
+// gate reads its per-actor configuration from (task t14, issue #67):
+// `capabilities.preflight` is the surface the bridge advertises,
+// `metadata.preflight_gate` is whether the deployment turned the gate on.
+//
+// It returns the raw documents rather than a parsed configuration because
+// parsing belongs to internal/preflight: a registry that also parsed would
+// be a second place for the same rules to live, and the two would drift.
+// Like Resolve it reads the highest revision — the current registration is
+// the one whose facts are current.
+//
+// A reference with no registered actor yields two empty documents and no
+// error: an unresolvable reference is a dispatch failure Resolve reports a
+// moment later with a much better diagnostic, and having the gate fail first
+// with "no configuration" would replace that message with a worse one.
+func (r *DBRegistry) PreflightConfig(ctx context.Context, ref string) (json.RawMessage, json.RawMessage, error) {
+	key := actorKeyOf(ref)
+	if key == "" {
+		return nil, nil, nil
+	}
+	var capabilities, metadata []byte
+	err := r.store.Pool().QueryRow(ctx, `
+		SELECT capabilities, metadata
+		FROM actors
+		WHERE namespace_id = $1 AND actor_key = $2
+		ORDER BY revision DESC
+		LIMIT 1
+	`, r.namespaceID, key).Scan(&capabilities, &metadata)
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return nil, nil, nil
+		}
+		return nil, nil, fmt.Errorf("worker: preflight configuration for %q: %w", ref, err)
+	}
+	return capabilities, metadata, nil
 }
 
 // actorRowIDResolver is the optional registry capability the worker uses

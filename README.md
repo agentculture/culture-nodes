@@ -19,7 +19,7 @@ back to `build` are domain outcomes on the graph, never engine failures.
 ![The same run in dark mode, following the OS color scheme](docs/assets/run-view-dark.png)
 
 Dark mode follows your OS, with the same design tokens the
-[agentculture.org](https://agentculture.org) site ships — nothing here invents
+the AgentCulture site ships — nothing here invents
 a sibling aesthetic.
 
 ![The node detail panel: contract digest, owner, attempts, ledger delta](docs/assets/node-detail.png)

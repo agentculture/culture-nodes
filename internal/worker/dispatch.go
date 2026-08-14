@@ -80,6 +80,19 @@ func (w *Worker) dispatchActor(
 		return w.deferForPause(ctx, claimed, node, dc, pause)
 	}
 
+	// The clarify-then-commit gate (task t14, issue #67), checked between the
+	// breaker and pacing. Before pacing deliberately: a dispatch about to be
+	// deferred for want of an acknowledgement must not spend a slot of a rate
+	// that exists to keep the provider from refusing us — and before the
+	// pre_run hook and the endpoint resolution below, because a hook executes
+	// real code on a real host. It is per-actor and default-off: an actor
+	// whose registration says nothing about it, or a registry that cannot
+	// answer the question at all, dispatches exactly as before. See
+	// clarifygate.go.
+	if proceed, err := w.clarifyGate(ctx, claimed, spec, node, dc, session); err != nil || !proceed {
+		return err
+	}
+
 	// Dispatch pacing, the breaker's sibling and one step behind it (task
 	// t10). Behind it deliberately: an actor the provider has already refused
 	// must not spend a slot of a rate that exists to keep the provider from

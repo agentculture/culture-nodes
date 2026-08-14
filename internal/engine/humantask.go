@@ -133,10 +133,12 @@ type humanTaskRequest struct {
 
 // humanTaskContext mirrors the authoring input-binding shape
 // (schemas/workflow/workflow.schema.json's inputBinding): a single pointer,
-// named bindings, or both.
+// named bindings, or both. A named binding renders as the author wrote it — a
+// pointer string, or a `{"literal": ...}` object (issue #73) — so the surface
+// presenting this task shows the reader the same declaration the workflow does.
 type humanTaskContext struct {
-	From     string            `json:"from,omitempty"`
-	Bindings map[string]string `json:"bindings,omitempty"`
+	From     string                  `json:"from,omitempty"`
+	Bindings map[string]InputBinding `json:"bindings,omitempty"`
 }
 
 // humanTaskAudit is the PRD §9.9 "audit identity" that is not already one of

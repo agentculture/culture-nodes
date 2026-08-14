@@ -127,7 +127,10 @@ func (c *compilation) checkProjectionBindings(base string, n *node) {
 		c.checkProjectionPointer(base+"/input/from", n.Input.From)
 	}
 	for _, key := range sortedKeys(n.Input.Bindings) {
-		c.checkProjectionPointer(pointerJoin(base+"/input/bindings", key), n.Input.Bindings[key])
+		// A literal reaches no projection: it is a constant, not a read.
+		if value := n.Input.Bindings[key]; !value.isLiteral() {
+			c.checkProjectionPointer(pointerJoin(base+"/input/bindings", key), value.Pointer)
+		}
 	}
 }
 

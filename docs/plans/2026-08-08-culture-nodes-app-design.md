@@ -6,7 +6,7 @@ angle-bracket placeholders rendered as inline HTML -->
 
 slug: `culture-nodes-app-design` · status: `exported` · from frame: `culture-nodes-app-design`
 
-> Culture Nodes ships as an agent-first, agent-native workflow app: a Go control plane implementing the PRD's durable graph runtime, a react-flow web UI carrying the agentculture.org design system, and a Python agent-first CLI — with full CLI/API/Web parity, Docker-native packaging that deploys cleanly to k8s, AWS-backed SQS signaling over authoritative Postgres, and agent actors reachable through claude-agent-sdk, claude-agent-api, or colleague adapters behind the provider-neutral actor protocol
+> Culture Nodes ships as an agent-first, agent-native workflow app: a Go control plane implementing the PRD's durable graph runtime, a react-flow web UI carrying the AgentCulture design system, and a Python agent-first CLI — with full CLI/API/Web parity, Docker-native packaging that deploys cleanly to k8s, AWS-backed SQS signaling over authoritative Postgres, and agent actors reachable through claude-agent-sdk, claude-agent-api, or colleague adapters behind the provider-neutral actor protocol
 
 ## Tasks
 

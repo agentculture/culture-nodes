@@ -171,9 +171,15 @@ wave against the remaining subscription window.
   verb with exactly one registered actor (today: `codex-thor` or
   `codex-orin`; billable — confirm intent per the skill's guard). Two goals, both deliberate: the product
   exercises itself on real work, and every assigned run grows the
-  comparative record of **which actor is better at what**. Until the bwrap
-  fix lands (#18), sessions on thor/orin are analysis-only — route reviews,
-  audits, doc checks, and investigations there; keep shell/write work local.
+  comparative record of **which actor is better at what**. Codex sessions on
+  thor/orin **can exec shell commands** as of the userns fix (#63:
+  `kernel.apparmor_restrict_unprivileged_userns=0`, applied and persisted on
+  all three hosts) — verified live by run `01M00AM5NME6TZ1PXDG4A454HE`, which
+  ran `git log`, `git status`, `pwd` and `ls` and got real output. The **write
+  path is not yet proven**: that probe was read-only, and #18 stays open until
+  a `workspace-write` dispatch actually lands a patch. Until then, route
+  analysis, reviews and investigations to codex freely, and treat write work
+  there as unproven rather than impossible.
   The assessment half is not optional: after every assigned run, read
   `run <id>` + `ledger <id>`, weigh the proposed claims (completion claims,
   not evidence — §10.4), decide them through the approval surface where one

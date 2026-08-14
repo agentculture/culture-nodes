@@ -5,9 +5,10 @@
 // Three families live here:
 //
 //   - ledger/   the work-ledger record envelope (PRD §10.3), the ten MVP
-//     record types (PRD §10.2), and the additively-registered `grade`
-//     opinion record (issue #28 item 1), plus record.schema.json which
-//     dispatches on record_type;
+//     record types (PRD §10.2), and the additively-registered domain
+//     records — `grade` (issue #28 item 1) and the clarify-then-commit
+//     gate's `dispatch_preflight`/`dispatch_acknowledgement` pair (issue
+//     #67) — plus record.schema.json which dispatches on record_type;
 //   - workflow/ the workflow authoring document (PRD §9.1, §11.1);
 //   - runner/   the runner-agnostic operation and result contracts (PRD §13.7).
 //

@@ -1,7 +1,8 @@
 # The PR-upkeep loop (plan task t21, spec claims c15/c26, honesty h21):
-# culture-nodes sweeps its OWN quality debt — unresolved SonarCloud issues
-# plus open Qodo findings on open PRs — and works the list one item at a
-# time through a human-gated fix/review cycle. The flow holds zero merge
+# culture-nodes sweeps its OWN quality debt — unresolved SonarCloud issues,
+# open Qodo findings on open PRs, and failed CI check runs on those PRs'
+# head commits (issue #61) — and works the list one item at a time through
+# a human-gated fix/review cycle. The flow holds zero merge
 # credentials: `approved` on the human gate MEANS the human already merged
 # the PR themselves (see README.md, "the human-merges rule").
 #
@@ -46,6 +47,48 @@
 #    gets merged or closed while the question is pending is ALSO an
 #    observable — `human-answers-review.merged` / `.dropped` — so a question
 #    posted to a PR that is later merged or closed does not wait forever.
+#
+# The fix -> review handoff (issue #74, task t13):
+# `fix` and `review` are deliberately DIFFERENT actors on DIFFERENT machines
+# — company/developer on spark, company/codex-thor on thor. A filesystem path
+# is not portable across that boundary, and this graph used to hand one over
+# anyway: run 01KZZSGSWH11J7R7P4V2HPTZZQ fixed and committed b01608c on spark,
+# then died at `review` with `auth_or_policy` HTTP 403 from thor's codex
+# bridge, which had correctly refused a spark path that is outside its
+# allowlist and does not exist on thor at all. The graph asked for something
+# incoherent, and the error named authorization when the cause was topology.
+#
+# What travels now is a HANDLE, not a location: `fix.completed` must carry
+# `handoff.ref`, an `artifact://<namespace>/<id>` reference which by
+# construction "never carries or implies a filesystem path"
+# (internal/artifacts/doc.go) and resolves through the artifact store from
+# any host. `review` binds it (`handoff: /nodes/fix/output/handoff`) and
+# requires it; its own `review_repo` is now only the working directory the
+# codex bridge allowlists on thor, never the work under review.
+#
+# Why not a git ref (#74's option 1, the issue's own recommendation): a probe
+# of the spark bridge host settled it — origin is HTTPS not SSH, no SSH key
+# is authorised for GitHub, there is no git credential.helper, and the
+# running bridge process carries neither GH_TOKEN nor GITHUB_TOKEN. The host
+# that must produce the handle cannot push, so a pushed branch is not a
+# handle it can offer. `handoff.kind` is an enum with one member today so
+# adding `git_ref` later, once a bridge host holds a credential, is visibly
+# additive rather than a reinterpretation of the field.
+#
+# WHAT IS NOT WIRED YET, stated plainly so nobody reads this graph as more
+# finished than it is: internal/artifacts (Store, Router, the Postgres and
+# S3 drivers, migrations 0004/0006) is a complete library with ZERO
+# production callers. There is no artifact ingest or fetch endpoint on the
+# control plane's HTTP surface, no bridge uploads bytes, and
+# InvocationResult.artifact_refs is accepted on the wire and then dropped.
+# So today every fix host lands on `handoff_unavailable` with
+# `missing_capability: artifact_publish` — which is the true answer, and a
+# far better one than reviewing thor's own checkout and calling it a review
+# of spark's work. The remaining work is the content path: an artifact
+# ingest/fetch endpoint, bridge-side publish/resolve in all backends
+# (all-backends rule), and persisting actor-reported artifact refs so
+# /nodes/<id>/artifacts can become a bindable surface (it is refused by both
+# internal/compiler/contract.go and internal/worker/bindings.go today).
 #
 # Authoring decisions worth stating outright:
 #
@@ -92,11 +135,55 @@
 #     failed-check verdict that routing deliberately treats as the benign
 #     `failed` domain outcome.
 #
-#  5. The sweep operation expects the extractor at /opt/pr-upkeep/sweep.py
-#     inside the pinned image: bake examples/pr-upkeep/sweep.py into the
-#     image (or bind-mount it) when registering the runner. The script is
-#     stdlib-only, so any python:3.12 base works. `network:
-#     egress-allowlist` scopes it to sonarcloud.io + api.github.com.
+#  5. The sweep operation FETCHES its extractor at dispatch time from the
+#     URL the deployment grants (see Deployment configuration below), and
+#     verifies its sha256 before executing it. The script is stdlib-only, so
+#     any python:3.12 base works and the image needs nothing baked in.
+#     `network: egress-allowlist` is the declared intent, scoping it to
+#     sonarcloud.io + api.github.com plus the source host.
+#
+# Deployment configuration (task t16) — everything below this graph needs
+# from the world outside it, and where each value comes from. Loading this
+# example into another deployment means supplying these; it never means
+# editing the graph.
+#
+#   RUN INPUT (the run's input document; examples/pr-upkeep/driver.sh builds
+#   one, and spec.contract.input below declares every property):
+#     repo, review_repo   per-host working directories. `repo` is where the
+#                         fix actor works, `review_repo` is the review
+#                         actor's own allowlisted checkout — two hosts, two
+#                         paths, and neither is the work under review (that
+#                         crosses as `handoff`, issue #74).
+#     *_instruction, notify_*, review_sandbox
+#                         the words each actor is given, authored per run.
+#
+#   ACTOR / RUNNER REGISTRY (an id in `uses:`, resolved by
+#   internal/worker/registry.go against this deployment's actors table with
+#   the @sha256 revision suffix stripped — register the SAME id against your
+#   own endpoint; the id names a role, and where the machine names in the
+#   prose below appear they record where THIS deployment ran it, not a
+#   requirement on yours):
+#     actor://company/developer        the fix lane, and the one identity
+#                                      here with a GitHub write credential.
+#     actor://company/codex-thor       the review lane — deliberately a
+#                                      different backend AND host than the
+#                                      fix lane, which is the whole point of
+#                                      the independent-review pattern.
+#     actor://company/human-ops        the kind=human inbox bridge.
+#     actor://company/notify-discord   the notify adapter (issue #68).
+#     runner://headspace/docker        the code-node runner boundary.
+#
+#   GRANTED ENVIRONMENT VALUES (named here, supplied by the worker process
+#   that dispatches the operation; the runner boundary refuses the operation
+#   BY NAME when one is unset — internal/runners/headspace/bridge.go):
+#     PR_UPKEEP_SWEEP_SOURCE_URL      where the sweep script is fetched from.
+#     PR_UPKEEP_SWEEP_SOURCE_SHA256   the sha256 the fetched bytes must have.
+#
+#   PINNED ON PURPOSE, not configuration: the swept repo. sweep.py's
+#   SONAR_COMPONENT_KEY and GITHUB_REPO are hard-coded so this sweep cannot
+#   generalise to arbitrary repos — a blast-radius boundary, documented at
+#   the constant and in README.md as the one value a new operator changes
+#   (in their own copy of the script, which is what the URL above points at).
 apiVersion: nodes.culture.dev/v1alpha1
 kind: Workflow
 
@@ -165,29 +252,6 @@ spec:
           merge_instruction:
             type: string
             minLength: 1
-          # The two observables, supplied as run input until #73 lands a
-          # literal binding shape. Objects, not pointers: the tracker reads
-          # them verbatim out of the bridge's stored task.
-          merge_observe:
-            type: object
-            required: [kind]
-            properties:
-              kind:
-                type: string
-              pr:
-                type: integer
-              repo:
-                type: string
-          reply_observe:
-            type: object
-            required: [kind]
-            properties:
-              kind:
-                type: string
-              pr:
-                type: integer
-              repo:
-                type: string
     output:
       schema:
         type: object
@@ -223,19 +287,51 @@ spec:
       operation:
         image: python:3.12-slim@sha256:57cd7c3a7a273101a6485ba99423ee568157882804b1124b4dd04266317710de
         # The image carries no repo checkout, so the sweep script is fetched
-        # from the repo pinned to an exact commit SHA and exec'd — the only
-        # code-shipping mechanism a bare operation supports today (found
-        # live: python3 exits 2 on the missing /opt path; run
-        # 01KZXAJ7KAH7WX495TDNM4MEZR). A file-mount/artifact-input mechanism
-        # for code nodes is follow-up material alongside issue #50.
+        # and exec'd — the only code-shipping mechanism a bare operation
+        # supports today (found live: python3 exits 2 on the missing /opt
+        # path; run 01KZXAJ7KAH7WX495TDNM4MEZR). A file-mount/artifact-input
+        # mechanism for code nodes is follow-up material alongside issue #50.
+        #
+        # WHOSE script runs is a deployment's decision, not this file's (task
+        # t16). This argv used to name a raw.githubusercontent URL pinned to
+        # one org, one commit and one path, which meant a third party who
+        # loaded this example got a graph that silently fetched and executed
+        # OUR bytes — a supply-chain property, not a portability wart. The
+        # origin is now a granted environment value, and the bootstrap below
+        # verifies what comes back against a second granted value before it
+        # executes anything: same reason the `image:` above is pinned by
+        # digest rather than by tag.
+        #
+        # Two distinct refusals, deliberately at two different depths. A name
+        # the RUNNER's own environment does not carry never reaches this
+        # script at all: the boundary refuses the operation as
+        # rejected_input, naming the missing value
+        # (internal/runners/headspace/bridge.go's resolveEnv). A value that
+        # is present but empty, or bytes whose digest does not match, is
+        # caught here and exits nonzero — `sweep_broken`, which routes to the
+        # backoff wait like any other broken sweep. The 0 / 10 / other
+        # exit-code contract is untouched either way.
+        environmentRefs:
+          - PR_UPKEEP_SWEEP_SOURCE_URL
+          - PR_UPKEEP_SWEEP_SOURCE_SHA256
         argv:
           - python3
           - -c
           - |
-            import urllib.request
-            url = ("https://raw.githubusercontent.com/agentculture/culture-nodes/"
-                   "29eacc81c89474e667bb751f13da151aca91bed6/examples/pr-upkeep/sweep.py")
-            exec(compile(urllib.request.urlopen(url).read().decode(), "sweep.py", "exec"))
+            import hashlib, os, sys, urllib.request
+            names = ("PR_UPKEEP_SWEEP_SOURCE_URL", "PR_UPKEEP_SWEEP_SOURCE_SHA256")
+            url, want = (os.environ.get(name, "").strip() for name in names)
+            missing = [n for n, v in zip(names, (url, want)) if not v]
+            if missing:
+                sys.exit("pr-upkeep sweep: %s unset. The deployment grants the sweep "
+                         "script's source and its sha256 -- see this workflow's "
+                         "Deployment configuration block." % ", ".join(missing))
+            source = urllib.request.urlopen(url, timeout=30).read()
+            got = hashlib.sha256(source).hexdigest()
+            if got != want.lower():
+                sys.exit("pr-upkeep sweep: %s serves sha256:%s, not the configured "
+                         "sha256:%s. Refusing to execute it." % (url, got, want.lower()))
+            exec(compile(source.decode(), "sweep.py", "exec"))
         # DECLARED intent: network: egress-allowlist (sonarcloud.io +
         # api.github.com only). Headspace-cli 0.11.0 supports only disabled/
         # enabled network posture, so the runner boundary honestly rejects
@@ -302,6 +398,12 @@ spec:
     # and opens or updates a PR — it never merges one. decision_history
     # carries the human gate's changes_required notes back into the loop's
     # later passes.
+    #
+    # It also PUBLISHES its work as a portable handle (issue #74): the review
+    # actor is on another machine, so `repo` below — spark's checkout — is
+    # where this node works and nothing the next node can read. See the
+    # `completed`/`handoff_unavailable` contracts and this file's header for
+    # what crosses the boundary and what happens when it cannot.
     fix:
       kind: agent
       ownerRef: team/developer-experience
@@ -319,12 +421,82 @@ spec:
             type: object
             required: [instruction, repo]
         outcomes:
+          # A completed fix MUST carry a portable handle (issue #74). `repo`
+          # above is where this actor WORKS; it is meaningless on any other
+          # host, so it can never be what the review lane reads. `handoff` is
+          # the thing that crosses: an artifact reference, which by
+          # construction "never carries or implies a filesystem path"
+          # (internal/artifacts/doc.go) and resolves through the store rather
+          # than through a directory that happens to exist on spark.
+          #
+          # It is REQUIRED rather than optional on purpose. The engine
+          # validates a completion against this schema
+          # (internal/engine/complete.go's checkOutput), so a fix session that
+          # produced no handle cannot report `completed` at all — it is
+          # contract_rejected at the FIX node, where the cause is, instead of
+          # sailing on to a review node that will fail somewhere else. A
+          # session that genuinely cannot produce one says so by name, through
+          # the `handoff_unavailable` outcome below.
           completed:
             schema:
               type: object
-              required: [summary]
+              required: [summary, handoff]
               properties:
                 summary:
+                  type: string
+                handoff:
+                  type: object
+                  required: [kind, ref]
+                  properties:
+                    # One kind today, declared as an enum rather than a bare
+                    # string so a second kind (a pushed git ref, #74's option
+                    # 1, once a bridge host has a credential for one) is an
+                    # additive change a reader can see coming.
+                    kind:
+                      type: string
+                      enum: [artifact]
+                    ref:
+                      type: string
+                      pattern: "^artifact://[^/]+/.+$"
+                    # What the handle contains, so the review lane knows what
+                    # it is opening without unpacking it first.
+                    media_type:
+                      type: string
+          # The honest failure (issue #74, task t13's criterion 3). A fix host
+          # that cannot publish its work as an artifact has ONE correct answer,
+          # and it is a domain outcome, not a technical error and emphatically
+          # not somebody else's 403.
+          #
+          # The history this exists to prevent: run 01KZZSGSWH11J7R7P4V2HPTZZQ
+          # fixed and committed b01608c on spark, then died at `review` with
+          # `auth_or_policy` HTTP 403 from thor's codex bridge. The bridge was
+          # correct — it was handed a spark path outside its allowlist that
+          # does not exist on thor — but the error named AUTHORIZATION when the
+          # cause was TOPOLOGY, which is the single worst place for a reader to
+          # start debugging.
+          #
+          # `missing_capability` is a CLOSED enum so the answer is a name a
+          # dashboard can group by, not a sentence someone has to interpret:
+          #   artifact_publish   — the host has no way to put bytes in the
+          #                        artifact store (no ingest endpoint reachable
+          #                        from it, no credential, store unconfigured).
+          #                        This is the state of the world TODAY: see
+          #                        the "What is not wired yet" note in this
+          #                        file's header.
+          #   workspace_export   — the host could not produce the bundle at all
+          #                        (git plumbing failed, nothing to export).
+          #   handoff_too_large  — the work exceeds what this lane may move.
+          handoff_unavailable:
+            schema:
+              type: object
+              required: [summary, missing_capability, detail]
+              properties:
+                summary:
+                  type: string
+                missing_capability:
+                  type: string
+                  enum: [artifact_publish, workspace_export, handoff_too_large]
+                detail:
                   type: string
       ledger:
         read: [decision_history]
@@ -356,6 +528,11 @@ spec:
     # decision (ask-pr-question -> notify-decision-pending ->
     # human-answers-review, issue #71) — every loop-back through the
     # billable fix actor passes a person first, either way.
+    #
+    # It reads the work under review through the fix lane's `handoff` handle
+    # (issue #74), never through a path: this node runs on thor and the fix
+    # lane runs on spark, and the only reason it is reachable at all is that
+    # `fix.completed` could not have been reported without producing one.
     review:
       kind: agent
       ownerRef: team/quality
@@ -363,8 +540,18 @@ spec:
       input:
         bindings:
           instruction: /run/input/review_instruction
+          # WHERE this session runs — the review host's OWN allowlisted
+          # checkout, which the codex bridge requires and resolves against its
+          # allowlist. It is a working directory, NOT the work under review:
+          # that checkout knows nothing about what the fix lane just did on a
+          # different machine (issue #74).
           repo: /run/input/review_repo
           sandbox: /run/input/review_sandbox
+          # WHAT is under review — the fix lane's portable handle. This is the
+          # binding that replaced "hand the other host your path", and it is
+          # the only one of review's inputs that carries the fix lane's actual
+          # work across the machine boundary.
+          handoff: /nodes/fix/output/handoff
           fixReport: /nodes/fix/output
           fixEvidence: /nodes/fix/evidence
           runEvidence: /ledger/projections/evidence
@@ -372,7 +559,12 @@ spec:
         input:
           schema:
             type: object
-            required: [instruction, repo, sandbox]
+            # `handoff` is required for the same reason `fix.completed`
+            # requires it: an optional handle is one a dispatch can proceed
+            # without, and a review that proceeds without it reviews its own
+            # host's checkout — the wrong tree, silently, which is worse than
+            # the 403 it replaced.
+            required: [instruction, repo, sandbox, handoff]
         outcomes:
           approve:
             schema:
@@ -437,18 +629,37 @@ spec:
           instruction: /run/input/merge_instruction
           fixReport: /nodes/fix/output
           reviewVerdict: /nodes/review/output
-          # Issue #73: a binding value must be a JSON-Pointer STRING, so the
-          # observable rides run input as a whole object rather than being
-          # written inline. The nested-literal form this used to carry never
-          # compiled. The pointer form is what the live merge-as-action proof
-          # actually used; #73 tracks restoring the declaration to the graph
-          # text via a typed literal binding.
-          observe: /run/input/merge_observe
+          # WHICH pull request, per cycle: the one the fix node just opened
+          # or updated. The tracker reads `pr` from the observe block when it
+          # is there and from the task's own input otherwise, the same
+          # fallback it has always applied to `repo`.
+          pr: /nodes/fix/output/pr_number
+          # WHAT this node is waiting for, declared in the graph text (issue
+          # #73's typed literal binding). A literal is a constant fixed at
+          # publish time, which is exactly right for the observation KIND and
+          # exactly wrong for the PR number above — so the two are declared
+          # separately rather than smuggling a pointer inside a literal,
+          # which would be the template language PRD §11.2 forbids.
+          observe:
+            literal:
+              kind: github_pr_merged
       contract:
         input:
           schema:
             type: object
             required: [instruction]
+            properties:
+              instruction:
+                type: string
+              pr:
+                type: integer
+              observe:
+                type: object
+                required: [kind]
+                properties:
+                  kind:
+                    type: string
+                    const: github_pr_merged
         outcomes:
           merged:
             schema:
@@ -571,13 +782,29 @@ spec:
           instruction: /run/input/await_reply_instruction
           reviewVerdict: /nodes/review/output
           questionPosted: /nodes/ask-pr-question/output
-          # Same pointer form as human-merges-pr above, same reason (#73).
-          observe: /run/input/reply_observe
+          # Same split as human-merges-pr above, same reason (#73): which PR
+          # is per-cycle data, what is being watched is a declaration.
+          pr: /nodes/fix/output/pr_number
+          observe:
+            literal:
+              kind: github_pr_reply
       contract:
         input:
           schema:
             type: object
             required: [instruction]
+            properties:
+              instruction:
+                type: string
+              pr:
+                type: integer
+              observe:
+                type: object
+                required: [kind]
+                properties:
+                  kind:
+                    type: string
+                    const: github_pr_reply
         outcomes:
           answered:
             schema:
@@ -624,6 +851,31 @@ spec:
       output:
         from: /nodes/sweep/output
 
+    # Where `fix.handoff_unavailable` ends (issue #74). A missing HOST
+    # capability is not something any other node in this graph can resolve:
+    # no amount of reviewing, asking or waiting gives the fix host an artifact
+    # store. So the run ends, and it ends carrying the FIX node's output
+    # rather than `finish`'s sweep report — that output is where
+    # `missing_capability` lives, and a terminal run whose output does not
+    # name why it stopped is the same illegible failure this whole change is
+    # about.
+    #
+    # It is a separate `end` node rather than a route into `finish` for
+    # exactly that reason: `finish` outputs the sweep report, which would
+    # bury the one fact that matters here.
+    #
+    # No notification node sits in front of it deliberately: the notify actor
+    # takes static per-run text (see notify-decision-pending), so it could
+    # announce that something stopped but not WHICH capability is missing —
+    # and adding two more run-input fields to say less than the run output
+    # already says is not a trade worth making. An operator reads the named
+    # outcome on the run.
+    handoff-blocked:
+      kind: end
+      ownerRef: team/platform-ai
+      output:
+        from: /nodes/fix/output
+
   edges:
     # Both sweep outcomes are domain answers headed for triage: `passed`
     # is exit 0 (work found), `failed` is any nonzero exit — the sentinel
@@ -650,6 +902,12 @@ spec:
 
     - from: fix.completed
       to: review
+    # The honest failure never reaches review (issue #74). Routing a fix that
+    # produced no portable handle into the review node is precisely what
+    # turned a topology problem into an HTTP 403 on another machine; the run
+    # stops here instead, naming the capability that is missing.
+    - from: fix.handoff_unavailable
+      to: handoff-blocked
 
     # A clean review verdict becomes an ACTIVE merge assignment on the
     # human actor (user decision: "waiting for merge" is work in a

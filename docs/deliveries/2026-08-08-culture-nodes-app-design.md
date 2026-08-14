@@ -8,7 +8,7 @@ baseline: `devague summary skeleton`
 Execute the converged 27-task, 8-wave plan that turns this repo from a PRD +
 mesh-agent scaffold into the Phase-0/1 Culture Nodes product: a Go control
 plane implementing the PRD's durable graph runtime, a React Flow web front
-carrying the agentculture.org design system, a thin Python CLI front over one
+carrying the AgentCulture design system, a thin Python CLI front over one
 OpenAPI surface, Docker/k8s-native packaging, and trigger-only external
 agents behind the provider-neutral actor protocol. One task per agent per
 wave in isolated worktrees, TDD-gated merges by the main agent.

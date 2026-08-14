@@ -1,0 +1,90 @@
+# The approval slice again, with the review node's context declared through
+# named bindings instead of a whole-value `from` — one pointer beside one
+# literal (issue #73). An approval node's binding is carried as a REFERENCE
+# into the human task's context_refs rather than resolved into a payload, so
+# this fixture is what proves a literal survives that path intact: what the
+# author wrote in the graph is what the person is shown.
+apiVersion: nodes.culture.dev/v1alpha1
+kind: Workflow
+
+metadata:
+  name: engine-approval-literal-slice
+  version: 1.0.0
+  ownerRef: team/platform-ai
+
+spec:
+  entry: intake
+
+  contract:
+    input:
+      schema:
+        type: object
+        required: [subject]
+        properties:
+          subject:
+            type: string
+    output:
+      schema:
+        type: object
+
+  limits:
+    maxDuration: 1h
+    maxTransitions: 32
+    maxVisitsPerNode: 8
+    maxParallelTokens: 1
+
+  ledger:
+    schemaVersion: nodes.culture.dev/ledger/v1alpha1
+    maxRecordsPerNode: 10
+
+  nodes:
+    intake:
+      kind: agent
+      ownerRef: team/platform-ai
+      uses: actor://company/intake@sha256:111111
+      input:
+        from: /run/input
+      contract:
+        outcomes:
+          completed:
+            schema:
+              type: object
+              required: [scope]
+              properties:
+                scope:
+                  type: string
+      policy:
+        timeout: 5m
+        retry:
+          maxAttempts: 1
+          backoff: none
+
+    review:
+      kind: approval
+      ownerRef: team/platform-ai
+      decisionSchemaRef: ./contracts/review-decision.schema.json
+      approverRef: group/platform-ai-approvers
+      deadline: 2h
+      input:
+        bindings:
+          scope: /nodes/intake/output/scope
+          observe:
+            literal:
+              kind: github_pr_merged
+              pr: 42
+
+    finish:
+      kind: end
+      ownerRef: team/platform-ai
+      output:
+        from: /nodes/intake/output
+
+  edges:
+    - from: intake.completed
+      to: review
+
+    - from: review.approved
+      to: finish
+
+    - from: review.rejected
+      to: finish

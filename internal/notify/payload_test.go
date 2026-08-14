@@ -172,6 +172,51 @@ func TestBuildMessageDiscordFieldsTraceOnlyToPayload(t *testing.T) {
 	}
 }
 
+// TestBuildMessageOmitsAnEmptyActorEntirely pins issue #66's second
+// finding at the rendering layer: an empty Actor is a legitimate fact (a
+// code-node or wait-node run has no agent actor), and the honest rendering
+// omits the field rather than emitting a blank one. Absent and empty are
+// different facts, and only one of them is worth a line.
+func TestBuildMessageOmitsAnEmptyActorEntirely(t *testing.T) {
+	payload := notify.Payload{
+		RunID:         "run_1",
+		Workflow:      "parallel-live-proof (8d4c768)",
+		Event:         "run.created",
+		DashboardLink: "https://dashboard.example/runs/run_1",
+	}
+
+	discordRaw, err := notify.BuildMessage(discordWebhookURL, payload)
+	if err != nil {
+		t.Fatalf("BuildMessage(discord): %v", err)
+	}
+	if strings.Contains(strings.ToLower(string(discordRaw)), "actor") {
+		t.Errorf("an empty actor must not render at all, got: %s", discordRaw)
+	}
+
+	var msg discordWireShape
+	if err := json.Unmarshal(discordRaw, &msg); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	if got, want := len(msg.Embeds[0].Fields), 4; got != want {
+		t.Errorf("embed has %d fields, want %d (no blank Actor field): %+v", got, want, msg.Embeds[0].Fields)
+	}
+	if got, want := msg.Embeds[0].Description, "Run run_1 reached run.created"; got != want {
+		t.Errorf("description = %q, want %q (no dangling actor parenthetical)", got, want)
+	}
+
+	genericRaw, err := notify.BuildMessage(genericWebhookURL, payload)
+	if err != nil {
+		t.Fatalf("BuildMessage(generic): %v", err)
+	}
+	var generic map[string]any
+	if err := json.Unmarshal(genericRaw, &generic); err != nil {
+		t.Fatalf("unmarshal generic: %v", err)
+	}
+	if _, present := generic["actor"]; present {
+		t.Errorf(`generic body carries an "actor" key when there is no actor: %s`, genericRaw)
+	}
+}
+
 // TestBuildMessageNeverMentionsForbiddenVocabulary is a defensive,
 // grep-style guard (matching this codebase's neutrality_test.go idiom):
 // even though Payload cannot structurally carry ledger/node-output/

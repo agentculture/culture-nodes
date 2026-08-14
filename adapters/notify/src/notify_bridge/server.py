@@ -27,6 +27,10 @@ Routes:
 * ``DELETE /v1/invocations/<id>`` -- an alias for the same cancellation.
 * ``GET /healthz`` -- operational convenience, no protocol meaning, the
   only unauthenticated route.
+* ``GET /v1/capabilities`` -- the preflight capability surface this bridge
+  advertises (issue #67, task t15): the measured host facts an actor
+  registration carries in ``capabilities``. Authenticated; optional in the
+  protocol, so an actor that serves nothing here is still conformant.
 """
 
 from __future__ import annotations
@@ -42,7 +46,7 @@ from http.server import BaseHTTPRequestHandler, HTTPServer
 from typing import Any
 from urllib.parse import urlsplit
 
-from notify_bridge import mapping, payload
+from notify_bridge import capabilities, mapping, payload, preflight
 from notify_bridge.config import Config
 from notify_bridge.idempotency import IdempotencyStore
 from notify_bridge.webhook import post as webhook_post
@@ -220,6 +224,9 @@ class Handler(BaseHTTPRequestHandler):
             if split.path == "/healthz":
                 self._write_json(200, {"status": "ok"})
                 return
+            if split.path == preflight.CAPABILITIES_PATH:
+                self._handle_capabilities()
+                return
             self._write_json(404, {"error": "not found"})
         except Exception:  # noqa: BLE001 - the server must answer, never crash
             logger.exception("unhandled error handling GET %s", self.path)
@@ -328,6 +335,19 @@ class Handler(BaseHTTPRequestHandler):
         )
         self.bridge.idempotency.put(idem_key, 200, result_body, request_fingerprint=idem_key)
         self._write_json(200, result_body)
+
+    def _handle_capabilities(self) -> None:
+        """Serve this bridge's preflight capability surface (issue #67, task
+        t15) — measured now, on this host, not read back from a config file.
+
+        Authenticated like the invocation route: the block names this host,
+        so `/healthz` stays the only unauthenticated route. Advertising is
+        all a bridge does here; the gate that reads it is per-actor,
+        default-off, and entirely engine-side (`internal/preflight`).
+        """
+        if not self._require_auth():
+            return
+        self._write_json(200, preflight.capability_block(capabilities.host_facts(self.bridge.cfg)))
 
     def _handle_cancel(self, invocation_id: str) -> None:
         if not self._require_auth():

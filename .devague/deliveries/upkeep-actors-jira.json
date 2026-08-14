@@ -1,0 +1,18 @@
+{
+  "plan_slug": "upkeep-actors-jira",
+  "schema_version": 1,
+  "created": "2026-08-14T14:12:30Z",
+  "updated": "2026-08-14T14:12:30Z",
+  "deviations": [
+    {
+      "id": "d1",
+      "what": "Spec claim c60 (confirmed) says the batch ships as several smaller PRs opened EARLY so per-PR SonarCloud and Qodo findings exist for the pr-upkeep loop to consume. The PR now comes at the END instead. Consequence, stated plainly: c60 was the MECHANISM behind t17's three-item target. With zero open PRs, the Qodo feed, the per-PR Sonar query and t7's brand-new check-runs source all return nothing, so the sweep's entire supply stays at the 3 main-branch findings measured during the challenge pass. t17 either draws from that thin supply or reports honestly short. The end-of-cycle PR will generate PR-scoped findings, but only after the work it was meant to feed is done.",
+      "task_ref": "t17",
+      "reason": "Operator decision: the PR is the seal on the work rather than a feed for it. Approved and recorded rather than silently followed, so the delivery summary can explain t17's number instead of the next cycle re-deriving why supply was thin.",
+      "affects": [],
+      "origin": "user",
+      "status": "approved",
+      "classification": null
+    }
+  ]
+}

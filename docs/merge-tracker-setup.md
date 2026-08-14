@@ -16,6 +16,14 @@ The tracker is a small stdlib-only Python process living beside the
 human-inbox bridge in `adapters/human-inbox`. It runs **outside the
 culture-nodes deployment**, as a systemd user unit on the bridge host.
 
+"The bridge host" is not a machine this repo names. `deploy.sh` resolves the
+human actor's registered `endpoint_ref` and installs the bridge and the
+tracker together on whichever host serves it — so the commands below still
+say `thor`, because that is the control plane being deployed, while the two
+human-inbox units land wherever `company/human-ops` is registered. The deploy
+refuses if those would come apart, and the tracker refuses to start if they
+already have (issue #72; `deploy/prod/README.md` has the full account).
+
 That placement is deliberate and load-bearing: **the control plane holds no
 GitHub credential and never calls the GitHub API.** A CI gate enforces it
 (`tests/lint/github_isolation_test.go` scans `internal/` and `cmd/`). If you
@@ -158,16 +166,26 @@ human-actor node, with the PR number coming from wherever the flow produced
 it:
 
 ```yaml
-- id: merge-gate
+merge-gate:
   kind: agent
-  uses: company/human-ops
+  ownerRef: team/platform-ai
+  uses: actor://company/human-ops@sha256:...
   input:
     bindings:
-      instruction: "Merge PR #{{ .nodes.open-pr.output.number }} when the review is green"
+      instruction: /run/input/merge_instruction
+      # Which PR: per-run data, so a JSON Pointer at whatever produced it.
+      pr: /nodes/open-pr/output/number
+      # What is being watched: a declaration, so a literal (issue #73).
       observe:
-        kind: github_pr_merged
-        pr: "{{ .nodes.open-pr.output.number }}"
+        literal:
+          kind: github_pr_merged
 ```
+
+There is no template language (PRD §11.2): a binding value is either a JSON
+Pointer or a `literal:`, so the observation kind and the PR number are
+declared side by side rather than interpolated into one string. The tracker
+reads `pr` from the `observe` block when it is there and from the task's own
+input otherwise.
 
 Every non-`instruction` input key is preserved verbatim into the bridge's
 stored task, which is how the declaration reaches the tracker without any

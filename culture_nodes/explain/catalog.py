@@ -38,6 +38,7 @@ response.
 - `culture-nodes ledger records|projection`
 - `culture-nodes review create|commit`
 - `culture-nodes human-tasks list|get|decide`
+- `culture-nodes dispatch pending|show|confirm`
 
 ## API configuration
 
@@ -65,6 +66,7 @@ the `NODES_HUMAN_DECISION_TOKEN` environment variable — never logged.
 - `culture-nodes explain ledger`
 - `culture-nodes explain review`
 - `culture-nodes explain human-tasks`
+- `culture-nodes explain dispatch`
 """
 
 _WHOAMI = """\
@@ -429,6 +431,52 @@ alongside this decision (ordinarily empty).
 """
 
 
+_DISPATCH = """\
+# culture-nodes dispatch
+
+Thin REST client over the clarify-then-commit gate (`api/openapi/openapi.yaml`,
+`preflights` tag): pending, show, confirm. The gate briefs a dispatched actor
+BEFORE its first billable turn — the operating facts its task depends on, as
+that actor's own bridge advertised them — and holds the dispatch until the
+briefing is acknowledged (issue #67).
+
+## Usage
+
+    culture-nodes dispatch pending [--actor-key KEY] [--limit N]
+    culture-nodes dispatch show <preflight-id>
+    culture-nodes dispatch confirm <preflight-id> --actor-id ACTOR [--note TEXT]
+
+## The three verbs are one sequence
+
+`pending` answers "is anything waiting on me". `show` prints the briefing
+itself — host capabilities, the task declaration, the expected terminal
+shape, and what does not proceed until it is acknowledged. `confirm` is the
+second, separate action that commits the dispatch, recording the actor's
+*proposed* claim to have read it. A confirm without a show is a keystroke,
+not an acknowledgement.
+
+## What confirm records, and what it does not
+
+The acknowledgement is a `proposed` ledger record naming the briefing by id
+AND content digest. It is a claim that the actor was told, never evidence
+that it understood — no actor promotes its own claim (PRD §10.4).
+
+It is **single-use** (the next dispatch of that node needs its own briefing)
+and **windowed** (default 15 minutes). Confirming an already-answered, spent
+or expired briefing is refused with HTTP 409, and a dispatch whose window
+closes unacknowledged is refused rather than sent — routing under the
+`preflight_unacknowledged` outcome, which a workflow author may declare an
+edge from.
+
+## Gate configuration
+
+The gate is per-actor and default-off. It is enabled on the actor's
+registration (`metadata.preflight_gate`), and enabling it for an actor whose
+registration advertises no `capabilities.preflight` surface is refused when
+the actor is registered — not discovered later by a run that stalls.
+"""
+
+
 ENTRIES: dict[tuple[str, ...], str] = {
     (): _ROOT,
     ("culture-nodes",): _ROOT,
@@ -469,4 +517,8 @@ ENTRIES: dict[tuple[str, ...], str] = {
     ("human-tasks", "list"): _HUMAN_TASKS,
     ("human-tasks", "get"): _HUMAN_TASKS,
     ("human-tasks", "decide"): _HUMAN_TASKS,
+    ("dispatch",): _DISPATCH,
+    ("dispatch", "pending"): _DISPATCH,
+    ("dispatch", "show"): _DISPATCH,
+    ("dispatch", "confirm"): _DISPATCH,
 }

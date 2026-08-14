@@ -9,9 +9,16 @@
 # unit is therefore the only thing on the host that both speaks the actor
 # protocol and holds the webhook URL.
 #
-# Deployed on THOR ONLY, for the same reason the human-inbox bridge is: one
-# logical notification actor (company/notify-discord). A second bridge on orin
-# would be a second identity posting to the same channel.
+# Deployed on THOR ONLY: one logical notification actor
+# (company/notify-discord), so a second bridge on orin would be a second
+# identity posting to the same channel.
+#
+# That is a DECLARED host, and the human-inbox units next door no longer have
+# one — theirs is derived from their actor's registered endpoint_ref after a
+# declaration here went stale against a registration and split a live
+# deployment (issue #72). company/notify-discord happens to be registered on
+# thor today; if it ever moves, this lane needs the same treatment rather than
+# an edit to this comment.
 #
 # Installed by deploy.sh's notify lane to
 # ~/.config/systemd/user/notify-bridge.service, execing the console script

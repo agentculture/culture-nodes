@@ -1,17 +1,29 @@
 #!/usr/bin/env python3
-"""PR-upkeep sweep: unresolved SonarCloud issues + open Qodo PR findings
--> one prioritised work-item list (plan task t21, spec claims c15/c26).
+"""PR-upkeep sweep: unresolved SonarCloud issues + open Qodo PR findings +
+failed CI check runs -> one prioritised work-item list (plan task t21, spec
+claims c15/c26; the third source is task t7 / issue #61).
 
 This is the payload of the pr-upkeep workflow's `sweep` code node. It runs
 through the runner boundary (never in a control-plane process), talks to
-exactly two read-only surfaces over an egress allowlist, and prints a JSON
-report to stdout. It holds no write credential of any kind.
+read-only surfaces on exactly two hosts over an egress allowlist
+(sonarcloud.io + api.github.com — the third source added no new host and no
+new credential), and prints a JSON report to stdout. It holds no write
+credential of any kind.
 
 The repo is HARD-CODED to culture-nodes and nothing else — spec claim c26.
 `SONAR_COMPONENT_KEY` below is the single grep-able mention of the
 SonarCloud component key in this example's configuration (the recorded
 fixtures under fixtures/ also contain the key, as data inside recorded API
-payloads, not as configuration).
+payloads, not as configuration). That pin is a deliberate blast-radius
+boundary and it is the one value a new operator changes; see the comment at
+the constants themselves for why it is a fork rather than a run input.
+
+The workflow does not ship this file inside its image. It fetches it at
+dispatch time from the URL its deployment grants
+(`PR_UPKEEP_SWEEP_SOURCE_URL`) and refuses bytes whose sha256 does not match
+the digest it also grants (`PR_UPKEEP_SWEEP_SOURCE_SHA256`), so a deployment
+that is not this one runs ITS copy of this script — with its own two
+constants — rather than ours (task t16).
 
 Exit-code contract (the workflow's `triage` decision node routes on
 `/nodes/sweep/output`'s `exit_code`, because a code node's persisted output
@@ -36,9 +48,21 @@ entirely. See `MAX_PRS_PER_SWEEP` for the request-budget bound and
 `dedupe_sonar_items` for how a finding that shows up on more than one query
 in the same sweep collapses to one work item.
 
+A red CI check is the THIRD finding source (issue #61, found live on PR
+#60: the spec PR sat with a failed `lint` job while a sweep ran and
+honestly reported nothing for it, because a check conclusion is neither a
+SonarCloud issue nor a Qodo review body). `check_run_work_items` reads
+`GET /repos/{repo}/commits/{head_sha}/check-runs` for each swept PR — the
+SAME capped PR set the other two per-PR queries use, one more request per
+PR — and emits a work item per failed check run. Sonar-named checks are
+skipped there: a red quality gate already arrives as SonarCloud issues
+above, and counting its check run too would book the same work twice.
+
 Dependencies: Python 3.12 stdlib only, mirroring the reference bridges'
-no-PyPI-graph constraint. Unit tests: tests/test_pr_upkeep_sweep.py runs
-the parsing functions against recorded fixtures (see fixtures/).
+no-PyPI-graph constraint (enforced by a test that walks this module's
+import statements against `sys.stdlib_module_names`). Unit tests:
+tests/test_pr_upkeep_sweep.py runs the parsing functions against recorded
+fixtures (see fixtures/).
 """
 
 from __future__ import annotations
@@ -50,9 +74,21 @@ import sys
 import urllib.error
 import urllib.request
 
-# The one repo this sweep is allowed to look at (spec claim c26). PR
-# enumeration below stays scoped to OPEN PRs on this exact repo — it does
-# not generalise to arbitrary repos.
+# The one repo this sweep is allowed to look at (spec claim c26), and the
+# one value a new operator changes to point this example at their own — in
+# their own copy of this file, which is what the workflow's granted
+# PR_UPKEEP_SWEEP_SOURCE_URL fetches.
+#
+# These two stay HARD-CODED on purpose, and the purpose is a blast radius
+# boundary rather than an oversight. `fetch_open_pulls` below walks EVERY
+# open PR on this repo and reads each one's comments and check runs; a repo
+# taken from run input would point that enumeration at whatever a caller
+# named, on a credential this script did not choose. So the boundary is
+# pinned in code, where changing it is an edit someone makes deliberately in
+# a fork, not a field someone fills in at run time. Nothing in this module
+# may re-point it from the environment — tests/test_pr_upkeep_sweep.py's
+# TestTheSweptRepoIsPinnedAndSaysSo asserts exactly that, alongside the
+# presence of this note.
 SONAR_COMPONENT_KEY = "agentculture_culture-nodes"
 GITHUB_REPO = "agentculture/culture-nodes"
 
@@ -68,6 +104,12 @@ SONAR_PR_ISSUES_URL = (
     "?componentKeys={key}&resolved=false&pullRequest={pr}&ps=100"
 )
 GITHUB_API = "https://api.github.com"
+
+#: Check runs for one PR's head commit. GitHub's default `filter=latest`
+#: already collapses re-runs to the current attempt, so a job that failed
+#: and was re-run green is reported green — the sweep does not have to
+#: de-duplicate attempts itself.
+GITHUB_CHECK_RUNS_URL = "{api}/repos/{repo}/commits/{sha}/check-runs?per_page=100"
 
 #: Upper bound on open PRs swept per cycle, for BOTH the SonarCloud
 #: per-PR query above and the existing Qodo per-PR comment fetch below —
@@ -93,9 +135,11 @@ MAX_PRS_PER_SWEEP = 10
 #: sweep broke" by this value alone.
 EXIT_EMPTY = 10
 
-#: Unified priority rank across the two finding vocabularies. Lower sorts
+#: Unified priority rank across the three finding vocabularies. Lower sorts
 #: first. SonarCloud: BLOCKER/CRITICAL/MAJOR/MINOR/INFO; Qodo badge
-#: severities: High/Medium/Low.
+#: severities: High/Medium/Low; CI check runs map onto the SAME ladder via
+#: REQUIRED_CHECK_SEVERITY / OPTIONAL_CHECK_SEVERITY below rather than
+#: introducing a fourth vocabulary.
 _SEVERITY_RANK = {
     "BLOCKER": 0,
     "CRITICAL": 1,
@@ -111,6 +155,41 @@ _SEVERITY_RANK = {
 # for resolved=false; this is the defensive re-check so a stale or
 # hand-fed payload cannot resurrect closed issues.
 _SONAR_OPEN_STATUSES = {"OPEN", "CONFIRMED", "REOPENED"}
+
+#: Severity a failed check run inherits, by whether the check gates merge.
+#: CRITICAL and HIGH share rank 1 above, so a failed required check sorts in
+#: the same band as a Qodo `High` finding — a merge-blocking red job is the
+#: most actionable thing this sweep can hand the fix node. MEDIUM (rank 2)
+#: keeps a failed optional check visible without letting it outrank real
+#: gate failures.
+REQUIRED_CHECK_SEVERITY = "CRITICAL"
+OPTIONAL_CHECK_SEVERITY = "MEDIUM"
+
+#: Which check names gate a merge. This is a DECLARED policy list, not a
+#: fact read from GitHub: the check-runs API does not report required-ness,
+#: and `GET /repos/{repo}/branches/main/protection` answers 404 "Branch not
+#: protected" for this repo (checked 2026-08-14), so there is no branch
+#: protection to read it from either. These three are the jobs CLAUDE.md
+#: names as merge gates (tests.yml's `test`, `lint`, and `version-check`).
+#: When branch protection does land here, this list should be replaced by
+#: the protection API's own answer rather than kept in sync by hand.
+#: Override with PR_UPKEEP_REQUIRED_CHECKS (comma-separated; explicitly
+#: empty means "nothing is required", which is the literal truth today and
+#: demotes every check failure to MEDIUM).
+REQUIRED_CHECKS = frozenset({"test", "lint", "version-check"})
+
+#: Check-run conclusions that mean "this check found something a person or
+#: the fix node must act on". `cancelled` is deliberately absent: a
+#: cancelled run is a superseded or human-interrupted job, not a finding,
+#: and reporting it would put noise at the top of a severity-ranked list.
+#: `neutral`, `stale`, and `skipped` are likewise not failures.
+_FAILING_CHECK_CONCLUSIONS = frozenset({"failure", "timed_out", "action_required"})
+
+#: Sonar's own checks, matched on BOTH the check name and the app slug
+#: (`sonarqubecloud`) so a renamed check is still recognised. Findings from
+#: these arrive through the SonarCloud issues feed above; see
+#: `check_run_work_items` for why they are skipped here.
+_SONAR_CHECK_RE = re.compile(r"sonar", re.IGNORECASE)
 
 _QODO_BOT_LOGIN = "qodo-code-review[bot]"
 _QODO_REVIEW_HEADER = "<h3>Code Review by Qodo</h3>"
@@ -244,6 +323,76 @@ def dedupe_sonar_items(items: list[dict]) -> list[dict]:
             by_key[key] = index
             by_fingerprint[fingerprint] = index
     return ordered
+
+
+def _required_checks() -> frozenset:
+    """The declared required-check set, or the PR_UPKEEP_REQUIRED_CHECKS
+    override. An explicitly empty override is honoured as an answer (see
+    REQUIRED_CHECKS) — unlike the numeric cap override, where empty is a
+    typo rather than a meaning."""
+    raw = os.environ.get("PR_UPKEEP_REQUIRED_CHECKS")
+    if raw is None:
+        return REQUIRED_CHECKS
+    return frozenset(name.strip() for name in raw.split(",") if name.strip())
+
+
+def _is_sonar_check(check: dict) -> bool:
+    slug = (check.get("app") or {}).get("slug") or ""
+    return bool(_SONAR_CHECK_RE.search(check.get("name", "")) or _SONAR_CHECK_RE.search(slug))
+
+
+def check_run_work_items(
+    payload: dict, *, pr: int, required: frozenset | None = None
+) -> list[dict]:
+    """GitHub check-runs response for one PR's head commit -> work items.
+
+    Only COMPLETED check runs with a failing conclusion become work (see
+    `_FAILING_CHECK_CONCLUSIONS`); a still-running check is not yet a
+    failure, and a green or skipped one is not work at all.
+
+    Sonar-named checks are skipped outright. A red SonarCloud quality gate
+    is not a separate piece of work from the issues that made it red — those
+    already arrive through `sonar_work_items`, with a rule, a file and a
+    line the fix node can act on, where the check run carries only "the gate
+    failed". Emitting both would put two items on the list for one fix.
+
+    `required` defaults to `_required_checks()`; it is a parameter so tests
+    (and a future branch-protection lookup) can supply the set directly.
+    """
+    required = _required_checks() if required is None else required
+    items = []
+    for check in payload.get("check_runs", []):
+        if check.get("status") != "completed":
+            continue
+        conclusion = (check.get("conclusion") or "").lower()
+        if conclusion not in _FAILING_CHECK_CONCLUSIONS:
+            continue
+        if _is_sonar_check(check):
+            continue
+        name = check.get("name", "")
+        output_title = (check.get("output") or {}).get("title") or ""
+        # GitHub Actions leaves output.title null on a plain job failure, so
+        # the check name has to carry the item's identity by itself.
+        title = f"{name}: {output_title}" if output_title else f"{name}: check run {conclusion}"
+        items.append(
+            {
+                "source": "github-check",
+                "id": f"pr{pr}-check-{check.get('id', name)}",
+                "pr": pr,
+                "severity": (
+                    REQUIRED_CHECK_SEVERITY if name in required else OPTIONAL_CHECK_SEVERITY
+                ),
+                "kind": "CI check failure",
+                "check": name,
+                "required": name in required,
+                "conclusion": conclusion,
+                "file": "",
+                "line": None,
+                "title": title,
+                "details_url": check.get("details_url") or check.get("html_url") or "",
+            }
+        )
+    return items
 
 
 def qodo_counts(body: str) -> dict:
@@ -391,13 +540,33 @@ def fetch_sonar_issues(pr: int | None = None) -> dict:
     return _get_json(SONAR_PR_ISSUES_URL.format(key=SONAR_COMPONENT_KEY, pr=pr))
 
 
-def fetch_open_pull_numbers(token: str | None) -> list[int]:
-    """Every currently open PR's number, unfiltered. The cap lives with the
-    caller (`main`) so the SAME swept set feeds both the SonarCloud per-PR
-    query and the Qodo per-PR comment fetch below, one request per PR each,
-    rather than two independently-capped (and possibly diverging) sets."""
+def fetch_open_pulls(token: str | None) -> list[dict]:
+    """Every currently open PR as ``{"number": int, "head_sha": str}``,
+    unfiltered. The cap lives with the caller (`main`) so the SAME swept set
+    feeds all three per-PR queries — the SonarCloud per-PR query, the Qodo
+    comment fetch, and the check-runs fetch below, one request per PR each —
+    rather than independently-capped (and possibly diverging) sets.
+
+    The head sha rides along from this ONE list request because the
+    check-runs endpoint is keyed by commit: fetching it per PR instead would
+    double this source's request cost for nothing. A PR object that arrives
+    without a head sha keeps its entry with an empty one; `main` reports it
+    rather than dropping it quietly."""
     pulls = _get_json(f"{GITHUB_API}/repos/{GITHUB_REPO}/pulls?state=open&per_page=50", token)
-    return [pull.get("number") for pull in pulls if isinstance(pull.get("number"), int)]
+    open_pulls = []
+    for pull in pulls:
+        if not isinstance(pull.get("number"), int):
+            continue
+        head = pull.get("head") or {}
+        open_pulls.append({"number": pull["number"], "head_sha": head.get("sha") or ""})
+    return open_pulls
+
+
+def fetch_check_runs(token: str | None, head_sha: str) -> dict:
+    """Check runs for one PR's head commit (issue #61's third source)."""
+    return _get_json(
+        GITHUB_CHECK_RUNS_URL.format(api=GITHUB_API, repo=GITHUB_REPO, sha=head_sha), token
+    )
 
 
 def fetch_open_pr_comments(token: str | None, pr_numbers: list[int]) -> tuple[list[str], list[int]]:
@@ -432,9 +601,11 @@ def main() -> int:
     try:
         sonar_items = sonar_work_items(fetch_sonar_issues())
 
-        open_prs = sorted(fetch_open_pull_numbers(token))
-        swept_prs, dropped_prs = open_prs[:max_prs], open_prs[max_prs:]
-        if dropped_prs:
+        open_pulls = sorted(fetch_open_pulls(token), key=lambda pull: pull["number"])
+        swept, dropped = open_pulls[:max_prs], open_pulls[max_prs:]
+        swept_prs = [pull["number"] for pull in swept]
+        if dropped:
+            dropped_prs = [pull["number"] for pull in dropped]
             print(
                 f"pr-upkeep sweep: {len(dropped_prs)} open PR(s) exceed the "
                 f"{max_prs}-PR-per-sweep cap and were NOT swept this cycle: "
@@ -449,10 +620,24 @@ def main() -> int:
 
         qodo_bodies, qodo_pr_numbers = fetch_open_pr_comments(token, swept_prs)
         qodo_items = qodo_work_items(qodo_bodies, qodo_pr_numbers)
+
+        check_items = []
+        for pull in swept:
+            if not pull["head_sha"]:
+                print(
+                    f"pr-upkeep sweep: PR #{pull['number']} arrived with no "
+                    "head sha, so its check runs were NOT read this cycle "
+                    "(the check-runs endpoint is keyed by commit)",
+                    file=sys.stderr,
+                )
+                continue
+            check_items.extend(
+                check_run_work_items(fetch_check_runs(token, pull["head_sha"]), pr=pull["number"])
+            )
     except (urllib.error.URLError, TimeoutError, json.JSONDecodeError) as exc:
         print(f"sweep failed: {exc}", file=sys.stderr)
         return 1
-    items = sonar_items + qodo_items
+    items = sonar_items + qodo_items + check_items
     json.dump(build_report(items), sys.stdout, indent=2, ensure_ascii=False)
     sys.stdout.write("\n")
     return exit_code_for(items)

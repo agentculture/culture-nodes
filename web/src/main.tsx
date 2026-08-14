@@ -4,7 +4,7 @@ import { BrowserRouter } from "react-router-dom";
 
 // The org's two variable faces, self-hosted — tokens.css names
 // "Fraunces Variable" and "Albert Sans Variable" in --font-display /
-// --font-body, and these are the packages agentculture.org itself ships.
+// --font-body, and these are the packages the AgentCulture project itself ships.
 import "@fontsource-variable/fraunces";
 import "@fontsource-variable/albert-sans";
 

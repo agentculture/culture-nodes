@@ -10,9 +10,10 @@ through culture-nodes' normal engine dispatch path, each producing its own
 
 - `smoke.workflow.yaml` compiles offline (`nodes validate`, or the
   `tests/deploy/codexsmoke_test.go` Go test — see below).
-- One read-only `codex exec` session completes on `codex-thor`, then one on
-  `codex-orin` (the graph is sequential — see the workflow file's own header
-  comment for why: this schema has no fan-out/parallel node kind yet).
+- One read-only `codex exec` session completes on the `codex-first` node,
+  then one on `codex-second` (the graph is sequential — see the workflow
+  file's own header comment for why: this schema has no fan-out/parallel node
+  kind yet).
 - The engine's ledger records exactly two `proposed`, `authority: proposed`
   `claim` records, attributed to `company/codex-thor` and
   `company/codex-orin` respectively (`origin.actor_id`) — proof that each
@@ -43,7 +44,9 @@ a **manual, live-only verification lane** — it is never invoked from any
   numeric LAN IP `endpoint_ref` reachable from both worker containers.
 - A git checkout at `~/git/culture-nodes-agent` on each host — `codex exec`
   refuses to run outside a git repo, and the bridge never passes
-  `--skip-git-repo-check`.
+  `--skip-git-repo-check`. The two paths reach the run as the `first_repo`
+  and `second_repo` run inputs; they are separate properties because a path
+  is meaningful on exactly one machine.
 - The culture-nodes API reachable at `http://thor:18080` (or wherever
   `NODES_API_URL` points).
 - `curl` and `jq` on the machine running `run-smoke.sh`.
@@ -59,10 +62,15 @@ Override the target API or repo paths as needed:
 ```bash
 CONFIRM_BILLABLE=yes \
   NODES_API_URL=http://thor:18080 \
-  THOR_REPO=/home/thor/git/culture-nodes-agent \
-  ORIN_REPO=/home/orin/git/culture-nodes-agent \
+  FIRST_REPO=/home/thor/git/culture-nodes-agent \
+  SECOND_REPO=/home/orin/git/culture-nodes-agent \
   ./run-smoke.sh
 ```
+
+Those defaults are **this** deployment's values, and the script's header
+block documents every one of them. Nothing in `smoke.workflow.yaml` names a
+machine: see its own "Deployment configuration" block for where each value
+comes from.
 
 The script validates the workflow against the API, publishes it, creates a
 run, polls `GET /v1alpha1/runs/{id}` until the run reaches a terminal state,

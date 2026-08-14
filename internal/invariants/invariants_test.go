@@ -115,12 +115,20 @@ var actorKindRead = regexp.MustCompile(`(?i)\b\w*(actor|grader)\w*\.Kind\b`)
 // what the control plane does, as opposed to what it stores or reports.
 var dispatchTrees = []string{"actors", "worker", "engine", "compiler", "api"}
 
-// sanctionedKindAware is the one file allowed to branch on actor kind:
-// the grades API decides record authority from the grading actor's
-// registered kind (a human grading directly is their own confirmation;
-// an agent grading is a proposal). Spec c16 names it as the precedent all
-// other kind-aware code must follow — outside dispatch.
-const sanctionedKindAware = "internal/api/grades.go"
+// sanctionedKindAware are the files allowed to branch on actor kind, each
+// with the standing that earns it. Every one of them decides a LEDGER
+// question — what origin or authority a record carries — from the producing
+// actor's registered kind, and none of them is on a dispatch path. Spec c16
+// names the grades API as the precedent all other kind-aware code follows.
+var sanctionedKindAware = map[string]string{
+	"internal/api/grades.go": "grade authority follows the grader's registered kind: a human grading directly " +
+		"is their own confirmation, an agent grading is a proposal (the c16 precedent)",
+	"internal/api/preflights.go": "a clarify-then-commit acknowledgement's ledger ORIGIN follows the " +
+		"acknowledging actor's registered kind — agent when a bridge answers for itself, human when an " +
+		"operator answers on its behalf. The authority is proposed either way (issue #67, task t14), so " +
+		"the kind decides who the record says produced it, never what the control plane does with it: " +
+		"the gate's dispatch-side half (internal/worker/clarifygate.go) reads no kind at all",
+}
 
 // TestActorKindReadsStayOutOfDispatch is the c16 sweep the neutrality test
 // does not perform: no non-test file in the dispatch trees reads an actor's
@@ -130,7 +138,7 @@ func TestActorKindReadsStayOutOfDispatch(t *testing.T) {
 	internalDir := filepath.Join(root, "internal")
 
 	scanned := 0
-	sanctionedHit := false
+	sanctionedHits := map[string]bool{}
 	for _, tree := range dispatchTrees {
 		treeRoot := filepath.Join(internalDir, tree)
 		if _, err := os.Stat(treeRoot); err != nil {
@@ -153,8 +161,8 @@ func TestActorKindReadsStayOutOfDispatch(t *testing.T) {
 			if loc == nil {
 				return nil
 			}
-			if rel == sanctionedKindAware {
-				sanctionedHit = true
+			if _, sanctioned := sanctionedKindAware[rel]; sanctioned {
+				sanctionedHits[rel] = true
 				return nil
 			}
 			t.Errorf("%s reads an actor kind (%s)\n"+
@@ -174,10 +182,12 @@ func TestActorKindReadsStayOutOfDispatch(t *testing.T) {
 	if scanned == 0 {
 		t.Fatal("the actor-kind guard scanned no files; it is not proving anything")
 	}
-	if !sanctionedHit {
-		t.Errorf("%s no longer matches the actor-kind pattern — either the sanctioned branch moved "+
-			"(update sanctionedKindAware and docs/invariants.md) or the pattern rotted and this guard "+
-			"is no longer detecting anything", sanctionedKindAware)
+	for rel := range sanctionedKindAware {
+		if !sanctionedHits[rel] {
+			t.Errorf("%s no longer matches the actor-kind pattern — either the sanctioned branch moved "+
+				"(update sanctionedKindAware and docs/invariants.md) or the pattern rotted and this guard "+
+				"is no longer detecting anything", rel)
+		}
 	}
 	t.Logf("scanned %d non-test .go files across internal/%v for actor-kind reads", scanned, dispatchTrees)
 }
@@ -246,6 +256,7 @@ var authorityAllowlists = []struct {
 			"internal/worker/successsignal.go": "validator-origin writer: mechanical success_signal evaluation (t18, issue 37)",
 			"internal/worker/hooks.go":         "validator-origin writer: assurance-hook rejection reviews at the runner boundary",
 			"internal/devague/deliverables.go": "engine-origin writer: pre-batch devague import derives delivery summaries",
+			"internal/preflight/records.go":    "engine-origin writer: the clarify-then-commit gate's briefing is a deterministic composition of advertised host state and the pinned task declaration (issue #67, task t14)",
 		},
 	},
 }
@@ -260,6 +271,7 @@ var deterministicOriginByFile = map[string]string{
 	"internal/worker/successsignal.go": "OriginValidator",
 	"internal/worker/hooks.go":         "OriginValidator",
 	"internal/devague/deliverables.go": "OriginEngine",
+	"internal/preflight/records.go":    "OriginEngine",
 }
 
 // TestAuthorityLadderWritersAreAllowlisted is the c17/h15 gate: for each

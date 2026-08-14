@@ -19,8 +19,102 @@ natively on each aarch64 target.
 `install-secrets.sh` never passes a secret through argv — everything rides
 ssh stdin into mode-0600 files (the credential discipline cited from
 reachy-mini-cli's ssh module). It refuses to overwrite an existing
-`prod.env` unless `FORCE=1`, so re-deploys never silently rotate the live
-database password.
+`prod.env` unless `FORCE_PROD=1`, so re-deploys never silently rotate the
+live database password, and each other lane has its own `FORCE_*` switch
+(`FORCE_RUNNER`, `FORCE_CODEX`, `FORCE_NOTIFY`, `FORCE_HUMAN_INBOX`) so
+authorizing one rotation cannot authorize another.
+
+## prod.env is merged, never rewritten
+
+`prod.env` holds two populations of keys: the six secrets
+`install-secrets.sh` generates, and the ones that accrete afterwards —
+`NODES_NAMESPACE_ID` and `THOR_IP` written by `deploy.sh`,
+`NODES_ACTOR_CODEX_*_TOKEN` / `NODES_ACTOR_NOTIFY_TOKEN` written by later
+lanes of the same script, and `NODES_ACTOR_CLAUDE_TOKEN` /
+`DISCORD_WEBHOOK_URL` relayed in from outside.
+
+Every write **merges key by key**: an existing key's line is replaced in
+place, an unknown key is appended, and nothing else in the file is touched.
+All three lanes that write the file share one `PROD_ENV_MERGE` definition,
+because the copies had already drifted — only one of them normalised a
+missing trailing newline, and appending to a hand-edited file without one
+concatenated the new key onto the previous value.
+The prod lane used to write the whole file from its generated block, so an
+authorized rotation deleted the second population without saying so — a
+`FORCE=1` rotation destroyed `NODES_ACTOR_CLAUDE_TOKEN` and the breakage
+stayed latent for ~18 hours, because the running worker kept the token in
+memory until its next restart (`company/developer` succeeded at 13:03, then
+answered `policy_denied` / 401 at 06:42 the next morning). Merge semantics
+are pinned by `tests/deploy/prodenvmerge_test.go`, which rotates for real
+with an externally-issued key present and looks for it afterwards.
+
+### Removing a key
+
+Merging means no deploy lane can delete a line, so removal is its own
+explicit act — otherwise `prod.env` could only ever grow, and a dead
+credential would be indistinguishable from a live one:
+
+```bash
+./remove-secret.sh NODES_ACTOR_CLAUDE_TOKEN thor          # dry run: shows the
+                                                          # line, value redacted
+./remove-secret.sh NODES_ACTOR_CLAUDE_TOKEN --yes thor    # actually removes it
+```
+
+Hosts default to `thor orin`; `ENV_FILE=<name>` targets another file in
+`~/.culture-nodes` (e.g. `codex-bridge.env`). It is a dry run until `--yes`,
+it never prints a value, it refuses any key name that is not
+`[A-Za-z_][A-Za-z0-9_]*` (a pattern here would delete lines nobody named),
+and it writes no backup — a `.bak` beside `prod.env` would be a second
+unmanaged copy of live credentials. Restart whatever reads the file
+afterwards: a running container still holds the removed value in memory.
+
+### The post-deploy credential audit
+
+Merging fixed the mechanism that ate `NODES_ACTOR_CLAUDE_TOKEN`.
+`audit-credentials.sh` is the **detector** for whatever eats a key next — a
+hand edit, a restore from an older copy, a lane that was never taught to
+install a key on this host. `deploy.sh` runs it **last**, after the stack is
+up, on both lanes:
+
+```bash
+./audit-credentials.sh thor      # 0 = complete, 1 = a required key is gone
+```
+
+It compares the env keys **this host's compose file declares** against what
+`~/.culture-nodes/prod.env` on that host contains, and puts every key in one
+of three classes:
+
+| class | meaning | audit behaviour |
+|---|---|---|
+| `required` | the service cannot work without it | **fails the audit** when absent or empty |
+| `optional` | absence is a legitimate choice that *closes a feature* rather than breaking one (`DISCORD_WEBHOOK_URL`, the closed-by-default bearer secrets, the runner-service placement keys) | reported, never a failure |
+| `unknown` | present in `prod.env`, declared by no compose file (`NODES_RUNNER_SECRET` is one on both hosts) | reported and **left alone** — `prod.env` legitimately carries keys compose never mentions; `remove-secret.sh` is the deliberate removal path |
+
+The declared set is **read from `compose.thor.yml` and `compose.orin.yml`**,
+never from a list in the script, so it cannot drift from what compose
+actually substitutes (`$${VAR}` is compose's escape for the container's own
+shell and is correctly ignored). Compose also decides most of the
+classification by itself: `${KEY:?…}` is required by construction and
+`${KEY:-value}` works without the key by construction. The hand-classified
+half is only the keys compose says nothing about — `${KEY:-}`, the shape
+every credential has, including the one the incident destroyed — and it
+lives in exactly one place, `audit_classification()` in
+`audit-credentials.sh`, one entry per key with the reason it is where it is.
+A compose-declared key with an open default that nobody classified is
+reported as unclassified and treated as required until someone writes down
+which it is.
+
+Values never leave the host: the remote command emits `KEY<TAB>set|empty`,
+so the audit reports key **names** only and no credential reaches an argv or
+a log line. `tests/deploy/credentialaudit_test.go` runs the real script
+against a stub `ssh` under a per-host `HOME` and pins all of it, including
+the fixture that is missing one required key.
+
+Known gap this surfaced on its first run: **`NODES_ACTOR_CLAUDE_TOKEN` is
+not installed on orin.** `install-secrets.sh`'s relay lane targets `$THOR`
+only, while `compose.orin.yml` declares the variable — so orin's worker
+401s on any claude node run it claims. The audit reports it; installing it
+is a change to `install-secrets.sh` that has not been made.
 
 ## The runner is a host process (deviation d2)
 
@@ -32,6 +126,27 @@ containers are deliberately socketless (`tests/deploy` enforces it).
 the binary, the env file, and the unit. The runner's bearer secret lives
 in `~/.culture-nodes/runner.secret` on each machine, mirrored to the
 operator's `~/.culture-nodes/runner-secret.<host>` for registry entries.
+
+### Granted environment values (`environment_refs`)
+
+A code operation can *name* an environment value it needs; the runner
+resolves the name from its **own** process environment and refuses the
+operation by name when it is unset. Values therefore live in
+`~/.culture-nodes/runner.env` on the runner host — and because `deploy.sh`
+rewrites that file every deploy, it also re-grants them, reading them from
+the deploying operator's environment:
+
+```bash
+PR_UPKEEP_SWEEP_SOURCE_URL=https://…/sweep.py \
+PR_UPKEEP_SWEEP_SOURCE_SHA256=$(sha256sum examples/pr-upkeep/sweep.py | cut -d' ' -f1) \
+  deploy/prod/deploy.sh thor
+```
+
+Those two are `examples/pr-upkeep`'s sweep script source and its expected
+digest (task t16): the workflow names *that it needs a script*, this
+deployment decides *whose*. Leave them unset on a host that does not run the
+pr-upkeep loop — the sweep is then refused there by name, which is the
+correct answer and not a silent fallback to someone else's code.
 
 ## The runner registry (NODES_RUNNER_SERVICES_FILE)
 
@@ -181,6 +296,46 @@ records, `s` cites its scope-exploration entries). Reference config surface:
   endpoint would fail resolution from inside the container the way
   `THOR_IP` resolution already exists to avoid above (c20, h18).
 
+### Unprivileged user namespaces (issue #63)
+
+**A fresh Ubuntu 24.04 host cannot run a codex actor until this is
+changed.** Codex sandboxes every shell command it runs inside a user
+namespace, built with bubblewrap. Ubuntu 24.04 ships
+`kernel.apparmor_restrict_unprivileged_userns=1`, which blocks unprivileged
+user-namespace creation outright — so the actor registers, dispatches,
+accepts work, and then fails every command it tries to run, after the turn
+is already spent. Nothing about the error says "host provisioning": it
+surfaces as a bridge or runner fault and is neither.
+
+This fleet takes the blunt option, deliberately and with its cost stated:
+
+```bash
+echo 'kernel.apparmor_restrict_unprivileged_userns = 0' \
+  | sudo tee /etc/sysctl.d/60-culture-nodes-userns.conf
+sudo sysctl --system
+```
+
+Applied and persisted on spark, thor and orin. The cost is real: this
+restores pre-24.04 behaviour for *every* local process, re-exposing a
+kernel attack surface that has historically carried local-root CVEs. On
+these single-tenant LAN machines that is a smaller cost than on a shared
+host, but it is not zero. The better option — a scoped AppArmor profile
+granting `userns` to `bwrap` alone — stays open; none is installed today.
+Disabling the codex sandbox instead (`--sandbox danger-full-access`) is
+rejected: it widens the agent's blast radius to everything the invoking
+user can touch, to work around a sandbox bug.
+
+**Verify by capability, never by reading the sysctl back.** The value says
+what was configured; only the probe says what works:
+
+```bash
+bwrap --unshare-user --unshare-net --ro-bind / / /bin/true && echo "bwrap userns: OK"
+```
+
+`codex-preflight.sh` runs exactly this probe as its check 7, and the
+bridge unit runs the preflight as `ExecStartPre` — so a host in this state
+fails to start its bridge instead of accepting work it cannot do.
+
 ### Install, deploy, verify
 
 Extends the one-time setup above with a bridge lane:
@@ -286,7 +441,7 @@ Skipping the reset does not corrupt anything — it blocks the *next*
 **token rotation.**
 
 ```bash
-FORCE=1 ./install-secrets.sh   # generates fresh tokens; refuses without FORCE=1
+FORCE_CODEX=1 ./install-secrets.sh   # fresh bridge tokens; refuses without it
 ./deploy.sh thor                # picks up the refreshed prod.env
 ./deploy.sh orin
 ssh thor 'systemctl --user restart codex-bridge'
@@ -399,27 +554,75 @@ A healthy startup line reads `nodes-notifier consuming http://api:8080
 (default), webhook enabled)` — `webhook disabled` means the secret above
 is not yet installed.
 
-## human-inbox actor bridge + merge tracker (thor only — task t34)
+## human-inbox actor bridge + merge tracker (task t34; host derivation, t10)
 
 `adapters/human-inbox` (task t16) is a `kind=human` actor-protocol bridge:
 culture-nodes invocations park as durable inbox tasks until a person (or
 the sibling GitHub merge tracker) submits a result. Reference config
-surface: `adapters/human-inbox/README.md`. Deployed as **two host
-systemd user units on thor only** — one logical human actor
-(`company/human-ops`), unlike codex's per-host actors, so a second copy
-on orin would just race the same GitHub PRs and the same inbox tasks
-against the same actor row.
+surface: `adapters/human-inbox/README.md`. Deployed as **two host systemd
+user units, always together, on the host serving `company/human-ops`** —
+one logical human actor, unlike codex's per-host actors, so a second copy
+anywhere would race the same GitHub PRs and the same inbox tasks against
+the same actor row.
+
+### Which host they go to (issue #72)
+
+**Derived from the actor's registration, never declared.** `deploy.sh`
+and `install-secrets.sh` both source `actor-placement.sh`, which reads
+`GET /v1alpha1/actors`, takes `company/human-ops`'s newest revision, and
+uses that row's `endpoint_ref` for the host to deploy to, the port the
+bridge binds, and the `actors(id)` the bridge stamps as
+`origin.actor_id`. One registry read, so those values cannot come from
+different revisions.
+
+This lane used to say *thor only*, in a comment, in three files, while
+the actor was registered at another machine's address. The engine
+dispatches to the registration — so human tasks parked on the bridge
+there while the tracker on the declared host watched its own empty state
+directory and logged `pending=0` for as long as anyone left it running.
+Nothing failed; two config values that had to agree were agreeing only by
+luck.
+
+Two mechanisms now hold the pairing, and both are needed:
+
+- **Deploy time.** `assert_human_inbox_colocated` runs after the env
+  files are written and before either unit is installed. It reads back
+  what was actually written on the host and refuses the deploy — loudly,
+  naming both sides — if the host does not answer on the registered
+  address, if the bridge port is not the registered port, if the tracker
+  points at another bridge or another state directory, if the bridge's
+  and tracker's `HUMAN_INBOX_BRIDGE_ACTOR_ID` values are swapped, or if
+  the tracker's startup check is left disarmed.
+- **Runtime.** The tracker resolves the same registration at startup and
+  exits non-zero when its bridge is not the actor's bridge (task t8,
+  `verify_bridge_serves_actor`). `deploy.sh` writes
+  `HUMAN_INBOX_TRACKER_CONTROL_PLANE_URL` precisely so this check is
+  armed; unset, it degrades to a warning and the split runs silently
+  again.
+
+A wrong deploy that never starts is still a wrong deploy, and a right
+deploy that nothing rechecks drifts on the next endpoint move.
+
+If the actor is not registered yet, both scripts install **nothing** and
+say so: a pair deployed to a guessed host is the defect, a pair not
+deployed is a reported gap. `HUMAN_INBOX_HOST=<address>` overrides the
+lookup in `install-secrets.sh` for bootstrapping a host before its actor
+row exists; `NODES_API_URL` (default `http://thor:18080`) points both
+scripts at the control plane.
+
+`deploy/prod/actor-placement.sh` also runs its command locally rather
+than over ssh when the resolved address belongs to the machine running
+the deploy — a normal arrangement (an actor served by the operator's own
+box), and one where ssh'ing to yourself may not be configured at all.
 
 ### Architecture
 
 - `human-inbox-bridge.service` — the bridge server (`human-inbox-bridge
   serve`), always installed and started.
 - `human-inbox-tracker.service` — the GitHub merge tracker
-  (`python -m human_inbox_bridge.tracker`), installed and started **only
-  when `GITHUB_TOKEN` was actually supplied** to `install-secrets.sh`
-  (see below); absent it, deploy.sh leaves this unit uninstalled with a
-  warning rather than starting it into an immediate `TrackerConfigError`
-  crash loop. Manual submission through the bridge works either way.
+  (`human-inbox-tracker`), installed and started **unconditionally**
+  beside the bridge. `GITHUB_TOKEN` selects the authenticated polling
+  lane; without one the tracker polls public repositories anonymously.
 - Both units are **persistent, `Restart=always` services**, not a
   `--once` timer: the tracker's own module docstring documents both a
   continuous mode and a one-shot `--once` probe, and the continuous mode
@@ -427,14 +630,15 @@ against the same actor row.
   (`HUMAN_INBOX_TRACKER_POLL_SECONDS`, default 60s) with a per-cycle
   GitHub request budget — wrapping `--once` in a systemd timer would just
   reimplement that same interval as a second, redundant schedule.
-- Both run `uv run --directory` against the **same**
-  archive-independent `~/git/culture-nodes-agent` checkout the
-  codex-bridge lane above already provisions and keeps fast-forwarded
-  (`deploy_codex_bridge` / `CODEX_AGENT_CHECKOUT_REMOTE`) — reused here
-  rather than a second package-install mechanism, since
-  `adapters/human-inbox` has zero third-party runtime dependencies
-  (`dependencies = []`) and its tracker module has no console-script
-  entry point of its own to `uv tool install`.
+- Both exec console scripts installed by `uv tool install`, which copies
+  the package into its own venv — so the units keep serving after the
+  next deploy's `rm -rf` removes the tree they were built from. They used
+  to `uv run --directory` against the `~/git/culture-nodes-agent` codex
+  agent workspace, a checkout the codex-bridge lane fast-forwards to
+  main: deploying a branch installed units whose code was not in the
+  directory they ran from, and the tracker crash-looped 6272 times over
+  nine hours on `No module named human_inbox_bridge.tracker`. An agent
+  workspace and a deployment artifact source are different things.
 
 ### Install, deploy, verify
 
@@ -446,34 +650,45 @@ GITHUB_TOKEN='ghp_…' \
   ./install-secrets.sh   # + human-inbox lane: HUMAN_INBOX_BRIDGE_AUTH_TOKEN
                           # generated locally like the codex-bridge tokens;
                           # GITHUB_TOKEN relayed as-is if set; both land in
-                          # ~/.culture-nodes/human-inbox.env on thor, 0600
-./deploy.sh thor          # + human-inbox lane: bridge unit always;
-                           # tracker unit only if GITHUB_TOKEN landed
+                          # ~/.culture-nodes/human-inbox.env (0600) on the
+                          # host serving company/human-ops
+./deploy.sh thor          # + human-inbox lane: bridge AND tracker, together,
+                           # on that same derived host — which may not be the
+                           # host named on this command line
 
-# verify:
-ssh thor 'systemctl --user status human-inbox-bridge'
-ssh thor 'systemctl --user status human-inbox-tracker'   # may be absent — see above
-ssh thor 'journalctl --user -u human-inbox-bridge -n 50'
+# verify (on the host the lane reported deploying to):
+ssh <human-ops-host> 'systemctl --user status human-inbox-bridge'
+ssh <human-ops-host> 'systemctl --user status human-inbox-tracker'
+ssh <human-ops-host> 'journalctl --user -u human-inbox-tracker -n 50'
 ```
+
+A healthy tracker start logs `bridge identity confirmed: <url> serves
+actor company/human-ops (revision N, registered <endpoint>)`. A refusal
+names both endpoints and exits non-zero — see
+`adapters/human-inbox/README.md`'s "Startup identity check".
 
 ### Registering the `company/human-ops` actor
 
-Not part of this task's plumbing (an operator/DB step, per
-`adapters/human-inbox/README.md`'s own "Registering a `kind=human`
-actor" section): once the bridge is active, register it against thor's
-Postgres the same append-only way `register-actor.sh` registers codex
-actors, naming `HUMAN_INBOX_BRIDGE_AUTH_TOKEN` as the
-`metadata.auth_token_env` and the bridge's bound address
-(`http://<thor-lan-ip>:8087`) as `endpoint_ref`.
+An operator/DB step, per `adapters/human-inbox/README.md`'s own
+"Registering a `kind=human` actor" section — but note that it is what
+DECIDES the deployment, not a formality after it. `register-actor.sh`
+appends a revision the same way it does for codex actors, naming
+`HUMAN_INBOX_BRIDGE_AUTH_TOKEN` as the `metadata.auth_token_env` and the
+bridge's bound address (`http://<lan-ip>:<port>`) as `endpoint_ref`.
+
+Moving the bridge to another machine is therefore a re-registration
+followed by a deploy — never an edit to a host name in this repo. The
+next `deploy.sh` follows the new endpoint, and any pair left behind on
+the old host refuses to start rather than double-serving the actor.
 
 ### Secrets this task adds to install-secrets.sh
 
 | Env var | Installed as | Source | Host(s) |
 | --- | --- | --- | --- |
 | `CULTURE_NODES_WEBHOOK_URL` / `DISCORD_WEBHOOK_URL` | a line in `prod.env` | relayed from the operator's own shell environment when set; never fabricated | thor only |
-| `HUMAN_INBOX_BRIDGE_AUTH_TOKEN` | `~/.culture-nodes/human-inbox.env` (0600) | generated locally (`openssl rand -base64 32`), like the codex-bridge tokens | thor only |
-| `GITHUB_TOKEN` | `~/.culture-nodes/human-inbox.env` (0600) | relayed from the operator's own shell environment when set; never fabricated | thor only |
+| `HUMAN_INBOX_BRIDGE_AUTH_TOKEN` | `~/.culture-nodes/human-inbox.env` (0600) | generated locally (`openssl rand -base64 32`), like the codex-bridge tokens | the host serving `company/human-ops` |
+| `GITHUB_TOKEN` | `~/.culture-nodes/human-inbox.env` (0600) | relayed from the operator's own shell environment when set; never fabricated | the host serving `company/human-ops` |
 
 All three follow the same discipline as every other secret in this file:
-stdin over ssh, never argv; `FORCE=1` required to overwrite an existing
-value; nothing committed to this repo.
+stdin over ssh, never argv; that lane's own `FORCE_*` switch required to
+overwrite an existing value; nothing committed to this repo.

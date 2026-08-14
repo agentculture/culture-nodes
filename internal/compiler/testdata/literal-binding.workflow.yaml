@@ -1,0 +1,75 @@
+# Issue #73's option A: a binding value is either a JSON Pointer string or a
+# declared literal. Both forms sit side by side here on purpose — the whole
+# point of the literal shape is that an author reading the graph can name what
+# the node observes without leaving the file, while every pointer binding on
+# the same node keeps meaning exactly what it meant before.
+apiVersion: nodes.culture.dev/v1alpha1
+kind: Workflow
+
+metadata:
+  name: literal-binding
+  version: 1.0.0
+  ownerRef: team/platform-ai
+
+spec:
+  entry: start
+
+  contract:
+    input:
+      schemaRef: ./contracts/in.schema.json
+    output:
+      schemaRef: ./contracts/out.schema.json
+
+  nodes:
+    start:
+      kind: agent
+      ownerRef: team/platform-ai
+      uses: actor://company/start@sha256:aaaaaa
+      contract:
+        input:
+          schema:
+            type: object
+            required: [instruction, observe]
+            properties:
+              instruction:
+                type: string
+              observe:
+                type: object
+                required: [kind]
+                properties:
+                  kind:
+                    type: string
+                  pr:
+                    type: integer
+              retries:
+                type: integer
+              enabled:
+                type: boolean
+              note:
+                type: [string, "null"]
+        outcomes:
+          completed:
+            schemaRef: ./contracts/start.schema.json
+      input:
+        bindings:
+          instruction: /run/input/instruction
+          observe:
+            literal:
+              kind: github_pr_merged
+              pr: 42
+          retries:
+            literal: 3
+          enabled:
+            literal: true
+          note:
+            literal: null
+
+    finish:
+      kind: end
+      ownerRef: team/platform-ai
+      output:
+        from: /nodes/start/output
+
+  edges:
+    - from: start.completed
+      to: finish

@@ -1,11 +1,20 @@
 # systemd user unit for the human-inbox actor bridge (adapters/human-inbox,
 # task t16) — a kind=human actor-protocol bridge that parks culture-nodes
 # invocations as durable inbox tasks until a person (or the sibling
-# human-inbox-tracker.service) submits a result. Deployed on THOR ONLY
-# (task t34): there is exactly one logical human actor
-# (company/human-ops), unlike codex's per-host actors, so a second
-# bridge on orin would just create a second inbox racing the same tasks
-# against the same actor row.
+# human-inbox-tracker.service) submits a result.
+#
+# There is exactly one logical human actor, unlike codex's per-host actors:
+# a second bridge for it anywhere would create a second inbox racing the
+# same tasks against the same actor row, and a second idempotency store that
+# cannot see the first one's replays.
+#
+# WHICH HOST that one bridge runs on is not declared here. This header used
+# to name one machine in capital letters while the actor was registered at a
+# different machine's address, and the engine dispatches to the registration,
+# not to the comment (issue #72). deploy.sh derives the host from the actor's endpoint_ref and
+# refuses to install this unit anywhere else — so this file stays a
+# host-agnostic artifact, and a stale host name here is a claim nothing
+# would have kept true.
 #
 # Host-resident Python, execing the console script `uv tool install` copied
 # into its own venv. It used to run `uv run --directory` against the shared

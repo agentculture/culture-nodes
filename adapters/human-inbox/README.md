@@ -247,10 +247,29 @@ where an external tracker reads it to watch for real-world completion.
 input:
   bindings:
     instruction: /run/input/merge_instruction
-    prNumber: /nodes/fix/output
+    # Which PR: per-cycle data, so a pointer at whatever produced it.
+    pr: /nodes/fix/output/pr_number
+    # What is being watched: a declaration, so a literal (issue #73).
     observe:
-      kind: github_pr_merged
-      pr: /nodes/fix/output/pr_number   # or a literal: pr: 42
+      literal:
+        kind: github_pr_merged
+```
+
+A binding value is either a JSON Pointer or a `literal:` — never a pointer
+*inside* a literal, which would be the template language PRD §11.2 forbids.
+So the observation kind and the PR number are declared separately, and the
+tracker reads `pr` from the `observe` block when it is there and from the
+task's own input otherwise. Both of these are equivalent:
+
+```yaml
+observe:
+  literal: {kind: github_pr_merged, pr: 42}   # a fixed PR, all inline
+```
+
+```yaml
+pr: /nodes/fix/output/pr_number               # a PR the run produced
+observe:
+  literal: {kind: github_pr_merged}
 ```
 
 The tracker contract:
@@ -269,8 +288,11 @@ The tracker contract:
 The `observe` value is a free-form object; the tracker interprets the
 `kind` field to select the right external check. Two kinds are supported:
 `github_pr_merged` (t16, merge-as-action) and `github_pr_reply` (issue #71,
-the pr-upkeep decision node). Both accept `repo: owner/name`; when absent,
-the tracker uses its configured default repository.
+the pr-upkeep decision node). Both accept `repo: owner/name` and `pr:
+<number>`; when either is absent from the block the tracker falls back to
+the task's own input of the same name, and `repo` falls back once more to
+the tracker's configured default repository. A task with no PR number from
+either source stays on the manual lane.
 
 `github_pr_merged`: a task-level `input.success_outcome` is used when
 present; otherwise this observation kind reports its unambiguous `merged`
@@ -290,15 +312,20 @@ The tracker is a separate stdlib-only process beside the bridge. It reads
 only `pending` task files from the same durable state directory, calls
 `GET /repos/{repo}/pulls/{number}` anonymously for public repositories or
 with `GITHUB_TOKEN` when one is present, and talks back only to the bridge's
-authenticated submit surface. It never calls the Culture Nodes control
-plane. `merged: true` plus a non-empty `merge_commit_sha` is the sole
-auto-submit state; `closed` with `merged: false`, malformed or unsupported
-declarations, and undeclared tasks stay manual.
+authenticated submit surface. It calls the Culture Nodes control plane
+exactly once, at startup, and only to read
+`GET /v1alpha1/actors` for the identity check below — never during a poll
+cycle, and never with a callback credential. `merged: true` plus a non-empty
+`merge_commit_sha` is the sole auto-submit state; `closed` with
+`merged: false`, malformed or unsupported declarations, and undeclared tasks
+stay manual.
 
 ```bash
 # Optional: export GITHUB_TOKEN=... for private repositories or higher cadence
 export HUMAN_INBOX_BRIDGE_AUTH_TOKEN=...       # submit auth to the sibling bridge
 export HUMAN_INBOX_BRIDGE_STATE_DIR=.human-inbox-bridge-state
+export HUMAN_INBOX_BRIDGE_ACTOR_ID=company/human-ops        # the actor this bridge serves
+export HUMAN_INBOX_TRACKER_CONTROL_PLANE_URL=http://192.168.1.5:18080
 export HUMAN_INBOX_TRACKER_DEFAULT_REPO=agentculture/culture-nodes
 
 uv run python -m human_inbox_bridge.tracker
@@ -312,7 +339,8 @@ uv run python -m human_inbox_bridge.tracker --once
 | `HUMAN_INBOX_TRACKER_STATE_DIR` | bridge config's `state_dir` | Durable bridge state directory to scan read-only |
 | `HUMAN_INBOX_TRACKER_BRIDGE_URL` | loopback + bridge config's `port` | Sibling bridge base URL |
 | `HUMAN_INBOX_BRIDGE_AUTH_TOKEN` | bridge config's `auth_token` | Bearer token for the bridge submit surface |
-| `HUMAN_INBOX_TRACKER_DEFAULT_REPO` | unset | Fallback GitHub `owner/repository` when `observe.repo` is absent |
+| `HUMAN_INBOX_TRACKER_CONTROL_PLANE_URL` | unset | Control-plane base URL for the startup identity check below. Unset **disables the check** and logs a warning naming what is then unguarded |
+| `HUMAN_INBOX_TRACKER_DEFAULT_REPO` | unset | Fallback GitHub `owner/repository` when neither `observe.repo` nor the task's own `repo` input is a valid one |
 | `HUMAN_INBOX_TRACKER_POLL_SECONDS` | `60` | Requested delay between cycles; clamped to the active lane's minimum safe cadence (60 seconds anonymous, 0.72 seconds authenticated) |
 | `HUMAN_INBOX_TRACKER_GITHUB_REQUEST_BUDGET` | `50` | Requested maximum unique PR GETs per cycle (`0` disables GitHub requests); clamped so `budget × 3600 / poll_seconds` cannot exceed the active lane's hourly ceiling |
 | `HUMAN_INBOX_TRACKER_HTTP_TIMEOUT_SECONDS` | `30` | Timeout for each GitHub GET and bridge POST |
@@ -323,6 +351,50 @@ rotates that request fairly across distinct watched PRs. Authenticated mode
 makes at most 50 per cycle. A GitHub rate-limit response backs off to the
 reported reset time and retries on the next cycle; a non-rate-limit `403` is
 logged separately as a permission problem.
+
+#### Startup identity check: this bridge must be the actor's bridge
+
+Before its first cycle, the tracker resolves `HUMAN_INBOX_BRIDGE_ACTOR_ID`
+against `GET /v1alpha1/actors` on `HUMAN_INBOX_TRACKER_CONTROL_PLANE_URL`,
+takes that actor_key's **newest revision** (actor identity is append-only —
+an endpoint move is a new row, never an update), and compares its
+`endpoint_ref` against `HUMAN_INBOX_TRACKER_BRIDGE_URL`. On a mismatch it
+prints both endpoints and exits non-zero (issue #72):
+
+```text
+error: this tracker submits to http://127.0.0.1:8087, but actor
+'company/human-ops' (revision 2) is registered at http://192.168.1.157:8090
+— a different bridge. Refusing to start: ...
+```
+
+Why a refusal rather than a warning: the bridge's idempotency store is
+**per-bridge and file-based** (one JSON file per key under `state_dir`), so
+it can only deduplicate submissions that pass through the same bridge
+process's state directory. Two bridges serving one actor never see each
+other's replays, which makes "one logical human inbox" a deployment
+convention — and this check the only mechanism that can notice the
+convention has been broken.
+
+Comparison rules, and what each one deliberately does not excuse:
+
+* **Host and port, not the URL string.** A tracker on the actor's own host
+  addresses the bridge as `http://127.0.0.1:8090` while the actor row names
+  `http://192.168.1.157:8090`. Those are the same bridge, so the check
+  resolves whether the registered address is one this machine itself answers
+  on rather than comparing text.
+* **A matching port on another host is still a mismatch** — that is exactly
+  the split this guards against.
+* **A different port on the same host is a mismatch** — two bridge
+  processes, two idempotency stores, and only one of them is the actor's.
+* **Failure to resolve is a refusal.** An unreachable control plane, an
+  actor_key with no registration, and an unusable `endpoint_ref` all exit
+  non-zero: an unverified identity is not a verified one. The systemd unit
+  restarts, so a control plane that is merely restarting costs retries, not
+  an unguarded window.
+
+Leaving `HUMAN_INBOX_TRACKER_CONTROL_PLANE_URL` unset skips the check and
+logs a warning naming the bridge, the actor, and the fact that nothing is
+then guarding against a split deployment.
 
 An automatic submit uses the task success outcome and a note naming the
 merge commit, plus this explicit marker:

@@ -6,13 +6,38 @@
 #
 # Usage: install-secrets.sh [thor-host] [orin-host]
 # Idempotent per machine: refuses to overwrite an existing prod.env unless
-# FORCE=1, so a re-deploy never silently rotates a live database password.
-# The codex-bridge lane (~/.culture-nodes/codex-bridge.env) carries the
-# same FORCE=1 guard so a re-run never silently rotates a live bridge
-# token either; the NODES_ACTOR_CODEX_*_TOKEN lines it adds to prod.env
-# are updated in place (or appended) instead, since they mirror rather
-# than gate access.
+# FORCE_PROD=1, so a re-deploy never silently rotates a live database
+# password. The codex-bridge lane (~/.culture-nodes/codex-bridge.env)
+# carries its own FORCE_CODEX=1 guard so a re-run never silently rotates a
+# live bridge token either; the NODES_ACTOR_CODEX_*_TOKEN lines it adds to
+# prod.env are updated in place (or appended) instead, since they mirror
+# rather than gate access.
+#
+# EVERY prod.env write in this file MERGES KEY BY KEY (task t11, issue #69
+# item 1). prod.env holds two populations: the six secrets this script
+# generates, and roughly eight more that accrete afterwards —
+# NODES_NAMESPACE_ID and THOR_IP from deploy.sh, NODES_ACTOR_*_TOKEN from
+# this script's own later lanes and from actor registration,
+# DISCORD_WEBHOOK_URL and NODES_ACTOR_CLAUDE_TOKEN relayed from outside.
+# The prod lane used to `cat >` the whole file from the generated block, so
+# an authorized rotation deleted the second population without saying so:
+# a FORCE=1 rotation destroyed NODES_ACTOR_CLAUDE_TOKEN and the failure
+# stayed latent for ~18 hours (company/developer succeeded at 13:03, then
+# answered 401 policy_denied at 06:42 the next morning, after a restart).
+# A rotation now replaces only the keys it actually generates.
+#
+# Merging means nothing here can DELETE a key, which would leave prod.env
+# able only to grow. deploy/prod/remove-secret.sh is the explicit removal
+# path: it names one key, shows the redacted line it would drop, and takes
+# a --yes to act.
 set -euo pipefail
+
+SCRIPT_DIR=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
+# Shared with deploy.sh: which host serves an actor is resolved in exactly one
+# place, so a secret can never be installed on a host the deploy will not use
+# (issue #72).
+# shellcheck source=deploy/prod/actor-placement.sh
+. "$SCRIPT_DIR/actor-placement.sh"
 
 THOR=${1:-thor}
 ORIN=${2:-orin}
@@ -84,6 +109,29 @@ EOF
 
 gen() { openssl rand -hex 32; }
 
+# PROD_ENV_MERGE -- the remote half of every prod.env write in this file.
+#
+# It reads KEY=VALUE lines from its own stdin and, for each one, replaces
+# that key's line in ~/.culture-nodes/prod.env if it is already there and
+# appends it if it is not. Keys nobody sent are not touched, which is the
+# whole point: prod.env accretes keys from deploy.sh, from actor
+# registration, and from token relays, and a lane that rewrites the file
+# from its own block deletes all of them (see this script's header).
+#
+# It lives in ONE variable rather than being pasted into each lane. The
+# idiom was already here — the single-key actor-token helpers below used
+# it — and pasting a third copy is how the copies start disagreeing: the
+# trailing-newline guard on the line below was missing from the pasted
+# copies, so appending a key to a hand-edited file whose last line had no
+# newline concatenated the new assignment onto the old value and destroyed
+# it (tests/deploy/prodenvmerge_test.go pins that case).
+#
+# Single-quoted on purpose: $line, ${k} and the command substitution are
+# for the remote shell to expand, not this one. Expanding "$PROD_ENV_MERGE"
+# into an ssh argv does not re-scan them.
+# shellcheck disable=SC2016 # the expansions are deliberately remote
+PROD_ENV_MERGE='touch ~/.culture-nodes/prod.env; chmod 600 ~/.culture-nodes/prod.env; if [ -s ~/.culture-nodes/prod.env ] && [ -n "$(tail -c1 ~/.culture-nodes/prod.env)" ]; then echo >> ~/.culture-nodes/prod.env; fi; while IFS= read -r line; do k=${line%%=*}; [ -z "$k" ] && continue; if grep -q "^${k}=" ~/.culture-nodes/prod.env; then sed -i "s|^${k}=.*|${line}|" ~/.culture-nodes/prod.env; else printf "%s\n" "$line" >> ~/.culture-nodes/prod.env; fi; done'
+
 POSTGRES_PASSWORD=$(gen)
 MINIO_ROOT_PASSWORD=$(gen)
 NODES_HUMAN_DECISION_TOKEN_SECRET=$(gen)
@@ -98,7 +146,8 @@ install_env() { # host, content-producing function
   if [ "${FORCE_PROD:-0}" = "1" ]; then
     require_destructive_confirmation "prod-env" "$host" \
 "Rotates POSTGRES_PASSWORD, MINIO_ROOT_PASSWORD, NODES_HUMAN_DECISION_TOKEN_SECRET
-and NODES_CALLBACK_TOKEN_SECRET on ${host}.
+and NODES_CALLBACK_TOKEN_SECRET on ${host}. Only those keys: every other line
+of prod.env is merged around, not overwritten.
 
 - PostgreSQL keeps the password from its initdb, so the new value will NOT
   authenticate until the role is altered to match: the api/worker/scheduler
@@ -111,7 +160,7 @@ and NODES_CALLBACK_TOKEN_SECRET on ${host}.
   # ssh does not forward env vars, so a bare ${FORCE:-0} inside the
   # single-quoted remote script would always read 0 on the target.
   # shellcheck disable=SC2029 # the remote path is deliberately remote
-  printf '%s\n' "$content" | ssh "$host" "FORCE=${FORCE_PROD:-0}; "'umask 077; mkdir -p ~/.culture-nodes; if [ -e ~/.culture-nodes/prod.env ] && [ "$FORCE" != "1" ]; then echo "keeping existing prod.env (set FORCE=1 to rotate)" >&2; exit 3; fi; cat > ~/.culture-nodes/prod.env' || rc=$?
+  printf '%s\n' "$content" | ssh "$host" "FORCE=${FORCE_PROD:-0}; "'umask 077; mkdir -p ~/.culture-nodes; if [ -e ~/.culture-nodes/prod.env ] && [ "$FORCE" != "1" ]; then echo "keeping existing prod.env (set FORCE_PROD=1 to rotate)" >&2; exit 3; fi; '"$PROD_ENV_MERGE" || rc=$?
   # exit 3 is the keep-existing refusal — a re-run on a provisioned host
   # must continue to the later lanes (codex tokens), not abort here.
   if [ "$rc" -eq 3 ]; then echo "kept existing prod.env on $host"; return 0; fi
@@ -184,7 +233,7 @@ update_actor_token_line() { # key, value — update-in-place or append into BOTH
   for host in "$THOR" "$ORIN"; do
     # shellcheck disable=SC2029 # the remote path is deliberately remote
     printf '%s=%s\n' "$key" "$value" \
-      | ssh "$host" 'umask 077; mkdir -p ~/.culture-nodes; touch ~/.culture-nodes/prod.env; while IFS= read -r line; do key=${line%%=*}; [ -z "$key" ] && continue; if grep -q "^${key}=" ~/.culture-nodes/prod.env; then sed -i "s|^${key}=.*|${line}|" ~/.culture-nodes/prod.env; else printf "%s\n" "$line" >> ~/.culture-nodes/prod.env; fi; done'
+      | ssh "$host" 'umask 077; mkdir -p ~/.culture-nodes; '"$PROD_ENV_MERGE"
     echo "installed $key into prod.env on $host"
   done
 }
@@ -193,7 +242,7 @@ update_env_line_on_host() { # host, key, value — update-in-place or append int
   local host=$1 key=$2 value=$3
   # shellcheck disable=SC2029 # the remote path is deliberately remote
   printf '%s=%s\n' "$key" "$value" \
-    | ssh "$host" 'umask 077; mkdir -p ~/.culture-nodes; touch ~/.culture-nodes/prod.env; while IFS= read -r line; do k=${line%%=*}; [ -z "$k" ] && continue; if grep -q "^${k}=" ~/.culture-nodes/prod.env; then sed -i "s|^${k}=.*|${line}|" ~/.culture-nodes/prod.env; else printf "%s\n" "$line" >> ~/.culture-nodes/prod.env; fi; done'
+    | ssh "$host" 'umask 077; mkdir -p ~/.culture-nodes; '"$PROD_ENV_MERGE"
   echo "installed $key into prod.env on $host"
 }
 
@@ -233,8 +282,7 @@ else
   echo "CULTURE_NODES_WEBHOOK_URL/DISCORD_WEBHOOK_URL not set in this script's own environment — skipping (nodes-notifier will run with webhook delivery disabled until this is installed)" >&2
 fi
 
-# --- human-inbox bridge + tracker secrets (thor only — one logical human
-# actor, task t34) ----------------------------------------------------------
+# --- human-inbox bridge + tracker secrets (task t34; host derivation, t10) --
 # HUMAN_INBOX_BRIDGE_AUTH_TOKEN is a bearer token generated locally exactly
 # like the codex-bridge tokens above — nothing a human chooses, just a
 # credential this script mints and installs, same FORCE=1 rotation guard.
@@ -242,7 +290,33 @@ fi
 # fabricated here: relayed only when the operator already exported it into
 # this script's own environment. Left unset, deploy.sh still installs the
 # tracker and it uses GitHub's anonymous public-repository lane.
+#
+# WHICH HOST gets them is derived, not declared. This lane used to install the
+# bridge token on $THOR because a comment said the bridge was thor-only, while
+# company/human-ops was registered at another machine's address entirely
+# (issue #72) — so the token landed on a host that ran no bridge, and the host
+# that did run one was never provisioned by this script at all. The bearer
+# token belongs wherever the bridge runs, and the actor's registration is the
+# only artifact that says where that is. deploy.sh resolves it the same way,
+# through the same library, so the secret and the unit cannot disagree.
+HUMAN_INBOX_ACTOR_KEY=${HUMAN_INBOX_ACTOR_KEY:-company/human-ops}
 HUMAN_INBOX_BRIDGE_AUTH_TOKEN=$(openssl rand -base64 32)
+
+# human_inbox_secret_host — the host serving HUMAN_INBOX_ACTOR_KEY.
+#
+# HUMAN_INBOX_HOST overrides it for the bootstrap case only: on a brand-new
+# cluster there is no control plane to ask and no actor row to ask about, and
+# an operator who knows where the bridge will run can say so. Everything else
+# resolves from the registry, and an unresolvable actor installs nothing.
+human_inbox_secret_host() {
+  if [ -n "${HUMAN_INBOX_HOST:-}" ]; then
+    printf '%s' "$HUMAN_INBOX_HOST"
+    return 0
+  fi
+  local registration
+  registration=$(actor_registration "$HUMAN_INBOX_ACTOR_KEY") || return 1
+  endpoint_address "$(printf '%s' "$registration" | cut -d'|' -f3)"
+}
 
 install_human_inbox_env() { # host
   local host=$1 rc=0
@@ -252,7 +326,7 @@ install_human_inbox_env() { # host
 GITHUB_TOKEN=${GITHUB_TOKEN}"
   fi
   # shellcheck disable=SC2029 # the remote path is deliberately remote
-  printf '%s\n' "$content" | ssh "$host" "FORCE=${FORCE_HUMAN_INBOX:-0}; "'umask 077; mkdir -p ~/.culture-nodes; if [ -e ~/.culture-nodes/human-inbox.env ] && [ "$FORCE" != "1" ]; then echo "keeping existing human-inbox.env (set FORCE=1 to rotate)" >&2; exit 3; fi; cat > ~/.culture-nodes/human-inbox.env' || rc=$?
+  printf '%s\n' "$content" | actor_host_exec "$host" "FORCE=${FORCE_HUMAN_INBOX:-0}; "'umask 077; mkdir -p ~/.culture-nodes; if [ -e ~/.culture-nodes/human-inbox.env ] && [ "$FORCE" != "1" ]; then echo "keeping existing human-inbox.env (set FORCE=1 to rotate)" >&2; exit 3; fi; cat > ~/.culture-nodes/human-inbox.env' || rc=$?
   if [ "$rc" -eq 3 ]; then echo "kept existing human-inbox.env on $host"; return 0; fi
   if [ "$rc" -eq 0 ]; then
     if [ -n "${GITHUB_TOKEN:-}" ]; then
@@ -263,7 +337,14 @@ GITHUB_TOKEN=${GITHUB_TOKEN}"
   fi
   return "$rc"
 }
-install_human_inbox_env "$THOR"
+
+HUMAN_INBOX_TARGET=$(human_inbox_secret_host) || HUMAN_INBOX_TARGET=""
+if [ -n "$HUMAN_INBOX_TARGET" ]; then
+  echo "$HUMAN_INBOX_ACTOR_KEY is served at $HUMAN_INBOX_TARGET — installing the human-inbox bridge secret there"
+  install_human_inbox_env "$HUMAN_INBOX_TARGET"
+else
+  echo "$HUMAN_INBOX_ACTOR_KEY does not resolve in the actor registry at $NODES_API_URL — skipping the human-inbox bridge secret rather than installing it on a guessed host. Register the actor (deploy/prod/register-actor.sh) and re-run, or set HUMAN_INBOX_HOST=<address> to bootstrap a host before its actor row exists" >&2
+fi
 
 # --- notify actor bridge bearer token (issue #68) -------------------------
 #
@@ -364,4 +445,15 @@ else:
     print("installed the control-plane copy of the claude actor token")
 PY'
 }
+# BOTH hosts, not just thor. Either worker may dispatch either actor, so
+# each needs every actor credential its compose file declares — which is why
+# the codex lanes above call update_actor_token_line, whose whole body is a
+# loop over both hosts. This lane installed to thor alone until task t12's
+# credential audit reported NODES_ACTOR_CLAUDE_TOKEN missing from orin's
+# prod.env on its first live run, while compose.orin.yml declared it: orin's
+# worker would answer 401 policy_denied on every claude node dispatched to
+# it, and no deploy would say so. tests/deploy/claudetokenplacement_test.go
+# derives the required hosts from the compose files, so a third host is
+# covered without editing the test.
 install_claude_actor_token "$THOR"
+install_claude_actor_token "$ORIN"

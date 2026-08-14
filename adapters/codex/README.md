@@ -256,6 +256,50 @@ bridge's own contract for it is:
 Unlike colleague-bridge, there is no `role`/`mode` field: codex exec has no
 persona/mode concept to map onto, so this bridge does not invent one.
 
+## Preflight capability surface (issue #67)
+
+This bridge measures the host it dispatches on and serves the result at
+`GET /v1/capabilities` (authenticated, like the invocation route), or prints
+the same document without a server:
+
+```bash
+uv run codex-bridge --print-capabilities
+curl -sH "Authorization: Bearer $CODEX_BRIDGE_AUTH_TOKEN" http://127.0.0.1:8086/v1/capabilities
+```
+
+The document is exactly what an actor registration carries in
+`capabilities`. What codex contributes to it:
+
+| Fact | Where it comes from |
+|---|---|
+| `sandbox_modes` | Which of `read-only` / `workspace-write` / `danger-full-access` this host can **actually** enforce |
+| `sandbox_modes_unavailable` | Modes it cannot, and why — measured from the userns sysctls, not read from config |
+| `default_sandbox_mode` | `default_sandbox` (what a dispatch that names no sandbox gets) |
+| `confinement` | Whether the bubblewrap helper codex's confinement rests on can start here at all |
+| `commit_policy` | The `preserve_on_failure` / `preserve_push` / `preserve_remote` policy in force |
+| `writable_paths` | `repo_allowlist` — `[]` means this bridge writes nowhere |
+
+The measurement is the point. Issues #18/#63: `--sandbox workspace-write`
+was requested on three hosts whose kernel restricted unprivileged user
+namespaces, the confinement helper could not start, every `apply_patch`
+failed and shell commands kept running unconfined. A surface that echoed
+`default_sandbox` would have advertised `workspace-write` and been wrong.
+This one reports it under `sandbox_modes_unavailable` with the sysctl that
+says so.
+
+The protocol is engine-side and the facts are bridge-side. The shared,
+byte-identical `preflight.py` in every bridge holds the protocol, the agreed
+key set and the measurement helpers; `capabilities.py` holds only what THIS
+backend measures. `tests/lint/preflightsurface_test.go` fails the build if
+those two ever swap roles. The full contract is
+[`api/actor-protocol/README.md`](../../api/actor-protocol/README.md); the
+engine half (the gate, the derived briefing, the acknowledgement, `nodes
+dispatch confirm`) is `internal/preflight`.
+
+Advertising changes nothing on its own: the gate that reads the surface is
+per-actor and default-off, and this bridge dispatches exactly as it did
+before whether or not an operator ever registers the block.
+
 ## Trust model: `proposed`-only
 
 This bridge **never emits `confirmed`/`observed`/`derived`** ledger

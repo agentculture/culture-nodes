@@ -20,6 +20,16 @@
 # simpler than it used to be — it only needs re-invoking after a TERMINAL
 # run (a dropped item or an explicit end), not after every empty sweep.
 #
+# issue #74: the fix and review actors are on DIFFERENT machines, so the fix
+# lane hands over a portable artifact handle rather than a path. The artifact
+# content path is not wired yet (see the workflow's header), so a run today
+# is expected to end at `handoff-blocked` with `missing_capability:
+# artifact_publish` — a named capability gap, which is the honest answer and
+# what this driver's operator should read on the terminal run. It is NOT a
+# reason to re-point REVIEW_REPO at a spark path: that is the defect #74 is
+# about, and thor's bridge will refuse it with a 403 that names the wrong
+# cause.
+#
 # BILLABLE: the run's fix node dispatches a real claude-code session and its
 # review node a real codex session per loop iteration. Like
 # examples/codex-smoke-pair/run-smoke.sh, this script refuses to do anything
@@ -56,8 +66,17 @@ REPO="${PR_UPKEEP_REPO:-/home/spark/git/culture-nodes}"
 # The review actor (codex on thor) has its own allowlisted checkout of the
 # SAME repository — per-host path, single-repo flow unchanged (cycle-4 403).
 REVIEW_REPO="${PR_UPKEEP_REVIEW_REPO:-/home/thor/git/culture-nodes-agent}"
-FIX_INSTRUCTION="${FIX_INSTRUCTION:-Take the TOP item of the prioritised sweep report bound as sweepReport (its artifact refs carry the full JSON list). Work only that one item: implement the fix on a branch and open or update a PR for it. Never merge anything. Summarise what you changed and name the PR.}"
-REVIEW_INSTRUCTION="${REVIEW_INSTRUCTION:-Read-only independent review of the fix described in fixReport (see the Bound inputs block for fixReport, fixEvidence, and runEvidence). fixEvidence being empty is a KNOWN platform gap (evidence capture for agent nodes), not a finding: judge the fix on fixReport plus the repository state on your checked-out branch. Analysis only: change nothing. Your FINAL message must be EXACTLY one JSON object and nothing else: {\"outcome\": \"approve\" or \"changes_required\", \"output\": {\"verdict\": same value as outcome, \"findings\": [{\"severity\": \"info\"|\"minor\"|\"major\"|\"blocking\", \"note\": string}]}} — findings may be empty only with approve; approve requires verdict approve and findings [].}"
+# The fix instruction now has to state the HANDOFF contract (issue #74), for
+# two reasons that both come back to the same fact: the review actor is on
+# another machine. First, `fix.completed` requires `handoff.ref`, so the
+# session must declare its own result JSON (the bridges'
+# `declared_result_override`) rather than let the default envelope through —
+# a default envelope carries no handle and would be contract_rejected at this
+# node. Second, a session that CANNOT publish an artifact needs the named way
+# out spelled for it, or it will improvise: invent a ref, or report completed
+# and leave the review lane to fail on another host as somebody else's 403.
+FIX_INSTRUCTION="${FIX_INSTRUCTION:-Take the TOP item of the prioritised sweep report bound as sweepReport (its artifact refs carry the full JSON list). Work only that one item: implement the fix on a branch and open or update a PR for it. Never merge anything. The review actor runs on a DIFFERENT machine and cannot see this working directory, so your work has to leave here as a portable handle: publish your change (a patch or bundle) to the artifact store and report the artifact reference it returns. Your FINAL message must be EXACTLY one JSON object and nothing else: {\"outcome\": \"completed\", \"output\": {\"summary\": string, \"pr_number\": integer, \"handoff\": {\"kind\": \"artifact\", \"ref\": \"artifact://<namespace>/<id>\", \"media_type\": string}}}. If you CANNOT publish an artifact from this host — no reachable ingest endpoint, no credential, or nothing exportable — do NOT report completed and do NOT invent a ref. Report exactly {\"outcome\": \"handoff_unavailable\", \"output\": {\"summary\": string, \"missing_capability\": one of \"artifact_publish\", \"workspace_export\", \"handoff_too_large\", \"detail\": string}} and name what is missing in detail. A named missing capability is a useful answer; a fabricated handle is not.}"
+REVIEW_INSTRUCTION="${REVIEW_INSTRUCTION:-Read-only independent review of the fix described in fixReport (see the Bound inputs block for handoff, fixReport, fixEvidence, and runEvidence). The work under review is the artifact named by handoff.ref — your own checkout is a working directory on a DIFFERENT machine than the fix lane and does NOT contain the fix, so never review it in place of the handoff. Resolve handoff.ref through the artifact store and review its contents. If you cannot resolve it, FAIL the attempt saying so; do not fall back to your own checkout and do not turn an unresolvable handle into a verdict about the fix. fixEvidence being empty is a KNOWN platform gap (evidence capture for agent nodes), not a finding. Analysis only: change nothing. Your FINAL message must be EXACTLY one JSON object and nothing else: {\"outcome\": \"approve\" or \"changes_required\", \"output\": {\"verdict\": same value as outcome, \"findings\": [{\"severity\": \"info\"|\"minor\"|\"major\"|\"blocking\", \"note\": string}]}} — findings may be empty only with approve; approve requires verdict approve and findings [].}"
 MERGE_INSTRUCTION="${MERGE_INSTRUCTION:-The fix PR passed independent review with no pending findings (see reviewVerdict and fixReport in your task payload). Merge the PR yourself on GitHub, then submit outcome merged with a note naming the merge commit. If you decide not to merge, submit outcome dropped with the reason.}"
 ASK_INSTRUCTION="${ASK_INSTRUCTION:-The independent review (see reviewVerdict) found blocking or major issues on the PR named in your task payload. Post the review findings as a comment on that PR — this is the question a human needs to answer — then submit outcome posted naming the comment URL.}"
 NOTIFY_TITLE="${NOTIFY_TITLE:-pr-upkeep: decision pending}"

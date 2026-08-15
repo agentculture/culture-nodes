@@ -38,6 +38,20 @@ push subprocess disables any interactive credential prompt
 (`GIT_TERMINAL_PROMPT=0`) so a missing credential fails fast and honestly
 instead of hanging until `PUSH_TIMEOUT_SECONDS`.
 
+`handover_ref` (task t6, issue #74, spec decision q9) is the SECOND caller of
+that same plumbing, and deliberately not a second implementation of it: it
+calls `_commit_plumbing` and `_update_ref` exactly as `preserve_on_failure`
+does, and differs only in why it runs, where the ref lands, and what it
+refuses to do afterwards. Preserve is a rescue on a technical failure and
+pushes best-effort; a handover is a SUCCESS path — the carrier a runner's
+changes travel on when the next node is on another machine — and it never
+pushes at all. That is policy, not capability: AGENTS.md lets an agent create
+a handover commit and a ref under `refs/culture-nodes/<run-id>` and forbids it
+to push or to commit onto a branch, so what this module produces is
+unreachable from any branch until the operator or the control plane moves it,
+and the handle says so in its own `publication` field rather than implying a
+fetchability nobody here can deliver.
+
 Mirrored field-for-field by `claude_code_bridge.preserve` and
 `colleague_bridge.preserve` (all-backends rule): only the docstring's named
 subprocess (`codex` here) differs.
@@ -224,9 +238,8 @@ def preserve_on_failure(
             reason=error,
         )
 
-    ref_proc = _run_git(repo, "update-ref", f"refs/heads/{branch}", commit_sha)
-    if ref_proc is None or ref_proc.returncode != 0:
-        detail = (ref_proc.stderr or "").strip() if ref_proc is not None else "git could not be run"
+    detail = _update_ref(repo, f"refs/heads/{branch}", commit_sha)
+    if detail is not None:
         return PreserveResult(
             attempted=True,
             committed=False,
@@ -324,6 +337,19 @@ def _commit_plumbing(repo: str, head: str, message: str) -> tuple[str | None, st
     return commit_proc.stdout.strip(), None
 
 
+def _update_ref(repo: str, ref: str, commit_sha: str) -> str | None:
+    """`git update-ref <ref> <sha>` — the ONE ref-writing step in this module,
+    shared by the preserve branch and the handover ref so neither grows its
+    own. Returns `None` on success, or the failure detail. Never writes HEAD
+    and never writes an existing branch: callers pass a freshly minted name."""
+    proc = _run_git(repo, "update-ref", ref, commit_sha)
+    if proc is None:
+        return "git could not be run"
+    if proc.returncode != 0:
+        return (proc.stderr or "").strip() or f"git update-ref exited {proc.returncode}"
+    return None
+
+
 def _push_best_effort(
     repo: str, remote: str, commit_sha: str, branch: str
 ) -> tuple[bool, str | None]:
@@ -353,3 +379,270 @@ def _push_best_effort(
             + " — the local preserve commit still exists"
         )
     return True, None
+
+
+# ---------------------------------------------------------------------------
+# the handover carrier (task t6, issue #74, spec decision q9)
+# ---------------------------------------------------------------------------
+
+#: Where a handover ref lives, and the only namespace this module will write
+#: for one. AGENTS.md: an agent may create a handover commit and a ref under
+#: `refs/culture-nodes/<run-id>`, may NEVER push, and may never commit onto a
+#: branch. A ref here is reachable from no branch, so nothing this module
+#: creates can be mistaken for work someone merged.
+HANDOVER_REF_NAMESPACE = "refs/culture-nodes"
+
+#: What a git-ref handle contains, reported as the handle's `media_type` so a
+#: consuming node knows what it is opening before it opens it.
+HANDOVER_MEDIA_TYPE = "application/vnd.culture-nodes.git-commit"
+
+#: The `missing_capability` names this module can report, mirroring the CLOSED
+#: enum in examples/pr-upkeep/workflow.yaml's `fix.handoff_unavailable`. A
+#: capability the graph cannot name is one no dashboard can group by, so this
+#: module never invents a third string.
+MISSING_GIT_REF_PUBLISH = "git_ref_publish"
+MISSING_WORKSPACE_EXPORT = "workspace_export"
+
+#: `user@host:path`, git's scp-like remote syntax. Recognised so it can be
+#: normalised to a real `ssh://` URL rather than refused: it is an ordinary
+#: shared remote, just written in git's oldest spelling.
+_SCP_LIKE_REMOTE = re.compile(r"^(?P<user>[^@/:]+@)?(?P<host>[^/:]+):(?P<path>[^/].*)$")
+
+
+def mint_handover_ref(run_id: str, node_run_id: str | None, attempt_id: str | None) -> str:
+    """A unique ref name under `HANDOVER_REF_NAMESPACE`, minted from the same
+    sanitised identifiers and the same collision-proofing (`mint_branch_name`'s
+    timestamp + random suffix) the preserve branch uses. Run-scoped by
+    construction — `refs/culture-nodes/<run-id>/...` — so an operator sweeping
+    a finished run's refs can select them by run without a database."""
+    run = _sanitize_ref_component(run_id) if run_id else "unknown"
+    tail = mint_branch_name("", "", node_run_id, attempt_id)
+    return f"{HANDOVER_REF_NAMESPACE}/{run}/{tail}"
+
+
+@dataclass(frozen=True)
+class HandoverResult:
+    """What one `handover_ref` call decided and did. Same discipline as
+    `PreserveResult`: every field is this module's own direct observation.
+    `created=True` always carries `ref`, `commit` and a `handle`;
+    `created=False` after an attempt always carries a `missing_capability`
+    from the graph's closed enum, so the caller can report the domain outcome
+    the workflow declares instead of inventing prose."""
+
+    attempted: bool
+    created: bool
+    ref: str | None = None
+    commit: str | None = None
+    remote: str | None = None
+    handle: dict[str, Any] | None = None
+    missing_capability: str | None = None
+    reason: str | None = None
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "attempted": self.attempted,
+            "created": self.created,
+            "ref": self.ref,
+            "commit": self.commit,
+            "remote": self.remote,
+            "handle": self.handle,
+            "missing_capability": self.missing_capability,
+            "reason": self.reason,
+        }
+
+
+def _unavailable(capability: str, reason: str, *, attempted: bool = True) -> HandoverResult:
+    return HandoverResult(
+        attempted=attempted, created=False, missing_capability=capability, reason=reason
+    )
+
+
+def _strip_userinfo(authority: str, *, keep_user: bool) -> str:
+    """Remove credentials from a remote's authority before it is published in
+    a handle. A handle is reported to the control plane and lands in the run
+    record, so an `https://x-access-token:<token>@github.com/...` remote would
+    write a live credential into the ledger. The ssh `git@` form is an
+    identity rather than a secret and is kept; anything carrying a password
+    (`user:secret@`) is dropped under either scheme."""
+    if "@" not in authority:
+        return authority
+    userinfo, _, hostport = authority.rpartition("@")
+    if keep_user and ":" not in userinfo:
+        return f"{userinfo}@{hostport}"
+    return hostport
+
+
+def _portable_remote_url(url: str) -> tuple[str | None, str | None]:
+    """Normalise a configured remote into the `git+<https|ssh>://...` prefix a
+    handle may carry, or explain why it cannot be one. Returns
+    `(prefix, None)` or `(None, reason)`.
+
+    The refusals are the point. A `file://` remote, a bare directory and a
+    relative path are all filesystem paths, and a handle built on one would
+    re-admit exactly the unportable value the whole handoff contract exists to
+    refuse (issue #74). `http://` and `git://` are refused for a different
+    reason: the handle contract admits https and ssh only, so producing one
+    would produce a handle no consumer's schema would accept."""
+    url = url.strip()
+    if not url:
+        return None, "the remote resolved to an empty url"
+    if any(ch.isspace() for ch in url) or "#" in url:
+        return None, (
+            f"the remote url {url!r} contains whitespace or '#', which cannot be expressed "
+            "in a handle (the ref is carried in the url's fragment)"
+        )
+
+    lowered = url.lower()
+    if lowered.startswith("https://"):
+        return "git+https://" + _strip_userinfo(url[len("https://") :], keep_user=False), None
+    if lowered.startswith("ssh://"):
+        return "git+ssh://" + _strip_userinfo(url[len("ssh://") :], keep_user=True), None
+    if lowered.startswith("file://") or url.startswith(("/", ".", "~")):
+        return None, (
+            f"the remote {url!r} is a filesystem path, which is meaningful only on this "
+            "host — the same unportable handle issue #74 exists to refuse"
+        )
+    if lowered.startswith(("http://", "git://")):
+        return None, (
+            f"the remote {url!r} uses a transport a handoff handle may not carry; the "
+            "contract admits https and ssh only"
+        )
+    scp = _SCP_LIKE_REMOTE.match(url)
+    if scp:
+        authority = _strip_userinfo(f"{scp.group('user') or ''}{scp.group('host')}", keep_user=True)
+        return f"git+ssh://{authority}/{scp.group('path')}", None
+    return None, f"the remote {url!r} is not a url this module knows how to make portable"
+
+
+def _remote_prefix(repo: str, remote: str) -> tuple[str | None, str | None]:
+    """Read the configured url for *remote* (a read-only git query — nothing
+    is fetched, nothing is written) and normalise it."""
+    proc = _run_git(repo, "remote", "get-url", remote)
+    if proc is None:
+        return None, f"git remote get-url {remote!r} could not be run"
+    if proc.returncode != 0:
+        detail = (proc.stderr or "").strip()
+        return None, (
+            f"no remote named {remote!r} is configured in this checkout"
+            + (f": {detail}" if detail else "")
+        )
+    return _portable_remote_url(proc.stdout.strip())
+
+
+def _handover_message(
+    reason: str, run_id: str, node_run_id: str | None, attempt_id: str | None
+) -> str:
+    lines = [
+        "culture-nodes: handover",
+        "",
+        reason,
+        "",
+        f"run_id: {run_id}",
+    ]
+    if node_run_id:
+        lines.append(f"node_run_id: {node_run_id}")
+    if attempt_id:
+        lines.append(f"attempt_id: {attempt_id}")
+    return "\n".join(lines) + "\n"
+
+
+def handover_ref(
+    repo: str,
+    measured: dict[str, Any],
+    *,
+    enabled: bool,
+    remote: str,
+    run_id: str,
+    node_run_id: str | None,
+    attempt_id: str | None,
+    reason: str,
+) -> HandoverResult:
+    """Publish this session's workspace changes as a `git_ref` HANDLE the next
+    node can read from another machine (task t6, spec decision q9): a runner's
+    CHANGES travel as a git ref, while context and data that is not naturally
+    a git object travels as an `artifact://` reference through the artifact
+    store. The rule itself is declared once, in
+    `schemas/workflow/handoff.schema.json`.
+
+    *enabled* is the per-dispatch opt-in. A package that hands nothing over
+    never reaches the git plumbing here at all — which is the same boundary
+    the sandbox side draws: a codex dispatch that hands over no ref is not
+    given `.git` write either (issue #91, deviation d6).
+
+    What this deliberately does NOT do is push. Publication is a separate
+    authority: AGENTS.md permits creating the commit and the ref, and forbids
+    pushing and forbids committing onto a branch, so the handle is reported
+    with `publication: "pending"` and the ref stays unreachable from any
+    branch until the operator or the control plane moves it. A consuming node
+    reading `pending` can say so by name instead of reporting a fetch failure
+    whose cause it would have to guess.
+
+    Degrades into the graph's own closed vocabulary rather than into prose:
+    every unsuccessful attempt names a `missing_capability` the workflow
+    already declares (`git_ref_publish`, `workspace_export`), so the caller
+    can report `handoff_unavailable` — a domain outcome — instead of a
+    technical failure at somebody else's node.
+    """
+    if not enabled:
+        return HandoverResult(
+            attempted=False,
+            created=False,
+            reason="this dispatch asked for no handover; nothing was created",
+        )
+    if not measured.get("measured"):
+        return _unavailable(
+            MISSING_WORKSPACE_EXPORT,
+            "workspace was not measurable "
+            f"({measured.get('reason') or 'no reason recorded'}); there is nothing to hand over",
+        )
+    if not _has_changes(measured):
+        return _unavailable(
+            MISSING_WORKSPACE_EXPORT,
+            "no workspace changes since the session started; there is nothing to hand over",
+        )
+
+    head = measured.get("head_after") or measured.get("head_before")
+    if not head:
+        return _unavailable(
+            MISSING_WORKSPACE_EXPORT,
+            "no HEAD commit to build the handover commit on top of",
+        )
+
+    # Resolved BEFORE anything is written: a checkout with no remote another
+    # host could ever fetch from cannot produce a portable handle, and finding
+    # that out first keeps the honest failure free of a stray object.
+    prefix, remote_error = _remote_prefix(repo, remote)
+    if prefix is None:
+        return _unavailable(
+            MISSING_GIT_REF_PUBLISH,
+            f"this host cannot name a remote a handover ref could reach: {remote_error}",
+        )
+
+    commit_sha, error = _commit_plumbing(
+        repo, head, _handover_message(reason, run_id, node_run_id, attempt_id)
+    )
+    if commit_sha is None:
+        return _unavailable(MISSING_WORKSPACE_EXPORT, error or "the handover commit failed")
+
+    ref = mint_handover_ref(run_id, node_run_id, attempt_id)
+    detail = _update_ref(repo, ref, commit_sha)
+    if detail is not None:
+        return _unavailable(
+            MISSING_WORKSPACE_EXPORT,
+            f"the local handover commit {commit_sha} exists but update-ref failed: {detail}",
+        )
+
+    return HandoverResult(
+        attempted=True,
+        created=True,
+        ref=ref,
+        commit=commit_sha,
+        remote=remote,
+        handle={
+            "kind": "git_ref",
+            "ref": f"{prefix}#{ref}",
+            "commit": commit_sha,
+            "publication": "pending",
+            "media_type": HANDOVER_MEDIA_TYPE,
+        },
+    )

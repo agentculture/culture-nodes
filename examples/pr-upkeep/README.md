@@ -292,50 +292,74 @@ defect.
 Three things changed, and the invariants are locked by
 [`tests/lint/crosshosthandoff_test.go`](../../tests/lint/crosshosthandoff_test.go):
 
-1. **`fix.completed` requires a handle.** Its contract requires
-   `handoff: {kind: artifact, ref: "artifact://<namespace>/<id>"}`, and the
-   ref is pattern-constrained so it cannot quietly become a path again. An
-   artifact reference "never carries or implies a filesystem path"
-   ([`internal/artifacts/doc.go`](../../internal/artifacts/doc.go)) — it
-   resolves through the store from any host. Because the engine validates a
-   completion against the outcome schema
+1. **`fix.completed` requires a handle, and `review` requires one too.** Both
+   contracts embed the same rule, declared once in
+   [`schemas/workflow/handoff.schema.json`](../../schemas/workflow/handoff.schema.json),
+   and it admits **two carriers** (spec decision `q9`, task t6):
+   - a runner's **changes** travel as `kind: git_ref` —
+     `git+<https|ssh>://<remote>#refs/culture-nodes/<run-id>/<node-run-id>`
+     plus the `commit` it pins. A remote, a ref name and a sha carry no host
+     and no path, which is the property #74 actually required;
+   - **context and data** that is not naturally a git object travel as
+     `kind: artifact` — an `artifact://<namespace>/<id>` reference, which
+     "never carries or implies a filesystem path"
+     ([`internal/artifacts/doc.go`](../../internal/artifacts/doc.go)) and
+     resolves through the store from any host. The sweep's prioritised item
+     list is JSON, so it is on this side of the rule.
+
+   Each carrier's ref is pattern-constrained so neither can quietly become a
+   path again — including the near misses, `git+file://` and a bare branch
+   name. Because the engine validates a completion against the outcome schema
    ([`internal/engine/complete.go`](../../internal/engine/complete.go)'s
    `checkOutput`), a fix that produced no handle **cannot report
    `completed`**. This is enforced, not advised.
 2. **A fix host that cannot produce one says so, by name.** The
    `handoff_unavailable` domain outcome requires a `missing_capability` from
-   a closed set — `artifact_publish`, `workspace_export`,
+   a closed set — `artifact_publish`, `git_ref_publish`, `workspace_export`,
    `handoff_too_large` — so the answer is a name, not a sentence to
-   interpret.
+   interpret. Two carriers means two publish capabilities, and a host can be
+   missing either one alone.
 3. **That outcome never reaches `review`.** It routes to the terminal
    `handoff-blocked` node, which carries the fix node's output (where
    `missing_capability` lives) as the run's output. `finish` would have
    buried it under the sweep report.
 
-**Why not a git ref**, which is [issue #74](https://github.com/agentculture/culture-nodes/issues/74)'s
-own recommendation and would reuse task t25's preserve-branch machinery: a
-probe of the spark bridge host settled it. `origin` is HTTPS not SSH, no SSH
-key is authorised for GitHub, there is no `credential.helper`, and the
-running bridge process carries neither `GH_TOKEN` nor `GITHUB_TOKEN`. The
-host that must produce the handle cannot push. `handoff.kind` is an enum
-with one member today so that adding `git_ref` later — once a bridge host
-holds a credential — is visibly additive.
+**This section used to say a git ref was impossible**, because a probe of the
+spark bridge host found HTTPS origin, no SSH key, no `credential.helper` and
+no token in the bridge process. That was true when it was written and no
+longer is: task t1 provisioned `GITHUB_TOKEN_WORKER` into the bridge units,
+and issue #91 measured that a codex session under `--sandbox workspace-write`
+can write `.git` once the dispatch widens `writable_roots` (deviation `d6`).
+So [issue #74](https://github.com/agentculture/culture-nodes/issues/74)'s own
+recommendation — "option 1, with 2 for anything not naturally a git object" —
+is what the graph now says, and the widening was a decided change rather than
+drift: it retired boundary `c3`, which its own honesty condition `h17` had
+already pinned as falsifiable.
 
-**What is not wired yet.** [`internal/artifacts`](../../internal/artifacts/)
-is a complete library (Store, Router, Postgres and S3 drivers, migrations
-0004/0006) with **zero production callers**. There is no artifact ingest or
-fetch endpoint on the control plane's HTTP surface, no bridge publishes
-bytes, and `InvocationResult.artifact_refs` is accepted on the wire and then
-dropped. So today every fix host lands on `handoff_unavailable` with
-`missing_capability: artifact_publish`. That is the true state of the
-system, and a far better answer than reviewing thor's own checkout and
-calling it a review of spark's work. Remaining for the content path: an
-ingest/fetch endpoint, bridge-side publish and resolve across all backends
-(the all-backends rule), and persisting actor-reported artifact refs so
-`/nodes/<id>/artifacts` can become a bindable surface — it is refused today
-by both [`internal/compiler/contract.go`](../../internal/compiler/contract.go)
-and [`internal/worker/bindings.go`](../../internal/worker/bindings.go), and
-those two verdicts must change together.
+**What is not wired yet.** Both carriers are half-built, and in the same half:
+a producer can create the handle, and no consumer can yet follow it.
+
+- **`artifact`** — task t5 mounted the publish side
+  (`POST /v1alpha1/attempts/{attemptID}/artifacts`, attempt-token scoped).
+  There is still no fetch route on the control plane's HTTP surface, and
+  `/nodes/<id>/artifacts` is not a bindable surface — refused today by both
+  [`internal/compiler/contract.go`](../../internal/compiler/contract.go) and
+  [`internal/worker/bindings.go`](../../internal/worker/bindings.go), and
+  those two verdicts must change together.
+- **`git_ref`** — the bridge-side producer is `preserve.handover_ref`, in all
+  three code adapters (all-backends rule). It mints
+  `refs/culture-nodes/<run-id>/<node-run-id>` out of the **same**
+  write-tree/commit-tree/update-ref plumbing preserve-on-failure uses, and it
+  **never pushes**: `AGENTS.md` lets an agent create a handover ref and
+  forbids it to push or to commit onto a branch, so the handle it reports
+  carries `publication: pending` and the ref is reachable from no branch until
+  the operator or the control plane moves it. Nothing moves it yet, no
+  dispatch requests one yet, and no node fetches one yet.
+
+So today a fix host still lands on `handoff_unavailable`, naming whichever
+publish capability it is missing. That is the true state of the system, and a
+far better answer than reviewing thor's own checkout and calling it a review
+of spark's work.
 
 ## The extractor and its fixtures
 

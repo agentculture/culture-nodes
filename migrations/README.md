@@ -135,6 +135,9 @@ Numbered SQL migrations for the authoritative PostgreSQL store (prd-spec
   over-counts a dispatch that dies in transport — the conservative
   direction, since a budget that under-counts spends money the author
   forbade.
+- `0027_artifact_tombstones.sql` — append-only artifact retention records.
+  Reaped refs preserve the original name, media type, size, digest, reaping
+  time and policy; immutable corrections append through `supersedes`.
 
 - `0022_dispatch_rate_state.sql` — expand-only: adds the mutable
   `dispatch_rate_state` table (task t10 of the economy-discord-graphs plan,

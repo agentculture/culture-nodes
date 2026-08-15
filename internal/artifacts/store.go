@@ -3,6 +3,7 @@ package artifacts
 import (
 	"context"
 	"io"
+	"time"
 )
 
 // Store is the artifact-store boundary every driver
@@ -36,8 +37,12 @@ type Store interface {
 	// Store holds.
 	Stat(ctx context.Context, ref Ref) (ArtifactMeta, error)
 
-	// Delete removes ref's content and its metadata row. Deleting a ref
-	// that does not exist (or that this Store does not hold) returns
-	// ErrNotFound.
+	// Delete is retained so old/unreviewed cleanup code fails closed. Raw
+	// deletion is never legitimate outside a Reap implementation and always
+	// returns ErrDeleteForbidden.
 	Delete(ctx context.Context, ref Ref) error
+
+	// Reap is the sole retention-policy operation. It durably appends an
+	// immutable tombstone before removing content. reason must name the policy.
+	Reap(ctx context.Context, ref Ref, reason string, reapedAt time.Time) (Tombstone, error)
 }

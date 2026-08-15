@@ -8,6 +8,7 @@ import (
 	"errors"
 	"io"
 	"testing"
+	"time"
 
 	"github.com/agentculture/culture-nodes/internal/artifacts"
 	artifactpg "github.com/agentculture/culture-nodes/internal/artifacts/postgres"
@@ -163,26 +164,29 @@ func TestGetUnknownRefReturnsNotFound(t *testing.T) {
 	}
 }
 
-func TestDeleteRemovesBlobAndMetadata(t *testing.T) {
+func TestReapRemovesBlobAndLeavesTombstone(t *testing.T) {
 	s := requireStore(t)
 	ctx := context.Background()
 	ns := mustNamespace(t, s, "test-artifacts-pg-delete")
 
 	d := artifactpg.New(s, artifactpg.DefaultCapBytes)
-	ref, err := d.Put(ctx, artifacts.ArtifactMeta{NamespaceID: ns.ID}, bytes.NewReader([]byte("to be deleted")))
+	ref, err := d.Put(ctx, artifacts.ArtifactMeta{NamespaceID: ns.ID, Name: "result.txt", MediaType: "text/plain"}, bytes.NewReader([]byte("to be deleted")))
 	if err != nil {
 		t.Fatalf("Put: %v", err)
 	}
 
-	if err := d.Delete(ctx, ref); err != nil {
-		t.Fatalf("Delete: %v", err)
+	tombstone, err := d.Reap(ctx, ref, "retention/30-days", time.Date(2026, 8, 15, 12, 0, 0, 0, time.UTC))
+	if err != nil {
+		t.Fatalf("Reap: %v", err)
 	}
-
-	if _, _, err := d.Get(ctx, ref); !errors.Is(err, artifacts.ErrNotFound) {
-		t.Fatalf("Get after Delete error = %v, want ErrNotFound", err)
+	if tombstone.Meta.Digest == "" || tombstone.Meta.Name != "result.txt" || tombstone.Meta.MediaType != "text/plain" || tombstone.Meta.SizeBytes != 13 {
+		t.Fatalf("tombstone metadata = %#v", tombstone.Meta)
 	}
-	if _, err := d.Stat(ctx, ref); !errors.Is(err, artifacts.ErrNotFound) {
-		t.Fatalf("Stat after Delete error = %v, want ErrNotFound", err)
+	if _, _, err := d.Get(ctx, ref); !errors.Is(err, artifacts.ErrReaped) {
+		t.Fatalf("Get after Reap error = %v, want ErrReaped", err)
+	}
+	if _, err := d.Stat(ctx, ref); err != nil {
+		t.Fatalf("Stat after Reap = %v", err)
 	}
 
 	// The ON DELETE CASCADE on artifact_blobs.id (migrations/0005) must
@@ -198,10 +202,12 @@ func TestDeleteRemovesBlobAndMetadata(t *testing.T) {
 	if count != 0 {
 		t.Fatalf("artifact_blobs row count = %d, want 0 (cascade delete should have removed it)", count)
 	}
+	if _, err := s.Pool().Exec(ctx, `UPDATE artifact_tombstones SET reason='rewritten' WHERE id=$1`, tombstone.ID); err == nil {
+		t.Fatal("artifact tombstone UPDATE succeeded, want immutable-row rejection")
+	}
 
-	// Deleting again must be ErrNotFound, not a silent success.
-	if err := d.Delete(ctx, ref); !errors.Is(err, artifacts.ErrNotFound) {
-		t.Fatalf("second Delete error = %v, want ErrNotFound", err)
+	if err := d.Delete(ctx, ref); !errors.Is(err, artifacts.ErrDeleteForbidden) {
+		t.Fatalf("Delete error = %v, want ErrDeleteForbidden", err)
 	}
 }
 

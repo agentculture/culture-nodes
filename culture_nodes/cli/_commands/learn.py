@@ -36,7 +36,7 @@ Identity commands
 
 Product commands (thin API clients)
 ------------------------------------
-  culture-nodes workflow validate|publish|list|get
+  culture-nodes workflow generate|generation-get|validate|publish|list|get
   culture-nodes run create|list|get|cancel|events|retag
   culture-nodes node-runs list
   culture-nodes ledger records|projection
@@ -84,6 +84,10 @@ def _as_json_payload() -> dict[str, object]:
                 "summary": "Check agent-identity + API-reachability invariants.",
             },
             {"path": ["cli", "overview"], "summary": "Describe the CLI surface."},
+            {
+                "path": ["workflow", "generate"],
+                "summary": "Dispatch fleet-agent workflow generation.",
+            },
             {
                 "path": ["workflow", "validate"],
                 "summary": "Compile a workflow and report diagnostics.",

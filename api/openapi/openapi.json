@@ -703,6 +703,28 @@
         ],
         "type": "object"
       },
+      "CreateWorkflowGeneration": {
+        "additionalProperties": false,
+        "properties": {
+          "actor_ref": {
+            "minLength": 1,
+            "type": "string"
+          },
+          "base_digest": {
+            "pattern": "^sha256:[0-9a-f]{64}$",
+            "type": "string"
+          },
+          "description": {
+            "minLength": 1,
+            "type": "string"
+          }
+        },
+        "required": [
+          "description",
+          "actor_ref"
+        ],
+        "type": "object"
+      },
       "CurrencyCost": {
         "description": "One Usage.cost_by_currency entry.",
         "properties": {
@@ -2093,6 +2115,57 @@
           "reasoning_tokens",
           "attempts_reported",
           "attempts_not_reported"
+        ],
+        "type": "object"
+      },
+      "WorkflowGeneration": {
+        "properties": {
+          "base_digest": {
+            "type": "string"
+          },
+          "diagnostics": {
+            "items": {
+              "$ref": "#/components/schemas/Diagnostic"
+            },
+            "type": "array"
+          },
+          "diff": {
+            "type": "string"
+          },
+          "digest": {
+            "type": "string"
+          },
+          "format": {
+            "enum": [
+              "yaml",
+              "json"
+            ],
+            "type": "string"
+          },
+          "run_id": {
+            "type": "string"
+          },
+          "source": {
+            "type": "string"
+          },
+          "status": {
+            "enum": [
+              "proposed",
+              "confirmed",
+              "rejected",
+              "exhausted"
+            ],
+            "type": "string"
+          },
+          "valid": {
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "run_id",
+          "status",
+          "valid",
+          "diagnostics"
         ],
         "type": "object"
       },
@@ -3945,6 +4018,99 @@
         "summary": "Create a review request over a batch of ledger records.",
         "tags": [
           "reviews"
+        ]
+      }
+    },
+    "/v1alpha1/workflow-generations": {
+      "post": {
+        "description": "Creates a normal bounded workflow run whose generation node is an agent and whose next node is human approval. This operation never publishes. The initial authority status is always proposed.",
+        "operationId": "createWorkflowGeneration",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CreateWorkflowGeneration"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "202": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/WorkflowGeneration"
+                }
+              }
+            },
+            "description": "The fleet generation run was created."
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "description": "The description or actor reference is malformed."
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "description": "The pinned base workflow does not exist."
+          }
+        },
+        "summary": "Dispatch a registered fleet agent to propose workflow source.",
+        "tags": [
+          "workflows"
+        ]
+      }
+    },
+    "/v1alpha1/workflow-generations/{id}": {
+      "get": {
+        "operationId": "getWorkflowGeneration",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/WorkflowGeneration"
+                }
+              }
+            },
+            "description": "Current generation state. Exhaustion is a domain status."
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "description": "No such generation run."
+          }
+        },
+        "summary": "Read a generated proposal, compiler diagnostics, and edit diff.",
+        "tags": [
+          "workflows"
         ]
       }
     },

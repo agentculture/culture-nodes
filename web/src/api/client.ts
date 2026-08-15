@@ -216,6 +216,17 @@ export const validateWorkflow = (
   signal?: AbortSignal,
 ) => postJson<WorkflowValidation>("/workflows/validate", source, signal);
 
+export const createWorkflowGeneration = (
+  request: import("./types").CreateWorkflowGeneration,
+  signal?: AbortSignal,
+) => postJson<import("./types").WorkflowGeneration>("/workflow-generations", request, signal);
+
+export const getWorkflowGeneration = (runID: string, signal?: AbortSignal) =>
+  getJson<import("./types").WorkflowGeneration>(
+    `/workflow-generations/${encodeURIComponent(runID)}`,
+    signal,
+  );
+
 /**
  * `POST /v1alpha1/workflows` (task t9): publishes `source` as an immutable
  * workflow version, exactly as submitted — the caller must pass the operator's

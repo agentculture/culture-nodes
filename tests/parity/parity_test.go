@@ -204,6 +204,8 @@ var goCLIOutOfScopeVerbs = map[string]string{
 // documentedQueryParams below, since they extend an existing verb/operation
 // pair rather than adding a new one.
 var pythonFrontVerbs = []verbMapping{
+	{Verb: "workflow generate", OperationID: "createWorkflowGeneration"},
+	{Verb: "workflow generation-get", OperationID: "getWorkflowGeneration"},
 	{Verb: "workflow validate", OperationID: "validateWorkflow"},
 	{Verb: "workflow publish", OperationID: "publishWorkflow"},
 	{Verb: "workflow list", OperationID: "listWorkflows"},

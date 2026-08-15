@@ -29,24 +29,46 @@ Read plan state with `devague plan show`, deviations with `devague deviate --lis
 
 ## 2. What is merged
 
-**t1 + t2** (package P1, built by `codex-thor` run `01M022G18240VX3NX6NRT8HJCF`),
-merged to `owe/batch` at `a6c9301`. TDD gate passed before and after: `go build`,
-`go vet`, full `go test ./...`, adapter compile.
+**t1, t2, t3, t8, t15** plus the gate work, on `owe/batch`. TDD gate ran before
+and after every merge.
 
-- t1 — `EnvironmentFile` seam on every claude and codex bridge unit;
-  `install-secrets.sh` relays `GITHUB_TOKEN_WORKER` without fabricating it, host
-  derived from the actor registration; early `.github/workflows/**` scope refusal.
-- t2 — human-inbox lane adopts `culture-nodes-*` naming with the JSON config the
-  running bridge actually reads; the deploy now stops, disables **and removes**
-  the legacy unit files.
+| Task | Issue | Built by | Run |
+|---|---|---|---|
+| t1 | #72 | codex-thor | `01M022G18240VX3NX6NRT8HJCF` |
+| t2 | #84 | codex-thor | same |
+| t3 | #83 | codex-orin | `01M023VRBAZWF9S3BK3JVZX2E3` |
+| t15 | #77 (partial) | codex-orin | same |
+| t8 | #80 (partial) | codex-thor | `01M023WD51EZDCNJSNW69MW43Y` |
+
+Operator-lane commits on the same branch: `ea1ce0c` (#91 resolution +
+`AGENTS.md` + credential-lint fix), `0c573fc` (q5 decision + `DefaultTokenTTL`
+docstring).
+
+**Known partials, deliberately left open:**
+
+- **t8** — the continuation declaration compiles and its CEL evaluates;
+  scheduling is **not** wired into attempt completion.
+- **t15** — colleague and notify emit explicit model sentinels; human-inbox
+  has no preflight capability surface at all, which the run flagged itself.
+- **t4** — the 1000-line lint is written but **held out of the tree** until the
+  four over-limit files are split (deviation d7). Merging a red gate would make
+  every later merge unable to tell new breakage from old.
 
 ## 3. What is NOT done
 
-24 of 26 tasks. Waves 1–7 untouched. **No live test (t25), no summary (t26), no
-`/cicd`, no PR.**
+21 of 26 tasks. Waves 1–7 untouched. **No live test (t25), no summary (t26), no
+`/cicd`, no PR, no `/version-bump`.**
 
-Remaining wave 0: **t3, t15** (package P2, adapters) and **t4, t8** (package P3,
-platform) — both dispatched twice and blocked both times, see §5.
+**In flight right now:**
+
+| Pkg | Task | Actor | Run |
+|---|---|---|---|
+| P4 | t4 — split the four files, then land the lint | codex-thor | `01M026D8P5V97PH0YRZ3MZ1YB4` |
+| P6 | t5 — the artifact write route (#79) | codex-orin | `01M026V7GE2NFXAEXWKAHBFQFY` |
+
+**`t6` is `proposed`, not confirmed** — its instruction was rewritten with the
+#91 measurements, which flips a confirmed task back. It needs
+`devague plan confirm t6` from the user before wave 1 dispatches.
 
 ## 4. The credential — settled, do not re-litigate
 
@@ -75,29 +97,28 @@ git -c credential.helper= -c credential.https://github.com.helper= \
 `git config --get credential.helper` does **not** show URL-scoped helpers; use
 `git config --get-regexp 'credential.*helper'`.
 
-## 5. The blocker to solve first
+## 5. The sandbox — settled by measurement, [#91] closed
 
-Both round-2 packages failed identically, after their write probes passed:
+Under codex `--sandbox workspace-write` the **worktree is writable and `.git` is
+read-only**. That is a codex carve-out (codex-cli 0.147.0), not a kernel
+restriction. Adding one scoped entry lifts it:
 
-```text
-git fetch origin owe/batch  ->  .git/FETCH_HEAD: Read-only file system
+```bash
+codex exec --sandbox workspace-write \
+  -c 'sandbox_workspace_write={writable_roots=["<checkout>/.git"]}'
 ```
 
-Under codex `--sandbox workspace-write` the **worktree is writable but `.git` is
-read-only**. So an agent can edit files but cannot `fetch`, `commit`, or create a
-ref.
+Measured on thor: plain `workspace-write` → `Read-only file system`; with the
+widening → `GIT_WRITABLE`, and a full write-tree/commit-tree/update-ref produced
+commit `df7d974` at `refs/culture-nodes/probe`. So the `git_ref` carrier
+(q9/c70) needs **neither** `danger-full-access` **nor** to be dropped. Build the
+widening as opt-in per dispatch — a package that hands over no ref gets no
+`.git` write. Recorded as deviation `d6`.
 
-Two consequences, the second far larger than the first:
-
-1. **Operationally**, packages need `--sandbox danger-full-access` (what the
-   agent checkout's own `AGENTS.md` recommends), or briefs must avoid git
-   entirely and be self-contained.
-2. **For the spec**, the `git_ref` handover carrier decided in q9/c70 requires
-   the producing agent to create a commit and a ref — exactly what this sandbox
-   forbids. The two-carrier decision currently rests on either raising the
-   sandbox (weakening confinement) or having the operator create the ref, which
-   reintroduces the human-as-transport the batch exists to remove. **This is an
-   open decision, recorded as a `risky` deviation.**
+**Policy, decided by the repo owner:** `AGENTS.md` now permits a handover commit
+and a ref under `refs/culture-nodes/<run-id>`. Push stays forbidden and nothing
+may be committed onto a branch, so an agent's output is unreachable from any
+branch until the operator or control plane moves it.
 
 ## 6. Fleet facts (measured, do not re-derive)
 
@@ -106,13 +127,13 @@ Two consequences, the second far larger than the first:
 | Control plane | `http://192.168.1.146:18080` |
 | `company/codex-thor` | `http://192.168.1.146:8086`, checkout `/home/thor/git/culture-nodes-agent` |
 | `company/codex-orin` | `http://192.168.1.138:8086`, checkout `/home/orin/git/culture-nodes-agent` |
-| Both checkouts | clean, at `7519d74` |
+| codex on the agent hosts | `~/.local/bin/codex`, codex-cli 0.147.0 — **not on the default `ssh` PATH** |
+| Go on the agent hosts | **absent** — an agent there cannot run `go test`, so every Go claim needs the operator's gate |
 | Allowlist | **exactly one path per codex bridge**, exact-match — hence one package per actor at a time (deviation d1) |
-| Agent commit policy | `AGENTS.md:22` — *"Never `git commit` or `git push` from a session"*; the operator harvests the diff |
 | Harvest command | `ssh <host> 'cd <checkout> && git add -N . >/dev/null 2>&1; git diff HEAD --binary'` |
-
-**`AGENTS.md:22` contradicts the `git_ref` carrier.** t6 requires an agent to
-produce a commit; the policy forbids it. Unreconciled.
+| Checkout refresh | `git reset --hard HEAD && git clean -qfd && git fetch -q origin owe/batch && git checkout -q -B owe/batch origin/owe/batch` — required before **every** dispatch ([#93]) |
+| `nodes-op.sh assign` | **watches by default and blocks**; background it with `nohup … &` |
+| `nodes-op.sh ledger` | **truncates the claim** ([#92]); read the full text with `curl "$API/v1alpha1/runs/<id>/ledger"` piped through `python3 -c "…x['data']['statement']…"` |
 
 ## 7. Deviations recorded
 
@@ -120,39 +141,68 @@ produce a commit; the policy forbids it. Unreconciled.
 |---|---|
 | d1 | Serialize to one package per codex actor — one allowlisted checkout each |
 | d2 | Refresh both agent checkouts; they were two commits behind |
-| d3 | Commit and push spec + plan so briefs cite them rather than inlining — **done** |
-| d4 | Reconcile decision c26 against the committed unit tests (narrowed an over-broad `Environment=` ban to its real intent) |
-| d4* | Sandbox posture: `workspace-write` leaves `.git` read-only (see §5), classified `risky` |
+| d3 | Commit and push spec + plan so briefs cite them rather than inlining |
+| d4 | Reconcile decision c26 against the committed unit tests |
+| d4* | Sandbox posture: `workspace-write` leaves `.git` read-only — **superseded by d6** |
+| d5 | Self-contained briefs to unblock wave 0 without answering #91 |
+| d6 | #91 resolved by measurement: keep `workspace-write`, widen `.git` per dispatch, permit local refs |
+| d7 | Split t4: the lint lands with the file splits, not before. t8 lands its declaration and stays open |
+| d8 | q5 settled on per-artifact read capabilities; the spec's TTL premise falsified |
 
-*Two records display as `d4`; read `devague deviate --list` for the authoritative ids.*
+`devague deviate --list` is authoritative for ids.
 
 ## 8. Next actions, in order
 
-1. **Decide the sandbox question — see [#91], which states the four options.**
-   It gates everything downstream and changes what t6 can be.
-2. Re-dispatch P2 (t3, t15 → `codex-orin`) and P3 (t4, t8 → `codex-thor`) with
-   the chosen sandbox. One package per actor.
-3. Harvest → apply to a `owe/<pkg>` worktree under
-   `../.worktrees.culture-nodes/` → TDD gate → merge into `owe/batch` →
-   `git worktree remove`.
-4. Continue waves 1–7 per `devague plan waves`.
+1. Harvest P4 and P6 → apply to a worktree under
+   `../.worktrees.culture-nodes/` → **run the full suite on spark** (the agent
+   hosts have no Go) → merge into `owe/batch` → `git worktree remove`.
+2. `devague plan confirm t6` — user-only, and wave 1 waits on it.
+3. Wave 1: t6, t7, t9, t14, t16, t18, t19. t6 now carries the #91 measurements
+   in its brief.
+4. Waves 2–4 per `devague plan waves`.
 5. t24 self-test → t25 live test → t26 summary → `/cicd` → PR against `main`.
 
 **Every PR bumps the version** (`/version-bump`) — the `version-check` job blocks
 merge otherwise. Not yet done for this batch.
 
-## 9. Issues opened this cycle
+## 9. The merge gate is not a formality
+
+Every build package so far has arrived with at least one failure the run could
+not have seen, because **the agent hosts have no Go toolchain** and their
+sandbox blocks socket creation for the Python loopback tests. Three of four
+gate failures in this batch were tests the agent wrote and never executed.
+
+Specifics worth remembering, because they will recur:
+
+- A stale sibling test encoding the old semantics, missed while its neighbours
+  were updated (codex capability tests, t3).
+- An instruction satisfied in letter but not intent — `probes` kept injectable
+  while being made to decide nothing, with module globals monkeypatched instead
+  (t3; fixed by adding an injectable `capability_probe`).
+- A fixture spliced at the wrong indentation, producing nine diagnostics none of
+  which were about the feature (t8).
+- A declaration validated in one direction only: `onExhausted` excused from
+  needing a contract declaration, but never required to be *routed* (t8; fixed
+  with `graph.continuation_exhausted_unrouted`).
+
+## 10. Issues opened this cycle
 
 - [#88] widen SonarCloud beyond `culture_nodes`, measure a baseline, ratchet
 - [#89] run scope → think → challenge through Culture Nodes as a workflow
-- [#90] worker push credential: permission, delivery seam, verification —
-  **carries a correction comment**; its original root-cause analysis was wrong
-- [#91] `workspace-write` leaves `.git` read-only, so an agent cannot produce a
-  git ref — carries §5's four options **and** §6's `AGENTS.md` contradiction;
-  **this is the decision that unblocks the fan-out**
+- [#90] worker push credential — **carries a correction comment**; its original
+  root-cause analysis was wrong
+- [#91] `.git` read-only under `workspace-write` — **closed**, resolved by
+  measurement, see §5
+- [#92] the operator surface truncates ledger claims, hiding the qualifying half
+- [#93] every dispatch needs the operator to hand-prepare the agent checkout
+- [#94] the capability surface reports `writable_paths` but not whether `.git`
+  is writable
 
 [#87]: https://github.com/agentculture/culture-nodes/issues/87
 [#88]: https://github.com/agentculture/culture-nodes/issues/88
 [#89]: https://github.com/agentculture/culture-nodes/issues/89
 [#90]: https://github.com/agentculture/culture-nodes/issues/90
 [#91]: https://github.com/agentculture/culture-nodes/issues/91
+[#92]: https://github.com/agentculture/culture-nodes/issues/92
+[#93]: https://github.com/agentculture/culture-nodes/issues/93
+[#94]: https://github.com/agentculture/culture-nodes/issues/94

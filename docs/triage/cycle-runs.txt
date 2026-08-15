@@ -29,3 +29,8 @@
 01M03CTYP0P33C6QRJN1FMD2M2   # sweep-B (t7, issues 10/54/61/62), developer — read-only
 01M03CXXZ9N34FP4CYNA0BBS43   # Go capability probe, codex-thor — can a dispatch compile?
 01M03D53VRJ8FP5CJVGHWF4DJM   # t29 (#92/#108), codex-thor — first Go build package on a codex host
+
+# --- round 4 ---
+01M03DH3EQVESW0J5J63E28M1W   # K3 (t9 all-backends finish + t10), developer
+01M03DPMXFN912FF9BG6M2NJYJ   # K4 (t30 decision surface), planner
+01M03DQNQFG8TMX9AJSJN6NFYY   # t31 (brief composition), codex-thor

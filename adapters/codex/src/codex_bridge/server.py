@@ -459,6 +459,32 @@ class Handler(BaseHTTPRequestHandler):
         # `raw_input.get(...)` fallback is defensive only.
         continuation_ref = body.get("continuation_ref") or raw_input.get("continuation_ref") or None
 
+        # t9 / #90: does this dispatch hand its changes over as a git ref?
+        #
+        # Both halves of that path — the `.git` sandbox widening in
+        # codex_cli and preserve.handover_ref — were written and unit-tested
+        # while NOTHING set this flag, so every dispatch ran with a read-only
+        # `.git` and no session could commit its own work (deviation d2). It
+        # is read here, once, and threaded to both.
+        #
+        # Opt-in on purpose, and the two boundaries agree: a package that
+        # hands nothing over is given neither the ref plumbing nor `.git`
+        # write. Widening the sandbox for every session to spare this flag
+        # would serve the minority at the majority's expense (issue #91).
+        handover = bool(raw_input.get("handover"))
+        if handover and sandbox != codex_cli.SANDBOX_WORKSPACE_WRITE:
+            self._write_json(
+                400,
+                {
+                    "error": (
+                        "input.handover requires sandbox 'workspace-write': a session that "
+                        "cannot write its workspace has no changes to hand over"
+                    ),
+                    "class": mapping.CLASS_ACTOR_REJECTED_INPUT,
+                },
+            )
+            return
+
         ctx = mapping.InvocationContext(
             run_id=str(body.get("run_id") or ""),
             node_run_id=body.get("node_run_id") or None,
@@ -492,6 +518,7 @@ class Handler(BaseHTTPRequestHandler):
                 resolved_repo,
                 model,
                 sandbox,
+                handover=handover,
                 session_key=session_key,
                 held=held,
                 forked=forked,
@@ -505,6 +532,7 @@ class Handler(BaseHTTPRequestHandler):
             resolved_repo,
             model,
             sandbox,
+            handover=handover,
             session_key=session_key,
             held=held,
             forked=forked,
@@ -519,6 +547,7 @@ class Handler(BaseHTTPRequestHandler):
         model: str | None,
         sandbox: str | None,
         *,
+        handover: bool = False,
         session_key: str | None = None,
         held: bool = False,
         forked: bool = False,
@@ -536,6 +565,7 @@ class Handler(BaseHTTPRequestHandler):
                 model=model,
                 sandbox=sandbox,
                 continuation_ref=ctx.continuation_ref,
+                writable_git=handover,
             )
         finally:
             # t6 (c44/h37): the provider call is over (successfully or
@@ -619,6 +649,7 @@ class Handler(BaseHTTPRequestHandler):
         model: str | None,
         sandbox: str | None,
         *,
+        handover: bool = False,
         session_key: str | None = None,
         held: bool = False,
         forked: bool = False,
@@ -646,6 +677,7 @@ class Handler(BaseHTTPRequestHandler):
                 model=model,
                 sandbox=sandbox,
                 continuation_ref=ctx.continuation_ref,
+                writable_git=handover,
                 ctx=ctx,
                 callback_url=callback_url,
                 callback_token=callback_token,

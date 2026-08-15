@@ -134,6 +134,12 @@ class AsyncRunner:
         callback_token: str,
         heartbeat_after_seconds: int,
         continuation_ref: str | None = None,
+        # t9 / #90: threaded through to `codex_cli.spawn` so an async
+        # handover dispatch gets the same `.git` widening a sync one does.
+        # Async is the path production actually uses (`always_async: true`),
+        # so a wire that stopped at run_sync would have left the flag dead
+        # in exactly the deployment that needs it.
+        writable_git: bool = False,
         session_registry: SessionRegistry | None = None,
         session_key: str | None = None,
         session_holder: str | None = None,
@@ -165,6 +171,7 @@ class AsyncRunner:
             model=model,
             sandbox=sandbox,
             continuation_ref=continuation_ref,
+            writable_git=writable_git,
         )
         invocation_id = uuid.uuid4().hex
         inv = AsyncInvocation(

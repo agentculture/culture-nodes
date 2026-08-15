@@ -271,7 +271,7 @@ print(d.get("id", ""), d.get("authority", ""), origin.get("kind", ""),
 assign)
   actor="${1:?usage: assign <codex-thor|codex-orin|developer|planner|verifier|intake> \"instruction\" [opts]}"; shift
   instruction="${1:?assign needs an instruction}"; shift
-  sandbox=read-only; timeout=15m; retries=1; outcome=completed; watch=1; category=""; repo_override=""
+  sandbox=read-only; timeout=15m; retries=1; outcome=completed; watch=1; category=""; repo_override=""; handover=false
   while [ $# -gt 0 ]; do
     case "$1" in
       --sandbox) sandbox="$2"; shift 2;;
@@ -280,6 +280,12 @@ assign)
       --outcome) outcome="$2"; shift 2;;
       --category) category="$2"; shift 2;;
       --repo) repo_override="$2"; shift 2;;
+      # t9 / #90: ask the actor to hand its changes over as a git ref. On
+      # codex this also opens `.git` for writing, so the session can commit
+      # its own work instead of leaving a working tree for the operator to
+      # collect over ssh. Opt-in: a verification package hands nothing over
+      # and must stay unable to write .git.
+      --handover) handover=true; shift;;
       --no-watch) watch=0; shift;;
       --yes) ASSUME_YES=1; shift;;
       *) echo "nodes-op: unknown assign option $1" >&2; exit 1;;
@@ -315,10 +321,11 @@ assign)
       "$TEMPLATE" > "$wf"
   digest=$("$0" publish "$wf")
   [ -n "$digest" ] || { echo "nodes-op: publish returned no digest" >&2; exit 1; }
-  python3 - "$instruction" "$sandbox" "$outcome" "$repo" <<'PYEOF' > "$wf.json"
+  python3 - "$instruction" "$sandbox" "$outcome" "$repo" "$handover" <<'PYEOF' > "$wf.json"
 import json, sys
 print(json.dumps({"instruction": sys.argv[1], "sandbox": sys.argv[2],
-                  "success_outcome": sys.argv[3], "repo": sys.argv[4]}))
+                  "success_outcome": sys.argv[3], "repo": sys.argv[4],
+                  "handover": sys.argv[5] == "true"}))
 PYEOF
   if [ -n "$category" ]; then
     out=$(NODES_OP_YES=1 "$0" create "$digest" "$wf.json" --category "$category")
@@ -326,7 +333,7 @@ PYEOF
     out=$(NODES_OP_YES=1 "$0" create "$digest" "$wf.json")
   fi
   run_id=$(echo "$out" | awk '{print $1}')
-  echo "assigned: run=$run_id actor=$actor sandbox=$sandbox timeout=$timeout${category:+ category=$category}"
+  echo "assigned: run=$run_id actor=$actor sandbox=$sandbox timeout=$timeout${category:+ category=$category}${handover:+ handover=$handover}"
   [ "$watch" = "1" ] && "$0" watch "$run_id"
   ;;
 actors)

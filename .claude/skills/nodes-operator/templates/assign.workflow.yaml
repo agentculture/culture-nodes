@@ -34,6 +34,12 @@ spec:
             type: string
           repo:
             type: string
+          # t9 / #90: does this package hand its changes over as a git ref?
+          # Optional, and absent means false — a verification package hands
+          # nothing over and must not be given `.git` write. Adding it as a
+          # REQUIRED field would have broken every already-published digest.
+          handover:
+            type: boolean
     output:
       schema:
         type: object
@@ -59,6 +65,7 @@ spec:
           repo: /run/input/repo
           sandbox: /run/input/sandbox
           success_outcome: /run/input/success_outcome
+          handover: /run/input/handover
       contract:
         input:
           schema:

@@ -64,4 +64,5 @@ def host_facts(
         confinement=_CONFINEMENT,
         commit_policy=_COMMIT_POLICY,
         writable_paths=[],
+        artifact_publish="not-applicable-no-workspace",
     )

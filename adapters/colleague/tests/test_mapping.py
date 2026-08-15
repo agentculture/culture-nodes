@@ -198,7 +198,13 @@ def test_missing_task_result_entirely_is_an_execution_failure():
 
 def test_usage_maps_prompt_and_completion_tokens_cost_and_currency_are_null():
     usage = mapping.usage_from_task_result(_ok_result())
-    assert usage == {"input_tokens": 10, "output_tokens": 5, "cost": None, "currency": None}
+    assert usage == {
+        "input_tokens": 10,
+        "output_tokens": 5,
+        "cost": None,
+        "currency": None,
+        "model": "unknown:colleague-backend-cannot-report",
+    }
     assert "cached_input_tokens" not in usage
     assert usage.get("cached_input_tokens") is None
     assert "reasoning_tokens" not in usage
@@ -206,7 +212,8 @@ def test_usage_maps_prompt_and_completion_tokens_cost_and_currency_are_null():
 
 def test_usage_defaults_to_zero_when_absent():
     usage = mapping.usage_from_task_result({"status": "ok"})
-    assert usage == {"input_tokens": 0, "output_tokens": 0, "cost": None, "currency": None}
+    assert usage["model"] == "unknown:colleague-backend-cannot-report"
+    assert usage["model"] is not None
 
 
 def test_output_carries_summary_changed_files_artifacts_path():
@@ -600,6 +607,7 @@ def test_sync_response_failure_carries_usage_from_task_result():
         "output_tokens": 0,
         "cost": None,
         "currency": None,
+        "model": "unknown:colleague-backend-cannot-report",
     }
 
 
@@ -617,6 +625,7 @@ def test_sync_response_undeclared_incomplete_failure_carries_usage():
         "output_tokens": 50,
         "cost": None,
         "currency": None,
+        "model": "unknown:colleague-backend-cannot-report",
     }
 
 
@@ -656,6 +665,7 @@ def test_terminal_event_failed_carries_usage_from_task_result():
         "output_tokens": 0,
         "cost": None,
         "currency": None,
+        "model": "unknown:colleague-backend-cannot-report",
     }
 
 
@@ -673,6 +683,7 @@ def test_terminal_event_undeclared_incomplete_failure_carries_usage():
         "output_tokens": 50,
         "cost": None,
         "currency": None,
+        "model": "unknown:colleague-backend-cannot-report",
     }
 
 

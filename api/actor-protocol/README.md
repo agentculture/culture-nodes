@@ -116,6 +116,7 @@ absence, a null or an empty string reads as a fact about the host.
 | `confinement` | One sentence on what actually confines a session here — including "nothing", when that is the truth. |
 | `commit_policy` | Whether the session commits, and where a dispatch's changes end up. Always present. |
 | `writable_paths` | The paths a dispatch may write in. `[]` means nowhere, which is a fact rather than an absence. |
+| `artifact_publish` | Three-valued publication fact: `supported`, `unsupported-by-host`, or `not-applicable-no-workspace`. The last value is explicit for bridges such as notify and human-inbox; it must not be represented by a silent skip. |
 
 The facts must describe what the host **can do**, never what its
 configuration asks for. That distinction is the whole reason this exists:

@@ -57,8 +57,10 @@ a fifth dialect.
 from __future__ import annotations
 
 import socket
+import shutil
+import subprocess
 from pathlib import Path
-from typing import Any, Iterable, Mapping, Sequence
+from typing import Any, Callable, Iterable, Mapping, Sequence
 
 #: The capability-surface version this bridge produces. Pinned to
 #: `internal/preflight.ProtocolVersion` — the control plane refuses a
@@ -96,6 +98,9 @@ CAPABILITIES_PATH = "/v1/capabilities"
 #:   changes end up. Always present.
 #: * ``writable_paths`` — the paths a dispatch may write in. ``[]`` means
 #:   nowhere.
+#: * ``artifact_publish`` — one of ``supported``, ``unsupported-by-host``,
+#:   or ``not-applicable-no-workspace``. Unlike omission, the last value
+#:   explicitly says that this bridge has no workspace to publish from.
 HOST_KEYS = (
     "hostname",
     "sandbox_modes",
@@ -104,6 +109,11 @@ HOST_KEYS = (
     "confinement",
     "commit_policy",
     "writable_paths",
+    "artifact_publish",
+)
+
+ARTIFACT_PUBLISH_VALUES = frozenset(
+    ("supported", "unsupported-by-host", "not-applicable-no-workspace")
 )
 
 #: The two facts every bridge knows about itself without measuring anything.
@@ -147,9 +157,10 @@ def userns_restrictions(
     """The `name=value` of every probed sysctl currently restricting
     unprivileged user namespaces, empty when none is.
 
-    Read-only and stdlib-only: the sysctls ARE the fact, so read them rather
-    than shelling out to `bwrap` to find out. An absent knob is a kernel that
-    does not restrict here — never read absence as the blocking value.
+    These values are diagnostic hints, not the capability fact. The
+    executable bwrap/unshare probe in :func:`measure_sandbox_modes` decides
+    whether the capability works; sysctls are read only to explain a failed
+    probe. An absent knob contributes no explanation.
     *probes* is injectable so a test can assert both kinds of kernel rather
     than whichever one happens to be running the suite.
     """
@@ -164,12 +175,39 @@ def userns_restrictions(
     return tuple(blockers)
 
 
+def _userns_capability() -> tuple[str, str]:
+    """Return ``(state, probe)`` for an executable user-namespace probe.
+
+    ``state`` is ``available``, ``unavailable``, or ``not-probed``. bwrap is
+    authoritative when installed because it is the mechanism codex uses;
+    unshare is a capability-level fallback only when bwrap is absent.
+    """
+    if shutil.which("bwrap"):
+        probe = "bwrap"
+        argv = ["bwrap", "--unshare-user", "--unshare-net", "--ro-bind", "/", "/", "/bin/true"]
+    elif shutil.which("unshare"):
+        probe = "unshare"
+        argv = ["unshare", "--user", "--map-root-user", "true"]
+    else:
+        return "not-probed", "neither bwrap nor unshare is installed"
+    try:
+        completed = subprocess.run(
+            argv, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, timeout=10, check=False
+        )
+    except (OSError, subprocess.TimeoutExpired) as exc:
+        return "unavailable", f"{probe} capability probe could not run ({exc})"
+    if completed.returncode == 0:
+        return "available", f"{probe} capability probe succeeded"
+    return "unavailable", f"{probe} capability probe failed (exit {completed.returncode})"
+
+
 def measure_sandbox_modes(
     candidates: Sequence[str],
     *,
     requires_userns: Iterable[str] = (),
     unsupported: Mapping[str, str] | None = None,
     probes: Sequence[tuple[str, str]] = USERNS_SYSCTLS,
+    capability_probe: Callable[[], tuple[str, str]] | None = None,
 ) -> tuple[list[str], dict[str, str]]:
     """Split *candidates* into (modes this host can actually deliver, modes
     it cannot with a reason each).
@@ -186,24 +224,34 @@ def measure_sandbox_modes(
       them the helper cannot start, and codex's own behaviour then is to
       lose every file write while still running shell commands unconfined
       (#18/#63). MEASURED, per dispatch host, at the moment it is asked.
+
+    *capability_probe* is injectable alongside *probes* for the same reason
+    *probes* is: since the executable probe — not the sysctls — decides the
+    answer, a test that could only inject sysctls could no longer assert
+    both kinds of kernel. It returns the same ``(state, reason)`` pair as
+    :func:`_userns_capability`, which is the default.
     """
     unsupported = dict(unsupported or {})
-    blockers = userns_restrictions(probes)
     needs_userns = set(requires_userns)
+    measure = capability_probe or _userns_capability
+    capability_state, capability_reason = (
+        measure() if needs_userns else ("available", "not required")
+    )
+    blockers = userns_restrictions(probes) if capability_state == "unavailable" else ()
 
     available: list[str] = []
     unavailable: dict[str, str] = {}
     for mode in candidates:
         if mode in unsupported:
             unavailable[mode] = unsupported[mode]
-        elif mode in needs_userns and blockers:
-            unavailable[mode] = (
-                "unprivileged user namespaces are restricted on this host ("
-                + ", ".join(blockers)
-                + "), so the sandbox helper this mode's confinement depends on cannot "
-                "start here — requesting it does not fail, it silently loses every file "
-                "write while shell commands keep running unconfined (#18/#63)"
-            )
+        elif mode in needs_userns and capability_state != "available":
+            if capability_state == "not-probed":
+                unavailable[mode] = f"user-namespace capability not probed: {capability_reason}"
+            else:
+                diagnostic = (
+                    "; likely kernel setting(s): " + ", ".join(blockers) if blockers else ""
+                )
+                unavailable[mode] = capability_reason + diagnostic
         else:
             available.append(mode)
     return available, unavailable
@@ -275,6 +323,13 @@ def host_block(**facts: Any) -> dict[str, Any]:
                 f"{key} without measuring anything, so an empty one is a caller bug rather than an "
                 f"honest absence"
             )
+
+    artifact_publish = facts.get("artifact_publish")
+    if artifact_publish is not None and artifact_publish not in ARTIFACT_PUBLISH_VALUES:
+        raise SurfaceError(
+            "host fact 'artifact_publish' must be supported, unsupported-by-host, "
+            "or not-applicable-no-workspace"
+        )
 
     host: dict[str, Any] = {}
     for key in HOST_KEYS:

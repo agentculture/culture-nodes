@@ -45,7 +45,10 @@ def test_a_bridge_with_no_session_omits_the_sandbox_keys(tmp_path):
     was measured and none works", which is a claim about a session that does
     not exist."""
     host = capabilities.host_facts(Config(), probes=_permissive(tmp_path))
-    assert set(host) == {"hostname", "confinement", "commit_policy", "writable_paths"}
+    assert set(host) == {
+        "hostname", "confinement", "commit_policy", "writable_paths", "artifact_publish"
+    }
+    assert host["artifact_publish"] == "not-applicable-no-workspace"
 
 
 def test_what_remains_still_states_the_facts_a_dispatch_depends_on(tmp_path):

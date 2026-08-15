@@ -21,3 +21,6 @@
 01M03A6RB6SB9JQWV09QPSPH3R   # C2 (t15), codex-orin
 01M03A7GAP69Q4WJVFANKX0120   # C4 (t5, t6, t25), codex-thor
 01M03ANKVQ9DQPCAK8A7Q6Z22F   # K2 (t13, t19), planner
+
+# --- round 3 ---
+01M03B29EGQY1F3FET2AEX2BZN   # C6 (t27 owner briefs), codex-thor

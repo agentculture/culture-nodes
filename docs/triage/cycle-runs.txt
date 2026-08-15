@@ -28,3 +28,4 @@
 01M03CD5V0WE9CBSHBM1Y3E9S7   # handover probe (t9/#90), codex-thor — first dispatch with .git write
 01M03CTYP0P33C6QRJN1FMD2M2   # sweep-B (t7, issues 10/54/61/62), developer — read-only
 01M03CXXZ9N34FP4CYNA0BBS43   # Go capability probe, codex-thor — can a dispatch compile?
+01M03D53VRJ8FP5CJVGHWF4DJM   # t29 (#92/#108), codex-thor — first Go build package on a codex host

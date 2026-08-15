@@ -24,6 +24,27 @@ live database password, and each other lane has its own `FORCE_*` switch
 (`FORCE_RUNNER`, `FORCE_CODEX`, `FORCE_NOTIFY`, `FORCE_HUMAN_INBOX`) so
 authorizing one rotation cannot authorize another.
 
+## Bundled or external PostgreSQL
+
+`install-secrets.sh` preserves the current topology explicitly: thor's
+`COMPOSE_PROFILES=bundled-postgres,backup` starts the bundled database and
+backup loop, while both thor and orin receive a host-appropriate
+`NODES_DATABASE_URL`. `DATABASE_SSLMODE` is the single TLS-mode input; the
+LAN default is `disable` under the network trust decision below.
+
+To use an external database, edit `prod.env` on each host: set the same
+provider URL in `NODES_DATABASE_URL` (using the provider-required sslmode),
+remove `bundled-postgres` from `COMPOSE_PROFILES`, and keep `backup` only if
+that external database should be dumped to thor's configured backup
+directory. The backup service runs `pg_dump "$NODES_DATABASE_URL"`, so it
+cannot silently continue dumping an unused local database. Removing
+`backup` disables the loop explicitly. No Go/Python source or image changes
+are involved.
+
+An absent `NODES_DATABASE_URL` is a configuration error: Compose exits
+during variable interpolation with `set the bundled or external PostgreSQL
+URL in prod.env` before it starts any control-plane service.
+
 ## prod.env is merged, never rewritten
 
 `prod.env` holds two populations of keys: the six secrets

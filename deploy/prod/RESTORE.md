@@ -1,6 +1,7 @@
 # Restore runbook — thor's authoritative Postgres (plan t20)
 
-The `backup` service in `compose.thor.yml` writes a full `pg_dump -Fc`
+The optional `backup` profile in `compose.thor.yml` writes a full
+`pg_dump -Fc` of `NODES_DATABASE_URL`
 to `~/.culture-nodes/backups/` on thor every `BACKUP_INTERVAL_SECONDS`
 (default 6h), keeping the newest 7 and a `latest.dump` symlink. The
 ledger is the authoritative evidence store; this file is how it comes

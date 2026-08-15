@@ -1,0 +1,23 @@
+# Culture Nodes runs dispatched by the close-the-backlog cycle.
+#
+# scripts/ledger-gate.py reads this file to answer "is any claim from this
+# cycle still undecided?" — the stage exit gate of task t8. One run id per
+# line; text after '#' is a comment. Append a run the moment it is
+# dispatched, not when it lands: a run missing from this file is a run the
+# gate cannot see, which is exactly the recollection the gate replaces.
+
+# --- probes (pre-fan-out, sandbox capability) ---
+01M03374VAKH0KHN0GDZ466NP4   # probe: thor, snap-packaged uv cannot run
+01M0342X60F3NY8MH150G48AZ6   # probe: orin, standalone uv, read-only cache
+01M0356BK8QYR3119R8VY1YY9Q   # probe: orin, /tmp and cwd both read-only
+
+# --- round 1 ---
+01M039KA0QQ73XM3WQCQEQF1CN   # K1 first cut, developer — refused 403, reproduced #98
+01M039V5YTX7EXS13AVAHJQZ5W   # K1 re-cut (t12), developer
+01M039NZ2TZYFG68YZT93A6DC7   # C1 (t2, t3, t18), codex-thor
+01M039PJGX69ZNP59XBQB95XV8   # C3 (t16, t20), codex-orin
+
+# --- round 2 ---
+01M03A6RB6SB9JQWV09QPSPH3R   # C2 (t15), codex-orin
+01M03A7GAP69Q4WJVFANKX0120   # C4 (t5, t6, t25), codex-thor
+01M03ANKVQ9DQPCAK8A7Q6Z22F   # K2 (t13, t19), planner

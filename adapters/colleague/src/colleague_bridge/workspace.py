@@ -126,6 +126,16 @@ def _git_stdout(repo: str, *args: str) -> str | None:
     return proc.stdout
 
 
+#: Public aliases for `reap.py`, this module's other half (task t17). The
+#: reaper runs git through THIS module's one bounded, never-raising
+#: subprocess helper and checks containment with THIS module's predicate,
+#: rather than growing a second git path and a second ownership rule that
+#: could drift from the provisioner's.
+run_git = _run_git
+git_stdout = _git_stdout
+is_within = _is_within
+
+
 @dataclass(frozen=True)
 class WorkspaceHandle:
     """What `begin()` captures right before the actor subprocess is

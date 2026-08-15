@@ -61,6 +61,7 @@ _ENV_FLOAT_FIELDS = {
     "COLLEAGUE_BRIDGE_SYNC_TIMEOUT_SECONDS": "sync_timeout_seconds",
     "COLLEAGUE_BRIDGE_BACKGROUND_DISPATCH_TIMEOUT_SECONDS": "background_dispatch_timeout_seconds",
     "COLLEAGUE_BRIDGE_ASYNC_WAIT_SECONDS": "async_wait_seconds",
+    "COLLEAGUE_BRIDGE_WORKTREE_REAP_MIN_IDLE_SECONDS": "worktree_reap_min_idle_seconds",
 }
 _ENV_BOOL_FIELDS = {
     "COLLEAGUE_BRIDGE_ALWAYS_ASYNC": "always_async",
@@ -158,6 +159,13 @@ class Config:
     #: The remote a preserve branch is pushed to, when `preserve_push` is
     #: True.
     preserve_remote: str = "origin"
+
+    # --- worktree reaping (task t17) -------------------------------------
+    #: How long a minted worktree must have gone untouched before age stops
+    #: being a reason to DEFER its removal. Read by `reap.ReapPolicy`; see
+    #: `reap.py`'s docstring for why age is the weakest of the four idleness
+    #: signals and never on its own a reason to reap.
+    worktree_reap_min_idle_seconds: float = 86_400.0
 
     # --- HTTP surface ----------------------------------------------------
     host: str = "127.0.0.1"
@@ -265,6 +273,7 @@ _FILE_FIELDS = {
     "preserve_branch_prefix": str,
     "preserve_push": bool,
     "preserve_remote": str,
+    "worktree_reap_min_idle_seconds": float,
     "host": str,
     "port": int,
     "auth_token": str,

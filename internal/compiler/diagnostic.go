@@ -52,6 +52,13 @@ const (
 	CodeGraphNoEndReachable    = "graph.no_end_reachable"
 	CodeGraphUnboundedCycle    = "graph.unbounded_cycle"
 
+	// CodeGraphExhaustedUnrouted fires when a node declares
+	// `continue.onExhausted` but no edge carries that outcome away. Running
+	// out of continuation budget is a DOMAIN outcome, so it has to follow an
+	// edge like any other (PRD §3.4); with no edge the run reaches the one
+	// state the declaration exists to handle and stops there.
+	CodeGraphExhaustedUnrouted = "graph.continuation_exhausted_unrouted"
+
 	// Contract.
 	CodeContractOutcomesMissing    = "contract.outcomes_missing"
 	CodeContractSelectMissing      = "contract.select_missing"

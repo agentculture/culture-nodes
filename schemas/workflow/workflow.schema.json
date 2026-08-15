@@ -92,6 +92,23 @@
         }
       }
     },
+    "continuation": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["while", "bounds", "onExhausted"],
+      "properties": {
+        "while": { "type": "array", "minItems": 1, "items": { "$ref": "#/$defs/cel" } },
+        "bounds": {
+          "type": "object", "additionalProperties": false, "minProperties": 1,
+          "properties": {
+            "maxContinuations": { "type": "integer", "minimum": 1 },
+            "maxWallClock": { "$ref": "#/$defs/duration" },
+            "maxSessions": { "type": "integer", "minimum": 1 }
+          }
+        },
+        "onExhausted": { "$ref": "#/$defs/outcomeName" }
+      }
+    },
     "metadata": {
       "type": "object",
       "required": [
@@ -293,6 +310,9 @@
         },
         "policy": {
           "$ref": "#/$defs/nodePolicy"
+        },
+        "continue": {
+          "$ref": "#/$defs/continuation"
         },
         "decisionSchemaRef": {
           "type": "string",

@@ -64,6 +64,11 @@ func (c *compilation) checkContracts() {
 		c.checkNodeSchemas(base, n)
 		c.checkNodeBindings(base, n)
 		c.checkNodeHooks(base, id, n)
+		if n.Continue != nil {
+			for j, expression := range n.Continue.While {
+				c.compileCEL(base+"/continue/while/"+strconv.Itoa(j), expression)
+			}
+		}
 
 		for j, port := range n.Select {
 			if port.When != "" {

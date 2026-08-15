@@ -11,20 +11,20 @@ import (
 	"github.com/agentculture/culture-nodes/internal/store/postgres/pgtest"
 )
 
-func requireDriver(t *testing.T) *queuepg.Driver {
+func requireDriver(t *testing.T, namespaceID string) *queuepg.Driver {
 	t.Helper()
 	s := pgtest.RequireStore(t, testStore)
-	return queuepg.New(s.Pool())
+	return queuepg.New(s.Pool(), namespaceID)
 }
 
 // TestPublishReceiveAckDelayRoundTrip proves the basic four-method
 // round-trip: a published WorkRef is receivable, and once acked is gone.
 func TestPublishReceiveAckDelayRoundTrip(t *testing.T) {
-	d := requireDriver(t)
 	s := pgtest.RequireStore(t, testStore)
 	ctx := context.Background()
 
 	ns := pgtest.MustNamespace(t, s, "test-queue-roundtrip")
+	d := requireDriver(t, ns.ID)
 	ref := queue.WorkRef{
 		WorkID:      "wrk_" + store.NewULID(),
 		NodeRunID:   "nr_" + store.NewULID(),
@@ -64,11 +64,11 @@ func TestPublishReceiveAckDelayRoundTrip(t *testing.T) {
 // no-op, not an error -- required because delivery is at-least-once and a
 // caller (or two racing callers) may ack the same WorkRef twice.
 func TestAckIsIdempotent(t *testing.T) {
-	d := requireDriver(t)
 	s := pgtest.RequireStore(t, testStore)
 	ctx := context.Background()
 
 	ns := pgtest.MustNamespace(t, s, "test-queue-ack-idempotent")
+	d := requireDriver(t, ns.ID)
 	ref := queue.WorkRef{WorkID: "wrk_" + store.NewULID(), NamespaceID: ns.ID}
 	mustPublish(t, d, ctx, ref)
 
@@ -93,11 +93,11 @@ func TestAckIsIdempotent(t *testing.T) {
 // in between (a duplicate/early poll) is harmless, per the queue's
 // at-least-once, duplicates-are-harmless contract.
 func TestDelayThenReceiveAgain(t *testing.T) {
-	d := requireDriver(t)
 	s := pgtest.RequireStore(t, testStore)
 	ctx := context.Background()
 
 	ns := pgtest.MustNamespace(t, s, "test-queue-delay")
+	d := requireDriver(t, ns.ID)
 	ref := queue.WorkRef{WorkID: "wrk_" + store.NewULID(), NamespaceID: ns.ID}
 	mustPublish(t, d, ctx, ref)
 
@@ -140,11 +140,11 @@ func TestDelayThenReceiveAgain(t *testing.T) {
 // (the crash-retry case internal/events.Relay depends on) does not create a
 // duplicate signal.
 func TestPublishIsIdempotentByWorkID(t *testing.T) {
-	d := requireDriver(t)
 	s := pgtest.RequireStore(t, testStore)
 	ctx := context.Background()
 
 	ns := pgtest.MustNamespace(t, s, "test-queue-publish-idempotent")
+	d := requireDriver(t, ns.ID)
 	ref := queue.WorkRef{WorkID: "wrk_" + store.NewULID(), NamespaceID: ns.ID}
 
 	if err := d.Publish(ctx, ref); err != nil {
@@ -174,7 +174,9 @@ func TestPublishIsIdempotentByWorkID(t *testing.T) {
 // blocking -- the "check once, do not wait" contract documented on
 // queue.Queue.
 func TestReceiveNoWaitReturnsEmptyWithoutBlocking(t *testing.T) {
-	d := requireDriver(t)
+	s := pgtest.RequireStore(t, testStore)
+	ns := pgtest.MustNamespace(t, s, "test-queue-empty")
+	d := requireDriver(t, ns.ID)
 	ctx := context.Background()
 
 	start := time.Now()
@@ -192,6 +194,33 @@ func TestReceiveNoWaitReturnsEmptyWithoutBlocking(t *testing.T) {
 	}
 	if elapsed > 2*time.Second {
 		t.Fatalf("Receive with wait=0 took %v, want it to return promptly", elapsed)
+	}
+}
+
+// TestReceiveIsScopedToNamespace proves unrelated ready rows cannot fill a
+// receive batch and hide work belonging to this driver. A namespace-agnostic
+// LIMIT query returns only the ten older foreign rows and fails this test.
+func TestReceiveIsScopedToNamespace(t *testing.T) {
+	s := pgtest.RequireStore(t, testStore)
+	ctx := context.Background()
+	own := pgtest.MustNamespace(t, s, "test-queue-scoped-own")
+	foreign := pgtest.MustNamespace(t, s, "test-queue-scoped-foreign")
+	d := requireDriver(t, own.ID)
+
+	for i := 0; i < 10; i++ {
+		mustPublish(t, d, ctx, queue.WorkRef{
+			WorkID: "wrk_" + store.NewULID(), NamespaceID: foreign.ID,
+		})
+	}
+	want := queue.WorkRef{WorkID: "wrk_" + store.NewULID(), NamespaceID: own.ID}
+	mustPublish(t, d, ctx, want)
+
+	deliveries, err := d.Receive(ctx, 10, 0)
+	if err != nil {
+		t.Fatalf("Receive: %v", err)
+	}
+	if len(deliveries) != 1 || deliveries[0].WorkID != want.WorkID {
+		t.Fatalf("Receive returned %+v, want only %s from namespace %s", deliveries, want.WorkID, own.ID)
 	}
 }
 

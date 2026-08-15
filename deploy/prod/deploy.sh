@@ -73,12 +73,38 @@ PR_UPKEEP_SWEEP_SOURCE_SHA256=${PR_UPKEEP_SWEEP_SOURCE_SHA256:-$(git show "$REVI
 if [ -z "${PR_UPKEEP_REPOSITORIES:-}" ]; then
 	PR_UPKEEP_REPOSITORIES='{"cycle":0,"repositories":[{"github_repo":"agentculture/culture-nodes","sonar_component":"agentculture_culture-nodes"}]}'
 fi
+# systemd's EnvironmentFile parser is shell-LIKE: it processes backslash
+# escapes in an unquoted value. Measured on thor, unquoted:
+#
+#   {"x":"a\"b","path":"c\\d"}  ->  {"x":"a"b","path":"c\d"}   (invalid JSON)
+#   {"t":"line\nbreak"}          ->  {"t":"linebreak"}           (escape eaten)
+#
+# PR_UPKEEP_REPOSITORIES is JSON, and JSON string escapes are backslashes, so
+# any repo name, sonar component or jira_site containing a quote or backslash
+# silently reshapes the config the sweep reads. Today's default value happens
+# to contain neither, which is why this worked at all.
+#
+# Single-quoting suppresses escape processing entirely (measured: the same
+# JSON round-trips byte-exact), so the value is single-quoted here, with any
+# literal single quote escaped the POSIX way. Found by pr-upkeep itself, on
+# the PR that introduced it.
+case "$PR_UPKEEP_REPOSITORIES" in
+	*"'"*)
+		echo "refusing: PR_UPKEEP_REPOSITORIES contains a literal single quote." >&2
+		echo "systemd EnvironmentFile is shell-LIKE, not shell: it cannot represent one inside a" >&2
+		echo "single-quoted value and does not honour the POSIX escape idiom (measured on thor)." >&2
+		echo "Writing it unquoted would let the runner read the config back reshaped." >&2
+		exit 1
+		;;
+esac
 if [ -n "$PR_UPKEEP_SWEEP_SOURCE_URL" ] && [ -n "$PR_UPKEEP_SWEEP_SOURCE_SHA256" ]; then
-	ssh "$HOST" "umask 077; { \
-		echo 'PR_UPKEEP_SWEEP_SOURCE_URL=${PR_UPKEEP_SWEEP_SOURCE_URL}'; \
-		echo 'PR_UPKEEP_SWEEP_SOURCE_SHA256=${PR_UPKEEP_SWEEP_SOURCE_SHA256}'; \
-		echo 'PR_UPKEEP_REPOSITORIES=${PR_UPKEEP_REPOSITORIES}'; \
-	} >> ~/.culture-nodes/runner.env"
+	# Piped over stdin rather than built into the ssh command string: the
+	# repositories value is single-quoted (see above) and interpolating quotes
+	# into a double-quoted remote command is how you get a value that is
+	# correct locally and reshaped remotely.
+	printf "PR_UPKEEP_SWEEP_SOURCE_URL=%s\nPR_UPKEEP_SWEEP_SOURCE_SHA256=%s\nPR_UPKEEP_REPOSITORIES='%s'\n" \
+		"$PR_UPKEEP_SWEEP_SOURCE_URL" "$PR_UPKEEP_SWEEP_SOURCE_SHA256" "$PR_UPKEEP_REPOSITORIES" \
+		| ssh "$HOST" "umask 077; cat >> ~/.culture-nodes/runner.env"
 	say "granted the pr-upkeep sweep source and closed repository set to the runner on $HOST"
 else
 	say "PR_UPKEEP_SWEEP_SOURCE_URL/_SHA256 empty: pr-upkeep's sweep is not configured on $HOST (see examples/pr-upkeep/README.md)"

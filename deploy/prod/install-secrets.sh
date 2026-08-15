@@ -380,7 +380,24 @@ fi
 install_jira_runner_env() { # host
   local host=$1
   if [ -z "${JIRA_ACCOUNT_EMAIL:-}" ] && [ -z "${JIRA_API_TOKEN:-}" ]; then
-    echo "JIRA_ACCOUNT_EMAIL/JIRA_API_TOKEN not set — skipping Jira runner credential relay on $host" >&2
+    # Grant the NAMES with empty values rather than skipping the file.
+    #
+    # The runner boundary refuses an operation whose environment_refs name
+    # anything absent from the runner process (headspace/bridge.go's
+    # resolveEnv) -- deliberately, and before the operation runs. pr-upkeep's
+    # sweep node names the Jira pair unconditionally, so on a deployment with
+    # no Jira configured the sweep was refused as rejected_input in 1ms and
+    # the whole flow failed. Found live: run 01M02J59XEF9RB30ZDTYRD1ADQ, the
+    # first pr-upkeep run ever attempted in production.
+    #
+    # Empty is the honest grant here, not a workaround: sweep.py only reads
+    # these when a repository entry carries a `jira_site`, so an unconfigured
+    # deployment skips the Jira source entirely and never looks at them. What
+    # the boundary needs is for the name to EXIST; what the script needs is to
+    # know Jira is off. Both are true of an empty value.
+    echo "JIRA_ACCOUNT_EMAIL/JIRA_API_TOKEN not set — granting empty values on $host so the sweep's environment_refs resolve" >&2
+    printf 'JIRA_ACCOUNT_EMAIL=\nJIRA_API_TOKEN=\n' \
+      | ssh "$host" 'umask 077; mkdir -p ~/.culture-nodes; cat > ~/.culture-nodes/runner-secrets.env; chmod 600 ~/.culture-nodes/runner-secrets.env'
     return 0
   fi
   if [ -z "${JIRA_ACCOUNT_EMAIL:-}" ] || [ -z "${JIRA_API_TOKEN:-}" ]; then

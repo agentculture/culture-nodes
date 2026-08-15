@@ -1,0 +1,23 @@
+{
+  "outcome": "completed",
+  "output": {},
+  "ledger_delta": {
+    "records": []
+  },
+  "handover": {
+    "attempted": true,
+    "created": true,
+    "ref": "refs/culture-nodes/run_x/nr-att-20260815T194420Z-d40ae1",
+    "commit": "bddd639a176adfb73b6a82dfc7e6b2b2a4f0913d",
+    "remote": "origin",
+    "handle": {
+      "kind": "git_ref",
+      "ref": "git+https://github.com/agentculture/culture-nodes.git#refs/culture-nodes/run_x/nr-att-20260815T194420Z-d40ae1",
+      "commit": "bddd639a176adfb73b6a82dfc7e6b2b2a4f0913d",
+      "publication": "pending",
+      "media_type": "application/vnd.culture-nodes.git-commit"
+    },
+    "missing_capability": null,
+    "reason": null
+  }
+}

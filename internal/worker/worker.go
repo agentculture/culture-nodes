@@ -9,6 +9,7 @@ import (
 
 	"github.com/agentculture/culture-nodes/internal/actors"
 	"github.com/agentculture/culture-nodes/internal/engine"
+	"github.com/agentculture/culture-nodes/internal/handover"
 	"github.com/agentculture/culture-nodes/internal/ledger"
 	"github.com/agentculture/culture-nodes/internal/runners"
 	idstore "github.com/agentculture/culture-nodes/internal/store"
@@ -204,6 +205,14 @@ type Options struct {
 	// existing caller, every existing test) behaves exactly as it did
 	// before this field existed.
 	Telemetry *telemetry.Provider
+
+	// Handover fetches a handed-over git ref and records what it measured
+	// as observed evidence (task t10, issue #13). Nil — the default, and
+	// every deployment that has configured no remote to fetch from —
+	// observes nothing: a control plane that cannot look must not write a
+	// record saying it did. See internal/handover's package doc and
+	// handover.go in this package.
+	Handover *handover.Observer
 }
 
 // Worker claims ready work and dispatches it. It is safe for concurrent use;

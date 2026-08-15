@@ -11,6 +11,7 @@ import (
 	"github.com/agentculture/culture-nodes/internal/actors"
 	"github.com/agentculture/culture-nodes/internal/artifacts"
 	"github.com/agentculture/culture-nodes/internal/engine"
+	"github.com/agentculture/culture-nodes/internal/handover"
 	"github.com/agentculture/culture-nodes/internal/ledger"
 	"github.com/agentculture/culture-nodes/internal/store/postgres"
 	"github.com/agentculture/culture-nodes/internal/telemetry"
@@ -54,6 +55,10 @@ type Server struct {
 	// NODES_CALLBACK_TOKEN_SECRET for a token minted by a worker to verify
 	// here.
 	callbackSigner *actors.TokenSigner
+	// handoverObserver measures a handed-over git ref reported on a
+	// `completed` callback event (task t10). Nil in every deployment that
+	// has configured no remote to fetch from — see WithHandoverObserver.
+	handoverObserver *handover.Observer
 
 	// artifactRouter is the only artifact content boundary exposed by this
 	// server. artifactInvocationStore deliberately has the one read method the
@@ -137,6 +142,26 @@ func WithPollInterval(d time.Duration) Option {
 func WithWebAssets(assets fs.FS) Option {
 	return func(s *Server) {
 		s.webAssets = assets
+	}
+}
+
+// WithHandoverObserver gives the actor callback route a handover observer
+// (task t10, issue #13): when a `completed` event reports a ref the session
+// handed over, the control plane fetches it and records what it measured as
+// observed evidence.
+//
+// It is an Option — not a required dependency — for the same reason
+// WithCallbackSigner is: a deployment that has configured no remote to fetch
+// from cannot measure anything, and a control plane that cannot look must
+// record nothing rather than record that it could not. Omitting it leaves the
+// route behaving exactly as it did before this existed.
+//
+// The observer passed here is expected to be the SAME one the worker holds
+// (worker.Options.Handover): one control plane, one remote, one measuring
+// identity, whichever terminal path a dispatch happens to take.
+func WithHandoverObserver(observer *handover.Observer) Option {
+	return func(s *Server) {
+		s.handoverObserver = observer
 	}
 }
 
@@ -383,6 +408,11 @@ func (s *Server) Handler() http.Handler {
 			Engine:    s.Engine,
 			Signer:    s.callbackSigner,
 			Telemetry: s.telemetry,
+			// Task t10: a `completed` event that reports a handover ref gets
+			// the ref fetched and measured. Nil unless the deployment
+			// configured a remote (WithHandoverObserver), in which case
+			// nothing is fetched and nothing is recorded.
+			Handover: s.handoverObserver,
 		})))
 	}
 	// Unlike the unversioned actor callback protocol above, this documented

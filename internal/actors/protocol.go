@@ -233,6 +233,68 @@ func (p *Preserve) ToEngine() *engine.Preserve {
 	return out
 }
 
+// Handover is the bridge-reported outcome of creating a handover ref (task
+// t9, issue #90): an additive "handover" key a bridge attaches to a
+// SUCCESSFUL sync body or `completed` event, the mirror of Preserve on the
+// failure side and attached the same additive way ADR 0008/0009/0010
+// attached usage/termination-reason/continuation-ref. Every adapter under
+// adapters/ produces it field-for-field from its own bridge-side
+// `preserve.HandoverResult.to_dict()`.
+//
+// Like Preserve it is a bridge's own CLAIM about what it did on its own host,
+// and nothing here promotes it. What separates the two is what happens next:
+// Preserve's branch is only ever as true as the bridge's report, whereas a
+// handover ref is a claim the control plane can go and CHECK. internal/
+// handover takes exactly one field from this block — Ref, the NAME of the ref
+// to look for — fetches it from a remote the control plane itself is
+// configured with, and records what it measured (issue #13, task t10).
+//
+// Commit and Handle are deliberately NOT read by that path. A bridge's own
+// idea of which commit its ref points at, and of which remote holds it, are
+// precisely the facts that would make the measurement circular. They are
+// decoded here so the block round-trips whole for an operator reading a
+// run's raw attempt output, and they travel no further.
+type Handover struct {
+	Attempted         bool            `json:"attempted"`
+	Created           bool            `json:"created"`
+	Ref               *string         `json:"ref"`
+	Commit            *string         `json:"commit"`
+	Remote            *string         `json:"remote"`
+	Handle            *HandoverHandle `json:"handle"`
+	MissingCapability *string         `json:"missing_capability"`
+	Reason            *string         `json:"reason"`
+}
+
+// HandoverHandle is the `git_ref` handle a created ref is reported with,
+// shaped by schemas/workflow/handoff.schema.json. Publication is "pending"
+// for every handle a bridge produces: creating the commit and the ref is a
+// different authority from publishing it, and the bridges deliberately never
+// push (see each adapter's preserve.handover_ref docstring).
+type HandoverHandle struct {
+	Kind        string `json:"kind"`
+	Ref         string `json:"ref"`
+	Commit      string `json:"commit"`
+	Publication string `json:"publication"`
+	MediaType   string `json:"media_type"`
+}
+
+// ClaimedRef returns the ref name this block claims exists, and whether the
+// block claims one at all. It is the ONLY accessor internal/handover uses,
+// which is what keeps "the control plane records what it measured, never what
+// the actor reported" a property of the type rather than of a call site's
+// discipline: there is no method here that hands out the bridge's commit sha
+// or its remote.
+//
+// Created gates it because a block that says it created nothing names no ref
+// worth looking for — `ref` is null in exactly that case, and an
+// unsuccessful attempt is reported through MissingCapability instead.
+func (h *Handover) ClaimedRef() (string, bool) {
+	if h == nil || !h.Created || h.Ref == nil || *h.Ref == "" {
+		return "", false
+	}
+	return *h.Ref, true
+}
+
 // InvocationResult is the §13.2 synchronous result body (HTTP 200).
 //
 // WorkspaceMeasured is the bridge-measured workspace block (issue #33a,
@@ -267,6 +329,10 @@ type InvocationResult struct {
 	Usage             *Usage          `json:"usage"`
 	TerminationReason *string         `json:"termination_reason,omitempty"`
 	WorkspaceMeasured json.RawMessage `json:"workspace_measured,omitempty"`
+	// Handover is the bridge's report of a handover ref it created (task
+	// t9). Absent on every dispatch that asked for none, which is most of
+	// them. See the Handover type for what is read from it and what is not.
+	Handover *Handover `json:"handover,omitempty"`
 }
 
 // Records returns the proposed ledger records, or nil when the result carried
@@ -413,6 +479,11 @@ type CompletedPayload struct {
 	// InvocationResult does — an actor that finished late measured its
 	// workspace exactly like one that finished inline.
 	WorkspaceMeasured json.RawMessage `json:"workspace_measured,omitempty"`
+	// Handover is InvocationResult's field on the asynchronous path, and
+	// this is the copy that matters most: the bridges dispatch
+	// `always_async` in production, so a handover block the terminal event
+	// could not carry would be one the control plane never saw.
+	Handover *Handover `json:"handover,omitempty"`
 }
 
 // FailedPayload is the body of a `failed` event. Class is one of §13.5's

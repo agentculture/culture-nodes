@@ -442,6 +442,18 @@ class Handler(BaseHTTPRequestHandler):
             )
             return
 
+        # t9 / #90: does this dispatch hand its changes over as a git ref?
+        #
+        # Opt-in per dispatch, symmetric with the codex bridge — the REF
+        # CREATION is the all-backends part. What is deliberately NOT
+        # mirrored is codex's `input.handover` + `sandbox=workspace-write`
+        # requirement: that check guards a codex-only sandbox widening
+        # (`-c sandbox_workspace_write.writable_roots`), and `colleague` takes
+        # no sandbox flag at all — its session can already write `.git`, so
+        # a widening to demand here would be a fake one. Copying the 400
+        # would refuse dispatches this bridge can serve perfectly well.
+        handover = bool(raw_input.get("handover"))
+
         ctx = mapping.InvocationContext(
             run_id=str(body.get("run_id") or ""),
             node_run_id=body.get("node_run_id") or None,
@@ -485,6 +497,7 @@ class Handler(BaseHTTPRequestHandler):
                 role,
                 max_steps,
                 mode,
+                handover=handover,
                 session_key=session_key,
                 held=held,
                 forked=forked,
@@ -500,6 +513,7 @@ class Handler(BaseHTTPRequestHandler):
             role,
             max_steps,
             mode,
+            handover=handover,
             session_key=session_key,
             held=held,
             forked=forked,
@@ -516,6 +530,7 @@ class Handler(BaseHTTPRequestHandler):
         max_steps: int | None,
         mode: str | None,
         *,
+        handover: bool = False,
         session_key: str | None = None,
         held: bool = False,
         forked: bool = False,
@@ -585,6 +600,38 @@ class Handler(BaseHTTPRequestHandler):
                 reason=str(response.body.get("error") or "bridge reported a non-success status"),
             )
             response.body["preserve"] = preserve_result.to_dict()
+        # t9 / #90: the OTHER half of the handover opt-in, and the half that
+        # had no caller in any bridge — `preserve.handover_ref` was written
+        # and unit-tested everywhere and invoked nowhere, so no dispatch in
+        # any backend had ever created a handover ref. A dispatch that asked
+        # for one, and SUCCEEDED, creates it here and reports it in the body,
+        # which is what gives the control plane a ref to fetch and measure
+        # (t10, issue #13) instead of an agent's account of its own work.
+        #
+        # Success only, and mutually exclusive with the preserve hook above
+        # by construction (that one gates on != 200, this on == 200): a
+        # failed session's changes belong on a preserve branch, and handing
+        # them over as a ref would offer the graph a deliverable the session
+        # never finished.
+        #
+        # `enabled` is passed rather than checked here so the opt-in stays
+        # declared in one place — handover_ref's own documented contract —
+        # and a dispatch that asked for nothing runs no git command at all.
+        # The block is attached only when something was actually attempted,
+        # so an ordinary dispatch's response is byte-for-byte unchanged.
+        if response.status_code == 200:
+            handover_result = preserve.handover_ref(
+                repo,
+                measured,
+                enabled=handover,
+                remote=cfg.handover_remote,
+                run_id=ctx.run_id,
+                node_run_id=ctx.node_run_id,
+                attempt_id=ctx.attempt_id,
+                reason=preserve.handover_success_reason(response.body.get("outcome")),
+            )
+            if handover_result.attempted:
+                response.body["handover"] = handover_result.to_dict()
         # A real dispatch happened (colleague was actually invoked) — durably
         # remember the outcome so a redelivered attempt replays it instead of
         # running colleague a second time (PRD §20.3). A pre-dispatch
@@ -617,6 +664,7 @@ class Handler(BaseHTTPRequestHandler):
         max_steps: int | None,
         mode: str | None,
         *,
+        handover: bool = False,
         session_key: str | None = None,
         held: bool = False,
         forked: bool = False,
@@ -687,6 +735,7 @@ class Handler(BaseHTTPRequestHandler):
             callback_token=callback_token,
             heartbeat_after_seconds=cfg.heartbeat_after_seconds,
             workspace_handle=handle,
+            handover=handover,
             # t6 (c44/h37): the background poller releases this
             # session_key's slot once colleague's turn actually finishes —
             # None here whenever `held` is False (no slot to release,

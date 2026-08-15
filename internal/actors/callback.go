@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/agentculture/culture-nodes/internal/engine"
+	"github.com/agentculture/culture-nodes/internal/handover"
 	"github.com/agentculture/culture-nodes/internal/ledger"
 	"github.com/agentculture/culture-nodes/internal/telemetry"
 )
@@ -287,6 +288,14 @@ type CallbackDeps struct {
 	// InvocationLookupDelay is the pause between those re-reads. Defaults to
 	// DefaultInvocationLookupDelay.
 	InvocationLookupDelay time.Duration
+
+	// Handover fetches a handed-over git ref reported on a `completed`
+	// event and records what it measured as observed evidence (task t10,
+	// issue #13). Nil — the default, and every deployment that has
+	// configured no remote to fetch from — observes nothing: see
+	// handover.go in this package, and internal/handover's package doc for
+	// why a control plane that cannot look must write no record at all.
+	Handover *handover.Observer
 
 	// Telemetry instruments the callback ingest seam (task t19,
 	// HandleCallback) through internal/telemetry. The zero value, a nil
@@ -764,6 +773,12 @@ func commitTerminal(ctx context.Context, deps CallbackDeps, inv PendingInvocatio
 		deps.commitFailed(ctx, inv, ev, StageClose, err)
 		return CallbackResult{}, err
 	}
+	// Task t10 (issue #13): the outcome is durable and the invocation is
+	// closed; now go and read the ref this event claims was handed over. It
+	// runs last, and its failure is never propagated, because an observation
+	// is a second fact about an attempt whose completion already committed —
+	// see handover.go in this package.
+	deps.observeHandover(ctx, completion, ev)
 	return CallbackResult{
 		AttemptID:   inv.AttemptID,
 		Disposition: DispositionCommitted,

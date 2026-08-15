@@ -552,6 +552,20 @@ def _handover_message(
     return "\n".join(lines) + "\n"
 
 
+def handover_success_reason(outcome: Any) -> str:
+    """The reason line a SUCCESSFUL dispatch's handover commit carries.
+
+    Shared by every call site (each bridge's synchronous and asynchronous
+    success path) so the commit message a fetching node reads means the same
+    thing whichever path produced it: it names the DOMAIN OUTCOME the session
+    reported, which is the one fact that distinguishes two otherwise
+    identical handover commits from the same run.
+    """
+    if outcome:
+        return f"the session completed with outcome {outcome!r}; its changes travel as this ref"
+    return "the session completed; its changes travel as this ref"
+
+
 def handover_ref(
     repo: str,
     measured: dict[str, Any],

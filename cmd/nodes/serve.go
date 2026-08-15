@@ -191,6 +191,18 @@ func runServeMode(args []string, verb string, withScheduler bool) (int, error) {
 		return 0, err
 	}
 	opts = append(opts, api.WithCallbackSigner(callbackSigner))
+
+	// Task t10: a `completed` callback that reports a handed-over ref gets the
+	// ref fetched and measured. It is configured identically to the worker's
+	// own observer (cmd/nodes/handover.go) so an API process and a worker
+	// process reading the same environment measure from the same remote under
+	// the same identity — nil, and silent, unless the deployment set both
+	// variables.
+	handoverObs, cliErr := handoverObserver(db, namespaceID)
+	if cliErr != nil {
+		return 0, cliErr
+	}
+	opts = append(opts, api.WithHandoverObserver(handoverObs))
 	artifactRouter, err := artifactRouterFromEnv(ctx, db)
 	if err != nil {
 		return 0, err

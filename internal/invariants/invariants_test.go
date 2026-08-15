@@ -208,24 +208,30 @@ var authorityAllowlists = []struct {
 }{
 	{
 		token: "AuthorityObserved",
-		rule: "observed authority belongs to the runner boundary: only internal/runners constructs " +
-			"observed evidence, from facts the boundary directly measured (PRD §10.4). No agent path — " +
-			"worker completions, engine deltas, bridges — may claim it.",
+		rule: "observed authority belongs to a boundary that DIRECTLY MEASURED the fact it records " +
+			"(PRD §10.4): internal/runners for a runner's own Result, internal/handover for a git ref " +
+			"the control plane itself fetched. The test of standing is not which package a writer sits " +
+			"in but whether every field it stamps came from its own measurement rather than from " +
+			"something an actor reported. No agent path — worker completions, engine deltas, bridges — " +
+			"may claim it.",
 		files: map[string]string{
 			"internal/ledger/record.go":      "vocabulary: defines the Authority constants",
 			"internal/ledger/authority.go":   "append-time enforcement: checkRunnerAuthority admits observed evidence only with a runner manifest",
 			"internal/engine/ledgerdelta.go": "refusal gate: a node's declared delta may propose or observe per its contract; everything else is rejected",
 			"internal/runners/dispatch.go":   "THE writer: EvidenceRecord stamps OriginRunner + AuthorityObserved from boundary-measured observations",
+			"internal/handover/handover.go":  "second measuring boundary (task t10, issue #13): the control plane fetches a handed-over ref itself and records the ref, commit sha and changed paths ITS OWN git fetch produced — the agent's report supplies only the ref name to look for (actors.Handover.ClaimedRef is the sole accessor), and an unfetchable ref writes no record at all",
 		},
 	},
 	{
 		token: "OriginRunner",
-		rule: "runner origin is stamped only where the runner boundary itself reports — a worker or " +
-			"engine file constructing an OriginRunner record would be an agent path impersonating the boundary.",
+		rule: "runner origin is stamped only where a boundary reports on its own measurement — a worker " +
+			"or engine file constructing an OriginRunner record would be an agent path impersonating the " +
+			"boundary. A writer here must also be on the AuthorityObserved list: the two travel together.",
 		files: map[string]string{
-			"internal/ledger/record.go":    "vocabulary: defines the Origin kinds",
-			"internal/ledger/authority.go": "append-time enforcement: runners write observed evidence only, manifest-checked",
-			"internal/runners/dispatch.go": "THE writer: the runner boundary's own evidence records",
+			"internal/ledger/record.go":     "vocabulary: defines the Origin kinds",
+			"internal/ledger/authority.go":  "append-time enforcement: runners write observed evidence only, manifest-checked",
+			"internal/runners/dispatch.go":  "THE writer: the runner boundary's own evidence records",
+			"internal/handover/handover.go": "second measuring boundary (task t10): the git-fetch observer, identified by its own configured actor id and refusing to write at all without one",
 		},
 	},
 	{

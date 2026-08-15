@@ -2,7 +2,7 @@
   "plan_slug": "close-the-backlog",
   "schema_version": 1,
   "created": "2026-08-15T18:07:41Z",
-  "updated": "2026-08-15T19:03:52Z",
+  "updated": "2026-08-15T19:46:57Z",
   "deviations": [
     {
       "id": "d1",
@@ -181,6 +181,32 @@
         "t5",
         "c109",
         "h73"
+      ],
+      "origin": "llm",
+      "status": "proposed",
+      "classification": "acceptable"
+    },
+    {
+      "id": "d15",
+      "what": "the control plane now runs git as a subprocess, to fetch a handed-over ref it measures itself",
+      "task_ref": "t10",
+      "reason": "CLAUDE.md states the runtime rule flatly: 'Code executes only through the headspace-cli runner boundary \u2014 never a shell, script, or Docker socket in the control-plane process.' internal/handover runs git fetch/rev-parse/diff-tree via exec.CommandContext. The package argues the distinction in its own doc and the operator verified the implementation matches: fixed binary, argv built from constants plus one ref validated by ValidateRef against refs/culture-nodes/, NO shell (no sh -c anywhere), context deadline on every call, GIT_TERMINAL_PROMPT=0 so a credential challenge fails rather than hangs, and the remote is the control plane's own configuration never the agent's report. What PRD \u00a721 refuses is executing WORK \u2014 a workflow's code, an image, a script \u2014 in the control plane, and that still goes through the runner boundary unchanged. Accepted as infrastructure I/O rather than code execution, but recorded because it is a real widening of a rule this repo states without qualification, and because the alternative (trusting the agent's own account of the ref) is exactly what t10 exists to refuse. The session flagged it for review rather than landing it silently.",
+      "affects": [
+        "c120",
+        "h77"
+      ],
+      "origin": "llm",
+      "status": "proposed",
+      "classification": "needs-follow-up"
+    },
+    {
+      "id": "d16",
+      "what": "internal/handover joins the set of packages allowed to write AuthorityObserved/OriginRunner records",
+      "task_ref": "t10",
+      "reason": "the c17/h15 invariant sweep in internal/ledger caught this itself, which is what it is for: a new writer of observed/runner-origin evidence appeared. The invariant and docs/invariants.md were extended deliberately rather than the test relaxed, restating the standing rule as whether every field came from the WRITER'S OWN MEASUREMENT rather than which package it lives in \u2014 which is the property that actually matters and is what internal/handover satisfies (it reads only the ref NAME from the agent and measures sha and changed paths by fetching). Recorded because a widened invariant is exactly the kind of change that should not pass unremarked; the session named it as deserving the operator's eye.",
+      "affects": [
+        "c120",
+        "h77"
       ],
       "origin": "llm",
       "status": "proposed",

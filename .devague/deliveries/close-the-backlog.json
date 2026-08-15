@@ -2,7 +2,7 @@
   "plan_slug": "close-the-backlog",
   "schema_version": 1,
   "created": "2026-08-15T18:07:41Z",
-  "updated": "2026-08-15T18:57:38Z",
+  "updated": "2026-08-15T19:03:52Z",
   "deviations": [
     {
       "id": "d1",
@@ -171,6 +171,20 @@
       "origin": "llm",
       "status": "proposed",
       "classification": "needs-follow-up"
+    },
+    {
+      "id": "d14",
+      "what": "Go 1.26.6 installed on thor under ~/.local with a pre-warmed module cache, to test whether the codex lane can be reopened for Go work",
+      "task_ref": "t19",
+      "reason": "deviation d9 recorded that the codex lane exhausted by capability rather than budget: after the docs and config packages, all eleven remaining plan tasks need Go, docker or network, and the codex hosts had none. Go is the cheapest of the three to supply. Installed userland (~/.local/go-dist, no root, reversible with one rm -rf) and the module cache pre-warmed from an ssh session OUTSIDE the sandbox, since the sandbox has no network and cannot fetch modules itself. 'go build ./...' succeeds on the host; whether it succeeds INSIDE a dispatch is the open question, because the Go build cache lives outside the workspace and workspace-write blocks writes there. Probe run 01M03CXXZ9N34FP4CYNA0BBS43 answers it. This also gives #115 a second place the Go tree can be compiled that is not the operator's laptop, though CI remains the real answer.",
+      "affects": [
+        "t5",
+        "c109",
+        "h73"
+      ],
+      "origin": "llm",
+      "status": "proposed",
+      "classification": "acceptable"
     }
   ]
 }

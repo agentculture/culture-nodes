@@ -50,6 +50,26 @@ jobs:
     runs-on: ubuntu-latest
     permissions:
       contents: read
+
+    # Without a reachable Postgres this job would be green and hollow.
+    # pgtest.RequireStore calls t.Skip when none is available, and `go test`
+    # prints "ok" for a package whose every test skipped — measured: with the
+    # database unreachable, `go test ./internal/queue/postgres/` reports ok
+    # while `-v` shows 5 SKIPs. A CI job cannot tell those apart, so the
+    # database is supplied here rather than hoped for.
+    services:
+      postgres:
+        image: postgres:17-alpine
+        env:
+          POSTGRES_USER: nodes
+          POSTGRES_PASSWORD: nodes-ci-only
+          POSTGRES_DB: nodes
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U nodes -d nodes"
+          --health-interval 5s --health-timeout 5s --health-retries 10
+
     steps:
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
 
@@ -68,7 +88,27 @@ jobs:
       # the race detector's slowdown pushes them past their own timeouts. The
       # trade is deliberate — a fast job that runs on every PR beats a
       # thorough one that gets disabled.
-      - run: go test ./...
+      - name: go test
+        env:
+          NODES_TEST_DATABASE_URL: postgres://nodes:nodes-ci-only@localhost:5432/nodes?sslmode=disable
+        run: go test ./...
+
+      # The service above is only useful if the tests actually used it. A run
+      # where every Postgres-backed test skipped is a false green, and this is
+      # the cheapest way to notice: assert that at least one package that
+      # needs the database ran a test rather than skipping it.
+      - name: the database-backed tests actually ran
+        env:
+          NODES_TEST_DATABASE_URL: postgres://nodes:nodes-ci-only@localhost:5432/nodes?sslmode=disable
+        run: |
+          out=$(go test -count=1 -v ./internal/queue/postgres/ 2>&1)
+          echo "$out" | tail -20
+          if echo "$out" | grep -q "no PostgreSQL available"; then
+            echo "::error::Postgres-backed tests SKIPPED — this job would have been green without testing anything"
+            exit 1
+          fi
+          echo "$out" | grep -q -- "--- PASS" || {
+            echo "::error::no test in internal/queue/postgres reported PASS"; exit 1; }
 
   lint:
     runs-on: ubuntu-latest

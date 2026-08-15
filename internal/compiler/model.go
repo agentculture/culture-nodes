@@ -129,8 +129,8 @@ type node struct {
 	Operation *codeOperation `json:"operation,omitempty"`
 	Ledger    *ledgerDelta   `json:"ledger,omitempty"`
 
-	Acceptance *acceptance  `json:"acceptance,omitempty"`
-	Policy     *nodePolicy  `json:"policy,omitempty"`
+	Acceptance *acceptance   `json:"acceptance,omitempty"`
+	Policy     *nodePolicy   `json:"policy,omitempty"`
 	Continue   *continuation `json:"continue,omitempty"`
 
 	DecisionSchemaRef string       `json:"decisionSchemaRef,omitempty"`
@@ -160,11 +160,11 @@ type node struct {
 type continuation struct {
 	While       []string           `json:"while"`
 	Bounds      continuationBounds `json:"bounds"`
-	OnExhausted string `json:"onExhausted"`
+	OnExhausted string             `json:"onExhausted"`
 }
 
 type continuationBounds struct {
-	MaxContinuations *int `json:"maxContinuations,omitempty"`
+	MaxContinuations *int   `json:"maxContinuations,omitempty"`
 	MaxWallClock     string `json:"maxWallClock,omitempty"`
 	MaxSessions      *int   `json:"maxSessions,omitempty"`
 }

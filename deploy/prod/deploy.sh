@@ -24,11 +24,12 @@ SCRIPT_DIR=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
 HOST=${1:?usage: deploy.sh <thor|orin>}
 REMOTE_DIR="culture-nodes-prod"
 BRANCH=${BRANCH:-HEAD}
+REVISION=$(git rev-parse "$BRANCH")
 
 say() { printf '==> %s\n' "$*"; }
 
-say "shipping $(git rev-parse --short "$BRANCH") to $HOST:$REMOTE_DIR"
-git archive --format=tar "$BRANCH" | ssh "$HOST" "rm -rf $REMOTE_DIR && mkdir -p $REMOTE_DIR && tar -x -C $REMOTE_DIR"
+say "shipping $(git rev-parse --short "$REVISION") to $HOST:$REMOTE_DIR"
+git archive --format=tar "$REVISION" | ssh "$HOST" "rm -rf $REMOTE_DIR && mkdir -p $REMOTE_DIR && tar -x -C $REMOTE_DIR"
 
 say "building control-plane image on $HOST (native aarch64)"
 ssh "$HOST" "cd $REMOTE_DIR && docker build -q -t culture-nodes:prod ."
@@ -62,17 +63,21 @@ ssh "$HOST" 'umask 077; mkdir -p ~/.culture-nodes/bin ~/.culture-nodes/runner-st
 # runner.env -- and the block above REWRITES that file on every deploy, so
 # these two have to be re-granted here rather than hand-added once.
 #
-# Unset is a legitimate state, not a misconfiguration: it means this host
-# does not run the pr-upkeep sweep, and the boundary refuses that one
-# operation by name instead of quietly fetching somebody else's script.
-if [ -n "${PR_UPKEEP_SWEEP_SOURCE_URL:-}" ] && [ -n "${PR_UPKEEP_SWEEP_SOURCE_SHA256:-}" ]; then
+# Defaults name the exact immutable revision whose archive was shipped above.
+# `git show` reads sweep.py from that same object, so this remains correct when
+# the revision is a squash merge and its pre-merge commits are unreachable.
+# Either value remains explicitly overridable: running somebody else's granted
+# copy is intentional, and its URL and digest can be supplied by the operator.
+PR_UPKEEP_SWEEP_SOURCE_URL=${PR_UPKEEP_SWEEP_SOURCE_URL:-"https://raw.githubusercontent.com/agentculture/culture-nodes/$REVISION/examples/pr-upkeep/sweep.py"}
+PR_UPKEEP_SWEEP_SOURCE_SHA256=${PR_UPKEEP_SWEEP_SOURCE_SHA256:-$(git show "$REVISION:examples/pr-upkeep/sweep.py" | sha256sum | cut -d' ' -f1)}
+if [ -n "$PR_UPKEEP_SWEEP_SOURCE_URL" ] && [ -n "$PR_UPKEEP_SWEEP_SOURCE_SHA256" ]; then
 	ssh "$HOST" "umask 077; { \
 		echo 'PR_UPKEEP_SWEEP_SOURCE_URL=${PR_UPKEEP_SWEEP_SOURCE_URL}'; \
 		echo 'PR_UPKEEP_SWEEP_SOURCE_SHA256=${PR_UPKEEP_SWEEP_SOURCE_SHA256}'; \
 	} >> ~/.culture-nodes/runner.env"
 	say "granted the pr-upkeep sweep source to the runner on $HOST"
 else
-	say "PR_UPKEEP_SWEEP_SOURCE_URL/_SHA256 unset: pr-upkeep's sweep is not configured on $HOST (see examples/pr-upkeep/README.md)"
+	say "PR_UPKEEP_SWEEP_SOURCE_URL/_SHA256 empty: pr-upkeep's sweep is not configured on $HOST (see examples/pr-upkeep/README.md)"
 fi
 ssh "$HOST" "loginctl enable-linger \$(id -un) 2>/dev/null || true"
 ssh "$HOST" "export XDG_RUNTIME_DIR=/run/user/\$(id -u); mkdir -p ~/.config/systemd/user && cp $REMOTE_DIR/deploy/prod/nodes-runner.service ~/.config/systemd/user/ && systemctl --user daemon-reload && systemctl --user restart nodes-runner && systemctl --user enable nodes-runner"

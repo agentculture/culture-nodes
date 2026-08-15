@@ -186,6 +186,8 @@ export function NodeDetailPanel({
                 <th scope="col">actor</th>
                 <th scope="col">started</th>
                 <th scope="col">duration</th>
+                <th scope="col">model / effort</th>
+                <th scope="col">usage</th>
                 <th scope="col">preserve</th>
               </tr>
             </thead>
@@ -211,6 +213,17 @@ export function NodeDetailPanel({
                       </time>
                     </td>
                     <td>{duration(attempt.started_at, attempt.completed_at)}</td>
+                    <td>
+                      <code>{attempt.usage?.usage_model ?? "—"}</code>
+                      {attempt.usage?.reasoning_tokens !== undefined ? (
+                        <span>{` · ${attempt.usage.reasoning_tokens} reasoning`}</span>
+                      ) : null}
+                    </td>
+                    <td>
+                      {attempt.usage
+                        ? `${attempt.usage.input_tokens} in / ${attempt.usage.output_tokens} out`
+                        : "not reported"}
+                    </td>
                     <td data-preserve-branch={preserve?.branch}>
                       {preserve ? (
                         <span

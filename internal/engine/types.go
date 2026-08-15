@@ -258,6 +258,14 @@ func (s TechStatus) Valid() bool {
 // differently. A cancelled attempt is not retried — cancellation is an
 // instruction, not a fault — and a policy denial is not retried, because the
 // policy would deny the next attempt for the same reason.
+//
+// This predicate answers ONLY "could a second attempt say something new". It
+// is deliberately not the whole retry decision: a timed_out attempt could
+// plausibly answer differently and still be one it is unsafe to re-dispatch,
+// because the session behind it may not have stopped. That second question is
+// TimeoutOrigin's, and the two are kept apart in retry.go rather than folded
+// into one predicate here — collapsing them is how a workspace fence turns
+// back into a status check.
 func (s TechStatus) retryable() bool {
 	switch s {
 	case StatusFailed, StatusTimedOut, StatusContractRejected:
@@ -266,6 +274,48 @@ func (s TechStatus) retryable() bool {
 		return false
 	}
 }
+
+// TimeoutOrigin names WHO decided an attempt timed out. It is consulted only
+// when TechStatus is timed_out, and it exists because `timed_out` alone no
+// longer says enough to decide a retry (spec claims c42/c49, task t10).
+//
+// Two producers reach the same status by different routes:
+//
+//   - An ACTOR reported it. A §13.4 terminal callback classified `timeout`, or
+//     an actor answering 408/504, is the far side saying "my invocation is
+//     over". Nothing is still holding the workspace, so the node's declared
+//     retry policy applies exactly as it always has.
+//
+//   - The CONTROL PLANE decided it. A waiting_external deadline expired, the
+//     scheduler consulted the node's declared continuation and it did not
+//     hold, and the session is being cancelled — best-effort, and only AFTER
+//     the completion commits (decision q3/c48). At the moment the retry
+//     decision is made, the control plane has not asked the session to stop,
+//     let alone observed it stop.
+//
+// The zero value is Unknown, and it means exactly that: nobody said. A
+// timeout of unknown origin is treated as the control plane's is — refused —
+// because the hazard being guarded (a second writing session against a
+// workspace the first may still hold) has no detection, so an ambiguous state
+// must resolve to refusal. A fence that opens when unsure is not a fence.
+//
+// Note what this is NOT: it is not a record of whether the deadline PAUSED a
+// node. A deadline that finds the declared continuation still holding re-arms
+// its timer and completes no attempt at all, so it never reaches this type.
+// Pause and cancel are two different answers to a fired deadline, and only
+// one of them produces a timeout.
+type TimeoutOrigin string
+
+const (
+	// TimeoutOriginUnknown is the zero value: no producer vouched for how
+	// this timeout came about. It fails closed.
+	TimeoutOriginUnknown TimeoutOrigin = ""
+	// TimeoutOriginActor is a timeout the actor itself reported terminally.
+	TimeoutOriginActor TimeoutOrigin = "actor"
+	// TimeoutOriginDeadline is the control plane's own wall-clock verdict
+	// against a session it has not observed stop.
+	TimeoutOriginDeadline TimeoutOrigin = "deadline"
+)
 
 // Attempt is one dispatch attempt against a node run (PRD §3.1). Number is
 // per node run and starts at 1; the fencing token is recorded so a completed
@@ -443,6 +493,16 @@ type CompletionRequest struct {
 	// TechStatus is how the dispatch went. Required.
 	TechStatus TechStatus
 
+	// TimeoutOrigin names who decided this attempt timed out. It is read
+	// only when TechStatus is timed_out, and it gates the retry: only an
+	// actor-reported timeout is re-dispatched, because only that one comes
+	// with the far side saying its invocation is over. See TimeoutOrigin.
+	//
+	// Every producer of a timed_out completion must set this. Leaving it
+	// unset is not a neutral default — it means "nobody vouched", and the
+	// attempt is not retried.
+	TimeoutOrigin TimeoutOrigin
+
 	// Outcome is the domain outcome the actor produced — a port declared by
 	// the node's contract, e.g. `passed` or `changes_required`. It is
 	// required when TechStatus is succeeded and ignored otherwise: a dispatch
@@ -596,6 +656,12 @@ type CompletionResult struct {
 	Retried bool
 	// RetryAvailableAt is when the re-enqueued work becomes claimable.
 	RetryAvailableAt time.Time
+	// RetryRefused explains why an unspent retry budget was NOT spent, and
+	// is empty whenever no refusal happened. A caller that only reads
+	// Retried cannot tell "the budget ran out" from "the budget was there
+	// and the engine refused to use it", and those are different facts —
+	// the second one is the workspace fence doing its job (task t10).
+	RetryRefused string
 
 	// NextNodeID and NextNodeRunID name the node run this completion created,
 	// empty when the run ended or retried.

@@ -72,7 +72,7 @@ WORKFLOW_FILE="$SCRIPT_DIR/workflow.yaml"
 BASE_URL="${NODES_API_URL:-http://thor:18080}"
 REPO="${PR_UPKEEP_REPO:-/home/spark/git/culture-nodes}"
 # The review actor (codex on thor) has its own allowlisted checkout of the
-# SAME repository — per-host path, single-repo flow unchanged (cycle-4 403).
+# repository selected by the deployment grant — a distinct per-host path.
 REVIEW_REPO="${PR_UPKEEP_REVIEW_REPO:-/home/thor/git/culture-nodes-agent}"
 # The fix instruction now has to state the HANDOFF contract (issue #74), for
 # two reasons that both come back to the same fact: the review actor is on
@@ -104,7 +104,7 @@ command -v jq >/dev/null 2>&1 || fail "jq is required"
 [ -f "$WORKFLOW_FILE" ] || fail "workflow file not found: $WORKFLOW_FILE"
 
 log "target API: $BASE_URL"
-log "repo=$REPO (single-repo flow: culture-nodes only, claim c26)"
+log "fix checkout=$REPO; review checkout=$REVIEW_REPO (both must match the repository selected by the deployment grant)"
 
 # --- validate ---------------------------------------------------------------
 log "POST /v1alpha1/workflows/validate"

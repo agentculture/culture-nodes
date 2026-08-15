@@ -904,6 +904,14 @@ func completionFor(inv PendingInvocation, ev CallbackEvent) (engine.CompletionRe
 			class = ClassExecution
 		}
 		req.TechStatus = TechStatusFor(class)
+		if req.TechStatus == engine.StatusTimedOut {
+			// A §13.4 terminal event is the actor reporting that ITS
+			// invocation is over — the one timeout origin that leaves no
+			// session to fence a retry against (task t10). Every other
+			// producer of timed_out either is the control plane's own
+			// wall-clock verdict or cannot say, and neither is retried.
+			req.TimeoutOrigin = engine.TimeoutOriginActor
+		}
 		// The failure diagnostic and the workspace measurement are different
 		// facts about the same attempt: the session failed, AND the bridge
 		// measured (or honestly could not measure) what it left behind.

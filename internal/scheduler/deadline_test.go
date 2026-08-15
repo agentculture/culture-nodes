@@ -242,6 +242,108 @@ func TestSchedulerDeadlineRefusesToPauseWithoutATimeBound(t *testing.T) {
 	}
 }
 
+// TestSchedulerDeadlineTimeoutIsNotRetriedIntoASecondSession is task t10's
+// acceptance criterion, and the reason spec claim c42 calls the hazard LIVE
+// rather than hypothetical: internal/engine/types.go's retryable() returns
+// true for StatusTimedOut, and the retry decision (complete.go) re-dispatches
+// on nothing more than that plus an unspent attempt budget. So a node
+// declaring maxAttempts > 1 whose deadline fires is re-dispatched while the
+// first session is still running -- the deadline's cancel is best-effort and
+// post-commit (decision q3/c48), so at the moment the retry is scheduled the
+// control plane has not even ASKED the session to stop, let alone observed it
+// stop.
+//
+// Note what is asserted and what deliberately is not. The honesty condition
+// on c42 is explicit that "no corruption happened to occur" proves nothing:
+// this failure mode has no detection. So the assertion is on the REFUSAL
+// itself -- exactly one attempt row, no retry event, no claimable work item,
+// and the workflow's declared timed_out edge taken instead -- all of which
+// are things the engine either did or did not do, rather than things that
+// happened not to go wrong.
+//
+// The fixture's only edit is the retry budget. Everything else is the same
+// deadline.workflow.yaml the other tests in this file use, so what changes
+// between this test and TestSchedulerFiresDeadlineTimerFailsWaitingExternalAttemptAndRoutesEdge
+// is precisely the one declaration that makes the hazard reachable.
+func TestSchedulerDeadlineTimeoutIsNotRetriedIntoASecondSession(t *testing.T) {
+	s := requireStore(t)
+	f := newDeadlineFixtureSource(t, s, func(source string) string {
+		anchor := "        retry:\n          maxAttempts: 1"
+		if !strings.Contains(source, anchor) {
+			t.Fatalf("deadline fixture lacks retry-policy anchor %q", anchor)
+		}
+		// Only the FIRST occurrence: that is the build node, the one the
+		// deadline fires against. repair keeps its own budget untouched.
+		return strings.Replace(source, anchor, "        retry:\n          maxAttempts: 3", 1)
+	})
+	inv := f.startAsyncWait(time.Now().Add(-time.Second))
+
+	sch := scheduler.New(s, scheduler.Options{TickInterval: 25 * time.Millisecond})
+	runCtx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	go func() { _ = sch.Run(runCtx) }()
+
+	// Poll for the refusal, but deliberately do NOT fail here on timeout: when
+	// this test is red, what happened instead is the interesting part, and
+	// "condition not met within 5s" would hide it behind the assertions below.
+	// The scheduler is left running until after the read, because cancelling
+	// it mid-tick aborts the very completion under test.
+	settle := time.Now().Add(5 * time.Second)
+	for time.Now().Before(settle) {
+		if status, _ := mustNodeRunStatus(t, s, f.buildNodeRunID); status == "failed" {
+			break
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
+	// Let any second dispatch this refusal was supposed to prevent actually
+	// show up before reading. Asserting immediately would pass on timing.
+	time.Sleep(300 * time.Millisecond)
+
+	status, outcome := mustNodeRunStatus(t, s, f.buildNodeRunID)
+	if status != "failed" {
+		t.Fatalf("build node run status = %q, want failed: a deadline that expired with maxAttempts 3 "+
+			"must not buy a second session against a workspace no one has confirmed is free", status)
+	}
+	if outcome != "timed_out" {
+		t.Errorf("build node run outcome = %q, want timed_out", outcome)
+	}
+
+	// One session, one attempt row. A second dispatch would record a second.
+	if count, latest := attemptCountAndLatestStatus(t, s, f.buildNodeRunID); count != 1 || latest != "timed_out" {
+		t.Fatalf("build attempts = %d (latest %q), want exactly 1 with status timed_out: "+
+			"a re-dispatch is exactly what c42's fence exists to refuse", count, latest)
+	}
+
+	// Nothing claimable is left behind either -- a refusal that still leaves a
+	// ready work item is a refusal a worker walks straight through.
+	if n := mustClaimableWorkItemCount(t, s, f.buildNodeRunID); n != 0 {
+		t.Errorf("claimable work items for the timed-out node run = %d, want 0", n)
+	}
+
+	events := runEventTypes(t, s, f.runID)
+	if containsString(events, engine.TypeAttemptRetryScheduled) {
+		t.Errorf("run events = %v, want no %s: the retry budget must not be spent on a deadline expiry",
+			events, engine.TypeAttemptRetryScheduled)
+	}
+	// Refused, not merely not-retried. c49 is explicit that a warning is what
+	// today's behaviour already effectively is, so the refusal has to be a
+	// fact in the run's own stream: an operator seeing one attempt against
+	// maxAttempts 3 must be able to tell a fence from a misconfiguration.
+	if !containsString(events, engine.TypeAttemptRetryRefused) {
+		t.Errorf("run events = %v, want one of type %s", events, engine.TypeAttemptRetryRefused)
+	}
+
+	// The token still moves. Refusing the retry is not the same as ending the
+	// run: build.timed_out is a declared edge and it routes, which is how an
+	// author sends a blown deadline somewhere deliberate.
+	if !nodeRunExists(t, s, f.runID, "repair") {
+		t.Errorf("no repair node run; refusing the retry must still let build.timed_out route")
+	}
+	if got := mustInvocationState(t, s, inv.AttemptID); got != actors.InvocationCompleted {
+		t.Errorf("invocation state = %q, want %q", got, actors.InvocationCompleted)
+	}
+}
+
 func mustPendingDeadlineCount(t *testing.T, s *postgres.Store, nodeRunID string) int {
 	t.Helper()
 	var n int
@@ -373,6 +475,20 @@ func attemptCountAndLatestStatus(t *testing.T, s *postgres.Store, nodeRunID stri
 		t.Fatalf("attemptCountAndLatestStatus: status: %v", err)
 	}
 	return count, latestStatus
+}
+
+// mustClaimableWorkItemCount counts the work items a worker could still pick
+// up for a node run. 'ready' is what a scheduled retry leaves behind, so this
+// is the direct read of "was a second dispatch enqueued".
+func mustClaimableWorkItemCount(t *testing.T, s *postgres.Store, nodeRunID string) int {
+	t.Helper()
+	var n int
+	if err := s.Pool().QueryRow(context.Background(),
+		`SELECT count(*) FROM work_items WHERE node_run_id = $1 AND state = 'ready'`, nodeRunID,
+	).Scan(&n); err != nil {
+		t.Fatalf("mustClaimableWorkItemCount: %v", err)
+	}
+	return n
 }
 
 func mustInvocationState(t *testing.T, s *postgres.Store, attemptID string) string {

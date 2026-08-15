@@ -70,12 +70,16 @@ ssh "$HOST" 'umask 077; mkdir -p ~/.culture-nodes/bin ~/.culture-nodes/runner-st
 # copy is intentional, and its URL and digest can be supplied by the operator.
 PR_UPKEEP_SWEEP_SOURCE_URL=${PR_UPKEEP_SWEEP_SOURCE_URL:-"https://raw.githubusercontent.com/agentculture/culture-nodes/$REVISION/examples/pr-upkeep/sweep.py"}
 PR_UPKEEP_SWEEP_SOURCE_SHA256=${PR_UPKEEP_SWEEP_SOURCE_SHA256:-$(git show "$REVISION:examples/pr-upkeep/sweep.py" | sha256sum | cut -d' ' -f1)}
+if [ -z "${PR_UPKEEP_REPOSITORIES:-}" ]; then
+	PR_UPKEEP_REPOSITORIES='{"cycle":0,"repositories":[{"github_repo":"agentculture/culture-nodes","sonar_component":"agentculture_culture-nodes"}]}'
+fi
 if [ -n "$PR_UPKEEP_SWEEP_SOURCE_URL" ] && [ -n "$PR_UPKEEP_SWEEP_SOURCE_SHA256" ]; then
 	ssh "$HOST" "umask 077; { \
 		echo 'PR_UPKEEP_SWEEP_SOURCE_URL=${PR_UPKEEP_SWEEP_SOURCE_URL}'; \
 		echo 'PR_UPKEEP_SWEEP_SOURCE_SHA256=${PR_UPKEEP_SWEEP_SOURCE_SHA256}'; \
+		echo 'PR_UPKEEP_REPOSITORIES=${PR_UPKEEP_REPOSITORIES}'; \
 	} >> ~/.culture-nodes/runner.env"
-	say "granted the pr-upkeep sweep source to the runner on $HOST"
+	say "granted the pr-upkeep sweep source and closed repository set to the runner on $HOST"
 else
 	say "PR_UPKEEP_SWEEP_SOURCE_URL/_SHA256 empty: pr-upkeep's sweep is not configured on $HOST (see examples/pr-upkeep/README.md)"
 fi

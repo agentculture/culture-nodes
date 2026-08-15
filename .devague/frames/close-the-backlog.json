@@ -4,7 +4,7 @@
   "schema_version": 5,
   "status": "exported",
   "created": "2026-08-15T13:56:35Z",
-  "updated": "2026-08-15T14:43:58Z",
+  "updated": "2026-08-15T15:08:27Z",
   "claims": [
     {
       "id": "c1",
@@ -1252,11 +1252,17 @@
           "text": "The policy extension is a reviewed diff in deploy/aws/dev-operator-policy.json, and the same provisioning commands that failed with AccessDenied succeed afterwards.",
           "status": "confirmed",
           "instruction": ""
+        },
+        {
+          "id": "h57",
+          "text": "The gate is an exit code, not a conversation: ./deploy/aws/preflight.py exits 0 before any provisioning command runs, and the same script is what proves it afterwards.",
+          "status": "confirmed",
+          "instruction": ""
         }
       ],
       "hard_questions": [],
       "links": [],
-      "instruction": "Extend deploy/aws/dev-operator-policy.json with the RDS actions provisioning needs, re-run bootstrap-operator.sh, and confirm the previously-denied describe call now succeeds.",
+      "instruction": "Run ./deploy/aws/preflight.py \u2014 it reports every prerequisite with who may fix it and the exact command. An account admin then runs 'bootstrap-operator.sh enable-region il-central-1' and 'bootstrap-operator.sh update-policy'. Re-run preflight until it exits 0.",
       "revisions": []
     },
     {

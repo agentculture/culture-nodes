@@ -290,6 +290,25 @@ export interface WorkflowValidation {
   diagnostics: Diagnostic[];
 }
 
+/** A fleet-agent workflow-authoring run. Generated source is never published here. */
+export interface WorkflowGeneration {
+  run_id: string;
+  status: "proposed" | "confirmed" | "rejected" | "exhausted";
+  base_digest?: string;
+  format?: "yaml" | "json";
+  source?: string;
+  diff?: string;
+  valid: boolean;
+  digest?: string;
+  diagnostics: Diagnostic[];
+}
+
+export interface CreateWorkflowGeneration {
+  description: string;
+  actor_ref: string;
+  base_digest?: string;
+}
+
 /** The subset of the normalized IR the Run view renders (PRD §11.3). */
 export interface WorkflowIR {
   apiVersion?: string;

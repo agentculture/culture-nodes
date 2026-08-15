@@ -5,6 +5,12 @@ All notable changes to this project will be documented in this file.
 Format follows [Keep a Changelog](https://keepachangelog.com/). This project
 adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.23.0] - 2026-08-15
+
+### Added
+
+- Plain-text workflow generation through one fleet-agent API, available from the dashboard and CLI, with proposed/confirmed authority, bounded routed exhaustion, deterministic compiler diagnostics, and pinned-version diffs for edits.
+
 ## [0.22.0] - 2026-08-15
 
 ### Added

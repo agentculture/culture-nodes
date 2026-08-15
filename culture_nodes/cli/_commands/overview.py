@@ -32,7 +32,7 @@ _VERBS = [
     "explain <path> — markdown docs for a topic",
     "overview — this descriptive snapshot",
     "doctor — check the agent-identity and API-reachability invariants",
-    "workflow validate|publish|list|get — thin client over the workflows API",
+    "workflow generate|generation-get|validate|publish|list|get — workflow authoring API",
     "run create|list|get|cancel|events|retag — thin client over the runs API",
     "node-runs list — cross-run node-runs listing (jobs timeline)",
     "ledger records|projection — thin client over the ledger read API",

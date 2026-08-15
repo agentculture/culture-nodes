@@ -54,6 +54,50 @@ describe("NodeDetailPanel", () => {
     expect(screen.getByText("dispatched")).toBeInTheDocument();
   });
 
+  it("renders per-attempt model and token attribution without hiding explicit unknowns", () => {
+    const attempt: Attempt = {
+      id: "att-attributed",
+      node_run_id: "nr-attributed",
+      attempt_number: 1,
+      status: "succeeded",
+      started_at: "2026-08-15T10:00:00Z",
+      completed_at: "2026-08-15T10:01:00Z",
+      usage: {
+        input_tokens: 120,
+        output_tokens: 45,
+        cached_input_tokens: 20,
+        reasoning_tokens: 8,
+        usage_model: "unknown:colleague-backend-cannot-report",
+      },
+      termination_reason: "end_turn",
+      continuation_ref: "session://opaque",
+    };
+    render(
+      <NodeDetailPanel
+        node={graph.nodes.find((n) => n.id === "build")!}
+        execution={{
+          nodeId: "build",
+          // NodeExecState is the node-scoped vocabulary ("completed"), not the
+          // attempt-scoped one ("succeeded") -- see RunStateChip's note on the
+          // three separate vocabularies.
+          state: "completed",
+          nodeRuns: [],
+          attempts: [attempt],
+          visits: 1,
+        }}
+        ledger={[]}
+        onClose={vi.fn()}
+      />,
+    );
+    expect(
+      screen.getByText("unknown:colleague-backend-cannot-report"),
+    ).toBeInTheDocument();
+    expect(screen.getByText("120 in / 45 out")).toBeInTheDocument();
+    // The separator lives inside the same text node (` · 8 reasoning`), so an
+    // exact-string match would fail on the bullet rather than on the number.
+    expect(screen.getByText(/8 reasoning/)).toBeInTheDocument();
+  });
+
   describe("preserve branch (task t26)", () => {
     // Synthetic executions built directly (bypassing RUN_VIEW, which has no
     // failed attempt in its fixture) — NodeExecution is a plain interface,

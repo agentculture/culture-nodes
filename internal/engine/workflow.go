@@ -249,7 +249,7 @@ func (n *Node) DecideContinuation(state ContinuationState) ContinuationDecision 
 	activation := map[string]any{
 		celVarNode:   map[string]any{"state": state.NodeState},
 		celVarBudget: map[string]any{"remaining_sessions": state.RemainingSessions},
-		celVarInput: map[string]any{}, celVarOutput: map[string]any{},
+		celVarInput:  map[string]any{}, celVarOutput: map[string]any{},
 		celVarOutcome: "", celVarEvent: map[string]any{},
 	}
 	for _, program := range n.Continue.While {
@@ -566,9 +566,9 @@ type irNode struct {
 		} `json:"retry"`
 	} `json:"policy"`
 	Continue *struct {
-		While []string `json:"while"`
+		While  []string `json:"while"`
 		Bounds struct {
-			MaxContinuations *int `json:"maxContinuations"`
+			MaxContinuations *int   `json:"maxContinuations"`
 			MaxWallClock     string `json:"maxWallClock"`
 			MaxSessions      *int   `json:"maxSessions"`
 		} `json:"bounds"`

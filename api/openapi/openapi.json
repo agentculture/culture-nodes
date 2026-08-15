@@ -488,6 +488,10 @@
             "format": "date-time",
             "type": "string"
           },
+          "continuation_ref": {
+            "description": "Opaque handle offered by the actor for continuing this session.",
+            "type": "string"
+          },
           "fencing_token": {
             "type": "integer"
           },
@@ -526,6 +530,13 @@
               "contract_rejected"
             ],
             "type": "string"
+          },
+          "termination_reason": {
+            "description": "The provider-reported reason this attempt ended.",
+            "type": "string"
+          },
+          "usage": {
+            "$ref": "#/components/schemas/AttemptUsage"
           }
         },
         "required": [
@@ -534,6 +545,40 @@
           "attempt_number",
           "status",
           "started_at"
+        ],
+        "type": "object"
+      },
+      "AttemptUsage": {
+        "properties": {
+          "cached_input_tokens": {
+            "type": "integer"
+          },
+          "cost": {
+            "type": "number"
+          },
+          "currency": {
+            "type": "string"
+          },
+          "input_tokens": {
+            "type": "integer"
+          },
+          "output_tokens": {
+            "type": "integer"
+          },
+          "reasoning_tokens": {
+            "type": "integer"
+          },
+          "thread_id": {
+            "type": "string"
+          },
+          "usage_model": {
+            "description": "Model attribution exactly as reported by the bridge. Explicit unknown sentinels are rendered verbatim and never collapsed to null.",
+            "type": "string"
+          }
+        },
+        "required": [
+          "input_tokens",
+          "output_tokens"
         ],
         "type": "object"
       },

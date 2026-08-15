@@ -130,6 +130,9 @@ export interface Attempt {
   result?: unknown;
   started_at: string;
   completed_at?: string;
+  usage?: AttemptUsage;
+  termination_reason?: string;
+  continuation_ref?: string;
   /**
    * Task t26 (issue #49, spec claim c32 / honesty h21): the branch name a
    * bridge's preserve-on-failure plumbing commit (task t25) actually
@@ -158,6 +161,17 @@ export interface Attempt {
    * domain/preserve.ts).
    */
   preserve_remote?: string;
+}
+
+export interface AttemptUsage {
+  input_tokens: number;
+  output_tokens: number;
+  cost?: number;
+  currency?: string;
+  cached_input_tokens?: number;
+  reasoning_tokens?: number;
+  usage_model?: string;
+  thread_id?: string;
 }
 
 export type NodeRunState =

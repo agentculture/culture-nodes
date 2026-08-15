@@ -67,9 +67,9 @@ func newArtifactRouteTestServer(t *testing.T, now time.Time) (*httptest.Server, 
 		t.Fatalf("NewTokenSigner: %v", err)
 	}
 	inv := actors.PendingInvocation{
-		AttemptID: "att_producer",
+		AttemptID:   "att_producer",
 		NamespaceID: "ns_durable",
-		RunID: "run_durable",
+		RunID:       "run_durable",
 	}
 	store := &memoryArtifactStore{}
 	router := artifacts.NewRouter(store, store, 1<<20)

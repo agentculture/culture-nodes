@@ -240,18 +240,45 @@ type TokenOut struct {
 // PreservePushed/PreserveRemote are only ever populated alongside it (see
 // the migration's own header), so a reader checks PreserveBranch first.
 type AttemptOut struct {
-	ID             string          `json:"id"`
-	NodeRunID      string          `json:"node_run_id"`
-	AttemptNumber  int             `json:"attempt_number"`
-	ActorID        string          `json:"actor_id,omitempty"`
-	Status         string          `json:"status"`
-	FencingToken   int64           `json:"fencing_token,omitempty"`
-	Result         json.RawMessage `json:"result,omitempty"`
-	StartedAt      time.Time       `json:"started_at"`
-	CompletedAt    *time.Time      `json:"completed_at,omitempty"`
-	PreserveBranch string          `json:"preserve_branch,omitempty"`
-	PreservePushed *bool           `json:"preserve_pushed,omitempty"`
-	PreserveRemote string          `json:"preserve_remote,omitempty"`
+	ID                string           `json:"id"`
+	NodeRunID         string           `json:"node_run_id"`
+	AttemptNumber     int              `json:"attempt_number"`
+	ActorID           string           `json:"actor_id,omitempty"`
+	Status            string           `json:"status"`
+	FencingToken      int64            `json:"fencing_token,omitempty"`
+	Result            json.RawMessage  `json:"result,omitempty"`
+	StartedAt         time.Time        `json:"started_at"`
+	CompletedAt       *time.Time       `json:"completed_at,omitempty"`
+	Usage             *AttemptUsageOut `json:"usage,omitempty"`
+	TerminationReason string           `json:"termination_reason,omitempty"`
+	ContinuationRef   string           `json:"continuation_ref,omitempty"`
+	PreserveBranch    string           `json:"preserve_branch,omitempty"`
+	PreservePushed    *bool            `json:"preserve_pushed,omitempty"`
+	PreserveRemote    string           `json:"preserve_remote,omitempty"`
+}
+
+// AttemptUsageOut is one attempt's reported telemetry, kept separate from
+// UsageOut because it is attribution rather than an aggregate.
+//
+// UsageModel is emitted VERBATIM, including the "unknown:<backend>-backend-
+// cannot-report" sentinels an adapter sends when its backend genuinely cannot
+// name a model. Those are facts, not missing values, and collapsing them to
+// null would restore the #77 ambiguity this field exists to remove: a null was
+// indistinguishable from nobody having written the field at all.
+//
+// The sentinel shape is described rather than exemplified on purpose --
+// tests/lint's neutrality gate refuses provider names in runtime code (PRD
+// §9.5), and this API does not branch on them either. It relays what the
+// adapter reported.
+type AttemptUsageOut struct {
+	InputTokens       int64    `json:"input_tokens"`
+	OutputTokens      int64    `json:"output_tokens"`
+	Cost              *float64 `json:"cost,omitempty"`
+	Currency          string   `json:"currency,omitempty"`
+	CachedInputTokens *int64   `json:"cached_input_tokens,omitempty"`
+	ReasoningTokens   *int64   `json:"reasoning_tokens,omitempty"`
+	UsageModel        *string  `json:"usage_model,omitempty"`
+	ThreadID          *string  `json:"thread_id,omitempty"`
 }
 
 // NodeRunOut is one node run with its attempts nested, as documented in

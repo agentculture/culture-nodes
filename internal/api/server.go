@@ -269,15 +269,15 @@ func NewServer(store *postgres.Store, namespaceID string, opts ...Option) (*Serv
 	}
 
 	s := &Server{
-		Store:         store,
-		Engine:        eng,
-		Ledger:        led,
-		NamespaceID:   namespaceID,
-		engineStore:   engineStore,
-		callbackStore: callbackStore,
+		Store:                   store,
+		Engine:                  eng,
+		Ledger:                  led,
+		NamespaceID:             namespaceID,
+		engineStore:             engineStore,
+		callbackStore:           callbackStore,
 		artifactInvocationStore: callbackStore,
-		pollInterval:  defaultEventPollInterval,
-		log:           slog.Default(),
+		pollInterval:            defaultEventPollInterval,
+		log:                     slog.Default(),
 	}
 	for _, opt := range opts {
 		if opt != nil {

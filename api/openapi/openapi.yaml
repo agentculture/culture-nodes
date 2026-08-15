@@ -2122,6 +2122,14 @@ components:
         completed_at:
           type: string
           format: date-time
+        usage:
+          $ref: '#/components/schemas/AttemptUsage'
+        termination_reason:
+          type: string
+          description: The provider-reported reason this attempt ended.
+        continuation_ref:
+          type: string
+          description: Opaque handle offered by the actor for continuing this session.
         preserve_branch:
           type: string
           description: >-
@@ -2145,6 +2153,30 @@ components:
             the push against. Informational only -- never combined with
             preserve_branch to construct a forge URL; a client-side link
             may only come from configuration the operator actually set.
+
+    AttemptUsage:
+      type: object
+      required: [input_tokens, output_tokens]
+      properties:
+        input_tokens:
+          type: integer
+        output_tokens:
+          type: integer
+        cost:
+          type: number
+        currency:
+          type: string
+        cached_input_tokens:
+          type: integer
+        reasoning_tokens:
+          type: integer
+        usage_model:
+          type: string
+          description: >-
+            Model attribution exactly as reported by the bridge. Explicit
+            unknown sentinels are rendered verbatim and never collapsed to null.
+        thread_id:
+          type: string
 
     NodeRun:
       type: object

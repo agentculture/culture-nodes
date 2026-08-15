@@ -1,12 +1,11 @@
 #!/usr/bin/env python3
-"""PR-upkeep sweep: SonarCloud, Qodo, failed CI, and Jira backlog findings
--> one prioritised work-item list (plan task t21, spec claims c15/c26).
+"""PR-upkeep pure emitter for GitHub PR and Jira findings.
 
 This is the payload of the pr-upkeep workflow's `sweep` code node. It runs
 through the runner boundary (never in a control-plane process), talks to
-read-only surfaces over an egress allowlist and prints a JSON report to
-stdout. It holds no write
-credential of any kind.
+read-only source surfaces over an egress allowlist, then raises cursor-guarded
+facts through POST /v1alpha1/events. Its only write credential is the narrow
+event-ingress token; it performs no triage and has no merge credential.
 
 The repositories are a CLOSED, deployment-granted set — never run input.
 Each invocation selects one entry by the configured cycle index, preserving
@@ -19,17 +18,11 @@ the digest it also grants (`PR_UPKEEP_SWEEP_SOURCE_SHA256`), so a deployment
 that is not this one runs ITS copy of this script — with its own two
 constants — rather than ours (task t16).
 
-Exit-code contract (the workflow's `triage` decision node routes on
-`/nodes/sweep/output`'s `exit_code`, because a code node's persisted output
-is runner metadata — operation id, state, exit code, artifact refs — not
-the script's stdout):
-
-* ``0``  — the sweep ran and found at least one work item (routes `passed`).
-* ``10`` — the sweep ran cleanly and found NOTHING to do (`EXIT_EMPTY`;
-  routes `failed`, which triage recognises as the benign empty sweep).
-* anything else — the sweep itself broke (network, auth, parse); also
-  routes `failed`, and triage sends it to the backoff wait instead of
-  inventing an empty result.
+Each PR watermark is its head SHA plus newest comment timestamp. Each Jira
+watermark is the issue update timestamp plus newest comment timestamp. The
+control plane advances that watermark in the same transaction that appends
+the signal event, so restarting this process cannot report the same position
+twice.
 
 SonarCloud sees the MAIN branch only unless a query names a `pullRequest`
 (found live: `?componentKeys=...&resolved=false` alone answered `total: 0`
@@ -124,11 +117,6 @@ GITHUB_CHECK_RUNS_URL = "{api}/repos/{repo}/commits/{sha}/check-runs?per_page=10
 #: silently, and a dropped PR's issues surface on a later cycle once one of
 #: the swept PRs closes or the cap is raised.
 MAX_PRS_PER_SWEEP = 10
-
-#: Exit code for a clean sweep that found no work. Deliberately not 0 and
-#: not 1: the triage decision node tells "nothing to do" apart from "the
-#: sweep broke" by this value alone.
-EXIT_EMPTY = 10
 
 #: Unified priority rank across the three finding vocabularies. Lower sorts
 #: first. SonarCloud: BLOCKER/CRITICAL/MAJOR/MINOR/INFO; Qodo badge
@@ -559,7 +547,7 @@ def fetch_jira_issues(site: str, project: str, email: str, token: str) -> dict:
     query = urllib.parse.urlencode(
         {
             "jql": f'project = "{project}" AND resolution IS EMPTY ORDER BY priority ASC',
-            "fields": "summary,priority,status,issuetype",
+            "fields": "summary,priority,status,issuetype,updated,comment",
             "maxResults": "100",
         }
     )
@@ -571,21 +559,6 @@ def fetch_jira_issues(site: str, project: str, email: str, token: str) -> dict:
 def prioritise(items: list[dict]) -> list[dict]:
     """Stable severity-ranked ordering: the list IS the priority."""
     return sorted(items, key=lambda item: severity_rank(item["severity"]))
-
-
-def build_report(items: list[dict], repository: dict) -> dict:
-    ordered = prioritise(items)
-    return {
-        "sweep": "pr-upkeep",
-        "sonar_component": repository["sonar_component"],
-        "github_repo": repository["github_repo"],
-        "count": len(ordered),
-        "items": ordered,
-    }
-
-
-def exit_code_for(items: list[dict]) -> int:
-    return 0 if items else EXIT_EMPTY
 
 
 def _get_json(url: str, token: str | None = None, *, basic: tuple[str, str] | None = None):
@@ -654,6 +627,46 @@ def fetch_open_pr_comments(
     return bodies, numbers
 
 
+def fetch_pr_comments(token: str | None, repository: str, number: int) -> list[dict]:
+    """All issue comments for one PR, including timestamps for its cursor."""
+    return _get_json(
+        f"{GITHUB_API}/repos/{repository}/issues/{number}/comments?per_page=100", token
+    )
+
+
+def newest_comment_timestamp(comments: list[dict]) -> str:
+    return max((str(c.get("updated_at") or c.get("created_at") or "") for c in comments), default="")
+
+
+def jira_watermark(issue: dict) -> dict:
+    fields = issue.get("fields") or {}
+    comments = ((fields.get("comment") or {}).get("comments") or [])
+    return {
+        "updated_at": fields.get("updated") or "",
+        "newest_comment_at": newest_comment_timestamp(comments),
+    }
+
+
+def raise_event(name: str, payload: dict, source_key: str, watermark: dict) -> dict:
+    """Raise one cursor-guarded fact through the control plane's event path."""
+    base = os.environ.get("NODES_API_URL")
+    token = os.environ.get("NODES_EVENT_TOKEN")
+    if not base or not token:
+        raise ValueError("NODES_API_URL and NODES_EVENT_TOKEN are required")
+    body = json.dumps({
+        "name": name,
+        "payload": payload,
+        "emitter": "pr-upkeep/sweep",
+        "source_key": source_key,
+        "watermark": watermark,
+    }).encode()
+    request = urllib.request.Request(base.rstrip("/") + "/v1alpha1/events", data=body, method="POST")
+    request.add_header("Content-Type", "application/json")
+    request.add_header("Authorization", f"Bearer {token}")
+    with urllib.request.urlopen(request, timeout=30) as response:  # noqa: S310
+        return json.load(response)
+
+
 def _max_prs_per_sweep() -> int:
     raw = os.environ.get("PR_UPKEEP_MAX_PRS_PER_SWEEP")
     if raw is None:
@@ -672,11 +685,8 @@ def main() -> int:
         repository = selected_repository()
         github_repo = repository["github_repo"]
         component = repository["sonar_component"]
-        sonar_items = sonar_work_items(fetch_sonar_issues(component))
-
         open_pulls = sorted(fetch_open_pulls(token, github_repo), key=lambda pull: pull["number"])
         swept, dropped = open_pulls[:max_prs], open_pulls[max_prs:]
-        swept_prs = [pull["number"] for pull in swept]
         if dropped:
             dropped_prs = [pull["number"] for pull in dropped]
             print(
@@ -687,14 +697,7 @@ def main() -> int:
                 file=sys.stderr,
             )
 
-        for pr in swept_prs:
-            sonar_items.extend(sonar_work_items(fetch_sonar_issues(component, pr=pr), pr=pr))
-        sonar_items = dedupe_sonar_items(sonar_items)
-
-        qodo_bodies, qodo_pr_numbers = fetch_open_pr_comments(token, github_repo, swept_prs)
-        qodo_items = qodo_work_items(qodo_bodies, qodo_pr_numbers)
-
-        check_items = []
+        emitted = []
         for pull in swept:
             if not pull["head_sha"]:
                 print(
@@ -704,11 +707,22 @@ def main() -> int:
                     file=sys.stderr,
                 )
                 continue
-            check_items.extend(
-                check_run_work_items(
-                    fetch_check_runs(token, github_repo, pull["head_sha"]), pr=pull["number"]
-                )
+            comments = fetch_pr_comments(token, github_repo, pull["number"])
+            qodo_bodies = qodo_review_bodies(comments)
+            qodo_items = qodo_work_items(qodo_bodies, [pull["number"]] * len(qodo_bodies))
+            check_items = check_run_work_items(
+                fetch_check_runs(token, github_repo, pull["head_sha"]), pr=pull["number"]
             )
+            pr_sonar = sonar_work_items(fetch_sonar_issues(component, pr=pull["number"]), pr=pull["number"])
+            payload = {
+                "source": "github_pr", "repository": github_repo,
+                "number": pull["number"], "head_sha": pull["head_sha"],
+                "findings": prioritise(pr_sonar + qodo_items + check_items),
+            }
+            emitted.append(raise_event(
+                "pr-upkeep.pr", payload, f"github:{github_repo}:pr:{pull['number']}",
+                {"head_sha": pull["head_sha"], "newest_comment_at": newest_comment_timestamp(comments)},
+            ))
 
         jira_items = []
         if repository.get("jira_site"):
@@ -719,20 +733,23 @@ def main() -> int:
                     "JIRA_ACCOUNT_EMAIL and JIRA_API_TOKEN are both required "
                     "when Jira is configured"
                 )
-            jira_items = jira_work_items(
-                fetch_jira_issues(
+            jira_payload = fetch_jira_issues(
                     repository["jira_site"], repository["jira_project"], email, jira_token
-                ),
-                site=repository["jira_site"],
-                project=repository["jira_project"],
-            )
+                )
+            jira_items = jira_work_items(jira_payload, site=repository["jira_site"], project=repository["jira_project"])
+            by_key = {issue.get("key"): issue for issue in jira_payload.get("issues", [])}
+            for item in jira_items:
+                issue = by_key.get(item["id"], {})
+                emitted.append(raise_event(
+                    "pr-upkeep.jira", item,
+                    f"jira:{repository['jira_site']}:{item['id']}", jira_watermark(issue),
+                ))
     except (urllib.error.URLError, TimeoutError, json.JSONDecodeError, ValueError) as exc:
         print(f"sweep failed: {exc}", file=sys.stderr)
         return 1
-    items = sonar_items + qodo_items + check_items + jira_items
-    json.dump(build_report(items, repository), sys.stdout, indent=2, ensure_ascii=False)
+    json.dump({"sweep": "pr-upkeep", "emitted": len(emitted)}, sys.stdout, indent=2)
     sys.stdout.write("\n")
-    return exit_code_for(items)
+    return 0
 
 
 if __name__ == "__main__":

@@ -791,6 +791,14 @@
           "run_id": {
             "description": "Optional scope. Set, the event resumes only that run's matching subscriptions; unset, it resumes every matching subscription in the namespace.",
             "type": "string"
+          },
+          "source_key": {
+            "description": "Stable emitter-owned identity whose watermark suppresses duplicate deliveries. Must be supplied with watermark.",
+            "type": "string"
+          },
+          "watermark": {
+            "description": "Opaque per-source position. An exact repeat for source_key returns the original event without delivering it again.",
+            "type": "object"
           }
         },
         "required": [
@@ -940,6 +948,10 @@
       },
       "EventDeliveryResult": {
         "properties": {
+          "duplicate": {
+            "description": "True when source_key and watermark already named a recorded event; resumed and picked_up are then empty.",
+            "type": "boolean"
+          },
           "event": {
             "$ref": "#/components/schemas/SignalEvent"
           },

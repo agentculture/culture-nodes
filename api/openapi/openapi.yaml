@@ -61,6 +61,10 @@ tags:
       Registered actor identities and their aggregate stats (task t15).
       Read-only — registering an actor stays
       deploy/prod/register-actor.sh (issue #8).
+  - name: artifacts
+    description: >-
+      Attempt-authenticated publication of opaque artifact bytes. This
+      surface intentionally exposes no read or delete operation.
   - name: preflights
     description: >-
       The clarify-then-commit gate (task t14, issue #67): the briefing an
@@ -408,6 +412,72 @@ paths:
                 $ref: '#/components/schemas/NodeRunList'
         '400':
           description: updated_since, updated_until, or cursor is malformed.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+
+  /v1alpha1/attempts/{attemptID}/artifacts:
+    post:
+      operationId: putAttemptArtifact
+      tags: [artifacts]
+      summary: Publish opaque artifact bytes for one pending attempt.
+      description: >-
+        Requires the callback bearer token issued for exactly the attempt
+        named in the path. Namespace, run, and attempt associations are
+        derived from that attempt's durable PendingInvocation; the body is
+        opaque content and cannot supply authority-bearing fields. Returns
+        an artifact:// ref and metadata measured by the artifact store.
+
+        No GET or DELETE operation is mounted. Possession of an artifact://
+        ref is not authorization, and filesystem paths are never resolved.
+      security:
+        - attemptCallbackBearerAuth: []
+      parameters:
+        - $ref: '#/components/parameters/AttemptID'
+        - name: Artifact-Name
+          in: header
+          required: true
+          description: A descriptive, non-authoritative artifact name.
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          '*/*':
+            schema:
+              type: string
+              format: binary
+      responses:
+        '201':
+          description: The artifact was stored and associated with the durable invocation.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ArtifactWriteResult'
+        '400':
+          description: Content-Type or Artifact-Name is missing.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '401':
+          description: The token is missing, expired, invalid, or belongs to a different attempt.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '404':
+          description: No durable pending invocation has the path's attempt id.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '413':
+          description: >-
+            The body exceeds the publication limit (api.MaxArtifactBytes,
+            64 MiB). Authentication is not a size limit: publish large output
+            to object storage and record a reference, or split it.
           content:
             application/json:
               schema:
@@ -1571,6 +1641,13 @@ components:
       description: The human task id.
       schema:
         type: string
+    AttemptID:
+      name: attemptID
+      in: path
+      required: true
+      description: The protocol attempt id signed into the callback token.
+      schema:
+        type: string
 
   securitySchemes:
     decisionBearerAuth:
@@ -1608,8 +1685,40 @@ components:
         auth-hardening pass, spec c27) — its own secret, so the power to
         start ad-hoc (often billable) work is granted independently of
         decision, registration, and event standing.
+    attemptCallbackBearerAuth:
+      type: http
+      scheme: bearer
+      description: >-
+        The short-lived callback token minted for exactly one attempt. The
+        route verifies it against the attempt id in the path before loading
+        durable invocation authority or reading the request body.
 
   schemas:
+    ArtifactWriteResult:
+      type: object
+      required: [ref, name, media_type, size_bytes, digest, backend, created_at]
+      properties:
+        ref:
+          type: string
+          pattern: '^artifact://[^/]+/[^/]+$'
+        name:
+          type: string
+        media_type:
+          type: string
+        size_bytes:
+          type: integer
+          format: int64
+          minimum: 0
+        digest:
+          type: string
+          pattern: '^sha256:[0-9a-f]{64}$'
+        backend:
+          type: string
+          enum: [postgres, s3]
+        created_at:
+          type: string
+          format: date-time
+
     Error:
       type: object
       description: >-

@@ -7,12 +7,16 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
+	"strconv"
 	"syscall"
 	"time"
 
 	culturenodes "github.com/agentculture/culture-nodes"
 	"github.com/agentculture/culture-nodes/internal/actors"
 	"github.com/agentculture/culture-nodes/internal/api"
+	"github.com/agentculture/culture-nodes/internal/artifacts"
+	artifactpg "github.com/agentculture/culture-nodes/internal/artifacts/postgres"
+	artifacts3 "github.com/agentculture/culture-nodes/internal/artifacts/s3"
 	"github.com/agentculture/culture-nodes/internal/clifmt"
 	"github.com/agentculture/culture-nodes/internal/scheduler"
 	"github.com/agentculture/culture-nodes/internal/store/postgres"
@@ -63,6 +67,14 @@ const envEventTokenSecret = "NODES_EVENT_TOKEN_SECRET"
 // ad-hoc (often billable) work is granted independently. Unset is not an
 // error: ad-hoc runs are simply refused with 401 until an operator sets it.
 const envAdhocRunSecret = "NODES_ADHOC_RUN_TOKEN_SECRET"
+
+const (
+	envArtifactS3Endpoint  = "NODES_ARTIFACT_S3_ENDPOINT"
+	envArtifactS3AccessKey = "NODES_ARTIFACT_S3_ACCESS_KEY"
+	envArtifactS3SecretKey = "NODES_ARTIFACT_S3_SECRET_KEY"
+	envArtifactS3Bucket    = "NODES_ARTIFACT_S3_BUCKET"
+	envArtifactS3UseTLS    = "NODES_ARTIFACT_S3_USE_TLS"
+)
 
 // minDecisionAuthSecretBytes mirrors actors.MinTokenSecretBytes: a secret
 // short enough to guess is not meaningfully different from no secret at
@@ -179,6 +191,11 @@ func runServeMode(args []string, verb string, withScheduler bool) (int, error) {
 		return 0, err
 	}
 	opts = append(opts, api.WithCallbackSigner(callbackSigner))
+	artifactRouter, err := artifactRouterFromEnv(ctx, db)
+	if err != nil {
+		return 0, err
+	}
+	opts = append(opts, api.WithArtifactRouter(artifactRouter))
 
 	decisionAuthSecret, err := authSecretFromEnv(envDecisionAuthSecret)
 	if err != nil {
@@ -266,6 +283,40 @@ func runServeMode(args []string, verb string, withScheduler bool) (int, error) {
 
 	clifmt.EmitDiagnostic(fmt.Sprintf("nodes %s: shut down cleanly", verb))
 	return clifmt.ExitSuccess, nil
+}
+
+func artifactRouterFromEnv(ctx context.Context, db *postgres.Store) (*artifacts.Router, error) {
+	small := artifactpg.New(db, artifactpg.DefaultCapBytes)
+	endpoint := os.Getenv(envArtifactS3Endpoint)
+	if endpoint == "" {
+		// A Postgres-only installation still gets the authenticated production
+		// route for small artifacts. Routing a larger body back to the capped
+		// driver fails closed with ErrTooLarge rather than touching a filesystem.
+		return artifacts.NewRouter(small, small, artifactpg.DefaultCapBytes), nil
+	}
+
+	accessKey := os.Getenv(envArtifactS3AccessKey)
+	secretKey := os.Getenv(envArtifactS3SecretKey)
+	bucket := os.Getenv(envArtifactS3Bucket)
+	if accessKey == "" || secretKey == "" || bucket == "" {
+		return nil, envError("configuring artifact storage", errors.New("incomplete NODES_ARTIFACT_S3_* configuration"),
+			"set endpoint, access key, secret key, and bucket together, or unset the endpoint for Postgres-only artifacts")
+	}
+	useTLS := false
+	if raw := os.Getenv(envArtifactS3UseTLS); raw != "" {
+		parsed, err := strconv.ParseBool(raw)
+		if err != nil {
+			return nil, envError("configuring artifact storage", err, "set NODES_ARTIFACT_S3_USE_TLS to true or false")
+		}
+		useTLS = parsed
+	}
+	object, err := artifacts3.New(ctx, artifacts3.Config{
+		Endpoint: endpoint, AccessKey: accessKey, SecretKey: secretKey, Bucket: bucket, UseTLS: useTLS,
+	}, db)
+	if err != nil {
+		return nil, envError("connecting artifact object storage", err, "verify NODES_ARTIFACT_S3_* and MinIO/S3 reachability")
+	}
+	return artifacts.NewRouter(small, object, artifactpg.DefaultCapBytes), nil
 }
 
 // authSecretFromEnv reads an optional bearer secret from envName (the

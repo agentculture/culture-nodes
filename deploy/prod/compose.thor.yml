@@ -75,6 +75,11 @@ services:
       NODES_LISTEN: ":8080"
       NODES_HUMAN_DECISION_TOKEN_SECRET: ${NODES_HUMAN_DECISION_TOKEN_SECRET:?install secrets first}
       NODES_CALLBACK_TOKEN_SECRET: ${NODES_CALLBACK_TOKEN_SECRET:?install secrets first}
+      NODES_ARTIFACT_S3_ENDPOINT: minio:9000
+      NODES_ARTIFACT_S3_ACCESS_KEY: ${MINIO_ROOT_USER:-nodesroot}
+      NODES_ARTIFACT_S3_SECRET_KEY: ${MINIO_ROOT_PASSWORD:?}
+      NODES_ARTIFACT_S3_BUCKET: ${NODES_ARTIFACT_S3_BUCKET:-nodes-artifacts}
+      NODES_ARTIFACT_S3_USE_TLS: "false"
       # Bearer for external actor endpoints whose rows name this env var
       # (metadata.auth_token_env) — needed here too (task t4, issue #19):
       # POST .../cancel propagates a run cancellation to the actor directly
@@ -100,6 +105,8 @@ services:
       migrate:
         condition: service_completed_successfully
       postgres:
+        condition: service_healthy
+      minio:
         condition: service_healthy
     restart: unless-stopped
 

@@ -1,0 +1,57 @@
+{
+  "plan_slug": "own-the-work-end-to-end",
+  "schema_version": 1,
+  "created": "2026-08-15T06:38:50Z",
+  "updated": "2026-08-15T06:44:43Z",
+  "deviations": [
+    {
+      "id": "d1",
+      "what": "Serialize package dispatch to one package per codex actor at a time: wave 0 runs as two rounds (round 1: P1->codex-thor, P2->codex-orin; round 2: P3->codex-thor, P4->codex-orin) instead of four concurrent packages. Waves 1-3 follow the same one-per-actor rule until t16 lands. Task content, acceptance criteria and coverage targets are unchanged \u2014 this is a scheduling amendment only.",
+      "task_ref": "t1",
+      "reason": "Each codex bridge allowlists exactly ONE checkout per host, exact-match \u2014 verified live: thor's codex-bridge.json has repo_allowlist=['/home/thor/git/culture-nodes-agent'] and config.py resolves membership by equality. Two concurrent packages on one actor would therefore put two agent sessions in one checkout, which is precisely the concurrent-writer corruption mode spec claim c42 describes, with the c49 fence not yet built (it is task t10). Running it would reproduce, while building the fix, the exact hazard the batch exists to remove. Serializing costs wall-clock and nothing else; t16 (the workspace provisioner, already scheduled in wave 1) restores parallelism for waves 2-3, and this incident is empirical evidence for t16's value rather than an argument for it.",
+      "affects": [
+        "t3",
+        "t4",
+        "t5",
+        "t8",
+        "t15",
+        "t16",
+        "c42",
+        "c49",
+        "c24"
+      ],
+      "origin": "user",
+      "status": "approved",
+      "classification": "acceptable"
+    },
+    {
+      "id": "d2",
+      "what": "Refresh both codex hosts' allowlisted checkouts to main before dispatching any package.",
+      "task_ref": "t1",
+      "reason": "thor's /home/thor/git/culture-nodes-agent is at fadfa1d, two commits behind main 7519d74 \u2014 so an agent would build against stale code and its diff would not apply cleanly at merge. Observed at wave-0 dispatch; orin unchecked and assumed equally stale until verified.",
+      "affects": [
+        "t3",
+        "t5"
+      ],
+      "origin": "user",
+      "status": "approved",
+      "classification": "acceptable"
+    },
+    {
+      "id": "d3",
+      "what": "Commit and push the spec, the plan, the devague frame/plan/delivery state and scripts/verify-token-scope.sh to a branch, and have every subsequent work-package brief reference them via 'git fetch origin && git show origin/<branch>:<path>' instead of inlining the task text into the instruction string.",
+      "task_ref": "t1",
+      "reason": "Discovered at wave-0 dispatch: run 01M022BSJ3550RQ8Q2P7DFWA91 refused to start because 'docs/plans/2026-08-15-own-the-work-end-to-end.md is absent from this checkout and all local Git refs'. The plan was uncommitted on spark, so the brief referenced a path that does not exist on thor \u2014 the same class of defect #74 documents, committed by the operator while dispatching its fix. The workaround (inline every task's full text into the instruction string) does not scale past a two-task package and makes the ledger see one opaque blob instead of citable documents. Committing and pushing costs one branch and fixes the class for every remaining package. The operator approved a cheap in-flight fix via /deviate. Note this is a WORKAROUND for the missing artifact carrier, not a substitute: it works only because these artifacts belong in git anyway. A brief attachment that is not a repo file still has no carrier \u2014 that is #79, and the improvement issue stands.",
+      "affects": [
+        "t3",
+        "t5",
+        "t16",
+        "c2",
+        "c69"
+      ],
+      "origin": "user",
+      "status": "approved",
+      "classification": "acceptable"
+    }
+  ]
+}

@@ -4,7 +4,7 @@
   "schema_version": 5,
   "status": "exported",
   "created": "2026-08-15T13:56:35Z",
-  "updated": "2026-08-15T15:08:27Z",
+  "updated": "2026-08-15T15:14:57Z",
   "claims": [
     {
       "id": "c1",
@@ -1401,6 +1401,42 @@
       "hard_questions": [],
       "links": [],
       "instruction": "Keep the bundled-Postgres compose smoke in the test matrix and run it on a credential-free machine after the migration.",
+      "revisions": []
+    },
+    {
+      "id": "c79",
+      "kind": "decision",
+      "text": "The il-central-1 choice was challenged against us-east-2 and re-answered with measurement, not assertion. From thor: il-central-1 13ms, eu-south-1 54ms, eu-central-1 68ms, us-east-1 155ms, us-east-2 161ms, us-west-2 224ms. us-east-2 is cheaper by roughly 15-20 percent (an estimate \u2014 the operator policy has no pricing:GetProducts), needs no opt-in, and is the more mature region. It loses on the only axis that dominates while compute stays on thor: every claim, tick, transition and UI read pays the round trip. The decision carries an explicit expiry \u2014 if compute moves into AWS (the bridges-poll-outbound issue), the database follows the compute and this region choice is re-opened.",
+      "origin": "llm",
+      "status": "confirmed",
+      "honesty_conditions": [],
+      "hard_questions": [],
+      "links": [],
+      "instruction": "",
+      "revisions": []
+    },
+    {
+      "id": "c80",
+      "kind": "before_state",
+      "text": "The lease-expiry risk in the latency argument was overstated and is corrected here: DefaultLeaseDuration is 60 seconds with a 20-second heartbeat (internal/worker/worker.go:29,32), so even a hundred round trips at 161ms fit inside one lease. Latency costs throughput and responsiveness, not correctness. c68's measurement gate stays worth running, and is now expected to pass rather than expected to bite.",
+      "origin": "llm",
+      "status": "confirmed",
+      "honesty_conditions": [],
+      "hard_questions": [],
+      "links": [],
+      "instruction": "",
+      "revisions": []
+    },
+    {
+      "id": "c81",
+      "kind": "assumption",
+      "text": "Data residency is an unanswered question, not a settled one: the ledger holds every instruction, claim and evidence trail this system produces, and whether that should be Israel-resident or US-resident is the owner's call rather than a technical consequence of the latency measurement.",
+      "origin": "llm",
+      "status": "confirmed",
+      "honesty_conditions": [],
+      "hard_questions": [],
+      "links": [],
+      "instruction": "",
       "revisions": []
     }
   ],

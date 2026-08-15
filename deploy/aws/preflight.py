@@ -87,6 +87,12 @@ OPT_IN_MARKER = "InvalidClientTokenId"
 
 OK = "ok"
 BLOCKED = "blocked"
+#: Requested and in flight at AWS. Not ready, so the exit code still says
+#: "do not provision yet" — but nobody has anything to do, so it must never
+#: appear in the next-actions list. A report that tells an admin to re-run
+#: the command they just ran sends them hunting for a failure that has not
+#: happened.
+PENDING = "pending"
 WARN = "warn"
 SKIPPED = "skipped"
 
@@ -211,6 +217,20 @@ def check_region_enabled(region: str, account: str | None) -> Result:
                 status=OK,
                 detail=f"RegionOptStatus={status}",
             )
+        if status in ("ENABLING", "DISABLING"):
+            # In flight. Not ready, but there is nothing for anyone to do —
+            # and telling an admin to re-run the enable they already ran is
+            # worse than saying nothing, because it invites them to go
+            # looking for a failure that has not happened.
+            return Result(
+                key="region",
+                title=f"Region {region} enabled",
+                status=PENDING,
+                detail=f"RegionOptStatus={status} — AWS is working on it, typically a few minutes",
+                why="an opt-in region takes time to propagate after the account requests it",
+                who="nobody — no action to take",
+                fix=f"wait, then re-run ./deploy/aws/preflight.py --region {region}",
+            )
         return Result(
             key="region",
             title=f"Region {region} enabled",
@@ -274,6 +294,23 @@ def check_rds_permissions(region: str, region_ok: bool) -> Result:
             status=OK,
             detail=f"rds:DescribeDBInstances succeeded{note}",
         )
+    if region_disabled(err):
+        # The opt-status flipped to ENABLED but the credential is not valid
+        # in the new region yet — AWS propagates that separately, and for a
+        # few minutes a freshly enabled region rejects a key that works
+        # everywhere else. Reporting this as a policy problem would send an
+        # admin to re-run update-policy, which fixes nothing.
+        return Result(
+            key="rds_iam",
+            title="Operator may use RDS",
+            status=PENDING,
+            detail=f"{probe_region} answered {OPT_IN_MARKER} — the region was just enabled and"
+            " credentials are still propagating into it",
+            why="enabling a region and making credentials valid there are two separate"
+            " propagations; the second trails the first by a few minutes",
+            who="nobody — no action to take",
+            fix=f"wait, then re-run ./deploy/aws/preflight.py --region {region}",
+        )
     if denied(err):
         return Result(
             key="rds_iam",
@@ -311,6 +348,18 @@ def check_vpc_reads(region: str, region_ok: bool) -> Result:
             title="Operator may read VPC placement",
             status=OK,
             detail=f"ec2:DescribeVpcs succeeded{note}",
+        )
+    if region_disabled(err):
+        return Result(
+            key="vpc_iam",
+            title="Operator may read VPC placement",
+            status=PENDING,
+            detail=f"{probe_region} answered {OPT_IN_MARKER} — the region was just enabled and"
+            " credentials are still propagating into it",
+            why="enabling a region and making credentials valid there are two separate"
+            " propagations; the second trails the first by a few minutes",
+            who="nobody — no action to take",
+            fix=f"wait, then re-run ./deploy/aws/preflight.py --region {region}",
         )
     if denied(err):
         return Result(
@@ -471,7 +520,13 @@ def check_existing_instance(region: str, region_ok: bool, rds_ok: bool) -> Resul
 # report
 # --------------------------------------------------------------------------
 
-BADGE = {OK: "  ok   ", BLOCKED: "BLOCKED", WARN: " warn  ", SKIPPED: " skip  "}
+BADGE = {
+    OK: "  ok   ",
+    BLOCKED: "BLOCKED",
+    PENDING: "waiting",
+    WARN: " warn  ",
+    SKIPPED: " skip  ",
+}
 
 
 def render(results: list[Result], region: str) -> str:
@@ -484,15 +539,17 @@ def render(results: list[Result], region: str) -> str:
     for r in results:
         lines.append(f"  [{BADGE[r.status]}]  {r.title}")
         lines.append(f"              {r.detail}")
-        if r.status in (BLOCKED, WARN) and r.why:
+        if r.status in (BLOCKED, PENDING, WARN) and r.why:
             lines.append(f"              why:  {r.why}")
             lines.append(f"              who:  {r.who}")
             lines.append(f"              fix:  {r.fix}")
         lines.append("")
-    counts = {s: sum(1 for r in results if r.status == s) for s in (OK, BLOCKED, WARN, SKIPPED)}
+    counts = {
+        s: sum(1 for r in results if r.status == s) for s in (OK, BLOCKED, PENDING, WARN, SKIPPED)
+    }
     lines.append("-" * 64)
     lines.append(
-        f"  {counts[OK]} ready, {counts[BLOCKED]} blocked,"
+        f"  {counts[OK]} ready, {counts[BLOCKED]} blocked, {counts[PENDING]} in progress,"
         f" {counts[WARN]} warning, {counts[SKIPPED]} not yet testable"
     )
     if counts[BLOCKED]:
@@ -508,6 +565,11 @@ def render(results: list[Result], region: str) -> str:
                 lines.append(f"    {len(seen)}. [{r.who.split(' — ')[0]}]  {r.fix}")
         lines.append("")
         lines.append("  Then re-run this script. It is a read-only check and is safe to repeat.")
+    elif counts[PENDING]:
+        lines.append("")
+        lines.append("  Nothing to do — AWS is still working. Re-run this script in a few minutes:")
+        for r in (x for x in results if x.status == PENDING):
+            lines.append(f"    - {r.title}: {r.detail}")
     else:
         lines.append("")
         lines.append("  All prerequisites are clear. Provisioning may proceed.")
@@ -555,14 +617,19 @@ def main(argv: list[str] | None = None) -> int:
     results.append(check_existing_instance(args.region, region_ok, rds_ok))
 
     _emit(results, args)
-    return 1 if any(r.status == BLOCKED for r in results) else 0
+    # In-progress counts as not-ready: the exit code gates provisioning, and
+    # a region that is still ENABLING cannot host anything yet. It differs
+    # from BLOCKED only in that no human owes anyone an action.
+    return 1 if any(r.status in (BLOCKED, PENDING) for r in results) else 0
 
 
 def _emit(results: list[Result], args: argparse.Namespace, exit_hint: str = "") -> None:
     if args.json:
         payload = {
             "region": args.region,
-            "ready": not any(r.status == BLOCKED for r in results),
+            "ready": not any(r.status in (BLOCKED, PENDING) for r in results),
+            "blocked": [r.key for r in results if r.status == BLOCKED],
+            "in_progress": [r.key for r in results if r.status == PENDING],
             "checks": [r.as_dict() for r in results],
         }
         print(json.dumps(payload, indent=2))

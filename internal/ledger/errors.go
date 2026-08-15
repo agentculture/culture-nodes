@@ -13,6 +13,11 @@ var ErrRecordNotFound = errors.New("ledger: record not found")
 // ErrReviewNotFound is returned when no review request has the requested id.
 var ErrReviewNotFound = errors.New("ledger: review request not found")
 
+// ErrActorNotFound is returned when an actor id resolves to no registered
+// actor. A review names its reviewer as an accountable identity, and an id
+// nobody registered is not one.
+var ErrActorNotFound = errors.New("ledger: actor not found")
+
 // ErrStaleReview reports that a review was written against a ledger that has
 // since moved. A stale review is rejected in full rather than applied to
 // changed work (PRD §10.8): when CommitReview returns an error matching this
@@ -97,6 +102,14 @@ const (
 	// actor promotes its own proposal") extended to opinion records. No
 	// actor grades its own work.
 	RuleNoSelfGrade = "no_self_grade"
+	// RuleReviewerNotHuman — the actor a review names as its reviewer is
+	// registered as something other than a human (PRD §10.4: "humans
+	// confirm/reject"). CommitReview stamps the reviewer as the HUMAN origin
+	// of every review record it appends, so without this check that origin
+	// would be a value the ledger asserts on the caller's behalf rather than
+	// a fact about the named actor — and an agent could decide its own claim
+	// by naming itself.
+	RuleReviewerNotHuman = "reviewer_must_be_human"
 )
 
 // AuthorityError reports that the producer/authority matrix (PRD §10.4)

@@ -26,12 +26,25 @@ type memStore struct {
 	mu      sync.Mutex
 	records map[string]ledger.Record
 	reviews map[string]ledger.ReviewRequest
+	// actorKinds stands in for the actors table CommitReview resolves a
+	// reviewer against. It is seeded with the shared fixture actors below,
+	// each under the kind its name says it is — so a test that reviews as
+	// testHuman works, and a test that reviews as testAgent is refused for
+	// the same reason production would refuse it.
+	actorKinds map[string]string
 }
 
 func newMemStore() *memStore {
 	return &memStore{
 		records: map[string]ledger.Record{},
 		reviews: map[string]ledger.ReviewRequest{},
+		actorKinds: map[string]string{
+			testHuman:   ledger.ActorKindHuman,
+			testAgent:   "agent",
+			testRunner:  "runner",
+			testEngine:  "engine",
+			testService: "service",
+		},
 	}
 }
 
@@ -125,6 +138,16 @@ func (m *memStore) GetReviewRequest(_ context.Context, id string) (ledger.Review
 	return req.Clone(), nil
 }
 
+func (m *memStore) ActorKind(_ context.Context, actorID string) (string, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	kind, ok := m.actorKinds[actorID]
+	if !ok {
+		return "", fmt.Errorf("memstore: %s: %w", actorID, ledger.ErrActorNotFound)
+	}
+	return kind, nil
+}
+
 func (m *memStore) MarkReviewCommitted(_ context.Context, id string) (bool, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
@@ -150,6 +173,9 @@ func (m *memStore) InTx(ctx context.Context, fn func(context.Context, ledger.Tx)
 	}
 	for id, req := range m.reviews {
 		staged.reviews[id] = req.Clone()
+	}
+	for id, kind := range m.actorKinds {
+		staged.actorKinds[id] = kind
 	}
 	m.mu.Unlock()
 

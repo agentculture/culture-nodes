@@ -603,11 +603,17 @@
             "description": "The ledger version the caller expects to still hold. A mismatch is refused with 409, nothing written.",
             "format": "int64",
             "type": "integer"
+          },
+          "rationale": {
+            "description": "Why the reviewer decided this way — what they read, ran, or checked. Recorded on every review record the commit appends. A confirmation with no stated reason cannot be told apart from an unread one, so an empty rationale is refused with 400.",
+            "minLength": 1,
+            "type": "string"
           }
         },
         "required": [
           "decisions",
-          "expected_ledger_version"
+          "expected_ledger_version",
+          "rationale"
         ],
         "type": "object"
       },
@@ -667,13 +673,15 @@
             "type": "array"
           },
           "reviewer_actor_id": {
-            "description": "The human actor the review is bound to. Required for the review to ever be committable.",
+            "description": "The human actor the review is bound to, and the origin stamped on every review record the commit appends. Must be registered with kind `human`.",
+            "minLength": 1,
             "type": "string"
           }
         },
         "required": [
           "record_ids",
-          "ledger_version"
+          "ledger_version",
+          "reviewer_actor_id"
         ],
         "type": "object"
       },
@@ -1404,6 +1412,84 @@
         },
         "required": [
           "category"
+        ],
+        "type": "object"
+      },
+      "PendingDecisionList": {
+        "properties": {
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/PendingDecisionRun"
+            },
+            "type": "array"
+          },
+          "record_count": {
+            "description": "Undecided records across every listed run — the number a stage exit gate compares against zero.",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "items",
+          "record_count"
+        ],
+        "type": "object"
+      },
+      "PendingDecisionRecord": {
+        "properties": {
+          "created_at": {
+            "format": "date-time",
+            "type": "string"
+          },
+          "data": {
+            "description": "The record's payload, verbatim — what the decider actually reads.",
+            "type": "object"
+          },
+          "id": {
+            "type": "string"
+          },
+          "node_run_id": {
+            "type": "string"
+          },
+          "origin_actor_id": {
+            "type": "string"
+          },
+          "origin_kind": {
+            "type": "string"
+          },
+          "record_type": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "record_type",
+          "origin_kind",
+          "created_at",
+          "data"
+        ],
+        "type": "object"
+      },
+      "PendingDecisionRun": {
+        "properties": {
+          "ledger_version": {
+            "description": "The run's current ledger version, read in this same request — what POST /v1alpha1/runs/{id}/reviews wants as `ledger_version`.",
+            "format": "int64",
+            "type": "integer"
+          },
+          "records": {
+            "items": {
+              "$ref": "#/components/schemas/PendingDecisionRecord"
+            },
+            "type": "array"
+          },
+          "run_id": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "run_id",
+          "ledger_version",
+          "records"
         ],
         "type": "object"
       },
@@ -2300,7 +2386,7 @@
         "type": "http"
       },
       "decisionBearerAuth": {
-        "description": "The shared secret configured as NODES_HUMAN_DECISION_TOKEN_SECRET. Used only by POST /v1alpha1/human-tasks/{id}/decision — every other operation in this API is authless by phase-1 design (spec decision c45).",
+        "description": "The shared secret configured as NODES_HUMAN_DECISION_TOKEN_SECRET. Used by the three operations that record a human decision — POST /v1alpha1/human-tasks/{id}/decision and the two review operations (POST /v1alpha1/runs/{id}/reviews, POST /v1alpha1/reviews/{id}/commit) — because all three write human-authority records into the ledger on whoever presents the token. Every other operation in this API is authless by phase-1 design (spec decision c45).",
         "scheme": "bearer",
         "type": "http"
       },
@@ -3086,6 +3172,78 @@
         ]
       }
     },
+    "/v1alpha1/pending-decisions": {
+      "get": {
+        "description": "Answers \"what is awaiting my decision\", per run and across runs, without a hand-maintained manifest of run ids.\nA record is pending when it carries `proposed` authority and no `review` record names it as its subject — whatever the verdict would have been, since a rejection answers the question as completely as a confirmation does. It is NOT simply `authority = proposed`: records are immutable, so committing a confirmation appends a review record rather than changing the claim, and a decided claim reads `proposed` forever. A record a later record supersedes is excluded too — the correction that replaced it is what should be decided now.\nResults are grouped by run and each group carries that run's current `ledger_version`, which is exactly what POST /v1alpha1/runs/{id}/reviews needs to open a review over them.\nAn unrecognised query parameter is refused with 400 rather than ignored: a filter silently dropped answers a different question than the one asked while still looking authoritative.",
+        "operationId": "listPendingDecisions",
+        "parameters": [
+          {
+            "description": "Only records belonging to this run.",
+            "in": "query",
+            "name": "run_id",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "description": "Only records of this ledger record type (e.g. `claim`).",
+            "in": "query",
+            "name": "record_type",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "description": "Only records whose origin actor is this actor.",
+            "in": "query",
+            "name": "actor_id",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "description": "Maximum number of records to return (default 200, max 1000).",
+            "in": "query",
+            "name": "limit",
+            "required": false,
+            "schema": {
+              "maximum": 1000,
+              "minimum": 1,
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PendingDecisionList"
+                }
+              }
+            },
+            "description": "The pending records, grouped by run."
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "description": "An unrecognised query parameter was supplied."
+          }
+        },
+        "summary": "Every proposed ledger record still awaiting a human decision.",
+        "tags": [
+          "reviews"
+        ]
+      }
+    },
     "/v1alpha1/plan-imports": {
       "get": {
         "description": "Task t23 (issue #45): every `plan_imports` row for the given `slug`, newest `imported_at` first — how a dashboard finds \"the current state\" of a plan (`items[0]`) without this endpoint guessing at a supersedes relationship the schema deliberately does not model (see `migrations/0024_plan_imports.sql`). `slug` is required; unlike `GET /v1alpha1/workflows`, there is no cross-slug \"every imported plan\" listing. Each item is the lightweight summary shape (no `tasks`/`deviations` — those are read one snapshot at a time via `GET /v1alpha1/plan-imports/{id}`, since an empty array here would misread as \"zero tasks\" rather than \"not fetched on this path\").",
@@ -3396,7 +3554,7 @@
     },
     "/v1alpha1/reviews/{id}/commit": {
       "post": {
-        "description": "Applies confirm/reject decisions for every record the review named, all in one transaction, or none (PRD §10.8). Refused — with nothing written — when the caller's expected ledger version no longer matches: the ledger moved, a reviewed record was superseded, or the reviewed frame no longer checksums to what was requested.",
+        "description": "Applies confirm/reject decisions for every record the review named, all in one transaction, or none (PRD §10.8). Refused — with nothing written — when the caller's expected ledger version no longer matches: the ledger moved, a reviewed record was superseded, or the reviewed frame no longer checksums to what was requested.\nEach decision is appended as its own immutable `review` record: human origin naming the reviewer, `confirmed` or `rejected` authority, `subject_ref` naming the record decided, and the stated `rationale` in its payload. The reviewed records are NOT rewritten — a confirmed claim still reads `authority: proposed` forever, with the decision attached to it (see GET /v1alpha1/pending-decisions for \"which claims are still undecided\", which is that join, not an authority filter).\n`rationale` is required: a confirmation with no stated reason cannot be told apart from an unread one. A reviewer the registry does not record as a human is refused with 400 (PRD §10.4).\nRequires the decision bearer token (`NODES_HUMAN_DECISION_TOKEN_SECRET`).",
         "operationId": "commitReview",
         "parameters": [
           {
@@ -3438,7 +3596,17 @@
                 }
               }
             },
-            "description": "The decision set does not exactly cover the records under review."
+            "description": "The decision set does not exactly cover the records under review, no rationale was stated, or the reviewer is not a registered human."
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "description": "No bearer token was presented, it does not match the configured secret, or no secret is configured at all."
           },
           "404": {
             "content": {
@@ -3461,6 +3629,11 @@
             "description": "The review is stale (the ledger moved, the expected version does not match, a target was superseded, or the frame checksum no longer matches) or was already committed."
           }
         },
+        "security": [
+          {
+            "decisionBearerAuth": []
+          }
+        ],
         "summary": "Commit a review's decisions.",
         "tags": [
           "reviews"
@@ -3968,7 +4141,7 @@
     },
     "/v1alpha1/runs/{id}/reviews": {
       "post": {
-        "description": "Records the ledger version and content-digest frame checksum the reviewer is looking at (PRD §10.8), so a later commit against a ledger that has since moved is refused rather than silently applied.",
+        "description": "Records the ledger version and content-digest frame checksum the reviewer is looking at (PRD §10.8), so a later commit against a ledger that has since moved is refused rather than silently applied.\n`reviewer_actor_id` is required: a review nobody is accountable for is not a review, and refusing it here — rather than two calls later at commit time — tells the caller which field is missing while they can still supply it. The named actor must be registered with kind `human`; commitReview resolves it against the registry and refuses anything else (PRD §10.4, rule `reviewer_must_be_human`), which is what stops an agent deciding its own claim by naming itself.\nRequires the decision bearer token (`NODES_HUMAN_DECISION_TOKEN_SECRET`).",
         "operationId": "createReview",
         "parameters": [
           {
@@ -4006,6 +4179,16 @@
             },
             "description": "The request is malformed."
           },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "description": "No bearer token was presented, it does not match the configured secret, or no secret is configured at all."
+          },
           "404": {
             "content": {
               "application/json": {
@@ -4027,6 +4210,11 @@
             "description": "The request names a ledger version that is not the run's current one."
           }
         },
+        "security": [
+          {
+            "decisionBearerAuth": []
+          }
+        ],
         "summary": "Create a review request over a batch of ledger records.",
         "tags": [
           "reviews"

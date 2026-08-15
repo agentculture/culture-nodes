@@ -127,11 +127,21 @@ func rewriteIR(t *testing.T, cw *compiler.CompiledWorkflow, edit func(ir map[str
 
 func (f *fixture) insertActor(key string) string {
 	f.t.Helper()
+	return f.insertActorKind(key, "agent")
+}
+
+// insertActorKind inserts a minimal actor row of the given registered kind.
+// A decider is registered as "human" for the same reason production requires
+// it: ledger.CommitReview resolves the reviewer against this table and
+// refuses anything that is not a human, so a decision made as an agent-kind
+// actor would be self-promotion (PRD §10.4).
+func (f *fixture) insertActorKind(key, kind string) string {
+	f.t.Helper()
 	id := store.NewULID()
 	_, err := f.store.Pool().Exec(f.ctx,
 		`INSERT INTO actors (id, namespace_id, actor_key, revision, kind, protocol)
-		 VALUES ($1, $2, $3, 1, 'agent', 'http')`,
-		id, f.ns.ID, key+"-"+id)
+		 VALUES ($1, $2, $3, 1, $4, 'http')`,
+		id, f.ns.ID, key+"-"+id, kind)
 	if err != nil {
 		f.t.Fatalf("insert actor: %v", err)
 	}

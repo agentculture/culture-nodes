@@ -1,13 +1,18 @@
 import type {
   ActorList,
+  CommitReviewRequest,
+  CreateReviewRequest,
   HumanTaskDecisionRequest,
   HumanTaskDecisionResult,
   HumanTaskList,
   LedgerRecords,
   NodeRunList,
+  PendingDecisionList,
   PlanImport,
   PlanImportSummaryList,
   Projection,
+  ReviewCommitResult,
+  ReviewRequest,
   RunList,
   RunState,
   RunView,
@@ -21,9 +26,10 @@ import type {
  * Same-origin API root. In dev, vite.config.ts proxies it to the Go control
  * plane; in production the Go binary serves this bundle and `/v1alpha1`
  * from one origin. Phase 1 is authless by design (PRD §26) with exactly one
- * exception: `POST /human-tasks/{id}/decision` writes a human-authority
- * review into a run's ledger and requires a bearer token the user presents
- * per call (`decideHumanTask` below; retention policy in
+ * class of exceptions: the three calls that write a human-authority record
+ * into a run's ledger — `POST /human-tasks/{id}/decision` and the two
+ * review calls (`createReview`, `commitReview`, task t30) — each require a
+ * bearer token the user presents per call (retention policy in
  * ./decision-token.ts). No other request attaches a credential, and none
  * should without the wider auth story landing first.
  */
@@ -270,6 +276,73 @@ export const getProjection = (
   getJson<Projection>(
     `/runs/${encodeURIComponent(runId)}/ledger/projections/${encodeURIComponent(name)}`,
     signal,
+  );
+
+/** GET /v1alpha1/pending-decisions query parameters (task t30). */
+export interface ListPendingDecisionsParams {
+  /** Only this run's records. */
+  run_id?: string;
+  /** Only this ledger record type (e.g. `claim`). */
+  record_type?: string;
+  /** Only records this actor produced. */
+  actor_id?: string;
+  limit?: number;
+}
+
+/**
+ * `GET /v1alpha1/pending-decisions` (task t30, issue #99): every proposed
+ * record no review has decided, grouped by run.
+ *
+ * This is deliberately not something the browser derives from the ledger
+ * feed: "decided" means a review record names it, so the question is a join,
+ * and a client-side approximation of it would drift from the gate scripts
+ * and the API's own answer.
+ */
+export const listPendingDecisions = (
+  signal?: AbortSignal,
+  params?: ListPendingDecisionsParams,
+) =>
+  getJson<PendingDecisionList>(
+    `/pending-decisions${toQueryString(params as Record<string, string | number | undefined> | undefined)}`,
+    signal,
+  );
+
+/**
+ * `POST /v1alpha1/runs/{id}/reviews` (task t30): open a review over the
+ * records a human is about to decide, pinned to the ledger version they were
+ * read at. Authenticated for the same reason `decideHumanTask` is — it is
+ * half of writing a human-authority record.
+ */
+export const createReview = (
+  runId: string,
+  request: CreateReviewRequest,
+  token: string,
+  signal?: AbortSignal,
+) =>
+  postJson<ReviewRequest>(
+    `/runs/${encodeURIComponent(runId)}/reviews`,
+    request,
+    signal,
+    { authorization: `Bearer ${token}` },
+  );
+
+/**
+ * `POST /v1alpha1/reviews/{id}/commit` (task t30): record the decision. Each
+ * verdict becomes its own immutable review record naming the reviewer, the
+ * record decided, and the stated rationale. The records under review are not
+ * modified — a confirmed claim still reads `proposed`.
+ */
+export const commitReview = (
+  reviewId: string,
+  request: CommitReviewRequest,
+  token: string,
+  signal?: AbortSignal,
+) =>
+  postJson<ReviewCommitResult>(
+    `/reviews/${encodeURIComponent(reviewId)}/commit`,
+    request,
+    signal,
+    { authorization: `Bearer ${token}` },
   );
 
 /** GET /v1alpha1/human-tasks query parameters (task t14). */

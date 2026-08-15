@@ -1,10 +1,10 @@
 #!/usr/bin/env python3
 """Stage exit gate: no claim from this cycle's runs is still undecided.
 
-The gate is the query's output, not anyone's recollection (task t8). It reads
-every run named in a cycle manifest, asks the control plane for that run's
-ledger, and reports every ``proposed`` record that no committed review has
-decided.
+The gate is the query's output, not anyone's recollection (task t8). It asks
+the control plane which records are still awaiting a decision — for the runs
+named in a cycle manifest, or (``--all-runs``) for every run in the namespace
+— and reports each one.
 
 An agent's completion claim lands ``proposed`` by construction (PRD §10.4) —
 it is a claim that work happened, not evidence that it did. Leaving one
@@ -19,9 +19,17 @@ whose ``reviewed_refs`` name the claim it decided. A gate phrased as "zero
 records at authority proposed" therefore can never pass, no matter how
 diligently every claim is read; it would be a gate that fails on correct
 behaviour. The decidable question is whether each proposed record has been
-*reviewed*, which is what this asks.
+*reviewed*.
+
+Since task t30 that question is the control plane's to answer: GET
+/v1alpha1/pending-decisions applies exactly this rule (proposed, no review
+record naming it, not superseded) server-side, so the gate and the decision
+surface can no longer disagree about what "undecided" means. ``--all-runs``
+asks it without a manifest at all, which is the version of this gate that
+needs no hand-maintained list of run ids.
 
     scripts/ledger-gate.py                      # read docs/triage/cycle-runs.txt
+    scripts/ledger-gate.py --all-runs           # every run, no manifest needed
     scripts/ledger-gate.py --run 01M0... --run 01M0...
     scripts/ledger-gate.py --json
 
@@ -72,59 +80,113 @@ def manifest_runs() -> list[str]:
     return runs
 
 
-def fetch_ledger(base: str, run_id: str) -> list[dict]:
-    url = f"{base}/v1alpha1/runs/{run_id}/ledger"
+def fetch_pending(base: str, run_id: str | None = None) -> list[dict]:
+    """Run groups still awaiting a decision, per the control plane's own rule."""
+    url = f"{base}/v1alpha1/pending-decisions"
+    if run_id:
+        url += f"?run_id={run_id}"
     try:
         with urllib.request.urlopen(url, timeout=20) as response:  # noqa: S310
             return json.load(response).get("items", [])
     except urllib.error.HTTPError as exc:
-        raise SystemExit(f"ledger-gate: run {run_id}: HTTP {exc.code} from {url}") from exc
+        raise SystemExit(f"ledger-gate: HTTP {exc.code} from {url}") from exc
+    except json.JSONDecodeError:
+        # The endpoint shipped in this cycle; a control plane that predates it
+        # answers 200 with the SPA's index.html for any unknown /v1alpha1/
+        # path (the defect issue #8 records), so an absent endpoint looks
+        # exactly like an empty one. ADR 0002 asks for N-1 compatibility and
+        # the gate is on the wrong side of it during a rollout: a gate that
+        # simply broke here would be unrunnable precisely while a release is
+        # in flight. The fallback is announced, never silent — the
+        # server-side rule is the authority, and a client-side copy of it is
+        # what t30 set out to remove.
+        if run_id is None:
+            raise SystemExit(
+                "ledger-gate: --all-runs needs the control plane's "
+                "pending-decisions endpoint, and this one predates it; use the "
+                "manifest form until the deployed binary carries it"
+            )
+        print(
+            f"ledger-gate: {base} has no /v1alpha1/pending-decisions "
+            "(control plane predates it); applying the same rule client-side",
+            file=sys.stderr,
+        )
+        return _pending_client_side(base, run_id)
     except OSError as exc:
         # Distinguished from "gate failed": we never got to ask the question.
         print(f"ledger-gate: cannot reach the control plane at {base}: {exc}", file=sys.stderr)
         raise SystemExit(2) from exc
 
 
+def _pending_client_side(base: str, run_id: str) -> list[dict]:
+    """The pre-t30 rule: proposed, and named by no committed review record."""
+    url = f"{base}/v1alpha1/runs/{run_id}/ledger"
+    try:
+        with urllib.request.urlopen(url, timeout=20) as response:  # noqa: S310
+            ledger = json.load(response)
+    except OSError as exc:
+        print(f"ledger-gate: cannot reach the control plane at {base}: {exc}", file=sys.stderr)
+        raise SystemExit(2) from exc
+    items = ledger.get("items", [])
+    decided: set[str] = set()
+    for item in items:
+        if item.get("record_type") == "review":
+            decided.update(item.get("data", {}).get("reviewed_refs", []))
+    records = [
+        {"id": i["id"], "record_type": i.get("record_type")}
+        for i in items
+        if i.get("authority") == "proposed" and i.get("id") not in decided
+    ]
+    if not records:
+        return []
+    return [{"run_id": run_id, "ledger_version": ledger.get("ledger_version"), "records": records}]
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     parser.add_argument("--run", action="append", default=[], metavar="RUN_ID")
+    parser.add_argument(
+        "--all-runs",
+        action="store_true",
+        help="ask across every run in the namespace instead of reading the cycle manifest",
+    )
     parser.add_argument("--json", action="store_true")
     args = parser.parse_args()
 
     base = api_base()
-    runs = args.run or manifest_runs()
 
     undecided: list[dict] = []
-    total = 0
-    for run_id in runs:
-        items = fetch_ledger(base, run_id)
-        total += len(items)
-        # Every record any committed review on this run has already decided.
-        decided: set[str] = set()
-        for item in items:
-            if item.get("record_type") == "review":
-                decided.update(item.get("data", {}).get("reviewed_refs", []))
-        for item in items:
-            if item.get("authority") == "proposed" and item.get("id") not in decided:
-                undecided.append(
-                    {
-                        "run_id": run_id,
-                        "record_id": item.get("id"),
-                        "record_type": item.get("record_type"),
-                    }
-                )
+    if args.all_runs:
+        runs = []
+        groups = fetch_pending(base)
+    else:
+        runs = args.run or manifest_runs()
+        groups = []
+        for run_id in runs:
+            groups.extend(fetch_pending(base, run_id))
+    for group in groups:
+        if group["run_id"] not in runs:
+            runs.append(group["run_id"])
+        for record in group.get("records", []):
+            undecided.append(
+                {
+                    "run_id": group["run_id"],
+                    "record_id": record.get("id"),
+                    "record_type": record.get("record_type"),
+                }
+            )
 
     if args.json:
         json.dump(
-            {"runs": runs, "records": total, "undecided": undecided, "passed": not undecided},
+            {"runs": runs, "undecided": undecided, "passed": not undecided},
             sys.stdout,
             indent=2,
         )
         print()
     elif undecided:
         print(
-            f"ledger-gate: {len(undecided)} of {total} record(s) across {len(runs)} run(s) "
-            "are still proposed:",
+            f"ledger-gate: {len(undecided)} record(s) across {len(runs)} run(s) "
+            "are still awaiting a decision:",
             file=sys.stderr,
         )
         for row in undecided:
@@ -134,8 +196,10 @@ def main() -> int:
             "scripts/decide-claims.py <run-id> --verdict confirm|reject --why '<reason>'",
             file=sys.stderr,
         )
+    elif args.all_runs:
+        print("ledger-gate: no run in the namespace has a record awaiting a decision")
     else:
-        print(f"ledger-gate: {total} record(s) across {len(runs)} run(s), none still proposed")
+        print(f"ledger-gate: {len(runs)} run(s) checked, nothing awaiting a decision")
 
     return 1 if undecided else 0
 

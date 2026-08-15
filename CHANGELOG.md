@@ -55,6 +55,72 @@ and the control plane learns to measure what was handed over (t10, #13).
   restated: not which package a writer lives in, but whether every field it
   stamps came from its own measurement.
 
+### The affirmative half of the authority model (task t30, #99)
+
+A proposed claim can now be decided through the product, and the decision
+names who decided and why.
+
+#### Added
+
+- `GET /v1alpha1/pending-decisions`: every proposed ledger record no review
+  has decided, grouped by run, each group carrying the ledger version a
+  review must be opened against. This is a join, not an authority filter —
+  records are immutable, so confirming a claim appends a review record and
+  leaves the claim reading `proposed` forever; "what is still undecided" was
+  previously a question only a hand-maintained manifest
+  (`docs/triage/cycle-runs.txt`) could answer. Filters: `run_id`,
+  `record_type`, `actor_id`, `limit`; an unrecognised one is refused with
+  400 rather than ignored.
+- A **Decisions** view in the web front (`/decisions`): the undecided queue
+  with each record's payload rendered in full, and a form that records the
+  verdict, the reviewer and the rationale. Until now the affirmative half
+  was reachable only by hand-writing two authenticated HTTP calls, which is
+  not "through the product". Proven in a browser against a live control
+  plane: an agent's claim confirmed, and the decision read back from the
+  ledger as a human-origin `confirmed` review naming it.
+- `rationale` on `POST /v1alpha1/reviews/{id}/commit`, required, recorded on
+  every review record the commit appends (`schemas/ledger/review.schema.json`
+  gains the field). `scripts/decide-claims.py` has demanded a `--why` since
+  it was written but had nowhere to put it — it was printed to the operator's
+  terminal and dropped. A confirmation with no stated reason cannot be told
+  apart from an unread one.
+- `nodes-op.sh pending [run-id]`, and `scripts/decide-claims.py --pending`:
+  the same queue from a shell.
+
+#### Fixed
+
+- **An agent could decide its own claim.** `CommitReview` stamps the review
+  records it appends with `Origin{Kind: human, ActorID: <reviewer>}`, so the
+  producer/authority matrix — which correctly refuses an agent-origin
+  `confirmed` record — saw a human no matter who was named, and nothing
+  checked that the named reviewer was one. Passing an agent actor's id as
+  `reviewer_actor_id` confirmed that agent's own claim, end to end, with no
+  refusal anywhere. `ledger.CommitReview` now resolves the reviewer against
+  the actor registry (new `ledger.Tx.ActorKind`) and refuses anything not
+  registered `human` (`reviewer_must_be_human`, `ErrActorNotFound`). Every
+  test fixture that decided as an agent-kind actor was fixed, not the check:
+  three test files across the API and engine were doing exactly what this
+  now refuses.
+- The two review routes are gated by the decision bearer token, the same
+  secret `POST /v1alpha1/human-tasks/{id}/decision` requires. All three
+  write human-authority records into the ledger on whoever presents the
+  token, which is the stated reason that one endpoint was gated; the review
+  routes were the unauthenticated way to do the same thing.
+- `POST /v1alpha1/runs/{id}/reviews` refuses a review with no
+  `reviewer_actor_id` where it is created rather than two calls later at
+  commit time.
+- The Decisions view keeps its confirmation after the decided run leaves the
+  queue. Found by driving the view against a live control plane: the card
+  that made the decision is gone on the next refresh, so a confirmation
+  rendered inside it vanished and the click looked like it had done nothing.
+
+#### Changed
+
+- `scripts/ledger-gate.py` asks the control plane which records are awaiting
+  a decision instead of re-deriving the join client-side, so the gate and
+  the decision surface cannot disagree about what "undecided" means. New
+  `--all-runs` asks across the namespace with no cycle manifest at all.
+
 ## [0.24.0] - 2026-08-15
 
 The bug tail of the `close-the-backlog` plan (task t12): #98, #95 + #105 as

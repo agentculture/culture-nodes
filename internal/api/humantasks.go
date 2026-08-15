@@ -91,18 +91,24 @@ func (s *Server) handleDecideHumanTask(w http.ResponseWriter, r *http.Request) e
 	return nil
 }
 
-// requireDecisionAuth enforces the bearer-token gate a human-task decision
-// needs (see Server.decisionAuthSecret's doc comment for why this one
-// endpoint departs from the rest of the authless API). A missing secret on
-// the server (decisionAuthSecret unset) refuses every decision — there is
-// nothing to authenticate a decider against — and a present-but-wrong bearer
-// token is refused the same way a stale or forged callback token is
-// (internal/actors/callback_http.go): 401, constant-time compared.
+// requireDecisionAuth enforces the bearer-token gate every route that
+// records a human decision needs (see Server.decisionAuthSecret's doc
+// comment for why these routes depart from the rest of the authless API).
+// A missing secret on the server (decisionAuthSecret unset) refuses every
+// decision — there is nothing to authenticate a decider against — and a
+// present-but-wrong bearer token is refused the same way a stale or forged
+// callback token is (internal/actors/callback_http.go): 401, constant-time
+// compared.
+//
+// Three routes share this gate because they do the same thing: POST
+// /human-tasks/{id}/decision, and the two review routes (task t30) that let
+// a human decide a proposed claim. All three write human-authority records
+// into the ledger on whoever presents the token.
 func (s *Server) requireDecisionAuth(r *http.Request) error {
 	if len(s.decisionAuthSecret) == 0 {
 		return unauthorized(
-			"configure the server with a decision auth secret (NODES_HUMAN_DECISION_TOKEN_SECRET) to enable human-task decisions",
-			"human-task decisions require a configured bearer secret and none is configured")
+			"configure the server with a decision auth secret (NODES_HUMAN_DECISION_TOKEN_SECRET) to enable human decisions",
+			"recording a human decision requires a configured bearer secret and none is configured")
 	}
 
 	const prefix = "bearer "

@@ -382,6 +382,7 @@ func (s *Server) Handler() http.Handler {
 
 	mux.HandleFunc("POST /v1alpha1/runs/{id}/reviews", s.wrap(s.handleCreateReview))
 	mux.HandleFunc("POST /v1alpha1/reviews/{id}/commit", s.wrap(s.handleCommitReview))
+	mux.HandleFunc("GET /v1alpha1/pending-decisions", s.wrap(s.handleListPendingDecisions))
 
 	mux.HandleFunc("POST /v1alpha1/runs/{id}/grades", s.wrap(s.handleCreateGrade))
 

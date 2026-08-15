@@ -464,6 +464,15 @@ type memLedgerStore struct {
 	records []ledger.Record
 }
 
+// ActorKind satisfies ledger.Tx, which task t30 widened so CommitReview can
+// check that a reviewer is a registered human rather than trusting the id it
+// was handed. Nothing in this package reviews anything, so the fake answers
+// the kind that cannot decide a claim — an accidental dependency on it would
+// then fail rather than quietly pass.
+func (m *memLedgerStore) ActorKind(_ context.Context, _ string) (string, error) {
+	return "agent", nil
+}
+
 func (m *memLedgerStore) InsertRecord(_ context.Context, rec ledger.Record) error {
 	m.records = append(m.records, rec)
 	return nil

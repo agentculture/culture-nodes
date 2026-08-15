@@ -26,12 +26,12 @@ type createGradeReq struct {
 // surface — create review + commit — with nothing special-cased for grade
 // records along the way.
 func TestCreateGradeAgentProposedThenHumanConfirmsThroughReview(t *testing.T) {
-	f := newFixture(t)
+	f := newFixtureWithDecisionAuth(t, decisionAuthSecret)
 	run, _ := createMinimalRun(t, f)
 
 	graderAgent := f.insertActor("grader-agent")
 	evaluatedActor := f.insertActor("evaluated")
-	reviewerActor := f.insertActor("reviewer")
+	reviewerActor := f.insertActorKind("reviewer", "human")
 
 	var grade ledger.Record
 	resp, body := doJSON(t, f.client, http.MethodPost, f.url("/v1alpha1/runs/"+run.ID+"/grades"),
@@ -54,13 +54,19 @@ func TestCreateGradeAgentProposedThenHumanConfirmsThroughReview(t *testing.T) {
 	// review surface -- create + commit -- exactly the path any other
 	// agent-origin proposal is confirmed through (PRD §10.8).
 	var review apipkg.ReviewRequestOut
-	resp, body = doJSON(t, f.client, http.MethodPost, f.url("/v1alpha1/runs/"+run.ID+"/reviews"),
+	resp, body = doJSONBearer(t, f.client, http.MethodPost, f.url("/v1alpha1/runs/"+run.ID+"/reviews"),
+		decisionAuthSecret,
 		createReviewReq{RecordIDs: []string{grade.ID}, LedgerVersion: 1, ReviewerActorID: reviewerActor}, &review)
 	requireStatus(t, resp, body, http.StatusCreated)
 
 	var commitResult apipkg.ReviewCommitResultOut
-	resp, body = doJSON(t, f.client, http.MethodPost, f.url("/v1alpha1/reviews/"+review.ID+"/commit"),
-		commitReviewReq{Decisions: map[string]string{grade.ID: "confirm"}, ExpectedLedgerVersion: 1}, &commitResult)
+	resp, body = doJSONBearer(t, f.client, http.MethodPost, f.url("/v1alpha1/reviews/"+review.ID+"/commit"),
+		decisionAuthSecret,
+		commitReviewReq{
+			Decisions:             map[string]string{grade.ID: "confirm"},
+			ExpectedLedgerVersion: 1,
+			Rationale:             "read the run transcript; the rating matches what the attempts show",
+		}, &commitResult)
 	requireStatus(t, resp, body, http.StatusOK)
 	if len(commitResult.Records) != 1 {
 		t.Fatalf("review commit result records = %+v, want exactly one", commitResult.Records)

@@ -160,9 +160,11 @@ def _stub_sweep(
     monkeypatch.setattr(sweep, "fetch_open_pr_comments", fake_qodo)
     monkeypatch.setattr(sweep, "fetch_pr_comments", lambda token, repository, number: [])
     monkeypatch.setattr(sweep, "fetch_check_runs", fake_checks)
+
     def fake_raise(name, payload, source_key, watermark):
         calls["events"].append((name, payload, source_key, watermark))
         return {"event": {"id": f"event-{len(calls['events'])}"}}
+
     monkeypatch.setattr(sweep, "raise_event", fake_raise)
     return calls
 
@@ -209,9 +211,12 @@ def test_pr_watermark_uses_latest_comment_timestamp():
 
 
 def test_jira_watermark_carries_issue_and_comment_positions():
-    issue = {"fields": {"updated": "2026-08-15T03:00:00Z", "comment": {"comments": [
-        {"updated_at": "2026-08-15T02:00:00Z"}
-    ]}}}
+    issue = {
+        "fields": {
+            "updated": "2026-08-15T03:00:00Z",
+            "comment": {"comments": [{"updated_at": "2026-08-15T02:00:00Z"}]},
+        }
+    }
     assert sweep.jira_watermark(issue) == {
         "updated_at": "2026-08-15T03:00:00Z",
         "newest_comment_at": "2026-08-15T02:00:00Z",
@@ -321,6 +326,7 @@ class TestPrioritise:
         assert all(item["source"] == "qodo" for item in items)
         assert all(item["pr"] == 35 for item in items)
         assert items[0]["id"] == "pr35-qodo-1"
+
 
 class TestJiraWorkItems:
     """Issue #76 acceptance is recorded-fixture-only; the live backlog is empty."""

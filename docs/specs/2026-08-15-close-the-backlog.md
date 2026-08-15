@@ -207,6 +207,7 @@
 - The read-only finding is re-tested if codex-cli is upgraded, since sandbox behaviour is the vendor's to change.
 - A verification dispatch recorded with sandbox workspace-write is a gate failure; the posture is checked against the package kind at dispatch time.
 - The Go tree runs in CI, and removing a test from internal/engine turns a check red — proving the job actually gates rather than merely existing.
+- The declared per-wave slot count is checked against what actually ran: attempt timestamps show at most two concurrent runs per account, and a wave that overlapped three on one account is a recorded miss.
 
 ## Success signals
 
@@ -285,6 +286,8 @@
 - Issue #113 files the containerised-bridge contract: the image is the answer to 'do we officially support this agent', which bounds adding Kiro (agentculture/kirod#1) and later antigravity, grok and cursor. It explicitly does NOT fix the sandbox finding — codex builds its sandbox around the child process inside whatever container the bridge runs in — and says so, so the next cycle does not spend itself conflating drift with sandboxing.
 - Git-as-medium collapses several backlog items rather than adding to them: #100 (harvest is an operator ssh command) stops existing, #93 (hand-prepare the checkout before every dispatch) becomes the agent's own pull, and t6's two-carrier handoff finally gets the transport it landed the contract for but never had — the last cycle named three blockers for it, and 'nothing publishes the handover ref to a remote' was the first of them.
 - The merge gate does not move and should not: it still runs where a Go toolchain exists, because the agent hosts have none. What changes is only how the gate obtains the work — a git fetch of refs/culture-nodes/RUN-ID instead of an ssh-and-git-diff harvest piped into git apply. Cheaper, atomic, and it leaves a fetchable artifact a later reader can inspect. Issue #115 then moves the gate off spark entirely by giving the Go tree CI.
+- The Claude pool's 1-2 slots include the operator's own interactive session, not just dispatched bridges — the same account, the same window (CLAUDE.md session accounting). So a Claude-lane wave running two dispatches leaves the operator no room to gate or merge concurrently, and the practical Claude-lane figure during active operator work is one dispatch, not two. The codex pool has no such contention, which is a reason to weight ambiguous tasks toward it.
+  - instruction: Read CLAUDE.md's split-plan section and issue #48 before declaring a wave's session count; the operator's own session counts against the Claude pool.
 
 ## Scope exploration
 
@@ -372,6 +375,9 @@
 - The RDS grant is reverted out of the base operator policy and becomes an opt-in configuration decision: deploy/aws/rds-optional-policy.json, attached with 'bootstrap-operator.sh enable-rds' and detached with disable-rds. preflight.py gains --db-target local|rds|managed, defaulting to local, so the checks follow the chosen target instead of assuming one. #59 is closed with its accounting and #112 carries the database-target decision forward.
 - c94's lane split is final and now rests on measurement rather than inference: a read-only dispatch cannot execute any test on any agent host, so stage 1's executable evidence is produced on spark. The only alternative is dispatching the sweep workspace-write, which trades away c51 — the boundary that keeps a verification pass from writing — for convenience. That trade is available to the owner but is not taken by default.
 - Git is the handover medium for work packages: an agent granted push pulls, changes, and pushes its own result. The operator's ssh-and-diff harvest stops being a step in the loop rather than being automated as one.
+- Parallelism is 2-4 in flight: one to two per account, across two independent subscription pools — the Claude account (the operator's own interactive session, local subagents, and the four spark claude bridges all draw on it) and the codex account (codex-thor and codex-orin). The pools do not share capacity, which is what makes 2-4 possible where a single pool allowed only 1-2.
+- Work splits roughly evenly between Claude actors and codex actors, both to use both pools and to keep growing the comparative record of which actor is better at what. The split is bounded by capability rather than imposed on it: the codex hosts have no Go toolchain, so Go-side work routes to the spark claude bridges, and an exactly even split is neither achievable nor desirable where it would send work to a host that cannot verify it.
+- \#107 (upkeep runs itself) is IN this cycle's scope, not deferred. It is the mechanism that turns future findings into runs instead of tracker rows, which is what makes closing the backlog a one-time cost rather than a recurring one — the risk the plan raised against itself.
 
 ## Hard questions
 

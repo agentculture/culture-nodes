@@ -4,7 +4,7 @@
   "schema_version": 5,
   "status": "exported",
   "created": "2026-08-15T13:56:35Z",
-  "updated": "2026-08-15T17:13:55Z",
+  "updated": "2026-08-15T17:51:26Z",
   "claims": [
     {
       "id": "c1",
@@ -2138,6 +2138,61 @@
       "hard_questions": [],
       "links": [],
       "instruction": "Add a go job to .github/workflows/tests.yml: go build ./... && go vet ./... && go test ./... (issue #115).",
+      "revisions": []
+    },
+    {
+      "id": "c126",
+      "kind": "decision",
+      "text": "Parallelism is 2-4 in flight: one to two per account, across two independent subscription pools \u2014 the Claude account (the operator's own interactive session, local subagents, and the four spark claude bridges all draw on it) and the codex account (codex-thor and codex-orin). The pools do not share capacity, which is what makes 2-4 possible where a single pool allowed only 1-2.",
+      "origin": "user",
+      "status": "confirmed",
+      "honesty_conditions": [],
+      "hard_questions": [],
+      "links": [],
+      "instruction": "",
+      "revisions": []
+    },
+    {
+      "id": "c127",
+      "kind": "decision",
+      "text": "Work splits roughly evenly between Claude actors and codex actors, both to use both pools and to keep growing the comparative record of which actor is better at what. The split is bounded by capability rather than imposed on it: the codex hosts have no Go toolchain, so Go-side work routes to the spark claude bridges, and an exactly even split is neither achievable nor desirable where it would send work to a host that cannot verify it.",
+      "origin": "user",
+      "status": "confirmed",
+      "honesty_conditions": [],
+      "hard_questions": [],
+      "links": [],
+      "instruction": "",
+      "revisions": []
+    },
+    {
+      "id": "c128",
+      "kind": "assumption",
+      "text": "The Claude pool's 1-2 slots include the operator's own interactive session, not just dispatched bridges \u2014 the same account, the same window (CLAUDE.md session accounting). So a Claude-lane wave running two dispatches leaves the operator no room to gate or merge concurrently, and the practical Claude-lane figure during active operator work is one dispatch, not two. The codex pool has no such contention, which is a reason to weight ambiguous tasks toward it.",
+      "origin": "llm",
+      "status": "confirmed",
+      "honesty_conditions": [
+        {
+          "id": "h81",
+          "text": "The declared per-wave slot count is checked against what actually ran: attempt timestamps show at most two concurrent runs per account, and a wave that overlapped three on one account is a recorded miss.",
+          "status": "confirmed",
+          "instruction": ""
+        }
+      ],
+      "hard_questions": [],
+      "links": [],
+      "instruction": "Read CLAUDE.md's split-plan section and issue #48 before declaring a wave's session count; the operator's own session counts against the Claude pool.",
+      "revisions": []
+    },
+    {
+      "id": "c129",
+      "kind": "decision",
+      "text": "#107 (upkeep runs itself) is IN this cycle's scope, not deferred. It is the mechanism that turns future findings into runs instead of tracker rows, which is what makes closing the backlog a one-time cost rather than a recurring one \u2014 the risk the plan raised against itself.",
+      "origin": "user",
+      "status": "confirmed",
+      "honesty_conditions": [],
+      "hard_questions": [],
+      "links": [],
+      "instruction": "",
       "revisions": []
     }
   ],

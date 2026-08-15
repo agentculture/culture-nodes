@@ -5,7 +5,7 @@
   "schema_version": 4,
   "status": "exported",
   "created": "2026-08-15T05:58:27Z",
-  "updated": "2026-08-15T06:41:34Z",
+  "updated": "2026-08-15T07:53:59Z",
   "targets": [
     {
       "id": "c1",
@@ -815,7 +815,7 @@
       "id": "t6",
       "summary": "git_ref carrier: extend handoff.kind, widen the cross-host guard, reuse the preserve machinery",
       "origin": "llm",
-      "status": "confirmed",
+      "status": "proposed",
       "acceptance_criteria": [
         "handoff.kind carries git_ref beside artifact, and the routing rule is declared once: a runner's changes take git_ref, context and data take artifact",
         "tests/lint/crosshosthandoff_test.go still REFUSES a bare filesystem path handed between nodes \u2014 verified by a case that hands one and expects rejection",
@@ -831,7 +831,7 @@
         "c69",
         "h52"
       ],
-      "instruction": "READ FIRST, do not re-derive: docs/specs/2026-08-14-own-the-work-end-to-end.md (the claim this task covers, with its honesty condition and instruction) and CLAUDE.md. The spec already names the file, line and measurement for every finding \u2014 cite it rather than re-measuring. FILES: tests/lint/crosshosthandoff_test.go, examples/pr-upkeep/workflow.yaml (its header at 51-101 already documents this work), schemas/. Reuse t25's write-tree/commit-tree/update-ref machinery in adapters/*/preserve.py rather than writing a second git path. The guard's bare-path refusal is load-bearing and must survive the widening."
+      "instruction": "READ FIRST, do not re-derive: docs/specs/2026-08-14-own-the-work-end-to-end.md (the claim this task covers) and CLAUDE.md.\n\nFILES: tests/lint/crosshosthandoff_test.go, examples/pr-upkeep/workflow.yaml (its header at 51-101 already documents this work), schemas/, adapters/codex/src/codex_bridge/codex_cli.py:67-106 (_common_argv, the ONE place the real command line is assembled). Reuse t25's write-tree/commit-tree/update-ref machinery in adapters/*/preserve.py rather than writing a second git path. The guard's bare-path refusal is load-bearing and must survive the widening.\n\nSETTLED BY MEASUREMENT (deviation d6, issue #91) -- do not re-litigate:\ncodex --sandbox workspace-write leaves .git READ-ONLY. That is a codex carve-out on codex-cli 0.147.0, not a kernel restriction: the worktree is writable, .git is not, so fetch/commit/update-ref all fail 'Read-only file system'. Measured on thor: plain workspace-write gives 'touch .git/probe' -> Read-only file system; adding\n\n  -c 'sandbox_workspace_write={writable_roots=[\"<checkout>/.git\"]}'\n\ngives GIT_WRITABLE, and a full write-tree/commit-tree/update-ref sequence produced commit df7d974 at refs/culture-nodes/probe. So the git_ref carrier (q9/c70) needs neither danger-full-access nor to be dropped. Build the widening as an OPT-IN per dispatch: a package that does not hand over a ref must not get .git write.\n\nPOLICY, decided by the user: AGENTS.md now permits a handover commit and a ref under refs/culture-nodes/<run-id>. Push stays forbidden and nothing may be committed onto a branch -- so the ref an agent creates is unreachable from any branch until the operator or control plane moves it. Honor that boundary in the carrier's design: the producing side creates a ref, it never pushes one."
     },
     {
       "id": "t7",

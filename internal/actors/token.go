@@ -33,12 +33,25 @@ import (
 //     token whose signature is wrong would tell a forger that everything
 //     except the clock was right.
 
-// DefaultTokenTTL is how long a minted callback token stays valid.
+// DefaultTokenTTL is how long a minted callback token stays valid when nothing
+// better is known -- that is, only for an attempt with NO deadline at all.
 //
-// It bounds a leaked token's usefulness, and it is deliberately much shorter
-// than a long-running async invocation: an actor that runs for an hour is
-// expected to be re-issued a token, not to hold one for the hour. Any
-// deployment can shorten it.
+// It is not the lifetime a dispatched actor normally gets, and reading it as
+// one is a live trap: it says "15 minutes", so a long invocation looks like it
+// must outlive its own credential. It does not. Worker dispatch calls
+// MintUntil(attemptID, deadline+callbackTokenGrace) whenever the attempt has a
+// deadline (internal/worker/dispatch.go's callbackFor), and deadlineFor
+// supplies one from DefaultTimeout when the node declares none
+// (internal/worker/worker.go) -- so a 30-minute invocation holds a token to
+// roughly minute 32, and no refresh route is needed for it.
+//
+// The docstring previously said an actor running for an hour "is expected to
+// be re-issued a token". Nothing re-issues one, and nothing needs to; that
+// sentence was carried into the own-the-work-end-to-end spec as a premise for
+// open question q5, where measuring the dispatch path falsified it.
+//
+// What this constant does do: bound a leaked token's usefulness in the
+// deadline-less case. Any deployment can shorten it.
 const DefaultTokenTTL = 15 * time.Minute
 
 // MinTokenSecretBytes is the shortest secret NewTokenSigner accepts. HMAC-

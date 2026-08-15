@@ -2,7 +2,7 @@
   "plan_slug": "own-the-work-end-to-end",
   "schema_version": 1,
   "created": "2026-08-15T06:38:50Z",
-  "updated": "2026-08-15T07:41:15Z",
+  "updated": "2026-08-15T07:56:24Z",
   "deviations": [
     {
       "id": "d1",
@@ -93,6 +93,32 @@
         "c70",
         "t16",
         "t25"
+      ],
+      "origin": "user",
+      "status": "approved",
+      "classification": "acceptable"
+    },
+    {
+      "id": "d7",
+      "what": "Split t4 in two: the 1000-line lint (tests/lint/filelength_test.go) lands with the four file splits, not before. Land t8's continuation DECLARATION now and keep t8 open for the scheduling integration.",
+      "task_ref": "t4",
+      "reason": "codex-thor built the lint correctly but did not split the four over-limit files (tracker.py 1523, test_tracker.py 1144, test_run.py 1019, stickiness_ab.py 1016), so the gate is red on arrival. Merging a red gate would make every later merge unable to distinguish new breakage from this known one, which defeats the TDD merge contract. t8 is separable and green, so it merges alone.",
+      "affects": [
+        "t8"
+      ],
+      "origin": "user",
+      "status": "approved",
+      "classification": "acceptable"
+    },
+    {
+      "id": "d8",
+      "what": "Settle q5: per-artifact read capabilities (binding namespace, run, exact ref, consumer attempt and expiry), with WRITES authorized by the existing attempt callback token. Reject the run-scoped grant (grants every artifact a run accumulated, exceeding the bounded artifact_refs the dispatch already names) and the re-issued attempt token (does not solve cross-attempt reads at all; weakening VerifyFor to accept any same-run attempt erases the boundary the token exists for). Also correct the spec's TTL premise, which measurement falsified.",
+      "task_ref": "t5",
+      "reason": "Analysis package on codex-orin, run 01M026HSMX5EKGJ89F9NWFNHQG, grounded every claim in cited line numbers and I verified the load-bearing one directly. The spec's q5 instruction says 'a 30-minute session's upload outlives the 15-minute DefaultTokenTTL' -- that is FALSE in the shipped code: internal/worker/dispatch.go:270-300 mints with MintUntil(attemptID, deadline + callbackTokenGrace) whenever a deadline exists, and worker.go:505-510's deadlineFor supplies one from DefaultTimeout when the node omits it, so a 30-minute invocation holds a token to roughly minute 32. DefaultTokenTTL applies only when there is no deadline at all. So no refresh route is needed for the stated case, and the TTL half of q5 dissolves rather than being answered.",
+      "affects": [
+        "c70",
+        "t7",
+        "t14"
       ],
       "origin": "user",
       "status": "approved",

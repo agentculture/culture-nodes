@@ -66,8 +66,8 @@ docstring).
 | P4 | t4 — split the four files, then land the lint | codex-thor | `01M026D8P5V97PH0YRZ3MZ1YB4` |
 | P6 | t5 — the artifact write route (#79) | codex-orin | `01M026V7GE2NFXAEXWKAHBFQFY` |
 
-**`t6` is `proposed`, not confirmed** — its instruction was rewritten with the
-#91 measurements, which flips a confirmed task back. It needs
+**`t6` is `proposed`, not confirmed** — its instruction was rewritten with
+[#91]'s measurements, which flips a confirmed task back. It needs
 `devague plan confirm t6` from the user before wave 1 dispatches.
 
 ## 4. The credential — settled, do not re-litigate

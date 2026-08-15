@@ -47,3 +47,4 @@ issue,bucket,disposition,evidence_pointer
 113,large bets,schedule containerized bridge contract as a named large bet,close-the-backlog large-bets batch
 114,large bets,schedule repository-configured agents as a named large bet,close-the-backlog large-bets batch
 115,finish work,add Go CI then consume its verdict,plan t1/t11
+116,bug tail,fix the attempt timestamps that make duration_percentiles report zeros,found verifying #28 in run 01M03BV3DYNB9N7J1Q1RJ55HNB

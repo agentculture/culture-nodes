@@ -70,7 +70,7 @@ func (f *fakeCallbackStore) TouchInvocation(_ context.Context, _, _ string, _ ti
 func (f *fakeCallbackStore) CloseInvocation(_ context.Context, _, _ string) error { return nil }
 
 func (f *fakeCallbackStore) RecordSupersedingAttempt(
-	_ context.Context, _ actors.PendingInvocation, _ engine.CompletionRequest,
+	_ context.Context, _ actors.PendingInvocation, _ string, _ engine.CompletionRequest,
 ) (actors.SupersedingAttempt, error) {
 	return actors.SupersedingAttempt{AttemptID: "att_superseding"}, nil
 }

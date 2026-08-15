@@ -93,13 +93,22 @@ LIMIT 1
 // the number in between — so RecordSupersedingAttempt retries on exactly
 // that constraint.
 //
-// ON CONFLICT targets migrations/0028's partial unique index on
-// `supersedes`, which is what makes the append idempotent under §13.4's
+// ON CONFLICT targets migrations/0029's partial unique index over the
+// report's DELIVERY identity — the protocol attempt id and the callback
+// event id — which is what makes the append idempotent under §13.4's
 // at-least-once delivery: callback ingest releases its event-id claim
 // whenever processing fails part-way, so the same late report can honestly
-// be processed twice, and the second pass must find the correction already
-// there rather than write a twin. DO NOTHING returns no row; the caller
-// reads the existing correction back instead.
+// be processed twice, and the second pass must find its record already there
+// rather than write a twin. DO NOTHING returns no row; the caller reads the
+// existing record back instead.
+//
+// It deliberately does NOT target 0028's `supersedes` index, which was this
+// statement's arbiter until ADR 0012 §5: that index is partial on
+// `supersedes IS NOT NULL`, so it left the reconciliation that corrects
+// nothing — §13.4's reclaimed-item flavour of lateness — with no guard at
+// all. `supersedes` keeps its unique index for the semantic invariant (a
+// record is corrected at most once), and a collision there is now a
+// violation the caller resolves rather than a silent DO NOTHING.
 const recordSupersedingAttemptSQL = `
 INSERT INTO attempts (
 	id, namespace_id, node_run_id, attempt_number, actor_id, status, fencing_token,
@@ -108,17 +117,32 @@ INSERT INTO attempts (
 	usage_cached_input_tokens, usage_reasoning_tokens, usage_model, usage_thread_id,
 	termination_reason, continuation_ref,
 	preserve_branch, preserve_pushed, preserve_remote,
-	supersedes
+	supersedes, late_callback_attempt_id, late_callback_event_id
 )
 SELECT $1, $2, $3,
        (SELECT COALESCE(MAX(attempt_number), 0) + 1 FROM attempts WHERE node_run_id = $3),
-       $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22, $23
-ON CONFLICT (supersedes) WHERE supersedes IS NOT NULL DO NOTHING
+       $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22, $23,
+       $24, $25
+ON CONFLICT (late_callback_attempt_id, late_callback_event_id)
+    WHERE late_callback_event_id IS NOT NULL DO NOTHING
 RETURNING id, attempt_number
 `
 
-// selectSupersedingAttemptSQL reads back the correction an earlier delivery
-// of the same report already appended.
+// selectSupersedingAttemptByDeliverySQL reads back the record an earlier
+// delivery of THIS report already appended — the row the ON CONFLICT above
+// declined to duplicate. It is keyed on the delivery rather than on
+// `supersedes` because the report that corrects nothing has no other key.
+const selectSupersedingAttemptByDeliverySQL = `
+SELECT id, attempt_number, supersedes
+FROM attempts
+WHERE late_callback_attempt_id = $1 AND late_callback_event_id = $2
+`
+
+// selectSupersedingAttemptSQL reads back the correction a DIFFERENT delivery
+// already appended for the same superseded record: 0028's `supersedes`
+// uniqueness refusing a second correction of one record (ADR 0012 §2's
+// chain-not-fan-out invariant), as distinct from a redelivery of the same
+// report.
 const selectSupersedingAttemptSQL = `
 SELECT id, attempt_number
 FROM attempts
@@ -152,9 +176,23 @@ const recordSupersedingAttemptRetries = 3
 // arrived. A correction with no superseded row to copy from starts at
 // completed_at, which is the honest "this record cannot say how long it
 // took" rather than an invented span back to nothing.
+//
+// callbackEventID is the §13.4 event id of the delivery being recorded, and
+// with inv.AttemptID it is this record's idempotency key (migration 0029,
+// ADR 0012 §5): a redelivery of the same report finds its own row and
+// returns it instead of appending a twin. It is required — a report whose
+// delivery has no identity cannot be recorded idempotently, and writing it
+// unkeyed would silently re-open exactly the gap §5 closes. Callback ingest
+// refuses an empty event id before any of this runs (HandleCallback's
+// request-shape validation), so this refuses nothing a delivery could
+// legitimately carry.
 func (cs *CallbackStore) RecordSupersedingAttempt(
-	ctx context.Context, inv actors.PendingInvocation, req engine.CompletionRequest,
+	ctx context.Context, inv actors.PendingInvocation, callbackEventID string, req engine.CompletionRequest,
 ) (actors.SupersedingAttempt, error) {
+	if callbackEventID == "" {
+		return actors.SupersedingAttempt{}, fmt.Errorf(
+			"postgres: RecordSupersedingAttempt: a callback event id is required to record a late report idempotently")
+	}
 	var (
 		supersededID pgtype.Text
 		startedAt    pgtype.Timestamptz
@@ -226,7 +264,7 @@ func (cs *CallbackStore) RecordSupersedingAttempt(
 			textPtrFromNullable(req.TerminationReason),
 			textPtrFromNullable(req.ContinuationRef),
 			preserveBranch, preservePushed, preserveRemote,
-			supersededID,
+			supersededID, inv.AttemptID, callbackEventID,
 		).Scan(&id, &number)
 
 		switch {
@@ -239,9 +277,17 @@ func (cs *CallbackStore) RecordSupersedingAttempt(
 
 		case errors.Is(err, pgx.ErrNoRows):
 			// ON CONFLICT DO NOTHING: an earlier delivery of this same report
-			// already appended the correction. Report that one — the ingest's
-			// caller must see the same answer whichever delivery got there
-			// first.
+			// already recorded it. Report that record — the ingest's caller
+			// must see the same answer whichever delivery got there first.
+			return cs.supersedingAttemptForDelivery(ctx, inv.AttemptID, callbackEventID)
+
+		case uniqueViolationConstraint(err) == "attempts_supersedes_key":
+			// A DIFFERENT late report already corrected this same record
+			// (ADR 0012 §2: one record is corrected at most once, so
+			// corrections chain rather than fan out). Not a redelivery of
+			// this report — the delivery key would have absorbed that — so
+			// the honest answer is the correction that is already there,
+			// which is what this path returned before the arbiter moved.
 			return cs.existingSupersedingAttempt(ctx, supersededID)
 
 		case uniqueViolationConstraint(err) == "attempts_node_run_attempt_number_key" && retry < recordSupersedingAttemptRetries:
@@ -253,6 +299,32 @@ func (cs *CallbackStore) RecordSupersedingAttempt(
 			return actors.SupersedingAttempt{}, fmt.Errorf("postgres: RecordSupersedingAttempt: %w", err)
 		}
 	}
+}
+
+// supersedingAttemptForDelivery reads back the record an earlier delivery of
+// this same report appended (migration 0029's delivery key). It reports the
+// `supersedes` link as PERSISTED rather than as recomputed by this pass: the
+// answer a redelivery gives has to be the record that exists, not this
+// caller's second look at a candidate that may since have changed.
+func (cs *CallbackStore) supersedingAttemptForDelivery(
+	ctx context.Context, invocationAttemptID, callbackEventID string,
+) (actors.SupersedingAttempt, error) {
+	var (
+		id         string
+		number     int32
+		supersedes pgtype.Text
+	)
+	err := cs.store.pool.QueryRow(ctx, selectSupersedingAttemptByDeliverySQL,
+		invocationAttemptID, callbackEventID).Scan(&id, &number, &supersedes)
+	if err != nil {
+		return actors.SupersedingAttempt{}, fmt.Errorf(
+			"postgres: RecordSupersedingAttempt: read back the record of callback event %s: %w", callbackEventID, err)
+	}
+	return actors.SupersedingAttempt{
+		AttemptID:  id,
+		Number:     int(number),
+		Supersedes: textOrEmpty(supersedes),
+	}, nil
 }
 
 // existingSupersedingAttempt reads back the correction a previous delivery

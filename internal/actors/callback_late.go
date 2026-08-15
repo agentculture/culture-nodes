@@ -58,7 +58,12 @@ type SupersedingAttempt struct {
 func (d CallbackDeps) late(
 	ctx context.Context, inv PendingInvocation, ev CallbackEvent, req engine.CompletionRequest, diagnostic string,
 ) (CallbackResult, error) {
-	recorded, err := d.Store.RecordSupersedingAttempt(ctx, inv, req)
+	// ev.EventID is the record's idempotency key beside inv.AttemptID (ADR
+	// 0012 §5): this method is reached again whenever a redelivery follows a
+	// pass that failed after the append — the CloseInvocation below is such a
+	// step — and the key is what makes the second pass find the record rather
+	// than write a second one.
+	recorded, err := d.Store.RecordSupersedingAttempt(ctx, inv, ev.EventID, req)
 	if err != nil {
 		d.commitFailed(ctx, inv, ev, StageSupersede, err)
 		return CallbackResult{}, err

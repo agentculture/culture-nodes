@@ -131,6 +131,88 @@ create burn out of nothing. The invocation record already holds the resolved
 actor row id (migration 0015), so this is attribution the deployment already
 measured, not an inference.
 
+### 5. Amendment (2026-08-15): the idempotency key is the DELIVERY, not the record corrected
+
+§2 claimed the `supersedes` unique index makes the append idempotent under
+§13.4 redelivery. It does — for the correcting case. It cannot for the other
+one: a reconciliation that finds no earlier record writes `supersedes` NULL,
+and a partial index `WHERE supersedes IS NOT NULL` does not constrain NULL.
+So the flavour of lateness with no natural key was the flavour with no guard,
+and §Consequences below recorded that as an accepted cost. It is not one: the
+callback path explicitly re-processes a report whose first pass failed
+part-way (`HandleCallback` releases the event-id claim and rolls the sequence
+mark back on every error out of `handleClaimed`, and `late()` has a step —
+`CloseInvocation` — that can fail after the append), so the second delivery
+appends a twin describing the same session. Two rows for one dispatch, with
+no superseding link for §3's reader rule to drop either of them: the exact
+retry-burn distortion the rest of this ADR exists to prevent, arriving
+through the door it left open.
+
+Three keys were weighed.
+
+**Rejected — `(node_run_id, fencing_token) WHERE supersedes IS NULL`.** It is
+the smallest diff (no new column, no signature change) and it does key the
+unguarded case exactly, since "no row under this node run and fencing token"
+is precisely what the lookup found. But its predicate covers every ORDINARY
+dispatch row, not just reconciliations, so the index would assert a new
+engine-wide invariant — one attempt row per claim per node run — that this
+task neither owns nor verifies, on the strength of a reconciliation bug. That
+has three costs. `CREATE UNIQUE INDEX` can fail outright against existing
+production data if the invariant was ever violated. An N-1 binary that writes
+a second row under one fencing token starts getting a constraint violation
+where it used to succeed, which is exactly the promise ADR 0002 makes about
+migrations and this one would break — "expand-only" is about what old
+binaries can still write, not merely about not dropping anything. And it is
+incomplete anyway: `attempts.fencing_token` is nullable and NULLs are
+distinct in a unique index, so any attempt row without a token stays
+unconstrained.
+
+**Rejected — do not insert at all when there is nothing to correct.** It
+makes the problem disappear by re-opening the silence this whole task exists
+to close. That session genuinely ran, burned tokens on a named model, and
+left work on a preserve branch; §Consequences is right that the row "counts
+as its own attempt, which is correct". Dropping the record to avoid
+double-counting it is not a fix, it is the original bug.
+
+**Chosen — the report's own delivery identity: `(protocol attempt id,
+callback event id)`.** `migrations/0029_attempt_late_callback_delivery.sql`
+adds `late_callback_attempt_id` and `late_callback_event_id` to `attempts`,
+NULL on every row except a late-callback reconciliation, with a partial
+UNIQUE index over the pair. Three reasons it wins:
+
+1. **It is what a redelivery repeats.** The ingest's own idempotency
+   authority is already the `(attempt, event id)` claim
+   (`ClaimCallbackEvent`), and a redelivery is by definition the same event
+   id arriving again. Keying the row on that pair makes the schema fact and
+   the delivery fact one fact rather than two approximations of it, and the
+   guard then holds in BOTH flavours of lateness instead of only where a
+   correcting row happens to exist.
+2. **It constrains only rows this writer writes.** Both columns are NULL on
+   every ordinary dispatch and on everything an N-1 binary writes, so the
+   partial index cannot fail against existing data and cannot make an old
+   binary's INSERT start failing. That is expand-only in ADR 0002's sense,
+   which the rejected alternative is not.
+3. **It says what the row is.** `late_callback_attempt_id` also links an
+   attempts row back to the invocation whose report it records — an
+   association that was previously inferable only through the fencing token.
+
+§2's `supersedes` index stays, with its job narrowed to the semantic one it
+alone can do: a record is corrected at most once, so corrections chain rather
+than fan out. An INSERT can arbitrate on one index only, so the conflict
+target moves to the delivery key, and a `supersedes` collision — a DIFFERENT
+late event correcting the same record — now surfaces as a unique violation
+that the writer resolves by returning the correction already there. That is
+the same answer `ON CONFLICT DO NOTHING` produced before; only the mechanism
+moved.
+
+The accepted cost: `RecordSupersedingAttempt` needs the callback event id, so
+`actors.CallbackStore`'s method carries it. A store method whose idempotency
+depends on the delivery identity should be TOLD that identity rather than
+infer one, and an empty event id is refused rather than written as a silently
+unguarded NULL — the ingest rejects an empty `event_id` before any of this
+runs, so refusing it here costs no record that could otherwise have been
+written.
+
 ## Consequences
 
 - A node run whose deadline expires and whose session later reports back has
@@ -146,9 +228,10 @@ measured, not an inference.
   the "a newer worker reclaimed the item" flavour of §13.4 lateness, as
   distinct from a deadline — appends a row with `supersedes` NULL. That row
   counts as its own attempt, which is correct: a second session genuinely
-  ran, and the reclaiming worker records its own row too. The idempotency
-  the UNIQUE index provides does not cover this case; a redelivery whose
-  first pass failed after the append can leave two such rows.
+  ran, and the reclaiming worker records its own row too. It is kept
+  idempotent by the delivery key of §5, not by the `supersedes` index, which
+  does not constrain NULL; before §5 a redelivery whose first pass failed
+  after the append left two such rows.
 - An N-1 binary (ADR 0002) keeps counting superseded rows because it cannot
   know about the correction. That is exactly what it does today, so it stays
   self-consistent through a rollout rather than becoming wrong.

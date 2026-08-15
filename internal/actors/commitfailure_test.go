@@ -255,7 +255,7 @@ func (s *compensationStore) CloseInvocation(context.Context, string, string) err
 }
 
 func (s *compensationStore) RecordSupersedingAttempt(
-	_ context.Context, _ actors.PendingInvocation, _ engine.CompletionRequest,
+	_ context.Context, _ actors.PendingInvocation, _ string, _ engine.CompletionRequest,
 ) (actors.SupersedingAttempt, error) {
 	s.note("record_superseding_attempt")
 	if s.supersedeErr != nil {

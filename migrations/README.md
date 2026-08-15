@@ -138,6 +138,25 @@ Numbered SQL migrations for the authoritative PostgreSQL store (prd-spec
 - `0027_artifact_tombstones.sql` — append-only artifact retention records.
   Reaped refs preserve the original name, media type, size, digest, reaping
   time and policy; immutable corrections append through `supersedes`.
+- `0028_attempt_supersedes.sql` — expand-only: `attempts.supersedes`, the
+  nullable self-FK a late-callback reconciliation uses to name the attempt
+  record it corrects (task t11,
+  `docs/adr/0012-late-callback-supersession.md`), plus a partial UNIQUE
+  index over it. The index carries ADR 0012 §2's invariant — one record is
+  corrected at most once, so corrections chain rather than fan out. Every
+  aggregate over `attempts` drops a row some other row supersedes (§3);
+  listings deliberately keep both.
+- `0029_attempt_late_callback_delivery.sql` — expand-only:
+  `attempts.late_callback_attempt_id` / `late_callback_event_id`, the
+  delivery identity (§13.1 protocol attempt id + §13.4 callback event id) of
+  the late report a reconciliation row records, with a partial UNIQUE index
+  over the pair and a `NOT VALID` CHECK keeping the two columns written
+  together. It closes ADR 0012 §5's gap: 0028's index is partial on
+  `supersedes IS NOT NULL`, so the reconciliation that corrects nothing was
+  unguarded and an at-least-once redelivery could persist one session's
+  report twice. Both columns are NULL on every ordinary dispatch, so the
+  index constrains only rows a binary that knows about it writes — an N-1
+  binary's INSERT cannot start failing under it.
 
 - `0022_dispatch_rate_state.sql` — expand-only: adds the mutable
   `dispatch_rate_state` table (task t10 of the economy-discord-graphs plan,

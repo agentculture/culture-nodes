@@ -178,8 +178,17 @@ func cmdWorker(args []string, jsonMode bool) (int, error) {
 		return 0, cliErr
 	}
 
+	// Task t10: measure a handed-over ref, when the deployment named a
+	// remote to fetch from and an identity to attribute the observation to.
+	// Nil — the default — records nothing at all.
+	handoverObs, cliErr := handoverObserver(db, namespace)
+	if cliErr != nil {
+		return 0, cliErr
+	}
+
 	wk, err := worker.New(db, eng, worker.Options{
 		WorkerID:           os.Getenv(envWorkerIdentifier),
+		Handover:           handoverObs,
 		Pacing:             pacingOpts,
 		NamespaceID:        namespace,
 		ClaimBatch:         *batch,
@@ -414,8 +423,14 @@ func buildWorker(db *postgres.Store, namespace string, telemetryProvider *teleme
 	if cliErr != nil {
 		return nil, cliErr
 	}
+	handoverObs, cliErr := handoverObserver(db, namespace)
+	if cliErr != nil {
+		return nil, cliErr
+	}
+
 	wk, err := worker.New(db, eng, worker.Options{
 		NamespaceID:        namespace,
+		Handover:           handoverObs,
 		Pacing:             pacingOpts,
 		Registry:           registry,
 		Signer:             signer,

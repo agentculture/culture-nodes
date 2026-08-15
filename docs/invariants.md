@@ -61,7 +61,15 @@ that token's allowlist — and each allowlisted file to still mention it
 granularity is deliberate: a new reader is cheap to allowlist in review; a
 new writer hiding as a reader is what a looser sweep would miss.
 
-### `AuthorityObserved` — runner boundary only
+### `AuthorityObserved` — direct measurement only
+
+The standing test is not which package a writer lives in: it is whether
+every field the record stamps came from the writer's **own measurement**
+rather than from something an actor reported. `internal/runners` qualifies
+because a runner watched the process it reports on. `internal/handover`
+qualifies because the control plane fetched the ref itself — the agent's
+report supplies only the ref *name* to look for, and a ref that cannot be
+fetched produces no record at all rather than one marked unmeasured.
 
 | File | Standing |
 | --- | --- |
@@ -69,14 +77,20 @@ new writer hiding as a reader is what a looser sweep would miss.
 | `internal/ledger/authority.go` | Append-time enforcement: observed needs a runner manifest |
 | `internal/engine/ledgerdelta.go` | Refusal gate: node deltas may propose/observe per declared contract only |
 | `internal/runners/dispatch.go` | **The writer**: boundary-measured evidence, `OriginRunner` + observed |
+| `internal/handover/handover.go` | **Second writer** (task t10, issue #13): what a `git fetch` of a handed-over ref measured — ref, commit sha, changed paths. Reads nothing the agent reported except the ref name (`actors.Handover.ClaimedRef` is the only accessor); refuses to write without an identified measuring actor |
 
-### `OriginRunner` — stamped only by the boundary itself
+### `OriginRunner` — stamped only by a boundary reporting its own measurement
+
+A writer here must also appear on the `AuthorityObserved` list above: the
+two travel together, and a file stamping one without the other is claiming
+an identity it is not using or an authority it has not earned.
 
 | File | Standing |
 | --- | --- |
 | `internal/ledger/record.go` | Vocabulary |
 | `internal/ledger/authority.go` | Enforcement: runners write manifest-checked observed evidence only |
 | `internal/runners/dispatch.go` | **The writer** |
+| `internal/handover/handover.go` | **Second writer**: the git-fetch observer, under its own configured actor id |
 
 ### `AuthorityConfirmed` — human acceptance only
 

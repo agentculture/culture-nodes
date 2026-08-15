@@ -407,6 +407,11 @@ func (w *Worker) completeFromResult(
 	w.appendHookEvidence(ctx, completion, preRun)
 	postEvidence, postEvidenceOK := w.appendHookEvidence(ctx, completion, postRun)
 	w.recordHookOperations(ctx, d.NamespaceID, completion.AttemptID, preRun, postRun)
+	// Task t10 (issue #13): if this dispatch handed a ref over, go and read
+	// it. The agent's own account of what it changed is the proposed claim
+	// committed just above; this appends what the control plane measured for
+	// itself, beside it. Nothing is written when there is no fetchable ref.
+	w.observeHandover(ctx, completion, result.Handover)
 	// Task t17 (issue #37): an agent node's acceptance checks are not
 	// mechanically evaluable — no runner-measured Result exists for an agent
 	// dispatch — so a routing enforce policy gets the honest floor: routing

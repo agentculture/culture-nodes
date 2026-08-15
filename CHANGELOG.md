@@ -5,6 +5,56 @@ All notable changes to this project will be documented in this file.
 Format follows [Keep a Changelog](https://keepachangelog.com/). This project
 adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.25.0] - 2026-08-15
+
+Work package K3: the handover mechanism gets a caller in every bridge (t9),
+and the control plane learns to measure what was handed over (t10, #13).
+
+### Added
+
+- **Every bridge now creates the handover ref it was already able to
+  create.** `preserve.handover_ref` shipped fully written and fully
+  unit-tested in all three bridges with **no caller anywhere** — a
+  verification dispatch measured it (`grep -rn "handover_ref(" adapters/*/
+  src/*/ --include=*.py | grep -v preserve.py` returned 0, 0, 0) — so no
+  dispatch in any backend had ever created one. Each bridge now reads
+  `input.handover`, threads it through both terminal paths, and on a
+  SUCCESSFUL dispatch creates the ref and reports it in the response body
+  (sync) or the terminal event payload (async). The async half is the one
+  production takes (`always_async`). New config: `handover_remote` (default
+  `origin`), separate from `preserve_remote` because a handover only ever
+  READS the remote's url — it never pushes.
+- **Parity is on the ref creation, not the sandbox widening.** The codex
+  bridge alone refuses `input.handover` without `sandbox=workspace-write`,
+  because `writable_git` lowers a codex-specific
+  `-c sandbox_workspace_write.writable_roots` flag; `claude -p` and
+  `colleague` take no sandbox flag at all and can already write `.git`.
+  Copying that 400 would refuse dispatches those bridges serve.
+- **A handed-over ref is recorded as evidence the control plane measured
+  itself** (#13, new `internal/handover`). It takes exactly one field from
+  the agent's report — the ref NAME — fetches it from a remote the CONTROL
+  PLANE is configured with, and records the ref, the commit sha the fetch
+  resolved, and the paths that commit changed, as an `observed` ledger
+  record. The agent's own commit sha and remote are decoded for
+  round-tripping and read by nothing. Wired into both terminal paths
+  (`internal/worker`, `internal/actors` callback ingest) and configured by
+  `NODES_HANDOVER_REMOTE` + `NODES_HANDOVER_ACTOR_ID`; half-configuration
+  refuses to start rather than silently recording nothing.
+- **No fetchable ref means no record at all** — not a record marked
+  unmeasured, not one citing the agent's summary. A ledger row that exists
+  says a measurement happened, and there is no shape of `observed` record
+  that honestly means "I could not look". The reason goes to the process's
+  diagnostic stream. This closes the gap where `buildEvidence` could build
+  observed evidence from a runner's answer while both shipped runners state
+  they cannot answer, so no production run had ever carried one.
+
+### Changed
+
+- `docs/invariants.md` and the c17/h15 authority sweep now admit a second
+  `AuthorityObserved` / `OriginRunner` writer, with the standing test
+  restated: not which package a writer lives in, but whether every field it
+  stamps came from its own measurement.
+
 ## [0.24.0] - 2026-08-15
 
 The bug tail of the `close-the-backlog` plan (task t12): #98, #95 + #105 as

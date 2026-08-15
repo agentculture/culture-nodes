@@ -222,6 +222,35 @@ The worker envs that complete the code-dispatch wiring:
 - `NODES_RUNNER_SERVICES_FILE` — the path to this registry file; unset
   or an empty array keeps the worker in-process only.
 
+### Handover evidence (task t10, issue #13)
+
+When a dispatch hands its changes over as a git ref (`input.handover`, see
+each bridge's README), the control plane can fetch that ref and record what
+it measured — ref, commit sha, changed paths — as an `observed` ledger
+record beside the agent's own proposed claim. It is **off unless
+configured**, and both variables must be set together or the process
+refuses to start:
+
+- `NODES_HANDOVER_REMOTE` — the git remote **this host** fetches handover
+  refs from. Deliberately the operator's configuration and never the remote
+  a bridge reported: fetching from an agent-supplied url would let a session
+  choose the repository its own work is measured against.
+- `NODES_HANDOVER_ACTOR_ID` — the **registered** actors-table row the
+  observation is attributed to (`ledger_records.origin_actor_id` is a
+  foreign key to `actors(id)`), the same registration obligation
+  `NODES_CODE_RUNNER_ACTOR_ID` carries.
+- `NODES_HANDOVER_ACTOR_REVISION` — optional revision pin for that producer.
+- `NODES_HANDOVER_OBJECT_DIR` — optional persistent bare repo fetches reuse
+  objects from; unset means a fresh temp dir per fetch.
+
+Set them on **both** `api` (the async `completed` callback lands there) and
+`worker` (the synchronous 200 lands there), with the same values.
+
+With neither set, nothing is fetched and no record is written — which is the
+honest default: a control plane that cannot look must not write a record
+saying it did. A ref that is claimed but not fetchable also writes nothing;
+the reason goes to the process's diagnostic stream, never to the ledger.
+
 ## Dispatch pacing (NODES_DISPATCH_RATE_*)
 
 Task t10 (issue #48 item 2). A worker can hold itself to a declared

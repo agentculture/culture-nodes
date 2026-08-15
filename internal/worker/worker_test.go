@@ -92,16 +92,6 @@ func newClockedHarness(t *testing.T, now func() time.Time, actorHandler func(h *
 		engine: eng, signer: signer, callbacks: callbacks,
 	}
 
-	// The callback endpoint §13.1 advertises, served by the real ingest
-	// handler — so an async actor in these tests reports through exactly the
-	// path a deployed actor would.
-	h.callbackServer = httptest.NewServer(actors.NewCallbackHandler(actors.CallbackDeps{
-		Store:  callbacks,
-		Engine: eng,
-		Signer: signer,
-	}))
-	t.Cleanup(h.callbackServer.Close)
-
 	h.actorServer = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		// §13.6 cancellation shares the actor's base URL with §13.1
 		// invocation, so the one test server answers both. Cancels are
@@ -132,10 +122,10 @@ func newClockedHarness(t *testing.T, now func() time.Time, actorHandler func(h *
 	}))
 	t.Cleanup(h.actorServer.Close)
 
-	registry := worker.StaticRegistry{
-		"actor://company/analyzer":    {URL: h.actorServer.URL},
-		"actor://company/long-runner": {URL: h.actorServer.URL},
-	}
+	// The worker options are assembled between the two servers: the actor
+	// endpoint above is what a harnessOption reads to register a real actors
+	// row, and the callback server below needs the handover observer an
+	// option may have set.
 	workerOpts := worker.Options{
 		WorkerID:          "worker-" + t.Name(),
 		NamespaceID:       ns.ID,
@@ -143,10 +133,12 @@ func newClockedHarness(t *testing.T, now func() time.Time, actorHandler func(h *
 		LeaseDuration:     30 * time.Second,
 		HeartbeatInterval: 200 * time.Millisecond,
 		PollInterval:      20 * time.Millisecond,
-		Registry:          registry,
-		Signer:            signer,
-		CallbackBaseURL:   h.callbackServer.URL,
-		Now:               now,
+		Registry: worker.StaticRegistry{
+			"actor://company/analyzer":    {URL: h.actorServer.URL},
+			"actor://company/long-runner": {URL: h.actorServer.URL},
+		},
+		Signer: signer,
+		Now:    now,
 		OnError: func(err error) {
 			h.mu.Lock()
 			h.errs = append(h.errs, err)
@@ -156,6 +148,19 @@ func newClockedHarness(t *testing.T, now func() time.Time, actorHandler func(h *
 	for _, opt := range opts {
 		opt(&workerOpts)
 	}
+
+	// The callback endpoint §13.1 advertises, served by the real ingest
+	// handler — so an async actor in these tests reports through exactly the
+	// path a deployed actor would.
+	h.callbackServer = httptest.NewServer(actors.NewCallbackHandler(actors.CallbackDeps{
+		Store:    callbacks,
+		Engine:   eng,
+		Signer:   signer,
+		Handover: workerOpts.Handover,
+	}))
+	t.Cleanup(h.callbackServer.Close)
+
+	workerOpts.CallbackBaseURL = h.callbackServer.URL
 	wk, err := worker.New(s, eng, workerOpts)
 	if err != nil {
 		t.Fatalf("worker.New: %v", err)

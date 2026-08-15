@@ -140,7 +140,8 @@
 #     verifies its sha256 before executing it. The script is stdlib-only, so
 #     any python:3.12 base works and the image needs nothing baked in.
 #     `network: egress-allowlist` is the declared intent, scoping it to
-#     sonarcloud.io + api.github.com plus the source host.
+#     sonarcloud.io + api.github.com + the granted Jira host, plus the source
+#     host.
 #
 # Deployment configuration (task t16) — everything below this graph needs
 # from the world outside it, and where each value comes from. Loading this
@@ -178,12 +179,11 @@
 #   BY NAME when one is unset — internal/runners/headspace/bridge.go):
 #     PR_UPKEEP_SWEEP_SOURCE_URL      where the sweep script is fetched from.
 #     PR_UPKEEP_SWEEP_SOURCE_SHA256   the sha256 the fetched bytes must have.
-#
-#   PINNED ON PURPOSE, not configuration: the swept repo. sweep.py's
-#   SONAR_COMPONENT_KEY and GITHUB_REPO are hard-coded so this sweep cannot
-#   generalise to arbitrary repos — a blast-radius boundary, documented at
-#   the constant and in README.md as the one value a new operator changes
-#   (in their own copy of the script, which is what the URL above points at).
+#     PR_UPKEEP_REPOSITORIES          the closed ordered repo/component set,
+#                                     current cycle index, and optional Jira
+#                                     site/project for each entry.
+#     JIRA_ACCOUNT_EMAIL              Jira Cloud Basic-auth account value.
+#     JIRA_API_TOKEN                  its separately issued API token.
 apiVersion: nodes.culture.dev/v1alpha1
 kind: Workflow
 
@@ -274,7 +274,7 @@ spec:
     maxRecordsPerNode: 200
 
   nodes:
-    # The sweep. Read-only against two public quality surfaces; its
+    # The sweep. Read-only against its deployment-granted finding surfaces; its
     # prioritised work-item list rides in the result-payload/stdout
     # artifacts (refs in /nodes/sweep/output.artifacts) and its measured
     # facts (exit code, duration) land as runner-observed evidence —
@@ -314,6 +314,9 @@ spec:
         environmentRefs:
           - PR_UPKEEP_SWEEP_SOURCE_URL
           - PR_UPKEEP_SWEEP_SOURCE_SHA256
+          - PR_UPKEEP_REPOSITORIES
+          - JIRA_ACCOUNT_EMAIL
+          - JIRA_API_TOKEN
         argv:
           - python3
           - -c
@@ -332,8 +335,9 @@ spec:
                 sys.exit("pr-upkeep sweep: %s serves sha256:%s, not the configured "
                          "sha256:%s. Refusing to execute it." % (url, got, want.lower()))
             exec(compile(source.decode(), "sweep.py", "exec"))
-        # DECLARED intent: network: egress-allowlist (sonarcloud.io +
-        # api.github.com only). Headspace-cli 0.11.0 supports only disabled/
+        # DECLARED intent: network: egress-allowlist (sonarcloud.io,
+        # api.github.com, and the deployment-granted Jira site). Headspace-cli
+        # 0.11.0 supports only disabled/
         # enabled network posture, so the runner boundary honestly rejects
         # egress-allowlist as rejected_input (issue #50). `full` is the
         # working posture until headspace ships allowlist support; restore

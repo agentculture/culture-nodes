@@ -372,6 +372,29 @@ else
   echo "$CLAUDE_PUSH_ACTOR_KEY does not resolve in the actor registry at $NODES_API_URL — skipping GITHUB_TOKEN_WORKER rather than installing it on a guessed host" >&2
 fi
 
+# --- Jira Cloud read credential, relayed not minted ----------------------
+# Jira Cloud REST v3 requires the externally-issued account email AND API
+# token as one Basic-auth pair. Refuse a partial pair; relay both over stdin
+# to the runner's separate mode-600 EnvironmentFile so deploy.sh can safely
+# rewrite its non-secret runner.env without erasing them.
+install_jira_runner_env() { # host
+  local host=$1
+  if [ -z "${JIRA_ACCOUNT_EMAIL:-}" ] && [ -z "${JIRA_API_TOKEN:-}" ]; then
+    echo "JIRA_ACCOUNT_EMAIL/JIRA_API_TOKEN not set — skipping Jira runner credential relay on $host" >&2
+    return 0
+  fi
+  if [ -z "${JIRA_ACCOUNT_EMAIL:-}" ] || [ -z "${JIRA_API_TOKEN:-}" ]; then
+    echo "JIRA_ACCOUNT_EMAIL and JIRA_API_TOKEN must both be set" >&2
+    return 1
+  fi
+  printf 'JIRA_ACCOUNT_EMAIL=%s\nJIRA_API_TOKEN=%s\n' "$JIRA_ACCOUNT_EMAIL" "$JIRA_API_TOKEN" \
+    | ssh "$host" 'umask 077; mkdir -p ~/.culture-nodes; cat > ~/.culture-nodes/runner-secrets.env; chmod 600 ~/.culture-nodes/runner-secrets.env'
+  echo "installed Jira Basic-auth pair in mode-600 runner-secrets.env on $host"
+}
+
+install_jira_runner_env "$THOR"
+install_jira_runner_env "$ORIN"
+
 # --- notify actor bridge bearer token (issue #68) -------------------------
 #
 # The notify bridge is a kind=agent actor the worker dispatches to, so the

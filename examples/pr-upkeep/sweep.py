@@ -1,22 +1,16 @@
 #!/usr/bin/env python3
-"""PR-upkeep sweep: unresolved SonarCloud issues + open Qodo PR findings +
-failed CI check runs -> one prioritised work-item list (plan task t21, spec
-claims c15/c26; the third source is task t7 / issue #61).
+"""PR-upkeep sweep: SonarCloud, Qodo, failed CI, and Jira backlog findings
+-> one prioritised work-item list (plan task t21, spec claims c15/c26).
 
 This is the payload of the pr-upkeep workflow's `sweep` code node. It runs
 through the runner boundary (never in a control-plane process), talks to
-read-only surfaces on exactly two hosts over an egress allowlist
-(sonarcloud.io + api.github.com — the third source added no new host and no
-new credential), and prints a JSON report to stdout. It holds no write
+read-only surfaces over an egress allowlist and prints a JSON report to
+stdout. It holds no write
 credential of any kind.
 
-The repo is HARD-CODED to culture-nodes and nothing else — spec claim c26.
-`SONAR_COMPONENT_KEY` below is the single grep-able mention of the
-SonarCloud component key in this example's configuration (the recorded
-fixtures under fixtures/ also contain the key, as data inside recorded API
-payloads, not as configuration). That pin is a deliberate blast-radius
-boundary and it is the one value a new operator changes; see the comment at
-the constants themselves for why it is a fork rather than a run input.
+The repositories are a CLOSED, deployment-granted set — never run input.
+Each invocation selects one entry by the configured cycle index, preserving
+the granted order and reporting the selected repository.
 
 The workflow does not ship this file inside its image. It fetches it at
 dispatch time from the URL its deployment grants
@@ -72,25 +66,24 @@ import os
 import re
 import sys
 import urllib.error
+import urllib.parse
 import urllib.request
+from base64 import b64encode
 
-# The one repo this sweep is allowed to look at (spec claim c26), and the
-# one value a new operator changes to point this example at their own — in
-# their own copy of this file, which is what the workflow's granted
-# PR_UPKEEP_SWEEP_SOURCE_URL fetches.
+# The blast radius used to be one repo pinned in this module. That narrowing
+# existed because fetch_open_pulls enumerates EVERY open PR and then reads
+# comments and checks with the sweep credential: accepting a repo from run
+# input would let a caller redirect that authority. Multi-repo upkeep keeps
+# the same reasoning but moves the boundary to a CLOSED, ordered set granted
+# by the deployment. One entry is selected by that grant's cycle index; run
+# input still cannot add, select, or re-point a repository.
 #
-# These two stay HARD-CODED on purpose, and the purpose is a blast radius
-# boundary rather than an oversight. `fetch_open_pulls` below walks EVERY
-# open PR on this repo and reads each one's comments and check runs; a repo
-# taken from run input would point that enumeration at whatever a caller
-# named, on a credential this script did not choose. So the boundary is
-# pinned in code, where changing it is an edit someone makes deliberately in
-# a fork, not a field someone fills in at run time. Nothing in this module
-# may re-point it from the environment — tests/test_pr_upkeep_sweep.py's
-# TestTheSweptRepoIsPinnedAndSaysSo asserts exactly that, alongside the
-# presence of this note.
-SONAR_COMPONENT_KEY = "agentculture_culture-nodes"
-GITHUB_REPO = "agentculture/culture-nodes"
+# PR_UPKEEP_REPOSITORIES is JSON:
+# {"cycle":0,"repositories":[{"github_repo":"owner/repo",
+#   "sonar_component":"owner_repo","jira_site":"team.example.com",
+#   "jira_project":"EX"}]}
+# Jira fields are optional; both are required together to enable that source.
+REPOSITORIES_ENV = "PR_UPKEEP_REPOSITORIES"
 
 SONAR_ISSUES_URL = (
     "https://sonarcloud.io/api/issues/search" "?componentKeys={key}&resolved=false&ps=100"
@@ -104,6 +97,8 @@ SONAR_PR_ISSUES_URL = (
     "?componentKeys={key}&resolved=false&pullRequest={pr}&ps=100"
 )
 GITHUB_API = "https://api.github.com"
+JIRA_SEARCH_PATH = "/rest/api/3/search/jql"
+JIRA_RATE_LIMIT_PER_WINDOW = 350
 
 #: Check runs for one PR's head commit. GitHub's default `filter=latest`
 #: already collapses re-runs to the current attempt, so a job that failed
@@ -142,6 +137,7 @@ EXIT_EMPTY = 10
 #: introducing a fourth vocabulary.
 _SEVERITY_RANK = {
     "BLOCKER": 0,
+    "HIGHEST": 0,
     "CRITICAL": 1,
     "HIGH": 1,
     "MAJOR": 2,
@@ -149,6 +145,7 @@ _SEVERITY_RANK = {
     "MINOR": 3,
     "LOW": 3,
     "INFO": 4,
+    "LOWEST": 4,
 }
 
 # SonarCloud issue statuses that still need work. The query already asks
@@ -232,6 +229,35 @@ _QODO_COUNTS_RE = re.compile(
 _QODO_FILE_RE = re.compile(r"\[([^\[\]]+?)\[R?\d")
 
 _TAG_RE = re.compile(r"<[^>]+>")
+
+
+def selected_repository(raw: str | None = None) -> dict:
+    """Return the one repository selected by the deployment grant."""
+    # Keep the literal at the read site so the exact-set AST guard sees every
+    # environment capability this payload consumes.
+    raw = os.environ.get("PR_UPKEEP_REPOSITORIES") if raw is None else raw
+    if not raw:
+        raise ValueError(f"{REPOSITORIES_ENV} is required")
+    document = json.loads(raw)
+    repositories = document.get("repositories") if isinstance(document, dict) else None
+    cycle = document.get("cycle", 0) if isinstance(document, dict) else 0
+    if not isinstance(repositories, list) or not repositories:
+        raise ValueError(f"{REPOSITORIES_ENV}.repositories must be a non-empty list")
+    if not isinstance(cycle, int) or cycle < 0:
+        raise ValueError(f"{REPOSITORIES_ENV}.cycle must be a non-negative integer")
+    repository = repositories[cycle % len(repositories)]
+    if not isinstance(repository, dict):
+        raise ValueError(f"{REPOSITORIES_ENV}.repositories entries must be objects")
+    for name in ("github_repo", "sonar_component"):
+        if not isinstance(repository.get(name), str) or not repository[name].strip():
+            raise ValueError(f"{REPOSITORIES_ENV} entry requires {name}")
+    jira_site = repository.get("jira_site")
+    jira_project = repository.get("jira_project")
+    if bool(jira_site) != bool(jira_project):
+        raise ValueError("jira_site and jira_project must be configured together")
+    if jira_site and ("/" in jira_site or ":" in jira_site):
+        raise ValueError("jira_site must be a host name, not a URL")
+    return dict(repository)
 
 
 def severity_rank(severity: str) -> int:
@@ -503,17 +529,56 @@ def qodo_work_items(bodies: list[str], pr_numbers: list[int]) -> list[dict]:
     return items
 
 
+def jira_work_items(payload: dict, *, site: str, project: str) -> list[dict]:
+    """Recorded Jira Cloud REST v3 search response -> work items."""
+    items = []
+    for issue in payload.get("issues", []):
+        fields = issue.get("fields") or {}
+        priority = (fields.get("priority") or {}).get("name") or "Medium"
+        status = (fields.get("status") or {}).get("name") or ""
+        key = issue.get("key") or ""
+        items.append(
+            {
+                "source": "jira",
+                "id": key,
+                "project": project,
+                "severity": priority,
+                "kind": (fields.get("issuetype") or {}).get("name") or "Jira issue",
+                "file": "",
+                "line": None,
+                "title": fields.get("summary") or "",
+                "status": status,
+                "details_url": f"https://{site}/browse/{urllib.parse.quote(key)}",
+            }
+        )
+    return items
+
+
+def fetch_jira_issues(site: str, project: str, email: str, token: str) -> dict:
+    """Fetch one project's unresolved backlog using Jira Cloud Basic auth."""
+    query = urllib.parse.urlencode(
+        {
+            "jql": f'project = "{project}" AND resolution IS EMPTY ORDER BY priority ASC',
+            "fields": "summary,priority,status,issuetype",
+            "maxResults": "100",
+        }
+    )
+    return _get_json(
+        f"https://{site}{JIRA_SEARCH_PATH}?{query}", basic=(email, token)
+    )
+
+
 def prioritise(items: list[dict]) -> list[dict]:
     """Stable severity-ranked ordering: the list IS the priority."""
     return sorted(items, key=lambda item: severity_rank(item["severity"]))
 
 
-def build_report(items: list[dict]) -> dict:
+def build_report(items: list[dict], repository: dict) -> dict:
     ordered = prioritise(items)
     return {
         "sweep": "pr-upkeep",
-        "sonar_component": SONAR_COMPONENT_KEY,
-        "github_repo": GITHUB_REPO,
+        "sonar_component": repository["sonar_component"],
+        "github_repo": repository["github_repo"],
         "count": len(ordered),
         "items": ordered,
     }
@@ -523,24 +588,27 @@ def exit_code_for(items: list[dict]) -> int:
     return 0 if items else EXIT_EMPTY
 
 
-def _get_json(url: str, token: str | None = None):
+def _get_json(url: str, token: str | None = None, *, basic: tuple[str, str] | None = None):
     request = urllib.request.Request(url)  # noqa: S310 — fixed https hosts
     request.add_header("Accept", "application/json")
     if token:
         request.add_header("Authorization", f"Bearer {token}")
+    if basic:
+        encoded = b64encode(f"{basic[0]}:{basic[1]}".encode()).decode("ascii")
+        request.add_header("Authorization", f"Basic {encoded}")
     with urllib.request.urlopen(request, timeout=30) as response:  # noqa: S310
         return json.load(response)
 
 
-def fetch_sonar_issues(pr: int | None = None) -> dict:
+def fetch_sonar_issues(component: str, pr: int | None = None) -> dict:
     """The main-branch query when `pr` is None, else that same PR's own
     analysis context (see module docstring for why both are needed)."""
     if pr is None:
-        return _get_json(SONAR_ISSUES_URL.format(key=SONAR_COMPONENT_KEY))
-    return _get_json(SONAR_PR_ISSUES_URL.format(key=SONAR_COMPONENT_KEY, pr=pr))
+        return _get_json(SONAR_ISSUES_URL.format(key=component))
+    return _get_json(SONAR_PR_ISSUES_URL.format(key=component, pr=pr))
 
 
-def fetch_open_pulls(token: str | None) -> list[dict]:
+def fetch_open_pulls(token: str | None, repository: str) -> list[dict]:
     """Every currently open PR as ``{"number": int, "head_sha": str}``,
     unfiltered. The cap lives with the caller (`main`) so the SAME swept set
     feeds all three per-PR queries — the SonarCloud per-PR query, the Qodo
@@ -552,7 +620,7 @@ def fetch_open_pulls(token: str | None) -> list[dict]:
     double this source's request cost for nothing. A PR object that arrives
     without a head sha keeps its entry with an empty one; `main` reports it
     rather than dropping it quietly."""
-    pulls = _get_json(f"{GITHUB_API}/repos/{GITHUB_REPO}/pulls?state=open&per_page=50", token)
+    pulls = _get_json(f"{GITHUB_API}/repos/{repository}/pulls?state=open&per_page=50", token)
     open_pulls = []
     for pull in pulls:
         if not isinstance(pull.get("number"), int):
@@ -562,20 +630,22 @@ def fetch_open_pulls(token: str | None) -> list[dict]:
     return open_pulls
 
 
-def fetch_check_runs(token: str | None, head_sha: str) -> dict:
+def fetch_check_runs(token: str | None, repository: str, head_sha: str) -> dict:
     """Check runs for one PR's head commit (issue #61's third source)."""
     return _get_json(
-        GITHUB_CHECK_RUNS_URL.format(api=GITHUB_API, repo=GITHUB_REPO, sha=head_sha), token
+        GITHUB_CHECK_RUNS_URL.format(api=GITHUB_API, repo=repository, sha=head_sha), token
     )
 
 
-def fetch_open_pr_comments(token: str | None, pr_numbers: list[int]) -> tuple[list[str], list[int]]:
+def fetch_open_pr_comments(
+    token: str | None, repository: str, pr_numbers: list[int]
+) -> tuple[list[str], list[int]]:
     """Qodo review bodies for the given (already-capped) open PR numbers."""
     bodies: list[str] = []
     numbers: list[int] = []
     for number in pr_numbers:
         comments = _get_json(
-            f"{GITHUB_API}/repos/{GITHUB_REPO}/issues/{number}/comments" "?per_page=100",
+            f"{GITHUB_API}/repos/{repository}/issues/{number}/comments" "?per_page=100",
             token,
         )
         for body in qodo_review_bodies(comments):
@@ -599,9 +669,12 @@ def main() -> int:
     token = os.environ.get("GITHUB_TOKEN")
     max_prs = _max_prs_per_sweep()
     try:
-        sonar_items = sonar_work_items(fetch_sonar_issues())
+        repository = selected_repository()
+        github_repo = repository["github_repo"]
+        component = repository["sonar_component"]
+        sonar_items = sonar_work_items(fetch_sonar_issues(component))
 
-        open_pulls = sorted(fetch_open_pulls(token), key=lambda pull: pull["number"])
+        open_pulls = sorted(fetch_open_pulls(token, github_repo), key=lambda pull: pull["number"])
         swept, dropped = open_pulls[:max_prs], open_pulls[max_prs:]
         swept_prs = [pull["number"] for pull in swept]
         if dropped:
@@ -615,10 +688,10 @@ def main() -> int:
             )
 
         for pr in swept_prs:
-            sonar_items.extend(sonar_work_items(fetch_sonar_issues(pr=pr), pr=pr))
+            sonar_items.extend(sonar_work_items(fetch_sonar_issues(component, pr=pr), pr=pr))
         sonar_items = dedupe_sonar_items(sonar_items)
 
-        qodo_bodies, qodo_pr_numbers = fetch_open_pr_comments(token, swept_prs)
+        qodo_bodies, qodo_pr_numbers = fetch_open_pr_comments(token, github_repo, swept_prs)
         qodo_items = qodo_work_items(qodo_bodies, qodo_pr_numbers)
 
         check_items = []
@@ -632,13 +705,32 @@ def main() -> int:
                 )
                 continue
             check_items.extend(
-                check_run_work_items(fetch_check_runs(token, pull["head_sha"]), pr=pull["number"])
+                check_run_work_items(
+                    fetch_check_runs(token, github_repo, pull["head_sha"]), pr=pull["number"]
+                )
             )
-    except (urllib.error.URLError, TimeoutError, json.JSONDecodeError) as exc:
+
+        jira_items = []
+        if repository.get("jira_site"):
+            email = os.environ.get("JIRA_ACCOUNT_EMAIL")
+            jira_token = os.environ.get("JIRA_API_TOKEN")
+            if not email or not jira_token:
+                raise ValueError(
+                    "JIRA_ACCOUNT_EMAIL and JIRA_API_TOKEN are both required "
+                    "when Jira is configured"
+                )
+            jira_items = jira_work_items(
+                fetch_jira_issues(
+                    repository["jira_site"], repository["jira_project"], email, jira_token
+                ),
+                site=repository["jira_site"],
+                project=repository["jira_project"],
+            )
+    except (urllib.error.URLError, TimeoutError, json.JSONDecodeError, ValueError) as exc:
         print(f"sweep failed: {exc}", file=sys.stderr)
         return 1
-    items = sonar_items + qodo_items + check_items
-    json.dump(build_report(items), sys.stdout, indent=2, ensure_ascii=False)
+    items = sonar_items + qodo_items + check_items + jira_items
+    json.dump(build_report(items, repository), sys.stdout, indent=2, ensure_ascii=False)
     sys.stdout.write("\n")
     return exit_code_for(items)
 

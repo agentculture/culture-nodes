@@ -101,6 +101,8 @@ profile's manifest-adjacent live check.
 | `scheduler` | `culture-nodes:local` | `scheduler` | `nodes scheduler` — durable timers + expired-lease sweep. |
 | `worker` | `culture-nodes:local` | `worker` | `nodes worker` — claims ready work and dispatches it to actors. |
 | `colleague-bridge` *(profile `agents`)* | `culture-nodes-colleague-bridge:local` | — | Example EXTERNAL agent host (see below). Off by default. |
+| `otel-collector` *(profile `telemetry`)* | `otel/opentelemetry-collector-contrib` | — | OTLP sink for the three instrumented seams. Off by default (see below). |
+| `smoke-actor` *(profile `smoke-actor`)* | `python:3.12-alpine` | `testdata/smoke_actor.py` | Minimal §13 actor, for `otel-smoke.sh` only. Off by default. |
 
 `api`, `scheduler`, `migrate`, and `worker` all run the **same** image
 (`culture-nodes:local`, built once from the repo root `Dockerfile`) under
@@ -247,6 +249,39 @@ for; its two siblings — [`adapters/claude-code`](../../adapters/claude-code/RE
 run the same way (their own README's "Running it" section), just not yet
 wired into this particular manifest. Any of the three, or a fourth you write
 yourself, is registered the same way: a base URL in the `actors` table.
+
+## Telemetry (telemetry + smoke-actor profiles)
+
+Both profiles are off by default and neither is needed by a plain
+`docker compose up`.
+
+`otel-collector` is an OTLP sink for the three seams `internal/telemetry`
+instruments. It is only half of what turns telemetry on: the control plane
+builds no exporter at all unless `OTEL_EXPORTER_OTLP_ENDPOINT` is set, which
+is why the collector can be running and the stack still be silent.
+
+```bash
+COMPOSE_PROFILES=bundled-postgres,telemetry \
+OTEL_EXPORTER_OTLP_ENDPOINT=http://otel-collector:4317 \
+  docker compose up -d
+docker compose logs --no-log-prefix otel-collector | grep '^{"resourceSpans"' | jq .
+```
+
+`smoke-actor` is a minimal §13 actor (`testdata/smoke_actor.py`, stdlib
+only, read into a stock python image) that exists so a local run can reach
+the actor-callback seam — the one seam a workflow whose `uses:` resolves to
+nothing never gets to. It authenticates nothing and belongs on this network
+only; `tests/conformance/reference.go` is the authoritative reference
+implementation.
+
+`./otel-smoke.sh` runs the whole thing as one proof: a real run with the
+export on (all three seams arrive), the same run with the variable unset
+(the same query returns nothing), and the same deployment pointed at a
+throwaway collector started by `docker run` (the spans arrive there
+instead). `docs/operations/telemetry.md` documents the query, the export
+delay, and the one thing a trace here does NOT say — the three seams share a
+`run_id`, not a trace id, because no trace context crosses the actor
+boundary.
 
 ## Images
 

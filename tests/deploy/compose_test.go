@@ -124,23 +124,37 @@ func TestNoServiceMountsTheDockerSocket(t *testing.T) {
 	}
 }
 
-// TestOnlyBackingStoresHaveVolumes is the complementary half of h4/h7's
-// "complete local system, no socket in control-plane containers": not just
-// that no volume names a Docker socket, but that only postgres and minio
-// (the two stateful backing services) declare a volumes: key at all. Every
-// control-plane role container, and the colleague-bridge example, must
-// stay stateless in this reference file.
-func TestOnlyBackingStoresHaveVolumes(t *testing.T) {
+// TestOnlyBackingStoresHaveStateVolumes is the complementary half of
+// h4/h7's "complete local system, no socket in control-plane containers":
+// not just that no volume names a Docker socket, but that only postgres and
+// minio (the two stateful backing services) hold anything that survives the
+// container. Every control-plane role container, and the colleague-bridge
+// example, must stay stateless in this reference file.
+//
+// A READ-ONLY bind mount is not state and is allowed on any service (task
+// t13's otel-collector mounts deploy/otel-collector.yaml that way): it can
+// be re-created from the repo, the container cannot write to it, and
+// nothing about it survives a `docker compose down -v`. A writable mount or
+// a named volume on a service outside statefulServices still fails — that
+// is the property this test was written for.
+func TestOnlyBackingStoresHaveStateVolumes(t *testing.T) {
 	doc := loadCompose(t)
 
 	for name, svc := range doc.Services {
-		hasVolumes := len(svc.Volumes) > 0
-		wantVolumes := statefulServices[name]
-		if hasVolumes && !wantVolumes {
-			t.Errorf("service %q declares volumes %v, but only %v are expected to hold any volume in this profile",
-				name, svc.Volumes, sortedKeys(statefulServices))
+		stateVolumes := []string{}
+		for _, v := range svc.Volumes {
+			if !strings.HasSuffix(v, ":ro") {
+				stateVolumes = append(stateVolumes, v)
+			}
 		}
-		if wantVolumes && !hasVolumes {
+		hasState := len(stateVolumes) > 0
+		wantState := statefulServices[name]
+		if hasState && !wantState {
+			t.Errorf("service %q declares writable volume(s) %v, but only %v are expected to hold state in this profile "+
+				"(a read-only config bind mount is fine; this is not one)",
+				name, stateVolumes, sortedKeys(statefulServices))
+		}
+		if wantState && !hasState {
 			t.Errorf("service %q is expected to declare a volume (it is a stateful backing service) but declares none", name)
 		}
 	}

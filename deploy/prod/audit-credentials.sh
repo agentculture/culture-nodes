@@ -197,6 +197,23 @@ NODES_RUNNER_SERVICES_FILE optional
 # called optional rather than unknown.
 PR_UPKEEP_SWEEP_SOURCE_URL optional
 PR_UPKEEP_SWEEP_SOURCE_SHA256 optional
+
+# The bundled database's password (task t15 made the database a deployment
+# input). It became an OPEN default the moment the bundled postgres service
+# moved behind the `bundled-postgres` profile: compose interpolates disabled
+# profiles too, so a deployment running against an external database must not
+# be made to supply a password nothing reads. It is therefore optional here —
+# and NODES_DATABASE_URL, which every profile does read, is the required key
+# that replaced it. A bundled-postgres deployment absent this value gets a
+# database with no password, which install-secrets.sh is what prevents.
+POSTGRES_PASSWORD optional
+
+# The telemetry collector endpoint (task t13, issue #5). Not a credential at
+# all: it is an address, and its absence is the OFF state
+# (internal/telemetry.New returns NoOp() when it is unset — no exporter, no
+# dial). Classified so an operator who sets it sees it called optional rather
+# than unknown.
+OTEL_EXPORTER_OTLP_ENDPOINT optional
 EOF
 }
 

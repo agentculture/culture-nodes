@@ -49,94 +49,97 @@ const provisionerModule = "workspace.py"
 
 // TestTheReaperIsOneModuleNotThreeCopies is guard 1.
 func TestTheReaperIsOneModuleNotThreeCopies(t *testing.T) {
+	// A bridge with a workspace owes a reaper; one without a workspace has
+	// nothing to reap and is not this guard's business.
+	var provisioners []adapterPackage
+	for _, pkg := range discoverAdapterPackages(t) {
+		if pkg.has(t, provisionerModule) {
+			provisioners = append(provisioners, pkg)
+		}
+	}
 	for _, reaperModule := range reaperModules {
-		digests := map[string][]string{}
-		var missing []string
-		for _, pkg := range discoverAdapterPackages(t) {
-			if !pkg.has(t, provisionerModule) {
-				continue // no workspace, so nothing to reap
-			}
-			if !pkg.has(t, reaperModule) {
-				missing = append(missing, pkg.adapter)
-				continue
-			}
-			sum := sha256.Sum256([]byte(pkg.read(t, reaperModule)))
-			digest := hex.EncodeToString(sum[:])
-			digests[digest] = append(digests[digest], pkg.adapter)
-		}
-
-		if len(missing) > 0 {
-			sort.Strings(missing)
-			t.Errorf("adapters/%s mint worktrees (%s) but ship no %s: a bridge that can create a "+
-				"writer's checkout and cannot give it back leaks one directory per node run",
-				strings.Join(missing, ", "), provisionerModule, reaperModule)
-		}
-		if len(digests) == 0 {
-			t.Fatalf("no adapter ships %s; the reaper task t17 built is gone", reaperModule)
-		}
-		if len(digests) > 1 {
-			var lines []string
-			for digest, adapters := range digests {
-				sort.Strings(adapters)
-				lines = append(lines, fmt.Sprintf("  %s: %s", digest[:12], strings.Join(adapters, ", ")))
-			}
-			sort.Strings(lines)
-			t.Fatalf("%s has diverged between bridges — it must be byte-identical everywhere. A "+
-				"reaper is the one place where a divergence nobody noticed removes a directory "+
-				"nobody agreed to remove.\n%s", reaperModule, strings.Join(lines, "\n"))
-		}
+		assertReaperModuleIsUniform(t, provisioners, reaperModule)
 	}
 }
 
-// forceFlag matches the flag in any form git accepts, plus the shorthand.
-var forceFlag = regexp.MustCompile(`(?:"--force"|'--force'|"-f"|'-f'|\s--force\b)`)
+// assertReaperModuleIsUniform is guard 1 for one module: every worktree-minting
+// bridge ships it, and every copy is byte-identical.
+func assertReaperModuleIsUniform(t *testing.T, provisioners []adapterPackage, reaperModule string) {
+	t.Helper()
+	digests := map[string][]string{}
+	var missing []string
+	for _, pkg := range provisioners {
+		if !pkg.has(t, reaperModule) {
+			missing = append(missing, pkg.adapter)
+			continue
+		}
+		sum := sha256.Sum256([]byte(pkg.read(t, reaperModule)))
+		digest := hex.EncodeToString(sum[:])
+		digests[digest] = append(digests[digest], pkg.adapter)
+	}
+
+	if len(missing) > 0 {
+		sort.Strings(missing)
+		t.Errorf("adapters/%s mint worktrees (%s) but ship no %s: a bridge that can create a "+
+			"writer's checkout and cannot give it back leaks one directory per node run",
+			strings.Join(missing, ", "), provisionerModule, reaperModule)
+	}
+	if len(digests) == 0 {
+		t.Fatalf("no adapter ships %s; the reaper task t17 built is gone", reaperModule)
+	}
+	if len(digests) > 1 {
+		t.Fatalf("%s has diverged between bridges — it must be byte-identical everywhere. A "+
+			"reaper is the one place where a divergence nobody noticed removes a directory "+
+			"nobody agreed to remove.\n%s", reaperModule, digestGroupLines(digests))
+	}
+}
+
+// digestGroupLines renders a digest -> adapters map as sorted `  <digest12>:
+// <adapters>` lines, so a divergence failure names which bridges agree with
+// which.
+func digestGroupLines(digests map[string][]string) string {
+	var lines []string
+	for digest, adapters := range digests {
+		sort.Strings(adapters)
+		lines = append(lines, fmt.Sprintf("  %s: %s", digest[:12], strings.Join(adapters, ", ")))
+	}
+	sort.Strings(lines)
+	return strings.Join(lines, "\n")
+}
+
+// forceFlagPattern matches the flag in any form git accepts, plus the
+// shorthand. The scan that applies it skips Python prose (pythonCodeLines),
+// because the module docstrings quote git's own refusal and the comments
+// explain why the flag is absent: prose may name it, code may not.
+var forceFlagPattern = []scanPattern{{
+	name:    "force-flag",
+	pattern: regexp.MustCompile(`(?:"--force"|'--force'|"-f"|'-f'|\s--force\b)`),
+}}
 
 // TestTheReaperNeverForces is guard 2. It covers reclaim.py above all —
 // that is the only module that can run a removal at all.
 func TestTheReaperNeverForces(t *testing.T) {
-	for _, pkg := range discoverAdapterPackages(t) {
-		for _, reaperModule := range reaperModules {
-			if !pkg.has(t, reaperModule) {
-				continue
-			}
-			body := pkg.read(t, reaperModule)
-			inDocstring := false
-			for i, line := range strings.Split(body, "\n") {
-				trimmed := strings.TrimSpace(line)
-				// The module docstrings quote git's own refusal, and the
-				// comments explain why the flag is absent. Prose may name
-				// it; code may not.
-				prose := inDocstring || strings.HasPrefix(trimmed, "#") || strings.Contains(line, `"""`)
-				if strings.Count(line, `"""`)%2 == 1 {
-					inDocstring = !inDocstring
-				}
-				if prose {
-					continue
-				}
-				if forceFlag.MatchString(line) {
-					t.Errorf("adapters/%s/%s:%d passes a force flag: %q\n"+
-						"`git worktree remove --force` deletes uncommitted work that no ref "+
-						"holds. That is issue #78's data loss arriving as housekeeping. If a "+
-						"worktree will not come off cleanly, the answer is the `refuse` "+
-						"decision and a domain outcome of `retained`, never a flag.",
-						pkg.adapter, reaperModule, i+1, trimmed)
-				}
-			}
-		}
+	files := adapterModuleFiles(t, reaperModules...)
+	for _, finding := range scanFiles(files, forceFlagPattern, pythonCodeLines) {
+		t.Errorf("adapters/%s:%d passes a force flag: %q\n"+
+			"`git worktree remove --force` deletes uncommitted work that no ref "+
+			"holds. That is issue #78's data loss arriving as housekeeping. If a "+
+			"worktree will not come off cleanly, the answer is the `refuse` "+
+			"decision and a domain outcome of `retained`, never a flag.",
+			finding.file, finding.line, finding.text)
 	}
 }
 
 // TestTheReaperGuardActuallyReadsSomething is the anti-vacuity check the
 // file-length scanner's own TestTheFileLengthScannerActuallyScans exists for:
 // a guard that looked at no files reports no violations.
+// It asserts on the output of adapterModuleFiles, which is the very collection
+// TestTheReaperNeverForces scans -- so "the force guard saw nothing" cannot
+// pass here and fail silently there.
 func TestTheReaperGuardActuallyReadsSomething(t *testing.T) {
 	var found []string
-	for _, pkg := range discoverAdapterPackages(t) {
-		for _, reaperModule := range reaperModules {
-			if pkg.has(t, reaperModule) {
-				found = append(found, pkg.adapter+"/"+reaperModule)
-			}
-		}
+	for _, file := range adapterModuleFiles(t, reaperModules...) {
+		found = append(found, file.rel)
 	}
 	sort.Strings(found)
 	want := []string{

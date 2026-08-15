@@ -185,6 +185,7 @@ def test_sync_dispatch_maps_ok_result_to_200(bridge_url, monkeypatch):
         "cost": None,
         "currency": None,
         "thread_id": "019fe54f-8e7b-7940-943c-1728fd3a7c6b",
+        "model": "unknown:codex-session-did-not-report",
     }
     assert body["ledger_delta"]["records"][0]["authority"] == "proposed"
 

@@ -64,15 +64,15 @@ def test_the_surface_is_a_document_the_control_plane_accepts(tmp_path):
     preflight.validate_block(block)
     assert block["preflight"]["protocol_version"] == preflight.PROTOCOL_VERSION
     assert block["preflight"]["host"]["artifact_publish"] in {
-        "supported", "unsupported-by-host", "not-applicable-no-workspace"
+        "supported",
+        "unsupported-by-host",
+        "not-applicable-no-workspace",
     }
 
 
 def test_a_permissive_kernel_advertises_every_sandbox_mode(tmp_path):
     cfg = Config(repo_allowlist=(str(tmp_path),))
-    host = capabilities.host_facts(
-        cfg, probes=_permissive(tmp_path), capability_probe=_probe_works
-    )
+    host = capabilities.host_facts(cfg, probes=_permissive(tmp_path), capability_probe=_probe_works)
     assert host["sandbox_modes"] == list(capabilities.SANDBOX_MODE_CANDIDATES)
     assert host["artifact_publish"] == "unsupported-by-host"
     assert "sandbox_modes_unavailable" not in host
@@ -83,9 +83,7 @@ def test_a_restricting_kernel_advertises_only_what_it_can_enforce(tmp_path):
     whose kernel restricted unprivileged user namespaces, and every file
     write was silently lost. The surface reports what the host can do."""
     cfg = Config(repo_allowlist=(str(tmp_path),))
-    host = capabilities.host_facts(
-        cfg, probes=_restricted(tmp_path), capability_probe=_probe_fails
-    )
+    host = capabilities.host_facts(cfg, probes=_restricted(tmp_path), capability_probe=_probe_fails)
 
     assert host["sandbox_modes"] == ["danger-full-access"]
     assert set(host["sandbox_modes_unavailable"]) == {"read-only", "workspace-write"}
@@ -115,9 +113,7 @@ def test_the_default_mode_is_reported_even_when_this_host_cannot_deliver_it(tmp_
     the unavailability rather than quietly rewritten to something that works
     — the bridge advertises, the operator decides."""
     cfg = Config(repo_allowlist=(str(tmp_path),), default_sandbox="workspace-write")
-    host = capabilities.host_facts(
-        cfg, probes=_restricted(tmp_path), capability_probe=_probe_fails
-    )
+    host = capabilities.host_facts(cfg, probes=_restricted(tmp_path), capability_probe=_probe_fails)
     assert host["default_sandbox_mode"] == "workspace-write"
     assert "workspace-write" in host["sandbox_modes_unavailable"]
 

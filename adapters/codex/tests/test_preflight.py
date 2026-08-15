@@ -106,8 +106,14 @@ def test_a_mode_needing_userns_is_unavailable_where_the_kernel_restricts_it(tmp_
     cannot start here is reported unavailable with the sysctl that says so."""
     knob = tmp_path / "apparmor_restrict_unprivileged_userns"
     knob.write_text("1\n")
-    monkeypatch.setattr(preflight.shutil, "which", lambda name: "/usr/bin/bwrap" if name == "bwrap" else None)
-    monkeypatch.setattr(preflight.subprocess, "run", lambda *args, **kwargs: preflight.subprocess.CompletedProcess(args[0], 1))
+    monkeypatch.setattr(
+        preflight.shutil, "which", lambda name: "/usr/bin/bwrap" if name == "bwrap" else None
+    )
+    monkeypatch.setattr(
+        preflight.subprocess,
+        "run",
+        lambda *args, **kwargs: preflight.subprocess.CompletedProcess(args[0], 1),
+    )
 
     available, unavailable = preflight.measure_sandbox_modes(
         ("read-only", "workspace-write", "danger-full-access"),
@@ -123,8 +129,14 @@ def test_a_mode_needing_userns_is_unavailable_where_the_kernel_restricts_it(tmp_
 def test_the_same_modes_are_available_where_the_kernel_permits_it(tmp_path, monkeypatch):
     knob = tmp_path / "apparmor_restrict_unprivileged_userns"
     knob.write_text("0\n")
-    monkeypatch.setattr(preflight.shutil, "which", lambda name: "/usr/bin/bwrap" if name == "bwrap" else None)
-    monkeypatch.setattr(preflight.subprocess, "run", lambda *args, **kwargs: preflight.subprocess.CompletedProcess(args[0], 0))
+    monkeypatch.setattr(
+        preflight.shutil, "which", lambda name: "/usr/bin/bwrap" if name == "bwrap" else None
+    )
+    monkeypatch.setattr(
+        preflight.subprocess,
+        "run",
+        lambda *args, **kwargs: preflight.subprocess.CompletedProcess(args[0], 0),
+    )
 
     available, unavailable = preflight.measure_sandbox_modes(
         ("read-only", "workspace-write"),
@@ -139,8 +151,14 @@ def test_the_same_modes_are_available_where_the_kernel_permits_it(tmp_path, monk
 def test_an_absent_knob_is_not_a_restriction(monkeypatch):
     """A kernel with no such sysctl does not restrict here — absence must not
     be read as the blocking value."""
-    monkeypatch.setattr(preflight.shutil, "which", lambda name: "/usr/bin/bwrap" if name == "bwrap" else None)
-    monkeypatch.setattr(preflight.subprocess, "run", lambda *args, **kwargs: preflight.subprocess.CompletedProcess(args[0], 0))
+    monkeypatch.setattr(
+        preflight.shutil, "which", lambda name: "/usr/bin/bwrap" if name == "bwrap" else None
+    )
+    monkeypatch.setattr(
+        preflight.subprocess,
+        "run",
+        lambda *args, **kwargs: preflight.subprocess.CompletedProcess(args[0], 0),
+    )
     available, unavailable = preflight.measure_sandbox_modes(
         ("workspace-write",), requires_userns=("workspace-write",), probes=_PERMISSIVE
     )
@@ -173,8 +191,14 @@ def test_userns_restrictions_reports_every_blocking_knob(tmp_path):
 def test_bwrap_probe_is_authority_even_when_sysctl_looks_restricted(tmp_path, monkeypatch):
     knob = tmp_path / "apparmor_restrict_unprivileged_userns"
     knob.write_text("1\n")
-    monkeypatch.setattr(preflight.shutil, "which", lambda name: "/usr/bin/bwrap" if name == "bwrap" else None)
-    monkeypatch.setattr(preflight.subprocess, "run", lambda *args, **kwargs: preflight.subprocess.CompletedProcess(args[0], 0))
+    monkeypatch.setattr(
+        preflight.shutil, "which", lambda name: "/usr/bin/bwrap" if name == "bwrap" else None
+    )
+    monkeypatch.setattr(
+        preflight.subprocess,
+        "run",
+        lambda *args, **kwargs: preflight.subprocess.CompletedProcess(args[0], 0),
+    )
 
     available, unavailable = preflight.measure_sandbox_modes(
         ("workspace-write",), requires_userns=("workspace-write",), probes=((str(knob), "1"),)
@@ -187,8 +211,14 @@ def test_bwrap_probe_is_authority_even_when_sysctl_looks_restricted(tmp_path, mo
 def test_failed_bwrap_probe_uses_sysctl_only_to_explain_why(tmp_path, monkeypatch):
     knob = tmp_path / "apparmor_restrict_unprivileged_userns"
     knob.write_text("1\n")
-    monkeypatch.setattr(preflight.shutil, "which", lambda name: "/usr/bin/bwrap" if name == "bwrap" else None)
-    monkeypatch.setattr(preflight.subprocess, "run", lambda *args, **kwargs: preflight.subprocess.CompletedProcess(args[0], 1))
+    monkeypatch.setattr(
+        preflight.shutil, "which", lambda name: "/usr/bin/bwrap" if name == "bwrap" else None
+    )
+    monkeypatch.setattr(
+        preflight.subprocess,
+        "run",
+        lambda *args, **kwargs: preflight.subprocess.CompletedProcess(args[0], 1),
+    )
 
     available, unavailable = preflight.measure_sandbox_modes(
         ("workspace-write",), requires_userns=("workspace-write",), probes=((str(knob), "1"),)

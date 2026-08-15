@@ -67,9 +67,7 @@ def test_provision_refuses_non_local_writer_names(tmp_path, name):
     _init_repo(repo)
 
     with pytest.raises(workspace.WorkspaceProvisionError):
-        workspace.provision(
-            str(repo), str(tmp_path / "worktrees"), name, forbidden_roots=()
-        )
+        workspace.provision(str(repo), str(tmp_path / "worktrees"), name, forbidden_roots=())
 
 
 # ---------------------------------------------------------------------------

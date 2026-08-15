@@ -278,7 +278,17 @@ def test_usage_maps_cache_model_session_and_passes_through_real_cost():
 
 def test_usage_defaults_to_zero_and_null_cost_when_absent():
     usage = mapping.usage_from_result({"type": "result"})
-    assert usage == {"input_tokens": 0, "output_tokens": 0, "cost": None, "currency": None}
+    # Counts default to zero and cost stays null, but `model` is PRESENT and
+    # explicit rather than absent. A result carrying no model at all is the
+    # #77 case: an omitted key and a key nobody wrote are the same null
+    # downstream, so the bridge says which one this is.
+    assert usage == {
+        "input_tokens": 0,
+        "output_tokens": 0,
+        "cost": None,
+        "currency": None,
+        "model": mapping.MODEL_NOT_REPORTED,
+    }
 
 
 def test_usage_maps_single_model_from_model_usage_when_no_direct_model_field():
@@ -714,6 +724,7 @@ def test_sync_response_failure_carries_usage_from_terminal_result():
         "cost": 0.0001,
         "currency": "USD",
         "thread_id": "sess-err",
+        "model": "unknown:claude-code-session-did-not-report",
     }
 
 
@@ -732,6 +743,7 @@ def test_sync_response_undeclared_incomplete_failure_carries_usage():
         "cost": 0.05,
         "currency": "USD",
         "thread_id": "sess-partial",
+        "model": "unknown:claude-code-session-did-not-report",
     }
 
 
@@ -771,6 +783,7 @@ def test_terminal_event_failed_carries_usage_from_terminal_result():
         "cost": 0.0001,
         "currency": "USD",
         "thread_id": "sess-err",
+        "model": "unknown:claude-code-session-did-not-report",
     }
 
 
@@ -789,6 +802,7 @@ def test_terminal_event_undeclared_incomplete_failure_carries_usage():
         "cost": 0.05,
         "currency": "USD",
         "thread_id": "sess-partial",
+        "model": "unknown:claude-code-session-did-not-report",
     }
 
 
@@ -811,3 +825,40 @@ def test_terminal_event_timeout_emits_no_usage_key():
     )
     assert ev.kind == "failed"
     assert "usage" not in ev.payload
+
+
+def test_a_multi_model_session_reports_an_explicit_unknown_not_an_omission():
+    """The live case that reopened #77 after t14/t15 shipped.
+
+    `claude -p` reports `modelUsage` as a map, and a session that ran subagents
+    has more than one entry — a main model plus whatever served the subagents.
+    Naming any single one would be a guess, so the bridge used to omit `model`
+    entirely. Downstream that is a null, and a null was indistinguishable from
+    a field nobody wrote, which is the whole of #77. Five consecutive live
+    attempts across four claude bridges all landed usage_model NULL this way,
+    after the batch believed the issue closed.
+    """
+    usage = mapping.usage_from_result(
+        {
+            "type": "result",
+            "usage": {"input_tokens": 10, "output_tokens": 20},
+            "modelUsage": {"claude-opus-4": {}, "claude-haiku-4": {}},
+        }
+    )
+    assert usage["model"] == mapping.MODEL_NOT_REPORTED
+    assert usage["input_tokens"] == 10
+
+    # One entry is unambiguous, so the real name still wins.
+    named = mapping.usage_from_result({"type": "result", "modelUsage": {"claude-opus-4": {}}})
+    assert named["model"] == "claude-opus-4"
+
+
+def test_the_two_unknown_sentinels_say_different_things():
+    """`did-not-report` is a gap in ONE attempt; the colleague/notify
+    `cannot-report` sentinels are a permanent property of those backends.
+    Collapsing them would hide a regression here behind a limitation there —
+    a claude bridge that silently stopped reporting models would read exactly
+    like a backend that never could."""
+    assert mapping.MODEL_NOT_REPORTED.startswith("unknown:")
+    assert "cannot-report" not in mapping.MODEL_NOT_REPORTED
+    assert "did-not-report" in mapping.MODEL_NOT_REPORTED

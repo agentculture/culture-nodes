@@ -197,6 +197,7 @@ def test_sync_dispatch_maps_success_result_to_200(bridge_url, monkeypatch):
         "cost": 0.01,
         "currency": "USD",
         "thread_id": "sess-1",
+        "model": "unknown:claude-code-session-did-not-report",
     }
     assert body["ledger_delta"]["records"][0]["authority"] == "proposed"
 

@@ -233,9 +233,11 @@ docker compose --profile agents up --build
 With `COLLEAGUE_ENGINE=mock` (the `.env.example` default) it runs a
 deterministic offline actor useful for a smoke test, no real model
 required. To register it as an actor for a workflow node's `uses:`
-reference, insert a row in the `actors` table pointing at
-`http://colleague-bridge:8085` (there is no actor-registration HTTP
-endpoint yet — see `internal/worker/registry.go`'s `DBRegistry`), then
+reference, register it at `http://colleague-bridge:8085` — `POST
+/v1alpha1/actors` with the `NODES_ACTOR_REGISTRATION_TOKEN_SECRET` bearer
+(`.env.example` carries a dev-only value; `otel-smoke.sh` is a worked
+example), or by inserting the row directly (`internal/worker/registry.go`'s
+`DBRegistry`) — then
 point `NODES_NAMESPACE_ID`/a workflow's `uses:` at it accordingly. See
 `adapters/colleague/README.md` for the full actor-protocol mapping, the
 `repo_allowlist` requirement (empty by default — the bridge refuses every

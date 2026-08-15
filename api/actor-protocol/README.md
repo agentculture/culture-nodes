@@ -62,12 +62,23 @@ fourth adapter over a different backend.
 
 ## Registering an actor
 
-There is no actor-registration HTTP endpoint yet (PRD §26 open question) —
-an actor becomes reachable by inserting a row naming its base URL into the
-`actors` table (`internal/worker/registry.go`'s `DBRegistry`), and a
-workflow node's `uses:` reference binds to it by that row's id. See
-`deploy/compose/README.md`'s colleague-bridge section for a worked local
-example.
+`POST /v1alpha1/actors` registers one, authenticated by the bearer
+`NODES_ACTOR_REGISTRATION_TOKEN_SECRET` names — closed by default, so a
+deployment that configures no secret refuses every registration rather than
+accepting an unauthenticated one:
+
+```bash
+curl -X POST "$API/v1alpha1/actors" \
+  -H "authorization: Bearer $NODES_ACTOR_REGISTRATION_TOKEN_SECRET" \
+  -H 'content-type: application/json' \
+  -d '{"actor_key":"company/verifier","kind":"agent","protocol":"http","endpoint_ref":"http://bridge:8085"}'
+```
+
+Rows are append-only: a new endpoint or capability set is a new revision,
+never an update, and a `uses:` reference resolves to the highest one
+(`internal/worker/registry.go`'s `DBRegistry`). Writing the row directly is
+still supported and is what `deploy/prod/register-actor.sh` does;
+`deploy/compose/otel-smoke.sh` is a worked example of the HTTP path.
 
 ## The preflight capability surface (issue #67, tasks t14/t15)
 

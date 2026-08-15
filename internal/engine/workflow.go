@@ -3,6 +3,7 @@ package engine
 import (
 	"bytes"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"time"
 
@@ -221,6 +222,18 @@ type ContinuationBounds struct {
 // is intentionally not part of it: retry/deadline and continuation bounds
 // are independent clocks.
 type ContinuationState struct {
+	// NodeState is the node run's own durable state, mapped onto the
+	// `node.state` vocabulary by ContinuationNodeState — MEASURED by the
+	// caller from the node_runs row, never a literal (issue #95: the
+	// scheduler used to pass "incomplete" unconditionally, which made the
+	// canonical `node.state == "incomplete"` true in every run for every
+	// node).
+	//
+	// The empty string means "not measured", and it is not a value: a
+	// condition that reads node.state under an empty NodeState is
+	// undecidable (ErrContinuationUndecidable), not false. That is what
+	// stops a future caller fabricating a state by omission the way the
+	// old one did by assignment.
 	NodeState         string
 	RemainingSessions int
 	Continuations     int
@@ -234,35 +247,87 @@ type ContinuationDecision struct {
 	EngineFailure bool
 }
 
+// ErrContinuationUndecidable is returned by DecideContinuation when a declared
+// `continue.while` condition could not be EVALUATED — the CEL program errored,
+// or it produced something that is not a boolean. Neither is a domain
+// decision, and dressing them as one is issue #105: before this, all three of
+// "the condition was false", "the condition errored" and "the condition
+// returned a non-boolean" returned the identical zero ContinuationDecision.
+// The first is the node saying stop; the other two are nobody answering. A
+// reader of the run could not tell them apart, and because the zero value
+// carries no outcome, the author's declared `onExhausted` safety net was
+// bypassed by exactly the kind of trouble it exists to catch.
+var ErrContinuationUndecidable = errors.New("continue.while condition is undecidable")
+
+// ContinuationNodeState maps a node run's durable lifecycle state onto the
+// `node.state` vocabulary a `continue.while` condition is written against
+// (issue #95). Terminal node runs are "complete"; every parked or in-flight
+// one is "incomplete", which is what the canonical
+// `node.state == "incomplete"` means and what its author expects to be able
+// to observe as FALSE.
+//
+// An empty NodeRunState maps to the empty string on purpose: a row nobody
+// read is not a state, and DecideContinuation turns that into an undecidable
+// condition rather than a guess. Callers pass the status they queried; they
+// never pass a literal.
+func ContinuationNodeState(status NodeRunState) string {
+	switch {
+	case status == "":
+		return ""
+	case status.Terminal():
+		return "complete"
+	default:
+		return "incomplete"
+	}
+}
+
 // DecideContinuation evaluates the author-owned condition between turns.
 // Exhaustion is a routable domain answer, never an engine failure.
-func (n *Node) DecideContinuation(state ContinuationState) ContinuationDecision {
+//
+// The error return is reserved for a condition that could not be decided at
+// all (ErrContinuationUndecidable). A condition that decides "stop" is a
+// nil-error zero decision, and bound exhaustion is a nil-error decision
+// carrying OnExhausted: neither is a failure, and the difference between
+// those two and an undecidable one is the whole point of the signature.
+func (n *Node) DecideContinuation(state ContinuationState) (ContinuationDecision, error) {
 	if n == nil || n.Continue == nil {
-		return ContinuationDecision{}
+		return ContinuationDecision{}, nil
 	}
 	b := n.Continue.Bounds
 	if (b.MaxContinuations > 0 && state.Continuations >= b.MaxContinuations) ||
 		(b.MaxWallClock > 0 && state.WallClock >= b.MaxWallClock) ||
 		(b.MaxSessions > 0 && state.Sessions >= b.MaxSessions) {
-		return ContinuationDecision{Outcome: n.Continue.OnExhausted}
+		return ContinuationDecision{Outcome: n.Continue.OnExhausted}, nil
+	}
+	// An unmeasured node state is OMITTED, not defaulted: `node.state` then
+	// fails to resolve and the condition comes back undecidable, instead of
+	// silently comparing against "" (issue #95).
+	nodeVars := map[string]any{}
+	if state.NodeState != "" {
+		nodeVars["state"] = state.NodeState
 	}
 	activation := map[string]any{
-		celVarNode:   map[string]any{"state": state.NodeState},
+		celVarNode:   nodeVars,
 		celVarBudget: map[string]any{"remaining_sessions": state.RemainingSessions},
 		celVarInput:  map[string]any{}, celVarOutput: map[string]any{},
 		celVarOutcome: "", celVarEvent: map[string]any{},
 	}
-	for _, program := range n.Continue.While {
+	for i, program := range n.Continue.While {
 		value, _, err := program.Eval(activation)
 		if err != nil {
-			return ContinuationDecision{}
+			return ContinuationDecision{EngineFailure: true},
+				fmt.Errorf("%w: continue.while[%d]: %w", ErrContinuationUndecidable, i, err)
 		}
 		ok, err := truthy(value)
-		if err != nil || !ok {
-			return ContinuationDecision{}
+		if err != nil {
+			return ContinuationDecision{EngineFailure: true},
+				fmt.Errorf("%w: continue.while[%d]: %w", ErrContinuationUndecidable, i, err)
+		}
+		if !ok {
+			return ContinuationDecision{}, nil
 		}
 	}
-	return ContinuationDecision{Continue: true}
+	return ContinuationDecision{Continue: true}, nil
 }
 
 // bindingLiteralKey is the wrapper the authoring schema uses to declare a

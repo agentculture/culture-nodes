@@ -137,11 +137,13 @@
 #     DecideContinuation builds its CEL activation with `node.state` and
 #     `budget.remaining_sessions` populated and `input`/`output`/`outcome`/
 #     `event` deliberately EMPTY (internal/engine/workflow.go). An expression
-#     reaching into `output` errors on evaluation, and an erroring condition
-#     is read as "do not continue" — it would silently stop the loop rather
-#     than fail loudly. So `continue.while` below uses only the two variables
-#     that carry values, and the gate's verdict steers the loop through an
-#     EDGE (`gate-verdict.changes_required -> work`) instead.
+#     reaching into `output` errors on evaluation. That error is no longer
+#     silent — issue #105 made an undecidable condition return
+#     ErrContinuationUndecidable, and the scheduler records a
+#     `dev.culture.nodes.continuation.undecidable` event before failing closed
+#     — but it is still not an answer. So `continue.while` below uses only the
+#     two variables that carry values, and the gate's verdict steers the loop
+#     through an EDGE (`gate-verdict.changes_required -> work`) instead.
 #
 #  6. TWO OF THE FOUR GATES MEASURE NOTHING ON MOST OF THIS REPO. Per the t18
 #     design, coverage reaches only `culture_nodes` (the configured coverage
@@ -553,7 +555,10 @@ spec:
       # `node.state` and `budget.remaining_sessions` are the ONLY two
       # variables carrying values here — see gap 5 for why the gate's own
       # numbers cannot appear in this condition, and why that is stated rather
-      # than worked around. `remaining_sessions` is derived from
+      # than worked around. `node.state` is the node run's own durable status
+      # mapped to incomplete/complete (issue #95: it was a hardcoded literal
+      # until this batch, which made the first clause below true in every run
+      # of every node). `remaining_sessions` is derived from
       # `bounds.maxSessions` below minus the attempts already recorded, so the
       # second clause is the session economics expressed as a condition rather
       # than as a comment.

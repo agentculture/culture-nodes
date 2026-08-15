@@ -24,18 +24,31 @@ func TestContinuationConditionAndIndependentBounds(t *testing.T) {
 		MaxContinuations: 3, MaxWallClock: 2 * time.Hour, MaxSessions: 4,
 	}, OnExhausted: "needs_human"}}
 
-	got := n.DecideContinuation(ContinuationState{NodeState: "incomplete", RemainingSessions: 2, Continuations: 1, Sessions: 2, WallClock: time.Hour})
+	// The NodeState values below are what a caller MEASURED (see
+	// ContinuationNodeState and issue #95); a caller that measured nothing
+	// gets ErrContinuationUndecidable instead, which
+	// continuation_undecidable_test.go covers.
+	got, err := n.DecideContinuation(ContinuationState{NodeState: "incomplete", RemainingSessions: 2, Continuations: 1, Sessions: 2, WallClock: time.Hour})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
 	if !got.Continue || got.Outcome != "" {
 		t.Fatalf("decision = %+v, want continue", got)
 	}
 
 	// Deadline is intentionally absent from ContinuationState: technical
 	// gate-retry/deadline exhaustion and continuation bounds are independent.
-	got = n.DecideContinuation(ContinuationState{NodeState: "incomplete", RemainingSessions: 2, Continuations: 3, Sessions: 2, WallClock: time.Hour})
+	got, err = n.DecideContinuation(ContinuationState{NodeState: "incomplete", RemainingSessions: 2, Continuations: 3, Sessions: 2, WallClock: time.Hour})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
 	if got.Continue || got.Outcome != "needs_human" || got.EngineFailure {
 		t.Fatalf("decision = %+v, want routed domain exhaustion", got)
 	}
-	got = n.DecideContinuation(ContinuationState{NodeState: "complete", RemainingSessions: 2})
+	got, err = n.DecideContinuation(ContinuationState{NodeState: "complete", RemainingSessions: 2})
+	if err != nil {
+		t.Fatalf("a cleanly false condition must not be an error: %v", err)
+	}
 	if got.Continue || got.Outcome != "" || got.EngineFailure {
 		t.Fatalf("false CEL condition = %+v, want stop without failure", got)
 	}

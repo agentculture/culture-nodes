@@ -40,6 +40,8 @@ const (
 	celVarOutput  = "output"
 	celVarOutcome = "outcome"
 	celVarEvent   = "event"
+	celVarNode    = "node"
+	celVarBudget  = "budget"
 )
 
 // Workflow is a normalized workflow IR prepared for execution: guards
@@ -199,6 +201,68 @@ type Node struct {
 	// quorum. Empty/zero for every other kind.
 	JoinPolicy string
 	JoinQuorum int
+
+	Continue *Continuation
+}
+
+type Continuation struct {
+	While       []cel.Program
+	Bounds      ContinuationBounds
+	OnExhausted string
+}
+
+type ContinuationBounds struct {
+	MaxContinuations int
+	MaxWallClock     time.Duration
+	MaxSessions      int
+}
+
+// ContinuationState contains only continuation accounting. A node deadline
+// is intentionally not part of it: retry/deadline and continuation bounds
+// are independent clocks.
+type ContinuationState struct {
+	NodeState         string
+	RemainingSessions int
+	Continuations     int
+	Sessions          int
+	WallClock         time.Duration
+}
+
+type ContinuationDecision struct {
+	Continue      bool
+	Outcome       string
+	EngineFailure bool
+}
+
+// DecideContinuation evaluates the author-owned condition between turns.
+// Exhaustion is a routable domain answer, never an engine failure.
+func (n *Node) DecideContinuation(state ContinuationState) ContinuationDecision {
+	if n == nil || n.Continue == nil {
+		return ContinuationDecision{}
+	}
+	b := n.Continue.Bounds
+	if (b.MaxContinuations > 0 && state.Continuations >= b.MaxContinuations) ||
+		(b.MaxWallClock > 0 && state.WallClock >= b.MaxWallClock) ||
+		(b.MaxSessions > 0 && state.Sessions >= b.MaxSessions) {
+		return ContinuationDecision{Outcome: n.Continue.OnExhausted}
+	}
+	activation := map[string]any{
+		celVarNode:   map[string]any{"state": state.NodeState},
+		celVarBudget: map[string]any{"remaining_sessions": state.RemainingSessions},
+		celVarInput: map[string]any{}, celVarOutput: map[string]any{},
+		celVarOutcome: "", celVarEvent: map[string]any{},
+	}
+	for _, program := range n.Continue.While {
+		value, _, err := program.Eval(activation)
+		if err != nil {
+			return ContinuationDecision{}
+		}
+		ok, err := truthy(value)
+		if err != nil || !ok {
+			return ContinuationDecision{}
+		}
+	}
+	return ContinuationDecision{Continue: true}
 }
 
 // bindingLiteralKey is the wrapper the authoring schema uses to declare a
@@ -501,6 +565,15 @@ type irNode struct {
 			Backoff     string `json:"backoff"`
 		} `json:"retry"`
 	} `json:"policy"`
+	Continue *struct {
+		While []string `json:"while"`
+		Bounds struct {
+			MaxContinuations *int `json:"maxContinuations"`
+			MaxWallClock     string `json:"maxWallClock"`
+			MaxSessions      *int   `json:"maxSessions"`
+		} `json:"bounds"`
+		OnExhausted string `json:"onExhausted"`
+	} `json:"continue"`
 
 	// DecisionSchemaRef, ApproverRef, and Deadline mirror the authoring
 	// document's approval-node fields (schemas/workflow/workflow.schema.json,
@@ -556,6 +629,30 @@ func decodeNode(id string, raw *irNode) (*Node, error) {
 	if raw.Join != nil {
 		node.JoinPolicy = raw.Join.Policy
 		node.JoinQuorum = valueOr(raw.Join.Quorum, 0)
+	}
+	if raw.Continue != nil {
+		cont := &Continuation{OnExhausted: raw.Continue.OnExhausted}
+		cont.Bounds.MaxContinuations = valueOr(raw.Continue.Bounds.MaxContinuations, 0)
+		cont.Bounds.MaxSessions = valueOr(raw.Continue.Bounds.MaxSessions, 0)
+		if raw.Continue.Bounds.MaxWallClock != "" {
+			d, err := time.ParseDuration(raw.Continue.Bounds.MaxWallClock)
+			if err != nil {
+				return nil, fmt.Errorf("continue.bounds.maxWallClock: %w", err)
+			}
+			cont.Bounds.MaxWallClock = d
+		}
+		env, err := newCELEnv()
+		if err != nil {
+			return nil, err
+		}
+		for i, expression := range raw.Continue.While {
+			program, err := compileGuard(env, expression)
+			if err != nil {
+				return nil, fmt.Errorf("continue.while[%d]: %w", i, err)
+			}
+			cont.While = append(cont.While, program)
+		}
+		node.Continue = cont
 	}
 	if raw.Ledger != nil {
 		node.Propose = append([]string(nil), raw.Ledger.Propose...)
@@ -691,6 +788,8 @@ func newCELEnv() (*cel.Env, error) {
 		cel.Variable(celVarOutput, cel.DynType),
 		cel.Variable(celVarOutcome, cel.DynType),
 		cel.Variable(celVarEvent, cel.DynType),
+		cel.Variable(celVarNode, cel.DynType),
+		cel.Variable(celVarBudget, cel.DynType),
 	)
 	if err != nil {
 		return nil, fmt.Errorf("build CEL environment: %w", err)

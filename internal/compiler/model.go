@@ -129,8 +129,9 @@ type node struct {
 	Operation *codeOperation `json:"operation,omitempty"`
 	Ledger    *ledgerDelta   `json:"ledger,omitempty"`
 
-	Acceptance *acceptance `json:"acceptance,omitempty"`
-	Policy     *nodePolicy `json:"policy,omitempty"`
+	Acceptance *acceptance  `json:"acceptance,omitempty"`
+	Policy     *nodePolicy  `json:"policy,omitempty"`
+	Continue   *continuation `json:"continue,omitempty"`
 
 	DecisionSchemaRef string       `json:"decisionSchemaRef,omitempty"`
 	ApproverRef       string       `json:"approverRef,omitempty"`
@@ -154,6 +155,18 @@ type node struct {
 	// produce, sorted. The engine reads it instead of re-deriving the union of
 	// contract outcomes, decision ports, and kind-implied ports.
 	Outcomes []string `json:"outcomes,omitempty"`
+}
+
+type continuation struct {
+	While       []string           `json:"while"`
+	Bounds      continuationBounds `json:"bounds"`
+	OnExhausted string `json:"onExhausted"`
+}
+
+type continuationBounds struct {
+	MaxContinuations *int `json:"maxContinuations,omitempty"`
+	MaxWallClock     string `json:"maxWallClock,omitempty"`
+	MaxSessions      *int   `json:"maxSessions,omitempty"`
 }
 
 type nodeContract struct {

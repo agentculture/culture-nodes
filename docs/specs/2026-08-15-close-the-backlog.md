@@ -26,6 +26,10 @@
   - instruction: Re-run the three-region curl loop from thor at cutover.
 - Before: Two owner-only prerequisites block provisioning, both measured: il-central-1 is not enabled on account 435593604218 (an sts call there returns InvalidClientTokenId, the opt-in-region signature), and deploy/aws/dev-operator-policy.json grants SQS, S3, ECR, Lambda, scoped IAM and STS but no RDS at all (rds:DescribeOrderableDBInstanceOptions is denied).
   - instruction: Verify with: aws sts get-caller-identity --region il-central-1 and aws rds describe-orderable-db-instance-options --region il-central-1.
+- Before: Postgres data lives in a Docker named volume — `prod_pgdata`, mounted at /var/lib/docker/volumes/`prod_pgdata`/`_data` on thor, 96MB today — and its only backups are `pg_dump` -Fc files written every six hours to ~/.culture-nodes/backups on the same machine, seven retained, newest 2.3MB. Authoritative state and its entire backup history sit on one host's local disk. That, not memory, is the durability argument #59 actually has.
+  - instruction: Re-check the volume and backup facts after cutover: docker volume inspect `prod_pgdata`, ls ~/.culture-nodes/backups, and confirm RDS automated backups are on with a stated retention.
+- Before: The control-plane code is already database-location-agnostic: `NODES_DATABASE_URL` is a single connection URL read by api, migrate, scheduler and worker, and the Helm chart already documents bringing your own (postgresql.enabled false plus postgresql.external.url, values.yaml:155-160). It is already exercised in production — orin's worker connects to thor's Postgres over the LAN through the same variable. The gap is the compose profiles, which bundle a postgres service, inline sslmode=disable in four places, and point the backup loop at -h postgres.
+  - instruction: Read deploy/helm/culture-nodes/values.yaml:155-160 for the pattern to mirror, and deploy/prod/compose.orin.yml:20 for the remote-database call site already in production.
 - After: The tracker answers three questions without a human reconstructing them: what is closed and on what evidence, what is open and who owns it, and what the system did versus what a person did. Bucket A is closed on run evidence, the operator-lane loop runs the work instead of an operator's session, #5 exports live telemetry, and the four decision-shaped issues carry an owner's recorded answer.
   - instruction: Commit the four queries alongside the triage artifact so the after-state is re-derivable.
 
@@ -103,6 +107,12 @@
 - The two owner prerequisites are cleared as an explicit, recorded step: il-central-1 enabled on the account, and deploy/aws/dev-operator-policy.json extended with the RDS actions the provisioning needs plus whatever the OTel backend requires. The policy is a checked-in artifact, so the extension is a reviewable diff, not a console click.
   - instruction: Extend deploy/aws/dev-operator-policy.json with the RDS actions provisioning needs, re-run bootstrap-operator.sh, and confirm the previously-denied describe call now succeeds.
   - honesty: The policy extension is a reviewed diff in deploy/aws/dev-operator-policy.json, and the same provisioning commands that failed with AccessDenied succeed afterwards.
+- Every deployment profile takes the database as one input and can run with no bundled database: compose gains the switch the Helm chart already has, sslmode becomes a variable rather than four inlined copies of sslmode=disable, and the backup service either follows the same connection URL or is explicitly disabled in favour of the provider's backups — never silently pointed at a container that is not there.
+  - instruction: Add the toggle to deploy/compose/docker-compose.yml and deploy/prod/compose.thor.yml, and document it in both READMEs and .env.example.
+  - honesty: A compose stack started with the bundled database disabled and an external URL supplied comes up healthy and passes the smoke script; a stack started with neither fails with a clear error rather than silently starting an empty bundled database.
+- The RDS migration is executed as the first non-bundled deployment rather than as an AWS special case: the same switch a stranger would use to point at their own Neon or Cloud SQL instance is the switch our production stack uses to reach il-central-1. If the migration needs a code path a third-party install would not have, the portability requirement has been violated.
+  - instruction: Perform the cutover by changing `NODES_DATABASE_URL` and disabling the bundled service — nothing else.
+  - honesty: The diff that lands the RDS cutover touches deployment configuration and documentation only — no file under internal/ or cmd/ changes to make AWS work.
 
 ## Honesty conditions
 
@@ -134,6 +144,9 @@
 - The latency ladder is re-measured from thor at cutover time and recorded, because a route can change; a cutover that finds il-central-1 no longer near stops rather than proceeding on this measurement.
 - Both prerequisites are verified by a command that succeeds — an sts call in il-central-1 returning an identity, and an rds describe call returning options — not by someone reporting that they clicked the console.
 - The bridges-poll-outbound issue exists with a number before this cycle closes, so the deferral is a filed decision rather than a dropped thread.
+- The backup and volume facts are restated after the migration: if RDS becomes authoritative, the compose backup loop is either removed or repurposed, and no stale six-hourly `pg_dump` keeps running against a database nothing reads.
+- Pointing a fresh install at an external database requires editing configuration only: a clean checkout, one URL, no code change and no image rebuild — demonstrated by doing it against a throwaway database before the RDS cutover.
+- The bundled-Postgres path still passes its smoke test after the migration, run on a machine that has no AWS credentials at all.
 
 ## Success signals
 
@@ -170,6 +183,8 @@
   - instruction: Inspect each verification dispatch's recorded request for `writable_roots` or `handover_ref` and assert both are absent.
 - The event seam already exists and is the one to build on: POST /v1alpha1/events appends an immutable signal event and resumes matching subscriptions inside one transaction, with PostgreSQL the single writer of waiting state and no completion committed outside a fenced claim. The sweep split adds emission, conditions and triggers to that surface — it does not introduce a second event path.
   - instruction: Review the diff against internal/api/signalevents.go and migrations/0016 before merging any trigger work.
+- No AWS-specific assumption enters the control-plane code. RDS, S3, ECS and the OTel backend are deployment configuration; a self-hosted install with a bundled Postgres and MinIO must stay a first-class, tested target after the migration, not a legacy path that quietly rots.
+  - instruction: Keep the bundled-Postgres compose smoke in the test matrix and run it on a credential-free machine after the migration.
 
 ## Non-goals
 
@@ -251,6 +266,7 @@
 - Sweep is broken into two halves. Sweep itself becomes a pure finding-emitter: it discovers work, holds durable dedup state, and raises an event — nothing else. It carries no triage logic, no merge logic, and no opinion about what should happen next. Workflows with event handlers pick the events up, and the conditions on those handlers decide which workflow reacts to which finding.
 - Sweep re-raises only on change, per source key: a GitHub PR raises again only if its head commit changed or a comment arrived since the last raise; a Jira issue only if its updated timestamp moved or a comment was added. Everything else it sees, it has already reported and stays silent about.
 - \#59 is decided: authoritative state moves to AWS — RDS PostgreSQL replaces prod-postgres and S3 replaces MinIO — while api, worker, scheduler and notifier stay on thor and keep dispatching to the bridges over the LAN. No VPN, no change to the actor dispatch protocol. Bridges-poll-outbound, the configuration that would let agents live outside the LAN, becomes its own future issue rather than part of #59.
+- Where the database lives is a deployment input, never a product decision. Anyone installing culture-nodes points it at their own hosted Postgres — RDS, Cloud SQL, Neon, Supabase, a shared cluster, or the bundled container — and the same applies to where the compute runs: thor, ECS, Kubernetes or a laptop. Our own AWS choice is one deployment's answer, not the system's.
 
 ## Hard questions
 

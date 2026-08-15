@@ -4,7 +4,7 @@
   "schema_version": 5,
   "status": "exported",
   "created": "2026-08-15T13:56:35Z",
-  "updated": "2026-08-15T14:39:36Z",
+  "updated": "2026-08-15T14:43:58Z",
   "claims": [
     {
       "id": "c1",
@@ -1288,6 +1288,113 @@
       "hard_questions": [],
       "links": [],
       "instruction": "File the issue with the section 13 contract change and the all-backends implication named explicitly.",
+      "revisions": []
+    },
+    {
+      "id": "c73",
+      "kind": "before_state",
+      "text": "Postgres data lives in a Docker named volume \u2014 prod_pgdata, mounted at /var/lib/docker/volumes/prod_pgdata/_data on thor, 96MB today \u2014 and its only backups are pg_dump -Fc files written every six hours to ~/.culture-nodes/backups on the same machine, seven retained, newest 2.3MB. Authoritative state and its entire backup history sit on one host's local disk. That, not memory, is the durability argument #59 actually has.",
+      "origin": "llm",
+      "status": "confirmed",
+      "honesty_conditions": [
+        {
+          "id": "h52",
+          "text": "The backup and volume facts are restated after the migration: if RDS becomes authoritative, the compose backup loop is either removed or repurposed, and no stale six-hourly pg_dump keeps running against a database nothing reads.",
+          "status": "confirmed",
+          "instruction": ""
+        }
+      ],
+      "hard_questions": [],
+      "links": [],
+      "instruction": "Re-check the volume and backup facts after cutover: docker volume inspect prod_pgdata, ls ~/.culture-nodes/backups, and confirm RDS automated backups are on with a stated retention.",
+      "revisions": []
+    },
+    {
+      "id": "c74",
+      "kind": "before_state",
+      "text": "The control-plane code is already database-location-agnostic: NODES_DATABASE_URL is a single connection URL read by api, migrate, scheduler and worker, and the Helm chart already documents bringing your own (postgresql.enabled false plus postgresql.external.url, values.yaml:155-160). It is already exercised in production \u2014 orin's worker connects to thor's Postgres over the LAN through the same variable. The gap is the compose profiles, which bundle a postgres service, inline sslmode=disable in four places, and point the backup loop at -h postgres.",
+      "origin": "llm",
+      "status": "confirmed",
+      "honesty_conditions": [
+        {
+          "id": "h53",
+          "text": "Pointing a fresh install at an external database requires editing configuration only: a clean checkout, one URL, no code change and no image rebuild \u2014 demonstrated by doing it against a throwaway database before the RDS cutover.",
+          "status": "confirmed",
+          "instruction": ""
+        }
+      ],
+      "hard_questions": [],
+      "links": [],
+      "instruction": "Read deploy/helm/culture-nodes/values.yaml:155-160 for the pattern to mirror, and deploy/prod/compose.orin.yml:20 for the remote-database call site already in production.",
+      "revisions": []
+    },
+    {
+      "id": "c75",
+      "kind": "decision",
+      "text": "Where the database lives is a deployment input, never a product decision. Anyone installing culture-nodes points it at their own hosted Postgres \u2014 RDS, Cloud SQL, Neon, Supabase, a shared cluster, or the bundled container \u2014 and the same applies to where the compute runs: thor, ECS, Kubernetes or a laptop. Our own AWS choice is one deployment's answer, not the system's.",
+      "origin": "user",
+      "status": "confirmed",
+      "honesty_conditions": [],
+      "hard_questions": [],
+      "links": [],
+      "instruction": "",
+      "revisions": []
+    },
+    {
+      "id": "c76",
+      "kind": "requirement",
+      "text": "Every deployment profile takes the database as one input and can run with no bundled database: compose gains the switch the Helm chart already has, sslmode becomes a variable rather than four inlined copies of sslmode=disable, and the backup service either follows the same connection URL or is explicitly disabled in favour of the provider's backups \u2014 never silently pointed at a container that is not there.",
+      "origin": "llm",
+      "status": "confirmed",
+      "honesty_conditions": [
+        {
+          "id": "h54",
+          "text": "A compose stack started with the bundled database disabled and an external URL supplied comes up healthy and passes the smoke script; a stack started with neither fails with a clear error rather than silently starting an empty bundled database.",
+          "status": "confirmed",
+          "instruction": ""
+        }
+      ],
+      "hard_questions": [],
+      "links": [],
+      "instruction": "Add the toggle to deploy/compose/docker-compose.yml and deploy/prod/compose.thor.yml, and document it in both READMEs and .env.example.",
+      "revisions": []
+    },
+    {
+      "id": "c77",
+      "kind": "requirement",
+      "text": "The RDS migration is executed as the first non-bundled deployment rather than as an AWS special case: the same switch a stranger would use to point at their own Neon or Cloud SQL instance is the switch our production stack uses to reach il-central-1. If the migration needs a code path a third-party install would not have, the portability requirement has been violated.",
+      "origin": "llm",
+      "status": "confirmed",
+      "honesty_conditions": [
+        {
+          "id": "h55",
+          "text": "The diff that lands the RDS cutover touches deployment configuration and documentation only \u2014 no file under internal/ or cmd/ changes to make AWS work.",
+          "status": "confirmed",
+          "instruction": ""
+        }
+      ],
+      "hard_questions": [],
+      "links": [],
+      "instruction": "Perform the cutover by changing NODES_DATABASE_URL and disabling the bundled service \u2014 nothing else.",
+      "revisions": []
+    },
+    {
+      "id": "c78",
+      "kind": "boundary",
+      "text": "No AWS-specific assumption enters the control-plane code. RDS, S3, ECS and the OTel backend are deployment configuration; a self-hosted install with a bundled Postgres and MinIO must stay a first-class, tested target after the migration, not a legacy path that quietly rots.",
+      "origin": "llm",
+      "status": "confirmed",
+      "honesty_conditions": [
+        {
+          "id": "h56",
+          "text": "The bundled-Postgres path still passes its smoke test after the migration, run on a machine that has no AWS credentials at all.",
+          "status": "confirmed",
+          "instruction": ""
+        }
+      ],
+      "hard_questions": [],
+      "links": [],
+      "instruction": "Keep the bundled-Postgres compose smoke in the test matrix and run it on a credential-free machine after the migration.",
       "revisions": []
     }
   ],

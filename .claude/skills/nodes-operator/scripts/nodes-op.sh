@@ -51,8 +51,20 @@ usage: nodes-op.sh <verb> [args]
             --yes                                  (required: this bills a session)
   actors                       registered actors (requires `ssh thor`)
 
-Actors known to `assign`: codex-thor, codex-orin, developer (repo allowlists are per-host;
-`--repo <path>` pins one dispatch to an isolated worktree).
+Actors known to `assign`:
+  codex-thor, codex-orin   codex bridges on thor/orin. Cross-machine, separate
+                           identity — but NO Go, npm or working uv on those
+                           hosts (#96), so anything they build needs the
+                           operator's gate on spark before it can be believed.
+  developer, planner,      claude bridges on spark. Full toolchain, so they can
+  verifier, intake         actually run what they write — but all four share
+                           ONE subscription window with the operator's own
+                           session (#48, #97), so they are not four independent
+                           capacity pools. Fan out accordingly.
+
+Each actor defaults to its own worktree; `--repo <path>` pins a dispatch
+elsewhere. The bridge's own repo_allowlist is the real gate (exact-match), and
+for the claude bridges it is the ONLY one — `claude -p` takes no sandbox flag.
 EOF
   exit 1
 }
@@ -257,7 +269,7 @@ print(d.get("id", ""), d.get("authority", ""), origin.get("kind", ""),
       "rating=" + str(data.get("rating", "")), "actor=" + str(data.get("evaluated_actor_id", "")))'
   ;;
 assign)
-  actor="${1:?usage: assign <codex-thor|codex-orin|developer> \"instruction\" [opts]}"; shift
+  actor="${1:?usage: assign <codex-thor|codex-orin|developer|planner|verifier|intake> \"instruction\" [opts]}"; shift
   instruction="${1:?assign needs an instruction}"; shift
   sandbox=read-only; timeout=15m; retries=1; outcome=completed; watch=1; category=""; repo_override=""
   while [ $# -gt 0 ]; do
@@ -276,8 +288,19 @@ assign)
   case "$actor" in
     codex-thor) ref="actor://company/codex-thor@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"; repo=/home/thor/git/culture-nodes-agent;;
     codex-orin) ref="actor://company/codex-orin@sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"; repo=/home/orin/git/culture-nodes-agent;;
-    developer) ref="actor://company/developer@sha256:3333333333333333333333333333333333333333333333333333333333333333"; repo=/home/spark/git/culture-nodes;;
-    *) echo "nodes-op: unknown actor '$actor' (codex-thor|codex-orin|developer)" >&2; exit 1;;
+    # The four spark claude bridges. Each defaults to its OWN lane worktree,
+    # never the operator's checkout: `claude -p` takes no sandbox flag and runs
+    # with the bridge process's own privileges (its capability surface says so
+    # outright -- "confinement: none"), so the repo allowlist is the only
+    # boundary there is. developer used to default to /home/spark/git/culture-nodes,
+    # which is the checkout the operator is working in; a dispatch and a merge
+    # gate would have been writing to the same tree at once (the c42 concurrent
+    # -writer corruption mode).
+    developer) ref="actor://company/developer@sha256:3333333333333333333333333333333333333333333333333333333333333333"; repo=/home/spark/git/.worktrees.culture-nodes/owe-developer;;
+    planner)   ref="actor://company/planner@sha256:4444444444444444444444444444444444444444444444444444444444444444";   repo=/home/spark/git/.worktrees.culture-nodes/owe-planner;;
+    verifier)  ref="actor://company/verifier@sha256:5555555555555555555555555555555555555555555555555555555555555555";  repo=/home/spark/git/.worktrees.culture-nodes/owe-verifier;;
+    intake)    ref="actor://company/intake@sha256:6666666666666666666666666666666666666666666666666666666666666666";    repo=/home/spark/git/.worktrees.culture-nodes/owe-intake;;
+    *) echo "nodes-op: unknown actor '$actor' (codex-thor|codex-orin|developer|planner|verifier|intake)" >&2; exit 1;;
   esac
   # --repo pins a dispatch to one isolated worktree; the bridge's own
   # repo_allowlist is the real gate (exact-match), so an unlisted path is

@@ -321,6 +321,8 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("POST /v1alpha1/workflows", s.wrap(s.handlePublishWorkflow))
 	mux.HandleFunc("GET /v1alpha1/workflows", s.wrap(s.handleListWorkflows))
 	mux.HandleFunc("GET /v1alpha1/workflows/{digest}", s.wrap(s.handleGetWorkflow))
+	mux.HandleFunc("POST /v1alpha1/workflow-generations", s.wrap(s.handleCreateWorkflowGeneration))
+	mux.HandleFunc("GET /v1alpha1/workflow-generations/{id}", s.wrap(s.handleGetWorkflowGeneration))
 
 	mux.HandleFunc("POST /v1alpha1/adhoc-runs", s.wrap(s.handleCreateAdhocRun))
 	mux.HandleFunc("POST /v1alpha1/runs", s.wrap(s.handleCreateRun))

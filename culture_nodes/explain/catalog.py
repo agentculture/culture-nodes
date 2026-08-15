@@ -31,7 +31,7 @@ response.
 
 ## Product verbs (thin API clients)
 
-- `culture-nodes workflow validate|publish|list|get`
+- `culture-nodes workflow generate|generation-get|validate|publish|list|get`
 - `culture-nodes run create|list|get|cancel|events|retag|grade`
 - `culture-nodes node-runs list`
 - `culture-nodes actors list|get|resume`
@@ -154,12 +154,15 @@ _WORKFLOW = """\
 # culture-nodes workflow
 
 Thin REST client over the workflows API (`api/openapi/openapi.yaml`,
-`workflows` tag): validate, publish, list, get. No engine logic lives here —
-every verb sends one HTTP request to the Culture Nodes control-plane API
-(the Go `nodes serve` binary) and renders the response.
+`workflows` tag): generate, generation-get, validate, publish, list, get.
+No engine logic lives here — every verb sends one HTTP request to the
+Culture Nodes control-plane API (the Go `nodes serve` binary) and renders
+the response.
 
 ## Usage
 
+    culture-nodes workflow generate "DESCRIPTION" --actor-ref REF [--base-digest DIGEST]
+    culture-nodes workflow generation-get <run-id>
     culture-nodes workflow validate <file.yaml|file.json>
     culture-nodes workflow publish <file.yaml|file.json>
     culture-nodes workflow list [--workflow-key KEY] [--limit N]
@@ -175,6 +178,13 @@ Compiles the file server-side and reports every diagnostic. A document with
 error diagnostics is a domain outcome (`valid: false`), not a technical
 failure: diagnostics print to stdout with exit `1`, never an `error:`/
 `hint:` stderr message.
+
+## generate
+
+Dispatches the one server-side generation workflow to a registered fleet
+agent. The result stays `proposed` until its native approval node receives a
+human decision and is never published by this verb. `generation-get` returns
+the compiler diagnostics and, for an edit, the diff against `--base-digest`.
 
 ## publish
 
@@ -489,6 +499,8 @@ ENTRIES: dict[tuple[str, ...], str] = {
     ("cli",): _CLI,
     ("cli", "overview"): _CLI,
     ("workflow",): _WORKFLOW,
+    ("workflow", "generate"): _WORKFLOW,
+    ("workflow", "generation-get"): _WORKFLOW,
     ("workflow", "validate"): _WORKFLOW,
     ("workflow", "publish"): _WORKFLOW,
     ("workflow", "list"): _WORKFLOW,

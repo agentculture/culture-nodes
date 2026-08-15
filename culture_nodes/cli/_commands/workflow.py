@@ -1,8 +1,8 @@
 """``nodes workflow`` — thin REST client over the workflows API.
 
 Every verb here is one HTTP call to the Culture Nodes control-plane API
-(``api/openapi/openapi.yaml``, ``workflows`` tag): validate, publish, list,
-get. No engine logic lives in this module (spec decision c28) — compiling,
+(``api/openapi/openapi.yaml``, ``workflows`` tag): generate, generation-get,
+validate, publish, list, get. No engine logic lives in this module (spec decision c28) — compiling,
 digesting, and storing a workflow all happen server-side; this module only
 shapes the request and renders the response.
 """
@@ -79,6 +79,46 @@ def cmd_workflow_validate(args: argparse.Namespace) -> int:
     return 0 if (resp.payload or {}).get("valid") else 1
 
 
+def _render_generation(payload: dict) -> str:
+    lines = [f"status: {payload.get('status', 'proposed')}", f"run_id: {payload.get('run_id', '')}"]
+    if payload.get("digest"):
+        lines.append(f"digest: {payload['digest']}")
+    if payload.get("source"):
+        lines.extend(["source:", payload["source"]])
+    if payload.get("diff"):
+        lines.extend(["diff:", payload["diff"]])
+    return "\n".join(lines)
+
+
+def cmd_workflow_generate(args: argparse.Namespace) -> int:
+    client = client_from_args(args)
+    resp = client.request(
+        "POST",
+        f"{API_PREFIX}/workflow-generations",
+        json_body={
+            "description": args.description,
+            "actor_ref": args.actor_ref,
+            "base_digest": args.base_digest,
+        },
+    )
+    if args.json:
+        emit_json_passthrough(resp.raw)
+    else:
+        emit_result(_render_generation(resp.payload or {}), json_mode=False)
+    return 0
+
+
+def cmd_workflow_generation_get(args: argparse.Namespace) -> int:
+    client = client_from_args(args)
+    resp = client.request("GET", f"{API_PREFIX}/workflow-generations/{args.run_id}")
+    if args.json:
+        emit_json_passthrough(resp.raw)
+    else:
+        emit_result(_render_generation(resp.payload or {}), json_mode=False)
+    payload = resp.payload or {}
+    return 1 if payload.get("status") in {"exhausted", "rejected"} else 0
+
+
 def cmd_workflow_publish(args: argparse.Namespace) -> int:
     source, fmt = _read_workflow_source(args.file)
     client = client_from_args(args)
@@ -147,7 +187,7 @@ def cmd_workflow_get(args: argparse.Namespace) -> int:
 
 def _bare_noun(args: argparse.Namespace) -> int:
     emit_result(
-        "usage: nodes workflow {validate,publish,list,get} ...\n"
+        "usage: nodes workflow {generate,generation-get,validate,publish,list,get} ...\n"
         "run 'nodes explain workflow' for details",
         json_mode=False,
     )
@@ -155,12 +195,30 @@ def _bare_noun(args: argparse.Namespace) -> int:
 
 
 def register(sub: argparse._SubParsersAction) -> None:
-    p = sub.add_parser(
-        "workflow", help="Thin client for the workflows API (validate/publish/list/get)."
-    )
+    p = sub.add_parser("workflow", help="Generate proposals and use the workflows API.")
     p.add_argument("--json", action="store_true", help=JSON_FLAG_HELP)
     p.set_defaults(func=_bare_noun, json=False)
     noun_sub = p.add_subparsers(dest="workflow_command", parser_class=type(p))
+
+    generate = noun_sub.add_parser(
+        "generate", help="Dispatch a fleet agent to propose a workflow from plain text."
+    )
+    generate.add_argument("description", help="Plain-text workflow description.")
+    generate.add_argument(
+        "--actor-ref", required=True, help="Registered fleet actor component ref."
+    )
+    generate.add_argument("--base-digest", default="", help="Pinned workflow version to edit.")
+    generate.add_argument("--json", action="store_true", help=JSON_FLAG_HELP)
+    add_api_url_argument(generate)
+    generate.set_defaults(func=cmd_workflow_generate)
+
+    generation_get = noun_sub.add_parser(
+        "generation-get", help="Fetch a generated proposal, validation, and pinned diff."
+    )
+    generation_get.add_argument("run_id", help="Generation run id returned by workflow generate.")
+    generation_get.add_argument("--json", action="store_true", help=JSON_FLAG_HELP)
+    add_api_url_argument(generation_get)
+    generation_get.set_defaults(func=cmd_workflow_generation_get)
 
     validate = noun_sub.add_parser(
         "validate", help="Compile a workflow definition and report diagnostics."

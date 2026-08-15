@@ -9,6 +9,7 @@ import AgentStateScript from "./agent-state/AgentStateScript";
 import { setAgentState } from "./agent-state/store";
 import Header from "./components/Header";
 import AuthorWorkflow from "./routes/AuthorWorkflow";
+import GenerateWorkflow from "./routes/GenerateWorkflow";
 import Inbox from "./routes/Inbox";
 import JobsTimeline from "./routes/JobsTimeline";
 import LedgerView from "./routes/LedgerView";
@@ -57,6 +58,7 @@ export function App() {
             element={<Navigate to="/graphs?tab=graphs" replace />}
           />
           <Route path="/workflows/new" element={<AuthorWorkflow />} />
+          <Route path="/workflows/generate" element={<GenerateWorkflow />} />
           <Route path="/runs/:id" element={<RunView />} />
           <Route path="/runs/:id/ledger" element={<LedgerView />} />
           <Route

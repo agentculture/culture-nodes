@@ -174,6 +174,70 @@ def test_common_argv_instruction_is_always_the_trailing_positional():
     assert argv[-1] == "last arg please"
 
 
+# ---------------------------------------------------------------------------
+# `.git` write is opt-in per dispatch (task t6, issue #91, deviation d6)
+# ---------------------------------------------------------------------------
+
+
+def test_a_dispatch_that_hands_over_no_ref_gets_no_git_write():
+    """The default, and the load-bearing half: `.git` stays read-only for
+    every dispatch that did not ask to hand a ref over. A widening that
+    happened by default would be a sandbox change nobody decided."""
+    argv = codex_cli._common_argv("do the thing", "/repo", model=None, sandbox="workspace-write")
+    assert not any(arg == "-c" for arg in argv)
+    assert not any("writable_roots" in arg for arg in argv)
+
+
+def test_a_handover_dispatch_widens_exactly_dot_git_and_nothing_else():
+    argv = codex_cli._common_argv(
+        "do the thing", "/repo", model=None, sandbox="workspace-write", writable_git=True
+    )
+    assert argv == [
+        "exec",
+        "--json",
+        "--sandbox",
+        "workspace-write",
+        "-C",
+        "/repo",
+        "-c",
+        'sandbox_workspace_write={writable_roots=["/repo/.git"]}',
+        "do the thing",
+    ]
+    # Still a sandboxed mode: the widening is scoped to .git, and #91 settled
+    # that danger-full-access is not needed for a handover.
+    assert "danger-full-access" not in argv
+
+
+def test_git_write_is_never_widened_under_a_read_only_sandbox():
+    """A read-only dispatch asking for a writable `.git` is incoherent, and
+    the incoherence is resolved toward the narrower authority."""
+    argv = codex_cli._common_argv(
+        "do the thing", "/repo", model=None, sandbox="read-only", writable_git=True
+    )
+    assert not any("writable_roots" in arg for arg in argv)
+
+
+def test_git_writable_override_names_the_repo_dot_git_without_a_double_slash():
+    assert codex_cli.git_writable_override("/home/thor/git/culture-nodes-agent/") == (
+        'sandbox_workspace_write={writable_roots=["/home/thor/git/culture-nodes-agent/.git"]}'
+    )
+
+
+def test_resume_carries_no_sandbox_override_because_it_carries_no_sandbox():
+    """A resumed session keeps the policy it started with, which is why
+    `--sandbox` is absent from the resume line -- so the override cannot be
+    bolted on later either."""
+    argv = codex_cli._common_argv(
+        "continue",
+        "/repo",
+        model=None,
+        sandbox="workspace-write",
+        continuation_ref="thread_1",
+        writable_git=True,
+    )
+    assert argv == ["exec", "resume", "thread_1", "--json", "continue"]
+
+
 def test_sandbox_modes_are_the_three_codex_declares():
     assert codex_cli.SANDBOX_MODES == frozenset(
         {"read-only", "workspace-write", "danger-full-access"}

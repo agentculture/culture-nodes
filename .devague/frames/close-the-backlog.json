@@ -4,7 +4,7 @@
   "schema_version": 5,
   "status": "exported",
   "created": "2026-08-15T13:56:35Z",
-  "updated": "2026-08-15T15:22:55Z",
+  "updated": "2026-08-15T17:13:55Z",
   "claims": [
     {
       "id": "c1",
@@ -1512,6 +1512,633 @@
       "links": [],
       "instruction": "",
       "revisions": []
+    },
+    {
+      "id": "c87",
+      "kind": "decision",
+      "text": "The database stays on thor. Off-machine durability \u2014 the only surviving argument for moving it, once the memory premise was falsified \u2014 is bought by shipping the existing six-hourly pg_dump to S3 for about a dollar a month, which is issue #30. No RDS instance is provisioned, no security group is pinned to a moving address, and no tunnel or AWS-side terminator is introduced. A separate issue trials a credential-authenticated managed Postgres (Neon or Supabase free tier) so the option is measured rather than assumed.",
+      "origin": "user",
+      "status": "confirmed",
+      "honesty_conditions": [
+        {
+          "id": "h60",
+          "text": "The durability claim is proven by a restore, not by an upload: a dump fetched from S3 is restored into a scratch Postgres and the stack runs against it, before #30 is called done.",
+          "status": "confirmed",
+          "instruction": ""
+        }
+      ],
+      "hard_questions": [],
+      "links": [],
+      "instruction": "Extend the compose backup service to push each dump to s3://culture-nodes-*/backups/ using the ArtifactBucket grant the operator policy already holds, then prove a restore from S3.",
+      "revisions": []
+    },
+    {
+      "id": "c88",
+      "kind": "decision",
+      "text": "A dialing worker authenticates by extending the HMAC scheme that already exists: internal/actors/token.go signs short-lived attempt tokens for the inbound direction today, so each registered actor gains a rotatable credential and derives short-lived tokens from it on dial. No identity provider enters the critical path of a dispatch, and the empty internal/auth package finally has its contents. #6 (OIDC / workload identity) stays parked, now for a stated reason rather than for want of a cloud lane.",
+      "origin": "user",
+      "status": "confirmed",
+      "honesty_conditions": [
+        {
+          "id": "h61",
+          "text": "A worker presenting no credential, an expired one, or another actor's credential is refused, and each refusal is a distinct test that fails if the check is stubbed.",
+          "status": "confirmed",
+          "instruction": ""
+        }
+      ],
+      "hard_questions": [],
+      "links": [],
+      "instruction": "Build on internal/actors/token.go's HMAC signer and constant-time verify; put the registered-actor credential in the empty internal/auth package rather than adding a fourth place auth lives.",
+      "revisions": []
+    },
+    {
+      "id": "c89",
+      "kind": "decision",
+      "text": "The section 13 inversion is inside this program: stage 3 is bridges dialing in and endpoint_ref leaving the actors table. It competes with the backlog close for the same window and the same actors, and that trade is accepted deliberately \u2014 the inversion is what actually delivers the mass-mesh goal #59 was reaching for, and delivers it better than moving a database ever would have.",
+      "origin": "user",
+      "status": "confirmed",
+      "honesty_conditions": [
+        {
+          "id": "h62",
+          "text": "The inversion is demonstrated, not declared: one dispatch reaches a bridge that the control plane holds no address for, and endpoint_ref is dropped from the actors table in the same cycle rather than left in place unused.",
+          "status": "confirmed",
+          "instruction": ""
+        }
+      ],
+      "hard_questions": [],
+      "links": [],
+      "instruction": "Sequence it after the operator-lane bootstrap so the harvest, gate and decision nodes exist to carry the work; all five bridges change together per the all-backends rule.",
+      "revisions": []
+    },
+    {
+      "id": "c90",
+      "kind": "assumption",
+      "text": "#59's disposition changes shape rather than closing quietly: its memory premise was falsified by measurement, its durability premise is answered by #30, and its mass-mesh premise is answered by the stage-3 inversion. What remains of it \u2014 cloud-authoritative state as a thing worth proving on its own \u2014 is either closed with that accounting recorded or narrowed to a successor issue, and the owner decides which.",
+      "origin": "llm",
+      "status": "confirmed",
+      "honesty_conditions": [],
+      "hard_questions": [],
+      "links": [],
+      "instruction": "",
+      "revisions": []
+    },
+    {
+      "id": "c91",
+      "kind": "before_state",
+      "text": "The actors table stores endpoint_ref (migrations/0001_namespaces_and_identity.sql:46) and runner_invocations stores endpoint, so the control plane records where each participant lives today. The connection principle makes those columns wrong, not merely unfashionable, and the inversion is what removes them. Auth is already split by direction: HMAC-signed short-lived attempt tokens inbound (internal/actors/token.go), a static per-endpoint bearer outbound (internal/actors/client.go:425). A dialing worker is inbound, so the scheme to extend is the one that already works.",
+      "origin": "llm",
+      "status": "confirmed",
+      "honesty_conditions": [
+        {
+          "id": "h63",
+          "text": "The choice is recorded before the cycle closes: either dev-operator-policy.json no longer grants RDS, or a line in the delivery summary says why the grant is kept. Silence is the failure mode.",
+          "status": "confirmed",
+          "instruction": ""
+        }
+      ],
+      "hard_questions": [],
+      "links": [],
+      "instruction": "Re-read deploy/aws/dev-operator-policy.json at cycle close and decide; reverting costs one admin 'bootstrap-operator.sh update-policy' run.",
+      "revisions": []
+    },
+    {
+      "id": "c92",
+      "kind": "assumption",
+      "text": "The RDS and EC2 grants added to dev-operator-policy.json this session are now unused by any decided work: the database is not moving, and a Neon or Supabase trial would not touch them. Leaving permissions that nothing exercises is the drift this repo dislikes, so they are either reverted with one more admin update-policy run at the end of the cycle, or kept deliberately because the trial may send us back to RDS. That is a recorded choice, not something to discover later in an audit.",
+      "origin": "llm",
+      "status": "confirmed",
+      "honesty_conditions": [],
+      "hard_questions": [],
+      "links": [],
+      "instruction": "",
+      "revisions": []
+    },
+    {
+      "id": "c93",
+      "kind": "assumption",
+      "text": "CHALLENGE / unstated-assumptions lens: the fleet fact that the agent hosts have 'no Go, no npm, no working uv run' (own-the-work STATE section 6) is partly falsified. Measured on thor over ssh: npm is at /usr/bin/npm, uv is at /snap/bin/uv, and 'uv run pytest -q' in adapters/colleague passed 248 tests in 6.57s. Only Go is genuinely absent. The caveat that keeps this from being a clean win: it was measured over plain ssh, NOT inside a codex dispatch's sandbox, and the sandbox's socket restriction is exactly what broke loopback tests before. The sandboxed answer remains unmeasured.",
+      "origin": "llm",
+      "status": "confirmed",
+      "honesty_conditions": [],
+      "hard_questions": [],
+      "links": [],
+      "instruction": "",
+      "revisions": []
+    },
+    {
+      "id": "c94",
+      "kind": "requirement",
+      "text": "CHALLENGE / unstated-assumptions lens: stage 1 is two lanes, not one, and the plan must say which issue goes to which. c7 demands executable evidence; no agent host has Go; so the Go-side and shell-side verifications (#8, #9, #13, #17, #28, #48) can only produce that evidence on spark \u2014 in the operator's window, which the concurrency cap c55 exists to protect. The Python-side ones (#54, #62, #61, #10, #98) may run on the agent host if the sandbox permits it, which is itself the first thing stage 1 should measure.",
+      "origin": "llm",
+      "status": "confirmed",
+      "honesty_conditions": [
+        {
+          "id": "h64",
+          "text": "The lane split is written down before stage 1 dispatches anything, and every bucket-A issue appears in exactly one lane; an issue whose evidence turns out to need the other lane is a recorded miss, not a silent re-route.",
+          "status": "confirmed",
+          "instruction": ""
+        }
+      ],
+      "hard_questions": [],
+      "links": [],
+      "instruction": "Split bucket A by what its evidence needs: Go or shell to spark, Python to the agent host if the sandbox probe passes.",
+      "revisions": []
+    },
+    {
+      "id": "c95",
+      "kind": "requirement",
+      "text": "CHALLENGE / adjacent-systems lens: dropping endpoint_ref is a CONTRACT migration under ADR 0002, which permits a destructive change only at least one release after the binary that stopped depending on it. Stage 3 therefore needs an expand-then-contract sequence across two releases \u2014 stop writing and reading the column, ship, then drop \u2014 and cannot do both in one. This directly contradicts c89's honesty condition as written, which demands the column be dropped in the same cycle.",
+      "origin": "llm",
+      "status": "confirmed",
+      "honesty_conditions": [
+        {
+          "id": "h65",
+          "text": "The migration that drops endpoint_ref is not in the same release as the binary that stops using it, and ADR 0002's rule is cited in the migration file itself.",
+          "status": "confirmed",
+          "instruction": ""
+        }
+      ],
+      "hard_questions": [],
+      "links": [],
+      "instruction": "Sequence as expand, migrate, contract: stop reading and writing the column, ship, then drop in a later release.",
+      "revisions": []
+    },
+    {
+      "id": "c96",
+      "kind": "boundary",
+      "text": "CHALLENGE / security lens: the HMAC dial credential is never stored in the database. The existing registry already does this correctly \u2014 internal/worker/registry.go:153 stores auth_token_env, the NAME of an environment variable, and reads the secret from the environment at load time \u2014 which is why a pg_dump carries no actor credential today. The dialing credential follows the same rule, so that property survives the inversion.",
+      "origin": "llm",
+      "status": "confirmed",
+      "honesty_conditions": [
+        {
+          "id": "h70",
+          "text": "grep over the schema and the dump for a credential column returns nothing, and the dial credential appears only as an environment-variable name in configuration.",
+          "status": "confirmed",
+          "instruction": ""
+        }
+      ],
+      "hard_questions": [],
+      "links": [],
+      "instruction": "Follow internal/worker/registry.go:153's auth_token_env pattern for the dialing credential.",
+      "revisions": []
+    },
+    {
+      "id": "c97",
+      "kind": "requirement",
+      "text": "CHALLENGE / security lens: a pg_dump carries the full ledger \u2014 instructions, claims, evidence text and whatever repo content an agent quoted into them \u2014 so #30's S3 destination is private with server-side encryption and a stated retention, not merely a bucket that exists. No actor credentials are in the dump (registry.go:153), which lowers the severity but does not remove it.",
+      "origin": "llm",
+      "status": "confirmed",
+      "honesty_conditions": [
+        {
+          "id": "h66",
+          "text": "The bucket refuses a public read and the objects are encrypted at rest, both checked by a command whose output is pasted into #30 \u2014 not by reading the console.",
+          "status": "confirmed",
+          "instruction": ""
+        }
+      ],
+      "hard_questions": [],
+      "links": [],
+      "instruction": "Set SSE and a public-access block on the culture-nodes-* backup bucket, and state the retention alongside the existing seven-dump local rotation.",
+      "revisions": []
+    },
+    {
+      "id": "c98",
+      "kind": "requirement",
+      "text": "CHALLENGE / security lens: the inversion moves the attack surface and the frame has no answer for it. Today the control plane dials out and an impostor must be at a known address holding a token; once bridges dial in, anything that can reach the control plane may attempt to authenticate as an actor. The dial path needs rate limiting, lockout on repeated failure, and a revocation path for a compromised actor credential \u2014 none of which exists today.",
+      "origin": "llm",
+      "status": "confirmed",
+      "honesty_conditions": [
+        {
+          "id": "h67",
+          "text": "A worker presenting a wrong credential repeatedly is locked out, and a revoked actor credential stops working on the next dial \u2014 each proven by a test that fails when the check is removed.",
+          "status": "confirmed",
+          "instruction": ""
+        }
+      ],
+      "hard_questions": [],
+      "links": [],
+      "instruction": "Design rate limiting, lockout and revocation alongside the credential itself; a credential with no revocation path is a credential you cannot rotate under compromise.",
+      "revisions": []
+    },
+    {
+      "id": "c99",
+      "kind": "requirement",
+      "text": "CHALLENGE / lifecycle lens: the inversion specifies a mixed mode or it is a flag day across three machines. Five bridges on thor, orin and spark cannot all cut over atomically, so either both transports stay alive during the transition \u2014 the control plane dialing out to bridges that have not converted, accepting dials from those that have \u2014 or the cutover is a coordinated restart with no rollback. The frame currently says neither.",
+      "origin": "llm",
+      "status": "confirmed",
+      "honesty_conditions": [
+        {
+          "id": "h68",
+          "text": "Either both transports are alive simultaneously and one bridge is converted while another is not, demonstrated live, or the plan states the flag day explicitly with its rollback.",
+          "status": "confirmed",
+          "instruction": ""
+        }
+      ],
+      "hard_questions": [],
+      "links": [],
+      "instruction": "Decide mixed-mode versus flag day before writing the first bridge change; the answer determines whether the control plane keeps its outbound dial path.",
+      "revisions": []
+    },
+    {
+      "id": "c100",
+      "kind": "assumption",
+      "text": "CHALLENGE / operations lens: holding persistent inbound connections changes what internal/api is. It is a plain net/http server today, and a dead bridge is discovered lazily at dispatch time; with dial-in it must track connection liveness, handle reconnect and backoff, and decide what a dispatch means when the actor's connection has dropped but its lease has not expired.",
+      "origin": "llm",
+      "status": "confirmed",
+      "honesty_conditions": [],
+      "hard_questions": [],
+      "links": [],
+      "instruction": "",
+      "revisions": []
+    },
+    {
+      "id": "c101",
+      "kind": "assumption",
+      "text": "CHALLENGE / observability lens, and a positive finding: #5's own trigger condition already holds. It says OTel 'becomes worthwhile once the thor+orin production pair runs two workers against one Postgres', and that is the deployment right now \u2014 prod-worker-1 is up on thor and on orin, both against thor's prod-postgres-1. #5 therefore waits on nothing: it needs a collector and a trace, and with the AWS move cancelled it has no external dependency at all.",
+      "origin": "llm",
+      "status": "confirmed",
+      "honesty_conditions": [],
+      "hard_questions": [],
+      "links": [],
+      "instruction": "",
+      "revisions": []
+    },
+    {
+      "id": "c102",
+      "kind": "requirement",
+      "text": "CHALLENGE / recovery lens: c69's rollback requirement was written for an RDS cutover that is no longer happening, and is now orphaned. Re-point it at #30: a dump fetched back FROM S3 is restored into a scratch Postgres and the stack runs against it, before #30 is called done. Otherwise the cycle ships a backup nobody has ever restored \u2014 which is the same failure the original single-machine backup had.",
+      "origin": "llm",
+      "status": "confirmed",
+      "honesty_conditions": [
+        {
+          "id": "h69",
+          "text": "A dump is fetched back from S3, restored into a scratch Postgres, and the stack runs against it \u2014 before #30 closes.",
+          "status": "confirmed",
+          "instruction": ""
+        }
+      ],
+      "hard_questions": [],
+      "links": [],
+      "instruction": "Re-point c69's rollback proof at the S3 path; the RDS cutover it was written for is cancelled.",
+      "revisions": []
+    },
+    {
+      "id": "c103",
+      "kind": "decision",
+      "text": "Credentials start simple and get a record per machine, configured in the database, because the exposure today is LAN-scoped and the cost of building real auth now is not worth paying. User types, admin lanes and proper authentication are filed as their own issue, and this simple form is explicitly the thing that issue replaces.",
+      "origin": "user",
+      "status": "confirmed",
+      "honesty_conditions": [],
+      "hard_questions": [],
+      "links": [],
+      "instruction": "",
+      "revisions": []
+    },
+    {
+      "id": "c104",
+      "kind": "decision",
+      "text": "ADR 0002's expand-contract rule is bypassed for the endpoint_ref drop: the cycle ships it as a breaking change in one release, with human approval recorded as the authority for the bypass rather than the policy being quietly ignored.",
+      "origin": "user",
+      "status": "confirmed",
+      "honesty_conditions": [],
+      "hard_questions": [],
+      "links": [],
+      "instruction": "",
+      "revisions": []
+    },
+    {
+      "id": "c105",
+      "kind": "requirement",
+      "text": "CHALLENGE follow-up: the simple credential record stores a REFERENCE or a hash, never the secret itself. Two already-confirmed decisions collide with putting secrets in the database: c96 (the credential is never stored there, which is why a pg_dump carries none today) and #30, which ships those very dumps to S3. Simple credentials in the database plus dumps in object storage equals credentials in object storage, from two changes neither of which looks dangerous alone. Storing the environment-variable name \u2014 the pattern internal/worker/registry.go:153 already uses \u2014 or a hash of the secret gives the per-machine record with the property intact.",
+      "origin": "llm",
+      "status": "confirmed",
+      "honesty_conditions": [
+        {
+          "id": "h71",
+          "text": "A pg_dump of the credential table yields nothing an attacker could present: only hashes or environment-variable names, checked by inspecting a real dump.",
+          "status": "confirmed",
+          "instruction": ""
+        }
+      ],
+      "hard_questions": [],
+      "links": [],
+      "instruction": "Follow internal/worker/registry.go:153's auth_token_env pattern, or store a hash; key the row by actor key or host name, never by IP.",
+      "revisions": []
+    },
+    {
+      "id": "c106",
+      "kind": "requirement",
+      "text": "CHALLENGE follow-up: 'no risk for now' has a precise expiry, and it is inside this program. The exposure is LAN-scoped only while the control plane dials out to bridges at known addresses. Stage 3's inversion makes the control plane accept inbound dials, at which point anything that can reach it may attempt to authenticate as an actor. The simple credential form is therefore acceptable until the dial-in path accepts its first connection, not until 'auth lands' \u2014 an unbounded date the program does not control.",
+      "origin": "llm",
+      "status": "confirmed",
+      "honesty_conditions": [
+        {
+          "id": "h72",
+          "text": "The simple credential form is replaced before the dial-in path accepts its first connection, and #111 is referenced from the code that implements the simple form.",
+          "status": "confirmed",
+          "instruction": ""
+        }
+      ],
+      "hard_questions": [],
+      "links": [],
+      "instruction": "Put the expiry in a comment at the credential's definition site, naming #111 and the dial-in event.",
+      "revisions": []
+    },
+    {
+      "id": "c107",
+      "kind": "assumption",
+      "text": "CHALLENGE follow-up: recording a credential per machine or IP sits uneasily beside c84, which says the system does not store, depend on, or filter by any participant's IP address. A credential keyed BY machine identity is compatible with the principle; a credential keyed by IP address is the thing the principle rejects, and thor's address is not static anyway. The distinction is worth making explicit before the column is named.",
+      "origin": "llm",
+      "status": "confirmed",
+      "honesty_conditions": [],
+      "hard_questions": [],
+      "links": [],
+      "instruction": "",
+      "revisions": []
+    },
+    {
+      "id": "c108",
+      "kind": "assumption",
+      "text": "The ADR 0002 bypass is safe here for a reason worth stating rather than assuming: expand-contract exists to keep the immediately-previous binary running during a rolling deploy, and this deployment is two workers and one API restarted together by deploy.sh, not a fleet rolling over. The rule protects against a hazard this topology does not have \u2014 which is why the bypass is a considered exception and not a precedent for the next migration.",
+      "origin": "llm",
+      "status": "confirmed",
+      "honesty_conditions": [],
+      "hard_questions": [],
+      "links": [],
+      "instruction": "",
+      "revisions": []
+    },
+    {
+      "id": "c109",
+      "kind": "before_state",
+      "text": "PROBE RESULT (runs 01M03374VAKH0KHN0GDZ466NP4 on thor, 01M0342X60F3NY8MH150G48AZ6 on orin): a dispatched codex session cannot execute a Python test suite on EITHER agent host, and the two hosts fail for different reasons. thor's uv is a snap, and snap-confine cannot run inside the sandbox ('required permitted capability cap_dac_override not found'). orin's uv is a standalone binary that gets past that, and then dies anyway: 'Could not create temporary file ... Read-only file system (os error 30) at path /home/orin/.cache/uv'. Neither suite started. My earlier ssh measurement was real but answered a different question, exactly as its caveat said.",
+      "origin": "llm",
+      "status": "confirmed",
+      "honesty_conditions": [
+        {
+          "id": "h73",
+          "text": "The probe results are re-checked if either agent host's toolchain is reinstalled, because both findings were properties of how uv was packaged and sandboxed, not of the hosts forever.",
+          "status": "confirmed",
+          "instruction": ""
+        }
+      ],
+      "hard_questions": [],
+      "links": [],
+      "instruction": "Re-run the same three commands after any toolchain change on thor or orin; the run ids are the baseline.",
+      "revisions": []
+    },
+    {
+      "id": "c110",
+      "kind": "assumption",
+      "text": "The decisive blocker is the sandbox mode, not the packaging: under --sandbox read-only nothing under $HOME is writable, and uv needs a lock file in its cache before it runs anything. Installing a standalone uv on thor removes thor's snap failure mode but does not make a read-only dispatch able to run tests, because orin \u2014 which already has the standalone binary \u2014 still cannot. The likely fix is UV_CACHE_DIR pointed inside the writable workspace under --sandbox workspace-write, which is untested and should be measured rather than assumed, given this pass has now falsified two toolchain premises in a row.",
+      "origin": "llm",
+      "status": "confirmed",
+      "honesty_conditions": [],
+      "hard_questions": [],
+      "links": [],
+      "instruction": "",
+      "revisions": []
+    },
+    {
+      "id": "c111",
+      "kind": "requirement",
+      "text": "The verification sweep's two confirmed claims cannot both hold on an agent host, and the measurement is what settles it: c51 requires the sweep to dispatch read-only, c7 requires executable evidence, and read-only mode cannot execute uv at all. Therefore executable evidence for stage 1 comes from spark, per c94's lane split \u2014 the sweep on agent hosts produces readings and pointers, and the operator's gate produces the evidence. Widening the sweep to workspace-write to escape this would trade the boundary c51 exists to hold for a convenience.",
+      "origin": "llm",
+      "status": "confirmed",
+      "honesty_conditions": [
+        {
+          "id": "h74",
+          "text": "No stage-1 verification run produces a test result from an agent host; every executable evidence artifact names a command that ran on spark.",
+          "status": "confirmed",
+          "instruction": ""
+        }
+      ],
+      "hard_questions": [],
+      "links": [],
+      "instruction": "Split bucket A by evidence kind before dispatching; agent-host runs return readings and pointers only.",
+      "revisions": []
+    },
+    {
+      "id": "c112",
+      "kind": "assumption",
+      "text": "The probes produced unplanned evidence for #96 (the capability surface does not report toolchains): the two agent hosts differ in a way nothing in the system can see \u2014 thor's uv is snap-packaged and orin's is standalone \u2014 and that difference decides whether a dispatch can run a test. A capability surface reporting 'uv present' would have been true on both hosts and useless on both.",
+      "origin": "llm",
+      "status": "confirmed",
+      "honesty_conditions": [],
+      "hard_questions": [],
+      "links": [],
+      "instruction": "",
+      "revisions": []
+    },
+    {
+      "id": "c113",
+      "kind": "decision",
+      "text": "The per-machine credential record stores a hash of the secret, never the secret itself, and is keyed by machine or actor identity rather than by IP address. Lockout is not a risk because database access is itself the reset path. The simple form is bounded by an event, not a date: it is acceptable until the dial-in path accepts its first connection, which is stage 3 of this same program. Issue #111 carries user types, admin lanes and the real credential mechanism.",
+      "origin": "user",
+      "status": "confirmed",
+      "honesty_conditions": [],
+      "hard_questions": [],
+      "links": [],
+      "instruction": "",
+      "revisions": []
+    },
+    {
+      "id": "c114",
+      "kind": "decision",
+      "text": "The RDS grant is reverted out of the base operator policy and becomes an opt-in configuration decision: deploy/aws/rds-optional-policy.json, attached with 'bootstrap-operator.sh enable-rds' and detached with disable-rds. preflight.py gains --db-target local|rds|managed, defaulting to local, so the checks follow the chosen target instead of assuming one. #59 is closed with its accounting and #112 carries the database-target decision forward.",
+      "origin": "user",
+      "status": "confirmed",
+      "honesty_conditions": [],
+      "hard_questions": [],
+      "links": [],
+      "instruction": "",
+      "revisions": []
+    },
+    {
+      "id": "c115",
+      "kind": "before_state",
+      "text": "PROBE 3 (run 01M0356BK8QYR3119R8VY1YY9Q, orin): under --sandbox read-only NOTHING is writable \u2014 'touch: cannot touch /tmp/probe3-write-test: Read-only file system' and the same for the working directory, so UV_CACHE_DIR has nowhere to point. uv fails initialising its cache and never reaches package resolution, so there is no second blocker hiding behind the first. Three probes, three falsified hypotheses: not the snap, not the standalone binary, not the cache path \u2014 the sandbox mode itself.",
+      "origin": "llm",
+      "status": "confirmed",
+      "honesty_conditions": [
+        {
+          "id": "h75",
+          "text": "The read-only finding is re-tested if codex-cli is upgraded, since sandbox behaviour is the vendor's to change.",
+          "status": "confirmed",
+          "instruction": ""
+        }
+      ],
+      "hard_questions": [],
+      "links": [],
+      "instruction": "Re-run probe 3's four steps after any codex-cli version bump on either host.",
+      "revisions": []
+    },
+    {
+      "id": "c116",
+      "kind": "decision",
+      "text": "c94's lane split is final and now rests on measurement rather than inference: a read-only dispatch cannot execute any test on any agent host, so stage 1's executable evidence is produced on spark. The only alternative is dispatching the sweep workspace-write, which trades away c51 \u2014 the boundary that keeps a verification pass from writing \u2014 for convenience. That trade is available to the owner but is not taken by default.",
+      "origin": "llm",
+      "status": "confirmed",
+      "honesty_conditions": [],
+      "hard_questions": [],
+      "links": [],
+      "instruction": "",
+      "revisions": []
+    },
+    {
+      "id": "c117",
+      "kind": "assumption",
+      "text": "Issue #113 files the containerised-bridge contract: the image is the answer to 'do we officially support this agent', which bounds adding Kiro (agentculture/kirod#1) and later antigravity, grok and cursor. It explicitly does NOT fix the sandbox finding \u2014 codex builds its sandbox around the child process inside whatever container the bridge runs in \u2014 and says so, so the next cycle does not spend itself conflating drift with sandboxing.",
+      "origin": "llm",
+      "status": "confirmed",
+      "honesty_conditions": [],
+      "hard_questions": [],
+      "links": [],
+      "instruction": "",
+      "revisions": []
+    },
+    {
+      "id": "c118",
+      "kind": "decision",
+      "text": "Git is the handover medium for work packages: an agent granted push pulls, changes, and pushes its own result. The operator's ssh-and-diff harvest stops being a step in the loop rather than being automated as one.",
+      "origin": "user",
+      "status": "confirmed",
+      "honesty_conditions": [],
+      "hard_questions": [],
+      "links": [],
+      "instruction": "",
+      "revisions": []
+    },
+    {
+      "id": "c119",
+      "kind": "requirement",
+      "text": "The agent pushes to a namespaced ref, never to a branch: refs/culture-nodes/RUN-ID, the namespace last cycle's AGENTS.md policy already permits locally. That preserves the property the policy was protecting \u2014 an agent's output is unreachable from any branch until the operator or control plane moves it \u2014 while moving the artifact off the agent host, which local-only refs never did. Pushing to a branch would surrender that property for no gain.",
+      "origin": "llm",
+      "status": "confirmed",
+      "honesty_conditions": [
+        {
+          "id": "h76",
+          "text": "A dispatch that pushes to any ref outside refs/culture-nodes/* is refused by the remote, not merely discouraged by the instruction \u2014 proven by attempting one.",
+          "status": "confirmed",
+          "instruction": ""
+        }
+      ],
+      "hard_questions": [],
+      "links": [],
+      "instruction": "Enforce with a ruleset on the remote; test the refusal before trusting the fence.",
+      "revisions": [
+        {
+          "text": "The agent pushes to a namespaced ref, never to a branch: refs/culture-nodes/<run-id>, the namespace last cycle's AGENTS.md policy already permits locally. That preserves the property the policy was protecting \u2014 an agent's output is unreachable from any branch until the operator or control plane moves it \u2014 while moving the artifact off the agent host, which local-only refs never did. Pushing to a branch would surrender that property for no gain.",
+          "kind": "requirement",
+          "reason": ""
+        }
+      ]
+    },
+    {
+      "id": "c120",
+      "kind": "requirement",
+      "text": "A pushed ref is OBSERVED evidence, not a completion claim, and the ledger must record it as such. The control plane can fetch the ref and read what is in it without believing anything the agent said \u2014 which is exactly the \u00a710.4 distinction the last cycle could not honour, because the only account of an agent's work was its own summary text. This is the concrete answer to #13's 'stronger evidence for agent work'.",
+      "origin": "llm",
+      "status": "confirmed",
+      "honesty_conditions": [
+        {
+          "id": "h77",
+          "text": "The ledger record for a pushed ref is authority 'observed' and cites the ref and its commit sha, and a run whose agent claims success without a fetchable ref produces no observed record at all.",
+          "status": "confirmed",
+          "instruction": ""
+        }
+      ],
+      "hard_questions": [],
+      "links": [],
+      "instruction": "Fetch the ref in the control plane and record what was measured, never what the agent reported.",
+      "revisions": []
+    },
+    {
+      "id": "c121",
+      "kind": "assumption",
+      "text": "Git-as-medium collapses several backlog items rather than adding to them: #100 (harvest is an operator ssh command) stops existing, #93 (hand-prepare the checkout before every dispatch) becomes the agent's own pull, and t6's two-carrier handoff finally gets the transport it landed the contract for but never had \u2014 the last cycle named three blockers for it, and 'nothing publishes the handover ref to a remote' was the first of them.",
+      "origin": "llm",
+      "status": "confirmed",
+      "honesty_conditions": [],
+      "hard_questions": [],
+      "links": [],
+      "instruction": "",
+      "revisions": []
+    },
+    {
+      "id": "c122",
+      "kind": "boundary",
+      "text": "The sandbox posture splits by package kind, and the split is now principled rather than uniform: VERIFICATION packages stay read-only and produce readings, because they should not write at all; BUILD packages run workspace-write with the measured .git widening (deviation d6) because pushing a ref requires writing .git. c51's read-only rule therefore scopes to the verification sweep, not to every dispatch.",
+      "origin": "llm",
+      "status": "confirmed",
+      "honesty_conditions": [
+        {
+          "id": "h78",
+          "text": "A verification dispatch recorded with sandbox workspace-write is a gate failure; the posture is checked against the package kind at dispatch time.",
+          "status": "confirmed",
+          "instruction": ""
+        }
+      ],
+      "hard_questions": [],
+      "links": [],
+      "instruction": "Set the posture from the package kind in the dispatch node, not by hand per brief.",
+      "revisions": []
+    },
+    {
+      "id": "c123",
+      "kind": "requirement",
+      "text": "The push credential is scoped by what it can WRITE, not merely by which repo it can reach. The credential measured last cycle (GITHUB_TOKEN_WORKER, Contents: Read and write across all agentculture repos) is broader than this needs: an agent that may only publish refs/culture-nodes/* should be held to that by a ruleset on the remote, so the fence is enforced by the server rather than by the agent's good behaviour.",
+      "origin": "llm",
+      "status": "confirmed",
+      "honesty_conditions": [
+        {
+          "id": "h79",
+          "text": "The credential is demonstrated to fail when pushing outside its namespace \u2014 a false positive here is worse than no fence, because it would be trusted.",
+          "status": "confirmed",
+          "instruction": ""
+        }
+      ],
+      "hard_questions": [],
+      "links": [],
+      "instruction": "Verify with scripts/verify-token-scope.sh extended to attempt an out-of-namespace push and require refusal.",
+      "revisions": []
+    },
+    {
+      "id": "c124",
+      "kind": "assumption",
+      "text": "The merge gate does not move and should not: it still runs where a Go toolchain exists, because the agent hosts have none. What changes is only how the gate obtains the work \u2014 a git fetch of refs/culture-nodes/RUN-ID instead of an ssh-and-git-diff harvest piped into git apply. Cheaper, atomic, and it leaves a fetchable artifact a later reader can inspect. Issue #115 then moves the gate off spark entirely by giving the Go tree CI.",
+      "origin": "llm",
+      "status": "confirmed",
+      "honesty_conditions": [],
+      "hard_questions": [],
+      "links": [],
+      "instruction": "",
+      "revisions": [
+        {
+          "text": "The merge gate does not move and should not: it still runs on spark because the agent hosts have no Go. What changes is only how the gate obtains the work \u2014 'git fetch origin refs/culture-nodes/<run-id>' instead of 'ssh <host> git diff HEAD --binary' piped into git apply. Cheaper, atomic, and it leaves a fetchable artifact a later reader can inspect.",
+          "kind": "assumption",
+          "reason": ""
+        }
+      ]
+    },
+    {
+      "id": "c125",
+      "kind": "before_state",
+      "text": "The Go control plane has NO automated test coverage anywhere. .github/workflows/tests.yml's test job runs only 'uv run pytest --cov=culture_nodes' \u2014 the Python CLI package \u2014 with no go build, go vet or go test in any job, and neither agent host has Go installed. internal/engine, internal/worker, internal/store, internal/api, internal/ledger and cmd/ are therefore tested in exactly one place: an operator's interactive session on spark. That, not workflow preference, is why spark gates. Filed as #115.",
+      "origin": "llm",
+      "status": "confirmed",
+      "honesty_conditions": [
+        {
+          "id": "h80",
+          "text": "The Go tree runs in CI, and removing a test from internal/engine turns a check red \u2014 proving the job actually gates rather than merely existing.",
+          "status": "confirmed",
+          "instruction": ""
+        }
+      ],
+      "hard_questions": [],
+      "links": [],
+      "instruction": "Add a go job to .github/workflows/tests.yml: go build ./... && go vet ./... && go test ./... (issue #115).",
+      "revisions": []
     }
   ],
   "open_vagueness": [
@@ -1529,13 +2156,40 @@
       "text": "Whether a repair loop (#102) can be bounded safely enough to run unattended is unknown: the last cycle's four gate failures were all cases where the actor could not run the tool that would have shown them, which a repair node on the same host also could not run.",
       "kind": "unknown_nonblocking",
       "claim_id": null,
+      "resolved": true,
+      "resolution": "Answered: yes. The database stays on thor, S3 backups buy the durability (#30), and the mass-mesh premise is served by the stage-3 section 13 inversion instead of by moving a database.",
+      "resolution_claim_id": "c87"
+    },
+    {
+      "id": "v3",
+      "text": "Whether off-machine durability alone \u2014 shipping the existing six-hourly pg_dump to S3 for about a dollar a month \u2014 satisfies what #59 was actually for, now that the memory premise is falsified and the connectivity cost is real. That would close #30 and leave the database on thor.",
+      "kind": "unknown_nonblocking",
+      "claim_id": null,
+      "resolved": true,
+      "resolution": "Answered: yes. The database stays on thor, S3 backups buy the off-machine durability (#30), and the mass-mesh premise #59 was reaching for is served by the stage-3 section 13 inversion instead.",
+      "resolution_claim_id": "c87"
+    },
+    {
+      "id": "v4",
+      "text": "Whether a repair loop (#102) can be bounded safely enough to run unattended is unknown: the last cycle's four gate failures were all cases where the actor could not run the tool that would have shown them, which a repair node on the same host also could not run. Re-parked after v2 was resolved in error.",
+      "kind": "unknown_nonblocking",
+      "claim_id": null,
       "resolved": false,
       "resolution": "",
       "resolution_claim_id": null
     },
     {
-      "id": "v3",
-      "text": "Whether off-machine durability alone \u2014 shipping the existing six-hourly pg_dump to S3 for about a dollar a month \u2014 satisfies what #59 was actually for, now that the memory premise is falsified and the connectivity cost is real. That would close #30 and leave the database on thor.",
+      "id": "v5",
+      "text": "Whether a dialing worker can hold a claim across a dropped-and-reconnected connection without two workers believing they hold it. Fencing tokens make the write safe, but the inversion introduces a liveness signal the current lease model does not consult.",
+      "kind": "unknown_nonblocking",
+      "claim_id": null,
+      "resolved": false,
+      "resolution": "",
+      "resolution_claim_id": null
+    },
+    {
+      "id": "v6",
+      "text": "Whether a wrongly-closed issue can be recovered: the frame requires disposition-not-deletion (c17) but nothing requires that a closed-as-verified issue be reopened when its cited evidence later fails.",
       "kind": "unknown_nonblocking",
       "claim_id": null,
       "resolved": false,
@@ -1738,6 +2392,72 @@
         "c35",
         "c37"
       ]
+    },
+    {
+      "id": "s23",
+      "surface": "challenge pass / unstated-assumptions lens: thor toolchain (ssh probe)",
+      "finding": "npm present, uv present, 'uv run pytest -q' in adapters/colleague passes 248 tests in 6.57s; only Go absent. Measured over ssh, NOT inside a codex sandbox \u2014 the sandboxed answer is the gap this probe could not close.",
+      "seeds": []
+    },
+    {
+      "id": "s24",
+      "surface": "challenge pass / adjacent-systems lens: docs/adr/0002-migration-policy.md",
+      "finding": "expand-contract with N-1 binary compatibility; a contract migration ships at least one release after the binary stops depending on the column. Makes the endpoint_ref drop a two-release sequence.",
+      "seeds": []
+    },
+    {
+      "id": "s25",
+      "surface": "challenge pass / security lens: internal/worker/registry.go:122-158 + migrations/0001",
+      "finding": "actors table holds endpoint_ref but no credential column; the registry stores auth_token_env (a variable NAME) and reads the secret from the environment. A pg_dump carries no actor credentials \u2014 the ledger content is the real S3 exposure.",
+      "seeds": []
+    },
+    {
+      "id": "s26",
+      "surface": "challenge pass / observability lens: docker ps on thor and orin",
+      "finding": "prod-worker-1 up on BOTH hosts against thor's prod-postgres-1, so #5's stated trigger condition \u2014 two workers, one Postgres \u2014 already holds. First read of thor's docker ps was truncated and appeared to show no worker; the corrected probe is what this entry records.",
+      "seeds": []
+    },
+    {
+      "id": "s27",
+      "surface": "challenge pass / concurrency lens: internal/worker/worker.go:26-40 + internal/store/postgres/claiming.go",
+      "finding": "lease 60s, heartbeat 20s, poll 1s, fencing tokens on claims. Clean pass against the decisions taken \u2014 nothing in the stage plan changes claim semantics. Residual risk only if the inversion lets a dialing worker hold a claim across a dropped connection.",
+      "seeds": []
+    },
+    {
+      "id": "s28",
+      "surface": "challenge pass / NOT EXAMINED: web/ and the notifier's dependence on endpoint_ref",
+      "finding": "the UI and Discord surfaces were not read for address dependencies; if either renders or filters on an actor endpoint, the inversion touches them too and this pass did not find out.",
+      "seeds": []
+    },
+    {
+      "id": "s29",
+      "surface": "challenge pass / NOT EXAMINED: sibling repos against the section 13 contract",
+      "finding": "culture, guildmaster and steward were not checked for dependence on the actor protocol's shape. The all-backends rule covers the five bridges in this repo; a sibling consumer would be invisible to it.",
+      "seeds": []
+    },
+    {
+      "id": "s30",
+      "surface": "challenge pass / NOT EXAMINED: the codex sandbox's ability to run a Python suite",
+      "finding": "the toolchain probe ran over ssh. Whether a dispatched codex run can execute pytest under its sandbox \u2014 the socket restriction that broke loopback tests before \u2014 is unmeasured and is stage 1's first question.",
+      "seeds": []
+    },
+    {
+      "id": "s31",
+      "surface": "challenge pass / adjacent-systems lens: web/src (endpoint_ref)",
+      "finding": "the UI carries endpoint_ref in api/types.ts:417 and in mesh-fixture.ts, but nothing renders or filters on it \u2014 the inversion touches a type and four fixture lines, not a view. Gap closed favourably.",
+      "seeds": []
+    },
+    {
+      "id": "s32",
+      "surface": "challenge pass / adjacent-systems lens: internal/notifier",
+      "finding": "no endpoint dependency; the only match is a doc comment about control-plane write endpoints. Clean.",
+      "seeds": []
+    },
+    {
+      "id": "s33",
+      "surface": "challenge pass / adjacent-systems lens: sibling repos culture, steward, cultureagent, guildmaster",
+      "finding": "no consumer of the section 13 actor protocol outside this repo \u2014 guildmaster's only matches are skill-vendoring notes in CHANGELOG.md and docs/skill-sources.md. The all-backends rule over five bridges is therefore the complete blast radius.",
+      "seeds": []
     }
   ],
   "lapses": []

@@ -5,6 +5,8 @@
 #   ./deploy/aws/bootstrap-operator.sh [profile-name]   # default: culture-nodes
 #   ./deploy/aws/bootstrap-operator.sh update-policy     # re-apply dev-operator-policy.json
 #   ./deploy/aws/bootstrap-operator.sh enable-region <region>   # opt in to a region
+#   ./deploy/aws/bootstrap-operator.sh enable-rds               # opt in to the RDS grant
+#   ./deploy/aws/bootstrap-operator.sh disable-rds              # opt back out
 #
 # Run this yourself with admin (or root, first-time-only) credentials
 # active. It creates the culture-nodes-dev IAM user, attaches the
@@ -24,6 +26,7 @@ MODE="${1:-bootstrap}"
 case "$MODE" in
   update-policy) PROFILE="${2:-culture-nodes}" ;;
   enable-region) PROFILE="${3:-culture-nodes}" ;;
+  enable-rds|disable-rds) PROFILE="${2:-culture-nodes}" ;;
   *)             PROFILE="${1:-culture-nodes}" ;;
 esac
 USER_NAME="culture-nodes-dev"
@@ -34,6 +37,36 @@ REGION="${AWS_REGION:-$(aws configure get region 2>/dev/null || echo us-east-1)}
 
 echo "==> bootstrap identity: $(aws sts get-caller-identity --query Arn --output text)"
 ACCOUNT=$(aws sts get-caller-identity --query Account --output text)
+
+if [ "$MODE" = "enable-rds" ] || [ "$MODE" = "disable-rds" ]; then
+  # RDS is an OPT-IN database target, not part of the base grant.
+  #
+  # The base operator policy deliberately grants nothing for RDS: this
+  # deployment keeps Postgres on its own host and buys durability with S3
+  # backups, so a standing RDS grant would be permission nothing exercises.
+  # A deployment that chooses RDS opts in here, and the grant is a separate
+  # attachable policy so opting back out is a detach rather than an edit.
+  RDS_POLICY_NAME="culture-nodes-dev-rds"
+  RDS_POLICY_FILE="$SCRIPT_DIR/rds-optional-policy.json"
+  RDS_POLICY_ARN="arn:aws:iam::${ACCOUNT}:policy/${RDS_POLICY_NAME}"
+  if [ "$MODE" = "disable-rds" ]; then
+    aws iam detach-user-policy --user-name "$USER_NAME" --policy-arn "$RDS_POLICY_ARN" 2>/dev/null \
+      && echo "==> detached $RDS_POLICY_NAME from $USER_NAME" \
+      || echo "==> $RDS_POLICY_NAME was not attached (nothing to do)"
+    echo "==> the policy itself is kept so re-enabling is one attach; delete it by hand if you want it gone"
+    exit 0
+  fi
+  if aws iam get-policy --policy-arn "$RDS_POLICY_ARN" >/dev/null 2>&1; then
+    echo "==> policy $RDS_POLICY_NAME already exists (kept)"
+  else
+    aws iam create-policy --policy-name "$RDS_POLICY_NAME" \
+      --policy-document "file://$RDS_POLICY_FILE" >/dev/null
+    echo "==> created $RDS_POLICY_NAME from $RDS_POLICY_FILE"
+  fi
+  aws iam attach-user-policy --user-name "$USER_NAME" --policy-arn "$RDS_POLICY_ARN"
+  echo "==> attached — verify with ./deploy/aws/preflight.py --db-target rds"
+  exit 0
+fi
 
 if [ "$MODE" = "enable-region" ]; then
   # Opt in to a region. This is an ACCOUNT-LEVEL setting, which is why it

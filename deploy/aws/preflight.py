@@ -6,9 +6,10 @@ in plain language, and for every failure it names three things: **why** the
 check exists, **who** is allowed to fix it, and the **exact command** that
 does. Nothing here mutates anything — every probe is a read.
 
-    ./deploy/aws/preflight.py                     # human-readable report
-    ./deploy/aws/preflight.py --json              # same result, machine-readable
-    ./deploy/aws/preflight.py --region eu-west-1  # check a different target
+    ./deploy/aws/preflight.py                      # human-readable report
+    ./deploy/aws/preflight.py --json               # same result, machine-readable
+    ./deploy/aws/preflight.py --region eu-west-1   # a different region
+    ./deploy/aws/preflight.py --db-target rds      # check the opt-in RDS path too
 
 Exit codes follow the repo's CLI policy: ``0`` everything ready, ``1`` at
 least one prerequisite is blocked (the report says which), ``2`` this
@@ -16,18 +17,35 @@ machine cannot run the checks at all (no AWS CLI, no credentials).
 
 ## Why this file exists
 
-Two prerequisites blocked the #59 migration, and neither was discoverable
-without an AWS call that fails in a confusing way:
+AWS refuses in ways that read as something other than what they are, and
+two of those cost real time to diagnose:
 
 * an **opt-in region** answers *every* API call with
   ``InvalidClientTokenId`` until the account enables it — a signature that
-  reads like a broken credential, not like a disabled region;
-* the scoped ``culture-nodes-dev`` operator policy grants SQS, S3, ECR,
-  Lambda, IAM and STS, but granted **no RDS at all**, so provisioning fails
-  with ``AccessDenied`` on the first describe.
+  reads like a broken credential, not like a disabled region. A second
+  propagation hides behind the first: after the opt-status flips to
+  ENABLED, credentials stay invalid there for a few more minutes;
+* a **missing grant** surfaces as ``AccessDenied`` on whichever call
+  happens to run first, which says nothing about which policy to change.
 
-Both cost time to diagnose from the error alone. This script turns each one
-into a labelled row with a fix attached.
+This script turns each into a labelled row with a fix attached.
+
+## Database target — the checks follow the choice
+
+Where the database lives is a deployment input, so ``--db-target`` decides
+which checks even apply:
+
+* ``local`` (default) — the bundled Postgres container on its own host.
+  Durability comes from shipping its dump to S3, so S3 reachability is what
+  gets checked and the RDS rows are marked not-applicable rather than
+  pending.
+* ``rds`` — the opt-in AWS path. Its grant is a separate attachable policy
+  (``rds-optional-policy.json``, applied with
+  ``bootstrap-operator.sh enable-rds``), deliberately not part of the base
+  operator policy, so a deployment that never uses RDS never carries
+  permissions nothing exercises.
+* ``managed`` — a hosted Postgres that authenticates by credential rather
+  than by address. Nothing AWS-side to check beyond the backup bucket.
 
 ## The two roles, and why the split is deliberate
 
@@ -339,9 +357,9 @@ def check_rds_permissions(region: str, region_ok: bool) -> Result:
             detail="rds:DescribeDBInstances denied — the operator policy grants no RDS",
             why="provisioning, describing and snapshotting the database all need RDS actions;"
             " the policy predates this decision and was scoped to SQS, S3, ECR, Lambda and IAM",
-            who="account admin — the policy is a checked-in artifact, so this is a reviewed diff",
-            fix="./deploy/aws/bootstrap-operator.sh update-policy"
-            "   # applies deploy/aws/dev-operator-policy.json as a new default version",
+            who="account admin — RDS is an opt-in target, so this is a deliberate widening",
+            fix="./deploy/aws/bootstrap-operator.sh enable-rds"
+            "   # attaches deploy/aws/rds-optional-policy.json; disable-rds detaches it",
         )
     return Result(
         key="rds_iam",
@@ -497,6 +515,42 @@ def check_latency(region: str) -> Result:
     )
 
 
+def check_backup_bucket(region: str) -> Result:
+    """Can this identity reach S3 for the database backups?
+
+    This is the check that matters for the target this deployment actually
+    chose. The database stays on its own host; what makes it durable is
+    shipping the six-hourly pg_dump off that host into object storage, and
+    the base operator policy already grants s3 on culture-nodes-* for it.
+    """
+    code, out, err = aws("s3api", "list-buckets", "--query", "Buckets[].Name", region=region)
+    if code != 0:
+        return Result(
+            key="s3_backups",
+            title="Operator may reach S3 for backups",
+            status=BLOCKED,
+            detail=err.splitlines()[-1] if err else "s3:ListAllMyBuckets failed",
+            why="off-host durability for the database is a backup in object storage; without S3"
+            " the dumps stay on the same disk as the data they protect",
+            who="account admin",
+            fix="./deploy/aws/bootstrap-operator.sh update-policy",
+        )
+    buckets = [b for b in json.loads(out or "[]") if b.startswith(PROJECT_PREFIX)]
+    if buckets:
+        return Result(
+            key="s3_backups",
+            title="Operator may reach S3 for backups",
+            status=OK,
+            detail=f"s3 reachable; project buckets: {', '.join(buckets)}",
+        )
+    return Result(
+        key="s3_backups",
+        title="Operator may reach S3 for backups",
+        status=OK,
+        detail=f"s3 reachable; no {PROJECT_PREFIX}* bucket yet — the backup work creates it",
+    )
+
+
 def check_existing_instance(region: str, region_ok: bool, rds_ok: bool) -> Result:
     """Idempotency: has an instance already been provisioned?"""
     if not (region_ok and rds_ok):
@@ -607,6 +661,14 @@ def main(argv: list[str] | None = None) -> int:
         "--region", default=DEFAULT_REGION, help=f"target region (default: {DEFAULT_REGION})"
     )
     parser.add_argument("--instance-class", default="db.t4g.micro", help="RDS class to check for")
+    parser.add_argument(
+        "--db-target",
+        choices=("local", "rds", "managed"),
+        default="local",
+        help="where the database lives: local (the bundled container, the default), rds"
+        " (opt-in, needs bootstrap-operator.sh enable-rds), or managed (a hosted Postgres"
+        " that authenticates by credential). Only 'rds' makes the RDS checks apply.",
+    )
     parser.add_argument("--json", action="store_true", help="emit the report as JSON on stdout")
     args = parser.parse_args(argv)
 
@@ -628,14 +690,34 @@ def main(argv: list[str] | None = None) -> int:
     results.append(region)
     region_ok = region.status == OK
 
-    rds = check_rds_permissions(args.region, region_ok)
-    results.append(rds)
-    rds_ok = rds.status == OK
+    results.append(check_backup_bucket(args.region))
 
-    results.append(check_vpc_reads(args.region, region_ok))
-    results.append(check_instance_class(args.region, region_ok, rds_ok, args.instance_class))
-    results.append(check_latency(args.region))
-    results.append(check_existing_instance(args.region, region_ok, rds_ok))
+    if args.db_target == "rds":
+        rds = check_rds_permissions(args.region, region_ok)
+        results.append(rds)
+        rds_ok = rds.status == OK
+        results.append(check_vpc_reads(args.region, region_ok))
+        results.append(check_instance_class(args.region, region_ok, rds_ok, args.instance_class))
+        results.append(check_latency(args.region))
+        results.append(check_existing_instance(args.region, region_ok, rds_ok))
+    else:
+        # RDS is opt-in and not the chosen target, so its checks are not
+        # merely skipped-for-now — they do not apply. Saying so beats a row
+        # of `skip` that reads like something is still pending.
+        note = (
+            "the bundled container on its own host"
+            if args.db_target == "local"
+            else "a hosted Postgres that authenticates by credential"
+        )
+        results.append(
+            Result(
+                key="rds_iam",
+                title="RDS checks",
+                status=SKIPPED,
+                detail=f"not applicable — database target is '{args.db_target}': {note}."
+                " Re-run with --db-target rds to check the RDS path.",
+            )
+        )
 
     _emit(results, args)
     # In-progress counts as not-ready: the exit code gates provisioning, and
@@ -648,6 +730,7 @@ def _emit(results: list[Result], args: argparse.Namespace, exit_hint: str = "") 
     if args.json:
         payload = {
             "region": args.region,
+            "db_target": args.db_target,
             "ready": not any(r.status in (BLOCKED, PENDING) for r in results),
             "blocked": [r.key for r in results if r.status == BLOCKED],
             "in_progress": [r.key for r in results if r.status == PENDING],

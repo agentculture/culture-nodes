@@ -41,7 +41,14 @@ func TestTechnicalFailureRetriesTheSameNodeRun(t *testing.T) {
 		t.Errorf("node run state = %s, want ready", got)
 	}
 
-	second := f.step("worker-a", workNodeRun, engine.CompletionRequest{TechStatus: engine.StatusTimedOut})
+	// The origin is named because a timeout without one is refused rather than
+	// retried (task t10, and see retry_test.go). What this test is about is
+	// that a retry reuses the node run, so it states the case where a retry
+	// legitimately happens: the actor itself reported the timeout.
+	second := f.step("worker-a", workNodeRun, engine.CompletionRequest{
+		TechStatus:    engine.StatusTimedOut,
+		TimeoutOrigin: engine.TimeoutOriginActor,
+	})
 	if !second.Retried {
 		t.Fatalf("attempt 2 of 3 should have been retried")
 	}

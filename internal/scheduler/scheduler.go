@@ -152,10 +152,6 @@ type Scheduler struct {
 	registries map[string]worker.Registry
 }
 
-var deadlineActorClient = actors.NewClient()
-
-const deadlineCancelTimeout = 30 * time.Second
-
 // New returns a Scheduler backed by db. It does nothing until Run is
 // called -- constructing one never touches PostgreSQL.
 func New(db *postgres.Store, opts Options) *Scheduler {
@@ -513,7 +509,16 @@ func (sch *Scheduler) applyEffect(ctx context.Context, tx pgx.Tx, t postgres.Tim
 		if err != nil {
 			return "", nil, fmt.Errorf("deadline timer %s: fail waiting_external attempt: %w", t.ID, err)
 		}
-		if paused || inv.InvocationID == "" {
+		// A paused continuation cancels nothing -- the whole point is that the
+		// session stays warm -- and a zero PendingInvocation means
+		// failWaitingExternal found nothing to fail at all. Everything else
+		// goes to the cancel step, INCLUDING an invocation carrying no
+		// actor-assigned id: that one sends no request, but it is still a
+		// deadline that expired against a live session, and the run's event
+		// stream is where an operator has to be able to see that (task t12).
+		// Gating on the invocation id here instead would make the one case
+		// where the cancel is impossible the one case that leaves no trace.
+		if paused || inv.RunID == "" {
 			return topicDeadlineExpired, nil, nil
 		}
 		return topicDeadlineExpired, &inv, nil
@@ -615,7 +620,15 @@ func (sch *Scheduler) failWaitingExternal(ctx context.Context, t postgres.Timer)
 		FencingToken: inv.FencingToken,
 		Attempt:      inv.Attempt,
 		TechStatus:   engine.StatusTimedOut,
-		Output:       deadlineTimeoutOutput(t),
+		// Naming the origin is what stops this completion being re-dispatched
+		// (task t10, spec claim c42). By the time this call returns, the
+		// session behind the attempt has not been asked to stop -- the cancel
+		// is issued after fireOne commits, deliberately (decision q3/c48) --
+		// so the engine must treat the retry budget as unspendable here. It
+		// is the scheduler that knows this, and this is the only place it can
+		// say so.
+		TimeoutOrigin: engine.TimeoutOriginDeadline,
+		Output:        deadlineTimeoutOutput(t),
 	}); err != nil {
 		if errors.Is(err, engine.ErrStaleClaim) || errors.Is(err, engine.ErrTerminalNodeRun) || errors.Is(err, engine.ErrTerminalRun) {
 			// The engine's own fenced guard refused: the resume above won
@@ -705,24 +718,6 @@ func (sch *Scheduler) rearmDeadline(ctx context.Context, t postgres.Timer, fireA
 	return err
 }
 
-func (sch *Scheduler) cancelDeadlineInvocation(ctx context.Context, inv actors.PendingInvocation) {
-	if inv.InvocationID == "" || inv.ActorRef == "" {
-		return
-	}
-	registry, err := sch.registryFor(inv.NamespaceID)
-	if err != nil {
-		return
-	}
-	endpoint, err := registry.Resolve(ctx, inv.ActorRef)
-	if err != nil {
-		return
-	}
-	cancelCtx, cancel := context.WithTimeout(ctx, deadlineCancelTimeout)
-	defer cancel()
-	_ = deadlineActorClient.Cancel(cancelCtx, endpoint, inv.InvocationID,
-		fmt.Sprintf("deadline expired for attempt %s", inv.AttemptID))
-}
-
 // waitForDeadlineTimer resolves which durable async record a fired deadline
 // timer belongs to, and returns the matching way to retire it.
 //
@@ -797,26 +792,6 @@ func (sch *Scheduler) engineFor(namespaceID string) (*engine.Engine, error) {
 	}
 	sch.engines[namespaceID] = eng
 	return eng, nil
-}
-
-// registryFor mirrors engineFor: timers are deployment-wide while actor
-// registrations are namespace-scoped, so one scheduler lazily retains one
-// registry for every namespace whose deadline it has processed.
-func (sch *Scheduler) registryFor(namespaceID string) (worker.Registry, error) {
-	sch.registryMu.Lock()
-	defer sch.registryMu.Unlock()
-	if registry, ok := sch.registries[namespaceID]; ok {
-		return registry, nil
-	}
-	registry, err := worker.NewDBRegistry(sch.db, namespaceID)
-	if err != nil {
-		return nil, err
-	}
-	if sch.registries == nil {
-		sch.registries = make(map[string]worker.Registry)
-	}
-	sch.registries[namespaceID] = registry
-	return registry, nil
 }
 
 // deadlineTimeoutOutput is the diagnostic body recorded on the attempt a

@@ -37,7 +37,18 @@ cd "$(dirname "${BASH_SOURCE[0]}")"
 PROJECT="${COMPOSE_PROJECT_NAME:-t13otel}"
 ENV_FILE="${COMPOSE_ENV_FILE:-.env.example}"
 PROFILES="bundled-postgres,telemetry,smoke-actor"
-API_PORT="${NODES_API_PORT:-8080}"
+# A FREE port, not 8080. This script stands a whole stack up and tears it
+# down three times, and it must not fight whatever already holds the usual
+# port — a dev stack from smoke.sh, or another worktree's `nodes serve`,
+# both of which happened while this script was being written. Set
+# NODES_API_PORT to pin one.
+API_PORT="${NODES_API_PORT:-$(python3 -c '
+import socket
+s = socket.socket()
+s.bind(("127.0.0.1", 0))
+print(s.getsockname()[1])
+s.close()
+')}"
 BASE_URL="http://localhost:${API_PORT}"
 FIXTURE="testdata/smoke.workflow.yaml"
 ACTOR_KEY="company/smoke-test"
@@ -56,6 +67,7 @@ compose() {
 	COMPOSE_PROFILES="$PROFILES" \
 		OTEL_EXPORTER_OTLP_ENDPOINT="${OTEL_ENDPOINT:-}" \
 		NODES_NAMESPACE_ID="${NAMESPACE_ID:-default}" \
+		NODES_API_PORT="$API_PORT" \
 		docker compose -p "$PROJECT" --env-file "$ENV_FILE" "$@"
 }
 

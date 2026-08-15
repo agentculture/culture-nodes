@@ -25,6 +25,7 @@ usage() {
 usage: nodes-op.sh <verb> [args]
 
   status                       healthz + run counts
+  running                      running runs + current node/attempt detail
   workflows                    published workflows (key, digest)
   runs [N]                     newest N runs (default 10)
   run <id>                     one run: state, node outcomes, attempts
@@ -105,6 +106,33 @@ import json,sys
 runs=json.load(sys.stdin); runs=runs if isinstance(runs,list) else runs.get('runs',runs.get('items',[]))
 for r in runs[:$n]: print(r['id'], r.get('state','?'), r.get('created_at',''))"
   ;;
+running)
+  tmp=$(mktemp -d)
+  trap 'find "$tmp" -depth -delete' EXIT
+  api_get "/v1alpha1/runs?state=running&limit=500" > "$tmp/runs.json"
+  python3 - "$tmp/runs.json" "$tmp/ids" <<'PYEOF'
+import json, sys
+d = json.load(open(sys.argv[1]))
+runs = d if isinstance(d, list) else d.get("runs", d.get("items", []))
+with open(sys.argv[2], "w") as ids:
+    for run in runs:
+        ids.write(run["id"] + "\n")
+print("running runs:", len(runs))
+PYEOF
+  while IFS= read -r id; do
+    [ -n "$id" ] || continue
+    api_get "/v1alpha1/runs/$id" | py '
+import json, sys
+d = json.load(sys.stdin); r = d.get("run", d)
+print("%s  name=%s  category=%s" % (r.get("id"), r.get("name") or "-", r.get("category") or "-"))
+print("  description:", r.get("description") or "-")
+print("  input:", json.dumps(r.get("input"), ensure_ascii=False))
+for nr in d.get("node_runs", []):
+    attempts = ["%s:%s" % (a.get("actor_id") or "?", a.get("status") or "?") for a in nr.get("attempts", [])]
+    print("  %s: %s outcome=%s attempts=%s" % (
+        nr.get("node_id"), nr.get("state"), nr.get("outcome"), attempts))'
+  done < "$tmp/ids"
+  ;;
 run)
   id="${1:?usage: run <id>}"
   tmp=$(mktemp); api_get "/v1alpha1/runs/$id" > "$tmp"
@@ -127,7 +155,7 @@ import json,sys
 d=json.load(sys.stdin)
 for r in d.get("items",[]):
     o=r.get("origin",{})
-    print(r.get("authority"), r.get("record_type"), o.get("actor_id"), "--", json.dumps(r.get("data",{}))[:160])'
+    print(r.get("authority"), r.get("record_type"), o.get("actor_id"), "--", json.dumps(r.get("data",{}), ensure_ascii=False))'
   ;;
 tasks)
   api_get /v1alpha1/human-tasks | py '

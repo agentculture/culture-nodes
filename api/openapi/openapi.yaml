@@ -405,7 +405,7 @@ paths:
               schema:
                 $ref: '#/components/schemas/RunList'
         '400':
-          description: updated_since, updated_until, or sort is malformed.
+          description: state, updated_since, updated_until, or sort is malformed.
           content:
             application/json:
               schema:

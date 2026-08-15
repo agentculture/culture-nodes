@@ -85,6 +85,10 @@ func (s *Server) handleCreateRun(w http.ResponseWriter, r *http.Request) error {
 // queries.go for the two query shapes and parseRunSort below for how the
 // default sort column is chosen.
 func (s *Server) handleListRuns(w http.ResponseWriter, r *http.Request) error {
+	state, err := parseRunState(r)
+	if err != nil {
+		return err
+	}
 	updatedSince, err := parseRFC3339(r, "updated_since")
 	if err != nil {
 		return err
@@ -99,7 +103,7 @@ func (s *Server) handleListRuns(w http.ResponseWriter, r *http.Request) error {
 	}
 
 	runs, err := s.listRuns(r.Context(), listRunsParams{
-		State:        r.URL.Query().Get("state"),
+		State:        state,
 		Limit:        parseLimit(r, 50, 500),
 		UpdatedSince: updatedSince,
 		UpdatedUntil: updatedUntil,
@@ -110,6 +114,23 @@ func (s *Server) handleListRuns(w http.ResponseWriter, r *http.Request) error {
 	}
 	writeJSON(w, http.StatusOK, RunListOut{Items: runs})
 	return nil
+}
+
+// parseRunState validates GET /v1alpha1/runs' optional state filter before
+// it reaches SQL. An unknown value must not masquerade as a valid empty
+// result: that leaves an operator believing nothing is running when the
+// filter was merely misspelled.
+func parseRunState(r *http.Request) (string, error) {
+	raw := r.URL.Query().Get("state")
+	switch engine.RunState(raw) {
+	case "", engine.RunCreated, engine.RunRunning, engine.RunWaiting,
+		engine.RunCompleted, engine.RunFailed, engine.RunCancelled:
+		return raw, nil
+	default:
+		return "", badRequest(
+			"state must be one of created, running, waiting, completed, failed, cancelled",
+			"unrecognized state=%q", raw)
+	}
 }
 
 // parseRunSort reads GET /v1alpha1/runs' "sort" query parameter: sortCreatedAt

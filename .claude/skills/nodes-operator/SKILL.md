@@ -38,6 +38,7 @@ same origin). Requires `bash`, `curl`, `python3` (+PyYAML for
 | Verb | What it does |
 |------|--------------|
 | `status` | healthz + run-state counts |
+| `running` | every running run with its metadata/input and current node/attempt detail |
 | `workflows` | published workflows (key, digest) |
 | `runs [N]` / `run <id>` | newest runs / one run's nodes, outcomes, attempts |
 | `ledger <id>` | a run's ledger records (authority, origin actor, data) |

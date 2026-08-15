@@ -89,6 +89,19 @@ export function NodeDetailPanel({
     (record) => record.node_run_id && nodeRunIds.has(record.node_run_id),
   );
   const evidence = delta.filter((record) => record.record_type === "evidence");
+  // A late-callback reconciliation (task t11, ADR 0012) leaves the attempt it
+  // corrects in place and appends a new record naming it, so one dispatch can
+  // show up as two rows. These two derivations are what let the table say
+  // which row is the correction and which is the history it replaced, instead
+  // of showing an operator what looks like a second try.
+  const supersededIDs = new Set(
+    execution.attempts
+      .map((attempt) => attempt.supersedes)
+      .filter((id): id is string => Boolean(id)),
+  );
+  const attemptNumbersByID = new Map(
+    execution.attempts.map((attempt) => [attempt.id, attempt.attempt_number]),
+  );
   const contract = node.raw.contract;
   const contractDigest =
     contract?.input?.digest ??
@@ -197,9 +210,40 @@ export function NodeDetailPanel({
                   attempt,
                   PRESERVE_BRANCH_URL_TEMPLATE,
                 );
+                const corrects = attempt.supersedes
+                  ? attemptNumbersByID.get(attempt.supersedes)
+                  : undefined;
                 return (
-                  <tr key={attempt.id} data-attempt-id={attempt.id}>
-                    <th scope="row">{attempt.attempt_number}</th>
+                  <tr
+                    key={attempt.id}
+                    data-attempt-id={attempt.id}
+                    data-attempt-record={
+                      supersededIDs.has(attempt.id)
+                        ? "superseded"
+                        : attempt.supersedes
+                          ? "correction"
+                          : "dispatch"
+                    }
+                  >
+                    <th scope="row">
+                      {attempt.attempt_number}
+                      {/* One dispatch can leave two records — see
+                          AttemptOut.supersedes. Saying which is which here is
+                          the difference between reading a deadline
+                          reconciliation and reading a retry. */}
+                      {attempt.supersedes ? (
+                        <span className="detail-panel__attempt-note">
+                          {corrects === undefined
+                            ? " corrects an earlier record"
+                            : ` corrects #${corrects}`}
+                        </span>
+                      ) : null}
+                      {supersededIDs.has(attempt.id) ? (
+                        <span className="detail-panel__attempt-note">
+                          {" superseded"}
+                        </span>
+                      ) : null}
+                    </th>
                     <td data-attempt-status={attempt.status}>{attempt.status}</td>
                     <td>
                       <code>{attempt.actor_id ?? "—"}</code>

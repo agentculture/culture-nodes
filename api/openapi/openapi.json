@@ -531,6 +531,10 @@
             ],
             "type": "string"
           },
+          "supersedes": {
+            "description": "The id of the attempt record this one corrects, absent on every ordinary dispatch. Set by the late-callback reconciliation: a node run's deadline expires, the engine records a timed_out attempt, and the actor session it bounded later reports the tokens, model, termination reason and preserve branch of work that really happened. That report cannot commit workflow state (PRD 13.4) and does not rewrite the record it corrects (PRD 10.4) -- it is appended as a new attempt naming the old one. A node run therefore legitimately lists BOTH: read the superseding record as current and the one it names as history.",
+            "type": "string"
+          },
           "termination_reason": {
             "description": "The provider-reported reason this attempt ended.",
             "type": "string"

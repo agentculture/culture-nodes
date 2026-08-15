@@ -28,6 +28,14 @@ import (
 //     separately" (len(Cost) > 1) from "nobody priced their work at all"
 //     (len(Cost) == 0) without ever computing a number that adds USD to
 //     JPY.
+//
+// One later amendment (task t11, ADR 0012): every scope here excludes
+// SUPERSEDED attempts -- a row some other row corrects with `supersedes`.
+// That is not an exception to the retry-burn rule above, it is what makes it
+// come out right. A deadline expiry records an attempt that reported no
+// usage, and the session's own late report appends a correction that does;
+// counting both would show one dispatch as one reported attempt AND one
+// unreported attempt, which describes two sessions where only one ran.
 type UsageRollup struct {
 	// InputTokens/OutputTokens sum usage_input_tokens/usage_output_tokens
 	// over attempts where usage_input_tokens IS NOT NULL -- migrations/0012's
@@ -140,7 +148,7 @@ func (eq engineQueries) usageRollup(ctx context.Context, whereSQL, scopeID strin
 			COUNT(*) FILTER (WHERE usage_input_tokens IS NOT NULL)::int,
 			COUNT(*) FILTER (WHERE usage_input_tokens IS NULL)::int
 		FROM attempts
-		WHERE `+whereSQL,
+		WHERE `+whereSQL+attemptCurrentUnaliasedSQL,
 		scopeID,
 	).Scan(
 		&rollup.InputTokens, &rollup.OutputTokens,
@@ -154,7 +162,7 @@ func (eq engineQueries) usageRollup(ctx context.Context, whereSQL, scopeID strin
 	rows, err := eq.q.Query(ctx, `
 		SELECT COALESCE(usage_currency, ''), SUM(usage_cost)
 		FROM attempts
-		WHERE `+whereSQL+`
+		WHERE `+whereSQL+attemptCurrentUnaliasedSQL+`
 		  AND usage_cost IS NOT NULL
 		GROUP BY COALESCE(usage_currency, '')
 		ORDER BY 1`,
@@ -200,7 +208,7 @@ func (eq engineQueries) NodeRunUsages(ctx context.Context, nodeRunIDs []string) 
 			COUNT(*) FILTER (WHERE usage_input_tokens IS NOT NULL)::int,
 			COUNT(*) FILTER (WHERE usage_input_tokens IS NULL)::int
 		FROM attempts
-		WHERE node_run_id = ANY($1)
+		WHERE node_run_id = ANY($1)`+attemptCurrentUnaliasedSQL+`
 		GROUP BY node_run_id`,
 		nodeRunIDs,
 	)
@@ -230,7 +238,7 @@ func (eq engineQueries) NodeRunUsages(ctx context.Context, nodeRunIDs []string) 
 	costRows, err := eq.q.Query(ctx, `
 		SELECT node_run_id, COALESCE(usage_currency, ''), SUM(usage_cost)
 		FROM attempts
-		WHERE node_run_id = ANY($1)
+		WHERE node_run_id = ANY($1)`+attemptCurrentUnaliasedSQL+`
 		  AND usage_cost IS NOT NULL
 		GROUP BY node_run_id, COALESCE(usage_currency, '')
 		ORDER BY 1, 2`,

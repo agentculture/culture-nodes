@@ -961,6 +961,17 @@ button.timeline__node {
   overflow-wrap: anywhere;
 }
 
+/* Supersession note in the attempt-number cell (task t11): "corrects #2" /
+   "superseded". Words, not colour (PRD §8.8) — a reader who cannot tell a
+   deadline reconciliation from a second try reads one dispatch as two. */
+.detail-panel__attempt-note {
+  display: block;
+  color: var(--ink-soft);
+  font-size: 0.85em;
+  font-weight: normal;
+  white-space: normal;
+}
+
 .detail-panel__ledger,
 .detail-panel__evidence {
   list-style: none;

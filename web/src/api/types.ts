@@ -161,6 +161,18 @@ export interface Attempt {
    * domain/preserve.ts).
    */
   preserve_remote?: string;
+  /**
+   * Task t11 (ADR 0012, migrations/0028_attempt_supersedes.sql): the id of
+   * the attempt record this one CORRECTS, absent on every ordinary dispatch.
+   *
+   * A node run whose deadline expired and whose actor session later reported
+   * back legitimately lists two attempts — the `timed_out` record, and the
+   * correction carrying the tokens, model, termination reason and preserve
+   * branch of work that really happened. Neither is deleted (PRD §10.4:
+   * records are immutable, corrections append), so a reader must be told
+   * which is which or they will read one dispatch as two.
+   */
+  supersedes?: string;
 }
 
 export interface AttemptUsage {

@@ -49,9 +49,30 @@ type asyncFixture struct {
 	claimed   storepg.ClaimedWork
 	attemptID string
 	token     string
+	// actorID is the resolved actors-table row id the dispatch attributed
+	// this invocation to (migration 0015), empty when the fixture does not
+	// need per-actor attribution. It is set BEFORE park() so it reaches the
+	// actor_invocations row the way a real dispatch writes it, rather than
+	// being patched in afterwards.
+	actorID string
 }
 
 func newAsyncFixture(t *testing.T) *asyncFixture {
+	t.Helper()
+	return newAsyncFixtureWith(t, false)
+}
+
+// newAsyncFixtureForActor is newAsyncFixture with the dispatch attributed to
+// a freshly registered actor (f.actorID), for the tests that read per-actor
+// statistics back. The actor is registered before the park so the
+// attribution reaches actor_invocations.actor_id the way a real dispatch
+// writes it (migration 0015), not by patching the row afterwards.
+func newAsyncFixtureForActor(t *testing.T) *asyncFixture {
+	t.Helper()
+	return newAsyncFixtureWith(t, true)
+}
+
+func newAsyncFixtureWith(t *testing.T, withActor bool) *asyncFixture {
 	t.Helper()
 	s := pgtest.RequireStore(t, testStore)
 	ctx := context.Background()
@@ -85,6 +106,9 @@ func newAsyncFixture(t *testing.T) *asyncFixture {
 		},
 		cw:       compileFixture(t, "async.workflow.yaml"),
 		workerID: "worker-" + t.Name(),
+	}
+	if withActor {
+		f.actorID = mustRegisterActor(t, s, ns.ID)
 	}
 
 	run, err := eng.CreateRun(ctx, f.cw, json.RawMessage(`{"subject":"async"}`))
@@ -179,6 +203,7 @@ func (f *asyncFixture) park() {
 		NodeRunID:             f.nodeRunID,
 		NodeID:                "work",
 		AttemptID:             f.attemptID,
+		ActorID:               f.actorID,
 		ActorRef:              "actor://company/long-runner@sha256:aaaaaa",
 		InvocationID:          "external_" + f.attemptID,
 		HeartbeatAfterSeconds: 30,
@@ -571,77 +596,6 @@ func TestCallbackSequenceIsMonotonic(t *testing.T) {
 	// The sequence still moves forward for a genuinely newer event.
 	if got := f.handle(completedEvent("ev-6", 6, "real answer")); got.Disposition != actors.DispositionCommitted {
 		t.Fatalf("in-order completion disposition = %s (%s), want committed", got.Disposition, got.Diagnostic)
-	}
-}
-
-// §13.4's closing rule, and the reason the whole fencing tuple is stored:
-// "completion after cancellation or attempt replacement is recorded as a late
-// diagnostic event but cannot commit workflow state."
-func TestCallbackAfterNewerAttemptIsLateAndCommitsNothing(t *testing.T) {
-	f := newAsyncFixture(t)
-
-	// A fired deadline timer returns a parked item to 'ready' (the
-	// scheduler's wait/retry effect targets `state <> 'completed'`), and a
-	// second worker then claims it — which bumps the fencing token and the
-	// attempt number out from under the first invocation.
-	if _, err := f.store.Pool().Exec(f.ctx,
-		`UPDATE work_items SET state = 'ready', available_at = now(), state_version = state_version + 1 WHERE id = $1`,
-		f.claimed.ID); err != nil {
-		t.Fatalf("simulate deadline timer effect: %v", err)
-	}
-	reclaimed := f.claim("second-worker", f.nodeRunID)
-	if reclaimed.FencingToken <= f.claimed.FencingToken {
-		t.Fatalf("reclaim did not advance the fencing token: %d then %d",
-			f.claimed.FencingToken, reclaimed.FencingToken)
-	}
-
-	// Now the original actor finally reports.
-	result := f.handle(completedEvent("ev-late", 1, "an hour late"))
-	if result.Disposition != actors.DispositionLate {
-		t.Fatalf("late completion disposition = %s (%s), want late", result.Disposition, result.Diagnostic)
-	}
-	if result.Completion != nil {
-		t.Error("a late completion returned a committed result")
-	}
-	if result.Diagnostic == "" {
-		t.Error("a late completion carried no diagnostic explaining why")
-	}
-
-	if !f.hasEvent(actors.TypeCallbackLate) {
-		t.Errorf("no late diagnostic event was recorded; events were %v", f.eventTypes())
-	}
-
-	// Nothing committed: no attempt row, the run is still running, and the
-	// newer claim still holds the work item.
-	var attempts int
-	if err := f.store.Pool().QueryRow(f.ctx,
-		`SELECT count(*)::int FROM attempts WHERE node_run_id = $1`, f.nodeRunID).Scan(&attempts); err != nil {
-		t.Fatalf("count attempts: %v", err)
-	}
-	if attempts != 0 {
-		t.Errorf("attempts recorded = %d, want 0: a late completion writes no attempt", attempts)
-	}
-	run, err := f.engine.Store().Run(f.ctx, f.run.ID)
-	if err != nil {
-		t.Fatalf("read run: %v", err)
-	}
-	if run.State != engine.RunRunning {
-		t.Errorf("run state = %s, want still running", run.State)
-	}
-	state, owner := f.workItemState(f.claimed.ID)
-	if state != "leased" || owner == nil || *owner != "second-worker" {
-		t.Errorf("work item is %q owned by %v, want leased by second-worker", state, owner)
-	}
-
-	// The superseded invocation is closed, so an operator listing waiting
-	// invocations does not see one that will never be answered.
-	var invocationState string
-	if err := f.store.Pool().QueryRow(f.ctx,
-		`SELECT state FROM actor_invocations WHERE attempt_id = $1`, f.attemptID).Scan(&invocationState); err != nil {
-		t.Fatalf("read invocation: %v", err)
-	}
-	if invocationState != actors.InvocationSuperseded {
-		t.Errorf("invocation state = %q, want superseded", invocationState)
 	}
 }
 

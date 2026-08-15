@@ -46,7 +46,7 @@ func auditScriptPath(t *testing.T) string {
 const auditProdEnvComplete = `POSTGRES_USER=nodes
 POSTGRES_DB=nodes
 POSTGRES_PASSWORD=placeholder-postgres-password
-NODES_DATABASE_URL=postgres://nodes:placeholder-postgres-password@postgres:5432/nodes?sslmode=disable
+NODES_DATABASE_URL=placeholder-database-url
 MINIO_ROOT_USER=nodesroot
 MINIO_ROOT_PASSWORD=placeholder-minio-password
 NODES_HUMAN_DECISION_TOKEN_SECRET=placeholder-human-decision-secret
@@ -64,6 +64,10 @@ NODES_ACTOR_NOTIFY_TOKEN=placeholder-notify-token
 // appear in the audit's output or in an ssh argv: the audit reports key NAMES.
 var auditPlaceholderValues = []string{
 	"placeholder-postgres-password",
+	// Task t15 made the database URL a deployment input every profile
+	// reads, which makes it a required key here — and a credential-shaped
+	// one: a connection URL carries the password inline.
+	"placeholder-database-url",
 	"placeholder-minio-password",
 	"placeholder-human-decision-secret",
 	"placeholder-callback-secret",

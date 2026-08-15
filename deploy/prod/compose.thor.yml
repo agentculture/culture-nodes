@@ -104,6 +104,14 @@ services:
       NODES_ACTOR_REGISTRATION_TOKEN_SECRET: ${NODES_ACTOR_REGISTRATION_TOKEN_SECRET:-}
       NODES_EVENT_TOKEN_SECRET: ${NODES_EVENT_TOKEN_SECRET:-}
       NODES_ADHOC_RUN_TOKEN_SECRET: ${NODES_ADHOC_RUN_TOKEN_SECRET:-}
+      # Task t13 / issue #5. Empty by default, and that IS the gate:
+      # internal/telemetry.New returns NoOp() when this is unset — no
+      # exporter, no goroutine, no dial. Set it in prod.env to
+      # http://otel-collector:4317 to use the bundled collector below
+      # (which also needs `--profile telemetry`), or to any other
+      # OTLP/gRPC endpoint to use any other collector. Which collector
+      # answers is a value, never a code or image change.
+      OTEL_EXPORTER_OTLP_ENDPOINT: ${OTEL_EXPORTER_OTLP_ENDPOINT:-}
     ports:
       - "18080:8080"
     depends_on:
@@ -122,6 +130,8 @@ services:
     environment:
       NODES_DATABASE_URL: ${NODES_DATABASE_URL:?set the bundled or external PostgreSQL URL in prod.env}
       NODES_SCHEDULER_ID: thor-scheduler-1
+      # See the api service's note: unset means telemetry off.
+      OTEL_EXPORTER_OTLP_ENDPOINT: ${OTEL_EXPORTER_OTLP_ENDPOINT:-}
     depends_on:
       migrate:
         condition: service_completed_successfully
@@ -161,6 +171,10 @@ services:
       # container, so an unlisted token is simply absent at dispatch.
       NODES_ACTOR_NOTIFY_TOKEN: ${NODES_ACTOR_NOTIFY_TOKEN:-}
       NODES_RUNNER_SERVICES_FILE: ${NODES_RUNNER_SERVICES_FILE:-}
+      # See the api service's note: unset means telemetry off. This is the
+      # seam #5 cares most about — worker.dispatch — and it is instrumented
+      # on BOTH machines, so compose.orin.yml carries the same variable.
+      OTEL_EXPORTER_OTLP_ENDPOINT: ${OTEL_EXPORTER_OTLP_ENDPOINT:-}
     volumes:
       - ~/.culture-nodes/runners:/etc/nodes-runners:ro
     depends_on:
@@ -275,6 +289,34 @@ services:
       postgres:
         condition: service_healthy
         required: false
+    restart: unless-stopped
+
+  # The OTLP collector (task t13, issue #5), behind `--profile telemetry`.
+  #
+  # Off unless asked for, twice over: the profile keeps `docker compose up`
+  # from starting it, and OTEL_EXPORTER_OTLP_ENDPOINT being empty keeps the
+  # control plane from building an exporter even if it is running. Turning
+  # telemetry on is therefore a deliberate two-step, and turning it off is
+  # removing one line from prod.env.
+  #
+  # Config: deploy/otel-collector.yaml, the SAME file the local profile
+  # mounts (see its header for what this collector is and why the export
+  # goes to stdout — `docker compose logs otel-collector` is the query
+  # surface). Traces land in the container's log stream, so nothing here
+  # holds state and no volume is needed for them.
+  otel-collector:
+    profiles: ["telemetry"]
+    image: otel/opentelemetry-collector-contrib:latest@sha256:c5918f78992ee73b0d6f0e599423ac5ec52dd5d9726733114d6eca53d5a32ed5
+    volumes:
+      - ../otel-collector.yaml:/etc/otelcol-contrib/config.yaml:ro
+    ports:
+      # Bound on all interfaces for the same reason Postgres above is:
+      # orin's worker is the second instrumented process in this
+      # deployment, and its dispatches are half the spans a trace taken
+      # across the pair contains. The trust boundary is the LAN — see
+      # README.md "Network trust". A deployment that keeps orin's worker
+      # unexported instead simply leaves this variable unset there.
+      - "4317:4317"
     restart: unless-stopped
 
 volumes:

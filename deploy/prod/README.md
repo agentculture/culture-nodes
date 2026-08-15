@@ -266,6 +266,33 @@ parked as issue #6; the runner protocol's `AllowInsecureTransport` opt-in
 is what permits plaintext HTTP off-loopback). Do not port-forward any of
 these beyond the LAN.
 
+## Telemetry (telemetry profile, issue #5)
+
+Off by default, twice over: the `otel-collector` service sits behind the
+`telemetry` profile, and the control plane builds no exporter at all unless
+`OTEL_EXPORTER_OTLP_ENDPOINT` is set (`internal/telemetry.New` returns
+`NoOp()` — no exporter, no goroutine, no dial). Turning it on is one line in
+`~/.culture-nodes/prod.env`:
+
+```text
+OTEL_EXPORTER_OTLP_ENDPOINT=http://otel-collector:4317
+```
+
+plus starting the collector: `COMPOSE_PROFILES=telemetry docker compose
+--env-file ~/.culture-nodes/prod.env -f compose.thor.yml up -d`. orin's
+worker points at thor's (`http://thor:4317`, port 4317 published on the LAN
+for exactly that, per Network trust above); leaving it unset there is a
+supported state.
+
+`api`, `scheduler` and both workers carry the variable, because all three
+seams `internal/telemetry` instruments live in those processes. Pointing at
+a different collector — Jaeger, Tempo, a vendor endpoint — is that
+variable's value and nothing else.
+
+Read `docs/operations/telemetry.md` before believing a trace: the three
+seams share a `run_id`, not a trace id, because this control plane
+propagates no W3C trace context across the actor boundary.
+
 ## After first boot
 
 `nodes serve` mints the namespace id on first boot; `deploy.sh thor`

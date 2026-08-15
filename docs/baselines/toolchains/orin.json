@@ -1,0 +1,58 @@
+{
+  "hostname": "orin",
+  "search_path": "/home/orin/.local/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin:/usr/games:/usr/local/games:/snap/bin:/snap/bin",
+  "toolchains": [
+    {
+      "name": "uv",
+      "state": "present",
+      "path": "/home/orin/.local/bin/uv",
+      "on_path": true,
+      "packaging": "standalone",
+      "version": "uv 0.11.29 (aarch64-unknown-linux-gnu)"
+    },
+    {
+      "name": "go",
+      "state": "absent"
+    },
+    {
+      "name": "gh",
+      "state": "present",
+      "path": "/home/orin/.local/bin/gh",
+      "on_path": true,
+      "packaging": "standalone",
+      "version": "gh version 2.96.0 (2026-07-02)"
+    },
+    {
+      "name": "git",
+      "state": "present",
+      "path": "/usr/bin/git",
+      "on_path": true,
+      "packaging": "system",
+      "version": "git version 2.43.0"
+    },
+    {
+      "name": "codex",
+      "state": "present",
+      "path": "/home/orin/.local/bin/codex",
+      "on_path": true,
+      "packaging": "standalone",
+      "version": "codex-cli 0.147.0"
+    },
+    {
+      "name": "claude",
+      "state": "present",
+      "path": "/home/orin/.local/bin/claude",
+      "on_path": true,
+      "packaging": "standalone",
+      "version": "2.1.221 (Claude Code)"
+    },
+    {
+      "name": "colleague",
+      "state": "present",
+      "path": "/home/orin/.local/bin/colleague",
+      "on_path": true,
+      "packaging": "standalone",
+      "version": "colleague 1.49.0"
+    }
+  ]
+}

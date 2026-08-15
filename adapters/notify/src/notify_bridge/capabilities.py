@@ -16,6 +16,14 @@ absence. The keys that remain are the ones that still mean something —
 which host this runs on, that nothing is written or committed, and that the
 set of paths a dispatch may write is empty.
 
+`dispatch_grants` and `toolchains` (issue #96) are omitted for the same
+reason and are worth naming explicitly, because "which toolchains can
+execute here" is a question with no answer on this bridge rather than one
+whose answer is "none": it starts no session, so there is no posture to
+grant anything and no tool a dispatch could invoke. A `toolchains: []` here
+would read as "this host has no uv", which is a claim about a host nobody
+measured.
+
 The webhook URL is deliberately not a host fact and never will be: this
 module, like every other module outside `webhook.py`, never reads it. See
 `webhook.py`'s docstring for the isolation rule.

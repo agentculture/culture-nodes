@@ -133,3 +133,22 @@ def test_print_capabilities_emits_the_registration_document(capsys):
     assert rc == 0
     printed = json.loads(capsys.readouterr().out)
     preflight.validate_block(printed)
+
+
+# --- the two keys this bridge deliberately does not carry (issue #96) ----
+
+
+def test_no_toolchain_or_grant_facts_because_there_is_no_dispatch_to_have_them(tmp_path):
+    """`toolchains: []` here would read as "this host has no uv" — a claim
+    about a host nobody measured. This bridge starts no session, so there is
+    no posture to grant anything and no tool a dispatch could invoke, and
+    both keys are absent rather than empty.
+
+    The sandbox keys are absent for the same reason, and this test states
+    both together so the pair cannot drift apart."""
+    host = capabilities.host_facts(Config())
+    for key in ("dispatch_grants", "toolchains", "sandbox_modes", "sandbox_modes_unavailable"):
+        assert key not in host
+    # ...and what remains still says something: this is not an empty surface.
+    assert host["hostname"]
+    assert host["writable_paths"] == []

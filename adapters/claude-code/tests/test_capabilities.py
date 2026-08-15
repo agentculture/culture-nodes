@@ -158,3 +158,56 @@ def test_print_capabilities_emits_the_registration_document(capsys, tmp_path):
     assert rc == 0
     printed = json.loads(capsys.readouterr().out)
     preflight.validate_block(printed)
+
+
+# --- toolchains under THIS backend's postures (issue #96) ----------------
+
+#: The same two agent-host shapes codex's own test injects, so the two
+#: surfaces are comparable tool for tool.
+THOR = {"uv": ("/snap/bin/uv", True), "gh": ("/usr/bin/gh", True)}
+
+
+def _host(table, tmp_path):
+    return capabilities.host_facts(
+        Config(repo_allowlist=(str(tmp_path),)),
+        probes=_permissive(tmp_path),
+        locate=lambda name: table.get(name, (None, False)),
+        version=lambda _path: "test-version",
+    )
+
+
+def _tool(host, name):
+    return next(fact for fact in host["toolchains"] if fact["name"] == name)
+
+
+def test_every_deliverable_mode_grants_everything_because_nothing_confines(tmp_path):
+    """`claude -p` runs with this bridge process's privileges: a permission
+    mode decides whether the session ASKS, never what it CAN. Stated in the
+    shared grant vocabulary so a toolchain verdict is derivable here the same
+    way it is on the codex bridge."""
+    host = _host(THOR, tmp_path)
+    assert set(host["dispatch_grants"]) == {"acceptEdits", "bypassPermissions"}
+    for granted in host["dispatch_grants"].values():
+        assert set(granted) == set(preflight.GRANTS)
+
+
+def test_the_same_snap_uv_that_a_codex_dispatch_cannot_run_is_usable_here(tmp_path):
+    """The contrast issue #96 is really about: the fact is per-DISPATCH, not
+    per-host. thor's snap-packaged uv is unusable under codex's confined
+    modes and perfectly usable through a bridge that confines nothing --
+    which is why plan t5 routes Python-side verification to a claude bridge
+    rather than to an agent host."""
+    uv = _tool(_host(THOR, tmp_path), "uv")
+    assert uv["packaging"] == "snap"
+    assert uv["usable_in"] == ["acceptEdits", "bypassPermissions"]
+    assert "unusable_in" not in uv
+
+
+def test_an_absent_toolchain_is_still_absent_however_permissive_the_mode(tmp_path):
+    go = _tool(_host(THOR, tmp_path), "go")
+    assert go["state"] == "absent"
+    assert go["usable_in"] == []
+
+
+def test_the_surface_with_toolchains_is_still_a_document_the_engine_accepts(tmp_path):
+    preflight.validate_block(preflight.capability_block(_host(THOR, tmp_path)))

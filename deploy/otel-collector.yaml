@@ -1,0 +1,79 @@
+# Culture Nodes — the OTLP collector both compose profiles ship (task t13,
+# issue #5).
+#
+# ONE file, mounted read-only by deploy/compose/docker-compose.yml and
+# deploy/prod/compose.thor.yml alike, because the two deployments need the
+# same thing from a collector: accept what internal/telemetry sends, and
+# make it readable without installing a backend first.
+#
+# # What this collector is, and is not
+#
+# It is the DEFAULT sink, not the only one. #5 closes on a live trace, and
+# a trace needs something to arrive at; this service is that something, so
+# closing the issue does not depend on provisioning a hosted backend first.
+# Pointing the deployment at any other collector — Jaeger, Tempo, an
+# OTLP-speaking vendor endpoint, a throwaway `docker run` on a laptop — is
+# one variable's value (OTEL_EXPORTER_OTLP_ENDPOINT) and nothing else: this
+# service can stay down, and no manifest or image changes.
+#
+# # Why the export goes to stdout
+#
+# The `file` exporter writes OTLP/JSON, one request per line, and its path
+# is /dev/stdout. That makes `docker compose logs otel-collector` the query
+# surface: `jq` reads it directly, there is no volume to provision, no
+# ownership to arrange for the image's non-root user (uid 10001), and
+# nothing on disk to rotate or forget. deploy/compose/otel-smoke.sh queries
+# exactly this stream.
+#
+# A deployment that wants durable traces points the variable at a collector
+# that stores them — which is the same one-variable change as above.
+#
+# # Both pipelines are load-bearing
+#
+# internal/telemetry.New builds an OTLP trace exporter AND an OTLP metric
+# exporter from the one variable. Against a collector configured with only
+# a traces pipeline the spans arrive and the metrics are refused, and every
+# control-plane process's Shutdown then fails with "unknown service
+# opentelemetry.proto.collector.metrics.v1.MetricsService" (measured on
+# spark while building this task). Deleting the metrics pipeline below
+# therefore breaks the control plane's shutdown path, not just its metrics.
+# tests/deploy/otelcollector_test.go asserts both pipelines exist.
+
+receivers:
+  otlp:
+    protocols:
+      grpc:
+        # Every process reaching this collector is on the compose network
+        # (or, for orin's worker, on the LAN — the same trust boundary
+        # deploy/prod/README.md's "Network trust" section states for
+        # Postgres and MinIO).
+        endpoint: 0.0.0.0:4317
+
+processors:
+  # Small batches, flushed fast: this collector's job is to make a trace
+  # readable moments after a run, not to be efficient about volume.
+  batch:
+    timeout: 1s
+    send_batch_size: 128
+
+exporters:
+  file:
+    path: /dev/stdout
+
+service:
+  telemetry:
+    logs:
+      # The collector's own logs share the stream the exported JSON goes
+      # to. At `warn` it says nothing during normal operation, so every
+      # line a query reads is an OTLP payload — and a real problem still
+      # shows up rather than being suppressed.
+      level: warn
+  pipelines:
+    traces:
+      receivers: [otlp]
+      processors: [batch]
+      exporters: [file]
+    metrics:
+      receivers: [otlp]
+      processors: [batch]
+      exporters: [file]

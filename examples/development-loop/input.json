@@ -1,0 +1,11 @@
+{
+  "repo": "/srv/checkouts/culture-nodes",
+  "review_repo": "/srv/review-checkouts/culture-nodes",
+  "writer_name": "development-loop-writer",
+  "review_sandbox": "read-only",
+  "provision_instruction": "Mint an isolated, detached worktree for the supplied writer name from this checkout, beneath the root this bridge is configured with. Never adopt an existing directory and never place the worktree inside another writer's allowlisted root. Report the writer name and the commit the worktree was cut from, or say by name which capability you lack.",
+  "work_instruction": "Do the work described in the ledger's ready tasks against your own worktree. Read the verification queue first: on a second pass it carries the handover gate's threshold misses and the reviewer's findings. When you are done, hand over BOTH carriers -- a handover commit at a ref under refs/culture-nodes/<run-id> for your changes, and an artifact reference for the context a reviewer needs to read them. Never push and never commit onto a branch. If you cannot produce either handle, report handoff_unavailable and name the capability rather than reporting completed.",
+  "review_instruction": "Review the handed-over changes against the context artifact and the gate's measured evidence. You are read-only: your checkout is a working directory, not the work under review. Say plainly which of the four gates actually measured anything on the changed trees and which were reported not-applicable -- an unmeasured gate is not a passing gate. Approve, or return findings.",
+  "cleanup_instruction": "Remove the worktree this run minted, and only that one. Refuse if the tree still holds work that no handoff carried away, if it is missing, or if it was not minted by this run -- a refusal that retains the tree is the correct answer, and reaping unharvested work is not recoverable.",
+  "decision_instruction": "You are being asked one of three questions, and the run says which: the writer spent its continuation budget without finishing; a deadline cancelled the writer's session and the engine refused to start a second one against a session it has not observed stop; or the handover gate could not measure something it was supposed to measure. Approve to proceed to cleanup, reject to stop, and read the run's events before either."
+}

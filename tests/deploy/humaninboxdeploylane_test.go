@@ -113,9 +113,9 @@ func TestHumanInboxDeployLaneAssertsColocationBeforeInstalling(t *testing.T) {
 	if assertIdx == -1 {
 		t.Fatal("deploy_human_inbox never calls assert_human_inbox_colocated; nothing fails the deploy when the pair would be split")
 	}
-	installIdx := strings.Index(body, "~/.config/systemd/user/human-inbox-bridge.service")
+	installIdx := strings.Index(body, "~/.config/systemd/user/culture-nodes-human-inbox.service")
 	if installIdx == -1 {
-		t.Fatal("deploy_human_inbox does not install human-inbox-bridge.service")
+		t.Fatal("deploy_human_inbox does not install culture-nodes-human-inbox.service")
 	}
 	if assertIdx > installIdx {
 		t.Error("assert_human_inbox_colocated runs AFTER the bridge unit is installed; the assertion has to refuse before anything lands on the host")
@@ -131,7 +131,7 @@ func TestHumanInboxBridgeAndTrackerInstallOnOneHost(t *testing.T) {
 	hostVar := regexp.MustCompile(`actor_host_exec\s+"(\$[A-Za-z_][A-Za-z0-9_]*)"`)
 	seen := map[string][]string{}
 	for _, line := range strings.Split(body, "\n") {
-		if !strings.Contains(line, "~/.config/systemd/user/human-inbox-") {
+		if !strings.Contains(line, "~/.config/systemd/user/culture-nodes-human-inbox") {
 			continue
 		}
 		m := hostVar.FindStringSubmatch(line)
@@ -139,18 +139,18 @@ func TestHumanInboxBridgeAndTrackerInstallOnOneHost(t *testing.T) {
 			t.Errorf("a unit-install line does not run through actor_host_exec \"$host\": %s", strings.TrimSpace(line))
 			continue
 		}
-		for _, unit := range []string{"human-inbox-bridge.service", "human-inbox-tracker.service"} {
+		for _, unit := range []string{"culture-nodes-human-inbox.service", "culture-nodes-human-inbox-tracker.service"} {
 			if strings.Contains(line, unit) {
 				seen[unit] = append(seen[unit], m[1])
 			}
 		}
 	}
-	for _, unit := range []string{"human-inbox-bridge.service", "human-inbox-tracker.service"} {
+	for _, unit := range []string{"culture-nodes-human-inbox.service", "culture-nodes-human-inbox-tracker.service"} {
 		if len(seen[unit]) == 0 {
 			t.Fatalf("no install line found for %s", unit)
 		}
 	}
-	bridgeHost, trackerHost := seen["human-inbox-bridge.service"][0], seen["human-inbox-tracker.service"][0]
+	bridgeHost, trackerHost := seen["culture-nodes-human-inbox.service"][0], seen["culture-nodes-human-inbox-tracker.service"][0]
 	if bridgeHost != trackerHost {
 		t.Errorf("the bridge installs on %s and the tracker on %s — the tracker reads the bridge's state directory off the local filesystem, so two host variables is a split by construction", bridgeHost, trackerHost)
 	}
@@ -214,8 +214,8 @@ func TestHumanInboxDeployLaneRunsViaUvRunAgainstAgentCheckout(t *testing.T) {
 		t.Fatal("no deploy_human_inbox() function found")
 	}
 
-	if !strings.Contains(script, "~/.config/systemd/user/human-inbox-bridge.service") {
-		t.Error("deploy.sh does not install human-inbox-bridge.service to ~/.config/systemd/user/")
+	if !strings.Contains(script, "~/.config/systemd/user/culture-nodes-human-inbox.service") {
+		t.Error("deploy.sh does not install culture-nodes-human-inbox.service to ~/.config/systemd/user/")
 	}
 }
 
@@ -226,11 +226,11 @@ func TestHumanInboxDeployLaneInstallsAndStartsBridgeUnit(t *testing.T) {
 	script := deployScriptText(t)
 
 	for _, want := range []struct{ needle, why string }{
-		{"~/.config/systemd/user/human-inbox-bridge.service", "the unit file install"},
+		{"~/.config/systemd/user/culture-nodes-human-inbox.service", "the unit file install"},
 		{"systemctl --user daemon-reload", "the daemon-reload after installing the unit"},
-		{"systemctl --user restart human-inbox-bridge", "the restart (so a re-deploy picks up changes)"},
-		{"systemctl --user enable human-inbox-bridge", "the enable (so the bridge survives a reboot)"},
-		{`assert_unit_healthy "$host" human-inbox-bridge`, "the health assertion (wait-active plus a stays-active recheck)"},
+		{"systemctl --user restart culture-nodes-human-inbox", "the restart (so a re-deploy picks up changes)"},
+		{"systemctl --user enable culture-nodes-human-inbox", "the enable (so the bridge survives a reboot)"},
+		{`assert_unit_healthy "$host" culture-nodes-human-inbox`, "the health assertion (wait-active plus a stays-active recheck)"},
 	} {
 		if !strings.Contains(script, want.needle) {
 			t.Errorf("deploy.sh has no %q — %s is missing from the human-inbox-bridge lane", want.needle, want.why)
@@ -252,10 +252,10 @@ func TestHumanInboxDeployLaneInstallsTrackerWithoutGitHubToken(t *testing.T) {
 		t.Error("deploy_human_inbox still has a no-token path that skips the tracker unit")
 	}
 	for _, want := range []struct{ needle, why string }{
-		{"~/.config/systemd/user/human-inbox-tracker.service", "the tracker unit file install"},
-		{"systemctl --user restart human-inbox-tracker", "the tracker restart"},
-		{"systemctl --user enable human-inbox-tracker", "the tracker enable"},
-		{`assert_unit_healthy "$host" human-inbox-tracker`, "the tracker health assertion"},
+		{"~/.config/systemd/user/culture-nodes-human-inbox-tracker.service", "the tracker unit file install"},
+		{"systemctl --user restart culture-nodes-human-inbox-tracker", "the tracker restart"},
+		{"systemctl --user enable culture-nodes-human-inbox-tracker", "the tracker enable"},
+		{`assert_unit_healthy "$host" culture-nodes-human-inbox-tracker`, "the tracker health assertion"},
 	} {
 		if !strings.Contains(script, want.needle) {
 			t.Errorf("deploy.sh has no %q — %s is missing from the human-inbox-tracker lane", want.needle, want.why)

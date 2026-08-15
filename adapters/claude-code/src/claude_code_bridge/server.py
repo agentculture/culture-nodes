@@ -317,6 +317,25 @@ class Handler(BaseHTTPRequestHandler):
             )
             return
 
+        # This bridge's fine-grained push credential intentionally excludes
+        # GitHub Actions workflow administration.  Refuse that work package
+        # while its scope is being validated, before a model edits anything
+        # and long before git push could misreport the boundary as a broken
+        # credential.
+        if ".github/workflows/" in instruction.replace("\\", "/"):
+            self._write_json(
+                403,
+                {
+                    "error": (
+                        "workflow-scope boundary: this actor may not modify "
+                        ".github/workflows/; split that work into a separately "
+                        "authorized package"
+                    ),
+                    "class": "auth_or_policy",
+                },
+            )
+            return
+
         # Engine-resolved bindings beyond the transport fields ride into the
         # session as a serialized context block: a node's input.bindings
         # (fixReport, evidence projections, ...) are resolved by the worker

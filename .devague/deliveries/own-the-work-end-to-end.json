@@ -2,7 +2,7 @@
   "plan_slug": "own-the-work-end-to-end",
   "schema_version": 1,
   "created": "2026-08-15T06:38:50Z",
-  "updated": "2026-08-15T06:44:43Z",
+  "updated": "2026-08-15T07:01:25Z",
   "deviations": [
     {
       "id": "d1",
@@ -52,6 +52,23 @@
       "origin": "user",
       "status": "approved",
       "classification": "acceptable"
+    },
+    {
+      "id": "d4",
+      "what": "Wave-0 round 2 blocked on sandbox posture: under codex --sandbox workspace-write the WORKTREE is writable but .git is READ-ONLY, so git fetch/commit/branch all fail ('.git/FETCH_HEAD: Read-only file system'). Both P2 (run 01M023GXENMQ0QRZQH5G61TXD9) and P3 (run 01M023GXJB2ARP1B8213Q992AT) reported it independently after their write probes passed. Packages must be re-dispatched with a sandbox that permits git metadata writes, per the agent checkout's own AGENTS.md guidance (danger-full-access).",
+      "task_ref": "t1",
+      "reason": "This refines #18 rather than reopening it: file writes in the worktree ARE proven (three independent probes), but git-metadata writes are not permitted under workspace-write. The consequence reaches the spec, not just the fan-out: the git_ref handover carrier decided in q9/c70 requires the producing agent to create a commit and a ref, which is exactly what this sandbox forbids. So the two-carrier decision currently depends on either raising the sandbox to danger-full-access for any package that hands over a ref, or on the operator creating the ref on the agent's behalf \u2014 which reintroduces the human-as-transport the batch exists to remove. Classified RISKY because raising the sandbox weakens the confinement that made read-only dispatch safe, and that trade deserves an explicit decision rather than being absorbed as a dispatch flag.",
+      "affects": [
+        "t3",
+        "t4",
+        "t8",
+        "t15",
+        "c69",
+        "c70"
+      ],
+      "origin": "user",
+      "status": "approved",
+      "classification": "risky"
     }
   ]
 }

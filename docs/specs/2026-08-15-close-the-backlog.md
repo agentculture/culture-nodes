@@ -20,6 +20,12 @@
   - instruction: Copy STATE section 11's fourteen rows into the triage artifact as a checklist; mark each automated-by-node or still-manual at cycle close.
 - Before: headspace-cli 0.11.0 is both the version installed on thor and the latest published release on PyPI, and its CLI surface has no network flag at all — so #50's egress allowlist cannot arrive by upgrading. But headspace-cli is a first-party AgentCulture repo (agentculture/headspace-cli, checked out at /home/spark/git/headspace-cli, 12 open issues, none about egress), so this is a cross-repo feature we can ship, not an external blocker.
   - instruction: Re-run 'curl -s <https://pypi.org/pypi/headspace-cli/json>' at the point #50 is dispositioned and compare against 0.11.0.
+- Before: The stated motivation for #59 is falsified by measurement: the entire control plane on thor uses 246MB (postgres 69, minio 95, api 32, worker 20, scheduler 15, notifier 14, backup 2) out of 122GB, with 56GB free — while model-gear's vLLM worker alone holds 16.2GB. Moving the control plane to AWS frees a quarter of a gigabyte. The mass-mesh motivation is untouched; the memory one should not be repeated.
+  - instruction: Re-run free -h and docker stats on thor after the cutover; report the delta in the delivery summary.
+- Before: Measured from thor, TCP connect latency is 19ms to il-central-1, 70ms to eu-central-1, and 160ms to us-east-1, where the existing SQS/Lambda lane lives. Local Postgres answers in under a millisecond. Region choice is therefore not a preference: it is an eight-fold difference on every database round trip the engine makes.
+  - instruction: Re-run the three-region curl loop from thor at cutover.
+- Before: Two owner-only prerequisites block provisioning, both measured: il-central-1 is not enabled on account 435593604218 (an sts call there returns InvalidClientTokenId, the opt-in-region signature), and deploy/aws/dev-operator-policy.json grants SQS, S3, ECR, Lambda, scoped IAM and STS but no RDS at all (rds:DescribeOrderableDBInstanceOptions is denied).
+  - instruction: Verify with: aws sts get-caller-identity --region il-central-1 and aws rds describe-orderable-db-instance-options --region il-central-1.
 - After: The tracker answers three questions without a human reconstructing them: what is closed and on what evidence, what is open and who owns it, and what the system did versus what a person did. Bucket A is closed on run evidence, the operator-lane loop runs the work instead of an operator's session, #5 exports live telemetry, and the four decision-shaped issues carry an owner's recorded answer.
   - instruction: Commit the four queries alongside the triage artifact so the after-state is re-derivable.
 
@@ -76,6 +82,27 @@
 - Every dispatched package declares a model tier matched to its task kind, and the split plan states the tier per wave: mechanical and verification work — reading code, running a probe, reporting evidence — goes to the cheapest model that can do it; design, gate adjudication and judgment calls go to the strongest. A wave that runs everything on the top tier is a planning defect, not a safety margin.
   - instruction: In the split plan, add a per-wave line: concurrency (1-2), model tier per package, and the justification. Verify afterwards by reading `usage_model` off each attempt through the API.
   - honesty: Each wave's declared tier is checkable against what actually ran: the attempt records name the model, and a wave whose attempts all report the top tier while its split plan declared a cheaper one is a recorded miss, not a rounding error.
+- Sweep's dedup state is durable and per source key — PR: head SHA plus newest comment timestamp; Jira issue: updated timestamp plus newest comment timestamp — surviving a sweep restart, a redeploy and a control-plane restart. A sweep that loses its watermark re-raises the whole world, which is the failure this split exists to prevent.
+  - instruction: Store watermarks in Postgres beside the notifier cursor prior art; key them on repo+PR and on Jira issue key.
+  - honesty: Killing the sweep between a raise and the next cycle, then restarting it, produces no duplicate event for anything it already reported — tested by restarting mid-sweep, not argued from the code.
+- An event subscription may carry a condition evaluated over the event's payload, so one emitted finding reaches only the handlers that match it. The condition language is CEL, the same as every other predicate in the system (contracts, guards, continue.while) — not a second expression dialect.
+  - instruction: Evaluate the condition inside the same delivery transaction that already matches subscriptions; record the non-match rather than dropping it.
+  - honesty: An event that matches a handler's name but fails its condition creates no run and resumes nothing, and the event is still recorded — so a non-match is visible as a decision, not as silence.
+- A workflow may declare an event trigger that CREATES a run, not merely resumes one parked on a wait node. That is what closes #71 (nothing wakes the flow when a new PR arrives) and the 'start the first run' half of #107; the existing until.signal wait covers only the resume case, which requires a run to already exist.
+  - instruction: Extend the workflow schema with a trigger declaration, and match it at delivery time in DeliverSignalEvent.
+  - honesty: Opening a PR causes a run to exist with no human action and no run parked in advance; removing the trigger declaration makes the same PR produce nothing.
+- The RDS instance runs in il-central-1, not the us-east-1 the existing AWS lane uses. With compute staying on thor, the worker-to-Postgres link becomes the chattiest path in the system, and 160ms per round trip would multiply every engine transaction, every lease claim and every tick. The SQS and Lambda lanes may stay where they are; the database may not.
+  - instruction: Enable il-central-1 on the account, then provision RDS there. Keep the us-east-1 SQS/Lambda resources as they are — a split-region deployment is correct here, not a mistake to tidy up.
+  - honesty: Latency from thor to the provisioned RDS endpoint is measured and under 30ms; if it is not, the region choice is wrong and the cutover stops.
+- Before any cutover, the engine's latency budget is measured against the real RDS endpoint, not assumed: the number of round trips in a completion transaction, a lease claim and one scheduler tick, multiplied by the measured RTT, compared against the lease and fencing timeouts already in the code. If a lease can expire inside one transaction's round trips, the cutover changes the timeouts before it changes the database.
+  - instruction: Run the existing engine and worker suites against an il-central-1 RDS instance before pointing production at it; the suites already exercise leases and fencing.
+  - honesty: A completion transaction's round-trip count times the measured RTT is smaller than the lease timeout with margin, stated as two numbers and their ratio; if it is not, the timeouts change first.
+- The cutover has a proven rollback before it happens: the existing `pg_dump` loop in the compose backup service is restored into the RDS instance and the stack is run against it, so the migration path is exercised in the direction that matters before production depends on it. RESTORE.md is updated with whichever procedure actually worked.
+  - instruction: Restore the newest ~/.culture-nodes/backups dump into the il-central-1 RDS instance, point a non-production stack at it, run the suites, then update docs/prod/RESTORE.md with what actually worked.
+  - honesty: A restore from the current `pg_dump` into the RDS instance is completed and the stack runs against it, before production traffic points there. A rollback that has never been executed is not a rollback.
+- The two owner prerequisites are cleared as an explicit, recorded step: il-central-1 enabled on the account, and deploy/aws/dev-operator-policy.json extended with the RDS actions the provisioning needs plus whatever the OTel backend requires. The policy is a checked-in artifact, so the extension is a reviewable diff, not a console click.
+  - instruction: Extend deploy/aws/dev-operator-policy.json with the RDS actions provisioning needs, re-run bootstrap-operator.sh, and confirm the previously-denied describe call now succeeds.
+  - honesty: The policy extension is a reviewed diff in deploy/aws/dev-operator-policy.json, and the same provisioning commands that failed with AccessDenied succeed afterwards.
 
 ## Honesty conditions
 
@@ -102,6 +129,11 @@
 - headspace-cli's published version is re-checked at the point #50 is dispositioned; if a release with a network flag has appeared, the disposition changes rather than shipping stale.
 - Every Go-side closure this cycle cites a command that ran on spark, and none cites output from an agent host.
 - The verification sweep's dispatches contain no writable-roots widening and no handover ref, checkable in the dispatch records themselves.
+- No second events table and no second delivery path appear in the diff: git log -p over migrations shows the trigger work extending `signal_events`' delivery transaction rather than adding a parallel one.
+- The 246MB figure is re-measured after the migration and the freed memory reported as a number, so the falsified premise is closed with evidence rather than left as an argument.
+- The latency ladder is re-measured from thor at cutover time and recorded, because a route can change; a cutover that finds il-central-1 no longer near stops rather than proceeding on this measurement.
+- Both prerequisites are verified by a command that succeeds — an sts call in il-central-1 returning an identity, and an rds describe call returning options — not by someone reporting that they clicked the console.
+- The bridges-poll-outbound issue exists with a number before this cycle closes, so the deferral is a filed decision rather than a dropped thread.
 
 ## Success signals
 
@@ -136,6 +168,8 @@
   - instruction: Run every Go-side verification command on spark and paste its output into the closing comment.
 - The verification sweep dispatches read-only and stays read-only: no `writable_roots` widening, no .git widening, no handover ref. The write path is unproven (#18), and proving it is stage 2's job, not stage 1's.
   - instruction: Inspect each verification dispatch's recorded request for `writable_roots` or `handover_ref` and assert both are absent.
+- The event seam already exists and is the one to build on: POST /v1alpha1/events appends an immutable signal event and resumes matching subscriptions inside one transaction, with PostgreSQL the single writer of waiting state and no completion committed outside a fenced claim. The sweep split adds emission, conditions and triggers to that surface — it does not introduce a second event path.
+  - instruction: Review the diff against internal/api/signalevents.go and migrations/0016 before merging any trigger work.
 
 ## Non-goals
 
@@ -143,6 +177,8 @@
 - Not the AWS migration (#59). It is an infra and cost decision with #6 and #30 hanging off it, and deploy/aws plus ADRs 0003/0004/0006 already open that lane; this cycle sizes it and hands it to the owner.
 - Not the fully autonomous cycle (#109). That issue is the measure of the whole program — the human doing exactly one thing, reviewing the PR — and it closes when a later cycle demonstrates it, not as a task inside this one.
 - Not a rewrite of the devague chain into Culture Nodes (#89) as a precondition. The chain runs in this session as it always has; running it as a workflow is its own batch.
+- Not bridges-poll-outbound. Inverting the actor dispatch protocol so bridges pull work is what would let agents live outside the LAN, and it changes the section 13 contract across all five bridges. It is recorded as the next architectural step and filed as its own issue, not folded into this decision.
+  - instruction: File the issue with the section 13 contract change and the all-backends implication named explicitly.
 
 ## Assumptions
 
@@ -152,6 +188,9 @@
 - Fleet capacity is six registered actors — codex-thor and codex-orin on the two agent hosts, plus developer, planner, verifier and intake claude bridges on spark (nodes-op.sh actor table). The four claude bridges draw on the same subscription window as the operator's own session (CLAUDE.md session accounting, #48), so only the two codex actors add capacity that the operator's window does not already pay for.
 - Go is still absent on the agent hosts (STATE section 6), so every Go-side claim — including all of #5's telemetry work — needs the operator's gate on spark until #96 makes the capability surface report toolchains and routing respects it.
 - The codex write path remains unproven (CLAUDE.md, #18 open): shell exec works, but no dispatch has yet landed a patch under workspace-write with the .git widening measured in STATE section 5. Read-only verification dispatch is therefore safe to fan out now; write dispatch is a bet this cycle can test rather than assume.
+- The sweep split collapses part of the backlog rather than adding to it: #71 becomes the trigger case, #107's 'start the first run' becomes the same trigger plus a schedule, #61 and #76 become two more emitters against one contract instead of two more vocabularies inside one sweep script, and #108's 'what is running' surface shrinks because a finding's path from raise to run becomes a queryable chain of events. The triage table must record that collapse rather than carrying five independent items.
+- The #59 decision changes three other issues' dispositions: #30 closes on RDS automated backups plus S3 artifact durability rather than a new backup script; #6 becomes live work — the RDS and S3 access is exactly the workload-identity case OIDC was deferred for — rather than staying parked; and #5's collector gets an AWS home that thor reaches outbound, needing no inbound path.
+  - instruction: Update #30, #6 and #5 with the consequence of this decision as soon as it is recorded, so their dispositions do not drift from it.
 
 ## Scope exploration
 
@@ -209,6 +248,9 @@
 - Stage 2 opens with a single small write package dispatched to codex-thor to prove the write path (#18, unproven since the userns fix). If that package lands a patch, all stage-2 build work routes to codex actors and the operator's session is reserved for gates and merges; if it fails, stage 2 stops and is re-planned rather than absorbed into the operator's window.
 - \#5 is built now and does not wait on #59: the collector configuration, endpoint environment and deploy ship behind a single `OTEL_EXPORTER_OTLP_ENDPOINT` variable. The #59 decision brief is the first artifact this cycle produces, so the backend answer arrives before the build needs it. #5 closes on the first live trace from the deployed control plane, wherever the collector ends up running.
 - Concurrency is capped at one to two model tasks in flight at a time per subscription, counted across every lane that draws on the same window — the operator's own session, local subagents, and all bridge sessions. The thirteen bucket-A verifications therefore serialize deliberately; wall-clock is traded for not exhausting the window, which is what ended the attempts-evidence cycle mid-wave.
+- Sweep is broken into two halves. Sweep itself becomes a pure finding-emitter: it discovers work, holds durable dedup state, and raises an event — nothing else. It carries no triage logic, no merge logic, and no opinion about what should happen next. Workflows with event handlers pick the events up, and the conditions on those handlers decide which workflow reacts to which finding.
+- Sweep re-raises only on change, per source key: a GitHub PR raises again only if its head commit changed or a comment arrived since the last raise; a Jira issue only if its updated timestamp moved or a comment was added. Everything else it sees, it has already reported and stays silent about.
+- \#59 is decided: authoritative state moves to AWS — RDS PostgreSQL replaces prod-postgres and S3 replaces MinIO — while api, worker, scheduler and notifier stay on thor and keep dispatching to the bridges over the LAN. No VPN, no change to the actor dispatch protocol. Bridges-poll-outbound, the configuration that would let agents live outside the LAN, becomes its own future issue rather than part of #59.
 
 ## Hard questions
 

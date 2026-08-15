@@ -86,6 +86,65 @@ tags:
     description: Liveness and readiness probes.
 
 paths:
+  /v1alpha1/workflow-generations:
+    post:
+      operationId: createWorkflowGeneration
+      tags: [workflows]
+      summary: Dispatch a registered fleet agent to propose workflow source.
+      description: >-
+        Creates a normal bounded workflow run whose generation node is an
+        agent and whose next node is human approval. This operation never
+        publishes. The initial authority status is always proposed.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CreateWorkflowGeneration'
+      responses:
+        '202':
+          description: The fleet generation run was created.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/WorkflowGeneration'
+        '400':
+          description: The description or actor reference is malformed.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '404':
+          description: The pinned base workflow does not exist.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+
+  /v1alpha1/workflow-generations/{id}:
+    get:
+      operationId: getWorkflowGeneration
+      tags: [workflows]
+      summary: Read a generated proposal, compiler diagnostics, and edit diff.
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: {type: string}
+      responses:
+        '200':
+          description: Current generation state. Exhaustion is a domain status.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/WorkflowGeneration'
+        '404':
+          description: No such generation run.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+
   /v1alpha1/workflows/validate:
     post:
       operationId: validateWorkflow
@@ -1694,6 +1753,36 @@ components:
         durable invocation authority or reading the request body.
 
   schemas:
+    CreateWorkflowGeneration:
+      type: object
+      required: [description, actor_ref]
+      additionalProperties: false
+      properties:
+        description: {type: string, minLength: 1}
+        actor_ref: {type: string, minLength: 1}
+        base_digest:
+          type: string
+          pattern: '^sha256:[0-9a-f]{64}$'
+
+    WorkflowGeneration:
+      type: object
+      required: [run_id, status, valid, diagnostics]
+      properties:
+        run_id: {type: string}
+        status:
+          type: string
+          enum: [proposed, confirmed, rejected, exhausted]
+        base_digest: {type: string}
+        format: {type: string, enum: [yaml, json]}
+        source: {type: string}
+        diff: {type: string}
+        valid: {type: boolean}
+        digest: {type: string}
+        diagnostics:
+          type: array
+          items:
+            $ref: '#/components/schemas/Diagnostic'
+
     ArtifactWriteResult:
       type: object
       required: [ref, name, media_type, size_bytes, digest, backend, created_at]

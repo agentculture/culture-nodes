@@ -67,6 +67,9 @@ export function Header() {
         <NavLink to="/plan" className={navLinkClass} onClick={closeNav}>
           Plan
         </NavLink>
+        <NavLink to="/workflows/generate" className={navLinkClass} onClick={closeNav}>
+          Generate
+        </NavLink>
       </nav>
       <p className="app-header__tagline">
         Every node has a contract. Every result has evidence.

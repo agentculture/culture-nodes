@@ -2,7 +2,7 @@
   "plan_slug": "close-the-backlog",
   "schema_version": 1,
   "created": "2026-08-15T18:07:41Z",
-  "updated": "2026-08-15T18:47:24Z",
+  "updated": "2026-08-15T18:57:38Z",
   "deviations": [
     {
       "id": "d1",
@@ -152,6 +152,21 @@
         "t12",
         "c125",
         "h80"
+      ],
+      "origin": "llm",
+      "status": "proposed",
+      "classification": "needs-follow-up"
+    },
+    {
+      "id": "d13",
+      "what": "t9's remote-side fence is replaced by the sandbox's absence of egress, and the weaker guarantee is stated rather than glossed",
+      "task_ref": "t9",
+      "reason": "two measurements remove the need for the ruleset design: the fleet already moves work over plain ssh git transport with no credential (d1), and the codex dispatch sandbox has no network egress at all (d6), so a session cannot push anywhere even though origin still points at GitHub. The handover is therefore unfenced by design and unreachable in practice. This is genuinely WEAKER than a server-side ruleset in one way \u2014 a sandbox that regains egress removes the fence silently, where a ruleset would survive a host-side mistake \u2014 and docs/deviations/2026-08-15-handover-fence.md says so rather than claiming equivalence. t9's third criterion did ship and is proven live by run 01M03CD5V0WE9CBSHBM1Y3E9S7.",
+      "affects": [
+        "c119",
+        "h76",
+        "c123",
+        "h79"
       ],
       "origin": "llm",
       "status": "proposed",

@@ -25,3 +25,4 @@
 # --- round 3 ---
 01M03B29EGQY1F3FET2AEX2BZN   # C6 (t27 owner briefs), codex-thor
 01M03BV3DYNB9N7J1Q1RJ55HNB   # sweep-A (t7, issues 8/9/13/28/48), developer — read-only
+01M03CD5V0WE9CBSHBM1Y3E9S7   # handover probe (t9/#90), codex-thor — first dispatch with .git write

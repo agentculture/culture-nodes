@@ -1,0 +1,9 @@
+Issue: #{issue_number}
+Specific claim under test: {claim}
+Evidence form that would settle it: {evidence_form}
+
+Work read-only. Do not modify the checkout or any external state.
+Run executable verification only on spark and name every command that produced a result.
+Return evidence or the words cannot verify here with the reason.
+Return evidence, never an opinion about whether it feels done.
+Do not request or use writable-roots widening, workspace-write, or a handover ref.

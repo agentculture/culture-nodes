@@ -5,6 +5,55 @@ All notable changes to this project will be documented in this file.
 Format follows [Keep a Changelog](https://keepachangelog.com/). This project
 adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.24.0] - 2026-08-15
+
+The bug tail of the `close-the-backlog` plan (task t12): #98, #95 + #105 as
+one fix, #17, and #21 decided rather than patched.
+
+### Fixed
+
+- The workflow-scope boundary is enforced against what a session CHANGED,
+  not against what its brief SAID (#98). The old guard grepped the
+  instruction text for `.github/workflows/`, so a brief whose safest line
+  was `Do NOT touch .github/workflows/**` was refused 403 before any model
+  ran (live: run `01M039KA0QQ73XM3WQCQEQF1CN`), while a session that never
+  mentioned CI could edit it freely. `scope_guard.py` now decides on the
+  bridge's own measured change set — `workspace.measure()`'s `changed_files`
+  plus a targeted `git status -uall` over the guarded prefixes, because git
+  collapses a brand-new `.github/workflows/go.yml` into the entry
+  `.github/`. A violation becomes a 403 (sync) or a `failed` terminal event
+  (async) BEFORE the preserve hook, so refused work lands on a branch. Added
+  to all three bridges per the all-backends rule; the broken guard existed
+  in claude-code alone.
+- `continue.while` conditions that could not be evaluated stopped looking
+  like conditions that decided to stop (#105). An errored CEL evaluation, a
+  non-boolean result and a cleanly false condition all returned the same
+  zero `ContinuationDecision`, so `onExhausted` never fired and the run
+  showed nothing. `Node.DecideContinuation` now returns
+  `ErrContinuationUndecidable`, and the scheduler records a
+  `dev.culture.nodes.continuation.undecidable` outbox event before failing
+  closed.
+- `node.state` is read from the node run rather than fabricated (#95).
+  `deadlineContinuationHolds` passed the literal `"incomplete"`, which made
+  the canonical `node.state == "incomplete"` true in every run for every
+  node; it now reads `node_runs.status` in the same query as the bounds and
+  maps it through `engine.ContinuationNodeState`. An unmeasured state is
+  omitted from the CEL activation instead of defaulted, so it cannot be
+  fabricated by omission either.
+- `deploy/prod/deploy.sh` aborts when the `nodes-runner` binary fails to
+  ship, and lands the binary by rename (#17). The failure was swallowed by
+  `set -e`'s documented exemption for `&&` lists inside a `||` group, so a
+  re-deploy restarted the unit on the previous build; the scp failed in the
+  first place because it overwrote the running unit's own binary (ETXTBSY).
+
+### Changed
+
+- ADR 0013 records that the reference bridges stay single-threaded (#21),
+  with measurements: the cancel handler costs 0.26 ms idle and 0.23 ms
+  mid-session against a live async invocation, so the reported ~2.2 s is not
+  in it. `adapters/codex/scripts/probe_cancel_latency.py` is committed so
+  the numbers can be re-derived on any host.
+
 ## [0.23.0] - 2026-08-15
 
 The `own-the-work-end-to-end` batch — eleven issues (76, 77, 78, 79, 80, 81,

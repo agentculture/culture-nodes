@@ -4,6 +4,7 @@
 #
 #   ./deploy/aws/bootstrap-operator.sh [profile-name]   # default: culture-nodes
 #   ./deploy/aws/bootstrap-operator.sh update-policy     # re-apply dev-operator-policy.json
+#   ./deploy/aws/bootstrap-operator.sh enable-region <region>   # opt in to a region
 #
 # Run this yourself with admin (or root, first-time-only) credentials
 # active. It creates the culture-nodes-dev IAM user, attaches the
@@ -20,7 +21,11 @@
 set -euo pipefail
 
 MODE="${1:-bootstrap}"
-if [ "$MODE" = "update-policy" ]; then PROFILE="${2:-culture-nodes}"; else PROFILE="${1:-culture-nodes}"; fi
+case "$MODE" in
+  update-policy) PROFILE="${2:-culture-nodes}" ;;
+  enable-region) PROFILE="${3:-culture-nodes}" ;;
+  *)             PROFILE="${1:-culture-nodes}" ;;
+esac
 USER_NAME="culture-nodes-dev"
 POLICY_NAME="culture-nodes-dev-operator"
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -29,6 +34,35 @@ REGION="${AWS_REGION:-$(aws configure get region 2>/dev/null || echo us-east-1)}
 
 echo "==> bootstrap identity: $(aws sts get-caller-identity --query Arn --output text)"
 ACCOUNT=$(aws sts get-caller-identity --query Account --output text)
+
+if [ "$MODE" = "enable-region" ]; then
+  # Opt in to a region. This is an ACCOUNT-LEVEL setting, which is why it
+  # lives with the admin identity and not in the scoped operator policy:
+  # a credential that can turn regions on for the whole account is not a
+  # scoped credential. The operator policy grants only the READ
+  # (account:GetRegionOptStatus) so preflight.py can report the status.
+  #
+  # Until a region is enabled, EVERY API call to it fails with
+  # InvalidClientTokenId — a signature that reads like a broken credential
+  # and is not one. That confusion is the reason this mode exists.
+  TARGET_REGION="${2:?usage: bootstrap-operator.sh enable-region <region> [profile]}"
+  STATUS=$(aws account get-region-opt-status --region-name "$TARGET_REGION" \
+    --query RegionOptStatus --output text 2>/dev/null || echo UNKNOWN)
+  echo "==> $TARGET_REGION current status: $STATUS"
+  case "$STATUS" in
+    ENABLED|ENABLED_BY_DEFAULT)
+      echo "==> already enabled — nothing to do"; exit 0 ;;
+    ENABLING)
+      echo "==> enable already in progress; it takes a few minutes. Re-run"
+      echo "    ./deploy/aws/preflight.py --region $TARGET_REGION to watch for it."
+      exit 0 ;;
+  esac
+  aws account enable-region --region-name "$TARGET_REGION"
+  echo "==> enable requested for $TARGET_REGION"
+  echo "==> this takes a few minutes to propagate. Watch it with:"
+  echo "      ./deploy/aws/preflight.py --region $TARGET_REGION"
+  exit 0
+fi
 
 if [ "$MODE" = "update-policy" ]; then
   # Re-apply the committed JSON as the default policy version. IAM caps a

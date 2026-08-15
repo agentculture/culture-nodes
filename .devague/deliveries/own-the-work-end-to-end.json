@@ -2,7 +2,7 @@
   "plan_slug": "own-the-work-end-to-end",
   "schema_version": 1,
   "created": "2026-08-15T06:38:50Z",
-  "updated": "2026-08-15T07:01:25Z",
+  "updated": "2026-08-15T07:41:15Z",
   "deviations": [
     {
       "id": "d1",
@@ -69,6 +69,34 @@
       "origin": "user",
       "status": "approved",
       "classification": "risky"
+    },
+    {
+      "id": "d5",
+      "what": "Unblock wave 0 without changing sandbox posture: dispatch remaining packages with SELF-CONTAINED briefs under --sandbox workspace-write, rather than raising to danger-full-access so agents can git fetch the plan. Proven: P1 (run 01M022G18240VX3NX6NRT8HJCF) completed both its tasks this way, producing a 16-file diff, while both git-fetching packages failed. The operator continues to harvest diffs, which AGENTS.md:22 mandates anyway.",
+      "task_ref": "t3",
+      "reason": "Issue #91 records the sandbox/git_ref decision and its four options; it is a real decision about fleet security posture and about what the q9/c70 carrier can be, and it belongs to the operator. But it does not need to be answered to finish wave 0: nothing in t3/t4/t8/t15 requires the agent to touch git metadata. Deferring it to t6 \u2014 the task that genuinely needs an agent-produced ref \u2014 keeps the decision where its consequences are visible instead of resolving it as a dispatch flag. Cost of this route: briefs carry their own task text, so the ledger sees one opaque instruction rather than a citable document, which is the #79 gap seen from the operator's side and is already recorded.",
+      "affects": [
+        "t4",
+        "t8",
+        "t15"
+      ],
+      "origin": "user",
+      "status": "approved",
+      "classification": "acceptable"
+    },
+    {
+      "id": "d6",
+      "what": "Resolve #91 by measurement rather than by choosing among its four options: codex workspace-write CAN create commits and refs when the dispatch passes -c 'sandbox_workspace_write={writable_roots=[\"<checkout>/.git\"]}'. Keep workspace-write as the dispatch sandbox (option 1 'raise to danger-full-access' and option 4 'drop the git_ref carrier' are both unnecessary), and amend AGENTS.md to permit local ref creation under refs/culture-nodes/<run-id> while keeping the push ban and the never-commit-onto-a-branch rule.",
+      "task_ref": "t6",
+      "reason": "Measured live on thor with codex-cli 0.147.0: under plain workspace-write 'touch .git/probe-writable' returns 'Read-only file system'; with the scoped writable_roots entry the same probe returns GIT_WRITABLE, and a full write-tree/commit-tree/update-ref sequence produced commit df7d974 at refs/culture-nodes/probe. The confinement widening is one directory on one host with network still off, so the git_ref carrier decided in q9/c70 stands without weakening the sandbox. The policy half was a human decision and the user chose 'permit local refs, keep push banned'.",
+      "affects": [
+        "c70",
+        "t16",
+        "t25"
+      ],
+      "origin": "user",
+      "status": "approved",
+      "classification": "acceptable"
     }
   ]
 }

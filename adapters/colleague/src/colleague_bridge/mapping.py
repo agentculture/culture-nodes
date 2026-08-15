@@ -240,8 +240,9 @@ def usage_from_task_result(task_result: dict[str, Any] | None) -> dict[str, Any]
     null rather than a zero that reads as free (protocol.go's own docstring).
 
     Contract v1 exposes only prompt/completion/total counts. Cache, reasoning,
-    model, and thread fields are therefore omitted, never zero-filled: no
-    measurement is an absent fact, not a measured zero.
+    and thread fields are therefore omitted, never zero-filled. Model is the
+    deliberate exception: a stable non-null sentinel distinguishes "this
+    backend cannot report it" from an attempt where nobody wrote the field.
     """
     usage = (task_result or {}).get("usage") or {}
     return {
@@ -249,6 +250,7 @@ def usage_from_task_result(task_result: dict[str, Any] | None) -> dict[str, Any]
         "output_tokens": int(usage.get("completion_tokens") or 0),
         "cost": None,
         "currency": None,
+        "model": "unknown:colleague-backend-cannot-report",
     }
 
 

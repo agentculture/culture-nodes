@@ -8,20 +8,32 @@ production host (thor/orin), not a local dev clone.
 
 - Sessions default to a **read-only** sandbox. Write access is granted only
   when the dispatched task explicitly requests it — don't assume it.
-- **On these hosts `workspace-write` grants no writes at all.** thor, orin and
-  spark all run with `kernel.apparmor_restrict_unprivileged_userns=1`
-  (the Ubuntu 24.04 default), so the bubblewrap helper that confines file
-  writes cannot start. Codex does not fail on that — it prints one warning,
-  keeps running shell commands *unconfined*, and fails every `apply_patch`
-  with `bwrap: setting up uid map: Permission denied`. The result reads like a
-  code problem and is not one. **Do not retry the patch.** Say the sandbox
-  cannot write and stop; the operator must re-dispatch with
-  `--sandbox danger-full-access`, where the isolation comes from your git
-  worktree rather than from the flag. Run `uv run nodes doctor` to see this
-  host's verdict (`unprivileged_userns`) before you start work.
-- Never `git commit` or `git push` from a session. Any diff you produce is
-  harvested by the human operator afterward; leave changes uncommitted in
-  the working tree.
+- **`workspace-write` does grant file writes on these hosts.** It did not
+  until #63: thor, orin and spark shipped the Ubuntu 24.04 default
+  `kernel.apparmor_restrict_unprivileged_userns=1`, the bubblewrap helper
+  could not start, and codex printed one warning, kept running shell commands
+  *unconfined*, and failed every `apply_patch` with `bwrap: setting up uid
+  map: Permission denied` — a sandbox failure that read like a code problem.
+  The sysctl is now `0`, applied and persisted on all three hosts, and
+  workspace writes are proven (run `01M022G18240VX3NX6NRT8HJCF` produced a
+  complete 16-file diff). If `apply_patch` still fails this way, **do not
+  retry it** — say the sandbox cannot write and stop, because the host has
+  regressed. Run `uv run nodes doctor` for this host's verdict
+  (`unprivileged_userns`) before you start work.
+- **`.git` is read-only under `workspace-write` unless the dispatch widens
+  it.** That is a codex carve-out (measured on codex-cli 0.147.0), not a
+  kernel restriction: the worktree is writable and `.git` is not, so `fetch`,
+  `commit` and `update-ref` all fail with `Read-only file system` even though
+  editing files works. A dispatch that needs to hand over a ref passes
+  `-c 'sandbox_workspace_write={writable_roots=["<checkout>/.git"]}'`; one
+  that does not, should not.
+- **Never `git push` from a session, and never commit onto a branch.** You
+  may create a handover commit and a ref under
+  `refs/culture-nodes/<run-id>` in your own checkout when the dispatch asks
+  for one — that ref is how your changes reach the next node, and it is
+  deliberately not a branch: nothing you create is reachable from a branch
+  until the operator or the control plane moves it. Otherwise leave changes
+  uncommitted in the working tree for the operator to harvest.
 - A result you report ("done", "tests pass", "fixed") is a **completion
   claim**, not verified evidence — see the ledger authority rules under
   "Repository invariants" below. State

@@ -10,6 +10,12 @@ import json
 from notify_bridge import mapping
 from notify_bridge.webhook import PostResult
 
+
+def test_usage_names_an_explicit_non_null_unknown_model():
+    usage = mapping.usage_for_backend()
+    assert usage["model"] == "unknown:notify-backend-cannot-report"
+    assert usage["model"] is not None
+
 CTX = mapping.InvocationContext(run_id="run_1", node_run_id="nr_1", attempt_id="att_1")
 SECRET_URL = "https://discord.com/api/webhooks/999/super-secret-token-value"
 
@@ -78,6 +84,7 @@ def test_default_outcome_is_sent_on_success():
     )
     assert body["outcome"] == mapping.OUTCOME_SENT
     assert body["output"] == {"delivered": True, "status_code": 204}
+    assert body["usage"]["model"] == "unknown:notify-backend-cannot-report"
 
 
 def test_default_outcome_is_still_sent_on_failure():

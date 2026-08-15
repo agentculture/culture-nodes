@@ -52,3 +52,15 @@ type ArtifactMeta struct {
 	// CreatedAt is when the metadata row was written.
 	CreatedAt time.Time
 }
+
+// Tombstone is the immutable resolution of a Ref whose content was reaped.
+// Meta preserves what was stored, including the digest needed to identify a
+// surviving copy. Corrections append a tombstone naming Supersedes.
+type Tombstone struct {
+	ID         string
+	Ref        Ref
+	ReapedAt   time.Time
+	Reason     string
+	Meta       ArtifactMeta
+	Supersedes string
+}

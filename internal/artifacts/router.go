@@ -5,6 +5,7 @@ import (
 	"context"
 	"fmt"
 	"io"
+	"time"
 )
 
 // Router is a composite Store that fans a Put out to whichever backing
@@ -88,13 +89,17 @@ func (r *Router) Stat(ctx context.Context, ref Ref) (ArtifactMeta, error) {
 	return r.small.Stat(ctx, ref)
 }
 
-// Delete resolves ref's backend via backendFor and delegates to it.
+// Delete refuses raw removal; use Reap with an explicit retention reason.
 func (r *Router) Delete(ctx context.Context, ref Ref) error {
+	return ErrDeleteForbidden
+}
+
+func (r *Router) Reap(ctx context.Context, ref Ref, reason string, reapedAt time.Time) (Tombstone, error) {
 	store, _, err := r.backendFor(ctx, ref)
 	if err != nil {
-		return err
+		return Tombstone{}, err
 	}
-	return store.Delete(ctx, ref)
+	return store.Reap(ctx, ref, reason, reapedAt)
 }
 
 // backendFor looks up ref's metadata (a backend-agnostic read, see Stat)

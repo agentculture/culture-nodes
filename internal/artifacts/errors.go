@@ -1,6 +1,9 @@
 package artifacts
 
-import "errors"
+import (
+	"errors"
+	"fmt"
+)
 
 var (
 	// ErrNotFound is returned by Get, Stat, and Delete when ref does not
@@ -33,5 +36,16 @@ var (
 	// ErrInvalidRef is returned by ParseRef (and therefore by any Store
 	// method that calls it) when a ref is not a well-formed
 	// "artifact://<namespace>/<id>" URI.
-	ErrInvalidRef = errors.New("artifacts: invalid ref")
+	ErrInvalidRef      = errors.New("artifacts: invalid ref")
+	ErrDeleteForbidden = errors.New("artifacts: raw delete forbidden; use retention Reap with a reason")
+	ErrReaped          = errors.New("artifacts: content reaped")
 )
+
+// ReapedError carries the explicit, durable resolution for a reaped Ref.
+type ReapedError struct{ Tombstone Tombstone }
+
+func (e *ReapedError) Error() string {
+	return fmt.Sprintf("%s at %s by %s", ErrReaped, e.Tombstone.ReapedAt.UTC().Format("2006-01-02T15:04:05Z"), e.Tombstone.Reason)
+}
+
+func (e *ReapedError) Unwrap() error { return ErrReaped }

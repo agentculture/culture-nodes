@@ -45,6 +45,18 @@ type ArtifactRecord struct {
 	CreatedAt      time.Time
 }
 
+type ArtifactTombstoneRecord struct {
+	ID, ArtifactID, ArtifactRef, Reason, Name, MediaType, Digest, Supersedes string
+	SizeBytes                                                                int64
+	ReapedAt                                                                 time.Time
+}
+
+type InsertArtifactTombstoneInput struct {
+	ID, ArtifactID, ArtifactRef, Reason, Name, MediaType, Digest, Supersedes string
+	SizeBytes                                                                int64
+	ReapedAt                                                                 time.Time
+}
+
 // InsertArtifactInput is the input to Store.InsertArtifact and
 // InsertArtifactTx. RunID, AttemptID, and MediaType are optional ("" means
 // NULL); ID, NamespaceID, URI, and StorageBackend are required.
@@ -155,23 +167,55 @@ func (s *Store) GetArtifactByURI(ctx context.Context, namespaceID, uri string) (
 	return rec, nil
 }
 
-// DeleteArtifactByURI deletes an artifact metadata row. It returns
-// ErrNotFound if no row matched. Both driver subpackages call this as a
-// single, standalone statement rather than inside a transaction: the
-// Postgres driver's companion artifact_blobs row is removed by the same
-// statement via ON DELETE CASCADE (migrations/0006_artifact_blobs.sql), and
-// the S3 driver's bucket object lives outside Postgres entirely, so there
-// is no second Postgres write for either driver's Delete to compose with
-// this one transactionally.
-func (s *Store) DeleteArtifactByURI(ctx context.Context, namespaceID, uri string) error {
-	tag, err := s.pool.Exec(ctx, `DELETE FROM artifacts WHERE namespace_id = $1 AND uri = $2`, namespaceID, uri)
+func (s *Store) GetArtifactTombstone(ctx context.Context, artifactID string) (ArtifactTombstoneRecord, error) {
+	return getArtifactTombstone(ctx, s.pool, artifactID)
+}
+
+func GetArtifactTombstoneTx(ctx context.Context, tx pgx.Tx, artifactID string) (ArtifactTombstoneRecord, error) {
+	return getArtifactTombstone(ctx, tx, artifactID)
+}
+
+func getArtifactTombstone(ctx context.Context, q querier, artifactID string) (ArtifactTombstoneRecord, error) {
+	var rec ArtifactTombstoneRecord
+	err := q.QueryRow(ctx, `SELECT id, artifact_id, artifact_ref, reaped_at, reason,
+		name, media_type, size_bytes, digest, COALESCE(supersedes, '')
+		FROM artifact_tombstones WHERE artifact_id=$1
+		ORDER BY reaped_at DESC, id DESC LIMIT 1`, artifactID).Scan(
+		&rec.ID, &rec.ArtifactID, &rec.ArtifactRef, &rec.ReapedAt, &rec.Reason,
+		&rec.Name, &rec.MediaType, &rec.SizeBytes, &rec.Digest, &rec.Supersedes)
+	if isNoRows(err) {
+		return ArtifactTombstoneRecord{}, ErrNotFound
+	}
 	if err != nil {
-		return fmt.Errorf("postgres: DeleteArtifactByURI: %w", err)
+		return ArtifactTombstoneRecord{}, fmt.Errorf("postgres: GetArtifactTombstone: %w", err)
 	}
-	if tag.RowsAffected() == 0 {
-		return ErrNotFound
+	return rec, nil
+}
+
+func InsertArtifactTombstoneTx(ctx context.Context, tx pgx.Tx, in InsertArtifactTombstoneInput) (ArtifactTombstoneRecord, error) {
+	if in.ID == "" || in.ArtifactID == "" || in.ArtifactRef == "" || in.Reason == "" {
+		return ArtifactTombstoneRecord{}, fmt.Errorf("postgres: InsertArtifactTombstone: id, artifact, ref, and reason are required")
 	}
-	return nil
+	var rec ArtifactTombstoneRecord
+	err := tx.QueryRow(ctx, `INSERT INTO artifact_tombstones
+		(id, artifact_id, artifact_ref, reaped_at, reason, name, media_type, size_bytes, digest, supersedes)
+		VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)
+		RETURNING id, artifact_id, artifact_ref, reaped_at, reason, name, media_type,
+		size_bytes, digest, COALESCE(supersedes, '')`, in.ID, in.ArtifactID, in.ArtifactRef,
+		in.ReapedAt, in.Reason, in.Name, in.MediaType, in.SizeBytes, in.Digest, textOrNull(in.Supersedes)).Scan(
+		&rec.ID, &rec.ArtifactID, &rec.ArtifactRef, &rec.ReapedAt, &rec.Reason,
+		&rec.Name, &rec.MediaType, &rec.SizeBytes, &rec.Digest, &rec.Supersedes)
+	if err != nil {
+		return ArtifactTombstoneRecord{}, fmt.Errorf("postgres: InsertArtifactTombstone: %w", err)
+	}
+	return rec, nil
+}
+
+// DeleteArtifactByURI is retained as a fail-closed compatibility method.
+// Artifact metadata is part of immutable ref resolution and may only lose
+// content through artifacts.Store.Reap after a tombstone is durable.
+func (s *Store) DeleteArtifactByURI(ctx context.Context, namespaceID, uri string) error {
+	return fmt.Errorf("postgres: DeleteArtifactByURI: raw artifact deletion is forbidden; use artifacts.Store.Reap")
 }
 
 // artifactRowScanner is satisfied by pgx.Row (both *pgxpool.Pool.QueryRow

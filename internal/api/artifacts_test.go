@@ -60,6 +60,10 @@ func (*memoryArtifactStore) Delete(context.Context, artifacts.Ref) error {
 	panic("Delete must not be exposed by the write route")
 }
 
+func (*memoryArtifactStore) Reap(context.Context, artifacts.Ref, string, time.Time) (artifacts.Tombstone, error) {
+	panic("Reap must not be exposed by the write route")
+}
+
 func newArtifactRouteTestServer(t *testing.T, now time.Time) (*httptest.Server, *actors.TokenSigner, *memoryArtifactStore, actors.PendingInvocation) {
 	t.Helper()
 	signer, err := actors.NewTokenSigner([]byte(artifactTestSecret), actors.WithTokenClock(func() time.Time { return now }))

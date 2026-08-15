@@ -16,6 +16,7 @@ import (
 	"io"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/agentculture/culture-nodes/internal/artifacts"
 	artifactpg "github.com/agentculture/culture-nodes/internal/artifacts/postgres"
@@ -136,14 +137,14 @@ func TestPodAgnosticArtifactStore(t *testing.T) {
 				t.Fatalf("SizeBytes = %d, want %d", getMeta.SizeBytes, len(tc.content))
 			}
 
-			// Delete via pod B must be visible to pod A too -- one shared
+			// Reap via pod B must be visible to pod A too -- one shared
 			// authority, not two independent ones that happen to agree
 			// right now.
-			if err := podB.router.Delete(ctx, ref); err != nil {
-				t.Fatalf("Delete via pod B: %v", err)
+			if _, err := podB.router.Reap(ctx, ref, "test/retention", time.Now().UTC()); err != nil {
+				t.Fatalf("Reap via pod B: %v", err)
 			}
-			if _, err := podA.router.Stat(ctx, ref); !errors.Is(err, artifacts.ErrNotFound) {
-				t.Fatalf("Stat via pod A after delete via pod B = %v, want ErrNotFound", err)
+			if _, _, err := podA.router.Get(ctx, ref); !errors.Is(err, artifacts.ErrReaped) {
+				t.Fatalf("Get via pod A after reap via pod B = %v, want ErrReaped", err)
 			}
 		})
 	}

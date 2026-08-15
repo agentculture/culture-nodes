@@ -10,6 +10,7 @@ import (
 	"io"
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/agentculture/culture-nodes/internal/artifacts"
 )
@@ -31,13 +32,14 @@ type fakeStore struct {
 // fakeStore instances in a test write/read the same map, exactly as the
 // real postgres and s3 drivers both write/read the same artifacts table.
 type sharedMetadata struct {
-	mu      sync.Mutex
-	records map[artifacts.Ref]artifacts.ArtifactMeta
-	nextID  int
+	mu         sync.Mutex
+	records    map[artifacts.Ref]artifacts.ArtifactMeta
+	tombstones map[artifacts.Ref]artifacts.Tombstone
+	nextID     int
 }
 
 func newSharedMetadata() *sharedMetadata {
-	return &sharedMetadata{records: map[artifacts.Ref]artifacts.ArtifactMeta{}}
+	return &sharedMetadata{records: map[artifacts.Ref]artifacts.ArtifactMeta{}, tombstones: map[artifacts.Ref]artifacts.Tombstone{}}
 }
 
 func newFakeStore(name artifacts.Backend, meta *sharedMetadata) *fakeStore {
@@ -74,7 +76,11 @@ func (f *fakeStore) Put(_ context.Context, meta artifacts.ArtifactMeta, r io.Rea
 func (f *fakeStore) Get(_ context.Context, ref artifacts.Ref) (io.ReadCloser, artifacts.ArtifactMeta, error) {
 	f.meta.mu.Lock()
 	meta, ok := f.meta.records[ref]
+	tombstone, reaped := f.meta.tombstones[ref]
 	f.meta.mu.Unlock()
+	if reaped {
+		return nil, meta, &artifacts.ReapedError{Tombstone: tombstone}
+	}
 	if !ok || meta.Backend != f.name {
 		return nil, artifacts.ArtifactMeta{}, artifacts.ErrNotFound
 	}
@@ -96,16 +102,20 @@ func (f *fakeStore) Stat(_ context.Context, ref artifacts.Ref) (artifacts.Artifa
 }
 
 func (f *fakeStore) Delete(_ context.Context, ref artifacts.Ref) error {
+	return artifacts.ErrDeleteForbidden
+}
+
+func (f *fakeStore) Reap(_ context.Context, ref artifacts.Ref, reason string, reapedAt time.Time) (artifacts.Tombstone, error) {
 	f.meta.mu.Lock()
+	defer f.meta.mu.Unlock()
 	meta, ok := f.meta.records[ref]
 	if !ok || meta.Backend != f.name {
-		f.meta.mu.Unlock()
-		return artifacts.ErrNotFound
+		return artifacts.Tombstone{}, artifacts.ErrNotFound
 	}
-	delete(f.meta.records, ref)
-	f.meta.mu.Unlock()
+	tombstone := artifacts.Tombstone{Ref: ref, ReapedAt: reapedAt, Reason: reason, Meta: meta}
+	f.meta.tombstones[ref] = tombstone
 	delete(f.data, ref)
-	return nil
+	return tombstone, nil
 }
 
 func newRouterFixture() (router *artifacts.Router, small, object *fakeStore) {
@@ -255,7 +265,7 @@ func TestRouterStatIsBackendAgnostic(t *testing.T) {
 	}
 }
 
-func TestRouterDeleteDispatchesToRecordedBackend(t *testing.T) {
+func TestRouterReapLeavesResolvableTombstone(t *testing.T) {
 	router, small, object := newRouterFixture()
 	ctx := context.Background()
 
@@ -268,22 +278,61 @@ func TestRouterDeleteDispatchesToRecordedBackend(t *testing.T) {
 		t.Fatalf("Put: %v", err)
 	}
 
-	if err := router.Delete(ctx, smallRef); err != nil {
-		t.Fatalf("Delete small: %v", err)
+	reapedAt := time.Date(2026, 8, 15, 12, 0, 0, 0, time.UTC)
+	if _, err := router.Reap(ctx, smallRef, "retention/30-days", reapedAt); err != nil {
+		t.Fatalf("Reap small: %v", err)
 	}
 	if _, ok := small.data[smallRef]; ok {
-		t.Fatal("small store still has data after Delete")
+		t.Fatal("small store still has data after Reap")
 	}
 
-	if err := router.Delete(ctx, largeRef); err != nil {
-		t.Fatalf("Delete large: %v", err)
+	if _, err := router.Reap(ctx, largeRef, "retention/30-days", reapedAt); err != nil {
+		t.Fatalf("Reap large: %v", err)
 	}
 	if _, ok := object.data[largeRef]; ok {
-		t.Fatal("object store still has data after Delete")
+		t.Fatal("object store still has data after Reap")
 	}
 
-	if _, err := router.Stat(ctx, smallRef); !errors.Is(err, artifacts.ErrNotFound) {
-		t.Fatalf("Stat after delete = %v, want ErrNotFound", err)
+	rc, meta, err := router.Get(ctx, smallRef)
+	var reaped *artifacts.ReapedError
+	if !errors.As(err, &reaped) {
+		t.Fatalf("Get after reap = %v, want ReapedError", err)
+	}
+	if reaped.Tombstone.Ref != smallRef || reaped.Tombstone.Reason != "retention/30-days" || !reaped.Tombstone.ReapedAt.Equal(reapedAt) {
+		t.Fatalf("tombstone = %#v", reaped.Tombstone)
+	}
+
+	// The digest is the load-bearing field: it is what lets someone who still
+	// holds a copy prove it is the same bytes that were reaped. It lives on the
+	// tombstone, and ONLY there.
+	if reaped.Tombstone.Meta.Digest == "" {
+		t.Fatalf("tombstone carries no digest: %#v", reaped.Tombstone.Meta)
+	}
+
+	// Get returns ZERO values beside the error, deliberately, and this assertion
+	// is what keeps it that way. Handing back the reaped artifact's metadata as
+	// a normal-looking second return would give a caller that ignores the error
+	// a populated ArtifactMeta describing content that no longer exists -- the
+	// exact "record points at something that is not there" failure this task
+	// exists to prevent, reintroduced one layer up. A reader who wants to know
+	// what is gone unwraps the ReapedError and says so.
+	if rc != nil {
+		t.Errorf("Get after reap returned a reader; there are no bytes to read")
+	}
+	if meta != (artifacts.ArtifactMeta{}) {
+		t.Errorf("Get after reap returned metadata %#v beside its error; want the zero value, "+
+			"so a caller cannot mistake a reaped artifact for a live one", meta)
+	}
+}
+
+func TestRouterDeleteIsAlwaysRefused(t *testing.T) {
+	router, _, _ := newRouterFixture()
+	ref, err := router.Put(context.Background(), artifacts.ArtifactMeta{NamespaceID: "ns1"}, bytes.NewReader([]byte("kept")))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := router.Delete(context.Background(), ref); !errors.Is(err, artifacts.ErrDeleteForbidden) {
+		t.Fatalf("Delete = %v, want ErrDeleteForbidden", err)
 	}
 }
 

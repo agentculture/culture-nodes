@@ -198,11 +198,17 @@ type CallbackStore interface {
 	// to let a late completion commit workflow state is not what this
 	// records. See task t11 and docs/adr/0012-late-callback-supersession.md.
 	//
-	// It is idempotent per superseded record, because callback delivery is
-	// at-least-once and this ingest legitimately reprocesses a report whose
-	// first pass failed part-way: a second call for the same superseded
-	// record returns the correction the first one appended.
-	RecordSupersedingAttempt(ctx context.Context, inv PendingInvocation, req engine.CompletionRequest) (SupersedingAttempt, error)
+	// It is idempotent per DELIVERY — the (inv.AttemptID, callbackEventID)
+	// pair — because callback delivery is at-least-once and this ingest
+	// legitimately reprocesses a report whose first pass failed part-way: a
+	// second call for the same callback event returns the record the first
+	// one appended. Keying on the delivery rather than on the record being
+	// corrected is what makes that true of the report that corrects NOTHING
+	// as well, which is the flavour of lateness with no other natural key
+	// (ADR 0012 §5; before it, that report could be persisted twice).
+	RecordSupersedingAttempt(
+		ctx context.Context, inv PendingInvocation, callbackEventID string, req engine.CompletionRequest,
+	) (SupersedingAttempt, error)
 
 	// ResumeWaitingWork re-leases the parked work item under the fencing
 	// tuple recorded at dispatch, so the engine's own fenced completion guard

@@ -172,7 +172,7 @@ func (f *fakeCallbackStore) CloseInvocation(ctx context.Context, attemptID, stat
 	return nil
 }
 func (f *fakeCallbackStore) RecordSupersedingAttempt(
-	ctx context.Context, inv actors.PendingInvocation, req engine.CompletionRequest,
+	ctx context.Context, inv actors.PendingInvocation, callbackEventID string, req engine.CompletionRequest,
 ) (actors.SupersedingAttempt, error) {
 	return actors.SupersedingAttempt{AttemptID: "att_superseding"}, nil
 }

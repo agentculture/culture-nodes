@@ -105,11 +105,22 @@ type UncachedInput struct {
 	// spend is measured and how much is assumed.
 	AttemptsWithoutCacheTelemetry int
 	// AttemptsReported / AttemptsNotReported partition every attempt of the
-	// run exactly as UsageRollup's fields of the same name do.
+	// run exactly as UsageRollup's fields of the same name do -- including
+	// the superseded-row exclusion (ADR 0012 §3), without which they would
+	// not partition anything: one dispatch would count once as reported and
+	// once as not.
 	AttemptsReported    int
 	AttemptsNotReported int
 }
 
+// The superseded-row exclusion is attemptCurrentUnaliasedSQL, the same
+// fragment usage_rollup.go applies, for the same reason and with the same
+// force: this is an aggregate over `attempts`, so ADR 0012 §3's reader rule
+// applies to it. It matters MORE here than in a rollup, in fact -- a rollup
+// that double-counts misreports, while a budget that double-counts SPENDS
+// the ceiling the author declared, tripping `budget.maxUncachedInput` early
+// against tokens no session ever sent. Nobody files that as a bug; the run
+// just looks expensive.
 const runUncachedInputSQL = `
 SELECT
     COALESCE(SUM(usage_input_tokens - COALESCE(usage_cached_input_tokens, 0)), 0),
@@ -117,14 +128,15 @@ SELECT
     COUNT(*) FILTER (WHERE usage_input_tokens IS NOT NULL)::int,
     COUNT(*) FILTER (WHERE usage_input_tokens IS NULL)::int
 FROM attempts
-WHERE node_run_id IN (SELECT id FROM node_runs WHERE run_id = $1)
-`
+WHERE node_run_id IN (SELECT id FROM node_runs WHERE run_id = $1)` + attemptCurrentUnaliasedSQL
 
 // RunUncachedInput measures what `budget.maxUncachedInput` bounds: the input
 // tokens this run has sent that the provider did not demonstrably serve from
 // cache, summed over every attempt of every node run -- including failed,
 // retried and cancelled ones, for UsageRollup's retry-burn reason (a failed
-// attempt spent its tokens regardless of how it ended).
+// attempt spent its tokens regardless of how it ended), and excluding
+// superseded ones, for ADR 0012 §3's reason (a corrected record and its
+// correction describe one dispatch, not two).
 func (s *Store) RunUncachedInput(ctx context.Context, runID string) (UncachedInput, error) {
 	var spend UncachedInput
 	err := s.pool.QueryRow(ctx, runUncachedInputSQL, runID).Scan(

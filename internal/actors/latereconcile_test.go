@@ -337,6 +337,166 @@ func TestDeadlineReconciliationAttributesUsageExactlyOnce(t *testing.T) {
 	}
 }
 
+// redeliver is §13.4's at-least-once delivery arriving a second time with the
+// same event, after a first pass that failed part-way.
+//
+// It is not a hand-waved fixture: HandleCallback gives its event-id claim
+// back and lowers the sequence mark on EVERY error out of handleClaimed, and
+// late() has a step that can legitimately fail after the correction is
+// appended (CloseInvocation). So this is the state the ingest itself leaves
+// behind for the actor's next delivery — the claim released and the mark
+// rolled back — reproduced through the same two store methods the
+// compensation calls.
+func (f *asyncFixture) redeliver(ev actors.CallbackEvent) actors.CallbackResult {
+	f.t.Helper()
+	inv := f.pendingInvocation()
+	if err := f.callbacks.ReleaseCallbackEvent(f.ctx, inv, ev.EventID); err != nil {
+		f.t.Fatalf("release event-id claim for %s: %v", ev.EventID, err)
+	}
+	if err := f.callbacks.RollbackCallbackSequence(f.ctx, inv.AttemptID, ev.Sequence, ev.Sequence-1); err != nil {
+		f.t.Fatalf("roll back the sequence mark for %s: %v", ev.EventID, err)
+	}
+	return f.handle(ev)
+}
+
+// The reconciliation that corrects NOTHING must be idempotent too.
+//
+// ADR 0012 §2 rests the whole idempotency argument on
+// migrations/0028's partial unique index over `supersedes` — and that index
+// constrains only rows where `supersedes IS NOT NULL`. The correcting case is
+// therefore safe and this one, §13.4's other flavour of lateness (a newer
+// worker reclaimed the item, so there is no earlier record under the original
+// dispatch's fencing tuple), is not: it writes NULL, the partial index does
+// not see it, and a redelivered report appends a second row describing the
+// SAME session. Two rows for one dispatch is precisely the retry-burn
+// distortion the ADR is otherwise careful to avoid — here with no superseding
+// link for any reader rule to drop.
+func TestRedeliveredLateCallbackThatCorrectsNothingRecordsOneAttempt(t *testing.T) {
+	f := newAsyncFixtureForActor(t)
+
+	// A fired deadline returns the parked item to 'ready'; a second worker
+	// claims it, bumping the fencing token out from under the invocation. No
+	// attempt row was ever written under the original tuple.
+	if _, err := f.store.Pool().Exec(f.ctx,
+		`UPDATE work_items SET state = 'ready', available_at = now(), state_version = state_version + 1 WHERE id = $1`,
+		f.claimed.ID); err != nil {
+		t.Fatalf("simulate deadline timer effect: %v", err)
+	}
+	if reclaimed := f.claim("second-worker", f.nodeRunID); reclaimed.FencingToken <= f.claimed.FencingToken {
+		t.Fatalf("reclaim did not advance the fencing token: %d then %d", f.claimed.FencingToken, reclaimed.FencingToken)
+	}
+
+	ev := lateFailedEvent("ev-late-redelivered", 1)
+
+	first := f.handle(ev)
+	if first.Disposition != actors.DispositionLate {
+		t.Fatalf("first delivery disposition = %s (%s), want late", first.Disposition, first.Diagnostic)
+	}
+	if rows := f.attemptRows(); len(rows) != 1 {
+		t.Fatalf("attempt rows after the first delivery = %d, want 1 (the report's own record)", len(rows))
+	}
+
+	second := f.redeliver(ev)
+	if second.Disposition != actors.DispositionLate {
+		t.Fatalf("redelivery disposition = %s (%s), want late", second.Disposition, second.Diagnostic)
+	}
+
+	rows := f.attemptRows()
+	if len(rows) != 1 {
+		t.Fatalf("attempt rows after the redelivery = %d, want 1: one session reported once, however many times its report was delivered", len(rows))
+	}
+	if rows[0].Supersedes != nil {
+		t.Errorf("supersedes = %q, want NULL: there was no earlier record under this dispatch to correct", *rows[0].Supersedes)
+	}
+	// Both deliveries must name the SAME record, or the caller's answer
+	// depends on which delivery it happened to be.
+	if second.SupersedingAttemptID != first.SupersedingAttemptID {
+		t.Errorf("redelivery named attempt %q, first delivery named %q; a redelivery must report the record already written",
+			second.SupersedingAttemptID, first.SupersedingAttemptID)
+	}
+	if first.SupersedingAttemptID != rows[0].ID {
+		t.Errorf("the late result named attempt %q, but the recorded row is %q", first.SupersedingAttemptID, rows[0].ID)
+	}
+	// And the actor is charged for one dispatch, not two.
+	if burn := f.retryBurnAttempts(f.actorID); burn != 1 {
+		t.Errorf("retry burn attempts = %d, want 1: one session ran, one report was delivered twice", burn)
+	}
+}
+
+// The idempotency 0028 did provide must survive the arbiter moving to the
+// delivery key (ADR 0012 §5): a redelivered deadline reconciliation still
+// appends ONE correction, and both deliveries name it.
+func TestRedeliveredLateCallbackAfterDeadlineRecordsOneCorrection(t *testing.T) {
+	f := newAsyncFixtureForActor(t)
+	f.deadlineExpiry()
+
+	ev := lateFailedEvent("ev-late-redelivered-deadline", 1)
+	first := f.handle(ev)
+	if first.Disposition != actors.DispositionLate {
+		t.Fatalf("first delivery disposition = %s (%s), want late", first.Disposition, first.Diagnostic)
+	}
+
+	second := f.redeliver(ev)
+	if second.Disposition != actors.DispositionLate {
+		t.Fatalf("redelivery disposition = %s (%s), want late", second.Disposition, second.Diagnostic)
+	}
+
+	rows := f.attemptRows()
+	if len(rows) != 2 {
+		t.Fatalf("attempt rows after the redelivery = %d, want 2 (the timed-out record and ONE correction)", len(rows))
+	}
+	if rows[1].Supersedes == nil || *rows[1].Supersedes != rows[0].ID {
+		t.Errorf("the correction supersedes %v, want the timed-out record %q", rows[1].Supersedes, rows[0].ID)
+	}
+	if second.SupersedingAttemptID != first.SupersedingAttemptID || first.SupersedingAttemptID != rows[1].ID {
+		t.Errorf("deliveries named %q and %q; the recorded correction is %q",
+			first.SupersedingAttemptID, second.SupersedingAttemptID, rows[1].ID)
+	}
+	if burn := f.retryBurnAttempts(f.actorID); burn != 1 {
+		t.Errorf("retry burn attempts = %d, want 1", burn)
+	}
+}
+
+// ADR 0012 §2's other invariant, now enforced by a violation rather than by
+// ON CONFLICT: one record is corrected at most once. Two DISTINCT late
+// reports that both resolve the same record to correct is a race between
+// concurrent deliveries — each reads the candidate before the other writes —
+// and the loser must return the correction already recorded instead of
+// failing or fanning out.
+//
+// A test cannot schedule that interleaving, so the second delivery's view is
+// reproduced instead of raced for: moving the first correction off the
+// dispatch's fencing token hides it from the candidate lookup exactly as not
+// yet being committed would, leaving the timed-out record as the candidate
+// both deliveries resolve. Everything after that — the INSERT, the
+// constraint, the recovery — is the real path.
+func TestTwoLateReportsCorrectingOneRecordResolveToTheSameCorrection(t *testing.T) {
+	f := newAsyncFixtureForActor(t)
+	f.deadlineExpiry()
+
+	first := f.handle(lateFailedEvent("ev-race-first", 1))
+	if first.Disposition != actors.DispositionLate {
+		t.Fatalf("first delivery disposition = %s (%s), want late", first.Disposition, first.Diagnostic)
+	}
+	if _, err := f.store.Pool().Exec(f.ctx,
+		`UPDATE attempts SET fencing_token = fencing_token + 1000 WHERE id = $1`, first.SupersedingAttemptID); err != nil {
+		t.Fatalf("hide the first correction from the candidate lookup: %v", err)
+	}
+
+	second := f.handle(lateFailedEvent("ev-race-second", 2))
+	if second.Disposition != actors.DispositionLate {
+		t.Fatalf("second delivery disposition = %s (%s), want late", second.Disposition, second.Diagnostic)
+	}
+
+	if rows := f.attemptRows(); len(rows) != 2 {
+		t.Fatalf("attempt rows = %d, want 2: a second report correcting the same record adds no third row", len(rows))
+	}
+	if second.SupersedingAttemptID != first.SupersedingAttemptID {
+		t.Errorf("second delivery named attempt %q, want the correction already recorded, %q",
+			second.SupersedingAttemptID, first.SupersedingAttemptID)
+	}
+}
+
 func derefString(s *string) string {
 	if s == nil {
 		return "<NULL>"

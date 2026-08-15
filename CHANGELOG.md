@@ -5,6 +5,16 @@ All notable changes to this project will be documented in this file.
 Format follows [Keep a Changelog](https://keepachangelog.com/). This project
 adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.22.0] - 2026-08-15
+
+### Added
+
+- PR-upkeep can read a recorded Jira Cloud backlog through a deployment-configured site and project, using the measured two-value Basic-auth contract without placing either credential in argv, logs, fixtures, or reports.
+
+### Changed
+
+- PR-upkeep repository scope is now a closed, ordered deployment grant instead of one module-pinned repository. Each sweep selects one configured entry by cycle index and reports the repository it swept; run input still cannot redirect the read credential.
+
 ## [0.21.0] - 2026-08-14
 
 ### Added

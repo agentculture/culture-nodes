@@ -24,8 +24,9 @@ means supplying these — it never means editing `workflow.yaml`.
 | `runner://headspace/docker` | **Runner registry.** The code-node runner boundary the sweep dispatches through. |
 | `PR_UPKEEP_SWEEP_SOURCE_URL` | **Granted environment value** on the sweep operation. Where `sweep.py` is fetched from at dispatch time. |
 | `PR_UPKEEP_SWEEP_SOURCE_SHA256` | **Granted environment value.** The sha256 those fetched bytes must have; the bootstrap refuses to execute anything else. |
-| `PR_UPKEEP_MAX_PRS_PER_SWEEP`, `PR_UPKEEP_REQUIRED_CHECKS`, `GITHUB_TOKEN` | **Process environment of the sweep**, all optional except the token's effect on rate limits. Documented at their constants in `sweep.py`. |
-| `SONAR_COMPONENT_KEY`, `GITHUB_REPO` | **Pinned in `sweep.py`, on purpose** — see below. This is *the one value a new operator changes*, and they change it in their own copy of the script. |
+| `PR_UPKEEP_REPOSITORIES` | **Granted environment value.** An ordered JSON object containing `cycle` and the closed `repositories` set. Each entry supplies `github_repo` and `sonar_component`; optional `jira_site` and `jira_project` enable Jira for that repo. The cycle index selects exactly one entry per sweep. |
+| `JIRA_ACCOUNT_EMAIL`, `JIRA_API_TOKEN` | **Granted environment values.** The two separately configured Jira Cloud Basic-auth values. They are never run input, argv, output, or fixture data. |
+| `PR_UPKEEP_MAX_PRS_PER_SWEEP`, `PR_UPKEEP_REQUIRED_CHECKS`, `GITHUB_TOKEN` | **Process environment of the sweep.** These remain optional; the GitHub token only changes rate-limit headroom. |
 
 The granted environment values are the ones a reader cannot trace from the
 document alone: they resolve in the worker process that dispatches the
@@ -169,8 +170,8 @@ treats the two states as genuinely different:
 ## The human-merges rule
 
 **This flow holds zero merge credentials in the control plane.** The sweep
-is read-only against two public APIs; the fix actor can push branches and
-open PRs but never merge; the review actor is read-only outright; the control
+is read-only against its configured finding APIs; the fix actor can push
+branches and open PRs but never merge; the review actor is read-only outright; the control
 plane process holds no GitHub credential at all (spec claim c13, issue #54).
 
 **How the workflow's `approved` outcome works now:** The human merges the PR
@@ -242,35 +243,24 @@ terms:
   a merge-kind group's human can act at their own pace), which reprioritises
   the same fixed budget without growing it.
 
-## The single-repo boundary (claim c26)
+## The closed repository-set boundary (claim c26)
 
-This flow works on culture-nodes and nothing else. The repo is hard-coded,
-not configured per run — and that is the point rather than an oversight. It
-is a **blast-radius boundary**: `fetch_open_pulls` walks *every* open PR on
-the repo and reads each one's comments and check runs, so a repo taken from
-run input would aim that enumeration wherever a caller pointed it, on a
-credential the script did not choose. Pinned in code, re-pointing it is an
-edit someone makes deliberately in a fork.
+The boundary remains deliberate, but moved from one code-pinned repo to a
+closed set granted by the deployment. `fetch_open_pulls` enumerates every
+open PR and reads its comments and checks with the sweep credential, so run
+input still cannot name or select a repository. `PR_UPKEEP_REPOSITORIES`
+contains the ordered set and a cycle index; one entry is swept and named in
+the report. Before adding an entry, provision its checkout and exact-match
+allowlist on both fix and review hosts, and scope the read credential to the
+same set.
 
-So it stays pinned, and it is **the one value a new operator changes** to
-run this example against their own repo: edit the two constants in your
-copy of `sweep.py` — the copy `PR_UPKEEP_SWEEP_SOURCE_URL` points at — and
-nothing else. Both halves are stated at the constants themselves, and
-`tests/test_pr_upkeep_sweep.py`'s `TestTheSweptRepoIsPinnedAndSaysSo`
-asserts that the pin is real (plain literals, no environment value able to
-re-point it) *and* that this note still exists.
-
-- `sweep.py` pins `SONAR_COMPONENT_KEY` and `GITHUB_REPO` to this repo —
-  the single configuration mention of the SonarCloud component key:
-
-  ```bash
-  grep -rn "agentculture_culture-nodes" examples/pr-upkeep \
-      --include='*.py' --include='*.yaml' --include='*.sh'
-  # exactly one hit: sweep.py's SONAR_COMPONENT_KEY
-  ```
-
-  (The recorded fixtures under `fixtures/` also contain the key — as data
-  inside recorded API payloads, which is what recorded payloads look like.)
+Jira is additive inside that selected entry. `jira_site` is a host name and
+`jira_project` a project key; neither is a module constant. Jira Cloud REST
+v3 uses HTTP Basic from `JIRA_ACCOUNT_EMAIL:JIRA_API_TOKEN` and the sweep
+budgets at the measured 350-request window. The committed acceptance is the
+recorded `fixtures/jira-search.json` response because the probed live backlog
+is empty. A live proof is a separate gate, blocked until backlog content
+exists; it is not a success signal for this batch.
 
 - the `repo` run input is the local checkout path the fix/review bridges
   allowlist; a run naming a non-allowlisted repo is refused by the bridges
@@ -482,7 +472,8 @@ on: `scripts/validate-examples.sh` and `tests/lint/examplescompile_test.go`
   "Deployment configuration"); the pinned `python:3.12-slim` image needs
   nothing baked in, since the script is stdlib-only. **Egress: DECLARED
   intent is `network:
-  egress-allowlist` (sonarcloud.io + api.github.com only).** Headspace-cli
+  egress-allowlist` (sonarcloud.io + api.github.com + the granted Jira
+  host).** Headspace-cli
   0.11.0 supports only disabled/enabled network posture, so the boundary
   honestly rejects the allowlist as `rejected_input` (issue #50). The
   workflow runs with `network: full` until headspace ships allowlist support;

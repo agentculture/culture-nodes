@@ -8,10 +8,8 @@ package testslint
 // quality signal into a repository-wide exception list.
 
 import (
-	"bytes"
 	"fmt"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"sort"
 	"strings"
@@ -31,8 +29,8 @@ var sourceFileExtensions = map[string]bool{
 // no trailing newline. Comments count on purpose: the limit is about how much
 // a reviewer has to hold in their head, and a 1400-line file does not become
 // reviewable because 500 of those lines explain the other 900.
-func countLines(contents []byte) int {
-	lines := bytes.Count(contents, []byte{'\n'})
+func countLines(contents string) int {
+	lines := strings.Count(contents, "\n")
 	if len(contents) > 0 && contents[len(contents)-1] != '\n' {
 		lines++
 	}
@@ -44,43 +42,26 @@ func countLines(contents []byte) int {
 // examined nothing reports no violations, which is indistinguishable from a
 // clean tree unless someone checks. See TestTheFileLengthScannerActuallyScans.
 func scanOversized(root string, names []string) (oversized []string, scanned int, err error) {
-	for _, rel := range names {
-		if rel == "" || !sourceFileExtensions[strings.ToLower(filepath.Ext(rel))] {
-			continue
-		}
-		contents, readErr := os.ReadFile(filepath.Join(root, rel))
-		if readErr != nil {
-			return nil, 0, fmt.Errorf("read tracked source file %s: %w", rel, readErr)
-		}
-		scanned++
-		if lines := countLines(contents); lines > maxSourceFileLines {
-			oversized = append(oversized, fmt.Sprintf("%s: %d lines", rel, lines))
+	files, err := readSourceFiles(root, names, hasExtensionIn(sourceFileExtensions))
+	if err != nil {
+		return nil, 0, err
+	}
+	for _, file := range files {
+		if lines := countLines(file.contents); lines > maxSourceFileLines {
+			oversized = append(oversized, fmt.Sprintf("%s: %d lines", file.rel, lines))
 		}
 	}
 	sort.Strings(oversized)
-	return oversized, scanned, nil
-}
-
-func trackedFiles(t *testing.T, root string) []string {
-	t.Helper()
-	cmd := exec.Command("git", "ls-files", "-z")
-	cmd.Dir = root
-	raw, err := cmd.Output()
-	if err != nil {
-		t.Fatalf("git ls-files in %s: %v", root, err)
-	}
-	var names []string
-	for _, name := range bytes.Split(raw, []byte{0}) {
-		if len(name) > 0 {
-			names = append(names, string(name))
-		}
-	}
-	return names
+	return oversized, len(files), nil
 }
 
 func TestTrackedSourceFilesStayWithinTheHardLineLimit(t *testing.T) {
+	// committedFiles (credentialisolation_test.go) is the package's one
+	// `git ls-files` reader: the limit is about tracked source, so the index
+	// is the right input, and a second inline copy of the same command was
+	// how the two guards could drift over what "tracked" means.
 	root := repoRoot(t)
-	oversized, scanned, err := scanOversized(root, trackedFiles(t, root))
+	oversized, scanned, err := scanOversized(root, committedFiles(t, root))
 	if err != nil {
 		t.Fatal(err)
 	}

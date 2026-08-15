@@ -84,6 +84,11 @@ CREATE TABLE IF NOT EXISTS schema_migrations (
     applied_at TIMESTAMPTZ NOT NULL DEFAULT now()
 )`
 
+// migrationAdvisoryLockID serializes migrations within a PostgreSQL cluster.
+// The lock is session-scoped, so Migrate holds one pool connection for the
+// complete sequence and explicitly releases it before returning.
+const migrationAdvisoryLockID int64 = 0x63756c747572656e
+
 // Migrate applies every migration embedded in migrations.FS that has not
 // already been recorded in the schema_migrations bookkeeping table, in
 // filename order (the numeric prefix), each inside its own transaction.
@@ -91,7 +96,22 @@ CREATE TABLE IF NOT EXISTS schema_migrations (
 // error, when the schema is already up to date, so Migrate is safe to run
 // repeatedly (e.g. from a k8s pre-rollout Job on every deploy).
 func (s *Store) Migrate(ctx context.Context) ([]string, error) {
-	if _, err := s.pool.Exec(ctx, ensureSchemaMigrationsDDL); err != nil {
+	conn, err := s.pool.Acquire(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("postgres: acquire migration connection: %w", err)
+	}
+	defer conn.Release()
+
+	if _, err := conn.Exec(ctx, `SELECT pg_advisory_lock($1)`, migrationAdvisoryLockID); err != nil {
+		return nil, fmt.Errorf("postgres: acquire migration lock: %w", err)
+	}
+	defer func() {
+		// Session termination also releases this lock. An explicit unlock keeps
+		// the pooled connection reusable immediately on the successful path.
+		_, _ = conn.Exec(context.Background(), `SELECT pg_advisory_unlock($1)`, migrationAdvisoryLockID)
+	}()
+
+	if _, err := conn.Exec(ctx, ensureSchemaMigrationsDDL); err != nil {
 		return nil, fmt.Errorf("postgres: ensure schema_migrations table: %w", err)
 	}
 
@@ -114,7 +134,7 @@ func (s *Store) Migrate(ctx context.Context) ([]string, error) {
 		version := strings.TrimSuffix(name, ".sql")
 
 		var alreadyApplied bool
-		err := s.pool.QueryRow(ctx,
+		err := conn.QueryRow(ctx,
 			`SELECT EXISTS (SELECT 1 FROM schema_migrations WHERE version = $1)`,
 			version,
 		).Scan(&alreadyApplied)
@@ -131,7 +151,7 @@ func (s *Store) Migrate(ctx context.Context) ([]string, error) {
 		}
 		checksum := sha256.Sum256(contents)
 
-		tx, err := s.pool.Begin(ctx)
+		tx, err := conn.Begin(ctx)
 		if err != nil {
 			return applied, fmt.Errorf("postgres: begin migration %s: %w", version, err)
 		}

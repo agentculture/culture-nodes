@@ -3,8 +3,11 @@ package scheduler_test
 import (
 	"context"
 	"encoding/json"
+	"net/http"
+	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -50,6 +53,10 @@ type deadlineFixture struct {
 }
 
 func newDeadlineFixture(t *testing.T, s *postgres.Store) *deadlineFixture {
+	return newDeadlineFixtureSource(t, s, nil)
+}
+
+func newDeadlineFixtureSource(t *testing.T, s *postgres.Store, edit func(string) string) *deadlineFixture {
 	t.Helper()
 	ctx := context.Background()
 	ns := pgtest.MustNamespace(t, s, "test-scheduler-deadline-fixture")
@@ -58,6 +65,9 @@ func newDeadlineFixture(t *testing.T, s *postgres.Store) *deadlineFixture {
 	source, err := os.ReadFile(path)
 	if err != nil {
 		t.Fatalf("read %s: %v", path, err)
+	}
+	if edit != nil {
+		source = []byte(edit(string(source)))
 	}
 	cw, diags, err := compiler.Compile(source, compiler.FormatForPath(path))
 	if err != nil {
@@ -118,6 +128,244 @@ func newDeadlineFixture(t *testing.T, s *postgres.Store) *deadlineFixture {
 		runID: run.ID, buildNodeRunID: buildNodeRunID, buildTokenID: buildTokenID,
 		claimed: *build,
 	}
+}
+
+func TestSchedulerDeadlinePausesWhenDeclaredContinuationHolds(t *testing.T) {
+	s := requireStore(t)
+	f := newDeadlineFixtureSource(t, s, func(source string) string {
+		anchor := "      kind: agent\n      ownerRef: team/platform-ai"
+		continuation := `      kind: agent
+      continue:
+        while:
+          - node.state == "incomplete"
+        bounds:
+          maxContinuations: 3
+          maxWallClock: 2h
+          maxSessions: 4
+        onExhausted: timed_out
+      ownerRef: team/platform-ai`
+		if !strings.Contains(source, anchor) {
+			t.Fatalf("deadline fixture lacks build-node anchor %q", anchor)
+		}
+		return strings.Replace(source, anchor, continuation, 1)
+	})
+	inv := f.startAsyncWait(time.Now().Add(-time.Second))
+
+	sch := scheduler.New(s, scheduler.Options{TickInterval: 25 * time.Millisecond})
+	runCtx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	go func() { _ = sch.Run(runCtx) }()
+	waitFor(t, 5*time.Second, func() bool {
+		return sch.Health().Status == scheduler.StatusActive && !sch.Health().LastTick.IsZero()
+	})
+	time.Sleep(100 * time.Millisecond)
+
+	if status, _ := mustNodeRunStatus(t, s, f.buildNodeRunID); status != "waiting_external" {
+		t.Fatalf("node run status = %q, want waiting_external while continuation holds", status)
+	}
+	if got := mustInvocationState(t, s, inv.AttemptID); got != actors.InvocationWaiting {
+		t.Fatalf("invocation state = %q, want %q (session remains warm)", got, actors.InvocationWaiting)
+	}
+
+	// The half that "session stays warm" does not cover, and the half that
+	// matters: a pause must RE-ARM. The timer that just fired is spent, and
+	// nothing else schedules another -- so without a replacement this node
+	// now runs with no deadline at all, and maxWallClock is never re-checked.
+	// The declaration would still be sitting in the graph looking honoured.
+	// Wait for the count to settle rather than sampling it once. The re-arm is
+	// inserted before the original timer is marked fired, so there is a window
+	// in which BOTH are pending and a single sample reads 2. Same window the
+	// no-time-bound test below has to wait through, for the same reason.
+	waitFor(t, 10*time.Second, func() bool {
+		return mustPendingDeadlineCount(t, s, f.buildNodeRunID) == 1
+	})
+	pending := mustPendingDeadlineCount(t, s, f.buildNodeRunID)
+	if pending != 1 {
+		t.Fatalf("pending deadline timers after pause = %d, want exactly 1: a paused continuation "+
+			"with no future timer is an unbounded loop (PRD §9.7)", pending)
+	}
+	// It must be armed for the wall-clock bound, not for the moment it paused.
+	if at := mustNextDeadlineFireAt(t, s, f.buildNodeRunID); !at.After(time.Now().Add(time.Hour)) {
+		t.Fatalf("re-armed deadline fires at %s, want ~2h out (the declared maxWallClock); "+
+			"an immediate re-arm would spin the tick loop", at)
+	}
+}
+
+// TestSchedulerDeadlineRefusesToPauseWithoutATimeBound is the companion
+// refusal. maxSessions and maxContinuations only change when a new attempt is
+// recorded, which the completion path already re-evaluates -- so with no
+// maxWallClock there is no future moment at which a PAUSED node's verdict can
+// change on its own. Pausing there would be indistinguishable from hanging.
+func TestSchedulerDeadlineRefusesToPauseWithoutATimeBound(t *testing.T) {
+	s := requireStore(t)
+	f := newDeadlineFixtureSource(t, s, func(source string) string {
+		anchor := "      kind: agent\n      ownerRef: team/platform-ai"
+		continuation := `      kind: agent
+      continue:
+        while:
+          - node.state == "incomplete"
+        bounds:
+          maxSessions: 4
+        onExhausted: timed_out
+      ownerRef: team/platform-ai`
+		if !strings.Contains(source, anchor) {
+			t.Fatalf("deadline fixture lacks build-node anchor %q", anchor)
+		}
+		return strings.Replace(source, anchor, continuation, 1)
+	})
+	f.startAsyncWait(time.Now().Add(-time.Second))
+
+	sch := scheduler.New(s, scheduler.Options{TickInterval: 25 * time.Millisecond})
+	runCtx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	go func() { _ = sch.Run(runCtx) }()
+
+	// Both conditions must be in the SAME wait. failWaitingExternal commits the
+	// attempt failure through the engine's own transaction, and fireOne marks
+	// the timer fired in a LATER commit -- so there is a real window where the
+	// node reads "failed" while the timer is still pending. Waiting only on the
+	// status and then asserting the count passes alone and fails under load,
+	// which is the worst kind of test.
+	waitFor(t, 10*time.Second, func() bool {
+		status, _ := mustNodeRunStatus(t, s, f.buildNodeRunID)
+		terminal := status == "failed" || status == "timed_out"
+		return terminal && mustPendingDeadlineCount(t, s, f.buildNodeRunID) == 0
+	})
+
+	status, _ := mustNodeRunStatus(t, s, f.buildNodeRunID)
+	if status != "failed" && status != "timed_out" {
+		t.Fatalf("node run status = %q, want a terminal status: with no time-based bound "+
+			"the scheduler must cancel rather than pause", status)
+	}
+	if pending := mustPendingDeadlineCount(t, s, f.buildNodeRunID); pending != 0 {
+		t.Errorf("pending deadline timers = %d, want 0: the node was failed, not paused", pending)
+	}
+}
+
+// TestSchedulerDeadlineTimeoutIsNotRetriedIntoASecondSession is task t10's
+// acceptance criterion, and the reason spec claim c42 calls the hazard LIVE
+// rather than hypothetical: internal/engine/types.go's retryable() returns
+// true for StatusTimedOut, and the retry decision (complete.go) re-dispatches
+// on nothing more than that plus an unspent attempt budget. So a node
+// declaring maxAttempts > 1 whose deadline fires is re-dispatched while the
+// first session is still running -- the deadline's cancel is best-effort and
+// post-commit (decision q3/c48), so at the moment the retry is scheduled the
+// control plane has not even ASKED the session to stop, let alone observed it
+// stop.
+//
+// Note what is asserted and what deliberately is not. The honesty condition
+// on c42 is explicit that "no corruption happened to occur" proves nothing:
+// this failure mode has no detection. So the assertion is on the REFUSAL
+// itself -- exactly one attempt row, no retry event, no claimable work item,
+// and the workflow's declared timed_out edge taken instead -- all of which
+// are things the engine either did or did not do, rather than things that
+// happened not to go wrong.
+//
+// The fixture's only edit is the retry budget. Everything else is the same
+// deadline.workflow.yaml the other tests in this file use, so what changes
+// between this test and TestSchedulerFiresDeadlineTimerFailsWaitingExternalAttemptAndRoutesEdge
+// is precisely the one declaration that makes the hazard reachable.
+func TestSchedulerDeadlineTimeoutIsNotRetriedIntoASecondSession(t *testing.T) {
+	s := requireStore(t)
+	f := newDeadlineFixtureSource(t, s, func(source string) string {
+		anchor := "        retry:\n          maxAttempts: 1"
+		if !strings.Contains(source, anchor) {
+			t.Fatalf("deadline fixture lacks retry-policy anchor %q", anchor)
+		}
+		// Only the FIRST occurrence: that is the build node, the one the
+		// deadline fires against. repair keeps its own budget untouched.
+		return strings.Replace(source, anchor, "        retry:\n          maxAttempts: 3", 1)
+	})
+	inv := f.startAsyncWait(time.Now().Add(-time.Second))
+
+	sch := scheduler.New(s, scheduler.Options{TickInterval: 25 * time.Millisecond})
+	runCtx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	go func() { _ = sch.Run(runCtx) }()
+
+	// Poll for the refusal, but deliberately do NOT fail here on timeout: when
+	// this test is red, what happened instead is the interesting part, and
+	// "condition not met within 5s" would hide it behind the assertions below.
+	// The scheduler is left running until after the read, because cancelling
+	// it mid-tick aborts the very completion under test.
+	settle := time.Now().Add(5 * time.Second)
+	for time.Now().Before(settle) {
+		if status, _ := mustNodeRunStatus(t, s, f.buildNodeRunID); status == "failed" {
+			break
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
+	// Let any second dispatch this refusal was supposed to prevent actually
+	// show up before reading. Asserting immediately would pass on timing.
+	time.Sleep(300 * time.Millisecond)
+
+	status, outcome := mustNodeRunStatus(t, s, f.buildNodeRunID)
+	if status != "failed" {
+		t.Fatalf("build node run status = %q, want failed: a deadline that expired with maxAttempts 3 "+
+			"must not buy a second session against a workspace no one has confirmed is free", status)
+	}
+	if outcome != "timed_out" {
+		t.Errorf("build node run outcome = %q, want timed_out", outcome)
+	}
+
+	// One session, one attempt row. A second dispatch would record a second.
+	if count, latest := attemptCountAndLatestStatus(t, s, f.buildNodeRunID); count != 1 || latest != "timed_out" {
+		t.Fatalf("build attempts = %d (latest %q), want exactly 1 with status timed_out: "+
+			"a re-dispatch is exactly what c42's fence exists to refuse", count, latest)
+	}
+
+	// Nothing claimable is left behind either -- a refusal that still leaves a
+	// ready work item is a refusal a worker walks straight through.
+	if n := mustClaimableWorkItemCount(t, s, f.buildNodeRunID); n != 0 {
+		t.Errorf("claimable work items for the timed-out node run = %d, want 0", n)
+	}
+
+	events := runEventTypes(t, s, f.runID)
+	if containsString(events, engine.TypeAttemptRetryScheduled) {
+		t.Errorf("run events = %v, want no %s: the retry budget must not be spent on a deadline expiry",
+			events, engine.TypeAttemptRetryScheduled)
+	}
+	// Refused, not merely not-retried. c49 is explicit that a warning is what
+	// today's behaviour already effectively is, so the refusal has to be a
+	// fact in the run's own stream: an operator seeing one attempt against
+	// maxAttempts 3 must be able to tell a fence from a misconfiguration.
+	if !containsString(events, engine.TypeAttemptRetryRefused) {
+		t.Errorf("run events = %v, want one of type %s", events, engine.TypeAttemptRetryRefused)
+	}
+
+	// The token still moves. Refusing the retry is not the same as ending the
+	// run: build.timed_out is a declared edge and it routes, which is how an
+	// author sends a blown deadline somewhere deliberate.
+	if !nodeRunExists(t, s, f.runID, "repair") {
+		t.Errorf("no repair node run; refusing the retry must still let build.timed_out route")
+	}
+	if got := mustInvocationState(t, s, inv.AttemptID); got != actors.InvocationCompleted {
+		t.Errorf("invocation state = %q, want %q", got, actors.InvocationCompleted)
+	}
+}
+
+func mustPendingDeadlineCount(t *testing.T, s *postgres.Store, nodeRunID string) int {
+	t.Helper()
+	var n int
+	if err := s.Pool().QueryRow(context.Background(),
+		`SELECT count(*) FROM timers WHERE node_run_id = $1 AND timer_kind = 'deadline' AND status = 'pending'`,
+		nodeRunID,
+	).Scan(&n); err != nil {
+		t.Fatalf("mustPendingDeadlineCount: %v", err)
+	}
+	return n
+}
+
+func mustNextDeadlineFireAt(t *testing.T, s *postgres.Store, nodeRunID string) time.Time {
+	t.Helper()
+	var at time.Time
+	if err := s.Pool().QueryRow(context.Background(),
+		`SELECT fire_at FROM timers WHERE node_run_id = $1 AND timer_kind = 'deadline' AND status = 'pending'
+		 ORDER BY fire_at DESC LIMIT 1`, nodeRunID,
+	).Scan(&at); err != nil {
+		t.Fatalf("mustNextDeadlineFireAt: %v", err)
+	}
+	return at
 }
 
 // startAsyncWait parks the claimed "build" attempt exactly as an async
@@ -229,6 +477,20 @@ func attemptCountAndLatestStatus(t *testing.T, s *postgres.Store, nodeRunID stri
 	return count, latestStatus
 }
 
+// mustClaimableWorkItemCount counts the work items a worker could still pick
+// up for a node run. 'ready' is what a scheduled retry leaves behind, so this
+// is the direct read of "was a second dispatch enqueued".
+func mustClaimableWorkItemCount(t *testing.T, s *postgres.Store, nodeRunID string) int {
+	t.Helper()
+	var n int
+	if err := s.Pool().QueryRow(context.Background(),
+		`SELECT count(*) FROM work_items WHERE node_run_id = $1 AND state = 'ready'`, nodeRunID,
+	).Scan(&n); err != nil {
+		t.Fatalf("mustClaimableWorkItemCount: %v", err)
+	}
+	return n
+}
+
 func mustInvocationState(t *testing.T, s *postgres.Store, attemptID string) string {
 	t.Helper()
 	var state string
@@ -337,6 +599,54 @@ func TestSchedulerFiresDeadlineTimerFailsWaitingExternalAttemptAndRoutesEdge(t *
 
 	if got := mustInvocationState(t, s, inv.AttemptID); got != actors.InvocationCompleted {
 		t.Errorf("invocation state = %q, want %q", got, actors.InvocationCompleted)
+	}
+}
+
+// A bridge that accepts the cancel request but never answers must not hold
+// the singleton timer loop. The attempt transition and timer commit happen
+// first; cancellation is an independently bounded, best-effort side effect.
+func TestSchedulerTickIsBoundedByNoUnreachableDeadlineBridge(t *testing.T) {
+	s := requireStore(t)
+	f := newDeadlineFixture(t, s)
+	inv := f.startAsyncWait(time.Now().Add(-time.Second))
+
+	requestArrived := make(chan struct{}, 1)
+	release := make(chan struct{})
+	bridge := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		requestArrived <- struct{}{}
+		<-release
+		w.WriteHeader(http.StatusAccepted)
+	}))
+	defer func() {
+		close(release)
+		bridge.Close()
+	}()
+	if _, err := s.Pool().Exec(context.Background(), `
+		INSERT INTO actors (id, namespace_id, actor_key, revision, kind, protocol, endpoint_ref, capabilities, metadata)
+		VALUES ($1, $2, 'company/builder', 1, 'agent', 'http', $3, '{}', '{}')`,
+		"actor_"+store.NewULID(), f.ns.ID, bridge.URL); err != nil {
+		t.Fatalf("register unreachable actor bridge: %v", err)
+	}
+
+	sch := scheduler.New(s, scheduler.Options{TickInterval: 25 * time.Millisecond})
+	runCtx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	go func() { _ = sch.Run(runCtx) }()
+
+	select {
+	case <-requestArrived:
+	case <-time.After(5 * time.Second):
+		t.Fatal("deadline cancellation never reached the actor bridge")
+	}
+	firstTick := sch.Health().LastTick
+	waitFor(t, 500*time.Millisecond, func() bool {
+		return sch.Health().LastTick.After(firstTick)
+	})
+	if status, _ := mustNodeRunStatus(t, s, f.buildNodeRunID); status != "failed" {
+		t.Fatalf("node run status while cancel bridge is hung = %q, want failed", status)
+	}
+	if inv.InvocationID == "" {
+		t.Fatal("fixture produced no invocation id")
 	}
 }
 

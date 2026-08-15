@@ -130,6 +130,9 @@ export interface Attempt {
   result?: unknown;
   started_at: string;
   completed_at?: string;
+  usage?: AttemptUsage;
+  termination_reason?: string;
+  continuation_ref?: string;
   /**
    * Task t26 (issue #49, spec claim c32 / honesty h21): the branch name a
    * bridge's preserve-on-failure plumbing commit (task t25) actually
@@ -158,6 +161,29 @@ export interface Attempt {
    * domain/preserve.ts).
    */
   preserve_remote?: string;
+  /**
+   * Task t11 (ADR 0012, migrations/0028_attempt_supersedes.sql): the id of
+   * the attempt record this one CORRECTS, absent on every ordinary dispatch.
+   *
+   * A node run whose deadline expired and whose actor session later reported
+   * back legitimately lists two attempts — the `timed_out` record, and the
+   * correction carrying the tokens, model, termination reason and preserve
+   * branch of work that really happened. Neither is deleted (PRD §10.4:
+   * records are immutable, corrections append), so a reader must be told
+   * which is which or they will read one dispatch as two.
+   */
+  supersedes?: string;
+}
+
+export interface AttemptUsage {
+  input_tokens: number;
+  output_tokens: number;
+  cost?: number;
+  currency?: string;
+  cached_input_tokens?: number;
+  reasoning_tokens?: number;
+  usage_model?: string;
+  thread_id?: string;
 }
 
 export type NodeRunState =
@@ -262,6 +288,25 @@ export interface WorkflowValidation {
   /** The normalized IR's content digest. Empty when there is any error diagnostic. */
   digest: string;
   diagnostics: Diagnostic[];
+}
+
+/** A fleet-agent workflow-authoring run. Generated source is never published here. */
+export interface WorkflowGeneration {
+  run_id: string;
+  status: "proposed" | "confirmed" | "rejected" | "exhausted";
+  base_digest?: string;
+  format?: "yaml" | "json";
+  source?: string;
+  diff?: string;
+  valid: boolean;
+  digest?: string;
+  diagnostics: Diagnostic[];
+}
+
+export interface CreateWorkflowGeneration {
+  description: string;
+  actor_ref: string;
+  base_digest?: string;
 }
 
 /** The subset of the normalized IR the Run view renders (PRD §11.3). */

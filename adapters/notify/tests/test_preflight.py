@@ -100,13 +100,21 @@ _RESTRICTED = (("/proc/sys/kernel/apparmor_restrict_unprivileged_userns", "1"),)
 _PERMISSIVE = (("/proc/sys/nonexistent/knob", "1"),)
 
 
-def test_a_mode_needing_userns_is_unavailable_where_the_kernel_restricts_it(tmp_path):
+def test_a_mode_needing_userns_is_unavailable_where_the_kernel_restricts_it(tmp_path, monkeypatch):
     """Issue #18/#63: `--sandbox workspace-write` was REQUESTED and silently
     degraded — every file write lost, shell commands still running. The
     surface must report what the host can do, so a mode whose confinement
     cannot start here is reported unavailable with the sysctl that says so."""
     knob = tmp_path / "apparmor_restrict_unprivileged_userns"
     knob.write_text("1\n")
+    monkeypatch.setattr(
+        preflight.shutil, "which", lambda name: "/usr/bin/bwrap" if name == "bwrap" else None
+    )
+    monkeypatch.setattr(
+        preflight.subprocess,
+        "run",
+        lambda *args, **kwargs: preflight.subprocess.CompletedProcess(args[0], 1),
+    )
 
     available, unavailable = preflight.measure_sandbox_modes(
         ("read-only", "workspace-write", "danger-full-access"),
@@ -119,9 +127,17 @@ def test_a_mode_needing_userns_is_unavailable_where_the_kernel_restricts_it(tmp_
     assert "apparmor_restrict_unprivileged_userns=1" in unavailable["workspace-write"]
 
 
-def test_the_same_modes_are_available_where_the_kernel_permits_it(tmp_path):
+def test_the_same_modes_are_available_where_the_kernel_permits_it(tmp_path, monkeypatch):
     knob = tmp_path / "apparmor_restrict_unprivileged_userns"
     knob.write_text("0\n")
+    monkeypatch.setattr(
+        preflight.shutil, "which", lambda name: "/usr/bin/bwrap" if name == "bwrap" else None
+    )
+    monkeypatch.setattr(
+        preflight.subprocess,
+        "run",
+        lambda *a, **kw: preflight.subprocess.CompletedProcess(a[0], 0),
+    )
 
     available, unavailable = preflight.measure_sandbox_modes(
         ("read-only", "workspace-write"),
@@ -133,9 +149,17 @@ def test_the_same_modes_are_available_where_the_kernel_permits_it(tmp_path):
     assert unavailable == {}
 
 
-def test_an_absent_knob_is_not_a_restriction():
+def test_an_absent_knob_is_not_a_restriction(monkeypatch):
     """A kernel with no such sysctl does not restrict here — absence must not
     be read as the blocking value."""
+    monkeypatch.setattr(
+        preflight.shutil, "which", lambda name: "/usr/bin/bwrap" if name == "bwrap" else None
+    )
+    monkeypatch.setattr(
+        preflight.subprocess,
+        "run",
+        lambda *a, **kw: preflight.subprocess.CompletedProcess(a[0], 0),
+    )
     available, unavailable = preflight.measure_sandbox_modes(
         ("workspace-write",), requires_userns=("workspace-write",), probes=_PERMISSIVE
     )

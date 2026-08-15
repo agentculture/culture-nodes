@@ -635,6 +635,7 @@ def test_sync_response_failure_carries_usage_from_task_result():
         "cost": None,
         "currency": None,
         "thread_id": "019fe54f-cb2c-7780-9316-46ecb958a6ed",
+        "model": "unknown:codex-session-did-not-report",
     }
 
 
@@ -653,6 +654,7 @@ def test_sync_response_undeclared_incomplete_failure_carries_usage():
         "cost": None,
         "currency": None,
         "thread_id": "019fe553-362a-7191-aa66-6c03191830b1",
+        "model": "unknown:codex-session-did-not-report",
     }
 
 
@@ -721,6 +723,7 @@ def test_terminal_event_failed_carries_usage_from_task_result():
         "cost": None,
         "currency": None,
         "thread_id": "019fe54f-cb2c-7780-9316-46ecb958a6ed",
+        "model": "unknown:codex-session-did-not-report",
     }
 
 
@@ -739,6 +742,7 @@ def test_terminal_event_undeclared_incomplete_failure_carries_usage():
         "cost": None,
         "currency": None,
         "thread_id": "019fe553-362a-7191-aa66-6c03191830b1",
+        "model": "unknown:codex-session-did-not-report",
     }
 
 

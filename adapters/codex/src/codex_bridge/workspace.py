@@ -25,6 +25,7 @@ from __future__ import annotations
 import shutil
 import subprocess
 from dataclasses import dataclass
+from pathlib import Path
 from typing import Any
 
 #: Bounds any single `git` subprocess this module runs. Git talking to a
@@ -32,6 +33,66 @@ from typing import Any
 #: filesystem (network mount, lock contention) cannot hang the bridge
 #: forever measuring a workspace nobody is waiting on synchronously.
 GIT_TIMEOUT_SECONDS = 10.0
+
+
+class WorkspaceProvisionError(RuntimeError):
+    """A requested writer worktree could not be minted safely."""
+
+
+def _is_within(path: Path, root: Path) -> bool:
+    try:
+        path.relative_to(root)
+    except ValueError:
+        return False
+    return True
+
+
+def provision(
+    repo: str,
+    permitted_root: str,
+    writer_name: str,
+    *,
+    forbidden_roots: tuple[str, ...],
+) -> str:
+    """Mint one local, detached worktree for *writer_name*.
+
+    The bridge owns path resolution: callers identify the source checkout and
+    writer, while this host selects the configured root. Existing targets are
+    never adopted, and roots nested beneath another writer-accessible root are
+    refused before Git or the filesystem is changed.
+    """
+    if (
+        not writer_name
+        or writer_name in {".", ".."}
+        or "/" in writer_name
+        or "\\" in writer_name
+        or Path(writer_name).name != writer_name
+    ):
+        raise WorkspaceProvisionError("writer_name must be one non-empty path component")
+
+    source = Path(repo).expanduser().resolve()
+    root = Path(permitted_root).expanduser().resolve()
+    target = root / writer_name
+    for entry in forbidden_roots:
+        forbidden = Path(entry).expanduser().resolve()
+        if _is_within(target, forbidden):
+            raise WorkspaceProvisionError(
+                f"worktree {target} is reachable from another writer's allowlisted root {forbidden}"
+            )
+    if target.exists() or target.is_symlink():
+        raise WorkspaceProvisionError(f"worktree target already exists: {target}")
+    if shutil.which("git") is None:
+        raise WorkspaceProvisionError("git is not installed on this bridge host")
+    inside = _git_stdout(str(source), "rev-parse", "--is-inside-work-tree")
+    if inside is None or inside.strip() != "true":
+        raise WorkspaceProvisionError(f"source repo is not a git working tree: {source}")
+
+    root.mkdir(parents=True, exist_ok=True)
+    proc = _run_git(str(source), "worktree", "add", "--detach", str(target), "HEAD")
+    if proc is None or proc.returncode != 0:
+        detail = "git worktree add could not run" if proc is None else proc.stderr.strip()
+        raise WorkspaceProvisionError(detail or "git worktree add refused the target")
+    return str(target)
 
 
 def _run_git(repo: str, *args: str) -> subprocess.CompletedProcess[str] | None:
@@ -63,6 +124,16 @@ def _git_stdout(repo: str, *args: str) -> str | None:
     if proc is None or proc.returncode != 0:
         return None
     return proc.stdout
+
+
+#: Public aliases for `reap.py`, this module's other half (task t17). The
+#: reaper runs git through THIS module's one bounded, never-raising
+#: subprocess helper and checks containment with THIS module's predicate,
+#: rather than growing a second git path and a second ownership rule that
+#: could drift from the provisioner's.
+run_git = _run_git
+git_stdout = _git_stdout
+is_within = _is_within
 
 
 @dataclass(frozen=True)

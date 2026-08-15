@@ -171,6 +171,11 @@ func (f *fakeCallbackStore) ReparkResumedWork(ctx context.Context, inv actors.Pe
 func (f *fakeCallbackStore) CloseInvocation(ctx context.Context, attemptID, state string) error {
 	return nil
 }
+func (f *fakeCallbackStore) RecordSupersedingAttempt(
+	ctx context.Context, inv actors.PendingInvocation, callbackEventID string, req engine.CompletionRequest,
+) (actors.SupersedingAttempt, error) {
+	return actors.SupersedingAttempt{AttemptID: "att_superseding"}, nil
+}
 func (f *fakeCallbackStore) EmitSignalEvent(ctx context.Context, inv actors.PendingInvocation, in actors.EmitSignalInput) (actors.EmitSignalResult, error) {
 	return actors.EmitSignalResult{}, nil
 }

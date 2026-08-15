@@ -8,6 +8,8 @@ from __future__ import annotations
 
 import subprocess
 
+import pytest
+
 from claude_code_bridge import workspace
 
 
@@ -30,6 +32,42 @@ def _head(repo) -> str:
         ["git", "rev-parse", "HEAD"], cwd=repo, check=True, capture_output=True, text=True
     )
     return proc.stdout.strip()
+
+
+def test_provision_mints_a_sibling_worktree_and_refuses_reuse(tmp_path):
+    repo = tmp_path / "culture-nodes"
+    _init_repo(repo)
+    root = tmp_path / ".worktrees.culture-nodes"
+
+    minted = workspace.provision(str(repo), str(root), "writer-t16", forbidden_roots=(str(repo),))
+
+    assert minted == str(root / "writer-t16")
+    assert (root / "writer-t16" / "README.md").is_file()
+    with pytest.raises(workspace.WorkspaceProvisionError, match="already exists"):
+        workspace.provision(str(repo), str(root), "writer-t16", forbidden_roots=(str(repo),))
+
+
+def test_provision_refuses_a_worktree_nested_in_another_writer_allowlisted_root(tmp_path):
+    repo = tmp_path / "culture-nodes"
+    _init_repo(repo)
+    nested_root = repo / ".claude" / "worktrees"
+
+    with pytest.raises(workspace.WorkspaceProvisionError, match="reachable"):
+        workspace.provision(
+            str(repo),
+            str(nested_root),
+            "web-ux-quick-wins",
+            forbidden_roots=(str(repo),),
+        )
+
+
+@pytest.mark.parametrize("name", ["", ".", "../escape", "a/b", "a\\b"])
+def test_provision_refuses_non_local_writer_names(tmp_path, name):
+    repo = tmp_path / "culture-nodes"
+    _init_repo(repo)
+
+    with pytest.raises(workspace.WorkspaceProvisionError):
+        workspace.provision(str(repo), str(tmp_path / "worktrees"), name, forbidden_roots=())
 
 
 # ---------------------------------------------------------------------------

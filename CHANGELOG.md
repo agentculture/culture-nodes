@@ -5,6 +5,75 @@ All notable changes to this project will be documented in this file.
 Format follows [Keep a Changelog](https://keepachangelog.com/). This project
 adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.23.0] - 2026-08-15
+
+The `own-the-work-end-to-end` batch — eleven issues (76, 77, 78, 79, 80, 81,
+82, 83, 84, 86, umbrella 87) taking a ticket across hosts: dispatch,
+handoff, timeout, cancellation, verification, and a ledger that explains
+itself. Full accounting, including the signals it did NOT meet, in
+`docs/deliveries/2026-08-15-own-the-work-end-to-end.md`.
+
+### Added
+
+- Artifact publication: an authenticated, attempt-scoped
+  `POST /v1alpha1/attempts/{attemptID}/artifacts` gives `internal/artifacts` its
+  first production caller (#79). Namespace, run and attempt are derived from the
+  durable invocation, never from the request body; the body is opaque and
+  bounded at 64 MiB.
+- Artifact retention: immutable tombstones, so following a reaped ref in a
+  ledger record resolves to when and why it was reaped rather than a bare
+  not-found. `Delete` fails closed; reaping goes through one guarded path.
+- Continuation: `continue.while` / `bounds` / `onExhausted` compile, and the
+  engine — not a model — evaluates the condition (#80). A declaration whose
+  exhaustion no edge carries away is refused.
+- A deadline now stops the actor session (#82). It consults the declared
+  continuation first: holding pauses and **re-arms** the timer, absent or false
+  cancels — after the timer transaction commits, off the tick loop.
+- A deadline-origin timeout is no longer retried (#78); an unvouched origin
+  fails closed. The refusal is visible as its own event.
+- A late callback appends a superseding attempt row instead of vanishing, so
+  reported work appears in the run's history without inflating retry burn.
+- Attempt attribution end to end (#77): `usage`, `usage_model`,
+  `termination_reason` and `continuation_ref` on the API and the run-detail
+  page. All four backends now emit an explicit model sentinel rather than
+  omitting the field — a null was indistinguishable from a field nobody wrote.
+- The two-carrier handoff **contract** (#74): changes travel as a git ref,
+  context as an artifact, declared once and proven to still refuse a bare
+  filesystem path. The transport is not yet built; the summary says so.
+- Bridge-side worktree minting with scoped-prefix allowlists, and a reaper that
+  refuses dirty worktrees unconditionally and preserves unreferenced work
+  before reclaiming it.
+- Generate a workflow from plain text (#81) through one fleet-agent API from
+  dashboard, CLI or mid-run, in front of the existing validate/publish door,
+  with a lint guard that keeps model calls out of the control plane.
+- Jira Cloud as a third pr-upkeep finding source (#76), fixture-backed; live
+  proof is separately gated and still blocked on an empty backlog.
+- `examples/development-loop/workflow.yaml` — the loop as a compiling graph
+  that names seven of its own gaps rather than implying they work.
+- A 1000-line file-length gate, with a test for the gate itself.
+
+### Changed
+
+- The capability surface probes bubblewrap executably instead of reading
+  sysctls, which can advertise a sandbox mode the host cannot deliver (#83).
+  Missing probe tools report `not-probed`, distinct from available.
+- pr-upkeep sweeps a configured, ordered set of repositories instead of one
+  pinned repo, and derives its source URL and digest from the revision the
+  deploy actually ships (#86).
+- Deploy installs the human-inbox units under the names spark runs, and removes
+  the legacy files rather than only disabling them (#84).
+- `AGENTS.md`: an agent may create a handover commit and a ref under
+  `refs/culture-nodes/<run-id>`; pushing and committing onto a branch stay
+  forbidden. The stale claim that `workspace-write` grants no writes is
+  corrected.
+
+### Fixed
+
+- `DefaultTokenTTL`'s docstring described a re-issue that never happens, and
+  that error had been carried into a spec question as a premise.
+- A credential lint that fired on `git@github.com` — git's protocol username,
+  not an account identity — in the documentation teaching the safe push command.
+
 ## [0.21.0] - 2026-08-14
 
 ### Added

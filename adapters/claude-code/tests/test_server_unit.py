@@ -130,6 +130,18 @@ def test_missing_instruction_is_400(bridge_url):
     assert "instruction" in body["error"]
 
 
+def test_workflow_scope_is_refused_before_dispatch(bridge_url):
+    base, cfg, repo = bridge_url
+    payload = _invocation_body(
+        str(repo), instruction="Update .github/workflows/go.yml and run its checks"
+    )
+    headers = {**_auth_header(cfg), "Idempotency-Key": "att_workflow_scope"}
+    status, body = _request(base, server.INVOCATIONS_PATH, body=payload, headers=headers)
+    assert status == 403
+    assert "workflow-scope boundary" in body["error"]
+    assert ".github/workflows/" in body["error"]
+
+
 def test_repo_outside_allowlist_is_403(bridge_url, tmp_path):
     base, cfg, repo = bridge_url
     other = tmp_path.parent / "not-allowed"
@@ -185,6 +197,7 @@ def test_sync_dispatch_maps_success_result_to_200(bridge_url, monkeypatch):
         "cost": 0.01,
         "currency": "USD",
         "thread_id": "sess-1",
+        "model": "unknown:claude-code-session-did-not-report",
     }
     assert body["ledger_delta"]["records"][0]["authority"] == "proposed"
 

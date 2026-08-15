@@ -28,6 +28,16 @@ const (
 	// TypeAttemptRetryScheduled records a technical failure that bought
 	// another attempt, with the time the re-enqueued work becomes claimable.
 	TypeAttemptRetryScheduled = "dev.culture.nodes.attempt.retry-scheduled"
+	// TypeAttemptRetryRefused records a retry budget the engine declined to
+	// spend (task t10's workspace fence): the node still had attempts left
+	// and the engine refused to use one. It is a separate type from
+	// retry-scheduled rather than a payload flag on it, because the two are
+	// opposite decisions, and it is separate from node-run.failed because a
+	// refusal is not itself an ending — the node run may still route its
+	// declared edge afterwards. Its absence is as informative as its
+	// presence: a run whose retries were all spent normally never carries
+	// one.
+	TypeAttemptRetryRefused = "dev.culture.nodes.attempt.retry-refused"
 	// TypeRunFailed records a run that ended without producing its result.
 	TypeRunFailed = "dev.culture.nodes.run.failed"
 	// TypeRunCancelled records a run stopped on instruction. It is separate

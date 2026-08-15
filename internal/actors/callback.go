@@ -81,7 +81,10 @@ const (
 	TypeCallbackOutOfOrder = "dev.culture.nodes.actor.callback-out-of-order"
 	// TypeCallbackLate records a terminal event that arrived after the
 	// attempt it belongs to was replaced or cancelled. This is §13.4's late
-	// diagnostic, and it is the only trace such an event leaves.
+	// diagnostic. It no longer stands alone: since task t11 the report also
+	// leaves a superseding attempt record, and this event names it
+	// (`superseding_attempt_id`) so the audit trail and the attempts table
+	// point at each other.
 	TypeCallbackLate = "dev.culture.nodes.actor.callback-late"
 	// TypeCallbackRejected records an event this ingest could not act on at
 	// all: an unusable payload for a terminal kind, or a `signal` emission
@@ -186,6 +189,26 @@ type CallbackStore interface {
 	EmitSignalEvent(ctx context.Context, inv PendingInvocation, in EmitSignalInput) (EmitSignalResult, error)
 	// CloseInvocation moves an invocation out of the waiting state.
 	CloseInvocation(ctx context.Context, attemptID, state string) error
+
+	// RecordSupersedingAttempt appends the attempt record a late terminal
+	// callback leaves: the facts the actor reported (status, output, usage
+	// including the model, termination reason, continuation ref, preserve
+	// block), on a NEW row naming the record it corrects. It changes nothing
+	// else — no work item, no node run, no ledger — because §13.4's refusal
+	// to let a late completion commit workflow state is not what this
+	// records. See task t11 and docs/adr/0012-late-callback-supersession.md.
+	//
+	// It is idempotent per DELIVERY — the (inv.AttemptID, callbackEventID)
+	// pair — because callback delivery is at-least-once and this ingest
+	// legitimately reprocesses a report whose first pass failed part-way: a
+	// second call for the same callback event returns the record the first
+	// one appended. Keying on the delivery rather than on the record being
+	// corrected is what makes that true of the report that corrects NOTHING
+	// as well, which is the flavour of lateness with no other natural key
+	// (ADR 0012 §5; before it, that report could be persisted twice).
+	RecordSupersedingAttempt(
+		ctx context.Context, inv PendingInvocation, callbackEventID string, req engine.CompletionRequest,
+	) (SupersedingAttempt, error)
 
 	// ResumeWaitingWork re-leases the parked work item under the fencing
 	// tuple recorded at dispatch, so the engine's own fenced completion guard
@@ -393,6 +416,11 @@ type CallbackResult struct {
 	Completion *engine.CompletionResult
 	// Diagnostic explains a non-committing disposition.
 	Diagnostic string
+	// SupersedingAttemptID is the attempt record a late terminal callback
+	// left (task t11), set only when Disposition is DispositionLate. It is
+	// how a caller — an HTTP handler answering the bridge, a test — can name
+	// the row the report landed on without going back to the database.
+	SupersedingAttemptID string
 }
 
 // HandleCallback ingests one PRD §13.4 event.
@@ -695,7 +723,7 @@ func commitTerminal(ctx context.Context, deps CallbackDeps, inv PendingInvocatio
 
 	if err := deps.Store.ResumeWaitingWork(ctx, inv, deps.resumeLease()); err != nil {
 		if errors.Is(err, engine.ErrStaleClaim) {
-			return deps.late(ctx, inv, ev,
+			return deps.late(ctx, inv, ev, req,
 				fmt.Sprintf("attempt %s is no longer parked under fencing token %d attempt %d; the work was reclaimed, cancelled, or already completed",
 					inv.AttemptID, inv.FencingToken, inv.Attempt))
 		}
@@ -721,7 +749,7 @@ func commitTerminal(ctx context.Context, deps CallbackDeps, inv PendingInvocatio
 			// §13.4 outcome as a failed resume and gets the same treatment;
 			// nothing was written, because the whole §12.5 transaction rolled
 			// back.
-			return deps.late(ctx, inv, ev,
+			return deps.late(ctx, inv, ev, req,
 				fmt.Sprintf("engine refused the late completion of attempt %s: %v", inv.AttemptID, err))
 		}
 		deps.commitFailed(ctx, inv, ev, StageComplete, err)
@@ -743,17 +771,6 @@ func commitTerminal(ctx context.Context, deps CallbackDeps, inv PendingInvocatio
 	}, nil
 }
 
-// late records §13.4's late diagnostic and closes the invocation. It is the
-// only trace a superseded completion leaves, and it deliberately returns no
-// error: the protocol behaved exactly as designed.
-func (d CallbackDeps) late(ctx context.Context, inv PendingInvocation, ev CallbackEvent, diagnostic string) (CallbackResult, error) {
-	d.record(ctx, inv, TypeCallbackLate, ev, diagnostic)
-	if err := d.Store.CloseInvocation(ctx, inv.AttemptID, InvocationSuperseded); err != nil {
-		return CallbackResult{}, err
-	}
-	return CallbackResult{AttemptID: inv.AttemptID, Disposition: DispositionLate, Diagnostic: diagnostic}, nil
-}
-
 // The stages of step 5, named on a TypeCallbackCommitFailed event so an
 // operator reading it knows how far the commit got — in particular whether
 // the engine was reached at all, which decides whether the run's own state
@@ -772,6 +789,13 @@ const (
 	// emitting attempt, which was never touched: the fact was not written, so
 	// the redelivery the compensated claim invites writes it exactly once.
 	StageEmitSignal = "emit_signal_event"
+	// StageSupersede is a failure to append the superseding attempt record a
+	// late terminal callback leaves (task t11). Like StageEmitSignal it says
+	// nothing about workflow state — §13.4 had already refused this report a
+	// commit — only that the facts it carried were not recorded, which is
+	// precisely why it is worth a compensated redelivery rather than a
+	// shrug.
+	StageSupersede = "record_superseding_attempt"
 )
 
 // commitFailed records why a terminal event did not commit. It is recorded
@@ -886,6 +910,14 @@ func completionFor(inv PendingInvocation, ev CallbackEvent) (engine.CompletionRe
 			class = ClassExecution
 		}
 		req.TechStatus = TechStatusFor(class)
+		if req.TechStatus == engine.StatusTimedOut {
+			// A §13.4 terminal event is the actor reporting that ITS
+			// invocation is over — the one timeout origin that leaves no
+			// session to fence a retry against (task t10). Every other
+			// producer of timed_out either is the control plane's own
+			// wall-clock verdict or cannot say, and neither is retried.
+			req.TimeoutOrigin = engine.TimeoutOriginActor
+		}
 		// The failure diagnostic and the workspace measurement are different
 		// facts about the same attempt: the session failed, AND the bridge
 		// measured (or honestly could not measure) what it left behind.

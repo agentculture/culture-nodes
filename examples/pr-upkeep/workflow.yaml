@@ -58,37 +58,61 @@
 # allowlist and does not exist on thor at all. The graph asked for something
 # incoherent, and the error named authorization when the cause was topology.
 #
-# What travels now is a HANDLE, not a location: `fix.completed` must carry
-# `handoff.ref`, an `artifact://<namespace>/<id>` reference which by
-# construction "never carries or implies a filesystem path"
-# (internal/artifacts/doc.go) and resolves through the artifact store from
-# any host. `review` binds it (`handoff: /nodes/fix/output/handoff`) and
-# requires it; its own `review_repo` is now only the working directory the
-# codex bridge allowlists on thor, never the work under review.
+# What travels now is a HANDLE, not a location — and since spec decision q9
+# (task t6) there are TWO KINDS of handle, with the rule declared once in
+# schemas/workflow/handoff.schema.json and embedded verbatim wherever a
+# contract carries one:
 #
-# Why not a git ref (#74's option 1, the issue's own recommendation): a probe
-# of the spark bridge host settled it — origin is HTTPS not SSH, no SSH key
-# is authorised for GitHub, there is no git credential.helper, and the
-# running bridge process carries neither GH_TOKEN nor GITHUB_TOKEN. The host
-# that must produce the handle cannot push, so a pushed branch is not a
-# handle it can offer. `handoff.kind` is an enum with one member today so
-# adding `git_ref` later, once a bridge host holds a credential, is visibly
-# additive rather than a reinterpretation of the field.
+#   * a runner's CHANGES travel as `git_ref` — `git+<https|ssh>://<remote>#
+#     refs/culture-nodes/<run-id>/<node-run-id>` plus the `commit` it pins.
+#     A remote plus a ref name plus a sha carries no host and no path, which
+#     is the property #74 actually required and the property a filesystem
+#     path failed; and a diff is naturally a git object already, so making
+#     it one costs nothing.
+#   * CONTEXT AND DATA that is not naturally a git object travels as
+#     `artifact` — an `artifact://<namespace>/<id>` reference which by
+#     construction "never carries or implies a filesystem path"
+#     (internal/artifacts/doc.go) and resolves through the store from any
+#     host. The sweep's prioritised item list is JSON, not a git object, so
+#     it is on this side of the rule (`sweepReport.artifacts`).
+#
+# This supersedes the note that used to sit here, which said a git ref was
+# impossible because the spark bridge host could not push. That was true when
+# it was written and is no longer: task t1 provisioned `GITHUB_TOKEN_WORKER`
+# into the bridge units, and issue #91 measured that a codex session under
+# `--sandbox workspace-write` can write `.git` when the dispatch widens
+# `writable_roots` (deviation d6). #74's own recommendation — "option 1, with
+# 2 for anything not naturally a git object" — is what the graph now says.
+# `review` binds the handle (`handoff: /nodes/fix/output/handoff`) and
+# requires it whichever kind it is; its own `review_repo` remains only the
+# working directory the codex bridge allowlists on thor, never the work
+# under review.
 #
 # WHAT IS NOT WIRED YET, stated plainly so nobody reads this graph as more
-# finished than it is: internal/artifacts (Store, Router, the Postgres and
-# S3 drivers, migrations 0004/0006) is a complete library with ZERO
-# production callers. There is no artifact ingest or fetch endpoint on the
-# control plane's HTTP surface, no bridge uploads bytes, and
-# InvocationResult.artifact_refs is accepted on the wire and then dropped.
-# So today every fix host lands on `handoff_unavailable` with
-# `missing_capability: artifact_publish` — which is the true answer, and a
-# far better one than reviewing thor's own checkout and calling it a review
-# of spark's work. The remaining work is the content path: an artifact
-# ingest/fetch endpoint, bridge-side publish/resolve in all backends
-# (all-backends rule), and persisting actor-reported artifact refs so
-# /nodes/<id>/artifacts can become a bindable surface (it is refused by both
-# internal/compiler/contract.go and internal/worker/bindings.go today).
+# finished than it is. Both carriers are half-built, and in the same half:
+# a producer can create the handle, and no consumer can yet follow it.
+#
+#   * `artifact` — task t5 mounted the PUBLISH side
+#     (POST /v1alpha1/attempts/{attemptID}/artifacts, internal/api/
+#     artifacts.go, attempt-token scoped). There is still no fetch route on
+#     the control plane's HTTP surface, and /nodes/<id>/artifacts is not a
+#     bindable surface (refused by internal/compiler/contract.go and
+#     internal/worker/bindings.go).
+#   * `git_ref` — the bridge-side producer exists and is deterministic:
+#     `preserve.handover_ref` in all three code adapters mints
+#     refs/culture-nodes/<run-id>/<node-run-id> out of the SAME
+#     write-tree/commit-tree/update-ref plumbing preserve-on-failure uses.
+#     It deliberately does NOT push: AGENTS.md lets an agent create a
+#     handover ref and forbids it to push or to commit onto a branch, so the
+#     handle it reports carries `publication: pending` and the ref is
+#     unreachable from any branch until the operator or the control plane
+#     moves it. Nothing moves it yet, and no node fetches one yet.
+#
+# So a fix host that has done the work but cannot get it to the next machine
+# still has exactly one honest answer, and it is a domain outcome:
+# `handoff_unavailable`, naming which publish capability is missing
+# (`artifact_publish` or `git_ref_publish`). That remains a far better answer
+# than reviewing thor's own checkout and calling it a review of spark's work.
 #
 # Authoring decisions worth stating outright:
 #
@@ -140,7 +164,8 @@
 #     verifies its sha256 before executing it. The script is stdlib-only, so
 #     any python:3.12 base works and the image needs nothing baked in.
 #     `network: egress-allowlist` is the declared intent, scoping it to
-#     sonarcloud.io + api.github.com plus the source host.
+#     sonarcloud.io + api.github.com + the granted Jira host, plus the source
+#     host.
 #
 # Deployment configuration (task t16) — everything below this graph needs
 # from the world outside it, and where each value comes from. Loading this
@@ -178,12 +203,11 @@
 #   BY NAME when one is unset — internal/runners/headspace/bridge.go):
 #     PR_UPKEEP_SWEEP_SOURCE_URL      where the sweep script is fetched from.
 #     PR_UPKEEP_SWEEP_SOURCE_SHA256   the sha256 the fetched bytes must have.
-#
-#   PINNED ON PURPOSE, not configuration: the swept repo. sweep.py's
-#   SONAR_COMPONENT_KEY and GITHUB_REPO are hard-coded so this sweep cannot
-#   generalise to arbitrary repos — a blast-radius boundary, documented at
-#   the constant and in README.md as the one value a new operator changes
-#   (in their own copy of the script, which is what the URL above points at).
+#     PR_UPKEEP_REPOSITORIES          the closed ordered repo/component set,
+#                                     current cycle index, and optional Jira
+#                                     site/project for each entry.
+#     JIRA_ACCOUNT_EMAIL              Jira Cloud Basic-auth account value.
+#     JIRA_API_TOKEN                  its separately issued API token.
 apiVersion: nodes.culture.dev/v1alpha1
 kind: Workflow
 
@@ -274,7 +298,7 @@ spec:
     maxRecordsPerNode: 200
 
   nodes:
-    # The sweep. Read-only against two public quality surfaces; its
+    # The sweep. Read-only against its deployment-granted finding surfaces; its
     # prioritised work-item list rides in the result-payload/stdout
     # artifacts (refs in /nodes/sweep/output.artifacts) and its measured
     # facts (exit code, duration) land as runner-observed evidence —
@@ -314,6 +338,9 @@ spec:
         environmentRefs:
           - PR_UPKEEP_SWEEP_SOURCE_URL
           - PR_UPKEEP_SWEEP_SOURCE_SHA256
+          - PR_UPKEEP_REPOSITORIES
+          - JIRA_ACCOUNT_EMAIL
+          - JIRA_API_TOKEN
         argv:
           - python3
           - -c
@@ -332,8 +359,9 @@ spec:
                 sys.exit("pr-upkeep sweep: %s serves sha256:%s, not the configured "
                          "sha256:%s. Refusing to execute it." % (url, got, want.lower()))
             exec(compile(source.decode(), "sweep.py", "exec"))
-        # DECLARED intent: network: egress-allowlist (sonarcloud.io +
-        # api.github.com only). Headspace-cli 0.11.0 supports only disabled/
+        # DECLARED intent: network: egress-allowlist (sonarcloud.io,
+        # api.github.com, and the deployment-granted Jira site). Headspace-cli
+        # 0.11.0 supports only disabled/
         # enabled network posture, so the runner boundary honestly rejects
         # egress-allowlist as rejected_input (issue #50). `full` is the
         # working posture until headspace ships allowlist support; restore
@@ -424,10 +452,10 @@ spec:
           # A completed fix MUST carry a portable handle (issue #74). `repo`
           # above is where this actor WORKS; it is meaningless on any other
           # host, so it can never be what the review lane reads. `handoff` is
-          # the thing that crosses: an artifact reference, which by
-          # construction "never carries or implies a filesystem path"
-          # (internal/artifacts/doc.go) and resolves through the store rather
-          # than through a directory that happens to exist on spark.
+          # the thing that crosses, and since spec decision q9 it may be
+          # either carrier: a `git_ref` for this lane's CHANGES, or an
+          # `artifact` reference for anything that is not naturally a git
+          # object. Neither may be a filesystem path.
           #
           # It is REQUIRED rather than optional on purpose. The engine
           # validates a completion against this schema
@@ -444,24 +472,53 @@ spec:
               properties:
                 summary:
                   type: string
+                # DECLARED ONCE, EMBEDDED HERE: every constraint below is
+                # schemas/workflow/handoff.schema.json's, copied verbatim
+                # because a node contract is a self-contained document the
+                # engine validates against — it cannot $ref a control-plane
+                # schema. tests/lint/crosshosthandoff_test.go compares the two
+                # keyword-by-keyword, so a copy that drifts fails the build
+                # instead of quietly becoming a second, weaker rule. Read the
+                # rationale for each refusal there; do not edit one copy.
                 handoff:
                   type: object
                   required: [kind, ref]
+                  additionalProperties: false
                   properties:
-                    # One kind today, declared as an enum rather than a bare
-                    # string so a second kind (a pushed git ref, #74's option
-                    # 1, once a bridge host has a credential for one) is an
-                    # additive change a reader can see coming.
                     kind:
                       type: string
-                      enum: [artifact]
+                      enum: [artifact, git_ref]
                     ref:
                       type: string
-                      pattern: "^artifact://[^/]+/.+$"
-                    # What the handle contains, so the review lane knows what
-                    # it is opening without unpacking it first.
+                      minLength: 1
+                    commit:
+                      type: string
+                      pattern: '^[0-9a-f]{40}$'
+                    publication:
+                      type: string
+                      enum: [pending, published]
                     media_type:
                       type: string
+                  allOf:
+                    - if:
+                        required: [kind]
+                        properties:
+                          kind:
+                            const: artifact
+                      then:
+                        properties:
+                          ref:
+                            pattern: '^artifact://[^/]+/.+$'
+                    - if:
+                        required: [kind]
+                        properties:
+                          kind:
+                            const: git_ref
+                      then:
+                        required: [commit, publication]
+                        properties:
+                          ref:
+                            pattern: '^git\+(https|ssh)://[^\s#]+#refs/culture-nodes/[^\s]+$'
           # The honest failure (issue #74, task t13's criterion 3). A fix host
           # that cannot publish its work as an artifact has ONE correct answer,
           # and it is a domain outcome, not a technical error and emphatically
@@ -476,15 +533,25 @@ spec:
           # start debugging.
           #
           # `missing_capability` is a CLOSED enum so the answer is a name a
-          # dashboard can group by, not a sentence someone has to interpret:
+          # dashboard can group by, not a sentence someone has to interpret.
+          # Two carriers means two publish capabilities, and a host can be
+          # missing either one independently:
           #   artifact_publish   — the host has no way to put bytes in the
           #                        artifact store (no ingest endpoint reachable
           #                        from it, no credential, store unconfigured).
-          #                        This is the state of the world TODAY: see
-          #                        the "What is not wired yet" note in this
-          #                        file's header.
+          #   git_ref_publish    — the host made a handover commit but nothing
+          #                        can make its ref reachable from another
+          #                        machine: no remote configured, or the only
+          #                        remote is a local path, which is the same
+          #                        unportable thing the handle exists to
+          #                        refuse. The agent-may-not-push policy alone
+          #                        is NOT this outcome — that case is a
+          #                        `publication: pending` handle, which is a
+          #                        completion, not a failure.
           #   workspace_export   — the host could not produce the bundle at all
           #                        (git plumbing failed, nothing to export).
+          #                        `.git` read-only under a sandbox that was
+          #                        not widened lands here (issue #91, d6).
           #   handoff_too_large  — the work exceeds what this lane may move.
           handoff_unavailable:
             schema:
@@ -495,7 +562,11 @@ spec:
                   type: string
                 missing_capability:
                   type: string
-                  enum: [artifact_publish, workspace_export, handoff_too_large]
+                  enum:
+                    - artifact_publish
+                    - git_ref_publish
+                    - workspace_export
+                    - handoff_too_large
                 detail:
                   type: string
       ledger:
@@ -565,6 +636,53 @@ spec:
             # host's checkout — the wrong tree, silently, which is worse than
             # the 403 it replaced.
             required: [instruction, repo, sandbox, handoff]
+            properties:
+              # The RECEIVING half of the same rule, and it is asserted here
+              # rather than assumed: the producing contract is the fix node's,
+              # and a review dispatch that trusted it would be trusting a
+              # different document. Same constraints, same single declaration
+              # in schemas/workflow/handoff.schema.json — so a path smuggled
+              # into this binding by any route is refused at the review node's
+              # own boundary too, before a session is spent on it.
+              handoff:
+                type: object
+                required: [kind, ref]
+                additionalProperties: false
+                properties:
+                  kind:
+                    type: string
+                    enum: [artifact, git_ref]
+                  ref:
+                    type: string
+                    minLength: 1
+                  commit:
+                    type: string
+                    pattern: '^[0-9a-f]{40}$'
+                  publication:
+                    type: string
+                    enum: [pending, published]
+                  media_type:
+                    type: string
+                allOf:
+                  - if:
+                      required: [kind]
+                      properties:
+                        kind:
+                          const: artifact
+                    then:
+                      properties:
+                        ref:
+                          pattern: '^artifact://[^/]+/.+$'
+                  - if:
+                      required: [kind]
+                      properties:
+                        kind:
+                          const: git_ref
+                    then:
+                      required: [commit, publication]
+                      properties:
+                        ref:
+                          pattern: '^git\+(https|ssh)://[^\s#]+#refs/culture-nodes/[^\s]+$'
         outcomes:
           approve:
             schema:
@@ -851,30 +969,21 @@ spec:
       output:
         from: /nodes/sweep/output
 
-    # Where `fix.handoff_unavailable` ends (issue #74). A missing HOST
-    # capability is not something any other node in this graph can resolve:
-    # no amount of reviewing, asking or waiting gives the fix host an artifact
-    # store. So the run ends, and it ends carrying the FIX node's output
-    # rather than `finish`'s sweep report — that output is where
-    # `missing_capability` lives, and a terminal run whose output does not
-    # name why it stopped is the same illegible failure this whole change is
-    # about.
+    # `handoff-blocked` USED TO LIVE HERE, as the end node
+    # `fix.handoff_unavailable` routed to. It is gone, and the compiler is why:
+    # once that outcome returns to `backoff` (see the edge and its reasoning),
+    # nothing reaches this node, and `graph.node_unreachable` refused the
+    # graph rather than letting a dead end node sit in it looking meaningful.
     #
-    # It is a separate `end` node rather than a route into `finish` for
-    # exactly that reason: `finish` outputs the sweep report, which would
-    # bury the one fact that matters here.
-    #
-    # No notification node sits in front of it deliberately: the notify actor
-    # takes static per-run text (see notify-decision-pending), so it could
-    # announce that something stopped but not WHICH capability is missing —
-    # and adding two more run-input fields to say less than the run output
-    # already says is not a trade worth making. An operator reads the named
-    # outcome on the run.
-    handoff-blocked:
-      kind: end
-      ownerRef: team/platform-ai
-      output:
-        from: /nodes/fix/output
+    # What it existed to protect is still true — a missing HOST capability is
+    # not something reviewing, asking or waiting can resolve, and the fix
+    # node's output is where `missing_capability` is named. What changed is
+    # the conclusion drawn from it. Ending the whole flow meant one item's
+    # capability gap stopped upkeep for every other item; the run that proved
+    # this (01M02JBTMGSY7EZMDMTJWC6BJW) ended with twelve untouched findings
+    # behind the one that could not hand over. The named outcome is still on
+    # the attempt for an operator to read; it is just no longer the last thing
+    # the flow ever does.
 
   edges:
     # Both sweep outcomes are domain answers headed for triage: `passed`
@@ -904,10 +1013,26 @@ spec:
       to: review
     # The honest failure never reaches review (issue #74). Routing a fix that
     # produced no portable handle into the review node is precisely what
-    # turned a topology problem into an HTTP 403 on another machine; the run
-    # stops here instead, naming the capability that is missing.
+    # turned a topology problem into an HTTP 403 on another machine.
+    #
+    # It used to end the run at `handoff-blocked`. It now returns to the
+    # BACKOFF WAIT instead, because "this one item cannot hand over" is not a
+    # reason to stop sweeping: the next sweep may find work that needs no
+    # handoff at all, and upkeep that stops on the first capability gap is
+    # upkeep that stops permanently. Measured on the first working cycle
+    # (run 01M02JBTMGSY7EZMDMTJWC6BJW): sweep passed, triage found 13 items,
+    # fix reported handoff_unavailable, and the whole flow ended — with
+    # twelve untouched items behind it.
+    #
+    # This is bounded, not perpetual: spec.limits.maxVisitsPerNode caps how
+    # many times `fix` can be re-entered, so a gap that keeps recurring ends
+    # the run on a declared bound rather than looping billably forever
+    # (PRD §9.7 — no loop relies on an agent deciding when to stop). The
+    # `handoff-blocked` end node this used to reach is removed: with nothing
+    # routing to it the compiler refused it as unreachable, which is the right
+    # answer and is how I found out my first version of this comment was wrong.
     - from: fix.handoff_unavailable
-      to: handoff-blocked
+      to: backoff
 
     # A clean review verdict becomes an ACTIVE merge assignment on the
     # human actor (user decision: "waiting for merge" is work in a

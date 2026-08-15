@@ -3,6 +3,7 @@ package actors_test
 import (
 	"context"
 	"errors"
+	"fmt"
 	"testing"
 	"time"
 
@@ -179,6 +180,12 @@ type compensationStore struct {
 	calls   []string
 	events  []recordedEvent
 	emitted []actors.EmitSignalInput
+
+	// superseded counts the late-report corrections appended (task t11), and
+	// supersedeErr makes that append fail so the compensation order can be
+	// asserted for a failure at this stage too.
+	superseded   int
+	supersedeErr error
 }
 
 type recordedEvent struct {
@@ -245,6 +252,21 @@ func (s *compensationStore) EmitSignalEvent(_ context.Context, _ actors.PendingI
 func (s *compensationStore) CloseInvocation(context.Context, string, string) error {
 	s.note("close")
 	return nil
+}
+
+func (s *compensationStore) RecordSupersedingAttempt(
+	_ context.Context, _ actors.PendingInvocation, _ string, _ engine.CompletionRequest,
+) (actors.SupersedingAttempt, error) {
+	s.note("record_superseding_attempt")
+	if s.supersedeErr != nil {
+		return actors.SupersedingAttempt{}, s.supersedeErr
+	}
+	s.superseded++
+	return actors.SupersedingAttempt{
+		AttemptID:  fmt.Sprintf("att_superseding_%d", s.superseded),
+		Number:     s.superseded + 1,
+		Supersedes: "att_superseded",
+	}, nil
 }
 
 func (s *compensationStore) ResumeWaitingWork(context.Context, actors.PendingInvocation, time.Duration) error {
@@ -413,7 +435,12 @@ func TestRefusedTerminalCommitStillReparksTheWorkItem(t *testing.T) {
 		t.Fatalf("disposition = %s, want late", result.Disposition)
 	}
 
-	want := []string{"claim", "advance_sequence", "resume", "repark", "close"}
+	// record_superseding_attempt sits between the repark and the close (task
+	// t11): the correction is durable state, so it is written BEFORE the
+	// bookkeeping that retires the invocation. A close that then fails leaves
+	// the record already there, and the redelivery it invites finds it
+	// through migrations/0028's unique index instead of appending a twin.
+	want := []string{"claim", "advance_sequence", "resume", "repark", "record_superseding_attempt", "close"}
 	if !equalStrings(store.calls, want) {
 		t.Errorf("store calls = %v, want %v", store.calls, want)
 	}

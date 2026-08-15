@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/agentculture/culture-nodes/internal/actors"
+	"github.com/agentculture/culture-nodes/internal/artifacts"
 	"github.com/agentculture/culture-nodes/internal/engine"
 	"github.com/agentculture/culture-nodes/internal/ledger"
 	"github.com/agentculture/culture-nodes/internal/store/postgres"
@@ -53,6 +54,13 @@ type Server struct {
 	// NODES_CALLBACK_TOKEN_SECRET for a token minted by a worker to verify
 	// here.
 	callbackSigner *actors.TokenSigner
+
+	// artifactRouter is the only artifact content boundary exposed by this
+	// server. artifactInvocationStore deliberately has the one read method the
+	// write route needs: authority is derived from the durable invocation after
+	// the path-bound callback token verifies.
+	artifactRouter          *artifacts.Router
+	artifactInvocationStore artifactInvocationStore
 
 	// decisionAuthSecret gates POST /v1alpha1/human-tasks/{id}/decision (see
 	// (*Server).requireDecisionAuth in humantasks.go). Every other operation
@@ -141,6 +149,17 @@ func WithCallbackSigner(signer *actors.TokenSigner) Option {
 	return func(s *Server) {
 		if signer != nil {
 			s.callbackSigner = signer
+		}
+	}
+}
+
+// WithArtifactRouter enables authenticated artifact publication. The route
+// is always mounted because OpenAPI declares it, but fails closed unless
+// this and WithCallbackSigner are both configured.
+func WithArtifactRouter(router *artifacts.Router) Option {
+	return func(s *Server) {
+		if router != nil {
+			s.artifactRouter = router
 		}
 	}
 }
@@ -250,14 +269,15 @@ func NewServer(store *postgres.Store, namespaceID string, opts ...Option) (*Serv
 	}
 
 	s := &Server{
-		Store:         store,
-		Engine:        eng,
-		Ledger:        led,
-		NamespaceID:   namespaceID,
-		engineStore:   engineStore,
-		callbackStore: callbackStore,
-		pollInterval:  defaultEventPollInterval,
-		log:           slog.Default(),
+		Store:                   store,
+		Engine:                  eng,
+		Ledger:                  led,
+		NamespaceID:             namespaceID,
+		engineStore:             engineStore,
+		callbackStore:           callbackStore,
+		artifactInvocationStore: callbackStore,
+		pollInterval:            defaultEventPollInterval,
+		log:                     slog.Default(),
 	}
 	for _, opt := range opts {
 		if opt != nil {
@@ -301,6 +321,8 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("POST /v1alpha1/workflows", s.wrap(s.handlePublishWorkflow))
 	mux.HandleFunc("GET /v1alpha1/workflows", s.wrap(s.handleListWorkflows))
 	mux.HandleFunc("GET /v1alpha1/workflows/{digest}", s.wrap(s.handleGetWorkflow))
+	mux.HandleFunc("POST /v1alpha1/workflow-generations", s.wrap(s.handleCreateWorkflowGeneration))
+	mux.HandleFunc("GET /v1alpha1/workflow-generations/{id}", s.wrap(s.handleGetWorkflowGeneration))
 
 	mux.HandleFunc("POST /v1alpha1/adhoc-runs", s.wrap(s.handleCreateAdhocRun))
 	mux.HandleFunc("POST /v1alpha1/runs", s.wrap(s.handleCreateRun))
@@ -363,6 +385,11 @@ func (s *Server) Handler() http.Handler {
 			Telemetry: s.telemetry,
 		})))
 	}
+	// Unlike the unversioned actor callback protocol above, this documented
+	// API route is always present. Missing signer/router configuration fails
+	// closed in the handler; it must never turn a declared operation into an
+	// accidental 404 or an authless write surface.
+	mux.HandleFunc("POST /v1alpha1/attempts/{attemptID}/artifacts", s.wrap(s.handlePutArtifact))
 
 	if s.webAssets != nil {
 		mux.Handle("GET /", spaHandler(s.webAssets))

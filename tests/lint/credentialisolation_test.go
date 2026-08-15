@@ -39,15 +39,13 @@ const (
 	rulePersonalHandle = "personal-handle"
 )
 
-// identifierRule is one tripwire: a named pattern, an optional allowance for
-// matches that are placeholders rather than identities, and the remediation
-// line the failure prints.
+// identifierRule is one tripwire: the shared scanPattern (a named pattern plus
+// an optional allowance for matches that are placeholders rather than
+// identities), and the remediation line this lint's failures print. The remedy
+// is what the shared scanner deliberately does not know about -- it is the
+// argument for why the rule exists, and it belongs to the guard.
 type identifierRule struct {
-	name    string
-	pattern *regexp.Regexp
-	// allow reports whether a raw match is a placeholder this rule
-	// deliberately tolerates. nil means every match is a violation.
-	allow  func(match string) bool
+	scanPattern
 	remedy string
 }
 
@@ -78,9 +76,30 @@ var reservedEmailDomains = []string{
 	"example", "invalid", "test", "localhost", "local", "internal",
 }
 
-// emailDomainIsReserved reports whether an email-shaped match sits at a domain
-// that cannot be a real account.
+// protocolLocalParts are email-SHAPED strings that are not addresses at all:
+// they are the fixed usernames git puts before the host in a remote URL.
+// `git@github.com` is the SSH user every GitHub clone URL carries, and
+// `x-access-token@github.com` is the HTTPS user a token-authenticated push
+// carries (scripts/verify-token-scope.sh documents that form, and the
+// own-the-work-end-to-end spec cites it). Neither can route to a mailbox and
+// neither identifies a person, so treating them as account identity would make
+// the rule fire on the very documentation that teaches the safe push command.
+//
+// Kept as an exact set of full local@domain strings rather than a bare
+// local-part allowance: `git@` at some other domain IS a plausible real
+// address, and this rule should still catch it.
+var protocolLocalParts = map[string]bool{
+	"git@github.com":            true,
+	"x-access-token@github.com": true,
+}
+
+// emailDomainIsReserved reports whether an email-shaped match cannot be a real
+// account -- either because its domain can never route, or because the match is
+// one of the git protocol usernames above.
 func emailDomainIsReserved(match string) bool {
+	if protocolLocalParts[strings.ToLower(match)] {
+		return true
+	}
 	at := strings.LastIndex(match, "@")
 	if at < 0 {
 		return false
@@ -133,46 +152,63 @@ var personalHandlePattern = regexp.MustCompile(
 // reviewer adjudicates, not a proof that the tree holds no secret.
 var credentialIdentifierRules = []identifierRule{
 	{
-		name:    ruleAccountEmail,
-		pattern: accountEmailPattern,
-		allow:   emailDomainIsReserved,
+		scanPattern: scanPattern{
+			name:    ruleAccountEmail,
+			pattern: accountEmailPattern,
+			allow:   emailDomainIsReserved,
+		},
 		remedy: "recorded fixtures use a neutral placeholder or a reserved domain " +
 			"(example.com, RFC 2606), never a routable account address",
 	},
 	{
-		name:    ruleAPIToken,
-		pattern: apiTokenPattern,
+		scanPattern: scanPattern{
+			name:    ruleAPIToken,
+			pattern: apiTokenPattern,
+		},
 		remedy: "credentials are read from the environment at run time, never committed; " +
 			"rotate this token immediately if it was ever real, then replace it with an " +
 			"inert placeholder such as ghp_example",
 	},
 	{
-		name:    rulePersonalHandle,
-		pattern: personalHandlePattern,
+		scanPattern: scanPattern{
+			name:    rulePersonalHandle,
+			pattern: personalHandlePattern,
+		},
 		remedy: "fixture logins and assignees use neutral placeholders (human-reviewer, " +
 			"maintainer@github), never a real account handle",
 	},
 }
 
+// credentialScanPatterns is what the shared scanner applies;
+// credentialRemedies is what this guard adds back on top of a finding. Split
+// once at init rather than per scan.
+var credentialScanPatterns, credentialRemedies = splitIdentifierRules(credentialIdentifierRules)
+
+func splitIdentifierRules(rules []identifierRule) ([]scanPattern, map[string]string) {
+	patterns := make([]scanPattern, 0, len(rules))
+	remedies := map[string]string{}
+	for _, rule := range rules {
+		patterns = append(patterns, rule.scanPattern)
+		remedies[rule.name] = rule.remedy
+	}
+	return patterns, remedies
+}
+
 // scanForCommittedIdentifiers applies every rule to content, line by line, and
 // returns one finding per match. Line-by-line (rather than whole-file) scanning
 // is what makes the failure message a `file:line` a reviewer can jump to.
+//
+// The walk is the shared scanLines; what this lint adds is redaction and the
+// remedy, which is why the findings are its own type rather than the scanner's.
 func scanForCommittedIdentifiers(content string) []identifierFinding {
 	var findings []identifierFinding
-	for index, line := range strings.Split(content, "\n") {
-		for _, rule := range credentialIdentifierRules {
-			for _, match := range rule.pattern.FindAllString(line, -1) {
-				if rule.allow != nil && rule.allow(match) {
-					continue
-				}
-				findings = append(findings, identifierFinding{
-					rule:    rule.name,
-					line:    index + 1,
-					excerpt: redactMatch(match),
-					remedy:  rule.remedy,
-				})
-			}
-		}
+	for _, hit := range scanLines("", content, credentialScanPatterns, nil) {
+		findings = append(findings, identifierFinding{
+			rule:    hit.name,
+			line:    hit.line,
+			excerpt: redactMatch(hit.match),
+			remedy:  credentialRemedies[hit.name],
+		})
 	}
 	return findings
 }
@@ -214,6 +250,16 @@ func TestCredentialLintFlagsPlantedIdentities(t *testing.T) {
 		{
 			name:     "account email at a company domain",
 			fixture:  `git config user.email "some.person@agentculture.org"`,
+			wantRule: ruleAccountEmail,
+		},
+		{
+			// The protocolLocalParts allowance is an exact full-address set,
+			// not a bare `git@` local-part rule -- so a plausible real mailbox
+			// that happens to start `git@` must still trip. Without this case
+			// the allowance could be loosened to a prefix match and no test
+			// would notice.
+			name:     "git@ at a domain that is not github.com",
+			fixture:  `Contact: git@agentculture.org`,
 			wantRule: ruleAccountEmail,
 		},
 		{
@@ -287,6 +333,11 @@ func TestCredentialLintAcceptsNeutralPlaceholders(t *testing.T) {
 		// Prose naming the prefixes this lint looks for -- including this
 		// task's own plan entry, which must not trip the lint it describes.
 		"Patterns: account emails, ATATT/gho_/ghp_ token prefixes, known personal handles.",
+		// Git's protocol usernames. Email-shaped, but they name a transport
+		// role rather than a person, and the documentation that teaches the
+		// safe push command cannot be written without them.
+		"git clone git@github.com:agentculture/culture-nodes.git",
+		`git push https://x-access-token@github.com/agentculture/culture-nodes.git owe/batch`,
 	} {
 		t.Run(fixture, func(t *testing.T) {
 			if findings := scanForCommittedIdentifiers(fixture); len(findings) != 0 {
@@ -305,40 +356,52 @@ func TestCredentialLintAcceptsNeutralPlaceholders(t *testing.T) {
 // package metadata is full of real author emails that are neither this repo's
 // leak nor this repo's to fix.
 func TestNoCommittedCredentialOrPersonalIdentifier(t *testing.T) {
-	repoRoot := repoRoot(t)
-	scanned := 0
-	violations := 0
+	files := scannableCommittedFiles(t, repoRoot(t))
+	if len(files) == 0 {
+		t.Fatal("the credential/identifier lint scanned no committed files; it is not proving anything")
+	}
 
+	violations := 0
+	for _, file := range files {
+		for _, finding := range scanForCommittedIdentifiers(file.contents) {
+			violations++
+			t.Errorf("%s:%d: %s match %s -- %s (%s)",
+				file.rel, finding.line, finding.rule, finding.excerpt, finding.remedy, committedIdentityBoundary)
+		}
+	}
+
+	t.Logf("scanned %d committed text files for account emails, API tokens and personal handles, found %d violation(s)",
+		len(files), violations)
+}
+
+// scannableCommittedFiles is the set of committed files this lint actually
+// reads: the git index, minus this package's own planted fixtures, minus
+// binaries, minus index entries with no file in the worktree. It is one
+// function rather than two because the gate below and the coverage check
+// further down must agree exactly on what "scanned" means -- if they can
+// drift, the coverage check stops proving anything about the gate.
+func scannableCommittedFiles(t *testing.T, repoRoot string) []sourceFile {
+	t.Helper()
+	var files []sourceFile
 	for _, rel := range committedFiles(t, repoRoot) {
 		if skipCommittedPath(rel) {
 			continue
 		}
 		content, readErr := os.ReadFile(filepath.Join(repoRoot, filepath.FromSlash(rel)))
+		if os.IsNotExist(readErr) {
+			// Tracked in the index but absent from the worktree (a staged
+			// deletion, a sparse checkout). Nothing to scan.
+			continue
+		}
 		if readErr != nil {
-			if os.IsNotExist(readErr) {
-				// Tracked in the index but absent from the worktree (a
-				// staged deletion, a sparse checkout). Nothing to scan.
-				continue
-			}
 			t.Fatalf("read %s: %v", rel, readErr)
 		}
 		if isBinaryContent(content) {
 			continue
 		}
-		scanned++
-
-		for _, finding := range scanForCommittedIdentifiers(string(content)) {
-			violations++
-			t.Errorf("%s:%d: %s match %s -- %s (%s)",
-				rel, finding.line, finding.rule, finding.excerpt, finding.remedy, committedIdentityBoundary)
-		}
+		files = append(files, sourceFile{rel: rel, contents: string(content)})
 	}
-
-	if scanned == 0 {
-		t.Fatal("the credential/identifier lint scanned no committed files; it is not proving anything")
-	}
-	t.Logf("scanned %d committed text files for account emails, API tokens and personal handles, found %d violation(s)",
-		scanned, violations)
+	return files
 }
 
 // scrubbedFixturePaths are the three committed files the v0.17.0 scrub edited.
@@ -385,22 +448,13 @@ func TestCredentialLintCoversTheScrubbedFixtures(t *testing.T) {
 	t.Logf("scanned %d committed files under examples/ and %d under adapters/*/tests", examples, adapterTests)
 }
 
-// scannableCommittedPaths is the set of committed paths the credential lint
-// actually reads: skip-listed paths and binaries drop out. Split from its
-// caller so the "did the walk reach what it must" assertions read as a flat
-// list rather than sitting under the walk's own filtering.
+// scannableCommittedPaths is scannableCommittedFiles as a set, so the "did the
+// walk reach what it must" assertions read as a flat list of lookups.
 func scannableCommittedPaths(t *testing.T, repoRoot string) map[string]bool {
 	t.Helper()
 	scannable := map[string]bool{}
-	for _, rel := range committedFiles(t, repoRoot) {
-		if skipCommittedPath(rel) {
-			continue
-		}
-		content, readErr := os.ReadFile(filepath.Join(repoRoot, filepath.FromSlash(rel)))
-		if readErr != nil || isBinaryContent(content) {
-			continue
-		}
-		scannable[rel] = true
+	for _, file := range scannableCommittedFiles(t, repoRoot) {
+		scannable[file.rel] = true
 	}
 	return scannable
 }

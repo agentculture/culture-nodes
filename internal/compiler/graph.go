@@ -59,6 +59,13 @@ func (c *compilation) checkGraph() {
 	// into a wave of "unreachable" noise.
 	adjacency := make(map[string][]string, len(nodes))
 
+	// routedOutcomes records, per node, every outcome an edge carries away.
+	// Used below to prove that a declared `continue.onExhausted` has an edge:
+	// the switch inside the edge loop excuses that outcome from needing a
+	// contract declaration, which without this check would let a node declare
+	// an exhaustion outcome that nothing routes.
+	routedOutcomes := make(map[string]map[string]bool, len(nodes))
+
 	// eventTargets are the nodes an `onEvent` edge can create a token at
 	// (issue #43, design D9). They are reachability ROOTS beside the entry
 	// node: a node an event picks up is reached by the world, not by a path
@@ -95,11 +102,15 @@ func (c *compilation) checkGraph() {
 		}
 
 		if sourceExists {
+			continuationExhausted := source.Continue != nil && outcome == source.Continue.OnExhausted
 			switch {
 			case source.Kind == KindEnd:
 				c.add(LevelError, base+"/from", CodeGraphEdgeFromEndNode,
 					fmt.Sprintf("node %q is an end node and produces the workflow result; it has no outgoing edges", fromNode),
 					"remove the edge, or change the node's kind if the run should continue")
+			case continuationExhausted:
+				// The engine produces this declared domain outcome when a
+				// continuation bound is spent; the actor does not declare it.
 			case refusalOutcomes[outcome] && !dispatchGuardedKinds[source.Kind]:
 				// A refusal name is reserved but not universal: only a kind
 				// whose dispatch the control plane guards can ever produce
@@ -123,6 +134,28 @@ func (c *compilation) checkGraph() {
 		if sourceExists && targetExists {
 			adjacency[fromNode] = append(adjacency[fromNode], e.To)
 		}
+		if sourceExists {
+			if routedOutcomes[fromNode] == nil {
+				routedOutcomes[fromNode] = map[string]bool{}
+			}
+			routedOutcomes[fromNode][outcome] = true
+		}
+	}
+
+	for _, id := range sortedKeys(nodes) {
+		n := nodes[id]
+		if n.Continue == nil || n.Continue.OnExhausted == "" {
+			continue
+		}
+		if routedOutcomes[id][n.Continue.OnExhausted] {
+			continue
+		}
+		c.add(LevelError, pointerJoin("/spec/nodes", id)+"/continue/onExhausted", CodeGraphExhaustedUnrouted,
+			fmt.Sprintf("node %q declares onExhausted %q but no edge carries that outcome away, so a run that "+
+				"spends its continuation budget stops at the one state the declaration exists to handle",
+				id, n.Continue.OnExhausted),
+			fmt.Sprintf("add an edge from %s.%s to the node that should take over -- typically a human node (PRD §3.4)",
+				id, n.Continue.OnExhausted))
 	}
 
 	if !entryExists {

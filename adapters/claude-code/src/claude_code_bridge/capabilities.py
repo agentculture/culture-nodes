@@ -83,5 +83,6 @@ def host_facts(
             push=cfg.preserve_push,
             remote=cfg.preserve_remote,
         ),
-        writable_paths=list(cfg.repo_allowlist),
+        writable_paths=list(cfg.repo_allowlist + cfg.repo_allowlist_prefixes),
+        artifact_publish="unsupported-by-host",
     )

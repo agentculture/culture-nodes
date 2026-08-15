@@ -13,7 +13,7 @@ import json
 import logging
 import sys
 
-from claude_code_bridge import capabilities, claude_cli, preflight
+from claude_code_bridge import capabilities, claude_cli, preflight, reap, reclaim
 from claude_code_bridge.config import Config, ConfigError
 from claude_code_bridge.server import serve_forever
 
@@ -38,6 +38,35 @@ def main(argv: list[str] | None = None) -> int:
             "registering an actor before its bridge has ever started."
         ),
     )
+    parser.add_argument(
+        "--reap-plan",
+        metavar="REPO",
+        default=None,
+        help=(
+            "Print the worktree reaper's plan (task t17) for every worktree of REPO as JSON, "
+            "then exit. READ-ONLY by default: it reports reap/preserve_then_reap/refuse/defer "
+            "with the reasons and the exact `git worktree remove` an operator would run, and "
+            "removes nothing itself."
+        ),
+    )
+    parser.add_argument(
+        "--reap-perform",
+        action="store_true",
+        help=(
+            "With --reap-plan, actually reclaim the worktrees the plan cleared. `--force` is "
+            "never passed, so a dirty worktree is retained rather than destroyed."
+        ),
+    )
+    parser.add_argument(
+        "--reap-assume-idle",
+        action="store_true",
+        help=(
+            "With --reap-plan, state positively that this bridge holds no live session in any "
+            "worktree. Without it the standalone CLI has no session registry to consult, so "
+            "every candidate DEFERS on session_liveness_unknown."
+        ),
+    )
+
     args = parser.parse_args(argv)
 
     logging.basicConfig(
@@ -63,7 +92,22 @@ def main(argv: list[str] | None = None) -> int:
         print(json.dumps(preflight.capability_block(capabilities.host_facts(cfg)), indent=2))
         return 0
 
-    if not cfg.repo_allowlist:
+    # Read-only unless --reap-perform, and (like --print-capabilities) ahead
+    # of the version probe on purpose: reclaiming disk on a host whose CLI
+    # install is broken is exactly when an operator needs this.
+    if args.reap_plan:
+        policy = reap.ReapPolicy.from_config(
+            cfg, active_workspaces=() if args.reap_assume_idle else None
+        )
+        print(
+            json.dumps(
+                reclaim.sweep(args.reap_plan, policy, perform=args.reap_perform),
+                indent=2,
+            )
+        )
+        return 0
+
+    if not (cfg.repo_allowlist or cfg.repo_allowlist_prefixes):
         print(
             "warning: no repo allowlist configured (CLAUDE_CODE_BRIDGE_REPO_ALLOWLIST or "
             "config file 'repo_allowlist') — every invocation will be refused with 403",

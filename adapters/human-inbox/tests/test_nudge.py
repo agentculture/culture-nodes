@@ -17,11 +17,11 @@ import pytest
 
 from human_inbox_bridge import nudge
 from human_inbox_bridge.nudge import (
-    NudgeConfig,
-    NudgeState,
     _COLOR_GENTLE,
     _COLOR_OVERDUE,
     _DEFAULT_USERNAME,
+    NudgeConfig,
+    NudgeState,
 )
 
 # --- Fake discord CLI ---------------------------------------------------

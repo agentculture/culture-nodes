@@ -79,6 +79,37 @@ elif behavior == "hang_then_clean_exit_zero_on_sigterm":
         }
     )
     time.sleep(60)
+elif behavior == "dirty_workspace_then_hang_clean_exit_zero_on_sigterm":
+    # Task t13: the same measured SIGTERM behavior as the branch above, with
+    # the one addition that makes the deadline case real -- this session
+    # CHANGES THE WORKSPACE before it is stopped. codex is spawned with
+    # cwd=repo (codex_cli.py), so writing here writes into the repository
+    # the dispatch named, exactly as a real session's edits do. The file is
+    # written BEFORE the first progress event, so a test that waits for
+    # progress has already-observed evidence the work exists on disk rather
+    # than a sleep.
+    def _on_term(signum, frame):
+        sys.exit(0)
+
+    signal.signal(signal.SIGTERM, _on_term)
+    with open("work-in-progress.txt", "w", encoding="utf-8") as fh:
+        fh.write("half-finished work the session was stopped in the middle of\\n")
+    emit({"type": "thread.started", "thread_id": "fake-thread-dirty-hang"})
+    emit({"type": "turn.started"})
+    emit(
+        {
+            "type": "item.started",
+            "item": {
+                "id": "item_1",
+                "type": "command_execution",
+                "command": "sleep 3",
+                "aggregated_output": "",
+                "exit_code": None,
+                "status": "in_progress",
+            },
+        }
+    )
+    time.sleep(60)
 """
 
 

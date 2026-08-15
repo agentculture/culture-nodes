@@ -179,7 +179,18 @@ def test_sync_dispatch_maps_ok_result_to_200(bridge_url, monkeypatch):
     assert status == 200
     assert body["outcome"] == "completed"
     assert body["output"]["summary"] == "did it"
-    assert body["usage"] == {"input_tokens": 1, "output_tokens": 2, "cost": None, "currency": None}
+    # An exact-dict assertion on purpose: the wire shape is the contract, so a
+    # field appearing or vanishing should fail here rather than pass silently.
+    # `model` is the t15 addition — an explicit sentinel, so a reader of the
+    # attempt can tell "this backend cannot report a model" apart from "nobody
+    # wrote the field", which was indistinguishable while it was omitted (#77).
+    assert body["usage"] == {
+        "input_tokens": 1,
+        "output_tokens": 2,
+        "cost": None,
+        "currency": None,
+        "model": "unknown:colleague-backend-cannot-report",
+    }
     assert body["ledger_delta"]["records"][0]["authority"] == "proposed"
 
 

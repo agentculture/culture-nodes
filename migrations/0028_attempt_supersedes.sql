@@ -1,0 +1,67 @@
+-- 0028_attempt_supersedes.sql
+--
+-- Expand-only: one nullable self-referencing column on `attempts` carrying
+-- task t11's late-callback reconciliation (spec claims c37/c39, issue #82).
+--
+-- The problem this exists for: when a node run's deadline expires, the
+-- scheduler records a `timed_out` attempt and gives up, while the actor
+-- session it bounded keeps running. When that session finally reports back,
+-- §13.4 correctly refuses to let it commit workflow state — but before this
+-- migration it also left NO attempt record at all
+-- (internal/actors/callback.go's late(), which appended a `callback-late`
+-- diagnostic event and nothing else). So the tokens a real session burned,
+-- the model that burned them, the reason the provider gave for ending the
+-- turn, and the branch the bridge preserved the work onto were all readable
+-- only by parsing a diagnostic event body. The run's own history did not
+-- show that the work happened.
+--
+-- The representation, chosen before this migration was written and recorded
+-- in docs/adr/0012-late-callback-supersession.md: the reconciliation is a
+-- NEW, APPENDED attempts row that names the row it corrects. That follows
+-- PRD §10.4 ("records are immutable; corrections append with `supersedes`")
+-- rather than mutating the timed-out row, which would make an immutable
+-- record lie.
+--
+-- supersedes: the id of the attempt row this record corrects, NULL on every
+--   ordinary dispatch (which corrects nothing) and on a reconciliation that
+--   found no earlier record for its own fencing tuple. It is a self-FK, so
+--   a correction can only ever name a record that exists.
+--
+-- WHY THIS COLUMN AND NOT A `kind` FLAG. The reader rule it buys is one
+-- sentence and applies to every aggregate over `attempts`: a row that some
+-- other row supersedes is superseded history, and the record that supersedes
+-- it is the current one. Per-actor retry burn
+-- (internal/store/postgres/actorstats.go's loadActorRetryBurnAttempts)
+-- counts "every attempt this actor made regardless of technical outcome", so
+-- without that rule one deadline reconciliation would add a second row for a
+-- SINGLE dispatch and inflate `attempts per completion` — penalising the
+-- actor for the engine's own late bookkeeping, which is the exact
+-- actor-scoring distortion issue #82 set out to remove. With it, the
+-- timed-out row drops out as the correction lands and the count is
+-- unchanged. The same rule makes the usage rollup read the tokens the
+-- session actually reported instead of the superseded record's silence.
+--
+-- attempts_supersedes_key is UNIQUE rather than a plain index, and that is
+-- load-bearing twice over. It makes "one record is corrected at most once"
+-- a schema fact rather than a convention (a further correction supersedes
+-- the correction, forming a chain, never a fan-out that would make "the
+-- current record" ambiguous), and it is what makes appending a
+-- reconciliation IDEMPOTENT: a callback redelivery that repeats the write
+-- after a failure part-way through ingest conflicts instead of appending a
+-- second correction. Being partial (WHERE supersedes IS NOT NULL) keeps it
+-- off the overwhelming majority of rows, which are ordinary dispatches, and
+-- it doubles as the index the "is this row superseded?" lookup uses.
+--
+-- N-1 compatibility (docs/adr/0002-migration-policy.md): a binary built
+-- before this migration inserts and selects attempts through fixed column
+-- lists (internal/store/postgres/engine_store.go's insertAttemptSQL and its
+-- Attempts query name every column explicitly, never a bare `SELECT *`), so
+-- one new nullable column with no default changes nothing it reads or
+-- writes. Its rollups will keep counting superseded rows — they cannot know
+-- about the correction — which is exactly the behaviour it has today, so the
+-- old binary stays self-consistent rather than becoming wrong.
+ALTER TABLE attempts ADD COLUMN supersedes TEXT REFERENCES attempts (id);
+
+CREATE UNIQUE INDEX attempts_supersedes_key
+    ON attempts (supersedes)
+    WHERE supersedes IS NOT NULL;

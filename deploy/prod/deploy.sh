@@ -24,11 +24,12 @@ SCRIPT_DIR=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
 HOST=${1:?usage: deploy.sh <thor|orin>}
 REMOTE_DIR="culture-nodes-prod"
 BRANCH=${BRANCH:-HEAD}
+REVISION=$(git rev-parse "$BRANCH")
 
 say() { printf '==> %s\n' "$*"; }
 
-say "shipping $(git rev-parse --short "$BRANCH") to $HOST:$REMOTE_DIR"
-git archive --format=tar "$BRANCH" | ssh "$HOST" "rm -rf $REMOTE_DIR && mkdir -p $REMOTE_DIR && tar -x -C $REMOTE_DIR"
+say "shipping $(git rev-parse --short "$REVISION") to $HOST:$REMOTE_DIR"
+git archive --format=tar "$REVISION" | ssh "$HOST" "rm -rf $REMOTE_DIR && mkdir -p $REMOTE_DIR && tar -x -C $REMOTE_DIR"
 
 say "building control-plane image on $HOST (native aarch64)"
 ssh "$HOST" "cd $REMOTE_DIR && docker build -q -t culture-nodes:prod ."
@@ -62,17 +63,51 @@ ssh "$HOST" 'umask 077; mkdir -p ~/.culture-nodes/bin ~/.culture-nodes/runner-st
 # runner.env -- and the block above REWRITES that file on every deploy, so
 # these two have to be re-granted here rather than hand-added once.
 #
-# Unset is a legitimate state, not a misconfiguration: it means this host
-# does not run the pr-upkeep sweep, and the boundary refuses that one
-# operation by name instead of quietly fetching somebody else's script.
-if [ -n "${PR_UPKEEP_SWEEP_SOURCE_URL:-}" ] && [ -n "${PR_UPKEEP_SWEEP_SOURCE_SHA256:-}" ]; then
-	ssh "$HOST" "umask 077; { \
-		echo 'PR_UPKEEP_SWEEP_SOURCE_URL=${PR_UPKEEP_SWEEP_SOURCE_URL}'; \
-		echo 'PR_UPKEEP_SWEEP_SOURCE_SHA256=${PR_UPKEEP_SWEEP_SOURCE_SHA256}'; \
-	} >> ~/.culture-nodes/runner.env"
-	say "granted the pr-upkeep sweep source to the runner on $HOST"
+# Defaults name the exact immutable revision whose archive was shipped above.
+# `git show` reads sweep.py from that same object, so this remains correct when
+# the revision is a squash merge and its pre-merge commits are unreachable.
+# Either value remains explicitly overridable: running somebody else's granted
+# copy is intentional, and its URL and digest can be supplied by the operator.
+PR_UPKEEP_SWEEP_SOURCE_URL=${PR_UPKEEP_SWEEP_SOURCE_URL:-"https://raw.githubusercontent.com/agentculture/culture-nodes/$REVISION/examples/pr-upkeep/sweep.py"}
+PR_UPKEEP_SWEEP_SOURCE_SHA256=${PR_UPKEEP_SWEEP_SOURCE_SHA256:-$(git show "$REVISION:examples/pr-upkeep/sweep.py" | sha256sum | cut -d' ' -f1)}
+if [ -z "${PR_UPKEEP_REPOSITORIES:-}" ]; then
+	PR_UPKEEP_REPOSITORIES='{"cycle":0,"repositories":[{"github_repo":"agentculture/culture-nodes","sonar_component":"agentculture_culture-nodes"}]}'
+fi
+# systemd's EnvironmentFile parser is shell-LIKE: it processes backslash
+# escapes in an unquoted value. Measured on thor, unquoted:
+#
+#   {"x":"a\"b","path":"c\\d"}  ->  {"x":"a"b","path":"c\d"}   (invalid JSON)
+#   {"t":"line\nbreak"}          ->  {"t":"linebreak"}           (escape eaten)
+#
+# PR_UPKEEP_REPOSITORIES is JSON, and JSON string escapes are backslashes, so
+# any repo name, sonar component or jira_site containing a quote or backslash
+# silently reshapes the config the sweep reads. Today's default value happens
+# to contain neither, which is why this worked at all.
+#
+# Single-quoting suppresses escape processing entirely (measured: the same
+# JSON round-trips byte-exact), so the value is single-quoted here, with any
+# literal single quote escaped the POSIX way. Found by pr-upkeep itself, on
+# the PR that introduced it.
+case "$PR_UPKEEP_REPOSITORIES" in
+	*"'"*)
+		echo "refusing: PR_UPKEEP_REPOSITORIES contains a literal single quote." >&2
+		echo "systemd EnvironmentFile is shell-LIKE, not shell: it cannot represent one inside a" >&2
+		echo "single-quoted value and does not honour the POSIX escape idiom (measured on thor)." >&2
+		echo "Writing it unquoted would let the runner read the config back reshaped." >&2
+		exit 1
+		;;
+esac
+if [ -n "$PR_UPKEEP_SWEEP_SOURCE_URL" ] && [ -n "$PR_UPKEEP_SWEEP_SOURCE_SHA256" ]; then
+	# Piped over stdin rather than built into the ssh command string: the
+	# repositories value is single-quoted (see above) and interpolating quotes
+	# into a double-quoted remote command is how you get a value that is
+	# correct locally and reshaped remotely.
+	printf "PR_UPKEEP_SWEEP_SOURCE_URL=%s\nPR_UPKEEP_SWEEP_SOURCE_SHA256=%s\nPR_UPKEEP_REPOSITORIES='%s'\n" \
+		"$PR_UPKEEP_SWEEP_SOURCE_URL" "$PR_UPKEEP_SWEEP_SOURCE_SHA256" "$PR_UPKEEP_REPOSITORIES" \
+		| ssh "$HOST" "umask 077; cat >> ~/.culture-nodes/runner.env"
+	say "granted the pr-upkeep sweep source and closed repository set to the runner on $HOST"
 else
-	say "PR_UPKEEP_SWEEP_SOURCE_URL/_SHA256 unset: pr-upkeep's sweep is not configured on $HOST (see examples/pr-upkeep/README.md)"
+	say "PR_UPKEEP_SWEEP_SOURCE_URL/_SHA256 empty: pr-upkeep's sweep is not configured on $HOST (see examples/pr-upkeep/README.md)"
 fi
 ssh "$HOST" "loginctl enable-linger \$(id -un) 2>/dev/null || true"
 ssh "$HOST" "export XDG_RUNTIME_DIR=/run/user/\$(id -u); mkdir -p ~/.config/systemd/user && cp $REMOTE_DIR/deploy/prod/nodes-runner.service ~/.config/systemd/user/ && systemctl --user daemon-reload && systemctl --user restart nodes-runner && systemctl --user enable nodes-runner"
@@ -276,6 +311,19 @@ fi
 echo \"$unit: active (NRestarts \$after)\""
 }
 
+report_port_conflict() { # host port failed-unit
+  local host=$1 port=$2 failed_unit=$3
+  actor_host_exec "$host" "export XDG_RUNTIME_DIR=/run/user/\$(id -u)
+pid=\$(ss -H -ltnp 'sport = :$port' 2>/dev/null | sed -n 's/.*pid=\([0-9][0-9]*\).*/\1/p' | head -n1)
+conflict=unknown
+if [ -n \"\$pid\" ]; then
+  conflict=\$(systemctl --user status \"\$pid\" --no-pager 2>/dev/null | sed -n 's#.*[ /]\([^ /]*\\.service\).*#\1#p' | head -n1)
+  [ -n \"\$conflict\" ] || conflict=pid-\$pid
+fi
+echo 'Address already in use: $failed_unit could not bind registered port $port; conflicting unit: '\"\$conflict\" >&2
+exit 1"
+}
+
 deploy_human_inbox() { # no argument: the host comes from the registration
   local registration row_id revision endpoint auth_env
   local host port bridge_bin tracker_bin
@@ -388,6 +436,13 @@ deploy_human_inbox() { # no argument: the host comes from the registration
 } > ~/.culture-nodes/human-inbox-bridge.env'
   say "human-inbox bridge origin.actor_id set to registered row $row_id"
 
+  # The canonical bridge unit reads the same JSON config as the already
+  # running culture-nodes-human-inbox service.  Generate it on the target so
+  # absolute paths and the registry-derived port/row id cannot drift.
+  actor_host_exec "$host" 'umask 077; mkdir -p ~/.config/culture-nodes-bridges
+PORT='"$port"' ACTOR_ID='"$row_id"' python3 -c '\''import json, os
+print(json.dumps({"host":"0.0.0.0","port":int(os.environ["PORT"]),"state_dir":os.path.expanduser("~/.culture-nodes/human-inbox-state"),"actor_id":os.environ["ACTOR_ID"]}, indent=2))'\'' > ~/.config/culture-nodes-bridges/human-ops.json'
+
   # HUMAN_INBOX_TRACKER_CONTROL_PLANE_URL is what ARMS task t8's startup
   # refusal: unset, the tracker logs a warning and runs unguarded, which is
   # the state issue #72 went unnoticed in. The deploy-time assertion below and
@@ -416,18 +471,26 @@ deploy_human_inbox() { # no argument: the host comes from the registration
   # what this function meant to write.
   assert_human_inbox_colocated "$host" "$HUMAN_INBOX_ACTOR_KEY" "$endpoint"
 
-  say "installing human-inbox-bridge systemd user unit on $host"
+  # Adopt the canonical culture-nodes-* names on every deploy.  Removing the
+  # legacy files is essential: disabling alone lets the next archive copy
+  # and re-enable them, recreating the :8090 conflict on a second deploy.
+  say "removing legacy human-inbox unit names on $host"
+  actor_host_exec "$host" "export XDG_RUNTIME_DIR=/run/user/\$(id -u); systemctl --user stop human-inbox-bridge.service 2>/dev/null || true; systemctl --user stop human-inbox-tracker.service 2>/dev/null || true; systemctl --user disable human-inbox-bridge.service 2>/dev/null || true; systemctl --user disable human-inbox-tracker.service 2>/dev/null || true; rm -f ~/.config/systemd/user/human-inbox-bridge.service; rm -f ~/.config/systemd/user/human-inbox-tracker.service; systemctl --user daemon-reload"
+
+  say "installing culture-nodes-human-inbox systemd user unit on $host"
   actor_host_exec "$host" "loginctl enable-linger \$(id -un) 2>/dev/null || true"
-  actor_host_exec "$host" "export XDG_RUNTIME_DIR=/run/user/\$(id -u); mkdir -p ~/.config/systemd/user && sed \"s#%h/.local/bin/human-inbox-bridge#$bridge_bin#\" $REMOTE_DIR/deploy/prod/human-inbox-bridge.service > ~/.config/systemd/user/human-inbox-bridge.service && systemctl --user daemon-reload && systemctl --user restart human-inbox-bridge && systemctl --user enable human-inbox-bridge"
-  assert_unit_healthy "$host" human-inbox-bridge
+  actor_host_exec "$host" "export XDG_RUNTIME_DIR=/run/user/\$(id -u); mkdir -p ~/.config/systemd/user && sed \"s#%h/.local/bin/human-inbox-bridge#$bridge_bin#\" $REMOTE_DIR/deploy/prod/culture-nodes-human-inbox.service > ~/.config/systemd/user/culture-nodes-human-inbox.service && systemctl --user daemon-reload && systemctl --user restart culture-nodes-human-inbox && systemctl --user enable culture-nodes-human-inbox"
+  assert_unit_healthy "$host" culture-nodes-human-inbox || {
+    report_port_conflict "$host" "$port" culture-nodes-human-inbox.service
+  }
 
   # GITHUB_TOKEN is optional: the public-repository lane polls anonymously at
   # half the 60/hour ceiling (the quota is per source IP, so the tracker must
   # leave room for whatever else on this host talks to GitHub), while a token
   # selects the 5,000/hour authenticated lane. Both install the same unit.
-  say "installing human-inbox-tracker systemd user unit on $host"
-  actor_host_exec "$host" "export XDG_RUNTIME_DIR=/run/user/\$(id -u); mkdir -p ~/.config/systemd/user && sed \"s#%h/.local/bin/human-inbox-tracker#$tracker_bin#\" $REMOTE_DIR/deploy/prod/human-inbox-tracker.service > ~/.config/systemd/user/human-inbox-tracker.service && systemctl --user daemon-reload && systemctl --user restart human-inbox-tracker && systemctl --user enable human-inbox-tracker"
-  assert_unit_healthy "$host" human-inbox-tracker
+  say "installing culture-nodes-human-inbox-tracker systemd user unit on $host"
+  actor_host_exec "$host" "export XDG_RUNTIME_DIR=/run/user/\$(id -u); mkdir -p ~/.config/systemd/user && sed \"s#%h/.local/bin/human-inbox-tracker#$tracker_bin#\" $REMOTE_DIR/deploy/prod/culture-nodes-human-inbox-tracker.service > ~/.config/systemd/user/culture-nodes-human-inbox-tracker.service && systemctl --user daemon-reload && systemctl --user restart culture-nodes-human-inbox-tracker && systemctl --user enable culture-nodes-human-inbox-tracker"
+  assert_unit_healthy "$host" culture-nodes-human-inbox-tracker
 }
 
 # --- notify actor bridge lane (issue #68) ---------------------------------

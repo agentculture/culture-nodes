@@ -61,6 +61,10 @@ tags:
       Registered actor identities and their aggregate stats (task t15).
       Read-only — registering an actor stays
       deploy/prod/register-actor.sh (issue #8).
+  - name: artifacts
+    description: >-
+      Attempt-authenticated publication of opaque artifact bytes. This
+      surface intentionally exposes no read or delete operation.
   - name: preflights
     description: >-
       The clarify-then-commit gate (task t14, issue #67): the briefing an
@@ -82,6 +86,65 @@ tags:
     description: Liveness and readiness probes.
 
 paths:
+  /v1alpha1/workflow-generations:
+    post:
+      operationId: createWorkflowGeneration
+      tags: [workflows]
+      summary: Dispatch a registered fleet agent to propose workflow source.
+      description: >-
+        Creates a normal bounded workflow run whose generation node is an
+        agent and whose next node is human approval. This operation never
+        publishes. The initial authority status is always proposed.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CreateWorkflowGeneration'
+      responses:
+        '202':
+          description: The fleet generation run was created.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/WorkflowGeneration'
+        '400':
+          description: The description or actor reference is malformed.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '404':
+          description: The pinned base workflow does not exist.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+
+  /v1alpha1/workflow-generations/{id}:
+    get:
+      operationId: getWorkflowGeneration
+      tags: [workflows]
+      summary: Read a generated proposal, compiler diagnostics, and edit diff.
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: {type: string}
+      responses:
+        '200':
+          description: Current generation state. Exhaustion is a domain status.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/WorkflowGeneration'
+        '404':
+          description: No such generation run.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+
   /v1alpha1/workflows/validate:
     post:
       operationId: validateWorkflow
@@ -408,6 +471,72 @@ paths:
                 $ref: '#/components/schemas/NodeRunList'
         '400':
           description: updated_since, updated_until, or cursor is malformed.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+
+  /v1alpha1/attempts/{attemptID}/artifacts:
+    post:
+      operationId: putAttemptArtifact
+      tags: [artifacts]
+      summary: Publish opaque artifact bytes for one pending attempt.
+      description: >-
+        Requires the callback bearer token issued for exactly the attempt
+        named in the path. Namespace, run, and attempt associations are
+        derived from that attempt's durable PendingInvocation; the body is
+        opaque content and cannot supply authority-bearing fields. Returns
+        an artifact:// ref and metadata measured by the artifact store.
+
+        No GET or DELETE operation is mounted. Possession of an artifact://
+        ref is not authorization, and filesystem paths are never resolved.
+      security:
+        - attemptCallbackBearerAuth: []
+      parameters:
+        - $ref: '#/components/parameters/AttemptID'
+        - name: Artifact-Name
+          in: header
+          required: true
+          description: A descriptive, non-authoritative artifact name.
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          '*/*':
+            schema:
+              type: string
+              format: binary
+      responses:
+        '201':
+          description: The artifact was stored and associated with the durable invocation.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ArtifactWriteResult'
+        '400':
+          description: Content-Type or Artifact-Name is missing.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '401':
+          description: The token is missing, expired, invalid, or belongs to a different attempt.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '404':
+          description: No durable pending invocation has the path's attempt id.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '413':
+          description: >-
+            The body exceeds the publication limit (api.MaxArtifactBytes,
+            64 MiB). Authentication is not a size limit: publish large output
+            to object storage and record a reference, or split it.
           content:
             application/json:
               schema:
@@ -1571,6 +1700,13 @@ components:
       description: The human task id.
       schema:
         type: string
+    AttemptID:
+      name: attemptID
+      in: path
+      required: true
+      description: The protocol attempt id signed into the callback token.
+      schema:
+        type: string
 
   securitySchemes:
     decisionBearerAuth:
@@ -1608,8 +1744,70 @@ components:
         auth-hardening pass, spec c27) — its own secret, so the power to
         start ad-hoc (often billable) work is granted independently of
         decision, registration, and event standing.
+    attemptCallbackBearerAuth:
+      type: http
+      scheme: bearer
+      description: >-
+        The short-lived callback token minted for exactly one attempt. The
+        route verifies it against the attempt id in the path before loading
+        durable invocation authority or reading the request body.
 
   schemas:
+    CreateWorkflowGeneration:
+      type: object
+      required: [description, actor_ref]
+      additionalProperties: false
+      properties:
+        description: {type: string, minLength: 1}
+        actor_ref: {type: string, minLength: 1}
+        base_digest:
+          type: string
+          pattern: '^sha256:[0-9a-f]{64}$'
+
+    WorkflowGeneration:
+      type: object
+      required: [run_id, status, valid, diagnostics]
+      properties:
+        run_id: {type: string}
+        status:
+          type: string
+          enum: [proposed, confirmed, rejected, exhausted]
+        base_digest: {type: string}
+        format: {type: string, enum: [yaml, json]}
+        source: {type: string}
+        diff: {type: string}
+        valid: {type: boolean}
+        digest: {type: string}
+        diagnostics:
+          type: array
+          items:
+            $ref: '#/components/schemas/Diagnostic'
+
+    ArtifactWriteResult:
+      type: object
+      required: [ref, name, media_type, size_bytes, digest, backend, created_at]
+      properties:
+        ref:
+          type: string
+          pattern: '^artifact://[^/]+/[^/]+$'
+        name:
+          type: string
+        media_type:
+          type: string
+        size_bytes:
+          type: integer
+          format: int64
+          minimum: 0
+        digest:
+          type: string
+          pattern: '^sha256:[0-9a-f]{64}$'
+        backend:
+          type: string
+          enum: [postgres, s3]
+        created_at:
+          type: string
+          format: date-time
+
     Error:
       type: object
       description: >-
@@ -2013,6 +2211,14 @@ components:
         completed_at:
           type: string
           format: date-time
+        usage:
+          $ref: '#/components/schemas/AttemptUsage'
+        termination_reason:
+          type: string
+          description: The provider-reported reason this attempt ended.
+        continuation_ref:
+          type: string
+          description: Opaque handle offered by the actor for continuing this session.
         preserve_branch:
           type: string
           description: >-
@@ -2036,6 +2242,43 @@ components:
             the push against. Informational only -- never combined with
             preserve_branch to construct a forge URL; a client-side link
             may only come from configuration the operator actually set.
+        supersedes:
+          type: string
+          description: >-
+            The id of the attempt record this one corrects, absent on every
+            ordinary dispatch. Set by the late-callback reconciliation: a
+            node run's deadline expires, the engine records a timed_out
+            attempt, and the actor session it bounded later reports the
+            tokens, model, termination reason and preserve branch of work
+            that really happened. That report cannot commit workflow state
+            (PRD 13.4) and does not rewrite the record it corrects
+            (PRD 10.4) -- it is appended as a new attempt naming the old
+            one. A node run therefore legitimately lists BOTH: read the
+            superseding record as current and the one it names as history.
+
+    AttemptUsage:
+      type: object
+      required: [input_tokens, output_tokens]
+      properties:
+        input_tokens:
+          type: integer
+        output_tokens:
+          type: integer
+        cost:
+          type: number
+        currency:
+          type: string
+        cached_input_tokens:
+          type: integer
+        reasoning_tokens:
+          type: integer
+        usage_model:
+          type: string
+          description: >-
+            Model attribution exactly as reported by the bridge. Explicit
+            unknown sentinels are rendered verbatim and never collapsed to null.
+        thread_id:
+          type: string
 
     NodeRun:
       type: object

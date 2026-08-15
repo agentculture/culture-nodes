@@ -53,13 +53,17 @@ import pytest
 EXAMPLE_DIR = Path(__file__).resolve().parents[1] / "examples" / "pr-upkeep"
 FIXTURES = EXAMPLE_DIR / "fixtures"
 
-#: Task t16's third acceptance criterion, as one phrase asserted in both
-#: places the criterion names — beside the constant, and in the example's
-#: README. Keeping it a single string here means a rewording is one edit and
-#: a DELETION is a failing test, which is the point: the swept repo staying
-#: hard-coded is a deliberate blast-radius boundary, and a deliberate boundary
-#: that nobody wrote down is indistinguishable from an unexplained constant.
-OPERATOR_CHANGE_PHRASE = "the one value a new operator changes"
+REPOSITORY_GRANT = json.dumps(
+    {
+        "cycle": 0,
+        "repositories": [
+            {
+                "github_repo": "agentculture/culture-nodes",
+                "sonar_component": "agentculture_culture-nodes",
+            }
+        ],
+    }
+)
 
 
 def _load_sweep():
@@ -70,6 +74,11 @@ def _load_sweep():
 
 
 sweep = _load_sweep()
+
+
+@pytest.fixture(autouse=True)
+def repository_grant(monkeypatch):
+    monkeypatch.setenv("PR_UPKEEP_REPOSITORIES", REPOSITORY_GRANT)
 
 
 @pytest.fixture(scope="module")
@@ -95,6 +104,11 @@ def check_runs_payload():
 @pytest.fixture(scope="module")
 def check_runs_sonar_failed_payload():
     return json.loads((FIXTURES / "github-check-runs-pr60-sonar-gate-failed.json").read_text())
+
+
+@pytest.fixture(scope="module")
+def jira_payload():
+    return json.loads((FIXTURES / "jira-search.json").read_text())
 
 
 def _reopen(body):
@@ -123,18 +137,20 @@ def _stub_sweep(
     entry answers an empty payload, which is what a green PR looks like.
     """
     monkeypatch.setenv("GITHUB_TOKEN", "")
-    monkeypatch.setattr(sweep, "fetch_open_pulls", lambda token: [dict(p) for p in pulls])
+    monkeypatch.setattr(
+        sweep, "fetch_open_pulls", lambda token, repository: [dict(p) for p in pulls]
+    )
     calls = {"sonar": [], "qodo": [], "checks": []}
 
-    def fake_sonar(pr=None):
+    def fake_sonar(component, pr=None):
         calls["sonar"].append(pr)
         return sonar_main if pr is None else (sonar_pr or {"issues": []})
 
-    def fake_qodo(token, pr_numbers):
+    def fake_qodo(token, repository, pr_numbers):
         calls["qodo"].append(list(pr_numbers))
         return qodo or ([], [])
 
-    def fake_checks(token, sha):
+    def fake_checks(token, repository, sha):
         calls["checks"].append(sha)
         if check_runs_error is not None:
             raise check_runs_error
@@ -285,11 +301,61 @@ class TestPrioritise:
 
     def test_report_encodes_the_exit_code_contract(self, sonar_payload):
         items = sweep.sonar_work_items(sonar_payload)
-        report = sweep.build_report(items)
+        report = sweep.build_report(items, sweep.selected_repository())
         assert report["count"] == 4
         assert report["items"][0]["severity"] == "BLOCKER"
         assert sweep.exit_code_for(items) == 0
         assert sweep.exit_code_for([]) == sweep.EXIT_EMPTY
+
+
+class TestJiraWorkItems:
+    """Issue #76 acceptance is recorded-fixture-only; the live backlog is empty."""
+
+    def test_recorded_backlog_item_enters_the_priority_list(self, jira_payload):
+        items = sweep.jira_work_items(jira_payload, site="team.example.com", project="EX")
+        assert len(items) == 1
+        assert items[0]["source"] == "jira"
+        assert items[0]["id"] == "EX-17"
+        assert items[0]["severity"] == "High"
+        assert sweep.prioritise(items)[0]["title"] == ("Make the recorded backlog item actionable")
+
+    def test_jira_provenance_uses_only_reserved_example_configuration(self, jira_payload):
+        (item,) = sweep.jira_work_items(jira_payload, site="team.example.com", project="EX")
+        assert item["project"] == "EX"
+        assert item["details_url"] == "https://team.example.com/browse/EX-17"
+
+    def test_basic_auth_is_built_in_the_request_not_argv_or_output(self, monkeypatch):
+        seen = {}
+
+        def fake_get(url, token=None, *, basic=None):
+            seen.update(url=url, token=token, basic=basic)
+            return {"issues": []}
+
+        monkeypatch.setattr(sweep, "_get_json", fake_get)
+        assert sweep.fetch_jira_issues(
+            "team.example.com", "EX", "robot@example.com", "fixture-token"
+        ) == {"issues": []}
+        assert seen["basic"] == ("robot@example.com", "fixture-token")
+        assert seen["token"] is None
+        assert "robot@example.com" not in seen["url"]
+        assert "fixture-token" not in seen["url"]
+        assert "maxResults=100" in seen["url"]
+        assert 100 < sweep.JIRA_RATE_LIMIT_PER_WINDOW == 350
+
+    def test_jira_configuration_requires_both_host_and_project(self):
+        raw = json.dumps(
+            {
+                "repositories": [
+                    {
+                        "github_repo": "owner.example/repo",
+                        "sonar_component": "owner_repo",
+                        "jira_site": "team.example.com",
+                    }
+                ]
+            }
+        )
+        with pytest.raises(ValueError, match="configured together"):
+            sweep.selected_repository(raw)
 
 
 class TestSonarWorkItemsPrContext:
@@ -309,8 +375,8 @@ class TestSonarWorkItemsPrContext:
     def test_fetch_sonar_issues_url_names_the_pull_request_param(self, monkeypatch):
         seen = []
         monkeypatch.setattr(sweep, "_get_json", lambda url, token=None: seen.append(url) or {})
-        sweep.fetch_sonar_issues()
-        sweep.fetch_sonar_issues(pr=70)
+        sweep.fetch_sonar_issues("agentculture_culture-nodes")
+        sweep.fetch_sonar_issues("agentculture_culture-nodes", pr=70)
         assert "pullRequest=" not in seen[0]
         assert seen[0].startswith(sweep.SONAR_ISSUES_URL.split("?")[0])
         assert "pullRequest=70" in seen[1]
@@ -367,7 +433,7 @@ class TestFetchOpenPulls:
         # Unsorted; main() sorts before capping. One request serves BOTH the
         # per-PR SonarCloud/Qodo fetches (which need the number) and the
         # check-runs fetch (which needs the head sha).
-        assert sweep.fetch_open_pulls(None) == [
+        assert sweep.fetch_open_pulls(None, "agentculture/culture-nodes") == [
             {"number": 42, "head_sha": "cafe1234"},
             {"number": 7, "head_sha": ""},
         ]
@@ -537,7 +603,7 @@ class TestCheckRunWorkItems:
     def test_fetch_check_runs_names_the_commit_check_runs_endpoint(self, monkeypatch):
         seen = []
         monkeypatch.setattr(sweep, "_get_json", lambda url, token=None: seen.append(url) or {})
-        sweep.fetch_check_runs(None, "67672519")
+        sweep.fetch_check_runs(None, "agentculture/culture-nodes", "67672519")
         assert seen == [
             "https://api.github.com/repos/agentculture/culture-nodes"
             "/commits/67672519/check-runs?per_page=100"
@@ -638,19 +704,8 @@ class TestStdlibOnlyImports:
         assert non_stdlib == set()
 
 
-class TestTheSweptRepoIsPinnedAndSaysSo:
-    """Task t16, criterion 3, which only LOOKS like a contradiction.
-
-    Hard-coding the swept repo is a deliberate blast-radius boundary: this
-    sweep must not generalise to arbitrary repos, and that stays. What t16
-    changes is that the boundary becomes VISIBLE — stated at the constant and
-    named in the README as the one value a new operator changes — instead of
-    being an unexplained constant a reader has to reverse-engineer.
-
-    So these tests assert both halves: the pin is real (a plain literal, with
-    nothing in the module able to override it from the environment), and the
-    pin is documented in both places the criterion names.
-    """
+class TestTheSweptRepoIsDeploymentGrantedAndSaysSo:
+    """The blast radius is a closed deployment grant, never run input."""
 
     #: Every environment value the sweep is allowed to read. An exact set, not
     #: a subset: the whole point of the boundary is that no environment value
@@ -659,23 +714,22 @@ class TestTheSweptRepoIsPinnedAndSaysSo:
     #: this line and says why.
     ALLOWED_ENVIRONMENT_READS = {
         "GITHUB_TOKEN",
+        # Safe: these are the two halves of Jira Cloud's measured Basic-auth
+        # requirement. They authenticate only the configured Jira source and
+        # are never copied into a report, argv, fixture, or diagnostic.
+        "JIRA_ACCOUNT_EMAIL",
+        "JIRA_API_TOKEN",
         "PR_UPKEEP_MAX_PRS_PER_SWEEP",
+        # Safe: this value is supplied by the trusted deployment, not run
+        # input. It is the closed ordered repo/component set and cycle index,
+        # so callers still cannot redirect the sweep credential.
+        "PR_UPKEEP_REPOSITORIES",
         "PR_UPKEEP_REQUIRED_CHECKS",
     }
 
     @staticmethod
     def _source():
         return (EXAMPLE_DIR / "sweep.py").read_text()
-
-    def _constant_assignment(self, name):
-        """sweep.py's module-level assignment node for `name`."""
-        for node in ast.parse(self._source()).body:
-            targets = getattr(node, "targets", [])
-            if isinstance(node, ast.Assign) and any(
-                isinstance(target, ast.Name) and target.id == name for target in targets
-            ):
-                return node
-        raise AssertionError(f"sweep.py declares no module-level {name}")
 
     @staticmethod
     def _prose(text):
@@ -698,21 +752,26 @@ class TestTheSweptRepoIsPinnedAndSaysSo:
                 return cls._prose("\n".join(reversed(block)))
         raise AssertionError(f"sweep.py has no line starting with {needle!r}")
 
-    def test_both_constants_are_plain_pinned_literals(self):
-        for name, value in (
-            ("SONAR_COMPONENT_KEY", "agentculture_culture-nodes"),
-            ("GITHUB_REPO", "agentculture/culture-nodes"),
-        ):
-            node = self._constant_assignment(name)
-            assert isinstance(node.value, ast.Constant), (
-                f"{name} is not a plain string literal. A value assembled at import time "
-                "is a value something can re-point, and the blast-radius boundary is "
-                "supposed to be un-re-pointable (claim c26)."
-            )
-            assert node.value.value == value
-            assert getattr(sweep, name) == value
+    def test_configured_order_and_cycle_select_exactly_one_repo(self):
+        raw = json.dumps(
+            {
+                "cycle": 1,
+                "repositories": [
+                    {"github_repo": "one.example/repo", "sonar_component": "one_repo"},
+                    {"github_repo": "two.example/repo", "sonar_component": "two_repo"},
+                ],
+            }
+        )
+        selected = sweep.selected_repository(raw)
+        assert selected["github_repo"] == "two.example/repo"
+        assert selected["sonar_component"] == "two_repo"
 
-    def test_no_environment_value_can_re_point_the_swept_repo(self):
+    def test_repo_pair_is_not_a_module_constant(self):
+        source = self._source()
+        assert "SONAR_COMPONENT_KEY =" not in source
+        assert "GITHUB_REPO =" not in source
+
+    def test_environment_reads_are_exactly_the_deliberately_granted_set(self):
         names = set()
         for node in ast.walk(ast.parse(self._source())):
             if isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute):
@@ -735,27 +794,16 @@ class TestTheSweptRepoIsPinnedAndSaysSo:
                     names.add(node.slice.value)
         assert names == self.ALLOWED_ENVIRONMENT_READS, (
             "the sweep reads environment values this test does not sanction. If a new "
-            "one is legitimate, add it above deliberately — and if it names a repo or a "
-            "component key, it is the boundary this example refuses to make configurable."
+            "one is legitimate, add it above deliberately and explain why it is safe."
         )
 
-    def test_the_pin_is_explained_where_the_pin_is(self):
-        block = self._preceding_comment_block(self._source(), "SONAR_COMPONENT_KEY =")
-        assert "blast radius" in block.lower(), (
-            "the comment above the constants does not say WHY they stay hard-coded. "
-            "Without the reason, a later reader reasonably reads a pinned repo as an "
-            "oversight and 'fixes' it into run input."
-        )
-        assert OPERATOR_CHANGE_PHRASE in block, (
-            f"the comment above the constants does not name them as {OPERATOR_CHANGE_PHRASE!r}; "
-            "a reader who forks this example has to guess what to edit."
-        )
-
-    def test_the_readme_names_the_same_one_value(self):
-        readme = (EXAMPLE_DIR / "README.md").read_text()
-        assert OPERATOR_CHANGE_PHRASE in self._prose(readme)
-        for name in ("SONAR_COMPONENT_KEY", "GITHUB_REPO"):
-            assert name in readme, f"the README never names {name}"
+    def test_the_moved_boundary_is_explained_where_the_grant_is_named(self):
+        block = self._preceding_comment_block(self._source(), "REPOSITORIES_ENV =")
+        assert (
+            "blast radius" in block.lower()
+        ), "the comment does not preserve why repository selection is a trust boundary"
+        assert "closed" in block.lower()
+        assert "run input" in block.lower()
 
     def test_the_readme_carries_the_deployment_configuration_section(self):
         # Criterion 2 for this example: every environment-specific value is
@@ -798,6 +846,41 @@ class TestExitCodeBranches:
         assert report["items"][0]["source"] == "github-check"
         assert report["items"][0]["check"] == "lint"
         assert report["items"][0]["pr"] == 60
+
+    def test_recorded_jira_item_surfaces_from_a_fixture_sweep_run(
+        self, monkeypatch, capsys, jira_payload
+    ):
+        monkeypatch.setenv(
+            "PR_UPKEEP_REPOSITORIES",
+            json.dumps(
+                {
+                    "cycle": 0,
+                    "repositories": [
+                        {
+                            "github_repo": "owner.example/repo",
+                            "sonar_component": "owner_repo",
+                            "jira_site": "team.example.com",
+                            "jira_project": "EX",
+                        }
+                    ],
+                }
+            ),
+        )
+        monkeypatch.setenv("JIRA_ACCOUNT_EMAIL", "robot@example.com")
+        monkeypatch.setenv("JIRA_API_TOKEN", "fixture-token")
+        _stub_sweep(monkeypatch, pulls=[], sonar_main={"issues": []})
+        monkeypatch.setattr(
+            sweep,
+            "fetch_jira_issues",
+            lambda site, project, email, token: jira_payload,
+        )
+
+        assert sweep.main() == 0
+        report = json.loads(capsys.readouterr().out)
+        assert report["github_repo"] == "owner.example/repo"
+        assert report["count"] == 1
+        assert report["items"][0]["source"] == "jira"
+        assert report["items"][0]["id"] == "EX-17"
 
     def test_a_clean_empty_sweep_exits_ten(self, monkeypatch, capsys):
         _stub_sweep(

@@ -32,6 +32,24 @@ def _restricted(tmp_path):
     return ((str(knob), "1"),)
 
 
+def _probe_works():
+    """The executable capability probe on a host where the helper starts.
+
+    Injected rather than monkeypatched: since t3 made the probe — not the
+    sysctls — authoritative, this is the input that decides the answer, and
+    a test that only injected sysctls would be asserting nothing.
+    """
+    return "available", "bwrap capability probe succeeded"
+
+
+def _probe_fails():
+    return "unavailable", "bwrap capability probe failed (exit 1)"
+
+
+def _probe_absent():
+    return "not-probed", "neither bwrap nor unshare is installed"
+
+
 def test_the_candidate_modes_are_exactly_the_ones_this_bridge_can_pass(tmp_path):
     """A mode codex accepts but this surface never mentions would be a fact
     the briefing omits; a mode this surface advertises but `codex exec`
@@ -45,12 +63,18 @@ def test_the_surface_is_a_document_the_control_plane_accepts(tmp_path):
     block = preflight.capability_block(capabilities.host_facts(cfg, probes=_permissive(tmp_path)))
     preflight.validate_block(block)
     assert block["preflight"]["protocol_version"] == preflight.PROTOCOL_VERSION
+    assert block["preflight"]["host"]["artifact_publish"] in {
+        "supported",
+        "unsupported-by-host",
+        "not-applicable-no-workspace",
+    }
 
 
 def test_a_permissive_kernel_advertises_every_sandbox_mode(tmp_path):
     cfg = Config(repo_allowlist=(str(tmp_path),))
-    host = capabilities.host_facts(cfg, probes=_permissive(tmp_path))
+    host = capabilities.host_facts(cfg, probes=_permissive(tmp_path), capability_probe=_probe_works)
     assert host["sandbox_modes"] == list(capabilities.SANDBOX_MODE_CANDIDATES)
+    assert host["artifact_publish"] == "unsupported-by-host"
     assert "sandbox_modes_unavailable" not in host
 
 
@@ -59,11 +83,29 @@ def test_a_restricting_kernel_advertises_only_what_it_can_enforce(tmp_path):
     whose kernel restricted unprivileged user namespaces, and every file
     write was silently lost. The surface reports what the host can do."""
     cfg = Config(repo_allowlist=(str(tmp_path),))
-    host = capabilities.host_facts(cfg, probes=_restricted(tmp_path))
+    host = capabilities.host_facts(cfg, probes=_restricted(tmp_path), capability_probe=_probe_fails)
 
     assert host["sandbox_modes"] == ["danger-full-access"]
     assert set(host["sandbox_modes_unavailable"]) == {"read-only", "workspace-write"}
-    assert "silently loses" in host["sandbox_modes_unavailable"]["workspace-write"]
+    assert "bwrap capability probe failed" in host["sandbox_modes_unavailable"]["workspace-write"]
+    assert host["artifact_publish"] == "unsupported-by-host"
+
+
+def test_an_unprobeable_host_says_so_rather_than_guessing_either_way(tmp_path):
+    """The third state t3 introduced, and the reason the probe is worth
+    having: with neither bwrap nor unshare installed there is no measurement
+    to report. Reporting `available` would invent a fact; reporting the
+    restricted wording would blame a kernel nobody asked. The mode is
+    withheld, and the reason says the probe never ran."""
+    cfg = Config(repo_allowlist=(str(tmp_path),))
+    host = capabilities.host_facts(
+        cfg, probes=_permissive(tmp_path), capability_probe=_probe_absent
+    )
+
+    assert host["sandbox_modes"] == ["danger-full-access"]
+    reason = host["sandbox_modes_unavailable"]["workspace-write"]
+    assert "not probed" in reason
+    assert "neither bwrap nor unshare is installed" in reason
 
 
 def test_the_default_mode_is_reported_even_when_this_host_cannot_deliver_it(tmp_path):
@@ -71,15 +113,19 @@ def test_the_default_mode_is_reported_even_when_this_host_cannot_deliver_it(tmp_
     the unavailability rather than quietly rewritten to something that works
     — the bridge advertises, the operator decides."""
     cfg = Config(repo_allowlist=(str(tmp_path),), default_sandbox="workspace-write")
-    host = capabilities.host_facts(cfg, probes=_restricted(tmp_path))
+    host = capabilities.host_facts(cfg, probes=_restricted(tmp_path), capability_probe=_probe_fails)
     assert host["default_sandbox_mode"] == "workspace-write"
     assert "workspace-write" in host["sandbox_modes_unavailable"]
 
 
 def test_confinement_names_what_actually_confines_a_session(tmp_path):
     cfg = Config(repo_allowlist=(str(tmp_path),))
-    permissive = capabilities.host_facts(cfg, probes=_permissive(tmp_path))
-    restricted = capabilities.host_facts(cfg, probes=_restricted(tmp_path))
+    permissive = capabilities.host_facts(
+        cfg, probes=_permissive(tmp_path), capability_probe=_probe_works
+    )
+    restricted = capabilities.host_facts(
+        cfg, probes=_restricted(tmp_path), capability_probe=_probe_fails
+    )
     assert "user namespace" in permissive["confinement"]
     assert "nothing is confined" in restricted["confinement"]
 

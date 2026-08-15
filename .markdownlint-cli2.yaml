@@ -16,11 +16,40 @@ config:
   # MD033: Inline HTML — devague-exported specs render claim text verbatim,
   # and binding-surface placeholders like /nodes/<id>/evidence read as HTML
   # elements. Allow exactly those placeholder tokens, nothing else.
+  #
+  # namespace/branch/path joined the list for the own-the-work-end-to-end
+  # spec: artifact://<namespace>/<id> is internal/artifacts' ref scheme
+  # (ref.go), refs/heads/<branch> is preserve-on-failure's update-ref target
+  # (adapters/*/preserve.py), and <path> appears inside quoted git output
+  # ("fatal: <path> contains modified or untracked files"). All three are
+  # placeholders in cited identifiers, not markup.
   MD033:
-    allowed_elements: ["id", "node", "name"]
+    allowed_elements: ["id", "node", "name", "namespace", "branch", "path"]
 
 ignores:
+  # Both forms are needed. The bare glob is root-anchored, so it misses
+  # web/node_modules — which does not exist in a fresh clone and does the
+  # moment anyone runs `npm install` to build or test the web app. Linting
+  # then fails on vendored package readmes nobody here wrote, in a run that
+  # passed five minutes earlier. The second pattern is the one that holds.
   - "node_modules/**"
+  - "**/node_modules/**"
+  # Every markdown file under .devague is generated, gitignored working state:
+  # review artifacts (which /think calls non-authoritative by design) and open
+  # question logs. What IS tracked there is JSON — frames, plans, deliveries —
+  # and no .md at all (`git ls-files '.devague/**/*.md'` returns nothing).
+  #
+  # CI never sees these because they are untracked; markdownlint-cli2 does,
+  # because it walks the filesystem rather than the index. Excluding them is
+  # what makes a local lint run mean the same thing as the CI one — otherwise
+  # the local run fails on prose the tool itself wrote.
+  - ".devague/**/*.md"
+  # Same reasoning, worse case: .claude/worktrees holds gitignored operator
+  # scratch AND a whole nested git worktree (web-ux-quick-wins), so a lint run
+  # here walks a second checkout's entire markdown tree. That nesting is itself
+  # a known defect — task t16 must fail a check against it, because a
+  # root-level repo allowlist entry contains another writer's worktree.
+  - ".claude/worktrees/**"
   - ".local/**"
   - ".afi/**"
   - ".teken/**"

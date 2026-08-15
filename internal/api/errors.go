@@ -38,9 +38,12 @@ func badRequest(remediation, format string, args ...any) *apiError {
 	return newAPIError(http.StatusBadRequest, clifmt.ExitUserError, fmt.Sprintf(format, args...), remediation)
 }
 
-// unauthorized builds a 401 — used only by the human-task decision endpoint
-// (see (*Server).requireDecisionAuth): every other operation in this API is
-// authless by phase-1 design (PRD spec decision c45).
+// unauthorized builds a 401 — used by the human-task decision endpoint (see
+// (*Server).requireDecisionAuth) and by artifact publication, which
+// authenticates the attempt callback token (task t5, #79). Most other
+// operations in this API remain authless by phase-1 design (PRD spec decision
+// c45); a route that carries authority over durable storage is the exception,
+// not a drift from it.
 func unauthorized(remediation, format string, args ...any) *apiError {
 	return newAPIError(http.StatusUnauthorized, clifmt.ExitUserError, fmt.Sprintf(format, args...), remediation)
 }
@@ -55,6 +58,13 @@ func conflict(remediation, format string, args ...any) *apiError {
 
 func unprocessable(remediation, format string, args ...any) *apiError {
 	return newAPIError(http.StatusUnprocessableEntity, clifmt.ExitUserError, fmt.Sprintf(format, args...), remediation)
+}
+
+// payloadTooLarge builds a 413 — the artifact publication route's body limit
+// (api.MaxArtifactBytes). A user error, not an environment one: the caller
+// chose what to send, and the remediation tells them what to do instead.
+func payloadTooLarge(remediation, format string, args ...any) *apiError {
+	return newAPIError(http.StatusRequestEntityTooLarge, clifmt.ExitUserError, fmt.Sprintf(format, args...), remediation)
 }
 
 func unavailable(remediation, format string, args ...any) *apiError {

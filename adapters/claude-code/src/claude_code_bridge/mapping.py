@@ -275,6 +275,13 @@ def _default_workspace_measured() -> dict[str, Any]:
     }
 
 
+#: The model sentinel for a session that normally reports one and did not.
+#: Distinct from the colleague/notify "backend cannot report" sentinels:
+#: this is a gap in one attempt, not a permanent property of the backend
+#: (#77 — a null here was indistinguishable from an unwritten field).
+MODEL_NOT_REPORTED = "unknown:claude-code-session-did-not-report"
+
+
 def usage_from_result(result: dict[str, Any] | None) -> dict[str, Any]:
     """Map claude's reported usage and identity onto §13.2 `Usage`.
 
@@ -310,6 +317,19 @@ def usage_from_result(result: dict[str, Any] | None) -> dict[str, Any]:
             model = next(iter(model_usage))
     if isinstance(model, str) and model:
         mapped["model"] = model
+    else:
+        # Never omit. Omission is what #77 was: a null `usage_model` that could
+        # not be told apart from a field nobody wrote, so every attempt looked
+        # equally unattributed and no comparison between actors was possible.
+        #
+        # This sentinel is deliberately NOT the colleague/notify one. Those say
+        # the backend CANNOT report a model, which is a permanent property.
+        # This says a session that normally does report one did not — the usual
+        # cause being a `modelUsage` map with several entries (a main model plus
+        # whatever ran subagents), where naming any single one would be a guess.
+        # Reading the two as the same fact would hide a regression here behind a
+        # limitation there.
+        mapped["model"] = MODEL_NOT_REPORTED
 
     session_id = r.get("session_id")
     if isinstance(session_id, str) and session_id:

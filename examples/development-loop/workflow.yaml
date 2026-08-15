@@ -1,0 +1,1090 @@
+# The DEVELOPMENT LOOP itself, expressed as a graph (plan task t21, spec
+# claims c21/c24, honesty conditions h14/h15).
+#
+# Every other example in this directory automates somebody else's work. This
+# one automates OURS: the order a piece of work moves through from "there is a
+# workspace to do it in" to "the workspace is gone again" —
+#
+#   provision-workspace -> work -> handover-gate -> (pass) merge-review
+#                                                -> (fail) continuation
+#                                                -> cleanup-workspace
+#
+# — is, in this file, a set of EDGES a compiler refuses to accept when they do
+# not cohere. That is the whole point of committing it (spec claim c21): the
+# order used to be prose in a runbook that a reader had to obey by hand, and
+# prose cannot be refused. `nodes validate` refuses an unreachable node, an
+# `onExhausted` nothing routes, a loop with no declared bound, an outcome no
+# contract declares, and a binding that addresses a surface no resolver
+# answers. The order below survived all five, which is a different and much
+# weaker claim than "this loop runs" — see "WHAT DOES NOT WORK YET" below,
+# which is long on purpose.
+#
+# ---------------------------------------------------------------------------
+# WHAT IS REAL TODAY
+# ---------------------------------------------------------------------------
+#
+#  * The compiler accepts every node kind, contract, continuation and edge
+#    below (internal/compiler; scripts/validate-examples.sh compiles this file
+#    beside the eleven that were already committed, with no control plane).
+#  * `work`'s `continue.while` is compiled to a CEL program at publish time
+#    and evaluated by the ENGINE, not by a model
+#    (internal/compiler/contract.go's checkContracts; Node.DecideContinuation
+#    in internal/engine/workflow.go). A spent bound produces the declared
+#    `onExhausted` domain outcome, and the compiler refuses this document if
+#    no edge carries that outcome away (CodeGraphExhaustedUnrouted, pinned by
+#    internal/compiler's TestExhaustedOutcomeMustBeRouted).
+#  * A fired deadline on `work` consults that continuation before it cancels
+#    (internal/scheduler/scheduler.go's deadlineContinuationHolds). Because
+#    `work` declares `policy.timeout: 45m` AND `bounds.maxWallClock: 4h`, the
+#    45-minute deadline PAUSES the node and re-arms itself; only once the
+#    4-hour wall clock is spent does the same handler CANCEL, emitting
+#    `dev.culture.nodes.deadline.cancel-requested`
+#    (internal/scheduler/deadlinecancel.go).
+#    ONE PRECONDITION, stated so the claim is not read wider than it is: the
+#    deadline TIMER is written only when the actor accepts the invocation
+#    ASYNCHRONOUSLY, on the §13.4 callback path
+#    (internal/store/postgres/async.go's StartAsyncWait, and its runner-side
+#    twin for a parked operation). A bridge that answers `work` synchronously
+#    creates no timer, so neither of the two events below is reachable for it
+#    — the timeout is enforced, but by a different path that neither consults
+#    the continuation nor fences the retry.
+#  * That cancellation then meets the WORKSPACE FENCE: the completion arrives
+#    as `timed_out` with `TimeoutOrigin = deadline`, `work` still has retry
+#    budget left (`maxAttempts: 2`), and the engine REFUSES to spend it,
+#    emitting `dev.culture.nodes.attempt.retry-refused`
+#    (internal/engine/retry.go's retryRefusal). The refusal is not an ending,
+#    so this graph declares where the token goes next: `work.timed_out` routes
+#    to the human node. Without that edge the refusal would be followed by a
+#    dead run, which is the shape the fence exists to improve on, not repeat.
+#
+# So of the four events this task set out to make visible in a run's stream,
+# TWO are real and reachable from the declarations in this file
+# (deadline.cancel-requested, attempt.retry-refused) and TWO DO NOT EXIST —
+# see below.
+#
+# ---------------------------------------------------------------------------
+# WHAT DOES NOT WORK YET — read this before believing the graph
+# ---------------------------------------------------------------------------
+#
+# A graph that looks complete and is not is worse than one that is explicit
+# about its gaps. Each gap below is named at the node it affects as well.
+#
+#  1. NO WORKTREE EVENT EXISTS, IN EITHER DIRECTION. There is no
+#     `worktree.provisioned` and no `worktree.reaped` type anywhere in the
+#     event vocabulary (internal/events/envelope.go and
+#     internal/engine/events.go hold every type this system emits; neither
+#     names a worktree). A consumer filtering a run's event stream for the
+#     provisioning or the reaping of a workspace finds NOTHING. What it finds
+#     instead is `attempt.completed` for the two nodes plus their `proposed`
+#     ledger claims — an actor's word, not an observation, because only a CODE
+#     node may declare `ledger.observe` (internal/compiler/ledger.go's
+#     checkLedgerDelta) and both of these nodes are agent nodes for the reason
+#     in gap 2.
+#
+#  2. NOTHING CALLS THE PROVISIONER, AND NOTHING REAPS. `provision()` exists,
+#     identically, in all three bridges (adapters/{codex,claude-code,
+#     colleague}/src/*/workspace.py, task t16) and is covered by each bridge's
+#     own tests — and its only callers ARE those tests. No dispatch path
+#     invokes it, no bridge config carries the `permitted_root` /
+#     `forbidden_roots` values its signature requires, and there is no
+#     removal counterpart at all: no `reap`, no `git worktree remove`, in any
+#     bridge. So `provision-workspace` and `cleanup-workspace` below declare
+#     an INTERFACE, and a run today lands on their honest-failure outcomes
+#     (`provision_unavailable` / `reap_refused`, both naming
+#     `..._unwired`).
+#
+#  3. NEITHER HANDOFF CARRIER CAN ACTUALLY CARRY ANYTHING. `work.completed`
+#     requires BOTH — a `git_ref` for the changes and an `artifact://` ref for
+#     the context, which is the two-carrier routing rule (a runner's changes
+#     take git_ref; context and data take artifact). Both are presently
+#     aspirational:
+#       - The ARTIFACT half: internal/artifacts is a complete library with
+#         zero production callers — no ingest or fetch endpoint on the HTTP
+#         surface, no bridge uploads bytes, and InvocationResult.artifact_refs
+#         is accepted on the wire and dropped (examples/pr-upkeep's header
+#         says the same thing at more length).
+#       - The GIT-REF half: task t6 has not landed. The shipped cross-host
+#         guard still pins a handle to `^artifact://` alone
+#         (tests/lint/crosshosthandoff_test.go's handoffRefPrefix), so nothing
+#         in this repo yet knows what a `git_ref` handle IS; the ref namespace
+#         below is the one the operator's policy decision fixed
+#         (AGENTS.md: a handover commit and a ref under
+#         `refs/culture-nodes/<run-id>`, never a branch, never pushed), while
+#         the ref-minting plumbing that exists today (adapters/*/preserve.py's
+#         write-tree/commit-tree/update-ref) mints `refs/heads/<prefix>...`
+#         for a different purpose. And no bridge host holds a push credential,
+#         so a `git_ref` is reachable only on the host that made it.
+#     The consequence is honest and routed: a real `work` session ends at
+#     `handoff_unavailable`, naming which capability it lacked.
+#
+#  4. THE GATE CANNOT REACH THE TREE IT IS SUPPOSED TO MEASURE. `handover-gate`
+#     is a code node, so it runs in a container through the runner boundary —
+#     and it has no way to obtain the candidate tree. `operation.workspaceRef`
+#     is the only mechanism, and the worker hands it to the runner VERBATIM as
+#     a workspace source ref (internal/worker/code.go), where the headspace
+#     bridge treats it as "a path already present on the local filesystem this
+#     bridge's process runs on" (internal/runners/headspace/doc.go's "Local
+#     artifact staging" section) — it holds no artifact Store and refuses an
+#     `artifact://` ref by failing to stat it. So this node deliberately
+#     declares NO workspaceRef: pointing one at either carrier would produce a
+#     runner stat-ing a JSON pointer as a directory name, which is a worse
+#     failure than the honest absence.
+#
+#  5. THE CONTINUATION CONDITION CANNOT READ THE GATE'S RESULT. The t18 design
+#     (docs/design/2026-08-15-t16-workspace-provisioner-and-t18-handover-gate.md)
+#     writes the condition as reading validator output, e.g.
+#     `failed_gate_count > 0`. The shipped evaluator cannot do that:
+#     DecideContinuation builds its CEL activation with `node.state` and
+#     `budget.remaining_sessions` populated and `input`/`output`/`outcome`/
+#     `event` deliberately EMPTY (internal/engine/workflow.go). An expression
+#     reaching into `output` errors on evaluation, and an erroring condition
+#     is read as "do not continue" — it would silently stop the loop rather
+#     than fail loudly. So `continue.while` below uses only the two variables
+#     that carry values, and the gate's verdict steers the loop through an
+#     EDGE (`gate-verdict.changes_required -> work`) instead.
+#
+#  6. TWO OF THE FOUR GATES MEASURE NOTHING ON MOST OF THIS REPO. Per the t18
+#     design, coverage reaches only `culture_nodes` (the configured coverage
+#     run) and cognitive complexity only `sonar.sources=culture_nodes`. A
+#     change under `internal/`, `adapters/` or `web/` is therefore
+#     TESTS-ONLY PLUS FILE-LENGTH, with the other two reported as
+#     `not_applicable/instrument_not_reaching_tree` — never as passing, and
+#     never folded into an aggregate that says "all four gates passed"
+#     (issue #88 is where widening those instruments lives). This graph
+#     honours that by giving a partial measurement its own routed outcome,
+#     `measurement_incomplete`, which goes to a PERSON rather than onward.
+#
+#  7. THE VALIDATOR ITSELF IS UNWRITTEN. t18 produced a design, not a program.
+#     The operation below fetches and digest-verifies a deployment-supplied
+#     script exactly as pr-upkeep's sweep does; what that script must compute
+#     is the t18 design's per-gate result document. Nothing in this repository
+#     implements it yet.
+#
+# ---------------------------------------------------------------------------
+# AUTHORING DECISIONS WORTH STATING OUTRIGHT
+# ---------------------------------------------------------------------------
+#
+#  1. WHY provision/work/cleanup ARE ALL THE SAME ACTOR. A worktree is minted
+#     by the bridge that owns the checkout, from that checkout's own git
+#     metadata; the control plane supplies "a stable writer name and repository
+#     identity, not a worktree path" (the t16 decision, taken because an
+#     engine-chosen path recreates issue #74's portability defect). Only the
+#     host that minted a worktree can remove it. So all three nodes name
+#     `actor://company/developer`, and `merge-review` deliberately does not:
+#     it is a different actor, which increasingly means a different machine,
+#     which is exactly why the work has to reach it as a HANDLE.
+#
+#  2. WHY provision AND cleanup ARE `agent` NODES, WHICH IS A KNOWN COST.
+#     Minting and removing a worktree is deterministic plumbing; spending a
+#     provider session on it is precisely the bootstrap tax the session
+#     economics work exists to avoid. It is authored this way because there is
+#     no third option: `code` reaches a container that is not the writer's
+#     host, and `agent` is the only node kind that reaches the host holding
+#     the checkout. A non-model bridge verb is the shape this wants, and it
+#     does not exist.
+#
+#  3. TWO DIFFERENT CLOCKS, DELIBERATELY NOT MERGED. `work` is bounded twice
+#     and they are independent. The CONTINUATION bounds (maxContinuations /
+#     maxWallClock / maxSessions) govern turns inside one warm session — the
+#     deadline consults them and pauses instead of cancelling. The GRAPH
+#     bounds (spec.limits.maxVisitsPerNode) govern how many times a token may
+#     re-enter `work` through an edge, which is a cold re-entry, a new node
+#     run and a new attempt row. A gate that keeps failing is stopped by the
+#     second; a session that keeps working is stopped by the first.
+#
+#  4. THE GATE IS SPLIT ACROSS TWO NODES ON PURPOSE. A code node's routable
+#     answer is its exit status: the worker maps exactly one success name and
+#     one failure name (internal/worker/code.go's ConventionalCodeOutcomes
+#     recognises `passed`/`failed` and refuses vocabulary it does not know),
+#     and a code node's persisted output is runner metadata rather than the
+#     script's stdout. So `handover-gate` MEASURES and encodes its one
+#     routable domain fact in the exit code, and `gate-verdict` — an ordinary
+#     decision node — turns that into the three domain answers t18 specifies:
+#     `gates_passed`, `changes_required`, `measurement_incomplete`. This is
+#     pr-upkeep's sweep/triage pattern, reused rather than reinvented.
+#
+#  5. CLEANUP FAILS CLOSED. `cleanup-workspace` may refuse to reap, and its
+#     `retained_reason` is a closed enum. Reaping a worktree destroys work
+#     that no handoff carried, and no other node in this graph can undo that.
+#     A refusal is therefore a first-class domain answer with its own terminal
+#     node, not an error. The corollary, stated plainly: every path that does
+#     NOT reach `cleanup-workspace` — `provision-blocked`, `handoff-blocked`,
+#     `abandoned` — leaves the worktree on disk, and per gap 2 nothing else
+#     will ever remove it.
+#
+# ---------------------------------------------------------------------------
+# Deployment configuration (task t16) — everything this graph needs from the
+# world outside it, and where each value comes from. Loading this example into
+# another deployment means supplying these; it never means editing the graph.
+#
+#   RUN INPUT (the run's input document; examples/development-loop/input.json
+#   is a complete one, and spec.contract.input below declares every property):
+#     repo             the writer host's own checkout — the source the
+#                      worktree is minted FROM, and a path meaningful on
+#                      exactly one machine.
+#     review_repo      the review host's OWN allowlisted checkout. Same
+#                      repository, different host, different path; it is a
+#                      working directory and never the work under review.
+#     writer_name      the stable, single-path-component writer identity the
+#                      control plane supplies. The bridge — not this graph —
+#                      turns it into a worktree beneath its configured root.
+#     review_sandbox   pinned to the literal "read-only" by the contract.
+#     *_instruction    the words each actor is given, authored per run.
+#
+#   ACTOR / RUNNER REGISTRY (an id in `uses:`, resolved by
+#   internal/worker/registry.go against this deployment's actors table with
+#   the @sha256 revision suffix stripped — register the SAME id against your
+#   own endpoint; the id names a ROLE, not a machine):
+#     actor://company/developer   the workspace-holding lane: it provisions,
+#                                 it works, and it reaps. One identity because
+#                                 one host owns the worktree.
+#     actor://company/verifier    the review lane — deliberately a different
+#                                 actor from the writer.
+#     runner://headspace/docker   the code-node runner boundary the gate
+#                                 dispatches through.
+#
+#   The `needs-human` approval node places on NO actor: the engine parks its
+#   token by writing a human_tasks row and a person answers through the
+#   decision endpoint. There is nothing to register for it.
+#
+#   GRANTED ENVIRONMENT VALUES (named here, supplied by the worker process
+#   that dispatches the operation; the runner boundary refuses the operation
+#   BY NAME when one is unset — internal/runners/headspace/bridge.go):
+#     DEVELOPMENT_LOOP_GATE_SOURCE_URL     where the validator is fetched from.
+#     DEVELOPMENT_LOOP_GATE_SOURCE_SHA256  the sha256 those bytes must have.
+#     DEVELOPMENT_LOOP_GATE_MATRIX         the applicable gate matrix and every
+#                                          threshold, pinned by the deployment
+#                                          so a threshold can never be chosen
+#                                          after seeing the result.
+apiVersion: nodes.culture.dev/v1alpha1
+kind: Workflow
+
+metadata:
+  name: development-loop
+  version: 1.0.0
+  ownerRef: team/platform-ai
+
+spec:
+  entry: provision-workspace
+
+  contract:
+    input:
+      schema:
+        type: object
+        required:
+          - repo
+          - review_repo
+          - writer_name
+          - review_sandbox
+          - provision_instruction
+          - work_instruction
+          - review_instruction
+          - cleanup_instruction
+          - decision_instruction
+        additionalProperties: false
+        properties:
+          repo:
+            type: string
+            minLength: 1
+          review_repo:
+            type: string
+            minLength: 1
+          # One path component, because that is exactly what the bridge's
+          # provisioner accepts: it refuses "", ".", "..", and anything
+          # carrying a separator before it touches git or the filesystem
+          # (adapters/*/workspace.py). Declaring the same rule here means a
+          # run that cannot succeed is refused at start rather than at
+          # dispatch.
+          writer_name:
+            type: string
+            minLength: 1
+            pattern: "^[A-Za-z0-9][A-Za-z0-9._-]*$"
+          # The review lane stays read-only. Pinning the value at the contract
+          # level makes a writable review run unpublishable rather than merely
+          # unadvised.
+          review_sandbox:
+            type: string
+            const: read-only
+          provision_instruction:
+            type: string
+            minLength: 1
+          work_instruction:
+            type: string
+            minLength: 1
+          review_instruction:
+            type: string
+            minLength: 1
+          cleanup_instruction:
+            type: string
+            minLength: 1
+          # What the approver is told they are deciding. Three different
+          # situations reach `needs-human` (bounds spent, measurement
+          # incomplete, session fenced after a deadline), so the text has to
+          # say which questions it may be asked.
+          decision_instruction:
+            type: string
+            minLength: 1
+    output:
+      schema:
+        type: object
+
+  # Bounded by the engine, not by an agent deciding when to stop (PRD §9.7).
+  # maxVisitsPerNode is the GRAPH-level bound on the gate-failure loop: `work`
+  # is re-entered by `gate-verdict.changes_required` and by
+  # `merge-review.changes_required`, and `handover-gate` is re-entered by the
+  # backoff after a broken instrument. maxDuration is human-timescale because
+  # `needs-human` parks on a person with a 24h decision deadline.
+  limits:
+    maxDuration: 72h
+    maxTransitions: 48
+    maxVisitsPerNode: 6
+    maxParallelTokens: 1
+
+  ledger:
+    schemaVersion: nodes.culture.dev/ledger/v1alpha1
+    maxRecordsPerNode: 200
+
+  nodes:
+    # ---------------------------------------------------------------------
+    # 1. PROVISION. The writer's isolated worktree is minted by the bridge
+    # that owns the checkout, from `repo`'s own git metadata, beneath a root
+    # this graph never names — the t16 decision, in one node.
+    #
+    # HONEST STATE (gap 2 in the header): `provision()` exists in all three
+    # bridges and nothing calls it. There is no dispatch path to it and no
+    # config for the roots it needs, so a run today reports
+    # `provision_unavailable` with `worktree_provisioner_unwired`. There is
+    # also no `worktree provisioned` EVENT for it to emit (gap 1): what a run
+    # actually shows is this node's `attempt.completed` and its `proposed`
+    # claim — an actor's word about its own work, which is what an agent node
+    # can produce and all it can produce (PRD §10.4).
+    # ---------------------------------------------------------------------
+    provision-workspace:
+      kind: agent
+      ownerRef: team/platform-ai
+      uses: actor://company/developer@sha256:3333333333333333333333333333333333333333333333333333333333333333
+      input:
+        bindings:
+          instruction: /run/input/provision_instruction
+          repo: /run/input/repo
+          writer: /run/input/writer_name
+      contract:
+        input:
+          schema:
+            type: object
+            required: [instruction, repo, writer]
+        outcomes:
+          # `workspace_ref` is the writer NAME the next node can be dispatched
+          # against, not a path: the same reason the engine hands a name down
+          # rather than choosing a directory. `worktree` is reported for a
+          # human reading the run, and is explicitly host-local — nothing
+          # downstream binds it.
+          provisioned:
+            schema:
+              type: object
+              required: [workspace_ref, base_commit]
+              properties:
+                workspace_ref:
+                  type: string
+                  minLength: 1
+                base_commit:
+                  type: string
+                  minLength: 1
+                worktree:
+                  type: string
+          # The honest failure, same shape and same reasoning as pr-upkeep's
+          # `handoff_unavailable`: a missing HOST capability gets a NAME from
+          # a closed set, so a dashboard can group by it and a reader is not
+          # handed a sentence to interpret.
+          #   worktree_provisioner_unwired — no dispatch path reaches
+          #                                  provision(); the state of the
+          #                                  world today.
+          #   root_not_configured          — the bridge holds no permitted
+          #                                  root / forbidden-root set.
+          #   target_exists                — the provisioner never adopts an
+          #                                  existing directory, by design.
+          #   source_not_a_git_worktree    — `repo` is not a working tree, or
+          #                                  git is absent from the host.
+          provision_unavailable:
+            schema:
+              type: object
+              required: [summary, missing_capability, detail]
+              properties:
+                summary:
+                  type: string
+                missing_capability:
+                  type: string
+                  enum:
+                    - worktree_provisioner_unwired
+                    - root_not_configured
+                    - target_exists
+                    - source_not_a_git_worktree
+                detail:
+                  type: string
+      ledger:
+        propose: [claim, result]
+      policy:
+        timeout: 5m
+        retry:
+          maxAttempts: 2
+          backoff: exponential
+
+    # ---------------------------------------------------------------------
+    # 2. WORK. The writer. This is the node every bound in this file is about.
+    #
+    # It carries state across loop passes through the LEDGER rather than
+    # through a binding (delivery-loop's own pattern): `gate-verdict` and
+    # `merge-review` both route back here, and a binding to a node that has
+    # not run on the first pass would be a pointer with nothing behind it.
+    # ---------------------------------------------------------------------
+    work:
+      kind: agent
+      ownerRef: team/developer-experience
+      uses: actor://company/developer@sha256:3333333333333333333333333333333333333333333333333333333333333333
+      input:
+        bindings:
+          instruction: /run/input/work_instruction
+          repo: /run/input/repo
+          workspace: /nodes/provision-workspace/output
+          priorVerification: /ledger/projections/verification_queue
+          decisions: /ledger/projections/decision_history
+      contract:
+        input:
+          schema:
+            type: object
+            required: [instruction, repo, workspace]
+        outcomes:
+          # BOTH CARRIERS, one document, one routing rule: a runner's CHANGES
+          # travel as a git ref, and CONTEXT and data travel as an artifact.
+          # They are separate members rather than one polymorphic handle
+          # because they are produced by different machinery, fail
+          # independently, and the review lane needs both — the diff to read
+          # and the reasoning to read it against.
+          #
+          # Both are REQUIRED. The engine validates a completion against this
+          # schema (internal/engine/complete.go's checkOutput), so a session
+          # that produced neither cannot report `completed` at all: it is
+          # rejected HERE, where the cause is, rather than sailing into a
+          # review node that fails somewhere else for a reason that names the
+          # wrong thing. A session that genuinely cannot produce one says so
+          # by name, through `handoff_unavailable` below.
+          #
+          # Neither carrier works today — see gap 3. The `ref` patterns are
+          # constrained anyway, and that is the load-bearing part: an
+          # unconstrained handle can be a filesystem path again, and a path is
+          # meaningful on exactly one machine (issue #74).
+          completed:
+            schema:
+              type: object
+              required: [summary, handoff]
+              properties:
+                summary:
+                  type: string
+                handoff:
+                  type: object
+                  required: [changes, context]
+                  properties:
+                    # The CHANGES carrier. `refs/culture-nodes/<run-id>` is
+                    # the namespace the operator's policy decision fixed: a
+                    # session may create a handover commit and this ref, it
+                    # may never push, and it may never commit onto a branch —
+                    # so what it makes is unreachable from any branch until
+                    # the control plane or the operator moves it (AGENTS.md).
+                    changes:
+                      type: object
+                      required: [kind, ref, base]
+                      properties:
+                        kind:
+                          type: string
+                          const: git_ref
+                        ref:
+                          type: string
+                          pattern: "^refs/culture-nodes/[A-Za-z0-9][A-Za-z0-9._/-]*$"
+                        # The commit the ref points at, and what it was cut
+                        # from. A ref name alone is a moving target; the pair
+                        # is what makes the handover addressable after the
+                        # fact.
+                        commit:
+                          type: string
+                        base:
+                          type: string
+                          minLength: 1
+                    # The CONTEXT carrier. An `artifact://` reference "never
+                    # carries or implies a filesystem path"
+                    # (internal/artifacts/doc.go) and resolves through the
+                    # store from any host, which is exactly the property the
+                    # git ref does not have while no host can push.
+                    context:
+                      type: object
+                      required: [kind, ref]
+                      properties:
+                        kind:
+                          type: string
+                          const: artifact
+                        ref:
+                          type: string
+                          pattern: "^artifact://[^/]+/.+$"
+                        media_type:
+                          type: string
+          # The honest failure. `missing_capability` is a CLOSED enum for the
+          # reason pr-upkeep gives: the answer should be a name a dashboard
+          # can group by, not a sentence someone has to interpret. Both of the
+          # first two entries describe the state of the world TODAY (gap 3).
+          handoff_unavailable:
+            schema:
+              type: object
+              required: [summary, missing_capability, detail]
+              properties:
+                summary:
+                  type: string
+                missing_capability:
+                  type: string
+                  enum:
+                    - artifact_publish
+                    - git_ref_publish
+                    - workspace_export
+                    - handoff_too_large
+                detail:
+                  type: string
+      # THE CONTINUATION (task t8's shipped machinery). The engine evaluates
+      # these expressions in CEL between turns; no model decides whether to
+      # keep going.
+      #
+      # `node.state` and `budget.remaining_sessions` are the ONLY two
+      # variables carrying values here — see gap 5 for why the gate's own
+      # numbers cannot appear in this condition, and why that is stated rather
+      # than worked around. `remaining_sessions` is derived from
+      # `bounds.maxSessions` below minus the attempts already recorded, so the
+      # second clause is the session economics expressed as a condition rather
+      # than as a comment.
+      #
+      # `onExhausted: needs_human` is a DOMAIN outcome the engine produces
+      # when any bound is spent. It must have an edge or this document does
+      # not compile (CodeGraphExhaustedUnrouted), and its edge goes to a
+      # person: a writer that has spent its budget is precisely the situation
+      # no other node in this graph is entitled to resolve.
+      continue:
+        while:
+          - node.state == "incomplete"
+          - budget.remaining_sessions > 0
+        bounds:
+          maxContinuations: 3
+          maxWallClock: 4h
+          maxSessions: 4
+        onExhausted: needs_human
+      ledger:
+        read: [current_scope, ready_tasks, decision_history, verification_queue]
+        propose: [claim, result]
+      acceptance:
+        # `enforce: observe` — the verdict lands as a derived record and
+        # touches no routing. Pre-announced criterion: a work session that
+        # changed nothing did nothing. Evaluable only where a runner measured
+        # the comparison; unmeasured stays honestly unevaluated.
+        enforce: observe
+        requires:
+          - kind: workspace_diff
+            complete: true
+      # 45m is the DEADLINE, and it is deliberately shorter than the 4h
+      # continuation wall clock: the first eight or so firings pause and
+      # re-arm (the session stays warm, its continuation ref intact, charging
+      # nothing against maxSessions), and the one that finds the wall clock
+      # spent cancels and emits deadline.cancel-requested. maxAttempts: 2 is
+      # what gives the workspace fence something to refuse — a fence that
+      # fires only when the budget was already empty would be indistinguishable
+      # from an exhausted budget, and would prove nothing.
+      policy:
+        timeout: 45m
+        retry:
+          maxAttempts: 2
+          backoff: exponential
+
+    # ---------------------------------------------------------------------
+    # 3. THE HANDOVER GATE. A DETERMINISTIC validator, not an agent prompt —
+    # which is the whole t18 decision in one line. It measures; it does not
+    # judge. Its input pins the base and candidate object ids, the changed-file
+    # list, the gate matrix, every threshold and the tool identity, and all of
+    # those are part of the published workflow version, so a threshold cannot
+    # be chosen after seeing the result.
+    #
+    # HONEST STATE: gaps 4, 6 and 7. It cannot reach the candidate tree, two
+    # of its four instruments do not reach most of this repo, and the script
+    # it fetches has not been written. What IS honest about it is the shape:
+    # a partial measurement is `measurement_incomplete` and goes to a person,
+    # never an aggregate that says four gates passed when two never ran.
+    # ---------------------------------------------------------------------
+    handover-gate:
+      kind: code
+      ownerRef: team/quality-platform
+      uses: runner://headspace/docker@sha256:5555555555555555555555555555555555555555555555555555555555555555
+      operation:
+        image: python:3.12-slim@sha256:57cd7c3a7a273101a6485ba99423ee568157882804b1124b4dd04266317710de
+        # WHOSE validator runs is a deployment's decision, not this file's: a
+        # committed URL means a third party who "configured the demo" is
+        # executing the demo author's bytes. The origin and the digest are
+        # both granted, and the bootstrap refuses bytes whose digest does not
+        # match before it executes anything — the same argument as pinning the
+        # image above by digest rather than by tag.
+        #
+        # Two refusals at two depths, deliberately. A name the RUNNER's
+        # environment does not carry never reaches this script: the boundary
+        # refuses the operation as rejected_input, naming the missing value.
+        # A value that is present but empty, or bytes whose digest does not
+        # match, is caught here and exits nonzero — which `gate-verdict` reads
+        # as a broken instrument, not as a failed gate.
+        environmentRefs:
+          - DEVELOPMENT_LOOP_GATE_SOURCE_URL
+          - DEVELOPMENT_LOOP_GATE_SOURCE_SHA256
+          - DEVELOPMENT_LOOP_GATE_MATRIX
+        argv:
+          - python3
+          - -c
+          - |
+            import hashlib, os, sys, urllib.request
+            names = ("DEVELOPMENT_LOOP_GATE_SOURCE_URL", "DEVELOPMENT_LOOP_GATE_SOURCE_SHA256")
+            src, want = (os.environ.get(name, "").strip() for name in names)
+            missing = [n for n, v in zip(names, (src, want)) if not v]
+            if missing:
+                sys.exit("development-loop gate: %s unset. The deployment grants the "
+                         "validator's source and its sha256 -- see this workflow's "
+                         "Deployment configuration block." % ", ".join(missing))
+            if not os.environ.get("DEVELOPMENT_LOOP_GATE_MATRIX", "").strip():
+                sys.exit("development-loop gate: DEVELOPMENT_LOOP_GATE_MATRIX unset. A gate "
+                         "matrix chosen at run time is a threshold chosen after seeing the "
+                         "result; the deployment pins it.")
+            source = urllib.request.urlopen(src, timeout=30).read()
+            got = hashlib.sha256(source).hexdigest()
+            if got != want.lower():
+                sys.exit("development-loop gate: the configured source serves sha256:%s, "
+                         "not the configured sha256:%s. Refusing to execute it."
+                         % (got, want.lower()))
+            exec(compile(source.decode(), "handover_gate.py", "exec"))
+        # DECLARED intent is an egress allowlist scoped to the source host and
+        # whatever measurement services the matrix names. headspace-cli 0.11.0
+        # supports only disabled/enabled network posture and honestly rejects
+        # `egress-allowlist` as rejected_input, so `full` is the working
+        # posture until it ships allowlist support.
+        network: full
+        allowedOutputPaths: []
+      contract:
+        # `passed`/`failed` and nothing else, because the worker maps exactly
+        # one success name and one failure name onto a code node's exit status
+        # and refuses vocabulary it does not recognise
+        # (internal/worker/code.go). The three domain answers t18 specifies
+        # live one node down, in `gate-verdict`.
+        outcomes:
+          passed:
+            schema:
+              type: object
+              required: [operation_id, state]
+              properties:
+                state:
+                  type: string
+                exit_code:
+                  type: integer
+          failed:
+            schema:
+              type: object
+              required: [operation_id, state]
+              properties:
+                state:
+                  type: string
+                exit_code:
+                  type: integer
+      # The code-node-only declaration that lets the runner append its own
+      # measured facts with `observed` authority inside the same transaction
+      # as the transition they justify. This is the one node in this graph
+      # that can produce anything stronger than a proposed claim.
+      ledger:
+        observe: [evidence]
+      acceptance:
+        enforce: observe
+        requires:
+          - kind: process_exit
+            equals: 0
+      # 15m is the ceiling, not a preference: the compiler refuses a code-node
+      # timeout above the smallest cap any registered runner declares (900s,
+      # from the Lambda adapter). A gate matrix whose measurements do not fit
+      # inside it has to be split across operations, which is a real
+      # constraint on how wide the matrix can grow.
+      policy:
+        timeout: 15m
+        retry:
+          maxAttempts: 1
+
+    # ---------------------------------------------------------------------
+    # 4. THE VERDICT. A decision node's `output` variable is its RESOLVED
+    # INPUT (internal/worker/decision.go's convention) — here the gate's own
+    # output document — and first match wins, so the ports read top-down.
+    #
+    # The exit-code contract the validator must honour:
+    #    0  every APPLICABLE gate passed
+    #   10  at least one gate missed its declared numeric threshold
+    #   11  a gate that should have been applicable produced no measurement
+    #  else the validator itself broke
+    #
+    # 10 and 11 are separated because they are different facts with different
+    # right answers: a threshold miss is work for the writer, an absent
+    # measurement is a question for a person. Collapsing them is exactly how
+    # an unmeasured tree comes to be reported as green.
+    # ---------------------------------------------------------------------
+    gate-verdict:
+      kind: decision
+      ownerRef: team/quality-platform
+      input:
+        from: /nodes/handover-gate/output
+      select:
+        - outcome: gates_passed
+          when: "output.state == 'completed' && output.exit_code == 0"
+        - outcome: changes_required
+          when: "output.state == 'completed' && output.exit_code == 10"
+        - outcome: measurement_incomplete
+          when: "output.state == 'completed' && output.exit_code == 11"
+        - outcome: gate_broken
+          when: "true"
+
+    # ---------------------------------------------------------------------
+    # 5. THE REVIEW. A different actor from the writer — which increasingly
+    # means a different machine, which is the entire reason the work has to
+    # reach it as a handle rather than as a path. `review_repo` is this host's
+    # OWN allowlisted checkout: a working directory, never the work under
+    # review.
+    #
+    # It binds BOTH carriers separately rather than the whole handoff blob,
+    # so the graph says which one is the diff and which one is the reasoning.
+    # It also binds the gate's own evidence — the node-run-scoped surface — so
+    # the reviewer sees what was MEASURED beside what the writer CLAIMED, and
+    # can tell the two apart (PRD §10.4).
+    # ---------------------------------------------------------------------
+    merge-review:
+      kind: agent
+      ownerRef: team/quality
+      uses: actor://company/verifier@sha256:4444444444444444444444444444444444444444444444444444444444444444
+      input:
+        bindings:
+          instruction: /run/input/review_instruction
+          repo: /run/input/review_repo
+          sandbox: /run/input/review_sandbox
+          changes: /nodes/work/output/handoff/changes
+          context: /nodes/work/output/handoff/context
+          workReport: /nodes/work/output
+          gateEvidence: /nodes/handover-gate/evidence
+          runEvidence: /ledger/projections/evidence
+      contract:
+        input:
+          schema:
+            type: object
+            # `changes` and `context` are required for the same reason
+            # `work.completed` requires them: an optional handle is one a
+            # dispatch can proceed without, and a review that proceeds
+            # without them reviews its own host's checkout — the wrong tree,
+            # silently, which is worse than a loud refusal.
+            required: [instruction, repo, sandbox, changes, context]
+        outcomes:
+          approve:
+            schema:
+              type: object
+              required: [verdict, findings]
+              properties:
+                verdict:
+                  type: string
+                  enum: [approve]
+                findings:
+                  type: array
+                  items:
+                    type: object
+                    required: [severity, note]
+                    properties:
+                      severity:
+                        type: string
+                        enum: [info, minor, major, blocking]
+                      note:
+                        type: string
+          # A domain answer, not a fault: it follows an edge back to the
+          # writer with the reviewer's own record left in the ledger. This is
+          # the SECOND edge into `work` — the gate catches what an instrument
+          # can measure, and a reviewer catches what one cannot.
+          changes_required:
+            schema:
+              type: object
+              required: [verdict, findings]
+              properties:
+                verdict:
+                  type: string
+                  enum: [changes_required]
+                findings:
+                  type: array
+                  minItems: 1
+                  items:
+                    type: object
+                    required: [severity, note]
+                    properties:
+                      severity:
+                        type: string
+                        enum: [info, minor, major, blocking]
+                      note:
+                        type: string
+      ledger:
+        propose: [claim]
+      policy:
+        timeout: 20m
+        retry:
+          maxAttempts: 2
+          backoff: exponential
+
+    # ---------------------------------------------------------------------
+    # 6. THE HUMAN NODE. An approval node (PRD §9.9): a token arriving here
+    # creates a human task and the run PAUSES — no work item is enqueued, so
+    # no worker can claim it and no lease or transaction is held while it
+    # waits. It resumes only when a person answers through the decision
+    # endpoint.
+    #
+    # THREE different situations route here, and they are the three this
+    # graph is not entitled to answer by itself:
+    #   * work.needs_human            — the continuation spent a bound. The
+    #                                   `onExhausted` edge, without which this
+    #                                   document does not compile.
+    #   * work.timed_out              — a deadline cancelled the session and
+    #                                   the workspace fence refused the
+    #                                   remaining retry. Someone has to say
+    #                                   whether that work is recoverable.
+    #   * gate-verdict.measurement_incomplete
+    #                                 — an instrument did not reach the tree.
+    #                                   Reinterpreting that as a pass is the
+    #                                   one thing t18 forbids outright, so it
+    #                                   becomes a person's decision instead.
+    #
+    # Its input binding is carried into the task as a REFERENCE, not resolved
+    # into a payload (internal/engine's humanTaskContext), which is what makes
+    # it safe to point at `work`'s output on a path where `work` produced
+    # none — the approver gets a pointer to look at, not a resolution that
+    # could fail.
+    # ---------------------------------------------------------------------
+    needs-human:
+      kind: approval
+      ownerRef: team/platform-ai
+      decisionSchemaRef: ./contracts/loop-decision.schema.json
+      approverRef: group/platform-ai-approvers
+      deadline: 24h
+      input:
+        from: /nodes/work/output
+
+    # ---------------------------------------------------------------------
+    # 7. THE BACKOFF. A broken INSTRUMENT is not a failed gate, and the right
+    # response to it is to measure again later rather than to send a writer
+    # back to fix nothing. A durable park: no lease is held while it waits.
+    # The loop is bounded by spec.limits.maxVisitsPerNode, so a permanently
+    # broken validator stops the run rather than re-measuring forever.
+    # ---------------------------------------------------------------------
+    gate-backoff:
+      kind: wait
+      ownerRef: team/quality-platform
+      until:
+        duration: 30m
+
+    # ---------------------------------------------------------------------
+    # 8. CLEANUP. The worktree is removed by the host that minted it — the
+    # only host that can — and only when it is safe to.
+    #
+    # HONEST STATE (gap 2): there is no reaper. `provision()` has no removal
+    # counterpart in any bridge, and there is no `worktree reaped` event for
+    # this node to emit even if there were; what a run shows is an
+    # `attempt.completed` and a proposed claim. `reaper_unwired` is what a
+    # real dispatch reports today.
+    #
+    # It FAILS CLOSED, which is the design decision worth defending: reaping
+    # destroys anything the handoff did not carry, and no node in this graph
+    # can undo that. `reap_refused` is therefore a first-class domain answer
+    # with its own terminal node, and its `retained_reason` is a closed enum
+    # so "why is this worktree still here" has a name rather than a sentence.
+    # ---------------------------------------------------------------------
+    cleanup-workspace:
+      kind: agent
+      ownerRef: team/platform-ai
+      uses: actor://company/developer@sha256:3333333333333333333333333333333333333333333333333333333333333333
+      input:
+        bindings:
+          instruction: /run/input/cleanup_instruction
+          repo: /run/input/repo
+          workspace: /nodes/provision-workspace/output
+          # What was handed on, so the reaper can tell "everything here was
+          # carried" from "there is unharvested work in this tree". On the
+          # paths where `work` produced no handoff this resolves to nothing,
+          # which is itself the answer: refuse.
+          handoff: /nodes/work/output
+      contract:
+        input:
+          schema:
+            type: object
+            required: [instruction, workspace]
+        outcomes:
+          reaped:
+            schema:
+              type: object
+              required: [workspace_ref, removed]
+              properties:
+                workspace_ref:
+                  type: string
+                removed:
+                  type: boolean
+          reap_refused:
+            schema:
+              type: object
+              required: [summary, retained_reason]
+              properties:
+                summary:
+                  type: string
+                retained_reason:
+                  type: string
+                  enum:
+                    - reaper_unwired
+                    - uncommitted_changes_outside_handoff
+                    - worktree_missing
+                    - worktree_not_owned_by_this_run
+      ledger:
+        propose: [claim, result]
+      policy:
+        timeout: 5m
+        retry:
+          maxAttempts: 2
+          backoff: exponential
+
+    # ---------------------------------------------------------------------
+    # 9. THE FOUR ENDINGS. Four rather than one because a terminal run whose
+    # output does not name why it stopped is the illegible failure this whole
+    # graph is against: each end node carries the output of the node that
+    # holds the answer for its own path.
+    # ---------------------------------------------------------------------
+
+    # The loop completed and the workspace is gone.
+    finish:
+      kind: end
+      ownerRef: team/platform-ai
+      output:
+        from: /nodes/cleanup-workspace/output
+
+    # The loop completed and the workspace is DELIBERATELY still there —
+    # `retained_reason` says which of the four reasons applies. The one
+    # ending in this graph that leaves state behind on purpose.
+    workspace-retained:
+      kind: end
+      ownerRef: team/platform-ai
+      output:
+        from: /nodes/cleanup-workspace/output
+
+    # No workspace was ever minted. Nothing downstream can resolve a missing
+    # host capability, so the run stops carrying the node output that names
+    # which capability was missing.
+    provision-blocked:
+      kind: end
+      ownerRef: team/platform-ai
+      output:
+        from: /nodes/provision-workspace/output
+
+    # A workspace exists, work happened in it, and none of it could be handed
+    # on. Routing this into `merge-review` is exactly the mistake issue #74
+    # records — the review host is asked to read work it was given no handle
+    # for, and answers with an authorization error for what is a topology
+    # problem. The run stops here instead, and the worktree stays: nothing
+    # reaps it (gap 2), and pretending otherwise would be worse than saying so.
+    handoff-blocked:
+      kind: end
+      ownerRef: team/platform-ai
+      output:
+        from: /nodes/work/output
+
+    # Nobody answered the approver's task within its 24h deadline. Reaping a
+    # worktree on the strength of silence is not a decision this graph gets to
+    # make, so `expired` ends the run with the workspace intact and unreaped —
+    # the same standing leak as above, named rather than hidden.
+    abandoned:
+      kind: end
+      ownerRef: team/platform-ai
+      output:
+        from: /nodes/work/output
+
+  # THE ORDER, COMPILED. Everything below is the development loop as a set of
+  # transitions the compiler checks rather than a numbered list in a document
+  # somebody has to remember to follow.
+  edges:
+    # --- provision -------------------------------------------------------
+    - from: provision-workspace.provisioned
+      to: work
+    - from: provision-workspace.provision_unavailable
+      to: provision-blocked
+
+    # --- work ------------------------------------------------------------
+    - from: work.completed
+      to: handover-gate
+    - from: work.handoff_unavailable
+      to: handoff-blocked
+    # THE onExhausted EDGE. The engine produces `needs_human` when any
+    # continuation bound is spent; no actor declares it, and the compiler
+    # refuses this document if nothing carries it away
+    # (graph.continuation_exhausted_unrouted). It goes to a person, which is
+    # the whole point of declaring an exhaustion outcome at all.
+    - from: work.needs_human
+      to: needs-human
+    # The workspace fence's aftermath. `timed_out` is an ENGINE status, not a
+    # contract outcome, and routing one is how a workflow sends a timeout
+    # somewhere useful (PRD §3.4). Reaching this edge means a deadline
+    # cancelled a live session AND the engine refused to spend the remaining
+    # retry budget on a session it has asked to stop but has not observed
+    # stop — a refusal is not an ending, so the token still needs somewhere
+    # to go, and the person who decides whether that work is recoverable is
+    # where it goes.
+    - from: work.timed_out
+      to: needs-human
+
+    # --- gate ------------------------------------------------------------
+    # Both of the code node's exit-status ports feed the same decision node:
+    # `failed` here is a DOMAIN answer, and `gate-verdict` tells a threshold
+    # miss, an absent measurement and a broken instrument apart by exit code.
+    - from: handover-gate.passed
+      to: gate-verdict
+    - from: handover-gate.failed
+      to: gate-verdict
+
+    - from: gate-verdict.gates_passed
+      to: merge-review
+    # THE GATE-FAILURE -> CONTINUATION EDGE. A failed threshold sends the work
+    # back to the node that declares `continue.while` and its three bounds —
+    # which is what stops "the gate failed, fix it" from being an unbounded
+    # billable loop when the threshold is genuinely unreachable. The bound is
+    # declared in two independent places on purpose: `spec.limits`
+    # .maxVisitsPerNode bounds these cold re-entries, and `work.continue`
+    # .bounds bounds the turns inside one warm session.
+    - from: gate-verdict.changes_required
+      to: work
+    # An instrument that did not reach the tree is a question, not a verdict.
+    - from: gate-verdict.measurement_incomplete
+      to: needs-human
+    - from: gate-verdict.gate_broken
+      to: gate-backoff
+    - from: gate-backoff.completed
+      to: handover-gate
+
+    # --- review ----------------------------------------------------------
+    - from: merge-review.approve
+      to: cleanup-workspace
+    # The second edge back into the writer: what a human reviewer catches that
+    # no instrument in the gate matrix measures.
+    - from: merge-review.changes_required
+      to: work
+
+    # --- the human decision ----------------------------------------------
+    # Both answers route to cleanup, and cleanup is fail-closed: "approved"
+    # does not mean "destroy the tree", it means "proceed to the reaper",
+    # which refuses on its own evidence if the tree still holds work nothing
+    # carried away.
+    - from: needs-human.approved
+      to: cleanup-workspace
+    - from: needs-human.rejected
+      to: cleanup-workspace
+    - from: needs-human.expired
+      to: abandoned
+
+    # --- endings ---------------------------------------------------------
+    - from: cleanup-workspace.reaped
+      to: finish
+    - from: cleanup-workspace.reap_refused
+      to: workspace-retained

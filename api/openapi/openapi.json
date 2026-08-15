@@ -1,6 +1,15 @@
 {
   "components": {
     "parameters": {
+      "AttemptID": {
+        "description": "The protocol attempt id signed into the callback token.",
+        "in": "path",
+        "name": "attemptID",
+        "required": true,
+        "schema": {
+          "type": "string"
+        }
+      },
       "Digest": {
         "description": "The workflow version's content digest.",
         "in": "path",
@@ -423,6 +432,50 @@
         ],
         "type": "object"
       },
+      "ArtifactWriteResult": {
+        "properties": {
+          "backend": {
+            "enum": [
+              "postgres",
+              "s3"
+            ],
+            "type": "string"
+          },
+          "created_at": {
+            "format": "date-time",
+            "type": "string"
+          },
+          "digest": {
+            "pattern": "^sha256:[0-9a-f]{64}$",
+            "type": "string"
+          },
+          "media_type": {
+            "type": "string"
+          },
+          "name": {
+            "type": "string"
+          },
+          "ref": {
+            "pattern": "^artifact://[^/]+/[^/]+$",
+            "type": "string"
+          },
+          "size_bytes": {
+            "format": "int64",
+            "minimum": 0,
+            "type": "integer"
+          }
+        },
+        "required": [
+          "ref",
+          "name",
+          "media_type",
+          "size_bytes",
+          "digest",
+          "backend",
+          "created_at"
+        ],
+        "type": "object"
+      },
       "Attempt": {
         "properties": {
           "actor_id": {
@@ -433,6 +486,10 @@
           },
           "completed_at": {
             "format": "date-time",
+            "type": "string"
+          },
+          "continuation_ref": {
+            "description": "Opaque handle offered by the actor for continuing this session.",
             "type": "string"
           },
           "fencing_token": {
@@ -473,6 +530,17 @@
               "contract_rejected"
             ],
             "type": "string"
+          },
+          "supersedes": {
+            "description": "The id of the attempt record this one corrects, absent on every ordinary dispatch. Set by the late-callback reconciliation: a node run's deadline expires, the engine records a timed_out attempt, and the actor session it bounded later reports the tokens, model, termination reason and preserve branch of work that really happened. That report cannot commit workflow state (PRD 13.4) and does not rewrite the record it corrects (PRD 10.4) -- it is appended as a new attempt naming the old one. A node run therefore legitimately lists BOTH: read the superseding record as current and the one it names as history.",
+            "type": "string"
+          },
+          "termination_reason": {
+            "description": "The provider-reported reason this attempt ended.",
+            "type": "string"
+          },
+          "usage": {
+            "$ref": "#/components/schemas/AttemptUsage"
           }
         },
         "required": [
@@ -481,6 +549,40 @@
           "attempt_number",
           "status",
           "started_at"
+        ],
+        "type": "object"
+      },
+      "AttemptUsage": {
+        "properties": {
+          "cached_input_tokens": {
+            "type": "integer"
+          },
+          "cost": {
+            "type": "number"
+          },
+          "currency": {
+            "type": "string"
+          },
+          "input_tokens": {
+            "type": "integer"
+          },
+          "output_tokens": {
+            "type": "integer"
+          },
+          "reasoning_tokens": {
+            "type": "integer"
+          },
+          "thread_id": {
+            "type": "string"
+          },
+          "usage_model": {
+            "description": "Model attribution exactly as reported by the bridge. Explicit unknown sentinels are rendered verbatim and never collapsed to null.",
+            "type": "string"
+          }
+        },
+        "required": [
+          "input_tokens",
+          "output_tokens"
         ],
         "type": "object"
       },
@@ -598,6 +700,28 @@
         },
         "required": [
           "workflow_digest"
+        ],
+        "type": "object"
+      },
+      "CreateWorkflowGeneration": {
+        "additionalProperties": false,
+        "properties": {
+          "actor_ref": {
+            "minLength": 1,
+            "type": "string"
+          },
+          "base_digest": {
+            "pattern": "^sha256:[0-9a-f]{64}$",
+            "type": "string"
+          },
+          "description": {
+            "minLength": 1,
+            "type": "string"
+          }
+        },
+        "required": [
+          "description",
+          "actor_ref"
         ],
         "type": "object"
       },
@@ -1994,6 +2118,57 @@
         ],
         "type": "object"
       },
+      "WorkflowGeneration": {
+        "properties": {
+          "base_digest": {
+            "type": "string"
+          },
+          "diagnostics": {
+            "items": {
+              "$ref": "#/components/schemas/Diagnostic"
+            },
+            "type": "array"
+          },
+          "diff": {
+            "type": "string"
+          },
+          "digest": {
+            "type": "string"
+          },
+          "format": {
+            "enum": [
+              "yaml",
+              "json"
+            ],
+            "type": "string"
+          },
+          "run_id": {
+            "type": "string"
+          },
+          "source": {
+            "type": "string"
+          },
+          "status": {
+            "enum": [
+              "proposed",
+              "confirmed",
+              "rejected",
+              "exhausted"
+            ],
+            "type": "string"
+          },
+          "valid": {
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "run_id",
+          "status",
+          "valid",
+          "diagnostics"
+        ],
+        "type": "object"
+      },
       "WorkflowSource": {
         "properties": {
           "format": {
@@ -2104,6 +2279,11 @@
       },
       "adhocRunBearerAuth": {
         "description": "The shared secret configured as NODES_ADHOC_RUN_TOKEN_SECRET. Used only by POST /v1alpha1/adhoc-runs (task t19, gated by the t15 auth-hardening pass, spec c27) — its own secret, so the power to start ad-hoc (often billable) work is granted independently of decision, registration, and event standing.",
+        "scheme": "bearer",
+        "type": "http"
+      },
+      "attemptCallbackBearerAuth": {
+        "description": "The short-lived callback token minted for exactly one attempt. The route verifies it against the attempt id in the path before loading durable invocation authority or reading the request body.",
         "scheme": "bearer",
         "type": "http"
       },
@@ -2411,6 +2591,98 @@
         "summary": "Create a first-class ad-hoc run from a bare instruction.",
         "tags": [
           "runs"
+        ]
+      }
+    },
+    "/v1alpha1/attempts/{attemptID}/artifacts": {
+      "post": {
+        "description": "Requires the callback bearer token issued for exactly the attempt named in the path. Namespace, run, and attempt associations are derived from that attempt's durable PendingInvocation; the body is opaque content and cannot supply authority-bearing fields. Returns an artifact:// ref and metadata measured by the artifact store.\nNo GET or DELETE operation is mounted. Possession of an artifact:// ref is not authorization, and filesystem paths are never resolved.",
+        "operationId": "putAttemptArtifact",
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/AttemptID"
+          },
+          {
+            "description": "A descriptive, non-authoritative artifact name.",
+            "in": "header",
+            "name": "Artifact-Name",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "*/*": {
+              "schema": {
+                "format": "binary",
+                "type": "string"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ArtifactWriteResult"
+                }
+              }
+            },
+            "description": "The artifact was stored and associated with the durable invocation."
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "description": "Content-Type or Artifact-Name is missing."
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "description": "The token is missing, expired, invalid, or belongs to a different attempt."
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "description": "No durable pending invocation has the path's attempt id."
+          },
+          "413": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "description": "The body exceeds the publication limit (api.MaxArtifactBytes, 64 MiB). Authentication is not a size limit: publish large output to object storage and record a reference, or split it."
+          }
+        },
+        "security": [
+          {
+            "attemptCallbackBearerAuth": []
+          }
+        ],
+        "summary": "Publish opaque artifact bytes for one pending attempt.",
+        "tags": [
+          "artifacts"
         ]
       }
     },
@@ -3749,6 +4021,99 @@
         ]
       }
     },
+    "/v1alpha1/workflow-generations": {
+      "post": {
+        "description": "Creates a normal bounded workflow run whose generation node is an agent and whose next node is human approval. This operation never publishes. The initial authority status is always proposed.",
+        "operationId": "createWorkflowGeneration",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CreateWorkflowGeneration"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "202": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/WorkflowGeneration"
+                }
+              }
+            },
+            "description": "The fleet generation run was created."
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "description": "The description or actor reference is malformed."
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "description": "The pinned base workflow does not exist."
+          }
+        },
+        "summary": "Dispatch a registered fleet agent to propose workflow source.",
+        "tags": [
+          "workflows"
+        ]
+      }
+    },
+    "/v1alpha1/workflow-generations/{id}": {
+      "get": {
+        "operationId": "getWorkflowGeneration",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/WorkflowGeneration"
+                }
+              }
+            },
+            "description": "Current generation state. Exhaustion is a domain status."
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "description": "No such generation run."
+          }
+        },
+        "summary": "Read a generated proposal, compiler diagnostics, and edit diff.",
+        "tags": [
+          "workflows"
+        ]
+      }
+    },
     "/v1alpha1/workflows": {
       "get": {
         "operationId": "listWorkflows",
@@ -3971,6 +4336,10 @@
     {
       "description": "Registered actor identities and their aggregate stats (task t15). Read-only — registering an actor stays deploy/prod/register-actor.sh (issue #8).",
       "name": "actors"
+    },
+    {
+      "description": "Attempt-authenticated publication of opaque artifact bytes. This surface intentionally exposes no read or delete operation.",
+      "name": "artifacts"
     },
     {
       "description": "The clarify-then-commit gate (task t14, issue #67): the briefing an actor is handed before its first billable turn, and the second, separate action that commits the dispatch. Per-actor and default-off — an actor whose registration enables no gate is never briefed and never waits.",

@@ -29,6 +29,8 @@ const (
 	CELVarOutput  = "output"
 	CELVarOutcome = "outcome"
 	CELVarEvent   = "event"
+	CELVarNode    = "node"
+	CELVarBudget  = "budget"
 )
 
 // newCELEnv builds the compile-time environment. A failure here is an internal
@@ -39,6 +41,8 @@ func newCELEnv() (*cel.Env, error) {
 		cel.Variable(CELVarOutput, cel.DynType),
 		cel.Variable(CELVarOutcome, cel.DynType),
 		cel.Variable(CELVarEvent, cel.DynType),
+		cel.Variable(CELVarNode, cel.DynType),
+		cel.Variable(CELVarBudget, cel.DynType),
 	)
 	if err != nil {
 		return nil, fmt.Errorf("compiler: build CEL environment: %w", err)

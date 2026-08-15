@@ -17,6 +17,7 @@ After=network-online.target docker.service
 # deploy.sh installs the binary and the env file; the secret file keeps the
 # bearer out of the environment listing entirely.
 EnvironmentFile=%h/.culture-nodes/runner.env
+EnvironmentFile=-%h/.culture-nodes/runner-secrets.env
 ExecStart=%h/.culture-nodes/bin/nodes-runner
 Restart=on-failure
 RestartSec=5

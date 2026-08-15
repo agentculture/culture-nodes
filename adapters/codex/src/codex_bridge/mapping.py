@@ -247,6 +247,13 @@ def _default_workspace_measured() -> dict[str, Any]:
     }
 
 
+#: The model sentinel for a session that normally reports one and did not.
+#: Distinct from the colleague/notify "backend cannot report" sentinels:
+#: this is a gap in one attempt, not a permanent property of the backend
+#: (#77 -- a null here was indistinguishable from an unwritten field).
+MODEL_NOT_REPORTED = "unknown:codex-session-did-not-report"
+
+
 def usage_from_task_result(task_result: dict[str, Any] | None) -> dict[str, Any] | None:
     """Map provider-reported codex usage onto §13.2 `Usage`.
 
@@ -284,6 +291,10 @@ def usage_from_task_result(task_result: dict[str, Any] | None) -> dict[str, Any]
     model = task.get("model")
     if isinstance(model, str) and model:
         mapped["model"] = model
+    else:
+        # Never omit -- see MODEL_NOT_REPORTED. #77 was exactly this: a null
+        # usage_model indistinguishable from a field nobody wrote.
+        mapped["model"] = MODEL_NOT_REPORTED
 
     thread_id = task.get("task_id")
     if isinstance(thread_id, str) and thread_id:

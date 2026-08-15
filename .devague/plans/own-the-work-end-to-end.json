@@ -1,0 +1,1339 @@
+{
+  "slug": "own-the-work-end-to-end",
+  "title": "own-the-work-end-to-end",
+  "frame_slug": "own-the-work-end-to-end",
+  "schema_version": 4,
+  "status": "exported",
+  "created": "2026-08-15T05:58:27Z",
+  "updated": "2026-08-15T08:33:41Z",
+  "targets": [
+    {
+      "id": "c1",
+      "kind": "announcement",
+      "text": "Culture Nodes owns a ticket end to end across hosts: work crosses a machine boundary as a portable handle, a deadline stops the session it bounds, and the run explains itself without a companion document.",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "h1",
+      "kind": "honesty",
+      "text": "Every one of the three verbs in the announcement is demonstrated against a LIVE cross-host run, not a test: a byte crosses spark->thor through an artifact handle, a deadline stops a real actor session, and a reader reconstructs that run from the run alone. If any of the three is only unit-tested, the announcement is overstated and must be narrowed to what was actually run.",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "c2",
+      "kind": "requirement",
+      "text": "An artifact Put/Get API route, persisted InvocationResult.artifact_refs, and a runner-boundary resolution path are the blocking prerequisite for every other capability in #87. internal/artifacts is a complete library (Store, Router, ref.go's artifact://<namespace>/<id> scheme, postgres + s3 drivers, migrations 0004_observability.sql + 0006_artifact_blobs.sql) with ZERO production callers: grepping the import across the tree returns only its own tests and drivers, and internal/api/server.go's route table (lines 300-346) registers no artifact route.",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "h2",
+      "kind": "honesty",
+      "text": "The artifact path is proven by a node on ONE host writing what a node on a DIFFERENT host reads \u2014 not by a same-host round trip, and not by a unit test against the Store interface. A same-host proof does not distinguish a working artifact path from a shared filesystem.",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "c3",
+      "kind": "boundary",
+      "text": "AMENDED after the q9 decision \u2014 this boundary as originally written was FALSE, and its own honesty condition h17 is what caught it. The original text said the fix->review handoff contract was already shipped and enforced and must not be redesigned, citing tests/lint/crosshosthandoff_test.go's requirement that fix.completed carry an artifact:// handle. h17 pinned that boundary to 'the guard passes UNCHANGED after the artifact path lands; if implementing the mechanism requires editing the guard, the contract was not settled and this boundary is false.' The q9 decision requires exactly that edit, so the antecedent holds and the boundary is retired. What SURVIVES and is still binding: the guard's refusal of a bare filesystem path between nodes whose actors may differ (the 403-that-names-authorization-when-the-cause-is-topology failure), the closed missing_capability enum on handoff_unavailable, and the rule that handoff_unavailable never routes into review. What CHANGES: handoff.kind gains git_ref beside artifact, and the guard asserts a portable handle of EITHER kind rather than an artifact:// specifically.",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "h48",
+      "kind": "honesty",
+      "text": "After the change, tests/lint/crosshosthandoff_test.go still REFUSES a bare filesystem path handed between nodes \u2014 verified by a case that hands one and expects rejection. That refusal is the load-bearing half of the guard and the thing #74 was actually about; widening the accepted handle kinds must not weaken it. Supersedes the rejected h17, whose antecedent the q9 decision satisfied.",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "c4",
+      "kind": "requirement",
+      "text": "A node deadline cannot stop an actor session today for a STRUCTURAL reason, not an oversight: the expiry runs in internal/scheduler (scheduler.go:688 deadlineTimeoutOutput, waitForDeadlineTimer at :617), and the Scheduler struct holds only db, pool, opts, and a per-namespace engine cache \u2014 no actors.Client and no actor Registry, so the process that expires the timer has no way to address a bridge. Wiring one in is proven three times over: internal/api/cancelpropagate.go builds its own worker.NewDBRegistry plus a package-level actors.NewClient(), internal/worker/branchcancel.go does it for reaped branches, and internal/worker/budget.go's cancelPendingInvocation does it for budget exhaustion \u2014 resolve the pending invocation, resolve the endpoint, Cancel best-effort, record an event, swallow every failure.",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "h3",
+      "kind": "honesty",
+      "text": "The deadline's cancel is verified by observing the ACTOR SESSION end \u2014 a process gone, a callback arriving, a provider thread closed \u2014 never by reading the run's status back. #87 acceptance 3 names this distinction explicitly, and reading the status back is exactly the bookkeeping fiction the issue is about.",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "c6",
+      "kind": "requirement",
+      "text": "Preserve-on-failure cannot be fixed engine-side alone. It is BRIDGE-side and triggered by a failure the bridge itself observes: adapters/claude-code/src/claude_code_bridge/server.py:538-555 and adapters/codex/src/codex_bridge/async_runner.py:263-277 both call preserve.preserve_on_failure() on their own technical-failure path and attach the result under a 'preserve' key. On a deadline expiry the ENGINE gives up while the bridge session keeps running, so the bridge never reaches its failure path and preserve never fires \u2014 which is exactly the mechanism behind #78's 'preserve_branch: None'. This makes #78 a consequence of #82: once the deadline's cancel actually reaches the bridge, the cancellation becomes a bridge-observed terminal event it can preserve from. Fixing #78 without #82 would require a second, independent preservation path.",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "h4",
+      "kind": "honesty",
+      "text": "A test pins the DEADLINE path specifically, with a dirty workspace, and asserts a preserve ref exists. The existing preserve tests were mutation-verified on two bridges but never against a deadline expiry \u2014 which is precisely how this gap survived a high-confidence delivery claim.",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "c8",
+      "kind": "requirement",
+      "text": "The API genuinely does not expose attempt attribution, and this half of #77 is confirmed rather than inferred. api/openapi/openapi.json's Attempt schema has exactly: actor_id, attempt_number, completed_at, fencing_token, id, node_run_id, preserve_branch, preserve_pushed, preserve_remote, result, started_at, status. No usage, no usage_model, no termination_reason, no continuation_ref. A live GET /v1alpha1/runs/{id} accordingly returns usage=null on every attempt including a succeeded claude-developer attempt from today \u2014 which means the API as it stands CANNOT distinguish 'the column is null' from 'the API does not render it'. Surfacing the usage block on the Attempt schema is a precondition for even measuring whether the write path works.",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "h7",
+      "kind": "honesty",
+      "text": "Adding usage to the Attempt schema is done in the OpenAPI document AND the Go handler AND the run-detail page together, so a reader never has one surface claiming a fact another cannot show. A schema change alone leaves the same measurement blindness in place under a new name.",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "c9",
+      "kind": "requirement",
+      "text": "colleague and notify are the real all-backends gap in #77. adapters/colleague/mapping.py:234-249 maps prompt/completion tokens and its docstring states that cost, currency, cache, reasoning, model and thread fields are 'omitted, never zero-filled'; adapters/notify has no mapping.py usage surface at all. #77 asks for absence recorded as an explicit unknown rather than a null indistinguishable from 'nobody wrote it' \u2014 for these two backends that is the whole of the work, and it needs a representation for 'this backend cannot report a model' that the ledger can tell apart from 'not measured'.",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "h8",
+      "kind": "honesty",
+      "text": "colleague and notify report an EXPLICIT unknown that the ledger can distinguish from 'not measured' \u2014 a rollup grouping tokens by model must be able to tell 'this backend cannot say' apart from 'nobody wrote it'. A null serves neither, which is the whole of #77's complaint.",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "c10",
+      "kind": "requirement",
+      "text": "adapters/*/preflight.py is BYTE-IDENTICAL across all four bridges \u2014 md5 76e595f6, 339 lines, in claude-code, codex, colleague and notify. So #83's fix is one edit applied four times in lockstep, and the all-backends rule here is literal file duplication rather than four independent implementations. tests/lint/preflightsurface_test.go already exists as the guard over this surface.",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "h9",
+      "kind": "honesty",
+      "text": "All four preflight.py copies stay byte-identical after the change \u2014 verified by comparing digests, not by intent. They are identical today (md5 76e595f6); a change that lands in three of four is exactly the all-backends bug CLAUDE.md names.",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "c11",
+      "kind": "requirement",
+      "text": "#83's contradiction is real and one doctrine must lose in writing. preflight.py's userns_restrictions() docstring states 'the sysctls ARE the fact, so read them rather than shelling out to bwrap to find out', while deploy/prod/README.md and codex-preflight.sh check 7 state 'Verify by capability, never by reading the sysctl back. The value says what was configured; only the probe says what works.' The second was established by probing during the #63 fix. Whichever wins, the loser's prose changes in the same diff \u2014 leaving both standing is how the next reader picks the wrong one.",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "h10",
+      "kind": "honesty",
+      "text": "The losing doctrine's prose is edited in the SAME diff that changes the measurement. Leaving both 'the sysctls ARE the fact' and 'verify by capability, never by reading the sysctl back' standing is how the next reader picks the wrong one, and the contradiction is the actual defect #83 reports.",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "c12",
+      "kind": "requirement",
+      "text": "#84 is WORSE on the host than it was filed, verified by reading spark's live systemd user units rather than the deploy script. There are THREE config mechanisms for one bridge, not two: (1) the running culture-nodes-human-inbox.service uses Environment=HUMAN_INBOX_BRIDGE_CONFIG=%h/.config/culture-nodes-bridges/human-ops.json \u2014 a JSON config file, with NO EnvironmentFile at all; (2) the running culture-nodes-human-inbox-tracker.service uses EnvironmentFile=%h/.config/culture-nodes-bridges/human-ops-tracker.env; (3) deploy.sh (lines 386-430) writes ~/.culture-nodes/human-inbox-bridge.env and ~/.culture-nodes/human-inbox-tracker.env and installs units named human-inbox-bridge.service / human-inbox-tracker.service that read ~/.culture-nodes/human-inbox-bridge.env plus ~/.culture-nodes/human-inbox.env. Reconciling 'the env-file path' as the issue frames it is not enough; a JSON-config bridge and an EnvironmentFile bridge are different configuration contracts.",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "h11",
+      "kind": "honesty",
+      "text": "The deploy is proven by running it twice against a host that already has the OTHER naming installed, and observing adoption rather than a port conflict on both runs. A single clean-host run proves nothing about the case this issue is entirely about.",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "c13",
+      "kind": "boundary",
+      "text": "The production claude-code bridges on spark run FROM THIS WORKING TREE: culture-nodes-claude-developer.service (and intake/planner/verifier) declare WorkingDirectory=/home/spark/git/culture-nodes/adapters/claude-code and ExecStart=uv run claude-code-bridge. Editing adapter source in this checkout changes production bridge behaviour on the next restart, with no deploy step in between. Any work on adapters/ during this cycle has to treat that as a live surface \u2014 and it is also the reason the model-attribution plumbing from b5cdc5b is already deployed on spark's claude bridges without anyone deploying it.",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "h18",
+      "kind": "honesty",
+      "text": "Any adapter change in this batch is followed by a deliberate restart of the four spark bridges, or it is not in effect. The corollary is the sharper half: an adapter edit is live on next restart whether or not anyone intended a deploy, so the batch must never leave adapters/ in a half-edited state across a restart boundary.",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "c14",
+      "kind": "requirement",
+      "text": "#86 part A is mechanically small and the inputs are already in hand: deploy/prod/deploy.sh:30-31 already does git rev-parse --short $BRANCH and ships git archive of that same revision, and lines 68-75 take PR_UPKEEP_SWEEP_SOURCE_URL and PR_UPKEEP_SWEEP_SOURCE_SHA256 from the operator's environment, skipping the lane with a named warning when either is unset. Deriving both from the revision being deployed is a change confined to that one lane, and it removes the class of failure where a squash merge orphans the pinned commit.",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "h12",
+      "kind": "honesty",
+      "text": "The derived pin is proven against a SQUASH-MERGED revision \u2014 the exact case that orphaned commit 0abf042 \u2014 not against a branch tip that happens to still be reachable. The current pin also 'works' right now, which is why testing the happy path proves nothing.",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "c15",
+      "kind": "boundary",
+      "text": "#86 part B must move the repo pin from a code literal to a GRANTED environment value resolved by the runner, never to run input \u2014 and the guard that enforces this will fail loudly and deliberately. tests/test_pr_upkeep_sweep.py:660-740's TestTheSweptRepoIsPinnedAndSaysSo asserts the module's environment reads are EXACTLY {GITHUB_TOKEN, PR_UPKEEP_MAX_PRS_PER_SWEEP, PR_UPKEEP_REQUIRED_CHECKS} and that SONAR_COMPONENT_KEY and GITHUB_REPO are plain literals, with an error message that says a new read naming a repo or component key 'is the boundary this example refuses to make configurable'. Editing that set is the deliberate act the issue asks for; the blast-radius note at examples/pr-upkeep/sweep.py:85-93 gets rewritten in the same diff rather than deleted.",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "h19",
+      "kind": "honesty",
+      "text": "The swept repo remains unreachable from run input after the change \u2014 a caller naming a repo in a workflow field or run input must still be refused. tests/test_pr_upkeep_sweep.py's environment-read assertion is edited deliberately to admit exactly the new granted value and nothing more, and the blast-radius note is rewritten rather than deleted.",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "c21",
+      "kind": "requirement",
+      "text": "The dependency order is forced by the mechanics, not chosen \u2014 and it has been re-threaded twice, by the q6 and q9 decisions. (1) TWO PARALLEL UNBLOCKING TRACKS, because the q9 decision gives the handoff two carriers: the ARTIFACT track is #79 (route, persisted artifact_refs, runner-boundary resolution, and its authorization model q5 settled BEFORE the route is built), carrying context and data; the GIT-REF track is the bridge push credential (c70) plus reuse of t25's write-tree/commit-tree/update-ref machinery, carrying a runner's changes. The pr-upkeep reference case needs BOTH \u2014 the sweep's item list is context, the fix's diff is changes \u2014 so neither track alone completes it. (2) A MINIMAL SLICE OF #80 next: the continue.while declaration, its compilation and its CEL evaluation, because the q6 decision makes the deadline consult it AND the q7/c63 decision makes a failed handover gate route to it. This is a reversal of the pre-challenge order, which had #80 after #78 and #77. (3) #82: the post-commit cancel (q3/c48), the workspace fence (c49), the late-callback reconciliation (c37), a deadline-cancel event type (c46). (4) #78 falls out of #82 plus honest-absence reporting \u2014 and its push leg is fixed by c70 on the git-ref track. (5) #77's API surface, then #28's model-attributed grades, then the rest of #80. Parallel throughout, touching nothing the chain edits: #83 (adapters/preflight.py), #84 (deploy/prod/ \u2014 composes with c70's credential work), #86 (examples/pr-upkeep/). #81 and #76 last.",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "h14",
+      "kind": "honesty",
+      "text": "The no-model-in-the-control-plane rule is enforced by a tests/lint gate, the way webhookisolation_test.go and github_isolation_test.go already enforce their boundaries \u2014 not by a comment or a review convention. #81 states this as acceptance, and an unenforced boundary in this repo has a track record of drifting.",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "c23",
+      "kind": "requirement",
+      "text": "#86's knock-on (part D) is confirmed exact-match, not prefix: adapters/claude-code/src/claude_code_bridge/config.py:196-201 resolves the requested repo and returns 'resolved in self.repo_allowlist'. So sweeping N repos requires N checkouts AND N allowlist entries on the fix actor's host, and the same again on the review actor's host \u2014 otherwise the sweep surfaces findings for repos the fix node is refused from touching, and the refusal (a correct 403) arrives one node too late. Sizing the configured repo set is therefore a per-host provisioning cost, not a config-file edit.",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "h13",
+      "kind": "honesty",
+      "text": "Every repo in the configured set has a checkout AND an exact-match allowlist entry on BOTH the fix and review actor hosts before the set is enlarged. config.py:196-201 is an exact-match membership test on a resolved path, so a missing entry surfaces as a correct 403 one node too late to be useful.",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "c24",
+      "kind": "requirement",
+      "text": "Session accounting binds this batch's shape, per CLAUDE.md's economy lane and issue #48. The operator's interactive Claude session, local subagents, and every bridge session on the same account share ONE subscription window. Eleven issues is not a wave; whatever subset is chosen needs a declared model-session count per wave against the remaining window before any fan-out, with big analysis/build packages routed to codex actors and the operator's window reserved for operator-lane work and merge gates.",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "h15",
+      "kind": "honesty",
+      "text": "The split plan declares an expected model-session count per wave against the REMAINING subscription window before any assignment, and the operator's own window is reserved for operator-lane work and merge gates. Issue #47's diagnosis is that a fan-out which does not do this exhausts the window mid-wave \u2014 this batch is larger than the one that did.",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "c28",
+      "kind": "requirement",
+      "text": "#78's evidence is stronger on the timeout path and WEAKER on the failure path than either the issue or my first reading of the data claimed. Measured on thor: preserve_branch is NULL on all 140 attempts, but the sample that could have exercised the failure path since t25 shipped (b5cdc5b, 2026-08-14) is ZERO. Only 2 of 13 failed attempts were on agent actors at all, and both predate t25 \u2014 one is retryable_transport (the invocation never reached the bridge, so no bridge-side preserve could have run by construction) and one is an execution failure from 2026-08-12. So the database neither confirms nor refutes the failure path; it has never been exercised in production. What IS established: 5 timed_out attempts, zero preserve branches, and \u2014 separately \u2014 every one of those 5 has a NULL actor_id, including 01M00DACGHSZ2QD73G5YA75N4V from today. The delivery claim in docs/deliveries/2026-08-14-economy-discord-graphs.md should be rescoped to 'verified by test, never exercised in production' rather than either 'high confidence' or 'false'.",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "h5",
+      "kind": "honesty",
+      "text": "The delivery-claim correction states what was actually verified and what was not: preserve-on-failure is verified BY TEST on two bridges and has never been exercised in production on any path. Restating it as either 'high confidence' or 'false' would both be wrong, and the correction is worthless if it is not more precise than the claim it replaces.",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "c30",
+      "kind": "requirement",
+      "text": "v1 is resolved and it makes #78 a consequence of #82 rather than independent work. Reading adapters/codex/src/codex_bridge/async_runner.py:201-278: cancel() sends SIGTERM cooperatively and never SIGKILL; _run() measures the workspace unconditionally after the session ends whatever ended it; a cancelled session is classified as incomplete rather than success, so it produces a 'failed' terminal event; and a 'failed' terminal event routes through preserve.preserve_on_failure BEFORE the terminal callback fires. The claude-code bridge carries the same hook on both its sync (server.py:543) and async (async_runner.py:192) paths, and preserve_on_failure defaults True with none of spark's five bridge configs overriding it. So the preservation window #78 asks for already exists \u2014 wiring the deadline to Cancel (#82) makes a timed-out node's work preserve through the path that is already built, with no second preservation mechanism. The residual #78 work is the honest-absence reporting (preserve_attempted:false with a reason) and a test that pins the deadline path specifically.",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "h6",
+      "kind": "honesty",
+      "text": "The claim that a cancelled session reaches preserve is verified by RUNNING one \u2014 cancel a live session with a dirty workspace and observe the preserve branch \u2014 not only by reading async_runner.py's ordering. Code reading established the path exists; only a run establishes it fires.",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "c31",
+      "kind": "audience",
+      "text": "Three audiences, in the order the work serves them. (1) The OPERATOR running a development cycle through Culture Nodes \u2014 today they are the transport (copying bytes between hosts), the memory (writing the state file the ledger could not), and the recovery mechanism (committing a timed-out node's work by hand). (2) A READER WHO WAS NOT PRESENT \u2014 a reviewer, a future maintainer, or the same operator six weeks later \u2014 who must reconstruct what happened from the run alone. (3) The AGENT FLEET itself, which needs work to cross a host boundary and needs its own attempts attributed well enough that the comparative record means something.",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "h20",
+      "kind": "honesty",
+      "text": "Each of the three audiences has at least one success signal in c35 that would fail if their need went unmet. An audience nothing measures is decoration \u2014 if the reader-who-was-not-present has no falsifiable signal, that audience is aspirational and should be struck rather than claimed.",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "c32",
+      "kind": "after_state",
+      "text": "After this batch: work crosses a machine boundary as an artifact:// handle resolved through the store, with no path passed between nodes and no operator copy step \u2014 the pr-upkeep fix->review handoff completes across spark and thor. A node that exceeds its deadline has its actor session STOPPED, and its in-flight work lands on a preserve branch through the path that already exists, recoverable without a human touching a filesystem. Every attempt records which model ran it, at what effort, at what cost, and the Attempt API surface carries that so it can be read without a database. A run explains itself: what was asked, what ran it, what it produced, what was measured versus claimed, and why it ended as it did, with no companion document. The human acts at the three devague gates and at ledger promotion, and nowhere else.",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "h21",
+      "kind": "honesty",
+      "text": "Every verb in the after-state is demonstrated on a LIVE run rather than a test: bytes actually cross spark to thor, a real session is actually stopped, a real run is actually read without a companion file. Any verb only unit-tested is narrowed in the delivery summary to what was run \u2014 this repo has already shipped one high-confidence claim (preserve-on-failure) that was true by test and never exercised in production.",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "c33",
+      "kind": "before_state",
+      "text": "Before: the 2026-08-14 upkeep-actors-jira cycle cost five specific things, each a record rather than a hypothetical. A human rescued the filesystem \u2014 run 01M00BKCVT04SSGPNXDF3JJX5G was recorded failed while its session kept working and committed 3f9bd3c, which survived only because a person looked. Work could not cross ANY boundary \u2014 run 01M00NVQH582QBARWSYFR0WTG1 swept successfully and terminated at handoff_unavailable because a code node's output is runner metadata and no artifact route is mounted. The rescue path does not work on the host it was built for \u2014 the spark bridge service cannot push. The ledger cannot say who did the work \u2014 1 of 140 attempts records a model, and that one only because a bridge restarted onto new code an hour before. And the record needed a companion document to be legible: docs/deliveries/2026-08-14-upkeep-actors-jira-STATE.md exists, and its existence IS the evidence.",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "h22",
+      "kind": "honesty",
+      "text": "Every one of the five costs cites a run id, a commit, a measured count or a committed file that a reader can check independently. A before-state built from recollection rather than records is the exact failure the companion-document problem is about, and would be self-refuting here.",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "c34",
+      "kind": "why_it_matters",
+      "text": "The human is meant to be the DECIDER, not the plumbing and not the memory. Every hour spent copying bytes between hosts, re-reading a worktree to find out whether a failed run actually failed, or writing down what the ledger could not say, is an hour not spent on the only judgement a human is uniquely needed for. The dogfooding reflex in CLAUDE.md exists to accumulate a comparative record of which actor is better at what \u2014 and every grade in that record currently rates an ENDPOINT against an unknown model, so the evidence is weaker than it reads. Fixing that is not tidiness; it is what makes the accumulated record worth anything.",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "h23",
+      "kind": "honesty",
+      "text": "The claim that grades currently rate an endpoint against an unknown model is checkable against the ledger: the two grade records from this cycle (ledger_01M0085GSDSXNQKEKK4WCXM6FX, ledger_01M008J5468R4T4WVH2D14WX9C) name no model, and usage_model was NULL on every attempt before 17:45 today. If a later reading contradicts that, this rationale weakens and must be restated.",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "c35",
+      "kind": "success_signal",
+      "text": "Six falsifiable signals, each demonstrable or failable, taken from #87's acceptance and sharpened by what the scope probes established. (1) A node killed mid-write has its session stopped and its work recovered from the run alone, with no filesystem access \u2014 provable because the preserve path already fires on a cancelled session. (2) The pr-upkeep fix->review handoff completes across two machines with no path passed and no operator copy step. (3) Cancelling a run ends the actor session, verified by observing the session end rather than reading the run status. (4) usage_model coverage moves from 1/140 to every fresh attempt on all four backends, with colleague and notify reporting an explicit unknown rather than a null. (5) The companion-document test: this cycle's -STATE.md would not have needed to exist, measured as a diff against what the delivery_summary projection renders. (6) A cycle of this shape completes with the human acting only at the three devague gates and at ledger promotion.",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "h24",
+      "kind": "honesty",
+      "text": "Every signal is falsifiable BEFORE the work starts \u2014 each names an observation that could come back negative, and none is written so that shipping the code automatically satisfies it. Signal 5 in particular is measured as a diff against what delivery_summary renders versus what the hand-written -STATE.md said, not as an opinion that the run reads well. Any signal that cannot fail is struck rather than counted, which is how last cycle's signal 5 became unverifiable.",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "c36",
+      "kind": "boundary",
+      "text": "This batch does not weaken PRD 10.4 and does not make the merge gate machine-DECIDED. Agents create only proposed records; humans confirm or reject; no actor promotes its own proposal; an agent saying 'done' stays a completion claim rather than evidence. The merge gate may become machine-VERIFIED \u2014 measured diffs, an independent review step, observed workspace evidence \u2014 but whether a machine may decide a merge is a separate question this work does not answer. The three devague gates stay. The work removes the human from TRANSPORT and RECALL, never from decision.",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "h25",
+      "kind": "honesty",
+      "text": "No record created by an agent in this batch lands with any authority above 'proposed', and no code path lets an actor promote its own proposal \u2014 checkable by the existing ledger authority tests rather than by review. If the batch needs an exception to ship a capability, that is a signal the capability is designed wrong, not that the boundary should move.",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "c37",
+      "kind": "requirement",
+      "text": "Wiring the deadline to Cancel is NOT sufficient on its own, and this binds #82, #78 and #77 into one change. The bridge's terminal event \u2014 carrying the preserve block AND the usage/model block for the work that actually happened \u2014 arrives after the engine has committed the attempt as timed_out. That makes it a LATE callback, and internal/actors/callback.go:748-755's late() records a TypeCallbackLate event and calls CloseInvocation(superseded), writing NOTHING to the attempts table. So the preserve branch would exist in git and stay invisible in the ledger (preserve_branch still NULL), and the model that did the work would stay unrecorded \u2014 exactly the two gaps #78 and #77 are about. #82's second ask \u2014 a late terminal callback reconciled as a superseding record rather than dropped \u2014 is therefore the CARRIER for the other two fixes, not a nicety. NOTE (amended after the challenge pass): this claim originally also required the Cancel to be issued BEFORE CompleteAttempt commits. That ordering is SUPERSEDED by the q3 decision \u2014 it collided with the scheduler's transaction shape (c40) and would not have closed the re-dispatch race anyway (c42). The cancel now goes out after commit and the race is closed by a workspace fence. The late-callback reconciliation is unaffected and remains required.",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "h16",
+      "kind": "honesty",
+      "text": "The late-callback reconciliation is proven by a superseding attempt record that actually carries the preserve branch and the usage/model block \u2014 read back from the attempts table, not from a TypeCallbackLate event body. An event-only trace is exactly the invisibility this claim identifies, so a fix that only enriches the event has not fixed it.",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "c39",
+      "kind": "requirement",
+      "text": "CHALLENGE / adjacent-systems lens: the superseding attempt record c37 requires would RE-CREATE, one layer down, the exact actor-scoring distortion #82 exists to fix. Two facts collide. (1) migrations/0002_runtime_execution.sql:71 declares CONSTRAINT attempts_node_run_attempt_number_key UNIQUE (node_run_id, attempt_number), and engine_store.go:659 mints the next number as MAX(attempt_number)+1 \u2014 so a superseding record CANNOT reuse the timed-out attempt's number and must take a new one. (2) actorstats.go:373-376's loadActorRetryBurnAttempts counts 'every attempt this actor made, in scope, REGARDLESS of its technical outcome \u2014 a retried, failed attempt still counts', and ActorRetryBurn is #28's headline 'attempts per completion' quality measure. So every deadline reconciliation would add a second attempt row for one dispatch and inflate that actor's retry burn \u2014 penalising the actor for the engine's own late bookkeeping, which is precisely #82 point 1's complaint ('any per-actor analytics built on run status will score this actor as having failed a task it completed') reappearing in a new place. The supersession representation must be excluded from retry-burn counting, or carried somewhere other than a second attempts row.",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "h26",
+      "kind": "honesty",
+      "text": "The supersession representation is proven not to move an actor's retry burn: read GET /v1alpha1/actors/{id}/stats before and after a deadline reconciliation and assert Attempts is unchanged. A fix that merely 'looks right' in the schema reintroduces #82 point 1's distortion in the metric #28 exists to provide.",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "c40",
+      "kind": "requirement",
+      "text": "CHALLENGE / concurrency+operations lens: decision c38 puts a network cancel inside an OPEN POSTGRES TRANSACTION on a SERIAL, SINGLETON loop, and that is an availability hazard on the exact path meant to make timeouts reliable. scheduler.go:386-420's fireOne opens tx, calls applyEffect (where the deadline effect and therefore the new cancel would sit), and only then does MarkFiredTx + InsertOutboxTx + commit; scheduler.go:355-362's tick iterates the claimed batch SERIALLY ('for _, t := range due { _ = sch.fireOne(ctx, t) }') with a default batch size of 100; and only one instance is active at a time behind the advisory lock. #21 measured a codex-bridge cancel at ~2.2s idle and >10s mid-session, and every existing Cancel caller allows 30s. So a handful of expired deadlines against one slow or unreachable bridge stalls ALL timer firing for the whole deployment \u2014 wait timers, retry timers and lease recovery included. Note applyEffect's own comment already establishes the pattern for stepping outside tx (the deadline and lease-recovery effects deliberately use the ambient pool), but the cancel would still block fireOne's transaction because applyEffect is called inside it.",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "h27",
+      "kind": "honesty",
+      "text": "The scheduler's tick latency is measured with a deliberately unreachable bridge holding expired deadlines, and stays bounded \u2014 proven by a test or a probe, not by the cancel having moved out of the transaction on paper. The q3 decision removes the stall by construction, so this condition is what confirms the construction is actually what shipped.",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "c41",
+      "kind": "requirement",
+      "text": "CHALLENGE / security lens: #79's artifact route has NO usable authentication model today, and the critical path runs straight through it. internal/actors/token.go is strictly attempt-scoped \u2014 the signed payload is exactly (attempt id, expiry), VerifyFor refuses 'a valid token for a different attempt', and DefaultTokenTTL is 15 minutes. Two consequences neither #79 nor #74 names. (a) CROSS-ATTEMPT READ: the review node on thor must GET an artifact produced by the fix node's attempt on spark, but its own token names its own attempt and nothing else \u2014 so the artifact GET cannot reuse the callback-token model as-is. It needs a run-scoped read grant or a per-artifact capability handed to the consuming node at dispatch, and neither seam exists. (b) TTL vs LONG SESSIONS: a token minted at dispatch expires in 15 minutes, while the publish happens at the END of a session that may run to a 30-minute deadline \u2014 so the artifact upload is the operation MOST likely to present an expired token, and the timeout case (#82) is exactly where it bites. token.go's own comment says a long-running actor 'is expected to be re-issued a token', which presumes a re-issue path the artifact publish would have to use.",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "h28",
+      "kind": "honesty",
+      "text": "The cross-host handoff is proven with the consuming node presenting only credentials it was legitimately given \u2014 no shared secret, no token minted for another attempt, no auth bypass for the artifact route. If the only way to make review read fix's artifact is to weaken the attempt-scoping, the authorization model is wrong and must be redesigned rather than excepted.",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "c42",
+      "kind": "requirement",
+      "text": "CHALLENGE / failure-mode lens: #82's concurrent-writer hazard is not hypothetical and not merely 'possible' \u2014 it is LIVE in production today, and the fix for the c40 transaction-stall hazard would make it worse. internal/engine/types.go:261-268's retryable() returns true for StatusFailed, StatusTimedOut AND StatusContractRejected, and complete.go:415 re-dispatches whenever 'c.status.retryable() && c.attemptNumber < c.node.Retry.MaxAttempts'. So ANY node declaring MaxAttempts > 1 whose deadline fires is re-dispatched while the first session is still running and writing to the same workspace. Run 01M00BKCVT04SSGPNXDF3JJX5G escaped this only because that node did not declare a retry. The coupling matters: if the cancel is moved AFTER the commit to avoid stalling the scheduler (c40), then CompleteAttempt commits timed_out, the item becomes immediately retryable, and a second dispatch can begin BEFORE the cancel is even sent. Nothing today gates re-dispatch on cancellation having completed, and nothing fences the workspace against a second writer. Whichever way q2/q3 is decided, one of those two guards has to exist.",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "h29",
+      "kind": "honesty",
+      "text": "A node with MaxAttempts > 1 whose deadline fires is shown to produce exactly ONE writing session \u2014 verified by observing the second dispatch being refused, not by observing that no corruption happened to occur. Absence of observed corruption is not evidence of the fence working; this failure mode has no detection, which is why #82 calls it the serious one.",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "c44",
+      "kind": "boundary",
+      "text": "CHALLENGE / reversibility lens: artifacts and the ledger have incompatible lifetimes and #79 does not address it. internal/artifacts/store.go:39-42 gives every Store a Delete, and Router fans it in \u2014 but nothing schedules retention, and no issue in the batch mentions it. Meanwhile internal/runners/dispatch.go:375-384 already writes artifact_refs INTO evidence records, and the PRD's ledger records are IMMUTABLE with corrections appended via supersedes. So the moment #79 makes artifacts real, an immutable evidence record can point at content that a future Delete removes, and the ledger's own promise degrades silently \u2014 a reader following a ref gets nothing, with no record saying the content was reaped rather than never written. Either artifacts referenced by a ledger record are never deleted, or a deletion appends a tombstone the ref resolves to. Doing neither is the failure mode.",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "h30",
+      "kind": "honesty",
+      "text": "Following an artifact ref recorded in a ledger evidence record either resolves to content or resolves to an explicit tombstone naming when and why it was reaped \u2014 never to a bare not-found. A ledger record whose evidence silently evaporates is a weaker promise than the immutability the PRD claims, and the degradation would be invisible.",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "c45",
+      "kind": "boundary",
+      "text": "CHALLENGE / overlooked-actors lens: the all-backends rule needs SCOPING for artifact publish, and applying it literally would be wrong. CLAUDE.md's rule is that a feature added to one backend must reach all of them, and the frame invokes it for artifact publish. But of the four bridges, only claude-code and codex hold a workspace to publish FROM; adapters/notify is a Discord-egress actor and adapters/human-inbox is a human-task bridge, and neither has a repo, a workspace measurement, or anything to put in an artifact. The honest scoping is that artifact publish is required of every WORKSPACE-HOLDING backend (claude-code, codex, colleague) and explicitly not-applicable to the two that hold no workspace \u2014 recorded as not-applicable rather than silently skipped, which is the distinction #77 is separately asking for on model reporting.",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "h31",
+      "kind": "honesty",
+      "text": "The two workspace-less bridges record artifact publish as explicitly NOT-APPLICABLE in their capability surface, distinguishable from unsupported and from unmeasured. A silent skip is indistinguishable from the all-backends bug this rule exists to catch, which is the same distinction #77 demands for model absence.",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "c46",
+      "kind": "requirement",
+      "text": "CHALLENGE / observability lens: a deadline-issued cancel needs its own event type or it is invisible. The two existing ones are deliberately distinct by ORIGIN, not by mechanism \u2014 internal/api/cancelpropagate.go:39's dev.culture.nodes.actor.cancel-requested ('what the control plane SENT', explicitly distinguished from what an actor reported) and internal/worker/branchcancel.go:49's dev.culture.nodes.branch.cancel-requested. A deadline cancel is a third origin: neither an operator asking nor a branch being reaped. Reusing either would make it impossible to answer 'did the timeout stop the session, or did an operator?' from the event stream \u2014 which is exactly the kind of question #87's self-explaining-run acceptance requires the run to answer without a companion document.",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "h32",
+      "kind": "honesty",
+      "text": "An operator reading only the run's event stream can tell a timeout-driven session stop from an operator-driven one. That is the concrete, checkable form of #87's self-explaining-run acceptance for this event, and it fails if the deadline reuses either existing cancel-requested type.",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "c47",
+      "kind": "requirement",
+      "text": "CHALLENGE / security lens: #86's multi-repo sweep enlarges credential blast radius in a way the issue notes only for the enumeration, not for the token. Today sweep.py reads one GITHUB_TOKEN and walks one pinned repo. Configuring a set of ALL agentculture repos means that same token must be authorised across every repo in the set, so a token scoped for one repo's read becomes an org-wide read credential living in a runner-granted environment value. The existing guard (tests/test_pr_upkeep_sweep.py's exact-set environment assertion) constrains WHICH names are read, not what the credential behind them can reach. Least privilege here means a token scoped to exactly the configured set and no more, and the deployment documenting that scope \u2014 otherwise widening the repo set silently widens what a compromised sweep can read.",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "h33",
+      "kind": "honesty",
+      "text": "The credential the sweep runs under is scoped to exactly the configured repo set and no wider, and the deployment records that scope where an operator will see it. Widening the set is then a deliberate two-part act \u2014 the grant AND the token \u2014 rather than one config edit that silently enlarges what a compromised sweep can read.",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "c49",
+      "kind": "requirement",
+      "text": "The workspace fence is NEW WORK this batch must carry, and it is the load-bearing half of decision on q3. Nothing today refuses a dispatch into a workspace a prior session may still hold: internal/engine/complete.go:415 re-dispatches purely on retryable() and attempt count, and the bridges' repo_allowlist (adapters/claude-code/config.py:196-201) is a membership test with no notion of occupancy. The fence must refuse the SECOND dispatch, not merely warn \u2014 a warning is what the current behaviour already effectively is \u2014 and it must fail closed, because the failure it prevents (two agent sessions interleaving writes in one checkout) is a corruption mode with no detection, per #82's own words. Where it lives is open: engine-side as a dispatch precondition keyed on the node run's prior attempt, or bridge-side as an occupancy check on the workspace path.",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "h34",
+      "kind": "honesty",
+      "text": "The fence FAILS CLOSED: if occupancy cannot be determined, the second dispatch is refused rather than allowed. The hazard it guards has no detection, so an ambiguous state must resolve to refusal \u2014 a fence that opens when unsure provides no guarantee at all.",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "c51",
+      "kind": "requirement",
+      "text": "Every writing node runs in its OWN dedicated, uniquely-named worktree \u2014 no two writers ever share a checkout. Per CLAUDE.md's convention these live at ../.worktrees.culture-nodes/<name>/, one repo-named directory beside the checkout (never a shared ../worktrees/), with branch prefixes scoped to the work rather than a bare agent/*. This is a first-class requirement of the batch, not an operator habit: it removes the shared-checkout precondition that makes the concurrent-writer hazard (c42) a corruption mode in the first place.",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "h35",
+      "kind": "honesty",
+      "text": "Uniqueness is enforced by the system that creates the worktree, not by naming discipline \u2014 two dispatches that would collide on a path are refused or disambiguated, never silently reused. A convention that depends on everyone picking distinct names is not a guarantee, and the failure it permits has no detection.",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "c52",
+      "kind": "requirement",
+      "text": "Worktrees are cleaned up by an explicit FOLLOW-UP STEP in the graph, not by operator memory and not by an ambient sweeper. The cleanup is its own node with its own contract, so its success or failure is a ledger fact like any other, and it runs after the work that produced the worktree has been consumed \u2014 a worktree removed before its artifact is published or its preserve branch is read destroys the very evidence the batch exists to keep. Removal uses git worktree remove; prune only clears metadata for already-deleted directories and is not a substitute.",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "h36",
+      "kind": "honesty",
+      "text": "Cleanup never runs before the worktree's output has been consumed \u2014 proven by a test in which cleanup is scheduled and the artifact/preserve-branch read still succeeds. Getting this wrong turns a housekeeping step into a data-loss step, which is the exact failure class #78 is about.",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "c53",
+      "kind": "requirement",
+      "text": "Every development step is TDD, and the HANDOVER CONTRACT is deterministic rather than self-reported (decision c60). A writer's package is not handed over until, ON ITS CHANGED FILES: the test suites pass, test coverage meets the declared threshold, cognitive complexity is within the declared bound, and file LENGTH is within the limit (target 300 advisory, 1000 hard \u2014 decision c62). These are measured by tools and land as derived evidence, never as a completion claim, which is what makes the discipline trustworthy without needing #13's measured-workspace work. A gate that does not pass is a ROUTABLE DOMAIN OUTCOME that routes to a continuation, never an engine failure (decision c63) \u2014 so the gates are part of the work loop rather than a wall at the end of it. Agent-authored tests and fixes are explicitly ACCEPTED after handover and merge; the gate is on the state of the changed code at handover, not on the provenance or ordering of the keystrokes that produced it. The batch still has three places where a test must be seen to fail against today's main before its fix is believed \u2014 c42's refused second dispatch, #78's deadline preserve path, and c40's scheduler shape \u2014 but those are named acceptance tests, not a general process claim about every step.",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "h38",
+      "kind": "honesty",
+      "text": "The handover gates are measured on CHANGED FILES and their thresholds are declared before the work starts, not chosen afterwards to fit what landed. Each gate reports a NUMBER a reader can check \u2014 coverage percentage, cognitive complexity score, file size \u2014 rather than a bare pass/fail, because a green with no value behind it tells a later reader nothing about how close it was. Where a gate genuinely cannot apply to a changed file (a pure docs or config change), that is recorded as not-applicable rather than counted as passing. Supersedes the rejected h37, which required an observed failing test \u2014 an evidence class the system cannot produce without #13.",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "c54",
+      "kind": "requirement",
+      "text": "CHALLENGE 2 / adjacent-systems lens: c51 is BUILD-NEW, not enforce-existing, and its wording hides that. No component mints a worktree today. adapters/claude-code/src/claude_code_bridge/workspace.py:80's begin(repo) takes a repo PATH IT IS GIVEN and only measures around it \u2014 the module docstring is explicit that 'no worktree/branch/commit/stash exists' from its side \u2014 and nothing engine-side creates one either. Today the operator makes worktrees by hand per CLAUDE.md's convention. So 'every writing node runs in its own dedicated worktree' requires a workspace PROVISIONER that exists on neither side of the boundary, plus a decision about which side owns it. Bridge-side means each bridge gains git-worktree creation under a permitted root (per-bridge work under the all-backends rule); engine-side means the control plane hands a path, which walks straight back into #74's finding that a path is not portable across endpoints. The live allowlists show the current hand-managed state failing already: spark's developer bridge allowlists /home/spark/git/.worktrees.culture-nodes/upkeep-t12, which does not exist on disk.",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "h39",
+      "kind": "honesty",
+      "text": "The provisioner refuses or disambiguates a colliding path rather than reusing one \u2014 proven by attempting two dispatches that would resolve to the same worktree and observing the second refused. Uniqueness by naming discipline is not uniqueness.",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "c55",
+      "kind": "requirement",
+      "text": "CHALLENGE 2 / failure-mode lens: c52's cleanup node would reintroduce #78's data loss as housekeeping unless it is gated, and this is probed rather than argued. git worktree remove REFUSES a dirty worktree \u2014 measured in scratch: 'fatal: <path> contains modified or untracked files, use --force to delete it'. A timed-out node's worktree is by definition dirty and is the case with the most work in flight of any failure mode (#78's own argument). So cleanup on that path has exactly two behaviours and both are wrong by default: refuse, and worktrees leak precisely where they matter most; or pass --force, and destroy unpreserved work \u2014 the same loss #78 exists to prevent, arriving from a housekeeping step instead of a timeout. The gate must be positive evidence that the work is safe (its preserve ref exists, or its artifact handle is published), never the absence of an error.",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "h40",
+      "kind": "honesty",
+      "text": "Cleanup is proven not to destroy unpreserved work by running it against a dirty worktree whose preserve ref does NOT exist and observing refusal. Testing it against a clean worktree proves nothing, and --force must never be the default.",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "c56",
+      "kind": "boundary",
+      "text": "CHALLENGE 2 / containment lens: c51's isolation intent is defeated by a NESTED worktree that already exists, and two path conventions are live at once. git worktree list shows /home/spark/git/culture-nodes/.claude/worktrees/web-ux-quick-wins \u2014 a worktree INSIDE the main checkout (gitignored at .gitignore:251, so deliberate, not accidental) \u2014 while CLAUDE.md mandates ../.worktrees.culture-nodes/<name>/ beside the checkout. The main checkout is in all four spark bridge allowlists, so a writer legitimately dispatched there can read and write another writer's nested worktree. Each writer having 'its own' worktree is not sufficient: the requirement must be that no writer's worktree is REACHABLE from another writer's allowlisted root, which rules out nesting.",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "h41",
+      "kind": "honesty",
+      "text": "No writer's worktree is reachable from another writer's allowlisted root \u2014 checkable by walking each bridge's allowlist and asserting no entry contains another writer's worktree path. The nested .claude/worktrees/ case must fail that check today, or the check is not testing anything.",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "c57",
+      "kind": "requirement",
+      "text": "CHALLENGE 2 / lifecycle lens: cleanup-as-a-node cannot be the only mechanism, because a node only runs if the graph REACHES it. A cancelled run, a run that ended at a terminal domain outcome upstream (handoff_unavailable being this batch's own live example), a failed engine, or a deadline that ended the run all skip the cleanup node entirely \u2014 and those are exactly the paths that leave a worktree behind. Live proof that the leak is real and current: git worktree list shows four worktrees from finished cycles (aehl-t13, aehl-t19, upkeep-s3516-node-runs, web-ux-quick-wins) still present. The user's own phrasing \u2014 'cleanup after a time' AND 'a follow up step' \u2014 names both halves, and they are different mechanisms with different authority: the node deletes with the run's consent as part of the graph, while an age-based sweeper deletes WITHOUT any run's consent and therefore needs its own safety rule (never touch a worktree whose work is unpreserved, never touch one whose session is not confirmed stopped).",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "h42",
+      "kind": "honesty",
+      "text": "An orphaned worktree \u2014 one whose run was cancelled or ended at a terminal outcome upstream of cleanup \u2014 is still reclaimed, proven by cancelling a run mid-flight and observing the worktree eventually removed. The age-based sweeper deletes without any run's consent, so it must independently refuse a worktree whose work is unpreserved or whose session is not confirmed stopped.",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "c58",
+      "kind": "requirement",
+      "text": "CHALLENGE 2 / evidence lens: c53's honesty condition demands something the system cannot currently produce, and the dependency runs OUTSIDE the batch. h37 requires the failing state to be OBSERVED and recorded rather than assumed \u2014 but for an agent node there is no measured-evidence path: all three bridges report changed_files as model-claimed, their mapping.py headers say so explicitly, and #13 is the issue that would add bridge-measured workspace facts and runner-observed workspace diffs. #13 is NOT in c25's list of eleven. So as things stand, 'the test failed before the implementation' would land as a self-reported completion claim \u2014 precisely the weak evidence class this whole batch exists to replace, applied to the very discipline meant to make the work trustworthy. Either a minimal slice of #13 joins the batch (enough for a runner or bridge to observe a test run's exit status), or c53's evidence bar is honestly downgraded to self-reported and labelled as such.",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "h47",
+      "kind": "honesty",
+      "text": "This claim is retained as the RECORD OF WHY the handover contract changed, not as live work: decision c60 resolved it by replacing the unverifiable process claim with deterministic changed-file gates. It stays true as a statement about the system \u2014 agent nodes produce model-claimed evidence and #13 is outside the batch \u2014 and if a later cycle reintroduces any requirement that a process step be observed rather than measured, this is the finding that must be answered again.",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "c61",
+      "kind": "requirement",
+      "text": "CHALLENGE 2 / adjacent-systems lens on the q7 decision: three of the four named gates DO NOT REACH the tree this batch mostly edits, so the handover contract needs infrastructure built before it can be applied. Measured against the committed CI: tests are gated everywhere (tests.yml runs pytest, go.yml runs go build + go vet + go test ./..., web.yml runs build + vitest + playwright, and adapter-claude-code.yml / adapter-codex.yml cover the bridges) \u2014 that half is fine. But COVERAGE is measured and thresholded only for the Python package: tests.yml runs pytest --cov=culture_nodes, go.yml runs go test with no -coverprofile and no threshold, and web.yml runs vitest with no coverage gate. COGNITIVE COMPLEXITY comes from SonarCloud, and sonar-project.properties sets sonar.sources=culture_nodes \u2014 so the entire Go control plane (internal/, cmd/), every adapter, and the web app are outside Sonar's analysis altogether. FILE-SIZE validation exists nowhere. CHANGED-FILES scoping exists only as Sonar's server-side new-code blame (tests.yml uses fetch-depth 0 for it); nothing repo-side scopes a gate to a diff. Since nearly all of this batch's work lands in internal/ and adapters/, the gates as named would today measure almost none of it.",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "h44",
+      "kind": "honesty",
+      "text": "The gate thresholds are asserted against a changed file in internal/ or adapters/ \u2014 the trees this batch actually edits \u2014 not against culture_nodes, where the instruments already work. A green handover gate that measured none of the changed code is worse than no gate, because it reads as assurance.",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "c64",
+      "kind": "requirement",
+      "text": "CHALLENGE 2 / lifecycle lens on decision c63: routing a failed gate to a continuation creates a LOOP THAT MUST BE BOUNDED, and the bound is not stated. A node whose tests fail continues to fix them; the fix may fail the gates again; nothing in c63 says how many times. #80 already specifies exactly the right machinery for this \u2014 bounds.maxContinuations, bounds.maxWallClock, bounds.maxSessions, and an onExhausted domain outcome \u2014 so the requirement is that a gate-failure continuation edge MUST declare those bounds rather than looping on the engine's good nature. Without it, a package whose coverage threshold is unreachable (a file that genuinely cannot be tested to the declared number) becomes an infinite billable loop, which is the failure mode #48's session economics exists to prevent. Note this also makes the minimal slice of #80 that c21 already sequences before #82 carry more weight: it is now a precondition for the handover contract too, not just for the deadline.",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "h45",
+      "kind": "honesty",
+      "text": "A gate-failure continuation loop is proven to terminate on a package whose gate is genuinely unreachable \u2014 set a coverage threshold that cannot be met and observe the run reach its declared onExhausted outcome rather than continuing indefinitely. A bound that has never been hit is a bound that has never been tested.",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "c66",
+      "kind": "requirement",
+      "text": "CHALLENGE 2 / adjacent-systems lens on the 1000-line gate: the three Go files closest to the limit are EXACTLY the three this batch must modify, so the gate forces splits inside the batch's own critical path rather than at its edges. Measured: internal/engine/complete.go is 939 lines and carries the retry logic c42 must change; internal/actors/callback.go is 931 and is where c37's late-callback reconciliation lands; internal/store/postgres/engine_store.go is 923 and is where c39's supersession representation and #77's attempt persistence go. All three sit within 80 lines of the hard limit, and all three are receiving additions rather than deletions. So each of those work packages must budget a file split as part of its own scope \u2014 discovering it at the handover gate instead would route to a continuation (c63) for a purely structural reason, burning a session on something predictable today.",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "h46",
+      "kind": "honesty",
+      "text": "Each of the three near-limit files has its split planned in its work package BEFORE the package is dispatched, not discovered at the gate. A split decided under gate pressure mid-continuation is a worse split than one designed up front, and the whole point of measuring this now is that it is predictable.",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "c69",
+      "kind": "requirement",
+      "text": "CHALLENGE 3 / operator challenge to c3: the carrier for a RUNNER'S CHANGES should arguably be a GIT BRANCH, not an artifact URI, and #74 itself agrees \u2014 its recommendation was 'option 1 [a git ref], with 2 [an artifact] for anything not naturally a git object'. The distinction is real and the spec currently collapses it: a code diff IS naturally a git object and a branch name plus remote is already a portable handle carrying no host and no path (which is the actual property #74 required, and which a filesystem path failed); whereas the sweep's prioritised work-item list is JSON and is NOT a git object, so it belongs in the artifact store. The right shape is therefore probably BOTH carriers with a declared rule \u2014 changes travel as a ref, context/data travels as an artifact \u2014 rather than the single artifact:// handle the shipped contract mandates. What blocks the git half is a CREDENTIAL, not a design: re-verified live on spark just now, the origin remote is HTTPS (no credential helper configured), the systemd user manager environment carries no GITHUB_TOKEN or GH_TOKEN, and `ssh -T git@github.com` answers 'Permission denied (publickey)'. So probe t9's finding stands \u2014 the bridge service cannot push by any route available to it today.",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "h52",
+      "kind": "honesty",
+      "text": "The two-carrier rule is proven by ONE run in which both carriers move real content in the same graph: the sweep's item list reaches fix as an artifact, and fix's diff reaches review as a git ref, across two machines. Proving each carrier in isolation leaves the rule itself \u2014 which carries what \u2014 untested, and the rule is the part that is new.",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "c71",
+      "kind": "requirement",
+      "text": "A PUSH CREDENTIAL for the bridge service is a prerequisite of the q9 decision and is currently absent on spark by every available route \u2014 verified 2026-08-15: origin is an HTTPS remote, no credential.helper is configured, the systemd user manager environment carries no GITHUB_TOKEN or GH_TOKEN (only SSH_AUTH_SOCK pointing at the login keyring, which a service does not hold), and `ssh -T git@github.com` answers 'Permission denied (publickey)'. This is the same gap probe t9 found and #78 noted as orthogonal, and it now sits on the critical path rather than beside it. Fixing it pays twice: it enables the git_ref handover carrier, AND it un-blocks preserve-on-failure's push leg, which has been silently local-only \u2014 preserve writes its ref locally and its push has never been able to succeed on this host. Scope it per host: spark is measured, thor and orin are not.",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "h50",
+      "kind": "honesty",
+      "text": "The credential is proven by the SERVICE pushing, not by the operator's shell pushing \u2014 a human session on spark has a keyring an unattended systemd unit does not, which is exactly why ssh -T succeeds interactively for a developer and the bridge still cannot push. The test executes a push from the bridge's own environment; anything else measures the wrong principal.",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "c72",
+      "kind": "requirement",
+      "text": "CHALLENGE 3 / provisioning lens on c71: the credential has no DELIVERY SEAM into the claude bridges today, which is a second gap beside the credential itself. None of the four culture-nodes-claude-*.service units on spark declares an EnvironmentFile \u2014 each carries exactly one Environment= line pointing at its JSON config \u2014 so there is nowhere to put a secret that the process will read, and a token written into the JSON config would sit in a file whose siblings are non-secret and whose mode is not managed as a secret. install-secrets.sh's existing doctrine (line 289) is the right pattern to extend: 'GITHUB_TOKEN is externally issued (a GitHub PAT/App token) and is never fabricated here: relayed only when the operator already exported it into this script's own environment', with the host derived from the actor's registration rather than declared. The unit change (add an EnvironmentFile) and the secrets-lane change land together, and they compose with #84's unit/config reconciliation which is already rewriting these units.",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "h53",
+      "kind": "honesty",
+      "text": "The credential reaches the bridge PROCESS, verified by reading it from inside the running service's environment rather than from a login shell. A secret an operator can see and a service cannot is the exact failure this claim describes, and it is invisible to any check run interactively.",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "c73",
+      "kind": "boundary",
+      "text": "CHALLENGE 3 / security lens on c71: the bridge PUSH credential must be a SEPARATE credential from the sweep's read-only GITHUB_TOKEN, not the same value reused. The sweep enumerates every open PR on every configured repo and reads their comments and check runs; c47 already flags that widening the repo set widens what a compromised sweep can read. Giving that same token write access would give the sweep the ability to push to every repo it enumerates \u2014 a strictly larger blast radius than either requirement asks for on its own. Two credentials with two scopes: read-only for the sweep, contents-write for the bridge handover.",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "h54",
+      "kind": "honesty",
+      "text": "The sweep's credential and the handover credential are demonstrably different values with different scopes \u2014 checkable because the sweep must FAIL to push if handed only its own token. If a single token satisfies both paths, the separation exists only in naming and the blast radius is unchanged.",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "c75",
+      "kind": "boundary",
+      "text": "A Contents-write token deliberately CANNOT push changes touching .github/workflows/** \u2014 that requires the separate workflow scope. This is the correct posture and should stay: CI configuration is operator-lane work, not something a dispatched bridge session hands over. But it must be DECLARED rather than discovered, because a handover carrying a workflow edit will fail at push time with a permissions error that reads like a broken credential rather than an intended boundary \u2014 the same class of misleading failure as #74's 403-that-blamed-authorization-when-the-cause-was-topology. A writer whose package touches CI config routes to the operator instead.",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "h51",
+      "kind": "honesty",
+      "text": "A package that touches .github/workflows/** is refused or routed to the operator BEFORE a session is spent on it, not at push time. Discovering the boundary after the work is done wastes the session and produces a failure whose message names the wrong cause.",
+      "deferred": false,
+      "deferred_reason": ""
+    }
+  ],
+  "tasks": [
+    {
+      "id": "t1",
+      "summary": "Bridge push credential: delivery seam + per-host provisioning",
+      "origin": "llm",
+      "status": "confirmed",
+      "acceptance_criteria": [
+        "Each culture-nodes-claude-* and codex bridge unit declares an EnvironmentFile, and GITHUB_TOKEN_WORKER is readable from INSIDE the running service's environment (verified by reading it from the service, never from a login shell)",
+        "install-secrets.sh relays GITHUB_TOKEN_WORKER without fabricating it, host derived from the actor registration, file mode 600",
+        "The sweep's GITHUB_TOKEN and the handover's GITHUB_TOKEN_WORKER are demonstrably different values: a push attempted with only the sweep's token FAILS",
+        "A work package touching .github/workflows/** is refused at scoping time with a message naming the workflow-scope boundary, not at push time"
+      ],
+      "deps": [],
+      "covers": [
+        "c71",
+        "h50",
+        "c72",
+        "h53",
+        "c73",
+        "h54",
+        "c75",
+        "h51",
+        "c13",
+        "h18"
+      ],
+      "instruction": "READ FIRST, do not re-derive: docs/specs/2026-08-14-own-the-work-end-to-end.md (the claim this task covers, with its honesty condition and instruction) and CLAUDE.md. The spec already names the file, line and measurement for every finding \u2014 cite it rather than re-measuring. FILES: deploy/prod/install-secrets.sh (follow its line-289 doctrine \u2014 relay an externally-issued token, never fabricate one), deploy/prod/*.service. The host is DERIVED from the actor registration, never declared \u2014 deploy.sh already resolves it that way; copying that resolution is the fix for #72. Do NOT read the token value; the operator holds it as GITHUB_TOKEN_WORKER. Restart all four spark bridges deliberately after the unit change (c13/h18) \u2014 they run from the operator's own checkout, so a restart deploys whatever is on disk."
+    },
+    {
+      "id": "t2",
+      "summary": "human-inbox units: adopt culture-nodes-* naming, remove the duplicate, reconcile config paths",
+      "origin": "llm",
+      "status": "confirmed",
+      "acceptance_criteria": [
+        "deploy.sh installs culture-nodes-human-inbox{,-tracker}.service with the JSON config the running bridge reads",
+        "The lane stops, disables AND REMOVES any human-inbox-* unit file serving the same actor \u2014 verified by running the deploy TWICE against a host that already has the other naming installed, observing adoption both times rather than a port conflict",
+        "'Address already in use' on this lane is a hard deploy failure whose message names the conflicting unit"
+      ],
+      "deps": [],
+      "covers": [
+        "c12",
+        "h11"
+      ],
+      "instruction": "READ FIRST, do not re-derive: docs/specs/2026-08-14-own-the-work-end-to-end.md (the claim this task covers, with its honesty condition and instruction) and CLAUDE.md. The spec already names the file, line and measurement for every finding \u2014 cite it rather than re-measuring. FILES: deploy/prod/deploy.sh lines 197-430, deploy/prod/human-inbox-*.service. Live state to reconcile against, already measured: spark runs culture-nodes-human-inbox.service (Environment=HUMAN_INBOX_BRIDGE_CONFIG=~/.config/culture-nodes-bridges/human-ops.json, no EnvironmentFile) and culture-nodes-human-inbox-tracker.service (EnvironmentFile=~/.config/culture-nodes-bridges/human-ops-tracker.env), and the stale human-inbox-bridge.service FILE is still in ~/.config/systemd/user/ though disabled \u2014 removing it, not just disabling it, is the fix."
+    },
+    {
+      "id": "t3",
+      "summary": "Capability surface: probe bwrap instead of reading two sysctls, across all four bridges",
+      "origin": "llm",
+      "status": "confirmed",
+      "acceptance_criteria": [
+        "A bwrap capability probe is the authority; the sysctl read is demoted to explaining WHY on failure; 'not probed' is reported distinctly from 'available'",
+        "All four adapters/*/preflight.py copies remain byte-identical after the change, verified by comparing digests",
+        "Artifact publish appears in the capability surface as a three-valued fact; notify and human-inbox report not-applicable-no-workspace rather than being silently skipped",
+        "The losing doctrine's prose is edited in the SAME diff: preflight.py's docstring, deploy/prod/README.md and codex-preflight.sh check 7 no longer disagree"
+      ],
+      "deps": [],
+      "covers": [
+        "c10",
+        "h9",
+        "c11",
+        "h10",
+        "c45",
+        "h31"
+      ],
+      "instruction": "READ FIRST, do not re-derive: docs/specs/2026-08-14-own-the-work-end-to-end.md (the claim this task covers, with its honesty condition and instruction) and CLAUDE.md. The spec already names the file, line and measurement for every finding \u2014 cite it rather than re-measuring. FILES: adapters/{claude-code,codex,colleague,notify}/src/*/preflight.py \u2014 all four are BYTE-IDENTICAL (md5 76e595f6, 339 lines), so make one edit and copy it, then diff the digests. Keep the injectable 'probes' parameter; the tests rely on it to assert both kinds of kernel. Also edit deploy/prod/README.md and codex-preflight.sh check 7 in the same diff so the two doctrines stop disagreeing."
+    },
+    {
+      "id": "t4",
+      "summary": "File length: gate at 1000 lines repo-wide and split the four files over it",
+      "origin": "llm",
+      "status": "confirmed",
+      "acceptance_criteria": [
+        "A lint check fails any tracked source file over 1000 lines and is green on the tree after the splits",
+        "adapters/human-inbox tracker.py (1523) and test_tracker.py (1144), tests/test_run.py (1019) and scripts/stickiness_ab.py (1016) are each under the limit",
+        "The three near-limit files this batch extends \u2014 complete.go 939, callback.go 931, engine_store.go 923 \u2014 have their splits PLANNED in the packages that touch them, recorded before those packages dispatch"
+      ],
+      "deps": [],
+      "covers": [
+        "c66",
+        "h46"
+      ],
+      "instruction": "READ FIRST, do not re-derive: docs/specs/2026-08-14-own-the-work-end-to-end.md (the claim this task covers, with its honesty condition and instruction) and CLAUDE.md. The spec already names the file, line and measurement for every finding \u2014 cite it rather than re-measuring. Four tracked files exceed 1000 lines: adapters/human-inbox/src/human_inbox_bridge/tracker.py (1523), adapters/human-inbox/tests/test_tracker.py (1144), tests/test_run.py (1019), scripts/stickiness_ab.py (1016). 239 of 805 files exceed 300, so 300 stays ADVISORY \u2014 do not gate on it. Record the planned splits for the three near-limit files this batch extends (complete.go 939, callback.go 931, engine_store.go 923) without splitting them here; their own tasks do that."
+    },
+    {
+      "id": "t5",
+      "summary": "Artifact carrier: settle the authorization model, then mount Put/Get and persist artifact_refs",
+      "origin": "llm",
+      "status": "confirmed",
+      "acceptance_criteria": [
+        "q5 is answered and recorded BEFORE the route is written: a run-scoped read grant, a per-artifact capability, or a re-issued attempt token \u2014 with the publish-side TTL problem answered in the same pass",
+        "A node on ONE host writes an artifact that a node on a DIFFERENT host reads; a same-host round trip does not count as proof",
+        "The consuming node presents only credentials it was legitimately given \u2014 no shared secret, no token minted for another attempt, no bypass of attempt scoping",
+        "InvocationResult.artifact_refs is persisted and resolvable instead of nil-defaulted at internal/actors/client.go:192, and headspace/verbs.go resolves a Ref instead of refusing it"
+      ],
+      "deps": [],
+      "covers": [
+        "c2",
+        "h2",
+        "c41",
+        "h28"
+      ],
+      "instruction": "READ FIRST, do not re-derive: docs/specs/2026-08-14-own-the-work-end-to-end.md (the claim this task covers, with its honesty condition and instruction) and CLAUDE.md. The spec already names the file, line and measurement for every finding \u2014 cite it rather than re-measuring. FILES: internal/api/server.go (route table at 300-346), internal/actors/client.go:192 (where artifact_refs is nil-defaulted today), internal/runners/headspace/verbs.go (the documented refusal to replace), api/openapi/*. internal/artifacts is COMPLETE \u2014 Store, Router, ref.go's artifact://<namespace>/<id>, postgres + s3 drivers \u2014 and both backends are already deployed on thor (prod-postgres-1, prod-minio-1) with migrations 0004/0006 applied. No provisioning, no new library. Settle the authorization model (spec q5) and record it BEFORE writing the route."
+    },
+    {
+      "id": "t6",
+      "summary": "git_ref carrier: extend handoff.kind, widen the cross-host guard, reuse the preserve machinery",
+      "origin": "llm",
+      "status": "proposed",
+      "acceptance_criteria": [
+        "handoff.kind carries git_ref beside artifact, and the routing rule is declared once: a runner's changes take git_ref, context and data take artifact",
+        "tests/lint/crosshosthandoff_test.go still REFUSES a bare filesystem path handed between nodes \u2014 verified by a case that hands one and expects rejection",
+        "ONE run moves both carriers in the same graph across two machines: the sweep's item list reaches fix as an artifact, fix's diff reaches review as a git ref",
+        "The ref is produced by t25's existing write-tree/commit-tree/update-ref machinery, not a second git path"
+      ],
+      "deps": [
+        "t1"
+      ],
+      "covers": [
+        "c3",
+        "h48",
+        "c69",
+        "h52"
+      ],
+      "instruction": "READ FIRST, do not re-derive: docs/specs/2026-08-14-own-the-work-end-to-end.md (the claim this task covers) and CLAUDE.md.\n\nFILES: tests/lint/crosshosthandoff_test.go, examples/pr-upkeep/workflow.yaml (its header at 51-101 already documents this work), schemas/, adapters/codex/src/codex_bridge/codex_cli.py:67-106 (_common_argv, the ONE place the real command line is assembled). Reuse t25's write-tree/commit-tree/update-ref machinery in adapters/*/preserve.py rather than writing a second git path. The guard's bare-path refusal is load-bearing and must survive the widening.\n\nSETTLED BY MEASUREMENT (deviation d6, issue #91) -- do not re-litigate:\ncodex --sandbox workspace-write leaves .git READ-ONLY. That is a codex carve-out on codex-cli 0.147.0, not a kernel restriction: the worktree is writable, .git is not, so fetch/commit/update-ref all fail 'Read-only file system'. Measured on thor: plain workspace-write gives 'touch .git/probe' -> Read-only file system; adding\n\n  -c 'sandbox_workspace_write={writable_roots=[\"<checkout>/.git\"]}'\n\ngives GIT_WRITABLE, and a full write-tree/commit-tree/update-ref sequence produced commit df7d974 at refs/culture-nodes/probe. So the git_ref carrier (q9/c70) needs neither danger-full-access nor to be dropped. Build the widening as an OPT-IN per dispatch: a package that does not hand over a ref must not get .git write.\n\nPOLICY, decided by the user: AGENTS.md now permits a handover commit and a ref under refs/culture-nodes/<run-id>. Push stays forbidden and nothing may be committed onto a branch -- so the ref an agent creates is unreachable from any branch until the operator or control plane moves it. Honor that boundary in the carrier's design: the producing side creates a ref, it never pushes one."
+    },
+    {
+      "id": "t7",
+      "summary": "Artifact retention: reconcile Delete with ledger immutability",
+      "origin": "llm",
+      "status": "confirmed",
+      "acceptance_criteria": [
+        "Following an artifact ref recorded in a ledger evidence record resolves to content OR to an explicit tombstone naming when and why it was reaped \u2014 never a bare not-found",
+        "Storage growth on prod-postgres-1 and prod-minio-1 is sized and recorded, since this batch adds the first production writer to both"
+      ],
+      "deps": [
+        "t5"
+      ],
+      "covers": [
+        "c44",
+        "h30"
+      ],
+      "instruction": "READ FIRST, do not re-derive: docs/specs/2026-08-14-own-the-work-end-to-end.md (the claim this task covers, with its honesty condition and instruction) and CLAUDE.md. The spec already names the file, line and measurement for every finding \u2014 cite it rather than re-measuring. FILES: internal/artifacts/store.go:39-42 (Delete), internal/runners/dispatch.go:375-384 (where evidence already carries artifact_refs), plus a migration. The tension is that a ledger record is immutable and can point at content Delete removes."
+    },
+    {
+      "id": "t8",
+      "summary": "Continuation condition: continue.while declaration, compilation, CEL evaluation and bounds",
+      "origin": "llm",
+      "status": "confirmed",
+      "acceptance_criteria": [
+        "A node declares continue.while plus bounds (maxContinuations, maxWallClock, maxSessions) and an onExhausted domain outcome; the engine evaluates the condition in CEL with no model involved",
+        "A gate-failure continuation loop TERMINATES on a package whose gate is genuinely unreachable \u2014 set a coverage threshold that cannot be met and observe the run reach onExhausted rather than looping",
+        "Gate-retry bounds are independent of the deadline's bounds: a node can exhaust its clock and its gate-retry budget separately",
+        "Each continuation is its own attempt row with its own usage, so the cost of continuing is visible rather than folded into one long attempt"
+      ],
+      "deps": [],
+      "covers": [
+        "c64",
+        "h45"
+      ],
+      "instruction": "READ FIRST, do not re-derive: docs/specs/2026-08-14-own-the-work-end-to-end.md (the claim this task covers, with its honesty condition and instruction) and CLAUDE.md. The spec already names the file, line and measurement for every finding \u2014 cite it rather than re-measuring. FILES: schemas/workflow/workflow.schema.json, internal/compiler/, internal/engine/workflow.go. #80's issue body specifies the continue.while / bounds / onExhausted shape \u2014 implement that, do not invent a second one. The engine evaluates the condition in CEL; no model decides whether to keep going."
+    },
+    {
+      "id": "t9",
+      "summary": "Deadline cancels the session: scheduler gains a registry and client, cancelling after commit",
+      "origin": "llm",
+      "status": "confirmed",
+      "acceptance_criteria": [
+        "A fired deadline consults the declared continuation condition first: holds -> PAUSE keeping the session warm; absent or false -> CANCEL",
+        "The cancel is verified by observing the ACTOR SESSION end \u2014 a process gone, a callback arriving \u2014 never by reading the run's status back",
+        "Nothing in applyEffect's deadline branch makes a network call and fireOne's transaction closes before any cancel is attempted, kept that way by a tests/lint guard",
+        "Scheduler tick latency stays bounded with a deliberately unreachable bridge holding expired deadlines",
+        "registryFor(ns) mirrors the existing engineFor(ns) per-namespace cache"
+      ],
+      "deps": [
+        "t8"
+      ],
+      "covers": [
+        "c4",
+        "h3",
+        "c40",
+        "h27"
+      ],
+      "instruction": "READ FIRST, do not re-derive: docs/specs/2026-08-14-own-the-work-end-to-end.md (the claim this task covers, with its honesty condition and instruction) and CLAUDE.md. The spec already names the file, line and measurement for every finding \u2014 cite it rather than re-measuring. FILES: internal/scheduler/scheduler.go (failWaitingExternal:547, applyEffect:469, fireOne:386, tick:344). failWaitingExternal ALREADY holds the PendingInvocation with ActorRef, ActorID and InvocationID \u2014 no lookup needed. Copy the shape of internal/worker/budget.go's cancelPendingInvocation minus its lookup, and internal/api/cancelpropagate.go for how a package acquires a registry. The cancel goes AFTER commit (spec decision c48); putting it in applyEffect stalls every timer in the deployment."
+    },
+    {
+      "id": "t10",
+      "summary": "Workspace fence: refuse a second dispatch into a workspace whose prior session is unconfirmed",
+      "origin": "llm",
+      "status": "confirmed",
+      "acceptance_criteria": [
+        "A node with MaxAttempts > 1 whose deadline fires produces exactly ONE writing session, verified by observing the second dispatch REFUSED \u2014 not by observing that no corruption happened to occur",
+        "The fence FAILS CLOSED: if occupancy cannot be determined, the dispatch is refused",
+        "A failing test exists first and fails against today's main"
+      ],
+      "deps": [
+        "t9"
+      ],
+      "covers": [
+        "c42",
+        "h29",
+        "c49",
+        "h34"
+      ],
+      "instruction": "READ FIRST, do not re-derive: docs/specs/2026-08-14-own-the-work-end-to-end.md (the claim this task covers, with its honesty condition and instruction) and CLAUDE.md. The spec already names the file, line and measurement for every finding \u2014 cite it rather than re-measuring. FILES: internal/engine/complete.go:415 (the retry decision), internal/engine/types.go:261-268 (retryable() returns true for StatusTimedOut \u2014 this is why the hazard is live). Write the failing test first and confirm it fails against today's main."
+    },
+    {
+      "id": "t11",
+      "summary": "Late-callback reconciliation: a superseding record that does not inflate retry burn",
+      "origin": "llm",
+      "status": "confirmed",
+      "acceptance_criteria": [
+        "A terminal callback arriving after the deadline lands as a superseding record carrying preserve, usage, usage_model and termination_reason \u2014 read back from the attempts table, not from a TypeCallbackLate event body",
+        "GET /v1alpha1/actors/{id}/stats reports an UNCHANGED Attempts count before and after a deadline reconciliation",
+        "The representation is chosen before the migration is written, and respects ADR 0002's additive-first rule or documents why it cannot"
+      ],
+      "deps": [
+        "t9"
+      ],
+      "covers": [
+        "c37",
+        "h16",
+        "c39",
+        "h26"
+      ],
+      "instruction": "READ FIRST, do not re-derive: docs/specs/2026-08-14-own-the-work-end-to-end.md (the claim this task covers, with its honesty condition and instruction) and CLAUDE.md. The spec already names the file, line and measurement for every finding \u2014 cite it rather than re-measuring. FILES: internal/actors/callback.go:748-755 (late() \u2014 records an event and writes NO attempt row, which is the whole gap), internal/store/postgres/engine_store.go:570-680 (insertAttemptSQL, and MAX(attempt_number)+1 at :659). The unique constraint is attempts_node_run_attempt_number_key at migrations/0002_runtime_execution.sql:71. Retry burn counts every attempt regardless of outcome (actorstats.go:373-376) \u2014 do not inflate it."
+    },
+    {
+      "id": "t12",
+      "summary": "Deadline-cancel event type: a third origin, distinguishable from operator and branch cancels",
+      "origin": "llm",
+      "status": "confirmed",
+      "acceptance_criteria": [
+        "An operator reading only the run's event stream can tell a timeout-driven session stop from an operator-driven one",
+        "The three cancel-requested types are asserted distinguishable in a test"
+      ],
+      "deps": [
+        "t9"
+      ],
+      "covers": [
+        "c46",
+        "h32"
+      ],
+      "instruction": "READ FIRST, do not re-derive: docs/specs/2026-08-14-own-the-work-end-to-end.md (the claim this task covers, with its honesty condition and instruction) and CLAUDE.md. The spec already names the file, line and measurement for every finding \u2014 cite it rather than re-measuring. FILES: internal/engine/events.go, internal/api/cancelpropagate.go:39 and internal/worker/branchcancel.go:46-49 \u2014 read their comments on why the existing two are separated by ORIGIN, and follow that reasoning for the third."
+    },
+    {
+      "id": "t13",
+      "summary": "Preserve on the deadline path",
+      "origin": "llm",
+      "status": "confirmed",
+      "acceptance_criteria": [
+        "A test pins the DEADLINE path specifically: the deadline fires with a dirty workspace and a preserve ref exists afterwards",
+        "Proven by RUNNING one \u2014 cancel a live session with a dirty workspace and observe the preserve branch \u2014 not only by reading async_runner.py's ordering",
+        "Where preserve genuinely cannot run, the attempt records preserve_attempted:false with a reason rather than a null indistinguishable from 'nothing to preserve'"
+      ],
+      "deps": [
+        "t9",
+        "t11"
+      ],
+      "covers": [
+        "c6",
+        "h4",
+        "c30",
+        "h6"
+      ],
+      "instruction": "READ FIRST, do not re-derive: docs/specs/2026-08-14-own-the-work-end-to-end.md (the claim this task covers, with its honesty condition and instruction) and CLAUDE.md. The spec already names the file, line and measurement for every finding \u2014 cite it rather than re-measuring. FILES: adapters/codex/src/codex_bridge/async_runner.py:201-278 and adapters/claude-code/src/claude_code_bridge/{server.py:543,async_runner.py:192}. The preserve path ALREADY fires on a cancelled session \u2014 cancel SIGTERMs, the workspace is measured unconditionally afterwards, and a non-success terminal event routes through preserve. You are proving and pinning that, not building it."
+    },
+    {
+      "id": "t14",
+      "summary": "Attempt attribution on the API surface",
+      "origin": "llm",
+      "status": "confirmed",
+      "acceptance_criteria": [
+        "api/openapi's Attempt schema carries the usage block including usage_model, plus termination_reason and continuation_ref",
+        "The OpenAPI document, the Go handler and the run-detail page land together, so no surface claims a fact another cannot show",
+        "A fresh attempt from each workspace-holding bridge reads back a non-null usage_model through the API"
+      ],
+      "deps": [
+        "t5"
+      ],
+      "covers": [
+        "c8",
+        "h7"
+      ],
+      "instruction": "READ FIRST, do not re-derive: docs/specs/2026-08-14-own-the-work-end-to-end.md (the claim this task covers, with its honesty condition and instruction) and CLAUDE.md. The spec already names the file, line and measurement for every finding \u2014 cite it rather than re-measuring. FILES: api/openapi/openapi.{json,yaml} (Attempt schema \u2014 today it has only actor_id, attempt_number, completed_at, fencing_token, id, node_run_id, preserve_*, result, started_at, status), internal/api/runs.go, web/src. The write path already works: attempt 01M00P2B1CGGGJP63TCDY5F18V records usage_model=claude-opus-5[1m]. You are surfacing it, not building it."
+    },
+    {
+      "id": "t15",
+      "summary": "colleague and notify report an explicit unknown for model",
+      "origin": "llm",
+      "status": "confirmed",
+      "acceptance_criteria": [
+        "A rollup grouping tokens by model can distinguish 'this backend cannot say' from 'nobody wrote it' \u2014 a null serves neither",
+        "The representation carries through the wire Usage block rather than omitting the field"
+      ],
+      "deps": [],
+      "covers": [
+        "c9",
+        "h8"
+      ],
+      "instruction": "READ FIRST, do not re-derive: docs/specs/2026-08-14-own-the-work-end-to-end.md (the claim this task covers, with its honesty condition and instruction) and CLAUDE.md. The spec already names the file, line and measurement for every finding \u2014 cite it rather than re-measuring. FILES: adapters/colleague/src/colleague_bridge/mapping.py:234-249 (its docstring states model and thread are 'omitted, never zero-filled' \u2014 that is the deliberate behaviour to change), adapters/notify/. claude-code and codex already report model; do not touch them."
+    },
+    {
+      "id": "t16",
+      "summary": "Workspace provisioner: a node that mints a unique worktree per writer",
+      "origin": "llm",
+      "status": "confirmed",
+      "acceptance_criteria": [
+        "Ownership is decided and recorded: bridge-side minting under a permitted root, or engine-side path handing \u2014 noting engine-side re-collides with #74's path-portability finding",
+        "Two dispatches that would resolve to the same worktree: the second is REFUSED or disambiguated, never silently reused",
+        "No writer's worktree is reachable from another writer's allowlisted root \u2014 a check that FAILS against today's nested .claude/worktrees/web-ux-quick-wins case",
+        "The repo allowlist gains a scoped-prefix form, since a per-writer path cannot be pre-enumerated; spark's stale aehl-t*/upkeep-t12 entries are reaped"
+      ],
+      "deps": [
+        "t1"
+      ],
+      "covers": [
+        "c51",
+        "h35",
+        "c54",
+        "h39",
+        "c56",
+        "h41"
+      ],
+      "instruction": "READ FIRST, do not re-derive: docs/specs/2026-08-14-own-the-work-end-to-end.md (the claim this task covers, with its honesty condition and instruction) and CLAUDE.md. The spec already names the file, line and measurement for every finding \u2014 cite it rather than re-measuring. FILES: adapters/*/workspace.py (begin(repo) takes a path it is HANDED and only measures \u2014 nothing mints a worktree today), adapters/claude-code/src/claude_code_bridge/config.py:196-201 (exact-match allowlist). CLAUDE.md's convention is ../.worktrees.culture-nodes/<name>/. Engine-side path handing re-collides with #74 \u2014 weigh that before choosing."
+    },
+    {
+      "id": "t17",
+      "summary": "Cleanup: a follow-up node plus an age-based orphan sweeper",
+      "origin": "llm",
+      "status": "confirmed",
+      "acceptance_criteria": [
+        "Removal is gated on POSITIVE evidence the work is safe \u2014 a preserve ref exists or the artifact handle is published \u2014 never on the absence of an error, and --force is never the default",
+        "Cleanup run against a dirty worktree whose preserve ref does NOT exist REFUSES, proven by that case rather than by a clean-worktree test",
+        "An orphaned worktree from a cancelled run is still reclaimed by the sweeper, which independently refuses one whose work is unpreserved or whose session is unconfirmed",
+        "The four stale worktrees on spark are reclaimed as the acceptance case",
+        "A failed cleanup is a routable domain outcome leaving the worktree in place, never an engine failure"
+      ],
+      "deps": [
+        "t16"
+      ],
+      "covers": [
+        "c52",
+        "h36",
+        "c55",
+        "h40",
+        "c57",
+        "h42"
+      ],
+      "instruction": "READ FIRST, do not re-derive: docs/specs/2026-08-14-own-the-work-end-to-end.md (the claim this task covers, with its honesty condition and instruction) and CLAUDE.md. The spec already names the file, line and measurement for every finding \u2014 cite it rather than re-measuring. Probed fact: git worktree remove REFUSES a dirty worktree ('use --force to delete it'). Preserve refs live in the shared .git and SURVIVE worktree removal, so the danger is confined to work never preserved. Four stale worktrees exist on spark now (aehl-t13, aehl-t19, upkeep-s3516-node-runs, web-ux-quick-wins) \u2014 reclaim them as the acceptance case."
+    },
+    {
+      "id": "t18",
+      "summary": "Handover gate: a deterministic validator node producing derived evidence",
+      "origin": "llm",
+      "status": "confirmed",
+      "acceptance_criteria": [
+        "The node measures tests, coverage, cognitive complexity and file length ON CHANGED FILES and reports a NUMBER per gate, not a bare pass/fail",
+        "Thresholds are declared before the work starts; a gate that cannot apply to a changed file is recorded not-applicable rather than counted as passing",
+        "A failing gate is a routable domain outcome routing to a continuation under declared bounds, never an engine failure",
+        "Gate results land as DERIVED records from a deterministic validator, never as an agent's proposed completion claim",
+        "Thresholds are asserted against a changed file in internal/ or adapters/; where issue #88 has not extended an instrument, that tree is recorded tests-only rather than reporting a green that measured nothing"
+      ],
+      "deps": [
+        "t4",
+        "t8"
+      ],
+      "covers": [
+        "c53",
+        "h38",
+        "c58",
+        "h47",
+        "c61",
+        "h44"
+      ],
+      "instruction": "READ FIRST, do not re-derive: docs/specs/2026-08-14-own-the-work-end-to-end.md (the claim this task covers, with its honesty condition and instruction) and CLAUDE.md. The spec already names the file, line and measurement for every finding \u2014 cite it rather than re-measuring. Gate reach, measured: coverage thresholds exist only for culture_nodes; Sonar analyses only culture_nodes (sonar.sources); file-length validation exists nowhere; changed-file scoping is Sonar-server-side only. Issue #88 tracks widening. Where an instrument does not reach a tree, record that tree tests-only rather than reporting a green that measured nothing."
+    },
+    {
+      "id": "t19",
+      "summary": "pr-upkeep sweep source: derive URL and digest from the revision deploy.sh already ships",
+      "origin": "llm",
+      "status": "confirmed",
+      "acceptance_criteria": [
+        "deploy.sh derives PR_UPKEEP_SWEEP_SOURCE_URL from the sha it resolves at line 30 and the digest from examples/pr-upkeep/sweep.py in that same revision",
+        "Proven against a SQUASH-MERGED revision \u2014 the case that orphaned 0abf042 \u2014 not against a branch tip that happens to still be reachable",
+        "The operator can still override both explicitly, since running someone else's copy is the point of the grant"
+      ],
+      "deps": [
+        "t2"
+      ],
+      "covers": [
+        "c14",
+        "h12"
+      ],
+      "instruction": "READ FIRST, do not re-derive: docs/specs/2026-08-14-own-the-work-end-to-end.md (the claim this task covers, with its honesty condition and instruction) and CLAUDE.md. The spec already names the file, line and measurement for every finding \u2014 cite it rather than re-measuring. FILES: deploy/prod/deploy.sh lines 26-75. It already does git rev-parse --short $BRANCH at line 30 and ships git archive of that revision \u2014 derive both values from it. The current pin (0abf042) is on an object unreachable from any branch after #85's squash merge."
+    },
+    {
+      "id": "t20",
+      "summary": "pr-upkeep multi-repo: a granted repo set, per-host checkouts, scoped credential",
+      "origin": "llm",
+      "status": "confirmed",
+      "acceptance_criteria": [
+        "SONAR_COMPONENT_KEY and GITHUB_REPO become one per-repo pair resolved from a granted environment value; a caller naming a repo in run input is still REFUSED",
+        "tests/test_pr_upkeep_sweep.py's environment-read assertion is edited deliberately to admit exactly the new value and nothing more, and the blast-radius note is rewritten rather than deleted",
+        "One repo per cycle, in configured order, and the sweep reports which one it swept",
+        "Every repo in the set has a checkout AND an exact-match allowlist entry on BOTH the fix and review actor hosts before the set is enlarged",
+        "The sweep's credential is scoped to exactly the configured set, and the deployment records that scope where an operator sees it"
+      ],
+      "deps": [
+        "t19"
+      ],
+      "covers": [
+        "c15",
+        "h19",
+        "c23",
+        "h13",
+        "c47",
+        "h33"
+      ],
+      "instruction": "READ FIRST, do not re-derive: docs/specs/2026-08-14-own-the-work-end-to-end.md (the claim this task covers, with its honesty condition and instruction) and CLAUDE.md. The spec already names the file, line and measurement for every finding \u2014 cite it rather than re-measuring. FILES: examples/pr-upkeep/sweep.py:85-93 (the pinned constants and the blast-radius note to rewrite, not delete), tests/test_pr_upkeep_sweep.py:660-740 (ALLOWED_ENVIRONMENT_READS is an EXACT-SET assertion designed to fail loudly \u2014 edit it deliberately)."
+    },
+    {
+      "id": "t21",
+      "summary": "The development-loop workflow: wire the new nodes, events and connections into a committed graph",
+      "origin": "llm",
+      "status": "confirmed",
+      "acceptance_criteria": [
+        "A committed example workflow expresses the whole loop as a graph: provision-workspace -> work -> handover-gate -> (pass) merge-review / (fail) continuation -> cleanup-workspace, with every step a node carrying a contract rather than an operator habit",
+        "The new NODES are declared and compile on the shipped compiler: provision-workspace, handover-gate, cleanup-workspace",
+        "The new EVENTS are emitted and visible in the run's event stream: deadline cancel-requested, workspace-fence refusal, worktree provisioned, worktree reaped",
+        "The new CONNECTIONS are exercised: both handoff carriers (git_ref for changes, artifact for context), the gate-failure -> continuation edge under declared bounds, and onExhausted -> a human node",
+        "The graph declares its dependency order (spec c21) so the order is a compiled artifact rather than prose a reader must obey by hand",
+        "The split plan declares expected model-session count per wave against the remaining subscription window BEFORE any assignment, with big packages routed to codex actors and the operator's window reserved for operator-lane work and merge gates",
+        "It validates offline through internal/compiler with 0 errors, like the eleven existing examples"
+      ],
+      "deps": [
+        "t6",
+        "t8",
+        "t12",
+        "t17",
+        "t18"
+      ],
+      "covers": [
+        "c21",
+        "h14",
+        "c24",
+        "h15"
+      ],
+      "instruction": "READ FIRST, do not re-derive: docs/specs/2026-08-14-own-the-work-end-to-end.md (the claim this task covers, with its honesty condition and instruction) and CLAUDE.md. The spec already names the file, line and measurement for every finding \u2014 cite it rather than re-measuring. This is the dogfooding centrepiece. Read examples/pr-upkeep/workflow.yaml and examples/delivery-loop/workflow.yaml as the skeleton; eleven committed examples already validate clean and cover sweep/triage loops, split/join, human gates and cross-machine dispatch. Validate offline with nodes validate \u2014 no control plane needed. Declare the split plan's session counts against the remaining window BEFORE any wave dispatches."
+    },
+    {
+      "id": "t22",
+      "summary": "Author nodes and flows from text, powered by an agent node (#81)",
+      "origin": "llm",
+      "status": "confirmed",
+      "acceptance_criteria": [
+        "A plain-text description produces a workflow compiling with 0 errors from the dashboard, the CLI, and an agent mid-run \u2014 one implementation behind one API, not three generators",
+        "Nothing publishes without passing validate and a human confirmation; a generated-but-unconfirmed workflow is visibly proposed",
+        "Generation happens in an agent node on the registered fleet \u2014 NO model call inside the control plane, enforced by a tests/lint gate the way webhook and GitHub egress already are",
+        "Editing an existing workflow produces a diff against the pinned version, never a silent replacement",
+        "A generation that cannot reach a compiling document within its bound is a routable domain outcome, not an engine failure"
+      ],
+      "deps": [
+        "t21"
+      ],
+      "covers": [],
+      "instruction": "READ FIRST, do not re-derive: docs/specs/2026-08-14-own-the-work-end-to-end.md (the claim this task covers, with its honesty condition and instruction) and CLAUDE.md. The spec already names the file, line and measurement for every finding \u2014 cite it rather than re-measuring. The validate/publish door already exists and is proven: web/src/routes/AuthorWorkflow.tsx (ADR 0007) does paste -> validate -> diagnostics -> graph preview -> publish, shipping the operator's EXACT source string so the digest matches the CLI path. Build the generator in FRONT of that door; do not touch the door. Follow tests/lint/{webhook,github}isolation_test.go for the no-model-in-the-control-plane gate."
+    },
+    {
+      "id": "t23",
+      "summary": "Jira Cloud as a third finding source (#76) \u2014 fixtures only, live proof separately gated",
+      "origin": "llm",
+      "status": "confirmed",
+      "acceptance_criteria": [
+        "A Jira backlog item surfaces as a prioritised work item from a sweep run against RECORDED FIXTURES, with site host, project key and credentials all supplied as configuration \u2014 never module constants",
+        "The unit tests pass with no network access and no credential present",
+        "No new node kind and no engine change: it compiles and runs on the shipped compiler exactly as pr-upkeep does",
+        "No credential, account email or personal identifier appears in any committed artifact, argv or log line",
+        "Live proof is recorded as a SEPARATE gate, explicitly blocked until the backlog has content, and is NOT written into this batch's success signals"
+      ],
+      "deps": [
+        "t20"
+      ],
+      "covers": [],
+      "instruction": "READ FIRST, do not re-derive: docs/specs/2026-08-14-own-the-work-end-to-end.md (the claim this task covers, with its honesty condition and instruction) and CLAUDE.md. The spec already names the file, line and measurement for every finding \u2014 cite it rather than re-measuring. Settled by live probe: Jira Cloud REST v3 needs HTTP Basic account-email:api-token (Basic 200, the same token as Bearer 403), so TWO config values are required. Rate limit is 350/window. The backlog is EMPTY \u2014 a JQL across the whole site returns zero issues \u2014 so fixtures are the only honest acceptance and live proof is a separately blocked gate."
+    },
+    {
+      "id": "t24",
+      "summary": "SELF-TEST: every tree green under its own suite and every declared gate",
+      "origin": "llm",
+      "status": "confirmed",
+      "acceptance_criteria": [
+        "All four trees pass their own CI: pytest (culture_nodes), go build + go vet + go test ./... (internal, cmd), the adapter suites, and web build + vitest + playwright",
+        "Every gate this batch declared is green on the changed files: tests, coverage and cognitive complexity where the instruments reach, and file length repo-wide at 1000",
+        "No agent-created record in the batch carries authority above 'proposed' and no code path lets an actor promote its own proposal, checked by the existing ledger authority tests rather than by review",
+        "Run BEFORE the live test: a self-test failure stops the chain rather than being discovered during the live run"
+      ],
+      "deps": [
+        "t3",
+        "t7",
+        "t9",
+        "t10",
+        "t11",
+        "t13",
+        "t14",
+        "t15",
+        "t19",
+        "t22",
+        "t23"
+      ],
+      "covers": [
+        "c36",
+        "h25"
+      ],
+      "instruction": "READ FIRST, do not re-derive: docs/specs/2026-08-14-own-the-work-end-to-end.md (the claim this task covers, with its honesty condition and instruction) and CLAUDE.md. The spec already names the file, line and measurement for every finding \u2014 cite it rather than re-measuring. Run every tree's own CI locally before claiming green: uv run pytest -n auto --cov=culture_nodes, go build ./... && go vet ./... && go test ./..., the adapter suites, and npm run build && npm test && npm run test:e2e. Plus the lint job: black, isort, flake8, bandit, markdownlint-cli2, teken cli doctor --strict. A self-test failure STOPS the chain."
+    },
+    {
+      "id": "t25",
+      "summary": "LIVE-TEST: the end-to-end proof on the real fleet, across two machines",
+      "origin": "llm",
+      "status": "confirmed",
+      "acceptance_criteria": [
+        "ONE run of the loop completes across spark and thor: sweep finds an item, fix produces its changes on spark, review consumes them on thor, with NO path passed between them and no operator copy step",
+        "A node killed mid-write has its session STOPPED and its work recovered from the run alone, with no human touching a filesystem",
+        "Cancelling a run ends the actor session, verified by observing the session end rather than reading the run's status",
+        "Every attempt in the run records what ran it: model, effort, cost \u2014 read back through the API, not the database",
+        "The COMPANION-DOCUMENT TEST: a reader given only the run \u2014 no delivery summary, no state file, no transcript \u2014 can say what happened and what state it left behind",
+        "Each of the three audiences has at least one signal that could have failed and did not; any signal only proven by test rather than by this live run is narrowed to what was actually run"
+      ],
+      "deps": [
+        "t24"
+      ],
+      "covers": [
+        "c1",
+        "h1",
+        "c32",
+        "h21",
+        "c35",
+        "h24",
+        "h52"
+      ],
+      "instruction": "READ FIRST, do not re-derive: docs/specs/2026-08-14-own-the-work-end-to-end.md (the claim this task covers, with its honesty condition and instruction) and CLAUDE.md. The spec already names the file, line and measurement for every finding \u2014 cite it rather than re-measuring. Use the live fleet: control plane at http://192.168.1.146:18080, actors codex-thor and codex-orin plus the four spark claude bridges. Drive it through the nodes-operator skill. Reference runs to compare against: 01M00NVQH582QBARWSYFR0WTG1 (terminated handoff_unavailable) and 01M00BKCVT04SSGPNXDF3JJX5G (the t14 timeout). The companion-document test is the hard one \u2014 hand someone only the run."
+    },
+    {
+      "id": "t26",
+      "summary": "Delivery summary: planned versus actual, with every claim scoped to its evidence",
+      "origin": "llm",
+      "status": "confirmed",
+      "acceptance_criteria": [
+        "docs/deliveries/2026-08-14-economy-discord-graphs.md's preserve-on-failure row is corrected to 'verified by test, never exercised in production' \u2014 neither 'high confidence' nor 'false', and stating the production sample size was zero",
+        "Every one of the five before-state costs is cited to a checkable record: run 01M00BKCVT04SSGPNXDF3JJX5G and commit 3f9bd3c, run 01M00NVQH582QBARWSYFR0WTG1, probe t9, the 1-of-140 usage_model measurement, and the -STATE.md file itself",
+        "Each success signal carries an explicit verdict INCLUDING the negative ones; no signal is marked met because the code shipped",
+        "The summary states, for each after-state verb, whether it was proven on the live run or only by test",
+        "It records whether a -STATE.md companion file was needed this cycle \u2014 the batch's own headline claim, answered rather than assumed"
+      ],
+      "deps": [
+        "t25"
+      ],
+      "covers": [
+        "c28",
+        "h5",
+        "c31",
+        "h20",
+        "c33",
+        "h22",
+        "c34",
+        "h23"
+      ],
+      "instruction": "READ FIRST, do not re-derive: docs/specs/2026-08-14-own-the-work-end-to-end.md (the claim this task covers, with its honesty condition and instruction) and CLAUDE.md. The spec already names the file, line and measurement for every finding \u2014 cite it rather than re-measuring. Use the summarize-delivery skill. The delivery row to correct is in docs/deliveries/2026-08-14-economy-discord-graphs.md. Report failures faithfully: this batch exists because a previous high-confidence claim was true by test and never exercised in production."
+    }
+  ],
+  "risks": [
+    {
+      "id": "r1",
+      "text": "The handoff design is the least settled area in the spec and everything sequences behind it: three challenge passes each overturned something already confirmed there \u2014 c37's cancel ordering, then c3's artifact-only contract, and the carrier decision re-threaded the dependency order twice. Treat the two-carrier decision as provisional at the split-plan gate rather than final.",
+      "kind": "unknown_nonblocking",
+      "task_id": null,
+      "resolved": false,
+      "resolution": ""
+    },
+    {
+      "id": "r2",
+      "text": "The codex workspace-write path has never been proven to land a patch (#18). Every write-side acceptance routed to a codex actor inherits that unknown, and #63's userns fix was verified only against a read-only probe.",
+      "kind": "unknown_nonblocking",
+      "task_id": null,
+      "resolved": true,
+      "resolution": "RESOLVED by live evidence from run 01M022BSJ3550RQ8Q2P7DFWA91 (codex-thor, sandbox=workspace-write, 2026-08-15): 'Write probe passed: the scratch file appeared as ?? .codex-write-probe-p1 and was deleted successfully.' The bridge's own workspace measurement corroborates it (measured=true, head unchanged, clean porcelain after cleanup). This is the first proof that a codex workspace-write session can create and remove a file in its allowlisted checkout \u2014 the gap #18 has carried since 2026-08-11, where #63's userns fix was verified only against a read-only probe. Every write-side acceptance in this batch that routes to a codex actor is therefore no longer inheriting an unproven precondition."
+    },
+    {
+      "id": "r3",
+      "text": "The disk cost of per-writer worktrees multiplied by the multi-repo set was measured on spark only (2.4TB free, ~330MB per worktree). thor and orin are Jetson-class with materially smaller storage and the two requirements compound as repos x writers.",
+      "kind": "unknown_nonblocking",
+      "task_id": null,
+      "resolved": false,
+      "resolution": ""
+    },
+    {
+      "id": "r4",
+      "text": "The token's granted scope is not established: a permissions probe reported admin/push true, but for a fine-grained PAT that reflects the authenticated identity's role rather than the token's grant. A classic repo-scope token would give an unattended bridge admin on every reachable repo.",
+      "kind": "unknown_blocking",
+      "task_id": null,
+      "resolved": true,
+      "resolution": "Over-classified as blocking; corrected. The FUNCTIONAL prerequisite \u2014 that a push credential exists at all, which is what spec claim c71 identified as absent \u2014 is RESOLVED: the operator provisioned GITHUB_TOKEN_WORKER as a distinct value from the sweep's GITHUB_TOKEN, which also satisfies boundary c73 by construction. What remained was a least-privilege question about how narrowly that token is scoped, and that is not blocking: the work proceeds identically under either answer, no task changes, and the remedy if it is over-scoped (reissue it fine-grained) invalidates nothing. It is already handled where it belongs \u2014 t1 carries the acceptance criterion that the two tokens are demonstrably different values with different scopes, verified by the sweep's token FAILING to push. Re-filed as a non-blocking posture note."
+    },
+    {
+      "id": "r5",
+      "text": "Least-privilege posture on the bridge push credential: an unattended service holding a broad token is a larger blast radius than the handover needs. A permissions probe reported admin/push true, but for a fine-grained PAT that reflects the authenticated identity's role rather than the token's grant, so the probe cannot tell a correctly-narrow Contents:write token from a broad classic repo-scope one. Verified at the operator's discretion (a classic PAT is prefixed ghp_, a fine-grained one github_pat_); the remedy if broad is to reissue fine-grained. Not blocking \u2014 t1's acceptance criteria carry the check.",
+      "kind": "unknown_nonblocking",
+      "task_id": "t1",
+      "resolved": true,
+      "resolution": "Resolved by measurement, using the new scripts/verify-token-scope.sh: GITHUB_TOKEN_WORKER is type=fine_grained, coarse_scoped=false, oauth_scopes empty (a classic token would return the x-oauth-scopes header), push present on agentculture/culture-nodes, within_policy=true, exit 0. The least-privilege concern is answered: it is not a coarse repo-scope classic token."
+    },
+    {
+      "id": "r6",
+      "text": "Routing decided: warm packages, codex-routed. Same-lane tasks group into persistent warm sessions with many ledgered sub-actions (~3-4 packages per wave, not one session per task); big analysis/build packages go to codex-thor and codex-orin so the cold-session tax buys ledger attribution and cross-machine execution; the operator's Claude window is reserved for merge gates only. This implements c24/h15 and the nodes-operator split-plan guidance, and deliberately avoids #47's failure shape (per-task cold sessions plus parallel subagents exhausting one shared window mid-wave). The residual exposure is #18: the codex workspace-write path has never been proven to land a patch, and this routing puts most of the batch's writing on it \u2014 wave 0 is therefore also the probe that proves or falsifies it.",
+      "kind": "follow_up",
+      "task_id": null,
+      "resolved": false,
+      "resolution": ""
+    },
+    {
+      "id": "r7",
+      "text": "h54's separation test is NOT yet satisfied and the API cannot settle it. Measured: GITHUB_TOKEN and GITHUB_TOKEN_WORKER are distinct values (sha256 digests differ) and both are fine-grained, but BOTH report push:true on agentculture/culture-nodes. Per verify-token-scope.sh's own caveat, a repository permissions block reflects the AUTHENTICATED IDENTITY's role rather than the token's grant, so for two tokens owned by an org owner it cannot distinguish a read-only grant from a write one. h54 requires that the sweep FAIL to push when handed only its own token; establishing that needs a non-mutating capability probe the script deliberately does not perform. The right primitive is 'git push --dry-run', which contacts the remote and exercises the permission check without writing \u2014 add it to the verification node as an opt-in probe, gated behind an explicit flag so verification stays side-effect-free by default.",
+      "kind": "unknown_nonblocking",
+      "task_id": "t1",
+      "resolved": true,
+      "resolution": "SETTLED by measurement, and h54 is satisfied. Added a write-capability probe to scripts/verify-token-scope.sh: a plain GET of the receive-pack advertisement (https://github.com/<repo>.git/info/refs?service=git-receive-pack), which GitHub gates on the TOKEN's write permission and which has no side effect \u2014 no git invocation, no pack negotiation, no ref touched. Results: GITHUB_TOKEN_WORKER returns 200 (can push); the sweep's GITHUB_TOKEN returns 403 (read-only). The separation c73 requires is therefore REAL, not nominal. This also demonstrates why the API alone could not settle it: BOTH tokens report role_implies_push=true from the repository permissions block, because that reflects the owner's role \u2014 the measured field disagrees with the role-derived one, and the measured one is authoritative. The script now reports both and says which to believe."
+    }
+  ]
+}

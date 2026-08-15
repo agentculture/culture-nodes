@@ -572,9 +572,10 @@ INSERT INTO attempts (
 	usage_input_tokens, usage_output_tokens, usage_cost, usage_currency,
 	usage_cached_input_tokens, usage_reasoning_tokens, usage_model, usage_thread_id,
 	termination_reason, continuation_ref,
-	preserve_branch, preserve_pushed, preserve_remote
+	preserve_branch, preserve_pushed, preserve_remote,
+	supersedes
 )
-VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22, $23)
+VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22, $23, $24)
 `
 
 // InsertAttempt records one dispatch attempt's result. The
@@ -604,6 +605,15 @@ VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $
 // never partially written — engine.Preserve carries no independently-
 // nullable sub-fields the way Usage's extended columns do, so either all
 // three are set together (from a real, committed branch) or none are.
+//
+// supersedes (migrations/0028_attempt_supersedes.sql) is written the same
+// way from attempt.Supersedes, and every caller on this path leaves it nil:
+// an ordinary dispatch corrects nothing. The one writer that sets it is the
+// late-callback reconciliation, which has its own statement
+// (recordSupersedingAttemptSQL) because it must mint its attempt number in
+// the same statement and conflict rather than duplicate under a callback
+// redelivery. The column is carried here so engine.Attempt round-trips whole
+// rather than dropping a field on a path that happens never to set it today.
 func (eq engineQueries) InsertAttempt(ctx context.Context, attempt engine.Attempt) error {
 	var result any
 	if len(attempt.Result) > 0 {
@@ -645,6 +655,7 @@ func (eq engineQueries) InsertAttempt(ctx context.Context, attempt engine.Attemp
 		textPtrFromNullable(attempt.TerminationReason),
 		textPtrFromNullable(attempt.ContinuationRef),
 		preserveBranch, preservePushed, preserveRemote,
+		textPtrFromNullable(attempt.Supersedes),
 	)
 	if err != nil {
 		return fmt.Errorf("postgres: engine: InsertAttempt: %w", err)
@@ -673,7 +684,7 @@ func (eq engineQueries) Attempts(ctx context.Context, nodeRunID string) ([]engin
 		       usage_input_tokens, usage_output_tokens, usage_cost, usage_currency,
 		       usage_cached_input_tokens, usage_reasoning_tokens, usage_model,
 		       usage_thread_id, termination_reason, continuation_ref,
-		       preserve_branch, preserve_pushed, preserve_remote
+		       preserve_branch, preserve_pushed, preserve_remote, supersedes
 		FROM attempts
 		WHERE node_run_id = $1
 		ORDER BY attempt_number
@@ -707,6 +718,7 @@ func (eq engineQueries) Attempts(ctx context.Context, nodeRunID string) ([]engin
 			preserveBranch    pgtype.Text
 			preservePushed    pgtype.Bool
 			preserveRemote    pgtype.Text
+			supersedes        pgtype.Text
 		)
 		if err := rows.Scan(
 			&attempt.ID, &attempt.NamespaceID, &attempt.NodeRunID, &number, &actorID,
@@ -714,7 +726,7 @@ func (eq engineQueries) Attempts(ctx context.Context, nodeRunID string) ([]engin
 			&usageInputTokens, &usageOutputTokens, &usageCost, &usageCurrency,
 			&usageCachedInput, &usageReasoning, &usageModel, &usageThreadID,
 			&terminationReason, &continuationRef,
-			&preserveBranch, &preservePushed, &preserveRemote,
+			&preserveBranch, &preservePushed, &preserveRemote, &supersedes,
 		); err != nil {
 			return nil, fmt.Errorf("postgres: engine: Attempts: scan: %w", err)
 		}
@@ -766,6 +778,13 @@ func (eq engineQueries) Attempts(ctx context.Context, nodeRunID string) ([]engin
 				Remote: textOrEmpty(preserveRemote),
 			}
 		}
+		// A node run's attempts are returned WHOLE, superseded rows included
+		// (ADR 0012 §3). This is the one read path that deliberately does not
+		// apply attemptCurrentSQL's filter: a reader reconstructing what
+		// happened needs to see that the deadline fired AND that the session
+		// reported afterwards, and `supersedes` is what tells them which row
+		// is which. The aggregates are where superseded history drops out.
+		attempt.Supersedes = textPtrFromPg(supersedes)
 		attempts = append(attempts, attempt)
 	}
 	if err := rows.Err(); err != nil {

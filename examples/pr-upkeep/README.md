@@ -24,8 +24,9 @@ means supplying these — it never means editing `workflow.yaml`.
 | `runner://headspace/docker` | **Runner registry.** The code-node runner boundary the sweep dispatches through. |
 | `PR_UPKEEP_SWEEP_SOURCE_URL` | **Granted environment value** on the sweep operation. Where `sweep.py` is fetched from at dispatch time. |
 | `PR_UPKEEP_SWEEP_SOURCE_SHA256` | **Granted environment value.** The sha256 those fetched bytes must have; the bootstrap refuses to execute anything else. |
-| `PR_UPKEEP_MAX_PRS_PER_SWEEP`, `PR_UPKEEP_REQUIRED_CHECKS`, `GITHUB_TOKEN` | **Process environment of the sweep**, all optional except the token's effect on rate limits. Documented at their constants in `sweep.py`. |
-| `SONAR_COMPONENT_KEY`, `GITHUB_REPO` | **Pinned in `sweep.py`, on purpose** — see below. This is *the one value a new operator changes*, and they change it in their own copy of the script. |
+| `PR_UPKEEP_REPOSITORIES` | **Granted environment value.** An ordered JSON object containing `cycle` and the closed `repositories` set. Each entry supplies `github_repo` and `sonar_component`; optional `jira_site` and `jira_project` enable Jira for that repo. The cycle index selects exactly one entry per sweep. |
+| `JIRA_ACCOUNT_EMAIL`, `JIRA_API_TOKEN` | **Granted environment values.** The two separately configured Jira Cloud Basic-auth values. They are never run input, argv, output, or fixture data. |
+| `PR_UPKEEP_MAX_PRS_PER_SWEEP`, `PR_UPKEEP_REQUIRED_CHECKS`, `GITHUB_TOKEN` | **Process environment of the sweep.** These remain optional; the GitHub token only changes rate-limit headroom. |
 
 The granted environment values are the ones a reader cannot trace from the
 document alone: they resolve in the worker process that dispatches the
@@ -169,8 +170,8 @@ treats the two states as genuinely different:
 ## The human-merges rule
 
 **This flow holds zero merge credentials in the control plane.** The sweep
-is read-only against two public APIs; the fix actor can push branches and
-open PRs but never merge; the review actor is read-only outright; the control
+is read-only against its configured finding APIs; the fix actor can push
+branches and open PRs but never merge; the review actor is read-only outright; the control
 plane process holds no GitHub credential at all (spec claim c13, issue #54).
 
 **How the workflow's `approved` outcome works now:** The human merges the PR
@@ -242,35 +243,24 @@ terms:
   a merge-kind group's human can act at their own pace), which reprioritises
   the same fixed budget without growing it.
 
-## The single-repo boundary (claim c26)
+## The closed repository-set boundary (claim c26)
 
-This flow works on culture-nodes and nothing else. The repo is hard-coded,
-not configured per run — and that is the point rather than an oversight. It
-is a **blast-radius boundary**: `fetch_open_pulls` walks *every* open PR on
-the repo and reads each one's comments and check runs, so a repo taken from
-run input would aim that enumeration wherever a caller pointed it, on a
-credential the script did not choose. Pinned in code, re-pointing it is an
-edit someone makes deliberately in a fork.
+The boundary remains deliberate, but moved from one code-pinned repo to a
+closed set granted by the deployment. `fetch_open_pulls` enumerates every
+open PR and reads its comments and checks with the sweep credential, so run
+input still cannot name or select a repository. `PR_UPKEEP_REPOSITORIES`
+contains the ordered set and a cycle index; one entry is swept and named in
+the report. Before adding an entry, provision its checkout and exact-match
+allowlist on both fix and review hosts, and scope the read credential to the
+same set.
 
-So it stays pinned, and it is **the one value a new operator changes** to
-run this example against their own repo: edit the two constants in your
-copy of `sweep.py` — the copy `PR_UPKEEP_SWEEP_SOURCE_URL` points at — and
-nothing else. Both halves are stated at the constants themselves, and
-`tests/test_pr_upkeep_sweep.py`'s `TestTheSweptRepoIsPinnedAndSaysSo`
-asserts that the pin is real (plain literals, no environment value able to
-re-point it) *and* that this note still exists.
-
-- `sweep.py` pins `SONAR_COMPONENT_KEY` and `GITHUB_REPO` to this repo —
-  the single configuration mention of the SonarCloud component key:
-
-  ```bash
-  grep -rn "agentculture_culture-nodes" examples/pr-upkeep \
-      --include='*.py' --include='*.yaml' --include='*.sh'
-  # exactly one hit: sweep.py's SONAR_COMPONENT_KEY
-  ```
-
-  (The recorded fixtures under `fixtures/` also contain the key — as data
-  inside recorded API payloads, which is what recorded payloads look like.)
+Jira is additive inside that selected entry. `jira_site` is a host name and
+`jira_project` a project key; neither is a module constant. Jira Cloud REST
+v3 uses HTTP Basic from `JIRA_ACCOUNT_EMAIL:JIRA_API_TOKEN` and the sweep
+budgets at the measured 350-request window. The committed acceptance is the
+recorded `fixtures/jira-search.json` response because the probed live backlog
+is empty. A live proof is a separate gate, blocked until backlog content
+exists; it is not a success signal for this batch.
 
 - the `repo` run input is the local checkout path the fix/review bridges
   allowlist; a run naming a non-allowlisted repo is refused by the bridges
@@ -302,50 +292,74 @@ defect.
 Three things changed, and the invariants are locked by
 [`tests/lint/crosshosthandoff_test.go`](../../tests/lint/crosshosthandoff_test.go):
 
-1. **`fix.completed` requires a handle.** Its contract requires
-   `handoff: {kind: artifact, ref: "artifact://<namespace>/<id>"}`, and the
-   ref is pattern-constrained so it cannot quietly become a path again. An
-   artifact reference "never carries or implies a filesystem path"
-   ([`internal/artifacts/doc.go`](../../internal/artifacts/doc.go)) — it
-   resolves through the store from any host. Because the engine validates a
-   completion against the outcome schema
+1. **`fix.completed` requires a handle, and `review` requires one too.** Both
+   contracts embed the same rule, declared once in
+   [`schemas/workflow/handoff.schema.json`](../../schemas/workflow/handoff.schema.json),
+   and it admits **two carriers** (spec decision `q9`, task t6):
+   - a runner's **changes** travel as `kind: git_ref` —
+     `git+<https|ssh>://<remote>#refs/culture-nodes/<run-id>/<node-run-id>`
+     plus the `commit` it pins. A remote, a ref name and a sha carry no host
+     and no path, which is the property #74 actually required;
+   - **context and data** that is not naturally a git object travel as
+     `kind: artifact` — an `artifact://<namespace>/<id>` reference, which
+     "never carries or implies a filesystem path"
+     ([`internal/artifacts/doc.go`](../../internal/artifacts/doc.go)) and
+     resolves through the store from any host. The sweep's prioritised item
+     list is JSON, so it is on this side of the rule.
+
+   Each carrier's ref is pattern-constrained so neither can quietly become a
+   path again — including the near misses, `git+file://` and a bare branch
+   name. Because the engine validates a completion against the outcome schema
    ([`internal/engine/complete.go`](../../internal/engine/complete.go)'s
    `checkOutput`), a fix that produced no handle **cannot report
    `completed`**. This is enforced, not advised.
 2. **A fix host that cannot produce one says so, by name.** The
    `handoff_unavailable` domain outcome requires a `missing_capability` from
-   a closed set — `artifact_publish`, `workspace_export`,
+   a closed set — `artifact_publish`, `git_ref_publish`, `workspace_export`,
    `handoff_too_large` — so the answer is a name, not a sentence to
-   interpret.
+   interpret. Two carriers means two publish capabilities, and a host can be
+   missing either one alone.
 3. **That outcome never reaches `review`.** It routes to the terminal
    `handoff-blocked` node, which carries the fix node's output (where
    `missing_capability` lives) as the run's output. `finish` would have
    buried it under the sweep report.
 
-**Why not a git ref**, which is [issue #74](https://github.com/agentculture/culture-nodes/issues/74)'s
-own recommendation and would reuse task t25's preserve-branch machinery: a
-probe of the spark bridge host settled it. `origin` is HTTPS not SSH, no SSH
-key is authorised for GitHub, there is no `credential.helper`, and the
-running bridge process carries neither `GH_TOKEN` nor `GITHUB_TOKEN`. The
-host that must produce the handle cannot push. `handoff.kind` is an enum
-with one member today so that adding `git_ref` later — once a bridge host
-holds a credential — is visibly additive.
+**This section used to say a git ref was impossible**, because a probe of the
+spark bridge host found HTTPS origin, no SSH key, no `credential.helper` and
+no token in the bridge process. That was true when it was written and no
+longer is: task t1 provisioned `GITHUB_TOKEN_WORKER` into the bridge units,
+and issue #91 measured that a codex session under `--sandbox workspace-write`
+can write `.git` once the dispatch widens `writable_roots` (deviation `d6`).
+So [issue #74](https://github.com/agentculture/culture-nodes/issues/74)'s own
+recommendation — "option 1, with 2 for anything not naturally a git object" —
+is what the graph now says, and the widening was a decided change rather than
+drift: it retired boundary `c3`, which its own honesty condition `h17` had
+already pinned as falsifiable.
 
-**What is not wired yet.** [`internal/artifacts`](../../internal/artifacts/)
-is a complete library (Store, Router, Postgres and S3 drivers, migrations
-0004/0006) with **zero production callers**. There is no artifact ingest or
-fetch endpoint on the control plane's HTTP surface, no bridge publishes
-bytes, and `InvocationResult.artifact_refs` is accepted on the wire and then
-dropped. So today every fix host lands on `handoff_unavailable` with
-`missing_capability: artifact_publish`. That is the true state of the
-system, and a far better answer than reviewing thor's own checkout and
-calling it a review of spark's work. Remaining for the content path: an
-ingest/fetch endpoint, bridge-side publish and resolve across all backends
-(the all-backends rule), and persisting actor-reported artifact refs so
-`/nodes/<id>/artifacts` can become a bindable surface — it is refused today
-by both [`internal/compiler/contract.go`](../../internal/compiler/contract.go)
-and [`internal/worker/bindings.go`](../../internal/worker/bindings.go), and
-those two verdicts must change together.
+**What is not wired yet.** Both carriers are half-built, and in the same half:
+a producer can create the handle, and no consumer can yet follow it.
+
+- **`artifact`** — task t5 mounted the publish side
+  (`POST /v1alpha1/attempts/{attemptID}/artifacts`, attempt-token scoped).
+  There is still no fetch route on the control plane's HTTP surface, and
+  `/nodes/<id>/artifacts` is not a bindable surface — refused today by both
+  [`internal/compiler/contract.go`](../../internal/compiler/contract.go) and
+  [`internal/worker/bindings.go`](../../internal/worker/bindings.go), and
+  those two verdicts must change together.
+- **`git_ref`** — the bridge-side producer is `preserve.handover_ref`, in all
+  three code adapters (all-backends rule). It mints
+  `refs/culture-nodes/<run-id>/<node-run-id>` out of the **same**
+  write-tree/commit-tree/update-ref plumbing preserve-on-failure uses, and it
+  **never pushes**: `AGENTS.md` lets an agent create a handover ref and
+  forbids it to push or to commit onto a branch, so the handle it reports
+  carries `publication: pending` and the ref is reachable from no branch until
+  the operator or the control plane moves it. Nothing moves it yet, no
+  dispatch requests one yet, and no node fetches one yet.
+
+So today a fix host still lands on `handoff_unavailable`, naming whichever
+publish capability it is missing. That is the true state of the system, and a
+far better answer than reviewing thor's own checkout and calling it a review
+of spark's work.
 
 ## The extractor and its fixtures
 
@@ -482,7 +496,8 @@ on: `scripts/validate-examples.sh` and `tests/lint/examplescompile_test.go`
   "Deployment configuration"); the pinned `python:3.12-slim` image needs
   nothing baked in, since the script is stdlib-only. **Egress: DECLARED
   intent is `network:
-  egress-allowlist` (sonarcloud.io + api.github.com only).** Headspace-cli
+  egress-allowlist` (sonarcloud.io + api.github.com + the granted Jira
+  host).** Headspace-cli
   0.11.0 supports only disabled/enabled network posture, so the boundary
   honestly rejects the allowlist as `rejected_input` (issue #50). The
   workflow runs with `network: full` until headspace ships allowlist support;

@@ -36,6 +36,7 @@ After=network-online.target
 # and this env file (secret token only — never the config JSON).
 ExecStartPre=%h/.culture-nodes/bin/codex-preflight.sh %h/.culture-nodes/codex-bridge.json
 EnvironmentFile=%h/.culture-nodes/codex-bridge.env
+EnvironmentFile=-%h/.culture-nodes/bridge-push.env
 ExecStart=%h/.local/bin/codex-bridge --config %h/.culture-nodes/codex-bridge.json
 Restart=always
 RestartSec=5

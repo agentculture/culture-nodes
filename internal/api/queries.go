@@ -333,7 +333,10 @@ func (s *Server) runNodeRuns(ctx context.Context, runID string) ([]NodeRunOut, e
 
 	attemptRows, err := s.Store.Pool().Query(ctx, `
 		SELECT a.id, a.node_run_id, a.attempt_number, a.actor_id, a.status, a.fencing_token, a.result, a.started_at, a.completed_at,
-		       a.preserve_branch, a.preserve_pushed, a.preserve_remote
+		       a.preserve_branch, a.preserve_pushed, a.preserve_remote,
+		       a.usage_input_tokens, a.usage_output_tokens, a.usage_cost, a.usage_currency,
+		       a.usage_cached_input_tokens, a.usage_reasoning_tokens, a.usage_model, a.usage_thread_id,
+		       a.termination_reason, a.continuation_ref, a.supersedes
 		FROM attempts a JOIN node_runs nr ON nr.id = a.node_run_id
 		WHERE nr.run_id = $1
 		ORDER BY a.node_run_id, a.attempt_number`, runID)
@@ -344,18 +347,24 @@ func (s *Server) runNodeRuns(ctx context.Context, runID string) ([]NodeRunOut, e
 
 	for attemptRows.Next() {
 		var (
-			a              AttemptOut
-			actorID        pgtype.Text
-			fencingToken   pgtype.Int8
-			result         []byte
-			startedAt      pgtype.Timestamptz
-			completedAt    pgtype.Timestamptz
-			preserveBranch pgtype.Text
-			preservePushed pgtype.Bool
-			preserveRemote pgtype.Text
+			a                                                                          AttemptOut
+			actorID                                                                    pgtype.Text
+			fencingToken                                                               pgtype.Int8
+			result                                                                     []byte
+			startedAt                                                                  pgtype.Timestamptz
+			completedAt                                                                pgtype.Timestamptz
+			preserveBranch                                                             pgtype.Text
+			preservePushed                                                             pgtype.Bool
+			preserveRemote                                                             pgtype.Text
+			usageInput, usageOutput, usageCached, usageReasoning                       pgtype.Int8
+			usageCost                                                                  pgtype.Float8
+			usageCurrency, usageModel, usageThread, terminationReason, continuationRef pgtype.Text
+			supersedes                                                                 pgtype.Text
 		)
 		if err := attemptRows.Scan(&a.ID, &a.NodeRunID, &a.AttemptNumber, &actorID, &a.Status, &fencingToken, &result, &startedAt, &completedAt,
-			&preserveBranch, &preservePushed, &preserveRemote); err != nil {
+			&preserveBranch, &preservePushed, &preserveRemote,
+			&usageInput, &usageOutput, &usageCost, &usageCurrency, &usageCached, &usageReasoning, &usageModel, &usageThread,
+			&terminationReason, &continuationRef, &supersedes); err != nil {
 			return nil, fmt.Errorf("api: run %s: list attempts: scan: %w", runID, err)
 		}
 		a.ActorID = textOrEmpty(actorID)
@@ -363,6 +372,10 @@ func (s *Server) runNodeRuns(ctx context.Context, runID string) ([]NodeRunOut, e
 			a.FencingToken = fencingToken.Int64
 		}
 		a.Result = nonNullJSON(result)
+		// The attempt this record corrects (task t11, ADR 0012). Both rows
+		// are listed -- the aggregates are where superseded history drops
+		// out, not the run's own account of what happened.
+		a.Supersedes = textOrEmpty(supersedes)
 		a.StartedAt = tsOrZero(startedAt)
 		if completedAt.Valid {
 			completed := completedAt.Time
@@ -376,6 +389,32 @@ func (s *Server) runNodeRuns(ctx context.Context, runID string) ([]NodeRunOut, e
 			a.PreservePushed = &pushed
 			a.PreserveRemote = textOrEmpty(preserveRemote)
 		}
+		if usageInput.Valid {
+			a.Usage = &AttemptUsageOut{InputTokens: usageInput.Int64, OutputTokens: usageOutput.Int64}
+			if usageCost.Valid {
+				cost := usageCost.Float64
+				a.Usage.Cost = &cost
+			}
+			a.Usage.Currency = textOrEmpty(usageCurrency)
+			if usageCached.Valid {
+				value := usageCached.Int64
+				a.Usage.CachedInputTokens = &value
+			}
+			if usageReasoning.Valid {
+				value := usageReasoning.Int64
+				a.Usage.ReasoningTokens = &value
+			}
+			if usageModel.Valid {
+				value := usageModel.String
+				a.Usage.UsageModel = &value
+			}
+			if usageThread.Valid {
+				value := usageThread.String
+				a.Usage.ThreadID = &value
+			}
+		}
+		a.TerminationReason = textOrEmpty(terminationReason)
+		a.ContinuationRef = textOrEmpty(continuationRef)
 
 		idx, ok := byID[a.NodeRunID]
 		if !ok {

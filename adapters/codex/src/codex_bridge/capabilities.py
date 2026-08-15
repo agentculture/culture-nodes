@@ -14,7 +14,7 @@ for.
 
 from __future__ import annotations
 
-from typing import Any, Sequence
+from typing import Any, Callable, Sequence
 
 from codex_bridge import preflight
 from codex_bridge.config import Config
@@ -42,15 +42,22 @@ def host_facts(
     cfg: Config,
     *,
     probes: Sequence[tuple[str, str]] = preflight.USERNS_SYSCTLS,
+    capability_probe: Callable[[], tuple[str, str]] | None = None,
 ) -> dict[str, Any]:
     """Measure this host and return the `host` block for its capability
-    surface. *probes* is injectable so a test can assert both kinds of
-    kernel rather than whichever one is running the suite.
+    surface.
+
+    Both measurement inputs are injectable so a test can assert both kinds
+    of kernel rather than whichever one is running the suite:
+    *capability_probe* is the executable bwrap/unshare probe that DECIDES
+    availability, and *probes* is the sysctl set read only to EXPLAIN a
+    probe that failed.
     """
     available, unavailable = preflight.measure_sandbox_modes(
         SANDBOX_MODE_CANDIDATES,
         requires_userns=_REQUIRES_USERNS,
         probes=probes,
+        capability_probe=capability_probe,
     )
     return preflight.host_block(
         hostname=preflight.hostname(),
@@ -64,7 +71,8 @@ def host_facts(
             push=cfg.preserve_push,
             remote=cfg.preserve_remote,
         ),
-        writable_paths=list(cfg.repo_allowlist),
+        writable_paths=list(cfg.repo_allowlist + cfg.repo_allowlist_prefixes),
+        artifact_publish="unsupported-by-host",
     )
 
 

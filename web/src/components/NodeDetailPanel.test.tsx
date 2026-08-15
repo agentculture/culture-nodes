@@ -54,6 +54,50 @@ describe("NodeDetailPanel", () => {
     expect(screen.getByText("dispatched")).toBeInTheDocument();
   });
 
+  it("renders per-attempt model and token attribution without hiding explicit unknowns", () => {
+    const attempt: Attempt = {
+      id: "att-attributed",
+      node_run_id: "nr-attributed",
+      attempt_number: 1,
+      status: "succeeded",
+      started_at: "2026-08-15T10:00:00Z",
+      completed_at: "2026-08-15T10:01:00Z",
+      usage: {
+        input_tokens: 120,
+        output_tokens: 45,
+        cached_input_tokens: 20,
+        reasoning_tokens: 8,
+        usage_model: "unknown:colleague-backend-cannot-report",
+      },
+      termination_reason: "end_turn",
+      continuation_ref: "session://opaque",
+    };
+    render(
+      <NodeDetailPanel
+        node={graph.nodes.find((n) => n.id === "build")!}
+        execution={{
+          nodeId: "build",
+          // NodeExecState is the node-scoped vocabulary ("completed"), not the
+          // attempt-scoped one ("succeeded") -- see RunStateChip's note on the
+          // three separate vocabularies.
+          state: "completed",
+          nodeRuns: [],
+          attempts: [attempt],
+          visits: 1,
+        }}
+        ledger={[]}
+        onClose={vi.fn()}
+      />,
+    );
+    expect(
+      screen.getByText("unknown:colleague-backend-cannot-report"),
+    ).toBeInTheDocument();
+    expect(screen.getByText("120 in / 45 out")).toBeInTheDocument();
+    // The separator lives inside the same text node (` · 8 reasoning`), so an
+    // exact-string match would fail on the bullet rather than on the number.
+    expect(screen.getByText(/8 reasoning/)).toBeInTheDocument();
+  });
+
   describe("preserve branch (task t26)", () => {
     // Synthetic executions built directly (bypassing RUN_VIEW, which has no
     // failed attempt in its fixture) — NodeExecution is a plain interface,
@@ -168,6 +212,98 @@ describe("NodeDetailPanel", () => {
         .getByText("preserve/run-01J-att-01L")
         .closest("td")!;
       expect(cell.querySelector("a")).toBeNull();
+    });
+  });
+
+  // Task t11 (ADR 0012): a node run whose deadline expired and whose actor
+  // session reported back afterwards carries TWO attempt records, and neither
+  // is deleted. The panel has to say which is the correction and which is the
+  // history it replaced — otherwise an operator reads one dispatch as two.
+  describe("late-callback supersession (task t11)", () => {
+    function reconciledExecution(): NodeExecution {
+      return {
+        nodeId: "build",
+        state: "failed",
+        nodeRuns: [],
+        attempts: [
+          {
+            id: "att-timed-out",
+            node_run_id: "nr-deadline",
+            attempt_number: 1,
+            status: "timed_out",
+            started_at: "2026-08-15T10:00:00Z",
+            completed_at: "2026-08-15T10:30:00Z",
+          },
+          {
+            id: "att-correction",
+            node_run_id: "nr-deadline",
+            attempt_number: 2,
+            status: "failed",
+            started_at: "2026-08-15T10:00:00Z",
+            completed_at: "2026-08-15T10:31:00Z",
+            supersedes: "att-timed-out",
+            usage: {
+              input_tokens: 4321,
+              output_tokens: 1234,
+              usage_model: "claude-opus-5[1m]",
+            },
+          },
+        ],
+        visits: 1,
+      };
+    }
+
+    it("labels the correction and the record it supersedes", () => {
+      const { container } = render(
+        <NodeDetailPanel
+          node={graph.nodes.find((n) => n.id === "build")!}
+          execution={reconciledExecution()}
+          ledger={[]}
+          onClose={vi.fn()}
+        />,
+      );
+
+      const timedOut = container.querySelector('[data-attempt-id="att-timed-out"]')!;
+      const correction = container.querySelector(
+        '[data-attempt-id="att-correction"]',
+      )!;
+      expect(timedOut).toHaveAttribute("data-attempt-record", "superseded");
+      expect(timedOut).toHaveTextContent("superseded");
+      expect(correction).toHaveAttribute("data-attempt-record", "correction");
+      expect(correction).toHaveTextContent("corrects #1");
+
+      // The whole point of the correction: what the session actually spent is
+      // readable, on the row that is current.
+      expect(correction).toHaveTextContent("4321 in / 1234 out");
+    });
+
+    it("leaves an ordinary dispatch unlabelled", () => {
+      const { container } = render(
+        <NodeDetailPanel
+          node={graph.nodes.find((n) => n.id === "build")!}
+          execution={{
+            nodeId: "build",
+            state: "failed",
+            nodeRuns: [],
+            attempts: [
+              {
+                id: "att-plain",
+                node_run_id: "nr-plain",
+                attempt_number: 1,
+                status: "failed",
+                started_at: "2026-08-15T10:00:00Z",
+              },
+            ],
+            visits: 1,
+          }}
+          ledger={[]}
+          onClose={vi.fn()}
+        />,
+      );
+      const row = container.querySelector('[data-attempt-id="att-plain"]')!;
+      expect(row).toHaveAttribute("data-attempt-record", "dispatch");
+      expect(row).not.toHaveTextContent("corrects");
+      expect(row).not.toHaveTextContent("superseded");
     });
   });
 

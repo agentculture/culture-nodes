@@ -70,6 +70,7 @@ _ENV_FLOAT_FIELDS = {
     "CODEX_BRIDGE_CALLBACK_RETRY_BACKOFF_SECONDS": "callback_retry_backoff_seconds",
     "CODEX_BRIDGE_SYNC_TIMEOUT_SECONDS": "sync_timeout_seconds",
     "CODEX_BRIDGE_ASYNC_WAIT_SECONDS": "async_wait_seconds",
+    "CODEX_BRIDGE_WORKTREE_REAP_MIN_IDLE_SECONDS": "worktree_reap_min_idle_seconds",
 }
 _ENV_BOOL_FIELDS = {
     "CODEX_BRIDGE_ALWAYS_ASYNC": "always_async",
@@ -84,6 +85,7 @@ _ENV_BOOL_FIELDS = {
 #: later membership check is a plain string-equality test, never a fresh
 #: filesystem walk per request.
 ENV_REPO_ALLOWLIST = "CODEX_BRIDGE_REPO_ALLOWLIST"
+ENV_REPO_ALLOWLIST_PREFIXES = "CODEX_BRIDGE_REPO_ALLOWLIST_PREFIXES"
 
 
 class ConfigError(Exception):
@@ -100,6 +102,7 @@ class Config:
     # --- repo allowlist (the bridge only works repos it is configured
     # for) --------------------------------------------------------------
     repo_allowlist: tuple[str, ...] = ()
+    repo_allowlist_prefixes: tuple[str, ...] = ()
 
     # --- codex dispatch --------------------------------------------------
     codex_bin: str = "codex"
@@ -164,6 +167,13 @@ class Config:
     #: True.
     preserve_remote: str = "origin"
 
+    # --- worktree reaping (task t17) -------------------------------------
+    #: How long a minted worktree must have gone untouched before age stops
+    #: being a reason to DEFER its removal. Read by `reap.ReapPolicy`; see
+    #: `reap.py`'s docstring for why age is the weakest of the four idleness
+    #: signals and never on its own a reason to reap.
+    worktree_reap_min_idle_seconds: float = 86_400.0
+
     # --- HTTP surface ----------------------------------------------------
     host: str = "127.0.0.1"
     #: Different default than colleague-bridge's 8085 so both can run on
@@ -202,12 +212,18 @@ class Config:
         return Path(self.state_dir)
 
     def repo_allowed(self, repo: str) -> bool:
-        """True iff *repo*, resolved, is exactly one of the allowlisted repos."""
+        """True for an exact entry or a strict child of a scoped prefix."""
         try:
             resolved = str(Path(repo).expanduser().resolve())
         except OSError:
             return False
-        return resolved in self.repo_allowlist
+        if resolved in self.repo_allowlist:
+            return True
+        candidate = Path(resolved)
+        return any(
+            candidate != Path(root) and candidate.is_relative_to(root)
+            for root in self.repo_allowlist_prefixes
+        )
 
     @classmethod
     def load(cls, config_path: str | None = None, env: dict[str, str] | None = None) -> "Config":
@@ -251,6 +267,7 @@ def _read_config_file(path: str) -> dict:
 _FILE_FIELDS = {
     "actor_id": str,
     "repo_allowlist": lambda v: tuple(str(x) for x in v),
+    "repo_allowlist_prefixes": lambda v: tuple(str(x) for x in v),
     "codex_bin": str,
     "codex_env": lambda v: {str(k): str(x) for k, x in dict(v).items()},
     "default_sandbox": str,
@@ -264,6 +281,7 @@ _FILE_FIELDS = {
     "preserve_branch_prefix": str,
     "preserve_push": bool,
     "preserve_remote": str,
+    "worktree_reap_min_idle_seconds": float,
     "host": str,
     "port": int,
     "auth_token": str,
@@ -306,6 +324,9 @@ def _apply_env_overrides(cfg: Config, env: dict[str, str]) -> None:
     if ENV_REPO_ALLOWLIST in env:
         raw = env[ENV_REPO_ALLOWLIST]
         cfg.repo_allowlist = tuple(p for p in raw.split(os.pathsep) if p.strip())
+    if ENV_REPO_ALLOWLIST_PREFIXES in env:
+        raw = env[ENV_REPO_ALLOWLIST_PREFIXES]
+        cfg.repo_allowlist_prefixes = tuple(p for p in raw.split(os.pathsep) if p.strip())
 
 
 def _normalize_allowlist(cfg: Config) -> None:
@@ -318,6 +339,13 @@ def _normalize_allowlist(cfg: Config) -> None:
                 f"repo allowlist entry {entry!r} could not be resolved: {exc}"
             ) from exc
     cfg.repo_allowlist = tuple(resolved)
+    prefixes: list[str] = []
+    for entry in cfg.repo_allowlist_prefixes:
+        try:
+            prefixes.append(str(Path(entry).expanduser().resolve()))
+        except OSError as exc:
+            raise ConfigError(f"cannot resolve repo allowlist prefix {entry!r}: {exc}") from exc
+    cfg.repo_allowlist_prefixes = tuple(prefixes)
 
 
 def _parse_int(name: str, raw: str) -> int:

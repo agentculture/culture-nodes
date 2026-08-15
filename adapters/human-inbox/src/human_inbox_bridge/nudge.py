@@ -380,7 +380,7 @@ def _float_env(env: dict[str, str], name: str, default: float) -> float:
 
 # --- Re-export for tracker integration ----------------------------------
 
-from datetime import datetime, timezone
 from dataclasses import asdict
+from datetime import datetime, timezone
 
 DEFAULT_USERNAME = _DEFAULT_USERNAME

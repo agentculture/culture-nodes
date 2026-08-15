@@ -5,7 +5,7 @@
   "schema_version": 4,
   "status": "exported",
   "created": "2026-08-15T05:58:27Z",
-  "updated": "2026-08-15T07:53:59Z",
+  "updated": "2026-08-15T08:33:41Z",
   "targets": [
     {
       "id": "c1",
@@ -1245,7 +1245,8 @@
         "c32",
         "h21",
         "c35",
-        "h24"
+        "h24",
+        "h52"
       ],
       "instruction": "READ FIRST, do not re-derive: docs/specs/2026-08-14-own-the-work-end-to-end.md (the claim this task covers, with its honesty condition and instruction) and CLAUDE.md. The spec already names the file, line and measurement for every finding \u2014 cite it rather than re-measuring. Use the live fleet: control plane at http://192.168.1.146:18080, actors codex-thor and codex-orin plus the four spark claude bridges. Drive it through the nodes-operator skill. Reference runs to compare against: 01M00NVQH582QBARWSYFR0WTG1 (terminated handoff_unavailable) and 01M00BKCVT04SSGPNXDF3JJX5G (the t14 timeout). The companion-document test is the hard one \u2014 hand someone only the run."
     },

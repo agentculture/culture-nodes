@@ -1,0 +1,122 @@
+import { useState } from "react";
+import { Link } from "react-router-dom";
+import {
+  ApiError,
+  createWorkflowGeneration,
+  getWorkflowGeneration,
+} from "../api/client";
+import type { WorkflowGeneration } from "../api/types";
+import ErrorNotice from "../components/ErrorNotice";
+
+export default function GenerateWorkflow() {
+  const [description, setDescription] = useState("");
+  const [actorRef, setActorRef] = useState("");
+  const [baseDigest, setBaseDigest] = useState("");
+  const [proposal, setProposal] = useState<WorkflowGeneration | null>(null);
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<ApiError | null>(null);
+
+  const fail = (cause: unknown) =>
+    setError(
+      cause instanceof ApiError
+        ? cause
+        : new ApiError(0, String(cause), "try again"),
+    );
+
+  const generate = async () => {
+    setBusy(true);
+    setError(null);
+    try {
+      setProposal(
+        await createWorkflowGeneration({
+          description,
+          actor_ref: actorRef,
+          base_digest: baseDigest || undefined,
+        }),
+      );
+    } catch (cause) {
+      fail(cause);
+    } finally {
+      setBusy(false);
+    }
+  };
+  const refresh = async () => {
+    if (!proposal) return;
+    setBusy(true);
+    setError(null);
+    try {
+      setProposal(await getWorkflowGeneration(proposal.run_id));
+    } catch (cause) {
+      fail(cause);
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  return (
+    <section className="view-rail author-workflow" id="generate-workflow-view">
+      <h1>Generate workflow</h1>
+      <p className="muted">
+        A registered fleet agent proposes source. The proposal stays visibly
+        proposed until a human confirms it; this page never publishes.
+      </p>
+      {error ? <ErrorNotice error={error} /> : null}
+      <div className="author-workflow__source">
+        <label htmlFor="generation-description">Plain-text description</label>
+        <textarea
+          id="generation-description"
+          className="author-workflow__textarea"
+          value={description}
+          onChange={(e) => setDescription(e.target.value)}
+        />
+        <label htmlFor="generation-actor">Registered actor ref</label>
+        <input
+          id="generation-actor"
+          value={actorRef}
+          onChange={(e) => setActorRef(e.target.value)}
+          placeholder="actor://company/planner@sha256:…"
+        />
+        <label htmlFor="generation-base">
+          Pinned base digest (required for edits)
+        </label>
+        <input
+          id="generation-base"
+          value={baseDigest}
+          onChange={(e) => setBaseDigest(e.target.value)}
+          placeholder="sha256:…"
+        />
+        <div className="author-workflow__actions">
+          <button
+            type="button"
+            disabled={busy || !description.trim() || !actorRef.trim()}
+            onClick={generate}
+          >
+            {busy ? "Dispatching…" : "Generate proposal"}
+          </button>
+          {proposal ? (
+            <button type="button" disabled={busy} onClick={refresh}>
+              Refresh
+            </button>
+          ) : null}
+        </div>
+      </div>
+      {proposal ? (
+        <section id="workflow-generation-result" data-status={proposal.status}>
+          <h2>Generation</h2>
+          <p><strong>Status:</strong> {proposal.status}</p>
+          <p><strong>Run:</strong> <Link to={`/runs/${proposal.run_id}`}>{proposal.run_id}</Link></p>
+          {proposal.source ? (
+            <>
+              <p>{proposal.valid ? "Compiles with 0 errors." : "The proposal does not compile."}</p>
+              <textarea readOnly className="author-workflow__textarea" value={proposal.source} />
+            </>
+          ) : <p className="muted">The agent is still working.</p>}
+          {proposal.diff ? <><h3>Diff against {proposal.base_digest}</h3><pre>{proposal.diff}</pre></> : null}
+          {proposal.status === "confirmed" && proposal.valid ? (
+            <p><Link to="/workflows/new">Open the validate and publish door</Link> after copying the exact source above.</p>
+          ) : null}
+        </section>
+      ) : null}
+    </section>
+  );
+}

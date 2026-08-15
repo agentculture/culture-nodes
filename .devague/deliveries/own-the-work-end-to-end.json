@@ -2,7 +2,7 @@
   "plan_slug": "own-the-work-end-to-end",
   "schema_version": 1,
   "created": "2026-08-15T06:38:50Z",
-  "updated": "2026-08-15T07:56:24Z",
+  "updated": "2026-08-15T08:39:25Z",
   "deviations": [
     {
       "id": "d1",
@@ -119,6 +119,19 @@
         "c70",
         "t7",
         "t14"
+      ],
+      "origin": "user",
+      "status": "approved",
+      "classification": "acceptable"
+    },
+    {
+      "id": "d9",
+      "what": "Rebalance work-package routing from codex-only to 70% Claude actors / 30% codex actors. Of the ten remaining dispatchable build tasks (t6, t10, t11, t12, t13, t17, t20, t21, t22, t23), route seven to the spark Claude bridges (company/developer, company/planner, company/verifier, company/intake) and three to codex-thor/codex-orin. t24/t25/t26 stay operator-lane. Prerequisite, discovered while checking: every Claude bridge currently allowlists /home/spark/git/culture-nodes, the operator's own live checkout, so each Claude writer must first be given a dedicated worktree and have that allowlist narrowed before any write package is dispatched to it.",
+      "task_ref": "t21",
+      "reason": "Operator direction: more of the batch should run on Claude actors through the nodes. This supersedes routing decision r6, which reserved the Claude window for merge gates and sent all build packages to codex. Two things also make the rebalance better-founded now than it was at split-plan time: the agent hosts have no Go, no npm and no working uv (issue #96), so every codex build package has arrived unverified and needed a full operator gate, while the Claude bridges run on spark where the whole toolchain exists; and codex has proven stronger at grounded analysis than at self-verified building (see the t5 q5 analysis versus three build packages that each shipped an unexecuted test). Keeping 30% on codex preserves cross-machine execution, ledger attribution under a second identity, and the comparative record CLAUDE.md asks for.",
+      "affects": [
+        "t16",
+        "t24"
       ],
       "origin": "user",
       "status": "approved",

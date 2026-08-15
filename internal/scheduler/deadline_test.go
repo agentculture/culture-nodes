@@ -172,6 +172,13 @@ func TestSchedulerDeadlinePausesWhenDeclaredContinuationHolds(t *testing.T) {
 	// nothing else schedules another -- so without a replacement this node
 	// now runs with no deadline at all, and maxWallClock is never re-checked.
 	// The declaration would still be sitting in the graph looking honoured.
+	// Wait for the count to settle rather than sampling it once. The re-arm is
+	// inserted before the original timer is marked fired, so there is a window
+	// in which BOTH are pending and a single sample reads 2. Same window the
+	// no-time-bound test below has to wait through, for the same reason.
+	waitFor(t, 10*time.Second, func() bool {
+		return mustPendingDeadlineCount(t, s, f.buildNodeRunID) == 1
+	})
 	pending := mustPendingDeadlineCount(t, s, f.buildNodeRunID)
 	if pending != 1 {
 		t.Fatalf("pending deadline timers after pause = %d, want exactly 1: a paused continuation "+
@@ -213,10 +220,23 @@ func TestSchedulerDeadlineRefusesToPauseWithoutATimeBound(t *testing.T) {
 	defer cancel()
 	go func() { _ = sch.Run(runCtx) }()
 
+	// Both conditions must be in the SAME wait. failWaitingExternal commits the
+	// attempt failure through the engine's own transaction, and fireOne marks
+	// the timer fired in a LATER commit -- so there is a real window where the
+	// node reads "failed" while the timer is still pending. Waiting only on the
+	// status and then asserting the count passes alone and fails under load,
+	// which is the worst kind of test.
 	waitFor(t, 10*time.Second, func() bool {
 		status, _ := mustNodeRunStatus(t, s, f.buildNodeRunID)
-		return status == "failed" || status == "timed_out"
+		terminal := status == "failed" || status == "timed_out"
+		return terminal && mustPendingDeadlineCount(t, s, f.buildNodeRunID) == 0
 	})
+
+	status, _ := mustNodeRunStatus(t, s, f.buildNodeRunID)
+	if status != "failed" && status != "timed_out" {
+		t.Fatalf("node run status = %q, want a terminal status: with no time-based bound "+
+			"the scheduler must cancel rather than pause", status)
+	}
 	if pending := mustPendingDeadlineCount(t, s, f.buildNodeRunID); pending != 0 {
 		t.Errorf("pending deadline timers = %d, want 0: the node was failed, not paused", pending)
 	}

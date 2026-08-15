@@ -216,27 +216,59 @@ services:
         condition: service_started
     restart: unless-stopped
 
-  # Scheduled logical backups (plan t20). Every BACKUP_INTERVAL_SECONDS a
-  # full pg_dump lands in ~/.culture-nodes/backups on the host (bind mount),
-  # newest last; the restore runbook is deploy/prod/RESTORE.md and the drill
-  # that proves it is recorded in the phase-2 delivery evidence.
+  # Scheduled logical backups (plan t20, extended off-host by t14/#30). Every
+  # BACKUP_INTERVAL_SECONDS a full pg_dump lands in ~/.culture-nodes/backups
+  # on the host (bind mount) AND, when BACKUP_S3_BUCKET is set, is copied to
+  # object storage. The restore runbook is deploy/prod/RESTORE.md.
+  #
+  # Two retentions, deliberately different, because they answer different
+  # questions:
+  #   - local:  the newest 7 dumps, rotated below. Fast to restore from,
+  #             worthless if the host is what failed.
+  #   - remote: every dump pushed to s3://$BACKUP_S3_BUCKET/backups/, expired
+  #             by the bucket's own lifecycle rule rather than by this loop.
+  #             A backup process that can delete its own off-host copies is
+  #             one bug away from deleting the thing it exists to protect.
+  #
+  # The S3 copy is opt-in and fails soft: an upload error is logged and the
+  # loop continues, because a broken off-host copy must not stop the local
+  # dump that is still working. `backup <ts> s3 FAILED` in the log is the
+  # signal to investigate.
   backup:
     profiles: ["backup"]
     image: postgres:17-alpine@sha256:742f40ea20b9ff2ff31db5458d127452988a2164df9e17441e191f3b72252193
     entrypoint: ["/bin/sh", "-c"]
     command:
       - |
+        if [ -n "$${BACKUP_S3_BUCKET:-}" ] && ! command -v aws >/dev/null 2>&1; then
+          apk add --no-cache aws-cli >/dev/null 2>&1 || \
+            echo "backup: BACKUP_S3_BUCKET is set but aws-cli could not be installed; local dumps only"
+        fi
         while true; do
           ts=$$(date -u +%Y%m%dT%H%M%SZ)
-          pg_dump "$${NODES_DATABASE_URL}" -Fc \
-            -f "/backups/nodes-$$ts.dump" && \
-            ln -sf "nodes-$$ts.dump" /backups/latest.dump && \
+          if pg_dump "$${NODES_DATABASE_URL}" -Fc -f "/backups/nodes-$$ts.dump"; then
+            ln -sf "nodes-$$ts.dump" /backups/latest.dump
             echo "backup $$ts ok"
+            if [ -n "$${BACKUP_S3_BUCKET:-}" ] && command -v aws >/dev/null 2>&1; then
+              if aws s3 cp "/backups/nodes-$$ts.dump" \
+                   "s3://$${BACKUP_S3_BUCKET}/backups/nodes-$$ts.dump"; then
+                echo "backup $$ts s3 ok"
+              else
+                echo "backup $$ts s3 FAILED — local dump kept, investigate"
+              fi
+            fi
+          fi
           ls -1t /backups/nodes-*.dump 2>/dev/null | tail -n +8 | xargs -r rm -f
           sleep $${BACKUP_INTERVAL_SECONDS:-21600}
         done
     environment:
       NODES_DATABASE_URL: ${NODES_DATABASE_URL:?set the bundled or external PostgreSQL URL in prod.env}
+      # Off-host backups are opt-in: unset means local-only, which is what
+      # every deployment without an AWS account gets.
+      BACKUP_S3_BUCKET: ${BACKUP_S3_BUCKET:-}
+      AWS_REGION: ${AWS_REGION:-us-east-1}
+      AWS_ACCESS_KEY_ID: ${AWS_ACCESS_KEY_ID:-}
+      AWS_SECRET_ACCESS_KEY: ${AWS_SECRET_ACCESS_KEY:-}
     volumes:
       - ~/.culture-nodes/backups:/backups
     depends_on:

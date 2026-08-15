@@ -1,0 +1,121 @@
+{
+  "plan_slug": "close-the-backlog",
+  "schema_version": 1,
+  "created": "2026-08-15T18:07:41Z",
+  "updated": "2026-08-15T18:24:21Z",
+  "deviations": [
+    {
+      "id": "d1",
+      "what": "the intra-fleet handover medium is plain ssh git transport, not a GitHub push credential fenced by an org ruleset",
+      "task_ref": "t9",
+      "reason": "measured: 'git push ssh://thor/home/thor/git/culture-nodes-agent HEAD:refs/heads/ctb-base' and 'git ls-remote ssh://orin/...' both succeed today from spark with no credential and no GitHub involvement, in both directions. t9's org-admin ruleset prerequisite falls away for the fleet path; a GitHub-side credential is only needed if a ref must reach GitHub itself.",
+      "affects": [
+        "c90"
+      ],
+      "origin": "llm",
+      "status": "proposed",
+      "classification": "acceptable"
+    },
+    {
+      "id": "d2",
+      "what": "codex work packages hand back working-tree changes for the operator to commit, because a dispatched codex session cannot write .git",
+      "task_ref": "t9",
+      "reason": "measured in adapters/codex/src/codex_bridge/codex_cli.py:139 \u2014 the .git widening is gated on a writable_git argument that is threaded through codex_cli but set True by no caller in server.py, so preserve.handover_ref and git_writable_override are built and unit-tested yet unreachable from a real dispatch. Round-1 codex packages C1/C3 were briefed to leave changes in the working tree and list the paths.",
+      "affects": [
+        "t2",
+        "t3",
+        "t16",
+        "t18",
+        "t20"
+      ],
+      "origin": "llm",
+      "status": "proposed",
+      "classification": "needs-follow-up"
+    },
+    {
+      "id": "d3",
+      "what": "t9 moves from the codex lane to the claude lane",
+      "task_ref": "t9",
+      "reason": "t9's remaining work is wiring writable_git and handover_ref through adapters/codex/src/codex_bridge/server.py \u2014 Python that needs pytest to verify. Issue #96 and probe runs 01M03374VAKH0KHN0GDZ466NP4 / 01M0342X60F3NY8MH150G48AZ6 established that neither thor's snap uv nor orin's standalone uv can run a test suite, so the codex hosts cannot verify their own bridge. Routing it there would have produced an unverifiable patch.",
+      "affects": [
+        "t10",
+        "t31"
+      ],
+      "origin": "llm",
+      "status": "proposed",
+      "classification": "acceptable"
+    },
+    {
+      "id": "d4",
+      "what": "t18 moves from codex-orin to codex-thor",
+      "task_ref": "t18",
+      "reason": "measured: 'command -v gh' returns /usr/bin/gh authenticated as OriNachum on thor and returns nothing on orin. t18 must file an issue on agentculture/headspace-cli, which needs gh; it was dispatched with package C1 on thor instead of C3 on orin.",
+      "affects": [],
+      "origin": "llm",
+      "status": "proposed",
+      "classification": "acceptable"
+    },
+    {
+      "id": "d5",
+      "what": "t1 (the Go CI job) is deferred behind the #98 fix, and package K1 is re-cut as t12-first",
+      "task_ref": "t1",
+      "reason": "live evidence, run 01M039KA0QQ73XM3WQCQEQF1CN: the developer bridge answered HTTP 403 'workflow-scope boundary' before dispatching a model, because adapters/claude-code/src/claude_code_bridge/server.py:325 refuses any instruction whose TEXT contains the CI workflow path \u2014 and t1's brief necessarily names the file it must edit. This is issue #98 reproduced in production on the cycle's first dispatch: the guard matches instruction text rather than the files a session actually changes. t1 cannot be dispatched to a claude bridge until #98 is fixed, so t12 (which contains the #98 fix) runs first and t1 follows it.",
+      "affects": [
+        "t12",
+        "t20"
+      ],
+      "origin": "llm",
+      "status": "proposed",
+      "classification": "needs-follow-up"
+    },
+    {
+      "id": "d6",
+      "what": "the codex dispatch sandbox has no network egress, which re-routes every network-dependent verification out of the agent hosts",
+      "task_ref": "t5",
+      "reason": "measured in run 01M039NZ2TZYFG68YZT93A6DC7 on thor: 'gh issue list' could not connect to api.github.com and pypi.org DNS did not resolve INSIDE the dispatch, while 'gh auth status' over a plain ssh session on the same host reports logged in as OriNachum. The capability is present on the host and absent under the dispatch posture. This generalises the probe finding that motivated t19/#96 from uv to the whole network: no agent host can produce evidence that needs GitHub, PyPI or any API, so those verifications join the executable ones in the spark lane.",
+      "affects": [
+        "t6",
+        "t7",
+        "t19"
+      ],
+      "origin": "llm",
+      "status": "proposed",
+      "classification": "needs-follow-up"
+    },
+    {
+      "id": "d7",
+      "what": "t14 moves out of the codex lane to a spark lane",
+      "task_ref": "t14",
+      "reason": "t14 must push a pg_dump to S3, set a public-access block and SSE, then fetch a dump BACK and restore it into a scratch Postgres. All three need AWS credentials, network egress and docker. The codex sandbox has none of them (see the deviation above); spark has all three. Routing it to codex would have produced a config diff with all four acceptance criteria marked 'cannot verify'.",
+      "affects": [],
+      "origin": "llm",
+      "status": "proposed",
+      "classification": "acceptable"
+    },
+    {
+      "id": "d8",
+      "what": "t8's exit gate asks whether every proposed record has been REVIEWED, not whether zero proposed records exist",
+      "task_ref": "t8",
+      "reason": "measured while building the gate: confirming a claim through POST /v1alpha1/reviews/{id}/commit does not mutate the claim \u2014 records are immutable, so it appends a 'review' record whose data.reviewed_refs name the claim decided. Run 01M039PJGX69ZNP59XBQB95XV8's claim ledger_01M039W8E56546KK5C2JQ122Q2 is still authority=proposed after a committed confirm. A gate literally phrased 'filtered to ledger state=proposed and require zero rows' can therefore never pass, however diligently every claim is read \u2014 it would fail on correct behaviour. scripts/ledger-gate.py implements the decidable form and, on its first real run, caught three probe runs whose claims were never decided at all.",
+      "affects": [
+        "c44",
+        "h9"
+      ],
+      "origin": "llm",
+      "status": "proposed",
+      "classification": "acceptable"
+    },
+    {
+      "id": "d9",
+      "what": "the codex lane exhausts by capability after the docs/config packages, not by session budget",
+      "task_ref": "t5",
+      "reason": "measured across four codex packages this cycle (C1, C2, C3, C4, all graded 5/5): once triage, AWS closeout, deployment config, lane split, brief template and the connection audit had landed, every remaining plan task needed Go (t10, t11, t17, t19, t21-t24, t29-t33), docker (t13, t14) or network (t14) \u2014 and the codex hosts have none of the three. The split plan's ~50/50 Claude/codex target was reachable for round 1 and 2 and is not reachable afterwards. This is a capability ceiling on the lane, and it belongs in the #48 session-economics record: routing big packages to codex saves the operator's window only while codex-executable work remains.",
+      "affects": [
+        "t19"
+      ],
+      "origin": "llm",
+      "status": "proposed",
+      "classification": "needs-follow-up"
+    }
+  ]
+}

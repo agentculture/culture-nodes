@@ -106,6 +106,32 @@ above were measured against the old state; re-run those probes, then
 capture. Editing the baseline to match is how a surface starts reporting
 what someone believes instead of what a dispatch measured.
 
+## Rendering a work-package brief
+
+`scripts/render-work-package.py` composes the dispatch brief directly from
+`.devague/plans/<slug>.json` and the target actor's registered capability
+document (or the same document read live from its bridge). For example:
+
+```bash
+python3 scripts/render-work-package.py close-the-backlog t31 company/codex-thor \
+  --capabilities /tmp/codex-thor-actor.json \
+  --sandbox workspace-write \
+  --repo /home/thor/git/culture-nodes-agent \
+  --branch ctb/t31 --base 442393f
+```
+
+The capability input is deliberately the full actor or bridge document, not
+one of `docs/baselines/toolchains/*.json`: those baselines record live
+toolchain identity but deliberately do not duplicate the bridge's dispatch
+grant map. The renderer refuses a sandbox the actor did not advertise.
+
+Checkout preparation is also a capability-derived statement. A mode that
+advertises `network-egress` can pull once the source remote and revision are
+bound as dispatch inputs. A mode without it cannot truthfully be told to
+pull: its output says that the checkout must already be seeded and that the
+operator-side predecessor remains manual. The current codex posture is the
+latter, so t31's second criterion cannot be met by brief composition alone.
+
 ## What is still not measured
 
 The posture map itself (`_MODE_GRANTS` in each bridge's `capabilities.py`)

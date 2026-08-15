@@ -592,10 +592,31 @@ func TestHandoffUnavailableNeverReachesReview(t *testing.T) {
 				"handle for (issue #74)")
 			continue
 		}
-		if kind := doc.node(t, target).Kind; kind != "end" {
-			t.Errorf("fix.handoff_unavailable routes to %q (kind %q), want a terminal "+
-				"node: a missing host capability is not something another node in "+
-				"this graph can resolve", target, kind)
+		// Deliberately NOT "the target must be an end node" any more.
+		//
+		// That was the original wording, and it conflated two things: the
+		// invariant (a fix that produced no portable handle must never be
+		// handed to the review host) and one particular way of honouring it
+		// (stop the run). The first is load-bearing and is asserted above.
+		// The second turned out to be wrong in practice — ending the flow
+		// meant ONE item's capability gap stopped upkeep for every other
+		// item, observed on run 01M02JBTMGSY7EZMDMTJWC6BJW, which ended with
+		// twelve untouched findings behind the one that could not hand over.
+		//
+		// What still must hold is that the target cannot act on work it was
+		// given no handle for. A `wait` is safe: it dispatches nobody. So the
+		// rule is now about the KIND OF NODE that may receive this outcome,
+		// not about the run ending.
+		switch kind := doc.node(t, target).Kind; kind {
+		case "end", "wait":
+			// end: the run stops and names the gap.
+			// wait: the flow backs off and re-sweeps; no actor is dispatched
+			// with an unreadable handoff, which is the whole point.
+		default:
+			t.Errorf("fix.handoff_unavailable routes to %q (kind %q), want an `end` or "+
+				"`wait` node: a missing host capability is not something a dispatching "+
+				"node can resolve, and handing this outcome to one is how issue #74's "+
+				"403 happened", target, kind)
 		}
 	}
 }

@@ -969,31 +969,21 @@ spec:
       output:
         from: /nodes/sweep/output
 
-    # Where `fix.handoff_unavailable` ends (issue #74). A missing HOST
-    # capability is not something any other node in this graph can resolve:
-    # no amount of reviewing, asking or waiting gives the fix host an artifact
-    # store or a remote its ref could reach. So the run ends, and it ends
-    # carrying the FIX node's output
-    # rather than `finish`'s sweep report — that output is where
-    # `missing_capability` lives, and a terminal run whose output does not
-    # name why it stopped is the same illegible failure this whole change is
-    # about.
+    # `handoff-blocked` USED TO LIVE HERE, as the end node
+    # `fix.handoff_unavailable` routed to. It is gone, and the compiler is why:
+    # once that outcome returns to `backoff` (see the edge and its reasoning),
+    # nothing reaches this node, and `graph.node_unreachable` refused the
+    # graph rather than letting a dead end node sit in it looking meaningful.
     #
-    # It is a separate `end` node rather than a route into `finish` for
-    # exactly that reason: `finish` outputs the sweep report, which would
-    # bury the one fact that matters here.
-    #
-    # No notification node sits in front of it deliberately: the notify actor
-    # takes static per-run text (see notify-decision-pending), so it could
-    # announce that something stopped but not WHICH capability is missing —
-    # and adding two more run-input fields to say less than the run output
-    # already says is not a trade worth making. An operator reads the named
-    # outcome on the run.
-    handoff-blocked:
-      kind: end
-      ownerRef: team/platform-ai
-      output:
-        from: /nodes/fix/output
+    # What it existed to protect is still true — a missing HOST capability is
+    # not something reviewing, asking or waiting can resolve, and the fix
+    # node's output is where `missing_capability` is named. What changed is
+    # the conclusion drawn from it. Ending the whole flow meant one item's
+    # capability gap stopped upkeep for every other item; the run that proved
+    # this (01M02JBTMGSY7EZMDMTJWC6BJW) ended with twelve untouched findings
+    # behind the one that could not hand over. The named outcome is still on
+    # the attempt for an operator to read; it is just no longer the last thing
+    # the flow ever does.
 
   edges:
     # Both sweep outcomes are domain answers headed for triage: `passed`
@@ -1023,10 +1013,26 @@ spec:
       to: review
     # The honest failure never reaches review (issue #74). Routing a fix that
     # produced no portable handle into the review node is precisely what
-    # turned a topology problem into an HTTP 403 on another machine; the run
-    # stops here instead, naming the capability that is missing.
+    # turned a topology problem into an HTTP 403 on another machine.
+    #
+    # It used to end the run at `handoff-blocked`. It now returns to the
+    # BACKOFF WAIT instead, because "this one item cannot hand over" is not a
+    # reason to stop sweeping: the next sweep may find work that needs no
+    # handoff at all, and upkeep that stops on the first capability gap is
+    # upkeep that stops permanently. Measured on the first working cycle
+    # (run 01M02JBTMGSY7EZMDMTJWC6BJW): sweep passed, triage found 13 items,
+    # fix reported handoff_unavailable, and the whole flow ended — with
+    # twelve untouched items behind it.
+    #
+    # This is bounded, not perpetual: spec.limits.maxVisitsPerNode caps how
+    # many times `fix` can be re-entered, so a gap that keeps recurring ends
+    # the run on a declared bound rather than looping billably forever
+    # (PRD §9.7 — no loop relies on an agent deciding when to stop). The
+    # `handoff-blocked` end node this used to reach is removed: with nothing
+    # routing to it the compiler refused it as unreachable, which is the right
+    # answer and is how I found out my first version of this comment was wrong.
     - from: fix.handoff_unavailable
-      to: handoff-blocked
+      to: backoff
 
     # A clean review verdict becomes an ACTIVE merge assignment on the
     # human actor (user decision: "waiting for merge" is work in a

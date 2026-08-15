@@ -1,6 +1,15 @@
 {
   "components": {
     "parameters": {
+      "AttemptID": {
+        "description": "The protocol attempt id signed into the callback token.",
+        "in": "path",
+        "name": "attemptID",
+        "required": true,
+        "schema": {
+          "type": "string"
+        }
+      },
       "Digest": {
         "description": "The workflow version's content digest.",
         "in": "path",
@@ -420,6 +429,50 @@
           "instruction",
           "actor_ref",
           "repo"
+        ],
+        "type": "object"
+      },
+      "ArtifactWriteResult": {
+        "properties": {
+          "backend": {
+            "enum": [
+              "postgres",
+              "s3"
+            ],
+            "type": "string"
+          },
+          "created_at": {
+            "format": "date-time",
+            "type": "string"
+          },
+          "digest": {
+            "pattern": "^sha256:[0-9a-f]{64}$",
+            "type": "string"
+          },
+          "media_type": {
+            "type": "string"
+          },
+          "name": {
+            "type": "string"
+          },
+          "ref": {
+            "pattern": "^artifact://[^/]+/[^/]+$",
+            "type": "string"
+          },
+          "size_bytes": {
+            "format": "int64",
+            "minimum": 0,
+            "type": "integer"
+          }
+        },
+        "required": [
+          "ref",
+          "name",
+          "media_type",
+          "size_bytes",
+          "digest",
+          "backend",
+          "created_at"
         ],
         "type": "object"
       },
@@ -2107,6 +2160,11 @@
         "scheme": "bearer",
         "type": "http"
       },
+      "attemptCallbackBearerAuth": {
+        "description": "The short-lived callback token minted for exactly one attempt. The route verifies it against the attempt id in the path before loading durable invocation authority or reading the request body.",
+        "scheme": "bearer",
+        "type": "http"
+      },
       "decisionBearerAuth": {
         "description": "The shared secret configured as NODES_HUMAN_DECISION_TOKEN_SECRET. Used only by POST /v1alpha1/human-tasks/{id}/decision — every other operation in this API is authless by phase-1 design (spec decision c45).",
         "scheme": "bearer",
@@ -2411,6 +2469,98 @@
         "summary": "Create a first-class ad-hoc run from a bare instruction.",
         "tags": [
           "runs"
+        ]
+      }
+    },
+    "/v1alpha1/attempts/{attemptID}/artifacts": {
+      "post": {
+        "description": "Requires the callback bearer token issued for exactly the attempt named in the path. Namespace, run, and attempt associations are derived from that attempt's durable PendingInvocation; the body is opaque content and cannot supply authority-bearing fields. Returns an artifact:// ref and metadata measured by the artifact store.\nNo GET or DELETE operation is mounted. Possession of an artifact:// ref is not authorization, and filesystem paths are never resolved.",
+        "operationId": "putAttemptArtifact",
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/AttemptID"
+          },
+          {
+            "description": "A descriptive, non-authoritative artifact name.",
+            "in": "header",
+            "name": "Artifact-Name",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "*/*": {
+              "schema": {
+                "format": "binary",
+                "type": "string"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ArtifactWriteResult"
+                }
+              }
+            },
+            "description": "The artifact was stored and associated with the durable invocation."
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "description": "Content-Type or Artifact-Name is missing."
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "description": "The token is missing, expired, invalid, or belongs to a different attempt."
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "description": "No durable pending invocation has the path's attempt id."
+          },
+          "413": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "description": "The body exceeds the publication limit (api.MaxArtifactBytes, 64 MiB). Authentication is not a size limit: publish large output to object storage and record a reference, or split it."
+          }
+        },
+        "security": [
+          {
+            "attemptCallbackBearerAuth": []
+          }
+        ],
+        "summary": "Publish opaque artifact bytes for one pending attempt.",
+        "tags": [
+          "artifacts"
         ]
       }
     },
@@ -3971,6 +4121,10 @@
     {
       "description": "Registered actor identities and their aggregate stats (task t15). Read-only — registering an actor stays deploy/prod/register-actor.sh (issue #8).",
       "name": "actors"
+    },
+    {
+      "description": "Attempt-authenticated publication of opaque artifact bytes. This surface intentionally exposes no read or delete operation.",
+      "name": "artifacts"
     },
     {
       "description": "The clarify-then-commit gate (task t14, issue #67): the briefing an actor is handed before its first billable turn, and the second, separate action that commits the dispatch. Per-actor and default-off — an actor whose registration enables no gate is never briefed and never waits.",

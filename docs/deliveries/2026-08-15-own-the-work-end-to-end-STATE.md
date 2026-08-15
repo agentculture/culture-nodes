@@ -217,7 +217,45 @@ Specifics worth remembering, because they will recur:
   needing a contract declaration, but never required to be *routed* (t8; fixed
   with `graph.continuation_exhausted_unrouted`).
 
-## 11. Issues opened this cycle
+## 11. What the operator did by hand — the inventory
+
+This batch dispatched its work through Culture Nodes and then did **everything
+around that work** in an interactive human session. Writing it down is the
+point: each row is a capability the product does not have yet, and each has an
+issue so the next cycle can close it rather than rediscover it.
+
+| Step, per package | Times | Automatable by | Issue |
+|---|---|---|---|
+| Refresh the agent checkout before dispatch | 9 | a provisioning node | [#93] |
+| Compose the brief by hand in a heredoc | 9 | composing it from the plan + capability surface | [#103] |
+| Choose actor, sandbox vocabulary, and background the blocking `assign` | 9 | the same dispatch node | [#103] |
+| Poll the run to terminal | 9 | — (a watch exists; the polling is cheap) | — |
+| Read the full claim (the operator surface truncates it) | 9 | untruncated ledger output | [#92] |
+| `ssh … git diff HEAD --binary` to collect the changes | 9 | a harvest node | [#100] |
+| `git worktree add` + `git apply --3way` to stage them | 9 | the same harvest node | [#100] |
+| Run every suite, before and after the merge | 18 | a gate node emitting `derived` records | [#101] |
+| Fix what the gate found, by hand, in the operator's window | 9 | a routed repair loop under bounds | [#102] |
+| Write the commit message and `git merge --no-ff` | 9 | a merge node gated on the verdict | [#101] |
+| Decide the agent's proposed claim | 0 of 9 | a decision record + surface | [#99] |
+| `git worktree remove` | 9 | worktree lifecycle (task t17) | — |
+| Push the integration branch (with the credential dance) | 9 | — | [#90] |
+| Deploy the reviewed revision | 0 (not yet done) | a gated deploy node | [#104] |
+
+**The row that matters most is the one with a zero in it.** Nine runs produced
+nine ledger records; all nine are still `proposed`. Every one *was* decided —
+read, gated, repaired, merged — and none of those decisions is anywhere a
+reader of the run can find them. The affirmative half of the PRD's authority
+model (§10.4) is simply not implemented: nothing self-promotes, which is
+correct, but nothing else promotes either.
+
+That is also the honest answer to this batch's success signal 5. A reader given
+only the runs could reconstruct what each agent *claimed*. They could not
+reconstruct what was believed, what was broken, what was fixed at the gate, or
+why three packages merged while partial. All of that is in this file and in git
+commit messages — which is exactly the companion document the signal says
+should not have needed to exist.
+
+## 12. Issues opened this cycle
 
 - [#88] widen SonarCloud beyond `culture_nodes`, measure a baseline, ratchet
 - [#89] run scope → think → challenge through Culture Nodes as a workflow
@@ -230,6 +268,15 @@ Specifics worth remembering, because they will recur:
 - [#94] the capability surface reports `writable_paths` but not whether `.git`
   is writable
 
+**Operator-lane gaps, one issue per improvement (see §11):**
+
+- [#99] nothing ever decides a proposed claim — 9 of 9 left undecided
+- [#100] harvesting a runner's changes is an operator ssh command
+- [#101] the TDD merge gate runs in the operator's session
+- [#102] gate failures are repaired by hand instead of routed
+- [#103] briefs are hand-written heredocs
+- [#104] nothing records what revision is deployed
+
 [#87]: https://github.com/agentculture/culture-nodes/issues/87
 [#88]: https://github.com/agentculture/culture-nodes/issues/88
 [#89]: https://github.com/agentculture/culture-nodes/issues/89
@@ -238,3 +285,9 @@ Specifics worth remembering, because they will recur:
 [#92]: https://github.com/agentculture/culture-nodes/issues/92
 [#93]: https://github.com/agentculture/culture-nodes/issues/93
 [#94]: https://github.com/agentculture/culture-nodes/issues/94
+[#99]: https://github.com/agentculture/culture-nodes/issues/99
+[#100]: https://github.com/agentculture/culture-nodes/issues/100
+[#101]: https://github.com/agentculture/culture-nodes/issues/101
+[#102]: https://github.com/agentculture/culture-nodes/issues/102
+[#103]: https://github.com/agentculture/culture-nodes/issues/103
+[#104]: https://github.com/agentculture/culture-nodes/issues/104

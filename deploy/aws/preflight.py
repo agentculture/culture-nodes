@@ -58,13 +58,24 @@ import sys
 import time
 from typing import Any
 
-#: The region the database goes in. il-central-1 (Tel Aviv) was chosen by
-#: measurement, not preference: TCP connect from thor is 19ms to
-#: il-central-1, 70ms to eu-central-1 and 160ms to us-east-1, and with the
-#: control plane staying on thor the worker-to-Postgres link is the
-#: chattiest path in the system. The SQS and Lambda lanes stay in
-#: us-east-1; a split-region deployment is correct here.
-DEFAULT_REGION = "il-central-1"
+#: The region this script assumes when nobody says otherwise.
+#:
+#: This is the REFERENCE default — the one a stranger cloning this repo
+#: gets — and it is deliberately boring: us-east-2 is enabled on every
+#: account without an opt-in step, sits in the cheapest pricing tier
+#: (measured: $0.016/hr for db.t4g.micro against il-central-1's $0.018),
+#: carries the broadest service coverage, and has the operational track
+#: record people reach for when they want us-east-1's ecosystem without
+#: us-east-1's outage history.
+#:
+#: It is NOT a statement about where any particular deployment's database
+#: belongs — that is a deployment input, and ``--region`` is how you say
+#: so. A deployment whose control plane sits far from us-east-2 pays for it
+#: in round trips, and the latency check below reports exactly that. For
+#: reference, measured TCP connect from thor: il-central-1 13ms,
+#: eu-south-1 54ms, eu-central-1 68ms, us-east-1 155ms, us-east-2 161ms,
+#: us-west-2 224ms.
+DEFAULT_REGION = "us-east-2"
 
 #: A region known to be enabled on every account, used to ask questions
 #: whose answer does not depend on the region — IAM permissions are global,
@@ -73,8 +84,17 @@ DEFAULT_REGION = "il-central-1"
 #: minutes for it to propagate, and only then learns about the second.
 FALLBACK_REGION = "us-east-1"
 
-#: The latency ceiling the migration spec commits to. Above this the region
-#: choice is wrong and the cutover stops rather than proceeding.
+#: The round-trip time above which this script says the link is slow.
+#:
+#: Deliberately a warning and never a blocker, because at the engine's
+#: actual timeouts — a 60-second lease with a 20-second heartbeat
+#: (internal/worker/worker.go:26-37) — even a 161ms round trip does not
+#: threaten correctness: a hundred round trips still fit inside one lease.
+#: What a distant region costs is responsiveness. Every claim, every
+#: one-second poll, every transition and every UI read pays the RTT, so a
+#: node transition doing five to ten round trips takes roughly a second
+#: instead of roughly a tenth of one. Worth knowing, worth choosing
+#: deliberately, not worth refusing to deploy over.
 LATENCY_BUDGET_MS = 30.0
 
 #: Everything this project creates is named with this prefix, and the
@@ -465,11 +485,12 @@ def check_latency(region: str) -> Result:
         title=f"Latency to {region} within budget",
         status=WARN,
         detail=f"{median:.0f}ms median TCP connect from {hostname} — over the"
-        f" {LATENCY_BUDGET_MS:.0f}ms budget",
-        why="the control plane stays on thor, so this link carries every engine transaction,"
-        " every lease claim and every tick; over budget means the timeouts change before the"
-        " database does",
-        who="operator — re-run from the machine that will actually host the control plane",
+        f" {LATENCY_BUDGET_MS:.0f}ms guideline (a warning, never a blocker)",
+        why="correctness is unaffected — a 60s lease with a 20s heartbeat absorbs round trips"
+        " this size — but every claim, one-second poll, transition and UI read pays this cost,"
+        " so transitions land in about a second rather than about a tenth of one",
+        who="operator — a deliberate choice, not an error. Re-run from the machine that will"
+        " actually host the control plane, and pick --region accordingly",
         fix=f"for r in il-central-1 eu-central-1 {region}; do printf '%s ' $r;"
         " curl -s -o /dev/null -w 'connect=%{time_connect}\\n'"
         " https://sts.$r.amazonaws.com/ --max-time 10; done",

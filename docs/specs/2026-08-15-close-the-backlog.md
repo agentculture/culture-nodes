@@ -32,6 +32,8 @@
   - instruction: Read deploy/helm/culture-nodes/values.yaml:155-160 for the pattern to mirror, and deploy/prod/compose.orin.yml:20 for the remote-database call site already in production.
 - Before: The lease-expiry risk in the latency argument was overstated and is corrected here: DefaultLeaseDuration is 60 seconds with a 20-second heartbeat (internal/worker/worker.go:29,32), so even a hundred round trips at 161ms fit inside one lease. Latency costs throughput and responsiveness, not correctness. c68's measurement gate stays worth running, and is now expected to pass rather than expected to bite.
   - instruction: Read internal/worker/worker.go:26-39 for the lease, heartbeat and node-timeout defaults before re-arguing any latency risk.
+- Before: thor's public IP is not static. Every design that pins an AWS security group rule to thor's address therefore needs a refresh mechanism, and that mechanism is the design smell the connection principle rejects rather than a gap to fill.
+  - instruction: Audit the existing surfaces against the principle before designing to it: actor endpoints in the actors table, the codex/claude bridge URLs in nodes-op.sh, and any security-group rule the RDS work would add.
 - After: The tracker answers three questions without a human reconstructing them: what is closed and on what evidence, what is open and who owns it, and what the system did versus what a person did. Bucket A is closed on run evidence, the operator-lane loop runs the work instead of an operator's session, #5 exports live telemetry, and the four decision-shaped issues carry an owner's recorded answer.
   - instruction: Commit the four queries alongside the triage artifact so the after-state is re-derivable.
 
@@ -151,6 +153,7 @@
 - Pointing a fresh install at an external database requires editing configuration only: a clean checkout, one URL, no code change and no image rebuild — demonstrated by doing it against a throwaway database before the RDS cutover.
 - The bundled-Postgres path still passes its smoke test after the migration, run on a machine that has no AWS credentials at all.
 - The corrected reading is testable rather than asserted: multiply the round-trip count of one completion transaction by the measured RTT and compare against DefaultLeaseDuration; the ratio is reported as a number in the cutover record whether it passes comfortably or not.
+- The principle is checkable in the code, not just stated: no configuration file, database column or dispatch record holds a participant's IP address, and grep over the deployment config for a hardcoded address returns only the LAN bridge endpoints that the inversion is scheduled to remove.
 
 ## Success signals
 
@@ -211,6 +214,8 @@
 - The #59 decision changes three other issues' dispositions: #30 closes on RDS automated backups plus S3 artifact durability rather than a new backup script; #6 becomes live work — the RDS and S3 access is exactly the workload-identity case OIDC was deferred for — rather than staying parked; and #5's collector gets an AWS home that thor reaches outbound, needing no inbound path.
   - instruction: Update #30, #6 and #5 with the consequence of this decision as soon as it is recorded, so their dispositions do not drift from it.
 - Data residency is an unanswered question, not a settled one: the ledger holds every instruction, claim and evidence trail this system produces, and whether that should be Israel-resident or US-resident is the owner's call rather than a technical consequence of the latency measurement.
+- The connection principle reaches further than the actor protocol. Applied to the database it argues against RDS-behind-a-security-group, because an SG filters by source address and that is exactly the fact this system refuses to depend on. The candidate answers, none chosen here: a managed Postgres that authenticates by credential and TLS rather than an IP allowlist; a tunnel with a terminator inside the VPC, which reintroduces the AWS compute this decision avoided; a dynamic SG updater on thor, which the principle rejects by construction; or keeping Postgres beside the compute and buying off-machine durability with S3 backups alone.
+- The bridges-poll-outbound work is no longer a deferred nice-to-have but the stated connection model for actors: workers and bridges dial the control plane and hold the connection, so the control plane never needs an address for them. That changes the section 13 contract across all five bridges and is the same principle the database question just ran into from the other side.
 
 ## Scope exploration
 
@@ -273,6 +278,8 @@
 - \#59 is decided: authoritative state moves to AWS — RDS PostgreSQL replaces prod-postgres and S3 replaces MinIO — while api, worker, scheduler and notifier stay on thor and keep dispatching to the bridges over the LAN. No VPN, no change to the actor dispatch protocol. Bridges-poll-outbound, the configuration that would let agents live outside the LAN, becomes its own future issue rather than part of #59.
 - Where the database lives is a deployment input, never a product decision. Anyone installing culture-nodes points it at their own hosted Postgres — RDS, Cloud SQL, Neon, Supabase, a shared cluster, or the bundled container — and the same applies to where the compute runs: thor, ECS, Kubernetes or a laptop. Our own AWS choice is one deployment's answer, not the system's.
 - The il-central-1 choice was challenged against us-east-2 and re-answered with measurement, not assertion. From thor: il-central-1 13ms, eu-south-1 54ms, eu-central-1 68ms, us-east-1 155ms, us-east-2 161ms, us-west-2 224ms. us-east-2 is cheaper by roughly 15-20 percent (an estimate — the operator policy has no pricing:GetProducts), needs no opt-in, and is the more mature region. It loses on the only axis that dominates while compute stays on thor: every claim, tick, transition and UI read pays the round trip. The decision carries an explicit expiry — if compute moves into AWS (the bridges-poll-outbound issue), the database follows the compute and this region choice is re-opened.
+- The reference region default is us-east-2, not il-central-1. Measured from AWS's public price list, db.t4g.micro PostgreSQL Single-AZ costs 0.016 USD/hr in us-east-2 against 0.018 in il-central-1 — 11.68 versus 13.14 a month. us-east-2 also needs no opt-in step, carries the broadest service coverage, and has the operational track record people reach for when they want us-east-1's ecosystem without its outage history. Latency is real but is not weighted here, and correctness is not at stake at either distance. What a stranger cloning this repo gets must be a region their account already has enabled.
+- The system does not store, depend on, or filter by the IP address of any participant. Connectivity is established by the edge side dialing in and authenticating by credential — the websocket model — never by the control plane dialing out to a recorded address. thor has no static IP, and designing around that fact rather than fighting it is the simpler system.
 
 ## Hard questions
 
@@ -285,6 +292,7 @@
 ## Open parks
 
 - [unknown_nonblocking] Whether a repair loop (#102) can be bounded safely enough to run unattended is unknown: the last cycle's four gate failures were all cases where the actor could not run the tool that would have shown them, which a repair node on the same host also could not run.
+- [unknown_nonblocking] Whether off-machine durability alone — shipping the existing six-hourly `pg_dump` to S3 for about a dollar a month — satisfies what #59 was actually for, now that the memory premise is falsified and the connectivity cost is real. That would close #30 and leave the database on thor.
 
 ## Resolved vagueness
 

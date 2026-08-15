@@ -16,10 +16,12 @@ move, and both need an admin identity — not the scoped automation credential.
 
 ```bash
 # 1. See exactly what is missing (read-only, safe, repeatable)
-./deploy/aws/preflight.py
+./deploy/aws/preflight.py                        # defaults to us-east-2
+./deploy/aws/preflight.py --region eu-west-1     # or wherever you want the database
 
-# 2. As an ACCOUNT ADMIN, clear whatever it reported:
-./deploy/aws/bootstrap-operator.sh enable-region il-central-1
+# 2. As an ACCOUNT ADMIN, clear whatever it reported. On a default region
+#    this is usually just the policy; an opt-in region needs the first line too:
+./deploy/aws/bootstrap-operator.sh enable-region <region>   # opt-in regions only
 ./deploy/aws/bootstrap-operator.sh update-policy
 
 # 3. Confirm
@@ -32,12 +34,46 @@ it — it is the authoritative version of this document.
 
 ---
 
-## The two blockers, in plain language
+## Choosing a region, then clearing the two blockers
 
-### 1. The region `il-central-1` is not enabled on the account
+### 0. Which region?
+
+**The default is `us-east-2`, and that is a deliberate choice about *other
+people*, not about us.** A stranger cloning this repository and running
+`preflight.py` should land somewhere that is enabled on every account, sits in
+the cheapest pricing tier, and has the longest operational track record.
+`us-east-2` is all three:
+
+| | `us-east-2` | `il-central-1` |
+|---|---|---|
+| Opt-in required | no | **yes** — every API call fails until enabled |
+| `db.t4g.micro` PostgreSQL, Single-AZ | **$0.016/hr** ≈ $11.68/mo | $0.018/hr ≈ $13.14/mo |
+| Service coverage | broadest | thinner, newer region |
+| Track record | the region people pick for `us-east-1`'s ecosystem without its outage history | launched 2023 |
+| TCP connect from `thor` | 161 ms | **13 ms** |
+
+Prices are from AWS's public price list, not estimates.
+
+**Where your database goes is a deployment input.** Pass `--region` and the
+whole script follows. A control plane far from its database pays in round
+trips — every claim, every one-second poll, every transition, every UI read —
+and `preflight.py` reports that as a **warning, never a blocker**, because at
+a 60-second lease with a 20-second heartbeat, correctness is not at stake even
+at 161 ms. What you lose is transitions landing in about a second instead of
+about a tenth of one.
+
+Choose on what you actually weigh. If cost, familiarity and maturity matter
+more than response time, `us-east-2` is the better answer, and that is why it
+is the default.
+
+### 1. Is your chosen region enabled on the account?
+
+Regions launched after 2019 are opt-in — `il-central-1` is one, `us-east-2` is
+not. If you picked a default region, skip to blocker 2.
 
 AWS regions launched after 2019 are **opt-in**: they exist, but your account
-cannot use them until you say so. Ours is not enabled today, measured:
+cannot use them until you say so. Here is what that looks like, measured
+against a region this account had not enabled:
 
 ```console
 $ aws sts get-caller-identity --region il-central-1
@@ -50,26 +86,14 @@ credential is invalid. The credential is fine. An opt-in region answers
 *every* API call that way until the account enables it. Anyone debugging this
 from the error alone will spend an hour rotating a key that was never broken.
 
-**Why this region and not the one we already use.** Measured TCP connect from
-`thor`, the machine that will keep running the application:
+There is a **second** propagation behind the first: after the opt-status flips
+to `ENABLED`, credentials stay invalid in the new region for a few more
+minutes. `preflight.py` reports both as `waiting` — not as something you broke.
 
-| Region | Connect | |
-|---|---:|---|
-| `il-central-1` (Tel Aviv) | **19 ms** | the target |
-| `eu-central-1` (Frankfurt) | 70 ms | |
-| `us-east-1` (N. Virginia) | 160 ms | where our existing SQS/Lambda lane lives |
-
-The application stays on `thor` while the database moves, so this link carries
-every database round trip the engine makes — transactions, lease claims, the
-scheduler tick. An eight-fold latency difference is not a preference, it is
-whether the lease timeouts still hold. **The SQS and Lambda resources stay in
-`us-east-1`.** A split-region deployment is correct here, not something to
-tidy up later.
-
-**Fix it:**
+**Fix it** (only if you chose an opt-in region):
 
 ```bash
-./deploy/aws/bootstrap-operator.sh enable-region il-central-1
+./deploy/aws/bootstrap-operator.sh enable-region <region>
 ```
 
 The script checks the current status first and does nothing if the region is
@@ -142,7 +166,7 @@ no ability for the automation to widen its own policy.
 | Step | Identity | Command | Mutates? |
 |---|---|---|---|
 | Check status | operator (`AWS_PROFILE=culture-nodes`) or admin | `./deploy/aws/preflight.py` | no |
-| Enable the region | **account admin** | `./deploy/aws/bootstrap-operator.sh enable-region il-central-1` | account setting |
+| Enable the region (opt-in regions only) | **account admin** | `./deploy/aws/bootstrap-operator.sh enable-region <region>` | account setting |
 | Grant RDS | **account admin** | `./deploy/aws/bootstrap-operator.sh update-policy` | IAM policy version |
 | Confirm | operator | `./deploy/aws/preflight.py` | no |
 
@@ -155,26 +179,27 @@ a human which of the two commands above to run.
 ## Reading the preflight report
 
 ```text
-culture-nodes AWS preflight — target region il-central-1
+culture-nodes AWS preflight — target region us-east-2
 ================================================================
 
   [  ok   ]  AWS CLI installed
               aws-cli/2.x.y at /usr/local/bin/aws
 
-  [BLOCKED]  Region il-central-1 enabled
-              sts in il-central-1 returned InvalidClientTokenId — the region is not enabled
-              why:  il-central-1 is an opt-in region: until the account enables it, EVERY
+  [BLOCKED]  Region eu-south-1 enabled
+              sts in eu-south-1 returned InvalidClientTokenId — the region is not enabled
+              why:  eu-south-1 is an opt-in region: until the account enables it, EVERY
                     API call there fails with InvalidClientTokenId, which looks like a
                     broken credential and is not one
               who:  account admin — an account-level setting, ~10 minutes to take effect
-              fix:  ./deploy/aws/bootstrap-operator.sh enable-region il-central-1
+              fix:  ./deploy/aws/bootstrap-operator.sh enable-region eu-south-1
 ```
 
 | Badge | Meaning |
 |---|---|
 | `ok` | ready |
 | `BLOCKED` | must be cleared before provisioning; the report names who and how |
-| `warn` | proceed with attention — e.g. latency over the 30 ms budget |
+| `waiting` | requested and in flight at AWS — nobody has anything to do |
+| `warn` | proceed with attention — e.g. latency over the 30 ms guideline |
 | `skip` | not testable yet because an earlier check is blocked |
 
 Exit codes: `0` ready · `1` at least one blocker · `2` this machine cannot run

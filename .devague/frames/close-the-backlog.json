@@ -4,7 +4,7 @@
   "schema_version": 5,
   "status": "exported",
   "created": "2026-08-15T13:56:35Z",
-  "updated": "2026-08-15T15:15:17Z",
+  "updated": "2026-08-15T15:22:55Z",
   "claims": [
     {
       "id": "c1",
@@ -1445,6 +1445,73 @@
       "links": [],
       "instruction": "",
       "revisions": []
+    },
+    {
+      "id": "c82",
+      "kind": "decision",
+      "text": "The reference region default is us-east-2, not il-central-1. Measured from AWS's public price list, db.t4g.micro PostgreSQL Single-AZ costs 0.016 USD/hr in us-east-2 against 0.018 in il-central-1 \u2014 11.68 versus 13.14 a month. us-east-2 also needs no opt-in step, carries the broadest service coverage, and has the operational track record people reach for when they want us-east-1's ecosystem without its outage history. Latency is real but is not weighted here, and correctness is not at stake at either distance. What a stranger cloning this repo gets must be a region their account already has enabled.",
+      "origin": "user",
+      "status": "confirmed",
+      "honesty_conditions": [],
+      "hard_questions": [],
+      "links": [],
+      "instruction": "",
+      "revisions": []
+    },
+    {
+      "id": "c83",
+      "kind": "decision",
+      "text": "The system does not store, depend on, or filter by the IP address of any participant. Connectivity is established by the edge side dialing in and authenticating by credential \u2014 the websocket model \u2014 never by the control plane dialing out to a recorded address. thor has no static IP, and designing around that fact rather than fighting it is the simpler system.",
+      "origin": "user",
+      "status": "confirmed",
+      "honesty_conditions": [],
+      "hard_questions": [],
+      "links": [],
+      "instruction": "",
+      "revisions": []
+    },
+    {
+      "id": "c84",
+      "kind": "before_state",
+      "text": "thor's public IP is not static. Every design that pins an AWS security group rule to thor's address therefore needs a refresh mechanism, and that mechanism is the design smell the connection principle rejects rather than a gap to fill.",
+      "origin": "llm",
+      "status": "confirmed",
+      "honesty_conditions": [
+        {
+          "id": "h59",
+          "text": "The principle is checkable in the code, not just stated: no configuration file, database column or dispatch record holds a participant's IP address, and grep over the deployment config for a hardcoded address returns only the LAN bridge endpoints that the inversion is scheduled to remove.",
+          "status": "confirmed",
+          "instruction": ""
+        }
+      ],
+      "hard_questions": [],
+      "links": [],
+      "instruction": "Audit the existing surfaces against the principle before designing to it: actor endpoints in the actors table, the codex/claude bridge URLs in nodes-op.sh, and any security-group rule the RDS work would add.",
+      "revisions": []
+    },
+    {
+      "id": "c85",
+      "kind": "assumption",
+      "text": "The connection principle reaches further than the actor protocol. Applied to the database it argues against RDS-behind-a-security-group, because an SG filters by source address and that is exactly the fact this system refuses to depend on. The candidate answers, none chosen here: a managed Postgres that authenticates by credential and TLS rather than an IP allowlist; a tunnel with a terminator inside the VPC, which reintroduces the AWS compute this decision avoided; a dynamic SG updater on thor, which the principle rejects by construction; or keeping Postgres beside the compute and buying off-machine durability with S3 backups alone.",
+      "origin": "llm",
+      "status": "confirmed",
+      "honesty_conditions": [],
+      "hard_questions": [],
+      "links": [],
+      "instruction": "",
+      "revisions": []
+    },
+    {
+      "id": "c86",
+      "kind": "assumption",
+      "text": "The bridges-poll-outbound work is no longer a deferred nice-to-have but the stated connection model for actors: workers and bridges dial the control plane and hold the connection, so the control plane never needs an address for them. That changes the section 13 contract across all five bridges and is the same principle the database question just ran into from the other side.",
+      "origin": "llm",
+      "status": "confirmed",
+      "honesty_conditions": [],
+      "hard_questions": [],
+      "links": [],
+      "instruction": "",
+      "revisions": []
     }
   ],
   "open_vagueness": [
@@ -1460,6 +1527,15 @@
     {
       "id": "v2",
       "text": "Whether a repair loop (#102) can be bounded safely enough to run unattended is unknown: the last cycle's four gate failures were all cases where the actor could not run the tool that would have shown them, which a repair node on the same host also could not run.",
+      "kind": "unknown_nonblocking",
+      "claim_id": null,
+      "resolved": false,
+      "resolution": "",
+      "resolution_claim_id": null
+    },
+    {
+      "id": "v3",
+      "text": "Whether off-machine durability alone \u2014 shipping the existing six-hourly pg_dump to S3 for about a dollar a month \u2014 satisfies what #59 was actually for, now that the memory premise is falsified and the connectivity cost is real. That would close #30 and leave the database on thor.",
       "kind": "unknown_nonblocking",
       "claim_id": null,
       "resolved": false,

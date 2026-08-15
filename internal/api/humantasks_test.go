@@ -191,7 +191,7 @@ func TestHumanTasksListGetDecisionLifecycle(t *testing.T) {
 	// --- auth: no Authorization header at all ---
 	decideBody := decideHumanTaskReq{
 		Outcome:               "approved",
-		DeciderActorID:        f.insertActor("approver"),
+		DeciderActorID:        f.insertActorKind("approver", "human"),
 		ExpectedLedgerVersion: 0,
 	}
 	resp2, body2 := authedDecide(t, f, task.ID, "", decideBody)
@@ -284,7 +284,7 @@ func TestHumanTaskDecisionRefusedWhenNoSecretConfigured(t *testing.T) {
 
 	resp, body := authedDecide(t, f, task.ID, "any-token-at-all", decideHumanTaskReq{
 		Outcome:               "approved",
-		DeciderActorID:        f.insertActor("approver"),
+		DeciderActorID:        f.insertActorKind("approver", "human"),
 		ExpectedLedgerVersion: 0,
 	})
 	requireStatus(t, resp, body, http.StatusUnauthorized)
@@ -312,7 +312,7 @@ func TestHumanTaskDecisionStaleLedgerVersion(t *testing.T) {
 
 	resp, body := authedDecide(t, f, task.ID, decisionAuthSecret, decideHumanTaskReq{
 		Outcome:               "approved",
-		DeciderActorID:        f.insertActor("approver"),
+		DeciderActorID:        f.insertActorKind("approver", "human"),
 		ExpectedLedgerVersion: 0, // stale: the ledger is now at version 1
 	})
 	requireStatus(t, resp, body, http.StatusConflict)
@@ -327,7 +327,7 @@ func TestHumanTaskDecisionUnknownOutcomeIsBadRequest(t *testing.T) {
 
 	resp, body := authedDecide(t, f, task.ID, decisionAuthSecret, decideHumanTaskReq{
 		Outcome:               "not-a-real-outcome",
-		DeciderActorID:        f.insertActor("approver"),
+		DeciderActorID:        f.insertActorKind("approver", "human"),
 		ExpectedLedgerVersion: 0,
 	})
 	requireStatus(t, resp, body, http.StatusBadRequest)
@@ -340,7 +340,7 @@ func TestHumanTaskDecisionUnknownTaskIsNotFound(t *testing.T) {
 
 	resp, body := authedDecide(t, f, "does-not-exist", decisionAuthSecret, decideHumanTaskReq{
 		Outcome:               "approved",
-		DeciderActorID:        f.insertActor("approver"),
+		DeciderActorID:        f.insertActorKind("approver", "human"),
 		ExpectedLedgerVersion: 0,
 	})
 	requireStatus(t, resp, body, http.StatusNotFound)

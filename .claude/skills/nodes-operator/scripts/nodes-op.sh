@@ -30,6 +30,10 @@ usage: nodes-op.sh <verb> [args]
   run <id>                     one run: state, node outcomes, attempts
   ledger <id>                  a run's ledger records
   tasks                        pending human tasks
+  pending [run-id]             ledger claims still awaiting a human decision
+                                (proposed, and no review record names them —
+                                NOT an authority filter: confirming a claim
+                                appends a review, it never rewrites the claim)
   cancel <id>                  cancel a run (reaps items, propagates actor Cancel)
   validate <file.yaml>         server-side compile check, prints digest
   publish <file.yaml>          validate + publish, prints digest
@@ -135,6 +139,22 @@ import json,sys
 d=json.load(sys.stdin); items=d if isinstance(d,list) else d.get("items",d.get("human_tasks",[]))
 if not items: print("no pending human tasks")
 for t in items: print(t.get("id"), t.get("status"), str(t.get("request",""))[:100])'
+  ;;
+pending)
+  # GET /v1alpha1/pending-decisions: the affirmative half of PRD §10.4's
+  # discoverability. Decide what this prints with scripts/decide-claims.py;
+  # both read the same server-side rule, so the gate and the queue cannot
+  # disagree about what "undecided" means.
+  q=""; [ -n "${1:-}" ] && q="?run_id=$1"
+  api_get "/v1alpha1/pending-decisions$q" | py '
+import json,sys
+d=json.load(sys.stdin); items=d.get("items",[])
+if not items: print("nothing awaiting a decision"); raise SystemExit(0)
+print(f"{d.get("record_count",0)} record(s) awaiting a decision across {len(items)} run(s)")
+for g in items:
+    print(f"  {g["run_id"]}  (ledger_version {g["ledger_version"]})")
+    for r in g.get("records",[]):
+        print(f"    {r["id"]}  {r["record_type"]}  from {r.get("origin_actor_id","-")}")'
   ;;
 cancel)
   id="${1:?usage: cancel <id>}"

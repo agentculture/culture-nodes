@@ -166,17 +166,65 @@ curl -X POST http://localhost:8080/v1alpha1/human-tasks/<id>/decision \
   -d '{"outcome": "approved", "decider_actor_id": "ori", "expected_ledger_version": 4}'
 ```
 
-The decision endpoint is the one write in this API that requires a bearer
-token (`NODES_HUMAN_DECISION_TOKEN_SECRET` on `nodes serve`) — every other
-Phase-1 endpoint is authless behind the private network above, but a
-decision here writes a human-authority review into the ledger and resumes
-the run on whoever's behalf the token vouches for. The commit is atomic and
-stale-guarded: a decision against a ledger version the run has since moved
-past is refused, never silently applied. The shipped
+The decision endpoint is one of three writes in this API that require a
+bearer token (`NODES_HUMAN_DECISION_TOKEN_SECRET` on `nodes serve`; the
+other two are the review routes below) — every other Phase-1 endpoint is
+authless behind the private network above, but a decision here writes a
+human-authority review into the ledger and resumes the run on whoever's
+behalf the token vouches for. The commit is atomic and stale-guarded: a
+decision against a ledger version the run has since moved past is refused,
+never silently applied. The shipped
 [`examples/delivery-loop`](examples/delivery-loop) reference workflow does
 not include an approval node yet (see its header comment); the engine, API,
 and worker plumbing above are real and tested independently of that
 fixture.
+
+## Deciding a claim: the affirmative half of the authority model
+
+An agent may only create `proposed` records, and no actor promotes its own
+proposal (PRD §10.4). That refusal is one half of the model; the other half
+is somebody actually deciding. A decision is recorded as its own immutable
+`review` record — human origin naming the reviewer, `confirmed` or
+`rejected` authority, `subject_ref` naming the record decided, and the
+stated reason in its payload.
+
+```bash
+# What is awaiting a decision, across every run (or one, with ?run_id=).
+curl http://localhost:8080/v1alpha1/pending-decisions
+
+# Open a review over the records, at the ledger version you read them at.
+curl -X POST http://localhost:8080/v1alpha1/runs/<run-id>/reviews \
+  -H "Authorization: Bearer $NODES_HUMAN_DECISION_TOKEN_SECRET" \
+  -H 'content-type: application/json' \
+  -d '{"record_ids": ["rec_..."], "ledger_version": 7, "reviewer_actor_id": "actor_..."}'
+
+# Decide it. `rationale` is required, and it is recorded on each decision.
+curl -X POST http://localhost:8080/v1alpha1/reviews/<review-id>/commit \
+  -H "Authorization: Bearer $NODES_HUMAN_DECISION_TOKEN_SECRET" \
+  -H 'content-type: application/json' \
+  -d '{"decisions": {"rec_...": "confirm"}, "expected_ledger_version": 7,
+       "rationale": "re-ran the suite on spark and read the output"}'
+```
+
+Three things this surface refuses to be casual about:
+
+- **Who decided is checked, not asserted.** `reviewer_actor_id` is resolved
+  against the actor registry and must be registered `human`. Without that
+  check the human origin stamped on a review record would be a value the
+  ledger asserts on the caller's behalf, and an agent could decide its own
+  claim by naming itself (rule `reviewer_must_be_human`).
+- **Why is required.** A confirmation with no stated reason cannot be told
+  apart from an unread one.
+- **Nothing is rewritten.** Records are immutable, so a confirmed claim
+  still reads `authority: proposed` forever with a review record pointing at
+  it. That is why "what is still undecided" is `GET /pending-decisions` — a
+  join — and not a filter on authority.
+
+The same thing from a browser: the **Decisions** view (`/decisions`) lists
+every undecided record with its payload in full and records the verdict,
+reviewer and rationale. `scripts/decide-claims.py` is the terminal version,
+and `scripts/ledger-gate.py` is the stage gate that fails while anything is
+still undecided.
 
 ## Example topology: one machine, or a small production split
 

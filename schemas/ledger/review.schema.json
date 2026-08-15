@@ -43,6 +43,11 @@
           "type": "string",
           "description": "The authority under which the reviewer acted, e.g. an approver group reference."
         },
+        "rationale": {
+          "type": "string",
+          "minLength": 1,
+          "description": "Why the reviewer decided this way — what they read, ran, or checked. Distinct from `comment`, which is an aside: this is the ground of the decision itself, and a confirmation without one cannot be told apart from an unread claim. The key is absent when no rationale was recorded, never present-and-empty."
+        },
         "comment": {
           "type": "string"
         }

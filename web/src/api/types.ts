@@ -511,6 +511,79 @@ export interface HumanTaskList {
   items: HumanTask[];
 }
 
+/**
+ * One proposed ledger record still awaiting a human decision
+ * (`GET /v1alpha1/pending-decisions`, task t30 / issue #99).
+ */
+export interface PendingDecisionRecord {
+  id: string;
+  record_type: string;
+  origin_kind: string;
+  origin_actor_id?: string;
+  node_run_id?: string;
+  created_at: string;
+  data: unknown;
+}
+
+/**
+ * One run's undecided records, with the ledger version they were read at.
+ *
+ * The version is what a review must be opened against (PRD §10.8), and it
+ * comes from the same response as the records so the browser never has to
+ * guess it — a guessed version is refused by the staleness guard rather
+ * than silently raced.
+ */
+export interface PendingDecisionRun {
+  run_id: string;
+  ledger_version: number;
+  records: PendingDecisionRecord[];
+}
+
+export interface PendingDecisionList {
+  items: PendingDecisionRun[];
+  /** Undecided records across every listed run. */
+  record_count: number;
+}
+
+/** `POST /v1alpha1/runs/{id}/reviews` request body. */
+export interface CreateReviewRequest {
+  record_ids: string[];
+  ledger_version: number;
+  /** The registered HUMAN actor who decides. The API refuses any other kind. */
+  reviewer_actor_id: string;
+}
+
+/** `POST /v1alpha1/runs/{id}/reviews`'s result. */
+export interface ReviewRequest {
+  id: string;
+  run_id: string;
+  reviewer_actor_id?: string;
+  status: "requested" | "committed";
+  ledger_version: number;
+  frame_checksum: string;
+  record_ids: string[];
+  created_at: string;
+}
+
+/** `POST /v1alpha1/reviews/{id}/commit` request body. */
+export interface CommitReviewRequest {
+  /** Record id to verdict; must cover exactly the records under review. */
+  decisions: Record<string, "confirm" | "reject">;
+  expected_ledger_version: number;
+  /**
+   * Why the reviewer decided this way. Required by the API: a confirmation
+   * with no stated reason cannot be told apart from an unread one.
+   */
+  rationale: string;
+}
+
+/** `POST /v1alpha1/reviews/{id}/commit`'s result. */
+export interface ReviewCommitResult {
+  review_id: string;
+  records: LedgerRecord[];
+  ledger_version: number;
+}
+
 /** `POST /v1alpha1/human-tasks/{id}/decision` request body. */
 export interface HumanTaskDecisionRequest {
   outcome: string;

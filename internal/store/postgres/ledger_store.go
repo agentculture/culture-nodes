@@ -222,6 +222,31 @@ func (ls *LedgerStore) Lock(ctx context.Context, key string) error {
 	return nil
 }
 
+// ActorKind returns the registered kind of an actor, or
+// ledger.ErrActorNotFound.
+//
+// Actor identity is append-only: a capability change is a new revision row
+// with its own id (migration 0001). The lookup is by row id because that is
+// what a ledger record's origin_actor_id and a review's reviewer_actor_id
+// both hold — one specific revision of one actor, which is exactly the
+// granularity a decision should be attributed at.
+func (ls *LedgerStore) ActorKind(ctx context.Context, actorID string) (string, error) {
+	if actorID == "" {
+		return "", fmt.Errorf("postgres: ledger: actor kind lookup requires an actor id: %w", ledger.ErrActorNotFound)
+	}
+	var kind string
+	err := ls.q.QueryRow(ctx,
+		`SELECT kind FROM actors WHERE namespace_id = $1 AND id = $2`,
+		ls.namespaceID, actorID).Scan(&kind)
+	if err != nil {
+		if isNoRows(err) {
+			return "", fmt.Errorf("postgres: actor %s: %w", actorID, ledger.ErrActorNotFound)
+		}
+		return "", fmt.Errorf("postgres: ledger: kind of actor %s: %w", actorID, err)
+	}
+	return kind, nil
+}
+
 const insertLedgerReviewSQL = `
 INSERT INTO ledger_reviews (
 	id, namespace_id, run_id, reviewer_actor_id, reviewed_ledger_version,

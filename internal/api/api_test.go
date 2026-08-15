@@ -39,6 +39,7 @@ type createReviewReq struct {
 type commitReviewReq struct {
 	Decisions             map[string]string `json:"decisions"`
 	ExpectedLedgerVersion int64             `json:"expected_ledger_version"`
+	Rationale             string            `json:"rationale"`
 }
 
 type validationResp struct {
@@ -148,7 +149,7 @@ func TestWorkflowLifecycle(t *testing.T) {
 // Last-Event-ID, then exercises ledger projections and a stale review
 // commit.
 func TestRunLifecycleEventsLedgerAndReviews(t *testing.T) {
-	f := newFixture(t)
+	f := newFixtureWithDecisionAuth(t, decisionAuthSecret)
 	source := readFixtureWorkflow(t, "edge-order-ordered.workflow.yaml")
 
 	var published apipkg.WorkflowVersionOut
@@ -299,9 +300,10 @@ func TestRunLifecycleEventsLedgerAndReviews(t *testing.T) {
 	// --- reviews: create at ledger version 1, append another record
 	// (moving the ledger to version 2), then commit against the now-stale
 	// expected version 1 and require a 409. ---
-	reviewerID := f.insertActor("reviewer")
+	reviewerID := f.insertActorKind("reviewer", "human")
 	var review apipkg.ReviewRequestOut
-	resp, body = doJSON(t, f.client, http.MethodPost, f.url("/v1alpha1/runs/"+run.ID+"/reviews"),
+	resp, body = doJSONBearer(t, f.client, http.MethodPost, f.url("/v1alpha1/runs/"+run.ID+"/reviews"),
+		decisionAuthSecret,
 		createReviewReq{RecordIDs: []string{firstRecord.ID}, LedgerVersion: 1, ReviewerActorID: reviewerID}, &review)
 	requireStatus(t, resp, body, http.StatusCreated)
 	if review.Status != "requested" {
@@ -329,21 +331,32 @@ func TestRunLifecycleEventsLedgerAndReviews(t *testing.T) {
 	// current version (2) no longer matches it. This is deliberate (PRD
 	// §10.8): a review is a statement about a specific frame, not a
 	// pointer a caller can keep re-aiming.
-	resp, body = doJSON(t, f.client, http.MethodPost, f.url("/v1alpha1/reviews/"+review.ID+"/commit"),
-		commitReviewReq{Decisions: map[string]string{firstRecord.ID: "confirm"}, ExpectedLedgerVersion: 1}, nil)
+	resp, body = doJSONBearer(t, f.client, http.MethodPost, f.url("/v1alpha1/reviews/"+review.ID+"/commit"),
+		decisionAuthSecret,
+		commitReviewReq{
+			Decisions:             map[string]string{firstRecord.ID: "confirm"},
+			ExpectedLedgerVersion: 1,
+			Rationale:             "re-read the announcement against the run transcript",
+		}, nil)
 	requireStatus(t, resp, body, http.StatusConflict)
 	decodeAPIError(t, body)
 
 	// The only way forward once stale is a fresh review request against
 	// the run's current ledger version.
 	var freshReview apipkg.ReviewRequestOut
-	resp, body = doJSON(t, f.client, http.MethodPost, f.url("/v1alpha1/runs/"+run.ID+"/reviews"),
+	resp, body = doJSONBearer(t, f.client, http.MethodPost, f.url("/v1alpha1/runs/"+run.ID+"/reviews"),
+		decisionAuthSecret,
 		createReviewReq{RecordIDs: []string{firstRecord.ID}, LedgerVersion: 2, ReviewerActorID: reviewerID}, &freshReview)
 	requireStatus(t, resp, body, http.StatusCreated)
 
 	var commitResult apipkg.ReviewCommitResultOut
-	resp, body = doJSON(t, f.client, http.MethodPost, f.url("/v1alpha1/reviews/"+freshReview.ID+"/commit"),
-		commitReviewReq{Decisions: map[string]string{firstRecord.ID: "confirm"}, ExpectedLedgerVersion: 2}, &commitResult)
+	resp, body = doJSONBearer(t, f.client, http.MethodPost, f.url("/v1alpha1/reviews/"+freshReview.ID+"/commit"),
+		decisionAuthSecret,
+		commitReviewReq{
+			Decisions:             map[string]string{firstRecord.ID: "confirm"},
+			ExpectedLedgerVersion: 2,
+			Rationale:             "re-read the announcement against the run transcript",
+		}, &commitResult)
 	requireStatus(t, resp, body, http.StatusOK)
 	if commitResult.LedgerVersion != 3 { // 2 announcements + 1 review record
 		t.Fatalf("ledger_version after commit = %d, want 3", commitResult.LedgerVersion)

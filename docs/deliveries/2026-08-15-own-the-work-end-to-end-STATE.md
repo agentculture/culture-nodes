@@ -128,8 +128,8 @@ produce a commit; the policy forbids it. Unreconciled.
 
 ## 8. Next actions, in order
 
-1. **Decide the sandbox question (§5).** It gates everything downstream and
-   changes what t6 can be.
+1. **Decide the sandbox question — see [#91], which states the four options.**
+   It gates everything downstream and changes what t6 can be.
 2. Re-dispatch P2 (t3, t15 → `codex-orin`) and P3 (t4, t8 → `codex-thor`) with
    the chosen sandbox. One package per actor.
 3. Harvest → apply to a `owe/<pkg>` worktree under
@@ -147,11 +147,12 @@ merge otherwise. Not yet done for this batch.
 - [#89] run scope → think → challenge through Culture Nodes as a workflow
 - [#90] worker push credential: permission, delivery seam, verification —
   **carries a correction comment**; its original root-cause analysis was wrong
-
-Queued, not yet filed: the sandbox/`git_ref` contradiction (§5), and the
-`AGENTS.md`-versus-`git_ref` contradiction (§6).
+- [#91] `workspace-write` leaves `.git` read-only, so an agent cannot produce a
+  git ref — carries §5's four options **and** §6's `AGENTS.md` contradiction;
+  **this is the decision that unblocks the fan-out**
 
 [#87]: https://github.com/agentculture/culture-nodes/issues/87
 [#88]: https://github.com/agentculture/culture-nodes/issues/88
 [#89]: https://github.com/agentculture/culture-nodes/issues/89
 [#90]: https://github.com/agentculture/culture-nodes/issues/90
+[#91]: https://github.com/agentculture/culture-nodes/issues/91

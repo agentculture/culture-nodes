@@ -43,6 +43,8 @@ jobs:
       contents: read
     steps:
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+        with:
+          fetch-depth: 0
 
       - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
         with:
@@ -53,6 +55,14 @@ jobs:
       - run: uv python install 3.12
 
       - run: uv sync
+
+      - name: Vendored skills unchanged in merge range
+        env:
+          RANGE_BASE: ${{ github.event.pull_request.base.sha || github.event.before }}
+        run: python3 scripts/check-vendored-skill-diff.py "$RANGE_BASE" "$GITHUB_SHA"
+
+      - name: Zero-dependency CLI works in a bare environment
+        run: scripts/check-zero-runtime-deps.sh
 
       - name: black --check
         run: uv run black --check culture_nodes tests

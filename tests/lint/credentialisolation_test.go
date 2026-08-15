@@ -78,9 +78,30 @@ var reservedEmailDomains = []string{
 	"example", "invalid", "test", "localhost", "local", "internal",
 }
 
-// emailDomainIsReserved reports whether an email-shaped match sits at a domain
-// that cannot be a real account.
+// protocolLocalParts are email-SHAPED strings that are not addresses at all:
+// they are the fixed usernames git puts before the host in a remote URL.
+// `git@github.com` is the SSH user every GitHub clone URL carries, and
+// `x-access-token@github.com` is the HTTPS user a token-authenticated push
+// carries (scripts/verify-token-scope.sh documents that form, and the
+// own-the-work-end-to-end spec cites it). Neither can route to a mailbox and
+// neither identifies a person, so treating them as account identity would make
+// the rule fire on the very documentation that teaches the safe push command.
+//
+// Kept as an exact set of full local@domain strings rather than a bare
+// local-part allowance: `git@` at some other domain IS a plausible real
+// address, and this rule should still catch it.
+var protocolLocalParts = map[string]bool{
+	"git@github.com":            true,
+	"x-access-token@github.com": true,
+}
+
+// emailDomainIsReserved reports whether an email-shaped match cannot be a real
+// account -- either because its domain can never route, or because the match is
+// one of the git protocol usernames above.
 func emailDomainIsReserved(match string) bool {
+	if protocolLocalParts[strings.ToLower(match)] {
+		return true
+	}
 	at := strings.LastIndex(match, "@")
 	if at < 0 {
 		return false
@@ -217,6 +238,16 @@ func TestCredentialLintFlagsPlantedIdentities(t *testing.T) {
 			wantRule: ruleAccountEmail,
 		},
 		{
+			// The protocolLocalParts allowance is an exact full-address set,
+			// not a bare `git@` local-part rule -- so a plausible real mailbox
+			// that happens to start `git@` must still trip. Without this case
+			// the allowance could be loosened to a prefix match and no test
+			// would notice.
+			name:     "git@ at a domain that is not github.com",
+			fixture:  `Contact: git@agentculture.org`,
+			wantRule: ruleAccountEmail,
+		},
+		{
 			name:     "github classic personal access token",
 			fixture:  "GITHUB_TOKEN=" + plantedToken("ghp_", 36),
 			wantRule: ruleAPIToken,
@@ -287,6 +318,11 @@ func TestCredentialLintAcceptsNeutralPlaceholders(t *testing.T) {
 		// Prose naming the prefixes this lint looks for -- including this
 		// task's own plan entry, which must not trip the lint it describes.
 		"Patterns: account emails, ATATT/gho_/ghp_ token prefixes, known personal handles.",
+		// Git's protocol usernames. Email-shaped, but they name a transport
+		// role rather than a person, and the documentation that teaches the
+		// safe push command cannot be written without them.
+		"git clone git@github.com:agentculture/culture-nodes.git",
+		`git push https://x-access-token@github.com/agentculture/culture-nodes.git owe/batch`,
 	} {
 		t.Run(fixture, func(t *testing.T) {
 			if findings := scanForCommittedIdentifiers(fixture); len(findings) != 0 {

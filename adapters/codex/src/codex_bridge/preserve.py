@@ -100,6 +100,12 @@ def _sanitize_ref_component(value: str) -> str:
     return cleaned or "x"
 
 
+#: Public alias for `reap.py`, which names its rescue ref under this
+#: module's own branch prefix and must sanitize it by the same rule — one
+#: place decides what a ref-safe component is.
+sanitize_ref_component = _sanitize_ref_component
+
+
 def mint_branch_name(
     prefix: str, run_id: str, node_run_id: str | None, attempt_id: str | None
 ) -> str:

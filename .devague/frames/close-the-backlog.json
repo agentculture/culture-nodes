@@ -4,7 +4,7 @@
   "schema_version": 5,
   "status": "exported",
   "created": "2026-08-15T13:56:35Z",
-  "updated": "2026-08-15T15:14:57Z",
+  "updated": "2026-08-15T15:15:17Z",
   "claims": [
     {
       "id": "c1",
@@ -1421,10 +1421,17 @@
       "text": "The lease-expiry risk in the latency argument was overstated and is corrected here: DefaultLeaseDuration is 60 seconds with a 20-second heartbeat (internal/worker/worker.go:29,32), so even a hundred round trips at 161ms fit inside one lease. Latency costs throughput and responsiveness, not correctness. c68's measurement gate stays worth running, and is now expected to pass rather than expected to bite.",
       "origin": "llm",
       "status": "confirmed",
-      "honesty_conditions": [],
+      "honesty_conditions": [
+        {
+          "id": "h58",
+          "text": "The corrected reading is testable rather than asserted: multiply the round-trip count of one completion transaction by the measured RTT and compare against DefaultLeaseDuration; the ratio is reported as a number in the cutover record whether it passes comfortably or not.",
+          "status": "confirmed",
+          "instruction": ""
+        }
+      ],
       "hard_questions": [],
       "links": [],
-      "instruction": "",
+      "instruction": "Read internal/worker/worker.go:26-39 for the lease, heartbeat and node-timeout defaults before re-arguing any latency risk.",
       "revisions": []
     },
     {

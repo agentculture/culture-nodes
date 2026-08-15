@@ -30,6 +30,8 @@
   - instruction: Re-check the volume and backup facts after cutover: docker volume inspect `prod_pgdata`, ls ~/.culture-nodes/backups, and confirm RDS automated backups are on with a stated retention.
 - Before: The control-plane code is already database-location-agnostic: `NODES_DATABASE_URL` is a single connection URL read by api, migrate, scheduler and worker, and the Helm chart already documents bringing your own (postgresql.enabled false plus postgresql.external.url, values.yaml:155-160). It is already exercised in production — orin's worker connects to thor's Postgres over the LAN through the same variable. The gap is the compose profiles, which bundle a postgres service, inline sslmode=disable in four places, and point the backup loop at -h postgres.
   - instruction: Read deploy/helm/culture-nodes/values.yaml:155-160 for the pattern to mirror, and deploy/prod/compose.orin.yml:20 for the remote-database call site already in production.
+- Before: The lease-expiry risk in the latency argument was overstated and is corrected here: DefaultLeaseDuration is 60 seconds with a 20-second heartbeat (internal/worker/worker.go:29,32), so even a hundred round trips at 161ms fit inside one lease. Latency costs throughput and responsiveness, not correctness. c68's measurement gate stays worth running, and is now expected to pass rather than expected to bite.
+  - instruction: Read internal/worker/worker.go:26-39 for the lease, heartbeat and node-timeout defaults before re-arguing any latency risk.
 - After: The tracker answers three questions without a human reconstructing them: what is closed and on what evidence, what is open and who owns it, and what the system did versus what a person did. Bucket A is closed on run evidence, the operator-lane loop runs the work instead of an operator's session, #5 exports live telemetry, and the four decision-shaped issues carry an owner's recorded answer.
   - instruction: Commit the four queries alongside the triage artifact so the after-state is re-derivable.
 
@@ -148,6 +150,7 @@
 - The backup and volume facts are restated after the migration: if RDS becomes authoritative, the compose backup loop is either removed or repurposed, and no stale six-hourly `pg_dump` keeps running against a database nothing reads.
 - Pointing a fresh install at an external database requires editing configuration only: a clean checkout, one URL, no code change and no image rebuild — demonstrated by doing it against a throwaway database before the RDS cutover.
 - The bundled-Postgres path still passes its smoke test after the migration, run on a machine that has no AWS credentials at all.
+- The corrected reading is testable rather than asserted: multiply the round-trip count of one completion transaction by the measured RTT and compare against DefaultLeaseDuration; the ratio is reported as a number in the cutover record whether it passes comfortably or not.
 
 ## Success signals
 
@@ -207,6 +210,7 @@
 - The sweep split collapses part of the backlog rather than adding to it: #71 becomes the trigger case, #107's 'start the first run' becomes the same trigger plus a schedule, #61 and #76 become two more emitters against one contract instead of two more vocabularies inside one sweep script, and #108's 'what is running' surface shrinks because a finding's path from raise to run becomes a queryable chain of events. The triage table must record that collapse rather than carrying five independent items.
 - The #59 decision changes three other issues' dispositions: #30 closes on RDS automated backups plus S3 artifact durability rather than a new backup script; #6 becomes live work — the RDS and S3 access is exactly the workload-identity case OIDC was deferred for — rather than staying parked; and #5's collector gets an AWS home that thor reaches outbound, needing no inbound path.
   - instruction: Update #30, #6 and #5 with the consequence of this decision as soon as it is recorded, so their dispositions do not drift from it.
+- Data residency is an unanswered question, not a settled one: the ledger holds every instruction, claim and evidence trail this system produces, and whether that should be Israel-resident or US-resident is the owner's call rather than a technical consequence of the latency measurement.
 
 ## Scope exploration
 
@@ -268,6 +272,7 @@
 - Sweep re-raises only on change, per source key: a GitHub PR raises again only if its head commit changed or a comment arrived since the last raise; a Jira issue only if its updated timestamp moved or a comment was added. Everything else it sees, it has already reported and stays silent about.
 - \#59 is decided: authoritative state moves to AWS — RDS PostgreSQL replaces prod-postgres and S3 replaces MinIO — while api, worker, scheduler and notifier stay on thor and keep dispatching to the bridges over the LAN. No VPN, no change to the actor dispatch protocol. Bridges-poll-outbound, the configuration that would let agents live outside the LAN, becomes its own future issue rather than part of #59.
 - Where the database lives is a deployment input, never a product decision. Anyone installing culture-nodes points it at their own hosted Postgres — RDS, Cloud SQL, Neon, Supabase, a shared cluster, or the bundled container — and the same applies to where the compute runs: thor, ECS, Kubernetes or a laptop. Our own AWS choice is one deployment's answer, not the system's.
+- The il-central-1 choice was challenged against us-east-2 and re-answered with measurement, not assertion. From thor: il-central-1 13ms, eu-south-1 54ms, eu-central-1 68ms, us-east-1 155ms, us-east-2 161ms, us-west-2 224ms. us-east-2 is cheaper by roughly 15-20 percent (an estimate — the operator policy has no pricing:GetProducts), needs no opt-in, and is the more mature region. It loses on the only axis that dominates while compute stays on thor: every claim, tick, transition and UI read pays the round trip. The decision carries an explicit expiry — if compute moves into AWS (the bridges-poll-outbound issue), the database follows the compute and this region choice is re-opened.
 
 ## Hard questions
 

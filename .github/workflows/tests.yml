@@ -84,6 +84,11 @@ jobs:
       - name: afi rubric gate
         run: uv run teken cli doctor . --strict
 
+      - name: open-issue triage is complete and current
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: python3 scripts/triage-report.py --check
+
   version-check:
     # Only run on PR events. On push to main after a merged PR, the comparison
     # would always fail (PR_VERSION == MAIN_VERSION because HEAD and origin/main

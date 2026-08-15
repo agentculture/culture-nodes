@@ -40,6 +40,7 @@ _ENV_STRING_FIELDS = {
     "CLAUDE_CODE_BRIDGE_MIN_CLAUDE_VERSION": "min_claude_version",
     "CLAUDE_CODE_BRIDGE_PRESERVE_BRANCH_PREFIX": "preserve_branch_prefix",
     "CLAUDE_CODE_BRIDGE_PRESERVE_REMOTE": "preserve_remote",
+    "CLAUDE_CODE_BRIDGE_HANDOVER_REMOTE": "handover_remote",
 }
 _ENV_INT_FIELDS = {
     "CLAUDE_CODE_BRIDGE_PORT": "port",
@@ -163,6 +164,17 @@ class Config:
     #: True.
     preserve_remote: str = "origin"
 
+    # --- handover ref (task t9/t10, issue #90, #13) ----------------------
+    #: The remote whose configured URL a handover ref's handle is built
+    #: from (`preserve.handover_ref`). It is READ ONLY — `git remote
+    #: get-url` — because a handover deliberately does not push; the name
+    #: is separate from `preserve_remote` because the two answer different
+    #: questions ("where a preserve branch is pushed to" versus "which
+    #: remote another host would fetch this ref from"), and a host that
+    #: pushes preserve branches to a scratch remote must still be able to
+    #: name the shared one in a handle.
+    handover_remote: str = "origin"
+
     # --- worktree reaping (task t17) -------------------------------------
     #: How long a minted worktree must have gone untouched before age stops
     #: being a reason to DEFER its removal. Read by `reap.ReapPolicy`; see
@@ -272,6 +284,7 @@ _FILE_FIELDS = {
     "preserve_branch_prefix": str,
     "preserve_push": bool,
     "preserve_remote": str,
+    "handover_remote": str,
     "worktree_reap_min_idle_seconds": float,
     "host": str,
     "port": int,

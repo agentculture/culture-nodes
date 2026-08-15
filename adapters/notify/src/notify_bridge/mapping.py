@@ -193,4 +193,16 @@ def result_for(
         "ledger_delta": {"records": [record]},
         "artifact_refs": [],
         "continuation_ref": None,
+        "usage": usage_for_backend(),
+    }
+
+
+def usage_for_backend() -> dict[str, Any]:
+    """Report an explicit model unknown for this non-model backend."""
+    return {
+        "input_tokens": 0,
+        "output_tokens": 0,
+        "cost": None,
+        "currency": None,
+        "model": "unknown:notify-backend-cannot-report",
     }

@@ -73,6 +73,7 @@ def host_facts(
             extra=_publication_clause(cfg),
         ),
         writable_paths=list(cfg.repo_allowlist),
+        artifact_publish="unsupported-by-host",
     )
 
 

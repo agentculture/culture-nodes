@@ -16,6 +16,7 @@ import (
 	idstore "github.com/agentculture/culture-nodes/internal/store"
 	"github.com/agentculture/culture-nodes/internal/store/postgres"
 	"github.com/agentculture/culture-nodes/internal/telemetry"
+	"github.com/agentculture/culture-nodes/internal/worker"
 )
 
 // lockKey names the single, well-known PostgreSQL advisory lock this
@@ -146,7 +147,14 @@ type Scheduler struct {
 	// engineFor.
 	engineMu sync.Mutex
 	engines  map[string]*engine.Engine
+
+	registryMu sync.Mutex
+	registries map[string]worker.Registry
 }
+
+var deadlineActorClient = actors.NewClient()
+
+const deadlineCancelTimeout = 30 * time.Second
 
 // New returns a Scheduler backed by db. It does nothing until Run is
 // called -- constructing one never touches PostgreSQL.
@@ -395,7 +403,7 @@ func (sch *Scheduler) fireOne(ctx context.Context, t postgres.Timer) error {
 		}
 	}()
 
-	topic, err := sch.applyEffect(ctx, tx, t)
+	topic, cancelInv, err := sch.applyEffect(ctx, tx, t)
 	if err != nil {
 		return fmt.Errorf("scheduler: fireOne: apply effect for timer %s: %w", t.ID, err)
 	}
@@ -426,6 +434,12 @@ func (sch *Scheduler) fireOne(ctx context.Context, t postgres.Timer) error {
 		return fmt.Errorf("scheduler: fireOne: commit for timer %s: %w", t.ID, err)
 	}
 	committed = true
+	if cancelInv != nil {
+		// Cancellation is external and best-effort (§13.6). Run it only after
+		// the durable timer transaction is closed, and off the singleton tick
+		// loop so an unreachable bridge cannot stall unrelated timers.
+		go sch.cancelDeadlineInvocation(context.WithoutCancel(ctx), *cancelInv)
+	}
 	return nil
 }
 
@@ -466,21 +480,21 @@ WHERE node_run_id = $1 AND state <> 'completed'
 // and returns the outbox topic fireOne should record for it. It is always
 // called before Hooks.AfterEffect and before MarkFiredTx -- see fireOne's
 // doc comment.
-func (sch *Scheduler) applyEffect(ctx context.Context, tx pgx.Tx, t postgres.Timer) (topic string, err error) {
+func (sch *Scheduler) applyEffect(ctx context.Context, tx pgx.Tx, t postgres.Timer) (topic string, cancelInv *actors.PendingInvocation, err error) {
 	switch t.Kind {
 	case postgres.TimerKindWait, postgres.TimerKindRetry:
 		if t.NodeRunID == "" {
-			return "", fmt.Errorf("timer %s (kind %s) has no node_run_id subject", t.ID, t.Kind)
+			return "", nil, fmt.Errorf("timer %s (kind %s) has no node_run_id subject", t.ID, t.Kind)
 		}
 		if _, err := tx.Exec(ctx, makeWorkItemAvailableSQL, t.NodeRunID); err != nil {
-			return "", fmt.Errorf("make work item available for node run %s: %w", t.NodeRunID, err)
+			return "", nil, fmt.Errorf("make work item available for node run %s: %w", t.NodeRunID, err)
 		}
 		// Zero rows affected is not an error: the subject work item may
 		// already be completed (a stale wait/retry timer firing after the
 		// node run finished by some other path), which is a legitimate,
 		// harmless no-op -- domain outcome, not engine failure (repo
 		// CLAUDE.md ground rule).
-		return topicTimerFired, nil
+		return topicTimerFired, nil, nil
 
 	case postgres.TimerKindDeadline:
 		// The effect is prd-spec §12.6's own timeout: fail the
@@ -495,10 +509,14 @@ func (sch *Scheduler) applyEffect(ctx context.Context, tx pgx.Tx, t postgres.Tim
 		// guard, an injected test crash), failWaitingExternal's own commit
 		// stays landed and simply is not retried, because it is guarded to
 		// be a safe no-op on a retry: see its doc comment.
-		if err := sch.failWaitingExternal(ctx, t); err != nil {
-			return "", fmt.Errorf("deadline timer %s: fail waiting_external attempt: %w", t.ID, err)
+		inv, paused, err := sch.failWaitingExternal(ctx, t)
+		if err != nil {
+			return "", nil, fmt.Errorf("deadline timer %s: fail waiting_external attempt: %w", t.ID, err)
 		}
-		return topicDeadlineExpired, nil
+		if paused || inv.InvocationID == "" {
+			return topicDeadlineExpired, nil, nil
+		}
+		return topicDeadlineExpired, &inv, nil
 
 	case postgres.TimerKindLeaseRecovery:
 		// Deliberately NOT run through tx: ReclaimExpired is already a
@@ -510,12 +528,12 @@ func (sch *Scheduler) applyEffect(ctx context.Context, tx pgx.Tx, t postgres.Tim
 		// fine: reclaiming an expired lease that is then "reclaimed again"
 		// on a retry is a harmless no-op, not a correctness problem.
 		if _, err := sch.db.ReclaimExpired(ctx); err != nil {
-			return "", fmt.Errorf("lease-recovery timer %s: ReclaimExpired: %w", t.ID, err)
+			return "", nil, fmt.Errorf("lease-recovery timer %s: ReclaimExpired: %w", t.ID, err)
 		}
-		return topicLeaseRecoverySwept, nil
+		return topicLeaseRecoverySwept, nil, nil
 
 	default:
-		return "", fmt.Errorf("timer %s: unknown timer kind %q", t.ID, t.Kind)
+		return "", nil, fmt.Errorf("timer %s: unknown timer kind %q", t.ID, t.Kind)
 	}
 }
 
@@ -544,18 +562,36 @@ func (sch *Scheduler) applyEffect(ctx context.Context, tx pgx.Tx, t postgres.Tim
 // resumed lease's own expiry and this package's standing ReclaimExpired
 // sweep (see tick) are what eventually recover it, exactly as they would
 // for any other worker that went dark mid-dispatch.
-func (sch *Scheduler) failWaitingExternal(ctx context.Context, t postgres.Timer) error {
+func (sch *Scheduler) failWaitingExternal(ctx context.Context, t postgres.Timer) (actors.PendingInvocation, bool, error) {
 	inv, closeWait, ok, err := sch.waitForDeadlineTimer(ctx, t)
 	if err != nil {
-		return err
+		return actors.PendingInvocation{}, false, err
 	}
 	if !ok || inv.State != actors.InvocationWaiting {
-		return nil
+		return actors.PendingInvocation{}, false, nil
+	}
+	paused, nextCheck, err := sch.deadlineContinuationHolds(ctx, inv)
+	if err != nil {
+		return actors.PendingInvocation{}, false, err
+	}
+	if paused {
+		// Pausing without replacing the timer would remove the only thing that
+		// ever re-evaluates the bound: this timer has fired, and nothing else
+		// schedules another. The session would then run with NO deadline at
+		// all, which is precisely the "loop that relies solely on an agent
+		// deciding when to stop" PRD §9.7 forbids -- and it would look like
+		// the bound was honoured, because the declaration is right there in
+		// the graph. Re-arm before pausing, or do not pause.
+		if err := sch.rearmDeadline(ctx, t, nextCheck); err != nil {
+			return actors.PendingInvocation{}, false,
+				fmt.Errorf("re-arm deadline for attempt %s: %w", inv.AttemptID, err)
+		}
+		return inv, true, nil
 	}
 
 	cs, err := postgres.NewCallbackStore(sch.db, t.NamespaceID)
 	if err != nil {
-		return fmt.Errorf("build callback store for namespace %s: %w", t.NamespaceID, err)
+		return actors.PendingInvocation{}, false, fmt.Errorf("build callback store for namespace %s: %w", t.NamespaceID, err)
 	}
 
 	if err := cs.ResumeWaitingWork(ctx, inv, actors.DefaultResumeLease); err != nil {
@@ -563,14 +599,14 @@ func (sch *Scheduler) failWaitingExternal(ctx context.Context, t postgres.Timer)
 			// Something else -- a racing callback, an operator
 			// cancellation, a worker's own lease reclaim -- already moved
 			// this attempt on. Nothing to fail.
-			return nil
+			return actors.PendingInvocation{}, false, nil
 		}
-		return fmt.Errorf("resume parked work for attempt %s: %w", inv.AttemptID, err)
+		return actors.PendingInvocation{}, false, fmt.Errorf("resume parked work for attempt %s: %w", inv.AttemptID, err)
 	}
 
 	eng, err := sch.engineFor(t.NamespaceID)
 	if err != nil {
-		return fmt.Errorf("build engine for namespace %s: %w", t.NamespaceID, err)
+		return actors.PendingInvocation{}, false, fmt.Errorf("build engine for namespace %s: %w", t.NamespaceID, err)
 	}
 
 	if _, err := eng.CompleteAttempt(ctx, engine.CompletionRequest{
@@ -586,15 +622,105 @@ func (sch *Scheduler) failWaitingExternal(ctx context.Context, t postgres.Timer)
 			// the race, but something newer committed before this call
 			// reached the engine. Nothing was written -- the whole §12.5
 			// transaction rolled back -- so there is nothing to undo.
-			return nil
+			return actors.PendingInvocation{}, false, nil
 		}
-		return fmt.Errorf("fail attempt %s on deadline: %w", inv.AttemptID, err)
+		return actors.PendingInvocation{}, false, fmt.Errorf("fail attempt %s on deadline: %w", inv.AttemptID, err)
 	}
 
 	if err := closeWait(ctx, cs); err != nil {
-		return fmt.Errorf("close wait record for attempt %s: %w", inv.AttemptID, err)
+		return actors.PendingInvocation{}, false, fmt.Errorf("close wait record for attempt %s: %w", inv.AttemptID, err)
 	}
-	return nil
+	return inv, false, nil
+}
+
+// deadlineContinuationHolds reports whether the node's declared continuation
+// says to keep going, and WHEN the answer could next change.
+//
+// The second return value is what makes pausing safe. Of the three bounds,
+// only maxWallClock changes with the passage of time; maxSessions and
+// maxContinuations change only when a new attempt is recorded, which the
+// completion path already re-evaluates. So the next moment a paused node's
+// verdict can flip on its own is exactly `node_run.created_at + maxWallClock`.
+//
+// A zero nextCheck means no time-based bound was declared. The caller must
+// then NOT pause: there would be no future moment at which anything reconsiders,
+// and "keep the session warm" would silently become "run forever".
+func (sch *Scheduler) deadlineContinuationHolds(ctx context.Context, inv actors.PendingInvocation) (bool, time.Time, error) {
+	var digest string
+	var ir []byte
+	var created time.Time
+	if err := sch.pool.QueryRow(ctx, `
+		SELECT wv.content_digest, wv.normalized_ir, nr.created_at
+		FROM runs r JOIN workflow_versions wv ON wv.id = r.workflow_version_id
+		JOIN node_runs nr ON nr.id = $2
+		WHERE r.id = $1`, inv.RunID, inv.NodeRunID).Scan(&digest, &ir, &created); err != nil {
+		return false, time.Time{}, fmt.Errorf("load continuation declaration for node run %s: %w", inv.NodeRunID, err)
+	}
+	wf, err := engine.LoadWorkflow(digest, ir)
+	if err != nil {
+		return false, time.Time{}, fmt.Errorf("load workflow for deadline continuation: %w", err)
+	}
+	node := wf.Nodes[inv.NodeID]
+	if node == nil || node.Continue == nil {
+		return false, time.Time{}, nil
+	}
+	var sessions int
+	if err := sch.pool.QueryRow(ctx, `SELECT count(*) FROM attempts WHERE node_run_id = $1`, inv.NodeRunID).Scan(&sessions); err != nil {
+		return false, time.Time{}, fmt.Errorf("count continuation attempts for node run %s: %w", inv.NodeRunID, err)
+	}
+	remaining := 0
+	if node.Continue.Bounds.MaxSessions > sessions {
+		remaining = node.Continue.Bounds.MaxSessions - sessions
+	}
+	decision := node.DecideContinuation(engine.ContinuationState{
+		NodeState: "incomplete", RemainingSessions: remaining,
+		Continuations: max(0, sessions-1), Sessions: sessions,
+		WallClock: time.Since(created),
+	})
+	if !decision.Continue {
+		return false, time.Time{}, nil
+	}
+	if node.Continue.Bounds.MaxWallClock <= 0 {
+		// Declared bounds, but none of them time-based. Refuse to pause rather
+		// than pause unboundedly; the caller cancels, which is the fail-closed
+		// reading of "absent or false -> CANCEL".
+		return false, time.Time{}, nil
+	}
+	return true, created.Add(node.Continue.Bounds.MaxWallClock), nil
+}
+
+// rearmDeadline replaces a fired deadline timer with the next one, so a paused
+// continuation is re-evaluated instead of forgotten. The payload is copied
+// verbatim: waitForDeadlineTimer resolves the invocation from those fields, so
+// the replacement resolves the same attempt the original did.
+func (sch *Scheduler) rearmDeadline(ctx context.Context, t postgres.Timer, fireAt time.Time) error {
+	if fireAt.IsZero() {
+		return fmt.Errorf("refusing to pause with no future re-check time")
+	}
+	_, err := sch.pool.Exec(ctx,
+		`INSERT INTO timers (id, namespace_id, run_id, node_run_id, timer_kind, fire_at, payload)
+		 VALUES ($1, $2, $3, $4, $5, $6, $7)`,
+		idstore.NewULID(), t.NamespaceID, t.RunID, t.NodeRunID,
+		string(postgres.TimerKindDeadline), fireAt, t.Payload)
+	return err
+}
+
+func (sch *Scheduler) cancelDeadlineInvocation(ctx context.Context, inv actors.PendingInvocation) {
+	if inv.InvocationID == "" || inv.ActorRef == "" {
+		return
+	}
+	registry, err := sch.registryFor(inv.NamespaceID)
+	if err != nil {
+		return
+	}
+	endpoint, err := registry.Resolve(ctx, inv.ActorRef)
+	if err != nil {
+		return
+	}
+	cancelCtx, cancel := context.WithTimeout(ctx, deadlineCancelTimeout)
+	defer cancel()
+	_ = deadlineActorClient.Cancel(cancelCtx, endpoint, inv.InvocationID,
+		fmt.Sprintf("deadline expired for attempt %s", inv.AttemptID))
 }
 
 // waitForDeadlineTimer resolves which durable async record a fired deadline
@@ -671,6 +797,26 @@ func (sch *Scheduler) engineFor(namespaceID string) (*engine.Engine, error) {
 	}
 	sch.engines[namespaceID] = eng
 	return eng, nil
+}
+
+// registryFor mirrors engineFor: timers are deployment-wide while actor
+// registrations are namespace-scoped, so one scheduler lazily retains one
+// registry for every namespace whose deadline it has processed.
+func (sch *Scheduler) registryFor(namespaceID string) (worker.Registry, error) {
+	sch.registryMu.Lock()
+	defer sch.registryMu.Unlock()
+	if registry, ok := sch.registries[namespaceID]; ok {
+		return registry, nil
+	}
+	registry, err := worker.NewDBRegistry(sch.db, namespaceID)
+	if err != nil {
+		return nil, err
+	}
+	if sch.registries == nil {
+		sch.registries = make(map[string]worker.Registry)
+	}
+	sch.registries[namespaceID] = registry
+	return registry, nil
 }
 
 // deadlineTimeoutOutput is the diagnostic body recorded on the attempt a

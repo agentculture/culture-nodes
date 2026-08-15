@@ -3,8 +3,11 @@ package scheduler_test
 import (
 	"context"
 	"encoding/json"
+	"net/http"
+	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -50,6 +53,10 @@ type deadlineFixture struct {
 }
 
 func newDeadlineFixture(t *testing.T, s *postgres.Store) *deadlineFixture {
+	return newDeadlineFixtureSource(t, s, nil)
+}
+
+func newDeadlineFixtureSource(t *testing.T, s *postgres.Store, edit func(string) string) *deadlineFixture {
 	t.Helper()
 	ctx := context.Background()
 	ns := pgtest.MustNamespace(t, s, "test-scheduler-deadline-fixture")
@@ -58,6 +65,9 @@ func newDeadlineFixture(t *testing.T, s *postgres.Store) *deadlineFixture {
 	source, err := os.ReadFile(path)
 	if err != nil {
 		t.Fatalf("read %s: %v", path, err)
+	}
+	if edit != nil {
+		source = []byte(edit(string(source)))
 	}
 	cw, diags, err := compiler.Compile(source, compiler.FormatForPath(path))
 	if err != nil {
@@ -118,6 +128,122 @@ func newDeadlineFixture(t *testing.T, s *postgres.Store) *deadlineFixture {
 		runID: run.ID, buildNodeRunID: buildNodeRunID, buildTokenID: buildTokenID,
 		claimed: *build,
 	}
+}
+
+func TestSchedulerDeadlinePausesWhenDeclaredContinuationHolds(t *testing.T) {
+	s := requireStore(t)
+	f := newDeadlineFixtureSource(t, s, func(source string) string {
+		anchor := "      kind: agent\n      ownerRef: team/platform-ai"
+		continuation := `      kind: agent
+      continue:
+        while:
+          - node.state == "incomplete"
+        bounds:
+          maxContinuations: 3
+          maxWallClock: 2h
+          maxSessions: 4
+        onExhausted: timed_out
+      ownerRef: team/platform-ai`
+		if !strings.Contains(source, anchor) {
+			t.Fatalf("deadline fixture lacks build-node anchor %q", anchor)
+		}
+		return strings.Replace(source, anchor, continuation, 1)
+	})
+	inv := f.startAsyncWait(time.Now().Add(-time.Second))
+
+	sch := scheduler.New(s, scheduler.Options{TickInterval: 25 * time.Millisecond})
+	runCtx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	go func() { _ = sch.Run(runCtx) }()
+	waitFor(t, 5*time.Second, func() bool {
+		return sch.Health().Status == scheduler.StatusActive && !sch.Health().LastTick.IsZero()
+	})
+	time.Sleep(100 * time.Millisecond)
+
+	if status, _ := mustNodeRunStatus(t, s, f.buildNodeRunID); status != "waiting_external" {
+		t.Fatalf("node run status = %q, want waiting_external while continuation holds", status)
+	}
+	if got := mustInvocationState(t, s, inv.AttemptID); got != actors.InvocationWaiting {
+		t.Fatalf("invocation state = %q, want %q (session remains warm)", got, actors.InvocationWaiting)
+	}
+
+	// The half that "session stays warm" does not cover, and the half that
+	// matters: a pause must RE-ARM. The timer that just fired is spent, and
+	// nothing else schedules another -- so without a replacement this node
+	// now runs with no deadline at all, and maxWallClock is never re-checked.
+	// The declaration would still be sitting in the graph looking honoured.
+	pending := mustPendingDeadlineCount(t, s, f.buildNodeRunID)
+	if pending != 1 {
+		t.Fatalf("pending deadline timers after pause = %d, want exactly 1: a paused continuation "+
+			"with no future timer is an unbounded loop (PRD §9.7)", pending)
+	}
+	// It must be armed for the wall-clock bound, not for the moment it paused.
+	if at := mustNextDeadlineFireAt(t, s, f.buildNodeRunID); !at.After(time.Now().Add(time.Hour)) {
+		t.Fatalf("re-armed deadline fires at %s, want ~2h out (the declared maxWallClock); "+
+			"an immediate re-arm would spin the tick loop", at)
+	}
+}
+
+// TestSchedulerDeadlineRefusesToPauseWithoutATimeBound is the companion
+// refusal. maxSessions and maxContinuations only change when a new attempt is
+// recorded, which the completion path already re-evaluates -- so with no
+// maxWallClock there is no future moment at which a PAUSED node's verdict can
+// change on its own. Pausing there would be indistinguishable from hanging.
+func TestSchedulerDeadlineRefusesToPauseWithoutATimeBound(t *testing.T) {
+	s := requireStore(t)
+	f := newDeadlineFixtureSource(t, s, func(source string) string {
+		anchor := "      kind: agent\n      ownerRef: team/platform-ai"
+		continuation := `      kind: agent
+      continue:
+        while:
+          - node.state == "incomplete"
+        bounds:
+          maxSessions: 4
+        onExhausted: timed_out
+      ownerRef: team/platform-ai`
+		if !strings.Contains(source, anchor) {
+			t.Fatalf("deadline fixture lacks build-node anchor %q", anchor)
+		}
+		return strings.Replace(source, anchor, continuation, 1)
+	})
+	f.startAsyncWait(time.Now().Add(-time.Second))
+
+	sch := scheduler.New(s, scheduler.Options{TickInterval: 25 * time.Millisecond})
+	runCtx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	go func() { _ = sch.Run(runCtx) }()
+
+	waitFor(t, 10*time.Second, func() bool {
+		status, _ := mustNodeRunStatus(t, s, f.buildNodeRunID)
+		return status == "failed" || status == "timed_out"
+	})
+	if pending := mustPendingDeadlineCount(t, s, f.buildNodeRunID); pending != 0 {
+		t.Errorf("pending deadline timers = %d, want 0: the node was failed, not paused", pending)
+	}
+}
+
+func mustPendingDeadlineCount(t *testing.T, s *postgres.Store, nodeRunID string) int {
+	t.Helper()
+	var n int
+	if err := s.Pool().QueryRow(context.Background(),
+		`SELECT count(*) FROM timers WHERE node_run_id = $1 AND timer_kind = 'deadline' AND status = 'pending'`,
+		nodeRunID,
+	).Scan(&n); err != nil {
+		t.Fatalf("mustPendingDeadlineCount: %v", err)
+	}
+	return n
+}
+
+func mustNextDeadlineFireAt(t *testing.T, s *postgres.Store, nodeRunID string) time.Time {
+	t.Helper()
+	var at time.Time
+	if err := s.Pool().QueryRow(context.Background(),
+		`SELECT fire_at FROM timers WHERE node_run_id = $1 AND timer_kind = 'deadline' AND status = 'pending'
+		 ORDER BY fire_at DESC LIMIT 1`, nodeRunID,
+	).Scan(&at); err != nil {
+		t.Fatalf("mustNextDeadlineFireAt: %v", err)
+	}
+	return at
 }
 
 // startAsyncWait parks the claimed "build" attempt exactly as an async
@@ -337,6 +463,54 @@ func TestSchedulerFiresDeadlineTimerFailsWaitingExternalAttemptAndRoutesEdge(t *
 
 	if got := mustInvocationState(t, s, inv.AttemptID); got != actors.InvocationCompleted {
 		t.Errorf("invocation state = %q, want %q", got, actors.InvocationCompleted)
+	}
+}
+
+// A bridge that accepts the cancel request but never answers must not hold
+// the singleton timer loop. The attempt transition and timer commit happen
+// first; cancellation is an independently bounded, best-effort side effect.
+func TestSchedulerTickIsBoundedByNoUnreachableDeadlineBridge(t *testing.T) {
+	s := requireStore(t)
+	f := newDeadlineFixture(t, s)
+	inv := f.startAsyncWait(time.Now().Add(-time.Second))
+
+	requestArrived := make(chan struct{}, 1)
+	release := make(chan struct{})
+	bridge := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		requestArrived <- struct{}{}
+		<-release
+		w.WriteHeader(http.StatusAccepted)
+	}))
+	defer func() {
+		close(release)
+		bridge.Close()
+	}()
+	if _, err := s.Pool().Exec(context.Background(), `
+		INSERT INTO actors (id, namespace_id, actor_key, revision, kind, protocol, endpoint_ref, capabilities, metadata)
+		VALUES ($1, $2, 'company/builder', 1, 'agent', 'http', $3, '{}', '{}')`,
+		"actor_"+store.NewULID(), f.ns.ID, bridge.URL); err != nil {
+		t.Fatalf("register unreachable actor bridge: %v", err)
+	}
+
+	sch := scheduler.New(s, scheduler.Options{TickInterval: 25 * time.Millisecond})
+	runCtx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	go func() { _ = sch.Run(runCtx) }()
+
+	select {
+	case <-requestArrived:
+	case <-time.After(5 * time.Second):
+		t.Fatal("deadline cancellation never reached the actor bridge")
+	}
+	firstTick := sch.Health().LastTick
+	waitFor(t, 500*time.Millisecond, func() bool {
+		return sch.Health().LastTick.After(firstTick)
+	})
+	if status, _ := mustNodeRunStatus(t, s, f.buildNodeRunID); status != "failed" {
+		t.Fatalf("node run status while cancel bridge is hung = %q, want failed", status)
+	}
+	if inv.InvocationID == "" {
+		t.Fatal("fixture produced no invocation id")
 	}
 }
 

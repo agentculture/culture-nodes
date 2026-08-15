@@ -61,7 +61,7 @@ def main(argv: list[str] | None = None) -> int:
         print(json.dumps(preflight.capability_block(capabilities.host_facts(cfg)), indent=2))
         return 0
 
-    if not cfg.repo_allowlist:
+    if not (cfg.repo_allowlist or cfg.repo_allowlist_prefixes):
         print(
             "warning: no repo allowlist configured (CODEX_BRIDGE_REPO_ALLOWLIST or "
             "config file 'repo_allowlist') — every invocation will be refused with 403",

@@ -59,6 +59,22 @@ def test_repo_allowlist_normalizes_relative_and_symlinked_paths(tmp_path):
     assert cfg.repo_allowed(str(real)) is True
 
 
+def test_repo_allowlist_scoped_prefix_allows_children_but_not_siblings(tmp_path):
+    root = tmp_path / ".worktrees.culture-nodes"
+    root.mkdir()
+    cfg = Config(repo_allowlist_prefixes=(str(root),))
+    assert cfg.repo_allowed(str(root / "writer-a")) is True
+    assert cfg.repo_allowed(str(tmp_path / ".worktrees.other" / "writer-a")) is False
+
+
+def test_exact_allowlist_does_not_accidentally_contain_nested_worktrees(tmp_path):
+    repo = tmp_path / "culture-nodes"
+    nested = repo / ".claude" / "worktrees" / "web-ux-quick-wins"
+    nested.mkdir(parents=True)
+    cfg = Config(repo_allowlist=(str(repo),))
+    assert cfg.repo_allowed(str(nested)) is False
+
+
 def test_config_file_sets_baseline_and_env_overrides_win(tmp_path):
     path = tmp_path / "bridge.json"
     path.write_text(json.dumps({"port": 9000, "actor_id": "from-file", "sync_max_steps": 3}))

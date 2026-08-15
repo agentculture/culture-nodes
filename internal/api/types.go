@@ -239,6 +239,14 @@ type TokenOut struct {
 // every successful one, carry none. PreserveBranch is the presence check:
 // PreservePushed/PreserveRemote are only ever populated alongside it (see
 // the migration's own header), so a reader checks PreserveBranch first.
+//
+// Supersedes (task t11, ADR 0012; migrations/0028_attempt_supersedes.sql) is
+// the attempt this record corrects, empty on every ordinary dispatch. It
+// exists because a node run whose deadline expired and whose session later
+// reported back has TWO attempts here — the timed_out record, and the
+// correction carrying what the session actually did — and a reader shown
+// both without being told which is which would reasonably conclude the node
+// was dispatched twice.
 type AttemptOut struct {
 	ID                string           `json:"id"`
 	NodeRunID         string           `json:"node_run_id"`
@@ -255,6 +263,7 @@ type AttemptOut struct {
 	PreserveBranch    string           `json:"preserve_branch,omitempty"`
 	PreservePushed    *bool            `json:"preserve_pushed,omitempty"`
 	PreserveRemote    string           `json:"preserve_remote,omitempty"`
+	Supersedes        string           `json:"supersedes,omitempty"`
 }
 
 // AttemptUsageOut is one attempt's reported telemetry, kept separate from

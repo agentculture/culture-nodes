@@ -374,6 +374,13 @@ func (eq engineQueries) loadActorClaimsByAuthority(ctx context.Context, actorID 
 // this actor made, in scope, regardless of its technical outcome -- the
 // same "retry burn" counting rule task t2's UsageRollup documents (a
 // retried, failed attempt still counts).
+//
+// "Every attempt this actor MADE" is why attemptCurrentSQL is here (task
+// t11, ADR 0012). A late-callback reconciliation appends a correcting row
+// for a dispatch that already has one, so counting raw rows would charge an
+// actor two tries for one session -- exactly the scoring distortion issue
+// #82 exists to remove, reappearing one layer down. Excluding superseded
+// rows counts sessions, which is what this measure claims to count.
 func (eq engineQueries) loadActorRetryBurnAttempts(ctx context.Context, actorID string, stats *ActorStats) error {
 	rows, err := eq.q.Query(ctx, `
 		SELECT
@@ -383,7 +390,7 @@ func (eq engineQueries) loadActorRetryBurnAttempts(ctx context.Context, actorID 
 		JOIN node_runs nr ON nr.id = a.node_run_id
 		JOIN runs r ON r.id = nr.run_id
 		WHERE a.namespace_id = $1 AND a.actor_id = $2
-		`+actorStatsCategoryGroupingSQL,
+		`+attemptCurrentSQL+actorStatsCategoryGroupingSQL,
 		eq.namespaceID, actorID)
 	if err != nil {
 		return fmt.Errorf("postgres: engine: ActorStats: retry burn attempts: %w", err)
@@ -454,7 +461,7 @@ func (eq engineQueries) loadActorDurationPercentiles(ctx context.Context, actorI
 		JOIN node_runs nr ON nr.id = a.node_run_id
 		JOIN runs r ON r.id = nr.run_id
 		WHERE a.namespace_id = $1 AND a.actor_id = $2 AND a.completed_at IS NOT NULL
-		`+actorStatsCategoryGroupingSQL,
+		`+attemptCurrentSQL+actorStatsCategoryGroupingSQL,
 		eq.namespaceID, actorID)
 	if err != nil {
 		return fmt.Errorf("postgres: engine: ActorStats: duration percentiles: %w", err)
@@ -508,7 +515,7 @@ func (eq engineQueries) loadActorUsageTotals(ctx context.Context, actorID string
 		JOIN node_runs nr ON nr.id = a.node_run_id
 		JOIN runs r ON r.id = nr.run_id
 		WHERE a.namespace_id = $1 AND a.actor_id = $2
-		`+actorStatsCategoryGroupingSQL,
+		`+attemptCurrentSQL+actorStatsCategoryGroupingSQL,
 		eq.namespaceID, actorID)
 	if err != nil {
 		return fmt.Errorf("postgres: engine: ActorStats: usage totals: %w", err)
@@ -549,6 +556,7 @@ func (eq engineQueries) loadActorUsageCostByCurrency(ctx context.Context, actorI
 		JOIN node_runs nr ON nr.id = a.node_run_id
 		JOIN runs r ON r.id = nr.run_id
 		WHERE a.namespace_id = $1 AND a.actor_id = $2 AND a.usage_cost IS NOT NULL
+		`+attemptCurrentSQL+`
 		GROUP BY GROUPING SETS (
 			(COALESCE(r.category, ''), COALESCE(a.usage_currency, '')),
 			(COALESCE(a.usage_currency, ''))

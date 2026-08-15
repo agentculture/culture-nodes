@@ -336,7 +336,7 @@ func (s *Server) runNodeRuns(ctx context.Context, runID string) ([]NodeRunOut, e
 		       a.preserve_branch, a.preserve_pushed, a.preserve_remote,
 		       a.usage_input_tokens, a.usage_output_tokens, a.usage_cost, a.usage_currency,
 		       a.usage_cached_input_tokens, a.usage_reasoning_tokens, a.usage_model, a.usage_thread_id,
-		       a.termination_reason, a.continuation_ref
+		       a.termination_reason, a.continuation_ref, a.supersedes
 		FROM attempts a JOIN node_runs nr ON nr.id = a.node_run_id
 		WHERE nr.run_id = $1
 		ORDER BY a.node_run_id, a.attempt_number`, runID)
@@ -359,11 +359,12 @@ func (s *Server) runNodeRuns(ctx context.Context, runID string) ([]NodeRunOut, e
 			usageInput, usageOutput, usageCached, usageReasoning                       pgtype.Int8
 			usageCost                                                                  pgtype.Float8
 			usageCurrency, usageModel, usageThread, terminationReason, continuationRef pgtype.Text
+			supersedes                                                                 pgtype.Text
 		)
 		if err := attemptRows.Scan(&a.ID, &a.NodeRunID, &a.AttemptNumber, &actorID, &a.Status, &fencingToken, &result, &startedAt, &completedAt,
 			&preserveBranch, &preservePushed, &preserveRemote,
 			&usageInput, &usageOutput, &usageCost, &usageCurrency, &usageCached, &usageReasoning, &usageModel, &usageThread,
-			&terminationReason, &continuationRef); err != nil {
+			&terminationReason, &continuationRef, &supersedes); err != nil {
 			return nil, fmt.Errorf("api: run %s: list attempts: scan: %w", runID, err)
 		}
 		a.ActorID = textOrEmpty(actorID)
@@ -371,6 +372,10 @@ func (s *Server) runNodeRuns(ctx context.Context, runID string) ([]NodeRunOut, e
 			a.FencingToken = fencingToken.Int64
 		}
 		a.Result = nonNullJSON(result)
+		// The attempt this record corrects (task t11, ADR 0012). Both rows
+		// are listed -- the aggregates are where superseded history drops
+		// out, not the run's own account of what happened.
+		a.Supersedes = textOrEmpty(supersedes)
 		a.StartedAt = tsOrZero(startedAt)
 		if completedAt.Valid {
 			completed := completedAt.Time

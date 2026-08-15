@@ -359,6 +359,25 @@ type Attempt struct {
 	// commit or ran with preserve-on-failure disabled. See the Preserve
 	// type's own doc comment for what NULL on the row means.
 	Preserve *Preserve
+	// Supersedes is the id of the attempt record this one corrects, nil on
+	// every ordinary dispatch — which corrects nothing (task t11,
+	// docs/adr/0012-late-callback-supersession.md;
+	// migrations/0028_attempt_supersedes.sql).
+	//
+	// It is set only by the late-callback reconciliation: a deadline expires,
+	// the scheduler records a `timed_out` attempt, and the actor session it
+	// bounded reports back afterwards with the tokens, model, termination
+	// reason and preserve branch of work that really happened. §13.4 still
+	// refuses that report a state commit, but the facts are appended here
+	// rather than lost, per PRD §10.4's "records are immutable; corrections
+	// append with `supersedes`". Nothing rewrites the superseded row.
+	//
+	// The reader rule that goes with it: a row another row supersedes is
+	// superseded history, and the row that supersedes it is current. Every
+	// aggregate over attempts applies that (internal/store/postgres'
+	// attemptCurrentSQL); the run-detail read path deliberately does not,
+	// because reconstructing what happened means seeing both.
+	Supersedes *string
 }
 
 // Preserve is one attempt's bridge-reported preserve-on-failure outcome

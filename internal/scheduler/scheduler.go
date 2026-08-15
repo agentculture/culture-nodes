@@ -619,7 +619,16 @@ func (sch *Scheduler) failWaitingExternal(ctx context.Context, t postgres.Timer)
 		WorkerID:     inv.WorkerID,
 		FencingToken: inv.FencingToken,
 		Attempt:      inv.Attempt,
-		TechStatus:   engine.StatusTimedOut,
+		// The actor the dispatch resolved (migration 0015), carried from the
+		// durable invocation rather than inferred. Without it every
+		// deadline-expired attempt persisted actor_id NULL and vanished from
+		// the per-actor statistics -- so a session that ran until its bound
+		// expired was billable work no comparison between actors could see,
+		// and task t11's superseding record would then appear to create
+		// retry burn out of nothing rather than replace a row that was
+		// already there (ADR 0012 §4).
+		ActorID:    inv.ActorID,
+		TechStatus: engine.StatusTimedOut,
 		// Naming the origin is what stops this completion being re-dispatched
 		// (task t10, spec claim c42). By the time this call returns, the
 		// session behind the attempt has not been asked to stop -- the cancel

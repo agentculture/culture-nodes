@@ -4,7 +4,6 @@ from pathlib import Path
 
 import pytest
 
-
 SCRIPT = Path(__file__).parents[1] / "scripts" / "render-work-package.py"
 SPEC = importlib.util.spec_from_file_location("render_work_package", SCRIPT)
 MODULE = importlib.util.module_from_spec(SPEC)
@@ -16,8 +15,7 @@ def host(grants=None):
     return {
         "hostname": "thor",
         "confinement": "bubblewrap",
-        "dispatch_grants": grants
-        or {"workspace-write": ["workspace-write", "tmp-write"]},
+        "dispatch_grants": grants or {"workspace-write": ["workspace-write", "tmp-write"]},
         "commit_policy": "local handover ref only",
         "toolchains": [
             {
@@ -95,9 +93,7 @@ def test_capability_host_accepts_registry_shape(tmp_path):
     path = tmp_path / "actor.json"
     path.write_text(json.dumps(document), encoding="utf-8")
     assert (
-        MODULE.capability_host(
-            MODULE.read_json(str(path)), "company/codex-thor"
-        )["hostname"]
+        MODULE.capability_host(MODULE.read_json(str(path)), "company/codex-thor")["hostname"]
         == "thor"
     )
 

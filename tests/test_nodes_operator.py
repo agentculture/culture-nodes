@@ -1,10 +1,9 @@
 import json
 import os
-from pathlib import Path
 import subprocess
 import tempfile
 import unittest
-
+from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
 SCRIPT = ROOT / ".claude/skills/nodes-operator/scripts/nodes-op.sh"
@@ -93,9 +92,7 @@ class NodesOperatorTest(unittest.TestCase):
                             "node_id": "task",
                             "state": "running",
                             "outcome": None,
-                            "attempts": [
-                                {"actor_id": "codex-thor", "status": "running"}
-                            ],
+                            "attempts": [{"actor_id": "codex-thor", "status": "running"}],
                         }
                     ],
                 },

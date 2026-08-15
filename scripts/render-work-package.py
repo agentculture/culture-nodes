@@ -70,9 +70,33 @@ def capability_host(
     if not isinstance(preflight, dict):
         raise BriefError("capabilities.preflight must be an object")
     host = preflight.get("host")
-    if not isinstance(host, dict) or not host:
-        raise BriefError("capability document has no non-empty preflight.host block")
-    return host
+    if isinstance(host, dict) and host:
+        return host
+    # A captured BASELINE is the other legitimate input, and it is the one an
+    # operator has when the bridge is unreachable. `preflight.py` run as a
+    # script — which is how scripts/toolchain-baseline.sh measures a host, and
+    # what docs/baselines/toolchains/*.json holds — emits a flatter envelope:
+    # {hostname, search_path, toolchains}, with no `preflight.host` wrapper.
+    # Two packages in the same cycle produced the two shapes; refusing the
+    # captured one would mean the generator could not read the very files the
+    # capability work committed.
+    if isinstance(preflight.get("toolchains"), list) and preflight.get("hostname"):
+        return {
+            "hostname": preflight["hostname"],
+            "search_path": preflight.get("search_path", ""),
+            "toolchains": preflight["toolchains"],
+            # A baseline records what is INSTALLED, measured under the
+            # bridge's PATH. It cannot say what a sandbox mode grants — that
+            # comes from dispatched probes and lives in the live document. Say
+            # so rather than letting a reader assume the silence means "no
+            # restrictions".
+            "commit_policy": "unknown-from-baseline",
+        }
+    raise BriefError(
+        "capability document has neither a non-empty preflight.host block "
+        "(the live /v1/capabilities shape) nor a hostname+toolchains envelope "
+        "(the captured docs/baselines/toolchains/*.json shape)"
+    )
 
 
 def bullets(values: list[str]) -> str:
@@ -110,14 +134,23 @@ def render(
         raise BriefError("task covers must be a string list")
 
     grants = host.get("dispatch_grants", {})
+    from_baseline = host.get("commit_policy") == "unknown-from-baseline"
     if sandbox not in grants:
-        available = ", ".join(grants) if isinstance(grants, dict) else "none"
-        raise BriefError(
-            f"actor does not advertise sandbox {sandbox!r}; advertised: {available or 'none'}"
-        )
-    mode_grants = grants[sandbox]
-    if not isinstance(mode_grants, list):
-        raise BriefError(f"dispatch_grants.{sandbox} must be a list")
+        if not from_baseline:
+            available = ", ".join(grants) if isinstance(grants, dict) else "none"
+            raise BriefError(
+                f"actor does not advertise sandbox {sandbox!r}; advertised: {available or 'none'}"
+            )
+        # A captured baseline measures what is INSTALLED; only the live
+        # surface knows what a mode GRANTS. Refusing here would make the
+        # baseline unusable for the case it exists for — an unreachable
+        # bridge — so the brief is rendered and carries the caveat instead of
+        # silently implying the grants were checked.
+        mode_grants = []
+    else:
+        mode_grants = grants[sandbox]
+        if not isinstance(mode_grants, list):
+            raise BriefError(f"dispatch_grants.{sandbox} must be a list")
 
     lines = [
         f"WORK PACKAGE {task_id} — {summary}",
@@ -140,7 +173,14 @@ def render(
             "Coverage targets:",
             bullets(covers) or "- none",
             "",
-            "Actor capability surface (advertised by the target bridge):",
+            (
+                "Actor capability surface (CAPTURED BASELINE — what is installed, "
+                "measured under the bridge's PATH. It does NOT say what this "
+                "sandbox mode grants; only the live /v1/capabilities does, and it "
+                "was not reachable when this brief was rendered):"
+                if from_baseline
+                else "Actor capability surface (advertised by the target bridge):"
+            ),
             f"- hostname: {host.get('hostname', 'not advertised')}",
             f"- sandbox: {sandbox}",
             f"- dispatch grants: {', '.join(mode_grants) or 'none'}",
@@ -187,7 +227,8 @@ def render(
             "",
             "Contract:",
             "- Every completion claim must name the command that produced it and its exit code.",
-            "- Distinguish commands run here from checks that could not run under this capability surface.",
+            "- Distinguish commands run here from checks that could not run "
+            "under this capability surface.",
             "- Report claims as proposed, never confirmed or observed.",
         ]
     )

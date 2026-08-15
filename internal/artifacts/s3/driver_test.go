@@ -9,6 +9,7 @@ import (
 	"io"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/minio/minio-go/v7"
 	"github.com/minio/minio-go/v7/pkg/credentials"
@@ -140,7 +141,7 @@ func TestGetUnknownRefReturnsNotFound(t *testing.T) {
 	}
 }
 
-func TestDeleteRemovesObjectAndMetadata(t *testing.T) {
+func TestReapRemovesObjectAndLeavesTombstone(t *testing.T) {
 	s := requireBackends(t)
 	ctx := context.Background()
 	ns := mustNamespace(t, s, "test-artifacts-s3-delete")
@@ -151,15 +152,14 @@ func TestDeleteRemovesObjectAndMetadata(t *testing.T) {
 		t.Fatalf("Put: %v", err)
 	}
 
-	if err := d.Delete(ctx, ref); err != nil {
-		t.Fatalf("Delete: %v", err)
+	if _, err := d.Reap(ctx, ref, "retention/30-days", time.Date(2026, 8, 15, 12, 0, 0, 0, time.UTC)); err != nil {
+		t.Fatalf("Reap: %v", err)
 	}
-
-	if _, _, err := d.Get(ctx, ref); !errors.Is(err, artifacts.ErrNotFound) {
-		t.Fatalf("Get after Delete error = %v, want ErrNotFound", err)
+	if _, _, err := d.Get(ctx, ref); !errors.Is(err, artifacts.ErrReaped) {
+		t.Fatalf("Get after Reap error = %v, want ErrReaped", err)
 	}
-	if err := d.Delete(ctx, ref); !errors.Is(err, artifacts.ErrNotFound) {
-		t.Fatalf("second Delete error = %v, want ErrNotFound", err)
+	if err := d.Delete(ctx, ref); !errors.Is(err, artifacts.ErrDeleteForbidden) {
+		t.Fatalf("Delete error = %v, want ErrDeleteForbidden", err)
 	}
 }
 

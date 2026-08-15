@@ -24,6 +24,8 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"strings"
+	"time"
 
 	"github.com/agentculture/culture-nodes/internal/artifacts"
 	"github.com/agentculture/culture-nodes/internal/store"
@@ -128,9 +130,21 @@ func (d *Driver) Get(ctx context.Context, ref artifacts.Ref) (io.ReadCloser, art
 	if row.StorageBackend != string(artifacts.BackendPostgres) {
 		return nil, artifacts.ArtifactMeta{}, artifacts.ErrNotFound
 	}
+	if tomb, tombErr := d.store.GetArtifactTombstone(ctx, row.ID); tombErr == nil {
+		meta := metaFromRecord(row)
+		return nil, meta, &artifacts.ReapedError{Tombstone: tombstoneFromRecord(tomb, meta)}
+	} else if !errors.Is(tombErr, pgstore.ErrNotFound) {
+		return nil, artifacts.ArtifactMeta{}, fmt.Errorf("artifacts/postgres: Get: tombstone: %w", tombErr)
+	}
 
 	var data []byte
 	if err := d.store.Pool().QueryRow(ctx, `SELECT data FROM artifact_blobs WHERE id = $1`, id).Scan(&data); err != nil {
+		// Reap may have committed between the first tombstone lookup and this
+		// content read. Resolve that race to the tombstone, never a bare miss.
+		if tomb, tombErr := d.store.GetArtifactTombstone(ctx, row.ID); tombErr == nil {
+			meta := metaFromRecord(row)
+			return nil, meta, &artifacts.ReapedError{Tombstone: tombstoneFromRecord(tomb, meta)}
+		}
 		return nil, artifacts.ArtifactMeta{}, fmt.Errorf("artifacts/postgres: Get: blob: %w", err)
 	}
 
@@ -158,36 +172,58 @@ func (d *Driver) Stat(ctx context.Context, ref artifacts.Ref) (artifacts.Artifac
 	return metaFromRecord(row), nil
 }
 
-// Delete removes ref's metadata row and (via artifact_blobs.id's ON DELETE
-// CASCADE foreign key, migrations/0006_artifact_blobs.sql) its bytes in the
-// same statement. Like Get, it refuses -- with artifacts.ErrNotFound -- a
-// ref recorded under a different backend, so calling Delete on the wrong
-// driver directly can never silently delete an S3-held artifact's metadata
-// while leaving its bytes orphaned in the bucket.
+// Delete refuses raw removal. Retention code must use Reap so ledger refs
+// continue to resolve to an immutable tombstone.
 func (d *Driver) Delete(ctx context.Context, ref artifacts.Ref) error {
-	namespaceID, _, err := artifacts.ParseRef(ref)
-	if err != nil {
-		return err
-	}
+	return artifacts.ErrDeleteForbidden
+}
 
+func (d *Driver) Reap(ctx context.Context, ref artifacts.Ref, reason string, reapedAt time.Time) (artifacts.Tombstone, error) {
+	if strings.TrimSpace(reason) == "" || reapedAt.IsZero() {
+		return artifacts.Tombstone{}, fmt.Errorf("artifacts/postgres: Reap: reason and reapedAt are required")
+	}
+	namespaceID, id, err := artifacts.ParseRef(ref)
+	if err != nil {
+		return artifacts.Tombstone{}, err
+	}
 	row, err := d.store.GetArtifactByURI(ctx, namespaceID, string(ref))
 	if err != nil {
 		if errors.Is(err, pgstore.ErrNotFound) {
-			return artifacts.ErrNotFound
+			return artifacts.Tombstone{}, artifacts.ErrNotFound
 		}
-		return fmt.Errorf("artifacts/postgres: Delete: %w", err)
+		return artifacts.Tombstone{}, err
 	}
 	if row.StorageBackend != string(artifacts.BackendPostgres) {
-		return artifacts.ErrNotFound
+		return artifacts.Tombstone{}, artifacts.ErrNotFound
 	}
-
-	if err := d.store.DeleteArtifactByURI(ctx, namespaceID, string(ref)); err != nil {
-		if errors.Is(err, pgstore.ErrNotFound) {
-			return artifacts.ErrNotFound
-		}
-		return fmt.Errorf("artifacts/postgres: Delete: %w", err)
+	meta := metaFromRecord(row)
+	tx, err := d.store.Pool().Begin(ctx)
+	if err != nil {
+		return artifacts.Tombstone{}, err
 	}
-	return nil
+	defer func() { _ = tx.Rollback(ctx) }()
+	if _, err = tx.Exec(ctx, `SELECT id FROM artifacts WHERE id=$1 FOR UPDATE`, id); err != nil {
+		return artifacts.Tombstone{}, err
+	}
+	if existing, tombErr := pgstore.GetArtifactTombstoneTx(ctx, tx, id); tombErr == nil {
+		return artifacts.Tombstone{}, &artifacts.ReapedError{Tombstone: tombstoneFromRecord(existing, meta)}
+	} else if !errors.Is(tombErr, pgstore.ErrNotFound) {
+		return artifacts.Tombstone{}, tombErr
+	}
+	rec, err := pgstore.InsertArtifactTombstoneTx(ctx, tx, pgstore.InsertArtifactTombstoneInput{
+		ID: store.NewULID(), ArtifactID: id, ArtifactRef: string(ref), ReapedAt: reapedAt,
+		Reason: reason, Name: meta.Name, MediaType: meta.MediaType, SizeBytes: meta.SizeBytes, Digest: meta.Digest,
+	})
+	if err != nil {
+		return artifacts.Tombstone{}, err
+	}
+	if _, err = tx.Exec(ctx, `DELETE FROM artifact_blobs WHERE id=$1`, id); err != nil {
+		return artifacts.Tombstone{}, fmt.Errorf("artifacts/postgres: Reap: content: %w", err)
+	}
+	if err = tx.Commit(ctx); err != nil {
+		return artifacts.Tombstone{}, err
+	}
+	return tombstoneFromRecord(rec, meta), nil
 }
 
 func metaFromRecord(row pgstore.ArtifactRecord) artifacts.ArtifactMeta {
@@ -201,5 +237,16 @@ func metaFromRecord(row pgstore.ArtifactRecord) artifacts.ArtifactMeta {
 		Digest:      row.Digest,
 		Backend:     artifacts.Backend(row.StorageBackend),
 		CreatedAt:   row.CreatedAt,
+	}
+}
+
+func tombstoneFromRecord(row pgstore.ArtifactTombstoneRecord, meta artifacts.ArtifactMeta) artifacts.Tombstone {
+	meta.Name = row.Name
+	meta.MediaType = row.MediaType
+	meta.SizeBytes = row.SizeBytes
+	meta.Digest = row.Digest
+	return artifacts.Tombstone{
+		ID: row.ID, Ref: artifacts.Ref(row.ArtifactRef), ReapedAt: row.ReapedAt,
+		Reason: row.Reason, Meta: meta, Supersedes: row.Supersedes,
 	}
 }

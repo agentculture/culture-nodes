@@ -3528,7 +3528,7 @@
                 }
               }
             },
-            "description": "updated_since, updated_until, or sort is malformed."
+            "description": "state, updated_since, updated_until, or sort is malformed."
           }
         },
         "summary": "List runs, optionally filtered by state and/or an updated_at window.",

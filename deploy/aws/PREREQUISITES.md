@@ -5,10 +5,10 @@ anything about culture-nodes to work through this page.
 
 **Time:** about 15 minutes, most of it waiting for AWS.
 
-**What you are enabling:** culture-nodes is moving its authoritative
-PostgreSQL database from a Docker container on one machine into managed RDS.
-The application itself stays where it is. Two account-level things block that
-move, and both need an admin identity — not the scoped automation credential.
+**What you are enabling:** the optional RDS database target for culture-nodes.
+The base deployment does not select RDS and the base operator policy does not
+grant it. If issue #112 selects RDS, the application can stay where it is while
+its authoritative PostgreSQL moves to managed RDS.
 
 ---
 
@@ -16,16 +16,16 @@ move, and both need an admin identity — not the scoped automation credential.
 
 ```bash
 # 1. See exactly what is missing (read-only, safe, repeatable)
-./deploy/aws/preflight.py                        # defaults to us-east-2
-./deploy/aws/preflight.py --region eu-west-1     # or wherever you want the database
+./deploy/aws/preflight.py --db-target rds                        # defaults to us-east-2
+./deploy/aws/preflight.py --db-target rds --region eu-west-1     # chosen region
 
 # 2. As an ACCOUNT ADMIN, clear whatever it reported. On a default region
 #    this is usually just the policy; an opt-in region needs the first line too:
 ./deploy/aws/bootstrap-operator.sh enable-region <region>   # opt-in regions only
-./deploy/aws/bootstrap-operator.sh update-policy
+./deploy/aws/bootstrap-operator.sh enable-rds
 
 # 3. Confirm
-./deploy/aws/preflight.py     # exits 0 when everything is ready
+./deploy/aws/preflight.py --db-target rds     # exits 0 when everything is ready
 ```
 
 `preflight.py` prints, for every failing check, **why** it exists, **who** may
@@ -105,11 +105,10 @@ already on or already enabling. AWS takes a few minutes to propagate; re-run
 > credential. The automation gets the *read* (`account:GetRegionOptStatus`) so
 > it can report the status, and nothing more.
 
-### 2. The operator policy grants no RDS at all
+### 2. The base operator policy grants no RDS at all
 
-The scoped IAM user the automation runs as, `culture-nodes-dev`, was created
-before this decision. Its policy covers SQS, S3, ECR, Lambda, scoped IAM and
-STS. It has never had a single RDS permission:
+The scoped IAM user's base policy covers SQS, S3, ECR, Lambda, scoped IAM and
+STS. RDS is deliberately separated into an opt-in overlay:
 
 ```console
 $ aws rds describe-orderable-db-instance-options --engine postgres
@@ -122,13 +121,13 @@ the rds:DescribeOrderableDBInstanceOptions action
 **Fix it:**
 
 ```bash
-./deploy/aws/bootstrap-operator.sh update-policy
+./deploy/aws/bootstrap-operator.sh enable-rds
 ```
 
-That applies `deploy/aws/dev-operator-policy.json` as a new default policy
-version. The file is committed to the repository, so what you are granting is
-a reviewable diff in git — not something typed into a console. Read it before
-you run this; that is the point of it being a file.
+That creates (if needed) and attaches the policy recorded in
+`deploy/aws/rds-optional-policy.json`. Remove it with
+`./deploy/aws/bootstrap-operator.sh disable-rds`. Both policy files are
+committed, so the base grant and optional widening are separately reviewable.
 
 ---
 
@@ -167,8 +166,8 @@ no ability for the automation to widen its own policy.
 |---|---|---|---|
 | Check status | operator (`AWS_PROFILE=culture-nodes`) or admin | `./deploy/aws/preflight.py` | no |
 | Enable the region (opt-in regions only) | **account admin** | `./deploy/aws/bootstrap-operator.sh enable-region <region>` | account setting |
-| Grant RDS | **account admin** | `./deploy/aws/bootstrap-operator.sh update-policy` | IAM policy version |
-| Confirm | operator | `./deploy/aws/preflight.py` | no |
+| Grant RDS | **account admin** | `./deploy/aws/bootstrap-operator.sh enable-rds` | IAM policy attachment |
+| Confirm | operator | `./deploy/aws/preflight.py --db-target rds` | no |
 
 Per standing policy, agent sessions never run `bootstrap-operator.sh` and
 never handle key material. They run `preflight.py`, read its report, and tell

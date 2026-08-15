@@ -29,8 +29,8 @@ Read plan state with `devague plan show`, deviations with `devague deviate --lis
 
 ## 2. What is merged
 
-**t1, t2, t3, t8, t15** plus the gate work, on `owe/batch`. TDD gate ran before
-and after every merge.
+**Waves 0 and most of 1**, on `owe/batch`. The TDD gate ran before and after
+every merge, on spark — never on the agent host that built it.
 
 | Task | Issue | Built by | Run |
 |---|---|---|---|
@@ -39,36 +39,40 @@ and after every merge.
 | t3 | #83 | codex-orin | `01M023VRBAZWF9S3BK3JVZX2E3` |
 | t15 | #77 (partial) | codex-orin | same |
 | t8 | #80 (partial) | codex-thor | `01M023WD51EZDCNJSNW69MW43Y` |
+| t4 | — | codex-thor | `01M026D8P5V97PH0YRZ3MZ1YB4` |
+| t5 | #79 | codex-orin | `01M026V7GE2NFXAEXWKAHBFQFY` |
+| t9 | #82 | codex-thor | `01M027SM6QM7TF1764S52B7NG5` |
+| t14 | #77 | codex-orin | `01M027V2QRAWW21MF8S2CFQ9QT` |
+| t19 | — | codex-orin | same |
 
-Operator-lane commits on the same branch: `ea1ce0c` (#91 resolution +
-`AGENTS.md` + credential-lint fix), `0c573fc` (q5 decision + `DefaultTokenTTL`
-docstring).
+Operator-lane commits: `ea1ce0c` (#91 resolution + `AGENTS.md` + credential
+lint), `0c573fc` (q5 decision + `DefaultTokenTTL` docstring), plus the plan
+coverage map.
 
 **Known partials, deliberately left open:**
 
 - **t8** — the continuation declaration compiles and its CEL evaluates;
-  scheduling is **not** wired into attempt completion.
-- **t15** — colleague and notify emit explicit model sentinels; human-inbox
-  has no preflight capability surface at all, which the run flagged itself.
-- **t4** — the 1000-line lint is written but **held out of the tree** until the
-  four over-limit files are split (deviation d7). Merging a red gate would make
-  every later merge unable to tell new breakage from old.
+  scheduling is **not** wired into attempt completion. Separately, `node.state`
+  is hardcoded so the `while` predicate is always true ([#95]).
+- **t15** — colleague and notify emit explicit model sentinels; human-inbox has
+  no preflight capability surface at all, which the run flagged itself.
 
 ## 3. What is NOT done
 
-21 of 26 tasks. Waves 1–7 untouched. **No live test (t25), no summary (t26), no
-`/cicd`, no PR, no `/version-bump`.**
+16 of 26 tasks remain. **No live test (t25), no summary (t26), no `/cicd`, no
+PR, no `/version-bump`.**
 
 **In flight right now:**
 
 | Pkg | Task | Actor | Run |
 |---|---|---|---|
-| P4 | t4 — split the four files, then land the lint | codex-thor | `01M026D8P5V97PH0YRZ3MZ1YB4` |
-| P6 | t5 — the artifact write route (#79) | codex-orin | `01M026V7GE2NFXAEXWKAHBFQFY` |
+| P9 | t7 — artifact retention vs ledger immutability | codex-thor | `01M028PJEW3K0AXAVF5B25E6YS` |
+| P10 | t16 workspace provisioner, t18 handover-gate design | codex-orin | `01M028R3ZMCRDZAA9341WNN3FZ` |
 
-**`t6` is `proposed`, not confirmed** — its instruction was rewritten with
-[#91]'s measurements, which flips a confirmed task back. It needs
-`devague plan confirm t6` from the user before wave 1 dispatches.
+**`t6` is `proposed`, not confirmed** — rewriting its instruction with [#91]'s
+measurements flipped a confirmed task back. It is now the plan's **only**
+convergence gap: t6 covers c3, h48 and c69, so `devague plan confirm t6` closes
+four reported gaps at once.
 
 ## 4. The credential — settled, do not re-litigate
 
@@ -151,21 +155,49 @@ branch until the operator or control plane moves it.
 
 `devague deviate --list` is authoritative for ids.
 
-## 8. Next actions, in order
+## 8. t25 needs a deploy first — measured, not assumed
 
-1. Harvest P4 and P6 → apply to a worktree under
+The production stack on thor is **15 hours old**, predating this whole batch.
+Probed live:
+
+```bash
+curl -o /dev/null -w '%{http_code}' -X POST \
+  http://192.168.1.146:18080/v1alpha1/attempts/att_probe/artifacts
+# -> 405   (401 would mean the route is deployed and rejecting the token)
+```
+
+So none of t5's artifact route, t9's deadline cancel, or t8's continuation is
+running in production. **t25 cannot be a live test of this batch until
+`owe/batch` is deployed to thor.**
+
+Two consequences worth planning for:
+
+- The deploy will itself exercise **t19**, which rewrote how `deploy.sh`
+  derives the sweep source from the revision it ships. That is dogfooding, and
+  it is also the first thing to check if the deploy misbehaves.
+- The API service now `depends_on: minio: service_healthy` and constructs an
+  S3-backed artifact router at startup (t5). A MinIO that is not healthy will
+  now stop the API from starting, where previously it would not have. Both
+  `prod-minio-1` and `prod-postgres-1` are currently healthy.
+
+## 9. Next actions, in order
+
+1. **`devague plan confirm t6`** — user-only, and it is now the plan's ONLY
+   convergence gap: t6 covers c3, h48 and c69, so confirming it closes four
+   reported gaps at once.
+2. Harvest P9 (t7) and P10 (t16, t18) → apply to a worktree under
    `../.worktrees.culture-nodes/` → **run the full suite on spark** (the agent
-   hosts have no Go) → merge into `owe/batch` → `git worktree remove`.
-2. `devague plan confirm t6` — user-only, and wave 1 waits on it.
-3. Wave 1: t6, t7, t9, t14, t16, t18, t19. t6 now carries the #91 measurements
-   in its brief.
+   hosts have no Go, no npm, no working `uv run`) → merge → `git worktree remove`.
+3. t6 itself, once confirmed — the two-carrier handoff, with #91's
+   measurements already in its brief.
 4. Waves 2–4 per `devague plan waves`.
-5. t24 self-test → t25 live test → t26 summary → `/cicd` → PR against `main`.
+5. t24 self-test → **deploy `owe/batch` to thor** (see §8) → t25 live test →
+   t26 summary → `/cicd` → PR against `main`.
 
 **Every PR bumps the version** (`/version-bump`) — the `version-check` job blocks
 merge otherwise. Not yet done for this batch.
 
-## 9. The merge gate is not a formality
+## 10. The merge gate is not a formality
 
 Every build package so far has arrived with at least one failure the run could
 not have seen, because **the agent hosts have no Go toolchain** and their
@@ -185,7 +217,7 @@ Specifics worth remembering, because they will recur:
   needing a contract declaration, but never required to be *routed* (t8; fixed
   with `graph.continuation_exhausted_unrouted`).
 
-## 10. Issues opened this cycle
+## 11. Issues opened this cycle
 
 - [#88] widen SonarCloud beyond `culture_nodes`, measure a baseline, ratchet
 - [#89] run scope → think → challenge through Culture Nodes as a workflow

@@ -115,30 +115,38 @@ OAUTH_SCOPES="$(grep -i '^x-oauth-scopes:' "$TMP/user.json.hdr" 2>/dev/null \
 
 # --- 4. the write-capability SCREEN (necessary, NOT sufficient) -------------
 #
-# READ THIS BEFORE TRUSTING THE RESULT. An earlier version of this script
-# treated the receive-pack advertisement as authoritative proof of push
-# capability. That was WRONG, and it was falsified the first time anyone
-# pushed: on 2026-08-15, GITHUB_TOKEN_WORKER got 200 from this endpoint and
-# then 403 from an actual `git push --dry-run` against the same repository
-# ("Permission to agentculture/culture-nodes.git denied to OriNachum"). An
-# unauthenticated request gets 401 and a genuinely read-only token gets 403,
-# so the endpoint does discriminate — it is simply discriminating on something
-# coarser than the token's ref-update grant. Plausibly the identity's role, or
-# an organisation policy applied later in the push path.
+# READ THIS BEFORE TRUSTING THE RESULT, AND READ THE CORRECTION.
 #
-# So this is a SCREEN, not a verdict:
-#   401/403 here  -> the credential definitely cannot push. Conclusive.
-#   200 here      -> it MIGHT be able to. Not conclusive.
+# The screen below is a NECESSARY condition, not a sufficient one, and the
+# story of how that was established is worth keeping because the mistake is
+# easy to repeat.
 #
-# The only sufficient check is an actual push negotiation. `git push --dry-run`
-# performs one and updates nothing — it is side-effect free in the sense that
-# matters (no ref moves), while genuinely exercising the permission the real
-# push needs. It costs a git invocation and a repository, which is why it is
-# opt-in via PROBE_PUSH rather than default.
+# On 2026-08-15 this endpoint returned 200 for a token whose `git push` was
+# then refused with "Permission to <repo>.git denied to <user>". The apparent
+# contradiction was recorded here as a false positive in the screen. It was
+# not. The push was authenticating with a DIFFERENT credential: `gh` installs
+# a URL-SCOPED credential helper —
 #
-# The lesson generalises past this script, and it is the same one the spec
-# keeps arriving at: a cheaper signal that CORRELATES with the fact you want is
-# not the fact you want. Measure the thing itself.
+#     credential.https://github.com.helper = !/usr/bin/gh auth git-credential
+#
+# — in ~/.gitconfig, and a configured helper takes precedence over GIT_ASKPASS.
+# So the probe measured the intended token while git pushed with gh's OAuth
+# token. Disabling the helper (`git -c credential.https://github.com.helper=`)
+# made the same push succeed with the same token that the screen had approved.
+#
+# Two lessons, both encoded below:
+#   * `git config --get credential.helper` DOES NOT show URL-scoped helpers.
+#     Use `git config --get-regexp "credential.*helper"`. A check that misses
+#     the helper actually in use will attribute its result to the wrong
+#     credential — which is exactly what happened.
+#   * When two probes of "the same" credential disagree, suspect first that
+#     they are not probing the same credential.
+#
+# The screen remains necessary-not-sufficient on its own terms: 401/403 is
+# conclusive proof a credential cannot push; 200 means it cleared the
+# advertisement, which is real but weaker than a completed negotiation. The
+# opt-in PROBE_PUSH dry-run remains the authoritative check, and it now
+# disables credential helpers so it measures the token it was handed.
 PUSH_CODE="$(printf 'user = "x-access-token:%s"\n' "$TOKEN" \
   | curl -sS -m 15 --config - -o /dev/null -w '%{http_code}' \
       "https://github.com/${REPO}.git/info/refs?service=git-receive-pack" 2>/dev/null || echo "000")"
@@ -152,8 +160,11 @@ if [ -n "${PROBE_PUSH:-}" ]; then
   _ap="$TMP/askpass.sh"
   printf '#!/bin/sh\nexec printf %%s "$_VTS_TOKEN"\n' > "$_ap"; chmod +x "$_ap"
   _ref="$(git -C "$PROBE_PUSH" symbolic-ref --quiet --short HEAD 2>/dev/null || echo HEAD)"
+  # credential.helper= AND the URL-scoped form: a configured helper outranks
+  # GIT_ASKPASS, so without both this probes gh's credential, not ours.
   if _VTS_TOKEN="$TOKEN" GIT_ASKPASS="$_ap" GIT_TERMINAL_PROMPT=0 \
-       git -C "$PROBE_PUSH" push --dry-run \
+       git -C "$PROBE_PUSH" -c credential.helper= \
+           -c credential.https://github.com.helper= push --dry-run \
          "https://x-access-token@github.com/${REPO}.git" "$_ref" >/dev/null 2>"$TMP/push.err"; then
     PUSH_DRYRUN="allowed"
   else

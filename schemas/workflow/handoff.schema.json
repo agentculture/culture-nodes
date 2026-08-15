@@ -1,0 +1,89 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://nodes.culture.dev/schemas/workflow/handoff.schema.json",
+  "title": "Handoff handle",
+  "description": "The portable handle one node hands to the next when the two may run on different machines (issue #74, spec decision q9). THE ROUTING RULE, DECLARED HERE AND NOWHERE ELSE: a runner's CHANGES travel as `git_ref` — a remote plus a ref name plus the commit they pin, which is naturally what a diff already is; CONTEXT AND DATA that is not naturally a git object — a prioritised work-item list, a report, a bundle, a log — travels as `artifact`, resolved through internal/artifacts. Both kinds are handles, never locations: neither may be a filesystem path, because a path is meaningful only on the host that produced it, and handing one across a machine boundary fails as somebody else's HTTP 403 naming AUTHORIZATION when the cause is TOPOLOGY (run 01KZZSGSWH11J7R7P4V2HPTZZQ). This document is the single declaration of that rule; a node contract that carries a handoff embeds this schema's constraints verbatim, and tests/lint/crosshosthandoff_test.go fails the build when a copy drifts from it.",
+  "type": "object",
+  "required": [
+    "kind",
+    "ref"
+  ],
+  "additionalProperties": false,
+  "properties": {
+    "kind": {
+      "type": "string",
+      "enum": [
+        "artifact",
+        "git_ref"
+      ],
+      "description": "Which carrier this handle names. `artifact` was the only member until spec decision q9 added `git_ref`; the enum is closed so a third carrier is a visible, decided change rather than a new string somebody typed."
+    },
+    "ref": {
+      "type": "string",
+      "minLength": 1,
+      "description": "The handle itself. Constrained per `kind` below — never a bare filesystem path under either kind."
+    },
+    "commit": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{40}$",
+      "description": "The commit a `git_ref` handle pins, so the consuming host can verify it fetched exactly the object the producer named rather than whatever the ref points at by the time it looks. Content addressing, the same reason a run pins a workflow digest."
+    },
+    "publication": {
+      "type": "string",
+      "enum": [
+        "pending",
+        "published"
+      ],
+      "description": "Whether the `git_ref` handle's ref has reached the remote it names. `pending` means the producing side created the commit and the ref in its own checkout and did NOT push — the standing policy in AGENTS.md, which lets an agent create a handover ref under refs/culture-nodes/<run-id> and forbids it to push or to commit onto a branch. A `pending` handle is therefore honest about being unfetchable until the operator or the control plane moves it; a consuming node that finds `pending` should say so by name rather than reporting a fetch failure."
+    },
+    "media_type": {
+      "type": "string",
+      "description": "What the handle contains, so the consuming node knows what it is opening without unpacking it first."
+    }
+  },
+  "allOf": [
+    {
+      "if": {
+        "required": [
+          "kind"
+        ],
+        "properties": {
+          "kind": {
+            "const": "artifact"
+          }
+        }
+      },
+      "then": {
+        "properties": {
+          "ref": {
+            "pattern": "^artifact://[^/]+/.+$"
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "required": [
+          "kind"
+        ],
+        "properties": {
+          "kind": {
+            "const": "git_ref"
+          }
+        }
+      },
+      "then": {
+        "required": [
+          "commit",
+          "publication"
+        ],
+        "properties": {
+          "ref": {
+            "pattern": "^git\\+(https|ssh)://[^\\s#]+#refs/culture-nodes/[^\\s]+$"
+          }
+        }
+      }
+    }
+  ],
+  "$comment": "The git_ref pattern refuses three things deliberately, each of which would re-admit the defect the handle exists to prevent. (1) No scheme, i.e. a bare path or a bare branch name: `/home/spark/git/culture-nodes` and `owe/batch` are both meaningless on another host. (2) The `file` transport: `git+file:///home/spark/...` is a filesystem path wearing a URL, and admitting it would make the pattern decorative. (3) Any ref outside `refs/culture-nodes/`: AGENTS.md forbids an agent to commit onto a branch, so a handover that named `refs/heads/...` would be asking for something the producing side is not allowed to do."
+}

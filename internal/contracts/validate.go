@@ -20,6 +20,12 @@ import (
 // suffixes of each schema's $id.
 const (
 	SchemaWorkflow = "workflow/workflow.schema.json"
+	// SchemaWorkflowHandoff is the two-carrier handoff handle (issue #74,
+	// spec decision q9). It is not a top-level document type: node contracts
+	// embed its constraints, and it lives here so the routing rule -- changes
+	// travel as a git ref, context and data travel as an artifact -- has
+	// exactly one declaration to cite.
+	SchemaWorkflowHandoff = "workflow/handoff.schema.json"
 
 	SchemaLedgerEnvelope      = "ledger/envelope.schema.json"
 	SchemaLedgerRecord        = "ledger/record.schema.json"

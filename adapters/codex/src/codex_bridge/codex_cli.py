@@ -56,6 +56,33 @@ from codex_bridge.config import Config
 #: ever pick among these three, explicit, always-sandboxed modes.
 SANDBOX_MODES = frozenset({"read-only", "workspace-write", "danger-full-access"})
 
+#: The sandbox mode `.git` write can be widened within. Only this one: under
+#: `read-only` a writable `.git` would contradict the mode outright, and under
+#: `danger-full-access` nothing is confined to widen.
+SANDBOX_WORKSPACE_WRITE = "workspace-write"
+
+
+def git_writable_override(repo: str) -> str:
+    """The one `-c` override that makes `.git` writable inside a
+    `workspace-write` session (task t6, issue #91, deviation d6).
+
+    MEASURED, not guessed: under plain `--sandbox workspace-write` on
+    codex-cli 0.147.0 the worktree is writable and `.git` is NOT — `fetch`,
+    `commit` and `update-ref` all fail with `Read-only file system` while
+    editing files works, which reads like a code problem and is a sandbox
+    carve-out. Adding this single scoped entry lifts exactly that, and a full
+    write-tree/commit-tree/update-ref then succeeds (commit df7d974 at
+    `refs/culture-nodes/probe`, on thor).
+
+    It is deliberately a per-dispatch OPT-IN, never a default: a package that
+    hands over no ref has no reason to write `.git`, and handing every session
+    that authority to save a flag would widen the sandbox for the majority to
+    serve the minority. The widening is also scoped to `.git` alone — it is
+    not `danger-full-access`, which #91 established is not needed here.
+    """
+    return f'sandbox_workspace_write={{writable_roots=["{repo.rstrip("/")}/.git"]}}'
+
+
 #: JSONL event types this module treats as terminal for a turn. Anything
 #: else (thread.started, turn.started, item.started, item.completed,
 #: standalone "error" notices, ...) is non-terminal — informative for
@@ -71,6 +98,7 @@ def _common_argv(
     model: str | None,
     sandbox: str,
     continuation_ref: str | None = None,
+    writable_git: bool = False,
 ) -> list[str]:
     """The `codex exec` argv this bridge generates, minus the binary name
     itself (`Config.codex_bin` is prepended by the caller). Mirrors
@@ -92,6 +120,14 @@ def _common_argv(
     `spawn`), so the OS-level working directory is right either way — `-C`
     is codex's own internal echo of that fact for a fresh session, not the
     only way this bridge controls it.
+
+    *writable_git* (task t6) opts THIS dispatch into a writable `.git`, which
+    a session must have to create the handover ref its changes travel on
+    (`preserve.handover_ref`). It applies only to a fresh `workspace-write`
+    session, for the same reason `--sandbox` itself does not appear on the
+    resume line: a resumed session already carries the sandbox policy it
+    started with, so a dispatch that will hand over a ref has to say so on
+    its FIRST turn rather than discovering the need mid-session.
     """
     if continuation_ref:
         argv = ["exec", "resume", continuation_ref, "--json"]
@@ -100,6 +136,8 @@ def _common_argv(
         argv.append(instruction)
         return argv
     argv = ["exec", "--json", "--sandbox", sandbox, "-C", repo]
+    if writable_git and sandbox == SANDBOX_WORKSPACE_WRITE:
+        argv += ["-c", git_writable_override(repo)]
     if model:
         argv += ["-m", model]
     argv.append(instruction)
@@ -291,6 +329,7 @@ def run_sync(
     model: str | None = None,
     sandbox: str | None = None,
     continuation_ref: str | None = None,
+    writable_git: bool = False,
 ) -> SyncRunResult:
     """Run `codex exec ...` in the foreground and wait for it to finish.
 
@@ -309,6 +348,7 @@ def run_sync(
             model=model,
             sandbox=sandbox or cfg.default_sandbox,
             continuation_ref=continuation_ref,
+            writable_git=writable_git,
         ),
     ]
 
@@ -363,6 +403,7 @@ def spawn(
     model: str | None = None,
     sandbox: str | None = None,
     continuation_ref: str | None = None,
+    writable_git: bool = False,
 ) -> subprocess.Popen:
     """Start `codex exec ...` in the background and return the live
     `Popen` handle immediately (near-instant — `Popen` never blocks on the
@@ -389,6 +430,7 @@ def spawn(
             model=model,
             sandbox=sandbox or cfg.default_sandbox,
             continuation_ref=continuation_ref,
+            writable_git=writable_git,
         ),
     ]
     try:

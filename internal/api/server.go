@@ -346,6 +346,7 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("POST /v1alpha1/actors/{id}/resume", s.wrap(s.handleResumeActor))
 
 	mux.HandleFunc("GET /v1alpha1/dispatch-rates", s.wrap(s.handleListDispatchRates))
+	mux.HandleFunc("GET /v1alpha1/namespaces", s.wrap(s.handleListNamespaces))
 
 	mux.HandleFunc("GET /v1alpha1/preflights", s.wrap(s.handleListPreflights))
 	mux.HandleFunc("GET /v1alpha1/preflights/{id}", s.wrap(s.handleGetPreflight))
@@ -366,6 +367,9 @@ func (s *Server) Handler() http.Handler {
 
 	mux.HandleFunc("GET /v1alpha1/healthz", s.wrap(s.handleHealthz))
 	mux.HandleFunc("GET /v1alpha1/readyz", s.wrap(s.handleReadyz))
+	// Keep the SPA fallback out of the API namespace. An unknown API path is
+	// a missing operation, not a client-side route.
+	mux.HandleFunc("/v1alpha1/", http.NotFound)
 
 	// The actor callback surface (PRD §13.1's callback.url, §13.4's event
 	// ingest) is not part of the nodes.culture.dev/v1alpha1 group above: it

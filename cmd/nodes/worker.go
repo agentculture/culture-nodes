@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"os"
 	"os/signal"
+	"strings"
 	"syscall"
 	"time"
 
@@ -95,6 +96,9 @@ func cmdWorker(args []string, jsonMode bool) (int, error) {
 			Remediation: "set " + envNamespace + " (or --namespace) to a namespace id, or " +
 				envNamespaceSlug + " (or --namespace-slug) to a slug to resolve/create",
 		}
+	}
+	if cliErr := workerConfigPreflight(); cliErr != nil {
+		return 0, cliErr
 	}
 
 	ctx, stop := shutdownContext()
@@ -237,6 +241,35 @@ func cmdWorker(args []string, jsonMode bool) (int, error) {
 		}
 	}
 	return clifmt.ExitSuccess, nil
+}
+
+// workerConfigPreflight validates deployment-level environment as one unit
+// before telemetry or PostgreSQL is touched. Code runner identity is a tuple:
+// accepting an absent or partial tuple lets a worker start but guarantees that
+// its first code dispatch cannot produce correctly attributed evidence.
+func workerConfigPreflight() *clifmt.CliError {
+	var problems []string
+	for _, name := range []string{envCodeRunnerName, envCodeRunnerRevision, envCodeRunnerActorID} {
+		if strings.TrimSpace(os.Getenv(name)) == "" {
+			problems = append(problems, name+" is missing")
+		}
+	}
+	callbackURL := strings.TrimSpace(os.Getenv(envCallbackBaseURL))
+	callbackSecret := strings.TrimSpace(os.Getenv(envCallbackSecret))
+	if callbackURL == "" && callbackSecret != "" {
+		problems = append(problems, envCallbackBaseURL+" is missing while "+envCallbackSecret+" is set")
+	}
+	if callbackURL != "" && callbackSecret == "" {
+		problems = append(problems, envCallbackSecret+" is missing while "+envCallbackBaseURL+" is set")
+	}
+	if len(problems) == 0 {
+		return nil
+	}
+	return &clifmt.CliError{
+		Code:        clifmt.ExitEnvError,
+		Message:     "worker deployment configuration is invalid: " + strings.Join(problems, "; "),
+		Remediation: "set the complete NODES_CODE_RUNNER_{NAME,REVISION,ACTOR_ID} tuple and either both or neither NODES_CALLBACK_{BASE_URL,TOKEN_SECRET}",
+	}
 }
 
 // callbackConfig builds the attempt-scoped token signer from the environment.

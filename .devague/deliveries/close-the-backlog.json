@@ -2,7 +2,7 @@
   "plan_slug": "close-the-backlog",
   "schema_version": 1,
   "created": "2026-08-15T18:07:41Z",
-  "updated": "2026-08-15T18:37:51Z",
+  "updated": "2026-08-15T18:47:24Z",
   "deviations": [
     {
       "id": "d1",
@@ -129,6 +129,33 @@
       "origin": "llm",
       "status": "proposed",
       "classification": "acceptable"
+    },
+    {
+      "id": "d11",
+      "what": "t1 (the Go CI job) becomes operator-lane work, because K1's own fix correctly forbids every bridge from touching CI configuration",
+      "task_ref": "t1",
+      "reason": "K1 propagated the workflow-scope guard to all three bridges per the all-backends rule (it had existed only in claude-code, which was half of #98). The guard now refuses a session that MODIFIES a guarded path, measured from the bridge's own git diff. That boundary is deliberate and correct \u2014 these bridges' push credential excludes CI administration \u2014 so t1, whose entire job is editing .github/workflows/tests.yml, can no longer be dispatched to ANY bridge. #98's fix unblocked t1's brief and correctly blocked t1's execution. Earlier packages C1 and C3 did edit tests.yml from codex, which was possible only because the guard did not exist there yet.",
+      "affects": [
+        "t12",
+        "t20"
+      ],
+      "origin": "llm",
+      "status": "proposed",
+      "classification": "acceptable"
+    },
+    {
+      "id": "d12",
+      "what": "t1's gate proof breaks production code rather than deleting an assertion, because a deleted assertion makes tests pass",
+      "task_ref": "t1",
+      "reason": "measured. Deleting the RunState assertion at internal/engine/humandecision_test.go:83 and running the job's three commands gave build PASS, vet PASS, test ok \u2014 a removed assertion cannot fail, so the criterion as written ('deleting an assertion turns the check red') is unprovable by construction. Injecting a real one-word defect instead (RunCompleted -> RunFailed at humandecision.go:633) gave the proof: 'go test ./internal/engine/' still passed, but 'go test ./...' failed with 'run state = failed, want completed' in TestHumanReviewRejectedDecisionRoutesItsOwnEdge. The CI job runs ./... so it gates. A second finding fell out: internal/engine's own unit test asserts on result.RunState, a struct field assigned the literal RunCompleted at humandecision.go:645 regardless of what was persisted \u2014 the same hardcoded-literal pattern K1 just fixed in DecideContinuation for #95. The integration suite covers the gap; the unit test cannot.",
+      "affects": [
+        "t12",
+        "c125",
+        "h80"
+      ],
+      "origin": "llm",
+      "status": "proposed",
+      "classification": "needs-follow-up"
     }
   ]
 }

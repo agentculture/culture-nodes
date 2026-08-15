@@ -37,6 +37,39 @@ jobs:
         env:
           SONAR_HOST_URL: https://sonarcloud.io
 
+  # The Go control plane had no CI at all until this job (issue #115). It was
+  # built and tested only on whichever machine an operator happened to be
+  # sitting at — and no agent host in the fleet has a Go toolchain, so "run
+  # the tests somewhere else" was not available even in principle. Every
+  # `go test ./...` result in this repository's history came from one laptop.
+  #
+  # The suite passes today: the tree was green on build, vet and test when
+  # this job was added, so a red check here is a regression rather than a
+  # backlog of pre-existing failures being surfaced for the first time.
+  go:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+
+      - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5.6.0
+        with:
+          # Read the version from go.mod rather than pinning it twice; a
+          # toolchain bump then changes one file, not two that can disagree.
+          go-version-file: go.mod
+          cache: true
+
+      - run: go build ./...
+
+      - run: go vet ./...
+
+      # Not -race: several suites drive real subprocesses and a Postgres, and
+      # the race detector's slowdown pushes them past their own timeouts. The
+      # trade is deliberate — a fast job that runs on every PR beats a
+      # thorough one that gets disabled.
+      - run: go test ./...
+
   lint:
     runs-on: ubuntu-latest
     permissions:

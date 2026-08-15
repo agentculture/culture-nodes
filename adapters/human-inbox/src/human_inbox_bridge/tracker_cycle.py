@@ -15,13 +15,13 @@ from typing import Any, Callable
 from human_inbox_bridge.store import STATUS_PENDING, HumanTask, TaskStore
 
 from .tracker import (
-    BridgeSubmit,
     CLOSED_OBSERVATION_KIND,
+    OBSERVATION_KIND,
+    REPLY_OBSERVATION_KIND,
+    BridgeSubmit,
     CycleResult,
     GithubFetch,
-    OBSERVATION_KIND,
     Observation,
-    REPLY_OBSERVATION_KIND,
     ReplyObservation,
     TrackerConfig,
     _github_rate_limit_backoff,

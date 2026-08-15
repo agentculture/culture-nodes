@@ -16,6 +16,7 @@ def test_usage_names_an_explicit_non_null_unknown_model():
     assert usage["model"] == "unknown:notify-backend-cannot-report"
     assert usage["model"] is not None
 
+
 CTX = mapping.InvocationContext(run_id="run_1", node_run_id="nr_1", attempt_id="att_1")
 SECRET_URL = "https://discord.com/api/webhooks/999/super-secret-token-value"
 

@@ -56,8 +56,8 @@ a fifth dialect.
 
 from __future__ import annotations
 
-import socket
 import shutil
+import socket
 import subprocess
 from pathlib import Path
 from typing import Any, Callable, Iterable, Mapping, Sequence

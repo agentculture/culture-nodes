@@ -46,7 +46,11 @@ def test_a_bridge_with_no_session_omits_the_sandbox_keys(tmp_path):
     not exist."""
     host = capabilities.host_facts(Config(), probes=_permissive(tmp_path))
     assert set(host) == {
-        "hostname", "confinement", "commit_policy", "writable_paths", "artifact_publish"
+        "hostname",
+        "confinement",
+        "commit_policy",
+        "writable_paths",
+        "artifact_publish",
     }
     assert host["artifact_publish"] == "not-applicable-no-workspace"
 

@@ -35,11 +35,29 @@ say "building control-plane image on $HOST (native aarch64)"
 ssh "$HOST" "cd $REMOTE_DIR && docker build -q -t culture-nodes:prod ."
 
 say "building nodes-runner host binary on $HOST"
-ssh "$HOST" "bash -lc 'cd $REMOTE_DIR && go build -o ~/.culture-nodes/bin/nodes-runner ./cmd/nodes-runner'" \
-  || { echo "remote Go missing — building here and copying (same arch)"; \
-       go build -o /tmp/nodes-runner ./cmd/nodes-runner && \
-       ssh "$HOST" 'mkdir -p ~/.culture-nodes/bin' && \
-       scp -q /tmp/nodes-runner "$HOST":.culture-nodes/bin/nodes-runner && rm /tmp/nodes-runner; }
+# Issue #17. Two things were wrong here, and only one of them was the shell.
+#
+# 1. The destination is the binary of the RUNNING nodes-runner unit, so
+#    writing it in place fails with ETXTBSY ("scp: dest open ... Failure",
+#    observed on the 2026-08-11 thor deploy). Both paths below therefore
+#    write `nodes-runner.new` and RENAME over the target: a rename is fine
+#    while the old inode is still executing, and needs no unit stop.
+# 2. The failure was swallowed. The fallback used to be a `{ ... }` group on
+#    the right of `||` containing an `&&` chain; every command in an `&&`
+#    list except the last runs with -e ignored, and bash does not exit when
+#    a compound command returns non-zero because a command failed while -e
+#    was being ignored. So the deploy carried on and restarted the unit on
+#    the previous build. `if ! <cond>; then <body>; fi` exempts only the
+#    CONDITION, so every command in the body below is back under `set -e`
+#    and a failed ship aborts the deploy where it happens.
+if ! ssh "$HOST" "bash -lc 'cd $REMOTE_DIR && go build -o ~/.culture-nodes/bin/nodes-runner.new ./cmd/nodes-runner'"; then
+  echo "remote Go missing — building here and copying (same arch)"
+  go build -o /tmp/nodes-runner ./cmd/nodes-runner
+  ssh "$HOST" 'mkdir -p ~/.culture-nodes/bin'
+  scp -q /tmp/nodes-runner "$HOST":.culture-nodes/bin/nodes-runner.new
+  rm -f /tmp/nodes-runner
+fi
+ssh "$HOST" 'mv -f ~/.culture-nodes/bin/nodes-runner.new ~/.culture-nodes/bin/nodes-runner'
 
 say "ensuring headspace CLI on $HOST (uv tool)"
 ssh "$HOST" 'bash -lc "command -v headspace >/dev/null || { command -v uv >/dev/null || curl -LsSf https://astral.sh/uv/install.sh | sh; \$HOME/.local/bin/uv tool install headspace-cli || uv tool install headspace-cli; }; command -v headspace"'

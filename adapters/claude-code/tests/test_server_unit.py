@@ -130,16 +130,40 @@ def test_missing_instruction_is_400(bridge_url):
     assert "instruction" in body["error"]
 
 
-def test_workflow_scope_is_refused_before_dispatch(bridge_url):
+def test_workflow_scope_is_not_refused_from_the_instruction_text(bridge_url, monkeypatch):
+    """Issue #98: this test used to assert the opposite — that naming
+    `.github/workflows/` in the brief was refused 403 before dispatch. That
+    guard read the operator's prose, so the safest possible instruction
+    ("do not touch CI") was the one thing guaranteed to be rejected, while a
+    session that edited CI silently passed. The boundary now lives in
+    `scope_guard.py` and is decided on the measured change set; see
+    `test_scope_guard.py` for both halves. Here the ladder must simply let
+    the dispatch through."""
     base, cfg, repo = bridge_url
+
+    def fake_run_sync(cfg_, instruction, repo_, *, role, max_steps, model, continuation_ref=None):
+        return claude_cli.SyncRunResult(
+            exit_code=0,
+            stdout="",
+            stderr="",
+            task_result={
+                "type": "result",
+                "subtype": "success",
+                "is_error": False,
+                "session_id": "sess-1",
+                "result": "did it",
+                "usage": {"input_tokens": 1, "output_tokens": 2},
+            },
+            timed_out=False,
+        )
+
+    monkeypatch.setattr(claude_cli, "run_sync", fake_run_sync)
     payload = _invocation_body(
-        str(repo), instruction="Update .github/workflows/go.yml and run its checks"
+        str(repo), instruction="Update the go job, and do NOT touch .github/workflows/**"
     )
     headers = {**_auth_header(cfg), "Idempotency-Key": "att_workflow_scope"}
     status, body = _request(base, server.INVOCATIONS_PATH, body=payload, headers=headers)
-    assert status == 403
-    assert "workflow-scope boundary" in body["error"]
-    assert ".github/workflows/" in body["error"]
+    assert status == 200, body
 
 
 def test_repo_outside_allowlist_is_403(bridge_url, tmp_path):

@@ -2,7 +2,7 @@
   "plan_slug": "close-the-backlog",
   "schema_version": 1,
   "created": "2026-08-15T18:07:41Z",
-  "updated": "2026-08-15T18:24:21Z",
+  "updated": "2026-08-15T18:37:51Z",
   "deviations": [
     {
       "id": "d1",
@@ -49,7 +49,7 @@
       "id": "d4",
       "what": "t18 moves from codex-orin to codex-thor",
       "task_ref": "t18",
-      "reason": "measured: 'command -v gh' returns /usr/bin/gh authenticated as OriNachum on thor and returns nothing on orin. t18 must file an issue on agentculture/headspace-cli, which needs gh; it was dispatched with package C1 on thor instead of C3 on orin.",
+      "reason": "measured: 'command -v gh' returns /usr/bin/gh authenticated (as the repo owner's account) on thor and returns nothing on orin. t18 must file an issue on agentculture/headspace-cli, which needs gh; it was dispatched with package C1 on thor instead of C3 on orin.",
       "affects": [],
       "origin": "llm",
       "status": "proposed",
@@ -72,7 +72,7 @@
       "id": "d6",
       "what": "the codex dispatch sandbox has no network egress, which re-routes every network-dependent verification out of the agent hosts",
       "task_ref": "t5",
-      "reason": "measured in run 01M039NZ2TZYFG68YZT93A6DC7 on thor: 'gh issue list' could not connect to api.github.com and pypi.org DNS did not resolve INSIDE the dispatch, while 'gh auth status' over a plain ssh session on the same host reports logged in as OriNachum. The capability is present on the host and absent under the dispatch posture. This generalises the probe finding that motivated t19/#96 from uv to the whole network: no agent host can produce evidence that needs GitHub, PyPI or any API, so those verifications join the executable ones in the spark lane.",
+      "reason": "measured in run 01M039NZ2TZYFG68YZT93A6DC7 on thor: 'gh issue list' could not connect to api.github.com and pypi.org DNS did not resolve INSIDE the dispatch, while 'gh auth status' over a plain ssh session on the same host reports logged in as the repo owner's account. The capability is present on the host and absent under the dispatch posture. This generalises the probe finding that motivated t19/#96 from uv to the whole network: no agent host can produce evidence that needs GitHub, PyPI or any API, so those verifications join the executable ones in the spark lane.",
       "affects": [
         "t6",
         "t7",
@@ -116,6 +116,19 @@
       "origin": "llm",
       "status": "proposed",
       "classification": "needs-follow-up"
+    },
+    {
+      "id": "d10",
+      "what": "the bucket-A sweep dispatches as two lane-shaped work packages, not as one run per issue",
+      "task_ref": "t7",
+      "reason": "CLAUDE.md's work-package sizing rule (issue #48): model nodes amortize bootstrap into one persistent warm session with many ledgered sub-actions, never one cold session per small plan task. Nine issues would be nine cold sessions paying nine repeated repo-discovery bootstraps, and last cycle measured ~25k output tokens per task on top of that. The sweep therefore runs as two packages matching t5's committed lanes: Go/shell (#8, #9, #13, #28, #48) and Python-plus-network (#10, #54, #61, #62). Each issue still gets its own rendered brief from scripts/render-verification-brief.py, so t6's 'differ only in issue number, claim and evidence form' still holds \u2014 the briefs are bundled into one session rather than rewritten. #98 is excluded: it already has live evidence from run 01M039KA0QQ73XM3WQCQEQF1CN, which reproduced it in production.",
+      "affects": [
+        "t5",
+        "t6"
+      ],
+      "origin": "llm",
+      "status": "proposed",
+      "classification": "acceptable"
     }
   ]
 }

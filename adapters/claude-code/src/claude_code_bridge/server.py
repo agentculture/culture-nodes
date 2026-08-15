@@ -34,7 +34,15 @@ from http.server import BaseHTTPRequestHandler, HTTPServer
 from pathlib import Path
 from typing import Any
 
-from claude_code_bridge import capabilities, claude_cli, mapping, preflight, preserve, workspace
+from claude_code_bridge import (
+    capabilities,
+    claude_cli,
+    mapping,
+    preflight,
+    preserve,
+    scope_guard,
+    workspace,
+)
 from claude_code_bridge.async_runner import AsyncRunner
 from claude_code_bridge.config import Config
 from claude_code_bridge.idempotency import IdempotencyStore
@@ -317,24 +325,13 @@ class Handler(BaseHTTPRequestHandler):
             )
             return
 
-        # This bridge's fine-grained push credential intentionally excludes
-        # GitHub Actions workflow administration.  Refuse that work package
-        # while its scope is being validated, before a model edits anything
-        # and long before git push could misreport the boundary as a broken
-        # credential.
-        if ".github/workflows/" in instruction.replace("\\", "/"):
-            self._write_json(
-                403,
-                {
-                    "error": (
-                        "workflow-scope boundary: this actor may not modify "
-                        ".github/workflows/; split that work into a separately "
-                        "authorized package"
-                    ),
-                    "class": "auth_or_policy",
-                },
-            )
-            return
+        # The workflow-scope boundary used to be enforced HERE, by grepping
+        # this instruction for ".github/workflows/". Issue #98: that refused
+        # a brief for NAMING the boundary while missing a session that
+        # edited CI without ever mentioning it. The boundary is unchanged
+        # and still enforced — see scope_guard.py — but against the change
+        # set this bridge measures after the session, in _dispatch_sync and
+        # async_runner._run.
 
         # Engine-resolved bindings beyond the transport fields ride into the
         # session as a serialized context block: a node's input.bindings
@@ -552,6 +549,18 @@ class Handler(BaseHTTPRequestHandler):
             timed_out=result.timed_out,
             workspace_measured=measured,
         )
+        # Issue #98: the workflow-scope boundary, decided on what the
+        # session actually changed. Placed between the response and the
+        # preserve hook on purpose — the refusal has to be a non-200 BEFORE
+        # that hook reads `response.status_code`, so refused work lands on a
+        # preserve branch rather than being reported as a success or thrown
+        # away.
+        scope_violations = scope_guard.violations(repo, measured)
+        if scope_violations:
+            response = mapping.SyncResponse(
+                status_code=403,
+                body=scope_guard.refusal_body(scope_violations, measured),
+            )
         # t25 (c26/h17, c41/h34): a genuine technical failure (never a
         # domain outcome — mapping.sync_response only ever answers 200 for
         # one) gets its workspace changes preserved on a branch, bridge-side,

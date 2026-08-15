@@ -45,7 +45,7 @@ from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from typing import Any
 
-from codex_bridge import codex_cli, mapping, preserve, workspace
+from codex_bridge import codex_cli, mapping, preserve, scope_guard, workspace
 from codex_bridge.callbacks import CallbackConfig, CallbackEmitter
 from codex_bridge.config import Config
 from codex_bridge.session_registry import SessionRegistry
@@ -257,6 +257,17 @@ class AsyncRunner:
             timed_out=timed_out,
             workspace_measured=measured,
         )
+        # Issue #98: the same workflow-scope boundary server.py applies to a
+        # synchronous response, applied to the terminal event — decided on
+        # the change set THIS bridge measured, never on the instruction text
+        # or on codex's own account of what it touched. Before the preserve
+        # hook below, so a refused change set is preserved rather than lost.
+        scope_violations = scope_guard.violations(inv.workspace_handle.repo, measured)
+        if scope_violations:
+            ev = mapping.TerminalEvent(
+                kind="failed",
+                payload=scope_guard.refusal_payload(scope_violations, measured),
+            )
         # t25 (c26/h17, c41/h34): the async equivalent of server.py's sync
         # hook — a "failed" terminal event (never "completed", which is the
         # only other kind terminal_event ever produces) gets its workspace

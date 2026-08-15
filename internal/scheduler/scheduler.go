@@ -448,6 +448,13 @@ const (
 	topicTimerFired         = "dev.culture.nodes.timer.fired"
 	topicDeadlineExpired    = "dev.culture.nodes.timer.deadline-expired"
 	topicLeaseRecoverySwept = "dev.culture.nodes.timer.lease-recovery-swept"
+	// topicContinuationUndecidable is issue #105's answer to "the error value
+	// is discarded at the return": a `continue.while` that could not be
+	// evaluated leaves a record naming the node run and the reason. Emitted
+	// beside -- never instead of -- the deadline's own event: the deadline
+	// really did expire, AND the declared condition could not be decided, and
+	// an operator needs both facts.
+	topicContinuationUndecidable = "dev.culture.nodes.continuation.undecidable"
 )
 
 // makeWorkItemAvailableSQL is the wait/retry effect (prd-spec §12.7): flip
@@ -667,15 +674,23 @@ func (sch *Scheduler) failWaitingExternal(ctx context.Context, t postgres.Timer)
 // A zero nextCheck means no time-based bound was declared. The caller must
 // then NOT pause: there would be no future moment at which anything reconsiders,
 // and "keep the session warm" would silently become "run forever".
+//
+// `node.state` comes from the node_runs row read below, mapped by
+// engine.ContinuationNodeState. It used to be the literal "incomplete" (issue
+// #95), which made the canonical `node.state == "incomplete"` true in every
+// run for every node: the predicate compiled, evaluated, and decided nothing.
+// It is read in the same query as `created_at` deliberately — the bounds and
+// the condition then describe the same instant of the same row.
 func (sch *Scheduler) deadlineContinuationHolds(ctx context.Context, inv actors.PendingInvocation) (bool, time.Time, error) {
 	var digest string
 	var ir []byte
 	var created time.Time
+	var nodeRunStatus string
 	if err := sch.pool.QueryRow(ctx, `
-		SELECT wv.content_digest, wv.normalized_ir, nr.created_at
+		SELECT wv.content_digest, wv.normalized_ir, nr.created_at, nr.status
 		FROM runs r JOIN workflow_versions wv ON wv.id = r.workflow_version_id
 		JOIN node_runs nr ON nr.id = $2
-		WHERE r.id = $1`, inv.RunID, inv.NodeRunID).Scan(&digest, &ir, &created); err != nil {
+		WHERE r.id = $1`, inv.RunID, inv.NodeRunID).Scan(&digest, &ir, &created, &nodeRunStatus); err != nil {
 		return false, time.Time{}, fmt.Errorf("load continuation declaration for node run %s: %w", inv.NodeRunID, err)
 	}
 	wf, err := engine.LoadWorkflow(digest, ir)
@@ -694,11 +709,32 @@ func (sch *Scheduler) deadlineContinuationHolds(ctx context.Context, inv actors.
 	if node.Continue.Bounds.MaxSessions > sessions {
 		remaining = node.Continue.Bounds.MaxSessions - sessions
 	}
-	decision := node.DecideContinuation(engine.ContinuationState{
-		NodeState: "incomplete", RemainingSessions: remaining,
-		Continuations: max(0, sessions-1), Sessions: sessions,
+	decision, err := node.DecideContinuation(engine.ContinuationState{
+		NodeState:         engine.ContinuationNodeState(engine.NodeRunState(nodeRunStatus)),
+		RemainingSessions: remaining,
+		Continuations:     max(0, sessions-1), Sessions: sessions,
 		WallClock: time.Since(created),
 	})
+	if err != nil {
+		if !errors.Is(err, engine.ErrContinuationUndecidable) {
+			return false, time.Time{}, fmt.Errorf("decide continuation for node run %s: %w", inv.NodeRunID, err)
+		}
+		// Issue #105: a condition that cannot be evaluated is not a decision,
+		// and it must not disappear. It also must not be returned as an error
+		// from here: this timer's transaction would roll back and the next
+		// tick would re-run the same deterministic CEL failure, forever,
+		// while the session it was supposed to bound kept running. So the
+		// answer is the same fail-closed one the no-time-bound branch below
+		// gives -- do not pause, let the deadline do its §12.6 job -- plus a
+		// durable record saying WHY, which is the thing that did not exist
+		// before. The outbox is the same channel this timer's own event
+		// rides; a reader of the run sees an undecidable condition instead of
+		// a stop indistinguishable from a legitimate one.
+		if recErr := sch.recordUndecidableContinuation(ctx, inv, err); recErr != nil {
+			return false, time.Time{}, recErr
+		}
+		return false, time.Time{}, nil
+	}
 	if !decision.Continue {
 		return false, time.Time{}, nil
 	}
@@ -709,6 +745,36 @@ func (sch *Scheduler) deadlineContinuationHolds(ctx context.Context, inv actors.
 		return false, time.Time{}, nil
 	}
 	return true, created.Add(node.Continue.Bounds.MaxWallClock), nil
+}
+
+// recordUndecidableContinuation writes the one durable trace an undecidable
+// `continue.while` leaves (issue #105). It goes through the store's ambient
+// pool rather than the timer's transaction for the same reason
+// failWaitingExternal's own work does: this is deliberately NOT undone if the
+// timer transaction later rolls back. A re-run of the timer records it again,
+// which is the harmless direction — the failure mode being fixed is a silent
+// stop, so a duplicate note beats a missing one.
+func (sch *Scheduler) recordUndecidableContinuation(
+	ctx context.Context, inv actors.PendingInvocation, cause error,
+) error {
+	payload, err := json.Marshal(map[string]string{
+		"run_id":      inv.RunID,
+		"node_run_id": inv.NodeRunID,
+		"node_id":     inv.NodeID,
+		"attempt_id":  inv.AttemptID,
+		"reason":      cause.Error(),
+	})
+	if err != nil {
+		return fmt.Errorf("marshal undecidable-continuation payload for node run %s: %w", inv.NodeRunID, err)
+	}
+	if _, err := sch.db.InsertOutbox(ctx, postgres.InsertOutboxInput{
+		NamespaceID: inv.NamespaceID,
+		Topic:       topicContinuationUndecidable,
+		Payload:     payload,
+	}); err != nil {
+		return fmt.Errorf("record undecidable continuation for node run %s: %w", inv.NodeRunID, err)
+	}
+	return nil
 }
 
 // rearmDeadline replaces a fired deadline timer with the next one, so a paused

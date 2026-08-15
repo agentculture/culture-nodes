@@ -163,7 +163,39 @@ NODES_ACTOR_NOTIFY_TOKEN required
 # (compose.orin.yml already says `:?`; this makes the two hosts agree.)
 NODES_NAMESPACE_ID required
 
+# Where the authoritative database is. Task t15 made this a deployment input
+# in every profile rather than four inlined copies of one URL, which means
+# there is no longer a value to fall back to: unset, compose refuses to render
+# at all. Required is therefore a description of what already happens, not a
+# policy this audit adds.
+NODES_DATABASE_URL required
+
+# The bundled database's password. It stopped being unconditionally required
+# when t15 put postgres behind a profile — compose now gives it an open
+# default so a deployment pointing at an EXTERNAL database can render without
+# supplying a password for a container it never starts. It stays required
+# here because a deployment that does run the bundled database and leaves this
+# at its default is running its authoritative store on a published default
+# credential, which is the one outcome this audit exists to prevent.
+POSTGRES_PASSWORD required
+
 # --- optional, closed by default -----------------------------------------
+
+# Off-host backups (task t14, issue #30). Unset is the deployment that keeps
+# its dumps only on the host they came from — which is every install without
+# an AWS account, and was this deployment until today. Set, each pg_dump is
+# also copied to object storage. The backup loop reads BACKUP_S3_BUCKET and
+# skips the upload entirely when it is empty, so absence closes the off-host
+# copy and breaks nothing; the local seven-dump rotation is unaffected.
+BACKUP_S3_BUCKET optional
+
+# The credentials that off-host copy uses, and nothing else. They are optional
+# for the same reason BACKUP_S3_BUCKET is: without a bucket there is nothing to
+# authenticate to. AWS_REGION carries a default in compose, so it is optional
+# even when the other two are set.
+AWS_ACCESS_KEY_ID optional
+AWS_SECRET_ACCESS_KEY optional
+AWS_REGION optional
 
 # The notifier's webhook. Either name enables delivery, neither is invented
 # here, and internal/notify.ResolveWebhook is fail-open by design: unset, the

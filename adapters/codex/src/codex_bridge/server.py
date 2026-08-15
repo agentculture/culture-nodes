@@ -47,7 +47,15 @@ from http.server import BaseHTTPRequestHandler, HTTPServer
 from pathlib import Path
 from typing import Any
 
-from codex_bridge import capabilities, codex_cli, mapping, preflight, preserve, workspace
+from codex_bridge import (
+    capabilities,
+    codex_cli,
+    mapping,
+    preflight,
+    preserve,
+    scope_guard,
+    workspace,
+)
 from codex_bridge.async_runner import AsyncRunner
 from codex_bridge.config import Config
 from codex_bridge.idempotency import IdempotencyStore
@@ -547,6 +555,18 @@ class Handler(BaseHTTPRequestHandler):
             timed_out=result.timed_out,
             workspace_measured=measured,
         )
+        # Issue #98: the workflow-scope boundary, decided on what the
+        # session actually changed. Placed between the response and the
+        # preserve hook on purpose — the refusal has to be a non-200 BEFORE
+        # that hook reads `response.status_code`, so refused work lands on a
+        # preserve branch rather than being reported as a success or thrown
+        # away.
+        scope_violations = scope_guard.violations(repo, measured)
+        if scope_violations:
+            response = mapping.SyncResponse(
+                status_code=403,
+                body=scope_guard.refusal_body(scope_violations, measured),
+            )
         # t25 (c26/h17, c41/h34): a genuine technical failure (never a
         # domain outcome — mapping.sync_response only ever answers 200 for
         # one) gets its workspace changes preserved on a branch, bridge-side,

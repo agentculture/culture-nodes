@@ -46,6 +46,7 @@ func auditScriptPath(t *testing.T) string {
 const auditProdEnvComplete = `POSTGRES_USER=nodes
 POSTGRES_DB=nodes
 POSTGRES_PASSWORD=placeholder-postgres-password
+NODES_DATABASE_URL=postgres://nodes:placeholder-postgres-password@postgres:5432/nodes?sslmode=disable
 MINIO_ROOT_USER=nodesroot
 MINIO_ROOT_PASSWORD=placeholder-minio-password
 NODES_HUMAN_DECISION_TOKEN_SECRET=placeholder-human-decision-secret

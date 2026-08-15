@@ -17,7 +17,7 @@ services:
       dockerfile: Dockerfile
     command: ["worker"]
     environment:
-      NODES_DATABASE_URL: postgres://${POSTGRES_USER:-nodes}:${POSTGRES_PASSWORD:?install secrets first (install-secrets.sh)}@${THOR_HOST:-thor}:5432/${POSTGRES_DB:-nodes}?sslmode=disable
+      NODES_DATABASE_URL: ${NODES_DATABASE_URL:?set the external PostgreSQL URL in prod.env}
       NODES_NAMESPACE_ID: ${NODES_NAMESPACE_ID:?deploy.sh writes this after thor's first boot}
       NODES_WORKER_ID: orin-worker-1
       NODES_CALLBACK_BASE_URL: ${NODES_CALLBACK_BASE_URL:-http://thor:18080}

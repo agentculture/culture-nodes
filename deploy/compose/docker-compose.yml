@@ -20,10 +20,14 @@
 
 services:
   postgres:
+    profiles: ["bundled-postgres"]
     image: postgres:17-alpine
     environment:
       POSTGRES_USER: ${POSTGRES_USER:-nodes}
-      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?set it in .env (cp .env.example .env)}
+      # Compose interpolates disabled profiles too. Keep this optional here
+      # so external mode needs no irrelevant bundled secret; the bundled
+      # example supplies it explicitly.
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-}
       POSTGRES_DB: ${POSTGRES_DB:-nodes}
     ports:
       - "${POSTGRES_PORT:-5432}:5432"
@@ -67,10 +71,11 @@ services:
     image: culture-nodes:local
     command: ["migrate"]
     environment:
-      NODES_DATABASE_URL: postgres://${POSTGRES_USER:-nodes}:${POSTGRES_PASSWORD:?set it in .env (cp .env.example .env)}@postgres:5432/${POSTGRES_DB:-nodes}?sslmode=disable
+      NODES_DATABASE_URL: ${NODES_DATABASE_URL:?set it to the bundled or external PostgreSQL URL}
     depends_on:
       postgres:
         condition: service_healthy
+        required: false
     restart: "no"
 
   # The API server (`nodes serve`): workflows, runs, ledger, reviews, SSE —
@@ -96,7 +101,7 @@ services:
     image: culture-nodes:local
     command: ["serve"]
     environment:
-      NODES_DATABASE_URL: postgres://${POSTGRES_USER:-nodes}:${POSTGRES_PASSWORD:?set it in .env (cp .env.example .env)}@postgres:5432/${POSTGRES_DB:-nodes}?sslmode=disable
+      NODES_DATABASE_URL: ${NODES_DATABASE_URL:?set it to the bundled or external PostgreSQL URL}
       NODES_LISTEN: ":8080"
       NODES_ARTIFACT_S3_ENDPOINT: minio:9000
       NODES_ARTIFACT_S3_ACCESS_KEY: ${MINIO_ROOT_USER:-nodesroot}
@@ -110,6 +115,7 @@ services:
         condition: service_completed_successfully
       postgres:
         condition: service_healthy
+        required: false
       minio:
         condition: service_healthy
     restart: unless-stopped
@@ -125,12 +131,13 @@ services:
     image: culture-nodes:local
     command: ["scheduler"]
     environment:
-      NODES_DATABASE_URL: postgres://${POSTGRES_USER:-nodes}:${POSTGRES_PASSWORD:?set it in .env (cp .env.example .env)}@postgres:5432/${POSTGRES_DB:-nodes}?sslmode=disable
+      NODES_DATABASE_URL: ${NODES_DATABASE_URL:?set it to the bundled or external PostgreSQL URL}
     depends_on:
       migrate:
         condition: service_completed_successfully
       postgres:
         condition: service_healthy
+        required: false
     restart: unless-stopped
 
   # The worker (`nodes worker`): claims ready work and dispatches it to an
@@ -153,7 +160,7 @@ services:
     image: culture-nodes:local
     command: ["worker"]
     environment:
-      NODES_DATABASE_URL: postgres://${POSTGRES_USER:-nodes}:${POSTGRES_PASSWORD:?set it in .env (cp .env.example .env)}@postgres:5432/${POSTGRES_DB:-nodes}?sslmode=disable
+      NODES_DATABASE_URL: ${NODES_DATABASE_URL:?set it to the bundled or external PostgreSQL URL}
       NODES_NAMESPACE_ID: ${NODES_NAMESPACE_ID:-default}
       NODES_ARTIFACT_S3_ENDPOINT: minio:9000
       NODES_ARTIFACT_S3_ACCESS_KEY: ${MINIO_ROOT_USER:-nodesroot}
@@ -165,6 +172,7 @@ services:
         condition: service_completed_successfully
       postgres:
         condition: service_healthy
+        required: false
       minio:
         condition: service_healthy
     restart: unless-stopped

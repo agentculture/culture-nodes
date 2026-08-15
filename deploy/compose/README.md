@@ -21,6 +21,39 @@ that and for Postgres to report healthy before starting
 (`depends_on: condition: service_completed_successfully` /
 `service_healthy`).
 
+### Bundled or external PostgreSQL
+
+PostgreSQL is a deployment input, matching the Helm chart's
+`postgresql.enabled` / `postgresql.external.url` choice. The example env
+enables the `bundled-postgres` Compose profile and supplies its URL:
+
+```dotenv
+COMPOSE_PROFILES=bundled-postgres
+DATABASE_SSLMODE=disable
+NODES_DATABASE_URL=postgres://${POSTGRES_USER}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB}?sslmode=${DATABASE_SSLMODE}
+```
+
+For an external database, leave `COMPOSE_PROFILES` empty and replace
+`NODES_DATABASE_URL` with the external URL. Choose `DATABASE_SSLMODE` (or
+put the provider-required mode directly in the external URL); production
+databases should normally use `verify-full` or `require`. The four role
+containers consume the same URL and their optional dependency on the
+bundled service does not enable it. If `NODES_DATABASE_URL` is absent,
+Compose stops during interpolation with `set it to the bundled or external
+PostgreSQL URL` instead of creating a new database.
+
+This is solely an env-file edit. The control-plane image and Go/Python
+source are unchanged, so switching databases requires neither a code change
+nor an image rebuild. To exercise the smoke script with another env file:
+
+```bash
+COMPOSE_ENV_FILE=/tmp/external.env COMPOSE_BUILD=0 ./smoke.sh
+```
+
+`COMPOSE_BUILD=0` makes the script pass `--no-build`, which is useful for
+proving that changing only the database configuration reuses an existing
+`culture-nodes:local` image.
+
 Once it is up:
 
 - API: `http://localhost:8080` — `curl http://localhost:8080/v1alpha1/healthz`
@@ -61,7 +94,7 @@ profile's manifest-adjacent live check.
 
 | Service | Image | Command | Role |
 |---|---|---|---|
-| `postgres` | `postgres:17-alpine` | — | The authoritative store (PRD's "Runtime" ground rule). |
+| `postgres` *(profile `bundled-postgres`)* | `postgres:17-alpine` | — | Optional bundled authoritative store. |
 | `minio` | `minio/minio:latest` | `server /data --console-address :9001` | S3-compatible artifact storage. |
 | `migrate` | `culture-nodes:local` | `migrate` | One-shot: applies pending schema migrations, then exits. |
 | `api` | `culture-nodes:local` | `serve` | `nodes serve` — the HTTP API on `:8080`. |

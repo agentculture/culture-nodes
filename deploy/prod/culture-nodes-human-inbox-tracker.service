@@ -1,0 +1,15 @@
+[Unit]
+Description=Culture Nodes human-inbox GitHub merge tracker
+After=network-online.target culture-nodes-human-inbox.service
+Wants=culture-nodes-human-inbox.service
+
+[Service]
+Environment=HUMAN_INBOX_BRIDGE_CONFIG=%h/.config/culture-nodes-bridges/human-ops.json
+EnvironmentFile=%h/.culture-nodes/human-inbox-tracker.env
+EnvironmentFile=%h/.culture-nodes/human-inbox.env
+ExecStart=%h/.local/bin/human-inbox-tracker
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=default.target

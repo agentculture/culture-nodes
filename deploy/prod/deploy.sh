@@ -276,6 +276,19 @@ fi
 echo \"$unit: active (NRestarts \$after)\""
 }
 
+report_port_conflict() { # host port failed-unit
+  local host=$1 port=$2 failed_unit=$3
+  actor_host_exec "$host" "export XDG_RUNTIME_DIR=/run/user/\$(id -u)
+pid=\$(ss -H -ltnp 'sport = :$port' 2>/dev/null | sed -n 's/.*pid=\([0-9][0-9]*\).*/\1/p' | head -n1)
+conflict=unknown
+if [ -n \"\$pid\" ]; then
+  conflict=\$(systemctl --user status \"\$pid\" --no-pager 2>/dev/null | sed -n 's#.*[ /]\([^ /]*\\.service\).*#\1#p' | head -n1)
+  [ -n \"\$conflict\" ] || conflict=pid-\$pid
+fi
+echo 'Address already in use: $failed_unit could not bind registered port $port; conflicting unit: '\"\$conflict\" >&2
+exit 1"
+}
+
 deploy_human_inbox() { # no argument: the host comes from the registration
   local registration row_id revision endpoint auth_env
   local host port bridge_bin tracker_bin
@@ -388,6 +401,13 @@ deploy_human_inbox() { # no argument: the host comes from the registration
 } > ~/.culture-nodes/human-inbox-bridge.env'
   say "human-inbox bridge origin.actor_id set to registered row $row_id"
 
+  # The canonical bridge unit reads the same JSON config as the already
+  # running culture-nodes-human-inbox service.  Generate it on the target so
+  # absolute paths and the registry-derived port/row id cannot drift.
+  actor_host_exec "$host" 'umask 077; mkdir -p ~/.config/culture-nodes-bridges
+PORT='"$port"' ACTOR_ID='"$row_id"' python3 -c '\''import json, os
+print(json.dumps({"host":"0.0.0.0","port":int(os.environ["PORT"]),"state_dir":os.path.expanduser("~/.culture-nodes/human-inbox-state"),"actor_id":os.environ["ACTOR_ID"]}, indent=2))'\'' > ~/.config/culture-nodes-bridges/human-ops.json'
+
   # HUMAN_INBOX_TRACKER_CONTROL_PLANE_URL is what ARMS task t8's startup
   # refusal: unset, the tracker logs a warning and runs unguarded, which is
   # the state issue #72 went unnoticed in. The deploy-time assertion below and
@@ -416,18 +436,26 @@ deploy_human_inbox() { # no argument: the host comes from the registration
   # what this function meant to write.
   assert_human_inbox_colocated "$host" "$HUMAN_INBOX_ACTOR_KEY" "$endpoint"
 
-  say "installing human-inbox-bridge systemd user unit on $host"
+  # Adopt the canonical culture-nodes-* names on every deploy.  Removing the
+  # legacy files is essential: disabling alone lets the next archive copy
+  # and re-enable them, recreating the :8090 conflict on a second deploy.
+  say "removing legacy human-inbox unit names on $host"
+  actor_host_exec "$host" "export XDG_RUNTIME_DIR=/run/user/\$(id -u); systemctl --user stop human-inbox-bridge.service 2>/dev/null || true; systemctl --user stop human-inbox-tracker.service 2>/dev/null || true; systemctl --user disable human-inbox-bridge.service 2>/dev/null || true; systemctl --user disable human-inbox-tracker.service 2>/dev/null || true; rm -f ~/.config/systemd/user/human-inbox-bridge.service; rm -f ~/.config/systemd/user/human-inbox-tracker.service; systemctl --user daemon-reload"
+
+  say "installing culture-nodes-human-inbox systemd user unit on $host"
   actor_host_exec "$host" "loginctl enable-linger \$(id -un) 2>/dev/null || true"
-  actor_host_exec "$host" "export XDG_RUNTIME_DIR=/run/user/\$(id -u); mkdir -p ~/.config/systemd/user && sed \"s#%h/.local/bin/human-inbox-bridge#$bridge_bin#\" $REMOTE_DIR/deploy/prod/human-inbox-bridge.service > ~/.config/systemd/user/human-inbox-bridge.service && systemctl --user daemon-reload && systemctl --user restart human-inbox-bridge && systemctl --user enable human-inbox-bridge"
-  assert_unit_healthy "$host" human-inbox-bridge
+  actor_host_exec "$host" "export XDG_RUNTIME_DIR=/run/user/\$(id -u); mkdir -p ~/.config/systemd/user && sed \"s#%h/.local/bin/human-inbox-bridge#$bridge_bin#\" $REMOTE_DIR/deploy/prod/culture-nodes-human-inbox.service > ~/.config/systemd/user/culture-nodes-human-inbox.service && systemctl --user daemon-reload && systemctl --user restart culture-nodes-human-inbox && systemctl --user enable culture-nodes-human-inbox"
+  assert_unit_healthy "$host" culture-nodes-human-inbox || {
+    report_port_conflict "$host" "$port" culture-nodes-human-inbox.service
+  }
 
   # GITHUB_TOKEN is optional: the public-repository lane polls anonymously at
   # half the 60/hour ceiling (the quota is per source IP, so the tracker must
   # leave room for whatever else on this host talks to GitHub), while a token
   # selects the 5,000/hour authenticated lane. Both install the same unit.
-  say "installing human-inbox-tracker systemd user unit on $host"
-  actor_host_exec "$host" "export XDG_RUNTIME_DIR=/run/user/\$(id -u); mkdir -p ~/.config/systemd/user && sed \"s#%h/.local/bin/human-inbox-tracker#$tracker_bin#\" $REMOTE_DIR/deploy/prod/human-inbox-tracker.service > ~/.config/systemd/user/human-inbox-tracker.service && systemctl --user daemon-reload && systemctl --user restart human-inbox-tracker && systemctl --user enable human-inbox-tracker"
-  assert_unit_healthy "$host" human-inbox-tracker
+  say "installing culture-nodes-human-inbox-tracker systemd user unit on $host"
+  actor_host_exec "$host" "export XDG_RUNTIME_DIR=/run/user/\$(id -u); mkdir -p ~/.config/systemd/user && sed \"s#%h/.local/bin/human-inbox-tracker#$tracker_bin#\" $REMOTE_DIR/deploy/prod/culture-nodes-human-inbox-tracker.service > ~/.config/systemd/user/culture-nodes-human-inbox-tracker.service && systemctl --user daemon-reload && systemctl --user restart culture-nodes-human-inbox-tracker && systemctl --user enable culture-nodes-human-inbox-tracker"
+  assert_unit_healthy "$host" culture-nodes-human-inbox-tracker
 }
 
 # --- notify actor bridge lane (issue #68) ---------------------------------

@@ -1,0 +1,13 @@
+[Unit]
+Description=Culture Nodes human-inbox actor bridge
+After=network-online.target
+
+[Service]
+Environment=HUMAN_INBOX_BRIDGE_CONFIG=%h/.config/culture-nodes-bridges/human-ops.json
+EnvironmentFile=%h/.culture-nodes/human-inbox.env
+ExecStart=%h/.local/bin/human-inbox-bridge serve
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=default.target

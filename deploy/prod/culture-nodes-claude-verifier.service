@@ -1,0 +1,13 @@
+[Unit]
+Description=Culture Nodes Claude verifier bridge
+After=network-online.target
+
+[Service]
+Environment=CLAUDE_CODE_BRIDGE_CONFIG=%h/.config/culture-nodes-bridges/verifier.json
+EnvironmentFile=-%h/.culture-nodes/bridge-push.env
+ExecStart=%h/.local/bin/claude-code-bridge
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=default.target

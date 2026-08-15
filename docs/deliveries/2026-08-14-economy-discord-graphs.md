@@ -191,7 +191,7 @@ six fixes are #69.
 | A declared budget refuses an unfundable dispatch as a domain outcome | high | `signal4-check` run, completed |
 | A capacity refusal pauses the actor | medium | t9 tests; no live provider-limit hit |
 | A failed node's work survives on a branch without touching HEAD/index | high | t25 tests, mutation-verified on two bridges |
-| A preserve branch is visible on the run detail page | medium | t26 store/API/web tests; not live-exercised |
+| A preserve branch is visible on the run detail page | medium | t26 store/API/web tests; not live-exercised. **Superseded 2026-08-15:** verified by test, never exercised in production — the production sample size when this row was written was zero. t13 of the own-the-work-end-to-end batch exercised the preserve path on a cancelled session and asserted on a real git ref rather than the bridge's payload. |
 | Merging a PR completes a human task with no manual submit | **unverified** | tracker only just started running; no observed merge yet |
 | The dashboard reflects new state without a refresh | high | t30 tests + operator observation |
 | The decompose pipeline generalizes beyond code | medium | t24: verifier reused over t22's fixture; newsletter nodes scripted, not model-dispatched |

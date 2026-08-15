@@ -213,3 +213,118 @@ def test_print_capabilities_emits_the_registration_document(capsys, tmp_path):
     assert rc == 0
     printed = json.loads(capsys.readouterr().out)
     preflight.validate_block(printed)
+
+
+# --- toolchains under THIS backend's postures (issue #96) ----------------
+#
+# test_preflight.py asserts the shared measurement. What is asserted here is
+# codex's own posture map: which of its three `--sandbox` modes grants what,
+# and therefore what the two agent hosts' surfaces actually say. The two
+# hosts are injected, because neither of them is the host running pytest.
+
+THOR = {  # snap-packaged uv, gh from the distro, codex off PATH
+    "uv": ("/snap/bin/uv", True),
+    "gh": ("/usr/bin/gh", True),
+    "codex": ("/home/thor/.local/bin/codex", False),
+}
+ORIN = {  # standalone uv under ~/.local/bin
+    "uv": ("/home/orin/.local/bin/uv", True),
+    "gh": ("/home/orin/.local/bin/gh", True),
+    "codex": ("/home/orin/.local/bin/codex", True),
+}
+
+
+def _host(table, tmp_path, versions=None):
+    versions = versions or {}
+    return capabilities.host_facts(
+        Config(repo_allowlist=(str(tmp_path),)),
+        probes=_permissive(tmp_path),
+        capability_probe=_probe_works,
+        locate=lambda name: table.get(name, (None, False)),
+        version=lambda path: versions.get(path, "test-version"),
+    )
+
+
+def _tool(host, name):
+    return next(fact for fact in host["toolchains"] if fact["name"] == name)
+
+
+def test_thors_snap_uv_and_orins_standalone_one_are_different_facts(tmp_path):
+    """Issue #96's acceptance criterion, against codex's real posture map. A
+    surface saying `uv: present` was true on both hosts and useless on both:
+    neither could run a Python suite, and they failed for different reasons
+    (runs 01M03374VAKH0KHN0GDZ466NP4 and 01M0342X60F3NY8MH150G48AZ6)."""
+    thor_uv = _tool(_host(THOR, tmp_path), "uv")
+    orin_uv = _tool(_host(ORIN, tmp_path), "uv")
+
+    assert thor_uv["packaging"] == "snap"
+    assert orin_uv["packaging"] == "standalone"
+    assert "snap-confine" in thor_uv["unusable_in"]["workspace-write"]
+    assert "01M03374VAKH0KHN0GDZ466NP4" in thor_uv["unusable_in"]["workspace-write"]
+    assert "01M0342X60F3NY8MH150G48AZ6" in orin_uv["unusable_in"]["workspace-write"]
+
+    # Both end up unusable under both confined modes -- for DIFFERENT stated
+    # reasons, which is the whole point.
+    for uv in (thor_uv, orin_uv):
+        assert uv["usable_in"] == ["danger-full-access"]
+
+
+def test_go_is_absent_on_an_agent_host_and_the_surface_says_so(tmp_path):
+    go = _tool(_host(THOR, tmp_path), "go")
+    assert go["state"] == "absent"
+    assert go["usable_in"] == []
+
+
+def test_gh_is_authenticated_on_the_host_and_unreachable_under_dispatch(tmp_path):
+    """Run 01M039NZ2TZYFG68YZT93A6DC7: a codex session on thor could reach
+    neither api.github.com nor pypi.org, while `gh auth status` over a plain
+    ssh session on that same host reports logged in. `gh: present` is a true
+    fact about the host and a false one about the dispatch."""
+    gh = _tool(_host(THOR, tmp_path), "gh")
+    assert gh["state"] == "present"
+    assert gh["usable_in"] == ["danger-full-access"]
+    assert "01M039NZ2TZYFG68YZT93A6DC7" in gh["unusable_in"]["read-only"]
+    assert "01M039NZ2TZYFG68YZT93A6DC7" in gh["unusable_in"]["workspace-write"]
+
+
+def test_the_confined_modes_grant_no_egress_and_nothing_under_home(tmp_path):
+    """The grants map is what makes those reasons derivable rather than
+    hand-written per tool. Probe 3 (01M0356BK8QYR3119R8VY1YY9Q) found neither
+    /tmp nor the working directory writable under read-only."""
+    grants = _host(THOR, tmp_path)["dispatch_grants"]
+    assert grants["read-only"] == []
+    assert set(grants["workspace-write"]) == {"workspace-write", "tmp-write"}
+    assert set(grants["danger-full-access"]) == set(preflight.GRANTS)
+
+
+def test_a_mode_this_kernel_cannot_deliver_is_not_a_place_a_toolchain_works(tmp_path):
+    """Where unprivileged user namespaces are restricted, codex can only
+    deliver danger-full-access -- so the grants map, and every toolchain
+    verdict read against it, must mention nothing else."""
+    host = capabilities.host_facts(
+        Config(repo_allowlist=(str(tmp_path),)),
+        probes=_restricted(tmp_path),
+        capability_probe=_probe_fails,
+        locate=lambda name: THOR.get(name, (None, False)),
+        version=lambda _path: "test-version",
+    )
+    assert list(host["dispatch_grants"]) == ["danger-full-access"]
+    assert _tool(host, "uv")["usable_in"] == ["danger-full-access"]
+    assert "unusable_in" not in _tool(host, "uv")
+
+
+def test_the_codex_cli_version_is_reported_so_a_bump_is_visible(tmp_path):
+    """The probe findings above are pinned to codex-cli's behaviour, so a
+    bump has to re-open them. Recording the version in the surface is what
+    makes `scripts/toolchain-baseline.sh check` notice one."""
+    host = _host(THOR, tmp_path, versions={"/home/thor/.local/bin/codex": "codex-cli 0.147.0"})
+    codex_fact = _tool(host, "codex")
+    assert codex_fact["version"] == "codex-cli 0.147.0"
+    # codex itself is what CREATES the sandbox, so it requires nothing and
+    # runs in every mode this host offers.
+    assert codex_fact["requires"] == []
+    assert codex_fact["usable_in"] == list(capabilities.SANDBOX_MODE_CANDIDATES)
+
+
+def test_the_surface_with_toolchains_is_still_a_document_the_engine_accepts(tmp_path):
+    preflight.validate_block(preflight.capability_block(_host(THOR, tmp_path)))

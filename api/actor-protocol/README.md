@@ -117,6 +117,29 @@ absence, a null or an empty string reads as a fact about the host.
 | `commit_policy` | Whether the session commits, and where a dispatch's changes end up. Always present. |
 | `writable_paths` | The paths a dispatch may write in. `[]` means nowhere, which is a fact rather than an absence. |
 | `artifact_publish` | Three-valued publication fact: `supported`, `unsupported-by-host`, or `not-applicable-no-workspace`. The last value is explicit for bridges such as notify and human-inbox; it must not be represented by a silent skip. |
+| `dispatch_grants` | Mode → what that mode actually **grants** a session, from the fixed vocabulary `workspace-write`, `tmp-write`, `home-write`, `network-egress`, `nested-confinement`. Omitted by a bridge that runs no session. |
+| `toolchains` | Per tool: whether it is here, how it was packaged, what version it reports, and **which modes can actually run it** — with a reason per mode that cannot. Omitted by a bridge that dispatches no toolchain. |
+
+`dispatch_grants` and `toolchains` (issue #96) exist because presence is not
+capability. A surface reporting `uv: present` was true on both agent hosts
+and useless on both: thor's uv is a snap whose own `snap-confine` cannot
+start inside a bubblewrap-confined mode (run
+`01M03374VAKH0KHN0GDZ466NP4`), orin's is a standalone binary that gets past
+that and then dies initialising a cache under a read-only `$HOME` (run
+`01M0342X60F3NY8MH150G48AZ6`), and neither could run a test suite. The
+sharper case is `gh`: `gh auth status` over ssh on thor reports logged in
+while a dispatch on that same host reached neither api.github.com nor
+pypi.org (run `01M039NZ2TZYFG68YZT93A6DC7`). "Present and authenticated" is
+a true fact about the **host** and a false one about the **dispatch**, and a
+surface has to be able to hold both without contradiction — which is what
+separating grants from tools does.
+
+`state` is one of `present`, `present-off-path` (installed, but not
+invocable by name under the PATH a dispatched session inherits) and
+`absent`. Usability is `usable_in`, which is per mode: the same binary is
+usable through a bridge that confines nothing and unusable under a
+`--sandbox read-only` dispatch, and both statements are about the same file
+on the same disk.
 
 The facts must describe what the host **can do**, never what its
 configuration asks for. That distinction is the whole reason this exists:

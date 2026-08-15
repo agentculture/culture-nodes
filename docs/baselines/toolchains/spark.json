@@ -1,0 +1,58 @@
+{
+  "hostname": "spark-f8a9",
+  "search_path": "/home/spark/git/culture-nodes/adapters/claude-code/.venv/bin:/home/spark/.local/go/bin:/home/spark/go/bin:/home/spark/.local/bin:/home/spark/.cargo/bin:/home/spark/.local/bin:/usr/local/cuda/bin:/opt/bin/:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin:/usr/games:/usr/local/games:/snap/bin:/snap/bin:/home/spark/.local/bin:/home/spark/.claude/plugins/cache/claude-plugins-official/frontend-design/unknown/bin:/home/spark/.claude/plugins/cache/claude-plugins-official/playwright/unknown/bin",
+  "toolchains": [
+    {
+      "name": "uv",
+      "state": "present",
+      "path": "/home/spark/.local/bin/uv",
+      "on_path": true,
+      "packaging": "standalone",
+      "version": "uv 0.9.28"
+    },
+    {
+      "name": "go",
+      "state": "present",
+      "path": "/home/spark/.local/go/bin/go",
+      "on_path": true,
+      "packaging": "standalone",
+      "version": "go version go1.26.5 linux/arm64"
+    },
+    {
+      "name": "gh",
+      "state": "present",
+      "path": "/usr/bin/gh",
+      "on_path": true,
+      "packaging": "system",
+      "version": "gh version 2.45.0 (2026-02-03 Ubuntu 2.45.0-1ubuntu0.3+esm2)"
+    },
+    {
+      "name": "git",
+      "state": "present",
+      "path": "/usr/bin/git",
+      "on_path": true,
+      "packaging": "system",
+      "version": "git version 2.43.0"
+    },
+    {
+      "name": "codex",
+      "state": "absent"
+    },
+    {
+      "name": "claude",
+      "state": "present",
+      "path": "/home/spark/.local/bin/claude",
+      "on_path": true,
+      "packaging": "standalone",
+      "version": "2.1.233 (Claude Code)"
+    },
+    {
+      "name": "colleague",
+      "state": "present",
+      "path": "/home/spark/.local/bin/colleague",
+      "on_path": true,
+      "packaging": "standalone",
+      "version": "colleague 1.56.0"
+    }
+  ]
+}

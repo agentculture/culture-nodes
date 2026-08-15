@@ -15,7 +15,7 @@ for.
 
 from __future__ import annotations
 
-from typing import Any, Sequence
+from typing import Any, Callable, Sequence
 
 from colleague_bridge import preflight
 from colleague_bridge.config import Config
@@ -39,11 +39,32 @@ _CONFINEMENT = (
     "rather than by the kernel during it"
 )
 
+#: What the one mode grants (issue #96): everything this bridge process
+#: itself has. Stated in the shared vocabulary rather than left implied by
+#: `_CONFINEMENT` above, because the toolchain facts below are read against
+#: it — a tool needing a writable cache or network egress gets both here,
+#: which is precisely what a codex dispatch under `--sandbox read-only` does
+#: not.
+_MODE_GRANTS = {preflight.MODE_UNSANDBOXED: preflight.GRANTS}
+
+#: The toolchains this bridge reports on: the CLI it drives, plus the three
+#: the dispatched probe runs on thor and orin tested (issue #96). Same list
+#: as the other bridges', so two hosts' surfaces are comparable tool for
+#: tool.
+TOOLCHAINS = (
+    preflight.Toolchain("colleague"),
+    preflight.Toolchain("uv", requires=(preflight.GRANT_HOME_WRITE,)),
+    preflight.Toolchain("go", requires=(preflight.GRANT_HOME_WRITE,)),
+    preflight.Toolchain("gh", requires=(preflight.GRANT_NETWORK_EGRESS,)),
+)
+
 
 def host_facts(
     cfg: Config,
     *,
     probes: Sequence[tuple[str, str]] = preflight.USERNS_SYSCTLS,
+    locate: Callable[[str], tuple[str | None, bool]] = preflight.locate_toolchain,
+    version: Callable[[str], str | None] = preflight.toolchain_version,
 ) -> dict[str, Any]:
     """Measure this host and return the `host` block for its capability
     surface.
@@ -54,17 +75,26 @@ def host_facts(
     backend's path at all), so no mode here is ever reported unavailable
     because of them — see `codex_bridge.capabilities` for the backend where
     that measurement is the load-bearing one.
+
+    *locate* and *version* are injectable so a test can assert what this
+    surface says about a snap-packaged toolchain and a standalone one alike,
+    neither of which is the host running pytest.
     """
     available, unavailable = preflight.measure_sandbox_modes(
         SANDBOX_MODE_CANDIDATES,
         probes=probes,
     )
+    grants = preflight.dispatch_grants({mode: _MODE_GRANTS[mode] for mode in available})
     return preflight.host_block(
         hostname=preflight.hostname(),
         sandbox_modes=available,
         sandbox_modes_unavailable=unavailable,
         default_sandbox_mode=preflight.MODE_UNSANDBOXED,
         confinement=_CONFINEMENT,
+        dispatch_grants=grants,
+        toolchains=preflight.measure_toolchains(
+            TOOLCHAINS, grants=grants, locate=locate, version=version
+        ),
         commit_policy=preflight.harvest_commit_policy(
             preserve_on_failure=cfg.preserve_on_failure,
             branch_prefix=cfg.preserve_branch_prefix,

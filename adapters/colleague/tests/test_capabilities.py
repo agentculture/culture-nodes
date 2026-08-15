@@ -163,3 +163,47 @@ def test_print_capabilities_emits_the_registration_document(capsys, tmp_path):
     assert rc == 0
     printed = json.loads(capsys.readouterr().out)
     preflight.validate_block(printed)
+
+
+# --- toolchains under THIS backend's postures (issue #96) ----------------
+
+
+def _host(table, tmp_path):
+    return capabilities.host_facts(
+        Config(repo_allowlist=(str(tmp_path),)),
+        probes=_permissive(tmp_path),
+        locate=lambda name: table.get(name, (None, False)),
+        version=lambda _path: "test-version",
+    )
+
+
+def _tool(host, name):
+    return next(fact for fact in host["toolchains"] if fact["name"] == name)
+
+
+def test_the_one_mode_grants_everything_this_bridge_process_has(tmp_path):
+    """`colleague work` takes no sandbox flag: the worktree bounds where
+    changes LAND, not what the session can reach. Said in the shared grant
+    vocabulary so the toolchain verdicts below are derivable the same way
+    they are on the codex bridge."""
+    host = _host({}, tmp_path)
+    assert set(host["dispatch_grants"]) == {preflight.MODE_UNSANDBOXED}
+    assert set(host["dispatch_grants"][preflight.MODE_UNSANDBOXED]) == set(preflight.GRANTS)
+
+
+def test_the_same_snap_uv_a_codex_dispatch_cannot_run_is_usable_here(tmp_path):
+    """thor's snap-packaged uv is unusable under codex's confined modes and
+    usable through a bridge that confines nothing — the fact is about the
+    DISPATCH, not the host (issue #96)."""
+    uv = _tool(_host({"uv": ("/snap/bin/uv", True)}, tmp_path), "uv")
+    assert uv["packaging"] == "snap"
+    assert uv["usable_in"] == [preflight.MODE_UNSANDBOXED]
+    assert "unusable_in" not in uv
+
+
+def test_an_absent_toolchain_is_still_absent(tmp_path):
+    assert _tool(_host({}, tmp_path), "go")["state"] == "absent"
+
+
+def test_the_surface_with_toolchains_is_still_a_document_the_engine_accepts(tmp_path):
+    preflight.validate_block(preflight.capability_block(_host({}, tmp_path)))

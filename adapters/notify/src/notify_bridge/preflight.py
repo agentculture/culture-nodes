@@ -56,11 +56,13 @@ a fifth dialect.
 
 from __future__ import annotations
 
+import os
 import shutil
 import socket
 import subprocess
+import sys
 from pathlib import Path
-from typing import Any, Callable, Iterable, Mapping, Sequence
+from typing import Any, Callable, Iterable, Mapping, NamedTuple, Sequence
 
 #: The capability-surface version this bridge produces. Pinned to
 #: `internal/preflight.ProtocolVersion` — the control plane refuses a
@@ -101,6 +103,14 @@ CAPABILITIES_PATH = "/v1/capabilities"
 #: * ``artifact_publish`` — one of ``supported``, ``unsupported-by-host``,
 #:   or ``not-applicable-no-workspace``. Unlike omission, the last value
 #:   explicitly says that this bridge has no workspace to publish from.
+#: * ``dispatch_grants`` — mode → what that mode actually GRANTS a session
+#:   (see ``GRANTS``). Issue #96's key: it is what makes "gh is authenticated
+#:   on this host" and "gh cannot reach api.github.com under dispatch" both
+#:   true without contradicting each other. Omitted by a bridge that runs no
+#:   session.
+#: * ``toolchains`` — per tool, what can actually EXECUTE here and in which
+#:   modes (see ``measure_toolchains``). Omitted by a bridge that dispatches
+#:   no toolchain.
 HOST_KEYS = (
     "hostname",
     "sandbox_modes",
@@ -110,6 +120,8 @@ HOST_KEYS = (
     "commit_policy",
     "writable_paths",
     "artifact_publish",
+    "dispatch_grants",
+    "toolchains",
 )
 
 ARTIFACT_PUBLISH_VALUES = frozenset(
@@ -132,6 +144,95 @@ MODE_UNSANDBOXED = "unsandboxed"
 USERNS_SYSCTLS = (
     ("/proc/sys/kernel/apparmor_restrict_unprivileged_userns", "1"),
     ("/proc/sys/kernel/unprivileged_userns_clone", "0"),
+)
+
+# --- toolchains (issue #96) -------------------------------------------------
+#
+# Three dispatched probe runs are the reason this section exists, and they
+# are its test cases:
+#
+#   01M03374VAKH0KHN0GDZ466NP4 (thor)  uv is a SNAP, and snap-confine cannot
+#                                      start inside codex's sandbox:
+#                                      "required permitted capability
+#                                      cap_dac_override not found".
+#   01M0342X60F3NY8MH150G48AZ6 (orin)  uv is a STANDALONE binary, gets past
+#                                      that, and dies initialising its cache:
+#                                      "Read-only file system (os error 30) at
+#                                      path /home/orin/.cache/uv".
+#   01M0356BK8QYR3119R8VY1YY9Q (orin)  under read-only NOTHING is writable —
+#                                      not /tmp, not the working directory —
+#                                      so redirecting the cache has nowhere to
+#                                      point.
+#
+# A surface reporting `uv: present` would have been TRUE on both hosts and
+# useless on both: neither could run a test suite, and they failed for
+# different reasons. So a toolchain fact here says what can EXECUTE, in which
+# dispatch modes, and why not in the others.
+#
+# The fourth case is sharper and is what `dispatch_grants` exists for: run
+# 01M039NZ2TZYFG68YZT93A6DC7 on thor could reach neither api.github.com nor
+# pypi.org, while `gh auth status` over a plain ssh session on that same host
+# reports logged in. "gh: present and authenticated" is a true fact about the
+# HOST and a false one about the DISPATCH.
+
+#: What a dispatch posture (one sandbox/permission mode) may grant a session.
+#: A mode grants a subset of these; a toolchain requires a subset; the
+#: difference is the reason it cannot run.
+GRANT_WORKSPACE_WRITE = "workspace-write"
+GRANT_TMP_WRITE = "tmp-write"
+GRANT_HOME_WRITE = "home-write"
+GRANT_NETWORK_EGRESS = "network-egress"
+#: Whether a helper that sets up its OWN confinement (snap-confine, a nested
+#: bubblewrap, a container runtime) can start. Its absence is why a
+#: snap-packaged binary is unusable in a bubblewrap-confined mode while the
+#: same tool's standalone build is fine.
+GRANT_NESTED_CONFINEMENT = "nested-confinement"
+
+GRANTS = (
+    GRANT_WORKSPACE_WRITE,
+    GRANT_TMP_WRITE,
+    GRANT_HOME_WRITE,
+    GRANT_NETWORK_EGRESS,
+    GRANT_NESTED_CONFINEMENT,
+)
+
+#: A toolchain's PRESENCE on this host, which is separate from whether any
+#: mode can run it (that is ``usable_in``).
+#:
+#: ``present-off-path`` is not pedantry: orin's uv lives at
+#: ~/.local/bin/uv and is absent from a non-interactive shell's PATH, so a
+#: dispatch that invokes `uv` by name fails on a host that has it. The
+#: measuring process here IS the bridge, whose PATH is the one a dispatched
+#: session inherits, which is exactly why this fact is worth measuring from
+#: the bridge rather than from an operator's ssh session.
+STATE_PRESENT = "present"
+STATE_OFF_PATH = "present-off-path"
+STATE_ABSENT = "absent"
+
+#: How a toolchain was installed, which decides whether it needs
+#: ``nested-confinement``. Derived from where the binary actually resolves to.
+PACKAGING_SNAP = "snap"
+PACKAGING_STANDALONE = "standalone"
+PACKAGING_SYSTEM = "system"
+PACKAGING_UNKNOWN = "unknown"
+
+#: Directories consulted when PATH does not carry a tool, so a host that HAS
+#: it is not reported as absent — it is reported as off-path, which is a
+#: different fact with a different remedy.
+TOOLCHAIN_SEARCH_DIRS = ("~/.local/bin", "/usr/local/bin", "/snap/bin", "/usr/bin", "/bin")
+
+#: The agreed keys of one toolchain fact. Same rule as HOST_KEYS: a bridge
+#: that cannot measure one omits it rather than guessing.
+TOOLCHAIN_KEYS = (
+    "name",
+    "state",
+    "path",
+    "on_path",
+    "packaging",
+    "version",
+    "requires",
+    "usable_in",
+    "unusable_in",
 )
 
 
@@ -257,6 +358,236 @@ def measure_sandbox_modes(
     return available, unavailable
 
 
+class Toolchain(NamedTuple):
+    """One toolchain a dispatch to this backend might need.
+
+    *requires* are the grants the tool needs to do its job — measured
+    requirements, not guesses: uv needs a writable cache under $HOME (probe
+    01M0342X60F3NY8MH150G48AZ6 died on exactly that), gh needs network
+    egress (probe 01M039NZ2TZYFG68YZT93A6DC7 could reach nothing). A
+    requirement that came from a packaging fact rather than from the tool is
+    added by :func:`measure_toolchains`, not declared here.
+    """
+
+    name: str
+    requires: tuple[str, ...] = ()
+
+
+def locate_toolchain(
+    name: str,
+    *,
+    which: Callable[[str], str | None] = shutil.which,
+    search_dirs: Sequence[str] = TOOLCHAIN_SEARCH_DIRS,
+) -> tuple[str | None, bool]:
+    """Return ``(path, on_path)`` for *name*.
+
+    PATH first, because that is what a dispatched session actually gets;
+    then the known install directories, so a tool that exists but is
+    unreachable by name reads as ``present-off-path`` rather than as absent.
+    """
+    found = which(name)
+    if found:
+        return found, True
+    for directory in search_dirs:
+        candidate = Path(directory).expanduser() / name
+        if candidate.exists():
+            return str(candidate), False
+    return None, False
+
+
+def toolchain_packaging(path: str) -> str:
+    """How the binary at *path* was installed.
+
+    Snap is the one that changes what a dispatch can do (its own
+    snap-confine cannot start inside a bubblewrap-confined mode), and it is
+    detectable two ways — the /snap/bin shim, and the fact that the shim
+    resolves to the snap runtime rather than to the tool. Both are checked,
+    because /snap/bin/uv is a RELATIVE symlink to astral-uv.uv whose
+    realpath is /usr/bin/snap.
+    """
+    resolved = str(Path(path).resolve())
+    if path.startswith("/snap/") or resolved.startswith("/snap/") or resolved.endswith("/snap"):
+        return PACKAGING_SNAP
+    if resolved.startswith(("/usr/bin/", "/bin/", "/usr/sbin/", "/sbin/")):
+        return PACKAGING_SYSTEM
+    return PACKAGING_STANDALONE
+
+
+#: How a tool is asked its version, in the order tried. Two spellings
+#: because `go --version` exits non-zero and `go version` is the one that
+#: answers; a tool that refuses both reports no version rather than an
+#: invented one.
+VERSION_ARGV = (("--version",), ("version",))
+
+
+def toolchain_version(
+    path: str,
+    *,
+    run: Callable[..., Any] = subprocess.run,
+) -> str | None:
+    """The version *path* reports, or None when it will not say.
+
+    This runs the tool AS THIS PROCESS, outside any sandbox — so it is a
+    fact about the host, not about a dispatch, and the surface keeps it next
+    to per-mode usability rather than instead of it. Its job is to make a
+    toolchain bump visible: the recorded baseline changes, and the probe
+    findings get re-checked.
+    """
+    for argv in VERSION_ARGV:
+        try:
+            completed = run(
+                [path, *argv],
+                stdout=subprocess.PIPE,
+                stderr=subprocess.STDOUT,
+                timeout=10,
+                check=False,
+            )
+        except (OSError, subprocess.TimeoutExpired):
+            return None
+        if completed.returncode != 0:
+            continue
+        output = completed.stdout
+        if isinstance(output, bytes):
+            output = output.decode("utf-8", "replace")
+        first = (output or "").strip().splitlines()
+        if first:
+            return first[0].strip()
+    return None
+
+
+def toolchain_fact(**facts: Any) -> dict[str, Any]:
+    """Build one toolchain fact, dropping what could not be measured.
+
+    Accepts exactly `TOOLCHAIN_KEYS`; `name` and `state` are required. Like
+    `host_block`, an unagreed key is a `SurfaceError` rather than a fifth
+    dialect quietly carried by one adapter.
+    """
+    unknown = sorted(set(facts) - set(TOOLCHAIN_KEYS))
+    if unknown:
+        raise SurfaceError(
+            f"unagreed toolchain fact(s) {', '.join(unknown)}: add a new one to "
+            f"preflight.TOOLCHAIN_KEYS, which adds it to every bridge at once"
+        )
+    for key in ("name", "state"):
+        if not facts.get(key):
+            raise SurfaceError(f"toolchain fact {key!r} is required and must be non-empty")
+    if facts["state"] not in (STATE_PRESENT, STATE_OFF_PATH, STATE_ABSENT):
+        raise SurfaceError(
+            f"toolchain state {facts['state']!r} is not one of {STATE_PRESENT!r}, "
+            f"{STATE_OFF_PATH!r}, {STATE_ABSENT!r}"
+        )
+    fact: dict[str, Any] = {}
+    for key in TOOLCHAIN_KEYS:
+        value = facts.get(key)
+        if value is None:
+            continue
+        if key in ("requires", "usable_in"):
+            fact[key] = list(value)
+        elif key == "unusable_in":
+            if not value:
+                continue
+            fact[key] = dict(value)
+        else:
+            fact[key] = value
+    return fact
+
+
+def dispatch_grants(grants: Mapping[str, Sequence[str]]) -> dict[str, list[str]]:
+    """Validate and normalise a mode → grants map.
+
+    A grant this protocol does not agree on is refused here rather than
+    advertised: a reader who sees an unknown word in this map cannot tell
+    whether it means more or less than the ones they know.
+    """
+    validated: dict[str, list[str]] = {}
+    for mode, granted in grants.items():
+        unknown = sorted(set(granted) - set(GRANTS))
+        if unknown:
+            raise SurfaceError(
+                f"mode {mode!r} declares unagreed grant(s) {', '.join(unknown)}: the vocabulary is "
+                f"preflight.GRANTS ({', '.join(GRANTS)})"
+            )
+        validated[mode] = list(granted)
+    return validated
+
+
+def measure_toolchains(
+    specs: Sequence[Toolchain],
+    *,
+    grants: Mapping[str, Sequence[str]],
+    grant_absence_reasons: Mapping[str, str] | None = None,
+    locate: Callable[[str], tuple[str | None, bool]] = locate_toolchain,
+    version: Callable[[str], str | None] = toolchain_version,
+) -> list[dict[str, Any]]:
+    """Measure each toolchain and say which dispatch modes can actually run it.
+
+    *grants* is the mode → grants map for the modes this host can ACTUALLY
+    deliver (pass `measure_sandbox_modes`' available list through the
+    backend's own posture map, so a mode the kernel already ruled out is not
+    reported as a place a tool works).
+
+    Two things make a tool unusable in a mode, and both are reported the same
+    way so a reader gets one list per tool:
+
+    * a grant the mode does not confer (uv without a writable cache, gh
+      without egress), and
+    * a grant the tool needs BECAUSE OF HOW IT IS PACKAGED — a snap needs
+      `nested-confinement`, because snap-confine cannot start inside a
+      bubblewrap-confined mode (thor, run 01M03374VAKH0KHN0GDZ466NP4). This
+      is the difference between thor's uv and orin's, from one declaration.
+
+    *grant_absence_reasons* supplies the backend's own sentence for each
+    missing grant — the place a measured probe run id belongs, so the
+    briefing says why rather than only what.
+    """
+    reasons = dict(grant_absence_reasons or {})
+    measured: list[dict[str, Any]] = []
+    for spec in specs:
+        path, on_path = locate(spec.name)
+        if path is None:
+            measured.append(
+                toolchain_fact(
+                    name=spec.name,
+                    state=STATE_ABSENT,
+                    requires=spec.requires,
+                    usable_in=[],
+                    unusable_in={mode: "not installed on this host" for mode in grants},
+                )
+            )
+            continue
+
+        packaging = toolchain_packaging(path)
+        required = list(spec.requires)
+        if packaging == PACKAGING_SNAP and GRANT_NESTED_CONFINEMENT not in required:
+            required.append(GRANT_NESTED_CONFINEMENT)
+
+        usable_in: list[str] = []
+        unusable_in: dict[str, str] = {}
+        for mode, granted in grants.items():
+            missing = [grant for grant in required if grant not in granted]
+            if not missing:
+                usable_in.append(mode)
+                continue
+            unusable_in[mode] = "; ".join(
+                reasons.get(grant, f"this mode grants no {grant}") for grant in missing
+            )
+
+        measured.append(
+            toolchain_fact(
+                name=spec.name,
+                state=STATE_PRESENT if on_path else STATE_OFF_PATH,
+                path=path,
+                on_path=on_path,
+                packaging=packaging,
+                version=version(path),
+                requires=required,
+                usable_in=usable_in,
+                unusable_in=unusable_in,
+            )
+        )
+    return measured
+
+
 def harvest_commit_policy(
     *,
     preserve_on_failure: bool,
@@ -336,12 +667,19 @@ def host_block(**facts: Any) -> dict[str, Any]:
         value = facts.get(key)
         if value is None:
             continue
-        if key == "sandbox_modes_unavailable":
+        if key in ("sandbox_modes_unavailable", "dispatch_grants"):
+            # An empty map is "nothing is degraded here" / "no mode grants
+            # anything", which absence already says without inviting the
+            # reader to interpret an empty object.
             if not value:
                 continue
             host[key] = dict(value)
         elif key in ("sandbox_modes", "writable_paths"):
             host[key] = list(value)
+        elif key == "toolchains":
+            if not value:
+                continue
+            host[key] = [toolchain_fact(**fact) for fact in value]
         else:
             host[key] = value
     return host
@@ -392,3 +730,65 @@ def validate_block(block: Any) -> None:
     if not isinstance(host, Mapping):
         raise SurfaceError(f"{CAPABILITY_KEY}.host must be an object of measured facts")
     surface(host)
+
+
+def _raw_toolchain_facts(names: Sequence[str]) -> list[dict[str, Any]]:
+    """The HOST half of each named toolchain's facts: where it is, whether it
+    is on PATH, how it was packaged, what version it reports.
+
+    Deliberately no per-mode verdict: that half needs the backend's posture
+    map, which lives in a bridge's own `capabilities.py`. This is the part
+    that can be measured anywhere, by anyone, with nothing installed.
+    """
+    facts = []
+    for name in names:
+        path, on_path = locate_toolchain(name)
+        if path is None:
+            facts.append({"name": name, "state": STATE_ABSENT})
+            continue
+        facts.append(
+            {
+                "name": name,
+                "state": STATE_PRESENT if on_path else STATE_OFF_PATH,
+                "path": path,
+                "on_path": on_path,
+                "packaging": toolchain_packaging(path),
+                "version": toolchain_version(path),
+            }
+        )
+    return facts
+
+
+def _main(argv: Sequence[str]) -> int:
+    """Measure this host's toolchains with the same code the surface uses.
+
+        python3 -m <bridge>.preflight uv go gh
+        cat preflight.py | ssh <host> python3 - uv go gh
+
+    The second form is the point. A host where this bridge is not installed
+    — or is installed at a version that predates a fact — can still be
+    measured by the module that DEFINES the fact, rather than by a second
+    implementation of `which` and `readlink` in a shell script that drifts
+    from this one. `scripts/toolchain-baseline.sh` is the caller.
+    """
+    import json
+
+    names = list(argv)
+    if not names:
+        print("usage: preflight.py <toolchain> [<toolchain> ...]", file=sys.stderr)
+        return 2
+    envelope = {
+        "hostname": hostname(),
+        # The PATH this measurement searched, recorded because `on_path` is
+        # relative to it: a probe run over ssh sees a login shell's PATH,
+        # while a dispatched session inherits the bridge process's. A
+        # baseline that does not say which one it used cannot be compared.
+        "search_path": os.environ.get("PATH", ""),
+        "toolchains": _raw_toolchain_facts(names),
+    }
+    print(json.dumps(envelope, indent=2))
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(_main(sys.argv[1:]))

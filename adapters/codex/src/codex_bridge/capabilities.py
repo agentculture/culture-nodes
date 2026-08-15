@@ -37,21 +37,100 @@ SANDBOX_MODE_CANDIDATES = ("read-only", "workspace-write", "danger-full-access")
 #: everywhere.
 _REQUIRES_USERNS = ("read-only", "workspace-write")
 
+#: What each `--sandbox` mode actually GRANTS a dispatched session (issue
+#: #96). Not a preference and not read off the config: each entry is what a
+#: dispatched probe run measured on thor or orin.
+#:
+#: * `read-only` grants NOTHING. Run 01M0356BK8QYR3119R8VY1YY9Q found neither
+#:   /tmp nor the working directory writable, and run 01M039NZ2TZYFG68YZT93A6DC7
+#:   could reach neither api.github.com nor pypi.org.
+#: * `workspace-write` grants the working directory and the temporary
+#:   directory, and still no egress: codex's writable roots are cwd + TMPDIR,
+#:   and its network stays off unless a deployment turns it on.
+#: * `danger-full-access` confines nothing by definition, so it grants
+#:   everything — including `nested-confinement`, which is why a snap-packaged
+#:   binary works there and nowhere else on this backend.
+#:
+#: $HOME is deliberately absent from `workspace-write`: a tool that
+#: initialises a cache under ~/.cache fails there exactly as it does under
+#: read-only, which is the whole of run 01M0342X60F3NY8MH150G48AZ6.
+_MODE_GRANTS = {
+    "read-only": (),
+    "workspace-write": (preflight.GRANT_WORKSPACE_WRITE, preflight.GRANT_TMP_WRITE),
+    "danger-full-access": preflight.GRANTS,
+}
+
+#: Why a missing grant stops a tool, in this backend's own words, each
+#: citing the dispatched run that measured it. `measure_toolchains` puts
+#: these in the per-mode reason so a briefing says why, not only what.
+_GRANT_ABSENCE_REASONS = {
+    preflight.GRANT_NESTED_CONFINEMENT: (
+        "codex confines this mode with a bubblewrap helper, and a snap-packaged binary's own "
+        "snap-confine cannot start inside it — 'required permitted capability cap_dac_override "
+        "not found' (thor, run 01M03374VAKH0KHN0GDZ466NP4)"
+    ),
+    preflight.GRANT_HOME_WRITE: (
+        "nothing under $HOME is writable in this mode, so a tool that initialises a cache there "
+        "fails before it does any work — 'Could not create temporary file ... Read-only file "
+        "system (os error 30) at path /home/orin/.cache/uv' (orin, run "
+        "01M0342X60F3NY8MH150G48AZ6). Redirecting the cache only helps where the mode grants "
+        "some other writable root: under read-only it grants none, not even /tmp (orin, run "
+        "01M0356BK8QYR3119R8VY1YY9Q)"
+    ),
+    preflight.GRANT_NETWORK_EGRESS: (
+        "a dispatched session has no network egress in this mode, even where the same host's "
+        "login shell does: `gh auth status` over ssh on thor reports logged in while a dispatch "
+        "there could reach neither api.github.com nor pypi.org (run 01M039NZ2TZYFG68YZT93A6DC7)"
+    ),
+    preflight.GRANT_WORKSPACE_WRITE: (
+        "the working directory is not writable in this mode — 'touch: cannot touch ...: Read-only "
+        "file system' (orin, run 01M0356BK8QYR3119R8VY1YY9Q)"
+    ),
+    preflight.GRANT_TMP_WRITE: (
+        "/tmp is not writable in this mode either, so a tool cannot fall back to it (orin, run "
+        "01M0356BK8QYR3119R8VY1YY9Q)"
+    ),
+}
+
+#: The toolchains this bridge reports on: the CLI it drives, plus the three
+#: the probe runs actually tested. Adding a fourth means DECLARING what it
+#: needs — which is the point. A tool listed with no requirements is a claim
+#: that it runs in every mode this host offers, so `git` is absent here
+#: rather than listed as unconditionally fine: reading a repo and pushing to
+#: one need very different grants.
+#:
+#: `codex` itself requires nothing because it is what CREATES the sandbox —
+#: it runs as this bridge process does. Its version is here to be watched:
+#: the probe findings below are pinned to codex-cli's behaviour, so a bump
+#: changes the recorded baseline and re-opens them (`scripts/
+#: toolchain-baseline.sh check`).
+TOOLCHAINS = (
+    preflight.Toolchain("codex"),
+    preflight.Toolchain("uv", requires=(preflight.GRANT_HOME_WRITE,)),
+    preflight.Toolchain("go", requires=(preflight.GRANT_HOME_WRITE,)),
+    preflight.Toolchain("gh", requires=(preflight.GRANT_NETWORK_EGRESS,)),
+)
+
 
 def host_facts(
     cfg: Config,
     *,
     probes: Sequence[tuple[str, str]] = preflight.USERNS_SYSCTLS,
     capability_probe: Callable[[], tuple[str, str]] | None = None,
+    locate: Callable[[str], tuple[str | None, bool]] = preflight.locate_toolchain,
+    version: Callable[[str], str | None] = preflight.toolchain_version,
 ) -> dict[str, Any]:
     """Measure this host and return the `host` block for its capability
     surface.
 
-    Both measurement inputs are injectable so a test can assert both kinds
-    of kernel rather than whichever one is running the suite:
-    *capability_probe* is the executable bwrap/unshare probe that DECIDES
-    availability, and *probes* is the sysctl set read only to EXPLAIN a
-    probe that failed.
+    Every measurement input is injectable so a test can assert both kinds of
+    kernel and both kinds of host, rather than whichever one is running the
+    suite: *capability_probe* is the executable bwrap/unshare probe that
+    DECIDES sandbox availability, *probes* is the sysctl set read only to
+    EXPLAIN a probe that failed, and *locate*/*version* are how a toolchain
+    is found and asked its version — thor's snap-packaged uv and orin's
+    standalone one are both test cases here, and neither host is the one
+    running pytest.
     """
     available, unavailable = preflight.measure_sandbox_modes(
         SANDBOX_MODE_CANDIDATES,
@@ -59,12 +138,24 @@ def host_facts(
         probes=probes,
         capability_probe=capability_probe,
     )
+    # Only the modes this host can ACTUALLY deliver get a grants entry: a
+    # mode the kernel already ruled out must not be reported as a place a
+    # toolchain works.
+    grants = preflight.dispatch_grants({mode: _MODE_GRANTS[mode] for mode in available})
     return preflight.host_block(
         hostname=preflight.hostname(),
         sandbox_modes=available,
         sandbox_modes_unavailable=unavailable,
         default_sandbox_mode=cfg.default_sandbox,
         confinement=_confinement(unavailable),
+        dispatch_grants=grants,
+        toolchains=preflight.measure_toolchains(
+            TOOLCHAINS,
+            grants=grants,
+            grant_absence_reasons=_GRANT_ABSENCE_REASONS,
+            locate=locate,
+            version=version,
+        ),
         commit_policy=preflight.harvest_commit_policy(
             preserve_on_failure=cfg.preserve_on_failure,
             branch_prefix=cfg.preserve_branch_prefix,

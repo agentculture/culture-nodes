@@ -140,7 +140,7 @@ def _stub_sweep(
     monkeypatch.setattr(
         sweep, "fetch_open_pulls", lambda token, repository: [dict(p) for p in pulls]
     )
-    calls = {"sonar": [], "qodo": [], "checks": []}
+    calls = {"sonar": [], "qodo": [], "checks": [], "events": []}
 
     def fake_sonar(component, pr=None):
         calls["sonar"].append(pr)
@@ -158,7 +158,12 @@ def _stub_sweep(
 
     monkeypatch.setattr(sweep, "fetch_sonar_issues", fake_sonar)
     monkeypatch.setattr(sweep, "fetch_open_pr_comments", fake_qodo)
+    monkeypatch.setattr(sweep, "fetch_pr_comments", lambda token, repository, number: [])
     monkeypatch.setattr(sweep, "fetch_check_runs", fake_checks)
+    def fake_raise(name, payload, source_key, watermark):
+        calls["events"].append((name, payload, source_key, watermark))
+        return {"event": {"id": f"event-{len(calls['events'])}"}}
+    monkeypatch.setattr(sweep, "raise_event", fake_raise)
     return calls
 
 
@@ -193,6 +198,24 @@ class TestSonarWorkItems:
 
     def test_empty_issue_list_yields_no_items(self):
         assert sweep.sonar_work_items({"issues": []}) == []
+
+
+def test_pr_watermark_uses_latest_comment_timestamp():
+    comments = [
+        {"created_at": "2026-08-14T01:00:00Z"},
+        {"updated_at": "2026-08-15T02:00:00Z"},
+    ]
+    assert sweep.newest_comment_timestamp(comments) == "2026-08-15T02:00:00Z"
+
+
+def test_jira_watermark_carries_issue_and_comment_positions():
+    issue = {"fields": {"updated": "2026-08-15T03:00:00Z", "comment": {"comments": [
+        {"updated_at": "2026-08-15T02:00:00Z"}
+    ]}}}
+    assert sweep.jira_watermark(issue) == {
+        "updated_at": "2026-08-15T03:00:00Z",
+        "newest_comment_at": "2026-08-15T02:00:00Z",
+    }
 
 
 class TestQodoFindings:
@@ -298,15 +321,6 @@ class TestPrioritise:
         assert all(item["source"] == "qodo" for item in items)
         assert all(item["pr"] == 35 for item in items)
         assert items[0]["id"] == "pr35-qodo-1"
-
-    def test_report_encodes_the_exit_code_contract(self, sonar_payload):
-        items = sweep.sonar_work_items(sonar_payload)
-        report = sweep.build_report(items, sweep.selected_repository())
-        assert report["count"] == 4
-        assert report["items"][0]["severity"] == "BLOCKER"
-        assert sweep.exit_code_for(items) == 0
-        assert sweep.exit_code_for([]) == sweep.EXIT_EMPTY
-
 
 class TestJiraWorkItems:
     """Issue #76 acceptance is recorded-fixture-only; the live backlog is empty."""
@@ -471,11 +485,11 @@ class TestMaxPrsPerSweepCap:
         exit_code = sweep.main()
 
         # Sorted ascending, capped at 2: 35 and 42 swept, 70 dropped — and
-        # ALL THREE per-PR sources honour the same swept set.
-        assert calls["sonar"] == [None, 35, 42]
-        assert calls["qodo"] == [[35, 42]]
+        # Every per-PR source honours the same swept set.
+        assert calls["sonar"] == [35, 42]
         assert calls["checks"] == ["sha35", "sha42"]
-        assert exit_code == 0  # the main-branch fixture still has 4 items
+        assert [event[1]["number"] for event in calls["events"]] == [35, 42]
+        assert exit_code == 0
 
         stderr = capsys.readouterr().err
         assert "1 open PR(s)" in stderr
@@ -494,7 +508,6 @@ class TestMaxPrsPerSweepCap:
 
         sweep.main()
         assert capsys.readouterr().err == ""
-        assert sweep.EXIT_EMPTY == 10
 
     def test_a_pr_with_no_head_sha_is_skipped_loudly_not_silently(
         self, monkeypatch, capsys, sonar_payload
@@ -719,6 +732,10 @@ class TestTheSweptRepoIsDeploymentGrantedAndSaysSo:
         # are never copied into a report, argv, fixture, or diagnostic.
         "JIRA_ACCOUNT_EMAIL",
         "JIRA_API_TOKEN",
+        # Safe: these identify and authenticate the one control-plane event
+        # ingress; they cannot redirect a source credential to another repo.
+        "NODES_API_URL",
+        "NODES_EVENT_TOKEN",
         "PR_UPKEEP_MAX_PRS_PER_SWEEP",
         # Safe: this value is supplied by the trusted deployment, not run
         # input. It is the closed ordered repo/component set and cycle index,
@@ -816,25 +833,25 @@ class TestTheSweptRepoIsDeploymentGrantedAndSaysSo:
             assert ref in readme, f"the README never names the granted value {ref}"
 
 
-class TestExitCodeBranches:
-    """The routable domain fact is the exit code — triage reads nothing else
-    (a code node's persisted output is runner metadata, not stdout)."""
+class TestEmitterMain:
+    """The sweep reports findings only through durable events."""
 
     def test_work_found_exits_zero(self, monkeypatch, capsys, sonar_payload):
-        _stub_sweep(
+        calls = _stub_sweep(
             monkeypatch,
             pulls=[{"number": 35, "head_sha": "sha35"}],
             sonar_main=sonar_payload,
         )
         assert sweep.main() == 0
         report = json.loads(capsys.readouterr().out)
-        assert report["count"] == 4
+        assert report["emitted"] == 1
+        assert calls["events"][0][0] == "pr-upkeep.pr"
 
     def test_a_check_failure_alone_is_enough_to_exit_zero(self, monkeypatch, capsys):
         # The whole point of issue #61: with both older sources silent, a red
         # required check still routes the loop to `fix` instead of `backoff`.
         payload = json.loads((FIXTURES / "github-check-runs-pr60.json").read_text())
-        _stub_sweep(
+        calls = _stub_sweep(
             monkeypatch,
             pulls=[{"number": 60, "head_sha": "sha60"}],
             sonar_main={"issues": []},
@@ -842,10 +859,11 @@ class TestExitCodeBranches:
         )
         assert sweep.main() == 0
         report = json.loads(capsys.readouterr().out)
-        assert report["count"] == 1
-        assert report["items"][0]["source"] == "github-check"
-        assert report["items"][0]["check"] == "lint"
-        assert report["items"][0]["pr"] == 60
+        assert report["emitted"] == 1
+        finding = calls["events"][0][1]["findings"][0]
+        assert finding["source"] == "github-check"
+        assert finding["check"] == "lint"
+        assert finding["pr"] == 60
 
     def test_recorded_jira_item_surfaces_from_a_fixture_sweep_run(
         self, monkeypatch, capsys, jira_payload
@@ -868,7 +886,7 @@ class TestExitCodeBranches:
         )
         monkeypatch.setenv("JIRA_ACCOUNT_EMAIL", "robot@example.com")
         monkeypatch.setenv("JIRA_API_TOKEN", "fixture-token")
-        _stub_sweep(monkeypatch, pulls=[], sonar_main={"issues": []})
+        calls = _stub_sweep(monkeypatch, pulls=[], sonar_main={"issues": []})
         monkeypatch.setattr(
             sweep,
             "fetch_jira_issues",
@@ -877,20 +895,19 @@ class TestExitCodeBranches:
 
         assert sweep.main() == 0
         report = json.loads(capsys.readouterr().out)
-        assert report["github_repo"] == "owner.example/repo"
-        assert report["count"] == 1
-        assert report["items"][0]["source"] == "jira"
-        assert report["items"][0]["id"] == "EX-17"
+        assert report["emitted"] == 1
+        assert calls["events"][0][0] == "pr-upkeep.jira"
+        assert calls["events"][0][1]["id"] == "EX-17"
 
-    def test_a_clean_empty_sweep_exits_ten(self, monkeypatch, capsys):
+    def test_a_clean_pr_still_emits_its_new_head(self, monkeypatch, capsys):
         _stub_sweep(
             monkeypatch,
             pulls=[{"number": 35, "head_sha": "sha35"}],
             sonar_main={"issues": []},
         )
-        assert sweep.main() == sweep.EXIT_EMPTY == 10
+        assert sweep.main() == 0
         report = json.loads(capsys.readouterr().out)
-        assert report["count"] == 0  # still a well-formed report, just empty
+        assert report["emitted"] == 1
 
     def test_a_broken_sweep_exits_neither_zero_nor_empty(self, monkeypatch, capsys):
         _stub_sweep(
@@ -900,7 +917,6 @@ class TestExitCodeBranches:
             check_runs_error=urllib.error.URLError("check-runs unreachable"),
         )
         exit_code = sweep.main()
-        assert exit_code not in (0, sweep.EXIT_EMPTY)
         assert exit_code == 1
         captured = capsys.readouterr()
         assert "sweep failed" in captured.err

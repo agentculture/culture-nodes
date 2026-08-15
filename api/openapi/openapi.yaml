@@ -2643,6 +2643,12 @@ components:
         emitter:
           type: string
           description: Free text naming who emitted the fact (an actor ref, a node id, an external system). Attribution for operators, never an authority claim (PRD §10.4) — an inbound event is actor-reported information, not observed evidence. Defaults to `external`.
+        source_key:
+          type: string
+          description: Stable emitter-owned identity whose watermark suppresses duplicate deliveries. Must be supplied with watermark.
+        watermark:
+          type: object
+          description: Opaque per-source position. An exact repeat for source_key returns the original event without delivering it again.
 
     SignalEvent:
       type: object
@@ -2711,6 +2717,9 @@ components:
                 description: '"guard", "run_terminal", or the loop bound that had no headroom (max_parallel_tokens, max_visits_per_node, max_transitions).'
               detail:
                 type: string
+        duplicate:
+          type: boolean
+          description: True when source_key and watermark already named a recorded event; resumed and picked_up are then empty.
 
     DecideHumanTaskRequest:
       type: object

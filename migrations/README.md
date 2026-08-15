@@ -157,6 +157,10 @@ Numbered SQL migrations for the authoritative PostgreSQL store (prd-spec
   report twice. Both columns are NULL on every ordinary dispatch, so the
   index constrains only rows a binary that knows about it writes — an N-1
   binary's INSERT cannot start failing under it.
+- `0030_signal_event_watermarks.sql` — expand-only: durable per-source
+  cursors for external emitters. Cursor comparison and advancement run in
+  `DeliverSignalEvent`'s existing `signal_events` transaction, so a repeated
+  discovery returns its original fact without firing handlers again.
 
 - `0022_dispatch_rate_state.sql` — expand-only: adds the mutable
   `dispatch_rate_state` table (task t10 of the economy-discord-graphs plan,

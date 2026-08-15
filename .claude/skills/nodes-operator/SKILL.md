@@ -48,7 +48,7 @@ same origin). Requires `bash`, `curl`, `python3` (+PyYAML for
 | `cancel <id>` | cancel: reaps work items, best-effort Cancels in-flight sessions |
 | `grade <run-id> --rating N --notes "..." [--actor ID] [--as ID] [--category C]` | grade a run against an actor (1-5 rating + rationale, issue #28 item 1) |
 | `assign <actor> "instruction" [opts] --yes` | the headline: one-node workflow → publish → run → watch |
-| `actors` | registered actor rows (the one verb needing `ssh thor`) |
+| `actors` | registered actor rows, read over the API (no `ssh`) |
 
 ## `assign` — delegate one task to one actor
 

@@ -5,8 +5,7 @@
 #
 # API resolution: $NODES_API_URL, else ~/.culture-nodes/operator.env's
 # NODES_API_URL line, else the thor production default. Everything speaks
-# the public v1alpha1 HTTP surface — no psql, no ssh, except the `actors`
-# verb which documents its ssh dependency inline.
+# the public v1alpha1 HTTP surface — no psql, no ssh, no exceptions.
 #
 # Billable guard: `assign` and `create` dispatch real agent sessions.
 # They refuse without --yes (or NODES_OP_YES=1) so a casual invocation
@@ -49,7 +48,7 @@ usage: nodes-op.sh <verb> [args]
             --category C                           (optional run category tag)
             --no-watch                             (create and return the run id)
             --yes                                  (required: this bills a session)
-  actors                       registered actors (requires `ssh thor`)
+  actors                       registered actor rows, over the API (no ssh)
 
 Actors known to `assign`:
   codex-thor, codex-orin   codex bridges on thor/orin. Cross-machine, separate
@@ -337,9 +336,16 @@ PYEOF
   [ "$watch" = "1" ] && "$0" watch "$run_id"
   ;;
 actors)
-  # Reads the registry through thor's compose psql — the one verb that
-  # needs the `ssh thor` alias (registration itself stays register-actor.sh).
-  ssh thor 'cd culture-nodes-prod/deploy/prod && docker compose --env-file ~/.culture-nodes/prod.env -f compose.thor.yml exec -T postgres psql -U nodes -d nodes -Atc "SELECT actor_key, revision, endpoint_ref FROM actors ORDER BY actor_key, revision"'
+  # Reads the registry over the public API. This used to shell out to thor's
+  # compose psql and was the ONE verb in this skill needing an `ssh thor`
+  # alias; stage-1 verification (run 01M03BV3DYNB9N7J1Q1RJ55HNB) established
+  # that GET /v1alpha1/actors already returns actor_key, revision AND
+  # endpoint_ref, so the ssh path was answering a question the API answers.
+  # Registration itself still goes through register-actor.sh.
+  api_get /v1alpha1/actors | py 'import json,sys
+rows = json.load(sys.stdin).get("items", [])
+for r in sorted(rows, key=lambda r: (r.get("actor_key",""), r.get("revision",0))):
+    print("|".join([str(r.get("actor_key","")), str(r.get("revision","")), str(r.get("endpoint_ref") or "")]))'
   ;;
 *)
   usage

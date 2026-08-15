@@ -43,6 +43,12 @@ else
   comment+=$(printf '\nTest path: `%s`\n\nCommand: `%s`\n' "$test_path" "$test_command")
 fi
 
+# Every post made on the user's behalf is signed so a reader can tell it was
+# written by an AI assistant. The nick resolves from culture.yaml, matching
+# what the cicd skill's pr-reply.sh does for PR comments.
+nick=$(sed -n 's/^[[:space:]-]*suffix:[[:space:]]*//p' "$(git rev-parse --show-toplevel)/culture.yaml" 2>/dev/null | head -1)
+comment+=$(printf '\n\n- %s (Claude)\n' "${nick:-culture-nodes}")
+
 # One command carries both the mandatory comment and closure. Do not replace
 # this with a bare `gh issue close` call.
 gh issue close "$issue" --repo "$repo" --reason completed --comment "$comment"

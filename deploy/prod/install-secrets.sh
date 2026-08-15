@@ -346,6 +346,32 @@ else
   echo "$HUMAN_INBOX_ACTOR_KEY does not resolve in the actor registry at $NODES_API_URL — skipping the human-inbox bridge secret rather than installing it on a guessed host. Register the actor (deploy/prod/register-actor.sh) and re-run, or set HUMAN_INBOX_HOST=<address> to bootstrap a host before its actor row exists" >&2
 fi
 
+# --- bridge git-push credential, relayed not minted -----------------------
+# GITHUB_TOKEN_WORKER is externally issued and deliberately distinct from
+# the human-inbox tracker's read-only GITHUB_TOKEN above.  It is relayed only
+# when the operator exported it into this script's environment.  The target
+# is the host serving company/developer according to the actor registry: the
+# registration, not a hostname declaration, is authoritative (issue #72).
+CLAUDE_PUSH_ACTOR_KEY=${CLAUDE_PUSH_ACTOR_KEY:-company/developer}
+install_bridge_push_env() { # host
+  local host=$1
+  [ -n "${GITHUB_TOKEN_WORKER:-}" ] || {
+    echo "GITHUB_TOKEN_WORKER not set in this script's own environment — skipping bridge push credential relay" >&2
+    return 0
+  }
+  printf 'GITHUB_TOKEN_WORKER=%s\n' "$GITHUB_TOKEN_WORKER" \
+    | actor_host_exec "$host" 'umask 077; mkdir -p ~/.culture-nodes; cat > ~/.culture-nodes/bridge-push.env; chmod 600 ~/.culture-nodes/bridge-push.env'
+  echo "installed mode-600 ~/.culture-nodes/bridge-push.env on the registered $CLAUDE_PUSH_ACTOR_KEY host"
+}
+
+CLAUDE_PUSH_REGISTRATION=$(actor_registration "$CLAUDE_PUSH_ACTOR_KEY") || CLAUDE_PUSH_REGISTRATION=""
+if [ -n "$CLAUDE_PUSH_REGISTRATION" ]; then
+  CLAUDE_PUSH_TARGET=$(endpoint_address "$(printf '%s' "$CLAUDE_PUSH_REGISTRATION" | cut -d'|' -f3)")
+  install_bridge_push_env "$CLAUDE_PUSH_TARGET"
+else
+  echo "$CLAUDE_PUSH_ACTOR_KEY does not resolve in the actor registry at $NODES_API_URL — skipping GITHUB_TOKEN_WORKER rather than installing it on a guessed host" >&2
+fi
+
 # --- notify actor bridge bearer token (issue #68) -------------------------
 #
 # The notify bridge is a kind=agent actor the worker dispatches to, so the

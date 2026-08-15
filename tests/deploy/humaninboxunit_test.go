@@ -1,7 +1,7 @@
 // Package deploytest (see compose_test.go's doc comment for the package's
 // purpose). This file is task t34's: definition tests for
-// deploy/prod/human-inbox-bridge.service and
-// deploy/prod/human-inbox-tracker.service, the two systemd user units
+// deploy/prod/culture-nodes-human-inbox.service and
+// deploy/prod/culture-nodes-human-inbox-tracker.service, the two systemd user units
 // that run adapters/human-inbox's bridge server and its GitHub merge
 // tracker as host-resident processes beside codex-bridge.service. Modeled
 // on codexbridgeunit_test.go's own style: parse the real files, assert
@@ -60,7 +60,7 @@ func (uf humanInboxUnitFile) first(key string) (string, bool) {
 	return vals[0], true
 }
 
-// --- human-inbox-bridge.service ---------------------------------------
+// --- culture-nodes-human-inbox.service ---------------------------------------
 
 // assertNotRunFromAgentCheckout is the regression guard for a live incident.
 //
@@ -90,47 +90,51 @@ func assertNotRunFromAgentCheckout(t *testing.T, unit, execStart string) {
 }
 
 func TestHumanInboxBridgeUnitRunsAnInstalledConsoleScript(t *testing.T) {
-	uf := loadHumanInboxUnitFile(t, "human-inbox-bridge.service")
+	uf := loadHumanInboxUnitFile(t, "culture-nodes-human-inbox.service")
 
 	execStart, ok := uf.first("ExecStart")
 	if !ok {
-		t.Fatal("human-inbox-bridge.service declares no ExecStart=")
+		t.Fatal("culture-nodes-human-inbox.service declares no ExecStart=")
 	}
-	assertNotRunFromAgentCheckout(t, "human-inbox-bridge.service", execStart)
+	assertNotRunFromAgentCheckout(t, "culture-nodes-human-inbox.service", execStart)
 	if !strings.Contains(execStart, "human-inbox-bridge serve") {
 		t.Errorf("ExecStart=%q does not invoke the `human-inbox-bridge serve` console script", execStart)
 	}
 }
 
 func TestHumanInboxBridgeUnitCarriesTokenOnlyViaEnvironmentFile(t *testing.T) {
-	uf := loadHumanInboxUnitFile(t, "human-inbox-bridge.service")
+	uf := loadHumanInboxUnitFile(t, "culture-nodes-human-inbox.service")
 
 	envFiles := uf.values["EnvironmentFile"]
 	if len(envFiles) == 0 {
-		t.Fatal("human-inbox-bridge.service declares no EnvironmentFile=")
+		t.Fatal("culture-nodes-human-inbox.service declares no EnvironmentFile=")
 	}
 	joined := strings.Join(envFiles, " ")
 	if !strings.Contains(joined, "human-inbox.env") {
 		t.Errorf("EnvironmentFile directives %v do not reference human-inbox.env (the secret file install-secrets.sh writes)", envFiles)
 	}
-	if !strings.Contains(joined, "human-inbox-bridge.env") {
-		t.Errorf("EnvironmentFile directives %v do not reference human-inbox-bridge.env (the non-secret config file deploy.sh writes)", envFiles)
+	// human-inbox-bridge.env is superseded by the JSON config the canonical unit
+	// points at (decision c26); only the SECRET file is still required here.
+	// A non-secret Environment= pointer is allowed (the canonical unit names its
+	// JSON config that way, decision c26); assertNoTokenLiteral below is what
+	// actually enforces "no secret in the unit file".
+	for _, env := range uf.values["Environment"] {
+		if !strings.HasPrefix(env, "HUMAN_INBOX_BRIDGE_CONFIG=") {
+			t.Errorf("culture-nodes-human-inbox.service declares Environment=%q; only the non-secret config pointer may ride a literal Environment= line", env)
+		}
 	}
-	if _, ok := uf.values["Environment"]; ok {
-		t.Error("human-inbox-bridge.service declares a literal Environment= line; secrets must ride EnvironmentFile only")
-	}
-	assertNoTokenLiteral(t, "human-inbox-bridge.service", uf.raw)
+	assertNoTokenLiteral(t, "culture-nodes-human-inbox.service", uf.raw)
 }
 
 func TestHumanInboxBridgeUnitAlwaysRestarts(t *testing.T) {
-	uf := loadHumanInboxUnitFile(t, "human-inbox-bridge.service")
+	uf := loadHumanInboxUnitFile(t, "culture-nodes-human-inbox.service")
 
 	restart, ok := uf.first("Restart")
 	if !ok || restart != "always" {
 		t.Errorf("Restart=%q, want %q (a long-running server the operator wants back regardless of exit reason)", restart, "always")
 	}
 	if _, ok := uf.first("RestartSec"); !ok {
-		t.Error("human-inbox-bridge.service declares Restart= but no RestartSec=; a bare Restart=always with no backoff can hot-loop")
+		t.Error("culture-nodes-human-inbox.service declares Restart= but no RestartSec=; a bare Restart=always with no backoff can hot-loop")
 	}
 	wantedBy, ok := uf.first("WantedBy")
 	if !ok || !strings.Contains(wantedBy, "default.target") {
@@ -138,14 +142,14 @@ func TestHumanInboxBridgeUnitAlwaysRestarts(t *testing.T) {
 	}
 }
 
-// --- human-inbox-tracker.service ---------------------------------------
+// --- culture-nodes-human-inbox-tracker.service ---------------------------------------
 
 func TestHumanInboxTrackerUnitRunsTrackerModuleContinuously(t *testing.T) {
-	uf := loadHumanInboxUnitFile(t, "human-inbox-tracker.service")
+	uf := loadHumanInboxUnitFile(t, "culture-nodes-human-inbox-tracker.service")
 
 	execStart, ok := uf.first("ExecStart")
 	if !ok {
-		t.Fatal("human-inbox-tracker.service declares no ExecStart=")
+		t.Fatal("culture-nodes-human-inbox-tracker.service declares no ExecStart=")
 	}
 	if !strings.Contains(execStart, "human-inbox-tracker") {
 		t.Errorf("ExecStart=%q does not invoke the `human-inbox-tracker` console script", execStart)
@@ -157,7 +161,7 @@ func TestHumanInboxTrackerUnitRunsTrackerModuleContinuously(t *testing.T) {
 	if strings.Contains(execStart, "--once") {
 		t.Errorf("ExecStart=%q passes --once; task t34 chose a persistent unit (the tracker's own internal poll loop), not a --once timer", execStart)
 	}
-	assertNotRunFromAgentCheckout(t, "human-inbox-tracker.service", execStart)
+	assertNotRunFromAgentCheckout(t, "culture-nodes-human-inbox-tracker.service", execStart)
 }
 
 // TestTrackerConsoleScriptIsDeclared closes the loop the unit alone cannot:
@@ -177,7 +181,7 @@ func TestTrackerConsoleScriptIsDeclared(t *testing.T) {
 }
 
 func TestHumanInboxTrackerUnitIsPersistentNotATimer(t *testing.T) {
-	path := filepath.Join(codexBridgeDir(t), "human-inbox-tracker.service")
+	path := filepath.Join(codexBridgeDir(t), "culture-nodes-human-inbox-tracker.service")
 	if _, err := os.Stat(path); err != nil {
 		t.Fatalf("expected %s to exist as a persistent systemd unit: %v", path, err)
 	}
@@ -188,7 +192,7 @@ func TestHumanInboxTrackerUnitIsPersistentNotATimer(t *testing.T) {
 		t.Errorf("found %s: task t34 chose a persistent Restart=always unit, not a systemd timer wrapping --once", timerPath)
 	}
 
-	uf := loadHumanInboxUnitFile(t, "human-inbox-tracker.service")
+	uf := loadHumanInboxUnitFile(t, "culture-nodes-human-inbox-tracker.service")
 	restart, ok := uf.first("Restart")
 	if !ok || restart != "always" {
 		t.Errorf("Restart=%q, want %q for the persistent-unit shape", restart, "always")
@@ -196,20 +200,22 @@ func TestHumanInboxTrackerUnitIsPersistentNotATimer(t *testing.T) {
 }
 
 func TestHumanInboxTrackerUnitCarriesSecretsOnlyViaEnvironmentFile(t *testing.T) {
-	uf := loadHumanInboxUnitFile(t, "human-inbox-tracker.service")
+	uf := loadHumanInboxUnitFile(t, "culture-nodes-human-inbox-tracker.service")
 
 	envFiles := uf.values["EnvironmentFile"]
 	if len(envFiles) == 0 {
-		t.Fatal("human-inbox-tracker.service declares no EnvironmentFile=")
+		t.Fatal("culture-nodes-human-inbox-tracker.service declares no EnvironmentFile=")
 	}
 	joined := strings.Join(envFiles, " ")
 	if !strings.Contains(joined, "human-inbox.env") {
 		t.Errorf("EnvironmentFile directives %v do not reference human-inbox.env (carries HUMAN_INBOX_BRIDGE_AUTH_TOKEN and optional GITHUB_TOKEN)", envFiles)
 	}
-	if _, ok := uf.values["Environment"]; ok {
-		t.Error("human-inbox-tracker.service declares a literal Environment= line; secrets must ride EnvironmentFile only")
+	for _, env := range uf.values["Environment"] {
+		if !strings.HasPrefix(env, "HUMAN_INBOX_BRIDGE_CONFIG=") {
+			t.Errorf("culture-nodes-human-inbox-tracker.service declares Environment=%q; only the non-secret config pointer may ride a literal Environment= line", env)
+		}
 	}
-	assertNoTokenLiteral(t, "human-inbox-tracker.service", uf.raw)
+	assertNoTokenLiteral(t, "culture-nodes-human-inbox-tracker.service", uf.raw)
 }
 
 // TestHumanInboxUnitsDeclareNoHost is task t10's pin on the unit files.
@@ -223,7 +229,7 @@ func TestHumanInboxTrackerUnitCarriesSecretsOnlyViaEnvironmentFile(t *testing.T)
 func TestHumanInboxUnitsDeclareNoHost(t *testing.T) {
 	// Whole words only: "mirroring" is not a claim about a host.
 	hostWord := regexp.MustCompile(`(?i)\b(thor|orin)\b`)
-	for _, filename := range []string{"human-inbox-bridge.service", "human-inbox-tracker.service"} {
+	for _, filename := range []string{"culture-nodes-human-inbox.service", "culture-nodes-human-inbox-tracker.service"} {
 		uf := loadHumanInboxUnitFile(t, filename)
 		if m := hostWord.FindString(uf.raw); m != "" {
 			t.Errorf("%s names the host %q; the unit is installed wherever the actor's registered endpoint says, so a host name here is a claim nothing keeps true", filename, m)
@@ -232,10 +238,10 @@ func TestHumanInboxUnitsDeclareNoHost(t *testing.T) {
 }
 
 func TestHumanInboxTrackerUnitWantsTheBridgeUnit(t *testing.T) {
-	uf := loadHumanInboxUnitFile(t, "human-inbox-tracker.service")
+	uf := loadHumanInboxUnitFile(t, "culture-nodes-human-inbox-tracker.service")
 
 	after, ok := uf.first("After")
-	if !ok || !strings.Contains(after, "human-inbox-bridge.service") {
-		t.Errorf("After=%q does not include human-inbox-bridge.service; the tracker submits to the sibling bridge and should order after it", after)
+	if !ok || !strings.Contains(after, "culture-nodes-human-inbox.service") {
+		t.Errorf("After=%q does not include culture-nodes-human-inbox.service; the tracker submits to the sibling bridge and should order after it", after)
 	}
 }

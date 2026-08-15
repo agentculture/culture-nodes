@@ -2671,7 +2671,7 @@ components:
 
     EventDeliveryResult:
       type: object
-      required: [event, resumed]
+      required: [event, resumed, picked_up, triggered]
       properties:
         event:
           $ref: '#/components/schemas/SignalEvent'
@@ -2717,9 +2717,20 @@ components:
                 description: '"guard", "run_terminal", or the loop bound that had no headroom (max_parallel_tokens, max_visits_per_node, max_transitions).'
               detail:
                 type: string
+        triggered:
+          type: array
+          description: Matching workflow-level handlers that created runs from this event. Empty means no newest published workflow version matched; the event is still recorded.
+          items:
+            type: object
+            required: [workflow_digest, run_id]
+            properties:
+              workflow_digest:
+                type: string
+              run_id:
+                type: string
         duplicate:
           type: boolean
-          description: True when source_key and watermark already named a recorded event; resumed and picked_up are then empty.
+          description: True when source_key and watermark already named a recorded event; resumed, picked_up, and triggered are then empty.
 
     DecideHumanTaskRequest:
       type: object

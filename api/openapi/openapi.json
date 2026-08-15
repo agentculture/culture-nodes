@@ -949,7 +949,7 @@
       "EventDeliveryResult": {
         "properties": {
           "duplicate": {
-            "description": "True when source_key and watermark already named a recorded event; resumed and picked_up are then empty.",
+            "description": "True when source_key and watermark already named a recorded event; resumed, picked_up, and triggered are then empty.",
             "type": "boolean"
           },
           "event": {
@@ -1017,11 +1017,32 @@
               "type": "object"
             },
             "type": "array"
+          },
+          "triggered": {
+            "description": "Matching workflow-level handlers that created runs from this event. Empty means no newest published workflow version matched; the event is still recorded.",
+            "items": {
+              "properties": {
+                "run_id": {
+                  "type": "string"
+                },
+                "workflow_digest": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "workflow_digest",
+                "run_id"
+              ],
+              "type": "object"
+            },
+            "type": "array"
           }
         },
         "required": [
           "event",
-          "resumed"
+          "resumed",
+          "picked_up",
+          "triggered"
         ],
         "type": "object"
       },

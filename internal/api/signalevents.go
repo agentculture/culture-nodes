@@ -8,6 +8,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/agentculture/culture-nodes/internal/engine"
 	"github.com/agentculture/culture-nodes/internal/store/postgres"
 )
 
@@ -110,6 +111,7 @@ type EventDeliveryOut struct {
 	Event     SignalEventOut           `json:"event"`
 	Resumed   []ResumedSubscriptionOut `json:"resumed"`
 	PickedUp  []EventPickupOut         `json:"picked_up"`
+	Triggered []engine.TriggeredRun    `json:"triggered"`
 	Duplicate bool                     `json:"duplicate,omitempty"`
 }
 
@@ -153,6 +155,7 @@ func (s *Server) handleDeliverEvent(w http.ResponseWriter, r *http.Request) erro
 		Emitter:     emitter,
 		RunID:       req.RunID,
 		Pickup:      s.Engine,
+		Trigger:     s.Engine,
 		SourceKey:   req.SourceKey,
 		Watermark:   req.Watermark,
 	})
@@ -172,8 +175,10 @@ func (s *Server) handleDeliverEvent(w http.ResponseWriter, r *http.Request) erro
 		},
 		Resumed:   make([]ResumedSubscriptionOut, 0, len(delivery.Fired)),
 		PickedUp:  make([]EventPickupOut, 0, len(delivery.Pickups)),
+		Triggered: make([]engine.TriggeredRun, 0, len(delivery.Triggered)),
 		Duplicate: delivery.Duplicate,
 	}
+	out.Triggered = append(out.Triggered, delivery.Triggered...)
 	for _, sub := range delivery.Fired {
 		out.Resumed = append(out.Resumed, ResumedSubscriptionOut{
 			SubscriptionID: sub.ID,

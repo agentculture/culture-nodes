@@ -152,6 +152,19 @@
           "$ref": "#/$defs/name",
           "description": "Name of the node a run starts at. That the name exists in `nodes` is a graph-level check performed by the compiler."
         },
+        "triggers": {
+          "type": "array",
+          "description": "Inbound event handlers that create a new run. The event payload is the run input.",
+          "items": {
+            "type": "object",
+            "required": ["onEvent"],
+            "additionalProperties": false,
+            "properties": {
+              "onEvent": {"type": "string", "minLength": 1},
+              "when": {"$ref": "#/$defs/cel", "description": "Optional CEL condition evaluated with event ({name, payload, emitter})."}
+            }
+          }
+        },
         "contract": {
           "type": "object",
           "required": [

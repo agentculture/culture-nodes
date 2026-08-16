@@ -54,3 +54,8 @@
 01M04F99A88BMY1YPAS5D7WVN7   # t32 (repair loop + deployed revision), developer
 01M04FCDSB2KFSX3M1HK2YWVA6   # t33 (upkeep schedule + affinity), planner
 01M04FX4B93JKP936ZM800838C   # t23 authoring half (decision + rollback + code), codex-orin
+
+# --- round 11: the loop, live against production (control plane 431528d) ---
+01M04K4TZVYFQX3W9M9SGTTWK3   # t23 criterion 2 — dispatch to a bridge held at no address; COMPLETED
+01M04P8DGCX33AFTBQXX1SJR2Y   # loop test 1 — event->trigger->run->dispatch; failed on #125 (input.instruction)
+01M04Q26ZPNKTXVNBGSDS1YR9F   # loop test 2 — after the instruction fix; failed on #125's repo half (2-lane bridge)

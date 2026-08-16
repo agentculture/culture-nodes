@@ -242,27 +242,41 @@ func TestDeploymentSettingsRefuseAMissingPostgresPasswordByName(t *testing.T) {
 	}
 
 	for _, host := range []string{"thor", "orin"} {
-		path := c.prodEnvPath(t, host)
-		env := readEnvFile(t, path)
-		env.assertNoDuplicateKeys(t, path)
-
-		if got, present := env.values["NODES_DATABASE_URL"]; present {
-			t.Errorf("%s: NODES_DATABASE_URL = %q was written with no password to compose it from; a URL that authenticates as nobody reads as configured to everything that greps for the key", host, got)
-		}
-		if strings.Contains(env.raw, "postgres://nodes:@") {
-			t.Errorf("%s: prod.env carries a URL with an empty password:\n%s", host, env.raw)
-		}
-		// The settings that do NOT depend on the password still arrive.
-		if got := env.values["DATABASE_SSLMODE"]; got != "disable" {
-			t.Errorf("%s: DATABASE_SSLMODE = %q — one unsatisfiable key must not take the rest of the lane's settings with it", host, got)
-		}
-		// …and so do the LATER lanes, which is why the refusal is not fatal.
-		if _, present := env.values["NODES_ACTOR_CODEX_THOR_TOKEN"]; !present {
-			t.Errorf("%s: the codex-bridge lane never ran — the refusal stopped the script instead of continuing past it", host)
-		}
+		assertRefusalCostOnlyTheURL(t, c, host)
 	}
 	if got := readEnvFile(t, c.prodEnvPath(t, "thor")).values["COMPOSE_PROFILES"]; got != "bundled-postgres,backup" {
 		t.Errorf("thor: COMPOSE_PROFILES = %q, want the thor-only profile list delivered despite the refused URL", got)
+	}
+}
+
+// assertRefusalCostOnlyTheURL checks one host's prod.env after the lane refused
+// to compose NODES_DATABASE_URL: the URL is absent (never present-but-empty),
+// and everything that did not depend on the missing password still arrived —
+// both this lane's other settings and the LATER lanes of the script.
+//
+// Extracted from the test body rather than inlined twice: the per-host block
+// carries four distinct assertions, and nesting them inside the host loop put
+// the test over the cognitive-complexity limit. Naming the block also names
+// what it is checking, which the loop did not.
+func assertRefusalCostOnlyTheURL(t *testing.T, c *fakeCluster, host string) {
+	t.Helper()
+	path := c.prodEnvPath(t, host)
+	env := readEnvFile(t, path)
+	env.assertNoDuplicateKeys(t, path)
+
+	if got, present := env.values["NODES_DATABASE_URL"]; present {
+		t.Errorf("%s: NODES_DATABASE_URL = %q was written with no password to compose it from; a URL that authenticates as nobody reads as configured to everything that greps for the key", host, got)
+	}
+	if strings.Contains(env.raw, "postgres://nodes:@") {
+		t.Errorf("%s: prod.env carries a URL with an empty password:\n%s", host, env.raw)
+	}
+	// The settings that do NOT depend on the password still arrive.
+	if got := env.values["DATABASE_SSLMODE"]; got != "disable" {
+		t.Errorf("%s: DATABASE_SSLMODE = %q — one unsatisfiable key must not take the rest of the lane's settings with it", host, got)
+	}
+	// …and so do the LATER lanes, which is why the refusal is not fatal.
+	if _, present := env.values["NODES_ACTOR_CODEX_THOR_TOKEN"]; !present {
+		t.Errorf("%s: the codex-bridge lane never ran — the refusal stopped the script instead of continuing past it", host)
 	}
 }
 

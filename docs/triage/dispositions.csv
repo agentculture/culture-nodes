@@ -56,3 +56,5 @@ issue,bucket,disposition,evidence_pointer
 124,operator-lane enablers,"run the credential audit before compose up, and give a newly-required key a derivation","deploy of 431528d failed on NODES_DATABASE_URL absent from a prod.env that predates t15"
 121,finish work,"apply migration 0036 after the dial-in cutover; it is written and deliberately held unapplied","t24 landed partial; merging it into the applied sequence dropped endpoint_ref and failed 14 tests"
 125,bug tail,"decide where repo comes from for a multi-lane bridge: a dedicated single-lane actor, or actor-registry metadata","instruction half closed in d7c6677; run 01M04Q26ZPNKTXVNBGSDS1YR9F still blocked on the developer bridge's two allowlist entries"
+126,bug tail,"make the two timing-sensitive tests deterministic, or measure and record the rate — never add a retry","TestChaosDroppedSendRepairedByOutboxRelay failed CI run 31933801167; 8 consecutive local passes"
+127,operator-lane enablers,"reconcile prod to a merged revision after #122, and close out the two by-hand prod.env edits","thor runs 431528d from an unmerged branch; NODES_DATABASE_URL and NODES_EVENT_TOKEN_SECRET added by hand"

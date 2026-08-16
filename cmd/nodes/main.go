@@ -51,6 +51,9 @@ Plan import:
 Decompose pipeline:
   chain-verify       check a run's claim/decision chain (--run)
 
+Runner services:
+  runner-services    list or register file-backed runner services
+
 Process modes:
   serve  scheduler  worker  all
 
@@ -101,6 +104,7 @@ func commands() map[string]handlerFunc {
 	m["run"] = cmdRun
 	m["plan-import"] = cmdPlanImport
 	m["chain-verify"] = cmdChainVerify
+	m["runner-services"] = cmdRunnerServices
 	return m
 }
 

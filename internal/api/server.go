@@ -371,6 +371,7 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("POST /v1alpha1/actors/{id}/resume", s.wrap(s.handleResumeActor))
 
 	mux.HandleFunc("GET /v1alpha1/dispatch-rates", s.wrap(s.handleListDispatchRates))
+	mux.HandleFunc("GET /v1alpha1/namespaces", s.wrap(s.handleListNamespaces))
 
 	mux.HandleFunc("GET /v1alpha1/preflights", s.wrap(s.handleListPreflights))
 	mux.HandleFunc("GET /v1alpha1/preflights/{id}", s.wrap(s.handleGetPreflight))
@@ -431,10 +432,23 @@ func (s *Server) Handler() http.Handler {
 
 // spaHandler serves the embedded web build: real files as-is, everything
 // else (client-side routes like /runs/abc) falls back to index.html. It
-// never shadows /v1alpha1 — the mux's more-specific API patterns win.
+// never shadows a DECLARED /v1alpha1 operation — the mux's more-specific API
+// patterns win — but it is where an UNdeclared one lands, and that is the
+// defect issue #8 records: `GET /v1alpha1/pending-decisions` against a
+// binary that predates the endpoint answered 200 with index.html, so a
+// client could not tell an absent endpoint from an empty one. Any path under
+// the API group is refused here instead. It is deliberately NOT registered
+// as a mux pattern (`mux.HandleFunc("/v1alpha1/", http.NotFound)`): a
+// pattern that broad matches wrong-method requests too, which turns the
+// mux's own 405 for a real operation into a 404 and breaks the route sweep
+// that probes with DELETE.
 func spaHandler(assets fs.FS) http.Handler {
 	fileServer := http.FileServerFS(assets)
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if strings.HasPrefix(r.URL.Path, "/v1alpha1/") {
+			http.NotFound(w, r)
+			return
+		}
 		p := strings.TrimPrefix(r.URL.Path, "/")
 		if p == "" {
 			p = "index.html"

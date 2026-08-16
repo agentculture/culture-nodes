@@ -86,6 +86,19 @@ tags:
     description: Liveness and readiness probes.
 
 paths:
+  /v1alpha1/namespaces:
+    get:
+      operationId: listNamespaces
+      summary: List namespaces available to workers in this installation.
+      responses:
+        '200':
+          description: Namespace rows ordered by creation time.
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/Namespace'
   /v1alpha1/workflow-generations:
     post:
       operationId: createWorkflowGeneration
@@ -1869,6 +1882,19 @@ components:
         durable invocation authority or reading the request body.
 
   schemas:
+    Namespace:
+      type: object
+      required: [id, slug, display_name, created_at]
+      properties:
+        id:
+          type: string
+        slug:
+          type: string
+        display_name:
+          type: string
+        created_at:
+          type: string
+          format: date-time
     CreateWorkflowGeneration:
       type: object
       required: [description, actor_ref]

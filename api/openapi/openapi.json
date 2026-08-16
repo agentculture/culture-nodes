@@ -1289,6 +1289,30 @@
         ],
         "type": "object"
       },
+      "Namespace": {
+        "properties": {
+          "created_at": {
+            "format": "date-time",
+            "type": "string"
+          },
+          "display_name": {
+            "type": "string"
+          },
+          "id": {
+            "type": "string"
+          },
+          "slug": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "slug",
+          "display_name",
+          "created_at"
+        ],
+        "type": "object"
+      },
       "NodeRun": {
         "properties": {
           "attempts": {
@@ -3121,6 +3145,27 @@
         "tags": [
           "human-tasks"
         ]
+      }
+    },
+    "/v1alpha1/namespaces": {
+      "get": {
+        "operationId": "listNamespaces",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "items": {
+                    "$ref": "#/components/schemas/Namespace"
+                  },
+                  "type": "array"
+                }
+              }
+            },
+            "description": "Namespace rows ordered by creation time."
+          }
+        },
+        "summary": "List namespaces available to workers in this installation."
       }
     },
     "/v1alpha1/node-runs": {

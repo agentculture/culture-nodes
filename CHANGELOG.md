@@ -5,6 +5,54 @@ All notable changes to this project will be documented in this file.
 Format follows [Keep a Changelog](https://keepachangelog.com/). This project
 adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.25.2] - 2026-08-16
+
+Issue #8's three measured gaps in the registration/worker-config surface —
+plus the SPA fallback defect that made the last one hard to even detect.
+
+### Added
+
+- **`nodes runner-services list` / `register`.** Registration validates the
+  entry and updates the configured JSON file atomically. Reload still needs a
+  worker restart: a live reload has to swap the registry AND the protocol
+  client/secret set together while in-flight operations keep a consistent
+  snapshot, which is a larger change than this closes. Gap 1 is therefore
+  **partial**, and is recorded as such rather than as done.
+- **Worker config preflight.** A worker now refuses absent or partial
+  code-runner identity and inconsistent callback configuration, reporting
+  every problem in ONE pass, before it connects to PostgreSQL — so a
+  misconfigured worker fails on its configuration instead of on a database it
+  should never have reached.
+- **`GET /v1alpha1/namespaces`.** Documented and served. Both deployment
+  paths use it instead of shelling out to `psql`, which was the last place
+  deployment needed database credentials to answer a question the API can
+  answer.
+
+### Fixed
+
+- **The SPA fallback no longer answers 200 for an undeclared API path
+  (#8).** `GET /v1alpha1/pending-decisions` against a control plane that
+  predates the endpoint returned index.html with status 200, so a client
+  could not distinguish an absent endpoint from an empty one — both operator
+  scripts written this cycle carry a fallback for exactly this. The guard
+  lives in `spaHandler`, NOT as a `mux.HandleFunc("/v1alpha1/",
+  http.NotFound)` pattern: a method-less pattern that broad also matches
+  wrong-method requests to real operations, turning the mux's own 405 into a
+  404 and breaking `TestOpenAPIRoutesAreServed`, which probes with DELETE to
+  prove a documented route is served at all. That is what the first merge
+  attempt did, and 20 tests caught it.
+
+### Verified
+
+- The dispatched session's own namespace test asserts the 404 against a
+  server built WITHOUT web assets, where it already held — it would have
+  passed with or without the fix. `TestSPAFallbackRefusesTheAPINamespace`
+  mounts an `fstest.MapFS` build, which is the configuration production
+  runs, and was confirmed by ablation: removing the guard makes it fail with
+  `status = 200`, the exact symptom #8 describes. It also pins both
+  neighbours — a client-side route still gets the SPA, and a declared
+  operation asked with the wrong method still refuses with 405.
+
 ## [0.25.1] - 2026-08-16
 
 Task t17b: an event can now START a run, not only resume one waiting for it.

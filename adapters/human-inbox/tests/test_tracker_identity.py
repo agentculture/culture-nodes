@@ -505,3 +505,41 @@ def test_the_live_guard_still_refuses_a_second_bridge(tmp_path, monkeypatch):
         our_srv.server_close()
         their_srv.shutdown()
         their_srv.server_close()
+
+
+# -- a malformed identity surface is a refusal, never a traceback -----------
+#
+# Reported by review on PR #154. `(raw.get("dial_in") or {}).get(...)` raises
+# AttributeError on a truthy non-mapping, and that exception escapes past the
+# handler that exists to turn a bad identity surface into an actionable
+# refusal. The whole function's contract is "fail closed with a message an
+# operator can act on"; a traceback naming neither endpoint is not that.
+#
+# Note what the RIGHT answer is: a bridge whose `dial_in` block is unreadable
+# has, as far as this tracker can tell, no dial-in key -- so it reaches the
+# ordinary "does not dial in at all" refusal, which names both endpoints and
+# says what to do. The bug was never the refusal; it was the exception type.
+
+
+@pytest.mark.parametrize("dial_in", [[], "yes", 7, [{"actor_key": ACTOR_KEY}]])
+def test_a_non_object_dial_in_block_refuses_readably_instead_of_raising(dial_in):
+    def bridge(bridge_url, bridge_token, **kwargs):
+        return {"actor_id": ACTOR_KEY, "store_id": OUR_STORE, "dial_in": dial_in}
+
+    with pytest.raises(tracker.BridgeIdentityError) as excinfo:
+        _verify(bridge=bridge)
+    message = str(excinfo.value)
+    assert "does not dial in at all" in message
+    assert "http://127.0.0.1:8087" in message
+
+
+@pytest.mark.parametrize("raw", [[], "identity", 42, None])
+def test_an_identity_surface_that_is_not_an_object_is_refused_by_name(raw):
+    def bridge(bridge_url, bridge_token, **kwargs):
+        return raw
+
+    with pytest.raises(tracker.BridgeIdentityError) as excinfo:
+        _verify(bridge=bridge)
+    message = str(excinfo.value)
+    assert "not an object" in message
+    assert "http://127.0.0.1:8087" in message

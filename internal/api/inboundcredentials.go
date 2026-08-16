@@ -67,18 +67,28 @@ type inboundCredentialRequest struct {
 
 // suppliedMaterial names the field a caller used to try to supply its own
 // credential, or "" when it supplied none.
+//
+// The candidates are an ORDERED slice, not a map, and that is the point: Go
+// randomises map iteration, so a request carrying two forbidden fields would
+// have been refused by a different field name on each run. The refusal text is
+// a client-facing remediation hint — an operator reading it is told which key
+// to remove — and a hint that changes run to run is one nobody can automate
+// against or write a stable test for.
 func (r inboundCredentialRequest) suppliedMaterial() string {
-	for name, value := range map[string]json.RawMessage{
-		"credential":        r.Credential,
-		"token":             r.Token,
-		"secret":            r.Secret,
-		"verifier":          r.Verifier,
-		"verifier_sha256":   r.VerifierSHA256,
-		"verifier_env_name": r.VerifierEnvName,
-		"digest_sha256":     r.Digest,
+	for _, candidate := range []struct {
+		name  string
+		value json.RawMessage
+	}{
+		{"credential", r.Credential},
+		{"token", r.Token},
+		{"secret", r.Secret},
+		{"verifier", r.Verifier},
+		{"verifier_sha256", r.VerifierSHA256},
+		{"verifier_env_name", r.VerifierEnvName},
+		{"digest_sha256", r.Digest},
 	} {
-		if len(value) > 0 && string(value) != "null" {
-			return name
+		if len(candidate.value) > 0 && string(candidate.value) != "null" {
+			return candidate.name
 		}
 	}
 	return ""

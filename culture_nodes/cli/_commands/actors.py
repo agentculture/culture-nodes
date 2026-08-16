@@ -273,11 +273,23 @@ def cmd_actors_dial_in(args: argparse.Namespace) -> int:
     if bool(getattr(args, "json", False)):
         emit_json_passthrough(resp.raw)
         return 0
-    payload = resp.payload or {}
+
+    # One text rendering, chosen and then emitted once. Every path here is a
+    # success -- a failed request raises CliError before this line, per
+    # _errors.py's exit-code policy -- so the value of the exit code is never in
+    # question and only the message differs.
+    emit_result(
+        _dial_in_text(resp.payload or {}, absent_only=bool(getattr(args, "absent_only", False))),
+        json_mode=False,
+    )
+    return 0
+
+
+def _dial_in_text(payload: dict, *, absent_only: bool) -> str:
+    """The text rendering of a dial-in presence payload."""
     items = payload.get("items") or []
     if not items:
-        emit_result("no registered actors in this namespace", json_mode=False)
-        return 0
+        return "no registered actors in this namespace"
 
     window = payload.get("window_seconds", "?")
     header = (
@@ -287,14 +299,11 @@ def cmd_actors_dial_in(args: argparse.Namespace) -> int:
         f"{payload.get('disconnected', 0)} disconnected, "
         f"{payload.get('never_dialled', 0)} never dialled"
     )
-    if getattr(args, "absent_only", False):
+    if absent_only:
         items = [item for item in items if item.get("presence") != "connected"]
         if not items:
-            emit_result(f"{header}\n\nevery registered actor is dialled in", json_mode=False)
-            return 0
-    lines = [_presence_line(item) for item in items]
-    emit_result("\n".join([header, "", *lines]), json_mode=False)
-    return 0
+            return f"{header}\n\nevery registered actor is dialled in"
+    return "\n".join([header, "", *(_presence_line(item) for item in items)])
 
 
 def _bare_noun(args: argparse.Namespace) -> int:

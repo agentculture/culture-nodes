@@ -310,10 +310,25 @@ def verify_bridge_serves_actor(
             "and still answers 404, it predates the identity surface and must be upgraded"
         ) from exc
 
+    # Everything below treats the response as untrusted SHAPE, not merely as
+    # untrusted values. The whole point of this function is to fail closed with
+    # a message an operator can act on, so a bridge answering `{"dial_in": []}`
+    # must reach that message -- not raise AttributeError past the handler above
+    # and abort startup with a traceback that names none of the two endpoints.
+    if not isinstance(raw, dict):
+        raise BridgeIdentityError(
+            f"{cfg.bridge_url}/identity answered a {type(raw).__name__}, not an object. Refusing "
+            "to start: an identity surface this tracker cannot read is an unverified identity, "
+            "and unverified is not verified"
+        )
+    dial_in = raw.get("dial_in")
+    if not isinstance(dial_in, dict):
+        dial_in = {}
+
     bridge = BridgeIdentity(
         actor_id=str(raw.get("actor_id") or ""),
         store_id=str(raw.get("store_id") or ""),
-        dial_in_actor_key=str((raw.get("dial_in") or {}).get("actor_key") or ""),
+        dial_in_actor_key=str(dial_in.get("actor_key") or ""),
     )
 
     if bridge.store_id != our_store:

@@ -110,7 +110,19 @@ uv run flake8 adapters/codex/src adapters/codex/tests
 and the workspace reaper). Formatting them per-adapter *breaks* that: isort is
 configured in three adapters and not the other two, so the same file acquires
 two different formattings. Format one, copy it to the rest, then re-run the
-loop above — do not run the formatter independently in each.
+loop above — do not run the formatter independently in each. The claim about
+`dialin.py` was aspirational until task t18: three of those four modules were
+checked and the transport was not, so `tests/lint/dialintransport_test.go` now
+covers it (across **all five** packages, including human-inbox, which ships no
+capability surface and is therefore invisible to the guard next door).
+
+**Every adapter is zero-runtime-dependency too, and that is now gated.**
+`scripts/check-zero-runtime-deps.sh` (CI lint job) used to load exactly the
+root `pyproject.toml`; it now checks the root plus every
+`adapters/*/pyproject.toml`, and `tests/test_adapter_zero_dependencies.py`
+both drives it (including a negative case that watches it reject a manifest
+which gained a dependency) and AST-scans every adapter module for a
+third-party import — the manifest is a promise, the import list is the fact.
 
 The installed CLI command is **`nodes`** (`[project.scripts]` in
 pyproject.toml), even though help text renders the prog as `culture-nodes`:

@@ -29,8 +29,19 @@ authorizing one rotation cannot authorize another.
 `install-secrets.sh` preserves the current topology explicitly: thor's
 `COMPOSE_PROFILES=bundled-postgres,backup` starts the bundled database and
 backup loop, while both thor and orin receive a host-appropriate
-`NODES_DATABASE_URL`. `DATABASE_SSLMODE` is the single TLS-mode input; the
-LAN default is `disable` under the network trust decision below.
+`NODES_DATABASE_URL`. `DATABASE_SSLMODE` is the TLS-mode input **used when
+the URL is first composed**; the LAN default is `disable` under the network
+trust decision below.
+
+Read that "first composed" literally. Nothing else reads `DATABASE_SSLMODE` —
+no compose service and no Go code — because the settings lane resolves it and
+writes the mode into `NODES_DATABASE_URL` as a literal (see below for why a
+`${DATABASE_SSLMODE}` placeholder is unsafe there). The URL is then
+add-if-absent, so on a host that already has one, **editing `DATABASE_SSLMODE`
+changes nothing and reports nothing**. To change the TLS mode of a provisioned
+host, change the URL itself: `remove-secret.sh NODES_DATABASE_URL --yes <host>`
+with the new `DATABASE_SSLMODE` in place, then re-run `install-secrets.sh` — or
+edit the URL by hand, which the external-database path already expects.
 
 To use an external database, edit `prod.env` on each host: set the same
 provider URL in `NODES_DATABASE_URL` (using the provider-required sslmode),

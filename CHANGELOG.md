@@ -5,6 +5,70 @@ All notable changes to this project will be documented in this file.
 Format follows [Keep a Changelog](https://keepachangelog.com/). This project
 adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.26.0] - 2026-08-16
+
+The merge gate stops being an operator looking at a green tick (task t11,
+issue #101).
+
+Two things were being substituted for evidence. The first was the *collection*
+step: `git fetch ssh://<host>/<path> <branch>`, typed by hand fifteen times
+this cycle, needing three facts the operator had to already know — which
+machine the session ran on, where its checkout lives, and what the ref was
+called. Only the third is genuinely derivable, and the other two are in the
+control plane. The second was the *verdict*: a person reading a CI status and
+deciding to merge leaves nothing behind that names the suite, the exit code,
+or the commit — so nothing later can check whether the thing that passed is
+the thing that shipped. This cycle produced two suites that passed while
+testing nothing, and neither was visible afterwards from the word "passed".
+
+Why the authority vocabulary carries the weight here: a test suite **is** a
+deterministic validator (a commit plus a command yields the same number every
+time), which is exactly the producer PRD §10.4 admits `derived` records from.
+An operator's opinion of a rendering is not a producer at all. So the finding
+can now be recorded by the thing that produced it, and the refusals that make
+it evidence — a full 40-hex commit sha or no record, an absent exit code never
+read as a pass — live with it.
+
+### Added
+
+- **`scripts/collect-handover.py <run-id>`.** A run id alone becomes a
+  reviewable diff. It asks the control plane which actor ran the run, resolves
+  that actor's host from the registry, and fetches
+  `refs/culture-nodes/<run-id>/*` by wildcard into `refs/handover/` — no
+  branch touched, nothing checked out — then reports each ref, its commit, and
+  the paths it changed. The remote is the control plane's configuration
+  (`metadata.handover_remote` per actor, or `NODES_HANDOVER_REMOTE_TEMPLATE`
+  with `{host}` from the registered `endpoint_ref`) and never the run's own
+  report, because a session that could point the fetch at a repository it
+  prepared would make the measurement real and the subject forged — the same
+  fence `internal/handover/doc.go` states for the control plane's own fetch.
+  Configured by neither is a refusal, not a guess.
+- **The no-ref case is reported as ambiguous, and exits non-zero.** After
+  issue #120 an empty result has two readings — the session handed over
+  nothing, or the bridge on that host cannot hand over at all — and the fetch
+  distinguishes neither. Both are named. Guessing here is how a lost handover
+  becomes "the agent did nothing". An *unreachable* remote is kept distinct
+  from an empty one: it exits 2, not 1, because that is no gate rather than a
+  passing one.
+- **`POST /v1alpha1/runs/{id}/suite-verdicts`**, and
+  `scripts/collect-handover.py <run-id> --gate --suite '…' -- <cmd>` that
+  drives it. The suite runs in a detached worktree at the collected commit and
+  the result lands as a `derived`, validator-origin record naming the suite,
+  the exit code, and the commit sha. The sha is read back from the worktree
+  the suite actually ran in rather than assumed, so a suite that moved the
+  tree records nothing instead of misattributing its verdict.
+- **`internal/handover.MeasuredCommit`**, the reader for the observed
+  handover-evidence payload `buildRecord` writes — placed next to its writer
+  so the two field-name opinions cannot drift.
+
+### Changed
+
+- `internal/handover/verdict.go` is added to the `AuthorityDerived` allowlist
+  in `internal/invariants` and `docs/invariants.md`, deliberately and with its
+  standing stated: it is a validator-origin writer, and it sits beside the
+  fetch rather than in `internal/api` because the verdict and the measurement
+  it judges have to name the same commit.
+
 ## [0.25.4] - 2026-08-16
 
 ### Added

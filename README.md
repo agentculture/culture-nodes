@@ -226,6 +226,53 @@ reviewer and rationale. `scripts/decide-claims.py` is the terminal version,
 and `scripts/ledger-gate.py` is the stage gate that fails while anything is
 still undecided.
 
+### Collecting a handover, and gating a merge on a real suite
+
+A run whose session handed work over left it on a git ref named
+`refs/culture-nodes/<run-id>/<node-run-id>-<attempt-id>-<UTC>-<short-sha>`,
+on whatever machine that session ran on. `scripts/collect-handover.py` turns
+the **run id alone** into a reviewable diff:
+
+```bash
+scripts/collect-handover.py <run-id>            # fetch and show what changed
+scripts/collect-handover.py <run-id> --json
+```
+
+It asks the control plane which actor ran the run, resolves that actor's host
+from the registry, fetches the run's refs by wildcard into `refs/handover/`
+(no branch is touched, nothing is checked out), and reports each ref, its
+commit, and the paths it changed. The remote is **the control plane's
+configuration, never the run's own report** — a session that could point the
+fetch at a repository it prepared would make the measurement real and the
+subject forged — and only `refs/culture-nodes/` is ever fetched. Configure it
+per actor with `metadata.handover_remote` at registration, or fleet-wide with
+`NODES_HANDOVER_REMOTE_TEMPLATE` (`{host}` is substituted from the actor's
+registered `endpoint_ref`). Neither present is a refusal, not a guess.
+
+**No ref is an ambiguous state, and is reported as one.** Either the session
+handed over nothing, or the bridge on that host cannot hand over at all
+(issue #120: bridges deployed before the ref-minting code create no ref even
+on success). The script exits non-zero and names both, because guessing here
+is how a lost handover becomes "the agent did nothing".
+
+`--gate` then runs a suite against the collected commit and records what
+happened:
+
+```bash
+scripts/collect-handover.py <run-id> --gate --suite 'go test ./...' -- go test ./...
+```
+
+The suite runs in a detached worktree at that exact commit, and the result is
+appended through `POST /v1alpha1/runs/{id}/suite-verdicts` as a **`derived`**
+record from the named validator — because a test suite *is* a deterministic
+validator (PRD §10.4), where an operator reading a green tick is not evidence
+of anything. The record names the suite, the exit code, and the commit sha,
+and the sha is read back from the worktree the suite actually ran in rather
+than assumed. A verdict that does not name what it tested is not evidence, so
+`commit_sha` must be a full 40-hex id, an absent `exit_code` is refused rather
+than defaulted to a pass, and a verdict naming a commit other than the one the
+control plane measured as this run's handover is refused outright.
+
 ## Example topology: one machine, or a small production split
 
 The runner protocol's placement-unaware model above is what makes this

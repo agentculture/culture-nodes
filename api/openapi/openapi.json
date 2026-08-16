@@ -711,6 +711,54 @@
         ],
         "type": "object"
       },
+      "CreateSuiteVerdictRequest": {
+        "properties": {
+          "attempt_ref": {
+            "description": "Narrows the verdict to one attempt.",
+            "type": "string"
+          },
+          "command": {
+            "description": "The argv the gate actually executed, when it executed one itself. Absent when the verdict came from a suite run elsewhere.",
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          },
+          "commit_sha": {
+            "description": "The commit the suite ran against, full 40-character lowercase hex. `HEAD`, a branch name, and an abbreviated sha are all refused: each means something different tomorrow, and a verdict that does not name what it tested is not evidence.",
+            "pattern": "^[0-9a-f]{40}$",
+            "type": "string"
+          },
+          "exit_code": {
+            "description": "The number the suite exited with. Required and never defaulted — an omitted exit code reading as 0 would make every malformed request a pass. Zero records verdict `confirm`; anything else records `reject`. The label is computed here, never supplied.",
+            "type": "integer"
+          },
+          "node_run_ref": {
+            "description": "Narrows the verdict to one node run.",
+            "type": "string"
+          },
+          "ref": {
+            "description": "The handover ref that carried the commit, when one did. Validated against the same `refs/culture-nodes/` fence a control-plane fetch is, so a verdict cannot name a ref the collector was never allowed to fetch.",
+            "type": "string"
+          },
+          "suite": {
+            "description": "What ran, in the spelling a reader could re-run it with (\"go test ./...\", \"uv run pytest -n auto\", a CI job name). An unnamed suite cannot be re-run, so an empty one is refused.",
+            "minLength": 1,
+            "type": "string"
+          },
+          "validator_actor_id": {
+            "description": "The registered actor identifying the deterministic producer. Must not be an actor registered as `human` — a person reporting a suite result is making a claim about it, not producing it.",
+            "type": "string"
+          }
+        },
+        "required": [
+          "suite",
+          "exit_code",
+          "commit_sha",
+          "validator_actor_id"
+        ],
+        "type": "object"
+      },
       "CreateWorkflowGeneration": {
         "additionalProperties": false,
         "properties": {
@@ -4284,6 +4332,73 @@
         "summary": "Create a review request over a batch of ledger records.",
         "tags": [
           "reviews"
+        ]
+      }
+    },
+    "/v1alpha1/runs/{id}/suite-verdicts": {
+      "post": {
+        "description": "The merge gate's mechanical half (task t11, issue #101). A test suite is a DETERMINISTIC VALIDATOR — a commit plus a command produces a number — so PRD §10.4 admits its finding as a `derived` record, with the validator named in `validator_actor_id` as its origin. That is the whole point of the endpoint: an operator reading a green tick and deciding to merge leaves nothing behind that names the suite, the exit code, or the commit, and is not evidence of anything.\n\nThree refusals are load-bearing. `exit_code` is REQUIRED and is never defaulted, because an omitted exit code silently meaning 0 would turn every malformed request into a pass. `commit_sha` must be a full 40-character lowercase hex commit id — not `HEAD`, not a branch name, not an abbreviation — because a verdict that does not name what it tested cannot be checked later. And when the control plane has already MEASURED this run's handover (an observed evidence record from a `git_ref_fetch`), a verdict naming a different commit is refused outright rather than recorded with a caveat.\n\n`validator_actor_id` must be a registered actor and must not be one registered as `human`: a person who ran a suite and reported the result is making a claim about it, which is the mirror of the reviewer-must-be-human rule the review surface enforces. The route is gated by the same bearer secret as the review surface — whoever can record a suite verdict can decide a merge.",
+        "operationId": "createSuiteVerdict",
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/RunID"
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CreateSuiteVerdictRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/LedgerRecord"
+                }
+              }
+            },
+            "description": "The verdict was recorded as a derived, validator-origin review record. Its `subject_ref` and `provenance_refs` name the run's handover evidence record when the control plane had measured one, and are empty when it had not."
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "description": "The request is malformed, `exit_code` is absent, `commit_sha` is not a full 40-hex commit id, `ref` is outside `refs/culture-nodes/`, the named validator is registered as a human, or the verdict names a commit other than the one this run's handover was measured at."
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "description": "The decision bearer token is missing, malformed, or not valid for this deployment."
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "description": "No run has this id, or validator_actor_id is not a registered actor."
+          }
+        },
+        "summary": "Record what a test suite did to this run's handed-over commit.",
+        "tags": [
+          "ledger"
         ]
       }
     },

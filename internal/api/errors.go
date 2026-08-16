@@ -9,6 +9,7 @@ import (
 	"github.com/agentculture/culture-nodes/internal/clifmt"
 	"github.com/agentculture/culture-nodes/internal/contracts"
 	"github.com/agentculture/culture-nodes/internal/engine"
+	"github.com/agentculture/culture-nodes/internal/handover"
 	"github.com/agentculture/culture-nodes/internal/ledger"
 	"github.com/agentculture/culture-nodes/internal/preflight"
 	"github.com/agentculture/culture-nodes/internal/store/postgres"
@@ -123,6 +124,17 @@ func classify(err error) *apiError {
 	var authorityErr *ledger.AuthorityError
 	if errors.As(err, &authorityErr) {
 		return badRequest("the producer named in origin may not write this record's authority; see PRD §10.4", "%v", err)
+	}
+
+	// A suite verdict that cannot be composed (task t11): no commit named, no
+	// suite named, no identified validator, or a ref outside the handover
+	// fence. Every one of those is a caller-caused refusal, and the error
+	// already carries the JSON pointer of the field that caused it.
+	var verdictErr *handover.VerdictError
+	if errors.As(err, &verdictErr) {
+		return badRequest(
+			"a verdict must name the suite that ran, the exit code it produced, and the full commit sha it ran against",
+			"%s: %v", verdictErr.Field, err)
 	}
 
 	// A registration that configures the clarify-then-commit gate in a way

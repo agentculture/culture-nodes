@@ -314,3 +314,36 @@ func (o *Observer) report(err error) {
 		o.OnError(err)
 	}
 }
+
+// MeasuredCommit reports the id of the live handover-evidence record in
+// records and the commit that record measured, or ("", "") when this package
+// has measured no handover for the run.
+//
+// It lives here, next to buildRecord, on purpose: it is the READER of exactly
+// the payload that function writes, and the two would drift the moment a
+// caller reimplemented the field names. It selects on `collection_method`
+// rather than on record type alone, so a runner's ordinary workspace evidence
+// is never mistaken for a ref this package fetched. The LAST match wins —
+// records are immutable and a re-fetch appends, so the newest measurement is
+// the current one.
+func MeasuredCommit(records []ledger.Record) (recordID string, commitSHA string) {
+	for _, rec := range ledger.Live(records) {
+		if rec.RecordType != ledger.RecordEvidence || rec.Authority != ledger.AuthorityObserved {
+			continue
+		}
+		data, err := rec.DataMap()
+		if err != nil {
+			continue
+		}
+		if method, _ := data["collection_method"].(string); method != CollectionMethod {
+			continue
+		}
+		measurements, _ := data["measurements"].(map[string]any)
+		sha, _ := measurements["commit_sha"].(string)
+		if sha == "" {
+			continue
+		}
+		recordID, commitSHA = rec.ID, sha
+	}
+	return recordID, commitSHA
+}

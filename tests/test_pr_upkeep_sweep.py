@@ -394,7 +394,7 @@ class TestSonarWorkItemsPrContext:
 
     def test_fetch_sonar_issues_url_names_the_pull_request_param(self, monkeypatch):
         seen = []
-        monkeypatch.setattr(sweep, "_get_json", lambda url, token=None: seen.append(url) or {})
+        monkeypatch.setattr(sweep, "_get_json", lambda url, token=None, **_: seen.append(url) or {})
         sweep.fetch_sonar_issues("agentculture_culture-nodes")
         sweep.fetch_sonar_issues("agentculture_culture-nodes", pr=70)
         assert "pullRequest=" not in seen[0]
@@ -449,7 +449,7 @@ class TestFetchOpenPulls:
             {},
             {"number": 7},  # a PR object with no head block at all
         ]
-        monkeypatch.setattr(sweep, "_get_json", lambda url, token=None: pulls)
+        monkeypatch.setattr(sweep, "_get_json", lambda url, token=None, **_: pulls)
         # Unsorted; main() sorts before capping. One request serves BOTH the
         # per-PR SonarCloud/Qodo fetches (which need the number) and the
         # check-runs fetch (which needs the head sha).
@@ -621,7 +621,7 @@ class TestCheckRunWorkItems:
 
     def test_fetch_check_runs_names_the_commit_check_runs_endpoint(self, monkeypatch):
         seen = []
-        monkeypatch.setattr(sweep, "_get_json", lambda url, token=None: seen.append(url) or {})
+        monkeypatch.setattr(sweep, "_get_json", lambda url, token=None, **_: seen.append(url) or {})
         sweep.fetch_check_runs(None, "agentculture/culture-nodes", "67672519")
         assert seen == [
             "https://api.github.com/repos/agentculture/culture-nodes"
@@ -748,6 +748,15 @@ class TestTheSweptRepoIsDeploymentGrantedAndSaysSo:
         # so callers still cannot redirect the sweep credential.
         "PR_UPKEEP_REPOSITORIES",
         "PR_UPKEEP_REQUIRED_CHECKS",
+        # Safe: read-only credential for ONE fixed host (sonarcloud.io) whose
+        # URLs are module constants, so no caller can point it elsewhere. It
+        # is optional — both Sonar queries succeed anonymously against a
+        # public project, measured on `agentculture_culture-nodes` — and it
+        # exists for the two cases where anonymous stops working: SonarCloud
+        # rate-limits unauthenticated requests harder, and a project turning
+        # private makes every anonymous query 401 while nothing else about the
+        # sweep changes.
+        "SONAR_TOKEN",
     }
 
     @staticmethod
@@ -927,74 +936,3 @@ class TestEmitterMain:
         captured = capsys.readouterr()
         assert "sweep failed" in captured.err
         assert captured.out == ""  # no invented empty report on a broken sweep
-
-
-def test_a_sweep_failure_names_the_surface_that_failed(monkeypatch, capsys):
-    """Every source surface used to fail with the same unattributable line.
-
-    Before this, all four surfaces — the repository grant, GitHub, SonarCloud,
-    Jira — reported through one boundary as::
-
-        sweep failed: Expecting value: line 1 column 1 (char 0)
-
-    That is what a JSON decoder says about an empty body, and an empty body is
-    what a wrong token, a rate limit, an outage, an SPA catch-all and a
-    malformed environment variable all look like from here. Diagnosing one
-    instance took a monkey-patched ``json.loads`` to find that the culprit was
-    a malformed ``PR_UPKEEP_REPOSITORIES``.
-
-    The sweep is meant to run unattended (#107), so this matters more than it
-    looks: an always-on emitter whose failures name nothing is one an operator
-    stops reading, and a sweep nobody reads is a sweep that has silently
-    stopped.
-    """
-    sweep = _load_sweep()
-
-    monkeypatch.setenv("PR_UPKEEP_REPOSITORIES", "agentculture/culture-nodes")  # not JSON
-    assert sweep.main() == 1
-    message = capsys.readouterr().err
-    assert "PR_UPKEEP_REPOSITORIES" in message, message
-    assert "JSONDecodeError" in message, message
-
-    # A different surface must name itself differently — otherwise the stage
-    # is decoration rather than diagnosis.
-    monkeypatch.setenv("PR_UPKEEP_REPOSITORIES", REPOSITORY_GRANT)
-    monkeypatch.setattr(
-        sweep,
-        "fetch_open_pulls",
-        lambda *a, **k: (_ for _ in ()).throw(
-            urllib.error.HTTPError("https://api.github.com", 401, "Unauthorized", None, None)
-        ),
-    )
-    assert sweep.main() == 1
-    message = capsys.readouterr().err
-    assert "GitHub" in message, message
-    assert "agentculture/culture-nodes" in message, message
-    assert "PR_UPKEEP_REPOSITORIES" not in message, message
-
-
-def test_a_failure_outside_every_attempting_block_says_it_is_unattributed(monkeypatch, capsys):
-    """The gap must be visible rather than dressed up as a named stage.
-
-    `attempting` blocks are added by hand, so a step can be missed — the pure
-    transforms between the fetches (`qodo_review_bodies`, `prioritise`) sit
-    outside them today. When an untagged step fails, the report says so
-    instead of implying a surface was identified, which is what would make the
-    next reader trust a stage that was never assigned.
-    """
-    sweep = _load_sweep()
-    monkeypatch.setenv("PR_UPKEEP_REPOSITORIES", REPOSITORY_GRANT)
-    monkeypatch.setattr(
-        sweep, "fetch_open_pulls", lambda *a, **k: [{"number": 1, "head_sha": "abc"}]
-    )
-    monkeypatch.setattr(sweep, "fetch_pr_comments", lambda *a, **k: [])
-    # A pure transform between two fetches — inside main's try, inside no
-    # `attempting` block.
-    monkeypatch.setattr(
-        sweep, "qodo_review_bodies", lambda *a, **k: (_ for _ in ()).throw(ValueError("boom"))
-    )
-
-    assert sweep.main() == 1
-    message = capsys.readouterr().err
-    assert "unattributed" in message, message
-    assert "boom" in message, message

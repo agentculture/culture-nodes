@@ -72,8 +72,51 @@ spec:
       kind: agent
       ownerRef: team/developer-experience
       uses: actor://company/developer@sha256:3333333333333333333333333333333333333333333333333333333333333333
+      # A trigger-created run's input IS the event payload, which carries the
+      # findings and nothing else — no instruction, no checkout path. Passing
+      # it through with `from: /run/input` is what made every triggered run
+      # fail on `input.instruction is required` (issue #125).
+      #
+      # `instruction` is a LITERAL because it is graph authoring, not
+      # deployment configuration: it says what this node does, it is the same
+      # in every deployment, and it is fixed at publish time and addressed by
+      # the workflow's content digest like everything else here.
+      #
+      # `repo` is deliberately NOT bound. It is the one genuinely
+      # deployment-specific value, so a literal here would break the rule this
+      # example holds to — loading it into another deployment must never mean
+      # editing workflow.yaml. The bridge resolves it from its own allowlist
+      # when that names exactly one repository, and refuses when the choice is
+      # ambiguous.
+      #
+      # `finding` carries the event payload. Every non-transport key arrives
+      # in the session as a verbatim "Bound inputs" block, so the findings are
+      # read by the actor without this graph reformatting them.
       input:
-        from: /run/input
+        bindings:
+          instruction:
+            literal: |
+              Take the HIGHEST-PRIORITY item from the prioritised `findings`
+              list bound below and work only that one item.
+
+              The list is already ordered across three vocabularies —
+              SonarCloud severities, Qodo severities, and failed CI checks —
+              so the first entry is the item to work. Do not re-rank it, and
+              do not batch several items into one change.
+
+              Implement the fix on a branch and open or update a pull request
+              for it. NEVER merge anything: this graph's merge step is a
+              separate human-approval node, and an agent merging here would
+              bypass it.
+
+              If the item is not actually a defect — a false positive, a
+              finding already fixed, or one whose fix would be wrong — say so
+              plainly and submit `no_change` with the reason. A stated
+              non-fix is a better outcome than a manufactured one.
+
+              Report which finding you took, what you changed, and the PR you
+              opened or updated.
+          finding: /run/input
       contract:
         outcomes:
           completed:

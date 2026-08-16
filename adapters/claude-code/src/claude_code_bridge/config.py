@@ -228,6 +228,27 @@ class Config:
             for root in self.repo_allowlist_prefixes
         )
 
+    def only_allowed_repo(self) -> str | None:
+        """The one repo this bridge can work in, when there is exactly one.
+
+        A trigger-created run's input IS the event payload (task t17b), so a
+        deployment-neutral workflow has nowhere to put a checkout path: a
+        literal in the graph would make it deployment-specific, and the
+        emitter that raises the event is a pure emitter that knows nothing
+        about checkouts. Issue #125 is that gap — every triggered pr-upkeep
+        run failed on `input.repo is required`.
+
+        When the allowlist names exactly one repository and no prefixes, the
+        caller restating it adds no safety: this bridge physically cannot work
+        anywhere else, and the allowlist check would reject anything else
+        anyway. Ambiguity fails closed — two entries, or any prefix rule, and
+        `input.repo` stays required, because then the choice is real and
+        guessing it would silently pick a workspace the caller did not name.
+        """
+        if len(self.repo_allowlist) == 1 and not self.repo_allowlist_prefixes:
+            return self.repo_allowlist[0]
+        return None
+
     @classmethod
     def load(cls, config_path: str | None = None, env: dict[str, str] | None = None) -> "Config":
         """Build a Config from an optional JSON file, then env overrides.

@@ -576,10 +576,26 @@ def _get_json(url: str, token: str | None = None, *, basic: tuple[str, str] | No
 
 def fetch_sonar_issues(component: str, pr: int | None = None) -> dict:
     """The main-branch query when `pr` is None, else that same PR's own
-    analysis context (see module docstring for why both are needed)."""
+    analysis context (see module docstring for why both are needed).
+
+    Authentication is OPTIONAL and read from `SONAR_TOKEN`. Both queries
+    succeed anonymously against a public project — measured, not assumed:
+    `agentculture_culture-nodes` answers both with a token and without one.
+    The token is worth supplying anyway, for two reasons that only bite
+    later: anonymous SonarCloud requests are rate-limited more tightly, and
+    the day a project turns private every anonymous query starts returning
+    401 while nothing else about the sweep changes.
+
+    SonarCloud takes the token as the BASIC username with an empty password,
+    not as a bearer — passing it as a bearer authenticates as nobody and the
+    request silently degrades to the anonymous behaviour it was meant to
+    replace, which is exactly the kind of failure this sweep should not have.
+    """
+    token = os.environ.get("SONAR_TOKEN") or None
+    basic = (token, "") if token else None
     if pr is None:
-        return _get_json(SONAR_ISSUES_URL.format(key=component))
-    return _get_json(SONAR_PR_ISSUES_URL.format(key=component, pr=pr))
+        return _get_json(SONAR_ISSUES_URL.format(key=component), basic=basic)
+    return _get_json(SONAR_PR_ISSUES_URL.format(key=component, pr=pr), basic=basic)
 
 
 def fetch_open_pulls(token: str | None, repository: str) -> list[dict]:

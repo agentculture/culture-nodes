@@ -5,6 +5,53 @@ All notable changes to this project will be documented in this file.
 Format follows [Keep a Changelog](https://keepachangelog.com/). This project
 adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.31.0] - 2026-08-16
+
+Issue #125: the rewritten pr-upkeep example could not dispatch. Found by
+running the loop against production, not by any test.
+
+### Fixed
+
+- **The `fix` node binds an instruction instead of passing the event
+  payload.** t17b's rewrite made a run start from the durable `pr-upkeep.pr`
+  event, so `/run/input` became the event payload — findings and nothing
+  else. The bridge answered `input.instruction is required` and every
+  triggered run failed at its first node. The instruction is now a LITERAL
+  binding, which is what literal bindings exist for: it is graph authoring,
+  identical in every deployment, fixed at publish time and addressed by the
+  content digest. The payload rides along as `finding`, and the bridge's
+  existing "Bound inputs (engine-resolved, verbatim)" block puts it in front
+  of the actor unreformatted.
+- **A bridge naming exactly one repository infers it when `input.repo` is
+  absent** (`Config.only_allowed_repo`, all three workspace bridges). `repo`
+  is the one genuinely deployment-specific value, so a literal would break the
+  rule this example holds to — loading it elsewhere must never mean editing
+  `workflow.yaml`. When the allowlist names one repo the caller restating it
+  adds no safety, because the allowlist check rejects anything else anyway.
+  **Ambiguity fails closed**: two entries, or any prefix rule, and `repo` stays
+  required with the reason in the error, because then the choice is real and
+  guessing would silently pick a workspace nobody named.
+
+### Verified
+
+- Against a single-entry bridge, a dispatch with no `input.repo` gets past the
+  repo check (it then fails on callback fields, which validate later) — the
+  inference works.
+- Ablation: relaxing the guard to `len(...) >= 1` fails the config test on the
+  two-entry and prefix cases.
+
+### Notes
+
+- **This does not fully close #125 for a multi-lane bridge.** The `developer`
+  bridge on spark has two allowlist entries, so it correctly still demands
+  `repo`. Closing that needs either a dedicated single-lane actor for the
+  upkeep lane (deployment configuration, no code) or the repo carried in the
+  actor registry the way `metadata.handover_remote` already is (a worker
+  change). Recorded on the issue rather than decided here.
+- `tests/test_pr_upkeep_sweep.py` crossed the repo's 1000-line hard limit and
+  was split by subject: reporting behaviour — which surface failed, how a
+  credential is presented — moved to `test_pr_upkeep_sweep_diagnostics.py`.
+
 ## [0.30.1] - 2026-08-16
 
 Two fixes found by watching the upkeep loop try to pick up its own PR.

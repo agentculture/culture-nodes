@@ -374,9 +374,22 @@ class Handler(BaseHTTPRequestHandler):
 
         repo = raw_input.get("repo")
         if not isinstance(repo, str) or not repo.strip():
+            # Issue #125: a trigger-created run's input is the event payload,
+            # which carries no checkout path. Fall back to the single
+            # allowlisted repo when there is exactly one; `only_allowed_repo`
+            # returns None the moment the choice is ambiguous, and this stays
+            # a 400 then.
+            repo = cfg.only_allowed_repo()
+        if not isinstance(repo, str) or not repo.strip():
             self._write_json(
                 400,
-                {"error": "input.repo is required", "class": mapping.CLASS_ACTOR_REJECTED_INPUT},
+                {
+                    "error": (
+                        "input.repo is required (this bridge's allowlist does not name "
+                        "exactly one repository, so it cannot be inferred)"
+                    ),
+                    "class": mapping.CLASS_ACTOR_REJECTED_INPUT,
+                },
             )
             return
         if not cfg.repo_allowed(repo):

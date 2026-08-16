@@ -116,6 +116,11 @@ type Server struct {
 	// surface this batch ships is authenticated from day one.
 	adhocRunSecret []byte
 
+	// inboundAuthenticator gates every bridge poll and completion before any
+	// mailbox state is exposed. The migration 0031 simple verifier is now on
+	// issue #111's replacement clock because this is the first accepting path.
+	inboundAuthenticator *actors.InboundAuthenticator
+
 	pollInterval time.Duration
 	webAssets    fs.FS
 
@@ -335,6 +340,10 @@ func NewServer(store *postgres.Store, namespaceID string, opts ...Option) (*Serv
 		pollInterval:            defaultEventPollInterval,
 		log:                     slog.Default(),
 	}
+	s.inboundAuthenticator, err = actors.NewInboundAuthenticator(store, actors.DefaultInboundAuthenticationConfig, nil)
+	if err != nil {
+		return nil, err
+	}
 	for _, opt := range opts {
 		if opt != nil {
 			opt(s)
@@ -400,6 +409,8 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("GET /v1alpha1/actors/{id}", s.wrap(s.handleGetActor))
 	mux.HandleFunc("GET /v1alpha1/actors/{id}/stats", s.wrap(s.handleGetActorStats))
 	mux.HandleFunc("POST /v1alpha1/actors/{id}/resume", s.wrap(s.handleResumeActor))
+	mux.HandleFunc("POST /v1alpha1/inbound/poll", s.handleInboundPoll)
+	mux.HandleFunc("POST /v1alpha1/inbound/{id}/complete", s.handleInboundComplete)
 
 	mux.HandleFunc("POST /v1alpha1/schedules", s.wrap(s.handleCreateSchedule))
 	mux.HandleFunc("GET /v1alpha1/schedules", s.wrap(s.handleListSchedules))

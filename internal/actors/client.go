@@ -34,6 +34,16 @@ type Endpoint struct {
 	// Protocol headers (Idempotency-Key, Authorization, Content-Type) are set
 	// by the client and win over anything here.
 	Header http.Header
+	// DialIn routes through an authenticated reverse connection. URL remains
+	// populated during mixed mode as the outbound fallback.
+	DialIn          DialInInvoker
+	DialInNamespace string
+	DialInActorKey  string
+}
+
+// DialInInvoker is implemented by the PostgreSQL-backed durable mailbox.
+type DialInInvoker interface {
+	InvokeInbound(context.Context, string, string, InvocationRequest) (InvocationResponse, error)
 }
 
 // invocationURL is the full URL for a §13.1 invocation.
@@ -184,6 +194,16 @@ func (c *Client) Invoke(ctx context.Context, endpoint Endpoint, req InvocationRe
 	if err := validateInvocation(endpoint, req); err != nil {
 		return InvocationResponse{}, err
 	}
+	if endpoint.DialIn != nil {
+		response, err := endpoint.DialIn.InvokeInbound(ctx, endpoint.DialInNamespace, endpoint.DialInActorKey, req)
+		if err == nil || endpoint.URL == "" || ctx.Err() != nil {
+			return response, err
+		}
+		// Mixed mode retains the outbound path for a bridge whose durable
+		// presence was current at resolution but whose mailbox failed before
+		// accepting this invocation. The idempotency key makes this fallback
+		// the same dispatch, not a second logical invocation.
+	}
 	if req.ProtocolVersion == "" {
 		req.ProtocolVersion = ProtocolVersion
 	}
@@ -234,6 +254,27 @@ func (c *Client) Invoke(ctx context.Context, endpoint Endpoint, req InvocationRe
 	}
 
 	return InvocationResponse{}, lastErr
+}
+
+// ParseInvocationResponse applies the same protocol parsing to a dial-in
+// mailbox response as the outbound HTTP client applies to an HTTP response.
+func ParseInvocationResponse(status int, payload []byte) (InvocationResponse, error) {
+	switch status {
+	case http.StatusOK:
+		var result InvocationResult
+		if err := json.Unmarshal(payload, &result); err != nil || result.Outcome == "" {
+			return InvocationResponse{}, fmt.Errorf("actors: dial-in 200 response is not a result: %w", err)
+		}
+		return InvocationResponse{Result: &result, StatusCode: status, Requests: 1}, nil
+	case http.StatusAccepted:
+		var accepted AsyncAccepted
+		if err := json.Unmarshal(payload, &accepted); err != nil {
+			return InvocationResponse{}, fmt.Errorf("actors: dial-in 202 response is not an acceptance: %w", err)
+		}
+		return InvocationResponse{Async: true, Accepted: &accepted, StatusCode: status, Requests: 1}, nil
+	default:
+		return InvocationResponse{}, &InvocationError{Class: classifyStatus(status), Op: "invoke", StatusCode: status, Requests: 1, Body: capture(payload), Message: "dial-in bridge refused invocation"}
+	}
 }
 
 // invokeOnce performs exactly one HTTP request and classifies its outcome.
@@ -452,7 +493,7 @@ func validateInvocation(endpoint Endpoint, req InvocationRequest) error {
 		return &InvocationError{Class: ClassContract, Op: "invoke", Message: detail}
 	}
 	switch {
-	case strings.TrimSpace(endpoint.URL) == "":
+	case strings.TrimSpace(endpoint.URL) == "" && endpoint.DialIn == nil:
 		return fail("endpoint URL is required")
 	case req.AttemptID == "":
 		// The attempt id is the Idempotency-Key. Sending an invocation

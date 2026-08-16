@@ -5,6 +5,41 @@ All notable changes to this project will be documented in this file.
 Format follows [Keep a Changelog](https://keepachangelog.com/). This project
 adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.29.0] - 2026-08-16
+
+### Verified
+
+- **`TestDBRegistryResolvesCurrentDialInWithoutAddress` passes.** The session
+  declared it compiled-and-skipped because its sandbox has no database socket
+  (#119); run in the operator lane it PASSES in 0.01s. Fifth package this
+  cycle to draw that line honestly and the fifth to be right first time.
+- Migration renumbered `0033` → `0035` at merge, after colliding with t33's
+  schedules and affinity migrations; the whole chain was applied to an empty
+  database in order to confirm it.
+
+### Not verified
+
+- **Criterion 2 is not met yet, by design.** "One dispatch reaches a bridge the
+  control plane holds no address for" is a live cross-fleet demonstration, and
+  the codex sandbox denies `socket(2)` entirely, so this half was deliberately
+  split out (deviation d21). The decision document ends with the ordered
+  operator procedure for running it. Nothing here claims it happened.
+
+### Added
+
+- **Address-free bridge dial-in with mixed-mode rollback.** Five bridges on
+  three hosts cannot change atomically, so the control plane now prefers a
+  currently authenticated inbound bridge while retaining the outbound
+  `endpoint_ref` path. PostgreSQL is the durable mailbox authority and stores
+  actor identity and work, never the connection's IP address.
+- **One transport behavior in all five backends.** Codex, Claude Code,
+  Colleague, human inbox, and notify start the same authenticated reconnecting
+  dialer when their three dial-in environment variables are configured.
+- **Pre-cutover decision and executable rollback.** The transport decision
+  records why mixed mode was chosen, the rejected flag-day cost, the unresolved
+  lease/liveness window, issue #111's now-started replacement clock, and the
+  operator-lane commands and outputs required for the live address-free proof.
+
 ## [0.28.0] - 2026-08-16
 
 ### Verified

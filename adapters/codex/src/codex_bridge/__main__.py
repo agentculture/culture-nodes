@@ -16,7 +16,7 @@ import json
 import logging
 import sys
 
-from codex_bridge import capabilities, preflight, reap, reclaim
+from codex_bridge import capabilities, dialin, preflight, reap, reclaim
 from codex_bridge.config import Config, ConfigError
 from codex_bridge.server import serve_forever
 
@@ -112,6 +112,7 @@ def main(argv: list[str] | None = None) -> int:
             file=sys.stderr,
         )
 
+    dialin.start("CODEX_BRIDGE", cfg.port)
     serve_forever(cfg)
     return 0
 

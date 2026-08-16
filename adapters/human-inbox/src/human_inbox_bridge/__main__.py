@@ -24,6 +24,7 @@ import sys
 import urllib.error
 import urllib.request
 
+from human_inbox_bridge import dialin
 from human_inbox_bridge.config import Config, ConfigError
 from human_inbox_bridge.server import serve_forever
 
@@ -94,6 +95,7 @@ def _cmd_serve(args: argparse.Namespace) -> int:
         cfg.host = args.host
     if args.port is not None:
         cfg.port = args.port
+    dialin.start("HUMAN_INBOX_BRIDGE", cfg.port)
     serve_forever(cfg)
     return 0
 

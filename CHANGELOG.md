@@ -5,6 +5,48 @@ All notable changes to this project will be documented in this file.
 Format follows [Keep a Changelog](https://keepachangelog.com/). This project
 adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.30.1] - 2026-08-16
+
+Two fixes found by watching the upkeep loop try to pick up its own PR.
+
+### Fixed
+
+- **A sweep failure now names the surface that failed.** All four source
+  surfaces — the repository grant, GitHub, SonarCloud, Jira — reported through
+  one boundary as `sweep failed: Expecting value: line 1 column 1 (char 0)`.
+  That is what a JSON decoder says about an empty body, and an empty body is
+  what a wrong token, a rate limit, an outage, an SPA catch-all and a malformed
+  environment variable all look like from there. Diagnosing one instance took a
+  monkey-patched `json.loads` to discover the culprit was a malformed
+  `PR_UPKEEP_REPOSITORIES`. Each surface read is now wrapped in `attempting()`,
+  and the report reads `sweep failed while reading PR_UPKEEP_REPOSITORIES:
+  JSONDecodeError: ...` or `... while listing open PRs of <repo> (GitHub):
+  HTTPError: HTTP Error 401`. A failure outside every block says it is
+  **unattributed** rather than implying a stage was identified.
+  This matters because #107 means the sweep runs unattended: an always-on
+  emitter whose failures name nothing is one an operator stops reading, and a
+  sweep nobody reads is a sweep that has silently stopped.
+
+### Changed
+
+- **`CLAUDE.md` now documents the five adapter lint jobs**, which the root lint
+  scope does not cover. PR #122 went red on three `lint` jobs after a fully
+  green local run, because each bridge lints `src tests` in its own workflow
+  while the documented gate only checked `culture_nodes tests`. It also records
+  the trap underneath: formatting the shared bridge modules per-adapter
+  **breaks** the byte-identity `tests/lint/` requires, since isort is
+  configured in three adapters and not the other two, so one file acquires two
+  formattings. Format once, copy, re-check.
+
+### Verified
+
+- Ablation: reverting the report to `sweep failed: {cause}` fails
+  `test_a_sweep_failure_names_the_surface_that_failed` with the original
+  unattributable string, verbatim.
+- The sweep was run read-only against PR #122 and turned its red checks into
+  **4 work items** (3× `lint` CRITICAL, 1× `go` MEDIUM) — confirming #61's
+  third finding source works, and that a failed check is seen.
+
 ## [0.30.0] - 2026-08-16
 
 ### Changed

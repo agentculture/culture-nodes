@@ -54,6 +54,7 @@ fixtures (see fixtures/).
 
 from __future__ import annotations
 
+import contextlib
 import json
 import os
 import re
@@ -678,14 +679,66 @@ def _max_prs_per_sweep() -> int:
     return value if value > 0 else MAX_PRS_PER_SWEEP
 
 
+#: The failure classes every source surface can raise. A network surface can
+#: be unreachable, slow, or answer with something that is not JSON; a config
+#: surface can be malformed. Kept in one place so `attempting` and `main`'s
+#: boundary cannot drift apart about what counts as a sweep failure.
+SWEEP_FAILURES = (urllib.error.URLError, TimeoutError, json.JSONDecodeError, ValueError)
+
+
+class SweepFailure(Exception):
+    """A sweep step that failed, carrying WHICH step it was.
+
+    The sweep reads four unrelated surfaces — its own configuration, GitHub,
+    SonarCloud, Jira — and before this it reported all four the same way::
+
+        sweep failed: Expecting value: line 1 column 1 (char 0)
+
+    That message names nothing. It is what a JSON decoder says about an empty
+    body, and an empty body is what a wrong token, a rate limit, an outage, an
+    SPA catch-all and a malformed environment variable all look like from
+    here. Diagnosing one instance took a monkey-patched ``json.loads`` to
+    discover the culprit was a malformed ``PR_UPKEEP_REPOSITORIES``.
+
+    This sweep is meant to run unattended (#107). An always-on emitter whose
+    failures name nothing is one an operator stops reading, and a sweep nobody
+    reads is a sweep that has silently stopped.
+    """
+
+    def __init__(self, stage: str, cause: BaseException) -> None:
+        self.stage = stage
+        self.cause = cause
+        super().__init__(f"{stage}: {type(cause).__name__}: {cause}")
+
+
+@contextlib.contextmanager
+def attempting(stage: str):
+    """Tag whatever fails inside with the surface that was being read.
+
+    Only the classes in `SWEEP_FAILURES` are tagged. Anything else is a defect
+    in this file rather than a surface being unavailable, and it keeps its own
+    traceback instead of being flattened into a one-line report.
+    """
+    try:
+        yield
+    except SweepFailure:
+        raise
+    except SWEEP_FAILURES as exc:
+        raise SweepFailure(stage, exc) from exc
+
+
 def main() -> int:
     token = os.environ.get("GITHUB_TOKEN")
     max_prs = _max_prs_per_sweep()
     try:
-        repository = selected_repository()
+        with attempting(f"reading {REPOSITORIES_ENV}"):
+            repository = selected_repository()
         github_repo = repository["github_repo"]
         component = repository["sonar_component"]
-        open_pulls = sorted(fetch_open_pulls(token, github_repo), key=lambda pull: pull["number"])
+        with attempting(f"listing open PRs of {github_repo} (GitHub)"):
+            open_pulls = sorted(
+                fetch_open_pulls(token, github_repo), key=lambda pull: pull["number"]
+            )
         swept, dropped = open_pulls[:max_prs], open_pulls[max_prs:]
         if dropped:
             dropped_prs = [pull["number"] for pull in dropped]
@@ -707,22 +760,31 @@ def main() -> int:
                     file=sys.stderr,
                 )
                 continue
-            comments = fetch_pr_comments(token, github_repo, pull["number"])
+            with attempting(f"reading comments on PR #{pull['number']} (GitHub)"):
+                comments = fetch_pr_comments(token, github_repo, pull["number"])
             qodo_bodies = qodo_review_bodies(comments)
             qodo_items = qodo_work_items(qodo_bodies, [pull["number"]] * len(qodo_bodies))
-            check_items = check_run_work_items(
-                fetch_check_runs(token, github_repo, pull["head_sha"]), pr=pull["number"]
-            )
-            pr_sonar = sonar_work_items(fetch_sonar_issues(component, pr=pull["number"]), pr=pull["number"])
+            with attempting(f"reading check runs for PR #{pull['number']} (GitHub)"):
+                check_items = check_run_work_items(
+                    fetch_check_runs(token, github_repo, pull["head_sha"]), pr=pull["number"]
+                )
+            with attempting(f"reading issues for PR #{pull['number']} (SonarCloud {component})"):
+                pr_sonar = sonar_work_items(
+                    fetch_sonar_issues(component, pr=pull["number"]), pr=pull["number"]
+                )
             payload = {
                 "source": "github_pr", "repository": github_repo,
                 "number": pull["number"], "head_sha": pull["head_sha"],
                 "findings": prioritise(pr_sonar + qodo_items + check_items),
             }
-            emitted.append(raise_event(
-                "pr-upkeep.pr", payload, f"github:{github_repo}:pr:{pull['number']}",
-                {"head_sha": pull["head_sha"], "newest_comment_at": newest_comment_timestamp(comments)},
-            ))
+            with attempting(f"emitting pr-upkeep.pr for #{pull['number']} (control plane)"):
+                emitted.append(raise_event(
+                    "pr-upkeep.pr", payload, f"github:{github_repo}:pr:{pull['number']}",
+                    {
+                        "head_sha": pull["head_sha"],
+                        "newest_comment_at": newest_comment_timestamp(comments),
+                    },
+                ))
 
         jira_items = []
         if repository.get("jira_site"):
@@ -733,19 +795,29 @@ def main() -> int:
                     "JIRA_ACCOUNT_EMAIL and JIRA_API_TOKEN are both required "
                     "when Jira is configured"
                 )
-            jira_payload = fetch_jira_issues(
-                    repository["jira_site"], repository["jira_project"], email, jira_token
-                )
-            jira_items = jira_work_items(jira_payload, site=repository["jira_site"], project=repository["jira_project"])
+            site, project = repository["jira_site"], repository["jira_project"]
+            with attempting(f"reading {project} issues (Jira {site})"):
+                jira_payload = fetch_jira_issues(site, project, email, jira_token)
+            jira_items = jira_work_items(jira_payload, site=site, project=project)
             by_key = {issue.get("key"): issue for issue in jira_payload.get("issues", [])}
             for item in jira_items:
                 issue = by_key.get(item["id"], {})
-                emitted.append(raise_event(
-                    "pr-upkeep.jira", item,
-                    f"jira:{repository['jira_site']}:{item['id']}", jira_watermark(issue),
-                ))
-    except (urllib.error.URLError, TimeoutError, json.JSONDecodeError, ValueError) as exc:
-        print(f"sweep failed: {exc}", file=sys.stderr)
+                with attempting(f"emitting pr-upkeep.jira for {item['id']} (control plane)"):
+                    emitted.append(raise_event(
+                        "pr-upkeep.jira", item,
+                        f"jira:{site}:{item['id']}", jira_watermark(issue),
+                    ))
+    except SweepFailure as failure:
+        # The stage is the whole point: four unrelated surfaces used to fail
+        # with the same unattributable message. The cause keeps its own type
+        # name so "not JSON" and "unreachable" stay distinguishable.
+        print(f"sweep failed while {failure}", file=sys.stderr)
+        return 1
+    except SWEEP_FAILURES as exc:
+        # Untagged: a failure outside every `attempting` block. Say so rather
+        # than implying a surface was named, so the gap is visible and can be
+        # given a stage of its own.
+        print(f"sweep failed at an unattributed step: {type(exc).__name__}: {exc}", file=sys.stderr)
         return 1
     json.dump({"sweep": "pr-upkeep", "emitted": len(emitted)}, sys.stdout, indent=2)
     sys.stdout.write("\n")

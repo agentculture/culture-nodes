@@ -82,14 +82,28 @@ uv run pytest -n auto                     # full test suite (xdist)
 uv run pytest tests/test_cli.py::test_whoami_text   # single test
 uv run pytest -n auto --cov=culture_nodes --cov-report=term  # with coverage (CI gates ≥60%)
 
-# Lint — mirrors the CI lint job exactly:
+# Lint — mirrors the ROOT CI lint job exactly:
 uv run black --check culture_nodes tests
 uv run isort --check-only culture_nodes tests
 uv run flake8 culture_nodes tests
 uv run bandit -c pyproject.toml -r culture_nodes
 markdownlint-cli2 "**/*.md" "#node_modules" "#.local" "#.claude/skills" "#.teken"
 uv run teken cli doctor . --strict        # agent-first CLI rubric gate
+
+# …and the FIVE adapter lint jobs, which the root scope does NOT cover.
+# Each bridge lints `src tests` in its own workflow. Skipping this is how
+# PR #122 went red on three `lint` jobs after a fully green local run:
+for a in claude-code codex colleague human-inbox notify; do
+  (cd adapters/$a && uv run black --check src tests && uv run isort --check-only src tests)
+done
 ```
+
+**A shared bridge module must stay byte-identical across all five adapters**
+(`tests/lint/` enforces it for `preflight.py`, `dialin.py`, `deployment.py`,
+and the workspace reaper). Formatting them per-adapter *breaks* that: isort is
+configured in three adapters and not the other two, so the same file acquires
+two different formattings. Format one, copy it to the rest, then re-run the
+loop above — do not run the formatter independently in each.
 
 The installed CLI command is **`nodes`** (`[project.scripts]` in
 pyproject.toml), even though help text renders the prog as `culture-nodes`:

@@ -2,7 +2,7 @@
   "plan_slug": "close-the-backlog",
   "schema_version": 1,
   "created": "2026-08-15T18:07:41Z",
-  "updated": "2026-08-16T04:18:47Z",
+  "updated": "2026-08-16T04:24:42Z",
   "deviations": [
     {
       "id": "d1",
@@ -242,6 +242,21 @@
         "t9",
         "t11",
         "t32"
+      ],
+      "origin": "llm",
+      "status": "proposed",
+      "classification": "needs-follow-up"
+    },
+    {
+      "id": "d19",
+      "what": "codex keeps the Go work it can AUTHOR \u2014 d17's reroute narrows from 'all Go tasks' to 'the gating step only', because two rounds of author-there-gate-here merged cleanly",
+      "task_ref": "t19",
+      "reason": "d17 moved every remaining Go task to the operator lane on the grounds that a codex package would land as an unverified claim. Two merges since say that is the wrong cut. t17b and issue-8 both authored correct Go on codex hosts, both declared their unrunnable tests as unrun rather than passed, and both sets of tests passed on FIRST execution in the operator lane \u2014 so the authoring was sound and only the verification was missing. Moving the whole task moves the authoring too, which spends the operator's own subscription window on work another account could do (#48: the operator session, local subagents and same-account bridges share one window). The narrower cut keeps codex authoring where the design is clear and reserves the operator lane for the gate. It is contingent on briefs stating unrunnable criteria explicitly and on the operator actually running them \u2014 a package that quietly claimed a database check would invalidate this.",
+      "affects": [
+        "t21",
+        "t22",
+        "t24",
+        "t11"
       ],
       "origin": "llm",
       "status": "proposed",

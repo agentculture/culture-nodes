@@ -2,7 +2,7 @@
   "plan_slug": "close-the-backlog",
   "schema_version": 1,
   "created": "2026-08-15T18:07:41Z",
-  "updated": "2026-08-16T04:47:02Z",
+  "updated": "2026-08-16T05:15:07Z",
   "deviations": [
     {
       "id": "d1",
@@ -277,6 +277,18 @@
       "origin": "llm",
       "status": "proposed",
       "classification": "needs-follow-up"
+    },
+    {
+      "id": "d21",
+      "what": "t23 splits: codex authors the transport-inversion decision, rollback and code; the live cross-fleet demonstration of criterion 2 stays in the operator lane",
+      "task_ref": "t23",
+      "reason": "Criterion 2 requires one dispatch to reach a bridge the control plane holds no address for, which is a live demonstration across three hosts. The codex sandbox denies socket(2) entirely (#119, run 01M04C39ZQK8NHJPQFSG8Z3QNV), so it cannot perform or observe any of it, and a package that claimed it would be claiming something structurally unobservable from where it ran. Splitting along d19's line keeps the authoring \u2014 including the mixed-mode-versus-flag-day decision the criterion says must be made BEFORE the first bridge changes, and the rollback \u2014 in the codex lane, and reserves only the demonstration for a lane with a network. The brief asks for the operator's demonstration steps as an ordered runnable list, so the split hands over an executable procedure rather than an assumption.",
+      "affects": [
+        "t24"
+      ],
+      "origin": "llm",
+      "status": "proposed",
+      "classification": "acceptable"
     }
   ]
 }

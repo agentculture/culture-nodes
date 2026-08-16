@@ -67,6 +67,17 @@ type Run struct {
 	Name        string
 	Description string
 	Category    string
+
+	// ActorAffinity is the routing the workflow's declared affinity block
+	// resolved for this run (task t33, migrations/0033): a JSON object keyed
+	// by node id, {"fix":{"actor":"actor://...","rule":"..."}}. nil means the
+	// run resolved none -- either the definition declares no affinity, or the
+	// run was created without a triggering event to evaluate the conditions
+	// against. Like Name/Description/Category it rides Run only so CreateRun
+	// and TriggerEvent can persist it inside the transaction that inserts the
+	// run row; unlike them it IS populated by the read path, because a
+	// dispatch has to be able to read it back.
+	ActorAffinity json.RawMessage
 }
 
 // RunOption adjusts the Run a CreateRun call is about to persist, inside

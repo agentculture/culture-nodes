@@ -1,0 +1,49 @@
+-- 0033_run_actor_affinity.sql
+--
+-- Where a run records which actor its declared affinity chose (issue #107,
+-- task t33, acceptance criterion 3).
+--
+-- Expand-only (docs/adr/0002-migration-policy.md): one nullable column with
+-- no default. A binary built before this migration names its columns
+-- explicitly (internal/store/postgres/engine_store.go's insertRunSQL /
+-- selectRunSQL never use SELECT *), so it inserts and reads runs exactly as
+-- it does today and simply never sees this column.
+--
+-- WHY ON THE RUN AND NOT ONLY IN THE INPUT. The criterion is not "affinity
+-- routes"; it is "affinity routes AND the affinity is recorded on the run so
+-- the comparative record can use it". This project keeps a per-actor record
+-- of which actor is better at what, and today that record is hand-written
+-- into ledger grades after the fact. An affinity that only influenced a
+-- dispatch and left no trace could not feed it: you would be able to see
+-- which actor ran, but not what the workflow SAID should run, and the
+-- interesting question -- did the declared routing pick well -- needs both.
+-- So the resolved choice is a column, queryable in the same row as the run's
+-- state, timings, and usage, rather than something to reconstruct by
+-- re-evaluating CEL against an event that may since have been superseded.
+--
+-- SHAPE. A JSON object keyed by node id:
+--
+--   {"fix": {"actor": "actor://company/developer", "rule": "security-findings"}}
+--
+-- Keyed by node because that is how the dispatcher reads it (one lookup per
+-- node run, internal/worker/worker.go's dispatch) and because a run may
+-- route more than one node. `rule` names the declared affinity entry that
+-- matched, which is the label the comparative record slices by -- "this
+-- actor, on this KIND of work" -- and is the reason the rule's name is
+-- carried rather than just the actor it resolved to.
+--
+-- NO FOREIGN KEY to actors. The value is a component reference
+-- (actor://company/developer), which per §9.5 names an identity and not a
+-- row: resolution to an endpoint is a registry lookup that happens at
+-- dispatch time and may legitimately answer differently in different
+-- deployments. An FK here would make a run's record of what it declared
+-- depend on what happens to be registered now, which is the opposite of what
+-- a historical record is for.
+--
+-- NULL means the run resolved no affinity: either the definition declares
+-- none, or the run was created by an operator rather than by an event
+-- trigger (affinity conditions are evaluated against the triggering event,
+-- so a run with no event has nothing to evaluate them against -- see
+-- internal/engine/affinity.go). NULL is not the same as {} and neither is
+-- written where the other belongs.
+ALTER TABLE runs ADD COLUMN actor_affinity JSONB;

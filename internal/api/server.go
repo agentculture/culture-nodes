@@ -370,6 +370,12 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("GET /v1alpha1/actors/{id}/stats", s.wrap(s.handleGetActorStats))
 	mux.HandleFunc("POST /v1alpha1/actors/{id}/resume", s.wrap(s.handleResumeActor))
 
+	mux.HandleFunc("POST /v1alpha1/schedules", s.wrap(s.handleCreateSchedule))
+	mux.HandleFunc("GET /v1alpha1/schedules", s.wrap(s.handleListSchedules))
+	mux.HandleFunc("GET /v1alpha1/schedules/{id}", s.wrap(s.handleGetSchedule))
+	mux.HandleFunc("PATCH /v1alpha1/schedules/{id}", s.wrap(s.handlePatchSchedule))
+	mux.HandleFunc("DELETE /v1alpha1/schedules/{id}", s.wrap(s.handleDeleteSchedule))
+
 	mux.HandleFunc("GET /v1alpha1/dispatch-rates", s.wrap(s.handleListDispatchRates))
 	mux.HandleFunc("GET /v1alpha1/namespaces", s.wrap(s.handleListNamespaces))
 

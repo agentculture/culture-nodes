@@ -76,6 +76,13 @@ type Hooks struct {
 	// point would leave things: see fireOne's doc comment for why that is
 	// safe to retry on the next tick.
 	AfterEffect func(t postgres.Timer) error
+	// BeforeScheduleCommit is AfterEffect's counterpart for the schedule
+	// half of the tick (task t33): it runs inside FireSchedule's still-open
+	// transaction, after the event has been appended and the schedule's
+	// cursor advanced, before commit. Returning an error rolls all of it
+	// back, which is the state a process killed at that exact instant would
+	// leave behind -- see FireSchedule's doc comment.
+	BeforeScheduleCommit func(sc postgres.Schedule) error
 }
 
 // Options configures a Scheduler. The zero value is valid: every field
@@ -105,6 +112,26 @@ type Options struct {
 	// without this option (every existing caller, every existing test)
 	// behaves exactly as it did before this option existed.
 	Telemetry *telemetry.Provider
+	// Now is the clock this scheduler reads when it asks what is due.
+	// Defaults to time.Now.
+	//
+	// It exists so the schedule half of the tick (task t33) can be tested
+	// against instants a test chooses, rather than by sleeping until a
+	// cadence elapses. A test that proved a schedule by waiting would be
+	// measuring time.Ticker, would be slow in proportion to the cadences it
+	// covers, and could not express the cases that matter here at all -- a
+	// schedule that came due during a four-hour outage is not something you
+	// wait for.
+	Now func() time.Time
+}
+
+// now reads the configured clock, defaulting to time.Now. Every instant this
+// package compares a schedule against comes from here.
+func (sch *Scheduler) now() time.Time {
+	if sch.opts.Now != nil {
+		return sch.opts.Now().UTC()
+	}
+	return time.Now().UTC()
 }
 
 func (o Options) tickInterval() time.Duration {
@@ -302,7 +329,7 @@ func (sch *Scheduler) runActive(ctx context.Context, conn *pgx.Conn) {
 			return
 		}
 
-		sch.recordTick(sch.tick(ctx))
+		sch.recordTick(sch.Tick(ctx))
 	}
 }
 
@@ -337,20 +364,28 @@ func sleepCtx(ctx context.Context, d time.Duration) bool {
 	}
 }
 
-// tick is one bounded unit of active-scheduler work: sweep expired leases
-// (the standing duty -- see the package doc comment), then claim and fire
-// up to opts.batchSize() due timers. A per-timer failure inside fireOne
-// does not abort the batch or fail tick as a whole -- see fireOne's doc
-// comment for why that timer simply stays 'pending' for the next tick to
-// retry. tick returns an error only for an infrastructure-level failure
-// (ReclaimExpired or ClaimDueTimers itself erroring), which
+// Tick is one bounded unit of active-scheduler work: sweep expired leases
+// (the standing duty -- see the package doc comment), claim and fire up to
+// opts.batchSize() due timers, then fire every schedule whose declared
+// instant has arrived (task t33). A per-timer failure inside fireOne does not
+// abort the batch or fail Tick as a whole -- see fireOne's doc comment for
+// why that timer simply stays 'pending' for the next tick to retry, and
+// fireDueSchedules' for the identical argument on the schedule side. Tick
+// returns an error only for an infrastructure-level failure (ReclaimExpired,
+// ClaimDueTimers, or DueSchedules itself erroring), which
 // Scheduler.recordTick surfaces through Health without stopping the loop.
-func (sch *Scheduler) tick(ctx context.Context) error {
+//
+// It is exported so a test can drive exactly one tick at exactly one instant
+// of its own choosing (with Options.Now) instead of starting the loop and
+// waiting for a real interval to elapse. Run is still the production entry
+// point; calling Tick directly bypasses the single-active advisory lock and
+// is meant for tests, which is why nothing in cmd/ calls it.
+func (sch *Scheduler) Tick(ctx context.Context) error {
 	if _, err := sch.db.ReclaimExpired(ctx); err != nil {
 		return fmt.Errorf("scheduler: tick: ReclaimExpired: %w", err)
 	}
 
-	due, err := sch.db.ClaimDueTimers(ctx, sch.opts.OwnerID, time.Now().UTC(), sch.opts.batchSize())
+	due, err := sch.db.ClaimDueTimers(ctx, sch.opts.OwnerID, sch.now(), sch.opts.batchSize())
 	if err != nil {
 		return fmt.Errorf("scheduler: tick: ClaimDueTimers: %w", err)
 	}
@@ -363,7 +398,7 @@ func (sch *Scheduler) tick(ctx context.Context) error {
 		// comment.
 		_ = sch.fireOne(ctx, t)
 	}
-	return nil
+	return sch.fireDueSchedules(ctx)
 }
 
 // fireOne processes exactly one claimed timer inside exactly one

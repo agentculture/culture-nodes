@@ -56,6 +56,10 @@ type Workflow struct {
 
 	Entry    string
 	Triggers []Trigger
+	// Affinity is the declared actor-routing block (task t33), in
+	// declaration order -- first match per node wins, so the order IS the
+	// semantics and must not be sorted or mapped.
+	Affinity []AffinityRule
 	Limits   Limits
 	Budget   Budget
 	Ledger   LedgerLimits
@@ -80,6 +84,17 @@ type Workflow struct {
 
 type Trigger struct {
 	OnEvent   string
+	When      string
+	Condition cel.Program
+}
+
+// AffinityRule is one declared actor-routing rule (task t33). Condition is
+// nil for an unconditional rule, which the compiler guarantees is the last
+// rule declared for its node.
+type AffinityRule struct {
+	Name      string
+	Node      string
+	Actor     string
 	When      string
 	Condition cel.Program
 }
@@ -546,6 +561,22 @@ func LoadWorkflow(digest string, ir []byte) (*Workflow, error) {
 		}
 		wf.Triggers = append(wf.Triggers, trigger)
 	}
+	for i, raw := range doc.Spec.Affinity {
+		rule := AffinityRule{Name: raw.Name, Node: raw.Node, Actor: raw.Actor, When: raw.When}
+		if rule.Node == "" || rule.Actor == "" {
+			return fail("affinity rule %d declares no node or no actor", i)
+		}
+		if _, ok := wf.Nodes[rule.Node]; !ok {
+			return fail("affinity rule %d targets node %q, which the IR does not declare", i, rule.Node)
+		}
+		if rule.When != "" {
+			rule.Condition, err = compileGuard(env, rule.When)
+			if err != nil {
+				return fail("affinity rule %d (node %q) condition: %v", i, rule.Node, err)
+			}
+		}
+		wf.Affinity = append(wf.Affinity, rule)
+	}
 	for i, e := range doc.Spec.Edges {
 		edge := Edge{
 			From: e.From, FromNode: e.FromNode, FromOutcome: e.FromOutcome,
@@ -589,6 +620,12 @@ type irDocument struct {
 			OnEvent string `json:"onEvent"`
 			When    string `json:"when"`
 		} `json:"triggers"`
+		Affinity []struct {
+			Name  string `json:"name"`
+			Node  string `json:"node"`
+			Actor string `json:"actor"`
+			When  string `json:"when"`
+		} `json:"affinity"`
 		Contract struct {
 			Input  *irSchemaSource `json:"input"`
 			Output *irSchemaSource `json:"output"`

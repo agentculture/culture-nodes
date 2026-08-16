@@ -84,6 +84,14 @@ type RunOut struct {
 	// so it never presents a derived hint as if an operator had actually
 	// named the run.
 	DisplayHint string `json:"display_hint,omitempty"`
+	// ActorAffinity is the routing this run's workflow declared and resolved
+	// at creation (task t33, migrations/0033), keyed by node id:
+	// {"fix":{"actor":"actor://company/developer","rule":"security-findings"}}.
+	// Absent when the run resolved none. It is on the RUN rather than only in
+	// the node runs because the point of recording it is the per-actor
+	// comparative record -- what the workflow said this work WAS, readable
+	// beside the run's own state, timings, and usage.
+	ActorAffinity json.RawMessage `json:"actor_affinity,omitempty"`
 }
 
 // runOut renders r with usage (the run-level §13.2 rollup task t2 adds,
@@ -107,6 +115,7 @@ func runOut(r engine.Run, usage postgres.UsageRollup, meta runMetadata) RunOut {
 		Name:           meta.Name,
 		Description:    meta.Description,
 		Category:       meta.Category,
+		ActorAffinity:  r.ActorAffinity,
 	}
 	if meta.Name == "" {
 		out.DisplayHint = deriveDisplayHint(r.Input)

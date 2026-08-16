@@ -384,6 +384,14 @@ func (w *Worker) dispatch(ctx context.Context, claimed postgres.ClaimedWork) err
 				d.NodeRunID, d.NodeID, d.WorkflowDigest))
 	}
 
+	// The run's recorded actor affinity is applied HERE, before anything
+	// downstream reads node.Uses -- the registry lookup, the pacing budget,
+	// the capacity breaker, the session budget, the preflight gate, the
+	// telemetry attribute, and the actor id stamped on the attempt all have
+	// to agree about which actor this dispatch is for. See
+	// internal/worker/affinity.go for why it returns a copy.
+	node = applyAffinity(node, d.NodeID, d.ActorAffinity)
+
 	input, err := resolveNodeInput(ctx, w.sources(d), node.Input)
 	if err != nil {
 		// An unresolvable binding is a real refusal to dispatch, not a

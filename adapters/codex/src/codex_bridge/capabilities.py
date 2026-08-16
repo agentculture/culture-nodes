@@ -87,7 +87,10 @@ _GRANT_ABSENCE_REASONS = {
         "the working directory is not writable in this mode — 'touch: cannot touch ...: Read-only "
         "file system' (orin, run 01M0356BK8QYR3119R8VY1YY9Q)"
     ),
-    preflight.GRANT_TMP_WRITE: (
+    # nosec B108 - this is prose ABOUT /tmp, reporting a measured sandbox
+    # limitation. Nothing here opens, creates, or names a temp file; bandit is
+    # pattern-matching the literal inside a diagnostic message.
+    preflight.GRANT_TMP_WRITE: (  # nosec B108
         "/tmp is not writable in this mode either, so a tool cannot fall back to it (orin, run "
         "01M0356BK8QYR3119R8VY1YY9Q)"
     ),

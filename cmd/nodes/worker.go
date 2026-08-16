@@ -258,9 +258,29 @@ func cmdWorker(args []string, jsonMode bool) (int, error) {
 // its first code dispatch cannot produce correctly attributed evidence.
 func workerConfigPreflight() *clifmt.CliError {
 	var problems []string
+	// All three or none, which is the same rule the callback pair below
+	// follows and for the same reason. A PARTIAL tuple is the dangerous
+	// state: the worker starts and its first code dispatch produces evidence
+	// attributed to an identity nobody fully declared. A tuple that is absent
+	// ENTIRELY says something different and legitimate — this deployment runs
+	// no code nodes at all, which is exactly the Helm chart's smoke
+	// configuration and every deployment that only dispatches agents.
+	//
+	// Demanding all three unconditionally broke that: the chart sets none of
+	// them, so every worker pod CrashLoopBackOff'd on a check meant to catch
+	// misattribution. Same shape as #124 — a fail-closed validation added
+	// without walking the deployment paths it would newly refuse.
+	var runnerSet, runnerMissing []string
 	for _, name := range []string{envCodeRunnerName, envCodeRunnerRevision, envCodeRunnerActorID} {
 		if strings.TrimSpace(os.Getenv(name)) == "" {
-			problems = append(problems, name+" is missing")
+			runnerMissing = append(runnerMissing, name)
+		} else {
+			runnerSet = append(runnerSet, name)
+		}
+	}
+	if len(runnerSet) > 0 && len(runnerMissing) > 0 {
+		for _, name := range runnerMissing {
+			problems = append(problems, name+" is missing while "+runnerSet[0]+" is set")
 		}
 	}
 	callbackURL := strings.TrimSpace(os.Getenv(envCallbackBaseURL))

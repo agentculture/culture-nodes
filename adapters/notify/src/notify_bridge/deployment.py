@@ -110,14 +110,17 @@ def _git_probe(package_dir: "Path") -> tuple[str, bool] | None:
 
     def run(*args: str) -> "subprocess.CompletedProcess[str] | None":
         try:
-            return (
-                subprocess.run(  # noqa: S603 # nosec B603 - fixed binary, constant argv, no shell
-                    ["git", "-C", str(package_dir), *args],
-                    capture_output=True,
-                    text=True,
-                    check=False,
-                    timeout=GIT_PROBE_TIMEOUT_SECONDS,
-                )
+            return subprocess.run(  # noqa: S603,S607 # nosec B603,B607 - fixed binary, constant
+                # argv, no shell. B607 (partial path) is deliberate: `git` is
+                # resolved from PATH so the deployment chooses its own
+                # toolchain, which is how every other git call in this
+                # project works. Hardcoding /usr/bin/git would break the
+                # hosts that install it elsewhere.
+                ["git", "-C", str(package_dir), *args],
+                capture_output=True,
+                text=True,
+                check=False,
+                timeout=GIT_PROBE_TIMEOUT_SECONDS,
             )
         except (OSError, subprocess.SubprocessError):
             return None

@@ -5,6 +5,47 @@ All notable changes to this project will be documented in this file.
 Format follows [Keep a Changelog](https://keepachangelog.com/). This project
 adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.31.1] - 2026-08-16
+
+Three CI reds on PR #122, each a different kind of thing.
+
+### Fixed
+
+- **A worker with no code runner at all starts again (kind-smoke).** Issue #8's
+  preflight demanded the complete `NODES_CODE_RUNNER_{NAME,REVISION,ACTOR_ID}`
+  tuple unconditionally, and the Helm chart sets none of the three — so both
+  worker pods went `CrashLoopBackOff` on a check meant to catch misattribution.
+  The rule is now all-three-or-none, exactly like the `NODES_CALLBACK_*` pair
+  directly beneath it: a PARTIAL tuple is still refused, because that is the
+  state where a worker starts and its first code dispatch produces evidence
+  attributed to an identity nobody fully declared. An absent tuple says
+  something different and legitimate — this deployment runs no code nodes.
+  Same shape as #124: a fail-closed validation added without walking the
+  deployment paths it would newly refuse.
+- **Two bandit findings that had never been reached.** The codex adapter's
+  lint job runs bandit after black and isort, so it only ran once those passed.
+  Both are false positives, suppressed with the reason at the line rather than
+  by widening the config: `B108` flags prose *about* `/tmp` inside a diagnostic
+  message, and `B607` flags `git` resolved from PATH, which is deliberate so a
+  deployment chooses its own toolchain.
+
+### Verified
+
+- Ablation: relaxing the tuple rule back to "any missing is an error" fails
+  `TestWorkerConfigPreflightAcceptsAnEntirelyAbsentCodeRunner`.
+- The test that asserted the old behaviour was retargeted rather than deleted —
+  its intent (report EVERY missing field, not just the first, so one restart
+  fixes the configuration instead of three) now applies to the partial case.
+
+### Not fixed
+
+- **The `go` job's failures are #126**, and a third test joined the family:
+  `TestRelayCrashRecoveryPublishesAtLeastOnceAndMarksExactlyOnce`
+  (`internal/events`), alongside the chaos and scheduler tests. All three are
+  outbox-relay or deadline timing tests. Not reproduced locally in 10+ runs
+  including under deliberate CPU contention, so nothing is claimed fixed and
+  no retry was added.
+
 ## [0.31.0] - 2026-08-16
 
 Issue #125: the rewritten pr-upkeep example could not dispatch. Found by

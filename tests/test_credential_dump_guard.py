@@ -46,6 +46,19 @@ def test_guard_rejects_plaintext_capable_schema_column(tmp_path):
     assert "credential" in result.stderr
 
 
+def test_guard_rejects_debug_column_that_could_retain_last_presentation(tmp_path):
+    result = run_guard(
+        tmp_path,
+        """CREATE TABLE public.inbound_authentication (
+ party_key text NOT NULL,
+ last_presented_value text
+);""",
+        "",
+    )
+    assert result.returncode == 1
+    assert "last_presented_value" in result.stderr
+
+
 def test_guard_rejects_presentable_canary_in_dump(tmp_path):
     result = run_guard(
         tmp_path,

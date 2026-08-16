@@ -5,6 +5,21 @@ All notable changes to this project will be documented in this file.
 Format follows [Keep a Changelog](https://keepachangelog.com/). This project
 adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.26.1] - 2026-08-16
+
+### Added
+
+- **Dial-in admission controls before connection acceptance.** Every attempt is
+  rate-limited, repeated wrong credentials produce a durable lockout that is
+  not outwaited as a rate window, and a positive `revoked_at` marker refuses
+  the next dial. Explicit revocation was chosen over row deletion so replaying
+  a migration, restoring a backup, or omitting a delete predicate cannot
+  silently make compromised credential material usable again.
+- **Secret-safe failure state.** Durable state stores only counts and instants;
+  the dump guard now also rejects debug-shaped `presented`, `material`, and
+  `value` columns so failed presentations cannot become backup-resident
+  credentials.
+
 ## [0.26.0] - 2026-08-16
 
 The merge gate stops being an operator looking at a green tick (task t11,

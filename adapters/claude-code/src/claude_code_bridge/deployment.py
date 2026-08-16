@@ -107,14 +107,17 @@ def _git_probe(package_dir: "Path") -> tuple[str, bool] | None:
     a bare repo, an unborn HEAD and a plain directory all fail `rev-parse
     HEAD` identically, and only one of them is a work tree at all.
     """
+
     def run(*args: str) -> "subprocess.CompletedProcess[str] | None":
         try:
-            return subprocess.run(  # noqa: S603 # nosec B603 - fixed binary, constant argv, no shell
-                ["git", "-C", str(package_dir), *args],
-                capture_output=True,
-                text=True,
-                check=False,
-                timeout=GIT_PROBE_TIMEOUT_SECONDS,
+            return (
+                subprocess.run(  # noqa: S603 # nosec B603 - fixed binary, constant argv, no shell
+                    ["git", "-C", str(package_dir), *args],
+                    capture_output=True,
+                    text=True,
+                    check=False,
+                    timeout=GIT_PROBE_TIMEOUT_SECONDS,
+                )
             )
         except (OSError, subprocess.SubprocessError):
             return None
@@ -267,8 +270,9 @@ def measure_deployment(
         return facts
 
     facts["staleness"] = (
-        "this install's revision CANNOT BE ESTABLISHED: it is not in a git work tree, it carries no "
-        f"deploy {REVISION_STAMP_FILE} stamp, and its install metadata names no commit. Treat it as "
+        "this install's revision CANNOT BE ESTABLISHED: it is not in a git work tree, it "
+        f"carries no deploy {REVISION_STAMP_FILE} stamp, and its install metadata names no "
+        "commit. Treat it as "
         "of unknown age — a bridge whose revision nobody can check is exactly the state issue #120 "
         "was found in"
     )
@@ -294,5 +298,3 @@ def deployment_facts(module: Any, distribution: str) -> dict[str, Any]:
     location = getattr(module, "__file__", None)
     package_dir = Path(location).resolve().parent if location else None
     return measure_deployment(package_dir=package_dir, distribution=distribution)
-
-

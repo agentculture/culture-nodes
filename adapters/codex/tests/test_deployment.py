@@ -143,7 +143,9 @@ def test_a_copy_with_a_build_stamp_reports_the_revision_the_deploy_shipped(tmp_p
     package = tmp_path / "site-packages" / "codex_bridge"
     package.mkdir(parents=True)
     (package / deployment.REVISION_STAMP_FILE).write_text(
-        json.dumps({"revision": FULL_SHA, "stamped_at": "2026-08-16T08:00:00Z", "source": "deploy.sh"})
+        json.dumps(
+            {"revision": FULL_SHA, "stamped_at": "2026-08-16T08:00:00Z", "source": "deploy.sh"}
+        )
     )
 
     facts = deployment.measure_deployment(package_dir=package, distribution="x")

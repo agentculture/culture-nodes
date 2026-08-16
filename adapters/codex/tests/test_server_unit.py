@@ -154,7 +154,9 @@ def test_unknown_sandbox_is_400(bridge_url):
 def test_sync_dispatch_maps_ok_result_to_200(bridge_url, monkeypatch):
     base, cfg, repo = bridge_url
 
-    def fake_run_sync(cfg_, instruction, repo_, *, model, sandbox, continuation_ref=None, writable_git=False):
+    def fake_run_sync(
+        cfg_, instruction, repo_, *, model, sandbox, continuation_ref=None, writable_git=False
+    ):
         return codex_cli.SyncRunResult(
             exit_code=0,
             stdout="",
@@ -198,7 +200,9 @@ def test_sync_dispatch_reads_top_level_continuation_ref_and_resumes(bridge_url, 
     base, cfg, repo = bridge_url
     captured = {}
 
-    def fake_run_sync(cfg_, instruction, repo_, *, model, sandbox, continuation_ref=None, writable_git=False):
+    def fake_run_sync(
+        cfg_, instruction, repo_, *, model, sandbox, continuation_ref=None, writable_git=False
+    ):
         captured["continuation_ref"] = continuation_ref
         return codex_cli.SyncRunResult(
             exit_code=0,
@@ -228,7 +232,9 @@ def test_sync_dispatch_without_a_prior_ref_dispatches_cold(bridge_url, monkeypat
     base, cfg, repo = bridge_url
     captured = {}
 
-    def fake_run_sync(cfg_, instruction, repo_, *, model, sandbox, continuation_ref=None, writable_git=False):
+    def fake_run_sync(
+        cfg_, instruction, repo_, *, model, sandbox, continuation_ref=None, writable_git=False
+    ):
         captured["continuation_ref"] = continuation_ref
         return codex_cli.SyncRunResult(
             exit_code=0,
@@ -261,7 +267,9 @@ def test_session_key_and_continuation_ref_never_appear_in_the_prompt_text(bridge
     base, cfg, repo = bridge_url
     captured = {}
 
-    def fake_run_sync(cfg_, instruction, repo_, *, model, sandbox, continuation_ref=None, writable_git=False):
+    def fake_run_sync(
+        cfg_, instruction, repo_, *, model, sandbox, continuation_ref=None, writable_git=False
+    ):
         captured["instruction"] = instruction
         return codex_cli.SyncRunResult(
             exit_code=0,
@@ -299,7 +307,9 @@ def test_sync_capacity_exhausted_failure_is_500_with_retry_after_header(bridge_u
     Retry-After header internal/actors/client.go reads the delay from."""
     base, cfg, repo = bridge_url
 
-    def fake_run_sync(cfg_, instruction, repo_, *, model, sandbox, continuation_ref=None, writable_git=False):
+    def fake_run_sync(
+        cfg_, instruction, repo_, *, model, sandbox, continuation_ref=None, writable_git=False
+    ):
         return codex_cli.SyncRunResult(
             exit_code=1,
             stdout="",
@@ -345,7 +355,9 @@ def test_sync_dispatch_maps_crashed_incomplete_session_to_execution_failure_neve
     exemption."""
     base, cfg, repo = bridge_url
 
-    def fake_run_sync(cfg_, instruction, repo_, *, model, sandbox, continuation_ref=None, writable_git=False):
+    def fake_run_sync(
+        cfg_, instruction, repo_, *, model, sandbox, continuation_ref=None, writable_git=False
+    ):
         return codex_cli.SyncRunResult(
             exit_code=0,  # deliberately 0 — mirrors the real grounded SIGTERM case
             stdout="",
@@ -376,7 +388,9 @@ def test_sync_dispatch_maps_crash_before_any_output_to_execution_failure(bridge_
     all (task_result is None) is also never success."""
     base, cfg, repo = bridge_url
 
-    def fake_run_sync(cfg_, instruction, repo_, *, model, sandbox, continuation_ref=None, writable_git=False):
+    def fake_run_sync(
+        cfg_, instruction, repo_, *, model, sandbox, continuation_ref=None, writable_git=False
+    ):
         return codex_cli.SyncRunResult(
             exit_code=1, stdout="", stderr="segfault or similar", task_result=None, timed_out=False
         )
@@ -397,7 +411,9 @@ def test_idempotent_replay_returns_the_same_response_without_recalling_codex(
     base, cfg, repo = bridge_url
     calls = []
 
-    def fake_run_sync(cfg_, instruction, repo_, *, model, sandbox, continuation_ref=None, writable_git=False):
+    def fake_run_sync(
+        cfg_, instruction, repo_, *, model, sandbox, continuation_ref=None, writable_git=False
+    ):
         calls.append(instruction)
         return codex_cli.SyncRunResult(
             exit_code=0,
@@ -432,7 +448,9 @@ def test_validation_failure_is_not_cached_for_replay(bridge_url, monkeypatch):
     status1, body1 = _request(base, server.INVOCATIONS_PATH, body=payload, headers=headers)
     assert status1 == 400
 
-    def fake_run_sync(cfg_, instruction, repo_, *, model, sandbox, continuation_ref=None, writable_git=False):
+    def fake_run_sync(
+        cfg_, instruction, repo_, *, model, sandbox, continuation_ref=None, writable_git=False
+    ):
         return codex_cli.SyncRunResult(
             exit_code=0,
             stdout="",
@@ -623,7 +641,9 @@ def test_sync_dispatch_preserves_workspace_changes_on_a_real_failure(bridge_url,
     subprocess.run(["git", "commit", "-q", "-m", "init"], cwd=repo, check=True)
     (repo / "note.txt").write_text("left behind by the failed session\n")
 
-    def fake_run_sync(cfg_, instruction, repo_, *, model, sandbox, continuation_ref=None, writable_git=False):
+    def fake_run_sync(
+        cfg_, instruction, repo_, *, model, sandbox, continuation_ref=None, writable_git=False
+    ):
         return codex_cli.SyncRunResult(
             exit_code=1,
             stdout="",
@@ -698,7 +718,9 @@ def test_handover_request_makes_git_writable_for_the_sandbox(bridge_url, monkeyp
     base, cfg, repo = bridge_url
     seen = {}
 
-    def fake_run_sync(cfg_, instruction, repo_, *, model, sandbox, continuation_ref=None, writable_git=False):
+    def fake_run_sync(
+        cfg_, instruction, repo_, *, model, sandbox, continuation_ref=None, writable_git=False
+    ):
         seen["writable_git"] = writable_git
         seen["sandbox"] = sandbox
         return codex_cli.SyncRunResult(
@@ -730,7 +752,9 @@ def test_without_a_handover_request_git_stays_read_only(bridge_url, monkeypatch)
     base, cfg, repo = bridge_url
     seen = {}
 
-    def fake_run_sync(cfg_, instruction, repo_, *, model, sandbox, continuation_ref=None, writable_git=False):
+    def fake_run_sync(
+        cfg_, instruction, repo_, *, model, sandbox, continuation_ref=None, writable_git=False
+    ):
         seen["writable_git"] = writable_git
         return codex_cli.SyncRunResult(
             exit_code=0,

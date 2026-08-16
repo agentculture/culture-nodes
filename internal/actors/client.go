@@ -292,7 +292,11 @@ func ParseInvocationResponse(status int, payload []byte) (InvocationResponse, er
 		}
 		return InvocationResponse{Async: true, Accepted: &accepted, StatusCode: status, Requests: 1}, nil
 	default:
-		return InvocationResponse{}, &InvocationError{Class: classifyStatus(status), Op: "invoke", StatusCode: status, Requests: 1, Body: capture(payload), Message: "dial-in bridge refused invocation"}
+		// The dial-in path lifts the bridge's own rejection reason exactly as
+		// the outbound path does (task t3): the transport inversion this
+		// cycle is running must not re-lose the diagnostic issue #125 was
+		// about the moment a bridge stops being reachable by address.
+		return InvocationResponse{}, &InvocationError{Class: classifyStatus(status), Op: "invoke", StatusCode: status, Requests: 1, Body: capture(payload), ActorError: actorErrorFrom(payload), Message: "dial-in bridge refused invocation"}
 	}
 }
 
@@ -389,11 +393,15 @@ func (c *Client) invokeOnce(ctx context.Context, url string, endpoint Endpoint, 
 	// on the circuit breaker deciding how long to pause the actor.
 	usage, terminationReason, preserve := telemetryFromErrorBody(payload)
 	return InvocationResponse{}, &InvocationError{
-		Class:             class,
-		Op:                "invoke",
-		StatusCode:        resp.StatusCode,
-		Message:           fmt.Sprintf("actor answered %s", http.StatusText(resp.StatusCode)),
-		Body:              capture(payload),
+		Class:      class,
+		Op:         "invoke",
+		StatusCode: resp.StatusCode,
+		Message:    fmt.Sprintf("actor answered %s", http.StatusText(resp.StatusCode)),
+		Body:       capture(payload),
+		// The actor's own reason, beside this package's summary of the
+		// status (task t3, issue #125). Message names the status; this names
+		// what the actor said was wrong with the request.
+		ActorError:        actorErrorFrom(payload),
 		RetryAfter:        parseRetryAfter(resp.Header.Get("Retry-After"), c.now()),
 		Usage:             usage,
 		TerminationReason: terminationReason,

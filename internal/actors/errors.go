@@ -210,6 +210,15 @@ type InvocationError struct {
 	// reason Usage is: the truncated Body capture must not cost a real
 	// preserve branch its record.
 	Preserve *Preserve
+	// ActorError is the actor's OWN account of the refusal — the `error`
+	// text and `class` claim from its response body — nil when the body said
+	// nothing this package could lift out of it. It is the diagnostic issue
+	// #125 needed and did not have: Message above is this package's summary
+	// of what happened ("actor answered Bad Request"), while this is what the
+	// actor said was wrong. Bounded and sanitized at the seam; see
+	// actorerror.go, which also explains why its Class is not this struct's
+	// Class.
+	ActorError *ActorError
 	// Requests is how many HTTP requests were spent before giving up.
 	Requests int
 	// Err is the underlying transport or decode error, if any.
@@ -300,6 +309,20 @@ func PreserveOf(err error) *Preserve {
 	var invErr *InvocationError
 	if errors.As(err, &invErr) {
 		return invErr.Preserve
+	}
+	return nil
+}
+
+// ActorErrorOf is UsageOf's shape for the actor's own account of a refusal
+// (task t3, issue #125): it extracts what the actor said was wrong from a
+// classified invocation failure, nil when err is not one or when its response
+// body carried nothing liftable. The worker threads it onto the failed
+// attempt's recorded diagnostic, so the run view shows the bridge's own
+// sentence instead of the HTTP status's name.
+func ActorErrorOf(err error) *ActorError {
+	var invErr *InvocationError
+	if errors.As(err, &invErr) {
+		return invErr.ActorError
 	}
 	return nil
 }

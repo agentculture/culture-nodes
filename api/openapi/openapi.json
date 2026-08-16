@@ -514,7 +514,7 @@
             "type": "string"
           },
           "result": {
-            "description": "The attempt's reported output, as submitted."
+            "description": "The attempt's reported output, as submitted. On a FAILED attempt it is the engine's diagnostic instead: {\"error\": {\"class\", \"detail\", \"actor\"?}}. `class` is the control plane's own PRD 13.5 classification and `detail` its one-line summary; `actor`, present only when the actor's error response carried something readable, is the ACTOR's own account of the refusal -- `message` (its error text), `class` (its class CLAIM, which is not adopted as the engine's), `body` (a snippet of a body that declared no error string), and `truncated`. Every string in the actor block is length-bounded and stripped of control characters at the dispatch seam: it is text an actor wrote, so treat it as data and never as markup."
           },
           "started_at": {
             "format": "date-time",

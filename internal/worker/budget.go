@@ -330,7 +330,7 @@ func (w *Worker) refuseUnfunded(
 	_, err := w.complete(ctx, claimed, engine.CompletionRequest{
 		TechStatus:     engine.StatusPolicyDenied,
 		RefusalOutcome: engine.OutcomeBudgetExhausted,
-		Output:         diagnosticOutput(budgetRefusalClass, detail),
+		Output:         diagnosticOutput(budgetRefusalClass, detail, nil),
 	})
 	if err != nil {
 		if isStale(err) {

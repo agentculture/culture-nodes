@@ -48,3 +48,7 @@
 01M04CQKJQDM3YCMSW6B8CTYM4   # t11 (collect-by-run-id + derived CI verdict), developer — first t11 dispatch
 01M04D0QE17WPV6XRC2RD2G3F7   # R9-A (t21 credential form), codex-orin — first dispatch after orin's redeploy
 01M04D3A7G5NWCHKMN3AJWXF5K   # read-only posture re-probe, codex-thor — go/uv installed but unusable
+
+# --- round 10 ---
+01M04F8A06TBG2N1M1FJQAA2D6   # t22 (rate limit, lockout, revocation), codex-orin
+01M04F99A88BMY1YPAS5D7WVN7   # t32 (repair loop + deployed revision), developer

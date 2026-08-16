@@ -35,6 +35,22 @@
       "version": "git version 2.43.0"
     },
     {
+      "name": "node",
+      "state": "present",
+      "path": "/home/spark/.local/bin/node",
+      "on_path": true,
+      "packaging": "standalone",
+      "version": "v24.13.1"
+    },
+    {
+      "name": "npm",
+      "state": "present",
+      "path": "/home/spark/.local/bin/npm",
+      "on_path": true,
+      "packaging": "standalone",
+      "version": "11.8.0"
+    },
+    {
       "name": "codex",
       "state": "present",
       "path": "/home/spark/.nvm/versions/node/v24.13.1/bin/codex",

@@ -5,6 +5,50 @@ All notable changes to this project will be documented in this file.
 Format follows [Keep a Changelog](https://keepachangelog.com/). This project
 adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.25.3] - 2026-08-16
+
+Work package R8-A: tasks t4, t26 and t28 — the cycle tells the truth about
+itself, in numbers a reader can re-run.
+
+### Added
+
+- **`scripts/cycle-accounting.py`.** Renders the four numbers the delivery
+  announcement needs — opened, closed, delta, and cycle-opened-but-
+  undispositioned — each as a command rather than as copied arithmetic. It
+  derives the cycle boundary from git on every run (commit `1e6a532`'s
+  committer timestamp) instead of a hardcoded date, and follows
+  `triage-report.py`'s `--issues-json` pattern so it runs both against live
+  `gh` and against a snapshot. The delta is printed as a signed number: a
+  cycle that ends the tracker LARGER than it started reports negative, which
+  is the case the criterion exists to protect and the one the test covers.
+- **`docs/deliveries/close-the-backlog-bootstrap-honesty.md`.** All fourteen
+  operator steps from the last cycle's STATE section 11, each marked
+  automated-by-a-merged-node or still-manual, plus the stage-2 operator shell
+  transcript reported rather than omitted, plus each of last cycle's NOT MET
+  signals mapped to the issue that would flip it.
+
+### Verified
+
+- **Fourteen of fourteen steps are still manual.** The document was written
+  marking one of them automated; that row was corrected at merge against
+  evidence gathered the same day (#120 — the handover the row credited had
+  produced nothing in production, and the collector it would need is t11,
+  dispatched but unmerged). Fourteen is the honest number.
+- **The live `gh` path works** — the one path the dispatched session could not
+  exercise, because its sandbox denies `socket(2)` (#119). Run in the operator
+  lane it returns 11 opened, 14 closed, delta 3, undispositioned 0. Those
+  differ by one from the snapshot numbers in the document because #120 was
+  filed in between, which is the evidence that the script queries rather than
+  remembers.
+
+### Notes
+
+- The document declines to force a mapping: it records that the STATE file has
+  four NOT MET headings where the spec names three actionable failures, and
+  that closed issue #21 concerns bridge concurrency rather than the missing
+  live cancellation observation, so it is not pressed into a row it does not
+  fit. A refused mapping is a more useful finding than a manufactured one.
+
 ## [0.25.2] - 2026-08-16
 
 Issue #8's three measured gaps in the registration/worker-config surface —

@@ -23,15 +23,25 @@ carry their disposition in their GitHub closure; open issues must have a row in
 the disposition authority.
 
 Omit `--issues-json .issues-snapshot.json` to query all issue states from
-GitHub with `gh`. That live path was not run in this network-denied dispatch.
+GitHub with `gh`. That live path could not run in the network-denied dispatch
+that wrote this (issue #119); it was exercised in the operator lane at merge
+and works, returning **11 opened, 14 closed, delta 3, undispositioned 0**.
+
+The live numbers differ from the snapshot numbers above by one, and that
+difference is the point rather than a discrepancy: #120 was filed between the
+snapshot being taken and the merge. A script that returned the same numbers
+either way would not be querying anything.
 
 ## The fourteen old-way operator steps
 
 The inventory below preserves all fourteen rows from section 11 of
 `2026-08-15-own-the-work-end-to-end-STATE.md`. “Automated” is deliberately
-narrow: a helpful command or UI is not an automated node. Only the collection
-of an agent-authored ref is automated by merged node-path code; the rest still
-requires an operator action at cycle close.
+narrow: a helpful command or UI is not an automated node.
+
+At merge the count became **fourteen of fourteen still-manual**. The single
+row this document originally marked automated — collecting an agent's changes
+— was corrected against evidence gathered the same day; see row 6. That is the
+honest number, and it is the number #118 exists to change.
 
 | # | Operator step | Cycle-close status | Repository evidence or remaining gap |
 |---:|---|---|---|
@@ -40,7 +50,7 @@ requires an operator action at cycle close.
 | 3 | Choose actor and sandbox vocabulary, then background blocking `assign` | **still-manual** | No merged node owns routing and dispatch; `nodes-op assign` remains an operator command. |
 | 4 | Poll the run to terminal | **still-manual** | `9f7f57c` adds `nodes-op running`, which improves the read surface but does not make a node wait and route on terminal state. |
 | 5 | Read the full claim | **still-manual** | `9f7f57c` removes truncation, but a human must still read and judge the claim. |
-| 6 | Collect changes with `ssh … git diff HEAD --binary` | **automated-by-a-merged-node** | `d5e4b35` wires handed-over refs into the worker and has the control plane fetch and measure the ref; this removes SSH diff harvesting on that path. |
+| 6 | Collect changes with `ssh … git diff HEAD --binary` | **still-manual** | Corrected at merge from the "automated" this row was first given. `d5e4b35` has the control plane fetch and measure a handed-over ref — but that is the *measurement* path, not the *collection* path: the operator still turns a run into a mergeable diff by hand, and did so for this very package. Two further facts landed after the row was written. The deployed bridges predated the ref-minting code, so three dispatches reported `handover=true` and created nothing (#120), and `internal/handover`'s correct "no fetchable ref, no record" rule made that indistinguishable from an honest refusal. And the collector the row would need is task t11, dispatched but not merged at the time of writing. |
 | 7 | Stage changes with `git worktree add` and `git apply --3way` | **still-manual** | `d5e4b35` fetches and measures a ref, but no merged merge node stages that ref into an integration worktree. |
 | 8 | Run every suite before and after merge | **still-manual** | The log records operator-run gates; planned gate-node task t11 is not merged. |
 | 9 | Repair what the gate found in the operator's window | **still-manual** | Issue #102 remains open and no repair-loop node is merged. |

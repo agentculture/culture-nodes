@@ -3,7 +3,6 @@ import importlib.util
 import json
 from pathlib import Path
 
-
 SCRIPT = Path(__file__).parents[1] / "scripts" / "cycle-accounting.py"
 SPEC = importlib.util.spec_from_file_location("cycle_accounting", SCRIPT)
 MODULE = importlib.util.module_from_spec(SPEC)

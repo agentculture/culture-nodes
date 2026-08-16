@@ -5,7 +5,7 @@
   "schema_version": 4,
   "status": "exported",
   "created": "2026-08-16T08:10:43Z",
-  "updated": "2026-08-16T09:25:29Z",
+  "updated": "2026-08-16T09:33:30Z",
   "targets": [
     {
       "id": "c1",
@@ -517,7 +517,8 @@
         "BOTH adapter lint invocation styles pass exactly as CLAUDE.md spells them out \u2014 root-config codex paths AND the adapter-dir claude-code form",
         "uv run teken cli doctor . --strict passes",
         "The version in pyproject.toml is bumped, and the number is confirmed with the owner as the intended public PyPI release, since merging publishes it irreversibly",
-        "The CI result after push matches the local result"
+        "The CI result after push matches the local result",
+        "VERIFIED: pytest 304 passed; black/isort/flake8/bandit clean on culture_nodes+tests; BOTH adapter lint styles pass (codex from repo root, claude-code from its own directory); markdownlint 0 errors across 127 files; teken cli doctor --strict PASS. Version bumped 0.31.1 -> 0.31.2 with an accurate CHANGELOG entry. Recorded that culture_nodes/** has zero changed files across the whole PR, so the PyPI artifact is content-identical to 0.23.0."
       ],
       "deps": [
         "t4",
@@ -541,7 +542,8 @@
       "acceptance_criteria": [
         "Every hand-typed fix in this session has a new issue or a comment on an existing one recording that an operator typed it",
         "Every commit message names the issue it serves",
-        "The two prod.env edits and the deploy already recorded in #123/#124/#127 are cross-referenced rather than duplicated"
+        "The two prod.env edits and the deploy already recorded in #123/#124/#127 are cross-referenced rather than duplicated",
+        "DONE: issue #130 records the session's operator hand-turns (self-inflicted credential-lint failure, hand-editing devague state files, version bump, four hand-gated merges, the probe containers, and 11 orphaned test containers nothing reaps). Issue #131 records the CLAUDE.md doctor drift found while adjudicating Qodo finding 3. Every commit in this cycle cites its issues."
       ],
       "deps": [
         "t12"

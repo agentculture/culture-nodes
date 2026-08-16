@@ -262,8 +262,17 @@ func ParseInvocationResponse(status int, payload []byte) (InvocationResponse, er
 	switch status {
 	case http.StatusOK:
 		var result InvocationResult
-		if err := json.Unmarshal(payload, &result); err != nil || result.Outcome == "" {
+		if err := json.Unmarshal(payload, &result); err != nil {
 			return InvocationResponse{}, fmt.Errorf("actors: dial-in 200 response is not a result: %w", err)
+		}
+		// A body that parsed cleanly but declared no outcome is rejected for a
+		// different reason, and that reason has no underlying cause: there is
+		// no json error to wrap. Folding it into the branch above would format
+		// a nil error through %w, which renders the literal "%!w(<nil>)" into
+		// the operator's message and leaves errors.Unwrap returning nil off a
+		// wrapping error. This branch is deliberately unwrapped.
+		if result.Outcome == "" {
+			return InvocationResponse{}, errors.New("actors: dial-in 200 response is not a result: missing outcome")
 		}
 		return InvocationResponse{Result: &result, StatusCode: status, Requests: 1}, nil
 	case http.StatusAccepted:

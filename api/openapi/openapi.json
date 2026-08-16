@@ -711,6 +711,53 @@
         ],
         "type": "object"
       },
+      "CreateScheduleRequest": {
+        "properties": {
+          "catch_up": {
+            "description": "Defaults to `fire-once`.",
+            "enum": [
+              "fire-once",
+              "skip"
+            ],
+            "type": "string"
+          },
+          "emitter": {
+            "description": "Defaults to `schedule:\u003cname\u003e` when omitted.",
+            "type": "string"
+          },
+          "enabled": {
+            "description": "Defaults to true. An operator who declared a cadence and did not say otherwise meant it to run.",
+            "type": "boolean"
+          },
+          "event_name": {
+            "minLength": 1,
+            "type": "string"
+          },
+          "first_fire_at": {
+            "description": "The first instant this schedule is due, and the phase every later occurrence aligns to. Omitted means one interval from now: creating a schedule is not the same act as starting a run.",
+            "format": "date-time",
+            "type": "string"
+          },
+          "interval_seconds": {
+            "format": "int64",
+            "minimum": 1,
+            "type": "integer"
+          },
+          "name": {
+            "minLength": 1,
+            "type": "string"
+          },
+          "payload": {
+            "description": "Defaults to `{}`."
+          }
+        },
+        "required": [
+          "name",
+          "event_name",
+          "interval_seconds"
+        ],
+        "type": "object"
+      },
       "CreateSuiteVerdictRequest": {
         "properties": {
           "attempt_ref": {
@@ -1508,6 +1555,17 @@
         ],
         "type": "object"
       },
+      "PatchScheduleRequest": {
+        "properties": {
+          "enabled": {
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "enabled"
+        ],
+        "type": "object"
+      },
       "PendingDecisionList": {
         "properties": {
           "items": {
@@ -2070,6 +2128,26 @@
       },
       "Run": {
         "properties": {
+          "actor_affinity": {
+            "additionalProperties": {
+              "properties": {
+                "actor": {
+                  "description": "The actor reference this node dispatched to.",
+                  "type": "string"
+                },
+                "rule": {
+                  "description": "The declared affinity rule that chose it, if it was named.",
+                  "type": "string"
+                }
+              },
+              "required": [
+                "actor"
+              ],
+              "type": "object"
+            },
+            "description": "The routing this run's workflow declared and resolved at creation (task t33, issue #107, migrations/0033), keyed by node id — e.g. `{\"fix\": {\"actor\": \"actor://company/developer\", \"rule\": \"security-findings\"}}`. Absent when the run resolved none, which is the case both for a workflow that declares no `spec.affinity` and for a run created by an operator rather than by an event trigger (affinity conditions are evaluated against the triggering event, so a run with no event has nothing to evaluate them against).\n\n`rule` is the declared affinity rule's name, and it is carried rather than dropped because it is what the per-actor comparative record slices by: \"actor X ran this node\" is already recoverable from the attempt, but \"actor X was chosen because the workflow classified this as security-findings work\" is only recoverable from here.",
+            "type": "object"
+          },
           "category": {
             "description": "The run's flat category tag (task t3), if any. Retaggable via PATCH /v1alpha1/runs/{id} (frame decision q4).",
             "type": "string"
@@ -2179,6 +2257,105 @@
           "run",
           "tokens",
           "node_runs"
+        ],
+        "type": "object"
+      },
+      "Schedule": {
+        "properties": {
+          "catch_up": {
+            "description": "What to do about an occurrence that came due while nothing was running — the question a cron line never answers.\n\n`fire-once` (the default) fires late, exactly once, then realigns to the next declared boundary; missed occurrences are counted, never backfilled, because six queued runs would each carry the same freshly-read findings. `skip` declines a MISSED occurrence and waits for the next boundary, which is right for anything whose value is tied to when it happens — a nightly report has no business running at noon. A skip increments `skip_count` and emits `dev.culture.nodes.schedule.skipped`, so \"chose not to run\" and \"never came due\" stay distinguishable.\n\nThe two differ ONLY for a missed occurrence. One that is merely LATE — overdue by less than one whole interval, which a tick interval and a busy loop produce normally — fires under both.",
+            "enum": [
+              "fire-once",
+              "skip"
+            ],
+            "type": "string"
+          },
+          "created_at": {
+            "format": "date-time",
+            "type": "string"
+          },
+          "emitter": {
+            "description": "Free text naming who emitted the fact. Attribution for operators, never an authority claim (PRD §10.4).",
+            "type": "string"
+          },
+          "enabled": {
+            "type": "boolean"
+          },
+          "event_name": {
+            "description": "The signal event this schedule appends on each occurrence.",
+            "type": "string"
+          },
+          "fire_count": {
+            "format": "int64",
+            "type": "integer"
+          },
+          "id": {
+            "type": "string"
+          },
+          "interval_seconds": {
+            "format": "int64",
+            "minimum": 1,
+            "type": "integer"
+          },
+          "last_event_id": {
+            "description": "The `signal_events` fact the last fire appended — the audit trail in one field, since the runs it triggered are reachable from it.",
+            "type": "string"
+          },
+          "last_fired_at": {
+            "description": "Absent until the first fire.",
+            "format": "date-time",
+            "type": "string"
+          },
+          "name": {
+            "description": "Unique per namespace. It is the handle an operator disables by, which is why two schedules cannot share one.",
+            "type": "string"
+          },
+          "next_fire_at": {
+            "description": "The next instant this schedule is due, and the whole durable state of the loop: it is advanced only inside the transaction that also appends the event, which is what makes a restart unable to double-start or lose an occurrence.",
+            "format": "date-time",
+            "type": "string"
+          },
+          "payload": {
+            "description": "The event body, verbatim. Plain declared data — a schedule reads no external system and holds no credential."
+          },
+          "skip_count": {
+            "description": "Occurrences declined under a `skip` catch-up policy.",
+            "format": "int64",
+            "type": "integer"
+          },
+          "updated_at": {
+            "format": "date-time",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "name",
+          "event_name",
+          "emitter",
+          "payload",
+          "interval_seconds",
+          "catch_up",
+          "enabled",
+          "next_fire_at",
+          "fire_count",
+          "skip_count",
+          "created_at",
+          "updated_at"
+        ],
+        "type": "object"
+      },
+      "ScheduleList": {
+        "properties": {
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/Schedule"
+            },
+            "type": "array"
+          }
+        },
+        "required": [
+          "items"
         ],
         "type": "object"
       },
@@ -4399,6 +4576,212 @@
         "summary": "Record what a test suite did to this run's handed-over commit.",
         "tags": [
           "ledger"
+        ]
+      }
+    },
+    "/v1alpha1/schedules": {
+      "get": {
+        "description": "Disabled schedules are included deliberately: a schedule that is not running is precisely what an operator asking \"why has nothing happened since Tuesday\" is looking for.",
+        "operationId": "listSchedules",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ScheduleList"
+                }
+              }
+            },
+            "description": "The namespace's schedules."
+          }
+        },
+        "summary": "Every declared schedule, enabled or not.",
+        "tags": [
+          "schedules"
+        ]
+      },
+      "post": {
+        "description": "Task t33 (issue #107): a schedule is an emitter with a clock. On each declared occurrence it appends its declared payload to `signal_events` as a fact, and every published workflow whose `spec.triggers` matches that fact creates a run — the same path a POST /v1alpha1/events delivery takes, so there is exactly one route from \"something happened\" to \"a run exists\".\n\nA schedule is deployment configuration, not part of a workflow: a workflow version is immutable and content-addressed, so a cadence declared inside one could not be disabled without republishing (which would change what the graph IS in order to change how often it runs). It also discovers nothing and holds no credential — what it emits is what an operator wrote down.",
+        "operationId": "createSchedule",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CreateScheduleRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Schedule"
+                }
+              }
+            },
+            "description": "The declared schedule."
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "description": "A declaration this control plane could not honour."
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "description": "A schedule with that name already exists in this namespace."
+          }
+        },
+        "summary": "Declare a cadence that emits an event with no human action.",
+        "tags": [
+          "schedules"
+        ]
+      }
+    },
+    "/v1alpha1/schedules/{id}": {
+      "delete": {
+        "description": "The `signal_events` facts it appended and the runs those started are untouched: they are history, and history does not stop being true because the thing that produced it was retired.",
+        "operationId": "deleteSchedule",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "Deleted."
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "description": "No such schedule in this namespace."
+          }
+        },
+        "summary": "Remove a schedule.",
+        "tags": [
+          "schedules"
+        ]
+      },
+      "get": {
+        "operationId": "getSchedule",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Schedule"
+                }
+              }
+            },
+            "description": "The schedule."
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "description": "No such schedule in this namespace."
+          }
+        },
+        "summary": "One schedule, with its cursor and history.",
+        "tags": [
+          "schedules"
+        ]
+      },
+      "patch": {
+        "description": "`enabled` is the only patchable field. Changing the cadence or the payload of a live schedule would leave already-fired runs pointing at a declaration that no longer exists anywhere, so those are a delete and a create.\n\nDisabling does NOT move `next_fire_at`. A schedule disabled at 09:00 and re-enabled at 17:00 is overdue on re-enable, and its declared `catch_up` policy decides whether that overdue occurrence fires — the same question, with the same answer, as a control plane that was down for those eight hours.",
+        "operationId": "patchSchedule",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/PatchScheduleRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Schedule"
+                }
+              }
+            },
+            "description": "The updated schedule."
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "description": "No patchable field was supplied."
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "description": "No such schedule in this namespace."
+          }
+        },
+        "summary": "Enable or disable a schedule.",
+        "tags": [
+          "schedules"
         ]
       }
     },

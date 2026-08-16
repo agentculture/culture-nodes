@@ -18,9 +18,11 @@ import (
 // ordinary encoding/json semantics, so every other field of the spec is
 // simply ignored rather than needing to be modeled here.
 type openapiDoc struct {
-	Paths map[string]map[string]struct {
-		OperationID string `json:"operationId"`
-	} `json:"paths"`
+	Paths map[string]map[string]openAPIOperation `json:"paths"`
+}
+
+type openAPIOperation struct {
+	OperationID string `json:"operationId"`
 }
 
 func loadOpenAPISpec(t *testing.T) openapiDoc {
@@ -42,6 +44,24 @@ func loadOpenAPISpec(t *testing.T) openapiDoc {
 
 var pathParamPattern = regexp.MustCompile(`\{[^}]+\}`)
 
+// probeMethodCandidates are methods Go's mux answers 405 for when a path is
+// registered under some other method, in preference order. TRACE is last and
+// is the backstop: nothing in this API will ever document it.
+var probeMethodCandidates = []string{http.MethodDelete, http.MethodPut, http.MethodTrace}
+
+// probeMethodFor returns a method the given path does NOT document, so a 405
+// from it proves the path is registered. It fails loudly rather than
+// silently probing with a documented method, because a probe the route
+// actually serves would turn this whole sweep into a no-op.
+func probeMethodFor(documented map[string]openAPIOperation) string {
+	for _, candidate := range probeMethodCandidates {
+		if _, taken := documented[strings.ToLower(candidate)]; !taken {
+			return candidate
+		}
+	}
+	panic("openapi route sweep: every candidate probe method is documented for this path; add one to probeMethodCandidates")
+}
+
 // concretePath fills every {param} segment of an OpenAPI path template with
 // a syntactically valid, certainly-nonexistent value, so it can be sent as
 // a real HTTP request path.
@@ -58,9 +78,14 @@ func concretePath(template string) string {
 //     undocumented method against it must get 405 (Method Not Allowed),
 //     never 404 — 404 there would mean the *path itself* is not wired into
 //     the mux at all, which is exactly the drift this test exists to catch.
-//     DELETE is used as the probe method because it is not a documented
-//     method anywhere in this spec, so it is always "wrong" for every
-//     route.
+//     The probe method is chosen PER PATH, from the methods that path does
+//     not document (probeMethodFor below), so it is always "wrong" for the
+//     route being swept. It used to be DELETE unconditionally, on the
+//     grounds that no route in this spec documented DELETE -- true until
+//     task t33 added DELETE /v1alpha1/schedules/{id}, at which point the
+//     sweep started reporting that a route it had just correctly reached
+//     was missing. A global assumption about which method is spare is a
+//     thing every new endpoint can invalidate; asking the spec is not.
 //   - a path the spec does not declare must still 404 — proof the mux is
 //     not simply routing everything through, which would make the 405
 //     check above meaningless.
@@ -84,7 +109,7 @@ func TestOpenAPIRoutesAreServed(t *testing.T) {
 
 			t.Run(httpMethod+"_"+template, func(t *testing.T) {
 				path := concretePath(template)
-				req, err := http.NewRequest(http.MethodDelete, f.url(path), nil)
+				req, err := http.NewRequest(probeMethodFor(methods), f.url(path), nil)
 				if err != nil {
 					t.Fatalf("new request: %v", err)
 				}
@@ -94,8 +119,8 @@ func TestOpenAPIRoutesAreServed(t *testing.T) {
 				}
 				resp.Body.Close()
 				if resp.StatusCode != http.StatusMethodNotAllowed {
-					t.Fatalf("DELETE %s: status = %d, want %d (405) — the mux does not appear to serve %s %s",
-						path, resp.StatusCode, http.StatusMethodNotAllowed, httpMethod, template)
+					t.Fatalf("%s %s: status = %d, want %d (405) — the mux does not appear to serve %s %s",
+						req.Method, path, resp.StatusCode, http.StatusMethodNotAllowed, httpMethod, template)
 				}
 			})
 		}

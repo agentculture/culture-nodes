@@ -386,23 +386,54 @@ FOR UPDATE
 // limitation). It returns the appended event and the subscriptions it
 // fired.
 func (s *Store) DeliverSignalEvent(ctx context.Context, in DeliverSignalEventInput) (SignalDelivery, error) {
-	switch {
-	case in.NamespaceID == "":
-		return SignalDelivery{}, errors.New("postgres: DeliverSignalEvent: namespaceID is required")
-	case in.Name == "":
-		return SignalDelivery{}, errors.New("postgres: DeliverSignalEvent: name is required")
-	case in.Emitter == "":
-		return SignalDelivery{}, errors.New("postgres: DeliverSignalEvent: emitter is required")
-	case (in.SourceKey == "") != (len(in.Watermark) == 0):
-		return SignalDelivery{}, errors.New("postgres: DeliverSignalEvent: sourceKey and watermark must be supplied together")
+	if err := in.validate(); err != nil {
+		return SignalDelivery{}, err
 	}
-
 	tx, err := s.pool.Begin(ctx)
 	if err != nil {
 		return SignalDelivery{}, fmt.Errorf("postgres: DeliverSignalEvent: begin: %w", err)
 	}
 	defer func() { _ = tx.Rollback(ctx) }() // no-op once Commit has succeeded
 
+	delivery, err := s.deliverSignalEventTx(ctx, tx, in)
+	if err != nil {
+		return SignalDelivery{}, err
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return SignalDelivery{}, fmt.Errorf("postgres: DeliverSignalEvent: commit: %w", err)
+	}
+	return delivery, nil
+}
+
+func (in DeliverSignalEventInput) validate() error {
+	switch {
+	case in.NamespaceID == "":
+		return errors.New("postgres: DeliverSignalEvent: namespaceID is required")
+	case in.Name == "":
+		return errors.New("postgres: DeliverSignalEvent: name is required")
+	case in.Emitter == "":
+		return errors.New("postgres: DeliverSignalEvent: emitter is required")
+	case (in.SourceKey == "") != (len(in.Watermark) == 0):
+		return errors.New("postgres: DeliverSignalEvent: sourceKey and watermark must be supplied together")
+	}
+	return nil
+}
+
+// deliverSignalEventTx is DeliverSignalEvent's whole body minus Begin and
+// Commit, so a caller that is ALREADY inside a transaction can append a fact
+// (and fire its waits, routes, and triggers) atomically with its own work.
+// FireSchedule is that caller: acceptance criterion 2 of task t33 requires
+// that a control plane which dies between deciding a schedule is due and
+// creating the run can tell afterwards which of those happened, and the only
+// way to make that answerable is to put the event, the run the trigger
+// creates from it, and the schedule's own advanced cursor in ONE transaction.
+// Splitting the seam here rather than duplicating the delivery is deliberate:
+// there is one set of delivery semantics in this system and this keeps it
+// that way.
+//
+// It does not commit and does not roll back: the caller owns tx's lifetime,
+// including the rollback that undoes everything this wrote.
+func (s *Store) deliverSignalEventTx(ctx context.Context, tx pgx.Tx, in DeliverSignalEventInput) (SignalDelivery, error) {
 	if in.SourceKey != "" {
 		if _, err := tx.Exec(ctx, `SELECT pg_advisory_xact_lock(hashtextextended($1, 0))`,
 			"signal-watermark:"+in.NamespaceID+":"+in.SourceKey); err != nil {
@@ -416,9 +447,6 @@ func (s *Store) DeliverSignalEvent(ctx context.Context, in DeliverSignalEventInp
 			ev, err := signalEventByIDTx(ctx, tx, eventID)
 			if err != nil {
 				return SignalDelivery{}, err
-			}
-			if err := tx.Commit(ctx); err != nil {
-				return SignalDelivery{}, fmt.Errorf("postgres: DeliverSignalEvent: commit duplicate: %w", err)
 			}
 			return SignalDelivery{Event: ev, Duplicate: true}, nil
 		}
@@ -501,9 +529,6 @@ func (s *Store) DeliverSignalEvent(ctx context.Context, in DeliverSignalEventInp
 		return SignalDelivery{}, fmt.Errorf("postgres: DeliverSignalEvent: outbox: %w", err)
 	}
 
-	if err := tx.Commit(ctx); err != nil {
-		return SignalDelivery{}, fmt.Errorf("postgres: DeliverSignalEvent: commit: %w", err)
-	}
 	return SignalDelivery{Event: ev, Fired: fired, Pickups: pickups, Triggered: triggered}, nil
 }
 

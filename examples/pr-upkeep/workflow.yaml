@@ -22,6 +22,26 @@ spec:
     - onEvent: pr-upkeep.pr
       when: event.payload.source == "github_pr" && size(event.payload.findings) > 0
 
+  # Which developer actor takes the fix, decided from the finding itself
+  # (task t33). First match wins, so the unconditional rule is declared last
+  # and the compiler enforces that ordering. The resolved choice is recorded
+  # on the run (runs.actor_affinity), which is the point: the per-actor
+  # comparative record needs to know what the workflow said this work WAS,
+  # not only which actor happened to run it.
+  #
+  # Deployment configuration, again: both references must resolve in the
+  # deployment's registry. Pointing them at the same registered actor is a
+  # legitimate way to run this workflow without splitting the fleet — the
+  # recorded rule still distinguishes the two kinds of work afterwards.
+  affinity:
+    - name: security-findings
+      node: fix
+      actor: actor://company/security-developer
+      when: event.payload.findings.exists(f, f.kind == "security")
+    - name: general-findings
+      node: fix
+      actor: actor://company/developer
+
   contract:
     # Triggered runs receive the event payload verbatim. This replaces the
     # former sweep report: repository, PR identity, and prioritized findings

@@ -33,6 +33,7 @@ type metadata struct {
 type spec struct {
 	Entry        string           `json:"entry"`
 	Triggers     []trigger        `json:"triggers,omitempty"`
+	Affinity     []affinityRule   `json:"affinity,omitempty"`
 	Contract     workflowContract `json:"contract"`
 	Limits       *limits          `json:"limits,omitempty"`
 	Budget       *budget          `json:"budget,omitempty"`
@@ -414,6 +415,7 @@ type IR struct {
 type irSpec struct {
 	Entry    string           `json:"entry"`
 	Triggers []trigger        `json:"triggers,omitempty"`
+	Affinity []affinityRule   `json:"affinity,omitempty"`
 	Contract workflowContract `json:"contract"`
 	Limits   limits           `json:"limits"`
 	// Budget is carried through unchanged and omitted entirely when the

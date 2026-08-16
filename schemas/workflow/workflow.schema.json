@@ -2,7 +2,7 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://nodes.culture.dev/schemas/workflow/workflow.schema.json",
   "title": "Workflow authoring document",
-  "description": "The authoring format for a Culture Nodes workflow (PRD §9.1, §11.1). YAML is authoring sugar; JSON is canonical, so this schema validates the JSON form. It is a *syntax and structure* gate only (PRD §11.4): graph reachability, contract compatibility, binding resolution, digest pinning, and policy checks are compiler jobs and are deliberately not attempted here. A published workflow version is immutable and content-addressed; a run pins one digest.",
+  "description": "The authoring format for a Culture Nodes workflow (PRD \u00a79.1, \u00a711.1). YAML is authoring sugar; JSON is canonical, so this schema validates the JSON form. It is a *syntax and structure* gate only (PRD \u00a711.4): graph reachability, contract compatibility, binding resolution, digest pinning, and policy checks are compiler jobs and are deliberately not attempted here. A published workflow version is immutable and content-addressed; a run pins one digest.",
   "type": "object",
   "required": [
     "apiVersion",
@@ -44,7 +44,7 @@
       "minLength": 3,
       "maxLength": 256,
       "pattern": "^[a-z][a-z0-9-]*/[a-z0-9][a-z0-9._-]*$",
-      "description": "Resolved owner, e.g. `team/platform-ai`. Ownership is architecture (PRD §7): every node carries one, and authoring defaults may reduce repetition but never remove the resolved owner from the normalized JSON."
+      "description": "Resolved owner, e.g. `team/platform-ai`. Ownership is architecture (PRD \u00a77): every node carries one, and authoring defaults may reduce repetition but never remove the resolved owner from the normalized JSON."
     },
     "semver": {
       "type": "string",
@@ -65,12 +65,12 @@
     "pointer": {
       "type": "string",
       "format": "json-pointer",
-      "description": "JSON Pointer into run, node, or ledger data (PRD §11.2). Direct data movement uses pointers, never a template language."
+      "description": "JSON Pointer into run, node, or ledger data (PRD \u00a711.2). Direct data movement uses pointers, never a template language."
     },
     "cel": {
       "type": "string",
       "minLength": 1,
-      "description": "A CEL expression (PRD §11.2). Compiled and bounded by the compiler; not evaluated here."
+      "description": "A CEL expression (PRD \u00a711.2). Compiled and bounded by the compiler; not evaluated here."
     },
     "schemaSource": {
       "type": "object",
@@ -95,18 +95,40 @@
     "continuation": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["while", "bounds", "onExhausted"],
+      "required": [
+        "while",
+        "bounds",
+        "onExhausted"
+      ],
       "properties": {
-        "while": { "type": "array", "minItems": 1, "items": { "$ref": "#/$defs/cel" } },
-        "bounds": {
-          "type": "object", "additionalProperties": false, "minProperties": 1,
-          "properties": {
-            "maxContinuations": { "type": "integer", "minimum": 1 },
-            "maxWallClock": { "$ref": "#/$defs/duration" },
-            "maxSessions": { "type": "integer", "minimum": 1 }
+        "while": {
+          "type": "array",
+          "minItems": 1,
+          "items": {
+            "$ref": "#/$defs/cel"
           }
         },
-        "onExhausted": { "$ref": "#/$defs/outcomeName" }
+        "bounds": {
+          "type": "object",
+          "additionalProperties": false,
+          "minProperties": 1,
+          "properties": {
+            "maxContinuations": {
+              "type": "integer",
+              "minimum": 1
+            },
+            "maxWallClock": {
+              "$ref": "#/$defs/duration"
+            },
+            "maxSessions": {
+              "type": "integer",
+              "minimum": 1
+            }
+          }
+        },
+        "onExhausted": {
+          "$ref": "#/$defs/outcomeName"
+        }
       }
     },
     "metadata": {
@@ -157,11 +179,52 @@
           "description": "Inbound event handlers that create a new run. The event payload is the run input.",
           "items": {
             "type": "object",
-            "required": ["onEvent"],
+            "required": [
+              "onEvent"
+            ],
             "additionalProperties": false,
             "properties": {
-              "onEvent": {"type": "string", "minLength": 1},
-              "when": {"$ref": "#/$defs/cel", "description": "Optional CEL condition evaluated with event ({name, payload, emitter})."}
+              "onEvent": {
+                "type": "string",
+                "minLength": 1
+              },
+              "when": {
+                "$ref": "#/$defs/cel",
+                "description": "Optional CEL condition evaluated with event ({name, payload, emitter})."
+              }
+            }
+          }
+        },
+        "affinity": {
+          "type": "array",
+          "description": "Declared actor affinity: which actor should execute a node, chosen by a condition over the triggering event. Rules are evaluated in declaration order and the first match for a node wins. The resolved choice is recorded on the run (migrations/0033) so the per-actor comparative record can slice by the rule that picked it.",
+          "items": {
+            "type": "object",
+            "required": [
+              "node",
+              "actor"
+            ],
+            "additionalProperties": false,
+            "properties": {
+              "name": {
+                "type": "string",
+                "minLength": 1,
+                "description": "Label for this rule, recorded alongside the resolved actor on the run. It is what the comparative record slices by: the kind of work, not just who did it."
+              },
+              "node": {
+                "type": "string",
+                "minLength": 1,
+                "description": "The agent or action.http node this rule routes."
+              },
+              "actor": {
+                "type": "string",
+                "pattern": "^actor://",
+                "description": "The actor reference that should execute the node instead of its declared `uses`."
+              },
+              "when": {
+                "$ref": "#/$defs/cel",
+                "description": "Optional CEL condition evaluated with event ({name, payload, emitter}). A rule with no condition is the default and must be declared last for its node."
+              }
             }
           }
         },
@@ -205,19 +268,19 @@
         },
         "budget": {
           "type": "object",
-          "description": "Declared economic limits for one run (PRD §9.7's \"optional agent token or cost budget\"). Unlike `limits`, nothing here is defaulted: an omitted budget means unbudgeted, and the compiler never invents a ceiling the author did not declare. When the next dispatch cannot be funded the control plane refuses it BEFORE invoking anything and routes the reserved outcome `budget_exhausted`, which an agent or action.http node may declare an edge from.",
+          "description": "Declared economic limits for one run (PRD \u00a79.7's \"optional agent token or cost budget\"). Unlike `limits`, nothing here is defaulted: an omitted budget means unbudgeted, and the compiler never invents a ceiling the author did not declare. When the next dispatch cannot be funded the control plane refuses it BEFORE invoking anything and routes the reserved outcome `budget_exhausted`, which an agent or action.http node may declare an edge from.",
           "additionalProperties": false,
           "minProperties": 1,
           "properties": {
             "maxSessions": {
               "type": "integer",
               "minimum": 1,
-              "description": "How many NEW provider sessions one run may start. It counts COLD STARTS only: an attempt dispatched carrying a prior `continuation_ref` continues a session already paid for and charges nothing, so a warm workstream of N node turns consumes 1, not N. 0 is refused rather than read — it reads as both \"no bound\" and \"no session may start\"."
+              "description": "How many NEW provider sessions one run may start. It counts COLD STARTS only: an attempt dispatched carrying a prior `continuation_ref` continues a session already paid for and charges nothing, so a warm workstream of N node turns consumes 1, not N. 0 is refused rather than read \u2014 it reads as both \"no bound\" and \"no session may start\"."
             },
             "maxUncachedInput": {
               "type": "integer",
               "minimum": 1,
-              "description": "How many input tokens one run may send that the provider did NOT serve from cache, summed over every attempt that reported usage (usage_input_tokens - usage_cached_input_tokens). An attempt that reported input tokens but no cached figure charges its input IN FULL: a backend reporting no cache telemetry is not a backend with a 0% hit rate. Attempts that reported no usage at all charge nothing and cannot — the ceiling bounds measured spend, and unmeasured spend stays visible as the attempt's unreported usage."
+              "description": "How many input tokens one run may send that the provider did NOT serve from cache, summed over every attempt that reported usage (usage_input_tokens - usage_cached_input_tokens). An attempt that reported input tokens but no cached figure charges its input IN FULL: a backend reporting no cache telemetry is not a backend with a 0% hit rate. Attempts that reported no usage at all charge nothing and cannot \u2014 the ceiling bounds measured spend, and unmeasured spend stays visible as the attempt's unreported usage."
             }
           }
         },
@@ -261,7 +324,7 @@
         },
         "presentation": {
           "type": "object",
-          "description": "Presentation metadata never changes runtime semantics (PRD §9.1)."
+          "description": "Presentation metadata never changes runtime semantics (PRD \u00a79.1)."
         }
       }
     },
@@ -275,7 +338,7 @@
       "properties": {
         "kind": {
           "type": "string",
-          "description": "Node kinds (PRD §9.2, §9.8). `parallel` and `join` are the split/barrier routers (issue #43): a parallel node fans out one token per eligible `<node>.split` edge, and a join node reconvenes the sibling set under its declared policy. `action.container`, `transform.wasm`, `foreach`, `subworkflow`, and `event` are named in the PRD as later work and are deliberately absent from this enum.",
+          "description": "Node kinds (PRD \u00a79.2, \u00a79.8). `parallel` and `join` are the split/barrier routers (issue #43): a parallel node fans out one token per eligible `<node>.split` edge, and a join node reconvenes the sibling set under its declared policy. `action.container`, `transform.wasm`, `foreach`, `subworkflow`, and `event` are named in the PRD as later work and are deliberately absent from this enum.",
           "enum": [
             "agent",
             "code",
@@ -339,7 +402,7 @@
         },
         "select": {
           "type": "array",
-          "description": "Decision-node output ports, each guarded by a CEL predicate (PRD §9.2, §11.2).",
+          "description": "Decision-node output ports, each guarded by a CEL predicate (PRD \u00a79.2, \u00a711.2).",
           "items": {
             "type": "object",
             "required": [
@@ -362,7 +425,7 @@
         },
         "until": {
           "type": "object",
-          "description": "Wait-node resume condition: a durable time or an external signal (PRD §9.2).",
+          "description": "Wait-node resume condition: a durable time or an external signal (PRD \u00a79.2).",
           "minProperties": 1,
           "additionalProperties": false,
           "properties": {
@@ -482,7 +545,7 @@
     },
     "joinConfig": {
       "type": "object",
-      "description": "A join node's barrier policy (PRD §9.8, issue #43). The sibling set the barrier counts against is discovered at split time (token_groups.cardinality), never declared here. `first_success` is deliberately not in this enum: domain outcomes carry no success/failure typing (PRD §3.4), so \"first success\" has no honest meaning yet — a recorded PRD deviation, see the parallel-tokens design §10.",
+      "description": "A join node's barrier policy (PRD \u00a79.8, issue #43). The sibling set the barrier counts against is discovered at split time (token_groups.cardinality), never declared here. `first_success` is deliberately not in this enum: domain outcomes carry no success/failure typing (PRD \u00a73.4), so \"first success\" has no honest meaning yet \u2014 a recorded PRD deviation, see the parallel-tokens design \u00a710.",
       "required": [
         "policy"
       ],
@@ -504,7 +567,7 @@
     },
     "nodeContract": {
       "type": "object",
-      "description": "Node contract (PRD §9.3): input schema, one output schema per domain outcome, and an error schema. JSON Schema is a validation language, not a decidable subtyping system — runtime validation stays mandatory even when the compiler proves edge compatibility.",
+      "description": "Node contract (PRD \u00a79.3): input schema, one output schema per domain outcome, and an error schema. JSON Schema is a validation language, not a decidable subtyping system \u2014 runtime validation stays mandatory even when the compiler proves edge compatibility.",
       "minProperties": 1,
       "additionalProperties": false,
       "properties": {
@@ -538,7 +601,7 @@
     },
     "inputBinding": {
       "type": "object",
-      "description": "Either a whole-value move (`from`, always a JSON Pointer) or named field bindings, each of which is a pointer or a declared literal (PRD §11.2, issue #73).",
+      "description": "Either a whole-value move (`from`, always a JSON Pointer) or named field bindings, each of which is a pointer or a declared literal (PRD \u00a711.2, issue #73).",
       "additionalProperties": false,
       "minProperties": 1,
       "properties": {
@@ -555,7 +618,7 @@
       }
     },
     "bindingValue": {
-      "description": "One named binding: a JSON Pointer into run, node, or ledger data, or a literal declared inline (issue #73, option A). A bare string is ALWAYS a pointer and a literal is ALWAYS wrapped, so the two can never be confused — this is not a template language (PRD §11.2), and a literal interpolates nothing. A literal exists so an author reading only the workflow text can name what a node observes; the compiler checks it against the node's own input contract, and it is fixed at publish time and addressed by the workflow's content digest like everything else the author wrote.",
+      "description": "One named binding: a JSON Pointer into run, node, or ledger data, or a literal declared inline (issue #73, option A). A bare string is ALWAYS a pointer and a literal is ALWAYS wrapped, so the two can never be confused \u2014 this is not a template language (PRD \u00a711.2), and a literal interpolates nothing. A literal exists so an author reading only the workflow text can name what a node observes; the compiler checks it against the node's own input contract, and it is fixed at publish time and addressed by the workflow's content digest like everything else the author wrote.",
       "oneOf": [
         {
           "$ref": "#/$defs/pointer"
@@ -580,7 +643,7 @@
     },
     "codeOperation": {
       "type": "object",
-      "description": "Authoring shape of a code node's operation. The compiler lowers this to the runner-agnostic operation contract in ../runner/operation.schema.json. A code node describes an operation; a runner executes it — no shell, script, or Docker socket ever runs in a control-plane process (PRD §9.2).",
+      "description": "Authoring shape of a code node's operation. The compiler lowers this to the runner-agnostic operation contract in ../runner/operation.schema.json. A code node describes an operation; a runner executes it \u2014 no shell, script, or Docker socket ever runs in a control-plane process (PRD \u00a79.2).",
       "required": [
         "image",
         "argv"
@@ -629,7 +692,7 @@
     },
     "networkMode": {
       "type": "string",
-      "description": "`none` is the safe default (PRD §13.7).",
+      "description": "`none` is the safe default (PRD \u00a713.7).",
       "enum": [
         "none",
         "egress-allowlist",
@@ -638,7 +701,7 @@
     },
     "preRunHook": {
       "type": "object",
-      "description": "A code operation the engine/worker executes through the runner boundary BEFORE an agent node's actor is dispatched (plan task t14, spec claim c37). The operation is the same authoring shape a code node declares (PRD §9.2, §13.7): no shell, script, or Docker socket ever runs in a control-plane process. Failure semantics (honesty condition h32) are fixed, not authored: a pre-run hook that fails fails the attempt before agent dispatch as a technical failure, retryable per the node's own retry policy, and the agent is never invoked.",
+      "description": "A code operation the engine/worker executes through the runner boundary BEFORE an agent node's actor is dispatched (plan task t14, spec claim c37). The operation is the same authoring shape a code node declares (PRD \u00a79.2, \u00a713.7): no shell, script, or Docker socket ever runs in a control-plane process. Failure semantics (honesty condition h32) are fixed, not authored: a pre-run hook that fails fails the attempt before agent dispatch as a technical failure, retryable per the node's own retry policy, and the agent is never invoked.",
       "required": [
         "operation"
       ],
@@ -688,7 +751,7 @@
     },
     "ledgerDelta": {
       "type": "object",
-      "description": "The node's ledger delta contract (PRD §10.7): the projection it may read, and the record types it may propose or observe. Authority is still enforced by the ledger runtime at append time — declaring `observe` does not grant an agent the right to issue observed evidence.",
+      "description": "The node's ledger delta contract (PRD \u00a710.7): the projection it may read, and the record types it may propose or observe. Authority is still enforced by the ledger runtime at append time \u2014 declaring `observe` does not grant an agent the right to issue observed evidence.",
       "additionalProperties": false,
       "properties": {
         "read": {
@@ -723,7 +786,7 @@
     },
     "projectionName": {
       "type": "string",
-      "description": "Standard ledger projections (PRD §10.9). Domain projections may be registered later; this enum is intentionally closed for now so typos fail loudly.",
+      "description": "Standard ledger projections (PRD \u00a710.9). Domain projections may be registered later; this enum is intentionally closed for now so typos fail loudly.",
       "enum": [
         "current_scope",
         "confirmed_claims",
@@ -754,7 +817,7 @@
     },
     "acceptance": {
       "type": "object",
-      "description": "Mechanical acceptance checks (PRD §10.10). Check payloads stay open until the check registry lands with the compiler; only `kind` is required. `enforce` declares what a failed check does to routing; omitting it means `observe`.",
+      "description": "Mechanical acceptance checks (PRD \u00a710.10). Check payloads stay open until the check registry lands with the compiler; only `kind` is required. `enforce` declares what a failed check does to routing; omitting it means `observe`.",
       "required": [
         "requires"
       ],
@@ -765,7 +828,7 @@
           "maxLength": 142,
           "pattern": "^(observe|route_technical|route_outcome:[a-z][a-z0-9_]*)$",
           "default": "observe",
-          "description": "Policy for a failed acceptance check (issue #37). `observe` — the default when the field is omitted, and today's behavior — records the verdict as a derived record without touching routing. `route_technical` fails the attempt with the engine's `contract_rejected` technical status. `route_outcome:<name>` follows the graph edge of a domain outcome the node itself declares; the compiler rejects a name the node's contract does not declare."
+          "description": "Policy for a failed acceptance check (issue #37). `observe` \u2014 the default when the field is omitted, and today's behavior \u2014 records the verdict as a derived record without touching routing. `route_technical` fails the attempt with the engine's `contract_rejected` technical status. `route_outcome:<name>` follows the graph edge of a domain outcome the node itself declares; the compiler rejects a name the node's contract does not declare."
         },
         "requires": {
           "type": "array",
@@ -824,7 +887,7 @@
     },
     "edge": {
       "type": "object",
-      "description": "A transition into a node, sourced either from another node's declared domain outcome (`from`) or from a named external event (`onEvent`). Exactly one of the two. `changes_required` is an outcome that follows an edge, never an engine failure (PRD §3.4).",
+      "description": "A transition into a node, sourced either from another node's declared domain outcome (`from`) or from a named external event (`onEvent`). Exactly one of the two. `changes_required` is an outcome that follows an edge, never an engine failure (PRD \u00a73.4).",
       "required": [
         "to"
       ],
@@ -860,7 +923,7 @@
         "onEvent": {
           "type": "string",
           "minLength": 1,
-          "description": "An event name (issue #43): when a signal event of this name is delivered to a run of this workflow, a token is created at `to` and the node runs. Several edges may name one event — one delivery then creates one token per matching edge, which is how an event splits. Routes are multi-fire and bounded by spec.limits (§9.7); an event edge may not target an `end` node."
+          "description": "An event name (issue #43): when a signal event of this name is delivered to a run of this workflow, a token is created at `to` and the node runs. Several edges may name one event \u2014 one delivery then creates one token per matching edge, which is how an event splits. Routes are multi-fire and bounded by spec.limits (\u00a79.7); an event edge may not target an `end` node."
         },
         "to": {
           "$ref": "#/$defs/name"

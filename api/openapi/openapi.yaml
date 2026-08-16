@@ -759,6 +759,159 @@ paths:
               schema:
                 $ref: '#/components/schemas/Error'
 
+  /v1alpha1/schedules:
+    post:
+      operationId: createSchedule
+      tags: [schedules]
+      summary: Declare a cadence that emits an event with no human action.
+      description: >-
+        Task t33 (issue #107): a schedule is an emitter with a clock. On
+        each declared occurrence it appends its declared payload to
+        `signal_events` as a fact, and every published workflow whose
+        `spec.triggers` matches that fact creates a run — the same path a
+        POST /v1alpha1/events delivery takes, so there is exactly one route
+        from "something happened" to "a run exists".
+
+
+        A schedule is deployment configuration, not part of a workflow: a
+        workflow version is immutable and content-addressed, so a cadence
+        declared inside one could not be disabled without republishing
+        (which would change what the graph IS in order to change how often
+        it runs). It also discovers nothing and holds no credential — what
+        it emits is what an operator wrote down.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CreateScheduleRequest'
+      responses:
+        '201':
+          description: The declared schedule.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Schedule'
+        '400':
+          description: A declaration this control plane could not honour.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '409':
+          description: A schedule with that name already exists in this namespace.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+    get:
+      operationId: listSchedules
+      tags: [schedules]
+      summary: Every declared schedule, enabled or not.
+      description: >-
+        Disabled schedules are included deliberately: a schedule that is
+        not running is precisely what an operator asking "why has nothing
+        happened since Tuesday" is looking for.
+      responses:
+        '200':
+          description: The namespace's schedules.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ScheduleList'
+
+  /v1alpha1/schedules/{id}:
+    get:
+      operationId: getSchedule
+      tags: [schedules]
+      summary: One schedule, with its cursor and history.
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: {type: string}
+      responses:
+        '200':
+          description: The schedule.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Schedule'
+        '404':
+          description: No such schedule in this namespace.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+    patch:
+      operationId: patchSchedule
+      tags: [schedules]
+      summary: Enable or disable a schedule.
+      description: >-
+        `enabled` is the only patchable field. Changing the cadence or the
+        payload of a live schedule would leave already-fired runs pointing
+        at a declaration that no longer exists anywhere, so those are a
+        delete and a create.
+
+
+        Disabling does NOT move `next_fire_at`. A schedule disabled at
+        09:00 and re-enabled at 17:00 is overdue on re-enable, and its
+        declared `catch_up` policy decides whether that overdue occurrence
+        fires — the same question, with the same answer, as a control plane
+        that was down for those eight hours.
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: {type: string}
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/PatchScheduleRequest'
+      responses:
+        '200':
+          description: The updated schedule.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Schedule'
+        '400':
+          description: No patchable field was supplied.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '404':
+          description: No such schedule in this namespace.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+    delete:
+      operationId: deleteSchedule
+      tags: [schedules]
+      summary: Remove a schedule.
+      description: >-
+        The `signal_events` facts it appended and the runs those started
+        are untouched: they are history, and history does not stop being
+        true because the thing that produced it was retired.
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: {type: string}
+      responses:
+        '204':
+          description: Deleted.
+        '404':
+          description: No such schedule in this namespace.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+
   /v1alpha1/dispatch-rates:
     get:
       operationId: listDispatchRates
@@ -2266,6 +2419,174 @@ components:
             MUST treat this as distinct from `name`: it is a guess, not
             something an operator actually said, and must never be
             presented to a user as if it were the given name.
+        actor_affinity:
+          type: object
+          description: >-
+            The routing this run's workflow declared and resolved at
+            creation (task t33, issue #107, migrations/0033), keyed by node
+            id — e.g. `{"fix": {"actor": "actor://company/developer",
+            "rule": "security-findings"}}`. Absent when the run resolved
+            none, which is the case both for a workflow that declares no
+            `spec.affinity` and for a run created by an operator rather
+            than by an event trigger (affinity conditions are evaluated
+            against the triggering event, so a run with no event has
+            nothing to evaluate them against).
+
+
+            `rule` is the declared affinity rule's name, and it is carried
+            rather than dropped because it is what the per-actor
+            comparative record slices by: "actor X ran this node" is
+            already recoverable from the attempt, but "actor X was chosen
+            because the workflow classified this as security-findings
+            work" is only recoverable from here.
+          additionalProperties:
+            type: object
+            required: [actor]
+            properties:
+              actor:
+                type: string
+                description: The actor reference this node dispatched to.
+              rule:
+                type: string
+                description: The declared affinity rule that chose it, if it was named.
+
+    Schedule:
+      type: object
+      required:
+        [id, name, event_name, emitter, payload, interval_seconds, catch_up,
+         enabled, next_fire_at, fire_count, skip_count, created_at, updated_at]
+      properties:
+        id:
+          type: string
+        name:
+          type: string
+          description: >-
+            Unique per namespace. It is the handle an operator disables by,
+            which is why two schedules cannot share one.
+        event_name:
+          type: string
+          description: The signal event this schedule appends on each occurrence.
+        emitter:
+          type: string
+          description: >-
+            Free text naming who emitted the fact. Attribution for
+            operators, never an authority claim (PRD §10.4).
+        payload:
+          description: >-
+            The event body, verbatim. Plain declared data — a schedule reads
+            no external system and holds no credential.
+        interval_seconds:
+          type: integer
+          format: int64
+          minimum: 1
+        catch_up:
+          type: string
+          enum: [fire-once, skip]
+          description: >-
+            What to do about an occurrence that came due while nothing was
+            running — the question a cron line never answers.
+
+
+            `fire-once` (the default) fires late, exactly once, then
+            realigns to the next declared boundary; missed occurrences are
+            counted, never backfilled, because six queued runs would each
+            carry the same freshly-read findings. `skip` declines a MISSED
+            occurrence and waits for the next boundary, which is right for
+            anything whose value is tied to when it happens — a nightly
+            report has no business running at noon. A skip increments
+            `skip_count` and emits
+            `dev.culture.nodes.schedule.skipped`, so "chose not to run" and
+            "never came due" stay distinguishable.
+
+
+            The two differ ONLY for a missed occurrence. One that is merely
+            LATE — overdue by less than one whole interval, which a tick
+            interval and a busy loop produce normally — fires under both.
+        enabled:
+          type: boolean
+        next_fire_at:
+          type: string
+          format: date-time
+          description: >-
+            The next instant this schedule is due, and the whole durable
+            state of the loop: it is advanced only inside the transaction
+            that also appends the event, which is what makes a restart
+            unable to double-start or lose an occurrence.
+        last_fired_at:
+          type: string
+          format: date-time
+          description: Absent until the first fire.
+        last_event_id:
+          type: string
+          description: >-
+            The `signal_events` fact the last fire appended — the audit
+            trail in one field, since the runs it triggered are reachable
+            from it.
+        fire_count:
+          type: integer
+          format: int64
+        skip_count:
+          type: integer
+          format: int64
+          description: Occurrences declined under a `skip` catch-up policy.
+        created_at:
+          type: string
+          format: date-time
+        updated_at:
+          type: string
+          format: date-time
+
+    ScheduleList:
+      type: object
+      required: [items]
+      properties:
+        items:
+          type: array
+          items:
+            $ref: '#/components/schemas/Schedule'
+
+    CreateScheduleRequest:
+      type: object
+      required: [name, event_name, interval_seconds]
+      properties:
+        name:
+          type: string
+          minLength: 1
+        event_name:
+          type: string
+          minLength: 1
+        emitter:
+          type: string
+          description: Defaults to `schedule:<name>` when omitted.
+        payload:
+          description: Defaults to `{}`.
+        interval_seconds:
+          type: integer
+          format: int64
+          minimum: 1
+        catch_up:
+          type: string
+          enum: [fire-once, skip]
+          description: Defaults to `fire-once`.
+        enabled:
+          type: boolean
+          description: >-
+            Defaults to true. An operator who declared a cadence and did not
+            say otherwise meant it to run.
+        first_fire_at:
+          type: string
+          format: date-time
+          description: >-
+            The first instant this schedule is due, and the phase every
+            later occurrence aligns to. Omitted means one interval from now:
+            creating a schedule is not the same act as starting a run.
+
+    PatchScheduleRequest:
+      type: object
+      required: [enabled]
+      properties:
+        enabled:
+          type: boolean
 
     Usage:
       type: object

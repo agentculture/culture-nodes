@@ -352,4 +352,3 @@ func containsPendingRecord(group apipkg.PendingDecisionRunOut, recordID string) 
 	}
 	return false
 }
-

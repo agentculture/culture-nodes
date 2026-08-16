@@ -59,6 +59,7 @@ func (c *compilation) checkContracts() {
 			c.compileCEL(fmt.Sprintf("/spec/triggers/%d/when", i), trigger.When)
 		}
 	}
+	c.checkAffinity()
 	c.checkSchemaSource("/spec/contract/input", c.doc.Spec.Contract.Input)
 	c.checkSchemaSource("/spec/contract/output", c.doc.Spec.Contract.Output)
 

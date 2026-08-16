@@ -121,14 +121,14 @@ func (s *Server) handleCreateSuiteVerdict(w http.ResponseWriter, r *http.Request
 	}
 
 	record, err := handover.SuiteVerdict{
-		RunID:            id,
-		NodeRunID:        req.NodeRunRef,
-		AttemptID:        req.AttemptRef,
-		Suite:            req.Suite,
-		Command:          req.Command,
-		ExitCode:         *req.ExitCode,
-		CommitSHA:        req.CommitSHA,
-		Ref:              req.Ref,
+		RunID:             id,
+		NodeRunID:         req.NodeRunRef,
+		AttemptID:         req.AttemptRef,
+		Suite:             req.Suite,
+		Command:           req.Command,
+		ExitCode:          *req.ExitCode,
+		CommitSHA:         req.CommitSHA,
+		Ref:               req.Ref,
 		ValidatorActorID:  req.ValidatorActorID,
 		ValidatorRevision: strconv.FormatInt(int64(validator.Revision), 10),
 		EvidenceRecordID:  evidenceID,

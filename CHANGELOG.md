@@ -5,6 +5,48 @@ All notable changes to this project will be documented in this file.
 Format follows [Keep a Changelog](https://keepachangelog.com/). This project
 adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.27.0] - 2026-08-16
+
+### Verified
+
+- **Criterion 4 demonstrated end to end, and its limit stated.** Nine events,
+  nine runs, nine distinct runs, against a real control plane and PostgreSQL:
+  one fire per occurrence, five boundaries passed while disabled with zero
+  events, exactly ONE late fire on re-enable rather than five, and exactly ONE
+  recovery fire after a kill rather than three or zero. Every run recorded
+  `rule=security-findings` and routed its dispatch to the affinity-chosen
+  actor rather than the node's declared `uses`. The package states plainly
+  that the finding in the demo is the schedule's declared payload and not a
+  live `sweep.py` read of Jira/GitHub, so the mechanism is demonstrated and
+  the discovery half is not.
+- **Ablation reproduced independently in the operator lane.** Removing
+  `FOR UPDATE SKIP LOCKED` makes `TestConcurrentFiresOfOneOccurrence
+  StartExactlyOneRun` fail with `7 of 8 concurrent fires reported firing,
+  want exactly 1` — the double-start criterion 2 forbids.
+- **Migrations renumbered at merge.** This package branched before t22 and
+  both claimed `0032`. `0032_schedules.sql` became `0033`, and
+  `0033_run_actor_affinity.sql` became `0034`, with every in-code reference to
+  the old numbers updated. Verified by applying the full chain to an empty
+  database in order.
+- Two pre-existing `gofmt` offenders that this package correctly identified as
+  not its own (`internal/api/decisions_test.go`, `internal/api/
+  suiteverdicts.go`, both arriving through earlier merges in this cycle) are
+  formatted here.
+
+### Added
+
+- Schedules: a declared cadence the control plane fires by itself (issue #107, task t33). A schedule is a durable row (migrations/0032) that appends its declared payload to `signal_events` on each occurrence; the workflow triggers task t17b shipped turn that fact into a run. WHY a table and not a field on the workflow: a workflow version is immutable and content-addressed, so a cadence declared inside one could not be disabled without republishing -- which would change what the graph IS in order to change how often it runs.
+- Declared actor affinity: `spec.affinity` routes a node to an actor chosen by a condition over the triggering event, and the resolved choice is recorded on the run (migrations/0033, `runs.actor_affinity`). WHY recorded rather than merely applied: this project keeps a per-actor comparative record of which actor is better at what, and an affinity that routed but left no trace could not feed it -- you would see which actor ran, not what the workflow said the work WAS.
+- `POST/GET/PATCH/DELETE /v1alpha1/schedules` and `actor_affinity` on the Run schema, with the OpenAPI document and its rendered JSON updated together.
+- `scheduler.Options.Now` and the exported `Scheduler.Tick`, so schedule behaviour is tested against instants the test chooses. WHY: a test that proved a cadence by sleeping would be measuring time.Ticker, and could not express the case that actually matters -- a schedule that came due during a four-hour outage.
+
+### Changed
+
+- `Store.DeliverSignalEvent` split into a transaction-scoped `deliverSignalEventTx` plus a Begin/Commit wrapper. WHY: firing a schedule has to append the event, let its triggers create runs, and advance the schedule's own cursor in ONE transaction, so a control plane that dies mid-fire can tell afterwards which side of the commit it died on -- it reads `next_fire_at`, which is the answer either way. Splitting the seam keeps one set of delivery semantics rather than a second copy.
+- The worker applies a run's recorded affinity at a single seam, before anything reads `node.Uses`. WHY there: `node.Uses` feeds the registry lookup, the pacing budget, the capacity breaker, the session budget, the preflight gate, the telemetry attribute, and the attempt's actor id -- overriding at only the registry lookup would route to one actor while attributing to another, corrupting exactly the comparative record this feature exists to feed. The override returns a COPY, because the pinned node spec is cached per digest and shared by every concurrent run of that workflow.
+- The OpenAPI route sweep picks its probe method per path instead of always using DELETE. WHY: the old probe rested on 'no route in this spec documents DELETE', which `DELETE /v1alpha1/schedules/{id}` invalidated -- and a global assumption about which method is spare is one every new endpoint can break.
+- `examples/pr-upkeep/workflow.yaml` declares affinity for its `fix` node, so a security finding and a dependency bump can reach different developer actors.
+
 ## [0.26.1] - 2026-08-16
 
 ### Verified

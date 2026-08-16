@@ -1,0 +1,880 @@
+{
+  "slug": "upkeep-dispatch-stable-addresses-gate-as-node",
+  "title": "upkeep-dispatch-stable-addresses-gate-as-node",
+  "frame_slug": "upkeep-dispatch-stable-addresses-gate-as-node",
+  "schema_version": 4,
+  "status": "exported",
+  "created": "2026-08-16T18:53:10Z",
+  "updated": "2026-08-16T19:02:54Z",
+  "targets": [
+    {
+      "id": "c3",
+      "kind": "requirement",
+      "text": "The live blocker is the DEPLOYED bridge config, not the graph: ~/.config/culture-nodes-bridges/developer.json lists TWO repo_allowlist entries (/home/spark/git/.worktrees.culture-nodes/owe-developer and .../upkeep-lane, both leftover merged worktrees), so only_allowed_repo() returns None and the dispatch is refused with 'input.repo is required'.",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "h1",
+      "kind": "honesty",
+      "text": "A triggered pr-upkeep run dispatched to the developer bridge reaches the agent session with the allowlist still holding more than one entry \u2014 proven by a live run, not by a unit test.",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "c4",
+      "kind": "requirement",
+      "text": "A multi-lane bridge needs a way to say WHICH repo it defaults to, because the allowlist's cardinality is the wrong signal: an allowlist is a permission surface, and 'exactly one entry' conflates permission with intent.",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "h2",
+      "kind": "honesty",
+      "text": "A bridge whose allowlist holds several repositories resolves the right checkout from the registry-supplied identity, and refuses with a named error when the identity maps to nothing it is permitted to touch.",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "c5",
+      "kind": "requirement",
+      "text": "The control plane discards the bridge's rejection REASON. Attempt 01M04Q276TPTA9GT8ME7PFVRFY records only 'actor_rejected_input (HTTP 400): actor answered Bad Request'; the bridge's JSON body naming input.repo never reaches the ledger, so diagnosing #125 required reproducing the call by hand.",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "h3",
+      "kind": "honesty",
+      "text": "The run view for a contract_rejected attempt shows the bridge's own error text and class, so #125 could have been diagnosed from GET /v1alpha1/runs/{id} alone.",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "c6",
+      "kind": "boundary",
+      "text": "sweep.py stays a pure emitter. Widening the event payload to carry instruction or repo is the thing task t17 deliberately stopped it doing, and examples/pr-upkeep/README.md forbids making workflow.yaml deployment-specific.",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "h11",
+      "kind": "honesty",
+      "text": "The pr-upkeep example still loads into a second deployment with no edit to workflow.yaml and no new field on the event payload.",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "c8",
+      "kind": "requirement",
+      "text": "The real cause is worse than a DHCP lease change: spark has TWO wireless NICs on the same /24, both dynamic \u2014 wlP9s9 at 192.168.1.157 and wlx90de80db7994 at 192.168.1.118. Whichever is up decides which address answers, so re-registering at .118 would be exactly as fragile as staying at .157.",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "h9",
+      "kind": "honesty",
+      "text": "Nothing in the deployed system reads a spark LAN address after the cutover \u2014 verified by dispatching to a spark actor with both wireless interfaces' addresses unregistered.",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "c14",
+      "kind": "requirement",
+      "text": "There is no validator/gate node kind. internal/compiler/vocabulary.go closes the enum at agent, code, action.http, decision, approval, wait, parallel, join, end \u2014 so a gate today can only be expressed as a code node through the headspace runner boundary, or as an agent node (which would be the actor grading itself).",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "h12",
+      "kind": "honesty",
+      "text": "The gate node is expressed with an existing node kind and internal/compiler/vocabulary.go is unchanged by this cycle.",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "c15",
+      "kind": "requirement",
+      "text": "Only spark can run the full TDD gate. Measured: thor has node/npm and uv but go is off-PATH; orin has neither node nor npm and its uv/go sit off a login shell's PATH. The gate's declared suites need Go, npm and uv together, so 'run the gate on a host with the toolchain' resolves today to the operator's own machine.",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "h4",
+      "kind": "honesty",
+      "text": "The gate node's declared suites are chosen from a measured capability surface, and a lane that cannot run one of them yields not_applicable naming the uncovered files \u2014 never a pass.",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "c16",
+      "kind": "requirement",
+      "text": "The toolchain baseline does not measure node or npm, so the capability surface #101 wants the gate to choose a host FROM cannot answer the question 'can this lane run the web build'.",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "h5",
+      "kind": "honesty",
+      "text": "scripts/toolchain-baseline.sh measures node and npm, the three host baselines are recaptured, and a capability surface can answer 'can this lane run the web build'.",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "c17",
+      "kind": "boundary",
+      "text": "No agent gets to author the gate verdict. PRD \u00a710.4 reserves derived records for deterministic validators; an agent node running the suites and reporting a result is the actor grading itself, which is the exact substitution #101 exists to prevent.",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "h13",
+      "kind": "honesty",
+      "text": "Every gate record in the ledger carries authority=derived with a validator origin; no proposed agent claim is read as a gate result anywhere in the merge path.",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "c21",
+      "kind": "requirement",
+      "text": "The owner's decision makes this cycle's third item the #121 cutover, which transport-inversion.md sequences strictly: convert all five bridges, disable the outbound fallback, THEN git mv migration 0036 into the applied sequence. Applying 0036 early was already tried once and failed fourteen tests.",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "h7",
+      "kind": "honesty",
+      "text": "The full suite passes with actors.endpoint_ref and runner_invocations.endpoint gone \u2014 the check that caught the premature merge the first time.",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "c22",
+      "kind": "requirement",
+      "text": "Control-plane-issued per-bridge tokens ARE issue #111. transport-inversion.md states migration 0031's simple verifier record must be replaced by #111's per-actor model \u2014 or that debt explicitly accepted and time-bounded \u2014 BEFORE the first production bridge accepts inbound dials. The owner's 'the main app assigns a token each bridge must keep' resolves that in favour of building it.",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "h8",
+      "kind": "honesty",
+      "text": "A bridge cannot dial in with an operator-invented token: the credential it presents was issued by the control plane, is per-actor, and can be revoked without restarting any other bridge.",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "c24",
+      "kind": "audience",
+      "text": "The operator running culture-nodes cycles, and the mesh actors the control plane dispatches to \u2014 plus anyone reading the ledger afterwards to decide whether a claim is evidence.",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "h14",
+      "kind": "honesty",
+      "text": "An operator who did not run this cycle can read a merged package's ledger and tell, without asking anyone, which suites ran and at which commit.",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "c26",
+      "kind": "before_state",
+      "text": "Every triggered upkeep run fails ~1s after creation with an unreadable 'actor answered Bad Request'; five actors' reachability depends on which of two DHCP wireless interfaces happens to be up, with nothing watching; and the TDD merge gate is typed and read by the operator, nine times in the #87 batch and six more hand-turns in the #128/#137 cycle.",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "h15",
+      "kind": "honesty",
+      "text": "The hand-turn count for the next cycle's merge gates is lower than the fifteen this one and the #87 batch recorded, and the difference is attributable to gate records rather than to fewer packages.",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "c27",
+      "kind": "why_it_matters",
+      "text": "All three are the same defect in different clothes: the system cannot see its own state. It cannot say why a dispatch was refused, cannot say whether an actor is reachable, and cannot say whether a merge was verified. Issue #118 closes only when those stop being facts a human holds in their head.",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "h16",
+      "kind": "honesty",
+      "text": "Each of the three halves ends with a query that answers the question a human currently answers from memory: why was this refused, is this actor connected, was this merge verified.",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "c28",
+      "kind": "success_signal",
+      "text": "One triggered pr-upkeep run reaches its approval node without an operator edit; GET /v1alpha1/actors returns no endpoint_ref column at all and every bridge is dialled in; and one package merges on a derived gate record whose commit sha was read back from the worktree the suites ran in.",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "h17",
+      "kind": "honesty",
+      "text": "All three signals are read from live surfaces after deploy, each naming a run id, and none is satisfied by a passing test alone.",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "c35",
+      "kind": "after_state",
+      "text": "A triggered pr-upkeep run dispatches and completes without an operator touching a bridge config; no participant address is stored anywhere, because every bridge dials OUT to the control plane holding a control-plane-issued token that is its identity; and a package cannot merge without a derived gate record naming the suites, the exit codes and the commit.",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "h19",
+      "kind": "honesty",
+      "text": "GET /v1alpha1/actors returns no endpoint_ref, every one of the five bridges shows as dialled in, and a dispatch to a spark actor succeeds with no address recorded anywhere in PostgreSQL.",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "c40",
+      "kind": "boundary",
+      "text": "The adapters keep dependencies = []. Whatever the dial-in client becomes, it stays stdlib-only and byte-identical across all five packages, because tests/lint enforces the byte-identity and the fleet's installability on thor and orin depends on the zero-dep property.",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "h20",
+      "kind": "honesty",
+      "text": "grep shows no third-party import in any adapter's dial-in path, all five pyprojects still declare dependencies = [], and tests/lint's byte-identity check passes for the shared module.",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "c43",
+      "kind": "announcement",
+      "text": "Triggered upkeep runs dispatch again, no bridge is reachable by an address anyone had to record because every bridge dials out and identifies itself with a control-plane-issued token, and the TDD merge gate leaves derived evidence instead of a human's recollection",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "h18",
+      "kind": "honesty",
+      "text": "All three halves are demonstrated LIVE, not by fixture: one triggered run dispatches with a multi-entry allowlist, one dispatch lands on a bridge the control plane holds no address for, and one merge is gated on a derived record \u2014 each with a run id in the ledger.",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "c44",
+      "kind": "requirement",
+      "text": "transport-inversion.md's list of non-dispatch endpoint_ref consumers is INCOMPLETE. It names internal/worker/registry.go and scripts/collect-handover.py. It misses adapters/human-inbox/src/human_inbox_bridge/tracker.py, whose verify_bridge_serves_actor reads registered.endpoint_ref at startup and RAISES BridgeIdentityError when it does not match the tracker's own bridge URL (issue #72's guard). Dropping the column stops culture-nodes-human-inbox-tracker.service from starting at all.",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "h21",
+      "kind": "honesty",
+      "text": "culture-nodes-human-inbox-tracker.service starts and confirms its bridge identity with actors.endpoint_ref gone.",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "c45",
+      "kind": "requirement",
+      "text": "Applying migration 0036 is a ONE-WAY DOOR for the whole fleet. transport-inversion.md's 'Rollback at 03:00' is per-bridge precisely because step 4 confirms the actor's latest registration still carries its pre-cutover endpoint_ref and step 5 restarts that bridge without dial-in configuration. Once the column is dropped, no bridge can be rolled back that way \u2014 the graceful per-bridge path is replaced by a schema restore.",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "h22",
+      "kind": "honesty",
+      "text": "Every step before the column drop is demonstrated live while the per-bridge rollback still exists, and the drop is the last action taken.",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "c46",
+      "kind": "requirement",
+      "text": "The cutover carries an UNRESOLVED liveness risk forward rather than fixing it. transport-inversion.md states plainly that a dropped poll does not revoke a claim, that a different worker may meanwhile believe it owns the attempt, and that fencing tokens refuse stale writes but the dial-in liveness signal is not consulted by the lease model \u2014 so duplicate execution or delayed completion is possible in that window.",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "h23",
+      "kind": "honesty",
+      "text": "The duplicate-execution window is either bounded, instrumented, or recorded as accepted-and-time-bounded with the reason \u2014 never left silent.",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "c47",
+      "kind": "requirement",
+      "text": "Retiring the address does not retire the QUESTION the address answered. 'Is this bridge reachable?' becomes 'is this bridge dialled in right now?', and nothing surfaces that today \u2014 internal/worker/registry.go consults dial-in presence only at dispatch resolution, so an un-dialled bridge is still discovered by a failing dispatch. The rejected reachability detector returns in this form, as a presence surface rather than a probe.",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "h24",
+      "kind": "honesty",
+      "text": "An operator can ask which bridges are dialled in right now and get an answer without dispatching anything.",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "c49",
+      "kind": "requirement",
+      "text": "There is a window where nothing can dispatch: the cutover's second-to-last step disables the outbound fallback, and any bridge not yet dialled in at that instant is unreachable by either path. transport-inversion.md's conversion is deliberately one-bridge-at-a-time, but disabling the fallback is fleet-wide and single-step.",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "h25",
+      "kind": "honesty",
+      "text": "Disabling the outbound fallback is refused, or loudly warned, while any of the five actors has no current dial-in presence.",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "c50",
+      "kind": "requirement",
+      "text": "The gate node cannot gate its own delivery. This cycle's merges are verified by the operator-typed gate that the cycle exists to replace, so the gate node's first real verdict is on work merged after it. Claiming the cycle's own packages were gate-node-verified would be exactly the false green #101 names.",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "h26",
+      "kind": "honesty",
+      "text": "The gate node's first verdict is on a package merged AFTER this cycle, named with its run id \u2014 and the delivery summary says so rather than implying the cycle gated itself.",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "c51",
+      "kind": "requirement",
+      "text": "The repository-identity mapping needs a collision and miss rule: two bridges on one host may allowlist overlapping checkouts, and an identity the registry supplies may map to nothing the bridge is permitted to touch. Both must be named refusals, not a silently-picked first match \u2014 which is the same failure only_allowed_repo() already fails closed on.",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "h27",
+      "kind": "honesty",
+      "text": "A repository identity that maps to two permitted paths, or to none, produces a named refusal with a hint \u2014 never a silently-picked first match.",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "c52",
+      "kind": "boundary",
+      "text": "The issued credential inherits the rotation hazards already filed against the secrets lane: #133 (a FORCE_PROD rotation can leave two different values) and #134 (probes relay live operator credentials into throwaway files). A newly-minted per-bridge token distributed by install-secrets.sh acquires both unless the issuance path is designed around them.",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "h29",
+      "kind": "honesty",
+      "text": "The issued per-bridge token is distributed without acquiring #133's rotation-split hazard or #134's credential-relay hazard, or those hazards are fixed first.",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "c53",
+      "kind": "requirement",
+      "text": "Migration 0036's ADR 0002 bypass premise no longer describes the fleet. It reads 'exactly two workers and one API, and deploy/prod/deploy.sh restarts all three together'. Measured: deploy.sh takes ONE host argument (deploy.sh <thor|orin>), so thor and orin are TWO operations; thor runs api, scheduler, worker, notifier and backup containers while orin runs a worker of its own; and the migrate service lives in compose.thor.yml, so migrating on thor leaves orin's worker on the previous binary \u2014 the exact N-1 window ADR 0002 exists to prevent. The migration's own text says the exception lapses in that case.",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "h28",
+      "kind": "honesty",
+      "text": "Either the ADR 0002 bypass is re-justified in writing against the measured fleet, or 0036 follows the full expand-contract sequence.",
+      "deferred": false,
+      "deferred_reason": ""
+    }
+  ],
+  "tasks": [
+    {
+      "id": "t1",
+      "summary": "Control plane sends a repository IDENTITY on dispatch, read from actor.metadata",
+      "origin": "llm",
+      "status": "confirmed",
+      "acceptance_criteria": [
+        "a registered actor carrying a repository-identity key has it delivered in the dispatch input; an actor without one dispatches exactly as today",
+        "the identity is never inferred from a run input, an event payload, or anything the agent reports"
+      ],
+      "deps": [],
+      "covers": [
+        "c4"
+      ],
+      "instruction": "Go, control plane. The identity is a deployment fact on actor.metadata, the same shape as the shipped handover_remote key. Never infer it from a run input, an event payload, or anything the agent reports. Route: local subagent worktree."
+    },
+    {
+      "id": "t2",
+      "summary": "All five adapters map a repository identity to a local checkout, refusing collision and miss",
+      "origin": "llm",
+      "status": "confirmed",
+      "acceptance_criteria": [
+        "an identity resolving to two permitted paths is refused with a named error and a hint, never a first match",
+        "an identity resolving to nothing the bridge may touch is refused with a named error naming the identity",
+        "the resolved path is still validated against repo_allowlist, which may hold many entries",
+        "the change is byte-identical across all five adapters where the code is shared (all-backends rule)"
+      ],
+      "deps": [
+        "t1"
+      ],
+      "covers": [
+        "h2",
+        "c51",
+        "h27"
+      ],
+      "instruction": "Python, all five adapters \u2014 the all-backends rule applies. Mirror only_allowed_repo()'s fail-closed shape: ambiguity refuses with a named error and a hint. The shared modules must stay byte-identical; format one and copy, never per-adapter. Route: local subagent worktree."
+    },
+    {
+      "id": "t3",
+      "summary": "Carry the actor's rejection body and class into the attempt result",
+      "origin": "llm",
+      "status": "confirmed",
+      "acceptance_criteria": [
+        "a bridge answering 400 with {error, class} shows that error text and class in GET /v1alpha1/runs/{id}",
+        "the copied body is length-bounded so a bridge cannot write unbounded text into the run view",
+        "a bridge answering a non-JSON body still records a technical status without crashing the worker"
+      ],
+      "deps": [
+        "t1"
+      ],
+      "covers": [
+        "c5",
+        "h3"
+      ],
+      "instruction": "Go, internal/actors. Bound the copied body \u2014 a bridge must not be able to write unbounded text into the run view. This is the fix that would have made #125 diagnosable from the run view alone. Route: local subagent worktree."
+    },
+    {
+      "id": "t4",
+      "summary": "Live proof: a triggered pr-upkeep run dispatches with the allowlist still multi-entry",
+      "origin": "llm",
+      "status": "confirmed",
+      "acceptance_criteria": [
+        "a run created by the pr-upkeep.pr trigger reaches the fix node's agent session, evidenced by a run id",
+        "spark's developer bridge still lists more than one repo_allowlist entry at the moment the run succeeds",
+        "workflow.yaml is unedited and the event payload gains no new field"
+      ],
+      "deps": [
+        "t2",
+        "t3"
+      ],
+      "covers": [
+        "c3",
+        "h1",
+        "c6",
+        "h11"
+      ],
+      "instruction": "Operator, live. Do NOT clean spark's developer bridge allowlist to make this pass \u2014 the multi-entry allowlist surviving is the proof. Record the run id."
+    },
+    {
+      "id": "t5",
+      "summary": "Control plane ISSUES per-bridge dial-in credentials: mint, digest, reveal once, revoke",
+      "origin": "llm",
+      "status": "confirmed",
+      "acceptance_criteria": [
+        "a token is generated by the control plane; an operator cannot register a credential value they invented",
+        "only a SHA-256 verifier is persisted \u2014 the plaintext is returned exactly once and never stored or logged",
+        "revoking one actor's credential leaves every other bridge dialled in and does not require a restart",
+        "the existing rate-limit, lockout and revoked_at controls from migrations 0031/0032 still gate every dial"
+      ],
+      "deps": [],
+      "covers": [
+        "c22",
+        "h8"
+      ],
+      "instruction": "Go + migration, control plane. The storage already exists (0031/0032: per-party verifier, revoked_at, lockout, rate window). Build minting: generate, digest, reveal once. Do not persist or log plaintext. Route: local subagent worktree."
+    },
+    {
+      "id": "t6",
+      "summary": "Dial-in presence is a read-only operator view: which bridges are connected right now",
+      "origin": "llm",
+      "status": "confirmed",
+      "acceptance_criteria": [
+        "an operator can list current dial-in presence per actor without dispatching anything",
+        "an actor that has never dialled in is distinguishable from one whose connection dropped, with the last-seen instant",
+        "the view is served by the control plane, not inferred by probing an address"
+      ],
+      "deps": [
+        "t5"
+      ],
+      "covers": [
+        "c47",
+        "h24"
+      ],
+      "instruction": "Go + web. Presence must distinguish never-dialled from dropped, with a last-seen instant. Served by the control plane, never by probing an address. Touches internal/api/server.go \u2014 do not run alongside t5. Route: local subagent worktree."
+    },
+    {
+      "id": "t7",
+      "summary": "human-inbox tracker confirms its bridge identity without reading endpoint_ref",
+      "origin": "llm",
+      "status": "confirmed",
+      "acceptance_criteria": [
+        "culture-nodes-human-inbox-tracker.service starts and confirms identity with actors.endpoint_ref absent",
+        "the fail-closed property of issue #72's guard is preserved: two bridges serving one actor is still refused",
+        "docs/decisions/transport-inversion.md's non-dispatch consumer list names the tracker as a third consumer"
+      ],
+      "deps": [
+        "t6"
+      ],
+      "covers": [
+        "c44",
+        "h21"
+      ],
+      "instruction": "Python, human-inbox. This is the challenge pass's finding: the tracker refuses to start without endpoint_ref (issue #72's guard). Preserve the fail-closed property; add the tracker to transport-inversion.md's consumer list, which missed it. Route: local subagent worktree."
+    },
+    {
+      "id": "t8",
+      "summary": "Convert all five bridges to authenticated dial-in using issued credentials",
+      "origin": "llm",
+      "status": "confirmed",
+      "acceptance_criteria": [
+        "codex on thor and orin, and claude-code, human-inbox and notify on spark, each dial in with a control-plane-issued token",
+        "conversion is performed one bridge at a time, with the documented per-bridge rollback still available at every step",
+        "no spark LAN address is re-registered as part of the conversion"
+      ],
+      "deps": [
+        "t5"
+      ],
+      "covers": [
+        "c8",
+        "h9"
+      ],
+      "instruction": "OPERATOR ONLY, production. One bridge at a time, per transport-inversion.md's rollback procedure. The per-bridge rollback must remain available at every step. File an issue or comment for each hand-turn."
+    },
+    {
+      "id": "t9",
+      "summary": "Register actor.metadata.handover_remote for every actor before the column goes",
+      "origin": "llm",
+      "status": "confirmed",
+      "acceptance_criteria": [
+        "every registered actor carries an explicit per-actor handover remote; no actor relies on NODES_HANDOVER_REMOTE_TEMPLATE",
+        "scripts/collect-handover.py resolves a remote for each actor with endpoint_ref unavailable"
+      ],
+      "deps": [],
+      "covers": [],
+      "instruction": "Operator + registry. #121 records that NO actor carries handover_remote today, so collect-handover.py falls back to a template. This must land before the column goes or handover collection breaks with it."
+    },
+    {
+      "id": "t10",
+      "summary": "Demonstrate all five bridges dialled in SIMULTANEOUSLY \u2014 the gate v5 became",
+      "origin": "llm",
+      "status": "confirmed",
+      "acceptance_criteria": [
+        "all five actors show current dial-in presence at the same instant, evidenced by a run id and the presence view",
+        "a dispatch to at least one spark-hosted and one thor/orin-hosted actor completes in that window",
+        "this demonstration blocks the fallback-disable and 0036 steps; neither proceeds without it"
+      ],
+      "deps": [
+        "t8"
+      ],
+      "covers": [],
+      "instruction": "OPERATOR ONLY, production. This is the gate r4 became. Evidence with a run id \u2014 all five showing current presence at one instant, plus a completing dispatch to both a spark-hosted and a thor/orin-hosted actor. Blocks t12 and t14."
+    },
+    {
+      "id": "t11",
+      "summary": "Re-justify migration 0036's ADR 0002 bypass against the measured fleet, or drop the bypass",
+      "origin": "llm",
+      "status": "confirmed",
+      "acceptance_criteria": [
+        "the migration's own premise text is amended to describe the real fleet: deploy.sh takes one host argument, thor runs api/scheduler/worker/notifier/backup, orin runs a second worker, and migrate lives only in compose.thor.yml",
+        "either the bypass is re-argued for that shape in writing, or 0036 is re-sequenced as a full expand-contract migration",
+        "the N-1 window (thor migrated, orin's worker on the previous binary) is addressed explicitly, not left implicit"
+      ],
+      "deps": [],
+      "covers": [
+        "c53",
+        "h28"
+      ],
+      "instruction": "Analysis. Route to codex-thor: it is a documents-and-facts task on a proven lane, and the measured fleet facts are in the plan already. Amend the migration's own premise text; do not assert the re-justification somewhere else."
+    },
+    {
+      "id": "t12",
+      "summary": "Disabling the outbound fallback checks live presence for all five at that moment",
+      "origin": "llm",
+      "status": "confirmed",
+      "acceptance_criteria": [
+        "the fallback-disable step refuses, or warns loudly, while any of the five actors has no current dial-in presence",
+        "the check reads presence at that instant, not a checklist of which bridges were converted"
+      ],
+      "deps": [
+        "t8",
+        "t10"
+      ],
+      "covers": [
+        "c49",
+        "h25"
+      ],
+      "instruction": "OPERATOR ONLY, production. The check reads presence at that instant, not a list of which bridges were converted. Refuse or warn loudly if any of the five is absent."
+    },
+    {
+      "id": "t13",
+      "summary": "Distribute the issued credential without acquiring the secrets lane's known hazards",
+      "origin": "llm",
+      "status": "confirmed",
+      "acceptance_criteria": [
+        "the new credential is not placed in install-secrets.sh's rotation-guarded block while #133 is open",
+        "no probe or test path relays a live operator credential into a throwaway file (#134)",
+        "a rotation cannot leave one copy of the credential updated and another stale"
+      ],
+      "deps": [
+        "t5"
+      ],
+      "covers": [
+        "c52",
+        "h29"
+      ],
+      "instruction": "Python/deploy. Do not route the new credential through install-secrets.sh's rotation-guarded block while #133 is open. Route: local subagent worktree."
+    },
+    {
+      "id": "t14",
+      "summary": "Apply migration 0036 as the final step and prove the suite green without the columns",
+      "origin": "llm",
+      "status": "confirmed",
+      "acceptance_criteria": [
+        "git mv migrations/pending/0036_*.sql into migrations/, then nodes migrate, in that order and last",
+        "the full suite passes with actors.endpoint_ref and runner_invocations.endpoint gone \u2014 the check that caught the premature merge before",
+        "GET /v1alpha1/actors returns no endpoint_ref, every bridge shows dialled in, and a dispatch to a spark actor succeeds with no address stored anywhere",
+        "web/src fixtures asserting endpoint_ref are updated; the web build stays green"
+      ],
+      "deps": [
+        "t9",
+        "t11",
+        "t12",
+        "t7"
+      ],
+      "covers": [
+        "c21",
+        "h7",
+        "c35",
+        "h19"
+      ],
+      "instruction": "OPERATOR ONLY, production, LAST. git mv then nodes migrate, in that order. The full suite passing without the columns is the real check \u2014 it is what caught the premature merge before. Update web fixtures asserting endpoint_ref."
+    },
+    {
+      "id": "t15",
+      "summary": "Measure node and npm in the toolchain baseline and recapture all three hosts",
+      "origin": "llm",
+      "status": "confirmed",
+      "acceptance_criteria": [
+        "scripts/toolchain-baseline.sh TOOLS includes node and npm alongside uv/go/gh/git/codex/claude/colleague",
+        "docs/baselines/toolchains/{spark,thor,orin}.json are recaptured under the same measuring PATH the script documents",
+        "the capability surface can answer whether a lane can run the web build"
+      ],
+      "deps": [],
+      "covers": [
+        "c16",
+        "h5"
+      ],
+      "instruction": "Shell + baselines. TOOLS is where node and npm go. Measure under the systemd user manager's PATH where available \u2014 an ssh login shell reports orin's uv absent on a host that has it. Route: codex-orin or codex-thor (measurement task, proven lane)."
+    },
+    {
+      "id": "t16",
+      "summary": "Express the TDD gate as a code node through the runner boundary, with a merge node routing on its outcome",
+      "origin": "llm",
+      "status": "confirmed",
+      "acceptance_criteria": [
+        "internal/compiler/vocabulary.go is unchanged: the gate uses the existing code kind via runner://, not a new validator kind",
+        "the node declares gates_passed, changes_required and measurement_incomplete as domain outcomes with edges for each",
+        "every gate record carries authority=derived with a validator origin; no proposed agent claim is read as a gate result",
+        "an instrument that does not reach a changed tree yields not_applicable naming the uncovered files, never a pass",
+        "the gate's host is declared explicitly and the plan records that only spark satisfies it today"
+      ],
+      "deps": [
+        "t15"
+      ],
+      "covers": [
+        "c14",
+        "h12",
+        "c15",
+        "h4",
+        "c17",
+        "h13"
+      ],
+      "instruction": "Go + workflow authoring. Do NOT add a validator kind to internal/compiler/vocabulary.go \u2014 the gate uses the existing code kind via runner://. Wrap what collect-handover.py --gate already does. Declare the gate's host explicitly and record that only spark satisfies it. Route: local subagent worktree."
+    },
+    {
+      "id": "t17",
+      "summary": "State the gate's bootstrap asymmetry in the delivery summary rather than implying self-verification",
+      "origin": "llm",
+      "status": "confirmed",
+      "acceptance_criteria": [
+        "the delivery summary says plainly that this cycle's own merges were operator-gated, not gate-node-gated",
+        "the gate node's first verdict is on a package merged AFTER this cycle, named with its run id"
+      ],
+      "deps": [
+        "t16"
+      ],
+      "covers": [
+        "c50",
+        "h26"
+      ],
+      "instruction": "Docs. Say plainly that this cycle's own merges were operator-gated. The gate node's first verdict is on a package merged after this cycle, named with its run id."
+    },
+    {
+      "id": "t18",
+      "summary": "Guard the adapters' zero-dependency and byte-identical properties through the dial-in change",
+      "origin": "llm",
+      "status": "confirmed",
+      "acceptance_criteria": [
+        "all five adapter pyprojects still declare dependencies = [] and no third-party import appears in any dial-in path",
+        "tests/lint's byte-identity check passes for the shared dial-in module across all five adapters"
+      ],
+      "deps": [],
+      "covers": [
+        "c40",
+        "h20"
+      ],
+      "instruction": "Lint/tests. tests/lint enforces byte-identity for the shared bridge modules; keep it green through the dial-in change. Route: local subagent worktree."
+    },
+    {
+      "id": "t19",
+      "summary": "Sequence 0036 last so every prior step is demonstrated while the per-bridge rollback still exists",
+      "origin": "llm",
+      "status": "confirmed",
+      "acceptance_criteria": [
+        "the plan's task order places the column drop after the simultaneity demonstration and the fallback-disable",
+        "the rollback procedure's dependence on endpoint_ref is stated in the delivery record as a deliberate one-way door"
+      ],
+      "deps": [
+        "t10"
+      ],
+      "covers": [
+        "c45",
+        "h22"
+      ],
+      "instruction": "Plan-ordering + docs. The mitigation for r3: state in the delivery record that the drop is a deliberate one-way door, not that it was reversible."
+    },
+    {
+      "id": "t20",
+      "summary": "Decide the duplicate-execution window's disposition: bound it, instrument it, or accept it time-bounded",
+      "origin": "llm",
+      "status": "confirmed",
+      "acceptance_criteria": [
+        "one of the three is chosen and written down with its reason; silence is not an outcome",
+        "the cycle does not attempt to solve the lease/liveness interaction, which is out of scope"
+      ],
+      "deps": [],
+      "covers": [
+        "c46",
+        "h23"
+      ],
+      "instruction": "Analysis + decision record. Route to codex-thor. Pick one of bound / instrument / accept-time-bounded and write the reason. Do NOT attempt to solve the lease-liveness interaction."
+    },
+    {
+      "id": "t21",
+      "summary": "Write the cycle's narrative record: who it is for, what it was like before, and why it matters",
+      "origin": "llm",
+      "status": "confirmed",
+      "acceptance_criteria": [
+        "an operator who did not run this cycle can read a merged package's ledger and tell which suites ran at which commit, without asking anyone",
+        "each of the three halves ends with a query that answers a question a human currently answers from memory: why was this refused, is this actor connected, was this merge verified",
+        "the hand-turn count is recorded so the next cycle's is comparable to this one's and the #87 batch's fifteen"
+      ],
+      "deps": [],
+      "covers": [
+        "c24",
+        "h14",
+        "c26",
+        "h15",
+        "c27",
+        "h16"
+      ],
+      "instruction": "Docs. The hand-turn count is the measurement #118 depends on \u2014 record it so the next cycle's is comparable to this one's and the #87 batch's fifteen."
+    },
+    {
+      "id": "t22",
+      "summary": "Live acceptance of all three halves, each named with a run id",
+      "origin": "llm",
+      "status": "confirmed",
+      "acceptance_criteria": [
+        "one triggered pr-upkeep run dispatches with a multi-entry allowlist",
+        "one dispatch lands on a bridge the control plane holds no address for",
+        "one merge is gated on a derived record whose commit sha was read back from the worktree the suites ran in",
+        "all three are read from live surfaces after deploy; none is satisfied by a passing test alone"
+      ],
+      "deps": [
+        "t4",
+        "t14",
+        "t16"
+      ],
+      "covers": [
+        "c43",
+        "h18",
+        "c28",
+        "h17"
+      ],
+      "instruction": "OPERATOR, live, after deploy. Three run ids, one per half. None of the three may be satisfied by a passing test."
+    },
+    {
+      "id": "t23",
+      "summary": "File the websocket exploration issue the owner deferred",
+      "origin": "llm",
+      "status": "confirmed",
+      "acceptance_criteria": [
+        "a new issue scopes full-duplex push (dispatch without a poll cycle, server-initiated cancellation) as its own question",
+        "it records why it was separated from the address problem: framing is not what removes a stored address, direction of initiation is",
+        "it names the cost that made it worth deferring: a dependency in five zero-dependency adapters plus a Go websocket library, or hand-rolled RFC 6455 framing"
+      ],
+      "deps": [],
+      "covers": [],
+      "instruction": "Issue filing. Record why WS was separated from the address problem: framing is not what removes a stored address, direction of initiation is. Name the deferred cost."
+    },
+    {
+      "id": "t24",
+      "summary": "Close the issues this cycle resolves, and update the ones it does not",
+      "origin": "llm",
+      "status": "confirmed",
+      "acceptance_criteria": [
+        "#139 is closed by recording the owner's chosen ordering as the decision it asked for",
+        "#125, #136, #121 and #101 are closed with the evidence that closes them, or left open with what remains stated plainly",
+        "#111's dial-in half is marked delivered and its authorization half left open; #120's human-inbox deployment gap is updated with what this cycle changed",
+        "every operator hand-turn in this cycle is filed or commented per the repo's convention, so the un-automated count stays measurable"
+      ],
+      "deps": [
+        "t22"
+      ],
+      "covers": [],
+      "instruction": "Operator. Every hand-turn in this cycle gets an issue or a comment \u2014 no exceptions for lint fixes. That count is the precondition for #118 ever closing."
+    }
+  ],
+  "risks": [
+    {
+      "id": "r1",
+      "text": "Only spark has Go, npm and uv together, so the gate node runs on the operator's own host. It leaves the operator's SESSION but not their MACHINE; widening eligible hosts is #96/#88 work.",
+      "kind": "unknown_nonblocking",
+      "task_id": "t16",
+      "resolved": false,
+      "resolution": ""
+    },
+    {
+      "id": "r2",
+      "text": "The duplicate-execution window between a dropped dial-in poll and a lease transition is described in transport-inversion.md but never measured, so the cutover's steady-state exposure is unquantified.",
+      "kind": "unknown_nonblocking",
+      "task_id": "t20",
+      "resolved": false,
+      "resolution": ""
+    },
+    {
+      "id": "r3",
+      "text": "Applying 0036 is a one-way door: it deletes the per-bridge rollback the whole conversion depends on. Every prior step must be demonstrated live before it, not merely written.",
+      "kind": "unknown_blocking",
+      "task_id": "t19",
+      "resolved": true,
+      "resolution": "Mitigated by t19, not eliminated: the column drop is sequenced as the plan's last substantive task (wave 5), behind the simultaneity demonstration (t10, wave 3) and the presence-checked fallback-disable (t12, wave 4). It stays a one-way door by design \u2014 the mitigation is that every step needing the rollback happens while the rollback still exists, and the delivery record says so plainly rather than implying the drop was reversible."
+    },
+    {
+      "id": "r4",
+      "text": "The five bridges have never been demonstrated dialled in simultaneously \u2014 #121 records even the two-bridge version was never run. t10 is that evidence and blocks t12 and t14.",
+      "kind": "unknown_blocking",
+      "task_id": "t10",
+      "resolved": true,
+      "resolution": "Converted into t10, a confirmed task in wave 3 that blocks t12 and t14. It is evidence with a run id, not a checkbox: all five actors showing current dial-in presence at the same instant, with a dispatch completing to both a spark-hosted and a thor/orin-hosted actor in that window. If it cannot be produced, the fallback stays on and 0036 does not apply."
+    },
+    {
+      "id": "r5",
+      "text": "The gate node cannot gate its own delivery, so this cycle's merges stay operator-gated. Claiming otherwise would be the exact false green #101 exists to prevent.",
+      "kind": "follow_up",
+      "task_id": "t17",
+      "resolved": false,
+      "resolution": ""
+    }
+  ]
+}

@@ -5,6 +5,17 @@ All notable changes to this project will be documented in this file.
 Format follows [Keep a Changelog](https://keepachangelog.com/). This project
 adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.31.3] - 2026-08-16
+
+### Fixed
+
+- Regenerated `docs/triage/open-issues.md` after #126 and #127 closed (50 open
+  issues down to 43). The triage gate validates the committed table against
+  live GitHub issues, so closing them turned main's lint job red with no code
+  change involved. Worth knowing: that will happen again on any issue churn —
+  the gate is a merge-blocking check over mutable external state, and every
+  correction costs a release because version-check requires a bump.
+
 ## [0.31.2] - 2026-08-16
 
 The two "timing-sensitive" tests in #126 were neither timing-sensitive nor two.

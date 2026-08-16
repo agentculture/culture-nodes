@@ -90,12 +90,19 @@ uv run bandit -c pyproject.toml -r culture_nodes
 markdownlint-cli2 "**/*.md" "#node_modules" "#.local" "#.claude/skills" "#.teken"
 uv run teken cli doctor . --strict        # agent-first CLI rubric gate
 
-# …and the FIVE adapter lint jobs, which the root scope does NOT cover.
-# Each bridge lints `src tests` in its own workflow. Skipping this is how
-# PR #122 went red on three `lint` jobs after a fully green local run:
-for a in claude-code codex colleague human-inbox notify; do
-  (cd adapters/$a && uv run black --check src tests && uv run isort --check-only src tests)
-done
+# …and the adapter lint jobs, which the root scope does NOT cover. Skipping
+# them is how PR #122 went red on three `lint` jobs after a green local run.
+#
+# The two adapter workflows invoke the linters DIFFERENTLY, and the difference
+# is load-bearing: `adapter-codex.yml` runs from the repo root against adapter
+# paths (so the ROOT isort/black config applies), while
+# `adapter-claude-code.yml` runs inside the adapter directory (so the ADAPTER's
+# own config applies). Running only the adapter-dir form for codex passes
+# locally and fails in CI. Run each exactly as its workflow does:
+uv run black --check adapters/codex/src adapters/codex/tests
+uv run isort --check-only adapters/codex/src adapters/codex/tests
+uv run flake8 adapters/codex/src adapters/codex/tests
+(cd adapters/claude-code && uv run black --check src tests && uv run isort --check-only src tests && uv run flake8 src tests)
 ```
 
 **A shared bridge module must stay byte-identical across all five adapters**

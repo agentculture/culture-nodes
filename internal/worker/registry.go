@@ -122,6 +122,11 @@ func (r *DBRegistry) Resolve(ctx context.Context, ref string) (actors.Endpoint, 
 	if endpoint.DialIn == nil && (!endpointRef.Valid || url == "") {
 		return actors.Endpoint{}, fmt.Errorf("worker: actor %q registers no endpoint_ref and has no current dial-in: %w", key, ErrUnknownActor)
 	}
+	// The repository this deployment registered the actor to work in (issue
+	// #125), read from the same document and the same revision the
+	// credential is. It is optional by construction: an actor that declares
+	// none dispatches exactly as it did before this existed.
+	endpoint.RepositoryIdentity = repositoryIdentityOf(metadata)
 	if envName := authTokenEnvOf(metadata); envName != "" {
 		if token, ok := r.lookupEnv(envName); ok {
 			endpoint.AuthToken = token
@@ -161,6 +166,30 @@ func authTokenEnvOf(metadata []byte) string {
 		return ""
 	}
 	return fields.AuthTokenEnv
+}
+
+// repositoryIdentityOf reads metadata.repository_identity the same partial
+// way authTokenEnvOf reads its own key, and for the same reason: the
+// metadata column is deliberately open, so a typed decode of the whole
+// document would fail on a key this code does not care about.
+//
+// The key is a per-actor deployment fact, exactly like `handover_remote`
+// (scripts/collect-handover.py) — the shipped precedent for a fact that
+// belongs to neither the graph nor the event that started the run. It is
+// registry-only on purpose: nothing here consults a run input, an event
+// payload, or anything an agent reported, because a repository the agent
+// could name is a repository the agent chose.
+func repositoryIdentityOf(metadata []byte) string {
+	if len(metadata) == 0 {
+		return ""
+	}
+	var fields struct {
+		RepositoryIdentity string `json:"repository_identity"`
+	}
+	if err := json.Unmarshal(metadata, &fields); err != nil {
+		return ""
+	}
+	return fields.RepositoryIdentity
 }
 
 // ActorRowID resolves a reference to the actors-table row id of its current

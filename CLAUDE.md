@@ -186,6 +186,23 @@ wave against the remaining subscription window.
 
 ## Conventions and workflow
 
+- **Every piece of operator work opens or updates an issue.** If the operator
+  did it by hand — a fix typed in-session, a config edit on a host, a deploy, a
+  merge conflict resolved, a bridge redeployed — it gets an issue, either a new
+  one or a comment on the existing one that covers it. No exceptions for
+  "it was only a lint fix."
+
+  The reason is measurement, not bureaucracy. Manual operator work is invisible
+  by default: it leaves a commit, and a commit does not say *a human had to do
+  this*. That invisibility is how the last cycle ended with **fourteen of
+  fourteen** operator steps still manual while the delivery summary could
+  otherwise have implied a loop that ran itself
+  (`docs/deliveries/close-the-backlog-bootstrap-honesty.md`). An issue per
+  hand-turn makes the backlog of un-automated steps countable, and countable is
+  the precondition for #118 ever closing.
+
+  Cite the issue in the commit message, so the trail runs both ways.
+
 - **Nodes dogfooding reflex**: when a scoped task is delegable, assign it
   through the system instead of doing it in-session — invoke the
   `/nodes-operator` skill and run its `assign <actor> "instruction" --yes`

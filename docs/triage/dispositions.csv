@@ -52,3 +52,6 @@ issue,bucket,disposition,evidence_pointer
 118,large bets,"make the combining step a node, then the Jira-driven loop around it",15 hand-merges in the close-the-backlog cycle; STATE section 11
 119,owner decisions,"pick one of four options for database-backed Go in the codex lane; option 1 needs an AF_UNIX probe first","run 01M04C39ZQK8NHJPQFSG8Z3QNV: socket(2) returns EPERM for loopback and egress alike"
 120,bug tail,"a bridge that cannot hand over must refuse the dispatch that asks; and attempted-but-empty must be distinguishable from not-attempted","three dispatches reported handover=true and created no ref; fixed by redeploy, found only by for-each-ref on the host"
+123,bug tail,"one command that runs every lint job CI runs, so local and CI cannot drift","PR #122: three lint jobs red after a green local run; two workflows lint in different styles"
+124,operator-lane enablers,"run the credential audit before compose up, and give a newly-required key a derivation","deploy of 431528d failed on NODES_DATABASE_URL absent from a prod.env that predates t15"
+121,finish work,"apply migration 0036 after the dial-in cutover; it is written and deliberately held unapplied","t24 landed partial; merging it into the applied sequence dropped endpoint_ref and failed 14 tests"

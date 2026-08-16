@@ -14,9 +14,20 @@ def run(prefix, port, opener=urllib.request.urlopen, pause=time.sleep):
             req=urllib.request.Request(base+"/v1alpha1/inbound/poll",data=b"",headers=headers,method="POST")
             try: response=opener(req,timeout=35)
             except urllib.error.HTTPError as exc:
+                # Kept for a server that signals "nothing waiting" as an error
+                # status; the shipped one does not, which is why the check
+                # below exists and this branch alone was not enough.
                 if exc.code==204: pause(.25); continue
                 raise
-            item=json.loads(response.read()); body=json.dumps(item["request"]).encode()
+            # An idle long poll returns 204 with an EMPTY body. 204 is 2xx, so
+            # urllib does NOT raise HTTPError for it -- json.loads("") then
+            # raised, the loop treated a normal empty poll as a connection
+            # fault, and every bridge reconnected once a second forever
+            # without ever claiming work. Found by the live demonstration in
+            # the operator lane, which is the half that can open a socket.
+            payload=response.read()
+            if getattr(response,"status",None)==204 or not payload.strip(): pause(.25); continue
+            item=json.loads(payload); body=json.dumps(item["request"]).encode()
             local=urllib.request.Request(f"http://127.0.0.1:{port}/v1/invocations",data=body,headers={"Content-Type":"application/json","Idempotency-Key":item["attempt_id"]},method="POST")
             try: result=opener(local,timeout=65); status,payload=result.status,result.read()
             except urllib.error.HTTPError as exc: status,payload=exc.code,exc.read()

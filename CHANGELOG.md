@@ -5,6 +5,44 @@ All notable changes to this project will be documented in this file.
 Format follows [Keep a Changelog](https://keepachangelog.com/). This project
 adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.29.1] - 2026-08-16
+
+t23's live half (deviation d21): criterion 2 demonstrated, and a fleet-wide
+defect found by demonstrating it.
+
+### Fixed
+
+- **Every bridge would have spun forever without ever claiming work.**
+  `dialin.py` treated an idle long poll as a connection fault. The poll answers
+  204 with an empty body; 204 is a 2xx, so `urllib` never raises `HTTPError`
+  and the `except HTTPError ... code == 204` branch is unreachable against the
+  shipped server. `json.loads("")` raised instead, the loop logged `dial-in
+  reconnecting`, slept a second and started over. The empty mailbox is the
+  NORMAL case, so this was the steady state rather than an edge. Fixed in all
+  five bridges (the module is byte-identical, checksum-verified before and
+  after), with a regression test in each that drives three idle polls and
+  asserts every pause is the 0.25s idle nap and never the 1s reconnect
+  backoff. Ablation reproduces the original log line exactly.
+
+### Verified
+
+- **Criterion 2 is met.** Run `01M04K4TZVYFQX3W9M9SGTTWK3` completed against an
+  actor whose newest registration has `endpoint_ref IS NULL`; the succeeded
+  attempt resolves to `company/dialin-demo`; and the inbound mailbox row shows
+  `claimed t, completed t, response_status 200`. The dispatch reached a bridge
+  the control plane holds no address for. See
+  `docs/deliveries/t23-live-demonstration.md`.
+- Run on a SCRATCH deployment rather than the fleet, because the decision
+  document sets its own precondition — the fleet demonstration waits on #111's
+  replacement — and converting a real bridge would have taken on that debt
+  without an owner decision.
+
+### Notes
+
+- Mixed mode's simultaneity (one converted and one unconverted bridge live
+  together) is step 6 of the procedure, needs two real bridges on two hosts,
+  and remains gated on the same precondition. Not claimed.
+
 ## [0.29.0] - 2026-08-16
 
 ### Verified

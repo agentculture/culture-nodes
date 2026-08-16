@@ -126,11 +126,40 @@ gen() { openssl rand -hex 32; }
 # newline concatenated the new assignment onto the old value and destroyed
 # it (tests/deploy/prodenvmerge_test.go pins that case).
 #
-# Single-quoted on purpose: $line, ${k} and the command substitution are
-# for the remote shell to expand, not this one. Expanding "$PROD_ENV_MERGE"
-# into an ssh argv does not re-scan them.
+# The replacement is done by REWRITING THE FILE LINE BY LINE in the shell,
+# not by `sed -i "s|^${k}=.*|${line}|"`, which is what this loop used to do.
+# sed's s/// delimiter is part of the expression, so a value carrying that
+# delimiter ends the expression early: with `|` as the delimiter,
+#
+#   line='NODES_DATABASE_URL=postgres://nodes:pa|ss@thor:5432/nodes'
+#   sed -i "s|^${k}=.*|${line}|" prod.env
+#   -> sed: unknown option to `s'   (exit 1, file BYTE-IDENTICAL)
+#
+# How that surfaces depends on how many keys are being merged, and the
+# multi-key case is the bad one. This loop runs on the remote side with no
+# `set -e`, so a later iteration's exit status overwrites the failed one:
+# merging twelve keys where the third carries a pipe skips that key and
+# still exits 0, and the lane prints its success line. (A single-key merge
+# happens to end on the failed sed, so ssh returns 1 and the local
+# `set -euo pipefail` aborts — loud, but the old value is still in place.)
+# Both were reproduced before this was changed. Every key survives today
+# only by accident — `openssl rand -hex 32` and `-base64 32` emit no pipe.
+# The exposed values are the ones this script RELAYS from the operator's
+# environment rather than generates, and NODES_DATABASE_URL, whose password
+# an external database hands out, is the one most likely to carry one.
+# Picking a different delimiter only moves the hazard to another character;
+# `case "$cur" in "$k"=*)` has no delimiter at all, and a quoted case
+# pattern is literal, so NO value and NO key can collide with it.
+#
+# The rewrite is written to a sibling temp file and moved into place, so a
+# merge interrupted midway leaves the previous prod.env intact instead of a
+# half-written one. The temp file is chmod 600 BEFORE it holds any secret.
+#
+# Single-quoted on purpose: $line, ${k}, $cur, $$ and the command
+# substitution are for the remote shell to expand, not this one. Expanding
+# "$PROD_ENV_MERGE" into an ssh argv does not re-scan them.
 # shellcheck disable=SC2016 # the expansions are deliberately remote
-PROD_ENV_MERGE='touch ~/.culture-nodes/prod.env; chmod 600 ~/.culture-nodes/prod.env; if [ -s ~/.culture-nodes/prod.env ] && [ -n "$(tail -c1 ~/.culture-nodes/prod.env)" ]; then echo >> ~/.culture-nodes/prod.env; fi; while IFS= read -r line; do k=${line%%=*}; [ -z "$k" ] && continue; if grep -q "^${k}=" ~/.culture-nodes/prod.env; then sed -i "s|^${k}=.*|${line}|" ~/.culture-nodes/prod.env; else printf "%s\n" "$line" >> ~/.culture-nodes/prod.env; fi; done'
+PROD_ENV_MERGE='touch ~/.culture-nodes/prod.env; chmod 600 ~/.culture-nodes/prod.env; if [ -s ~/.culture-nodes/prod.env ] && [ -n "$(tail -c1 ~/.culture-nodes/prod.env)" ]; then echo >> ~/.culture-nodes/prod.env; fi; while IFS= read -r line; do k=${line%%=*}; [ -z "$k" ] && continue; tmp=~/.culture-nodes/prod.env.merge.$$; : > "$tmp"; chmod 600 "$tmp"; found=0; while IFS= read -r cur || [ -n "$cur" ]; do case "$cur" in "$k"=*) printf "%s\n" "$line" >> "$tmp"; found=1;; *) printf "%s\n" "$cur" >> "$tmp";; esac; done < ~/.culture-nodes/prod.env; [ "$found" = 1 ] || printf "%s\n" "$line" >> "$tmp"; mv "$tmp" ~/.culture-nodes/prod.env; done'
 
 POSTGRES_PASSWORD=$(gen)
 MINIO_ROOT_PASSWORD=$(gen)

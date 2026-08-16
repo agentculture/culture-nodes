@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"os"
 	"strings"
+	"time"
 
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
@@ -112,11 +113,15 @@ func (r *DBRegistry) Resolve(ctx context.Context, ref string) (actors.Endpoint, 
 		return actors.Endpoint{}, fmt.Errorf("worker: resolve %q: %w: %v", ref, ErrUnknownActor, err)
 	}
 	url := endpointRef.String
-	if !endpointRef.Valid || url == "" {
-		return actors.Endpoint{}, fmt.Errorf("worker: actor %q registers no endpoint_ref: %w", key, ErrUnknownActor)
-	}
-
 	endpoint := actors.Endpoint{URL: url}
+	if available, availErr := r.store.InboundActorAvailable(ctx, r.namespaceID, key, time.Now().UTC().Add(-30*time.Second)); availErr == nil && available {
+		endpoint.DialIn = r.store
+		endpoint.DialInNamespace = r.namespaceID
+		endpoint.DialInActorKey = key
+	}
+	if endpoint.DialIn == nil && (!endpointRef.Valid || url == "") {
+		return actors.Endpoint{}, fmt.Errorf("worker: actor %q registers no endpoint_ref and has no current dial-in: %w", key, ErrUnknownActor)
+	}
 	if envName := authTokenEnvOf(metadata); envName != "" {
 		if token, ok := r.lookupEnv(envName); ok {
 			endpoint.AuthToken = token

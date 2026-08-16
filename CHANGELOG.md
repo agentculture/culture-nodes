@@ -5,6 +5,23 @@ All notable changes to this project will be documented in this file.
 Format follows [Keep a Changelog](https://keepachangelog.com/). This project
 adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.27.0] - 2026-08-16
+
+### Added
+
+- **Address-free bridge dial-in with mixed-mode rollback.** Five bridges on
+  three hosts cannot change atomically, so the control plane now prefers a
+  currently authenticated inbound bridge while retaining the outbound
+  `endpoint_ref` path. PostgreSQL is the durable mailbox authority and stores
+  actor identity and work, never the connection's IP address.
+- **One transport behavior in all five backends.** Codex, Claude Code,
+  Colleague, human inbox, and notify start the same authenticated reconnecting
+  dialer when their three dial-in environment variables are configured.
+- **Pre-cutover decision and executable rollback.** The transport decision
+  records why mixed mode was chosen, the rejected flag-day cost, the unresolved
+  lease/liveness window, issue #111's now-started replacement clock, and the
+  operator-lane commands and outputs required for the live address-free proof.
+
 ## [0.26.1] - 2026-08-16
 
 ### Verified

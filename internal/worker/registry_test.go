@@ -42,3 +42,31 @@ func TestDBRegistryActorRowID(t *testing.T) {
 		t.Fatal("ActorRowID(absent) = nil error, want ErrUnknownActor")
 	}
 }
+
+// TestDBRegistryResolvesCurrentDialInWithoutAddress is the database half of
+// t23's defining property. It requires PostgreSQL and is skipped by pgtest in
+// socket-denied sandboxes.
+func TestDBRegistryResolvesCurrentDialInWithoutAddress(t *testing.T) {
+	s := pgtest.RequireStore(t, testStore)
+	ns := pgtest.MustNamespace(t, s, "registry-dialin")
+	ctx := context.Background()
+	if _, err := s.Pool().Exec(ctx, `INSERT INTO actors
+		(id,namespace_id,actor_key,revision,kind,protocol,endpoint_ref)
+		VALUES('actor_dialin_no_address',$1,'company/dialin',1,'agent','nodes.actor/v1alpha1',NULL)`, ns.ID); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.TouchInboundActor(ctx, ns.ID, "company/dialin"); err != nil {
+		t.Fatal(err)
+	}
+	r, err := worker.NewDBRegistry(s, ns.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	endpoint, err := r.Resolve(ctx, "actor://company/dialin")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if endpoint.URL != "" || endpoint.DialIn == nil || endpoint.DialInActorKey != "company/dialin" {
+		t.Fatalf("endpoint = %+v, want addressless dial-in", endpoint)
+	}
+}

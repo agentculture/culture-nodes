@@ -246,6 +246,10 @@ Numbered SQL migrations for the authoritative PostgreSQL store (prd-spec
 
 ## Policy
 
+- `0033_inbound_transport.sql` — address-free actor presence and a durable
+  reverse-transport mailbox. PostgreSQL owns work and responses; long polls
+  are disposable signals and store no peer address.
+
 Migrations are additive-first (expand-contract). See
 `docs/adr/0002-migration-policy.md` for the full policy, the N-1 binary
 compatibility promise, and the k8s Job migrate-before-rollout pattern.

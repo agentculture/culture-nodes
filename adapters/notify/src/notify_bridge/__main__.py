@@ -16,7 +16,7 @@ import json
 import logging
 import sys
 
-from notify_bridge import capabilities, preflight
+from notify_bridge import capabilities, dialin, preflight
 from notify_bridge.config import Config, ConfigError
 from notify_bridge.server import serve_forever
 
@@ -69,6 +69,7 @@ def _cmd_serve(args: argparse.Namespace) -> int:
     if args.print_capabilities:
         print(json.dumps(preflight.capability_block(capabilities.host_facts(cfg)), indent=2))
         return 0
+    dialin.start("NOTIFY_BRIDGE", cfg.port)
     serve_forever(cfg)
     return 0
 

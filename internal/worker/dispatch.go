@@ -472,6 +472,14 @@ func (w *Worker) completeFromInvocationError(
 			// (task t25/t26, issue #49) on this synchronous failure's
 			// error body, nil unless it actually committed a branch.
 			Preserve: actors.PreserveOf(invokeErr).ToEngine(),
+			// What the actor said was WRONG (task t3, issue #125). The
+			// detail above names the class and the HTTP status — "actor
+			// answered Bad Request" — which is a status line, not a
+			// reason. This carries the bridge's own sentence, bounded
+			// and sanitized at the actors seam, so a refused dispatch is
+			// diagnosable from GET /v1alpha1/runs/{id} instead of by
+			// reproducing the call by hand.
+			ActorError: actors.ActorErrorOf(invokeErr),
 		})
 	if err != nil {
 		return err

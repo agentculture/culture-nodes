@@ -547,7 +547,7 @@ func (w *Worker) commitRunnerTerminal(ctx context.Context, op postgres.RunnerOpe
 		// that runner's operation.
 		req.TechStatus = engine.StatusContractRejected
 		req.Output = diagnosticOutput("runner",
-			fmt.Sprintf("node %q result could not be mapped onto a completion: %v", op.NodeID, buildErr))
+			fmt.Sprintf("node %q result could not be mapped onto a completion: %v", op.NodeID, buildErr), nil)
 		req.ActorID = w.codeRunnerActorID()
 	} else {
 		req.TechStatus = completion.TechStatus

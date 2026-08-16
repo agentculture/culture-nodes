@@ -591,6 +591,16 @@ type actorTelemetry struct {
 	// case, since a bridge only preserves on a genuine technical failure
 	// that left workspace changes behind.
 	Preserve *engine.Preserve
+	// ActorError is the actor's own account of a refusal (task t3, issue
+	// #125) — the `error` text and `class` claim from its error body, or a
+	// bounded snippet of a body that carried neither. It belongs to this
+	// struct for the same reason the other three do: it comes from the
+	// actor's own terminal report and nowhere else. It differs from them in
+	// where it lands — the other three become attempt COLUMNS, this one
+	// becomes part of the attempt's recorded diagnostic (see
+	// diagnosticOutput), because it is prose the actor wrote rather than a
+	// measurement, and the diagnostic is where an operator already looks.
+	ActorError *actors.ActorError
 }
 
 // completeTechnicalFailure is failAttempt's twin for a caller that needs the
@@ -616,7 +626,7 @@ func (w *Worker) completeTechnicalFailure(
 ) (engine.CompletionResult, error) {
 	result, err := w.complete(ctx, claimed, engine.CompletionRequest{
 		TechStatus:        status,
-		Output:            diagnosticOutput(class, detail),
+		Output:            diagnosticOutput(class, detail, telemetry.ActorError),
 		LedgerDelta:       delta,
 		Usage:             telemetry.Usage,
 		TerminationReason: telemetry.TerminationReason,
@@ -634,15 +644,27 @@ func (w *Worker) completeTechnicalFailure(
 }
 
 // diagnosticOutput is the fixed shape a failed attempt's output takes.
-func diagnosticOutput(class, detail string) json.RawMessage {
+//
+// class and detail are the CONTROL PLANE's account of the failure: the class
+// it derived, and the one-line summary it composed. actorErr, when present,
+// is the ACTOR's own account of the same failure, nested under its own key
+// so the two can never be mistaken for each other — `error.class` is what
+// this engine concluded and drives retry and the §3.4 status, while
+// `error.actor.class` is what the bridge claimed and drives nothing (task
+// t3, issue #125; see actors.ActorError.Class). Nil for every failure that
+// did not come from an actor at all — a refused binding, an unwired kind, a
+// hook verdict — which is most of them.
+func diagnosticOutput(class, detail string, actorErr *actors.ActorError) json.RawMessage {
 	payload := struct {
 		Error struct {
-			Class  string `json:"class"`
-			Detail string `json:"detail"`
+			Class  string             `json:"class"`
+			Detail string             `json:"detail"`
+			Actor  *actors.ActorError `json:"actor,omitempty"`
 		} `json:"error"`
 	}{}
 	payload.Error.Class = class
 	payload.Error.Detail = detail
+	payload.Error.Actor = actorErr
 	encoded, err := json.Marshal(payload)
 	if err != nil {
 		return json.RawMessage(`{"error":{"class":"execution"}}`)

@@ -502,9 +502,14 @@ deploy_human_inbox() { # no argument: the host comes from the registration
   # origin.actor_id on every proposed ledger claim, and
   # ledger_records.origin_actor_id is a FOREIGN KEY into actors(id) -- so the
   # bridge needs the ROW ID. The tracker resolves its copy as an actor_KEY
-  # against the control plane's actor list (task t8's startup identity
-  # check), so it needs the KEY. Same variable name, two required values, two
-  # separate env files; assert_human_inbox_colocated refuses the swap.
+  # against the control plane (task t8's startup identity check, which since
+  # task t7 resolves it against GET /v1alpha1/dial-in-presence rather than the
+  # actor list), so it needs the KEY. Same variable name, two required values,
+  # two separate env files; assert_human_inbox_colocated refuses the swap.
+  #
+  # The tracker knows about this split rather than being broken by it: its
+  # startup check compares the bridge's reported actor_id through the presence
+  # row, which carries both the actor_key and the current revision's row id.
   actor_host_exec "$host" 'umask 077; mkdir -p ~/.culture-nodes
 { echo "HUMAN_INBOX_BRIDGE_HOST=0.0.0.0"
   echo "HUMAN_INBOX_BRIDGE_PORT='"$port"'"
@@ -537,8 +542,8 @@ print(json.dumps({"host":"0.0.0.0","port":int(os.environ["PORT"]),"state_dir":os
   # to run if it fails. Proving that read works from THIS host now turns a
   # crash-loop the health assertion would report as "unit not active" into a
   # deploy-time message naming the actual cause.
-  actor_host_exec "$host" "curl -fsS --max-time 10 '${NODES_API_URL%/}/v1alpha1/actors' >/dev/null" || {
-    echo "$host cannot read the actor registry at $NODES_API_URL, which the tracker resolves its actor against at startup — it would refuse to start (issue #72's runtime half). Fix reachability from $host, or set NODES_API_URL to an address that host can reach" >&2
+  actor_host_exec "$host" "curl -fsS --max-time 10 '${NODES_API_URL%/}/v1alpha1/dial-in-presence' >/dev/null" || {
+    echo "$host cannot read dial-in presence at $NODES_API_URL, which the tracker resolves its actor against at startup — it would refuse to start (issue #72's runtime half). Fix reachability from $host, or set NODES_API_URL to an address that host can reach. A 404 here means the control plane predates task t6 and must be deployed first" >&2
     exit 1
   }
 

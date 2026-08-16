@@ -64,6 +64,11 @@ Protocol surface (what the culture-nodes worker talks to):
 * `POST /v1/invocations/<id>/cancel` — §13.6.
 * `DELETE /v1/invocations/<id>` — alias for the same cancellation.
 * `GET /healthz` — operational convenience; the only unauthenticated route.
+* `GET /identity` — `{actor_id, store_id, dial_in: {configured, actor_key}}`.
+  Not part of the actor protocol: it exists so the co-located merge tracker
+  can confirm it submits to the bridge whose task store it reads, without
+  any address at all. `store_id` names the durable state directory this
+  process owns; see the startup identity check below.
 
 Human surface (same server, same bearer token):
 
@@ -339,7 +344,7 @@ uv run python -m human_inbox_bridge.tracker --once
 | `HUMAN_INBOX_TRACKER_STATE_DIR` | bridge config's `state_dir` | Durable bridge state directory to scan read-only |
 | `HUMAN_INBOX_TRACKER_BRIDGE_URL` | loopback + bridge config's `port` | Sibling bridge base URL |
 | `HUMAN_INBOX_BRIDGE_AUTH_TOKEN` | bridge config's `auth_token` | Bearer token for the bridge submit surface |
-| `HUMAN_INBOX_TRACKER_CONTROL_PLANE_URL` | unset | Control-plane base URL for the startup identity check below. Unset **disables the check** and logs a warning naming what is then unguarded |
+| `HUMAN_INBOX_TRACKER_CONTROL_PLANE_URL` | unset | Control-plane base URL for the dispatch half of the startup identity check below. Unset **disables that half only** (the local co-location proof still runs) and logs a warning naming what is then unguarded |
 | `HUMAN_INBOX_TRACKER_DEFAULT_REPO` | unset | Fallback GitHub `owner/repository` when neither `observe.repo` nor the task's own `repo` input is a valid one |
 | `HUMAN_INBOX_TRACKER_POLL_SECONDS` | `60` | Requested delay between cycles; clamped to the active lane's minimum safe cadence (60 seconds anonymous, 0.72 seconds authenticated) |
 | `HUMAN_INBOX_TRACKER_GITHUB_REQUEST_BUDGET` | `50` | Requested maximum unique PR GETs per cycle (`0` disables GitHub requests); clamped so `budget × 3600 / poll_seconds` cannot exceed the active lane's hourly ceiling |
@@ -354,19 +359,6 @@ logged separately as a permission problem.
 
 #### Startup identity check: this bridge must be the actor's bridge
 
-Before its first cycle, the tracker resolves `HUMAN_INBOX_BRIDGE_ACTOR_ID`
-against `GET /v1alpha1/actors` on `HUMAN_INBOX_TRACKER_CONTROL_PLANE_URL`,
-takes that actor_key's **newest revision** (actor identity is append-only —
-an endpoint move is a new row, never an update), and compares its
-`endpoint_ref` against `HUMAN_INBOX_TRACKER_BRIDGE_URL`. On a mismatch it
-prints both endpoints and exits non-zero (issue #72):
-
-```text
-error: this tracker submits to http://127.0.0.1:8087, but actor
-'company/human-ops' (revision 2) is registered at http://192.168.1.157:8090
-— a different bridge. Refusing to start: ...
-```
-
 Why a refusal rather than a warning: the bridge's idempotency store is
 **per-bridge and file-based** (one JSON file per key under `state_dir`), so
 it can only deduplicate submissions that pass through the same bridge
@@ -375,26 +367,77 @@ other's replays, which makes "one logical human inbox" a deployment
 convention — and this check the only mechanism that can notice the
 convention has been broken.
 
-Comparison rules, and what each one deliberately does not excuse:
+The check used to compare the actor's registered `endpoint_ref` against
+`HUMAN_INBOX_TRACKER_BRIDGE_URL`, host and port. Migration 0036 (issue #121)
+retires stored participant addresses, so as of task t7 no address is
+involved. Before its first cycle the tracker now establishes three things:
 
-* **Host and port, not the URL string.** A tracker on the actor's own host
-  addresses the bridge as `http://127.0.0.1:8090` while the actor row names
-  `http://192.168.1.157:8090`. Those are the same bridge, so the check
-  resolves whether the registered address is one this machine itself answers
-  on rather than comparing text.
-* **A matching port on another host is still a mismatch** — that is exactly
-  the split this guards against.
-* **A different port on the same host is a mismatch** — two bridge
-  processes, two idempotency stores, and only one of them is the actor's.
-* **Failure to resolve is a refusal.** An unreachable control plane, an
-  actor_key with no registration, and an unusable `endpoint_ref` all exit
+1. **Co-location — a proof, not an assertion.** The bridge mints a random
+   `store_id` inside its state directory (`store-identity.json`, mode
+   `0600`) and reports it on `GET /identity`. The tracker reads the same
+   value off `HUMAN_INBOX_TRACKER_STATE_DIR` on the local filesystem. Only a
+   process that can read that directory can produce the value, so a match
+   proves the bridge being submitted to is the bridge whose task files are
+   being read — which is the split #72 actually forbids. This is strictly
+   stronger than the host/port comparison it replaces, and it needs no
+   control plane at all.
+2. **Actor agreement.** If the bridge's dial-in client is configured it must
+   present the same actor key this tracker observes — both are actor keys,
+   so that comparison is exact. Its own `actor_id` is compared through the
+   presence row instead, because `HUMAN_INBOX_BRIDGE_ACTOR_ID` deliberately
+   holds two different values: `deploy/prod/deploy.sh` writes the actors
+   **row id** into the bridge's env file (its ledger claims carry it as a
+   foreign key into `actors(id)`) and the actor **key** into the tracker's.
+   A value naming another registered actor is a refusal; a value naming
+   nothing the control plane knows — most likely a row id left behind by a
+   re-registration — is a warning telling you to redeploy the bridge.
+3. **Dispatch — `GET /v1alpha1/dial-in-presence`.** Presence is keyed by
+   `actor_key` and carries no address. It answers the question the
+   registered endpoint used to: is this actor's work delivered to a bridge
+   that dials in the way the one beside us does?
+
+On a mismatch it prints both sides and exits non-zero:
+
+```text
+error: this tracker reads its pending tasks from /var/lib/human-inbox (store
+a1b2c3d4) but submits to http://127.0.0.1:8087, which owns a different
+durable store (9f8e7d6c) — a different bridge process. Refusing to start: ...
+```
+
+What each rule deliberately does not excuse:
+
+* **A second bridge on this same host is a mismatch** — two bridge
+  processes, two state directories, two idempotency stores, and only one of
+  them holds the tasks this tracker reads. The store id catches this
+  without needing the registry to know the right port.
+* **A bridge that does not dial in, while the actor shows `connected`, is a
+  refusal** — something else is receiving this actor's work. The address
+  comparison could not detect that case at all.
+* **A bridge that dials in as this actor while presence shows
+  `disconnected`/`never_dialled` is a refusal** — usually transient (the
+  unit restarts); if it persists, check the credential with
+  `nodes actors dial-in`.
+* **Failure to resolve is a refusal.** An unreachable bridge, a bridge with
+  no `/identity` surface, an unreachable control plane, a state directory no
+  bridge has ever opened, and an actor_key with no registration all exit
   non-zero: an unverified identity is not a verified one. The systemd unit
   restarts, so a control plane that is merely restarting costs retries, not
   an unguarded window.
 
-Leaving `HUMAN_INBOX_TRACKER_CONTROL_PLANE_URL` unset skips the check and
-logs a warning naming the bridge, the actor, and the fact that nothing is
-then guarding against a split deployment.
+**What is no longer guaranteed.** A registered endpoint said *where the
+engine sends this actor's work*. Presence says only that *some* process is
+dialled in under that key — there is one presence row per actor, refreshed
+by whichever instance polls. So two correctly co-located tracker/bridge
+pairs, both dialling in under one actor key, would both pass. Nothing here
+can see that; closing it needs a per-connection instance identity in
+presence, which is control-plane work. The co-location proof still holds in
+that scenario, and it is the half that bounds the damage: each tracker only
+ever submits tasks out of its own bridge's store.
+
+Leaving `HUMAN_INBOX_TRACKER_CONTROL_PLANE_URL` unset skips only step 3.
+Steps 1 and 2 are local and always run — unlike the old check, which was
+switched off entirely — and the warning names the bridge, the actor, and the
+fact that nothing has confirmed the engine dispatches that actor's work here.
 
 An automatic submit uses the task success outcome and a note naming the
 merge commit, plus this explicit marker:

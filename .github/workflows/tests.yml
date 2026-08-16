@@ -135,7 +135,13 @@ jobs:
             | sudo tee /etc/apt/sources.list.d/pgdg.list > /dev/null
           sudo apt-get update -qq
           sudo apt-get install -y -qq postgresql-client-17
-          pg_dump --version
+          # The runner image puts /usr/lib/postgresql/16/bin on PATH ahead of
+          # postgresql-common's version-selecting wrapper, so installing 17 is
+          # not enough on its own -- the first attempt installed 17.11 and the
+          # guard still ran 16.14. Put the 17 bin directory first for every
+          # later step, then assert we actually got it rather than trusting it.
+          echo "/usr/lib/postgresql/17/bin" >> "$GITHUB_PATH"
+          /usr/lib/postgresql/17/bin/pg_dump --version
 
       # Task t21, criterion 1: prove against a REAL dump that the inbound
       # credential table carries nothing an attacker could present. #30 ships

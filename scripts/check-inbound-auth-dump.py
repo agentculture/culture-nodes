@@ -13,7 +13,9 @@ from pathlib import Path
 
 TABLE = "inbound_authentication"
 CANARY = "ATTACKER_CAN_PRESENT_ME"
-UNSAFE_COLUMN = re.compile(r"(?im)^\s*[a-z0-9_]*(?:credential|secret|password|token)[a-z0-9_]*\s+")
+UNSAFE_COLUMN = re.compile(
+    r"(?im)^\s*[a-z0-9_]*(?:credential|secret|password|token|presented|material|value)[a-z0-9_]*\s+"
+)
 
 
 def check_files(schema: str, dump: str) -> list[str]:
@@ -86,7 +88,7 @@ def main() -> int:
     if problems:
         print("FAIL: " + "; ".join(problems), file=sys.stderr)
         return 1
-    print("PASS: schema has no plaintext credential column and dump has no presentable canary")
+    print("PASS: authentication and lockout state have no plaintext-capable column and dump has no presentable canary")
     return 0
 
 

@@ -164,7 +164,12 @@ services:
       # Runner-service placement: present only when the operator installed a
       # registry file (see deploy.sh); an absent file keeps the in-process
       # CodeRunner path only.
-      NODES_CODE_RUNNER_NAME: headspace
+      # See compose.orin.yml for why this is interpolated rather than
+      # hardcoded: a partial tuple is refused, and a hardcoded name makes the
+      # legitimate "no code nodes here" state unreachable. thor keeps its
+      # code-runner capability because it has the other two, which is exactly
+      # the condition install-secrets.sh checks before writing this key.
+      NODES_CODE_RUNNER_NAME: ${NODES_CODE_RUNNER_NAME:-}
       NODES_CODE_RUNNER_REVISION: ${NODES_CODE_RUNNER_REVISION:-}
       NODES_CODE_RUNNER_ACTOR_ID: ${NODES_CODE_RUNNER_ACTOR_ID:-}
       # Bearer for external actor endpoints whose rows name this env var

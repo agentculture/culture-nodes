@@ -1062,3 +1062,56 @@ func TestDeploymentSettingsAreIdempotent(t *testing.T) {
 		}
 	}
 }
+
+// TestCodeRunnerNameFollowsTheRestOfItsTuple pins the fix for a live outage,
+// and the reason the condition cannot live in compose.
+//
+// cmd/nodes/worker.go refuses a PARTIAL code-runner tuple — one key set while
+// another is empty — because that attributes a code operation to a runner
+// nobody can identify. Setting NONE of the three is legitimate and means "this
+// deployment runs no code nodes at all".
+//
+// Both compose files used to hardcode NODES_CODE_RUNNER_NAME, which made that
+// legitimate state unreachable: the worker always saw exactly one of the three
+// set. thor survived only because someone had hand-installed the other two.
+// orin had none, ran fine for 46 hours on an older image, and CrashLoopBackOff'd
+// (exit 2, 11 restarts) the moment a deploy brought it to a revision carrying
+// the check. Compose has no conditionals, so the rule lives in the lane that is
+// already reading prod.env.
+//
+// The lane must never INVENT the other two: a build revision and a registered
+// actor row are facts about a deployment, and guessing either would attribute
+// evidence to a runner that never produced it.
+func TestCodeRunnerNameFollowsTheRestOfItsTuple(t *testing.T) {
+	const revision = "68024ac9a00cf3613a93c89ea251bde5b3cdfe32"
+	const actorRow = "actor_code_runner_ROW123"
+
+	c := newFakeCluster(t)
+	// thor: already carries the other two, as the live host does.
+	c.seedProdEnv(t, "thor", accretedProdEnv+
+		"NODES_CODE_RUNNER_REVISION="+revision+"\n"+
+		"NODES_CODE_RUNNER_ACTOR_ID="+actorRow+"\n")
+	// orin: carries neither — the state that crash-looped.
+	c.seedProdEnv(t, "orin", accretedProdEnv)
+
+	out, code := c.run(t, installSecretsPath(t), []string{"thor", "orin"})
+	if code != 0 {
+		t.Fatalf("run exited %d; output:\n%s", code, out)
+	}
+
+	thor := readEnvFile(t, c.prodEnvPath(t, "thor"))
+	if got := thor.values["NODES_CODE_RUNNER_NAME"]; got != "headspace" {
+		t.Errorf("thor has the other two runner keys but NODES_CODE_RUNNER_NAME is %q, want \"headspace\"; without it thor's worker loses its code-runner capability the next time it is deployed against a compose file that no longer hardcodes the name", got)
+	}
+	if thor.values["NODES_CODE_RUNNER_REVISION"] != revision || thor.values["NODES_CODE_RUNNER_ACTOR_ID"] != actorRow {
+		t.Errorf("thor's pre-existing runner keys were modified: revision=%q actor=%q", thor.values["NODES_CODE_RUNNER_REVISION"], thor.values["NODES_CODE_RUNNER_ACTOR_ID"])
+	}
+
+	orin := readEnvFile(t, c.prodEnvPath(t, "orin"))
+	for _, key := range []string{"NODES_CODE_RUNNER_NAME", "NODES_CODE_RUNNER_REVISION", "NODES_CODE_RUNNER_ACTOR_ID"} {
+		if got, present := orin.values[key]; present {
+			t.Errorf("orin carries none of the runner tuple, so the lane must write NONE of it — but %s = %q. One key alone is exactly what the worker refuses at startup, and inventing the other two would attribute code evidence to a runner that never ran", key, got)
+		}
+	}
+	orin.assertNoDuplicateKeys(t, c.prodEnvPath(t, "orin"))
+}

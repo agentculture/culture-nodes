@@ -337,6 +337,28 @@ NODES_DATABASE_URL=postgres://nodes:$pw@$DB_HOST:5432/nodes?sslmode=$sslmode"
   fi
 fi
 
+# NODES_CODE_RUNNER_NAME is delivered ONLY to a host that already carries
+# NODES_CODE_RUNNER_REVISION and NODES_CODE_RUNNER_ACTOR_ID.
+#
+# cmd/nodes/worker.go refuses a PARTIAL tuple — one set, another empty — because
+# that combination attributes a code operation to a runner nobody can identify.
+# Setting NONE of the three is legitimate and means "this deployment runs no
+# code nodes". Both compose files used to hardcode the name, which made that
+# legitimate state unreachable: the worker always saw exactly one of the three
+# set. thor survived only because someone had hand-installed the other two;
+# orin had none, so the first deploy that brought it to a revision carrying the
+# check left it crash-looping after 46 hours of running fine without them.
+#
+# The condition cannot live in compose — it has no conditionals — so it lives
+# here, where prod.env is already being read. This lane does not INVENT the
+# other two: a revision and a registered actor row are facts about a
+# deployment, not defaults, and guessing either would attribute evidence to a
+# runner that never produced it.
+if env_has NODES_CODE_RUNNER_REVISION && env_has NODES_CODE_RUNNER_ACTOR_ID; then
+  settings="$settings
+NODES_CODE_RUNNER_NAME=headspace"
+fi
+
 # Filter to the keys this host does NOT already have. What survives is what
 # gets merged, and what gets merged is what is reported — a lane that printed
 # the same success line either way would be a second place claiming success

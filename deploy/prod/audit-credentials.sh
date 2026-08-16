@@ -228,9 +228,21 @@ NODES_EVENT_TOKEN_SECRET optional
 NODES_ADHOC_RUN_TOKEN_SECRET optional
 
 # Runner-service placement. Unset keeps the in-process CodeRunner path, which
-# is a complete deployment — these three select the host runner service
-# instead. deploy.sh's own comment for the sibling pr-upkeep grants states the
-# same principle: "Unset is a legitimate state, not a misconfiguration."
+# is a complete deployment — these select the host runner service instead.
+# deploy.sh's own comment for the sibling pr-upkeep grants states the same
+# principle: "Unset is a legitimate state, not a misconfiguration."
+#
+# NODES_CODE_RUNNER_NAME joined this list when the compose files stopped
+# hardcoding it. Each of the tuple's three keys is individually optional here,
+# and that is correct for THIS script — the audit asks whether a key's absence
+# breaks the service, and any one of them absent is survivable. What is NOT
+# survivable is a PARTIAL tuple, which cmd/nodes/worker.go refuses at startup.
+# That is a relationship BETWEEN keys, and this audit is deliberately per-key:
+# it reads its declared set from the compose files precisely so it cannot drift
+# into encoding rules the compose files do not state. install-secrets.sh is
+# where the relationship is enforced, by writing the name only to a host that
+# already has the other two.
+NODES_CODE_RUNNER_NAME optional
 NODES_CODE_RUNNER_REVISION optional
 NODES_CODE_RUNNER_ACTOR_ID optional
 NODES_RUNNER_SERVICES_FILE optional

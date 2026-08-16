@@ -70,14 +70,17 @@ import (
 // pre_run/post_run rows hooks.go writes.
 const codeOperationKind = "code"
 
-// CodeOutcomes names the two domain outcomes a code node's exit status routes
-// to. Failure may be empty: a node that declares no domain answer for a
-// nonzero exit gets a technical failure instead, which is PRD §3.4's other
-// half and is exactly what runners.BuildCompletion does with an empty
-// FailureOutcome.
+// CodeOutcomes names the domain outcomes a code node's exit status routes to.
+// Failure may be empty: a node that declares no domain answer for a nonzero
+// exit gets a technical failure instead, which is PRD §3.4's other half and is
+// exactly what runners.BuildCompletion does with an empty FailureOutcome.
 type CodeOutcomes struct {
 	Success string
 	Failure string
+	// ByExitCode routes individual exit codes to individual outcomes, ahead
+	// of the pair above. Empty for the two-port convention; the merge gate's
+	// three-valued vocabulary (below) is what needs it.
+	ByExitCode map[int]string
 }
 
 // CodeOutcomeResolver maps one code node's declared outcomes onto its
@@ -96,14 +99,46 @@ var (
 	conventionalFailureNames = []string{"failed", "failure"}
 )
 
+// gateExitCodes is the merge gate's published exit-status contract (task t16,
+// issue #101): three domain answers, one exit code each.
+//
+// # Why a third answer exists at all
+//
+// A gate that can only say pass/fail has to fold "I could not measure this"
+// into one of them, and both foldings are lies with consequences. Folded into
+// the passing edge it is the empty-scan false green — a lane with no Go
+// toolchain reports nothing and the merge looks verified. Folded into the
+// failing edge it manufactures a defect: a repair gets dispatched for a
+// threshold nobody measured. `measurement_incomplete` is the answer that is
+// neither, and giving it its own edge is what lets a workflow author send it
+// somewhere a person looks.
+//
+// The exit codes are the contract between the gate program and this table.
+// They are published here, in scripts/merge-gate.py's own doc, and in
+// examples/merge-gate/README.md, and none of the three may drift alone.
+var gateExitCodes = map[string]int{
+	"gates_passed":           0,
+	"changes_required":       1,
+	"measurement_incomplete": 2,
+}
+
+// gateOutcomeNames is gateExitCodes' key set as a stable, readable list for
+// diagnostics.
+var gateOutcomeNames = []string{"gates_passed", "changes_required", "measurement_incomplete"}
+
 // ConventionalCodeOutcomes is the default CodeOutcomeResolver: it recognises
-// the outcome names PRD §11.1 uses and refuses anything else by name.
+// the outcome names PRD §11.1 uses, plus the merge gate's three-valued
+// vocabulary, and refuses anything else by name.
 //
 // A success port is required — without one there is no answer to route for a
 // run that worked, and runners.BuildCompletion refuses the contract anyway. A
 // failure port is optional, and its absence is a real statement: this node
 // treats a nonzero exit as a technical failure to retry, not a domain answer.
 func ConventionalCodeOutcomes(nodeID string, declared []string) (CodeOutcomes, error) {
+	if gate, isGate, err := gateCodeOutcomes(nodeID, declared); isGate {
+		return gate, err
+	}
+
 	var out CodeOutcomes
 	for _, name := range conventionalSuccessNames {
 		if slices.Contains(declared, name) {
@@ -126,6 +161,67 @@ func ConventionalCodeOutcomes(nodeID string, declared []string) (CodeOutcomes, e
 			nodeID, declared, strings.Join(conventionalSuccessNames, ", "))
 	}
 	return out, nil
+}
+
+// gateCodeOutcomes resolves the gate vocabulary, and reports whether the node
+// was asking for it at all.
+//
+// isGate is true as soon as the node declares ANY of the three names, not only
+// when it declares all of them — which is what makes the partial declaration a
+// refusal rather than a silent fall-through to the pass/fail pair. A node
+// declaring `gates_passed` and `changes_required` but not
+// `measurement_incomplete` has no edge for "I could not measure this", so the
+// answer would have to be routed as one of the other two. Refusing before
+// dispatch is the only honest option: the alternative is a graph that cannot
+// express the outcome its own instrument will eventually produce.
+//
+// Mixing the vocabulary with the pass/fail pair is refused for the neighbouring
+// reason: exit 1 would be claimed by both `changes_required` and `failed`, and
+// this file's whole discipline is that it never guesses which port means what.
+func gateCodeOutcomes(nodeID string, declared []string) (CodeOutcomes, bool, error) {
+	present := 0
+	for _, name := range declared {
+		if _, ok := gateExitCodes[name]; ok {
+			present++
+		}
+	}
+	if present == 0 {
+		return CodeOutcomes{}, false, nil
+	}
+
+	refuse := func(detail string) (CodeOutcomes, bool, error) {
+		return CodeOutcomes{}, true, fmt.Errorf(
+			"code node %q declares outcomes %v, which this worker reads as the merge-gate vocabulary "+
+				"(%s), but %s; declare all three and nothing else, or configure "+
+				"worker.Options.CodeOutcomes with a resolver that knows this workflow's vocabulary",
+			nodeID, declared, strings.Join(gateOutcomeNames, ", "), detail)
+	}
+
+	if present != len(declared) {
+		return refuse("it also declares outcomes that are not part of it, leaving no single answer for " +
+			"which exit code belongs to which port")
+	}
+	if present != len(gateExitCodes) {
+		missing := make([]string, 0, len(gateExitCodes))
+		for _, name := range gateOutcomeNames {
+			if !slices.Contains(declared, name) {
+				missing = append(missing, name)
+			}
+		}
+		return refuse(fmt.Sprintf(
+			"it is missing %s — a gate with no edge for an outcome its instrument can produce would have to "+
+				"route that outcome down one of the others", strings.Join(missing, ", ")))
+	}
+
+	byExitCode := make(map[int]string, len(gateExitCodes))
+	for name, code := range gateExitCodes {
+		byExitCode[code] = name
+	}
+	// Success is the exit-0 port. Failure stays EMPTY on purpose: the gate
+	// publishes exactly three exit codes, so a fourth is the instrument
+	// crashing, and a crash is a technical failure with no domain answer —
+	// never a threshold miss nobody measured.
+	return CodeOutcomes{Success: "gates_passed", ByExitCode: byExitCode}, true, nil
 }
 
 // codeRunnerActorID is the producer identity the runner's observed evidence
@@ -295,11 +391,12 @@ func (w *Worker) dispatchCode(
 	}
 
 	completion, err := runners.BuildCompletion(res, runners.NodeContract{
-		NodeID:         node.ID,
-		SuccessOutcome: outcomes.Success,
-		FailureOutcome: outcomes.Failure,
-		ActorID:        w.codeRunnerActorID(),
-		ActorRevision:  w.opts.CodeRunnerRevision,
+		NodeID:           node.ID,
+		SuccessOutcome:   outcomes.Success,
+		FailureOutcome:   outcomes.Failure,
+		ExitCodeOutcomes: outcomes.ByExitCode,
+		ActorID:          w.codeRunnerActorID(),
+		ActorRevision:    w.opts.CodeRunnerRevision,
 	})
 	if err != nil {
 		// The result could not be mapped at all. That is a contract problem,

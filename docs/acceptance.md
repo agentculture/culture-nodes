@@ -193,3 +193,15 @@ Expected-behavior prose from the same section:
   §11.1's example names `passed`/`failed` but never says which is the exit-0
   port. Closing that gap means a schema field (the way a `post_run` hook's
   `on_failure.outcome` already does it) and is open work.
+
+  Task t16 (issue #101) widened the convention rather than closing the gap: a
+  node declaring the merge gate's three names — `gates_passed`,
+  `changes_required`, `measurement_incomplete` — gets exit 0/1/2 mapped onto
+  them individually (`CodeOutcomes.ByExitCode`, carried through to
+  `runners.NodeContract.ExitCodeOutcomes`). It is still a convention by NAME,
+  with the same refusal discipline: a node declaring only part of that
+  vocabulary, or mixing it with `passed`/`failed`, is refused before dispatch
+  rather than half-mapped. The open work is unchanged and now has a second
+  motivating case — a third exit code is exactly the kind of thing an author
+  should be able to declare in the document instead of discovering in a
+  worker's source.

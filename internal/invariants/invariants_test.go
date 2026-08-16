@@ -266,6 +266,14 @@ var authorityAllowlists = []struct {
 				"where an operator's reading of a green tick is not evidence at all. It sits here rather than in " +
 				"internal/api because the verdict and the ref measurement it judges must name the same commit, and the " +
 				"refusal that enforces that (a full 40-hex sha, or no record) lives with the fetch it is about",
+			"internal/handover/gate.go": "validator-origin writer (task t16, issue #101): the two gate records " +
+				"verdict.go cannot compose — a gate that MEASURED NOTHING (an instrument that does not reach the " +
+				"changed tree, or is absent from this host), and the aggregate over a whole report. Both are " +
+				"derived by the same test verdict.go states: an applicability scan and a count over already-recorded " +
+				"findings yield the same answer every time. The aggregate is the sharper case for keeping it here " +
+				"rather than in internal/api — its counts and outcome are COMPUTED from the per-gate statuses and " +
+				"have no request field at all, so no caller can report a green gate over a report that measured " +
+				"nothing",
 			"internal/repair/route.go": "validator-origin writer (task t32, issue #102): a gate-failure routing is a " +
 				"PURE FUNCTION of already-recorded facts — a suite's exit code (itself a derived record), the run's own " +
 				"prior routings, the changed paths internal/handover measured, and the lane's advertised capability " +
@@ -289,6 +297,7 @@ var deterministicOriginByFile = map[string]string{
 	"internal/worker/successsignal.go": "OriginValidator",
 	"internal/worker/hooks.go":         "OriginValidator",
 	"internal/handover/verdict.go":     "OriginValidator",
+	"internal/handover/gate.go":        "OriginValidator",
 	"internal/repair/route.go":         "OriginValidator",
 	"internal/devague/deliverables.go": "OriginEngine",
 	"internal/preflight/records.go":    "OriginEngine",

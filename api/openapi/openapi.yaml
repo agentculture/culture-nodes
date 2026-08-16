@@ -1896,6 +1896,103 @@ paths:
               schema:
                 $ref: '#/components/schemas/Error'
 
+  /v1alpha1/runs/{id}/gate-reports:
+    post:
+      operationId: createGateReport
+      tags: [ledger]
+      summary: Record a whole merge gate's finding as derived validator records.
+      description: >-
+        The merge gate expressed as a NODE (task t16, issue #101). Where
+        `suite-verdicts` records one suite's exit code, this records every
+        gate a workflow declared — the ones that ran and the ones that did
+        not — plus an aggregate the control plane computes over them.
+
+
+        A gate that RAN is composed through exactly the same
+        `handover.SuiteVerdict` the single-suite endpoint uses, so its record
+        is identical to the one an operator's
+        `scripts/collect-handover.py --gate` writes today, with the gate
+        matrix's own annotations (`gate`, `instrument`, `value`, `unit`,
+        `threshold`) added.
+
+
+        A gate that did NOT run states `not_applicable` with a reason from a
+        closed vocabulary and the changed files it left uncovered. Its record
+        carries NO `verdict` key at all: no verdict was reached, and writing
+        one would make an unmeasured gate sortable beside measured ones. This
+        is the shape `suite-verdicts` cannot express — there, `exit_code` is
+        required precisely so a malformed request cannot become a pass, which
+        leaves no way to say "this instrument never reached the change".
+
+
+        Per gate, exactly ONE of `exit_code` and `not_applicable` is
+        accepted. Naming both, or neither, is refused: those are the two
+        shapes in which an unmeasured gate could pass itself off as a
+        measured one.
+
+
+        The aggregate's four counts (`declared`, `applicable`, `passed`,
+        `failed`, `not_applicable`) and its outcome are COMPUTED from the
+        statuses in the request — there is no field for either. That is what
+        stops an empty scan from looking green: a report in which no gate was
+        applicable yields `measurement_incomplete`, never `gates_passed`, and
+        so does a report in which any instrument was unavailable on the host
+        that ran it.
+
+
+        The route is gated by the same bearer secret as the review surface,
+        and `validator_actor_id` must be a registered non-human actor, for
+        the reasons `suite-verdicts` states.
+      parameters:
+        - $ref: '#/components/parameters/RunID'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CreateGateReportRequest'
+      responses:
+        '201':
+          description: >-
+            Every gate landed as a derived, validator-origin review record,
+            followed by the aggregate — whose `provenance_refs` name each
+            record it counted, so the derivation can be re-performed rather
+            than believed.
+
+
+            Each REJECTING gate is also routed through the same bounded
+            repair routing a singly-posted verdict gets (task t32, issue
+            #102): two repair attempts per run over a 24-hour window, both
+            ceilings reaching a human. Nothing is dispatched.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/GateReportResult'
+        '400':
+          description: >-
+            The request is malformed, `gates` is empty, a gate names both or
+            neither of `exit_code` and `not_applicable`, a not-applicable
+            reason is outside the closed vocabulary or names no uncovered
+            path, `commit_sha` is not a full 40-hex commit id, the named
+            validator is registered as a human, or the report names a commit
+            other than the one this run's handover was measured at.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '401':
+          description: The decision bearer token is missing, malformed, or not valid for this deployment.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '404':
+          description: No run has this id, or validator_actor_id is not a registered actor.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+
   /v1alpha1/human-tasks:
     get:
       operationId: listHumanTasks
@@ -3342,6 +3439,232 @@ components:
             this is a repair-router producer identity nobody registered —
             `ledger_records.origin_actor_id` has a foreign key to
             `actors(id)`.
+
+    CreateGateReportRequest:
+      type: object
+      required: [commit_sha, validator_actor_id, gates]
+      description: >-
+        One merge gate's whole finding. Every gate the workflow declared is
+        listed, including the ones that measured nothing — a gate omitted
+        because it did not apply is a gate the counts cannot report.
+      properties:
+        commit_sha:
+          type: string
+          pattern: '^[0-9a-f]{40}$'
+          description: >-
+            The candidate the gates ran against, full 40-character lowercase
+            hex, read back from the worktree the suites actually ran in.
+        base_sha:
+          type: string
+          pattern: '^[0-9a-f]{40}$'
+          description: What the candidate was compared against.
+        ref:
+          type: string
+          description: >-
+            The handover ref that carried the commit, validated against the
+            same `refs/culture-nodes/` fence a control-plane fetch is.
+        changed_files:
+          type: array
+          items:
+            type: string
+          description: >-
+            The changed-file set every applicability decision below was made
+            against. Recorded on the aggregate because "which files did you
+            consider" is the first question anyone asks of a not-applicable
+            count.
+        validator_actor_id:
+          type: string
+          description: >-
+            The registered actor identifying the deterministic producer. Must
+            not be an actor registered as `human`.
+        node_run_ref:
+          type: string
+          description: Narrows the records to one node run.
+        attempt_ref:
+          type: string
+          description: Narrows the records to one attempt.
+        gates:
+          type: array
+          minItems: 1
+          items:
+            $ref: '#/components/schemas/GateReportEntry'
+
+    GateReportEntry:
+      type: object
+      required: [gate]
+      description: >-
+        One declared gate's finding. Exactly one of `exit_code` and
+        `not_applicable` must be present.
+      properties:
+        gate:
+          type: string
+          minLength: 1
+          description: >-
+            The gate's name in the workflow's declared matrix ("go-test",
+            "coverage", "web-build"). An unnamed gate cannot be counted.
+        suite:
+          type: string
+          description: >-
+            What ran, or would have, in the spelling a reader could re-run it
+            with. Defaults to the gate name for a gate that ran.
+        command:
+          type: array
+          items:
+            type: string
+          description: The argv the gate executed.
+        instrument:
+          type: string
+          description: The tool that produced (or failed to produce) the measurement.
+        instrument_version:
+          type: string
+          description: >-
+            The instrument's version, when one could be read. Often absent for
+            a not-applicable gate precisely BECAUSE the instrument was
+            unavailable.
+        exit_code:
+          type: integer
+          description: >-
+            The number the gate exited with. Present only for a gate that
+            ran; zero records `passed`, anything else `failed`.
+        not_applicable:
+          $ref: '#/components/schemas/GateNotApplicable'
+        changed_files_considered:
+          type: array
+          items:
+            type: string
+          description: >-
+            The changed files this gate's applicability decision was made
+            against, so a reader can check the decision rather than take it.
+        measurement:
+          $ref: '#/components/schemas/GateMeasurement'
+        repair:
+          $ref: '#/components/schemas/GateRepairMetadata'
+
+    GateNotApplicable:
+      type: object
+      required: [reason]
+      description: >-
+        Why a declared gate measured nothing, and what it left uncovered.
+      properties:
+        reason:
+          type: string
+          enum:
+            - instrument_not_reaching_tree
+            - no_test_instrument
+            - instrument_unavailable
+            - no_source_files
+          description: >-
+            The vocabulary is closed so "which trees does no instrument reach
+            yet" stays a query rather than a read. `instrument_unavailable` is
+            the reason that makes the whole report `measurement_incomplete`:
+            the instrument was expected to reach this change and did not get
+            the chance.
+        uncovered_paths:
+          type: array
+          items:
+            type: string
+          description: >-
+            The changed files this instrument did not cover. Required for
+            every reason but `no_source_files`: a not-applicable gate that
+            names nothing is indistinguishable from a gate nobody ran, and
+            would read as a pass by omission.
+
+    GateMeasurement:
+      type: object
+      description: >-
+        The number an applicable gate produced and the threshold it was
+        measured against. The threshold travels with the result because it is
+        pinned in the published workflow — a reader must be able to see it
+        was not chosen after the number was known.
+      properties:
+        value:
+          type: number
+        unit:
+          type: string
+        threshold:
+          type: object
+          additionalProperties: true
+
+    GateRepairMetadata:
+      type: object
+      description: >-
+        What a repair of THIS gate would need, declared by the gate that
+        knows. Routing input only; never part of the record.
+      properties:
+        requires_grants:
+          type: array
+          items:
+            type: string
+        implicated_paths:
+          type: array
+          items:
+            type: string
+        repair_actor_id:
+          type: string
+
+    GateReportResult:
+      type: object
+      required: [gates, aggregate, counts, outcome, exit_code]
+      description: >-
+        The records the report produced, and the outcome computed over them.
+
+
+        `outcome` and `exit_code` are echoed because they are the two values
+        the gate program and the control plane must agree about: the program
+        exits with the code, the workflow routes on the outcome, and a caller
+        that computed a different one should find out here rather than from a
+        run that took the wrong edge.
+      properties:
+        gates:
+          type: array
+          items:
+            $ref: '#/components/schemas/LedgerRecord'
+        aggregate:
+          $ref: '#/components/schemas/LedgerRecord'
+        counts:
+          type: object
+          required:
+            - declared_gate_count
+            - applicable_gate_count
+            - passed_gate_count
+            - failed_gate_count
+            - not_applicable_gate_count
+          properties:
+            declared_gate_count:
+              type: integer
+            applicable_gate_count:
+              type: integer
+            passed_gate_count:
+              type: integer
+            failed_gate_count:
+              type: integer
+            not_applicable_gate_count:
+              type: integer
+        outcome:
+          type: string
+          enum: [gates_passed, changes_required, measurement_incomplete]
+          description: >-
+            The gate node's domain outcome, computed from the per-gate
+            statuses. A threshold miss is `changes_required` — a domain answer
+            that follows an edge, never an engine failure.
+        exit_code:
+          type: integer
+          description: >-
+            The exit code that outcome is reported with (0/1/2). It is the
+            contract between the gate program and the code node's declared
+            outcomes.
+        routings:
+          type: array
+          items:
+            $ref: '#/components/schemas/LedgerRecord'
+          description: The derived repair routings composed for the rejecting gates.
+        routing_errors:
+          type: array
+          items:
+            type: string
+          description: >-
+            Routings that were computed but could not be recorded, stated
+            rather than omitted.
 
     Version:
       type: object

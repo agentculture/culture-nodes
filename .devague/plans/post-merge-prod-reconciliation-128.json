@@ -1,0 +1,559 @@
+{
+  "slug": "post-merge-prod-reconciliation-128",
+  "title": "post-merge prod reconciliation (#128)",
+  "frame_slug": "post-merge-prod-reconciliation-128",
+  "schema_version": 4,
+  "status": "exported",
+  "created": "2026-08-16T13:36:19Z",
+  "updated": "2026-08-16T14:21:22Z",
+  "targets": [
+    {
+      "id": "c1",
+      "kind": "announcement",
+      "text": "Prod on thor runs the same revision as main, and the two prod.env keys written outside the deploy tooling during the last deploy are either owned by tooling or written down as deliberately manual",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "h1",
+      "kind": "honesty",
+      "text": "Prod's /v1alpha1/version equals git rev-parse origin/main on thor AND orin's prod-worker-1 was restarted by a deploy that exited 0 \u2014 not a worker left running from before.",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "c2",
+      "kind": "requirement",
+      "text": "Redeploying thor from main also redeploys and re-stamps thor's codex bridge: deploy.sh calls deploy_codex_bridge \"$HOST\" at line 307, OUTSIDE the thor/orin case block, and stamp_revision runs BEFORE the uv tool install (line 225). #128's item 2 is therefore not a separate manual step \u2014 it falls out of running deploy.sh on each host.",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "h2",
+      "kind": "honesty",
+      "text": "deploy/prod/deploy.sh calls deploy_codex_bridge outside the host case block, and a deploy that aborts in the case block still leaves that host's bridge reinstalled and stamped \u2014 observed on orin this session.",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "c3",
+      "kind": "requirement",
+      "text": "Reaching orin's codex bridge requires a full 'deploy.sh orin' run, which also rebuilds orin's worker image and re-runs the credential audit there; there is no bridge-only lane.",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "h3",
+      "kind": "honesty",
+      "text": "There is no bridge-only entry point in deploy.sh: reaching orin's bridge means running the orin lane, which also attempts the worker build.",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "c4",
+      "kind": "boundary",
+      "text": "This cycle applies no database migration. Prod's schema_migrations tops out at 0035_inbound_transport and main embeds through 0035; 0036 is held in migrations/pending/, which migrations/pending/README.md states //go:embed *.sql does not descend into. Redeploy is a code-only change, so the deploy must not be treated as needing a schema rollback plan.",
+      "deferred": true,
+      "deferred_reason": "Established by scope, not built by this plan: the redeploy applies no migration and 0036 stays held under #121. Recorded as a boundary the cycle respected."
+    },
+    {
+      "id": "h12",
+      "kind": "honesty",
+      "text": "schema_migrations on prod tops out at the same version as the highest migrations/*.sql in the shipped tree, and migrations/pending/ is not reachable by //go:embed *.sql.",
+      "deferred": true,
+      "deferred_reason": "Honesty condition on c4, deferred with it."
+    },
+    {
+      "id": "c7",
+      "kind": "requirement",
+      "text": "The two by-hand prod.env keys are exactly NODES_DATABASE_URL and NODES_EVENT_TOKEN_SECRET, established by diffing the key SETS of thor's live prod.env against both timestamped .bak files (values never read). Both are present now, and every deploy lane merges key-by-key and can never delete a line, so the redeploy preserves them.",
+      "deferred": true,
+      "deferred_reason": "Half of it is parked as v1: NODES_EVENT_TOKEN_SECRET is an owner decision about whether the scheduled-sweep emit path is on in prod. The NODES_DATABASE_URL half is covered by t2."
+    },
+    {
+      "id": "h4",
+      "kind": "honesty",
+      "text": "Diffing the key SETS of thor's prod.env against both .bak files names exactly NODES_DATABASE_URL and NODES_EVENT_TOKEN_SECRET and no third key, and a subsequent deploy leaves both in place.",
+      "deferred": true,
+      "deferred_reason": "Honesty condition on c7, deferred with it."
+    },
+    {
+      "id": "c8",
+      "kind": "requirement",
+      "text": "install-secrets.sh DOES template NODES_DATABASE_URL (lines 183 and 187, bundled and external forms) \u2014 so #124 is not a missing template. Its guard exits 3 on an existing prod.env unless FORCE_PROD=1, returning BEFORE PROD_ENV_MERGE runs, so an accreting key can never reach a host that already has the file. That guard is the ordering defect.",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "h5",
+      "kind": "honesty",
+      "text": "install-secrets.sh contains NODES_DATABASE_URL in its templates, AND a run against an existing prod.env without FORCE_PROD leaves that file unchanged \u2014 proving the guard, not the template, is what withholds the key.",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "c9",
+      "kind": "requirement",
+      "text": "NODES_EVENT_TOKEN_SECRET is generated by no tooling at all: install-secrets.sh mints six secrets and this is not one of them, compose.thor.yml declares it open (${NODES_EVENT_TOKEN_SECRET:-}) and audit-credentials.sh classifies it optional. It is a genuinely unmanaged hand-generated key, and the audit would not have reported its absence.",
+      "deferred": true,
+      "deferred_reason": "The subject of parked unknown v1 \u2014 an owner decision, not work this plan may take."
+    },
+    {
+      "id": "h6",
+      "kind": "honesty",
+      "text": "A grep of install-secrets.sh for NODES_EVENT_TOKEN_SECRET returns nothing, compose.thor.yml declares it with the open :- form, and audit-credentials.sh lists it under optional.",
+      "deferred": true,
+      "deferred_reason": "Honesty condition on c9, deferred with it."
+    },
+    {
+      "id": "c10",
+      "kind": "boundary",
+      "text": "The post-deploy credential audit will pass on thor's current key set and is not evidence the reconciliation is done: it classifies NODES_DATABASE_URL required (compose's :? form) but NODES_EVENT_TOKEN_SECRET optional, so it can only ever detect one of the two hand-added keys.",
+      "deferred": true,
+      "deferred_reason": "A scope finding about what the credential audit can and cannot detect; it constrains how evidence is read, not what this plan builds."
+    },
+    {
+      "id": "h13",
+      "kind": "honesty",
+      "text": "audit-credentials.sh reports NODES_EVENT_TOKEN_SECRET under 'optional' and still exits 0 on a host missing it.",
+      "deferred": true,
+      "deferred_reason": "Honesty condition on c10, deferred with it."
+    },
+    {
+      "id": "c11",
+      "kind": "requirement",
+      "text": "thor's runner.env carries no NODES_EVENT_TOKEN (keys: NODES_RUNNER_HEADSPACE_BIN/PROFILES, LISTEN, SECRET_FILE, STATE_DIR, PR_UPKEEP_REPOSITORIES, PR_UPKEEP_SWEEP_SOURCE_URL/SHA256), so a scheduled sweep still cannot emit. deploy.sh rewrites runner.env every deploy from the deploying operator's environment, so granting it means exporting it at deploy time \u2014 this redeploy will not grant it by accident.",
+      "deferred": true,
+      "deferred_reason": "The runner's NODES_EVENT_TOKEN grant belongs to parked unknown v1, not to this plan."
+    },
+    {
+      "id": "h7",
+      "kind": "honesty",
+      "text": "thor's runner.env contains no NODES_EVENT_TOKEN after a completed deploy, and deploy.sh's runner lane rewrites that file from the deploying operator's environment on every run.",
+      "deferred": true,
+      "deferred_reason": "Honesty condition on c11, deferred with it."
+    },
+    {
+      "id": "c12",
+      "kind": "boundary",
+      "text": "The redeploy cannot ship uncommitted work: deploy.sh resolves REVISION=$(git rev-parse ${BRANCH:-HEAD}) and ships 'git archive' of that COMMIT, so the one dirty file in the checkout (.eidetic/memory/culture-nodes__public.jsonl) cannot reach prod. Local main, origin/main and HEAD are all 68024ac.",
+      "deferred": true,
+      "deferred_reason": "A property of deploy.sh that scope verified and this plan does not change."
+    },
+    {
+      "id": "h14",
+      "kind": "honesty",
+      "text": "git archive of the resolved commit contains no file that git status reports as modified in the working tree.",
+      "deferred": true,
+      "deferred_reason": "Honesty condition on c12, deferred with it."
+    },
+    {
+      "id": "c13",
+      "kind": "requirement",
+      "text": "Verification is revision EQUALITY, never ancestry: #122 was squash-merged, so 431528d is not an ancestor of main. The check is that /v1alpha1/version .revision equals git rev-parse origin/main = 68024ac9a00cf3613a93c89ea251bde5b3cdfe32. Prod answers 431528d... with revision_source build_flag today.",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "h8",
+      "kind": "honesty",
+      "text": "git merge-base --is-ancestor 431528d origin/main FAILS while /v1alpha1/version reports a revision string equal to git rev-parse origin/main \u2014 so equality passes where ancestry cannot.",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "c14",
+      "kind": "boundary",
+      "text": "After this deploy the human-inbox bridge still cannot report a revision: deployment.py ships in adapters/codex, claude-code, colleague and notify but NOT adapters/human-inbox, so #120 item 4 stays partly delivered and no redeploy closes it.",
+      "deferred": true,
+      "deferred_reason": "The human-inbox bridge's missing deployment.py is #120 item 4, tracked there \u2014 widening this plan to it would be scope creep."
+    },
+    {
+      "id": "h15",
+      "kind": "honesty",
+      "text": "adapters/human-inbox/src/human_inbox_bridge/ contains no deployment.py, and its bridge's capability surface carries no deployment key after a deploy.",
+      "deferred": true,
+      "deferred_reason": "Honesty condition on c14, deferred with it."
+    },
+    {
+      "id": "c16",
+      "kind": "boundary",
+      "text": "The SONAR_CLOUD_SWEEP naming item changes nothing in-repo \u2014 it was resolved in favour of SONAR_TOKEN during the #122 cycle. The only remaining act is an edit to the operator's own .env on the host, so it produces no commit and no PR.",
+      "deferred": true,
+      "deferred_reason": "Resolved in the #122 cycle with nothing in-repo to change; the remaining act is an operator .env edit on a host."
+    },
+    {
+      "id": "h16",
+      "kind": "honesty",
+      "text": "A scoped git grep for SONAR_CLOUD_SWEEP across the repo excluding docs/specs, docs/plans and .devague returns nothing.",
+      "deferred": true,
+      "deferred_reason": "Honesty condition on c16, deferred with it."
+    },
+    {
+      "id": "c18",
+      "kind": "requirement",
+      "text": "Of the two runs that failed on 2026-08-16, only the 07:20 one (01M04Q26ZPNKTXVNBGSDS1YR9F) is issue #125. Both are schedule-triggered pr-upkeep runs that failed contract_rejected / actor_rejected_input within ~1s, and their error class and detail string are identical \u2014 but the 400 REASONS differ: the 07:05 run (01M04P8DGCX33AFTBQXX1SJR2Y, workflow digest sha256:41db129a...) failed on 'input.instruction is required', already closed in d7c6677, and the 07:20 run (digest sha256:02d24578...) failed on the repo half. Two different workflow versions, v9 and v10. An identical error class is not an identical cause, and reading one from the other is what made this look like a single defect.",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "h9",
+      "kind": "honesty",
+      "text": "The bridge answers 400 with the repo-required message for an input carrying no repo key while its allowlist holds two entries, and answers otherwise when the allowlist holds one \u2014 the branch, not the sandbox, decides.",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "c19",
+      "kind": "boundary",
+      "text": "Redeploying thor cannot fix or affect these failures. The rejecting party is the claude-developer bridge on SPARK, which deploy.sh never touches, and it is a live source-tree install (uv run from /home/spark/git/culture-nodes/adapters/claude-code) already serving current code. The failure is configuration, not revision.",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "h17",
+      "kind": "honesty",
+      "text": "The rejecting bridge runs from a path under /home/spark/git/culture-nodes and deploy/prod/deploy.sh names neither spark nor that path in any lane.",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "c21",
+      "kind": "requirement",
+      "text": "#124 is not historical \u2014 it reproduced live on orin during this session. deploy.sh orin exited 1 at the worker step with 'error while interpolating services.worker.environment.NODES_DATABASE_URL: required variable NODES_DATABASE_URL is missing a value'. orin's prod.env carries 14 keys and neither NODES_DATABASE_URL nor DATABASE_SSLMODE is among them, for the same reason thor's did not: install-secrets.sh's FORCE_PROD guard returns before the merge, so a key added to the template after provisioning can never reach a provisioned host.",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "h10",
+      "kind": "honesty",
+      "text": "install-secrets.sh run against a prod.env lacking NODES_DATABASE_URL adds that key without rotating POSTGRES_PASSWORD, and deploy.sh orin then passes compose interpolation.",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "c22",
+      "kind": "requirement",
+      "text": "orin's control-plane worker was NOT redeployed and is still serving a pre-68024ac image: prod-worker-1 reports 'Up 43 hours', so the deploy aborted before docker compose up. thor's control plane is on 68024ac and orin's worker is not \u2014 the pair is split-revision against one authoritative database.",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "h11",
+      "kind": "honesty",
+      "text": "orin's prod-worker-1 container start time is older than thor's api container start time while both answer for the same namespace.",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "c24",
+      "kind": "boundary",
+      "text": "Hand-adding NODES_DATABASE_URL to orin's prod.env would unblock the worker in seconds and is the WRONG move here: it is the identical hand-turn #124 exists to count, and doing it again converts the one piece of live evidence for the fix into another invisible manual step. The fix belongs in install-secrets.sh, after which install-secrets.sh + deploy.sh orin is the clean path.",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "h18",
+      "kind": "honesty",
+      "text": "#124 stays open with orin's failure attached as evidence, and orin's prod.env is unchanged between this session's deploy attempt and the fix landing.",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "c25",
+      "kind": "audience",
+      "text": "The operator who runs deploy/prod/deploy.sh against thor or orin, and the next person to add a required key to compose \u2014 the person who would otherwise discover mid-deploy that a provisioned host cannot receive it without rotating six live secrets.",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "h19",
+      "kind": "honesty",
+      "text": "The next person to add a compose-required key can point at install-secrets.sh as the thing to re-run, without a FORCE_PROD rotation.",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "c26",
+      "kind": "after_state",
+      "text": "Adding a newly-required deployment setting to a provisioned host is a re-run of install-secrets.sh, not a hand-typed line: the settings arrive by add-if-absent merge, the database URL is composed on the host from the password already there, and NOTHING generated is rewritten. deploy.sh orin completes, both hosts serve 68024ac, and orin's worker is no longer 43 hours behind thor's control plane.",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "h20",
+      "kind": "honesty",
+      "text": "deploy.sh orin exits 0 and prod-worker-1's container start time is after the deploy, on a host whose prod.env gained NODES_DATABASE_URL without any generated secret changing.",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "c27",
+      "kind": "why_it_matters",
+      "text": "The guard defect has now cost two hand-turns on two hosts in one day \u2014 thor's mid-deploy edit during the #127 session, and orin's aborted deploy in this one. It is the exact shape #118 counts: a manual step that leaves a commit but no record that a human had to do it. It also splits the pair's revision, which is worse than either host being stale.",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "h21",
+      "kind": "honesty",
+      "text": "Both hand-turns are recorded on issues \u2014 thor's on #124 and orin's on #124 as a second occurrence \u2014 so the count #118 tracks includes them.",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "c28",
+      "kind": "success_signal",
+      "text": "install-secrets.sh run against a prod.env seeded WITHOUT NodesDatabaseUrl adds it, composed from that file's own POSTGRES_PASSWORD, while every generated secret keeps its old value and every accreted key survives byte-for-byte \u2014 asserted behaviorally against the fakeCluster harness, not by grep. And deploy.sh orin then reaches 'orin deploy complete'.",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "h22",
+      "kind": "honesty",
+      "text": "A test seeds prod.env WITHOUT NODES_DATABASE_URL, runs install-secrets.sh unforced, and asserts the key appears with the seeded password while every generated secret keeps its seeded value.",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "c29",
+      "kind": "requirement",
+      "text": "ORDER IS LOAD-BEARING in prod.env and the failure is silent. Probed with docker compose config against two env files differing only in line order: with DATABASE_SSLMODE BEFORE NODES_DATABASE_URL the URL resolves to sslmode=disable; with it AFTER, compose resolves sslmode= to the EMPTY STRING and reports no error. libpq then falls back to its own default rather than refusing, so a mis-ordered file connects and nobody learns the TLS mode was never applied. An add-if-absent lane appends in whatever order the host's gaps dictate, so it can produce exactly that file.",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "h23",
+      "kind": "honesty",
+      "text": "Two env files differing only in the order of DATABASE_SSLMODE and NODES_DATABASE_URL produce different docker compose config output, one with sslmode=disable and one with sslmode= empty, and neither run reports an error.",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "c31",
+      "kind": "requirement",
+      "text": "PROD_ENV_MERGE cannot carry a value containing its own sed delimiter, and the failure has TWO forms. Probed directly: the substitution exits 1 with 'unknown option to s' and leaves the file byte-identical. In the SINGLE-KEY relay lanes the failed sed is the last command, so ssh returns 1 and the caller's set -euo pipefail aborts \u2014 loud, and the only form reachable today, because those are the only lanes carrying an operator-supplied value. In the MULTI-KEY block the remote loop has no set -e, so a later iteration's exit status overwrites the failed one: the loop exits 0, the lane prints its success line, and the key silently keeps its old value. That silent form becomes reachable the moment NODES_DATABASE_URL joins the multi-key block \u2014 which is exactly what the settings lane does.",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "h24",
+      "kind": "honesty",
+      "text": "The exact sed substitution from PROD_ENV_MERGE, given a replacement line containing a pipe, exits non-zero and leaves the target file byte-identical.",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "c32",
+      "kind": "boundary",
+      "text": "The settings lane must not be the place that fixes PROD_ENV_MERGE's delimiter hazard by rewriting the shared merge: tests/deploy/prodenvmerge_test.go pins that loop's exact text and requires exactly one copy of it. Either the hazard is fixed in the one shared definition with the test updated deliberately, or the lane refuses a value containing a pipe and says so \u2014 a silent no-op is the one option ruled out.",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "h25",
+      "kind": "honesty",
+      "text": "tests/deploy/prodenvmerge_test.go still asserts exactly one copy of the merge loop and still passes after whichever option is chosen.",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "c33",
+      "kind": "requirement",
+      "text": "The settings lane must compose NODES_DATABASE_URL with the sslmode value ALREADY RESOLVED \u2014 reading DATABASE_SSLMODE from prod.env and defaulting to disable \u2014 instead of emitting a literal ${DATABASE_SSLMODE} placeholder. Resolving on the host removes the ordering dependency entirely rather than documenting it. Thor's live value happens to have the same shape (sslmode=disable, no DATABASE_SSLMODE key present), but that is corroboration, not authority: it was written outside the deploy tooling during the #127 session and WHO wrote it \u2014 agent or human \u2014 is not recorded either way.",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "h26",
+      "kind": "honesty",
+      "text": "A prod.env that never receives a DATABASE_SSLMODE key still yields a fully-resolved sslmode in docker compose config, because the URL carries no placeholder.",
+      "deferred": false,
+      "deferred_reason": ""
+    }
+  ],
+  "tasks": [
+    {
+      "id": "t1",
+      "summary": "Fix the sed-delimiter hazard once, in the shared PROD_ENV_MERGE definition, and update its pinned test text deliberately",
+      "origin": "llm",
+      "status": "confirmed",
+      "acceptance_criteria": [
+        "A prod.env value containing a pipe is merged correctly instead of being silently skipped, proved by a behavioral test against the fakeCluster harness",
+        "tests/deploy/prodenvmerge_test.go still asserts exactly ONE copy of the merge loop, with prodEnvMergeLoop updated to the new text",
+        "All three prodEnvWriters still delegate to $PROD_ENV_MERGE"
+      ],
+      "deps": [],
+      "covers": [
+        "c31",
+        "h24",
+        "c32",
+        "h25"
+      ],
+      "instruction": "Edit ONLY the PROD_ENV_MERGE definition in deploy/prod/install-secrets.sh and the prodEnvMergeLoop const + related assertions in tests/deploy/prodenvmerge_test.go. The hazard: the loop uses sed -i \"s|^${k}=.*|${line}|\", so a replacement line containing a pipe makes sed exit 1 ('unknown option to s') and leaves the file byte-identical while the merge still reports success \u2014 the remote loop has no set -e. Probe it first to see it fail. Pick a substitution that cannot collide with a value (a bash parameter-expansion rewrite of the line, or a delimiter no env value can contain); do NOT add a second copy of the loop \u2014 tests assert exactly one. Run: go test ./tests/deploy/ -run ProdEnv."
+    },
+    {
+      "id": "t2",
+      "summary": "Add the add-if-absent deployment-settings lane to install-secrets.sh, composing NODES_DATABASE_URL on the host with sslmode already resolved",
+      "origin": "llm",
+      "status": "confirmed",
+      "acceptance_criteria": [
+        "Running install-secrets.sh unforced against an existing prod.env adds the missing settings keys and rotates NO generated secret",
+        "NODES_DATABASE_URL is composed from prod.env's OWN POSTGRES_PASSWORD, read on the host, so no password crosses the wire or enters an argv",
+        "The written URL carries a literal sslmode value, never a ${DATABASE_SSLMODE} placeholder, so key order in the file cannot change its meaning",
+        "A host whose prod.env has no POSTGRES_PASSWORD is refused by name rather than given a URL with an empty password",
+        "The lane names the keys it actually added, and says so distinctly when it added none"
+      ],
+      "deps": [
+        "t1"
+      ],
+      "covers": [
+        "c8",
+        "h5",
+        "c29",
+        "h23",
+        "c33",
+        "h26",
+        "c21",
+        "h10"
+      ],
+      "instruction": "Follows t1. Add the lane AFTER the two install_env calls in deploy/prod/install-secrets.sh. Add-if-absent only (filter out keys prod.env already has, then pipe the survivors through the ONE shared PROD_ENV_MERGE). Compose NODES_DATABASE_URL remotely from prod.env's own POSTGRES_PASSWORD so no password crosses the wire; refuse by name when that key is absent. CRITICAL (challenge finding c29): write a LITERAL sslmode value read from DATABASE_SSLMODE (default disable) \u2014 never a ${DATABASE_SSLMODE} placeholder, because compose interpolates env-file values recursively and resolves the placeholder to EMPTY, silently, when the referenced key lands later in the file. Report the keys actually added."
+    },
+    {
+      "id": "t3",
+      "summary": "Behavioral tests for the settings lane, seeded from a prod.env that lacks the key",
+      "origin": "llm",
+      "status": "confirmed",
+      "acceptance_criteria": [
+        "A test seeds prod.env WITHOUT NODES_DATABASE_URL, runs install-secrets.sh unforced, and asserts the key appears composed from the SEEDED password while every generated secret keeps its seeded value",
+        "A test asserts docker-compose-style resolution yields a non-empty sslmode regardless of where the key lands in the file",
+        "A test asserts every accreted key survives the settings lane byte-for-byte"
+      ],
+      "deps": [
+        "t2"
+      ],
+      "covers": [
+        "c28",
+        "h22"
+      ],
+      "instruction": "Follows t2. Extend tests/deploy/prodenvmerge_test.go using the existing fakeCluster harness. The accretedProdEnv fixture already lacks NODES_DATABASE_URL, which is exactly the pre-t15 shape \u2014 seed it, run install-secrets.sh UNFORCED, and assert the key appears composed from 'old-generated-postgres-password' while POSTGRES_PASSWORD and every other generated secret keep their seeded values and every accreted key survives byte-for-byte."
+    },
+    {
+      "id": "t4",
+      "summary": "Document the settings lane and the delimiter rule in deploy/prod/README.md",
+      "origin": "llm",
+      "status": "confirmed",
+      "acceptance_criteria": [
+        "The README states that a newly-required deployment setting reaches a provisioned host by re-running install-secrets.sh, with no FORCE_PROD rotation",
+        "The README records that add-if-absent never overwrites, so correcting a wrong value goes through remove-secret.sh first"
+      ],
+      "deps": [],
+      "covers": [
+        "c25",
+        "h19"
+      ],
+      "instruction": "Edit ONLY deploy/prod/README.md. Add the settings lane to the 'prod.env is merged, never rewritten' section: a newly-required deployment setting reaches an already-provisioned host by re-running install-secrets.sh, with no FORCE_PROD rotation \u2014 that guard exits before the merge, which is issue #124. Also record that the lane is add-if-absent, so it never overwrites an operator's edited NODES_DATABASE_URL or COMPOSE_PROFILES, and correcting a wrong value therefore means remove-secret.sh first, then re-run. Do not describe the lane's internals beyond that contract. markdownlint-cli2 must pass."
+    },
+    {
+      "id": "t5",
+      "summary": "Reconcile the hosts: re-run install-secrets.sh on thor and orin, then deploy.sh orin, and verify the pair is no longer split-revision",
+      "origin": "llm",
+      "status": "confirmed",
+      "acceptance_criteria": [
+        "deploy.sh orin exits 0 and orin's prod-worker-1 start time is after that deploy",
+        "thor's /v1alpha1/version still equals git rev-parse origin/main afterwards",
+        "orin's prod.env gained NODES_DATABASE_URL with no generated secret changed, verified by key-set diff without reading any value"
+      ],
+      "deps": [
+        "t2",
+        "t3"
+      ],
+      "covers": [
+        "c1",
+        "h1",
+        "c22",
+        "h11",
+        "c26",
+        "h20",
+        "c24",
+        "h18",
+        "c2",
+        "h2",
+        "c3",
+        "h3",
+        "c13",
+        "h8"
+      ],
+      "instruction": "Operator-only, after t2 and t3 merge. Check /v1alpha1/runs for non-terminal runs FIRST \u2014 deploying a host whose bridge serves an in-flight run orphans the session. Then install-secrets.sh (unforced) against both hosts, then deploy.sh orin. Verify: deploy exits 0, orin's prod-worker-1 start time is after it, thor's /v1alpha1/version still equals origin/main, and orin's prod.env key set gained NODES_DATABASE_URL with no generated secret changed \u2014 compare key SETS only, never read a value."
+    },
+    {
+      "id": "t6",
+      "summary": "Record the operator hand-turns and the live #125 evidence on their issues",
+      "origin": "llm",
+      "status": "confirmed",
+      "acceptance_criteria": [
+        "#124 carries orin's failure as a second occurrence, with the compose interpolation error quoted",
+        "#125 carries the two failed run ids, the allowlist contents, and the config.py line that names it",
+        "Each record cites the commit or run it came from, so the trail runs both ways"
+      ],
+      "deps": [],
+      "covers": [
+        "c27",
+        "h21",
+        "c18",
+        "h9",
+        "c19",
+        "h17"
+      ],
+      "instruction": "No repo files. Comment on the existing issues via the cicd/communicate lane so the signature is appended automatically. On #124: orin reproduced the defect on 2026-08-16 \u2014 deploy.sh orin exited 1 with 'error while interpolating services.worker.environment.NODES_DATABASE_URL: required variable NODES_DATABASE_URL is missing a value', leaving prod-worker-1 on a pre-68024ac image while thor's control plane ran 68024ac; this is the SECOND hand-turn the same guard has caused. On #125: runs 01M04P8DGCX33AFTBQXX1SJR2Y and 01M04Q26ZPNKTXVNBGSDS1YR9F both failed contract_rejected ~1s after create, because developer.json's repo_allowlist holds two entries (owe-developer, upkeep-lane) so Config.only_allowed_repo() returns None \u2014 config.py names #125 in its own comment. Zero tokens billed. Do NOT change the allowlist; the owner decided it stays #125's call."
+    },
+    {
+      "id": "t7",
+      "summary": "Bump the version and prepend a CHANGELOG entry",
+      "origin": "llm",
+      "status": "confirmed",
+      "acceptance_criteria": [
+        "pyproject.toml's version is bumped and CHANGELOG.md carries a Keep-a-Changelog entry naming the settings lane, the delimiter fix and issue #124",
+        "The version-check CI job passes on the resulting branch"
+      ],
+      "deps": [],
+      "covers": [],
+      "instruction": "Use the repo's /version-bump skill (patch), which updates pyproject.toml and prepends the CHANGELOG entry. Do this near the end, after the code tasks merge, so the entry can name what actually landed."
+    },
+    {
+      "id": "t8",
+      "summary": "Live-test the fix on the real fleet, beyond the host reconciliation itself",
+      "origin": "llm",
+      "status": "confirmed",
+      "acceptance_criteria": [
+        "A key deliberately removed from a host's prod.env via remove-secret.sh is restored by re-running install-secrets.sh, with no generated secret changed \u2014 the add-if-absent path proved on a live host, not only in the fakeCluster harness",
+        "Both hosts' /v1alpha1/version and both codex bridges' preflight.host.deployment report the same revision, so the pair is demonstrably no longer split",
+        "The resulting NODES_DATABASE_URL resolves to a NON-EMPTY sslmode in the running container's environment, checked on the host \u2014 the silent-failure mode c29 describes is confirmed absent in production",
+        "Any discrepancy found is reported as a finding, not smoothed over"
+      ],
+      "deps": [
+        "t5"
+      ],
+      "covers": [],
+      "instruction": "Live-testing means the real hosts, not the harness. The remove-secret.sh round trip is the sharpest probe: it proves add-if-absent restores a genuinely missing key without touching secrets. Check the container's resolved env for sslmode, since an empty one is the silent failure the challenge pass found and a config-file check would not catch it. Check for non-terminal runs before touching either host."
+    },
+    {
+      "id": "t9",
+      "summary": "Summarize the delivery before opening the PR",
+      "origin": "llm",
+      "status": "confirmed",
+      "acceptance_criteria": [
+        "A delivery summary records planned versus actual, every mid-run decision the owner made, the plan drift (the omitted version task, the corrected c18, the corrected secret count), and what is genuinely safe to claim as delivered",
+        "It states plainly what was NOT done and why \u2014 including anything left stale or deferred",
+        "Operator hand-turns in this cycle are counted, per the convention #118 tracks"
+      ],
+      "deps": [
+        "t7",
+        "t8"
+      ],
+      "covers": [],
+      "instruction": "Run the /summarize-delivery skill. The plan the owner confirmed is the contract; record where execution obeyed it and where it did not. This cycle has real drift to report: the plan omitted a repo-mandated version bump, claim c18 asserted both failed runs shared one cause when they did not, and a secret count in the README was wrong. Report failures faithfully."
+    }
+  ],
+  "risks": []
+}

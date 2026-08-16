@@ -5,6 +5,23 @@ All notable changes to this project will be documented in this file.
 Format follows [Keep a Changelog](https://keepachangelog.com/). This project
 adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.32.0] - 2026-08-16
+
+### Added
+
+- `install-secrets.sh` gained an unguarded, add-if-absent deployment-settings lane: a newly-required non-secret key now reaches an already-provisioned host by re-running the script, with no `FORCE_PROD=1` rotation (issue #124). `NODES_DATABASE_URL` is composed on the host from the `POSTGRES_PASSWORD` already in `prod.env`, so the password crosses no wire and enters no argv; a host without that key is refused by name rather than given a URL with an empty password.
+- Six behavioral tests for the new lane in `tests/deploy/prodenvmerge_test.go`, seeded from the `accretedProdEnv` fixture unchanged because it is already the pre-t15 shape that caused the incident. Each was checked against a deliberately broken script, so none is vacuous.
+
+### Changed
+
+- `prod.env`'s non-secret keys are now defined in exactly one place, the settings lane, instead of being duplicated into the rotation-guarded block. Consequence worth knowing: a `FORCE_PROD=1` rotation no longer rewrites `NODES_DATABASE_URL`, so `POSTGRES_PASSWORD` and the URL's embedded password can disagree after one (issue #133).
+- `NODES_DATABASE_URL` is written with a literal `sslmode` value instead of a `${DATABASE_SSLMODE}` placeholder. Compose interpolates env-file values recursively but only backwards, so a placeholder resolved to the empty string whenever the key it referenced landed later in the file — silently, with libpq then applying a default nobody chose.
+- `DATABASE_SSLMODE` is documented as an input to first composition rather than a live TLS switch, which is what it actually is now that the URL carries a literal and is add-if-absent.
+
+### Fixed
+
+- `PROD_ENV_MERGE` no longer uses a `sed s///` expression, so a value containing the substitution delimiter can no longer be dropped. It exited 1 and left `prod.env` byte-identical; in the multi-key block a later iteration's exit status overwrote the failure, so the lane reported success while the key kept its old value. Replaced with a pure-POSIX literal rewrite whose quoted `case` pattern has no delimiter to collide with, removing the failure class rather than relocating it to another character.
+
 ## [0.31.3] - 2026-08-16
 
 ### Fixed

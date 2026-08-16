@@ -33,7 +33,15 @@ services:
       NODES_ARTIFACT_S3_SECRET_KEY: ${MINIO_ROOT_PASSWORD:?}
       NODES_ARTIFACT_S3_BUCKET: ${NODES_ARTIFACT_S3_BUCKET:-nodes-artifacts}
       NODES_ARTIFACT_S3_USE_TLS: "false"
-      NODES_CODE_RUNNER_NAME: headspace
+      # All THREE come from prod.env, and the empty default is load-bearing.
+      # cmd/nodes/worker.go refuses a PARTIAL tuple: setting one and leaving
+      # the others empty is a misattribution risk, while setting none says
+      # something legitimate — this deployment runs no code nodes. Hardcoding
+      # the name here made that second state unreachable, so orin's worker
+      # CrashLoopBackOff'd the moment it was brought to a revision carrying
+      # the check, having run 46 hours without the tuple. install-secrets.sh
+      # delivers the name only to a host that already has the other two.
+      NODES_CODE_RUNNER_NAME: ${NODES_CODE_RUNNER_NAME:-}
       NODES_CODE_RUNNER_REVISION: ${NODES_CODE_RUNNER_REVISION:-}
       NODES_CODE_RUNNER_ACTOR_ID: ${NODES_CODE_RUNNER_ACTOR_ID:-}
       # Bearer for external actor endpoints whose rows name this env var

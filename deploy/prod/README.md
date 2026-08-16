@@ -29,8 +29,19 @@ authorizing one rotation cannot authorize another.
 `install-secrets.sh` preserves the current topology explicitly: thor's
 `COMPOSE_PROFILES=bundled-postgres,backup` starts the bundled database and
 backup loop, while both thor and orin receive a host-appropriate
-`NODES_DATABASE_URL`. `DATABASE_SSLMODE` is the single TLS-mode input; the
-LAN default is `disable` under the network trust decision below.
+`NODES_DATABASE_URL`. `DATABASE_SSLMODE` is the TLS-mode input **used when
+the URL is first composed**; the LAN default is `disable` under the network
+trust decision below.
+
+Read that "first composed" literally. Nothing else reads `DATABASE_SSLMODE` —
+no compose service and no Go code — because the settings lane resolves it and
+writes the mode into `NODES_DATABASE_URL` as a literal (see below for why a
+`${DATABASE_SSLMODE}` placeholder is unsafe there). The URL is then
+add-if-absent, so on a host that already has one, **editing `DATABASE_SSLMODE`
+changes nothing and reports nothing**. To change the TLS mode of a provisioned
+host, change the URL itself: `remove-secret.sh NODES_DATABASE_URL --yes <host>`
+with the new `DATABASE_SSLMODE` in place, then re-run `install-secrets.sh` — or
+edit the URL by hand, which the external-database path already expects.
 
 To use an external database, edit `prod.env` on each host: set the same
 provider URL in `NODES_DATABASE_URL` (using the provider-required sslmode),
@@ -88,6 +99,64 @@ it never prints a value, it refuses any key name that is not
 and it writes no backup — a `.bak` beside `prod.env` would be a second
 unmanaged copy of live credentials. Restart whatever reads the file
 afterwards: a running container still holds the removed value in memory.
+
+### Deployment settings arrive by re-run, not by rotation
+
+The `FORCE_PROD=1` guard above is what stops a re-deploy from rotating the
+live database password — and for a while it was also what stopped an
+already-provisioned host from receiving anything at all. The guard returns
+*before* the key-by-key merge runs, so on any host that already had a
+`prod.env`, the prod lane was a no-op. When `NODES_DATABASE_URL` later
+became a required key, there was no way to deliver that one non-secret line
+through the script except `FORCE_PROD=1`, which would have rotated every
+generated secret in that host's block to do it. Both hosts were fixed by hand instead — thor mid-deploy,
+and then orin, whose deploy never got that far and aborted outright at
+compose interpolation. Two operator hand-turns for a value the script
+already knew how to compose.
+
+The non-secret population therefore has its own lane, which runs
+**unguarded**. The answer to *compose says a variable is missing on a host
+I already installed* is to re-run the script, with nothing set:
+
+```bash
+./install-secrets.sh            # delivers newly-required settings;
+                                # rotates no secret, needs no FORCE_PROD
+```
+
+That lane is **add-if-absent**: it writes a key that `prod.env` does not
+have and never touches one it does. The asymmetry is deliberate, and the
+reason is a few sections up — "Bundled or external PostgreSQL" tells an
+operator to point the stack at an external database by editing
+`NODES_DATABASE_URL` and `COMPOSE_PROFILES` on the host. A lane that
+re-asserted its own values every run would quietly revert that documented
+choice on the next deploy, and the stack would come back up against the
+bundled database having reported nothing.
+
+The cost of that guarantee is worth stating plainly: **correcting a wrong
+value is not a re-run.** A key that is present is a key the lane leaves
+alone, however wrong it is. Remove it explicitly with `remove-secret.sh`
+above, then re-run:
+
+```bash
+./remove-secret.sh NODES_DATABASE_URL --yes thor
+./install-secrets.sh
+```
+
+Two properties of the URL that lane writes are invisible in the result and
+easy to undo by accident:
+
+- It is composed **on the host**, from that host's own `POSTGRES_PASSWORD`
+  line in `prod.env` — the same discipline as every other secret here: the
+  password crosses no wire and enters no argv. A host whose `prod.env`
+  carries no `POSTGRES_PASSWORD` is refused by name, rather than handed a
+  URL with an empty password in it.
+- Its `sslmode` is written as a **literal value, never a
+  `${DATABASE_SSLMODE}` placeholder**. Compose interpolates env-file values
+  recursively, but only backwards: a placeholder resolves only when the key
+  it names appears *earlier* in the file. In the other order compose
+  resolves `sslmode=` to the empty string and reports no error at all —
+  libpq then falls back to its own default, the stack connects, and nobody
+  learns the TLS mode was never applied.
 
 ### The post-deploy credential audit
 

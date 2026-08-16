@@ -8,7 +8,8 @@
 # revision and, when the desired state genuinely differs, inserts one more.
 # It never touches an existing row.
 #
-#   register-actor.sh <actor_key> <endpoint_url> [auth_token_env]
+#   register-actor.sh <actor_key> <endpoint_url> [auth_token_env] \
+#                     [--metadata KEY=VALUE]...
 #
 # Each input can also arrive as an env var (ACTOR_KEY, ENDPOINT_URL,
 # AUTH_TOKEN_ENV) so the script composes into other automation without
@@ -16,6 +17,23 @@
 # the worker reads its credential from at dispatch time
 # (internal/worker/registry.go's authTokenEnvOf) -- this script only ever
 # handles that name, never the token value itself.
+#
+# `--metadata KEY=VALUE` (repeatable) carries the OTHER per-actor deployment
+# facts the registry holds: `handover_remote`, which scripts/collect-handover.py
+# reads to learn where an actor's git remote is, and the repository identity a
+# dispatch resolves its checkout from. Both are facts about the deployment, not
+# about the graph or the agent -- which is why they live here.
+#
+# METADATA IS MERGED, NEVER REPLACED, and that is load-bearing. Every
+# registration writes a NEW ROW, so a revision built from a hardcoded metadata
+# object silently drops every key it does not know about. Once an actor carries
+# `handover_remote`, a later endpoint change written that way would erase it and
+# handover collection would start failing with nothing to point at. The insert
+# below therefore carries the previous revision's metadata forward with `||` and
+# overlays only the keys this invocation was actually given. For the same
+# reason it carries `kind` and `protocol` forward too, instead of re-asserting
+# 'agent'/'http' -- that hardcoding could not register a human or runner actor
+# at all, and would have silently rewritten one into an agent.
 #
 # Reaching Postgres: by default this runs the same
 # `docker compose ... exec -T postgres psql -U nodes -d nodes` invocation
@@ -30,13 +48,17 @@ SCRIPT_DIR=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
 
 usage() {
   cat >&2 <<'EOF'
-usage: register-actor.sh <actor_key> <endpoint_url> [auth_token_env]
+usage: register-actor.sh <actor_key> <endpoint_url> [auth_token_env] \
+                        [--metadata KEY=VALUE]...
 
   actor_key       e.g. company/codex-thor              (env: ACTOR_KEY)
   endpoint_url    must have a numeric IPv4 host, e.g.
                   http://192.168.1.5:17070              (env: ENDPOINT_URL)
   auth_token_env  name of the env var holding the credential -- never the
                   credential itself                      (env: AUTH_TOKEN_ENV)
+  --metadata      KEY=VALUE, repeatable. Merged over the previous revision's
+                  metadata; keys not named here are carried forward unchanged.
+                  e.g. --metadata handover_remote=ssh://thor/~/git/culture-nodes-agent
 
 Env overrides:
   PSQL_CMD           full command used to reach Postgres (default: the
@@ -45,9 +67,46 @@ Env overrides:
 EOF
 }
 
-ACTOR_KEY=${1:-${ACTOR_KEY:-}}
-ENDPOINT_URL=${2:-${ENDPOINT_URL:-}}
-AUTH_TOKEN_ENV=${3:-${AUTH_TOKEN_ENV:-}}
+# --- Argument parsing -----------------------------------------------------
+#
+# Flags are separated from positionals first so `--metadata` may appear
+# anywhere, including before the actor key.
+METADATA_KEYS=()
+METADATA_VALUES=()
+POSITIONAL=()
+while [ $# -gt 0 ]; do
+  case "$1" in
+    --metadata)
+      [ $# -ge 2 ] || { echo "register-actor: --metadata needs a KEY=VALUE argument" >&2; exit 1; }
+      pair=$2
+      case "$pair" in
+        *=*) ;;
+        *) echo "register-actor: refusing metadata '$pair': expected KEY=VALUE" >&2; exit 1 ;;
+      esac
+      METADATA_KEYS+=("${pair%%=*}")
+      METADATA_VALUES+=("${pair#*=}")
+      shift 2
+      ;;
+    --metadata=*)
+      pair=${1#--metadata=}
+      case "$pair" in
+        *=*) ;;
+        *) echo "register-actor: refusing metadata '$pair': expected KEY=VALUE" >&2; exit 1 ;;
+      esac
+      METADATA_KEYS+=("${pair%%=*}")
+      METADATA_VALUES+=("${pair#*=}")
+      shift
+      ;;
+    -h|--help) usage; exit 0 ;;
+    --) shift; while [ $# -gt 0 ]; do POSITIONAL+=("$1"); shift; done ;;
+    -*) echo "register-actor: unknown flag '$1'" >&2; usage; exit 1 ;;
+    *) POSITIONAL+=("$1"); shift ;;
+  esac
+done
+
+ACTOR_KEY=${POSITIONAL[0]:-${ACTOR_KEY:-}}
+ENDPOINT_URL=${POSITIONAL[1]:-${ENDPOINT_URL:-}}
+AUTH_TOKEN_ENV=${POSITIONAL[2]:-${AUTH_TOKEN_ENV:-}}
 
 if [ -z "$ACTOR_KEY" ] || [ -z "$ENDPOINT_URL" ]; then
   usage
@@ -69,6 +128,30 @@ if [ -n "$AUTH_TOKEN_ENV" ] && [[ ! "$AUTH_TOKEN_ENV" =~ ^[A-Za-z_][A-Za-z0-9_]*
   echo "register-actor: refusing auth token env name '$AUTH_TOKEN_ENV': must be a valid environment variable name" >&2
   exit 1
 fi
+
+# Metadata keys and values are interpolated into a JSON literal which is then
+# interpolated into SQL, so both are confined to character classes that can
+# contain neither a JSON metacharacter (quote, backslash) nor a SQL one. That
+# is the same shell-native parameterization the checks above use, applied one
+# layer deeper because there are two nested quoting contexts here rather than
+# one. A value that needs a quote is a value this script should refuse rather
+# than escape.
+for i in "${!METADATA_KEYS[@]}"; do
+  key=${METADATA_KEYS[$i]}
+  value=${METADATA_VALUES[$i]}
+  if [[ ! "$key" =~ ^[A-Za-z_][A-Za-z0-9_]*$ ]]; then
+    echo "register-actor: refusing metadata key '$key': must be a plain identifier" >&2
+    exit 1
+  fi
+  if [ -z "$value" ]; then
+    echo "register-actor: refusing empty metadata value for '$key': an empty string is a value a reader could mistake for a configured one -- omit the key instead" >&2
+    exit 1
+  fi
+  if [[ ! "$value" =~ ^[A-Za-z0-9:/@._~-]+$ ]]; then
+    echo "register-actor: refusing metadata value for '$key': only [A-Za-z0-9:/@._~-] is allowed (got '$value')" >&2
+    exit 1
+  fi
+done
 if [[ ! "$ENDPOINT_URL" =~ ^https?://[A-Za-z0-9:/._-]+$ ]]; then
   echo "register-actor: refusing endpoint '$ENDPOINT_URL': must be an explicit http:// or https:// URL (a scheme-less endpoint would be persisted and then fail when the worker builds requests from it)" >&2
   exit 1
@@ -123,18 +206,38 @@ if [[ ! "$NAMESPACE_ID" =~ ^[A-Za-z0-9_-]+$ ]]; then
   exit 1
 fi
 
+# --- The overlay this invocation asks for ---------------------------------
+#
+# Only keys actually supplied appear here. An absent auth_token_env is NOT
+# written as an empty string: that would overwrite a previously registered
+# credential name with a value the worker cannot resolve.
+overlay_pairs=()
+if [ -n "$AUTH_TOKEN_ENV" ]; then
+  overlay_pairs+=("\"auth_token_env\": \"$AUTH_TOKEN_ENV\"")
+fi
+for i in "${!METADATA_KEYS[@]}"; do
+  overlay_pairs+=("\"${METADATA_KEYS[$i]}\": \"${METADATA_VALUES[$i]}\"")
+done
+overlay_json="{$(IFS=,; echo "${overlay_pairs[*]}")}"
+
 # --- Read the newest revision --------------------------------------------
-current=$(run_psql "SELECT revision, endpoint_ref, metadata->>'auth_token_env' FROM actors WHERE namespace_id = '$NAMESPACE_ID' AND actor_key = '$ACTOR_KEY' ORDER BY revision DESC LIMIT 1")
+#
+# The comparison reads the metadata this invocation would OVERLAY, rendered
+# from the stored row the same way the overlay is rendered above, so a
+# metadata-only change is visible to the idempotency check. Comparing only
+# endpoint and auth_token_env would report "unchanged" for a registration whose
+# whole purpose was to add handover_remote.
+current=$(run_psql "SELECT revision, endpoint_ref, coalesce((metadata || '$overlay_json'::jsonb) = metadata, false) FROM actors WHERE namespace_id = '$NAMESPACE_ID' AND actor_key = '$ACTOR_KEY' ORDER BY revision DESC LIMIT 1")
 
 current_revision=""
 current_endpoint=""
-current_auth_env=""
+overlay_is_noop=""
 if [ -n "$current" ]; then
-  IFS='|' read -r current_revision current_endpoint current_auth_env <<< "$current"
+  IFS='|' read -r current_revision current_endpoint overlay_is_noop <<< "$current"
 fi
 
 # --- Idempotent no-op -----------------------------------------------------
-if [ -n "$current_revision" ] && [ "$current_endpoint" = "$ENDPOINT_URL" ] && [ "$current_auth_env" = "$AUTH_TOKEN_ENV" ]; then
+if [ -n "$current_revision" ] && [ "$current_endpoint" = "$ENDPOINT_URL" ] && [ "$overlay_is_noop" = "t" ]; then
   echo "register-actor: unchanged (revision $current_revision)"
   exit 0
 fi
@@ -142,8 +245,18 @@ fi
 # --- New revision -----------------------------------------------------
 next_revision=$(( ${current_revision:-0} + 1 ))
 actor_id="actor_register_$(date +%s%N)_$$"
-metadata_json=$(printf '{"auth_token_env": "%s"}' "$AUTH_TOKEN_ENV")
 
-run_psql "INSERT INTO actors (id, namespace_id, actor_key, revision, kind, protocol, endpoint_ref, metadata) VALUES ('$actor_id', '$NAMESPACE_ID', '$ACTOR_KEY', $next_revision, 'agent', 'http', '$ENDPOINT_URL', '$metadata_json'::jsonb)" >/dev/null
+if [ -n "$current_revision" ]; then
+  # Carry the previous revision's metadata, kind and protocol forward and
+  # overlay only what was asked for. INSERT ... SELECT does the merge inside
+  # Postgres so the stored JSON never round-trips through the shell -- which
+  # also means no stored value can be re-interpolated into this statement.
+  run_psql "INSERT INTO actors (id, namespace_id, actor_key, revision, kind, protocol, endpoint_ref, metadata) SELECT '$actor_id', '$NAMESPACE_ID', '$ACTOR_KEY', $next_revision, kind, protocol, '$ENDPOINT_URL', metadata || '$overlay_json'::jsonb FROM actors WHERE namespace_id = '$NAMESPACE_ID' AND actor_key = '$ACTOR_KEY' ORDER BY revision DESC LIMIT 1" >/dev/null
+else
+  # First revision: there is nothing to carry forward, so the kind/protocol
+  # defaults apply. An actor that is not an http agent is registered by
+  # amending its first revision, not by guessing here.
+  run_psql "INSERT INTO actors (id, namespace_id, actor_key, revision, kind, protocol, endpoint_ref, metadata) VALUES ('$actor_id', '$NAMESPACE_ID', '$ACTOR_KEY', $next_revision, 'agent', 'http', '$ENDPOINT_URL', '$overlay_json'::jsonb)" >/dev/null
+fi
 
 echo "register-actor: registered $ACTOR_KEY at revision $next_revision ($ENDPOINT_URL)"

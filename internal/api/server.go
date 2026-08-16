@@ -60,6 +60,19 @@ type Server struct {
 	// has configured no remote to fetch from — see WithHandoverObserver.
 	handoverObserver *handover.Observer
 
+	// repairRouterActor is the producer identity a gate-failure routing is
+	// derived under (task t32). Empty means DefaultRepairRouterActorID —
+	// see WithRepairRouterActorID.
+	repairRouterActor string
+
+	// buildVersion and buildRevision are what GET /v1alpha1/version reports
+	// (task t32, issue #104). Both are supplied by cmd/nodes from its
+	// -ldflags values; an empty revision falls back to the Go toolchain's
+	// own vcs stamp, and failing that is reported as unknown rather than as
+	// blank. See WithBuildInfo.
+	buildVersion  string
+	buildRevision string
+
 	// artifactRouter is the only artifact content boundary exposed by this
 	// server. artifactInvocationStore deliberately has the one read method the
 	// write route needs: authority is derived from the durable invocation after
@@ -162,6 +175,24 @@ func WithWebAssets(assets fs.FS) Option {
 func WithHandoverObserver(observer *handover.Observer) Option {
 	return func(s *Server) {
 		s.handoverObserver = observer
+	}
+}
+
+// WithRepairRouterActorID names the producer identity a gate-failure routing
+// is derived under (task t32, issue #102), overriding
+// DefaultRepairRouterActorID.
+//
+// Unlike the secret-shaped options above, there is no closed-by-default
+// posture to hold here: the identity is not an authorization, it is an
+// attribution. What it must be is REGISTERED — ledger_records
+// .origin_actor_id has a foreign key to actors(id) — and a deployment whose
+// identity is not registered gets that said to it on every routed gate
+// failure rather than silently recording none.
+func WithRepairRouterActorID(actorID string) Option {
+	return func(s *Server) {
+		if actorID != "" {
+			s.repairRouterActor = actorID
+		}
 	}
 }
 
@@ -393,6 +424,7 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("GET /v1alpha1/human-tasks/{id}", s.wrap(s.handleGetHumanTask))
 	mux.HandleFunc("POST /v1alpha1/human-tasks/{id}/decision", s.wrap(s.handleDecideHumanTask))
 
+	mux.HandleFunc("GET /v1alpha1/version", s.wrap(s.handleVersion))
 	mux.HandleFunc("GET /v1alpha1/healthz", s.wrap(s.handleHealthz))
 	mux.HandleFunc("GET /v1alpha1/readyz", s.wrap(s.handleReadyz))
 

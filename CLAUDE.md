@@ -187,6 +187,30 @@ wave against the remaining subscription window.
   kind, verdict, why) so the comparison survives the session. First-class
   grading records and per-actor analytics are tracked in issue #28 — prefer
   those surfaces over ad-hoc notes once they exist.
+- **A failing merge gate is routed, not carried** (task t32, issue #102): a
+  rejecting suite verdict makes the control plane compose a `derived` routing
+  record — a bounded repair attempt on a lane whose advertised capability
+  surface shows it can actually run the failing suite, or a human node. The
+  bound is **2 repair attempts per run over a 24-hour window from the run's
+  first gate rejection**, and both ceilings reach a human (`internal/repair`).
+  Nothing is dispatched: the control plane decides and records, and executing
+  the routed dispatch stays a deliberate step, because the bridge write path is
+  unproven (#18) and an advertised surface cannot show a database-backed suite
+  is runnable on a lane (#119). Read a red gate's routing with
+  `scripts/collect-handover.py <run-id> --gate ...`; declare what a repair
+  would need with `--requires-grant` / `--implicates`. A failure implicating
+  `.github/` always goes to a person — a repair is a dispatch, and a dispatch
+  may not modify CI configuration.
+- **Ask what revision is running before trusting a probe** (task t32, issues
+  #104 / #120): `curl -s $NODES_API_URL/v1alpha1/version` for the control
+  plane (unauthenticated), and the `deployment` block on a bridge's
+  `/v1/capabilities` for a bridge. Read `install_mode` first — the codex and
+  notify bridges are `uv tool install`ed **copies** that go stale silently
+  until redeployed, while spark's claude bridges are **editable** installs that
+  cannot go stale but can be serving uncommitted code (`revision_is_dirty`).
+  `deploy/prod/deploy.sh` stamps the copies before installing them; a bridge
+  reporting no revision was deployed by something that does not stamp, and its
+  age is unknown.
 - **Memory discipline** (eidetic): `/recall` before non-trivial work to build
   on prior decisions; `/remember` when a non-obvious decision, constraint, or
   hard-won fix surfaces. This repo's memory is **in-repo and public** — a

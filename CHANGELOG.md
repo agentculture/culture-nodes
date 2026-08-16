@@ -5,6 +5,111 @@ All notable changes to this project will be documented in this file.
 Format follows [Keep a Changelog](https://keepachangelog.com/). This project
 adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.27.0] - 2026-08-16
+
+A failing gate stops landing in the operator's session, and a deploy records
+what it shipped (task t32, issues #102 and #104, plus #120 item 4).
+
+**Why a minor bump.** Two new surfaces (`GET /v1alpha1/version`, a `deployment`
+key in the bridges' capability contract), one changed one: POST
+`/v1alpha1/runs/{id}/suite-verdicts` now answers `SuiteVerdictResult`
+(`{verdict, routing}`) rather than a bare `LedgerRecord`. That route is one
+release old and lives in `v1alpha1`; splitting the routing across a second
+round trip would have put the operator back inside the loop the routing exists
+to take them out of.
+
+### The gate → repair → gate loop is closed, and bounded (#102)
+
+Nine packages in the own-the-work-end-to-end batch failed their gate, and
+every one was repaired by hand in the operator's own interactive session —
+the most expensive lane in the deployment, and the only one whose work leaves
+no ledger record. The system already had the vocabulary for this and did not
+use it: a failing gate is a domain outcome (PRD §3.4), and a domain outcome is
+a thing that routes.
+
+`internal/repair` now decides where a rejecting suite verdict goes, as a
+`derived` validator record composed from already-recorded facts. **The bound is
+two numbers and a stated behaviour, all three enforced and all three in the
+record**: at most 2 repair attempts per run, over a 24-hour window measured
+from the run's first gate rejection, and a human node at either ceiling. The
+two bound different things — attempts bound spend, the window bounds staleness
+— and a run can hit either without the other.
+
+Three refusals outrank the budget, because a repair that was never possible
+must not be reported as one the attempts ran out on:
+
+- **the workflow-scope boundary** — a failure implicating `.github/` goes to a
+  person, because a repair attempt is a dispatch and a dispatch may not modify
+  CI configuration. The implicated paths are the ones the control plane already
+  *measured* for the run's handover, so this fires without anyone remembering
+  to declare it;
+- **a lane that cannot verify** — read off the lane's own advertised capability
+  surface. A posture that grants no `workspace-write` cannot repair; one that
+  cannot run the failing suite cannot check its own fix. This is #119
+  mechanized: `--requires-grant network-egress` is how a database-backed suite
+  says what its repair lane would need;
+- **a lane that advertised nothing** — refused rather than assumed, the same
+  fail-closed rule `retryRefusal` states.
+
+**Unattended execution is deliberately not enabled.** The control plane decides
+and records the route; it does not dispatch it, and the record says so in its
+own payload. The write path through the bridges is unproven (#18) and an
+advertised surface cannot show that a database-backed suite is runnable on a
+lane (#119) — so a repair could be dispatched at work it could not verify. What
+changes is that the decision is no longer made in a person's head at the moment
+they read a red gate: it is a deterministic function of recorded facts, written
+down under a stated bound, leaving the human step as executing a dispatch the
+system already chose and justified.
+
+Repair rounds are now a ledger query, which is the signal #28 was missing.
+
+### A deploy records which revision it shipped (#104, #120 item 4)
+
+Three dispatches this cycle reported `handover=true`, committed successfully,
+and created no handover ref — because the bridges installed on thor and orin
+predated the code that mints them. Nothing reported a problem, because
+`internal/handover` correctly records nothing when there is no fetchable ref,
+so a stale bridge and an honest refusal produce byte-identical evidence. It was
+found by running `git for-each-ref` on the host.
+
+The two install shapes have different answers, and reporting only one would
+have been wrong for the other:
+
+- the codex and notify bridges are `uv tool install`ed **copies** — no git near
+  them, so `deploy.sh` now stamps the resolved 40-hex revision into the shipped
+  tree *before* the install copies it;
+- the claude bridges on spark are **editable** installs serving a live work
+  tree — they cannot go stale, and they *can* be running uncommitted code,
+  which is now reported as its own hazard.
+
+So the bridges advertise a `deployment` host fact — install mode, revision, how
+that revision was learned, whether the tree is dirty, and what can go stale —
+on the `/v1/capabilities` surface an operator already reads without ssh. A
+revision that is not a full lowercase 40-hex commit id is refused rather than
+reported, and a revision nothing can establish is stated as such instead of
+returned blank.
+
+The control plane answers for itself at `GET /v1alpha1/version`, unauthenticated
+like `healthz`. Issue #104 was found by POSTing at a route that should have
+existed and reading the `405`; a live test can now *assert* which code it
+tested. The image is built from a `git archive` with no `.git` in it, so
+`deploy.sh` passes the revision through both build lanes and the Dockerfile
+injects it — and `-X main.version` finally does something, having written to a
+`const` since t1.
+
+### Also
+
+- `internal/handover.Measured` exposes the ref, commit and changed paths of a
+  measured handover; `MeasuredCommit` is now a projection of it rather than a
+  second walk with its own recognition rule.
+- `deployment.py` joins `preflight.py` as a byte-identical shared bridge
+  module, and `tests/lint` guards both — the split and the guard are one
+  change, so a shared module cannot quietly become four.
+- `tests/deploy/revisionstamp_test.go` builds a real wheel and looks inside it.
+  Written first as a test that passed for the wrong reason: hatchling resolves
+  `.gitignore` from the adapter directory, not the repo root, so the guard now
+  reproduces the adapter-local ignore rule that actually drops the stamp.
+
 ## [0.26.0] - 2026-08-16
 
 The merge gate stops being an operator looking at a green tick (task t11,

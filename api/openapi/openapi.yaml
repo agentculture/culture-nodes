@@ -1699,10 +1699,26 @@ paths:
             record. Its `subject_ref` and `provenance_refs` name the run's
             handover evidence record when the control plane had measured one,
             and are empty when it had not.
+
+
+            A REJECTING verdict is also ROUTED (task t32, issue #102): the
+            control plane derives where the failure goes next — a bounded
+            repair attempt on a lane whose advertised capability surface shows
+            it can run the suite that failed, or a human — and appends that
+            decision as a second derived record, returned as `routing`. The
+            bound is stated in the record: two repair attempts per run, over a
+            24-hour window measured from the run's first gate rejection, and a
+            human node at either ceiling.
+
+
+            The routing is a DECISION, not an execution: nothing is
+            dispatched, and the record says so in its own payload. Unattended
+            repair is deliberately not enabled — see the record's
+            `dispatch_note`.
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/LedgerRecord'
+                $ref: '#/components/schemas/SuiteVerdictResult'
         '400':
           description: >-
             The request is malformed, `exit_code` is absent, `commit_sha` is
@@ -1836,6 +1852,39 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/Error'
+
+  /v1alpha1/version:
+    get:
+      operationId: version
+      tags: [operations]
+      summary: Which revision of the control plane is running.
+      description: >-
+        Task t32, issue #104. Before this, "what revision is deployed" was
+        answered by probing feature routes one at a time and inferring from
+        the status code — a `POST` at an artifact route answering `405`
+        instead of `401` is how it was established that a whole merged batch
+        was not running in production, fifteen hours after it merged.
+
+
+        A live test can read this to ASSERT which code it tested rather than
+        assume it, which is why the route is unauthenticated exactly as
+        `healthz` and `readyz` are: a live test that had to hold a decision
+        secret just to learn what it was testing is one nobody runs.
+
+
+        `revision` is a full 40-character lowercase hex commit id or it is
+        ABSENT. `HEAD`, a branch name and an abbreviation are all refused —
+        each means something different tomorrow, and this value exists to be
+        compared later. A build that was never stamped reports no revision and
+        says so in `staleness` rather than returning an empty string a reader
+        has to interpret.
+      responses:
+        '200':
+          description: What this binary was built as.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Version'
 
   /v1alpha1/healthz:
     get:
@@ -2912,6 +2961,108 @@ components:
         attempt_ref:
           type: string
           description: Narrows the verdict to one attempt.
+        requires_grants:
+          type: array
+          items:
+            type: string
+          description: >-
+            The dispatch grants the SUITE needs beyond running its own binary
+            (`network-egress`, `home-write`, ...), in the vocabulary the
+            bridges' capability surface uses. Only a routing input, never part
+            of the verdict record. The gate is the only party that knows its
+            suite talks to a database, and a repair lane whose posture grants
+            no egress cannot verify one — so declaring it here is what turns
+            #119 into a routing decision rather than a wasted session.
+        implicated_paths:
+          type: array
+          items:
+            type: string
+          description: >-
+            Repo-relative paths the gate knows this failure involves, added to
+            the ones the control plane already measured for the run's
+            handover. A failure implicating `.github/` routes to a human: a
+            repair attempt is a dispatch, and a dispatch may not modify CI
+            configuration.
+        repair_actor_id:
+          type: string
+          description: >-
+            Overrides which lane a repair would be routed to. Omit it to use
+            the actor that authored this run's claims — the party that has the
+            checkout the failure is in.
+
+    SuiteVerdictResult:
+      type: object
+      required: [verdict]
+      description: >-
+        What the gate produced: the suite's verdict, and — for a REJECTING
+        gate — where that failure was routed (task t32, issue #102).
+
+
+        Two records rather than one because a rejecting gate produces two
+        facts, and splitting them across two round trips would put the
+        operator back in the loop the routing exists to take them out of.
+
+
+        `routing` is absent for a passing gate: there is nothing to route, and
+        a ledger row per green gate saying so is noise. `routing_error` is
+        present, with `routing` still absent, when a routing was computed but
+        could not be recorded — the verdict is the primary record and is never
+        failed to protect its derivation, but the failure is stated rather
+        than left as a silence.
+      properties:
+        verdict:
+          $ref: '#/components/schemas/LedgerRecord'
+        routing:
+          $ref: '#/components/schemas/LedgerRecord'
+        routing_error:
+          type: string
+          description: >-
+            Why the gate failure was not recorded as routed. Overwhelmingly
+            this is a repair-router producer identity nobody registered —
+            `ledger_records.origin_actor_id` has a foreign key to
+            `actors(id)`.
+
+    Version:
+      type: object
+      required: [version, staleness]
+      description: >-
+        The control plane's own build identity (task t32, issue #104).
+      properties:
+        version:
+          type: string
+          description: The binary's declared version.
+        revision:
+          type: string
+          pattern: '^[0-9a-f]{40}$'
+          description: >-
+            The commit this binary was built from. ABSENT when nothing
+            established one — never an empty string, and never an
+            abbreviation or a branch name.
+        revision_source:
+          type: string
+          enum: [build_flag, go_vcs_stamp]
+          description: >-
+            How the revision was learned. `build_flag` is what the deploy said
+            it was building (`-ldflags -X main.revision`), which is the only
+            thing that can answer inside a container built from a `git
+            archive` with no .git in it. `go_vcs_stamp` is what the build
+            machine observed, available only for a build that ran inside a
+            checkout — and it is the only one that can also report
+            `revision_is_dirty`.
+        revision_is_dirty:
+          type: boolean
+          description: >-
+            True when the Go toolchain stamped this build from a checkout with
+            uncommitted changes, so the revision names the last commit and not
+            the code that is running. Absent for a `build_flag` revision,
+            which cannot know it — its absence is not a claim that the tree
+            was clean.
+        staleness:
+          type: string
+          description: >-
+            One sentence on what this answer does and does not establish,
+            including the case where the revision cannot be established at
+            all.
 
     HumanTask:
       type: object

@@ -78,3 +78,55 @@ some-command 2>&1 | tail -20 ; echo "EXIT=$?"   # WRONG: that is tail's status
 this reports success for a command that failed. Use `${PIPESTATUS[0]}`, or drop
 the pipe. The probe on run `01M04D3A7G5NWCHKMN3AJWXF5K` caught it in its own
 brief and re-derived the real answer by counting PASS and SKIP lines instead.
+
+## This table is now a routing input, not only a briefing (task t32)
+
+`internal/repair` reads the same facts mechanically. When a merge gate rejects,
+the control plane decides where that failure goes, and this table is what
+decides whether a repair is offered at all:
+
+| What the surface says | What the router does |
+|---|---|
+| the posture grants no `workspace-write` | human — a session there cannot edit a file, so it cannot repair |
+| the failing suite's tool is unusable in that posture | human — a repair could not be checked before it was claimed |
+| the suite declares a grant the posture lacks (`--requires-grant network-egress`) | human — this row is the `go test` against PostgreSQL line above |
+| the actor advertised no surface at all | human — fail closed; unknown is not permission |
+| none of the above, and the run is inside its bound | a bounded repair attempt on that lane |
+
+The bound is stated in the record: **2 repair attempts per run, over a 24-hour
+window from the run's first gate rejection, and a human node at either
+ceiling.**
+
+Two limits worth knowing before trusting it. The tool is identified from the
+gate's `argv[0]`, which establishes "this lane can run the binary the suite is
+spelled with" — weaker than "this lane can run the suite", because a `go test`
+that needs a listener is invisible here. And the routing is a DECISION: nothing
+is dispatched, because the write path through the bridges is still unproven
+(#18). Both are why the loop is routed rather than unattended.
+
+## Which revision is answering (task t32, issue #120 item 4)
+
+Every fact above is only as current as the bridge that measured it, and until
+now nothing said how current that was — three dispatches this cycle reported
+`handover=true` and created no ref because the installed bridges predated the
+code that mints them. Each bridge now advertises a `deployment` block beside
+these facts:
+
+```sh
+curl -sH "Authorization: Bearer $TOKEN" http://thor:8086/v1/capabilities \
+  | python3 -c 'import json,sys; print(json.load(sys.stdin)["preflight"]["host"]["deployment"])'
+```
+
+`install_mode` is the part to read first. A `copy` (the `uv tool install`ed
+codex and notify bridges) reports the revision the deploy stamped and **goes
+stale silently until it is reinstalled**. An `editable` install (the claude
+bridges on spark) reports its live work tree and cannot go stale — but check
+`revision_is_dirty`, because it serves uncommitted changes too. A bridge
+reporting no revision at all has not been deployed by a `deploy.sh` that stamps,
+and its age is unknown.
+
+The control plane answers for itself, unauthenticated:
+
+```sh
+curl -s http://192.168.1.146:18080/v1alpha1/version
+```

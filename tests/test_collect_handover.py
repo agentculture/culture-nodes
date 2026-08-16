@@ -142,6 +142,25 @@ def world(tmp_path, fake_api):
         },
         "run": run_view(THOR_ACTOR),
         "posts": [],
+        "routing": {
+            "id": "ledger_routing_1",
+            "authority": "derived",
+            "data": {
+                "selected": "repair",
+                "reason": "within_bound",
+                "rationale": "routes to repair attempt 1 of 2 on company/codex-thor",
+                "attempt_number": 1,
+                "attempts_remaining": 1,
+                "repair_lane_actor_key": "company/codex-thor",
+                "dispatched": False,
+                "bound": {
+                    "max_attempts": 2,
+                    "window_seconds": 86400,
+                    "at_ceiling": "route to a human node",
+                },
+            },
+        },
+        "routing_error": "",
     }
 
     fake_api.route(
@@ -168,8 +187,18 @@ def world(tmp_path, fake_api):
     )
 
     def post_verdict(h, m, q, b):
-        state["posts"].append(json.loads(b))
-        h.send_json(201, {"id": "ledger_verdict_1", "authority": "derived"})
+        payload = json.loads(b)
+        state["posts"].append(payload)
+        # The 201 body is SuiteVerdictResult (task t32): the verdict, plus
+        # where a REJECTING gate was routed. `state["routing"]` lets a test
+        # choose which routing the control plane answered with.
+        result = {"verdict": {"id": "ledger_verdict_1", "authority": "derived"}}
+        if payload.get("exit_code") != 0:
+            result["routing"] = state["routing"]
+            if state["routing_error"]:
+                result["routing"] = None
+                result["routing_error"] = state["routing_error"]
+        h.send_json(201, result)
 
     fake_api.route("POST", r"/v1alpha1/runs/([^/]+)/suite-verdicts$", post_verdict)
     fake_api.start()
@@ -535,3 +564,100 @@ def test_the_gate_cleans_up_its_worktree(world):
     )
     assert proc.returncode == 0, proc.stdout + proc.stderr
     assert git(world["operator"], "worktree", "list", "--porcelain").count("worktree ") == 1
+
+
+# --------------------------------------------------------------------------
+# the routing (task t32, issue #102)
+# --------------------------------------------------------------------------
+
+
+def gate(world, exit_code: int, env_extra: dict | None = None, *extra: str):
+    return collect(
+        world,
+        RUN_ID,
+        "--gate",
+        "--suite",
+        "go test ./...",
+        *extra,
+        "--",
+        sys.executable,
+        "-c",
+        f"raise SystemExit({exit_code})",
+        env_extra=env_extra or GATE_ENV,
+    )
+
+
+def test_a_failing_gate_prints_where_it_was_routed_and_the_bound(world):
+    """The whole point of t32 for whoever is at the terminal: a red gate says
+    where it goes next and how many rounds are left, rather than leaving the
+    operator to decide both."""
+    proc = gate(world, 3)
+
+    assert proc.returncode != 0
+    assert "repair" in proc.stdout
+    assert "company/codex-thor" in proc.stdout
+    # The bound, in the output, in numbers.
+    assert "1 of 2" in proc.stdout
+    assert "route to a human node" in proc.stdout
+
+
+def test_the_routing_says_plainly_that_nothing_was_dispatched(world):
+    """A reader who mistakes a routing for an execution stops looking for the
+    dispatch that never happened."""
+    proc = gate(world, 1)
+    assert "not dispatched" in proc.stdout.lower()
+
+
+def test_a_routing_to_a_human_names_the_reason(world):
+    world["state"]["routing"] = {
+        "id": "ledger_routing_2",
+        "authority": "derived",
+        "data": {
+            "selected": "human",
+            "reason": "out_of_workflow_scope",
+            "rationale": (
+                "this failure involves .github/workflows/tests.yml, "
+                "which a dispatch may not modify"
+            ),
+            "attempt_number": 0,
+            "attempts_remaining": 2,
+            "guarded_paths": [".github/workflows/tests.yml"],
+            "dispatched": False,
+            "bound": {
+                "max_attempts": 2,
+                "window_seconds": 86400,
+                "at_ceiling": "route to a human node",
+            },
+        },
+    }
+
+    proc = gate(world, 1)
+
+    assert "human" in proc.stdout
+    assert "out_of_workflow_scope" in proc.stdout
+    assert ".github/workflows/tests.yml" in proc.stdout
+
+
+def test_an_unrecorded_routing_is_printed_rather_than_hidden(world):
+    """Issue #120's lesson applied one layer up: a routing that could not be
+    recorded must not look the same as a gate that passed."""
+    world["state"][
+        "routing_error"
+    ] = 'the router\'s producer identity "gate_repair_router" must be a registered actor'
+
+    proc = gate(world, 1)
+
+    assert "gate_repair_router" in proc.stdout + proc.stderr
+
+
+def test_a_passing_gate_prints_no_routing(world):
+    proc = gate(world, 0)
+    assert proc.returncode == 0
+    assert "routed" not in proc.stdout.lower()
+
+
+def test_json_carries_the_routing_record(world):
+    proc = gate(world, 1, {**GATE_ENV}, "--json")
+    payload = json.loads(proc.stdout)
+    assert payload["gate"]["routing"]["data"]["selected"] == "repair"
+    assert payload["gate"]["record"]["id"] == "ledger_verdict_1"

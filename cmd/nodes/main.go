@@ -21,7 +21,27 @@ import (
 // version is the Go control-plane CLI's own version. t1's scaffold did not
 // establish a Go versioning scheme (only pyproject.toml's is CI-enforced
 // via version-check); this is a placeholder until the Go side gets one.
-const version = "0.1.0-dev"
+//
+// It is a VAR rather than a const because the Dockerfile overrides it with
+// `-ldflags "-X main.version=$VERSION"`, which cannot write to a constant —
+// so the build flag that has been in the Dockerfile since t1 has never
+// actually done anything. Task t32 makes it, and its new sibling below, real.
+var version = "0.1.0-dev"
+
+// revision is the git commit this binary was built from, injected by
+// `-ldflags "-X main.revision=<sha>"` and served on GET /v1alpha1/version.
+//
+// It exists because the container is built from a source tree with NO .git in
+// it (see the Dockerfile: it COPYs cmd/, internal/, schemas/ and migrations/,
+// never the repository), so the Go toolchain stamps no vcs information and
+// the binary has no other way to know. Empty is honest and is reported as
+// unknown — internal/api's handleVersion falls back to the toolchain's own
+// stamp for a binary built inside a checkout, which is the developer case.
+//
+// Issue #104 is what its absence cost: `culture-nodes:prod` on thor was 15
+// hours old and running none of a merged batch, and the only way to find out
+// was to POST at a route that should have existed and read the 405.
+var revision = ""
 
 const usageText = `nodes - Culture Nodes control-plane entry point
 

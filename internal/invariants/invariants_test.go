@@ -266,6 +266,13 @@ var authorityAllowlists = []struct {
 				"where an operator's reading of a green tick is not evidence at all. It sits here rather than in " +
 				"internal/api because the verdict and the ref measurement it judges must name the same commit, and the " +
 				"refusal that enforces that (a full 40-hex sha, or no record) lives with the fetch it is about",
+			"internal/repair/route.go": "validator-origin writer (task t32, issue #102): a gate-failure routing is a " +
+				"PURE FUNCTION of already-recorded facts — a suite's exit code (itself a derived record), the run's own " +
+				"prior routings, the changed paths internal/handover measured, and the lane's advertised capability " +
+				"surface. Same inputs, same destination, every time, which is the §10.4 test for derived. It is " +
+				"emphatically not confirmed: the routing decides where a failure GOES, and a human deciding to merge " +
+				"remains that human's own transaction. It is not proposed either — nothing here is anybody's " +
+				"suggestion, and the record carries no field a caller could use to argue with the bound",
 			"internal/devague/deliverables.go": "engine-origin writer: pre-batch devague import derives delivery summaries",
 			"internal/preflight/records.go":    "engine-origin writer: the clarify-then-commit gate's briefing is a deterministic composition of advertised host state and the pinned task declaration (issue #67, task t14)",
 		},
@@ -282,6 +289,7 @@ var deterministicOriginByFile = map[string]string{
 	"internal/worker/successsignal.go": "OriginValidator",
 	"internal/worker/hooks.go":         "OriginValidator",
 	"internal/handover/verdict.go":     "OriginValidator",
+	"internal/repair/route.go":         "OriginValidator",
 	"internal/devague/deliverables.go": "OriginEngine",
 	"internal/preflight/records.go":    "OriginEngine",
 }

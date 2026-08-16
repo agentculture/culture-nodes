@@ -31,9 +31,10 @@ module, like every other module outside `webhook.py`, never reads it. See
 
 from __future__ import annotations
 
+import sys
 from typing import Any, Sequence
 
-from notify_bridge import preflight
+from notify_bridge import deployment, preflight
 from notify_bridge.config import Config
 
 #: No agent session runs here, so there is nothing to confine — stated
@@ -73,4 +74,13 @@ def host_facts(
         commit_policy=_COMMIT_POLICY,
         writable_paths=[],
         artifact_publish="not-applicable-no-workspace",
+        # Which revision of THIS bridge is answering (task t32, issue #120
+        # item 4). Measured from the module object rather than from a
+        # configured path, so it describes the code that is actually running.
+        # The distribution name is the one per-backend value: it is what the
+        # install recorded, and it is how the PEP 610 metadata that decides
+        # editable-vs-copy is looked up.
+        deployment=deployment.deployment_facts(
+            sys.modules[__package__], "culture-nodes-notify-bridge"
+        ),
     )

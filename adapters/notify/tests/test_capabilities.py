@@ -51,6 +51,13 @@ def test_a_bridge_with_no_session_omits_the_sandbox_keys(tmp_path):
         "commit_policy",
         "writable_paths",
         "artifact_publish",
+        # `deployment` is present even here, and deliberately so (task t32):
+        # which revision a bridge is running is a fact about the BRIDGE, not
+        # about the session it dispatches. A bridge that runs no session can
+        # still be the stale one — this is the bridge that sends the
+        # notifications, and a stale one sending yesterday's shape is exactly
+        # as invisible as a stale codex bridge was in issue #120.
+        "deployment",
     }
     assert host["artifact_publish"] == "not-applicable-no-workspace"
 

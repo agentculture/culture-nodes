@@ -382,6 +382,15 @@ class Handler(BaseHTTPRequestHandler):
             attempt_id=body.get("attempt_id") or None,
             callback_url=str(callback_url),
             callback_token=str(callback_token),
+            # `input.repository_identity` (task t2, issue #125) needs no
+            # resolution here and gets none: this bridge has no
+            # `repo_allowlist`, checks nothing out, and dispatches to a
+            # PERSON rather than a session in a directory. It rides into
+            # `extra_input` like every other non-instruction key, which is a
+            # structured field the inbox returns verbatim and the tracker
+            # reads by name — never prompt text appended to what the human is
+            # asked to do, so the "Bound inputs" leak the three checkout
+            # bridges exclude the key from cannot happen here.
             extra_input={k: v for k, v in raw_input.items() if k != "instruction"},
         )
         # Durably parked BEFORE the 202 is written: a crash after this line

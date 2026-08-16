@@ -138,6 +138,7 @@ docstring has the full precedence rule).
 | Config file key | Env var | Default | Meaning |
 |---|---|---|---|
 | `repo_allowlist` | `CLAUDE_CODE_BRIDGE_REPO_ALLOWLIST` (`:`-joined) | `[]` | Absolute repo paths this bridge will dispatch into. A request naming any other `input.repo` is refused `403`. **Empty means the bridge accepts no repo.** |
+| `repo_identities` | `CLAUDE_CODE_BRIDGE_REPO_IDENTITIES` (`:`-joined `name=path`) | `{}` | Maps a **repository identity** (the name the control plane sends from the actor's `metadata.repository_identity`) to a checkout on this host. Only needed when a checkout directory is not named after the repository it holds — otherwise the name is inferred from `repo_allowlist`. A declaration says *which* repository, never that the bridge may touch it: the resolved path still has to pass `repo_allowlist`. See [Repository identity](#repository-identity-issue-125). |
 | `claude_bin` | `CLAUDE_CODE_BRIDGE_CLAUDE_BIN` | `"claude"` | Path/name of the claude executable (resolved via `PATH` if bare). |
 | `claude_env` | — (file only) | `{}` | Extra env vars merged onto every claude subprocess (`ANTHROPIC_API_KEY`, ...). Operator-supplied only. |
 | `permission_mode` | `CLAUDE_CODE_BRIDGE_PERMISSION_MODE` | `"bypassPermissions"` | Forwarded as `--permission-mode`. Must be a mode that never blocks on an interactive prompt. |
@@ -180,13 +181,41 @@ Point the process at a config file with
 | Field | Required | Meaning |
 |---|---|---|
 | `instruction` | yes | The prompt passed to `claude -p`. `400` without it. |
-| `repo` | yes | Absolute path; must be in `repo_allowlist` or the invocation is refused `403`. |
+| `repo` | no | Absolute path; must be in `repo_allowlist` or the invocation is refused `403`. Optional since issue #125: when absent, the checkout is resolved from `repository_identity`, and only then from a single-entry `repo_allowlist`. |
+| `repository_identity` | no | Set by the **control plane**, from the actor's registration, and never by a workflow author or an event payload. Resolved to a checkout on this host when `repo` is absent. A name that reaches two permitted checkouts, or none, is a named `400` (`repository_identity_ambiguous` / `repository_identity_unknown`) with a hint — never a silently-picked first match. |
 | `role` | no | Passed as `--agent`. Validated against `.claude/agents/<role>.md` in the target repo (claude ships no built-in role set the way colleague does); unknown role is `400`. |
 | `max_steps` | no | Passed as `--max-turns`; also the "expected duration" signal for the sync/async threshold. |
 | `model` | no | Passed as `--model` (falls back to `Config.model`). |
 | `success_outcome` | no | Domain outcome reported on success (default: `default_success_outcome`). |
 | `incomplete_outcome` | no | Domain outcome reported for `subtype: "error_max_turns"`, **only if the node declares one here**. Absent: reported as an execution failure, never as success. |
 | `async` | no | Force sync (`false`) or async (`true`) dispatch, overriding the step-budget threshold. |
+
+## Repository identity (issue #125)
+
+A trigger-created run's `input` *is* the event payload, and a payload carries
+no checkout path. The control plane therefore sends the actor's registered
+repository **identity** — a name, from `actor.metadata.repository_identity`
+and from nowhere else — and this bridge maps it to a directory, because a
+path chosen on the control-plane host need not exist here.
+
+The mapping is tried in two steps:
+
+1. **Declared** — `repo_identities[identity]`, the operator's own statement.
+2. **Inferred** — the identity's repository segment
+   (`agentculture/culture-nodes` → `culture-nodes`) matched against the final
+   component of every path this bridge may work in: each `repo_allowlist`
+   entry, and `<root>/<name>` for each `repo_allowlist_prefixes` root that
+   actually holds such a directory.
+
+Then the survivor is validated against `repo_allowlist` like any other repo.
+Ambiguity and misses are named, hinted refusals, mirroring how
+`only_allowed_repo()` already fails closed — and `repo_allowlist` goes back to
+being a pure **permission** surface, free to hold as many entries as the host
+needs.
+
+An explicit `input.repo` still wins, and an actor registered with no identity
+dispatches exactly as before: the single-allowlist-entry inference is
+unchanged.
 
 ## Preflight capability surface (issue #67)
 

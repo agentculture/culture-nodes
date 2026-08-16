@@ -1,0 +1,153 @@
+# close #127 before #122 merges
+
+> Issue #127 closed out: PR #122 is green and merged into a clean main, the two intermittent tests are deterministic rather than re-run, and every item #127 listed is either done, decided by the owner, or a tracked successor with a named owner — nothing left as an unsorted handover blob.
+> instruction: Fix both #126 root causes test-locally on spec/close-the-backlog, disposition the five Qodo findings, bump the version, run the full local gate including both adapter lint styles, merge #122, then close #127 against a successor issue holding only the post-merge reconciliation.
+
+## Audience
+
+- The repo owner merging #122, and every future contributor who hits a red CI job on this repo and has to decide whether it is their change or a known flake.
+  - instruction: Add a comment above each fixed test naming its root cause and citing #126.
+
+## Before → After
+
+- Before: \#122 is MERGEABLE but has two red checks that everyone believes are 'just the flakes'; #127 is a 200-line handover blob mixing done facts, blocked reconciliation, unowned findings and owner-only decisions, so nobody can tell what closing it would even mean.
+  - instruction: Read #127's body as it stands today to confirm the four-way mix before rewriting it.
+- After: PR #122 merges into a main whose CI is green on its own merits — no re-run, no retry, no skip. #126's two tests are deterministic with their root causes named in code comments. #127 is closed, having been split into what was decidable pre-merge (done) and a successor issue holding only the genuinely post-merge reconciliation, each item with an owner.
+  - instruction: Verify with: gh pr view 122 --json state,mergeCommit and a check that the merge commit's CI run has attempt=1.
+
+## Why it matters
+
+- A test that fails once in twenty trains everyone to hit re-run (#126's own framing). Merging #122 red-but-believed-fine would make the re-run reflex the house style on the exact repo that spent this cycle building gate-verdict-as-evidence (#101). Claiming main clean is only worth something if 'clean' is measured, not asserted.
+  - instruction: If any CI job is re-run during this work, record that fact in the closure comment rather than repeating it silently.
+
+## Requirements
+
+- The two CI reds on PR #122 head 49a0e11 are exactly the two tests recorded in #126, and they failed in the SAME push in two different workflows (run 31934728992 'Go/build' = TestSchedulerDeadlineFailsAParkedRunnerOperation, run 31934729001 'Tests/go' = TestChaosDroppedSendRepairedByOutboxRelay). #126 is therefore not a side-issue: it is the only thing standing between #122 and a green merge.
+  - instruction: Before touching either test, re-read both CI logs (gh run view 31934728992 / 31934729001 --log-failed) and confirm no third failure hides behind the two named ones.
+  - honesty: Re-reading both CI logs shows the two named tests are the ONLY failures in their jobs — no third red hides behind them.
+- TestSchedulerDeadlineFailsAParkedRunnerOperation races on a two-transaction sequence: internal/scheduler/scheduler.go:658 eng.CompleteAttempt commits the node run as failed/`timed_out`, and only afterwards line 694 closeWait -> CloseRunnerOperation commits the runner operation as completed. `runnerdeadline_test.go`:94 waits only for the node run to reach 'failed', then immediately asserts the runner operation at line 111. The fix is test-local: wait explicitly on the runner-operation transition too.
+  - instruction: In internal/scheduler/`runnerdeadline_test.go`, replace the immediate mustRunnerOperationState assertion at line ~111 with a bounded waitFor on the runner operation reaching RunnerOperationCompleted. Prove it by construction: insert a temporary sleep between CompleteAttempt (scheduler.go:658) and closeWait (scheduler.go:694), verify the OLD assertion fails every run and the NEW one still passes, then remove the sleep.
+  - honesty: The scheduler fix must be proven by construction, not by passing: inserting an artificial delay between CompleteAttempt and closeWait makes the OLD test fail every time and the NEW test still pass.
+- TestChaosDroppedSendRepairedByOutboxRelay depends on the global contents of a shared database: internal/events/relay.go:152-158 selects 'FROM outbox WHERE ... LIMIT $1' with NO namespace filter and a default batch of 50, so relay.Run republishes pending outbox rows belonging to every other package running in the same parallel sweep. `chaos_test.go`:230 then reads only Receive(ctx, 10, 0) and demands the repaired row be among those 10. The fix is test-local: drain until the row appears within a bounded deadline instead of asserting on one 10-message page.
+  - instruction: In internal/queue/sqs/`chaos_test.go`, replace the single Receive(ctx,10,0) at line ~230 with a bounded drain loop that keeps receiving until row.ID appears or a deadline expires, ignoring foreign rows. Prove it by construction: insert pending outbox rows in a second namespace before the repair run, verify the OLD assertion fails deterministically and the NEW one passes. Do NOT add a namespace filter to internal/events/relay.go — deployment-wide draining is intended (resolved hard question q1).
+  - honesty: The chaos fix must be proven the same way: seeding foreign pending outbox rows in another namespace before the repair run makes the OLD assertion fail deterministically and the NEW one still pass.
+- The five Qodo findings on #122 are real review comments with file:line anchors, and exactly one is High/Action-required: 'Nil-wrapped dial-in error' at internal/actors/client.go:266. The other four are Medium: vendored nodes-op.sh edited (.claude/skills/nodes-operator/scripts/nodes-op.sh:121), control-plane shells out to git (internal/handover/git.go:134), no nodes doctor before deploy (deploy/prod/deploy.sh:43), mailbox upsert rewrites actor (internal/store/postgres/`inbound_transport.go`:84). #127 says nothing has worked any of them; they must be dispositioned rather than batch-dismissed.
+  - instruction: Fix internal/actors/client.go:266 (nil-wrapped dial-in error). For the four Mediums, post a written disposition per finding. Note: 'Vendored nodes-op.sh edited' is likely a FALSE POSITIVE — CLAUDE.md states nodes-operator is first-party, authored here, not vendored; verify against docs/skill-sources.md before accepting or rejecting it.
+  - honesty: Each of the five Qodo findings gets an explicit written disposition (fixed / tracked as issue N / rejected with a reason) — none is silently dropped or batch-dismissed.
+- The `SONAR_CLOUD_SWEEP`/`SONAR_TOKEN` naming split resolves in favour of `SONAR_TOKEN`: a full-repo grep finds `SONAR_CLOUD_SWEEP` in ZERO tracked files, while `SONAR_TOKEN` is what examples/pr-upkeep/sweep.py:594 reads, what .github/workflows/tests.yml:19 sets, what the sonarclaude skill requires, and what the tests assert. Nothing in-repo needs to change; the operator's .env is the side that gives way.
+  - instruction: Change nothing in-repo. Record in #127's closure that `SONAR_TOKEN` is the surviving name and the operator's .env is what changes.
+  - honesty: After the change, a fresh grep for `SONAR_CLOUD_SWEEP` across tracked files still returns nothing, and the pr-upkeep sweep still authenticates in CI where `SONAR_TOKEN` is set.
+- Every hand-turn in this session opens or updates an issue, per CLAUDE.md's every-operator-action rule — including the flake fixes if typed in-session, and any prod.env or deploy change. The commit message cites the issue so the trail runs both ways.
+  - instruction: Open or update an issue for every hand-typed fix in this session, and cite the issue number in each commit message.
+  - honesty: Every commit in this work names the issue it serves, and every hand-typed fix has a matching issue comment recording that an operator typed it.
+- The change must bump the version (/version-bump) or the version-check job blocks the merge, and must pass the FULL local lint set including BOTH adapter lint styles (root-config codex paths and adapter-dir claude-code), which is the exact gap that took #122 red on three lint jobs (#123).
+  - instruction: Run, in order: uv run pytest -n auto; the four root lint commands; BOTH adapter lint invocation styles exactly as CLAUDE.md spells them out; uv run teken cli doctor . --strict; then /version-bump patch.
+  - honesty: The full local gate is run before the PR: pytest, the root lint set, BOTH adapter lint invocation styles, teken cli doctor --strict, and a version bump — and the CI result matches the local result.
+- BOTH #126 flakes share ONE root cause, and it is the test ENVIRONMENT, not either test: .github/workflows/tests.yml:93 points every package at a SINGLE shared database (`NODES_TEST_DATABASE_URL`=.../nodes) for 'go test ./...', while pgtest.Run (internal/store/postgres/pgtest/pgtest.go:50-62) starts a PRIVATE ephemeral postgres per package when that variable is unset. Locally each package is therefore isolated and both tests pass; in CI every package shares one outbox and one timers table. This is exactly why #126 saw 8 consecutive local passes and CI-only failures.
+  - instruction: If the probe confirms it, fix the CLASS not the two tests: give each package its own database (or schema) in CI so pgtest's local isolation and CI isolation match. Fall back to per-test isolation of the two tests only if a per-package database proves impractical.
+  - honesty: The probe in c27 actually reproduces at least one of the two failures under a shared database, and neither reproduces under per-package private databases.
+- The shared-database environment is harmful because two components are deliberately deployment-wide: internal/events/relay.go:152-157 selects pending outbox rows with NO namespace filter, and the scheduler's ClaimDueTimers claims due timers across every namespace in one batch. So internal/events/`relay_test.go`'s relay can drain internal/queue/sqs/`chaos_test.go`'s repaired row into a DIFFERENT fake queue and mark it published — which produces precisely the observed failure (outbox status 'published' yet Receive returns nothing, `chaos_test.go`:236).
+  - instruction: Demonstrate the contamination explicitly before fixing: log which relay publishes the chaos test's outbox row under a shared database.
+  - honesty: The contamination is demonstrated concretely: a foreign relay is observed marking the chaos test's outbox row published while that test's own Receive returns nothing.
+- Merging #122 to main is an IRREVERSIBLE outward-facing publish, not just a merge: .github/workflows/publish.yml:5-10 publishes to real PyPI via Trusted Publishing on any push to main touching pyproject.toml or `culture_nodes`/\*\*, and the mandatory /version-bump touches pyproject.toml. Merging therefore cuts a public release of version 0.31.1+ that cannot be unpublished. deploy.yml and release.yml do NOT auto-deploy prod (kind smoke only; images on tags), so PyPI is the single irreversible side effect.
+  - instruction: Confirm with the owner that merging cuts a public PyPI release at the bumped version, and check pyproject.toml's version is the intended release number before merging.
+  - honesty: Before merge, the version in pyproject.toml is confirmed to be the version intended for a public PyPI release, and the owner has agreed the merge cuts that release.
+- The repo allows squash, merge, and rebase merges (gh repo view: all three true). If #122 is SQUASH-merged, commit 431528d never appears in main, so the successor issue's 'compare /v1alpha1/version revision against main' becomes unresolvable — the deployed revision would name a commit main does not contain. The merge strategy must be chosen deliberately, or the reconciliation check must compare something else.
+  - instruction: Pick the merge strategy explicitly (merge-commit preserves 431528d in main's history; squash does not) and record the choice plus the resulting revision-comparison method in the successor issue.
+  - honesty: The merge strategy for #122 is chosen explicitly and written into the successor issue, along with whatever revision comparison remains valid under it.
+- The shared-vs-private database hypothesis is cheaply falsifiable and MUST be probed before the fix is designed: run the two packages locally with `NODES_TEST_DATABASE_URL` pointed at one database while a full 'go test ./...' sweep runs against the SAME database. If the flakes reproduce, the root cause is confirmed and the fix targets isolation; if they do not, c23/c24 are wrong and the test-local fixes stand on their own.
+  - instruction: Run the probe BEFORE designing the fix: export `NODES_TEST_DATABASE_URL` to one scratch database, then run 'go test ./internal/queue/sqs/ ./internal/scheduler/ -count=5' while 'go test ./...' runs concurrently against that same database. Compare against the same command with `NODES_TEST_DATABASE_URL` unset (per-package private containers).
+  - honesty: The probe's result is recorded in #126 either way — including a negative result, which would refute c23/c24 rather than being quietly dropped.
+
+## Honesty conditions
+
+- \#127 is actually closed on GitHub with a successor issue linked, and #122's merge commit shows a green CI run that was never re-run.
+- The merged diff contains no t.Skip, no retry loop, and no reduction in -count for either test — checkable by grepping the two test files in the merge commit.
+- A successor issue exists and is linked from #127 before #127 is closed, holding the thor redeploy, the codex-bridge redeploys, and the dump deletion.
+- The two test files carry a comment naming the root cause, so the next contributor who sees a red job can tell in one read whether it is their change.
+- \#122 is merged, gh pr view 122 shows MERGED, and the merge commit's CI run is green with attempt=1.
+- \#127's current body does mix done facts, blocked reconciliation, unowned findings and owner-only decisions — re-readable in the issue as it stands today.
+- No CI job in this work is re-run to get green; if one is re-run, that is recorded as a failure of this claim rather than quietly repeated.
+- The contention condition is actually exercised: the two packages are run with -count=5 while a full go test ./... sweep runs concurrently, not in isolation.
+- The probe's result is recorded in #126 either way — including a negative result, which would refute c23/c24 rather than being quietly dropped.
+
+## Success signals
+
+- A single CI run on the merge commit is green with zero re-runs, and 'go test ./internal/scheduler/ ./internal/queue/sqs/ -count=5' passes under a concurrently running full sweep — the contention condition under which both tests actually failed. #127 shows closed with a successor issue linked.
+  - instruction: Run 'go test ./internal/scheduler/ ./internal/queue/sqs/ -count=5' while a full 'go test ./...' sweep runs concurrently in another shell.
+
+## Scope / boundaries
+
+- The fix for both #126 tests must not be a retry, a -count reduction, or a t.Skip. #126's 'Done when' explicitly rules that out ('What is not acceptable is quietly adding a retry'), and this repo spent the cycle building the opposite habit (#101's gate-verdict-as-evidence).
+  - instruction: Grep the merge commit's two test files for 't.Skip', retry loops, and -count changes; all three must be absent.
+- Three of #127's reconcile items are structurally impossible before #122 merges: 'Redeploy thor from main once #122 lands', redeploying the codex bridges onto a merged revision, and 'decide whether the pre-deploy dump is kept once #122 is merged and stable' all require main to already contain the code. Closing #127 before the merge therefore means closing what is decidable now and converting the rest into a named successor issue, not ticking those boxes.
+  - instruction: Open the successor issue FIRST, carrying the thor redeploy from main, both codex-bridge redeploys, and the dump deletion; link it from #127, then close #127.
+
+## Non-goals
+
+- Migration 0036 stays in migrations/pending/ and is NOT applied (#121 holds it until every bridge is converted to dial-in and the outbound fallback is disabled). #112's database-target question stays unanswered — it is a question for the owner, not a defect. #118 (14 of 14 operator steps still manual) is not attacked here.
+- The 21 deviation records stay proposed unless the owner confirms them. 'devague deviate --confirm' is user-only and no actor promotes its own proposal (PRD §10.4 / the ledger authority model in CLAUDE.md). This work may present them for decision; it may never decide them.
+
+## Assumptions
+
+- Prod on thor is verified live at 431528d via GET localhost:18080/v1alpha1/version (`revision_source`=`build_flag`), with prod-api/worker/scheduler/notifier containers up. Both prod.env hand-edits are present with two timestamped .bak files (06:49:48Z, 07:03:54Z) and the pre-deploy dump ~/nodes-predeploy-20260816T064724Z.dump (3.17 MB) still exists. The deployed-state half of #127 is accurate as written.
+- The scheduler's two-transaction sequence may hide a REAL product gap the test fix would paper over: if the process dies between CompleteAttempt (scheduler.go:658) and closeWait (scheduler.go:694), the node run is terminal while the runner operation stays '`waiting_external`' forever. Making the test wait longer makes the test honest but says nothing about whether any reconciliation sweep closes such an orphan. Whether one exists is unverified.
+- A shared CI database also means every package's TestMain calls Store.Migrate concurrently against the same database (pgtest.go:75). Concurrent migration of one database by ~20 package processes is a hazard in its own right and a plausible source of further intermittents beyond the two in #126; it was not examined in depth by this pass.
+
+## Scope exploration
+
+- `s1` — `CI runs 31934728992 + 31934729001 on head 49a0e11`: both #126 flakes failed in the same push, in two different workflows — new evidence #126 did not have, and proof #126 blocks the #122 merge
+  - seeds: `c2`
+- `s2` — `internal/scheduler/scheduler.go:612-696 (failWaitingExternal)`: CompleteAttempt and closeWait/CloseRunnerOperation commit in two separate transactions; the test waits on the first and asserts the second
+  - seeds: `c3`
+- `s3` — `internal/events/relay.go:144-160 + internal/queue/sqs/chaos_test.go:176-237`: relay batch is namespace-unfiltered (LIMIT 50) so a parallel sweep's foreign outbox rows crowd the repaired row out of the test's single 10-message Receive
+  - seeds: `c4`
+- `s4` — `#126 'Done when' section`: retries are explicitly unacceptable; option 2 (deterministic wait on the state transition) is the sanctioned route and matches both root causes
+  - seeds: `c5`
+- `s5` — `thor live probe (ssh: version endpoint, docker ps, ~/.culture-nodes/prod.env*, predeploy dump)`: every deployed-state fact #127 asserts is confirmed true right now — 431528d serving, two .bak files, dump present
+  - seeds: `c7`
+- `s6` — `gh api pulls/122/comments (Qodo review anchors)`: 5 findings with file:line; one High (client.go:266 nil-wrapped dial-in error), four Medium — all still unaddressed
+  - seeds: `c8`
+- `s7` — `repo-wide grep for SONAR_CLOUD_SWEEP vs SONAR_TOKEN`: `SONAR_CLOUD_SWEEP` appears in no tracked file; `SONAR_TOKEN` is the established name in code, CI, tests and skills — the naming question is already answered by the code
+  - seeds: `c9`
+- `s8` — `#127 'Reconcile after PR #122 merges' section`: three items are gated on main already containing the code, so they cannot close pre-merge and must become a successor issue
+  - seeds: `c6`
+- `s9` — `#121 / #112 / #118 issue bodies`: all three are deliberately-held decisions or the big automation issue — in-scope to reference, out of scope to resolve
+  - seeds: `c10`
+- `s10` — `CLAUDE.md ledger authority model + docs/deliveries/2026-08-15-close-the-backlog.md`: the 21 dN deviation records are agent-proposed and only the user may confirm them
+  - seeds: `c11`
+- `s11` — `CLAUDE.md 'Conventions and workflow' + CI and PR workflow sections`: issue-per-hand-turn, version bump, and the two-style adapter lint invocation are hard gates this work must satisfy
+  - seeds: `c13`
+- `s12` — `challenge pass / adjacent-systems lens: .github/workflows/tests.yml:93 vs pgtest.Run`: CI shares ONE database across all packages; local runs get a private container per package — the isolation asymmetry is the unifying root cause of both #126 flakes
+  - seeds: `c23`
+- `s13` — `challenge pass / concurrency lens: internal/events/relay.go + scheduler ClaimDueTimers`: two deliberately deployment-wide components become cross-package contaminators under a shared test database; a foreign relay can steal and publish another package's outbox row
+  - seeds: `c24`
+- `s14` — `challenge pass / reversibility lens: .github/workflows/publish.yml, deploy.yml, release.yml`: merging main publishes to real PyPI irreversibly; no auto-deploy to prod exists, so PyPI is the only one-way door
+  - seeds: `c25`
+- `s15` — `challenge pass / operations lens: gh repo merge settings`: squash-merge would erase 431528d from main and break the deployed-revision comparison the successor issue depends on
+  - seeds: `c26`
+- `s16` — `challenge pass / failure-mode lens: scheduler.go:640-696 crash window`: a crash between the two commits orphans a runner operation; no reconciliation path was located — recorded as an unverified assumption, not a claimed defect
+  - seeds: `c28`
+- `s17` — `challenge pass / migration lens: pgtest.go:75 Store.Migrate under a shared DB`: ~20 packages migrate the same database concurrently in CI; a hazard noted but NOT examined in depth by this pass
+  - seeds: `c29`
+- `s18` — `challenge pass / provenance correction`: s16 and s17 were recorded with mismatched --seeds ids (s16 cited c28 but describes the scheduler crash window now held in c27; s17 cited c29 but describes the concurrent-migrate hazard now held in c28); this entry is the correction — the findings themselves stand
+
+## Decisions
+
+- Both #126 flake fixes land in spec/close-the-backlog itself, so #122 merges green in one cycle rather than through a rebase.
+- Qodo: fix the High finding (nil-wrapped dial-in error, internal/actors/client.go:266) in this branch; give each of the four Medium findings a written disposition — a tracked issue or a reasoned rejection — so none is silently dropped.
+- thor's pre-deploy dump ~/nodes-predeploy-20260816T064724Z.dump is KEPT; deleting it becomes an item on the post-merge successor issue, since it is the only rollback point for the 431528d deploy.
+- The 21 proposed deviation records move to their own tracked issue and do NOT gate the #122 merge.
+- The falsification probe (c29) runs BEFORE any fix is designed. If it reproduces the flakes under a shared database, the fix targets the isolation class; if it does not, c23/c24 are refuted and the test-local fixes stand on their own. Either result is recorded in #126.
+- Merging #122 deliberately cuts a public PyPI release. The version bump is a release decision, and the version number is confirmed before merge.
+- \#122 is SQUASH-merged. Consequence, accepted knowingly: 431528d will NOT be an ancestor of main, so the successor issue must NOT verify prod by asking whether main contains 431528d. The valid check after redeploy is: GET /v1alpha1/version reports a revision equal to main's HEAD sha at deploy time.
+
+## Hard questions
+
+- Is a namespace-unfiltered outbox relay actually correct product behaviour, or is the test exposing a real design question about whether one deployment's relay should drain another namespace's outbox? (resolved: Correct by design. The relay is a deployment-level component and namespace-unfiltered draining is intentional — internal/scheduler documents the same deployment-wide pattern (ClaimDueTimers claims due timers across every namespace in one batch). The TEST was wrong to assume namespace isolation; no product change.)
+
+## Open parks
+
+- [unknown_nonblocking] whether any reconciliation sweep closes a runner operation orphaned by a crash between CompleteAttempt and closeWait
+- [unknown_nonblocking] whether concurrent Store.Migrate across ~20 packages on one CI database causes further intermittents beyond the two in #126
+- [unknown_nonblocking] the residual risk that a green CI run after the fix reflects luck rather than a fixed root cause, if the c27 probe comes back negative

@@ -5,6 +5,13 @@ All notable changes to this project will be documented in this file.
 Format follows [Keep a Changelog](https://keepachangelog.com/). This project
 adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.33.1] - 2026-08-17
+
+### Changed
+
+- Regenerated the open-issue triage table after #154 merged. Six issues closed as **records rather than work** — the four `deviate:` records (#142, #143, #144, #149), the prioritisation proposal they executed (#139), and a per-session hand-turn count (#130) — because each one's content now lives in a durable artifact (the migration text, CLAUDE.md, the delivery summary) and its residual work is tracked where the work is. #131 stays open: CLAUDE.md still omits the `unprivileged_userns` check from its `nodes doctor` description.
+- Dispositioned #155, the design for running the cycle inside Culture Nodes itself. It carries the measurement behind this round of triage: every day since 2026-08-08 has been net-positive on open issues, and this cycle was +23.
+
 ## [0.33.0] - 2026-08-16
 
 ### Added

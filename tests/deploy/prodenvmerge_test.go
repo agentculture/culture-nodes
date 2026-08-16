@@ -414,6 +414,96 @@ func TestProdEnvMergeSurvivesAFileWithNoTrailingNewline(t *testing.T) {
 	}
 }
 
+// TestProdEnvMergeReplacesAValueContainingAPipe pins the second way the
+// key-by-key merge could destroy a credential by itself, and the reason the
+// shared definition no longer uses sed.
+//
+// The replace branch was `sed -i "s|^${k}=.*|${line}|"`. sed's s/// delimiter
+// is part of the expression, so a replacement carrying a `|` closes it early:
+//
+//	line='NODES_DATABASE_URL=postgres://nodes:pa|ss@thor:5432/nodes'
+//	sed -i "s|^${k}=.*|${line}|" prod.env
+//	-> sed: unknown option to `s'   exit 1, file byte-identical
+//
+// Either way the key is NOT merged and the file keeps its previous value —
+// worse than the wholesale-rewrite incident this file was written for, where
+// the key at least vanished; here it holds a stale credential.
+//
+// The remote loop runs with no `set -e`, so how loudly that lands depends on
+// how many keys ride one merge, and both were reproduced:
+//
+//   - MULTI-KEY (install_env's generated block): a later iteration's status
+//     overwrites the failed one, the merge exits 0, and the lane prints its
+//     success line. Silent.
+//   - SINGLE-KEY (the relay lanes below): the failed sed is the last command,
+//     so ssh returns 1 and the caller's `set -euo pipefail` aborts the run.
+//
+// Only the single-key form is reachable from a test today, because nothing
+// in the multi-key block is operator-supplied — which is exactly the point of
+// fixing the shared definition rather than a lane. Nothing install-secrets.sh
+// GENERATES can trip this: `openssl rand -hex 32` and `-base64 32` emit no
+// pipe. The exposed values are the ones it RELAYS from the operator's
+// environment, and the webhook URL is the only relayed value reaching
+// PROD_ENV_MERGE today (update_env_line_on_host). NODES_DATABASE_URL — whose
+// password an external database hands out, and which a following task makes
+// this lane write into the multi-key block — rides the same definition.
+//
+// Both branches are exercised in order, because only the replace branch ever
+// ran sed: phase 1 appends the key to a host that has never had it, phase 2
+// replaces it on the next run.
+func TestProdEnvMergeReplacesAValueContainingAPipe(t *testing.T) {
+	const appended = "https://hooks.example/services/T0|A/B0|C/first-token"
+	const replaced = "postgres://nodes:pa|ss@thor:5432/nodes?sslmode=disable"
+
+	c := newFakeCluster(t)
+	c.hostHome(t, "thor")
+	c.hostHome(t, "orin")
+
+	// Phase 1 — append: a fresh host has no CULTURE_NODES_WEBHOOK_URL line,
+	// so the merge takes the append branch (which never used sed).
+	out, code := c.run(t, installSecretsPath(t), []string{"thor", "orin"},
+		"CULTURE_NODES_WEBHOOK_URL="+appended)
+	if code != 0 {
+		t.Fatalf("first install exited %d; output:\n%s", code, out)
+	}
+	path := c.prodEnvPath(t, "thor")
+	env := readEnvFile(t, path)
+	env.assertNoDuplicateKeys(t, path)
+	if got := env.values["CULTURE_NODES_WEBHOOK_URL"]; got != appended {
+		t.Fatalf("thor: append branch stored CULTURE_NODES_WEBHOOK_URL = %q, want %q", got, appended)
+	}
+	generated := env.values["POSTGRES_PASSWORD"]
+
+	// Phase 2 — replace: the key is now present, so the merge must rewrite
+	// its line. This is the branch that ran sed and changed nothing.
+	//
+	// A non-zero exit is reported, not fatal: what the merge left in the file
+	// is the actual subject, and asserting it is what names the defect.
+	out, code = c.run(t, installSecretsPath(t), []string{"thor", "orin"},
+		"CULTURE_NODES_WEBHOOK_URL="+replaced)
+	if code != 0 {
+		t.Errorf("second install exited %d; output:\n%s", code, out)
+	}
+	env = readEnvFile(t, path)
+	env.assertNoDuplicateKeys(t, path)
+	if got := env.values["CULTURE_NODES_WEBHOOK_URL"]; got != replaced {
+		t.Errorf("thor: a value containing a pipe was NOT merged — CULTURE_NODES_WEBHOOK_URL = %q, want %q; the merge left the previous value in place", got, replaced)
+	}
+	if strings.Contains(env.raw, appended) {
+		t.Errorf("thor: the superseded value is still in prod.env:\n%s", env.raw)
+	}
+
+	// The rest of the file is untouched by a merge that rewrites one line —
+	// an unforced re-run rotates nothing, and the pipe must not have leaked
+	// into a neighbouring assignment.
+	if got := env.values["POSTGRES_PASSWORD"]; got != generated {
+		t.Errorf("thor: the second run changed POSTGRES_PASSWORD from %q to %q", generated, got)
+	}
+	if got := env.values["NODES_CALLBACK_BASE_URL"]; got != "http://thor:18080" {
+		t.Errorf("thor: NODES_CALLBACK_BASE_URL = %q, want the generated block's value", got)
+	}
+}
+
 // --- criterion 3: the same idiom, not a second one -----------------------
 
 // prodEnvMergeLoop is the key-by-key merge install-secrets.sh already used
@@ -427,9 +517,21 @@ func TestProdEnvMergeSurvivesAFileWithNoTrailingNewline(t *testing.T) {
 // the same requirement: the copies had already drifted once — the missing
 // trailing-newline guard TestProdEnvMergeSurvivesAFileWithNoTrailingNewline
 // covers lived in the pasted helpers, not in some third mechanism.
+//
+// The replacement half of the loop was `sed -i "s|^${k}=.*|${line}|"` until
+// TestProdEnvMergeReplacesAValueContainingAPipe below; it is now a literal
+// line-by-line rewrite, because a value carrying sed's own s/// delimiter
+// terminated the expression and the key was silently skipped. This text is
+// updated deliberately whenever the shared definition changes — it is the
+// only assertion in this file that reads the script rather than running it,
+// and its job is to keep the loop singular, not to freeze its body.
 const prodEnvMergeLoop = `while IFS= read -r line; do k=${line%%=*}; [ -z "$k" ] && continue; ` +
-	`if grep -q "^${k}=" ~/.culture-nodes/prod.env; then sed -i "s|^${k}=.*|${line}|" ~/.culture-nodes/prod.env; ` +
-	`else printf "%s\n" "$line" >> ~/.culture-nodes/prod.env; fi; done`
+	`tmp=~/.culture-nodes/prod.env.merge.$$; : > "$tmp"; chmod 600 "$tmp"; found=0; ` +
+	`while IFS= read -r cur || [ -n "$cur" ]; do ` +
+	`case "$cur" in "$k"=*) printf "%s\n" "$line" >> "$tmp"; found=1;; ` +
+	`*) printf "%s\n" "$cur" >> "$tmp";; esac; done < ~/.culture-nodes/prod.env; ` +
+	`[ "$found" = 1 ] || printf "%s\n" "$line" >> "$tmp"; ` +
+	`mv "$tmp" ~/.culture-nodes/prod.env; done`
 
 // prodEnvWriters are the shell functions that write prod.env. Each must
 // delegate to the shared merge rather than carry its own copy.

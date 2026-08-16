@@ -54,10 +54,11 @@ type Workflow struct {
 	Name    string
 	Version string
 
-	Entry  string
-	Limits Limits
-	Budget Budget
-	Ledger LedgerLimits
+	Entry    string
+	Triggers []Trigger
+	Limits   Limits
+	Budget   Budget
+	Ledger   LedgerLimits
 
 	Nodes map[string]*Node
 	// Edges are in normalized order (by source node, outcome, target, guard),
@@ -75,6 +76,12 @@ type Workflow struct {
 
 	// IR is the exact normalized JSON this workflow was loaded from.
 	IR json.RawMessage
+}
+
+type Trigger struct {
+	OnEvent   string
+	When      string
+	Condition cel.Program
 }
 
 // Limits are the §9.7 loop bounds, already expanded by the compiler so every
@@ -526,6 +533,19 @@ func LoadWorkflow(digest string, ir []byte) (*Workflow, error) {
 	if err != nil {
 		return fail("%v", err)
 	}
+	for i, raw := range doc.Spec.Triggers {
+		trigger := Trigger{OnEvent: raw.OnEvent, When: raw.When}
+		if trigger.OnEvent == "" {
+			return fail("trigger %d declares no event name", i)
+		}
+		if trigger.When != "" {
+			trigger.Condition, err = compileGuard(env, trigger.When)
+			if err != nil {
+				return fail("trigger %d (onEvent %q) condition: %v", i, trigger.OnEvent, err)
+			}
+		}
+		wf.Triggers = append(wf.Triggers, trigger)
+	}
 	for i, e := range doc.Spec.Edges {
 		edge := Edge{
 			From: e.From, FromNode: e.FromNode, FromOutcome: e.FromOutcome,
@@ -565,6 +585,10 @@ type irDocument struct {
 	} `json:"metadata"`
 	Spec struct {
 		Entry    string `json:"entry"`
+		Triggers []struct {
+			OnEvent string `json:"onEvent"`
+			When    string `json:"when"`
+		} `json:"triggers"`
 		Contract struct {
 			Input  *irSchemaSource `json:"input"`
 			Output *irSchemaSource `json:"output"`

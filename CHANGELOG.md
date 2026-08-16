@@ -5,6 +5,48 @@ All notable changes to this project will be documented in this file.
 Format follows [Keep a Changelog](https://keepachangelog.com/). This project
 adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.25.1] - 2026-08-16
+
+Task t17b: an event can now START a run, not only resume one waiting for it.
+
+### Added
+
+- **Workflow-level `triggers`.** A published workflow may declare
+  `spec.triggers: [{onEvent, when}]` — an inbound event name plus an optional
+  CEL condition evaluated against `event.{name, emitter, payload}`. A matching
+  trigger CREATES a run, with the event payload as the run input (validated
+  against the workflow's input contract like any other input). Before this,
+  `signal_events` delivery could only resume a run that was already parked
+  waiting on the event, so an event-driven workflow needed a permanently
+  parked run to receive its first event.
+- **Trigger, recording, resume, route pickup and run creation share one
+  transaction.** `DeliverSignalEvent` appends the immutable event fact and
+  then evaluates triggers inside the same transaction, so an event is never
+  recorded-but-unhandled or handled-but-unrecorded.
+- **Only the newest published version of a workflow key is offered a
+  trigger.** Publishing a newer version WITHOUT the declaration therefore
+  disables future starts — the off switch is a publish, not a config edit.
+  The delivered event still lands in `signal_events` either way, so a
+  declined condition stays queryable rather than vanishing.
+
+### Changed
+
+- **`examples/pr-upkeep/workflow.yaml` drops from 1068 lines to 93.** The
+  example no longer carries the sweep machinery or a parked run: it starts
+  from the durable `pr-upkeep.pr` fact, conditioned on
+  `event.payload.source == "github_pr" && size(event.payload.findings) > 0`.
+  Repository identity and findings are event data now, so they are queryable
+  even on the runs the condition declines.
+
+### Verified
+
+- The two acceptance tests the dispatched session wrote could not be RUN on
+  its host — no PostgreSQL, no Docker (see the codex Go-lane limits recorded
+  as deviation d17). Both were executed in the operator lane against a real
+  database before this merge: `TestConditionedTriggerRecordsNonMatchWithout
+  CreatingOrResuming` and `TestTriggerCreatesRunAndNewerVersionCanRemoveIt`
+  PASS, 0.06s and 0.05s.
+
 ## [0.25.0] - 2026-08-15
 
 Work package K3: the handover mechanism gets a caller in every bridge (t9),

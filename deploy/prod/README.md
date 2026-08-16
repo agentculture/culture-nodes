@@ -97,8 +97,8 @@ already-provisioned host from receiving anything at all. The guard returns
 *before* the key-by-key merge runs, so on any host that already had a
 `prod.env`, the prod lane was a no-op. When `NODES_DATABASE_URL` later
 became a required key, there was no way to deliver that one non-secret line
-through the script except `FORCE_PROD=1`, which would have rotated six live
-secrets to do it. Both hosts were fixed by hand instead — thor mid-deploy,
+through the script except `FORCE_PROD=1`, which would have rotated every
+generated secret in that host's block to do it. Both hosts were fixed by hand instead — thor mid-deploy,
 and then orin, whose deploy never got that far and aborted outright at
 compose interpolation. Two operator hand-turns for a value the script
 already knew how to compose.

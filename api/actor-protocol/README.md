@@ -111,6 +111,30 @@ instruction from the event that started the run.
 An actor whose registration declares no identity is dispatched exactly as it
 was before this key existed: no key, and no new required field.
 
+### What a bridge does with it (task t2)
+
+Resolution is the actor host's job and its answer is host-local, so the
+protocol says nothing about *how* a name becomes a directory — only what the
+answers may be. Every bridge that runs a session inside a checkout carries
+one shared resolver (`adapters/*/src/*/repositories.py`, byte-identical, and
+guarded as such by `tests/lint/repositoryidentity_test.go`) with this
+contract:
+
+| Situation | Answer |
+|---|---|
+| `input.repo` present | Used as before; the identity is not consulted. |
+| Identity resolves to exactly one permitted checkout | Dispatched there, after the path is validated against `repo_allowlist` like any other repo. |
+| Identity resolves to **two or more** permitted checkouts | `400` `repository_identity_ambiguous`, naming the colliding paths and hinting at the fix. Never a first match. |
+| Identity resolves to **nothing** the bridge may touch | `400` `repository_identity_unknown`, naming the identity. |
+| A host-local declaration points outside the allowlist | `403` `repository_identity_not_permitted`. A declaration says *which* repository, never that the bridge may touch it. |
+| No identity supplied | The bridge's own fallback, unchanged. |
+
+The key is **transport, not content**: a bridge must exclude it from
+whatever block it forwards engine-resolved bindings to the model in, the
+same way `repo` is excluded. A bridge with no checkout at all
+(`adapters/notify`, `adapters/human-inbox`) resolves nothing and is not
+expected to.
+
 ## The preflight capability surface (issue #67, tasks t14/t15)
 
 An actor may advertise, in its **registration** (`actors.capabilities`), the

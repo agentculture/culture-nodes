@@ -307,6 +307,16 @@ class Handler(BaseHTTPRequestHandler):
 
         raw_input = body.get("input")
         raw_input = raw_input if isinstance(raw_input, dict) else {}
+        # `input.repository_identity` (task t2, issue #125) is deliberately
+        # NOT resolved here, and that is the all-backends rule satisfied
+        # rather than skipped: this bridge has no `repo_allowlist`, checks
+        # nothing out, and runs no session in a directory, so there is no
+        # checkout for a repository identity to name. `parse_message` reads
+        # only the message fields it knows, so the key is ignored rather than
+        # forwarded — it never reaches the webhook body. The guard that keeps
+        # this a choice is tests/lint/repositoryidentity_test.go, which
+        # requires the resolver of exactly those bridges that HAVE an
+        # allowlist.
         parsed, refusal = mapping.parse_message(raw_input)
         if refusal is not None:
             self._write_json(400, {"error": refusal, "class": mapping.CLASS_ACTOR_REJECTED_INPUT})

@@ -527,3 +527,38 @@ def test_observe_input_key_rounds_trips_verbatim_in_extra_input(bridge, receiver
     assert status == 200
     task_dict = next(t for t in listing["tasks"] if t["invocation_id"] == invocation_id)
     assert task_dict["extra_input"] == {"observe": observe_payload}
+
+
+# -- the repository identity, in a bridge with no checkout (t2 / #125) -------
+
+
+def test_a_repository_identity_rides_in_extra_input_and_not_in_the_instruction(bridge, receiver):
+    """`input.repository_identity` is the key the control plane sends an actor
+    whose registration names a repository (issue #125). This bridge has no
+    `repo_allowlist`, checks nothing out, and dispatches to a PERSON, so there
+    is no checkout for the name to resolve to.
+
+    What must still hold is the property the three checkout bridges get from
+    their `_transport_keys` set: the key never becomes prompt text. Here it
+    does not, because `extra_input` is a structured field the inbox returns
+    verbatim and the tracker reads by name — the instruction the human is
+    asked to act on is untouched.
+    """
+    base, cfg = bridge
+    body = _invocation_body(
+        receiver,
+        instruction="approve the release",
+        repository_identity="agentculture/culture-nodes",
+    )
+    status, accepted = _request(
+        base,
+        server.INVOCATIONS_PATH,
+        body=body,
+        headers={**AUTH, "Idempotency-Key": "att_repo_identity"},
+    )
+    assert status == 202
+
+    task = TaskStore(cfg.state_dir).get(accepted["invocation_id"])
+    assert task is not None
+    assert task.instruction == "approve the release"
+    assert task.extra_input == {"repository_identity": "agentculture/culture-nodes"}

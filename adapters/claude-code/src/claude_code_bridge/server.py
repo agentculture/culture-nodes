@@ -40,6 +40,7 @@ from claude_code_bridge import (
     mapping,
     preflight,
     preserve,
+    repositories,
     scope_guard,
     workspace,
 )
@@ -349,6 +350,13 @@ class Handler(BaseHTTPRequestHandler):
             "permission_mode",
             "session_key",
             "continuation_ref",
+            # t2/#125: the registry-supplied repository identity is an
+            # ADDRESSING field — it says which checkout this session runs
+            # in, the same way `repo` does. Left out of this set it would be
+            # appended to the prompt as an engine-resolved "Bound input",
+            # which is prose the model would be right to treat as an
+            # instruction about a repository.
+            repositories.INPUT_KEY,
         }
         _extras = {k: v for k, v in raw_input.items() if k not in _transport_keys}
         if _extras:
@@ -362,18 +370,29 @@ class Handler(BaseHTTPRequestHandler):
         repo = raw_input.get("repo")
         if not isinstance(repo, str) or not repo.strip():
             # Issue #125: a trigger-created run's input is the event payload,
-            # which carries no checkout path. Fall back to the single
-            # allowlisted repo when there is exactly one; `only_allowed_repo`
-            # returns None the moment the choice is ambiguous, and this stays
-            # a 400 then.
-            repo = cfg.only_allowed_repo()
+            # which carries no checkout path. The control plane supplies the
+            # actor's REGISTERED repository identity instead (task t1), and
+            # this host is the only party that can turn that name into a
+            # directory — see repositories.py for the mapping and for why
+            # both a collision and a miss are named refusals rather than a
+            # first match. An explicitly bound `input.repo` still wins: the
+            # identity answers "which repository is this actor's lane",
+            # which is only a question when nobody has answered it.
+            _identity = repositories.resolve_for_input(cfg, raw_input)
+            if _identity.refusal is not None:
+                self._write_json(_identity.refusal.status, _identity.refusal.body)
+                return
+            # No identity registered: the pre-t2 cardinality inference, which
+            # still resolves every single-repo deployment shipped today.
+            repo = _identity.repo or cfg.only_allowed_repo()
         if not isinstance(repo, str) or not repo.strip():
             self._write_json(
                 400,
                 {
                     "error": (
-                        "input.repo is required (this bridge's allowlist does not name "
-                        "exactly one repository, so it cannot be inferred)"
+                        "input.repo is required (this actor is registered with no "
+                        f"{repositories.INPUT_KEY}, and this bridge's allowlist does not "
+                        "name exactly one repository, so it cannot be inferred)"
                     ),
                     "class": mapping.CLASS_ACTOR_REJECTED_INPUT,
                 },

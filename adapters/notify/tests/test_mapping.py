@@ -173,3 +173,24 @@ def test_ledger_record_and_result_never_carry_the_webhook_url_or_message_body():
     # vocabulary -- no message content at all.
     record_data = body["ledger_delta"]["records"][0]["data"]
     assert set(record_data) == {"statement", "kind", "outcome", "delivered", "status_code"}
+
+
+# -- the repository identity, in a bridge with no checkout (t2 / #125) -------
+
+
+def test_a_repository_identity_is_ignored_rather_than_notified():
+    """`input.repository_identity` is the key the control plane sends an
+    actor whose registration names a repository (issue #125). This bridge has
+    no `repo_allowlist`, checks nothing out, and runs no session in a
+    directory, so there is nothing for it to resolve — and `parse_message`
+    reads only the message fields it knows, so the key changes no notification
+    and never reaches the webhook body. The all-backends rule is satisfied by
+    the guard in tests/lint/repositoryidentity_test.go, which requires the
+    resolver of exactly those bridges that have an allowlist."""
+    with_identity, refusal = mapping.parse_message(
+        {"content": "hello", "repository_identity": "agentculture/culture-nodes"}
+    )
+    plain, plain_refusal = mapping.parse_message({"content": "hello"})
+
+    assert refusal is None and plain_refusal is None
+    assert with_identity.message == plain.message

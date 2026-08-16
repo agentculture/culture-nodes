@@ -110,6 +110,11 @@ jobs:
           echo "$out" | grep -q -- "--- PASS" || {
             echo "::error::no test in internal/queue/postgres reported PASS"; exit 1; }
 
+      - name: inbound authentication dump carries no presentable credential
+        env:
+          NODES_TEST_DATABASE_URL: postgres://nodes:nodes-ci-only@localhost:5432/nodes?sslmode=disable
+        run: scripts/check-inbound-auth-dump.py
+
   lint:
     runs-on: ubuntu-latest
     permissions:

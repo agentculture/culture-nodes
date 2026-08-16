@@ -161,6 +161,10 @@ Numbered SQL migrations for the authoritative PostgreSQL store (prd-spec
   cursors for external emitters. Cursor comparison and advancement run in
   `DeliverSignalEvent`'s existing `signal_events` transaction, so a repeated
   discovery returns its original fact without firing handlers again.
+- `0031_inbound_authentication.sql` — the deliberately temporary (#111)
+  inbound verifier record. It keys parties by actor key or host name, rejects
+  address-shaped keys, and stores only a SHA-256 verifier or an environment
+  variable name so database dumps cannot become credential archives.
 
 - `0022_dispatch_rate_state.sql` — expand-only: adds the mutable
   `dispatch_rate_state` table (task t10 of the economy-discord-graphs plan,

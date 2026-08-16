@@ -5,6 +5,18 @@ All notable changes to this project will be documented in this file.
 Format follows [Keep a Changelog](https://keepachangelog.com/). This project
 adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.25.4] - 2026-08-16
+
+### Added
+
+- **Inbound authentication records that cannot retain a presented secret
+  (#111).** The schema accepts only a fixed-width SHA-256 verifier or an
+  environment-variable name and rejects IP-shaped party keys, because dumps
+  are shipped to object storage and thor's address is not stable. Verification
+  hashes both sides before a constant-time comparison, and a PostgreSQL guard
+  makes schema-only and data dumps part of CI rather than trusting migration
+  text alone.
+
 ## [0.25.3] - 2026-08-16
 
 Work package R8-A: tasks t4, t26 and t28 — the cycle tells the truth about

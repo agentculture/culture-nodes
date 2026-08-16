@@ -1010,6 +1010,134 @@
         ],
         "type": "object"
       },
+      "DialInCredential": {
+        "description": "This actor key's `inbound_authentication` state (migrations 0031, 0032, 0037). Absent entirely when no record exists — the actor could not dial in even if its process were healthy.\nAn actor can look absent for four unrelated reasons: its process is down, its credential was revoked, it is locked out after repeated failures, or it was never issued a control-plane credential. Only the first is an outage, and they look identical in presence alone.\nNo verifier material is rendered here — not the digest, not the environment variable name. Neither is needed to answer \"why is this bridge not dialling in\".",
+        "properties": {
+          "failure_count": {
+            "type": "integer"
+          },
+          "issuance_count": {
+            "type": "integer"
+          },
+          "issued": {
+            "description": "Whether THIS control plane minted the credential (migration 0037's `issued_at`). False means the record was provisioned by hand, which the shipped admission default refuses as `not_control_plane_issued` — such a bridge never dials in successfully however healthy its process is.",
+            "type": "boolean"
+          },
+          "issued_at": {
+            "format": "date-time",
+            "type": "string"
+          },
+          "locked_out": {
+            "description": "Computed against this response's `observed_at`, the same way ActorAvailability.paused is computed server-side. A lapsed lockout renders `false` with `locked_until` still present — distinct from a credential never locked out at all, which carries no `locked_until`.",
+            "type": "boolean"
+          },
+          "locked_until": {
+            "format": "date-time",
+            "type": "string"
+          },
+          "revoked": {
+            "type": "boolean"
+          },
+          "revoked_at": {
+            "description": "Revocation is positive durable evidence (migration 0032), so it renders as an instant rather than as an inference from absence.",
+            "format": "date-time",
+            "type": "string"
+          }
+        },
+        "required": [
+          "issued",
+          "issuance_count",
+          "revoked",
+          "locked_out",
+          "failure_count"
+        ],
+        "type": "object"
+      },
+      "DialInPresence": {
+        "description": "One registered actor identity's dial-in state. Keyed by `actor_key`, not by an actors-table row id: registration is append-only, so one identity has many revisions and exactly one connection.",
+        "properties": {
+          "actor_id": {
+            "description": "The current (highest) registration revision's row id, so a row here can be followed to GET /v1alpha1/actors/{id}.",
+            "type": "string"
+          },
+          "actor_key": {
+            "type": "string"
+          },
+          "credential": {
+            "$ref": "#/components/schemas/DialInCredential"
+          },
+          "kind": {
+            "type": "string"
+          },
+          "last_seen_at": {
+            "description": "The last poll. Present for `connected` and `disconnected`, absent for `never_dialled`. On a dropped connection this is the whole answer: it says WHEN, which a boolean cannot.",
+            "format": "date-time",
+            "type": "string"
+          },
+          "presence": {
+            "description": "Three values on purpose. `never_dialled` (no presence row at all) is a configuration or deployment fact; `disconnected` is a bridge that HAS dialled in and stopped, which is an outage. A two-valued present/absent answer would report a bridge nobody ever configured and a bridge that died an hour ago identically.",
+            "enum": [
+              "connected",
+              "disconnected",
+              "never_dialled"
+            ],
+            "type": "string"
+          },
+          "revision": {
+            "type": "integer"
+          },
+          "seconds_since_last_seen": {
+            "description": "Absent — never `0` — when nothing was ever seen; a fabricated zero there would read as \"seen just now\".",
+            "type": "number"
+          }
+        },
+        "required": [
+          "actor_key",
+          "actor_id",
+          "revision",
+          "kind",
+          "presence"
+        ],
+        "type": "object"
+      },
+      "DialInPresenceList": {
+        "description": "GET /v1alpha1/dial-in-presence' payload (task t6). The three counts are not client-side convenience: the address-retirement cutover's fallback-disable step must establish that every bridge is dialled in AT THAT MOMENT, and `connected == items.length` is that check in one read.",
+        "properties": {
+          "connected": {
+            "type": "integer"
+          },
+          "disconnected": {
+            "type": "integer"
+          },
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/DialInPresence"
+            },
+            "type": "array"
+          },
+          "never_dialled": {
+            "type": "integer"
+          },
+          "observed_at": {
+            "description": "The single instant every item was classified against, so two rows in one response never disagree about \"now\".",
+            "format": "date-time",
+            "type": "string"
+          },
+          "window_seconds": {
+            "description": "How recently a bridge must have polled to count as `connected`. Published because \"connected\" is a claim with a definition, and it is the same window dispatch resolution uses.",
+            "type": "number"
+          }
+        },
+        "required": [
+          "observed_at",
+          "window_seconds",
+          "connected",
+          "disconnected",
+          "never_dialled",
+          "items"
+        ],
+        "type": "object"
+      },
       "DispatchRate": {
         "description": "One dispatch-rate scope's declared rate and its standing in the CURRENT session window (task t10, migration 0022's `dispatch_rate_state`). On an actor payload it is that actor's own rate, resolved by `actor_key` the way `availability` is, and absent when no declared rate has ever admitted a dispatch to it.\n\n`window_started_at`, `window_ends_at`, `dispatched` and `remaining` are computed against the moment of the read, not read raw from the row: session windows reset on a fixed clock, so a stored counter belonging to a window that has already ended reports zero consumption rather than showing last window's spending as though it still constrained anything. `last_dispatch_at` and `updated_at` stay raw row provenance, so that history is not lost either.",
         "properties": {
@@ -3366,6 +3494,28 @@
         "summary": "Publish opaque artifact bytes for one pending attempt.",
         "tags": [
           "artifacts"
+        ]
+      }
+    },
+    "/v1alpha1/dial-in-presence": {
+      "get": {
+        "description": "Task t6 (issues #136, #121): the read-only answer to the question a stored participant address used to answer. Every bridge dials OUT and the control plane records no address, so \"is this bridge reachable?\" becomes \"is this bridge dialled in right now?\" — and until this operation existed nothing answered it outside dispatch resolution, so an un-dialled bridge was discovered by a failing dispatch.\nNothing is dispatched and nothing is probed. Presence is a fact PostgreSQL already holds: a bridge polling `POST /v1alpha1/inbound/poll` refreshes its own `last_seen_at`, and this operation reads it. The control plane holds no address for a participant, so there is nothing to probe — reintroducing a probe would reintroduce the address.\n`connected` means a poll within `window_seconds`, which is the SAME window dispatch resolution applies when it decides whether an actor is reachable through the durable mailbox. One definition, published in the response, so a reader can see what the claim means and the view can never say connected while dispatch says otherwise.\nThe spine is the actors table, not the presence table: an actor that has never dialled in has no presence row at all and would otherwise be silently missing from exactly the view an operator consults when a bridge is missing. `connected == items.length` is the check the cutover's fallback-disable step makes.",
+        "operationId": "listDialInPresence",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DialInPresenceList"
+                }
+              }
+            },
+            "description": "Every registered actor identity with its current dial-in state."
+          }
+        },
+        "summary": "Which bridges are dialled in right now.",
+        "tags": [
+          "actors"
         ]
       }
     },

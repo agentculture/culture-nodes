@@ -418,6 +418,9 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("GET /v1alpha1/actors/{id}", s.wrap(s.handleGetActor))
 	mux.HandleFunc("GET /v1alpha1/actors/{id}/stats", s.wrap(s.handleGetActorStats))
 	mux.HandleFunc("POST /v1alpha1/actors/{id}/resume", s.wrap(s.handleResumeActor))
+	// Read-only dial-in presence (task t6): its own route rather than a
+	// block on the actors list — see dialinpresence.go for the argument.
+	mux.HandleFunc("GET /v1alpha1/dial-in-presence", s.wrap(s.handleListDialInPresence))
 	mux.HandleFunc("POST /v1alpha1/inbound/poll", s.handleInboundPoll)
 	mux.HandleFunc("POST /v1alpha1/inbound/{id}/complete", s.handleInboundComplete)
 	// Issue #111's dial-in half: the control plane mints what a bridge

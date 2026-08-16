@@ -739,12 +739,17 @@ Two mechanisms now hold the pairing, and both are needed:
   points at another bridge or another state directory, if the bridge's
   and tracker's `HUMAN_INBOX_BRIDGE_ACTOR_ID` values are swapped, or if
   the tracker's startup check is left disarmed.
-- **Runtime.** The tracker resolves the same registration at startup and
-  exits non-zero when its bridge is not the actor's bridge (task t8,
-  `verify_bridge_serves_actor`). `deploy.sh` writes
-  `HUMAN_INBOX_TRACKER_CONTROL_PLANE_URL` precisely so this check is
-  armed; unset, it degrades to a warning and the split runs silently
-  again.
+- **Runtime.** The tracker exits non-zero at startup when its bridge is
+  not the actor's bridge (task t8, `verify_bridge_serves_actor`). Since
+  task t7 it establishes that without any address: it asks the bridge on
+  `GET /identity` for the `store_id` of the state directory that bridge
+  owns and compares it against the one it reads off the local filesystem
+  — proof that the process it submits to is the process whose task store
+  it is emptying — then reads `GET /v1alpha1/dial-in-presence` to check
+  that the actor's work is dispatched to a bridge that dials in as this
+  one does. `deploy.sh` writes `HUMAN_INBOX_TRACKER_CONTROL_PLANE_URL`
+  precisely so that second half is armed; unset, the co-location proof
+  still runs and only the dispatch half degrades to a warning.
 
 A wrong deploy that never starts is still a wrong deploy, and a right
 deploy that nothing rechecks drifts on the next endpoint move.

@@ -18,13 +18,20 @@
 # the registry cannot drift from itself.
 #
 # This is the deploy-time half of the invariant. The runtime half is task
-# t8's: the tracker resolves the same registration at startup and refuses to
-# run when its bridge is not the actor's bridge
+# t8's: the tracker refuses to run when its bridge is not the actor's bridge
 # (adapters/human-inbox/src/human_inbox_bridge/tracker.py,
-# verify_bridge_serves_actor). Both halves read the same
-# GET /v1alpha1/actors surface, deliberately -- a deploy that checked one
-# registry while the process checked another would be the original bug with
-# extra steps.
+# verify_bridge_serves_actor).
+#
+# The two halves no longer read the same surface, and that is a known,
+# temporary asymmetry rather than the original bug returning. Task t7
+# converted the runtime half off addresses entirely (issue #121): it proves
+# co-location from the bridge's own store identity and reads
+# GET /v1alpha1/dial-in-presence, which is keyed by actor_key and holds no
+# address. This script still needs one, because "which host do I ssh to" is
+# a question presence cannot answer. Migration 0036 drops endpoint_ref, so
+# before it is applied this lookup must move to a deployment fact on
+# actor.metadata -- the shape scripts/collect-handover.py's handover_remote
+# already uses. See docs/decisions/transport-inversion.md.
 
 # The control plane's public read surface. GET /v1alpha1/actors is
 # unauthenticated by design (spec decision c45: only registration and human
@@ -42,8 +49,7 @@ NODES_API_URL=${NODES_API_URL:-http://thor:18080}
 # (migrations/0001_namespaces_and_identity.sql -- "an endpoint change is a new
 # row, never an update"), so an actor that MOVED has both its old and new
 # address in the list. Picking the wrong one is precisely the split this
-# library exists to prevent. The tracker's newest_actor_revision applies the
-# same rule to the same payload.
+# library exists to prevent.
 #
 # Failure is never a fallback. A caller that cannot resolve an actor must
 # install nothing: a pair deployed to a guessed host is the defect, whereas a

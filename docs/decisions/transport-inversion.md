@@ -99,7 +99,11 @@ ADR 0002 bypass because the two workers and one API are restarted together by
 operation, the exception no longer applies and a later contract needs the
 full expand-contract sequence.
 
-Two non-dispatch consumers must also be converted before applying 0036:
+Three non-dispatch consumers must also be converted before applying 0036.
+This list said **two** until the challenge pass on the
+`upkeep-dispatch-stable-addresses-gate-as-node` frame found the third; the
+omission would have stopped a live systemd unit from starting, so treat the
+list as something to re-derive from the code, not to inherit.
 
 - `internal/worker/registry.go` must resolve actor dispatch exclusively
   through authenticated dial-in presence; no legacy bridge may remain.
@@ -107,6 +111,39 @@ Two non-dispatch consumers must also be converted before applying 0036:
   `actor.metadata.handover_remote`. An operator template that needs `{host}`
   is no longer valid because the registry no longer stores a host. Configure
   the full per-actor remote explicitly; do not infer it from a connection.
+- `adapters/human-inbox/src/human_inbox_bridge/tracker.py` —
+  `verify_bridge_serves_actor` is issue #72's fail-closed startup guard, and
+  it read the actor's registered `endpoint_ref` to answer "is the bridge I
+  submit to the bridge that serves the actor I observe?".
+  `culture-nodes-human-inbox-tracker.service` is a live unit; with the column
+  gone it would refuse to start. **Converted in task t7**, and not by
+  substituting another address:
+  - The bridge mints a `store_id` inside its state directory and reports it
+    on an authenticated `GET /identity`, alongside the `actor_id` it serves
+    and the actor key its dial-in client presents. The tracker reads the same
+    `store_id` off the local filesystem, so a match *proves* the process it
+    submits to is the process whose task store it is emptying — which is the
+    split #72 actually forbids, and a stronger fact than the host/port
+    comparison it replaces.
+  - `GET /v1alpha1/dial-in-presence` supplies the dispatch half. It is keyed
+    by `actor_key` and carries no address. Note the asymmetry honestly: a
+    registered endpoint said *where the engine sends this actor's work*,
+    whereas presence says only that *some* process is dialled in under that
+    key — one presence row per actor, refreshed by whichever instance polls.
+    The tracker therefore refuses a bridge that does not dial in while the
+    actor shows connected (a second bridge is provably receiving the work —
+    a case the address comparison could not detect), but it cannot refuse two
+    correctly co-located tracker/bridge pairs dialling in under one key.
+    Closing that needs a per-connection instance identity in presence; it is
+    control-plane work, not tracker work.
+
+One further address consumer is **not** converted and is not part of this
+list, because it is a deploy-time script rather than a running process:
+`deploy/prod/actor-placement.sh` reads `endpoint_ref` from
+`GET /v1alpha1/actors` to decide which host serves an actor and where to ssh.
+It genuinely needs a machine address, so presence cannot replace it — it needs
+a deployment fact on `actor.metadata`, the same shape as `handover_remote`.
+Resolve it as part of the bridge-conversion step, before the column drops.
 
 Runner sampling continues to resolve `runner_ref` through the configured
 runner-service registry on every poll. Migration 0036 removes only the copied

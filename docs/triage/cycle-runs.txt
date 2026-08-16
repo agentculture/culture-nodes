@@ -43,3 +43,5 @@
 
 # --- round 7 ---
 01M04C39ZQK8NHJPQFSG8Z3QNV   # sandbox socket probe, codex-thor — can a dispatch reach a database at all?
+01M04CD1RC0FK6957QEBYMZK9S   # R8-A (t4, t26, t28 accounting trio), codex-orin
+01M04CJT84WD20GDQEN266J9J6   # handover verification, codex-thor — first production handover ref, after redeploy

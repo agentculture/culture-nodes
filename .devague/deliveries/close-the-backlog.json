@@ -2,7 +2,7 @@
   "plan_slug": "close-the-backlog",
   "schema_version": 1,
   "created": "2026-08-15T18:07:41Z",
-  "updated": "2026-08-16T04:07:48Z",
+  "updated": "2026-08-16T04:18:47Z",
   "deviations": [
     {
       "id": "d1",
@@ -228,6 +228,20 @@
         "t4",
         "t26",
         "t28"
+      ],
+      "origin": "llm",
+      "status": "proposed",
+      "classification": "needs-follow-up"
+    },
+    {
+      "id": "d18",
+      "what": "the deployed bridges were stale, so t9/t10's handover shipped working and produced nothing in production for three dispatches \u2014 redeploy is part of landing a bridge change, and #120 makes the silence loud",
+      "task_ref": "t10",
+      "reason": "Live-testing before dispatching t11 found no refs under refs/culture-nodes/ on either codex host, despite three dispatches sent with --handover that all committed successfully. The installed bridges carried the writable_git widening from the earlier redeploy but not K3's preserve.handover_ref call in async_runner.py's terminal branch, and always_async means that is the only path production takes. Reinstalling from source and restarting produced the first handover ref any production dispatch has ever created (run 01M04CJT84WD20GDQEN266J9J6), which then fetched by run-id wildcard \u2014 proving t11's second criterion live. The deviation worth recording is not the staleness but what hid it: internal/handover's correct 'no fetchable ref means no record' rule makes a stale bridge and an honest refusal produce identical evidence, so nothing anywhere reported a problem.",
+      "affects": [
+        "t9",
+        "t11",
+        "t32"
       ],
       "origin": "llm",
       "status": "proposed",

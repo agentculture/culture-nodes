@@ -455,9 +455,25 @@ func TestSchedulerStandbyTakesOverWhenActiveLosesItsConnection(t *testing.T) {
 		}
 	}
 
+	// pg_locks is CLUSTER-wide: it lists locks held by backends in every
+	// database on the server, not just this one. Unscoped, this query could
+	// pick a backend belonging to another test binary sharing the server --
+	// and pg_terminate_backend would then kill an unrelated package's
+	// connection mid-statement. That is not hypothetical: it produced
+	// "FATAL: terminating connection due to administrator command" in
+	// internal/store/postgres while this test timed out waiting for a
+	// takeover that never had a lock to take over.
+	//
+	// pgtest.IsolatedDatabase gives each test binary its own database, so
+	// scoping to the current one makes the row unambiguous: no test in this
+	// package runs in parallel, and A is the only advisory-lock holder here.
 	var lockPID int32
 	if err := s.Pool().QueryRow(ctx,
-		`SELECT pid FROM pg_locks WHERE locktype = 'advisory' AND granted LIMIT 1`,
+		`SELECT pid FROM pg_locks
+		 WHERE locktype = 'advisory'
+		   AND granted
+		   AND database = (SELECT oid FROM pg_database WHERE datname = current_database())
+		 LIMIT 1`,
 	).Scan(&lockPID); err != nil {
 		t.Fatalf("find A's lock-holding backend pid: %v", err)
 	}

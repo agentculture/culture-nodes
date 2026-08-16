@@ -8,6 +8,7 @@ import (
 
 	"github.com/agentculture/culture-nodes/internal/artifacts/artifactstest"
 	pgstore "github.com/agentculture/culture-nodes/internal/store/postgres"
+	"github.com/agentculture/culture-nodes/internal/store/postgres/pgtest"
 )
 
 // TestMain provisions the two backends the pod-agnostic proof (see
@@ -35,8 +36,8 @@ func TestMain(m *testing.M) {
 func run(m *testing.M) int {
 	ctx := context.Background()
 
-	dbURL := os.Getenv("NODES_TEST_DATABASE_URL")
-	var stopPG func()
+	dbURL := os.Getenv(pgtest.DatabaseURLEnv)
+	var releasePG func()
 	if dbURL == "" {
 		url, stop, err := artifactstest.StartPostgres(ctx)
 		if err != nil {
@@ -45,10 +46,20 @@ func run(m *testing.M) int {
 			return m.Run()
 		}
 		dbURL = url
-		stopPG = stop
+		releasePG = stop
+	} else {
+		// The variable names a server, not a database to share. See
+		// pgtest.IsolatedDatabase.
+		isolated, drop, err := pgtest.IsolatedDatabase(ctx, dbURL)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "artifacts tests: %v\n", err)
+			return 1
+		}
+		dbURL = isolated
+		releasePG = drop
 	}
-	if stopPG != nil {
-		defer stopPG()
+	if releasePG != nil {
+		defer releasePG()
 	}
 
 	endpoint, accessKey, secretKey, stopMinIO, err := artifactstest.StartMinIO(ctx)

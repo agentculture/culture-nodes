@@ -57,6 +57,14 @@ jobs:
     # database unreachable, `go test ./internal/queue/postgres/` reports ok
     # while `-v` shows 5 SKIPs. A CI job cannot tell those apart, so the
     # database is supplied here rather than hoped for.
+    #
+    # NODES_TEST_DATABASE_URL below names this SERVER, not a database the
+    # suite may use directly: pgtest.IsolatedDatabase creates one database
+    # per test binary on it. Sharing a single database is what made #126
+    # flaky — the outbox relay and the scheduler are deployment-wide by
+    # design, so concurrently running packages stole each other's rows here
+    # and never on a laptop, where an unset variable gives every package a
+    # private container.
     services:
       postgres:
         image: postgres:17-alpine
@@ -115,11 +123,14 @@ jobs:
       # these dumps to S3, so a secret in the database becomes a secret in
       # object storage.
       #
-      # The migrate is deliberate rather than redundant. pgtest.Run migrates
-      # the shared database, so the table happens to exist by the time this
-      # step runs — but only as a side effect of an earlier step, and a guard
-      # that silently depends on step ordering is one reordering away from
-      # exiting 2 and looking like an infrastructure problem.
+      # The migrate is load-bearing. It used to be merely belt-and-braces —
+      # pgtest.Run migrated the shared database, so the table happened to
+      # exist by the time this step ran — but since every test binary now
+      # gets its own database (pgtest.IsolatedDatabase), nothing else ever
+      # touches the `nodes` database this step inspects. Keeping the migrate
+      # explicit was already the right call: a guard that silently depends on
+      # step ordering is one reordering away from exiting 2 and looking like
+      # an infrastructure problem.
       #
       # Exit codes are 0 pass / 1 fail / 2 could-not-check, and 2 fails this
       # job on purpose: "I could not look" is not "I looked and it was fine".

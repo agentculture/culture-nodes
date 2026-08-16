@@ -58,6 +58,7 @@ import (
 	"github.com/agentculture/culture-nodes/internal/compiler"
 	"github.com/agentculture/culture-nodes/internal/store"
 	"github.com/agentculture/culture-nodes/internal/store/postgres"
+	"github.com/agentculture/culture-nodes/internal/store/postgres/pgtest"
 )
 
 // testStore and testDBURL are shared across every test in this package, set up
@@ -77,8 +78,8 @@ func TestMain(m *testing.M) {
 func run(m *testing.M) int {
 	ctx := context.Background()
 
-	dbURL := os.Getenv("NODES_TEST_DATABASE_URL")
-	var stopContainer func()
+	dbURL := os.Getenv(pgtest.DatabaseURLEnv)
+	var release func()
 
 	if dbURL == "" {
 		url, stop, err := startDockerPostgres(ctx)
@@ -88,10 +89,20 @@ func run(m *testing.M) int {
 			return m.Run()
 		}
 		dbURL = url
-		stopContainer = stop
+		release = stop
+	} else {
+		// The variable names a server, not a database to share. See
+		// pgtest.IsolatedDatabase.
+		isolated, drop, err := pgtest.IsolatedDatabase(ctx, dbURL)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "load tests: %v\n", err)
+			return 1
+		}
+		dbURL = isolated
+		release = drop
 	}
-	if stopContainer != nil {
-		defer stopContainer()
+	if release != nil {
+		defer release()
 	}
 
 	s, err := postgres.Connect(ctx, dbURL)

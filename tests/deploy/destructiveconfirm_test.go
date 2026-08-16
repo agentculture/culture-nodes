@@ -47,10 +47,14 @@ func TestForceIsScopedPerLane(t *testing.T) {
 // runInstallSecrets invokes the script against an unresolvable host with an
 // isolated confirmation directory. It never reaches ssh when the guard holds,
 // which is the point: the refusal happens before anything leaves the machine.
+// The environment is built from scratch, not inherited: install-secrets.sh
+// relays several credentials out of its own environment, so a probe that
+// handed it os.Environ() would relay whatever the operator running `go test`
+// holds (issue #134). scrubbedEnv is the harness's single answer to that.
 func runInstallSecrets(t *testing.T, confirmDir string) string {
 	t.Helper()
 	cmd := exec.Command("bash", installSecretsPath(t), "host.invalid")
-	cmd.Env = append(os.Environ(),
+	cmd.Env = scrubbedEnv(t.TempDir(),
 		"FORCE_PROD=1",
 		"CONFIRM_DIR="+confirmDir,
 	)

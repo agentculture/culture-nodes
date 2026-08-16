@@ -131,22 +131,43 @@ func (c *fakeCluster) confirmRotation(t *testing.T, host string) {
 	}
 }
 
-// env is the environment every script under test runs with. It is built
-// from scratch rather than inherited, so nothing an operator happens to have
-// exported (a live DISCORD_WEBHOOK_URL, a real NODES_ACTOR_CLAUDE_TOKEN) can
-// be relayed into a test's prod.env and from there into a test log.
-func (c *fakeCluster) env(extraEnv ...string) []string {
+// scrubbedEnv is the environment EVERY deploy script under test runs with,
+// built from scratch rather than inherited (issue #134).
+//
+// install-secrets.sh and issue-dialin-credential.sh both relay values out of
+// their own environment -- DISCORD_WEBHOOK_URL, CULTURE_NODES_WEBHOOK_URL,
+// GITHUB_TOKEN, GITHUB_TOKEN_WORKER, the Jira pair, NODES_ACTOR_CLAUDE_TOKEN.
+// Handing one of them os.Environ() hands it whatever the operator running
+// `go test` happens to hold, and that is not hypothetical: a probe run during
+// the #128 cycle wrote a LIVE Discord webhook into its throwaway prod.env
+// files and then printed them. #134 records the near-miss and says the
+// mitigation belongs in the harness rather than in each agent brief, because
+// a rule that has to be remembered per brief is a rule that gets forgotten.
+//
+// This is that harness. Nothing reaches a script under test unless it is
+// named here or passed explicitly by the test.
+// TestNoTestPathRunsARelayingScriptWithTheOperatorEnvironment keeps it that
+// way.
+func scrubbedEnv(home string, extraEnv ...string) []string {
 	return append([]string{
-		"PATH=" + c.binDir + string(os.PathListSeparator) + os.Getenv("PATH"),
-		"HOME=" + c.operatorHome,
-		"CONFIRM_DIR=" + c.confirmDir,
-		"FAKE_SSH_HOME_ROOT=" + c.root,
+		"PATH=" + os.Getenv("PATH"),
+		"HOME=" + home,
 		// No control plane exists in a test: the human-inbox lane must
 		// resolve nothing and install nothing, which is its own documented
 		// refusal (actor-placement.sh: "Failure is never a fallback").
 		"NODES_API_URL=http://127.0.0.1:1",
 		"NODES_API_TIMEOUT_SECONDS=1",
 	}, extraEnv...)
+}
+
+// env is scrubbedEnv plus the fake cluster's own wiring: the stub ssh first
+// on PATH, the per-host HOME root, and an isolated confirmation directory.
+func (c *fakeCluster) env(extraEnv ...string) []string {
+	return scrubbedEnv(c.operatorHome, append([]string{
+		"PATH=" + c.binDir + string(os.PathListSeparator) + os.Getenv("PATH"),
+		"CONFIRM_DIR=" + c.confirmDir,
+		"FAKE_SSH_HOME_ROOT=" + c.root,
+	}, extraEnv...)...)
 }
 
 // run executes a deploy/prod script under the fake cluster and returns its

@@ -354,8 +354,39 @@ while IFS=$'\t' read -r key kind; do
   esac
 done <<< "$host_kinds"
 
+# --- credentials that must not be HERE ------------------------------------
+#
+# The classes above ask "is this key present?". This one asks the opposite,
+# and it exists because one credential in this deployment is designed to have
+# exactly ONE custody point.
+#
+# A dial-in credential (issue #111's dial-in half) is presented BY a bridge TO
+# the control plane. The control plane never presents it, so it keeps only a
+# SHA-256 verifier and needs no plaintext — unlike every NODES_ACTOR_*_TOKEN
+# above, each of which legitimately has two copies that a whole lane of
+# install-secrets.sh exists to keep in step. One copy is what makes a stale
+# rotation impossible rather than merely unlikely, so the only inconsistency
+# prod.env can express about such a credential is HOLDING ONE AT ALL — and
+# holding one is not harmless here: notify-bridge.service lists prod.env as an
+# EnvironmentFile, so a *_DIAL_TOKEN written here would really be read, by a
+# bridge that was supposed to read its own file.
+#
+# That is the two-copies-diverge shape issue #133 is about, caught by name
+# instead of discovered when a bridge quietly stops being dispatchable.
+forbidden_keys=()
 for key in "${!present[@]}"; do
-  [ -n "${declared[$key]:-}" ] || unknown_keys+=("$key")
+  case "$key" in
+    *_DIAL_TOKEN) forbidden_keys+=("$key") ;;
+  esac
+done
+
+declare -A forbidden=()
+for key in ${forbidden_keys[@]+"${forbidden_keys[@]}"}; do forbidden["$key"]=1; done
+
+for key in "${!present[@]}"; do
+  [ -n "${declared[$key]:-}" ] && continue
+  [ -n "${forbidden[$key]:-}" ] && continue
+  unknown_keys+=("$key")
 done
 
 # --- report ---------------------------------------------------------------
@@ -394,6 +425,11 @@ if [ "${#unclassified_keys[@]}" -gt 0 ]; then
 fi
 
 rc=0
+if [ "${#forbidden_keys[@]}" -gt 0 ]; then
+  echo "error: dial-in credential in prod.env: $(keys ${forbidden_keys[@]+"${forbidden_keys[@]}"})" >&2
+  echo "hint: a dial-in credential has exactly ONE custody point — the bridge's own per-bridge file, written by deploy/prod/issue-dialin-credential.sh, which is the only thing that may write one. prod.env is a second copy (and notify-bridge.service reads it), which is the two-copies-diverge shape of issue #133. Remove it with deploy/prod/remove-secret.sh <key> and re-issue that bridge's credential." >&2
+  rc=1
+fi
 if [ "${#missing_required[@]}" -gt 0 ]; then
   echo "error: missing (required): $(keys ${missing_required[@]+"${missing_required[@]}"})" >&2
   rc=1
@@ -402,9 +438,14 @@ if [ "${#empty_required[@]}" -gt 0 ]; then
   echo "error: empty (required): $(keys ${empty_required[@]+"${empty_required[@]}"})" >&2
   rc=1
 fi
-if [ "$rc" -ne 0 ]; then
+# The "incomplete" summary belongs to the missing/empty findings only: a
+# prod.env that carries a key it must NOT carry is wrong in the other
+# direction, and its own message above says so.
+if [ "${#missing_required[@]}" -gt 0 ] || [ "${#empty_required[@]}" -gt 0 ]; then
   echo "error: ~/.culture-nodes/prod.env on $HOST is incomplete for $(basename "$HOST_COMPOSE")" >&2
   echo "hint: the containers already running hold their credentials in memory and will keep working until they restart — this failure is LATENT, so fix it now: re-run deploy/prod/install-secrets.sh $HOST, or relay the externally-issued value (see that script's NODES_ACTOR_CLAUDE_TOKEN lane)" >&2
+fi
+if [ "$rc" -ne 0 ]; then
   exit "$rc"
 fi
 

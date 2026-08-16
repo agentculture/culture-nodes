@@ -131,12 +131,12 @@ func (c *fakeCluster) confirmRotation(t *testing.T, host string) {
 	}
 }
 
-// run executes a deploy/prod script under the fake cluster and returns its
-// combined output plus exit code.
-func (c *fakeCluster) run(t *testing.T, script string, args []string, extraEnv ...string) (string, int) {
-	t.Helper()
-	cmd := exec.Command("bash", append([]string{script}, args...)...)
-	cmd.Env = append([]string{
+// env is the environment every script under test runs with. It is built
+// from scratch rather than inherited, so nothing an operator happens to have
+// exported (a live DISCORD_WEBHOOK_URL, a real NODES_ACTOR_CLAUDE_TOKEN) can
+// be relayed into a test's prod.env and from there into a test log.
+func (c *fakeCluster) env(extraEnv ...string) []string {
+	return append([]string{
 		"PATH=" + c.binDir + string(os.PathListSeparator) + os.Getenv("PATH"),
 		"HOME=" + c.operatorHome,
 		"CONFIRM_DIR=" + c.confirmDir,
@@ -147,6 +147,14 @@ func (c *fakeCluster) run(t *testing.T, script string, args []string, extraEnv .
 		"NODES_API_URL=http://127.0.0.1:1",
 		"NODES_API_TIMEOUT_SECONDS=1",
 	}, extraEnv...)
+}
+
+// run executes a deploy/prod script under the fake cluster and returns its
+// combined output plus exit code.
+func (c *fakeCluster) run(t *testing.T, script string, args []string, extraEnv ...string) (string, int) {
+	t.Helper()
+	cmd := exec.Command("bash", append([]string{script}, args...)...)
+	cmd.Env = c.env(extraEnv...)
 	out, err := cmd.CombinedOutput()
 	if err == nil {
 		return string(out), 0
@@ -156,6 +164,29 @@ func (c *fakeCluster) run(t *testing.T, script string, args []string, extraEnv .
 	}
 	t.Fatalf("run %s: %v (output: %s)", filepath.Base(script), err, out)
 	return "", -1
+}
+
+// runSplit is run with the two streams kept apart. install-secrets.sh's
+// refusals are deliberately on stderr — a refusal folded into stdout is
+// indistinguishable from progress to anything that reads the deploy log —
+// so a test that asserts a refusal was ANNOUNCED has to look at stderr
+// specifically, not at the interleaving CombinedOutput gives.
+func (c *fakeCluster) runSplit(t *testing.T, script string, args []string, extraEnv ...string) (string, string, int) {
+	t.Helper()
+	cmd := exec.Command("bash", append([]string{script}, args...)...)
+	cmd.Env = c.env(extraEnv...)
+	var stdout, stderr strings.Builder
+	cmd.Stdout = &stdout
+	cmd.Stderr = &stderr
+	err := cmd.Run()
+	if err == nil {
+		return stdout.String(), stderr.String(), 0
+	}
+	if exitErr, ok := err.(*exec.ExitError); ok {
+		return stdout.String(), stderr.String(), exitErr.ExitCode()
+	}
+	t.Fatalf("run %s: %v (stdout: %s stderr: %s)", filepath.Base(script), err, stdout.String(), stderr.String())
+	return "", "", -1
 }
 
 // envFile is a parsed KEY=VALUE file. order keeps every key in encounter
@@ -687,5 +718,347 @@ func TestRemoveSecretRefusesAKeyItCannotSafelyMatch(t *testing.T) {
 	env := readEnvFile(t, c.prodEnvPath(t, "thor"))
 	if env.raw != accretedProdEnv {
 		t.Errorf("a refused removal still modified prod.env:\n%s", env.raw)
+	}
+}
+
+// --- the deployment-settings lane (issue #124) ----------------------------
+//
+// install_env's FORCE_PROD guard returns BEFORE the key-by-key merge, so on a
+// host that already carries a prod.env the prod lane writes nothing at all. A
+// key added to the generated block after that host was provisioned could
+// therefore reach it only by rotating every secret in the block alongside it —
+// a live database password included. NODES_DATABASE_URL is the key that
+// actually hit this, and it cost two operator hand-turns: thor's prod.env
+// edited by hand mid-deploy, and orin's deploy aborting outright at
+//
+//	error while interpolating services.worker.environment.NODES_DATABASE_URL
+//
+// install_deployment_settings is the answer: an UNGUARDED add-if-absent lane
+// that mints nothing, for the non-secret half of prod.env.
+//
+// accretedProdEnv above is the right seed for all of it without being changed
+// one character: it already carries POSTGRES_PASSWORD and already lacks
+// NODES_DATABASE_URL, which is exactly the pre-incident shape of a provisioned
+// host. These tests run the real script against it and read the file
+// afterwards — a lane whose whole contract is "what the host ends up with"
+// cannot be proven by grepping the script for the string it intends to write.
+
+// seededPostgresPassword is accretedProdEnv's POSTGRES_PASSWORD: the value
+// some PREVIOUS run generated and the live database was actually initdb'd
+// with. Every assertion naming it below is checking one thing — that the URL
+// was composed from the HOST's own file and not from the password this run
+// minted in memory. A URL built from the fresh value looks perfectly correct
+// in prod.env and authenticates as nobody on the next restart.
+const seededPostgresPassword = "old-generated-postgres-password"
+
+// databaseHostOf is the container-resolved database hostname each host's
+// NODES_DATABASE_URL must name. thor reaches the bundled compose service
+// `postgres`; orin reaches the same database as `thor`, the name
+// compose.orin.yml resolves through its extra_hosts entry from THOR_IP. These
+// are NOT the script's ssh targets, and a lane that reused the ssh target
+// would give thor a URL pointing at itself.
+var databaseHostOf = map[string]string{"thor": "postgres", "orin": "thor"}
+
+// wantDatabaseURL is the URL each host must end up with, given a prod.env
+// seeded with seededPostgresPassword and no DATABASE_SSLMODE of its own.
+func wantDatabaseURL(host, sslmode string) string {
+	return "postgres://nodes:" + seededPostgresPassword + "@" + databaseHostOf[host] + ":5432/nodes?sslmode=" + sslmode
+}
+
+// withoutKey drops one KEY= line from an env-file body, so a seed missing one
+// key stays derived from accretedProdEnv instead of forking a near-copy of it
+// that stops matching when the fixture changes.
+func withoutKey(body, key string) string {
+	var kept []string
+	for _, line := range strings.Split(body, "\n") {
+		if strings.HasPrefix(line, key+"=") {
+			continue
+		}
+		kept = append(kept, line)
+	}
+	return strings.Join(kept, "\n")
+}
+
+// TestDeploymentSettingsReachAProvisionedHostWithoutRotating is issue #124 in
+// executable form, and the reason the whole lane exists.
+//
+// Both hosts start out as the incident left them: a prod.env with a live
+// POSTGRES_PASSWORD from an earlier run and NO NODES_DATABASE_URL. The script
+// is run with nothing set — no FORCE_PROD, no confirmation file — because
+// "compose says a variable is missing on a host I already installed" must be
+// answered by a plain re-run and never by rotating a live credential.
+//
+// The load-bearing assertion is which password the URL carries. This run
+// generated a fresh POSTGRES_PASSWORD in memory and the guarded lane above
+// correctly refused to install it; a URL composed locally would therefore
+// embed a password the database has never heard of, in a prod.env that reads
+// as entirely correct, and the stack would fail auth on its next restart.
+// Finding the SEEDED password in the URL is the evidence it was read on the
+// host, from the host's own file.
+func TestDeploymentSettingsReachAProvisionedHostWithoutRotating(t *testing.T) {
+	if strings.Contains(accretedProdEnv, "NODES_DATABASE_URL") {
+		t.Fatal("accretedProdEnv now carries NODES_DATABASE_URL; the seed no longer reproduces the #124 shape (a provisioned host MISSING the key) and this test proves nothing")
+	}
+
+	c := newFakeCluster(t)
+	for _, host := range []string{"thor", "orin"} {
+		c.seedProdEnv(t, host, accretedProdEnv)
+	}
+
+	out, code := c.run(t, installSecretsPath(t), []string{"thor", "orin"})
+	if code != 0 {
+		t.Fatalf("unforced re-run exited %d; output:\n%s", code, out)
+	}
+	if !strings.Contains(out, "kept existing prod.env") {
+		t.Errorf("the guarded lane did not report keeping the existing prod.env — these settings must arrive WITHOUT a rotation, so a run that rotated proves nothing; output:\n%s", out)
+	}
+
+	for _, host := range []string{"thor", "orin"} {
+		path := c.prodEnvPath(t, host)
+		env := readEnvFile(t, path)
+		env.assertNoDuplicateKeys(t, path)
+
+		url, present := env.values["NODES_DATABASE_URL"]
+		if !present {
+			t.Errorf("%s: an unforced re-run left NODES_DATABASE_URL out of prod.env — that is issue #124 itself: the key is reachable only by rotating every generated secret with it", host)
+			continue
+		}
+		if !strings.Contains(url, seededPostgresPassword) {
+			t.Errorf("%s: NODES_DATABASE_URL does not carry the password this host's prod.env holds; it was composed from something other than the host's own file, so it will fail auth on the next restart while looking correct", host)
+		}
+		if want := wantDatabaseURL(host, "disable"); url != want {
+			t.Errorf("%s: NODES_DATABASE_URL = %q, want %q", host, url, want)
+		}
+		if got := env.values["POSTGRES_PASSWORD"]; got != seededPostgresPassword {
+			t.Errorf("%s: delivering a deployment setting rotated POSTGRES_PASSWORD to %q; this lane mints nothing and must touch no credential", host, got)
+		}
+		assertAccretedKeysSurvived(t, host, env)
+	}
+}
+
+// TestDeploymentSettingsWriteSslmodeAsALiteral pins challenge finding c29.
+//
+// The obvious way to write the URL is with a `${DATABASE_SSLMODE}` placeholder
+// and let compose resolve it. Compose does interpolate env-file values
+// recursively — but only BACKWARDS: a placeholder resolves only while the key
+// it names happens to sit EARLIER in the file. In the other order compose
+// resolves `sslmode=` to the empty string and reports no error whatsoever;
+// libpq then falls back to its own default, the stack connects, and nobody
+// learns the TLS mode was never applied. An add-if-absent lane appends in
+// whatever order a given host's gaps dictate, so it is perfectly capable of
+// producing exactly that file.
+//
+// Resolving on the host removes the ordering dependency instead of documenting
+// it, so the URL must contain no `${` at all and must end in a NON-EMPTY
+// sslmode — `sslmode=` is the exact string this lane exists never to write.
+func TestDeploymentSettingsWriteSslmodeAsALiteral(t *testing.T) {
+	c := newFakeCluster(t)
+	for _, host := range []string{"thor", "orin"} {
+		c.seedProdEnv(t, host, accretedProdEnv)
+	}
+
+	out, code := c.run(t, installSecretsPath(t), []string{"thor", "orin"})
+	if code != 0 {
+		t.Fatalf("unforced re-run exited %d; output:\n%s", code, out)
+	}
+
+	for _, host := range []string{"thor", "orin"} {
+		env := readEnvFile(t, c.prodEnvPath(t, host))
+		url, present := env.values["NODES_DATABASE_URL"]
+		if !present {
+			t.Errorf("%s: no NODES_DATABASE_URL was written", host)
+			continue
+		}
+		if strings.Contains(url, "${") {
+			t.Errorf("%s: NODES_DATABASE_URL = %q carries a compose placeholder; it resolves only when the key it names sits earlier in the file, and silently resolves to the empty string when it does not", host, url)
+		}
+		_, sslmode, found := strings.Cut(url, "?sslmode=")
+		if !found {
+			t.Errorf("%s: NODES_DATABASE_URL = %q names no sslmode at all; libpq then applies its own default and the TLS mode is whatever nobody chose", host, url)
+			continue
+		}
+		if sslmode == "" {
+			t.Errorf("%s: NODES_DATABASE_URL = %q ends in an empty sslmode — the exact quiet wrongness this lane exists to prevent", host, url)
+		}
+	}
+}
+
+// TestDeploymentSettingsHonourTheHostsOwnSslmode is the other half of c29.
+//
+// Resolving sslmode on the host is only correct if it resolves the HOST's
+// value. A lane that wrote its own default into the URL would silently
+// downgrade a host an operator had already set to `require` — and, because the
+// URL is add-if-absent, that downgrade is permanent until someone removes the
+// key by hand. The default (`disable`, the LAN network-trust decision) applies
+// only where the host expressed no choice.
+func TestDeploymentSettingsHonourTheHostsOwnSslmode(t *testing.T) {
+	c := newFakeCluster(t)
+	for _, host := range []string{"thor", "orin"} {
+		c.seedProdEnv(t, host, accretedProdEnv+"DATABASE_SSLMODE=require\n")
+	}
+
+	out, code := c.run(t, installSecretsPath(t), []string{"thor", "orin"})
+	if code != 0 {
+		t.Fatalf("unforced re-run exited %d; output:\n%s", code, out)
+	}
+
+	for _, host := range []string{"thor", "orin"} {
+		path := c.prodEnvPath(t, host)
+		env := readEnvFile(t, path)
+		env.assertNoDuplicateKeys(t, path)
+		if got := env.values["DATABASE_SSLMODE"]; got != "require" {
+			t.Errorf("%s: DATABASE_SSLMODE = %q, want the host's own %q left alone", host, got, "require")
+		}
+		if want := wantDatabaseURL(host, "require"); env.values["NODES_DATABASE_URL"] != want {
+			t.Errorf("%s: NODES_DATABASE_URL = %q, want %q — the URL must carry the TLS mode the host chose, not this lane's default", host, env.values["NODES_DATABASE_URL"], want)
+		}
+	}
+}
+
+// TestDeploymentSettingsNeverReplaceAnOperatorEditedValue pins the deliberate
+// asymmetry: a key prod.env does not have is written, a key it HAS is left
+// alone however wrong it looks.
+//
+// deploy/prod/README's "Bundled or external PostgreSQL" section tells an
+// operator to point the stack at an external database by hand-editing
+// NODES_DATABASE_URL and COMPOSE_PROFILES on the host. A lane that re-asserted
+// its own values every run would silently revert that documented choice on the
+// next deploy and bring the stack back up against the bundled database having
+// reported nothing — the same shape of quiet damage as the wholesale rewrite
+// this file was written for, arriving from the opposite direction.
+//
+// The cost is stated in the README rather than hidden: correcting a wrong
+// value is remove-secret.sh followed by a re-run, not a re-run.
+func TestDeploymentSettingsNeverReplaceAnOperatorEditedValue(t *testing.T) {
+	const externalURL = "postgres://nodes:provider-issued-password@db.example.net:5432/nodes?sslmode=verify-full"
+	const externalProfiles = "backup"
+
+	c := newFakeCluster(t)
+	c.seedProdEnv(t, "thor", accretedProdEnv+
+		"NODES_DATABASE_URL="+externalURL+"\n"+
+		"COMPOSE_PROFILES="+externalProfiles+"\n")
+	c.seedProdEnv(t, "orin", accretedProdEnv+"NODES_DATABASE_URL="+externalURL+"\n")
+
+	out, code := c.run(t, installSecretsPath(t), []string{"thor", "orin"})
+	if code != 0 {
+		t.Fatalf("unforced re-run exited %d; output:\n%s", code, out)
+	}
+
+	for _, host := range []string{"thor", "orin"} {
+		path := c.prodEnvPath(t, host)
+		env := readEnvFile(t, path)
+		env.assertNoDuplicateKeys(t, path)
+		if got := env.values["NODES_DATABASE_URL"]; got != externalURL {
+			t.Errorf("%s: a re-run reverted the operator's external NODES_DATABASE_URL to %q; the documented external-database edit must survive every deploy", host, got)
+		}
+		if strings.Contains(env.raw, seededPostgresPassword+"@") {
+			t.Errorf("%s: prod.env now carries a bundled-database URL alongside the operator's external one:\n%s", host, env.raw)
+		}
+	}
+	if got := readEnvFile(t, c.prodEnvPath(t, "thor")).values["COMPOSE_PROFILES"]; got != externalProfiles {
+		t.Errorf("thor: a re-run reverted COMPOSE_PROFILES to %q; re-adding bundled-postgres restarts the very database the operator moved off", got)
+	}
+}
+
+// TestDeploymentSettingsRefuseAMissingPostgresPasswordByName covers the host
+// this lane cannot serve: a prod.env with no POSTGRES_PASSWORD to compose from.
+//
+// Two things must both hold, and they pull in opposite directions.
+//
+// It must not write the URL anyway. `postgres://nodes:@postgres:5432/nodes`
+// authenticates as nobody while reading, to anything that greps for the key,
+// as configured — the same class of quiet wrongness as an empty sslmode.
+//
+// And it must not abort the run. Aborting before the later lanes (codex bridge
+// tokens, the notify token, the claude token relay) is the #124 failure shape
+// itself: one unsatisfiable key stopping every subsequent lane from reaching a
+// host. So the refusal is announced BY NAME on stderr, the settings that do
+// not depend on the password are still delivered, and the script continues.
+func TestDeploymentSettingsRefuseAMissingPostgresPasswordByName(t *testing.T) {
+	c := newFakeCluster(t)
+	seed := withoutKey(accretedProdEnv, "POSTGRES_PASSWORD")
+	if strings.Contains(seed, "POSTGRES_PASSWORD") {
+		t.Fatal("the seed still carries POSTGRES_PASSWORD; there is nothing to refuse")
+	}
+	for _, host := range []string{"thor", "orin"} {
+		c.seedProdEnv(t, host, seed)
+	}
+
+	stdout, stderr, code := c.runSplit(t, installSecretsPath(t), []string{"thor", "orin"})
+	if code != 0 {
+		t.Fatalf("a refused NODES_DATABASE_URL aborted the run (exit %d); the later lanes must still reach both hosts\nstdout:\n%s\nstderr:\n%s", code, stdout, stderr)
+	}
+	for _, key := range []string{"POSTGRES_PASSWORD", "NODES_DATABASE_URL"} {
+		if !strings.Contains(stderr, key) {
+			t.Errorf("the refusal does not name %s on stderr; an unannounced skip is indistinguishable from success in a deploy log\nstderr:\n%s", key, stderr)
+		}
+	}
+
+	for _, host := range []string{"thor", "orin"} {
+		path := c.prodEnvPath(t, host)
+		env := readEnvFile(t, path)
+		env.assertNoDuplicateKeys(t, path)
+
+		if got, present := env.values["NODES_DATABASE_URL"]; present {
+			t.Errorf("%s: NODES_DATABASE_URL = %q was written with no password to compose it from; a URL that authenticates as nobody reads as configured to everything that greps for the key", host, got)
+		}
+		if strings.Contains(env.raw, "postgres://nodes:@") {
+			t.Errorf("%s: prod.env carries a URL with an empty password:\n%s", host, env.raw)
+		}
+		// The settings that do NOT depend on the password still arrive.
+		if got := env.values["DATABASE_SSLMODE"]; got != "disable" {
+			t.Errorf("%s: DATABASE_SSLMODE = %q — one unsatisfiable key must not take the rest of the lane's settings with it", host, got)
+		}
+		// …and so do the LATER lanes, which is why the refusal is not fatal.
+		if _, present := env.values["NODES_ACTOR_CODEX_THOR_TOKEN"]; !present {
+			t.Errorf("%s: the codex-bridge lane never ran — the refusal stopped the script instead of continuing past it", host)
+		}
+	}
+	if got := readEnvFile(t, c.prodEnvPath(t, "thor")).values["COMPOSE_PROFILES"]; got != "bundled-postgres,backup" {
+		t.Errorf("thor: COMPOSE_PROFILES = %q, want the thor-only profile list delivered despite the refused URL", got)
+	}
+}
+
+// TestDeploymentSettingsAreIdempotent asserts the second run is a no-op and
+// SAYS so.
+//
+// This lane runs unguarded on every invocation of install-secrets.sh, so it is
+// the one lane an operator re-runs freely — which makes "a second run changes
+// nothing" a property, not a nicety. And because add-if-absent already means a
+// second run finds nothing to do, a lane printing the same success line either
+// way would be a second place in this script claiming success without
+// evidence: the report must distinguish keys actually added from none.
+func TestDeploymentSettingsAreIdempotent(t *testing.T) {
+	c := newFakeCluster(t)
+	for _, host := range []string{"thor", "orin"} {
+		c.seedProdEnv(t, host, accretedProdEnv)
+	}
+
+	out, code := c.run(t, installSecretsPath(t), []string{"thor", "orin"})
+	if code != 0 {
+		t.Fatalf("first re-run exited %d; output:\n%s", code, out)
+	}
+	if !strings.Contains(out, "added deployment settings to prod.env on thor:") {
+		t.Errorf("the first run does not report which settings it added; output:\n%s", out)
+	}
+	first := map[string]envFile{}
+	for _, host := range []string{"thor", "orin"} {
+		first[host] = readEnvFile(t, c.prodEnvPath(t, host))
+	}
+
+	out, code = c.run(t, installSecretsPath(t), []string{"thor", "orin"})
+	if code != 0 {
+		t.Fatalf("second re-run exited %d; output:\n%s", code, out)
+	}
+	for _, host := range []string{"thor", "orin"} {
+		if !strings.Contains(out, "no deployment settings to add on "+host) {
+			t.Errorf("the second run does not report that it added nothing on %s; a lane that prints the same line either way reports success without evidence; output:\n%s", host, out)
+		}
+		path := c.prodEnvPath(t, host)
+		second := readEnvFile(t, path)
+		second.assertNoDuplicateKeys(t, path)
+		if second.raw != first[host].raw {
+			t.Errorf("%s: a second unforced re-run changed prod.env.\nbefore:\n%s\nafter:\n%s", host, first[host].raw, second.raw)
+		}
 	}
 }

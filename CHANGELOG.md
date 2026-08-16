@@ -5,6 +5,12 @@ All notable changes to this project will be documented in this file.
 Format follows [Keep a Changelog](https://keepachangelog.com/). This project
 adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.32.1] - 2026-08-16
+
+### Changed
+
+- Regenerated the open-issue triage table after #124 closed, and dispositioned the four issues the #137 cycle filed — #133 (a FORCE_PROD rotation and NODES_DATABASE_URL can hold two different passwords), #134 (install-secrets.sh probes relay live operator credentials into throwaway files), #135 (a contradicting DATABASE_SSLMODE, an env_has/env_get duplicate-key asymmetry, hardcoded hostnames), and #136 (five spark-hosted actors registered at a LAN address that no longer resolves).
+
 ## [0.32.0] - 2026-08-16
 
 ### Added

@@ -12,12 +12,16 @@ import (
 	"time"
 )
 
-// Endpoint is a resolved actor: where to POST and what credential to present.
+// Endpoint is a resolved actor: where to POST, what credential to present,
+// and the deployment facts about the actor that the invocation itself must
+// carry.
 //
 // It carries no provider, model, or vendor field, and it never will — §9.5
 // puts those in telemetry metadata reported *by* the adapter, not in the
-// dispatch path. What the control plane needs to invoke an actor is a URL and
-// a credential.
+// dispatch path. RepositoryIdentity is not one of those: it is not a fact
+// about which engine runs behind the actor, it is a fact about which
+// repository this deployment registered the actor to work in, and it reaches
+// the actor through the same registry read that answers where to POST.
 type Endpoint struct {
 	// URL is the actor's base URL. InvocationPath is appended to it, so
 	// "https://actor.example" and "https://actor.example/" both invoke
@@ -34,6 +38,12 @@ type Endpoint struct {
 	// Protocol headers (Idempotency-Key, Authorization, Content-Type) are set
 	// by the client and win over anything here.
 	Header http.Header
+	// RepositoryIdentity is the repository the registration says this actor
+	// works in, sent on every dispatch under RepositoryIdentityKey (issue
+	// #125). Empty means the registration declares none, and the dispatch
+	// carries no identity at all — see WithRepositoryIdentity for why that
+	// is a removal rather than a passthrough.
+	RepositoryIdentity string
 	// DialIn routes through an authenticated reverse connection. URL remains
 	// populated during mixed mode as the outbound fallback.
 	DialIn          DialInInvoker

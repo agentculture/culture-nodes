@@ -159,7 +159,13 @@ func (w *Worker) dispatchActor(
 		Attempt:         dc.Attempt,
 		Workflow:        actors.WorkflowRef{Name: spec.Name, VersionDigest: spec.Digest},
 		Node:            actors.NodeRef{ID: node.ID, ContractDigest: node.ContractDigest},
-		Input:           dc.Input,
+		// The actor's REGISTERED repository identity, decided here and not by
+		// anything the run carries (issue #125). The endpoint was resolved
+		// from the actors table a few lines up, so the identity on the wire
+		// is the one the registry holds — an input that names a repository
+		// loses the argument, and an actor that registers no identity is
+		// dispatched without one. See actors.WithRepositoryIdentity.
+		Input:           actors.WithRepositoryIdentity(dc.Input, endpoint.RepositoryIdentity),
 		ContinuationRef: session.ContinuationRef,
 	}
 	if !dc.Deadline.IsZero() {

@@ -80,6 +80,37 @@ never an update, and a `uses:` reference resolves to the highest one
 still supported and is what `deploy/prod/register-actor.sh` does;
 `deploy/compose/otel-smoke.sh` is a worked example of the HTTP path.
 
+## The repository identity (issue #125)
+
+A registration may name the repository this deployment runs the actor
+against, in the same `metadata` document `handover_remote` and
+`preflight_gate` live in:
+
+```json
+{ "repository_identity": "agentculture/culture-nodes" }
+```
+
+Every dispatch to that actor then carries it in the invocation's `input`,
+under `repository_identity` (`internal/actors.RepositoryIdentityKey`). It is
+a **name, not a path**: a checkout path chosen on the control-plane host need
+not exist on the actor's, so the engine supplies a stable identity and the
+actor's own host resolves it — still validating the result against whatever
+that bridge is permitted to touch. `input.repo`, the explicit checkout path a
+workflow author may bind, is unchanged and unrelated.
+
+The identity comes from the **registry and nowhere else**. A run input, an
+event payload, or an upstream node's output that carries a
+`repository_identity` key does not reach the actor with it: the control plane
+overwrites the key for an actor that declares an identity and removes it for
+one that does not. That is not defensiveness for its own sake — a
+trigger-created run's input *is* the event payload verbatim, and a GitHub
+pull-request payload names a repository of its own, so a bridge resolving a
+checkout from whatever arrived under this key would be taking a checkout
+instruction from the event that started the run.
+
+An actor whose registration declares no identity is dispatched exactly as it
+was before this key existed: no key, and no new required field.
+
 ## The preflight capability surface (issue #67, tasks t14/t15)
 
 An actor may advertise, in its **registration** (`actors.capabilities`), the

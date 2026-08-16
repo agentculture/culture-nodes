@@ -79,6 +79,24 @@ func mustRunnerOperationState(t *testing.T, s *postgres.Store, namespaceID, atte
 // runner_unavailable, resampled), so without this timer a runner that vanished
 // would leave the attempt parked forever; with it, the wait ends in an honest
 // technical timeout that the workflow's own edge routes.
+//
+// On waiting twice (issue #126). failWaitingExternal commits this one logical
+// event in TWO separate transactions: eng.CompleteAttempt flips the node run
+// to failed/timed_out and routes its edge, and only afterwards does closeWait
+// retire the runner operation to completed. There is no transaction spanning
+// both, so observing the first says nothing whatsoever about the second —
+// between them the node run is already terminal while the runner operation is
+// still waiting_external, and both the state assertion and the due-queue
+// assertion below read that second commit.
+//
+// This test used to wait only for status == "failed" and then read the runner
+// operation immediately, which passed solely because the window between the
+// two commits is normally microseconds. Under load — CI running every package
+// against one shared PostgreSQL widened it enough — that read landed inside
+// the window and the test failed on a system that was behaving correctly.
+// Each observable therefore gets its own bounded wait; the assertions
+// afterwards are unchanged, so a runner operation that never reaches
+// completed still fails the test rather than being retried into passing.
 func TestSchedulerDeadlineFailsAParkedRunnerOperation(t *testing.T) {
 	s := requireStore(t)
 	f := newDeadlineFixture(t, s)
@@ -104,6 +122,14 @@ func TestSchedulerDeadlineFailsAParkedRunnerOperation(t *testing.T) {
 	if !nodeRunExists(t, s, f.runID, "repair") {
 		t.Fatal("no repair node run was created; build.timed_out did not route its edge")
 	}
+
+	// The second commit. Same helper, same 5s budget as the node-run wait
+	// above — not a widened timeout on the first wait, which would still be
+	// waiting on the wrong observable, but a wait on the transaction whose
+	// effect the next two assertions actually read.
+	waitFor(t, 5*time.Second, func() bool {
+		return mustRunnerOperationState(t, s, f.ns.ID, in.AttemptID) == postgres.RunnerOperationCompleted
+	})
 
 	// The durable runner record is closed, so nothing samples it again: the
 	// due queue is the in-flight set.

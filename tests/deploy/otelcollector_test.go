@@ -167,20 +167,30 @@ func TestACollectorShipsBehindItsOwnProfile(t *testing.T) {
 			t.Errorf("%s's %q service is not behind the %q profile (profiles: %v); a plain "+
 				"`docker compose up` would start it", file, collectorService, telemetryProfile, svc.Profiles)
 		}
-		mounted := false
-		for _, v := range svc.Volumes {
-			if strings.Contains(v, collectorConfig) {
-				mounted = true
-				if !strings.HasSuffix(v, ":ro") {
-					t.Errorf("%s's %q mounts its config %q writable; a collector never writes its own config",
-						file, collectorService, v)
-				}
-			}
+		assertConfigMountedReadOnly(t, file, svc.Volumes)
+	}
+}
+
+// assertConfigMountedReadOnly is the per-file half of the profile test: the
+// collector config must be mounted, and mounted read-only. It lives out here
+// so the loop above stays one level of nesting deep -- the checks are
+// unchanged, only their home is.
+func assertConfigMountedReadOnly(t *testing.T, file string, volumes []string) {
+	t.Helper()
+	mounted := false
+	for _, v := range volumes {
+		if !strings.Contains(v, collectorConfig) {
+			continue
 		}
-		if !mounted {
-			t.Errorf("%s's %q service mounts no %s: the config both profiles share is the one place "+
-				"the receiver and pipelines are declared", file, collectorService, collectorConfig)
+		mounted = true
+		if !strings.HasSuffix(v, ":ro") {
+			t.Errorf("%s's %q mounts its config %q writable; a collector never writes its own config",
+				file, collectorService, v)
 		}
+	}
+	if !mounted {
+		t.Errorf("%s's %q service mounts no %s: the config both profiles share is the one place "+
+			"the receiver and pipelines are declared", file, collectorService, collectorConfig)
 	}
 }
 
@@ -250,24 +260,33 @@ func TestTheCollectorAcceptsWhatTheControlPlaneSends(t *testing.T) {
 	}
 
 	for _, signal := range []string{"traces", "metrics"} {
-		pipeline, ok := doc.Service.Pipelines[signal]
-		if !ok {
-			t.Errorf("%s declares no %q pipeline: telemetry.New builds an exporter for that signal "+
-				"from the same variable, and a collector that does not accept it fails every "+
-				"process's Shutdown", path, signal)
-			continue
-		}
-		if !contains(pipeline.Receivers, "otlp") {
-			t.Errorf("%s's %q pipeline does not read from the otlp receiver", path, signal)
-		}
-		if len(pipeline.Exporters) == 0 {
-			t.Errorf("%s's %q pipeline exports nowhere, so nothing it receives is queryable", path, signal)
-		}
-		for _, name := range pipeline.Exporters {
-			if _, ok := doc.Exporters[name]; !ok {
-				t.Errorf("%s's %q pipeline names exporter %q, which the file does not declare",
-					path, signal, name)
-			}
+		assertSignalPipeline(t, path, doc, signal)
+	}
+}
+
+// assertSignalPipeline checks one signal's pipeline: that it exists, reads
+// from the otlp receiver, and exports somewhere the file actually declares.
+// Extracted from the loop above so each half stays readable; the assertions
+// and their messages are unchanged.
+func assertSignalPipeline(t *testing.T, path string, doc collectorConfigDoc, signal string) {
+	t.Helper()
+	pipeline, ok := doc.Service.Pipelines[signal]
+	if !ok {
+		t.Errorf("%s declares no %q pipeline: telemetry.New builds an exporter for that signal "+
+			"from the same variable, and a collector that does not accept it fails every "+
+			"process's Shutdown", path, signal)
+		return
+	}
+	if !contains(pipeline.Receivers, "otlp") {
+		t.Errorf("%s's %q pipeline does not read from the otlp receiver", path, signal)
+	}
+	if len(pipeline.Exporters) == 0 {
+		t.Errorf("%s's %q pipeline exports nowhere, so nothing it receives is queryable", path, signal)
+	}
+	for _, name := range pipeline.Exporters {
+		if _, ok := doc.Exporters[name]; !ok {
+			t.Errorf("%s's %q pipeline names exporter %q, which the file does not declare",
+				path, signal, name)
 		}
 	}
 }

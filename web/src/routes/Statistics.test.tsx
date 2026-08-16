@@ -256,6 +256,14 @@ describe("Statistics agent-state registration", () => {
     renderStatistics();
     await screen.findByRole("table");
 
+    // The table appearing and the agent-state registration are two different
+    // effects. Waiting on the first says nothing about the second, so reading
+    // the store straight after findByRole is a race that only loses on a
+    // slower machine -- which is why this passed locally and failed only in
+    // CI. Wait for the thing actually being asserted, the way
+    // LedgerView.test.tsx already does for getAgentState().status.
+    await waitFor(() => expect(getAgentState().statistics).toBeDefined());
+
     const statistics = getAgentState().statistics;
     expect(statistics).toMatchObject({
       total_runs: 5,

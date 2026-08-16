@@ -71,13 +71,18 @@ def test_network_capability_changes_checkout_statement():
 
 def test_refuses_a_sandbox_the_actor_did_not_advertise():
     task = MODULE.load_task("close-the-backlog", "t31")
+    # host() is built outside the raises block so the only call that can throw
+    # inside it is render() -- otherwise a BriefError from the fixture would
+    # satisfy the assertion and the test would pass without ever reaching the
+    # refusal it exists to prove.
+    capability_host = host()
     with pytest.raises(MODULE.BriefError, match="does not advertise"):
         MODULE.render(
             "close-the-backlog",
             "t31",
             "company/codex-thor",
             task,
-            host(),
+            capability_host,
             sandbox="read-only",
             repo="/work/culture-nodes",
             branch=None,

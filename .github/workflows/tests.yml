@@ -118,6 +118,25 @@ jobs:
           echo "$out" | grep -q -- "--- PASS" || {
             echo "::error::no test in internal/queue/postgres reported PASS"; exit 1; }
 
+      # pg_dump refuses to dump a server newer than itself. The runner ships
+      # the Ubuntu 24.04 client (16.x) while the service above is 17, so the
+      # guard below exited 2 -- "could not look" -- rather than running. That
+      # went unnoticed because the `go test` step ahead of it failed first and
+      # aborted the job, so this guard has never actually executed in CI.
+      # Matching the client to the service is what makes it real. Pinned to the
+      # same major as the service image; bump both together.
+      - name: install a pg_dump matching the service major
+        run: |
+          sudo install -d /usr/share/postgresql-common/pgdg
+          sudo curl -fsSL -o /usr/share/postgresql-common/pgdg/apt.postgresql.org.asc \
+            https://www.postgresql.org/media/keys/ACCC4CF8.asc
+          echo "deb [signed-by=/usr/share/postgresql-common/pgdg/apt.postgresql.org.asc] \
+          https://apt.postgresql.org/pub/repos/apt $(lsb_release -cs)-pgdg main" \
+            | sudo tee /etc/apt/sources.list.d/pgdg.list > /dev/null
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq postgresql-client-17
+          pg_dump --version
+
       # Task t21, criterion 1: prove against a REAL dump that the inbound
       # credential table carries nothing an attacker could present. #30 ships
       # these dumps to S3, so a secret in the database becomes a secret in

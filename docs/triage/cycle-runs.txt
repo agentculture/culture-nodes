@@ -47,3 +47,4 @@
 01M04CJT84WD20GDQEN266J9J6   # handover verification, codex-thor — first production handover ref, after redeploy
 01M04CQKJQDM3YCMSW6B8CTYM4   # t11 (collect-by-run-id + derived CI verdict), developer — first t11 dispatch
 01M04D0QE17WPV6XRC2RD2G3F7   # R9-A (t21 credential form), codex-orin — first dispatch after orin's redeploy
+01M04D3A7G5NWCHKMN3AJWXF5K   # read-only posture re-probe, codex-thor — go/uv installed but unusable

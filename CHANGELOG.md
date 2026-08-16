@@ -7,6 +7,24 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [0.26.1] - 2026-08-16
 
+### Verified
+
+- **The PostgreSQL test this package wrote but could not run passes.** Its
+  sandbox denies `socket(2)` (#119), so it declared
+  `TestInboundAuthenticationPersistsLockoutAndRevocation` as authored-and-
+  skipped rather than passing. Run in the operator lane against PostgreSQL 17:
+  PASS in 0.01s. This is the fourth package this cycle to draw that line
+  honestly and the fourth to be right on first execution.
+- **Revocation is enforced, by ablation.** Stubbing the `state.RevokedAt`
+  check makes both the pure and the database-backed test fail with
+  `decision=allowed=true reason=authenticated` — a revoked credential
+  authenticating on its next dial, which is exactly what the check exists to
+  prevent.
+- **The extended dump guard passes against a real dump** covering the new
+  lockout state as well as the credential itself: `PASS: authentication and
+  lockout state have no plaintext-capable column and dump has no presentable
+  canary`.
+
 ### Added
 
 - **Dial-in admission controls before connection acceptance.** Every attempt is

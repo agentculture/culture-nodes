@@ -5,6 +5,18 @@ All notable changes to this project will be documented in this file.
 Format follows [Keep a Changelog](https://keepachangelog.com/). This project
 adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.30.0] - 2026-08-16
+
+### Changed
+
+- Added the contract migration that retires `actors.endpoint_ref` and the
+  copied `runner_invocations.endpoint`. Its SQL records the human-approved
+  ADR 0002 bypass: expand-contract protects a rolling fleet, while production
+  is two workers and one API restarted together by `deploy.sh`. It also states
+  the non-generalisation and the required completion of the mixed-mode bridge
+  cutover, because applying the drop earlier would remove its outbound
+  fallback and rollback path.
+
 ## [0.29.0] - 2026-08-16
 
 ### Verified

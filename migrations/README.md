@@ -249,6 +249,11 @@ Numbered SQL migrations for the authoritative PostgreSQL store (prd-spec
 - `0035_inbound_transport.sql` — address-free actor presence and a durable
   reverse-transport mailbox. PostgreSQL owns work and responses; long polls
   are disposable signals and store no peer address.
+- `0036_retire_stored_participant_addresses.sql` — contract: drops
+  `actors.endpoint_ref` and `runner_invocations.endpoint` under the
+  human-approved ADR 0002 bypass. The migration itself records why the
+  coordinated two-worker/one-API restart makes the exception valid and why
+  it must not run until every bridge has left mixed-mode outbound fallback.
 
 Migrations are additive-first (expand-contract). See
 `docs/adr/0002-migration-policy.md` for the full policy, the N-1 binary

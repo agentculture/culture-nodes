@@ -110,6 +110,17 @@ services:
       NODES_ACTOR_REGISTRATION_TOKEN_SECRET: ${NODES_ACTOR_REGISTRATION_TOKEN_SECRET:-}
       NODES_EVENT_TOKEN_SECRET: ${NODES_EVENT_TOKEN_SECRET:-}
       NODES_ADHOC_RUN_TOKEN_SECRET: ${NODES_ADHOC_RUN_TOKEN_SECRET:-}
+      # The dial-in credential issuance lane (issue #111's dial-in half):
+      # POST /v1alpha1/inbound/credentials mints the token a bridge presents
+      # when it dials out, so no operator invents one. Same closed-by-default
+      # posture as the three above — unset leaves issuance refusing 401 and
+      # changes nothing about bridges already holding a credential.
+      #
+      # Deliberately NOT written by install-secrets.sh's rotation-guarded
+      # block: issue #133 (a FORCE_PROD rotation can leave two different
+      # values) would silently un-dial a bridge, so this key is installed by
+      # hand until that is fixed.
+      NODES_INBOUND_ISSUANCE_TOKEN_SECRET: ${NODES_INBOUND_ISSUANCE_TOKEN_SECRET:-}
       # Task t13 / issue #5. Empty by default, and that IS the gate:
       # internal/telemetry.New returns NoOp() when this is unset — no
       # exporter, no goroutine, no dial. Set it in prod.env to

@@ -68,6 +68,17 @@ const envEventTokenSecret = "NODES_EVENT_TOKEN_SECRET"
 // error: ad-hoc runs are simply refused with 401 until an operator sets it.
 const envAdhocRunSecret = "NODES_ADHOC_RUN_TOKEN_SECRET"
 
+// envInboundIssuanceSecret is the bearer secret POST
+// /v1alpha1/inbound/credentials and .../credentials/revoke require
+// (api.WithInboundIssuanceSecret) — issue #111's dial-in half, the lane that
+// MINTS the credential a bridge presents when it dials out. Its own secret
+// again: issuing a bridge's identity is a distinct standing from
+// registering an actor or starting billable work. Unset is not an error:
+// issuance and revocation are simply refused with 401 until an operator sets
+// it, and a fleet that has not yet been issued credentials keeps dialling
+// with whatever it already holds.
+const envInboundIssuanceSecret = "NODES_INBOUND_ISSUANCE_TOKEN_SECRET"
+
 const (
 	envArtifactS3Endpoint  = "NODES_ARTIFACT_S3_ENDPOINT"
 	envArtifactS3AccessKey = "NODES_ARTIFACT_S3_ACCESS_KEY"
@@ -232,6 +243,12 @@ func runServeMode(args []string, verb string, withScheduler bool) (int, error) {
 		return 0, err
 	}
 	opts = append(opts, api.WithAdhocRunSecret(adhocRunSecret))
+
+	inboundIssuanceSecret, err := authSecretFromEnv(envInboundIssuanceSecret)
+	if err != nil {
+		return 0, err
+	}
+	opts = append(opts, api.WithInboundIssuanceSecret(inboundIssuanceSecret))
 	// What this binary was built as, so a live test can assert which code it
 	// is testing rather than assume it (task t32, issue #104).
 	opts = append(opts, api.WithBuildInfo(version, revision))

@@ -10,25 +10,42 @@ import (
 // InboundAuthenticationConfig keeps admission pacing and failure lockout
 // separate. RateLimit bounds every presentation in RateWindow; FailureLimit
 // locks a credential after that many consecutive bad presentations.
+//
+// RequireControlPlaneIssued is the #111 posture switch: with it set, only a
+// credential this control plane MINTED (see MintInboundCredential) admits a
+// dial, and the operator-provisioned record migration 0031 called temporary
+// — a hand-inserted digest, or a verifier_env_name pointing at an
+// operator-invented PREFIX_DIAL_TOKEN — is refused as InboundNotIssued.
 type InboundAuthenticationConfig struct {
-	RateLimit       int
-	RateWindow      time.Duration
-	FailureLimit    int
-	LockoutDuration time.Duration
+	RateLimit                 int
+	RateWindow                time.Duration
+	FailureLimit              int
+	LockoutDuration           time.Duration
+	RequireControlPlaneIssued bool
 }
 
 // DefaultInboundAuthenticationConfig is deliberately conservative for a
 // dial-in endpoint. Callers may override it, and tests use small independent
 // limits to prove neither control is standing in for the other.
+//
+// RequireControlPlaneIssued is true here because the decision recorded for
+// issue #136 is that a bridge's identity IS a control-plane-issued token: a
+// deployment that wants the older operator-provisioned record must ask for
+// it explicitly, rather than getting it by having configured nothing.
 var DefaultInboundAuthenticationConfig = InboundAuthenticationConfig{
 	RateLimit: 10, RateWindow: time.Minute,
 	FailureLimit: 5, LockoutDuration: 15 * time.Minute,
+	RequireControlPlaneIssued: true,
 }
 
 // InboundAuthenticationState is the complete non-secret state used by one
 // admission decision. It must never grow a field containing a presentation.
 type InboundAuthenticationState struct {
-	Verifier         *InboundCredentialVerifier
+	Verifier *InboundCredentialVerifier
+	// Issued records whether this verifier was minted by the control plane
+	// (inbound_authentication.issued_at is not null, migration 0037) rather
+	// than provisioned by hand. It is provenance, not material.
+	Issued           bool
 	RevokedAt        *time.Time
 	FailureCount     int
 	LockedUntil      *time.Time
@@ -45,6 +62,10 @@ const (
 	InboundLocked        InboundAuthenticationReason = "locked_out"
 	InboundRateLimited   InboundAuthenticationReason = "rate_limited"
 	InboundRevoked       InboundAuthenticationReason = "revoked"
+	// InboundNotIssued refuses a credential this control plane did not mint
+	// (issue #111): the record exists, but its authority came from an
+	// operator rather than from issuance.
+	InboundNotIssued InboundAuthenticationReason = "not_control_plane_issued"
 )
 
 // InboundAuthenticationDecision is safe to return to the dial-in path. It
@@ -100,6 +121,13 @@ func (a *InboundAuthenticator) Authenticate(ctx context.Context, partyKind, part
 func decideInboundAuthentication(state InboundAuthenticationState, presented string, now time.Time, config InboundAuthenticationConfig) (InboundAuthenticationState, InboundAuthenticationDecision) {
 	if state.RevokedAt != nil && !now.Before(*state.RevokedAt) {
 		return state, InboundAuthenticationDecision{Reason: InboundRevoked}
+	}
+	// Provenance is a property of the RECORD, not of the presentation, so it
+	// is answered here — before lockout, before the rate window and without
+	// consuming either. The answer cannot vary with what was presented, so
+	// refusing early discloses nothing an attacker could probe with.
+	if config.RequireControlPlaneIssued && !state.Issued {
+		return state, InboundAuthenticationDecision{Reason: InboundNotIssued}
 	}
 	if state.LockedUntil != nil && now.Before(*state.LockedUntil) {
 		return state, InboundAuthenticationDecision{Reason: InboundLocked, RetryAt: *state.LockedUntil}

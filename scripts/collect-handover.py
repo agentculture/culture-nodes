@@ -57,9 +57,34 @@ code, and the commit sha — and the sha is READ BACK from the worktree the
 suite actually ran in rather than assumed, because a verdict that does not
 name what it tested is not evidence.
 
+# The routing half (task t32, issue #102)
+
+A failing gate no longer ends in the operator's session. The control plane
+routes it — to a bounded repair attempt on a lane whose advertised capability
+surface shows it can actually run the suite that failed, or to a human — and
+this prints the answer with its bound: **two repair attempts per run, over a
+24-hour window from the run's first gate rejection, and a human node at either
+ceiling**. Nine packages in the own-the-work-end-to-end batch failed their gate
+and were repaired by hand, with no record of how many rounds any of them took;
+after this that count is a ledger query.
+
+Two refusals are worth knowing before running it. A failure implicating
+`.github/` routes to a human, because a repair attempt is a dispatch and a
+dispatch may not modify CI configuration — pass `--implicates <path>` to
+declare one the control plane could not measure. And a lane that cannot run
+the failing suite is never sent a repair, because a fix it cannot verify is
+another unverified claim; `--requires-grant network-egress` is how a
+database-backed suite says so.
+
+The routing is a DECISION, not an execution. Nothing is dispatched, the record
+says so in its own payload, and this prints that line every time. Unattended
+repair is deliberately not enabled — see `internal/repair`'s package doc for
+why, and #18/#119 for the measurements behind it.
+
 Exit codes follow culture_nodes/cli/_errors.py: 0 success, 1 user/domain
 outcome (no ref collected; the suite failed), 2 environment (no control plane,
-no configured remote, no validator identity).
+no configured remote, no validator identity). A routed failure still exits 1:
+the gate rejected, and the routing is what happens next, not a pass.
 """
 
 from __future__ import annotations
@@ -548,7 +573,20 @@ def run_suite(repo: Path, sha: str, command: list[str]) -> tuple[int, str]:
 
 
 def record_verdict(base: str, result: dict, handover: dict, suite: str, command: list[str],
-                   exit_code: int, tested_sha: str, validator: str) -> dict:
+                   exit_code: int, tested_sha: str, validator: str,
+                   requires_grants: list[str] | None = None,
+                   implicates: list[str] | None = None) -> dict:
+    """POST the verdict and return the whole SuiteVerdictResult — the verdict
+    record and, for a rejecting gate, where the control plane routed it.
+
+    ``requires_grants`` and ``implicates`` are ROUTING inputs and never reach
+    the verdict record: they say what a repair of this failure would need, not
+    what the suite did. The gate is the only party that can supply the first —
+    it is the only one that knows its suite talks to a database — and #119 is
+    what that fact decides: a repair lane whose posture grants no network
+    egress cannot verify a PostgreSQL-backed suite no matter how cleanly `go`
+    runs there.
+    """
     return request(
         f"{base}/v1alpha1/runs/{result['run_id']}/suite-verdicts",
         {
@@ -558,6 +596,8 @@ def record_verdict(base: str, result: dict, handover: dict, suite: str, command:
             "commit_sha": tested_sha,
             "ref": handover["ref"],
             "validator_actor_id": validator,
+            "requires_grants": requires_grants or [],
+            "implicated_paths": implicates or [],
         },
         token=decision_token(),
     )
@@ -608,9 +648,60 @@ def gate(base: str, repo: Path, result: dict, args: argparse.Namespace) -> tuple
         )
 
     record = record_verdict(
-        base, result, handover, args.suite, args.command, exit_code, tested_sha, validator
+        base, result, handover, args.suite, args.command, exit_code, tested_sha, validator,
+        args.requires_grant, args.implicates,
     )
     return exit_code, record
+
+
+def render_routing(result: dict) -> None:
+    """Print where a failing gate was routed, or say plainly that it was not
+    routed at all.
+
+    This is task t32's operator-facing half. Before it, a red gate ended in a
+    person deciding — in their own head, in the most expensive session
+    available — whether this was repairable, by whom, and how many more tries
+    it got. Now the control plane has already decided all four, under a bound
+    it states, and this prints the answer.
+
+    The absence case is printed too, and loudly. Issue #120 is the whole
+    argument: a routing that silently did not happen looks exactly like a gate
+    that had nothing to route, and telling those apart took an ssh.
+    """
+    routing = result.get("routing")
+    error = result.get("routing_error")
+    if error:
+        print()
+        print("gate: the failure was NOT recorded as routed:")
+        print(f"      {error}")
+        return
+    if not routing:
+        return
+
+    data = routing.get("data") or {}
+    bound = data.get("bound") or {}
+    selected = data.get("selected", "?")
+    lane = data.get("repair_lane_actor_key") or data.get("repair_lane_actor_id") or "?"
+
+    print()
+    if selected == "repair":
+        print(f"gate: routed to a REPAIR attempt {data.get('attempt_number', '?')} of "
+              f"{bound.get('max_attempts', '?')} on {lane}")
+    else:
+        print(f"gate: routed to a HUMAN — {data.get('reason', '?')}")
+    print(f"      {data.get('rationale', '')}")
+    for path in data.get("guarded_paths") or []:
+        print(f"      out of scope: {path}")
+    window_hours = int(bound.get("window_seconds", 0)) // 3600
+    print(f"      bound: {bound.get('max_attempts', '?')} attempts per run over {window_hours}h; "
+          f"at the ceiling, {bound.get('at_ceiling', '?')}")
+    print(f"      recorded as derived record {routing.get('id', '?')}")
+    if data.get("dispatched") is False:
+        # Said every time, not only when it might be missed. A routing a
+        # reader takes for an execution is the failure mode that leaves
+        # nobody looking for the dispatch that never happened.
+        print("      NOTE: this was decided and recorded, not dispatched — "
+              "unattended repair is deliberately not enabled")
 
 
 # ---------------------------------------------------------------------------
@@ -634,6 +725,23 @@ def build_parser() -> argparse.ArgumentParser:
     )
     parser.add_argument("--suite", help="what ran, in the spelling a reader could re-run it with")
     parser.add_argument("--validator", help="the registered non-human actor the verdict is attributed to")
+    parser.add_argument(
+        "--requires-grant",
+        action="append",
+        default=[],
+        metavar="GRANT",
+        help="a dispatch grant this suite needs beyond its own binary "
+             "(network-egress, home-write, ...); repeatable. A repair lane whose posture lacks it "
+             "cannot verify a fix, so it routes to a human instead",
+    )
+    parser.add_argument(
+        "--implicates",
+        action="append",
+        default=[],
+        metavar="PATH",
+        help="a repo-relative path this failure involves, beyond the ones the control plane already "
+             "measured; repeatable. A failure implicating .github/ routes to a human",
+    )
     return parser
 
 
@@ -669,10 +777,10 @@ def main(argv: list[str] | None = None) -> int:
         if not result["collected"] or not result["handovers"]:
             raise no_ref_refusal(result)
 
-        verdict_record: dict | None = None
+        gate_result: dict = {}
         suite_exit = 0
         if args.gate:
-            suite_exit, verdict_record = gate(base, repo, result, args)
+            suite_exit, gate_result = gate(base, repo, result, args)
 
         if args.json:
             payload = dict(result)
@@ -680,7 +788,11 @@ def main(argv: list[str] | None = None) -> int:
                 payload["gate"] = {
                     "suite": args.suite,
                     "exit_code": suite_exit,
-                    "record": verdict_record,
+                    # `record` keeps its t11 name and meaning — the verdict —
+                    # so a reader's existing jq does not change under them.
+                    "record": gate_result.get("verdict"),
+                    "routing": gate_result.get("routing"),
+                    "routing_error": gate_result.get("routing_error"),
                 }
             json.dump(payload, sys.stdout, indent=2)
             print()
@@ -690,7 +802,9 @@ def main(argv: list[str] | None = None) -> int:
                 label = "passed" if suite_exit == 0 else f"FAILED (exit {suite_exit})"
                 print()
                 print(f"gate: {args.suite} {label} at {result['handovers'][0]['commit_sha']}")
-                print(f"gate: recorded as derived record {(verdict_record or {}).get('id', '?')}")
+                verdict = gate_result.get("verdict") or {}
+                print(f"gate: recorded as derived record {verdict.get('id', '?')}")
+                render_routing(gate_result)
 
         return 1 if args.gate and suite_exit != 0 else 0
 

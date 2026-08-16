@@ -315,9 +315,20 @@ func (o *Observer) report(err error) {
 	}
 }
 
-// MeasuredCommit reports the id of the live handover-evidence record in
-// records and the commit that record measured, or ("", "") when this package
-// has measured no handover for the run.
+// MeasuredHandover is one live handover-evidence record, read back.
+//
+// It carries the same three facts buildRecord measured, plus the id of the
+// record they came out of, so a consumer can point at the evidence rather
+// than restate it.
+type MeasuredHandover struct {
+	RecordID     string
+	Ref          string
+	CommitSHA    string
+	ChangedPaths []string
+}
+
+// Measured reports the live handover-evidence record for a run, or ok=false
+// when this package has measured no handover for it.
 //
 // It lives here, next to buildRecord, on purpose: it is the READER of exactly
 // the payload that function writes, and the two would drift the moment a
@@ -326,7 +337,15 @@ func (o *Observer) report(err error) {
 // is never mistaken for a ref this package fetched. The LAST match wins —
 // records are immutable and a re-fetch appends, so the newest measurement is
 // the current one.
-func MeasuredCommit(records []ledger.Record) (recordID string, commitSHA string) {
+//
+// The changed-path list is what makes this more than MeasuredCommit's two
+// return values: internal/repair checks it against the workflow-scope
+// boundary, so a gate failure on a commit that touched CI configuration is
+// routed to a person rather than at a dispatch that would be refused for
+// touching it.
+func Measured(records []ledger.Record) (MeasuredHandover, bool) {
+	var found MeasuredHandover
+	ok := false
 	for _, rec := range ledger.Live(records) {
 		if rec.RecordType != ledger.RecordEvidence || rec.Authority != ledger.AuthorityObserved {
 			continue
@@ -343,7 +362,31 @@ func MeasuredCommit(records []ledger.Record) (recordID string, commitSHA string)
 		if sha == "" {
 			continue
 		}
-		recordID, commitSHA = rec.ID, sha
+		ref, _ := measurements["ref"].(string)
+		raw, _ := measurements["changed_paths"].([]any)
+		paths := make([]string, 0, len(raw))
+		for _, entry := range raw {
+			if p, isString := entry.(string); isString {
+				paths = append(paths, p)
+			}
+		}
+		found = MeasuredHandover{RecordID: rec.ID, Ref: ref, CommitSHA: sha, ChangedPaths: paths}
+		ok = true
 	}
-	return recordID, commitSHA
+	return found, ok
+}
+
+// MeasuredCommit reports the id of the live handover-evidence record in
+// records and the commit that record measured, or ("", "") when this package
+// has measured no handover for the run.
+//
+// It is a projection of Measured rather than a second walk of the records:
+// two recognition rules for one payload is how the drift this package's
+// comment warns about actually happens.
+func MeasuredCommit(records []ledger.Record) (recordID string, commitSHA string) {
+	measured, ok := Measured(records)
+	if !ok {
+		return "", ""
+	}
+	return measured.RecordID, measured.CommitSHA
 }

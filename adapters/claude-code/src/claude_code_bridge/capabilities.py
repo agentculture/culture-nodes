@@ -15,9 +15,10 @@ for.
 
 from __future__ import annotations
 
+import sys
 from typing import Any, Callable, Sequence
 
-from claude_code_bridge import preflight
+from claude_code_bridge import deployment, preflight
 from claude_code_bridge.config import Config
 
 #: The `claude -p --permission-mode` values a dispatch may name (the server
@@ -123,4 +124,13 @@ def host_facts(
         ),
         writable_paths=list(cfg.repo_allowlist + cfg.repo_allowlist_prefixes),
         artifact_publish="unsupported-by-host",
+        # Which revision of THIS bridge is answering (task t32, issue #120
+        # item 4). Measured from the module object rather than from a
+        # configured path, so it describes the code that is actually running.
+        # The distribution name is the one per-backend value: it is what the
+        # install recorded, and it is how the PEP 610 metadata that decides
+        # editable-vs-copy is looked up.
+        deployment=deployment.deployment_facts(
+            sys.modules[__package__], "culture-nodes-claude-code-bridge"
+        ),
     )

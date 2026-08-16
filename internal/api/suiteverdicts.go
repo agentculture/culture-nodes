@@ -1,7 +1,6 @@
 package api
 
 import (
-	"context"
 	"encoding/json"
 	"net/http"
 	"strconv"
@@ -28,6 +27,22 @@ type createSuiteVerdictRequest struct {
 	ValidatorActorID string   `json:"validator_actor_id"`
 	NodeRunRef       string   `json:"node_run_ref"`
 	AttemptRef       string   `json:"attempt_ref"`
+
+	// The three fields task t32 adds, all of them inputs to the repair
+	// routing and none of them to the verdict record itself. A verdict says
+	// what a suite did; these say what a repair of it would need.
+	//
+	// RequiresGrants are the dispatch grants the SUITE needs beyond running
+	// its own binary — the gate is the only party that knows its suite talks
+	// to a database, and a lane whose posture grants no network egress
+	// cannot verify one (#119).
+	RequiresGrants []string `json:"requires_grants"`
+	// ImplicatedPaths are paths the gate knows this failure involves, added
+	// to the ones the control plane measured for the run's handover.
+	ImplicatedPaths []string `json:"implicated_paths"`
+	// RepairActorID overrides which lane a repair would go to. Empty means
+	// the actor that authored the run's claims.
+	RepairActorID string `json:"repair_actor_id"`
 }
 
 // handleCreateSuiteVerdict is POST /v1alpha1/runs/{id}/suite-verdicts: the
@@ -107,10 +122,12 @@ func (s *Server) handleCreateSuiteVerdict(w http.ResponseWriter, r *http.Request
 			req.ValidatorActorID, validator.Kind)
 	}
 
-	evidenceID, measuredCommit, err := s.measuredHandover(ctx, id)
+	records, err := s.Ledger.Records(ctx, id)
 	if err != nil {
 		return internalError(err)
 	}
+	measured, _ := handover.Measured(records)
+	evidenceID, measuredCommit := measured.RecordID, measured.CommitSHA
 	if measuredCommit != "" && measuredCommit != req.CommitSHA {
 		return badRequest(
 			"re-run the suite against the commit the run handed over, or collect the handover again "+
@@ -143,23 +160,18 @@ func (s *Server) handleCreateSuiteVerdict(w http.ResponseWriter, r *http.Request
 		return classify(err)
 	}
 
-	writeJSON(w, http.StatusCreated, appended)
-	return nil
-}
+	// Task t32: a rejecting gate does not stop here. It is routed — to a
+	// bounded repair attempt on a lane that can actually verify one, or to a
+	// human — and the routing is recorded beside the verdict rather than
+	// left to whoever happens to read the red tick. `records` is the ledger
+	// as it stood BEFORE this verdict, which is exactly the history the
+	// bound is counted over.
+	routing, routingErr := s.routeGateFailure(ctx, id, appended, req, records, measured)
 
-// measuredHandover returns the id of this run's live handover-evidence
-// record and the commit that record measured, or ("", "") when the control
-// plane has fetched no handover for the run.
-//
-// The recognition rule itself is handover.MeasuredCommit's, not a copy of it
-// here: it reads the payload internal/handover's own buildRecord writes, and
-// a second opinion about those field names in this package would drift the
-// first time either side changed. This handler's share is the read.
-func (s *Server) measuredHandover(ctx context.Context, runID string) (string, string, error) {
-	records, err := s.Ledger.Records(ctx, runID)
-	if err != nil {
-		return "", "", err
-	}
-	id, commit := handover.MeasuredCommit(records)
-	return id, commit, nil
+	writeJSON(w, http.StatusCreated, suiteVerdictResult{
+		Verdict:      appended,
+		Routing:      routing,
+		RoutingError: routingErr,
+	})
+	return nil
 }

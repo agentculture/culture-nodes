@@ -63,6 +63,12 @@ services:
     build:
       context: ../..
       dockerfile: Dockerfile
+      args:
+        # What this image is being built from (task t32, issue #104). The
+        # build context carries no .git, so the Dockerfile cannot discover
+        # it; deploy.sh exports NODES_BUILD_REVISION as the resolved commit
+        # it shipped, and the binary serves it on GET /v1alpha1/version.
+        REVISION: ${NODES_BUILD_REVISION:-}
     command: ["migrate"]
     environment:
       NODES_DATABASE_URL: ${NODES_DATABASE_URL:?set the bundled or external PostgreSQL URL in prod.env}

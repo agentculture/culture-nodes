@@ -27,6 +27,8 @@ type createSuiteVerdictReq struct {
 	ValidatorActorID string   `json:"validator_actor_id"`
 	NodeRunRef       string   `json:"node_run_ref,omitempty"`
 	AttemptRef       string   `json:"attempt_ref,omitempty"`
+	RequiresGrants   []string `json:"requires_grants,omitempty"`
+	ImplicatedPaths  []string `json:"implicated_paths,omitempty"`
 }
 
 const (
@@ -94,19 +96,19 @@ func TestSuiteVerdictLandsDerivedFromAValidator(t *testing.T) {
 	run, _ := createMinimalRun(t, f)
 	validator := f.insertActorKind("merge-gate", "validator")
 
-	var rec ledger.Record
+	var out suiteVerdictOut
 	resp, body := doJSONBearer(t, f.client, http.MethodPost,
 		f.url("/v1alpha1/runs/"+run.ID+"/suite-verdicts"), decisionAuthSecret,
-		passingGateReq(validator), &rec)
+		passingGateReq(validator), &out)
 	requireStatus(t, resp, body, http.StatusCreated)
 
-	if rec.Authority != ledger.AuthorityDerived {
-		t.Errorf("authority = %q, want %q", rec.Authority, ledger.AuthorityDerived)
+	if out.Verdict.Authority != ledger.AuthorityDerived {
+		t.Errorf("authority = %q, want %q", out.Verdict.Authority, ledger.AuthorityDerived)
 	}
-	if rec.Origin.Kind != ledger.OriginValidator || rec.Origin.ActorID != validator {
-		t.Errorf("origin = %+v, want validator origin actor %s", rec.Origin, validator)
+	if out.Verdict.Origin.Kind != ledger.OriginValidator || out.Verdict.Origin.ActorID != validator {
+		t.Errorf("origin = %+v, want validator origin actor %s", out.Verdict.Origin, validator)
 	}
-	data := verdictPayload(t, rec)
+	data := verdictPayload(t, out.Verdict)
 	if data["suite"] != "go test ./..." || data["exit_code"] != float64(0) || data["commit_sha"] != gateCommit {
 		t.Errorf("payload = %v, want it to name the suite, the exit code and the commit", data)
 	}
@@ -125,12 +127,12 @@ func TestSuiteVerdictRecordsAFailingSuiteToo(t *testing.T) {
 	req := passingGateReq(validator)
 	req.ExitCode = exitCode(1)
 
-	var rec ledger.Record
+	var out suiteVerdictOut
 	resp, body := doJSONBearer(t, f.client, http.MethodPost,
-		f.url("/v1alpha1/runs/"+run.ID+"/suite-verdicts"), decisionAuthSecret, req, &rec)
+		f.url("/v1alpha1/runs/"+run.ID+"/suite-verdicts"), decisionAuthSecret, req, &out)
 	requireStatus(t, resp, body, http.StatusCreated)
-	if verdictPayload(t, rec)["verdict"] != "reject" {
-		t.Errorf("verdict = %v, want reject", verdictPayload(t, rec)["verdict"])
+	if verdictPayload(t, out.Verdict)["verdict"] != "reject" {
+		t.Errorf("verdict = %v, want reject", verdictPayload(t, out.Verdict)["verdict"])
 	}
 }
 
@@ -179,17 +181,17 @@ func TestSuiteVerdictPointsAtTheHandoverEvidenceItJudged(t *testing.T) {
 	validator := f.insertActorKind("merge-gate", "validator")
 	evidence := seedHandoverEvidence(t, f, run.ID, gateCommit)
 
-	var rec ledger.Record
+	var out suiteVerdictOut
 	resp, body := doJSONBearer(t, f.client, http.MethodPost,
 		f.url("/v1alpha1/runs/"+run.ID+"/suite-verdicts"), decisionAuthSecret,
-		passingGateReq(validator), &rec)
+		passingGateReq(validator), &out)
 	requireStatus(t, resp, body, http.StatusCreated)
 
-	if rec.SubjectRef.String() != evidence.ID {
-		t.Errorf("subject_ref = %q, want the handover evidence record %s", rec.SubjectRef, evidence.ID)
+	if out.Verdict.SubjectRef.String() != evidence.ID {
+		t.Errorf("subject_ref = %q, want the handover evidence record %s", out.Verdict.SubjectRef, evidence.ID)
 	}
-	if len(rec.ProvenanceRefs) != 1 || rec.ProvenanceRefs[0] != evidence.ID {
-		t.Errorf("provenance_refs = %v, want [%s]", rec.ProvenanceRefs, evidence.ID)
+	if len(out.Verdict.ProvenanceRefs) != 1 || out.Verdict.ProvenanceRefs[0] != evidence.ID {
+		t.Errorf("provenance_refs = %v, want [%s]", out.Verdict.ProvenanceRefs, evidence.ID)
 	}
 }
 
@@ -203,15 +205,15 @@ func TestSuiteVerdictWithoutMeasuredHandoverIsStillRecorded(t *testing.T) {
 	run, _ := createMinimalRun(t, f)
 	validator := f.insertActorKind("merge-gate", "validator")
 
-	var rec ledger.Record
+	var out suiteVerdictOut
 	resp, body := doJSONBearer(t, f.client, http.MethodPost,
 		f.url("/v1alpha1/runs/"+run.ID+"/suite-verdicts"), decisionAuthSecret,
-		passingGateReq(validator), &rec)
+		passingGateReq(validator), &out)
 	requireStatus(t, resp, body, http.StatusCreated)
-	if rec.SubjectRef.String() != "" {
-		t.Errorf("subject_ref = %q, want empty when the control plane measured no handover", rec.SubjectRef)
+	if out.Verdict.SubjectRef.String() != "" {
+		t.Errorf("subject_ref = %q, want empty when the control plane measured no handover", out.Verdict.SubjectRef)
 	}
-	if verdictPayload(t, rec)["commit_sha"] != gateCommit {
+	if verdictPayload(t, out.Verdict)["commit_sha"] != gateCommit {
 		t.Error("the verdict must still name the commit it tested")
 	}
 }

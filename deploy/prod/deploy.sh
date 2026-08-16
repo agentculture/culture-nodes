@@ -32,7 +32,15 @@ say "shipping $(git rev-parse --short "$REVISION") to $HOST:$REMOTE_DIR"
 git archive --format=tar "$REVISION" | ssh "$HOST" "rm -rf $REMOTE_DIR && mkdir -p $REMOTE_DIR && tar -x -C $REMOTE_DIR"
 
 say "building control-plane image on $HOST (native aarch64)"
-ssh "$HOST" "cd $REMOTE_DIR && docker build -q -t culture-nodes:prod ."
+# --build-arg REVISION: the image is built from the shipped tar, which carries
+# no .git, so the binary has no way to discover what it is (task t32, issue
+# #104). Passed here and again through compose's own build args below, because
+# the two build the same Dockerfile by different routes and a revision stamped
+# into only one of them is a control plane whose answer depends on which lane
+# last rebuilt it. VERSION is deliberately left at its Dockerfile default: it
+# is the package's declared version, not this deploy's commit, and conflating
+# the two would make GET /v1alpha1/version report a sha twice.
+ssh "$HOST" "cd $REMOTE_DIR && docker build -q --build-arg REVISION=$REVISION -t culture-nodes:prod ."
 
 say "building nodes-runner host binary on $HOST"
 # Issue #17. Two things were wrong here, and only one of them was the shell.
@@ -155,6 +163,54 @@ git -C "$repo" fetch "${upstream%%/*}" || { echo "agent checkout $repo: git fetc
 git -C "$repo" merge --ff-only "$upstream" || { echo "agent checkout $repo has diverged from $upstream — refusing to touch it (no rebase, no reset)" >&2; exit 3; }
 echo "agent checkout: fast-forwarded $repo to $upstream"'
 
+# stamp_revision <host> <adapter-dir-name> <package-dir-name> — record WHICH
+# REVISION this deploy is about to install into a bridge (task t32, issue #120
+# item 4).
+#
+# The problem it closes is not hypothetical. Three dispatches this cycle
+# reported handover=true, committed successfully, and created no handover ref,
+# because the bridges on thor and orin predated the code that mints them.
+# Nothing reported a problem: internal/handover correctly records nothing when
+# there is no fetchable ref, so a stale bridge and an honest refusal produce
+# byte-identical evidence. It took `git for-each-ref` over ssh to notice, and
+# the reason nothing else could was that no bridge could say what it was
+# running.
+#
+# THIS SCRIPT is the only party that knows. It resolved $REVISION, it shipped
+# that exact tree, and `uv tool install` is about to copy it into a venv that
+# carries no git and no branch — so if the answer is not written down here it
+# does not exist anywhere. The bridge reads it back through
+# `<pkg>.deployment.measure_deployment` and advertises it on /v1/capabilities,
+# which is what makes "is the fleet current?" a query instead of an ssh.
+#
+# Two things about it are load-bearing:
+#
+#   * it runs BEFORE the install, because `uv tool install` COPIES. A stamp
+#     written afterwards lands only in the shipped archive that the next
+#     deploy's `rm -rf` deletes.
+#   * it writes the RESOLVED 40-hex $REVISION, never $BRANCH and never an
+#     abbreviation. The bridge refuses anything else (deployment.
+#     _full_commit_sha), for the reason internal/handover's validateFullSHA
+#     states: a name that means something different tomorrow is not a record.
+#
+# One helper for every lane rather than an inlined write per lane: three
+# copies of one write is exactly how resolve_actor_row_id shipped as the same
+# bug in three deploy lanes. tests/deploy/revisionstamp_test.go pins both the
+# ordering and the sha shape, and builds a real wheel to check the stamp is
+# not silently dropped at build time.
+stamp_revision() { # host adapter package
+  local host=$1 adapter=$2 package=$3
+  ssh "$host" "cat > $REMOTE_DIR/adapters/$adapter/src/$package/_revision.json" <<EOF
+{
+  "revision": "$REVISION",
+  "branch": "$BRANCH",
+  "stamped_at": "$(date -u +%Y-%m-%dT%H:%M:%SZ)",
+  "source": "deploy/prod/deploy.sh"
+}
+EOF
+  say "stamped $adapter with revision $(git rev-parse --short "$REVISION") on $host"
+}
+
 deploy_codex_bridge() { # host — runs identically on thor and orin
   local host=$1
   local remote_home
@@ -164,6 +220,9 @@ deploy_codex_bridge() { # host — runs identically on thor and orin
   # "run the other script first" message prod.env's absence produces.
   ssh "$host" 'test -f ~/.culture-nodes/codex-bridge.env' \
     || { echo "~/.culture-nodes/codex-bridge.env missing on $host — run deploy/prod/install-secrets.sh first" >&2; exit 1; }
+
+  # Before the install, never after: `uv tool install` copies (see below).
+  stamp_revision "$host" codex codex_bridge
 
   say "installing the codex-bridge uv tool on $host (archive-independent)"
   # `uv tool install` — NOT --editable, and not `uv run --project` — builds
@@ -543,6 +602,11 @@ deploy_notify() { # host
     return 0
   }
 
+  # Same helper, same reason, same ordering as the codex lane: this bridge is
+  # a copy too, and a notify bridge silently running last month's message
+  # shape is exactly as invisible as a stale codex bridge was in #120.
+  stamp_revision "$host" notify notify_bridge
+
   say "installing the notify adapter as a uv tool on $host (archive-independent)"
   ssh "$host" "bash -lc 'command -v uv >/dev/null || curl -LsSf https://astral.sh/uv/install.sh | sh; \$HOME/.local/bin/uv tool install --force ./$REMOTE_DIR/adapters/notify || uv tool install --force ./$REMOTE_DIR/adapters/notify'"
 
@@ -582,7 +646,7 @@ deploy_notify() { # host
 case "$HOST" in
   thor*)
     say "starting thor control plane"
-    ssh "$HOST" "cd $REMOTE_DIR/deploy/prod && docker compose --env-file ~/.culture-nodes/prod.env -f compose.thor.yml up -d --build"
+    ssh "$HOST" "cd $REMOTE_DIR/deploy/prod && NODES_BUILD_REVISION=$REVISION docker compose --env-file ~/.culture-nodes/prod.env -f compose.thor.yml up -d --build"
     say "waiting for readyz"
     ssh "$HOST" 'for i in $(seq 1 60); do curl -fsS http://localhost:18080/v1alpha1/readyz >/dev/null 2>&1 && echo READY && exit 0; sleep 2; done; echo NOT_READY; exit 1'
     say "resolving namespace id and (re)starting worker with it"
@@ -615,7 +679,7 @@ case "$HOST" in
     [ -n "$NS" ] || { echo "thor has no namespace yet — deploy thor first" >&2; exit 1; }
     ssh "$HOST" "grep -q '^THOR_IP=' ~/.culture-nodes/prod.env && sed -i 's/^THOR_IP=.*/THOR_IP=$THOR_IP/' ~/.culture-nodes/prod.env || echo THOR_IP=$THOR_IP >> ~/.culture-nodes/prod.env"
     ssh "$HOST" "grep -q '^NODES_NAMESPACE_ID=' ~/.culture-nodes/prod.env && sed -i 's/^NODES_NAMESPACE_ID=.*/NODES_NAMESPACE_ID=$NS/' ~/.culture-nodes/prod.env || echo NODES_NAMESPACE_ID=$NS >> ~/.culture-nodes/prod.env"
-    ssh "$HOST" "cd $REMOTE_DIR/deploy/prod && docker compose --env-file ~/.culture-nodes/prod.env -f compose.orin.yml up -d --build"
+    ssh "$HOST" "cd $REMOTE_DIR/deploy/prod && NODES_BUILD_REVISION=$REVISION docker compose --env-file ~/.culture-nodes/prod.env -f compose.orin.yml up -d --build"
     # Same detector, same reason, against compose.orin.yml's own declared set
     # (see the thor lane's comment).
     "$SCRIPT_DIR/audit-credentials.sh" "$HOST"

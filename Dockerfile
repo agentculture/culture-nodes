@@ -34,6 +34,14 @@ RUN npm run build
 FROM golang:1.26 AS build
 
 ARG VERSION=dev
+# The commit this image is built from. It cannot be discovered here: the
+# build context below COPYs cmd/, internal/, schemas/ and migrations/ and
+# never the repository, so there is no .git for the Go toolchain to stamp
+# from. deploy/prod/deploy.sh passes it (task t32, issue #104) and the binary
+# serves it on GET /v1alpha1/version — which is how a live test can assert
+# which code it tested instead of assuming, and how "what is deployed" stops
+# being a question you answer by probing a route and reading a 405.
+ARG REVISION=""
 
 WORKDIR /src
 
@@ -54,13 +62,13 @@ COPY --from=webbuild /src/web/dist ./web/dist
 RUN CGO_ENABLED=0 go build \
     -trimpath \
     -tags embedweb \
-    -ldflags "-s -w -X main.version=${VERSION}" \
+    -ldflags "-s -w -X main.version=${VERSION} -X main.revision=${REVISION}" \
     -o /out/nodes \
     ./cmd/nodes
 
 RUN CGO_ENABLED=0 go build \
     -trimpath \
-    -ldflags "-s -w -X main.version=${VERSION}" \
+    -ldflags "-s -w -X main.version=${VERSION} -X main.revision=${REVISION}" \
     -o /out/nodes-notifier \
     ./cmd/nodes-notifier
 

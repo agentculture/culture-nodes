@@ -33,6 +33,16 @@ build-backend = "hatchling.build"
 [tool.hatch.build.targets.wheel]
 packages = ["src/colleague_bridge"]
 
+# The deploy's revision stamp must reach the WHEEL (task t32, issue #120
+# item 4). `_revision.json` is VCS-ignored — it is generated per install, not
+# committed — and hatchling excludes VCS-ignored files by default, so without
+# this the stamp would be written by deploy.sh, silently dropped at build
+# time, and every `uv tool install`ed copy would report a revision it could
+# not establish. That is the same class of silent no-op the whole fact exists
+# to close, which is why tests/deploy/revisionstamp_test.go builds a wheel and
+# asserts the file is inside it rather than trusting this line.
+artifacts = ["src/colleague_bridge/_revision.json"]
+
 [dependency-groups]
 dev = [
     "pytest>=8.0",

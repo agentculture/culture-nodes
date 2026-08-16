@@ -111,6 +111,12 @@ CAPABILITIES_PATH = "/v1/capabilities"
 #: * ``toolchains`` — per tool, what can actually EXECUTE here and in which
 #:   modes (see ``measure_toolchains``). Omitted by a bridge that dispatches
 #:   no toolchain.
+#: * ``deployment`` — WHICH REVISION of this bridge is running, how that was
+#:   established, and whether this install shape can go stale (see
+#:   ``measure_deployment``). Issue #120 item 4's key: `deploy.sh` reinstalls
+#:   the bridges and nothing reported what it shipped, so "is the fleet
+#:   current?" needed an ssh. Omitted by a bridge that cannot locate its own
+#:   package.
 HOST_KEYS = (
     "hostname",
     "sandbox_modes",
@@ -122,6 +128,7 @@ HOST_KEYS = (
     "artifact_publish",
     "dispatch_grants",
     "toolchains",
+    "deployment",
 )
 
 ARTIFACT_PUBLISH_VALUES = frozenset(
@@ -626,6 +633,18 @@ def harvest_commit_policy(
     if extra:
         policy += f"; {extra}"
     return policy
+
+
+# --- deployed revision (task t32, issue #120 item 4) ------------------------
+#
+# The `deployment` host fact is MEASURED in the sibling shared module
+# `deployment.py`, which is byte-identical across the bridges exactly as this
+# file is (tests/lint/preflightsurface_test.go guards both). It lives there
+# rather than here for one blunt reason: this file was 79 lines from the
+# repo's 1000-line hard limit, and the measurement is a self-contained
+# concern — it reads git, a build stamp and PEP 610 metadata, and touches
+# nothing else in the protocol. `deployment` stays in HOST_KEYS above, because
+# the AGREED KEY SET is this file's job even when the measurement is not.
 
 
 def host_block(**facts: Any) -> dict[str, Any]:

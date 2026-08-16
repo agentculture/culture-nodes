@@ -181,6 +181,20 @@ POSTGRES_PASSWORD required
 
 # --- optional, closed by default -----------------------------------------
 
+# NOT a credential at all — the git commit this deploy is building the control
+# plane image from (task t32, issue #104). It reaches compose from deploy.sh's
+# OWN environment (`NODES_BUILD_REVISION=$REVISION docker compose ...`), never
+# from prod.env, so an absence here is the normal state for anyone running
+# `docker compose up` by hand rather than through the deploy.
+#
+# What an absence costs is worth stating, because it is quiet: the image is
+# built with no revision stamp, GET /v1alpha1/version answers that its
+# revision cannot be established, and a live test against it can say what it
+# measured but not which code it measured. That is a degraded answer rather
+# than a broken deployment, which is exactly what `optional` means here.
+NODES_BUILD_REVISION optional
+
+
 # Off-host backups (task t14, issue #30). Unset is the deployment that keeps
 # its dumps only on the host they came from — which is every install without
 # an AWS account, and was this deployment until today. Set, each pg_dump is

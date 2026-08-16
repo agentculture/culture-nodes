@@ -29,15 +29,17 @@ const decisionAuthSecret = "test-only-decision-secret-not-for-production"
 // (no secret configured at all) is what TestHumanTaskDecisionRefusedWhenNoSecretConfigured
 // below exercises — the two together cover PRD spec decision c45's carve-out
 // for this one endpoint.
-func newFixtureWithDecisionAuth(t *testing.T, secret string) *fixture {
+// extra options let a test tighten one more knob (task t32's repair-router
+// identity) without a second near-identical constructor.
+func newFixtureWithDecisionAuth(t *testing.T, secret string, extra ...apipkg.Option) *fixture {
 	t.Helper()
 	s := requireStore(t)
 
 	nsID := pgtest.MustNamespace(t, s, "api").ID
-	srv, err := apipkg.NewServer(s, nsID,
-		apipkg.WithPollInterval(30*time.Millisecond),
+	srv, err := apipkg.NewServer(s, nsID, append([]apipkg.Option{
+		apipkg.WithPollInterval(30 * time.Millisecond),
 		apipkg.WithDecisionAuthSecret(secret),
-	)
+	}, extra...)...)
 	if err != nil {
 		t.Fatalf("api.NewServer: %v", err)
 	}

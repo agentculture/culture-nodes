@@ -232,6 +232,9 @@ func runServeMode(args []string, verb string, withScheduler bool) (int, error) {
 		return 0, err
 	}
 	opts = append(opts, api.WithAdhocRunSecret(adhocRunSecret))
+	// What this binary was built as, so a live test can assert which code it
+	// is testing rather than assume it (task t32, issue #104).
+	opts = append(opts, api.WithBuildInfo(version, revision))
 
 	srv, err := api.NewServer(db, namespaceID, opts...)
 	if err != nil {

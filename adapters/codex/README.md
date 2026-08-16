@@ -203,6 +203,7 @@ rule as `adapters/colleague`'s `config.py`: file sets the baseline,
 | Config file key | Env var | Default | Meaning |
 |---|---|---|---|
 | `repo_allowlist` | `CODEX_BRIDGE_REPO_ALLOWLIST` (`:`-joined) | `[]` | Absolute repo paths this bridge will dispatch into. A request naming any other `input.repo` is refused `403`. **Empty means the bridge accepts no repo** — the safe default. |
+| `repo_identities` | `CODEX_BRIDGE_REPO_IDENTITIES` (`:`-joined `name=path`) | `{}` | Maps a **repository identity** (the name the control plane sends from the actor's `metadata.repository_identity`) to a checkout on this host. Only needed when a checkout directory is not named after the repository it holds — otherwise the name is inferred from `repo_allowlist`. A declaration says *which* repository, never that the bridge may touch it: the resolved path still has to pass `repo_allowlist`. See [Repository identity](#repository-identity-issue-125). |
 | `codex_bin` | `CODEX_BRIDGE_CODEX_BIN` | `"codex"` | Path/name of the codex executable (resolved via `PATH` if bare). |
 | `codex_env` | — (file only) | `{}` | Extra env vars merged onto every codex subprocess (e.g. `CODEX_HOME` to point at a specific auth profile). Operator-supplied only — the bridge never invents a value here. |
 | `default_sandbox` | `CODEX_BRIDGE_DEFAULT_SANDBOX` | `"workspace-write"` | The `--sandbox` value used when `input.sandbox` is absent. One of `read-only`, `workspace-write`, `danger-full-access`. |
@@ -245,7 +246,8 @@ bridge's own contract for it is:
 | Field | Required | Meaning |
 |---|---|---|
 | `instruction` | yes | The prompt passed to `codex exec` as its trailing positional `PROMPT`. `400` without it. |
-| `repo` | yes | Absolute path; must be in `repo_allowlist` or the invocation is refused `403`. Must already be a git checkout — this bridge never passes `--skip-git-repo-check`. |
+| `repo` | no | Absolute path; must be in `repo_allowlist` or the invocation is refused `403`. Must already be a git checkout — this bridge never passes `--skip-git-repo-check`. Optional since issue #125: when absent, the checkout is resolved from `repository_identity`, and only then from a single-entry `repo_allowlist`. |
+| `repository_identity` | no | Set by the **control plane**, from the actor's registration, and never by a workflow author or an event payload. Resolved to a checkout on this host when `repo` is absent. A name that reaches two permitted checkouts, or none, is a named `400` (`repository_identity_ambiguous` / `repository_identity_unknown`) with a hint — never a silently-picked first match. |
 | `model` | no | Passed as `-m`. Not validated against a fixed catalog (codex's own model list changes); an unrecognised model is codex's own `turn.failed`, mapped like any other execution failure. |
 | `sandbox` | no | Passed as `--sandbox`; must be one of `read-only`, `workspace-write`, `danger-full-access` or the invocation is refused `400`. Defaults to `Config.default_sandbox`. |
 | `max_steps` | no | **Not** forwarded to codex (no native flag) — only the sync/async dispatch threshold signal, matching colleague-bridge's own field name and semantics for that one purpose. |
@@ -255,6 +257,33 @@ bridge's own contract for it is:
 
 Unlike colleague-bridge, there is no `role`/`mode` field: codex exec has no
 persona/mode concept to map onto, so this bridge does not invent one.
+
+## Repository identity (issue #125)
+
+A trigger-created run's `input` *is* the event payload, and a payload carries
+no checkout path. The control plane therefore sends the actor's registered
+repository **identity** — a name, from `actor.metadata.repository_identity`
+and from nowhere else — and this bridge maps it to a directory, because a
+path chosen on the control-plane host need not exist here.
+
+The mapping is tried in two steps:
+
+1. **Declared** — `repo_identities[identity]`, the operator's own statement.
+2. **Inferred** — the identity's repository segment
+   (`agentculture/culture-nodes` → `culture-nodes`) matched against the final
+   component of every path this bridge may work in: each `repo_allowlist`
+   entry, and `<root>/<name>` for each `repo_allowlist_prefixes` root that
+   actually holds such a directory.
+
+Then the survivor is validated against `repo_allowlist` like any other repo.
+Ambiguity and misses are named, hinted refusals, mirroring how
+`only_allowed_repo()` already fails closed — and `repo_allowlist` goes back to
+being a pure **permission** surface, free to hold as many entries as the host
+needs.
+
+An explicit `input.repo` still wins, and an actor registered with no identity
+dispatches exactly as before: the single-allowlist-entry inference is
+unchanged.
 
 ## Preflight capability surface (issue #67)
 

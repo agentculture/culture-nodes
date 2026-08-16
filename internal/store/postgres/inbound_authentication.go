@@ -22,15 +22,17 @@ func (s *Store) UpdateInboundAuthentication(ctx context.Context, partyKind, part
 
 	var digest []byte
 	var envName pgtype.Text
-	var revokedAt, lockedUntil, windowStart pgtype.Timestamptz
+	var revokedAt, lockedUntil, windowStart, issuedAt pgtype.Timestamptz
 	var failures, attempts int32
 	err = tx.QueryRow(ctx, `
 		SELECT verifier_sha256, verifier_env_name, revoked_at,
-		       failure_count, locked_until, rate_window_started_at, rate_attempt_count
+		       failure_count, locked_until, rate_window_started_at, rate_attempt_count,
+		       issued_at
 		FROM inbound_authentication
 		WHERE party_kind = $1 AND party_key = $2
 		FOR UPDATE`, partyKind, partyKey).Scan(
 		&digest, &envName, &revokedAt, &failures, &lockedUntil, &windowStart, &attempts,
+		&issuedAt,
 	)
 	if err != nil {
 		if err == pgx.ErrNoRows {
@@ -42,8 +44,14 @@ func (s *Store) UpdateInboundAuthentication(ctx context.Context, partyKind, part
 	if err != nil {
 		return actors.InboundAuthenticationDecision{}, fmt.Errorf("postgres: invalid inbound authentication verifier: %w", err)
 	}
+	// issued_at (migration 0037) is the record's provenance: non-null means
+	// this control plane minted the credential. It is carried into the
+	// decision so an operator-provisioned record can be refused as
+	// `not_control_plane_issued` (issue #111) — never as a bad credential,
+	// which would be a different and misleading fact.
 	state := actors.InboundAuthenticationState{
-		Verifier: verifier, FailureCount: int(failures), RateAttemptCount: int(attempts),
+		Verifier: verifier, Issued: issuedAt.Valid,
+		FailureCount: int(failures), RateAttemptCount: int(attempts),
 	}
 	if revokedAt.Valid {
 		at := revokedAt.Time

@@ -1,0 +1,500 @@
+# The TDD merge gate, expressed as a NODE (task t16, issue #101).
+#
+# Before this file, the gate was a thing an operator typed and a thing an
+# operator read: build, vet, test, the adapter suites, the web build and the
+# linters, nine times in the #87 batch and six more hand-turns in the
+# #128/#137 cycle. A green tick is not evidence of anything — it leaves
+# nothing behind that names the suite, the exit code, or the commit, and a
+# week later nobody can tell a suite that passed from a suite that never ran.
+#
+# Here the gate is one `code` node dispatched through the runner boundary, and
+# what it leaves behind is one `derived`, validator-origin ledger record per
+# declared gate plus an aggregate the control plane computes over them
+# (PRD §10.4: a test suite is a deterministic validator, and §10.4 admits
+# derived records from exactly those).
+#
+# ---------------------------------------------------------------------------
+# WHY IT IS A `code` NODE AND NOT A NEW KIND
+# ---------------------------------------------------------------------------
+#
+# There is no validator node kind, and this cycle deliberately did not add
+# one. internal/compiler/vocabulary.go closes the enum at agent, code,
+# action.http, decision, approval, wait, parallel, join and end
+# (TestNodeKindEnumStaysClosedAtNine holds it there). KindCode already IS the
+# deterministic executor: it runs a pinned command through the runner boundary
+# and routes on what that command exited with, which is exactly what a gate
+# does. A tenth kind would have rippled through the compiler, the authoring
+# schema and the worker to obtain nothing new.
+#
+# The other candidate — an `agent` node that runs the suites and reports the
+# result — is worse than merely redundant. An agent may only produce
+# `proposed` records (§10.4), so its report of a green suite is a completion
+# claim, not evidence: it is the actor grading itself, which is the exact
+# substitution issue #101 exists to prevent.
+#
+# ---------------------------------------------------------------------------
+# THREE DOMAIN OUTCOMES, AND WHY THE THIRD IS NOT OPTIONAL
+# ---------------------------------------------------------------------------
+#
+#   gates_passed            every applicable gate measured and passed
+#   changes_required        an applicable gate missed its threshold
+#   measurement_incomplete  a gate that should have measured did not
+#
+# Each is a DOMAIN outcome with its own edge below. A threshold miss follows
+# an edge; it is never an engine failure and never a retry (PRD §3.4).
+#
+# The third exists because a two-answer gate has to fold "I could not measure
+# this" into one of the other two, and both foldings are lies with
+# consequences. Folded into `gates_passed` it is the empty-scan false green: a
+# lane with no Go toolchain reports nothing and the merge looks verified.
+# Folded into `changes_required` it manufactures a defect, and the repair
+# router (issue #102) then routes a session to fix something nobody observed.
+#
+# The exit codes carrying them (0 / 1 / 2) are one contract shared by four
+# places, and none may drift alone: scripts/merge-gate.py's docstring,
+# internal/worker/code.go's gate vocabulary, internal/handover/gate.go's
+# GateExitCode, and this file.
+#
+# ---------------------------------------------------------------------------
+# WHAT THE MERGE NODE MAY READ, AND WHAT MAKES THAT A CONTRACT
+# ---------------------------------------------------------------------------
+#
+# `human-merges` is reachable from exactly one place: `merge-gate.gates_passed`.
+# There is no edge into it from `changes_required`, from
+# `measurement_incomplete`, or from anywhere else, and no agent node exists in
+# this graph at all — so "a package cannot reach the merge decision without a
+# derived gate record" is a property of the EDGES, checked by the compiler,
+# rather than a habit somebody has to keep.
+#
+# What it binds is the gate node's own output and the run's ledger evidence.
+# It does not bind any node's `proposed` claim, because there is none to bind.
+#
+# An unmeasured gate still reaches a person — `human-overrides` — because a
+# human is the merge authority (§10.4) and "we could not measure the web build
+# on this lane" is a decision somebody has to be allowed to make. It is a
+# SEPARATE approval node with a separate decision schema on purpose: merging
+# on a green gate and merging over an unmeasured one are different acts, and
+# the ledger has to be able to tell them apart afterwards.
+#
+# ---------------------------------------------------------------------------
+# WHERE THIS RUNS — a measured fact, not a preference
+# ---------------------------------------------------------------------------
+#
+# The gate's declared suites need Go, Node/npm and uv together on the host the
+# runner service runs on. Measured this cycle, and recorded here because it is
+# the honest limit of what making the gate a node achieved:
+#
+#   * one machine in this fleet has all three;
+#   * a second has node, npm and uv, but `go` is off its PATH;
+#   * a third has neither node nor npm at all, confirmed by a dispatched
+#     session reading its own PATH (run 01M05ZGNT86MAFDHATB6W5VYPN).
+#
+# WHICH machine is a registry fact — `runner://headspace/tdd-gate` resolves
+# through the deployment's runner services file — and this graph names none of
+# them. What it does say is that only one of the three satisfies the
+# requirement today, so making the gate a node moves it out of the operator's
+# SESSION (it becomes a ledgered derived record instead of a typed command and
+# a read tick) and NOT off the operator's HOST.
+#
+# The graph does not rely on anyone remembering that. The gate program probes
+# for each declared instrument and emits `not_applicable/instrument_unavailable`
+# naming the files it owed a measurement on, which makes the whole report
+# `measurement_incomplete`. Pointed at a lane without the toolchain, this node
+# produces a routed answer that reaches a person — never a pass.
+#
+# The same is true of the image pinned below. python:3.12-slim carries neither
+# Go nor Node nor uv, so as committed this node measures only what a plain
+# Python 3.12 can measure and reports the rest as unavailable. That is
+# deliberate: the shipped example cannot produce a false green, and re-pinning
+# the image to a toolchain one is a GRAPH edit, addressed by the workflow
+# digest, exactly like the thresholds — because the tree under test must not
+# be able to choose the instruments that measure it.
+#
+# ---------------------------------------------------------------------------
+# Deployment configuration (task t16) — everything this graph needs from the
+# world outside it, and where each value comes from. Loading this example into
+# another deployment means supplying these; it never means editing the graph.
+#
+#   RUN INPUT: none. The gate measures the workspace the runner gives it and
+#   reads its own commit back out of that worktree, so there is nothing for a
+#   loader to supply per run. `spec.contract.input` is an open object for that
+#   reason, not an oversight.
+#
+#   RUNNER REGISTRY (an id in `uses:`, resolved by internal/worker/registry.go
+#   against this deployment's actors table with the @sha256 revision suffix
+#   stripped — register the SAME id against your own runner service):
+#     runner://headspace/tdd-gate   the runner boundary this gate dispatches
+#                                   through. It is a SEPARATE identity from a
+#                                   general-purpose runner precisely so a
+#                                   deployment can point it at the one host
+#                                   whose toolchain satisfies the declared
+#                                   instruments, without moving every other
+#                                   code node there too.
+#
+#   The two approval nodes place on NO actor: the engine parks their tokens by
+#   writing human_tasks rows and a person answers through the decision
+#   endpoint. There is nothing to register for them.
+#
+#   APPROVER GROUPS (resolved in the deployment's human inbox):
+#     group/platform-maintainers    decides both the ordinary merge and the
+#                                   over-an-unmeasured-gate merge.
+#
+#   GRANTED ENVIRONMENT VALUES (named here, supplied by the worker process
+#   that dispatches the operation; the runner boundary refuses the operation
+#   BY NAME when one is unset — internal/runners/headspace/bridge.go):
+#     MERGE_GATE_SOURCE_URL      where the gate program is fetched from. It is
+#                                a granted value rather than a committed URL
+#                                for the reason pr-upkeep's sweep records: a
+#                                fixed origin in a graph means every loader
+#                                silently runs the demo author's bytes.
+#     MERGE_GATE_SOURCE_SHA256   the sha256 those bytes must have. Both are
+#                                required, and the digest is the half that
+#                                matters here for a second reason: the gate
+#                                program must not come from the tree it is
+#                                measuring.
+#     NODES_API_URL              the control plane the derived records land in.
+#     NODES_DECISION_TOKEN       the same bearer secret the review surface
+#                                uses — whoever can record a gate result can
+#                                decide a merge, so a third secret would only
+#                                mean a third thing to leak.
+#     NODES_GATE_VALIDATOR_ACTOR_ID
+#                                the registered, NON-HUMAN validator identity
+#                                these derived records are attributed to. A
+#                                derived record needs an identified
+#                                deterministic producer (§10.4); the control
+#                                plane refuses a human one.
+#
+#   NOT deployment configuration, and deliberately so: the gate matrix and
+#   every threshold in it travel in argv, so they are pinned by the published
+#   workflow's own content digest. A matrix supplied as a granted environment
+#   value would be changeable without republishing the workflow, which is
+#   weaker than the t18 design requires — "these values are part of the
+#   published workflow version, so a threshold cannot be selected after seeing
+#   the result". (examples/development-loop takes the granted-value route and
+#   says so; this is the stricter of the two, recorded here rather than left
+#   as an unexplained difference.)
+#
+#   The run identity the gate program needs to attribute its records —
+#   NODES_RUN_ID, NODES_NODE_RUN_ID, NODES_ATTEMPT_ID — is NOT granted by the
+#   deployment. The runner boundary forwards it from the operation's own
+#   context (internal/runners.ContextEnvironment), so a container cannot
+#   choose which run it writes derived records against.
+apiVersion: nodes.culture.dev/v1alpha1
+kind: Workflow
+
+metadata:
+  name: merge-gate
+  version: 1.0.0
+  ownerRef: team/quality-platform
+
+spec:
+  entry: merge-gate
+
+  contract:
+    input:
+      schema:
+        type: object
+    output:
+      schema:
+        type: object
+
+  # One pass. A gate that measured a tree and a gate that measured it again
+  # answer the same question, so there is no loop here: `changes_required`
+  # terminates, and what happens next is the control plane's own repair
+  # routing (task t32) plus a person acting on it. Re-running the gate is a
+  # new run against a new commit, which is the only thing that could change
+  # the answer.
+  limits:
+    maxDuration: 168h
+    maxTransitions: 8
+    maxVisitsPerNode: 1
+    maxParallelTokens: 1
+
+  ledger:
+    schemaVersion: nodes.culture.dev/ledger/v1alpha1
+    maxRecordsPerNode: 100
+
+  nodes:
+    merge-gate:
+      kind: code
+      ownerRef: team/quality-platform
+      uses: runner://headspace/tdd-gate@sha256:9f2b1c4d6a8e0f31527394a6b8d0e2f4176a3c58bd91e07f4a2c6b8d0e1f3a25
+      operation:
+        # Pinned by digest, like every code operation: an unpinned image is
+        # not an execution environment the runner boundary will dispatch to
+        # (internal/worker/code.go refuses one). See the header for why THIS
+        # image, which carries no Go, Node or uv, is an honest default rather
+        # than a placeholder.
+        image: python:3.12-slim@sha256:57cd7c3a7a273101a6485ba99423ee568157882804b1124b4dd04266317710de
+        argv:
+          - python3
+          - -c
+          # The bootstrap, and nothing else. It fetches the gate program from
+          # the granted origin, refuses bytes whose sha256 is not the granted
+          # one, and hands the pinned matrix through unchanged. Deliberately
+          # tiny: everything it could get wrong, it gets wrong before any
+          # measurement exists, and its own refusal is a non-zero exit that
+          # this node's declared outcomes do not claim — a technical failure,
+          # which is the right answer for a gate that never ran.
+          - |
+            import hashlib, os, subprocess, sys, tempfile, urllib.request
+            want = os.environ["MERGE_GATE_SOURCE_SHA256"]
+            body = urllib.request.urlopen(os.environ["MERGE_GATE_SOURCE_URL"], timeout=60).read()
+            got = hashlib.sha256(body).hexdigest()
+            if got != want:
+                sys.exit("merge-gate: fetched bytes digest %s, granted digest %s; refusing to run unverified code" % (got, want))
+            path = os.path.join(tempfile.mkdtemp(), "merge-gate.py")
+            with open(path, "wb") as handle:
+                handle.write(body)
+            sys.exit(subprocess.run([sys.executable, path, "--gates", sys.argv[1], "--repo", sys.argv[2]]).returncode)
+          # The gate matrix: every declared gate, what it reaches, what it is
+          # RESPONSIBLE for, which tools it needs, and the threshold it is
+          # measured against. All of it is graph content, addressed by this
+          # workflow's content digest.
+          #
+          # `reaches` and `responsible_for` differ where an instrument's
+          # configured scope is narrower than the trees it ought to cover —
+          # today's coverage run reaches only `culture_nodes`, and Sonar's
+          # sources are the same, so a change under `internal/`, `adapters/`
+          # or `web/` gets `not_applicable/instrument_not_reaching_tree`
+          # naming those files. That is issue #88's gap, reported per run
+          # rather than silently counted as satisfied.
+          - |
+            {
+              "base": "origin/main",
+              "gates": [
+                {
+                  "gate": "go-build",
+                  "suite": "go build ./...",
+                  "instrument": "go",
+                  "version_command": ["go", "version"],
+                  "requires": ["go"],
+                  "reaches": ["**/*.go", "go.mod", "go.sum"],
+                  "command": ["go", "build", "./..."],
+                  "measurement": {"unit": "exit_status", "threshold": {"equals": 0}}
+                },
+                {
+                  "gate": "go-vet",
+                  "suite": "go vet ./...",
+                  "instrument": "go vet",
+                  "requires": ["go"],
+                  "reaches": ["**/*.go", "go.mod", "go.sum"],
+                  "command": ["go", "vet", "./..."]
+                },
+                {
+                  "gate": "go-test",
+                  "suite": "go test ./...",
+                  "instrument": "go test",
+                  "requires": ["go"],
+                  "reaches": ["**/*.go", "go.mod", "go.sum"],
+                  "command": ["go", "test", "./..."],
+                  "measurement": {"unit": "failed_packages", "threshold": {"maximum": 0}},
+                  "repair": {"requires_grants": ["network-egress"]}
+                },
+                {
+                  "gate": "pytest",
+                  "suite": "uv run pytest -n auto",
+                  "instrument": "pytest",
+                  "requires": ["uv"],
+                  "reaches": ["culture_nodes/**", "tests/**", "scripts/**", "pyproject.toml"],
+                  "command": ["uv", "run", "pytest", "-n", "auto"],
+                  "measurement": {"unit": "failures", "threshold": {"maximum": 0}}
+                },
+                {
+                  "gate": "coverage",
+                  "suite": "uv run pytest -n auto --cov=culture_nodes",
+                  "instrument": "coverage.py",
+                  "requires": ["uv"],
+                  "reaches": ["culture_nodes/**"],
+                  "responsible_for": ["culture_nodes/**", "internal/**", "adapters/**", "web/**"],
+                  "command": ["uv", "run", "pytest", "-n", "auto", "--cov=culture_nodes", "--cov-report=term"],
+                  "measurement": {"unit": "percent", "threshold": {"minimum": 60}}
+                },
+                {
+                  "gate": "cognitive-complexity",
+                  "suite": "sonar-scanner",
+                  "instrument": "sonar",
+                  "requires": ["sonar-scanner"],
+                  "reaches": ["culture_nodes/**"],
+                  "responsible_for": ["culture_nodes/**", "internal/**", "adapters/**", "web/**"],
+                  "command": ["sonar-scanner"],
+                  "measurement": {"unit": "cognitive_complexity", "threshold": {"maximum": 15}}
+                },
+                {
+                  "gate": "python-lint",
+                  "suite": "uv run flake8 culture_nodes tests",
+                  "instrument": "flake8",
+                  "requires": ["uv"],
+                  "reaches": ["culture_nodes/**", "tests/**", ".flake8", "pyproject.toml"],
+                  "command": ["uv", "run", "flake8", "culture_nodes", "tests"]
+                },
+                {
+                  "gate": "adapter-lint",
+                  "suite": "uv run flake8 adapters",
+                  "instrument": "flake8",
+                  "requires": ["uv"],
+                  "reaches": ["adapters/**"],
+                  "command": ["uv", "run", "flake8", "adapters"]
+                },
+                {
+                  "gate": "markdownlint",
+                  "suite": "markdownlint-cli2",
+                  "instrument": "markdownlint-cli2",
+                  "requires": ["markdownlint-cli2"],
+                  "reaches": ["**/*.md"],
+                  "command": ["markdownlint-cli2", "**/*.md", "#node_modules", "#.local"]
+                },
+                {
+                  "gate": "web-build",
+                  "suite": "npm run build",
+                  "instrument": "npm",
+                  "version_command": ["npm", "--version"],
+                  "requires": ["npm"],
+                  "reaches": ["web/**"],
+                  "cwd": "web",
+                  "command": ["npm", "run", "build"]
+                }
+              ]
+            }
+          - /workspace
+        # `full` because the operation has two things it must reach: the
+        # granted origin it fetches the gate program from, and the control
+        # plane the derived records land in. The DECLARED intent is
+        # `egress-allowlist` with those two hosts on it; headspace-cli 0.11.0
+        # supports only a disabled/enabled posture (internal/runners/headspace
+        # refuses an allowlist by name), so this records the wider posture
+        # rather than a narrower one nothing enforces.
+        network: full
+        environmentRefs:
+          - MERGE_GATE_SOURCE_URL
+          - MERGE_GATE_SOURCE_SHA256
+          - NODES_API_URL
+          - NODES_DECISION_TOKEN
+          - NODES_GATE_VALIDATOR_ACTOR_ID
+        allowedOutputPaths: []
+      contract:
+        # Three declared outcomes, one per exit code, each routed below. The
+        # worker refuses to dispatch a node that declares only some of them
+        # (internal/worker/code.go's gateCodeOutcomes): a gate with no edge
+        # for an answer its own instrument can produce would have to send
+        # that answer down one of the others.
+        outcomes:
+          gates_passed:
+            schema:
+              type: object
+              required: [operation_id, state]
+              properties:
+                state: {type: string}
+          changes_required:
+            schema:
+              type: object
+              required: [operation_id, state]
+              properties:
+                state: {type: string}
+          measurement_incomplete:
+            schema:
+              type: object
+              required: [operation_id, state]
+              properties:
+                state: {type: string}
+      # The runner's own measured observations, appended with `observed`
+      # authority inside the same transaction as the transition they justify.
+      # Only a code node may declare this (PRD §10.4). It is separate from the
+      # per-gate records, which the gate program posts as `derived`: this one
+      # says what the RUNNER observed about the operation, that one says what
+      # each INSTRUMENT measured about the change.
+      ledger:
+        observe: [evidence]
+      # Recorded, not enforced. `enforce` is omitted, so this evaluates to a
+      # derived acceptance record and leaves routing alone — which is right,
+      # because the exit code has already routed a real domain answer. Under
+      # `route_outcome` a nonzero exit would be re-routed by a second rule,
+      # and two rules deciding one edge is how a gate ends up somewhere
+      # neither rule intended.
+      acceptance:
+        requires:
+          - kind: process_exit
+            equals: 0
+      policy:
+        timeout: 15m
+        # One attempt. A gate is deterministic over a fixed commit, so a
+        # retry either measures the same thing again or hides a flake that
+        # should be visible.
+        retry:
+          maxAttempts: 1
+
+    # The merge decision. Reachable from `merge-gate.gates_passed` and from
+    # nowhere else, which is what makes "no merge without a derived gate
+    # record" a compiler-checked property of this graph rather than a habit.
+    human-merges:
+      kind: approval
+      ownerRef: team/platform-ai
+      approverRef: group/platform-maintainers
+      decisionSchemaRef: schema://merge-gate/merge-decision/v1
+      deadline: 168h
+      input:
+        bindings:
+          gate: /nodes/merge-gate/output
+          gateEvidence: /ledger/projections/evidence
+
+    # The same authority, a different act. A person may still merge over a
+    # gate that could not measure everything it declared — §10.4 makes a human
+    # the merge authority — but they do it here, against a decision schema
+    # that says what was unmeasured, and the ledger can afterwards tell a
+    # merge on a green gate from a merge over an incomplete one. That
+    # distinction is the whole reason this is a second node.
+    human-overrides:
+      kind: approval
+      ownerRef: team/platform-ai
+      approverRef: group/platform-maintainers
+      decisionSchemaRef: schema://merge-gate/unmeasured-merge-decision/v1
+      deadline: 168h
+      input:
+        bindings:
+          gate: /nodes/merge-gate/output
+          gateEvidence: /ledger/projections/evidence
+
+    # A missed threshold ends the run. What happens next is not this graph's
+    # to dispatch: the control plane composed a bounded repair routing beside
+    # the rejecting verdict (task t32, issue #102 — two attempts per run over
+    # 24 hours, both ceilings reaching a human), and executing it stays a
+    # deliberate step while the bridge write path is unproven (#18).
+    changes-requested:
+      kind: end
+      ownerRef: team/quality-platform
+      output:
+        from: /nodes/merge-gate/output
+
+    merged:
+      kind: end
+      ownerRef: team/platform-ai
+      output:
+        from: /nodes/merge-gate/output
+
+    not-merged:
+      kind: end
+      ownerRef: team/platform-ai
+      output:
+        from: /nodes/merge-gate/output
+
+  edges:
+    - from: merge-gate.gates_passed
+      to: human-merges
+
+    - from: merge-gate.changes_required
+      to: changes-requested
+
+    - from: merge-gate.measurement_incomplete
+      to: human-overrides
+
+    - from: human-merges.approved
+      to: merged
+
+    - from: human-merges.rejected
+      to: not-merged
+
+    - from: human-overrides.approved
+      to: merged
+
+    - from: human-overrides.rejected
+      to: not-merged

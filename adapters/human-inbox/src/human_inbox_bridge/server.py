@@ -20,6 +20,11 @@ Protocol routes (what the culture-nodes worker talks to):
 * ``POST /v1/invocations/<id>/cancel`` — PRD §13.6.
 * ``DELETE /v1/invocations/<id>`` — an alias for the same cancellation.
 * ``GET /healthz`` — operational convenience, no protocol meaning.
+* ``GET /identity`` — who this bridge serves, which durable store it owns,
+  and the actor key its dial-in client presents. Not part of the actor
+  protocol either: it exists so the co-located merge tracker can confirm it
+  submits to the bridge whose store it reads, without any address at all
+  (issue #72's guard, rebuilt for migration 0036 — see identity.py).
 
 Human surface (same server, same bearer token):
 
@@ -46,7 +51,7 @@ from http.server import BaseHTTPRequestHandler, HTTPServer
 from typing import Any
 from urllib.parse import parse_qs, urlsplit
 
-from human_inbox_bridge import mapping
+from human_inbox_bridge import identity, mapping
 from human_inbox_bridge.callbacks import CallbackConfig, CallbackEmitter
 from human_inbox_bridge.config import Config
 from human_inbox_bridge.idempotency import IdempotencyStore
@@ -62,6 +67,7 @@ logger = logging.getLogger("human_inbox_bridge.server")
 
 INVOCATIONS_PATH = "/v1/invocations"
 INBOX_TASKS_PATH = "/inbox/tasks"
+IDENTITY_PATH = "/identity"
 _CANCEL_RE = re.compile(r"^/v1/invocations/([^/]+)/cancel$")
 _ID_RE = re.compile(r"^/v1/invocations/([^/]+)$")
 _SUBMIT_RE = re.compile(r"^/inbox/tasks/([^/]+)/submit$")
@@ -82,6 +88,10 @@ class Bridge:
 
     def __init__(self, cfg: Config) -> None:
         self.cfg = cfg
+        # Minted before the stores so the co-located tracker's startup guard
+        # has something to read the moment this process is listening (issue
+        # #72's guard, rebuilt in task t7 — see identity.py).
+        self.store_identity = identity.ensure_store_identity(cfg.state_dir)
         self.idempotency = IdempotencyStore(cfg.state_dir)
         self.tasks = TaskStore(cfg.state_dir)
 
@@ -249,6 +259,9 @@ class Handler(BaseHTTPRequestHandler):
             if split.path == "/healthz":
                 self._write_json(200, {"status": "ok"})
                 return
+            if split.path == IDENTITY_PATH:
+                self._handle_identity()
+                return
             if split.path == INBOX_TASKS_PATH:
                 self._handle_inbox_list(split.query)
                 return
@@ -297,6 +310,41 @@ class Handler(BaseHTTPRequestHandler):
             self._write_json(
                 500, {"error": "internal bridge error", "class": mapping.CLASS_EXECUTION}
             )
+
+    # -- identity ----------------------------------------------------------
+
+    def _handle_identity(self) -> None:
+        """``GET /identity`` — who this bridge is, without an address.
+
+        The co-located merge tracker's startup guard (issue #72) used to
+        settle "is this the actor's bridge?" by comparing the actor's
+        registered ``endpoint_ref`` against its own bridge URL. Migration
+        0036 removes that column, so the question has to be answered by the
+        bridge itself. Three facts do it, and none of them is an address:
+
+        * ``actor_id`` — who this bridge serves as a ledger producer.
+        * ``store_id`` — which durable state directory it owns. The tracker
+          reads the same value off the local filesystem, so a match proves
+          the process answering here is the one whose tasks it is reading.
+          See identity.py for why that is the load-bearing half.
+        * ``dial_in`` — the actor key its dial-in client presents, which is
+          how the control plane decides where this actor's work goes.
+
+        Behind the bridge token: the store id is not a capability on its
+        own, but an unauthenticated reader must not be handed the one value
+        a wrong bridge would need in order to look right.
+        """
+        if not self._require_auth():
+            return
+        dial_in_key = identity.dial_in_actor_key()
+        self._write_json(
+            200,
+            {
+                "actor_id": self.bridge.cfg.actor_id,
+                "store_id": self.bridge.store_identity.store_id,
+                "dial_in": {"configured": bool(dial_in_key), "actor_key": dial_in_key},
+            },
+        )
 
     # -- protocol routes ---------------------------------------------------
 
@@ -382,6 +430,15 @@ class Handler(BaseHTTPRequestHandler):
             attempt_id=body.get("attempt_id") or None,
             callback_url=str(callback_url),
             callback_token=str(callback_token),
+            # `input.repository_identity` (task t2, issue #125) needs no
+            # resolution here and gets none: this bridge has no
+            # `repo_allowlist`, checks nothing out, and dispatches to a
+            # PERSON rather than a session in a directory. It rides into
+            # `extra_input` like every other non-instruction key, which is a
+            # structured field the inbox returns verbatim and the tracker
+            # reads by name — never prompt text appended to what the human is
+            # asked to do, so the "Bound inputs" leak the three checkout
+            # bridges exclude the key from cannot happen here.
             extra_input={k: v for k, v in raw_input.items() if k != "instruction"},
         )
         # Durably parked BEFORE the 202 is written: a crash after this line

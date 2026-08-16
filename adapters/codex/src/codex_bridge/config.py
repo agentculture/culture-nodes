@@ -88,6 +88,11 @@ _ENV_BOOL_FIELDS = {
 ENV_REPO_ALLOWLIST = "CODEX_BRIDGE_REPO_ALLOWLIST"
 ENV_REPO_ALLOWLIST_PREFIXES = "CODEX_BRIDGE_REPO_ALLOWLIST_PREFIXES"
 
+#: `CODEX_BRIDGE_REPO_IDENTITIES` declares the repository-identity map as
+#: `os.pathsep`-joined `name=path` pairs (task t2, issue #125) — the same
+#: separator the allowlist uses, so the two read alike in a unit file.
+ENV_REPO_IDENTITIES = "CODEX_BRIDGE_REPO_IDENTITIES"
+
 
 class ConfigError(Exception):
     """Raised for a config file/env value the bridge cannot use."""
@@ -104,6 +109,14 @@ class Config:
     # for) --------------------------------------------------------------
     repo_allowlist: tuple[str, ...] = ()
     repo_allowlist_prefixes: tuple[str, ...] = ()
+    #: Repository IDENTITY -> local checkout, for the identities the actors
+    #: served by this bridge are registered under (see `repositories.py`).
+    #: It says WHICH repository a name means, never that the bridge may
+    #: touch it: `repo_allowed` is still the last word, so a declaration
+    #: pointing outside the allowlist is refused. Empty is the ordinary
+    #: case — an identity whose repository segment matches an allowlisted
+    #: checkout's directory name resolves with no declaration at all.
+    repo_identities: dict[str, str] = field(default_factory=dict)
 
     # --- codex dispatch --------------------------------------------------
     codex_bin: str = "codex"
@@ -244,8 +257,13 @@ class Config:
         deployment-neutral workflow has nowhere to put a checkout path: a
         literal in the graph would make it deployment-specific, and the
         emitter that raises the event is a pure emitter that knows nothing
-        about checkouts. Issue #125 is that gap — every triggered pr-upkeep
-        run failed on `input.repo is required`.
+        about checkouts.
+
+        This is the LAST of the three answers to that gap, not the first.
+        `repositories.py` resolves the actor's registered repository identity
+        first (task t2, issue #125), and this inference only runs for an actor
+        registered without one — which is every deployment that worked before
+        the identity existed, and must keep working.
 
         When the allowlist names exactly one repository and no prefixes, the
         caller restating it adds no safety: this bridge physically cannot work
@@ -253,6 +271,9 @@ class Config:
         anyway. Ambiguity fails closed — two entries, or any prefix rule, and
         `input.repo` stays required, because then the choice is real and
         guessing it would silently pick a workspace the caller did not name.
+        That fail-closed shape is the one `repositories.py` mirrors; what
+        changed in t2 is that a multi-entry allowlist is no longer a dead end,
+        because cardinality stopped being how the repository is chosen.
         """
         if len(self.repo_allowlist) == 1 and not self.repo_allowlist_prefixes:
             return self.repo_allowlist[0]
@@ -301,6 +322,7 @@ _FILE_FIELDS = {
     "actor_id": str,
     "repo_allowlist": lambda v: tuple(str(x) for x in v),
     "repo_allowlist_prefixes": lambda v: tuple(str(x) for x in v),
+    "repo_identities": lambda v: {str(k): str(x) for k, x in dict(v).items()},
     "codex_bin": str,
     "codex_env": lambda v: {str(k): str(x) for k, x in dict(v).items()},
     "default_sandbox": str,
@@ -361,6 +383,27 @@ def _apply_env_overrides(cfg: Config, env: dict[str, str]) -> None:
     if ENV_REPO_ALLOWLIST_PREFIXES in env:
         raw = env[ENV_REPO_ALLOWLIST_PREFIXES]
         cfg.repo_allowlist_prefixes = tuple(p for p in raw.split(os.pathsep) if p.strip())
+    if ENV_REPO_IDENTITIES in env:
+        cfg.repo_identities = _parse_identities(env[ENV_REPO_IDENTITIES])
+
+
+def _parse_identities(raw: str) -> dict[str, str]:
+    """Parse `name=path` pairs joined by `os.pathsep` into an identity map.
+
+    A pair missing its `=` is a ConfigError rather than a silently dropped
+    entry: a bridge that came up holding half its identity map would refuse
+    dispatches with a naming error nobody would connect back to a typo here.
+    """
+    identities: dict[str, str] = {}
+    for pair in raw.split(os.pathsep):
+        entry = pair.strip()
+        if not entry:
+            continue
+        name, sep, path = entry.partition("=")
+        if not sep or not name.strip() or not path.strip():
+            raise ConfigError(f"{ENV_REPO_IDENTITIES} entry {entry!r} is not a 'name=path' pair")
+        identities[name.strip()] = path.strip()
+    return identities
 
 
 def _normalize_allowlist(cfg: Config) -> None:

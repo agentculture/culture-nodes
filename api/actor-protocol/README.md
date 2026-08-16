@@ -80,6 +80,61 @@ never an update, and a `uses:` reference resolves to the highest one
 still supported and is what `deploy/prod/register-actor.sh` does;
 `deploy/compose/otel-smoke.sh` is a worked example of the HTTP path.
 
+## The repository identity (issue #125)
+
+A registration may name the repository this deployment runs the actor
+against, in the same `metadata` document `handover_remote` and
+`preflight_gate` live in:
+
+```json
+{ "repository_identity": "agentculture/culture-nodes" }
+```
+
+Every dispatch to that actor then carries it in the invocation's `input`,
+under `repository_identity` (`internal/actors.RepositoryIdentityKey`). It is
+a **name, not a path**: a checkout path chosen on the control-plane host need
+not exist on the actor's, so the engine supplies a stable identity and the
+actor's own host resolves it — still validating the result against whatever
+that bridge is permitted to touch. `input.repo`, the explicit checkout path a
+workflow author may bind, is unchanged and unrelated.
+
+The identity comes from the **registry and nowhere else**. A run input, an
+event payload, or an upstream node's output that carries a
+`repository_identity` key does not reach the actor with it: the control plane
+overwrites the key for an actor that declares an identity and removes it for
+one that does not. That is not defensiveness for its own sake — a
+trigger-created run's input *is* the event payload verbatim, and a GitHub
+pull-request payload names a repository of its own, so a bridge resolving a
+checkout from whatever arrived under this key would be taking a checkout
+instruction from the event that started the run.
+
+An actor whose registration declares no identity is dispatched exactly as it
+was before this key existed: no key, and no new required field.
+
+### What a bridge does with it (task t2)
+
+Resolution is the actor host's job and its answer is host-local, so the
+protocol says nothing about *how* a name becomes a directory — only what the
+answers may be. Every bridge that runs a session inside a checkout carries
+one shared resolver (`adapters/*/src/*/repositories.py`, byte-identical, and
+guarded as such by `tests/lint/repositoryidentity_test.go`) with this
+contract:
+
+| Situation | Answer |
+|---|---|
+| `input.repo` present | Used as before; the identity is not consulted. |
+| Identity resolves to exactly one permitted checkout | Dispatched there, after the path is validated against `repo_allowlist` like any other repo. |
+| Identity resolves to **two or more** permitted checkouts | `400` `repository_identity_ambiguous`, naming the colliding paths and hinting at the fix. Never a first match. |
+| Identity resolves to **nothing** the bridge may touch | `400` `repository_identity_unknown`, naming the identity. |
+| A host-local declaration points outside the allowlist | `403` `repository_identity_not_permitted`. A declaration says *which* repository, never that the bridge may touch it. |
+| No identity supplied | The bridge's own fallback, unchanged. |
+
+The key is **transport, not content**: a bridge must exclude it from
+whatever block it forwards engine-resolved bindings to the model in, the
+same way `repo` is excluded. A bridge with no checkout at all
+(`adapters/notify`, `adapters/human-inbox`) resolves nothing and is not
+expected to.
+
 ## The preflight capability surface (issue #67, tasks t14/t15)
 
 An actor may advertise, in its **registration** (`actors.capabilities`), the

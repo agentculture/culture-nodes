@@ -191,6 +191,27 @@ func runRegisterActor(t *testing.T, env []string) (output string, exitCode int) 
 	return "", -1
 }
 
+// runRegisterActorArgs is runRegisterActor with argv. The flag-taking form
+// exists because --metadata has no environment-variable equivalent: it is
+// repeatable, and a single env var could not express two keys.
+func runRegisterActorArgs(t *testing.T, env []string, args ...string) (output string, exitCode int) {
+	t.Helper()
+
+	cmd := exec.Command("bash", append([]string{registerActorScriptPath(t)}, args...)...)
+	cmd.Env = append([]string{"PATH=" + os.Getenv("PATH")}, env...)
+	out, err := cmd.CombinedOutput()
+	output = string(out)
+	if err == nil {
+		return output, 0
+	}
+	var exitErr *exec.ExitError
+	if asExitError(err, &exitErr) {
+		return output, exitErr.ExitCode()
+	}
+	t.Fatalf("run register-actor.sh: %v (output: %s)", err, output)
+	return "", -1
+}
+
 func asExitError(err error, target **exec.ExitError) bool {
 	if ee, ok := err.(*exec.ExitError); ok {
 		*target = ee
@@ -315,7 +336,7 @@ func TestRegisterActorUnchangedRowIssuesNoInsert(t *testing.T) {
 	dir := t.TempDir()
 	psqlPath, _, insertLog := newFakePsql(t, dir,
 		"ns-1",
-		"3|http://192.168.1.5:17070|CODEX_THOR_TOKEN",
+		"3|http://192.168.1.5:17070|t",
 	)
 
 	env := []string{
@@ -350,7 +371,7 @@ func TestRegisterActorChangedEndpointInsertsNextRevision(t *testing.T) {
 	dir := t.TempDir()
 	psqlPath, _, insertLog := newFakePsql(t, dir,
 		"ns-1",
-		"3|http://192.168.1.5:17070|CODEX_THOR_TOKEN",
+		"3|http://192.168.1.5:17070|t",
 	)
 
 	env := []string{
@@ -393,6 +414,134 @@ func TestRegisterActorChangedEndpointInsertsNextRevision(t *testing.T) {
 	}
 	if strings.Contains(string(calls), "UPDATE") || strings.Contains(string(calls), "DELETE") {
 		t.Errorf("a changed endpoint issued an UPDATE or DELETE against Postgres; calls: %q", calls)
+	}
+}
+
+// TestRegisterActorMergesMetadataInsteadOfReplacingIt is the guard for the
+// hazard found while registering handover_remote across the fleet (task t9).
+//
+// Every registration writes a NEW ROW. The previous implementation built that
+// row's metadata from a hardcoded `{"auth_token_env": ...}` literal, so any
+// later registration silently dropped every other key -- and once an actor
+// carries handover_remote, dropping it makes scripts/collect-handover.py fall
+// back to a template or fail outright, with nothing pointing at the cause.
+//
+// The fix is to carry the prior revision's metadata forward inside Postgres
+// (INSERT ... SELECT ... metadata || overlay) rather than through the shell,
+// which also keeps stored JSON from ever being re-interpolated into the
+// statement. This test pins the merge, not the particular keys.
+func TestRegisterActorMergesMetadataInsteadOfReplacingIt(t *testing.T) {
+	dir := t.TempDir()
+	psqlPath, _, insertLog := newFakePsql(t, dir,
+		"ns-1",
+		"3|http://192.168.1.5:17070|f", // the overlay is NOT already present
+	)
+
+	env := []string{
+		"PSQL_CMD=" + psqlPath,
+		"NODES_NAMESPACE_ID=ns-1",
+		"ACTOR_KEY=company/codex-thor",
+		"ENDPOINT_URL=http://192.168.1.5:17070",
+		"AUTH_TOKEN_ENV=CODEX_THOR_TOKEN",
+	}
+	output, exitCode := runRegisterActorArgs(t, env,
+		"--metadata", "handover_remote=ssh://thor/~/git/culture-nodes-agent")
+
+	if exitCode != 0 {
+		t.Fatalf("exit code = %d, want 0; output: %s", exitCode, output)
+	}
+
+	inserted, err := os.ReadFile(insertLog)
+	if err != nil {
+		t.Fatalf("read insert log: %v", err)
+	}
+	insertedText := string(inserted)
+	if !strings.Contains(insertedText, "metadata || ") {
+		t.Errorf("INSERT must MERGE the previous revision's metadata, but no `metadata || ` appears; insert log: %q", insertedText)
+	}
+	if !strings.Contains(insertedText, "INSERT INTO actors") || !strings.Contains(insertedText, "SELECT") {
+		t.Errorf("a merge needs INSERT ... SELECT so the prior row supplies the carried metadata; insert log: %q", insertedText)
+	}
+	if !strings.Contains(insertedText, "handover_remote") {
+		t.Errorf("INSERT does not carry the requested metadata key; insert log: %q", insertedText)
+	}
+	// kind and protocol must be carried forward, not re-asserted: hardcoding
+	// 'agent'/'http' could not register the human-inbox actor at all, and would
+	// silently rewrite a human or runner row into an agent one.
+	if strings.Contains(insertedText, "'agent', 'http'") {
+		t.Errorf("INSERT re-asserts kind/protocol instead of carrying them forward; insert log: %q", insertedText)
+	}
+}
+
+// TestRegisterActorMetadataOnlyChangeIsNotReportedUnchanged pins the other
+// half of the same fix. The idempotency check used to compare only endpoint
+// and auth_token_env, so a registration whose entire purpose was to ADD a
+// metadata key reported "unchanged" and wrote nothing.
+func TestRegisterActorMetadataOnlyChangeIsNotReportedUnchanged(t *testing.T) {
+	dir := t.TempDir()
+	psqlPath, _, insertLog := newFakePsql(t, dir,
+		"ns-1",
+		"3|http://192.168.1.5:17070|f", // same endpoint, overlay not yet present
+	)
+
+	env := []string{
+		"PSQL_CMD=" + psqlPath,
+		"NODES_NAMESPACE_ID=ns-1",
+		"ACTOR_KEY=company/codex-thor",
+		"ENDPOINT_URL=http://192.168.1.5:17070",
+		"AUTH_TOKEN_ENV=CODEX_THOR_TOKEN",
+	}
+	output, exitCode := runRegisterActorArgs(t, env,
+		"--metadata", "handover_remote=ssh://thor/~/git/culture-nodes-agent")
+
+	if exitCode != 0 {
+		t.Fatalf("exit code = %d, want 0; output: %s", exitCode, output)
+	}
+	if strings.Contains(output, "unchanged") {
+		t.Errorf("a metadata-only change must not report unchanged; output: %q", output)
+	}
+	inserted, err := os.ReadFile(insertLog)
+	if err != nil {
+		t.Fatalf("read insert log: %v", err)
+	}
+	if len(inserted) == 0 {
+		t.Error("a metadata-only change wrote no INSERT, so the new key would never reach the registry")
+	}
+}
+
+// TestRegisterActorRefusesUnsafeMetadata: metadata values are interpolated
+// into a JSON literal which is itself interpolated into SQL, so a value that
+// needs escaping is refused rather than escaped -- the same shell-native
+// parameterization the endpoint and actor-key checks use, one layer deeper.
+func TestRegisterActorRefusesUnsafeMetadata(t *testing.T) {
+	for _, bad := range []string{
+		"handover_remote=ssh://thor/'; DROP TABLE actors; --",
+		`handover_remote=a"b`,
+		`handover_remote=a\b`,
+		"bad key=value",
+		"handover_remote=",
+	} {
+		t.Run(bad, func(t *testing.T) {
+			env := []string{
+				"PSQL_CMD=/nonexistent/should-not-run/psql",
+				"NODES_NAMESPACE_ID=ns-1",
+				"ACTOR_KEY=company/codex-thor",
+				"ENDPOINT_URL=http://192.168.1.5:17070",
+			}
+			output, exitCode := runRegisterActorArgs(t, env, "--metadata", bad)
+			if exitCode == 0 {
+				t.Fatalf("register-actor.sh accepted unsafe metadata %q; output: %s", bad, output)
+			}
+			if !strings.Contains(output, "refusing") || !strings.Contains(output, "metadata") {
+				t.Errorf("refusal for %q did not name metadata as the cause; output: %q", bad, output)
+			}
+			// The refusal must happen before any Postgres access, exactly as
+			// the hostname refusal does -- PSQL_CMD points nowhere, so a
+			// "no such file" message would prove the check ran too late.
+			if strings.Contains(output, "No such file") || strings.Contains(output, "not found") {
+				t.Errorf("metadata was validated only after shelling out to psql; output: %q", output)
+			}
+		})
 	}
 }
 

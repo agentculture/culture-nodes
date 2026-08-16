@@ -12,12 +12,16 @@ import (
 	"time"
 )
 
-// Endpoint is a resolved actor: where to POST and what credential to present.
+// Endpoint is a resolved actor: where to POST, what credential to present,
+// and the deployment facts about the actor that the invocation itself must
+// carry.
 //
 // It carries no provider, model, or vendor field, and it never will — §9.5
 // puts those in telemetry metadata reported *by* the adapter, not in the
-// dispatch path. What the control plane needs to invoke an actor is a URL and
-// a credential.
+// dispatch path. RepositoryIdentity is not one of those: it is not a fact
+// about which engine runs behind the actor, it is a fact about which
+// repository this deployment registered the actor to work in, and it reaches
+// the actor through the same registry read that answers where to POST.
 type Endpoint struct {
 	// URL is the actor's base URL. InvocationPath is appended to it, so
 	// "https://actor.example" and "https://actor.example/" both invoke
@@ -34,6 +38,12 @@ type Endpoint struct {
 	// Protocol headers (Idempotency-Key, Authorization, Content-Type) are set
 	// by the client and win over anything here.
 	Header http.Header
+	// RepositoryIdentity is the repository the registration says this actor
+	// works in, sent on every dispatch under RepositoryIdentityKey (issue
+	// #125). Empty means the registration declares none, and the dispatch
+	// carries no identity at all — see WithRepositoryIdentity for why that
+	// is a removal rather than a passthrough.
+	RepositoryIdentity string
 	// DialIn routes through an authenticated reverse connection. URL remains
 	// populated during mixed mode as the outbound fallback.
 	DialIn          DialInInvoker
@@ -282,7 +292,11 @@ func ParseInvocationResponse(status int, payload []byte) (InvocationResponse, er
 		}
 		return InvocationResponse{Async: true, Accepted: &accepted, StatusCode: status, Requests: 1}, nil
 	default:
-		return InvocationResponse{}, &InvocationError{Class: classifyStatus(status), Op: "invoke", StatusCode: status, Requests: 1, Body: capture(payload), Message: "dial-in bridge refused invocation"}
+		// The dial-in path lifts the bridge's own rejection reason exactly as
+		// the outbound path does (task t3): the transport inversion this
+		// cycle is running must not re-lose the diagnostic issue #125 was
+		// about the moment a bridge stops being reachable by address.
+		return InvocationResponse{}, &InvocationError{Class: classifyStatus(status), Op: "invoke", StatusCode: status, Requests: 1, Body: capture(payload), ActorError: actorErrorFrom(payload), Message: "dial-in bridge refused invocation"}
 	}
 }
 
@@ -379,11 +393,15 @@ func (c *Client) invokeOnce(ctx context.Context, url string, endpoint Endpoint, 
 	// on the circuit breaker deciding how long to pause the actor.
 	usage, terminationReason, preserve := telemetryFromErrorBody(payload)
 	return InvocationResponse{}, &InvocationError{
-		Class:             class,
-		Op:                "invoke",
-		StatusCode:        resp.StatusCode,
-		Message:           fmt.Sprintf("actor answered %s", http.StatusText(resp.StatusCode)),
-		Body:              capture(payload),
+		Class:      class,
+		Op:         "invoke",
+		StatusCode: resp.StatusCode,
+		Message:    fmt.Sprintf("actor answered %s", http.StatusText(resp.StatusCode)),
+		Body:       capture(payload),
+		// The actor's own reason, beside this package's summary of the
+		// status (task t3, issue #125). Message names the status; this names
+		// what the actor said was wrong with the request.
+		ActorError:        actorErrorFrom(payload),
 		RetryAfter:        parseRetryAfter(resp.Header.Get("Retry-After"), c.now()),
 		Usage:             usage,
 		TerminationReason: terminationReason,

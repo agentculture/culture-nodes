@@ -86,6 +86,7 @@ docstring has the full precedence rule: file sets the baseline, then
 | Config file key | Env var | Default | Meaning |
 |---|---|---|---|
 | `repo_allowlist` | `COLLEAGUE_BRIDGE_REPO_ALLOWLIST` (`:`-joined) | `[]` | Absolute repo paths this bridge will dispatch into. A request naming any other `input.repo` is refused `403`. **Empty means the bridge accepts no repo** — the safe default. |
+| `repo_identities` | `COLLEAGUE_BRIDGE_REPO_IDENTITIES` (`:`-joined `name=path`) | `{}` | Maps a **repository identity** (the name the control plane sends from the actor's `metadata.repository_identity`) to a checkout on this host. Only needed when a checkout directory is not named after the repository it holds — otherwise the name is inferred from `repo_allowlist`. A declaration says *which* repository, never that the bridge may touch it: the resolved path still has to pass `repo_allowlist`. See [Repository identity](#repository-identity-issue-125). |
 | `colleague_bin` | `COLLEAGUE_BRIDGE_COLLEAGUE_BIN` | `"colleague"` | Path/name of the colleague executable (resolved via `PATH` if bare). |
 | `colleague_env` | — (file only) | `{}` | Extra env vars merged onto every colleague subprocess (`COLLEAGUE_ENGINE`, `COLLEAGUE_MODEL`, `COLLEAGUE_BASE_URL`, `COLLEAGUE_API_KEY`, `COLLEAGUE_LOBES_URL`, ...). Operator-supplied only — the bridge never invents a value here. |
 | `open_pr` | `COLLEAGUE_BRIDGE_OPEN_PR` | `false` | Pass `--no-pr` unless true. A headless actor bridge defaults to local-commit-only. |
@@ -129,7 +130,8 @@ bridge's own contract for it is:
 | Field | Required | Meaning |
 |---|---|---|
 | `instruction` | yes | The goal/instruction passed to `colleague work`. `400` without it. |
-| `repo` | yes | Absolute path; must be in `repo_allowlist` or the invocation is refused `403`. |
+| `repo` | no | Absolute path; must be in `repo_allowlist` or the invocation is refused `403`. Optional since issue #125: when absent, the checkout is resolved from `repository_identity`, and only then from a single-entry `repo_allowlist`. |
+| `repository_identity` | no | Set by the **control plane**, from the actor's registration, and never by a workflow author or an event payload. Resolved to a checkout on this host when `repo` is absent. A name that reaches two permitted checkouts, or none, is a named `400` (`repository_identity_ambiguous` / `repository_identity_unknown`) with a hint — never a silently-picked first match. |
 | `role` | no | Passed as `--role`. Validated against colleague's built-in roles (`explorer`, `planner`, `reviewer`, `validator`, `writer`) or a `.colleague/agents/<role>.md` override in the target repo; unknown role is `400`. |
 | `max_steps` | no | Passed as `--max-steps`; also the "expected duration" signal for the sync/async threshold. |
 | `mode` | no | Passed as `--mode` (`work`\|`plan`\|`explore`\|`review`). |
@@ -159,6 +161,33 @@ rate-limit, or session-limit refusal, this bridge classifies the failure
 HTTP `Retry-After` header on the synchronous failure response when the
 text names a delay. See `adapters/claude-code/README.md`'s identical
 section for the full rationale.
+
+## Repository identity (issue #125)
+
+A trigger-created run's `input` *is* the event payload, and a payload carries
+no checkout path. The control plane therefore sends the actor's registered
+repository **identity** — a name, from `actor.metadata.repository_identity`
+and from nowhere else — and this bridge maps it to a directory, because a
+path chosen on the control-plane host need not exist here.
+
+The mapping is tried in two steps:
+
+1. **Declared** — `repo_identities[identity]`, the operator's own statement.
+2. **Inferred** — the identity's repository segment
+   (`agentculture/culture-nodes` → `culture-nodes`) matched against the final
+   component of every path this bridge may work in: each `repo_allowlist`
+   entry, and `<root>/<name>` for each `repo_allowlist_prefixes` root that
+   actually holds such a directory.
+
+Then the survivor is validated against `repo_allowlist` like any other repo.
+Ambiguity and misses are named, hinted refusals, mirroring how
+`only_allowed_repo()` already fails closed — and `repo_allowlist` goes back to
+being a pure **permission** surface, free to hold as many entries as the host
+needs.
+
+An explicit `input.repo` still wins, and an actor registered with no identity
+dispatches exactly as before: the single-allowlist-entry inference is
+unchanged.
 
 ## Preflight capability surface (issue #67)
 

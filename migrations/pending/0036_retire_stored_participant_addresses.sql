@@ -1,16 +1,41 @@
--- CONTRACT MIGRATION -- HUMAN-APPROVED ADR 0002 BYPASS (close-the-backlog t24).
+-- CONTRACT MIGRATION -- THE ADR 0002 BYPASS IS WITHDRAWN (see issue #143).
 --
--- ADR 0002 normally requires this drop to wait one full release after the
--- last binary that reads or writes these columns.  Expand-contract protects a
--- rolling fleet: it prevents an N-1 binary from meeting a schema it cannot
--- read.  Production here is not a rolling fleet; it is exactly two workers
--- and one API, and deploy/prod/deploy.sh restarts all three together.  The
--- human-approved bypass therefore permits this contract step in the same
--- release as the code that stops using the columns.
+-- This file previously carried an operator-approved exception to that ADR,
+-- resting on a claim that production was not a rolling fleet -- that it was a
+-- couple of workers plus an API which one deploy operation restarted together.
+-- That claim was measured against the real deployment during the
+-- upkeep-dispatch/address-retirement cycle and is FALSE.  It was also
+-- incomplete: it never mentioned the scheduler.
 --
--- This exception does not generalise.  If the fleet ever grows past what one
--- deploy.sh operation can restart, the next contract step needs the full
--- expand-contract sequence and N-1 compatibility required by ADR 0002.
+-- ADR 0002 requires this contract migration to wait one full release after the
+-- last binary that reads or writes these columns.  Production spans two
+-- INDEPENDENTLY DEPLOYED hosts: `deploy.sh thor` runs the migration and
+-- restarts thor's API, scheduler, and worker, while `deploy.sh orin`
+-- separately restarts orin's worker.  `deploy.sh` takes one host argument, so
+-- one invocation cannot restart both.  After a thor deploy applies the
+-- migration, the previous orin worker therefore remains active against the
+-- migrated schema.
+--
+-- That N-1 window is not survivable for THIS migration, because the previous
+-- worker uses both dropped columns: it reads `actors.endpoint_ref` when
+-- resolving actor endpoints (internal/worker/registry.go's DBRegistry.Resolve,
+-- reached from dispatch, branch cancellation and budget paths), and it both
+-- writes and reads `runner_invocations.endpoint` for durable runner operations
+-- (internal/store/postgres/runnerasync.go).  Dropping the columns under a live
+-- N-1 worker produces "column does not exist" against production traffic --
+-- the same failure the premature merge into migrations/ produced against the
+-- test suite.
+--
+-- THE REQUIRED SEQUENCE IS THEREFORE FULL EXPAND-CONTRACT, NOT A BYPASS:
+--   1. Keep both columns.
+--   2. Ship code that no longer reads or writes either column.
+--   3. Deploy that code to thor AND orin, completing a full fleet release.
+--   4. Only in a LATER release, apply this drop on thor.
+--   5. Then deploy that later release to orin; its still-running N-1 binary is
+--      safe because N-1 already stopped using the columns.
+--
+-- The transport cutover precondition below remains independently necessary.
+-- Satisfying it does not discharge ADR 0002's separate N-1 requirement.
 --
 -- EXECUTION PRECONDITION: do not apply this migration while mixed mode is in
 -- use.  docs/decisions/transport-inversion.md retains endpoint_ref as the

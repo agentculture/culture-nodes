@@ -354,7 +354,7 @@ func (w *Worker) refuseUnacknowledged(
 	_, err := w.complete(ctx, claimed, engine.CompletionRequest{
 		TechStatus:     engine.StatusPolicyDenied,
 		RefusalOutcome: engine.OutcomePreflightUnacknowledged,
-		Output:         diagnosticOutput(PreflightRefusalClass, detail),
+		Output:         diagnosticOutput(PreflightRefusalClass, detail, nil),
 	})
 	if err != nil {
 		if isStale(err) {

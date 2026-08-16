@@ -243,3 +243,168 @@ def test_actors_bare_noun_points_at_explain(capsys) -> None:
     out = capsys.readouterr().out
     assert rc == 0
     assert "nodes explain actors" in out
+
+
+# --- nodes actors dial-in (task t6, issues #136 / #121) ---------------------
+#
+# Retiring the stored participant address does not retire the question the
+# address answered. This is the operator's read-only view of it: which
+# bridges are dialled in right now, answered without dispatching anything.
+
+DIAL_IN_PRESENCE = {
+    "observed_at": "2026-08-16T12:00:00Z",
+    "window_seconds": 30,
+    "connected": 1,
+    "disconnected": 1,
+    "never_dialled": 2,
+    "items": [
+        {
+            "actor_key": "company/developer",
+            "actor_id": "act-dev",
+            "revision": 3,
+            "kind": "agent",
+            "presence": "connected",
+            "last_seen_at": "2026-08-16T11:59:57Z",
+            "seconds_since_last_seen": 3.0,
+            "credential": {
+                "issued": True,
+                "issued_at": "2026-08-15T09:00:00Z",
+                "issuance_count": 1,
+                "revoked": False,
+                "locked_out": False,
+                "failure_count": 0,
+            },
+        },
+        {
+            "actor_key": "company/notify",
+            "actor_id": "act-notify",
+            "revision": 1,
+            "kind": "agent",
+            "presence": "disconnected",
+            "last_seen_at": "2026-08-16T10:00:00Z",
+            "seconds_since_last_seen": 7200.0,
+            "credential": {
+                "issued": True,
+                "issuance_count": 1,
+                "revoked": False,
+                "locked_out": False,
+                "failure_count": 0,
+            },
+        },
+        {
+            "actor_key": "company/codex-thor",
+            "actor_id": "act-thor",
+            "revision": 2,
+            "kind": "agent",
+            "presence": "never_dialled",
+        },
+        {
+            "actor_key": "company/revoked-bridge",
+            "actor_id": "act-revoked",
+            "revision": 1,
+            "kind": "agent",
+            "presence": "never_dialled",
+            "credential": {
+                "issued": True,
+                "issuance_count": 2,
+                "revoked": True,
+                "revoked_at": "2026-08-16T09:00:00Z",
+                "locked_out": False,
+                "failure_count": 0,
+            },
+        },
+    ],
+}
+
+
+def _serve_presence(fake_api, payload=None):
+    fake_api.route(
+        "GET",
+        r"/v1alpha1/dial-in-presence$",
+        lambda h, m, q, b: h.send_json(200, payload or DIAL_IN_PRESENCE),
+    )
+    fake_api.start()
+
+
+def test_dial_in_lists_presence_without_dispatching(fake_api, capsys) -> None:
+    """Criterion 1: one GET answers 'who is connected', and it is the only call."""
+    _serve_presence(fake_api)
+    rc = main(["actors", "dial-in", "--api-url", fake_api.base_url])
+    out = capsys.readouterr().out
+    assert rc == 0
+    # Exactly one request, and it is a read.
+    assert [(method, path) for method, path, _ in fake_api.requests] == [
+        ("GET", "/v1alpha1/dial-in-presence")
+    ]
+    assert "company/developer" in out
+    assert "connected" in out
+    # The window the claim is made against is stated, not implied.
+    assert "30" in out
+
+
+def test_dial_in_distinguishes_never_dialled_from_dropped(fake_api, capsys) -> None:
+    """Criterion 2: absence has two shapes, and the dropped one names when."""
+    _serve_presence(fake_api)
+    rc = main(["actors", "dial-in", "--api-url", fake_api.base_url])
+    out = capsys.readouterr().out
+    assert rc == 0
+    lines = {line.split()[0]: line for line in out.splitlines() if line.startswith("company/")}
+
+    dropped = lines["company/notify"]
+    assert "DISCONNECTED" in dropped
+    assert "2026-08-16T10:00:00Z" in dropped
+
+    never = lines["company/codex-thor"]
+    assert "NEVER DIALLED" in never
+    # A bridge that never dialled in has no last-seen instant to report, and
+    # must not borrow one that reads like "just now".
+    assert "2026-08-16T10:00:00Z" not in never
+    assert "ago" not in never
+
+
+def test_dial_in_names_revocation_as_its_own_reason(fake_api, capsys) -> None:
+    """A revoked credential looks absent for a reason an outage cannot fix."""
+    _serve_presence(fake_api)
+    rc = main(["actors", "dial-in", "--api-url", fake_api.base_url])
+    out = capsys.readouterr().out
+    assert rc == 0
+    revoked = next(line for line in out.splitlines() if "company/revoked-bridge" in line)
+    assert "REVOKED" in revoked
+
+
+def test_dial_in_absent_only_filters_to_the_problem(fake_api, capsys) -> None:
+    _serve_presence(fake_api)
+    rc = main(["actors", "dial-in", "--absent-only", "--api-url", fake_api.base_url])
+    out = capsys.readouterr().out
+    assert rc == 0
+    assert "company/developer" not in out
+    assert "company/notify" in out
+    assert "company/codex-thor" in out
+
+
+def test_dial_in_json_is_passthrough(fake_api, capsys) -> None:
+    _serve_presence(fake_api)
+    rc = main(["actors", "dial-in", "--json", "--api-url", fake_api.base_url])
+    out = capsys.readouterr().out
+    assert rc == 0
+    payload = json.loads(out)
+    assert payload["connected"] == 1
+    assert payload["items"][2]["presence"] == "never_dialled"
+
+
+def test_dial_in_reports_an_empty_fleet_honestly(fake_api, capsys) -> None:
+    _serve_presence(
+        fake_api,
+        {
+            "observed_at": "2026-08-16T12:00:00Z",
+            "window_seconds": 30,
+            "connected": 0,
+            "disconnected": 0,
+            "never_dialled": 0,
+            "items": [],
+        },
+    )
+    rc = main(["actors", "dial-in", "--api-url", fake_api.base_url])
+    out = capsys.readouterr().out
+    assert rc == 0
+    assert "no registered actors" in out

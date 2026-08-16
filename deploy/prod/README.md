@@ -179,6 +179,7 @@ of three classes:
 | `required` | the service cannot work without it | **fails the audit** when absent or empty |
 | `optional` | absence is a legitimate choice that *closes a feature* rather than breaking one (`DISCORD_WEBHOOK_URL`, the closed-by-default bearer secrets, the runner-service placement keys) | reported, never a failure |
 | `unknown` | present in `prod.env`, declared by no compose file (`NODES_RUNNER_SECRET` is one on both hosts) | reported and **left alone** — `prod.env` legitimately carries keys compose never mentions; `remove-secret.sh` is the deliberate removal path |
+| `forbidden` | a key that must **not** be here at all: any `*_DIAL_TOKEN`, because a dial-in credential has exactly one custody point and it is not this file | **fails the audit**, naming the key (see [Dial-in credentials](#dial-in-credentials-issue-111)) |
 
 The declared set is **read from `compose.thor.yml` and `compose.orin.yml`**,
 never from a list in the script, so it cannot drift from what compose
@@ -205,6 +206,98 @@ not installed on orin.** `install-secrets.sh`'s relay lane targets `$THOR`
 only, while `compose.orin.yml` declares the variable — so orin's worker
 401s on any claude node run it claims. The audit reports it; installing it
 is a change to `install-secrets.sh` that has not been made.
+
+## Dial-in credentials (issue #111)
+
+A bridge no longer waits at an address for the control plane to call it: it
+**dials out** and identifies itself with a token **the control plane issued**
+(`POST /v1alpha1/inbound/credentials`, issue #111's dial-in half). One
+command issues and delivers one bridge's credential:
+
+```bash
+./issue-dialin-credential.sh company/codex-thor            # issue + deliver
+./issue-dialin-credential.sh --revoke company/codex-thor   # end its authority
+```
+
+### One plaintext, one digest
+
+This is the first bridge credential here with **one** plaintext custody
+point. Every other one has two — the bridge holds the token and `prod.env`
+holds the same token for the control plane to *present* when it dispatches
+outbound — and `install-secrets.sh` has a lane per credential whose whole job
+is keeping each pair in step.
+
+Dial-in reverses the direction, so the control plane never presents the
+value; it only verifies one, and keeps a SHA-256 verifier
+(`inbound_authentication`, migrations 0031/0037). What is left is:
+
+| copy | where | written by |
+|---|---|---|
+| the plaintext | the bridge's own per-bridge file | `issue-dialin-credential.sh`, and nothing else |
+| the digest | `inbound_authentication.verifier_sha256` | `POST /v1alpha1/inbound/credentials`, and nothing else |
+
+There is no lane that writes either one alone. Minting **replaces the
+verifier and reveals the plaintext in the same request**, this script has no
+mode that mints without delivering, and there is no mode that registers a
+value an operator invented — the control plane chooses it with `crypto/rand`
+and nothing can read it back. So a rotation replaces both copies or neither,
+and issue #133's failure shape (one copy updated, another left stale, in
+silence) has nowhere to occur.
+
+What two machines cannot do is commit atomically, so the remaining case is
+made **impossible to miss** rather than impossible:
+
+- delivery is prepare-then-replace, so a failed write leaves the bridge's
+  previous credential byte-intact;
+- the deliverer recomputes the SHA-256 of what it received and refuses to
+  write unless it equals the digest the control plane stored;
+- a delivery that fails *after* a successful mint exits non-zero and names
+  the party, which copy is ahead, and the repair (re-run — re-issuing
+  replaces the verifier again, so there is nothing to reconcile by hand);
+- `audit-credentials.sh` fails by name if a `*_DIAL_TOKEN` ever appears in a
+  `prod.env`, since for a single-copy credential the only inconsistency
+  `prod.env` can express is holding one at all — and it is not harmless:
+  `notify-bridge.service` lists `prod.env` as an `EnvironmentFile`, so such a
+  key would really be read.
+
+### Nothing is relayed, nothing is local
+
+The bearer that authorises minting
+(`NODES_INBOUND_ISSUANCE_TOKEN_SECRET`) is **read on the control plane host
+from its own `prod.env`** by the command that mints, and is never exported by
+the operator, never put on an argv (`curl` takes its whole configuration on
+stdin), and never returned. The credential itself flows from `curl` on the
+control plane host straight into the delivering command on the bridge host
+through a shell pipeline: it is never assigned to a variable in the script,
+never written locally, never printed. The operator's process handles an actor
+key, a host name, a URL and a digest.
+
+`install-secrets.sh` installs the issuance bearer on thor **add-if-absent**,
+outside the `FORCE_PROD` block, for both of that block's known problems —
+issue #124 (a key added to the guarded block cannot reach an
+already-provisioned host without rotating every secret beside it) and
+issue #133. `FORCE_ISSUANCE=1` rotates it through the same protocol as
+every other rotation here; doing so invalidates no issued credential, because
+admission reads each party's stored verifier and not this bearer.
+
+### Where a bridge reads it
+
+The destination is **per bridge**, not per backend: spark runs four
+claude-code bridges that share one prefix and one systemd `EnvironmentFile`,
+so a per-backend destination would give all four the same identity
+(issue #147). `dialin_bridges()` in the script carries one row per party, and
+a row's destination is either:
+
+- `env:<path>` — a single-purpose mode-0600 `EnvironmentFile` with the three
+  settings `dialin.configured()` requires together. This is what the shipped
+  bridge code reads today (`os.environ` only), and it is the default;
+- `json:<path>` — the per-bridge JSON config, where every other per-bridge
+  setting already lives.
+
+Which one a bridge *reads* from is issue #147's decision (plan task t8); this
+lane can already write either, so that decision does not need the script
+rewritten. Add `EnvironmentFile=-%h/<path>` to the bridge's unit for an `env`
+destination — the command prints the exact line.
 
 ## The runner is a host process (deviation d2)
 
@@ -739,12 +832,17 @@ Two mechanisms now hold the pairing, and both are needed:
   points at another bridge or another state directory, if the bridge's
   and tracker's `HUMAN_INBOX_BRIDGE_ACTOR_ID` values are swapped, or if
   the tracker's startup check is left disarmed.
-- **Runtime.** The tracker resolves the same registration at startup and
-  exits non-zero when its bridge is not the actor's bridge (task t8,
-  `verify_bridge_serves_actor`). `deploy.sh` writes
-  `HUMAN_INBOX_TRACKER_CONTROL_PLANE_URL` precisely so this check is
-  armed; unset, it degrades to a warning and the split runs silently
-  again.
+- **Runtime.** The tracker exits non-zero at startup when its bridge is
+  not the actor's bridge (task t8, `verify_bridge_serves_actor`). Since
+  task t7 it establishes that without any address: it asks the bridge on
+  `GET /identity` for the `store_id` of the state directory that bridge
+  owns and compares it against the one it reads off the local filesystem
+  — proof that the process it submits to is the process whose task store
+  it is emptying — then reads `GET /v1alpha1/dial-in-presence` to check
+  that the actor's work is dispatched to a bridge that dials in as this
+  one does. `deploy.sh` writes `HUMAN_INBOX_TRACKER_CONTROL_PLANE_URL`
+  precisely so that second half is armed; unset, the co-location proof
+  still runs and only the dispatch half degrades to a warning.
 
 A wrong deploy that never starts is still a wrong deploy, and a right
 deploy that nothing rechecks drifts on the next endpoint move.

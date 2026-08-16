@@ -57,7 +57,14 @@ HOSTS=(thor orin spark)
 
 # The toolchains measured on every host: the three the probe runs tested,
 # plus each backend CLI whose version bump would re-open them.
-TOOLS=(uv go gh git codex claude colleague)
+# node and npm are here because the TDD merge gate this repo is making a node
+# (#101) includes a web suite -- `cd web && npm run build && npm test`. A
+# capability surface that never measures npm cannot answer "can this lane run
+# the web build?", which is the question that decides where the gate node runs.
+# Measured by task t15 (run 01M05ZGNT86MAFDHATB6W5VYPN): preflight.py is
+# tool-agnostic (`names = list(argv)`), so naming them here is the entire
+# change -- the probe needs no edit at all.
+TOOLS=(uv go gh git node npm codex claude colleague)
 
 usage() {
 	sed -n '2,12p' "${BASH_SOURCE[0]}" >&2

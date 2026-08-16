@@ -254,6 +254,16 @@ Numbered SQL migrations for the authoritative PostgreSQL store (prd-spec
   human-approved ADR 0002 bypass. The migration itself records why the
   coordinated two-worker/one-API restart makes the exception valid and why
   it must not run until every bridge has left mixed-mode outbound fallback.
+- `0037_inbound_credential_issuance.sql` — expand-only: adds
+  `inbound_authentication.issued_at` and `issuance_count`, the provenance of
+  a credential the CONTROL PLANE minted (issue #111's dial-in half). It
+  discharges `0031`'s EXPIRY note: what 0031 and 0032 lacked was never
+  storage, verification, revocation or admission control — it was minting,
+  and a record with no provenance could not say whether an operator invented
+  the value. `issued_at IS NULL` means hand-provisioned, which the shipped
+  admission default refuses as `not_control_plane_issued`. Both columns are
+  an instant and a count, so the no-plaintext-at-rest posture 0031 and 0032
+  set is unchanged.
 
 Migrations are additive-first (expand-contract). See
 `docs/adr/0002-migration-policy.md` for the full policy, the N-1 binary

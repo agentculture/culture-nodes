@@ -159,7 +159,13 @@ func (w *Worker) dispatchActor(
 		Attempt:         dc.Attempt,
 		Workflow:        actors.WorkflowRef{Name: spec.Name, VersionDigest: spec.Digest},
 		Node:            actors.NodeRef{ID: node.ID, ContractDigest: node.ContractDigest},
-		Input:           dc.Input,
+		// The actor's REGISTERED repository identity, decided here and not by
+		// anything the run carries (issue #125). The endpoint was resolved
+		// from the actors table a few lines up, so the identity on the wire
+		// is the one the registry holds — an input that names a repository
+		// loses the argument, and an actor that registers no identity is
+		// dispatched without one. See actors.WithRepositoryIdentity.
+		Input:           actors.WithRepositoryIdentity(dc.Input, endpoint.RepositoryIdentity),
 		ContinuationRef: session.ContinuationRef,
 	}
 	if !dc.Deadline.IsZero() {
@@ -466,6 +472,14 @@ func (w *Worker) completeFromInvocationError(
 			// (task t25/t26, issue #49) on this synchronous failure's
 			// error body, nil unless it actually committed a branch.
 			Preserve: actors.PreserveOf(invokeErr).ToEngine(),
+			// What the actor said was WRONG (task t3, issue #125). The
+			// detail above names the class and the HTTP status — "actor
+			// answered Bad Request" — which is a status line, not a
+			// reason. This carries the bridge's own sentence, bounded
+			// and sanitized at the actors seam, so a refused dispatch is
+			// diagnosable from GET /v1alpha1/runs/{id} instead of by
+			// reproducing the call by hand.
+			ActorError: actors.ActorErrorOf(invokeErr),
 		})
 	if err != nil {
 		return err

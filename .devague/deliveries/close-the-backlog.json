@@ -2,7 +2,7 @@
   "plan_slug": "close-the-backlog",
   "schema_version": 1,
   "created": "2026-08-15T18:07:41Z",
-  "updated": "2026-08-15T19:46:57Z",
+  "updated": "2026-08-16T04:07:48Z",
   "deviations": [
     {
       "id": "d1",
@@ -211,6 +211,27 @@
       "origin": "llm",
       "status": "proposed",
       "classification": "acceptable"
+    },
+    {
+      "id": "d17",
+      "what": "Go work in the codex lane is capped at build/vet/non-DB tests \u2014 every remaining Go task needs a database or a listener, so t11, t21, t22, t23, t24, t32 and t33 move to the operator lane and the codex lane takes the accounting trio (t4, t26, t28)",
+      "task_ref": "t19",
+      "reason": "d14 installed Go on both codex hosts and reopened the lane for Go work; two rounds of live evidence now bound how far it reopened. Run 01M03F4Y5F3PHVE4DQPNTY36PT (t17b, thor) and run 01M03F5QWW6WQHV9W26WG8Y96A (issue 8, orin) both compiled, vetted and committed Go successfully \u2014 and both reported, unprompted and accurately, that they could NOT run the acceptance tests they had just written: no PostgreSQL, no Docker, and loopback listeners forbidden by the sandbox, so the whole internal/api package is unrunnable there. Both sets of tests passed on first execution in the operator lane, so the code was right and only the verification was missing. That is the precise shape of the cap: the codex lane can author Go but cannot GATE it, and a package whose acceptance criteria are database-backed would land as an unverified claim every time. Every remaining Go task is database-backed or listener-backed.",
+      "affects": [
+        "t11",
+        "t21",
+        "t22",
+        "t23",
+        "t24",
+        "t32",
+        "t33",
+        "t4",
+        "t26",
+        "t28"
+      ],
+      "origin": "llm",
+      "status": "proposed",
+      "classification": "needs-follow-up"
     }
   ]
 }

@@ -40,3 +40,6 @@
 # --- round 6 ---
 01M03F4Y5F3PHVE4DQPNTY36PT   # t17b (criteria 2+3), codex-thor — continuation of its own partial
 01M03F5QWW6WQHV9W26WG8Y96A   # issue #8 (three measured gaps), codex-orin
+
+# --- round 7 ---
+01M04C39ZQK8NHJPQFSG8Z3QNV   # sandbox socket probe, codex-thor — can a dispatch reach a database at all?

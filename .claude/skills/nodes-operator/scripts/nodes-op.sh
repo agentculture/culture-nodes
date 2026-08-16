@@ -57,9 +57,14 @@ usage: nodes-op.sh <verb> [args]
 
 Actors known to `assign`:
   codex-thor, codex-orin   codex bridges on thor/orin. Cross-machine, separate
-                           identity — but NO Go, npm or working uv on those
-                           hosts (#96), so anything they build needs the
-                           operator's gate on spark before it can be believed.
+                           identity. Go IS installed on both now (~/.local),
+                           so build and vet work — but the sandbox denies
+                           socket(2) outright, for loopback as well as egress
+                           (#119, measured), so NOTHING database-backed and
+                           nothing that binds a listener can run there. They
+                           can author Go; they cannot gate it. npm and uv are
+                           still absent/broken (#96). Route database-backed
+                           work elsewhere rather than accepting an unrun test.
   developer, planner,      claude bridges on spark. Full toolchain, so they can
   verifier, intake         actually run what they write — but all four share
                            ONE subscription window with the operator's own

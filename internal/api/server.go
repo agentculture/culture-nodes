@@ -121,6 +121,15 @@ type Server struct {
 	// issue #111's replacement clock because this is the first accepting path.
 	inboundAuthenticator *actors.InboundAuthenticator
 
+	// inboundIssuanceSecret gates the dial-in credential issuance and
+	// revocation routes (see requireInboundIssuanceAuth in
+	// inboundcredentials.go) — its own secret
+	// (NODES_INBOUND_ISSUANCE_TOKEN_SECRET), on the same closed-by-default
+	// posture as the four above: nil refuses every issuance with 401. This
+	// is issue #111's dial-in half — the credential a bridge presents is
+	// minted here, never invented by an operator.
+	inboundIssuanceSecret []byte
+
 	pollInterval time.Duration
 	webAssets    fs.FS
 
@@ -411,6 +420,12 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("POST /v1alpha1/actors/{id}/resume", s.wrap(s.handleResumeActor))
 	mux.HandleFunc("POST /v1alpha1/inbound/poll", s.handleInboundPoll)
 	mux.HandleFunc("POST /v1alpha1/inbound/{id}/complete", s.handleInboundComplete)
+	// Issue #111's dial-in half: the control plane mints what a bridge
+	// presents (see inboundcredentials.go). Registered before the {id}
+	// wildcard route above would ever be consulted for these paths — Go's
+	// mux prefers the more specific literal pattern.
+	mux.HandleFunc("POST /v1alpha1/inbound/credentials", s.wrap(s.handleIssueInboundCredential))
+	mux.HandleFunc("POST /v1alpha1/inbound/credentials/revoke", s.wrap(s.handleRevokeInboundCredential))
 
 	mux.HandleFunc("POST /v1alpha1/schedules", s.wrap(s.handleCreateSchedule))
 	mux.HandleFunc("GET /v1alpha1/schedules", s.wrap(s.handleListSchedules))

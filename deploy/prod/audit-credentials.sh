@@ -227,6 +227,13 @@ NODES_ACTOR_REGISTRATION_TOKEN_SECRET optional
 NODES_EVENT_TOKEN_SECRET optional
 NODES_ADHOC_RUN_TOKEN_SECRET optional
 
+# The dial-in credential issuance secret (issue #111's dial-in half). Same
+# closed-by-default reasoning: unset, POST /v1alpha1/inbound/credentials
+# refuses 401 and nothing else changes — a bridge that already holds an
+# issued credential keeps dialling, because admission reads the stored
+# verifier, not this key. Absence closes issuance; it breaks nothing.
+NODES_INBOUND_ISSUANCE_TOKEN_SECRET optional
+
 # Runner-service placement. Unset keeps the in-process CodeRunner path, which
 # is a complete deployment — these select the host runner service instead.
 # deploy.sh's own comment for the sibling pr-upkeep grants states the same

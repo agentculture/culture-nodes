@@ -114,7 +114,13 @@ func (r *DBRegistry) Resolve(ctx context.Context, ref string) (actors.Endpoint, 
 	}
 	url := endpointRef.String
 	endpoint := actors.Endpoint{URL: url}
-	if available, availErr := r.store.InboundActorAvailable(ctx, r.namespaceID, key, time.Now().UTC().Add(-30*time.Second)); availErr == nil && available {
+	// The freshness window is actors.DialInPresenceCutoff, not a local
+	// literal: the read-only presence view (GET /v1alpha1/dial-in-presence,
+	// task t6) answers "is this bridge dialled in right now" and must give
+	// the same answer this line gives, or an operator would read "connected"
+	// for an actor dispatch had already decided was absent.
+	cutoff := actors.DialInPresenceCutoff(time.Now().UTC())
+	if available, availErr := r.store.InboundActorAvailable(ctx, r.namespaceID, key, cutoff); availErr == nil && available {
 		endpoint.DialIn = r.store
 		endpoint.DialInNamespace = r.namespaceID
 		endpoint.DialInActorKey = key

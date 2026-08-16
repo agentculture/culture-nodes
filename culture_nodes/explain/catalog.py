@@ -34,7 +34,7 @@ response.
 - `culture-nodes workflow generate|generation-get|validate|publish|list|get`
 - `culture-nodes run create|list|get|cancel|events|retag|grade`
 - `culture-nodes node-runs list`
-- `culture-nodes actors list|get|resume`
+- `culture-nodes actors list|get|resume|dial-in`
 - `culture-nodes ledger records|projection`
 - `culture-nodes review create|commit`
 - `culture-nodes human-tasks list|get|decide`
@@ -388,6 +388,46 @@ Resuming an actor that is not paused succeeds (exit `0`) rather than
 erroring: the intent — "this actor should be dispatchable" — is already
 satisfied. Work items already deferred become claimable again within the
 worker's deferral horizon (minutes), not instantaneously.
+
+## dial-in — which bridges are connected right now
+
+    culture-nodes actors dial-in [--absent-only]
+
+Every bridge dials OUT to the control plane and the control plane records no
+address for it (issue #121). That removes the decayed-address failure, but
+not the QUESTION the address answered: "is this bridge reachable?" becomes
+"is this bridge dialled in right now?", and `dial-in` is where that is
+answered.
+
+It is a READ, never a probe. There is no address to probe — presence is a
+fact PostgreSQL already holds, written by the bridge's own poll of
+`POST /v1alpha1/inbound/poll`. Nothing is dispatched, so asking costs no
+billable session and cannot fail a run.
+
+Each actor renders in one of three states, and the three are deliberately
+not two:
+
+- `connected` — polled within the window, printed in the header. That window
+  is the SAME one dispatch resolution uses when it decides whether an actor
+  is reachable through the durable mailbox, so this view can never say
+  connected while a dispatch says otherwise.
+- `DISCONNECTED` — this bridge HAS dialled in before and stopped. The
+  last-seen instant and how long ago it was are printed with it, because
+  *when* it dropped is the whole answer.
+- `NEVER DIALLED` — no presence record at all. A configuration or deployment
+  fact, not an outage, and it carries no last-seen instant rather than a
+  fabricated one.
+
+Where the credential explains the absence, the line says so — `REVOKED`,
+`LOCKED OUT until …`, `credential not control-plane issued`, or `no
+credential record`. A locked-out bridge is dialling and being refused, which
+is the opposite situation from one that is not dialling at all, and the two
+need different remedies. No verifier material is ever rendered.
+
+`--absent-only` drops the connected rows, which is the shape of the question
+an operator actually has. The summary counts stay, so `connected` against
+the total is a one-line fleet check — the check the address-retirement
+cutover makes before disabling the outbound fallback.
 """
 
 _REVIEW = """\
@@ -519,6 +559,7 @@ ENTRIES: dict[tuple[str, ...], str] = {
     ("actors", "list"): _ACTORS,
     ("actors", "get"): _ACTORS,
     ("actors", "resume"): _ACTORS,
+    ("actors", "dial-in"): _ACTORS,
     ("ledger",): _LEDGER,
     ("ledger", "records"): _LEDGER,
     ("ledger", "projection"): _LEDGER,

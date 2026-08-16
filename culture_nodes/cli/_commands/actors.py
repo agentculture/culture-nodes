@@ -200,9 +200,107 @@ def cmd_actors_resume(args: argparse.Namespace) -> int:
     return 0
 
 
+#: The three presence states GET /v1alpha1/dial-in-presence reports, and how
+#: each renders in text. Absence is SHOUTED and connectedness is not: the
+#: operator reading this view is looking for what is wrong, and today ten of
+#: eleven actors are absent, so the exceptional rows have to be the legible
+#: ones. `never_dialled` and `disconnected` are deliberately different words —
+#: a bridge nobody ever configured and a bridge that died an hour ago are
+#: different problems (task t6, issue #136).
+_PRESENCE_LABELS = {
+    "connected": "connected",
+    "disconnected": "DISCONNECTED",
+    "never_dialled": "NEVER DIALLED",
+}
+
+
+def _credential_note(credential: object) -> str:
+    """Name the credential-side reason an actor is absent, or "".
+
+    An actor can look absent for four unrelated reasons: its process is down,
+    its credential was revoked, it is locked out after repeated failures, or
+    it was never issued a control-plane credential. Only the first is an
+    outage, and they are indistinguishable in presence alone — which is
+    exactly the confusion an operator debugging at 03:00 cannot afford.
+    """
+    if credential is None:
+        return "no credential record (this actor cannot dial in)"
+    if not isinstance(credential, dict):
+        return ""
+    if credential.get("revoked"):
+        return f"REVOKED at {credential.get('revoked_at', 'an unrecorded instant')}"
+    if credential.get("locked_out"):
+        return (
+            f"LOCKED OUT until {credential.get('locked_until', '?')} "
+            f"after {credential.get('failure_count', 0)} failures"
+        )
+    if not credential.get("issued"):
+        return "credential not control-plane issued (dials are refused)"
+    return ""
+
+
+def _presence_line(item: dict) -> str:
+    presence = str(item.get("presence", ""))
+    label = _PRESENCE_LABELS.get(presence, presence or "unknown")
+    parts = [f"{item.get('actor_key', ''):<34} {label:<13}"]
+
+    last_seen = item.get("last_seen_at")
+    if last_seen:
+        seconds = item.get("seconds_since_last_seen")
+        ago = f" ({int(seconds)}s ago)" if isinstance(seconds, (int, float)) else ""
+        parts.append(f"last seen {last_seen}{ago}")
+    elif presence == "never_dialled":
+        # No instant to report, and none is invented: a fabricated one would
+        # read as "seen just now", which is the opposite of the truth.
+        parts.append("never seen")
+
+    note = _credential_note(item.get("credential"))
+    if note:
+        parts.append(note)
+    return "  ".join(parts).rstrip()
+
+
+def cmd_actors_dial_in(args: argparse.Namespace) -> int:
+    """Render current dial-in presence — who is connected right now.
+
+    One GET, nothing dispatched, nothing probed. The control plane holds no
+    address for a bridge (issue #121 retires the stored one), so this cannot
+    be a reachability probe and must not become one: presence is a fact
+    PostgreSQL already holds, written by the bridge's own poll.
+    """
+    client = client_from_args(args)
+    resp = client.request("GET", f"{API_PREFIX}/dial-in-presence")
+    if bool(getattr(args, "json", False)):
+        emit_json_passthrough(resp.raw)
+        return 0
+    payload = resp.payload or {}
+    items = payload.get("items") or []
+    if not items:
+        emit_result("no registered actors in this namespace", json_mode=False)
+        return 0
+
+    window = payload.get("window_seconds", "?")
+    header = (
+        f"observed at {payload.get('observed_at', '?')} "
+        f"(connected = polled within {window}s, the same window dispatch uses)\n"
+        f"{payload.get('connected', 0)} connected, "
+        f"{payload.get('disconnected', 0)} disconnected, "
+        f"{payload.get('never_dialled', 0)} never dialled"
+    )
+    if getattr(args, "absent_only", False):
+        items = [item for item in items if item.get("presence") != "connected"]
+        if not items:
+            emit_result(f"{header}\n\nevery registered actor is dialled in", json_mode=False)
+            return 0
+    lines = [_presence_line(item) for item in items]
+    emit_result("\n".join([header, "", *lines]), json_mode=False)
+    return 0
+
+
 def _bare_noun(args: argparse.Namespace) -> int:
     emit_result(
-        "usage: nodes actors {list,get,resume} ...\nrun 'nodes explain actors' for details",
+        "usage: nodes actors {list,get,resume,dial-in} ...\n"
+        "run 'nodes explain actors' for details",
         json_mode=False,
     )
     return 0
@@ -210,7 +308,8 @@ def _bare_noun(args: argparse.Namespace) -> int:
 
 def register(sub: argparse._SubParsersAction) -> None:
     p = sub.add_parser(
-        "actors", help="Thin client for the actors API (list/get/resume a capacity pause)."
+        "actors",
+        help="Thin client for the actors API (list/get/resume a pause/dial-in presence).",
     )
     p.add_argument("--json", action="store_true", help=JSON_FLAG_HELP)
     p.set_defaults(func=_bare_noun, json=False)
@@ -256,3 +355,17 @@ def register(sub: argparse._SubParsersAction) -> None:
     resume.add_argument("--json", action="store_true", help=JSON_FLAG_HELP)
     add_api_url_argument(resume)
     resume.set_defaults(func=cmd_actors_resume)
+
+    dialin = noun_sub.add_parser(
+        "dial-in",
+        help="Show which bridges are dialled in right now (read-only; nothing is dispatched).",
+    )
+    dialin.add_argument(
+        "--absent-only",
+        dest="absent_only",
+        action="store_true",
+        help="Only actors that are NOT currently dialled in (text mode).",
+    )
+    dialin.add_argument("--json", action="store_true", help=JSON_FLAG_HELP)
+    add_api_url_argument(dialin)
+    dialin.set_defaults(func=cmd_actors_dial_in, absent_only=False)

@@ -87,6 +87,32 @@ claims remain live, and outbound canaries have reached codex on thor and orin
 and claude-code, human-inbox, and notify on spark. Keep the mailbox rows through
 the incident review.
 
+## Contract sequencing and address-dependent tools
+
+Migration 0036 is the contract step, not part of mixed-mode rollout. It must
+not be applied until all five bridges have been converted to authenticated
+dial-in and outbound fallback has been disabled. Mixed mode deliberately
+depends on `actors.endpoint_ref`; dropping it sooner destroys the fallback and
+the per-bridge rollback procedure above. The migration carries the approved
+ADR 0002 bypass because the two workers and one API are restarted together by
+`deploy/prod/deploy.sh`. If that fleet can no longer be restarted in one
+operation, the exception no longer applies and a later contract needs the
+full expand-contract sequence.
+
+Two non-dispatch consumers must also be converted before applying 0036:
+
+- `internal/worker/registry.go` must resolve actor dispatch exclusively
+  through authenticated dial-in presence; no legacy bridge may remain.
+- `scripts/collect-handover.py` must obtain the Git remote from
+  `actor.metadata.handover_remote`. An operator template that needs `{host}`
+  is no longer valid because the registry no longer stores a host. Configure
+  the full per-actor remote explicitly; do not infer it from a connection.
+
+Runner sampling continues to resolve `runner_ref` through the configured
+runner-service registry on every poll. Migration 0036 removes only the copied
+`runner_invocations.endpoint`; runner service endpoints remain operator
+configuration, not participant addresses stored in PostgreSQL.
+
 ## Shared and backend-specific implementation
 
 The dial-in transport, authentication headers, retry/backoff, mailbox wire

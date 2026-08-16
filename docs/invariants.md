@@ -116,6 +116,7 @@ sweep; refused at append time by `internal/ledger/authority.go` otherwise).
 | `internal/worker/acceptance.go` | Validator-origin writer: acceptance evaluation (issue 37) |
 | `internal/worker/successsignal.go` | Validator-origin writer: mechanical `success_signal` evaluation (t18) |
 | `internal/worker/hooks.go` | Validator-origin writer: assurance-hook rejection reviews |
+| `internal/handover/verdict.go` | Validator-origin writer (task t11, issue #101): a suite verdict over a handed-over commit. A test suite **is** a deterministic producer — a commit plus a command yields the same exit code every time — where an operator reading a green tick is not evidence of anything, which is precisely the substitution t11 replaces. It sits in `internal/handover` rather than `internal/api` because the verdict and the ref measurement it judges must name the same commit, and the refusal that enforces that (a full 40-hex sha, or no record at all) belongs with the fetch it is about |
 | `internal/devague/deliverables.go` | Engine-origin writer: devague delivery-summary derivation (pre-batch) |
 | `internal/preflight/records.go` | Engine-origin writer: the clarify-then-commit gate's briefing (issue #67, task t14) — a deterministic composition of the host capabilities a bridge advertised and the pinned task declaration, computed by the engine and asserted by nobody |
 

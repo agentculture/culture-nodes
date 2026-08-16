@@ -52,3 +52,4 @@
 # --- round 10 ---
 01M04F8A06TBG2N1M1FJQAA2D6   # t22 (rate limit, lockout, revocation), codex-orin
 01M04F99A88BMY1YPAS5D7WVN7   # t32 (repair loop + deployed revision), developer
+01M04FCDSB2KFSX3M1HK2YWVA6   # t33 (upkeep schedule + affinity), planner

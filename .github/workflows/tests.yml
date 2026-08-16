@@ -110,6 +110,28 @@ jobs:
           echo "$out" | grep -q -- "--- PASS" || {
             echo "::error::no test in internal/queue/postgres reported PASS"; exit 1; }
 
+      # Task t21, criterion 1: prove against a REAL dump that the inbound
+      # credential table carries nothing an attacker could present. #30 ships
+      # these dumps to S3, so a secret in the database becomes a secret in
+      # object storage.
+      #
+      # The migrate is deliberate rather than redundant. pgtest.Run migrates
+      # the shared database, so the table happens to exist by the time this
+      # step runs — but only as a side effect of an earlier step, and a guard
+      # that silently depends on step ordering is one reordering away from
+      # exiting 2 and looking like an infrastructure problem.
+      #
+      # Exit codes are 0 pass / 1 fail / 2 could-not-check, and 2 fails this
+      # job on purpose: "I could not look" is not "I looked and it was fine".
+      # That is the same lesson as the skip guard above.
+      - name: inbound authentication dump carries no presentable credential
+        env:
+          NODES_DATABASE_URL: postgres://nodes:nodes-ci-only@localhost:5432/nodes?sslmode=disable
+          NODES_TEST_DATABASE_URL: postgres://nodes:nodes-ci-only@localhost:5432/nodes?sslmode=disable
+        run: |
+          go run ./cmd/nodes migrate
+          scripts/check-inbound-auth-dump.py
+
   lint:
     runs-on: ubuntu-latest
     permissions:

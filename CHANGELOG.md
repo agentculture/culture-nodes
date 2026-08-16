@@ -5,6 +5,41 @@ All notable changes to this project will be documented in this file.
 Format follows [Keep a Changelog](https://keepachangelog.com/). This project
 adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.25.4] - 2026-08-16
+
+### Added
+
+- **Inbound authentication records that cannot retain a presented secret
+  (#111).** The schema accepts only a fixed-width SHA-256 verifier or an
+  environment-variable name and rejects IP-shaped party keys, because dumps
+  are shipped to object storage and thor's address is not stable. Verification
+  hashes both sides before a constant-time comparison, and a PostgreSQL guard
+  makes schema-only and data dumps part of CI rather than trusting migration
+  text alone.
+
+### Verified
+
+- **Criterion 1 held against a real dump**, which the dispatched session could
+  not do (#119: its sandbox denies `socket(2)`, so no database). The guard
+  seeds a row whose SHA-256 is stored, then asserts the plaintext canary does
+  NOT appear in `pg_dump` output. Run here against PostgreSQL 17 it PASSES;
+  ablated by adding a `credential_plaintext TEXT` column it FAILS with
+  `plaintext-capable credential column found`. Exit codes are 0 / 1 / 2, and
+  the skip code fails CI on purpose — "I could not look" is not "I looked".
+
+### Notes
+
+- **The dispatch was refused by the scope guard, and correctly.** It added its
+  own CI step to `.github/workflows/tests.yml`, which no bridge actor may
+  modify; the run ended `policy_denied` on the *bridge-measured change set*
+  rather than on the instruction text, which is the #98 fix working. Eight of
+  its nine files were in scope and are merged as authored. The CI step was
+  re-authored in the operator lane with one change: it runs `nodes migrate`
+  first, because the table otherwise exists only as a side effect of the
+  earlier `go test` step, and a guard that silently depends on step ordering
+  is one reordering away from exiting 2 and looking like an infrastructure
+  problem.
+
 ## [0.25.3] - 2026-08-16
 
 Work package R8-A: tasks t4, t26 and t28 — the cycle tells the truth about

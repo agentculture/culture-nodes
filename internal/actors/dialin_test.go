@@ -2,7 +2,9 @@ package actors_test
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
+	"strings"
 	"testing"
 
 	"github.com/agentculture/culture-nodes/internal/actors"
@@ -53,6 +55,39 @@ func TestParseDialInResponses(t *testing.T) {
 	}
 	if result.Async || result.Result == nil || result.Result.Outcome != "completed" {
 		t.Fatalf("result = %+v", result)
+	}
+}
+
+// A 200 that parses as JSON but carries no outcome is still a rejection, but
+// it is a rejection with no underlying cause. Reporting it through %w against
+// a nil error would render the literal text "%!w(<nil>)" into the operator's
+// message and leave the unwrap chain broken, so the two rejection reasons must
+// be distinguishable: the malformed-JSON branch wraps, the missing-outcome
+// branch does not. Asserting only err != nil would pass either way.
+func TestParseDialInMissingOutcomeReportsCauseFreeError(t *testing.T) {
+	_, err := actors.ParseInvocationResponse(200, []byte(`{}`))
+	if err == nil {
+		t.Fatal("a 200 without an outcome is not a result and must be rejected")
+	}
+	if strings.Contains(err.Error(), "%!w(") {
+		t.Fatalf("missing-outcome error wraps a nil cause: %q", err.Error())
+	}
+	if unwrapped := errors.Unwrap(err); unwrapped != nil {
+		t.Fatalf("missing-outcome error has no cause to unwrap, got %v", unwrapped)
+	}
+}
+
+func TestParseDialInMalformedBodyKeepsJSONCause(t *testing.T) {
+	_, err := actors.ParseInvocationResponse(200, []byte(`{not json`))
+	if err == nil {
+		t.Fatal("a 200 that is not JSON is not a result and must be rejected")
+	}
+	if strings.Contains(err.Error(), "%!w(") {
+		t.Fatalf("malformed-body error rendered a bad verb: %q", err.Error())
+	}
+	var syntaxErr *json.SyntaxError
+	if !errors.As(err, &syntaxErr) {
+		t.Fatalf("malformed-body error lost its json cause: %v (unwrap=%v)", err, errors.Unwrap(err))
 	}
 }
 

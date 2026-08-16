@@ -5,6 +5,28 @@ All notable changes to this project will be documented in this file.
 Format follows [Keep a Changelog](https://keepachangelog.com/). This project
 adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.33.0] - 2026-08-16
+
+### Added
+
+- The control plane supplies a repository IDENTITY on dispatch, read from `actor.metadata` and never inferrable from a run input or an event payload, and three bridges resolve that identity to their own checkout — refusing an identity that names two permitted paths and one that names none. This is issue #125's fix: a bridge's `repo_allowlist` goes back to being a pure PERMISSION surface that may hold many entries, instead of doubling as a statement of intent through its cardinality.
+- Control-plane credential issuance for dial-in (`POST /v1alpha1/inbound/credentials` and `.../revoke`, issue #111's dial-in half): mint, digest, reveal exactly once, revoke. Migration 0037 adds `issued_at`/`issuance_count`, so admission can refuse a credential the control plane did not issue — without that provenance the requirement was true only at the API, and a hand-inserted digest still admitted a dial.
+- `deploy/prod/issue-dialin-credential.sh` issues and delivers one bridge's credential in a single command, with the plaintext flowing `ssh control 'curl' | ssh bridge` as a pipeline — never a variable, a file, or an argv in the operator's process. `install-secrets.sh` gained an add-if-absent lane for the issuance bearer, which nothing installed before.
+- `GET /v1alpha1/dial-in-presence` and `nodes actors dial-in` answer 'which bridges are connected right now' without dispatching anything. `never_dialled` is distinguished from `disconnected`, and a hand-provisioned credential (`issued_at IS NULL`) gets its own reason line — such a bridge will never dial in successfully however healthy its process looks, and it looks exactly like an outage.
+- The TDD merge gate is a `code` node executed through the runner boundary (issue #101), with `gates_passed` / `changes_required` / `measurement_incomplete` as domain outcomes and a merge node that consumes the verdict. `human-merges` is reachable from exactly one edge and the graph contains no agent node, so 'no merge decision without a derived gate record' is compiler-checked rather than a discipline.
+- The actor's own rejection body and class now reach the run view, bounded and sanitized, kept in a field SEPARATE from the engine's classification — a bridge that could name its own class could talk itself out of `policy_denied` or into an infinite retry, and when the two disagree the disagreement is itself the diagnostic.
+- `node` and `npm` are measured by `scripts/toolchain-baseline.sh`, so a capability surface can answer whether a lane can run the web build.
+- Guards for two properties the repo believed it already had: `dialin.py` is now byte-identity-checked across all five adapters, and `scripts/check-zero-runtime-deps.sh` checks every adapter manifest rather than only the root one.
+
+### Changed
+
+- `deploy/prod/register-actor.sh` merges actor metadata inside Postgres (`INSERT ... SELECT ... metadata || overlay`) instead of rebuilding it from a hardcoded literal, and carries `kind`/`protocol` forward. Every registration writes a new row, so the old behaviour silently erased any key it did not know about — including `handover_remote`, which the address cutover depends on (issue #142).
+- Migration 0036's ADR 0002 bypass is WITHDRAWN, not reworded (issue #143). Its premise — production is not a rolling fleet and one `deploy.sh` restarts everything — was measured and is false: `deploy.sh` takes one host argument, `migrate` is thor-only, and orin's N-1 worker reads `actors.endpoint_ref` and reads/writes `runner_invocations.endpoint`. The drop now requires full expand-contract across two releases.
+
+### Fixed
+
+- Every triggered `pr-upkeep` run failed closed roughly a second after creation, because the bridge's fallback to a single allowlisted repository cannot fire when the allowlist legitimately holds more than one entry (issue #125).
+
 ## [0.32.1] - 2026-08-16
 
 ### Changed

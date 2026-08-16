@@ -71,6 +71,17 @@ const (
 	CodeContractCELInvalid         = "contract.cel_invalid"
 	CodeContractCELNotBoolean      = "contract.cel_not_boolean"
 
+	// Declared actor affinity (task t33, issue #107). Each of these refuses
+	// a routing declaration the compiler can prove could never route: a rule
+	// that names no reachable node, targets a kind that resolves no actor,
+	// names something that is not an actor, or sits behind an unconditional
+	// rule that already matches everything.
+	CodeAffinityNodeUnknown         = "affinity.node_unknown"
+	CodeAffinityNodeNotDispatchable = "affinity.node_not_dispatchable"
+	CodeAffinityActorInvalid        = "affinity.actor_invalid"
+	CodeAffinityDuplicateDefault    = "affinity.duplicate_default"
+	CodeAffinityUnreachableRule     = "affinity.unreachable_rule"
+
 	// Ledger.
 	CodeLedgerProjectionUnknown                  = "ledger.projection_unknown"
 	CodeLedgerRecordTypeUnknown                  = "ledger.record_type_unknown"

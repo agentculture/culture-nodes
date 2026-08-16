@@ -267,7 +267,7 @@ func TestRelayRepairsDroppedPublication(t *testing.T) {
 		t.Fatalf("InsertOutbox: %v", err)
 	}
 
-	driver := queuepg.New(s.Pool())
+	driver := queuepg.New(s.Pool(), ns.ID)
 
 	deliveries, err := driver.Receive(ctx, 10, 0)
 	if err != nil {

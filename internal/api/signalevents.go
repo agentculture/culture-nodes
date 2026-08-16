@@ -8,6 +8,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/agentculture/culture-nodes/internal/engine"
 	"github.com/agentculture/culture-nodes/internal/store/postgres"
 )
 
@@ -60,10 +61,12 @@ import (
 
 // deliverEventRequest is components.schemas.DeliverEventRequest.
 type deliverEventRequest struct {
-	Name    string          `json:"name"`
-	Payload json.RawMessage `json:"payload"`
-	RunID   string          `json:"run_id"`
-	Emitter string          `json:"emitter"`
+	Name      string          `json:"name"`
+	Payload   json.RawMessage `json:"payload"`
+	RunID     string          `json:"run_id"`
+	Emitter   string          `json:"emitter"`
+	SourceKey string          `json:"source_key"`
+	Watermark json.RawMessage `json:"watermark"`
 }
 
 // SignalEventOut is one appended signal event fact on the wire
@@ -105,9 +108,11 @@ type EventPickupOut struct {
 // `resumed` and `picked_up` lists are a normal answer, not an error — the
 // event was recorded and nothing was listening.
 type EventDeliveryOut struct {
-	Event    SignalEventOut           `json:"event"`
-	Resumed  []ResumedSubscriptionOut `json:"resumed"`
-	PickedUp []EventPickupOut         `json:"picked_up"`
+	Event     SignalEventOut           `json:"event"`
+	Resumed   []ResumedSubscriptionOut `json:"resumed"`
+	PickedUp  []EventPickupOut         `json:"picked_up"`
+	Triggered []engine.TriggeredRun    `json:"triggered"`
+	Duplicate bool                     `json:"duplicate,omitempty"`
 }
 
 // handleDeliverEvent is POST /v1alpha1/events. Authenticated with its own
@@ -150,6 +155,9 @@ func (s *Server) handleDeliverEvent(w http.ResponseWriter, r *http.Request) erro
 		Emitter:     emitter,
 		RunID:       req.RunID,
 		Pickup:      s.Engine,
+		Trigger:     s.Engine,
+		SourceKey:   req.SourceKey,
+		Watermark:   req.Watermark,
 	})
 	if err != nil {
 		return internalError(err)
@@ -165,9 +173,12 @@ func (s *Server) handleDeliverEvent(w http.ResponseWriter, r *http.Request) erro
 			Emitter:   ev.Emitter,
 			CreatedAt: ev.CreatedAt,
 		},
-		Resumed:  make([]ResumedSubscriptionOut, 0, len(delivery.Fired)),
-		PickedUp: make([]EventPickupOut, 0, len(delivery.Pickups)),
+		Resumed:   make([]ResumedSubscriptionOut, 0, len(delivery.Fired)),
+		PickedUp:  make([]EventPickupOut, 0, len(delivery.Pickups)),
+		Triggered: make([]engine.TriggeredRun, 0, len(delivery.Triggered)),
+		Duplicate: delivery.Duplicate,
 	}
+	out.Triggered = append(out.Triggered, delivery.Triggered...)
 	for _, sub := range delivery.Fired {
 		out.Resumed = append(out.Resumed, ResumedSubscriptionOut{
 			SubscriptionID: sub.ID,

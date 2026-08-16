@@ -270,8 +270,8 @@ func (eq engineQueries) EnqueueWork(ctx context.Context, nodeRunID string, avail
 
 const insertRunSQL = `
 INSERT INTO runs (id, namespace_id, workflow_version_id, status, input, created_at, updated_at,
-                  name, description, category)
-VALUES ($1, $2, $3, $4, $5, $6, $6, NULLIF($7, ''), NULLIF($8, ''), NULLIF($9, ''))
+                  name, description, category, actor_affinity)
+VALUES ($1, $2, $3, $4, $5, $6, $6, NULLIF($7, ''), NULLIF($8, ''), NULLIF($9, ''), $10)
 `
 
 // InsertRun records a new run. Metadata rides the same INSERT so POST
@@ -281,7 +281,7 @@ func (eq engineQueries) InsertRun(ctx context.Context, run engine.Run) error {
 	_, err := eq.q.Exec(ctx, insertRunSQL,
 		run.ID, eq.namespaceID, run.WorkflowVersionID, string(run.State),
 		jsonOrEmptyObject(run.Input), tsOrNow(run.CreatedAt),
-		run.Name, run.Description, run.Category,
+		run.Name, run.Description, run.Category, jsonOrNil(run.ActorAffinity),
 	)
 	if err != nil {
 		return fmt.Errorf("postgres: engine: InsertRun: %w", err)
@@ -315,7 +315,7 @@ func (eq engineQueries) UpdateRunState(ctx context.Context, runID string, state 
 
 const selectRunSQL = `
 SELECT r.id, r.namespace_id, r.workflow_version_id, wv.content_digest, r.status,
-       r.input, r.output, r.created_at, r.updated_at, r.completed_at
+       r.input, r.output, r.created_at, r.updated_at, r.completed_at, r.actor_affinity
 FROM runs AS r
 JOIN workflow_versions AS wv ON wv.id = r.workflow_version_id
 WHERE r.id = $1 AND r.namespace_id = $2
@@ -333,10 +333,11 @@ func (eq engineQueries) Run(ctx context.Context, runID string) (engine.Run, erro
 		createdAt   pgtype.Timestamptz
 		updatedAt   pgtype.Timestamptz
 		completedAt pgtype.Timestamptz
+		affinity    []byte
 	)
 	err := eq.q.QueryRow(ctx, selectRunSQL, runID, eq.namespaceID).Scan(
 		&run.ID, &run.NamespaceID, &run.WorkflowVersionID, &run.WorkflowDigest, &status,
-		&input, &output, &createdAt, &updatedAt, &completedAt,
+		&input, &output, &createdAt, &updatedAt, &completedAt, &affinity,
 	)
 	if err != nil {
 		if isNoRows(err) {
@@ -350,6 +351,10 @@ func (eq engineQueries) Run(ctx context.Context, runID string) (engine.Run, erro
 	run.CreatedAt = tsValue(createdAt)
 	run.UpdatedAt = tsValue(updatedAt)
 	run.CompletedAt = tsValue(completedAt)
+	// jsonOrNil keeps SQL NULL as a nil RawMessage rather than the literal
+	// bytes "null": a run that resolved no affinity must read back as absent,
+	// which is what every caller branches on.
+	run.ActorAffinity = jsonOrNil(affinity)
 	return run, nil
 }
 

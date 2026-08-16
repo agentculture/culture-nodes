@@ -82,14 +82,35 @@ uv run pytest -n auto                     # full test suite (xdist)
 uv run pytest tests/test_cli.py::test_whoami_text   # single test
 uv run pytest -n auto --cov=culture_nodes --cov-report=term  # with coverage (CI gates ≥60%)
 
-# Lint — mirrors the CI lint job exactly:
+# Lint — mirrors the ROOT CI lint job exactly:
 uv run black --check culture_nodes tests
 uv run isort --check-only culture_nodes tests
 uv run flake8 culture_nodes tests
 uv run bandit -c pyproject.toml -r culture_nodes
 markdownlint-cli2 "**/*.md" "#node_modules" "#.local" "#.claude/skills" "#.teken"
 uv run teken cli doctor . --strict        # agent-first CLI rubric gate
+
+# …and the adapter lint jobs, which the root scope does NOT cover. Skipping
+# them is how PR #122 went red on three `lint` jobs after a green local run.
+#
+# The two adapter workflows invoke the linters DIFFERENTLY, and the difference
+# is load-bearing: `adapter-codex.yml` runs from the repo root against adapter
+# paths (so the ROOT isort/black config applies), while
+# `adapter-claude-code.yml` runs inside the adapter directory (so the ADAPTER's
+# own config applies). Running only the adapter-dir form for codex passes
+# locally and fails in CI. Run each exactly as its workflow does:
+uv run black --check adapters/codex/src adapters/codex/tests
+uv run isort --check-only adapters/codex/src adapters/codex/tests
+uv run flake8 adapters/codex/src adapters/codex/tests
+(cd adapters/claude-code && uv run black --check src tests && uv run isort --check-only src tests && uv run flake8 src tests)
 ```
+
+**A shared bridge module must stay byte-identical across all five adapters**
+(`tests/lint/` enforces it for `preflight.py`, `dialin.py`, `deployment.py`,
+and the workspace reaper). Formatting them per-adapter *breaks* that: isort is
+configured in three adapters and not the other two, so the same file acquires
+two different formattings. Format one, copy it to the rest, then re-run the
+loop above — do not run the formatter independently in each.
 
 The installed CLI command is **`nodes`** (`[project.scripts]` in
 pyproject.toml), even though help text renders the prog as `culture-nodes`:
@@ -165,6 +186,23 @@ wave against the remaining subscription window.
 
 ## Conventions and workflow
 
+- **Every piece of operator work opens or updates an issue.** If the operator
+  did it by hand — a fix typed in-session, a config edit on a host, a deploy, a
+  merge conflict resolved, a bridge redeployed — it gets an issue, either a new
+  one or a comment on the existing one that covers it. No exceptions for
+  "it was only a lint fix."
+
+  The reason is measurement, not bureaucracy. Manual operator work is invisible
+  by default: it leaves a commit, and a commit does not say *a human had to do
+  this*. That invisibility is how the last cycle ended with **fourteen of
+  fourteen** operator steps still manual while the delivery summary could
+  otherwise have implied a loop that ran itself
+  (`docs/deliveries/close-the-backlog-bootstrap-honesty.md`). An issue per
+  hand-turn makes the backlog of un-automated steps countable, and countable is
+  the precondition for #118 ever closing.
+
+  Cite the issue in the commit message, so the trail runs both ways.
+
 - **Nodes dogfooding reflex**: when a scoped task is delegable, assign it
   through the system instead of doing it in-session — invoke the
   `/nodes-operator` skill and run its `assign <actor> "instruction" --yes`
@@ -187,6 +225,30 @@ wave against the remaining subscription window.
   kind, verdict, why) so the comparison survives the session. First-class
   grading records and per-actor analytics are tracked in issue #28 — prefer
   those surfaces over ad-hoc notes once they exist.
+- **A failing merge gate is routed, not carried** (task t32, issue #102): a
+  rejecting suite verdict makes the control plane compose a `derived` routing
+  record — a bounded repair attempt on a lane whose advertised capability
+  surface shows it can actually run the failing suite, or a human node. The
+  bound is **2 repair attempts per run over a 24-hour window from the run's
+  first gate rejection**, and both ceilings reach a human (`internal/repair`).
+  Nothing is dispatched: the control plane decides and records, and executing
+  the routed dispatch stays a deliberate step, because the bridge write path is
+  unproven (#18) and an advertised surface cannot show a database-backed suite
+  is runnable on a lane (#119). Read a red gate's routing with
+  `scripts/collect-handover.py <run-id> --gate ...`; declare what a repair
+  would need with `--requires-grant` / `--implicates`. A failure implicating
+  `.github/` always goes to a person — a repair is a dispatch, and a dispatch
+  may not modify CI configuration.
+- **Ask what revision is running before trusting a probe** (task t32, issues
+  #104 / #120): `curl -s $NODES_API_URL/v1alpha1/version` for the control
+  plane (unauthenticated), and the `deployment` block on a bridge's
+  `/v1/capabilities` for a bridge. Read `install_mode` first — the codex and
+  notify bridges are `uv tool install`ed **copies** that go stale silently
+  until redeployed, while spark's claude bridges are **editable** installs that
+  cannot go stale but can be serving uncommitted code (`revision_is_dirty`).
+  `deploy/prod/deploy.sh` stamps the copies before installing them; a bridge
+  reporting no revision was deployed by something that does not stamp, and its
+  age is unknown.
 - **Memory discipline** (eidetic): `/recall` before non-trivial work to build
   on prior decisions; `/remember` when a non-obvious decision, constraint, or
   hard-won fix surfaces. This repo's memory is **in-repo and public** — a

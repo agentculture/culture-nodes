@@ -9,6 +9,7 @@ import AgentStateScript from "./agent-state/AgentStateScript";
 import { setAgentState } from "./agent-state/store";
 import Header from "./components/Header";
 import AuthorWorkflow from "./routes/AuthorWorkflow";
+import Decisions from "./routes/Decisions";
 import GenerateWorkflow from "./routes/GenerateWorkflow";
 import Inbox from "./routes/Inbox";
 import JobsTimeline from "./routes/JobsTimeline";
@@ -45,6 +46,7 @@ export function App() {
           <Route path="/board" element={<RunsBoard />} />
           <Route path="/jobs" element={<JobsTimeline />} />
           <Route path="/inbox" element={<Inbox />} />
+          <Route path="/decisions" element={<Decisions />} />
           <Route path="/mesh" element={<Mesh />} />
           <Route path="/stats" element={<Statistics />} />
           <Route path="/graphs" element={<NodeGraphs />} />

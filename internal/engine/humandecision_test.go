@@ -65,7 +65,7 @@ func TestDecideHumanTaskApprovedResumesAndCompletesRun(t *testing.T) {
 		t.Fatalf("ledger version before any decision = %d, want 0", beforeVersion)
 	}
 
-	approver := f.insertActor("approver")
+	approver := f.insertActorKind("approver", "human")
 	result, err := f.decide(engine.HumanTaskDecisionRequest{
 		HumanTaskID:           taskID,
 		Outcome:               "approved",
@@ -201,7 +201,7 @@ func TestDecideHumanTaskRejectsOutcomeNotAllowed(t *testing.T) {
 	_, dispatch := advanceToReview(t, f)
 	taskID := dispatch.NextHumanTaskID
 
-	approver := f.insertActor("approver")
+	approver := f.insertActorKind("approver", "human")
 	_, err := f.decide(engine.HumanTaskDecisionRequest{
 		HumanTaskID:           taskID,
 		Outcome:               "not-a-real-outcome",
@@ -253,7 +253,7 @@ func TestDecideHumanTaskRejectsStaleLedgerVersion(t *testing.T) {
 		t.Fatalf("append unrelated record: %v", err)
 	}
 
-	approver := f.insertActor("approver")
+	approver := f.insertActorKind("approver", "human")
 	_, err = f.decide(engine.HumanTaskDecisionRequest{
 		HumanTaskID:           taskID,
 		Outcome:               "approved",
@@ -284,7 +284,7 @@ func TestDecideHumanTaskRefusesASecondDecision(t *testing.T) {
 	_, dispatch := advanceToReview(t, f)
 	taskID := dispatch.NextHumanTaskID
 
-	approver := f.insertActor("approver")
+	approver := f.insertActorKind("approver", "human")
 	first, err := f.decide(engine.HumanTaskDecisionRequest{
 		HumanTaskID:           taskID,
 		Outcome:               "approved",
@@ -328,7 +328,7 @@ func TestDecideHumanTaskConcurrentDecisionsResolveExactlyOnce(t *testing.T) {
 	_, dispatch := advanceToReview(t, f)
 	taskID := dispatch.NextHumanTaskID
 
-	approver := f.insertActor("approver")
+	approver := f.insertActorKind("approver", "human")
 	outcomes := []string{"approved", "rejected"}
 
 	var wg sync.WaitGroup
@@ -377,7 +377,7 @@ func TestDecideHumanTaskConcurrentDecisionsResolveExactlyOnce(t *testing.T) {
 // id that does not exist.
 func TestDecideHumanTaskUnknownTaskIsNotFound(t *testing.T) {
 	f := newFixture(t, "approval.workflow.yaml")
-	approver := f.insertActor("approver")
+	approver := f.insertActorKind("approver", "human")
 
 	_, err := f.decide(engine.HumanTaskDecisionRequest{
 		HumanTaskID:           "human_task_does_not_exist",

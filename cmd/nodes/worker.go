@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"os"
 	"os/signal"
+	"strings"
 	"syscall"
 	"time"
 
@@ -96,6 +97,9 @@ func cmdWorker(args []string, jsonMode bool) (int, error) {
 				envNamespaceSlug + " (or --namespace-slug) to a slug to resolve/create",
 		}
 	}
+	if cliErr := workerConfigPreflight(); cliErr != nil {
+		return 0, cliErr
+	}
 
 	ctx, stop := shutdownContext()
 	defer stop()
@@ -178,8 +182,17 @@ func cmdWorker(args []string, jsonMode bool) (int, error) {
 		return 0, cliErr
 	}
 
+	// Task t10: measure a handed-over ref, when the deployment named a
+	// remote to fetch from and an identity to attribute the observation to.
+	// Nil — the default — records nothing at all.
+	handoverObs, cliErr := handoverObserver(db, namespace)
+	if cliErr != nil {
+		return 0, cliErr
+	}
+
 	wk, err := worker.New(db, eng, worker.Options{
 		WorkerID:           os.Getenv(envWorkerIdentifier),
+		Handover:           handoverObs,
 		Pacing:             pacingOpts,
 		NamespaceID:        namespace,
 		ClaimBatch:         *batch,
@@ -237,6 +250,55 @@ func cmdWorker(args []string, jsonMode bool) (int, error) {
 		}
 	}
 	return clifmt.ExitSuccess, nil
+}
+
+// workerConfigPreflight validates deployment-level environment as one unit
+// before telemetry or PostgreSQL is touched. Code runner identity is a tuple:
+// accepting an absent or partial tuple lets a worker start but guarantees that
+// its first code dispatch cannot produce correctly attributed evidence.
+func workerConfigPreflight() *clifmt.CliError {
+	var problems []string
+	// All three or none, which is the same rule the callback pair below
+	// follows and for the same reason. A PARTIAL tuple is the dangerous
+	// state: the worker starts and its first code dispatch produces evidence
+	// attributed to an identity nobody fully declared. A tuple that is absent
+	// ENTIRELY says something different and legitimate — this deployment runs
+	// no code nodes at all, which is exactly the Helm chart's smoke
+	// configuration and every deployment that only dispatches agents.
+	//
+	// Demanding all three unconditionally broke that: the chart sets none of
+	// them, so every worker pod CrashLoopBackOff'd on a check meant to catch
+	// misattribution. Same shape as #124 — a fail-closed validation added
+	// without walking the deployment paths it would newly refuse.
+	var runnerSet, runnerMissing []string
+	for _, name := range []string{envCodeRunnerName, envCodeRunnerRevision, envCodeRunnerActorID} {
+		if strings.TrimSpace(os.Getenv(name)) == "" {
+			runnerMissing = append(runnerMissing, name)
+		} else {
+			runnerSet = append(runnerSet, name)
+		}
+	}
+	if len(runnerSet) > 0 && len(runnerMissing) > 0 {
+		for _, name := range runnerMissing {
+			problems = append(problems, name+" is missing while "+runnerSet[0]+" is set")
+		}
+	}
+	callbackURL := strings.TrimSpace(os.Getenv(envCallbackBaseURL))
+	callbackSecret := strings.TrimSpace(os.Getenv(envCallbackSecret))
+	if callbackURL == "" && callbackSecret != "" {
+		problems = append(problems, envCallbackBaseURL+" is missing while "+envCallbackSecret+" is set")
+	}
+	if callbackURL != "" && callbackSecret == "" {
+		problems = append(problems, envCallbackSecret+" is missing while "+envCallbackBaseURL+" is set")
+	}
+	if len(problems) == 0 {
+		return nil
+	}
+	return &clifmt.CliError{
+		Code:        clifmt.ExitEnvError,
+		Message:     "worker deployment configuration is invalid: " + strings.Join(problems, "; "),
+		Remediation: "set the complete NODES_CODE_RUNNER_{NAME,REVISION,ACTOR_ID} tuple and either both or neither NODES_CALLBACK_{BASE_URL,TOKEN_SECRET}",
+	}
 }
 
 // callbackConfig builds the attempt-scoped token signer from the environment.
@@ -414,8 +476,14 @@ func buildWorker(db *postgres.Store, namespace string, telemetryProvider *teleme
 	if cliErr != nil {
 		return nil, cliErr
 	}
+	handoverObs, cliErr := handoverObserver(db, namespace)
+	if cliErr != nil {
+		return nil, cliErr
+	}
+
 	wk, err := worker.New(db, eng, worker.Options{
 		NamespaceID:        namespace,
+		Handover:           handoverObs,
 		Pacing:             pacingOpts,
 		Registry:           registry,
 		Signer:             signer,

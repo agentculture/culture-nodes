@@ -45,6 +45,7 @@ _ENV_STRING_FIELDS = {
     "COLLEAGUE_BRIDGE_ACTOR_ID": "actor_id",
     "COLLEAGUE_BRIDGE_PRESERVE_BRANCH_PREFIX": "preserve_branch_prefix",
     "COLLEAGUE_BRIDGE_PRESERVE_REMOTE": "preserve_remote",
+    "COLLEAGUE_BRIDGE_HANDOVER_REMOTE": "handover_remote",
 }
 _ENV_INT_FIELDS = {
     "COLLEAGUE_BRIDGE_PORT": "port",
@@ -160,6 +161,17 @@ class Config:
     #: True.
     preserve_remote: str = "origin"
 
+    # --- handover ref (task t9/t10, issue #90, #13) ----------------------
+    #: The remote whose configured URL a handover ref's handle is built
+    #: from (`preserve.handover_ref`). It is READ ONLY — `git remote
+    #: get-url` — because a handover deliberately does not push; the name
+    #: is separate from `preserve_remote` because the two answer different
+    #: questions ("where a preserve branch is pushed to" versus "which
+    #: remote another host would fetch this ref from"), and a host that
+    #: pushes preserve branches to a scratch remote must still be able to
+    #: name the shared one in a handle.
+    handover_remote: str = "origin"
+
     # --- worktree reaping (task t17) -------------------------------------
     #: How long a minted worktree must have gone untouched before age stops
     #: being a reason to DEFER its removal. Read by `reap.ReapPolicy`; see
@@ -215,6 +227,27 @@ class Config:
             candidate != Path(root) and candidate.is_relative_to(root)
             for root in self.repo_allowlist_prefixes
         )
+
+    def only_allowed_repo(self) -> str | None:
+        """The one repo this bridge can work in, when there is exactly one.
+
+        A trigger-created run's input IS the event payload (task t17b), so a
+        deployment-neutral workflow has nowhere to put a checkout path: a
+        literal in the graph would make it deployment-specific, and the
+        emitter that raises the event is a pure emitter that knows nothing
+        about checkouts. Issue #125 is that gap — every triggered pr-upkeep
+        run failed on `input.repo is required`.
+
+        When the allowlist names exactly one repository and no prefixes, the
+        caller restating it adds no safety: this bridge physically cannot work
+        anywhere else, and the allowlist check would reject anything else
+        anyway. Ambiguity fails closed — two entries, or any prefix rule, and
+        `input.repo` stays required, because then the choice is real and
+        guessing it would silently pick a workspace the caller did not name.
+        """
+        if len(self.repo_allowlist) == 1 and not self.repo_allowlist_prefixes:
+            return self.repo_allowlist[0]
+        return None
 
     @classmethod
     def load(cls, config_path: str | None = None, env: dict[str, str] | None = None) -> "Config":
@@ -273,6 +306,7 @@ _FILE_FIELDS = {
     "preserve_branch_prefix": str,
     "preserve_push": bool,
     "preserve_remote": str,
+    "handover_remote": str,
     "worktree_reap_min_idle_seconds": float,
     "host": str,
     "port": int,

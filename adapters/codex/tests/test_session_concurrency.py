@@ -157,7 +157,16 @@ def test_concurrent_same_session_key_forks_the_second_invocation(concurrency_bri
         calls_lock = threading.Lock()
         real_spawn = codex_cli.spawn
 
-        def spy_spawn(cfg_, instruction, repo_, *, model=None, sandbox=None, continuation_ref=None):
+        def spy_spawn(
+            cfg_,
+            instruction,
+            repo_,
+            *,
+            model=None,
+            sandbox=None,
+            continuation_ref=None,
+            writable_git=False,
+        ):
             with calls_lock:
                 idx = len(calls)
                 calls.append(continuation_ref)

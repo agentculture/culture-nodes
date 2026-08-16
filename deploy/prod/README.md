@@ -24,6 +24,27 @@ live database password, and each other lane has its own `FORCE_*` switch
 (`FORCE_RUNNER`, `FORCE_CODEX`, `FORCE_NOTIFY`, `FORCE_HUMAN_INBOX`) so
 authorizing one rotation cannot authorize another.
 
+## Bundled or external PostgreSQL
+
+`install-secrets.sh` preserves the current topology explicitly: thor's
+`COMPOSE_PROFILES=bundled-postgres,backup` starts the bundled database and
+backup loop, while both thor and orin receive a host-appropriate
+`NODES_DATABASE_URL`. `DATABASE_SSLMODE` is the single TLS-mode input; the
+LAN default is `disable` under the network trust decision below.
+
+To use an external database, edit `prod.env` on each host: set the same
+provider URL in `NODES_DATABASE_URL` (using the provider-required sslmode),
+remove `bundled-postgres` from `COMPOSE_PROFILES`, and keep `backup` only if
+that external database should be dumped to thor's configured backup
+directory. The backup service runs `pg_dump "$NODES_DATABASE_URL"`, so it
+cannot silently continue dumping an unused local database. Removing
+`backup` disables the loop explicitly. No Go/Python source or image changes
+are involved.
+
+An absent `NODES_DATABASE_URL` is a configuration error: Compose exits
+during variable interpolation with `set the bundled or external PostgreSQL
+URL in prod.env` before it starts any control-plane service.
+
 ## prod.env is merged, never rewritten
 
 `prod.env` holds two populations of keys: the six secrets
@@ -201,6 +222,35 @@ The worker envs that complete the code-dispatch wiring:
 - `NODES_RUNNER_SERVICES_FILE` — the path to this registry file; unset
   or an empty array keeps the worker in-process only.
 
+### Handover evidence (task t10, issue #13)
+
+When a dispatch hands its changes over as a git ref (`input.handover`, see
+each bridge's README), the control plane can fetch that ref and record what
+it measured — ref, commit sha, changed paths — as an `observed` ledger
+record beside the agent's own proposed claim. It is **off unless
+configured**, and both variables must be set together or the process
+refuses to start:
+
+- `NODES_HANDOVER_REMOTE` — the git remote **this host** fetches handover
+  refs from. Deliberately the operator's configuration and never the remote
+  a bridge reported: fetching from an agent-supplied url would let a session
+  choose the repository its own work is measured against.
+- `NODES_HANDOVER_ACTOR_ID` — the **registered** actors-table row the
+  observation is attributed to (`ledger_records.origin_actor_id` is a
+  foreign key to `actors(id)`), the same registration obligation
+  `NODES_CODE_RUNNER_ACTOR_ID` carries.
+- `NODES_HANDOVER_ACTOR_REVISION` — optional revision pin for that producer.
+- `NODES_HANDOVER_OBJECT_DIR` — optional persistent bare repo fetches reuse
+  objects from; unset means a fresh temp dir per fetch.
+
+Set them on **both** `api` (the async `completed` callback lands there) and
+`worker` (the synchronous 200 lands there), with the same values.
+
+With neither set, nothing is fetched and no record is written — which is the
+honest default: a control plane that cannot look must not write a record
+saying it did. A ref that is claimed but not fetchable also writes nothing;
+the reason goes to the process's diagnostic stream, never to the ledger.
+
 ## Dispatch pacing (NODES_DISPATCH_RATE_*)
 
 Task t10 (issue #48 item 2). A worker can hold itself to a declared
@@ -244,6 +294,33 @@ trust boundary, per the cycle's boundary decision (OIDC/workload auth is
 parked as issue #6; the runner protocol's `AllowInsecureTransport` opt-in
 is what permits plaintext HTTP off-loopback). Do not port-forward any of
 these beyond the LAN.
+
+## Telemetry (telemetry profile, issue #5)
+
+Off by default, twice over: the `otel-collector` service sits behind the
+`telemetry` profile, and the control plane builds no exporter at all unless
+`OTEL_EXPORTER_OTLP_ENDPOINT` is set (`internal/telemetry.New` returns
+`NoOp()` — no exporter, no goroutine, no dial). Turning it on is one line in
+`~/.culture-nodes/prod.env`:
+
+```text
+OTEL_EXPORTER_OTLP_ENDPOINT=http://otel-collector:4317
+```
+
+plus starting the collector: `COMPOSE_PROFILES=telemetry docker compose
+--env-file ~/.culture-nodes/prod.env -f compose.thor.yml up -d`. orin's
+worker points at thor's (`http://thor:4317`, port 4317 published on the LAN
+for exactly that, per Network trust above); leaving it unset there is a
+supported state.
+
+`api`, `scheduler` and both workers carry the variable, because all three
+seams `internal/telemetry` instruments live in those processes. Pointing at
+a different collector — Jaeger, Tempo, a vendor endpoint — is that
+variable's value and nothing else.
+
+Read `docs/operations/telemetry.md` before believing a trace: the three
+seams share a `run_id`, not a trace id, because this control plane
+propagates no W3C trace context across the actor boundary.
 
 ## After first boot
 

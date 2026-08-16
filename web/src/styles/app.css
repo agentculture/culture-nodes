@@ -2356,3 +2356,59 @@ button.timeline__node {
   border-radius: calc(var(--radius) / 2);
   padding: 0.6rem 0.8rem;
 }
+
+/* --- Decisions view (task t30, issue #99) ---------------------------------
+   The decision queue reuses the Inbox card vocabulary deliberately: both
+   views ask the same thing of a person — read this, then decide it — and
+   giving them two visual languages would suggest two different kinds of
+   authority. Only what is genuinely new here gets its own rules. */
+
+.decisions-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: grid;
+  gap: 1rem;
+}
+
+.decisions-records {
+  list-style: none;
+  margin: 0.75rem 0 0;
+  padding: 0;
+  display: grid;
+  gap: 0.75rem;
+}
+
+.decisions-record__select {
+  display: flex;
+  align-items: baseline;
+  gap: 0.5rem;
+  flex-wrap: wrap;
+  font-size: 0.9rem;
+}
+
+/* The claim's payload, in full and scrollable rather than clipped: a
+   decision made on a truncated claim is the failure this view exists to
+   prevent. */
+.decisions-record__data {
+  margin: 0.4rem 0 0;
+  max-height: 16rem;
+  overflow: auto;
+  border: 1px solid var(--line-soft);
+  border-radius: calc(var(--radius) / 2);
+  padding: 0.6rem 0.8rem;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+/* Decisions recorded in this sitting. They live above the queue rather than
+   inside the card that made them, because a decided run leaves the queue —
+   see the comment in routes/Decisions.tsx. */
+.decisions-recorded {
+  list-style: none;
+  margin: 0 0 1rem;
+  padding: 0;
+  display: grid;
+  gap: 0.4rem;
+  font-size: 0.9rem;
+}

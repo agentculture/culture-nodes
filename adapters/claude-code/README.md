@@ -210,6 +210,16 @@ The document is exactly what an actor registration carries in
 | `confinement` | **none** — `claude -p` takes no sandbox flag and runs with this bridge process's own privileges |
 | `commit_policy` | The `preserve_on_failure` / `preserve_push` / `preserve_remote` policy in force |
 | `writable_paths` | `repo_allowlist` — `[]` means this bridge writes nowhere |
+| `dispatch_grants` | What each `--permission-mode` grants a session — here, everything this bridge process itself has, because `claude -p` takes no sandbox flag (issue #96) |
+| `toolchains` | `uv`, `go`, `gh` and `claude` itself: where each is, how it was packaged, what version it reports, and which modes can run it |
+
+`toolchains` (issue #96) is where the difference between backends becomes
+readable: the same snap-packaged `uv` that a codex dispatch cannot run under
+`--sandbox workspace-write` (run `01M03374VAKH0KHN0GDZ466NP4`) is reported
+usable here, because nothing confines a `claude -p` session. That is the
+fact, not a disagreement — the surface describes a DISPATCH, not a disk. See
+`docs/baselines/2026-08-15-agent-host-toolchains.md` for the baseline and
+`scripts/toolchain-baseline.sh` for the re-check.
 
 `confinement` is stated separately from the mode list on purpose: a reader
 who sees `bypassPermissions` under a key called `sandbox_modes` can mistake

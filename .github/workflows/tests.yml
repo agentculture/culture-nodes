@@ -37,12 +37,145 @@ jobs:
         env:
           SONAR_HOST_URL: https://sonarcloud.io
 
+  # The Go control plane had no CI at all until this job (issue #115). It was
+  # built and tested only on whichever machine an operator happened to be
+  # sitting at — and no agent host in the fleet has a Go toolchain, so "run
+  # the tests somewhere else" was not available even in principle. Every
+  # `go test ./...` result in this repository's history came from one laptop.
+  #
+  # The suite passes today: the tree was green on build, vet and test when
+  # this job was added, so a red check here is a regression rather than a
+  # backlog of pre-existing failures being surfaced for the first time.
+  go:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+
+    # Without a reachable Postgres this job would be green and hollow.
+    # pgtest.RequireStore calls t.Skip when none is available, and `go test`
+    # prints "ok" for a package whose every test skipped — measured: with the
+    # database unreachable, `go test ./internal/queue/postgres/` reports ok
+    # while `-v` shows 5 SKIPs. A CI job cannot tell those apart, so the
+    # database is supplied here rather than hoped for.
+    #
+    # NODES_TEST_DATABASE_URL below names this SERVER, not a database the
+    # suite may use directly: pgtest.IsolatedDatabase creates one database
+    # per test binary on it. Sharing a single database is what made #126
+    # flaky — the outbox relay and the scheduler are deployment-wide by
+    # design, so concurrently running packages stole each other's rows here
+    # and never on a laptop, where an unset variable gives every package a
+    # private container.
+    services:
+      postgres:
+        image: postgres:17-alpine
+        env:
+          POSTGRES_USER: nodes
+          POSTGRES_PASSWORD: nodes-ci-only
+          POSTGRES_DB: nodes
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U nodes -d nodes"
+          --health-interval 5s --health-timeout 5s --health-retries 10
+
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+
+      - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5.6.0
+        with:
+          # Read the version from go.mod rather than pinning it twice; a
+          # toolchain bump then changes one file, not two that can disagree.
+          go-version-file: go.mod
+          cache: true
+
+      - run: go build ./...
+
+      - run: go vet ./...
+
+      # Not -race: several suites drive real subprocesses and a Postgres, and
+      # the race detector's slowdown pushes them past their own timeouts. The
+      # trade is deliberate — a fast job that runs on every PR beats a
+      # thorough one that gets disabled.
+      - name: go test
+        env:
+          NODES_TEST_DATABASE_URL: postgres://nodes:nodes-ci-only@localhost:5432/nodes?sslmode=disable
+        run: go test ./...
+
+      # The service above is only useful if the tests actually used it. A run
+      # where every Postgres-backed test skipped is a false green, and this is
+      # the cheapest way to notice: assert that at least one package that
+      # needs the database ran a test rather than skipping it.
+      - name: the database-backed tests actually ran
+        env:
+          NODES_TEST_DATABASE_URL: postgres://nodes:nodes-ci-only@localhost:5432/nodes?sslmode=disable
+        run: |
+          out=$(go test -count=1 -v ./internal/queue/postgres/ 2>&1)
+          echo "$out" | tail -20
+          if echo "$out" | grep -q "no PostgreSQL available"; then
+            echo "::error::Postgres-backed tests SKIPPED — this job would have been green without testing anything"
+            exit 1
+          fi
+          echo "$out" | grep -q -- "--- PASS" || {
+            echo "::error::no test in internal/queue/postgres reported PASS"; exit 1; }
+
+      # pg_dump refuses to dump a server newer than itself. The runner ships
+      # the Ubuntu 24.04 client (16.x) while the service above is 17, so the
+      # guard below exited 2 -- "could not look" -- rather than running. That
+      # went unnoticed because the `go test` step ahead of it failed first and
+      # aborted the job, so this guard has never actually executed in CI.
+      # Matching the client to the service is what makes it real. Pinned to the
+      # same major as the service image; bump both together.
+      - name: install a pg_dump matching the service major
+        run: |
+          sudo install -d /usr/share/postgresql-common/pgdg
+          sudo curl -fsSL -o /usr/share/postgresql-common/pgdg/apt.postgresql.org.asc \
+            https://www.postgresql.org/media/keys/ACCC4CF8.asc
+          echo "deb [signed-by=/usr/share/postgresql-common/pgdg/apt.postgresql.org.asc] \
+          https://apt.postgresql.org/pub/repos/apt $(lsb_release -cs)-pgdg main" \
+            | sudo tee /etc/apt/sources.list.d/pgdg.list > /dev/null
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq postgresql-client-17
+          # The runner image puts /usr/lib/postgresql/16/bin on PATH ahead of
+          # postgresql-common's version-selecting wrapper, so installing 17 is
+          # not enough on its own -- the first attempt installed 17.11 and the
+          # guard still ran 16.14. Put the 17 bin directory first for every
+          # later step, then assert we actually got it rather than trusting it.
+          echo "/usr/lib/postgresql/17/bin" >> "$GITHUB_PATH"
+          /usr/lib/postgresql/17/bin/pg_dump --version
+
+      # Task t21, criterion 1: prove against a REAL dump that the inbound
+      # credential table carries nothing an attacker could present. #30 ships
+      # these dumps to S3, so a secret in the database becomes a secret in
+      # object storage.
+      #
+      # The migrate is load-bearing. It used to be merely belt-and-braces —
+      # pgtest.Run migrated the shared database, so the table happened to
+      # exist by the time this step ran — but since every test binary now
+      # gets its own database (pgtest.IsolatedDatabase), nothing else ever
+      # touches the `nodes` database this step inspects. Keeping the migrate
+      # explicit was already the right call: a guard that silently depends on
+      # step ordering is one reordering away from exiting 2 and looking like
+      # an infrastructure problem.
+      #
+      # Exit codes are 0 pass / 1 fail / 2 could-not-check, and 2 fails this
+      # job on purpose: "I could not look" is not "I looked and it was fine".
+      # That is the same lesson as the skip guard above.
+      - name: inbound authentication dump carries no presentable credential
+        env:
+          NODES_DATABASE_URL: postgres://nodes:nodes-ci-only@localhost:5432/nodes?sslmode=disable
+          NODES_TEST_DATABASE_URL: postgres://nodes:nodes-ci-only@localhost:5432/nodes?sslmode=disable
+        run: |
+          go run ./cmd/nodes migrate
+          scripts/check-inbound-auth-dump.py
+
   lint:
     runs-on: ubuntu-latest
     permissions:
       contents: read
     steps:
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+        with:
+          fetch-depth: 0
 
       - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
         with:
@@ -53,6 +186,14 @@ jobs:
       - run: uv python install 3.12
 
       - run: uv sync
+
+      - name: Vendored skills unchanged in merge range
+        env:
+          RANGE_BASE: ${{ github.event.pull_request.base.sha || github.event.before }}
+        run: python3 scripts/check-vendored-skill-diff.py "$RANGE_BASE" "$GITHUB_SHA"
+
+      - name: Zero-dependency CLI works in a bare environment
+        run: scripts/check-zero-runtime-deps.sh
 
       - name: black --check
         run: uv run black --check culture_nodes tests
@@ -73,6 +214,11 @@ jobs:
 
       - name: afi rubric gate
         run: uv run teken cli doctor . --strict
+
+      - name: open-issue triage is complete and current
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: python3 scripts/triage-report.py --check
 
   version-check:
     # Only run on PR events. On push to main after a merged PR, the comparison

@@ -179,6 +179,38 @@ func TestDeliverSignalEventWithNoSubscriptionIsAFactNotAnError(t *testing.T) {
 	}
 }
 
+func TestDeliverSignalEventWatermarkSuppressesRestartDuplicate(t *testing.T) {
+	s := requireStore(t)
+	ctx := context.Background()
+	ns := mustNamespace(t, s, "signal-watermark")
+	in := postgres.DeliverSignalEventInput{
+		NamespaceID: ns.ID, Name: "pr-upkeep.pr", Emitter: "sweep",
+		SourceKey: "github:owner/repo:pr:17",
+		Watermark: json.RawMessage(`{"head_sha":"abc","newest_comment_at":"2026-08-15T10:00:00Z"}`),
+	}
+	first, err := s.DeliverSignalEvent(ctx, in)
+	if err != nil {
+		t.Fatalf("first delivery: %v", err)
+	}
+	second, err := s.DeliverSignalEvent(ctx, in)
+	if err != nil {
+		t.Fatalf("restart delivery: %v", err)
+	}
+	if !second.Duplicate {
+		t.Fatal("restart delivery was not identified as duplicate")
+	}
+	if second.Event.ID != first.Event.ID {
+		t.Fatalf("duplicate event id = %s, want original %s", second.Event.ID, first.Event.ID)
+	}
+	var count int
+	if err := s.Pool().QueryRow(ctx, `SELECT count(*) FROM signal_events WHERE namespace_id=$1 AND name=$2`, ns.ID, in.Name).Scan(&count); err != nil {
+		t.Fatal(err)
+	}
+	if count != 1 {
+		t.Fatalf("signal_events count = %d, want 1", count)
+	}
+}
+
 func TestDeliverSignalEventFiresPendingSubscription(t *testing.T) {
 	s := requireStore(t)
 	ctx := context.Background()

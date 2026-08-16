@@ -326,12 +326,20 @@ type DeliverSignalEventInput struct {
 	// namespace (the API handler does) — an unknown id would only fail the FK
 	// on insert.
 	RunID string
+	// SourceKey and Watermark make discovery delivery idempotent. When both
+	// equal the durable cursor from an earlier delivery, the existing event is
+	// returned and no subscription, route, or trigger is run again.
+	SourceKey string
+	Watermark json.RawMessage
 
 	// Pickup performs event-route pickup (issue #43, design D9) inside this
 	// delivery's transaction. Nil disables route pickup entirely, which is
 	// what every caller that only cares about signal waits wants — and what
 	// keeps a delivery from silently depending on an engine it was not given.
 	Pickup engine.EventPickupRunner
+	// Trigger creates runs from matching handlers in the newest published
+	// workflow versions, in this same delivery transaction.
+	Trigger engine.EventTriggerRunner
 }
 
 // selectCandidateSubscriptionsSQL is the unlocked first read of the pending
@@ -378,20 +386,74 @@ FOR UPDATE
 // limitation). It returns the appended event and the subscriptions it
 // fired.
 func (s *Store) DeliverSignalEvent(ctx context.Context, in DeliverSignalEventInput) (SignalDelivery, error) {
-	switch {
-	case in.NamespaceID == "":
-		return SignalDelivery{}, errors.New("postgres: DeliverSignalEvent: namespaceID is required")
-	case in.Name == "":
-		return SignalDelivery{}, errors.New("postgres: DeliverSignalEvent: name is required")
-	case in.Emitter == "":
-		return SignalDelivery{}, errors.New("postgres: DeliverSignalEvent: emitter is required")
+	if err := in.validate(); err != nil {
+		return SignalDelivery{}, err
 	}
-
 	tx, err := s.pool.Begin(ctx)
 	if err != nil {
 		return SignalDelivery{}, fmt.Errorf("postgres: DeliverSignalEvent: begin: %w", err)
 	}
 	defer func() { _ = tx.Rollback(ctx) }() // no-op once Commit has succeeded
+
+	delivery, err := s.deliverSignalEventTx(ctx, tx, in)
+	if err != nil {
+		return SignalDelivery{}, err
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return SignalDelivery{}, fmt.Errorf("postgres: DeliverSignalEvent: commit: %w", err)
+	}
+	return delivery, nil
+}
+
+func (in DeliverSignalEventInput) validate() error {
+	switch {
+	case in.NamespaceID == "":
+		return errors.New("postgres: DeliverSignalEvent: namespaceID is required")
+	case in.Name == "":
+		return errors.New("postgres: DeliverSignalEvent: name is required")
+	case in.Emitter == "":
+		return errors.New("postgres: DeliverSignalEvent: emitter is required")
+	case (in.SourceKey == "") != (len(in.Watermark) == 0):
+		return errors.New("postgres: DeliverSignalEvent: sourceKey and watermark must be supplied together")
+	}
+	return nil
+}
+
+// deliverSignalEventTx is DeliverSignalEvent's whole body minus Begin and
+// Commit, so a caller that is ALREADY inside a transaction can append a fact
+// (and fire its waits, routes, and triggers) atomically with its own work.
+// FireSchedule is that caller: acceptance criterion 2 of task t33 requires
+// that a control plane which dies between deciding a schedule is due and
+// creating the run can tell afterwards which of those happened, and the only
+// way to make that answerable is to put the event, the run the trigger
+// creates from it, and the schedule's own advanced cursor in ONE transaction.
+// Splitting the seam here rather than duplicating the delivery is deliberate:
+// there is one set of delivery semantics in this system and this keeps it
+// that way.
+//
+// It does not commit and does not roll back: the caller owns tx's lifetime,
+// including the rollback that undoes everything this wrote.
+func (s *Store) deliverSignalEventTx(ctx context.Context, tx pgx.Tx, in DeliverSignalEventInput) (SignalDelivery, error) {
+	if in.SourceKey != "" {
+		if _, err := tx.Exec(ctx, `SELECT pg_advisory_xact_lock(hashtextextended($1, 0))`,
+			"signal-watermark:"+in.NamespaceID+":"+in.SourceKey); err != nil {
+			return SignalDelivery{}, fmt.Errorf("postgres: DeliverSignalEvent: lock watermark: %w", err)
+		}
+		var eventID string
+		err := tx.QueryRow(ctx, `SELECT event_id FROM signal_event_watermarks
+			WHERE namespace_id = $1 AND source_key = $2 AND watermark = $3::jsonb
+			FOR UPDATE`, in.NamespaceID, in.SourceKey, jsonOrEmptyObject(in.Watermark)).Scan(&eventID)
+		if err == nil {
+			ev, err := signalEventByIDTx(ctx, tx, eventID)
+			if err != nil {
+				return SignalDelivery{}, err
+			}
+			return SignalDelivery{Event: ev, Duplicate: true}, nil
+		}
+		if !isNoRows(err) {
+			return SignalDelivery{}, fmt.Errorf("postgres: DeliverSignalEvent: read watermark: %w", err)
+		}
+	}
 
 	fired, routes, err := matchUnderRunLocks(ctx, tx, in)
 	if err != nil {
@@ -416,6 +478,18 @@ func (s *Store) DeliverSignalEvent(ctx context.Context, in DeliverSignalEventInp
 		return SignalDelivery{}, fmt.Errorf("postgres: DeliverSignalEvent: append event: %w", err)
 	}
 	ev.CreatedAt = tsValue(createdAt)
+	if in.SourceKey != "" {
+		if len(in.Watermark) == 0 {
+			return SignalDelivery{}, errors.New("postgres: DeliverSignalEvent: watermark is required with sourceKey")
+		}
+		if _, err := tx.Exec(ctx, `INSERT INTO signal_event_watermarks
+			(namespace_id, source_key, watermark, event_id) VALUES ($1,$2,$3,$4)
+			ON CONFLICT (namespace_id, source_key) DO UPDATE SET
+			watermark = EXCLUDED.watermark, event_id = EXCLUDED.event_id, updated_at = now()`,
+			in.NamespaceID, in.SourceKey, in.Watermark, ev.ID); err != nil {
+			return SignalDelivery{}, fmt.Errorf("postgres: DeliverSignalEvent: advance watermark: %w", err)
+		}
+	}
 
 	for i := range fired {
 		if err := fireSubscription(ctx, tx, &fired[i], ev); err != nil {
@@ -430,6 +504,10 @@ func (s *Store) DeliverSignalEvent(ctx context.Context, in DeliverSignalEventInp
 	if err != nil {
 		return SignalDelivery{}, err
 	}
+	triggered, err := runEventTriggers(ctx, tx, in.NamespaceID, in.Trigger, ev)
+	if err != nil {
+		return SignalDelivery{}, err
+	}
 
 	// One outbox row for the delivery itself, whether or not anything was
 	// waiting — the same transactional audit discipline every other state
@@ -441,6 +519,7 @@ func (s *Store) DeliverSignalEvent(ctx context.Context, in DeliverSignalEventInp
 		"run_id":    ev.RunID,
 		"resumed":   len(fired),
 		"picked_up": admittedPickups(pickups),
+		"triggered": len(triggered),
 	})
 	if _, err := tx.Exec(ctx,
 		`INSERT INTO outbox (id, namespace_id, topic, payload, status, available_at)
@@ -450,10 +529,7 @@ func (s *Store) DeliverSignalEvent(ctx context.Context, in DeliverSignalEventInp
 		return SignalDelivery{}, fmt.Errorf("postgres: DeliverSignalEvent: outbox: %w", err)
 	}
 
-	if err := tx.Commit(ctx); err != nil {
-		return SignalDelivery{}, fmt.Errorf("postgres: DeliverSignalEvent: commit: %w", err)
-	}
-	return SignalDelivery{Event: ev, Fired: fired, Pickups: pickups}, nil
+	return SignalDelivery{Event: ev, Fired: fired, Pickups: pickups, Triggered: triggered}, nil
 }
 
 // SignalDelivery is what one committed delivery did: the fact it appended,
@@ -463,9 +539,25 @@ func (s *Store) DeliverSignalEvent(ctx context.Context, in DeliverSignalEventInp
 // entitled to see, and design D13 makes the refusal the only trace a
 // bound-refused pickup leaves.
 type SignalDelivery struct {
-	Event   SignalEvent
-	Fired   []SignalSubscription
-	Pickups []engine.EventPickupResult
+	Event     SignalEvent
+	Fired     []SignalSubscription
+	Pickups   []engine.EventPickupResult
+	Triggered []engine.TriggeredRun
+	Duplicate bool
+}
+
+func signalEventByIDTx(ctx context.Context, tx pgx.Tx, id string) (SignalEvent, error) {
+	var ev SignalEvent
+	var runID pgtype.Text
+	var createdAt pgtype.Timestamptz
+	var payload []byte
+	err := tx.QueryRow(ctx, `SELECT id, namespace_id, run_id, name, payload, emitter, created_at FROM signal_events WHERE id = $1`, id).
+		Scan(&ev.ID, &ev.NamespaceID, &runID, &ev.Name, &payload, &ev.Emitter, &createdAt)
+	if err != nil {
+		return SignalEvent{}, fmt.Errorf("postgres: DeliverSignalEvent: load duplicate event: %w", err)
+	}
+	ev.RunID, ev.Payload, ev.CreatedAt = textOrEmpty(runID), jsonOrEmptyObject(payload), tsValue(createdAt)
+	return ev, nil
 }
 
 func admittedPickups(pickups []engine.EventPickupResult) int {

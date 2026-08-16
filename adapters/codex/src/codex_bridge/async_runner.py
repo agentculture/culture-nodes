@@ -45,7 +45,7 @@ from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from typing import Any
 
-from codex_bridge import codex_cli, mapping, preserve, workspace
+from codex_bridge import codex_cli, mapping, preserve, scope_guard, workspace
 from codex_bridge.callbacks import CallbackConfig, CallbackEmitter
 from codex_bridge.config import Config
 from codex_bridge.session_registry import SessionRegistry
@@ -105,6 +105,11 @@ class AsyncInvocation:
     started_at: float = field(default_factory=time.monotonic)
     done: bool = False
     cancel_requested: bool = False
+    #: t9 / #90: did THIS dispatch ask for its changes to be handed over as
+    #: a git ref? Carried per-invocation rather than read off the config,
+    #: because it is a per-dispatch opt-in the caller makes and not a
+    #: property of the host this bridge runs on.
+    handover: bool = False
     #: t6 (c44/h37): the session_key slot this invocation holds, and the
     #: registry to release it from once codex's turn actually finishes.
     #: Both None when this invocation forked or session serialization
@@ -134,6 +139,19 @@ class AsyncRunner:
         callback_token: str,
         heartbeat_after_seconds: int,
         continuation_ref: str | None = None,
+        # t9 / #90: threaded through to `codex_cli.spawn` so an async
+        # handover dispatch gets the same `.git` widening a sync one does.
+        # Async is the path production actually uses (`always_async: true`),
+        # so a wire that stopped at run_sync would have left the flag dead
+        # in exactly the deployment that needs it.
+        writable_git: bool = False,
+        # t9 / #90: the ref-creation half of the same opt-in. It is a
+        # SEPARATE parameter from `writable_git` even though this bridge's
+        # server passes the one request flag to both, because the two are
+        # different mechanisms with different reach: `writable_git` is a
+        # codex sandbox flag and exists in no other bridge, while creating
+        # the ref is the part every backend does.
+        handover: bool = False,
         session_registry: SessionRegistry | None = None,
         session_key: str | None = None,
         session_holder: str | None = None,
@@ -165,6 +183,7 @@ class AsyncRunner:
             model=model,
             sandbox=sandbox,
             continuation_ref=continuation_ref,
+            writable_git=writable_git,
         )
         invocation_id = uuid.uuid4().hex
         inv = AsyncInvocation(
@@ -172,6 +191,7 @@ class AsyncRunner:
             proc=proc,
             ctx=ctx,
             workspace_handle=handle,
+            handover=handover,
             session_registry=session_registry,
             session_key=session_key,
             session_holder=session_holder,
@@ -257,6 +277,17 @@ class AsyncRunner:
             timed_out=timed_out,
             workspace_measured=measured,
         )
+        # Issue #98: the same workflow-scope boundary server.py applies to a
+        # synchronous response, applied to the terminal event — decided on
+        # the change set THIS bridge measured, never on the instruction text
+        # or on codex's own account of what it touched. Before the preserve
+        # hook below, so a refused change set is preserved rather than lost.
+        scope_violations = scope_guard.violations(inv.workspace_handle.repo, measured)
+        if scope_violations:
+            ev = mapping.TerminalEvent(
+                kind="failed",
+                payload=scope_guard.refusal_payload(scope_violations, measured),
+            )
         # t25 (c26/h17, c41/h34): the async equivalent of server.py's sync
         # hook — a "failed" terminal event (never "completed", which is the
         # only other kind terminal_event ever produces) gets its workspace
@@ -275,6 +306,28 @@ class AsyncRunner:
                 reason=str(ev.payload.get("message") or "bridge reported an asynchronous failure"),
             )
             ev.payload["preserve"] = preserve_result.to_dict()
+        # t9 / #90: the SUCCESS twin of the preserve hook above, and the
+        # path production actually takes (`always_async`). `preserve.
+        # handover_ref` had no caller in any bridge until this wire existed,
+        # so no asynchronous dispatch had ever created a handover ref
+        # either. "completed" is the only other kind terminal_event ever
+        # produces, so the two hooks partition the terminal branches between
+        # them and no invocation runs both. The block rides on the terminal
+        # event's payload, which is what carries it to the control plane —
+        # see server.py's synchronous copy for the full argument.
+        if ev.kind == "completed":
+            handover_result = preserve.handover_ref(
+                inv.workspace_handle.repo,
+                measured,
+                enabled=inv.handover,
+                remote=self._cfg.handover_remote,
+                run_id=inv.ctx.run_id,
+                node_run_id=inv.ctx.node_run_id,
+                attempt_id=inv.ctx.attempt_id,
+                reason=preserve.handover_success_reason(ev.payload.get("outcome")),
+            )
+            if handover_result.attempted:
+                ev.payload["handover"] = handover_result.to_dict()
         emitter.send(ev.kind, ev.payload)
         with self._lock:
             inv.done = True

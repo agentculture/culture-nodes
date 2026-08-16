@@ -5,6 +5,873 @@ All notable changes to this project will be documented in this file.
 Format follows [Keep a Changelog](https://keepachangelog.com/). This project
 adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.31.2] - 2026-08-16
+
+The two "timing-sensitive" tests in #126 were neither timing-sensitive nor two.
+
+### Fixed
+
+- **CI gave every package one shared test database while local runs gave each
+  its own.** `.github/workflows/tests.yml` set `NODES_TEST_DATABASE_URL` to a
+  single database, but `pgtest.Run` starts a private ephemeral postgres per
+  package when that variable is unset — so a local run isolated every package
+  and CI shared one `outbox` and one `timers` table across ~20 concurrent ones.
+  That asymmetry is why #126 recorded 8 consecutive local passes against
+  CI-only failures. The variable now names a *server*: `pgtest.IsolatedDatabase`
+  creates a uniquely named database per test binary and drops it on exit.
+  Database rather than schema because `Store.Migrate`'s advisory lock is
+  database-scoped, so schemas would have kept every package serialised behind
+  every other. Failure to isolate exits 1, never skips.
+- **`pg_locks` is cluster-wide, so a test could kill another test binary.**
+  The standby-takeover test selected any granted advisory lock and
+  `pg_terminate_backend`'d it, which under a shared server terminated unrelated
+  packages' connections. Now scoped to `current_database()`. Without this the
+  isolation fix would have looked correct and stayed flaky.
+- **A dial-in empty outcome produced `%!w(<nil>)` instead of a message.**
+  `ParseInvocationResponse` wrapped a nil cause with `%w`. Contrary to the
+  review that filed it, the returned error was never nil and no malformed 200
+  was ever treated as success — the defect was diagnostic: a garbage message
+  and a broken unwrap chain. Unmarshal failures keep `%w`; an empty outcome
+  returns a plain error.
+
+### Changed
+
+- The scheduler deadline test now waits for the runner-operation transition it
+  asserts, rather than assuming it lands atomically with the node-run status —
+  those commit in two separate transactions. Both of its assertions were racy,
+  not the one #126 named.
+- The chaos relay test no longer assumes it is alone in the outbox. The relay
+  is deliberately namespace-unfiltered, so the test drains until its own row
+  arrives instead of demanding it in the first page, and proves absence by
+  emptying the queue. Foreign-row seeding is kept as the regression guard.
+
+### Added
+
+- `tests/lint/testdatabaseisolation_test.go` — a standing guard that fails the
+  build if the test database URL is resolved without isolation, or if
+  `pg_locks`/`pg_stat_activity` are read without naming `current_database()`.
+
+## [0.31.1] - 2026-08-16
+
+Three CI reds on PR #122, each a different kind of thing.
+
+### Fixed
+
+- **A worker with no code runner at all starts again (kind-smoke).** Issue #8's
+  preflight demanded the complete `NODES_CODE_RUNNER_{NAME,REVISION,ACTOR_ID}`
+  tuple unconditionally, and the Helm chart sets none of the three — so both
+  worker pods went `CrashLoopBackOff` on a check meant to catch misattribution.
+  The rule is now all-three-or-none, exactly like the `NODES_CALLBACK_*` pair
+  directly beneath it: a PARTIAL tuple is still refused, because that is the
+  state where a worker starts and its first code dispatch produces evidence
+  attributed to an identity nobody fully declared. An absent tuple says
+  something different and legitimate — this deployment runs no code nodes.
+  Same shape as #124: a fail-closed validation added without walking the
+  deployment paths it would newly refuse.
+- **Two bandit findings that had never been reached.** The codex adapter's
+  lint job runs bandit after black and isort, so it only ran once those passed.
+  Both are false positives, suppressed with the reason at the line rather than
+  by widening the config: `B108` flags prose *about* `/tmp` inside a diagnostic
+  message, and `B607` flags `git` resolved from PATH, which is deliberate so a
+  deployment chooses its own toolchain.
+
+### Verified
+
+- Ablation: relaxing the tuple rule back to "any missing is an error" fails
+  `TestWorkerConfigPreflightAcceptsAnEntirelyAbsentCodeRunner`.
+- The test that asserted the old behaviour was retargeted rather than deleted —
+  its intent (report EVERY missing field, not just the first, so one restart
+  fixes the configuration instead of three) now applies to the partial case.
+
+### Not fixed
+
+- **The `go` job's failures are #126**, and a third test joined the family:
+  `TestRelayCrashRecoveryPublishesAtLeastOnceAndMarksExactlyOnce`
+  (`internal/events`), alongside the chaos and scheduler tests. All three are
+  outbox-relay or deadline timing tests. Not reproduced locally in 10+ runs
+  including under deliberate CPU contention, so nothing is claimed fixed and
+  no retry was added.
+
+## [0.31.0] - 2026-08-16
+
+Issue #125: the rewritten pr-upkeep example could not dispatch. Found by
+running the loop against production, not by any test.
+
+### Fixed
+
+- **The `fix` node binds an instruction instead of passing the event
+  payload.** t17b's rewrite made a run start from the durable `pr-upkeep.pr`
+  event, so `/run/input` became the event payload — findings and nothing
+  else. The bridge answered `input.instruction is required` and every
+  triggered run failed at its first node. The instruction is now a LITERAL
+  binding, which is what literal bindings exist for: it is graph authoring,
+  identical in every deployment, fixed at publish time and addressed by the
+  content digest. The payload rides along as `finding`, and the bridge's
+  existing "Bound inputs (engine-resolved, verbatim)" block puts it in front
+  of the actor unreformatted.
+- **A bridge naming exactly one repository infers it when `input.repo` is
+  absent** (`Config.only_allowed_repo`, all three workspace bridges). `repo`
+  is the one genuinely deployment-specific value, so a literal would break the
+  rule this example holds to — loading it elsewhere must never mean editing
+  `workflow.yaml`. When the allowlist names one repo the caller restating it
+  adds no safety, because the allowlist check rejects anything else anyway.
+  **Ambiguity fails closed**: two entries, or any prefix rule, and `repo` stays
+  required with the reason in the error, because then the choice is real and
+  guessing would silently pick a workspace nobody named.
+
+### Verified
+
+- Against a single-entry bridge, a dispatch with no `input.repo` gets past the
+  repo check (it then fails on callback fields, which validate later) — the
+  inference works.
+- Ablation: relaxing the guard to `len(...) >= 1` fails the config test on the
+  two-entry and prefix cases.
+
+### Notes
+
+- **This does not fully close #125 for a multi-lane bridge.** The `developer`
+  bridge on spark has two allowlist entries, so it correctly still demands
+  `repo`. Closing that needs either a dedicated single-lane actor for the
+  upkeep lane (deployment configuration, no code) or the repo carried in the
+  actor registry the way `metadata.handover_remote` already is (a worker
+  change). Recorded on the issue rather than decided here.
+- `tests/test_pr_upkeep_sweep.py` crossed the repo's 1000-line hard limit and
+  was split by subject: reporting behaviour — which surface failed, how a
+  credential is presented — moved to `test_pr_upkeep_sweep_diagnostics.py`.
+
+## [0.30.1] - 2026-08-16
+
+Two fixes found by watching the upkeep loop try to pick up its own PR.
+
+### Fixed
+
+- **A sweep failure now names the surface that failed.** All four source
+  surfaces — the repository grant, GitHub, SonarCloud, Jira — reported through
+  one boundary as `sweep failed: Expecting value: line 1 column 1 (char 0)`.
+  That is what a JSON decoder says about an empty body, and an empty body is
+  what a wrong token, a rate limit, an outage, an SPA catch-all and a malformed
+  environment variable all look like from there. Diagnosing one instance took a
+  monkey-patched `json.loads` to discover the culprit was a malformed
+  `PR_UPKEEP_REPOSITORIES`. Each surface read is now wrapped in `attempting()`,
+  and the report reads `sweep failed while reading PR_UPKEEP_REPOSITORIES:
+  JSONDecodeError: ...` or `... while listing open PRs of <repo> (GitHub):
+  HTTPError: HTTP Error 401`. A failure outside every block says it is
+  **unattributed** rather than implying a stage was identified.
+  This matters because #107 means the sweep runs unattended: an always-on
+  emitter whose failures name nothing is one an operator stops reading, and a
+  sweep nobody reads is a sweep that has silently stopped.
+
+### Changed
+
+- **`CLAUDE.md` now documents the five adapter lint jobs**, which the root lint
+  scope does not cover. PR #122 went red on three `lint` jobs after a fully
+  green local run, because each bridge lints `src tests` in its own workflow
+  while the documented gate only checked `culture_nodes tests`. It also records
+  the trap underneath: formatting the shared bridge modules per-adapter
+  **breaks** the byte-identity `tests/lint/` requires, since isort is
+  configured in three adapters and not the other two, so one file acquires two
+  formattings. Format once, copy, re-check.
+
+### Verified
+
+- Ablation: reverting the report to `sweep failed: {cause}` fails
+  `test_a_sweep_failure_names_the_surface_that_failed` with the original
+  unattributable string, verbatim.
+- The sweep was run read-only against PR #122 and turned its red checks into
+  **4 work items** (3× `lint` CRITICAL, 1× `go` MEDIUM) — confirming #61's
+  third finding source works, and that a failed check is seen.
+
+## [0.30.0] - 2026-08-16
+
+### Changed
+
+- Added the contract migration that retires `actors.endpoint_ref` and the
+  copied `runner_invocations.endpoint`. Its SQL records the human-approved
+  ADR 0002 bypass: expand-contract protects a rolling fleet, while production
+  is two workers and one API restarted together by `deploy.sh`. It also states
+  the non-generalisation and the required completion of the mixed-mode bridge
+  cutover, because applying the drop earlier would remove its outbound
+  fallback and rollback path.
+
+## [0.29.1] - 2026-08-16
+
+t23's live half (deviation d21): criterion 2 demonstrated, and a fleet-wide
+defect found by demonstrating it.
+
+### Fixed
+
+- **Every bridge would have spun forever without ever claiming work.**
+  `dialin.py` treated an idle long poll as a connection fault. The poll answers
+  204 with an empty body; 204 is a 2xx, so `urllib` never raises `HTTPError`
+  and the `except HTTPError ... code == 204` branch is unreachable against the
+  shipped server. `json.loads("")` raised instead, the loop logged `dial-in
+  reconnecting`, slept a second and started over. The empty mailbox is the
+  NORMAL case, so this was the steady state rather than an edge. Fixed in all
+  five bridges (the module is byte-identical, checksum-verified before and
+  after), with a regression test in each that drives three idle polls and
+  asserts every pause is the 0.25s idle nap and never the 1s reconnect
+  backoff. Ablation reproduces the original log line exactly.
+
+### Verified
+
+- **Criterion 2 is met.** Run `01M04K4TZVYFQX3W9M9SGTTWK3` completed against an
+  actor whose newest registration has `endpoint_ref IS NULL`; the succeeded
+  attempt resolves to `company/dialin-demo`; and the inbound mailbox row shows
+  `claimed t, completed t, response_status 200`. The dispatch reached a bridge
+  the control plane holds no address for. See
+  `docs/deliveries/t23-live-demonstration.md`.
+- Run on a SCRATCH deployment rather than the fleet, because the decision
+  document sets its own precondition — the fleet demonstration waits on #111's
+  replacement — and converting a real bridge would have taken on that debt
+  without an owner decision.
+
+### Notes
+
+- Mixed mode's simultaneity (one converted and one unconverted bridge live
+  together) is step 6 of the procedure, needs two real bridges on two hosts,
+  and remains gated on the same precondition. Not claimed.
+
+## [0.29.0] - 2026-08-16
+
+### Verified
+
+- **`TestDBRegistryResolvesCurrentDialInWithoutAddress` passes.** The session
+  declared it compiled-and-skipped because its sandbox has no database socket
+  (#119); run in the operator lane it PASSES in 0.01s. Fifth package this
+  cycle to draw that line honestly and the fifth to be right first time.
+- Migration renumbered `0033` → `0035` at merge, after colliding with t33's
+  schedules and affinity migrations; the whole chain was applied to an empty
+  database in order to confirm it.
+
+### Not verified
+
+- **Criterion 2 is not met yet, by design.** "One dispatch reaches a bridge the
+  control plane holds no address for" is a live cross-fleet demonstration, and
+  the codex sandbox denies `socket(2)` entirely, so this half was deliberately
+  split out (deviation d21). The decision document ends with the ordered
+  operator procedure for running it. Nothing here claims it happened.
+
+### Added
+
+- **Address-free bridge dial-in with mixed-mode rollback.** Five bridges on
+  three hosts cannot change atomically, so the control plane now prefers a
+  currently authenticated inbound bridge while retaining the outbound
+  `endpoint_ref` path. PostgreSQL is the durable mailbox authority and stores
+  actor identity and work, never the connection's IP address.
+- **One transport behavior in all five backends.** Codex, Claude Code,
+  Colleague, human inbox, and notify start the same authenticated reconnecting
+  dialer when their three dial-in environment variables are configured.
+- **Pre-cutover decision and executable rollback.** The transport decision
+  records why mixed mode was chosen, the rejected flag-day cost, the unresolved
+  lease/liveness window, issue #111's now-started replacement clock, and the
+  operator-lane commands and outputs required for the live address-free proof.
+
+## [0.28.0] - 2026-08-16
+
+### Verified
+
+- **The `.github/` refusal is enforced, by ablation in the operator lane.**
+  Emptying `GuardedPathPrefixes` makes two tests fail —
+  `.github/workflows/tests.yml: destination = "repair", want "human"`, and
+  `reason = "ceiling_reached", want "out_of_workflow_scope" — scope outranks
+  the ceiling`. The ordering matters as much as the refusal: a repair that was
+  never possible must not read as one whose attempts ran out.
+- The package reports 20 ablations of which **two passed**, and says so rather
+  than reporting 18 of 18. Both were its own tests being wrong — one matched a
+  doc comment instead of the call site, the other built a wheel under a
+  `.gitignore` hatchling never reads, because hatchling resolves it from the
+  adapter directory and not the repo root. Both tests were rewritten and
+  re-ablated. An ablation that passes is a finding, and reporting it is the
+  behaviour this cycle has been trying to buy.
+
+### Not verified
+
+- **The live path was not run.** `deploy/prod/deploy.sh` targets production over
+  ssh and was not executed, so the revision stamp landing on thor and orin, the
+  bridges advertising `deployment`, and `GET /v1alpha1/version` answering from a
+  deployed image are all unverified in production — checked here by static
+  assertion plus a real wheel build. The repair loop has never met a real
+  rejecting gate on the fleet. Both are stated rather than implied.
+
+A failing gate stops landing in the operator's session, and a deploy records
+what it shipped (task t32, issues #102 and #104, plus #120 item 4).
+
+**Why a minor bump.** Two new surfaces (`GET /v1alpha1/version`, a `deployment`
+key in the bridges' capability contract), one changed one: POST
+`/v1alpha1/runs/{id}/suite-verdicts` now answers `SuiteVerdictResult`
+(`{verdict, routing}`) rather than a bare `LedgerRecord`. That route is one
+release old and lives in `v1alpha1`; splitting the routing across a second
+round trip would have put the operator back inside the loop the routing exists
+to take them out of.
+
+### The gate → repair → gate loop is closed, and bounded (#102)
+
+Nine packages in the own-the-work-end-to-end batch failed their gate, and
+every one was repaired by hand in the operator's own interactive session —
+the most expensive lane in the deployment, and the only one whose work leaves
+no ledger record. The system already had the vocabulary for this and did not
+use it: a failing gate is a domain outcome (PRD §3.4), and a domain outcome is
+a thing that routes.
+
+`internal/repair` now decides where a rejecting suite verdict goes, as a
+`derived` validator record composed from already-recorded facts. **The bound is
+two numbers and a stated behaviour, all three enforced and all three in the
+record**: at most 2 repair attempts per run, over a 24-hour window measured
+from the run's first gate rejection, and a human node at either ceiling. The
+two bound different things — attempts bound spend, the window bounds staleness
+— and a run can hit either without the other.
+
+Three refusals outrank the budget, because a repair that was never possible
+must not be reported as one the attempts ran out on:
+
+- **the workflow-scope boundary** — a failure implicating `.github/` goes to a
+  person, because a repair attempt is a dispatch and a dispatch may not modify
+  CI configuration. The implicated paths are the ones the control plane already
+  *measured* for the run's handover, so this fires without anyone remembering
+  to declare it;
+- **a lane that cannot verify** — read off the lane's own advertised capability
+  surface. A posture that grants no `workspace-write` cannot repair; one that
+  cannot run the failing suite cannot check its own fix. This is #119
+  mechanized: `--requires-grant network-egress` is how a database-backed suite
+  says what its repair lane would need;
+- **a lane that advertised nothing** — refused rather than assumed, the same
+  fail-closed rule `retryRefusal` states.
+
+**Unattended execution is deliberately not enabled.** The control plane decides
+and records the route; it does not dispatch it, and the record says so in its
+own payload. The write path through the bridges is unproven (#18) and an
+advertised surface cannot show that a database-backed suite is runnable on a
+lane (#119) — so a repair could be dispatched at work it could not verify. What
+changes is that the decision is no longer made in a person's head at the moment
+they read a red gate: it is a deterministic function of recorded facts, written
+down under a stated bound, leaving the human step as executing a dispatch the
+system already chose and justified.
+
+Repair rounds are now a ledger query, which is the signal #28 was missing.
+
+### A deploy records which revision it shipped (#104, #120 item 4)
+
+Three dispatches this cycle reported `handover=true`, committed successfully,
+and created no handover ref — because the bridges installed on thor and orin
+predated the code that mints them. Nothing reported a problem, because
+`internal/handover` correctly records nothing when there is no fetchable ref,
+so a stale bridge and an honest refusal produce byte-identical evidence. It was
+found by running `git for-each-ref` on the host.
+
+The two install shapes have different answers, and reporting only one would
+have been wrong for the other:
+
+- the codex and notify bridges are `uv tool install`ed **copies** — no git near
+  them, so `deploy.sh` now stamps the resolved 40-hex revision into the shipped
+  tree *before* the install copies it;
+- the claude bridges on spark are **editable** installs serving a live work
+  tree — they cannot go stale, and they *can* be running uncommitted code,
+  which is now reported as its own hazard.
+
+So the bridges advertise a `deployment` host fact — install mode, revision, how
+that revision was learned, whether the tree is dirty, and what can go stale —
+on the `/v1/capabilities` surface an operator already reads without ssh. A
+revision that is not a full lowercase 40-hex commit id is refused rather than
+reported, and a revision nothing can establish is stated as such instead of
+returned blank.
+
+The control plane answers for itself at `GET /v1alpha1/version`, unauthenticated
+like `healthz`. Issue #104 was found by POSTing at a route that should have
+existed and reading the `405`; a live test can now *assert* which code it
+tested. The image is built from a `git archive` with no `.git` in it, so
+`deploy.sh` passes the revision through both build lanes and the Dockerfile
+injects it — and `-X main.version` finally does something, having written to a
+`const` since t1.
+
+### Also
+
+- `internal/handover.Measured` exposes the ref, commit and changed paths of a
+  measured handover; `MeasuredCommit` is now a projection of it rather than a
+  second walk with its own recognition rule.
+- `deployment.py` joins `preflight.py` as a byte-identical shared bridge
+  module, and `tests/lint` guards both — the split and the guard are one
+  change, so a shared module cannot quietly become four.
+- `tests/deploy/revisionstamp_test.go` builds a real wheel and looks inside it.
+  Written first as a test that passed for the wrong reason: hatchling resolves
+  `.gitignore` from the adapter directory, not the repo root, so the guard now
+  reproduces the adapter-local ignore rule that actually drops the stamp.
+
+## [0.27.0] - 2026-08-16
+
+Task t33: upkeep starts itself on a declared cadence, and findings route by
+declared actor affinity (#107).
+
+### Verified
+
+- **Criterion 4 demonstrated end to end, and its limit stated.** Nine events,
+  nine runs, nine distinct runs, against a real control plane and PostgreSQL:
+  one fire per occurrence, five boundaries passed while disabled with zero
+  events, exactly ONE late fire on re-enable rather than five, and exactly ONE
+  recovery fire after a kill rather than three or zero. Every run recorded
+  `rule=security-findings` and routed its dispatch to the affinity-chosen
+  actor rather than the node's declared `uses`. The package states plainly
+  that the finding in the demo is the schedule's declared payload and not a
+  live `sweep.py` read of Jira/GitHub, so the mechanism is demonstrated and
+  the discovery half is not.
+- **Ablation reproduced independently in the operator lane.** Removing
+  `FOR UPDATE SKIP LOCKED` makes `TestConcurrentFiresOfOneOccurrence
+  StartExactlyOneRun` fail with `7 of 8 concurrent fires reported firing,
+  want exactly 1` — the double-start criterion 2 forbids.
+- **Migrations renumbered at merge.** This package branched before t22 and
+  both claimed `0032`. `0032_schedules.sql` became `0033`, and
+  `0033_run_actor_affinity.sql` became `0034`, with every in-code reference to
+  the old numbers updated. Verified by applying the full chain to an empty
+  database in order.
+- Two pre-existing `gofmt` offenders that this package correctly identified as
+  not its own (`internal/api/decisions_test.go`, `internal/api/
+  suiteverdicts.go`, both arriving through earlier merges in this cycle) are
+  formatted here.
+
+### Added
+
+- Schedules: a declared cadence the control plane fires by itself (issue #107, task t33). A schedule is a durable row (migrations/0032) that appends its declared payload to `signal_events` on each occurrence; the workflow triggers task t17b shipped turn that fact into a run. WHY a table and not a field on the workflow: a workflow version is immutable and content-addressed, so a cadence declared inside one could not be disabled without republishing -- which would change what the graph IS in order to change how often it runs.
+- Declared actor affinity: `spec.affinity` routes a node to an actor chosen by a condition over the triggering event, and the resolved choice is recorded on the run (migrations/0033, `runs.actor_affinity`). WHY recorded rather than merely applied: this project keeps a per-actor comparative record of which actor is better at what, and an affinity that routed but left no trace could not feed it -- you would see which actor ran, not what the workflow said the work WAS.
+- `POST/GET/PATCH/DELETE /v1alpha1/schedules` and `actor_affinity` on the Run schema, with the OpenAPI document and its rendered JSON updated together.
+- `scheduler.Options.Now` and the exported `Scheduler.Tick`, so schedule behaviour is tested against instants the test chooses. WHY: a test that proved a cadence by sleeping would be measuring time.Ticker, and could not express the case that actually matters -- a schedule that came due during a four-hour outage.
+
+### Changed
+
+- `Store.DeliverSignalEvent` split into a transaction-scoped `deliverSignalEventTx` plus a Begin/Commit wrapper. WHY: firing a schedule has to append the event, let its triggers create runs, and advance the schedule's own cursor in ONE transaction, so a control plane that dies mid-fire can tell afterwards which side of the commit it died on -- it reads `next_fire_at`, which is the answer either way. Splitting the seam keeps one set of delivery semantics rather than a second copy.
+- The worker applies a run's recorded affinity at a single seam, before anything reads `node.Uses`. WHY there: `node.Uses` feeds the registry lookup, the pacing budget, the capacity breaker, the session budget, the preflight gate, the telemetry attribute, and the attempt's actor id -- overriding at only the registry lookup would route to one actor while attributing to another, corrupting exactly the comparative record this feature exists to feed. The override returns a COPY, because the pinned node spec is cached per digest and shared by every concurrent run of that workflow.
+- The OpenAPI route sweep picks its probe method per path instead of always using DELETE. WHY: the old probe rested on 'no route in this spec documents DELETE', which `DELETE /v1alpha1/schedules/{id}` invalidated -- and a global assumption about which method is spare is one every new endpoint can break.
+- `examples/pr-upkeep/workflow.yaml` declares affinity for its `fix` node, so a security finding and a dependency bump can reach different developer actors.
+
+## [0.26.1] - 2026-08-16
+
+### Verified
+
+- **The PostgreSQL test this package wrote but could not run passes.** Its
+  sandbox denies `socket(2)` (#119), so it declared
+  `TestInboundAuthenticationPersistsLockoutAndRevocation` as authored-and-
+  skipped rather than passing. Run in the operator lane against PostgreSQL 17:
+  PASS in 0.01s. This is the fourth package this cycle to draw that line
+  honestly and the fourth to be right on first execution.
+- **Revocation is enforced, by ablation.** Stubbing the `state.RevokedAt`
+  check makes both the pure and the database-backed test fail with
+  `decision=allowed=true reason=authenticated` — a revoked credential
+  authenticating on its next dial, which is exactly what the check exists to
+  prevent.
+- **The extended dump guard passes against a real dump** covering the new
+  lockout state as well as the credential itself: `PASS: authentication and
+  lockout state have no plaintext-capable column and dump has no presentable
+  canary`.
+
+### Added
+
+- **Dial-in admission controls before connection acceptance.** Every attempt is
+  rate-limited, repeated wrong credentials produce a durable lockout that is
+  not outwaited as a rate window, and a positive `revoked_at` marker refuses
+  the next dial. Explicit revocation was chosen over row deletion so replaying
+  a migration, restoring a backup, or omitting a delete predicate cannot
+  silently make compromised credential material usable again.
+- **Secret-safe failure state.** Durable state stores only counts and instants;
+  the dump guard now also rejects debug-shaped `presented`, `material`, and
+  `value` columns so failed presentations cannot become backup-resident
+  credentials.
+
+## [0.26.0] - 2026-08-16
+
+The merge gate stops being an operator looking at a green tick (task t11,
+issue #101).
+
+Two things were being substituted for evidence. The first was the *collection*
+step: `git fetch ssh://<host>/<path> <branch>`, typed by hand fifteen times
+this cycle, needing three facts the operator had to already know — which
+machine the session ran on, where its checkout lives, and what the ref was
+called. Only the third is genuinely derivable, and the other two are in the
+control plane. The second was the *verdict*: a person reading a CI status and
+deciding to merge leaves nothing behind that names the suite, the exit code,
+or the commit — so nothing later can check whether the thing that passed is
+the thing that shipped. This cycle produced two suites that passed while
+testing nothing, and neither was visible afterwards from the word "passed".
+
+Why the authority vocabulary carries the weight here: a test suite **is** a
+deterministic validator (a commit plus a command yields the same number every
+time), which is exactly the producer PRD §10.4 admits `derived` records from.
+An operator's opinion of a rendering is not a producer at all. So the finding
+can now be recorded by the thing that produced it, and the refusals that make
+it evidence — a full 40-hex commit sha or no record, an absent exit code never
+read as a pass — live with it.
+
+### Added
+
+- **`scripts/collect-handover.py <run-id>`.** A run id alone becomes a
+  reviewable diff. It asks the control plane which actor ran the run, resolves
+  that actor's host from the registry, and fetches
+  `refs/culture-nodes/<run-id>/*` by wildcard into `refs/handover/` — no
+  branch touched, nothing checked out — then reports each ref, its commit, and
+  the paths it changed. The remote is the control plane's configuration
+  (`metadata.handover_remote` per actor, or `NODES_HANDOVER_REMOTE_TEMPLATE`
+  with `{host}` from the registered `endpoint_ref`) and never the run's own
+  report, because a session that could point the fetch at a repository it
+  prepared would make the measurement real and the subject forged — the same
+  fence `internal/handover/doc.go` states for the control plane's own fetch.
+  Configured by neither is a refusal, not a guess.
+- **The no-ref case is reported as ambiguous, and exits non-zero.** After
+  issue #120 an empty result has two readings — the session handed over
+  nothing, or the bridge on that host cannot hand over at all — and the fetch
+  distinguishes neither. Both are named. Guessing here is how a lost handover
+  becomes "the agent did nothing". An *unreachable* remote is kept distinct
+  from an empty one: it exits 2, not 1, because that is no gate rather than a
+  passing one.
+- **`POST /v1alpha1/runs/{id}/suite-verdicts`**, and
+  `scripts/collect-handover.py <run-id> --gate --suite '…' -- <cmd>` that
+  drives it. The suite runs in a detached worktree at the collected commit and
+  the result lands as a `derived`, validator-origin record naming the suite,
+  the exit code, and the commit sha. The sha is read back from the worktree
+  the suite actually ran in rather than assumed, so a suite that moved the
+  tree records nothing instead of misattributing its verdict.
+- **`internal/handover.MeasuredCommit`**, the reader for the observed
+  handover-evidence payload `buildRecord` writes — placed next to its writer
+  so the two field-name opinions cannot drift.
+
+### Changed
+
+- `internal/handover/verdict.go` is added to the `AuthorityDerived` allowlist
+  in `internal/invariants` and `docs/invariants.md`, deliberately and with its
+  standing stated: it is a validator-origin writer, and it sits beside the
+  fetch rather than in `internal/api` because the verdict and the measurement
+  it judges have to name the same commit.
+
+## [0.25.4] - 2026-08-16
+
+### Added
+
+- **Inbound authentication records that cannot retain a presented secret
+  (#111).** The schema accepts only a fixed-width SHA-256 verifier or an
+  environment-variable name and rejects IP-shaped party keys, because dumps
+  are shipped to object storage and thor's address is not stable. Verification
+  hashes both sides before a constant-time comparison, and a PostgreSQL guard
+  makes schema-only and data dumps part of CI rather than trusting migration
+  text alone.
+
+### Verified
+
+- **Criterion 1 held against a real dump**, which the dispatched session could
+  not do (#119: its sandbox denies `socket(2)`, so no database). The guard
+  seeds a row whose SHA-256 is stored, then asserts the plaintext canary does
+  NOT appear in `pg_dump` output. Run here against PostgreSQL 17 it PASSES;
+  ablated by adding a `credential_plaintext TEXT` column it FAILS with
+  `plaintext-capable credential column found`. Exit codes are 0 / 1 / 2, and
+  the skip code fails CI on purpose — "I could not look" is not "I looked".
+
+### Notes
+
+- **The dispatch was refused by the scope guard, and correctly.** It added its
+  own CI step to `.github/workflows/tests.yml`, which no bridge actor may
+  modify; the run ended `policy_denied` on the *bridge-measured change set*
+  rather than on the instruction text, which is the #98 fix working. Eight of
+  its nine files were in scope and are merged as authored. The CI step was
+  re-authored in the operator lane with one change: it runs `nodes migrate`
+  first, because the table otherwise exists only as a side effect of the
+  earlier `go test` step, and a guard that silently depends on step ordering
+  is one reordering away from exiting 2 and looking like an infrastructure
+  problem.
+
+## [0.25.3] - 2026-08-16
+
+Work package R8-A: tasks t4, t26 and t28 — the cycle tells the truth about
+itself, in numbers a reader can re-run.
+
+### Added
+
+- **`scripts/cycle-accounting.py`.** Renders the four numbers the delivery
+  announcement needs — opened, closed, delta, and cycle-opened-but-
+  undispositioned — each as a command rather than as copied arithmetic. It
+  derives the cycle boundary from git on every run (commit `1e6a532`'s
+  committer timestamp) instead of a hardcoded date, and follows
+  `triage-report.py`'s `--issues-json` pattern so it runs both against live
+  `gh` and against a snapshot. The delta is printed as a signed number: a
+  cycle that ends the tracker LARGER than it started reports negative, which
+  is the case the criterion exists to protect and the one the test covers.
+- **`docs/deliveries/close-the-backlog-bootstrap-honesty.md`.** All fourteen
+  operator steps from the last cycle's STATE section 11, each marked
+  automated-by-a-merged-node or still-manual, plus the stage-2 operator shell
+  transcript reported rather than omitted, plus each of last cycle's NOT MET
+  signals mapped to the issue that would flip it.
+
+### Verified
+
+- **Fourteen of fourteen steps are still manual.** The document was written
+  marking one of them automated; that row was corrected at merge against
+  evidence gathered the same day (#120 — the handover the row credited had
+  produced nothing in production, and the collector it would need is t11,
+  dispatched but unmerged). Fourteen is the honest number.
+- **The live `gh` path works** — the one path the dispatched session could not
+  exercise, because its sandbox denies `socket(2)` (#119). Run in the operator
+  lane it returns 11 opened, 14 closed, delta 3, undispositioned 0. Those
+  differ by one from the snapshot numbers in the document because #120 was
+  filed in between, which is the evidence that the script queries rather than
+  remembers.
+
+### Notes
+
+- The document declines to force a mapping: it records that the STATE file has
+  four NOT MET headings where the spec names three actionable failures, and
+  that closed issue #21 concerns bridge concurrency rather than the missing
+  live cancellation observation, so it is not pressed into a row it does not
+  fit. A refused mapping is a more useful finding than a manufactured one.
+
+## [0.25.2] - 2026-08-16
+
+Issue #8's three measured gaps in the registration/worker-config surface —
+plus the SPA fallback defect that made the last one hard to even detect.
+
+### Added
+
+- **`nodes runner-services list` / `register`.** Registration validates the
+  entry and updates the configured JSON file atomically. Reload still needs a
+  worker restart: a live reload has to swap the registry AND the protocol
+  client/secret set together while in-flight operations keep a consistent
+  snapshot, which is a larger change than this closes. Gap 1 is therefore
+  **partial**, and is recorded as such rather than as done.
+- **Worker config preflight.** A worker now refuses absent or partial
+  code-runner identity and inconsistent callback configuration, reporting
+  every problem in ONE pass, before it connects to PostgreSQL — so a
+  misconfigured worker fails on its configuration instead of on a database it
+  should never have reached.
+- **`GET /v1alpha1/namespaces`.** Documented and served. Both deployment
+  paths use it instead of shelling out to `psql`, which was the last place
+  deployment needed database credentials to answer a question the API can
+  answer.
+
+### Fixed
+
+- **The SPA fallback no longer answers 200 for an undeclared API path
+  (#8).** `GET /v1alpha1/pending-decisions` against a control plane that
+  predates the endpoint returned index.html with status 200, so a client
+  could not distinguish an absent endpoint from an empty one — both operator
+  scripts written this cycle carry a fallback for exactly this. The guard
+  lives in `spaHandler`, NOT as a `mux.HandleFunc("/v1alpha1/",
+  http.NotFound)` pattern: a method-less pattern that broad also matches
+  wrong-method requests to real operations, turning the mux's own 405 into a
+  404 and breaking `TestOpenAPIRoutesAreServed`, which probes with DELETE to
+  prove a documented route is served at all. That is what the first merge
+  attempt did, and 20 tests caught it.
+
+### Verified
+
+- The dispatched session's own namespace test asserts the 404 against a
+  server built WITHOUT web assets, where it already held — it would have
+  passed with or without the fix. `TestSPAFallbackRefusesTheAPINamespace`
+  mounts an `fstest.MapFS` build, which is the configuration production
+  runs, and was confirmed by ablation: removing the guard makes it fail with
+  `status = 200`, the exact symptom #8 describes. It also pins both
+  neighbours — a client-side route still gets the SPA, and a declared
+  operation asked with the wrong method still refuses with 405.
+
+## [0.25.1] - 2026-08-16
+
+Task t17b: an event can now START a run, not only resume one waiting for it.
+
+### Added
+
+- **Workflow-level `triggers`.** A published workflow may declare
+  `spec.triggers: [{onEvent, when}]` — an inbound event name plus an optional
+  CEL condition evaluated against `event.{name, emitter, payload}`. A matching
+  trigger CREATES a run, with the event payload as the run input (validated
+  against the workflow's input contract like any other input). Before this,
+  `signal_events` delivery could only resume a run that was already parked
+  waiting on the event, so an event-driven workflow needed a permanently
+  parked run to receive its first event.
+- **Trigger, recording, resume, route pickup and run creation share one
+  transaction.** `DeliverSignalEvent` appends the immutable event fact and
+  then evaluates triggers inside the same transaction, so an event is never
+  recorded-but-unhandled or handled-but-unrecorded.
+- **Only the newest published version of a workflow key is offered a
+  trigger.** Publishing a newer version WITHOUT the declaration therefore
+  disables future starts — the off switch is a publish, not a config edit.
+  The delivered event still lands in `signal_events` either way, so a
+  declined condition stays queryable rather than vanishing.
+
+### Changed
+
+- **`examples/pr-upkeep/workflow.yaml` drops from 1068 lines to 93.** The
+  example no longer carries the sweep machinery or a parked run: it starts
+  from the durable `pr-upkeep.pr` fact, conditioned on
+  `event.payload.source == "github_pr" && size(event.payload.findings) > 0`.
+  Repository identity and findings are event data now, so they are queryable
+  even on the runs the condition declines.
+
+### Verified
+
+- The two acceptance tests the dispatched session wrote could not be RUN on
+  its host — no PostgreSQL, no Docker (see the codex Go-lane limits recorded
+  as deviation d17). Both were executed in the operator lane against a real
+  database before this merge: `TestConditionedTriggerRecordsNonMatchWithout
+  CreatingOrResuming` and `TestTriggerCreatesRunAndNewerVersionCanRemoveIt`
+  PASS, 0.06s and 0.05s.
+
+## [0.25.0] - 2026-08-15
+
+Work package K3: the handover mechanism gets a caller in every bridge (t9),
+and the control plane learns to measure what was handed over (t10, #13).
+
+### Added
+
+- **Every bridge now creates the handover ref it was already able to
+  create.** `preserve.handover_ref` shipped fully written and fully
+  unit-tested in all three bridges with **no caller anywhere** — a
+  verification dispatch measured it (`grep -rn "handover_ref(" adapters/*/
+  src/*/ --include=*.py | grep -v preserve.py` returned 0, 0, 0) — so no
+  dispatch in any backend had ever created one. Each bridge now reads
+  `input.handover`, threads it through both terminal paths, and on a
+  SUCCESSFUL dispatch creates the ref and reports it in the response body
+  (sync) or the terminal event payload (async). The async half is the one
+  production takes (`always_async`). New config: `handover_remote` (default
+  `origin`), separate from `preserve_remote` because a handover only ever
+  READS the remote's url — it never pushes.
+- **Parity is on the ref creation, not the sandbox widening.** The codex
+  bridge alone refuses `input.handover` without `sandbox=workspace-write`,
+  because `writable_git` lowers a codex-specific
+  `-c sandbox_workspace_write.writable_roots` flag; `claude -p` and
+  `colleague` take no sandbox flag at all and can already write `.git`.
+  Copying that 400 would refuse dispatches those bridges serve.
+- **A handed-over ref is recorded as evidence the control plane measured
+  itself** (#13, new `internal/handover`). It takes exactly one field from
+  the agent's report — the ref NAME — fetches it from a remote the CONTROL
+  PLANE is configured with, and records the ref, the commit sha the fetch
+  resolved, and the paths that commit changed, as an `observed` ledger
+  record. The agent's own commit sha and remote are decoded for
+  round-tripping and read by nothing. Wired into both terminal paths
+  (`internal/worker`, `internal/actors` callback ingest) and configured by
+  `NODES_HANDOVER_REMOTE` + `NODES_HANDOVER_ACTOR_ID`; half-configuration
+  refuses to start rather than silently recording nothing.
+- **No fetchable ref means no record at all** — not a record marked
+  unmeasured, not one citing the agent's summary. A ledger row that exists
+  says a measurement happened, and there is no shape of `observed` record
+  that honestly means "I could not look". The reason goes to the process's
+  diagnostic stream. This closes the gap where `buildEvidence` could build
+  observed evidence from a runner's answer while both shipped runners state
+  they cannot answer, so no production run had ever carried one.
+
+### Changed
+
+- `docs/invariants.md` and the c17/h15 authority sweep now admit a second
+  `AuthorityObserved` / `OriginRunner` writer, with the standing test
+  restated: not which package a writer lives in, but whether every field it
+  stamps came from its own measurement.
+
+### The affirmative half of the authority model (task t30, #99)
+
+A proposed claim can now be decided through the product, and the decision
+names who decided and why.
+
+#### Added
+
+- `GET /v1alpha1/pending-decisions`: every proposed ledger record no review
+  has decided, grouped by run, each group carrying the ledger version a
+  review must be opened against. This is a join, not an authority filter —
+  records are immutable, so confirming a claim appends a review record and
+  leaves the claim reading `proposed` forever; "what is still undecided" was
+  previously a question only a hand-maintained manifest
+  (`docs/triage/cycle-runs.txt`) could answer. Filters: `run_id`,
+  `record_type`, `actor_id`, `limit`; an unrecognised one is refused with
+  400 rather than ignored.
+- A **Decisions** view in the web front (`/decisions`): the undecided queue
+  with each record's payload rendered in full, and a form that records the
+  verdict, the reviewer and the rationale. Until now the affirmative half
+  was reachable only by hand-writing two authenticated HTTP calls, which is
+  not "through the product". Proven in a browser against a live control
+  plane: an agent's claim confirmed, and the decision read back from the
+  ledger as a human-origin `confirmed` review naming it.
+- `rationale` on `POST /v1alpha1/reviews/{id}/commit`, required, recorded on
+  every review record the commit appends (`schemas/ledger/review.schema.json`
+  gains the field). `scripts/decide-claims.py` has demanded a `--why` since
+  it was written but had nowhere to put it — it was printed to the operator's
+  terminal and dropped. A confirmation with no stated reason cannot be told
+  apart from an unread one.
+- `nodes-op.sh pending [run-id]`, and `scripts/decide-claims.py --pending`:
+  the same queue from a shell.
+
+#### Fixed
+
+- **An agent could decide its own claim.** `CommitReview` stamps the review
+  records it appends with `Origin{Kind: human, ActorID: <reviewer>}`, so the
+  producer/authority matrix — which correctly refuses an agent-origin
+  `confirmed` record — saw a human no matter who was named, and nothing
+  checked that the named reviewer was one. Passing an agent actor's id as
+  `reviewer_actor_id` confirmed that agent's own claim, end to end, with no
+  refusal anywhere. `ledger.CommitReview` now resolves the reviewer against
+  the actor registry (new `ledger.Tx.ActorKind`) and refuses anything not
+  registered `human` (`reviewer_must_be_human`, `ErrActorNotFound`). Every
+  test fixture that decided as an agent-kind actor was fixed, not the check:
+  three test files across the API and engine were doing exactly what this
+  now refuses.
+- The two review routes are gated by the decision bearer token, the same
+  secret `POST /v1alpha1/human-tasks/{id}/decision` requires. All three
+  write human-authority records into the ledger on whoever presents the
+  token, which is the stated reason that one endpoint was gated; the review
+  routes were the unauthenticated way to do the same thing.
+- `POST /v1alpha1/runs/{id}/reviews` refuses a review with no
+  `reviewer_actor_id` where it is created rather than two calls later at
+  commit time.
+- The Decisions view keeps its confirmation after the decided run leaves the
+  queue. Found by driving the view against a live control plane: the card
+  that made the decision is gone on the next refresh, so a confirmation
+  rendered inside it vanished and the click looked like it had done nothing.
+
+#### Changed
+
+- `scripts/ledger-gate.py` asks the control plane which records are awaiting
+  a decision instead of re-deriving the join client-side, so the gate and
+  the decision surface cannot disagree about what "undecided" means. New
+  `--all-runs` asks across the namespace with no cycle manifest at all.
+
+## [0.24.0] - 2026-08-15
+
+The bug tail of the `close-the-backlog` plan (task t12): #98, #95 + #105 as
+one fix, #17, and #21 decided rather than patched.
+
+### Fixed
+
+- The workflow-scope boundary is enforced against what a session CHANGED,
+  not against what its brief SAID (#98). The old guard grepped the
+  instruction text for `.github/workflows/`, so a brief whose safest line
+  was `Do NOT touch .github/workflows/**` was refused 403 before any model
+  ran (live: run `01M039KA0QQ73XM3WQCQEQF1CN`), while a session that never
+  mentioned CI could edit it freely. `scope_guard.py` now decides on the
+  bridge's own measured change set — `workspace.measure()`'s `changed_files`
+  plus a targeted `git status -uall` over the guarded prefixes, because git
+  collapses a brand-new `.github/workflows/go.yml` into the entry
+  `.github/`. A violation becomes a 403 (sync) or a `failed` terminal event
+  (async) BEFORE the preserve hook, so refused work lands on a branch. Added
+  to all three bridges per the all-backends rule; the broken guard existed
+  in claude-code alone.
+- `continue.while` conditions that could not be evaluated stopped looking
+  like conditions that decided to stop (#105). An errored CEL evaluation, a
+  non-boolean result and a cleanly false condition all returned the same
+  zero `ContinuationDecision`, so `onExhausted` never fired and the run
+  showed nothing. `Node.DecideContinuation` now returns
+  `ErrContinuationUndecidable`, and the scheduler records a
+  `dev.culture.nodes.continuation.undecidable` outbox event before failing
+  closed.
+- `node.state` is read from the node run rather than fabricated (#95).
+  `deadlineContinuationHolds` passed the literal `"incomplete"`, which made
+  the canonical `node.state == "incomplete"` true in every run for every
+  node; it now reads `node_runs.status` in the same query as the bounds and
+  maps it through `engine.ContinuationNodeState`. An unmeasured state is
+  omitted from the CEL activation instead of defaulted, so it cannot be
+  fabricated by omission either.
+- `deploy/prod/deploy.sh` aborts when the `nodes-runner` binary fails to
+  ship, and lands the binary by rename (#17). The failure was swallowed by
+  `set -e`'s documented exemption for `&&` lists inside a `||` group, so a
+  re-deploy restarted the unit on the previous build; the scp failed in the
+  first place because it overwrote the running unit's own binary (ETXTBSY).
+
+### Changed
+
+- ADR 0013 records that the reference bridges stay single-threaded (#21),
+  with measurements: the cancel handler costs 0.26 ms idle and 0.23 ms
+  mid-session against a live async invocation, so the reported ~2.2 s is not
+  in it. `adapters/codex/scripts/probe_cancel_latency.py` is committed so
+  the numbers can be re-derived on any host.
+
 ## [0.23.0] - 2026-08-15
 
 The `own-the-work-end-to-end` batch — eleven issues (76, 77, 78, 79, 80, 81,

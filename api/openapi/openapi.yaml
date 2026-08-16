@@ -86,6 +86,19 @@ tags:
     description: Liveness and readiness probes.
 
 paths:
+  /v1alpha1/namespaces:
+    get:
+      operationId: listNamespaces
+      summary: List namespaces available to workers in this installation.
+      responses:
+        '200':
+          description: Namespace rows ordered by creation time.
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/Namespace'
   /v1alpha1/workflow-generations:
     post:
       operationId: createWorkflowGeneration
@@ -405,7 +418,7 @@ paths:
               schema:
                 $ref: '#/components/schemas/RunList'
         '400':
-          description: updated_since, updated_until, or sort is malformed.
+          description: state, updated_since, updated_until, or sort is malformed.
           content:
             application/json:
               schema:
@@ -741,6 +754,159 @@ paths:
                 $ref: '#/components/schemas/ActorStats'
         '404':
           description: No actor with this id.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+
+  /v1alpha1/schedules:
+    post:
+      operationId: createSchedule
+      tags: [schedules]
+      summary: Declare a cadence that emits an event with no human action.
+      description: >-
+        Task t33 (issue #107): a schedule is an emitter with a clock. On
+        each declared occurrence it appends its declared payload to
+        `signal_events` as a fact, and every published workflow whose
+        `spec.triggers` matches that fact creates a run — the same path a
+        POST /v1alpha1/events delivery takes, so there is exactly one route
+        from "something happened" to "a run exists".
+
+
+        A schedule is deployment configuration, not part of a workflow: a
+        workflow version is immutable and content-addressed, so a cadence
+        declared inside one could not be disabled without republishing
+        (which would change what the graph IS in order to change how often
+        it runs). It also discovers nothing and holds no credential — what
+        it emits is what an operator wrote down.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CreateScheduleRequest'
+      responses:
+        '201':
+          description: The declared schedule.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Schedule'
+        '400':
+          description: A declaration this control plane could not honour.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '409':
+          description: A schedule with that name already exists in this namespace.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+    get:
+      operationId: listSchedules
+      tags: [schedules]
+      summary: Every declared schedule, enabled or not.
+      description: >-
+        Disabled schedules are included deliberately: a schedule that is
+        not running is precisely what an operator asking "why has nothing
+        happened since Tuesday" is looking for.
+      responses:
+        '200':
+          description: The namespace's schedules.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ScheduleList'
+
+  /v1alpha1/schedules/{id}:
+    get:
+      operationId: getSchedule
+      tags: [schedules]
+      summary: One schedule, with its cursor and history.
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: {type: string}
+      responses:
+        '200':
+          description: The schedule.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Schedule'
+        '404':
+          description: No such schedule in this namespace.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+    patch:
+      operationId: patchSchedule
+      tags: [schedules]
+      summary: Enable or disable a schedule.
+      description: >-
+        `enabled` is the only patchable field. Changing the cadence or the
+        payload of a live schedule would leave already-fired runs pointing
+        at a declaration that no longer exists anywhere, so those are a
+        delete and a create.
+
+
+        Disabling does NOT move `next_fire_at`. A schedule disabled at
+        09:00 and re-enabled at 17:00 is overdue on re-enable, and its
+        declared `catch_up` policy decides whether that overdue occurrence
+        fires — the same question, with the same answer, as a control plane
+        that was down for those eight hours.
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: {type: string}
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/PatchScheduleRequest'
+      responses:
+        '200':
+          description: The updated schedule.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Schedule'
+        '400':
+          description: No patchable field was supplied.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '404':
+          description: No such schedule in this namespace.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+    delete:
+      operationId: deleteSchedule
+      tags: [schedules]
+      summary: Remove a schedule.
+      description: >-
+        The `signal_events` facts it appended and the runs those started
+        are untouched: they are history, and history does not stop being
+        true because the thing that produced it was retired.
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: {type: string}
+      responses:
+        '204':
+          description: Deleted.
+        '404':
+          description: No such schedule in this namespace.
           content:
             application/json:
               schema:
@@ -1384,6 +1550,19 @@ paths:
         Records the ledger version and content-digest frame checksum the
         reviewer is looking at (PRD §10.8), so a later commit against a
         ledger that has since moved is refused rather than silently applied.
+
+        `reviewer_actor_id` is required: a review nobody is accountable for
+        is not a review, and refusing it here — rather than two calls later
+        at commit time — tells the caller which field is missing while they
+        can still supply it. The named actor must be registered with kind
+        `human`; commitReview resolves it against the registry and refuses
+        anything else (PRD §10.4, rule `reviewer_must_be_human`), which is
+        what stops an agent deciding its own claim by naming itself.
+
+        Requires the decision bearer token
+        (`NODES_HUMAN_DECISION_TOKEN_SECRET`).
+      security:
+        - decisionBearerAuth: []
       parameters:
         - $ref: '#/components/parameters/RunID'
       requestBody:
@@ -1401,6 +1580,12 @@ paths:
                 $ref: '#/components/schemas/ReviewRequest'
         '400':
           description: The request is malformed.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '401':
+          description: No bearer token was presented, it does not match the configured secret, or no secret is configured at all.
           content:
             application/json:
               schema:
@@ -1429,6 +1614,24 @@ paths:
         written — when the caller's expected ledger version no longer
         matches: the ledger moved, a reviewed record was superseded, or the
         reviewed frame no longer checksums to what was requested.
+
+        Each decision is appended as its own immutable `review` record:
+        human origin naming the reviewer, `confirmed` or `rejected`
+        authority, `subject_ref` naming the record decided, and the stated
+        `rationale` in its payload. The reviewed records are NOT rewritten —
+        a confirmed claim still reads `authority: proposed` forever, with the
+        decision attached to it (see GET /v1alpha1/pending-decisions for
+        "which claims are still undecided", which is that join, not an
+        authority filter).
+
+        `rationale` is required: a confirmation with no stated reason cannot
+        be told apart from an unread one. A reviewer the registry does not
+        record as a human is refused with 400 (PRD §10.4).
+
+        Requires the decision bearer token
+        (`NODES_HUMAN_DECISION_TOKEN_SECRET`).
+      security:
+        - decisionBearerAuth: []
       parameters:
         - name: id
           in: path
@@ -1450,7 +1653,16 @@ paths:
               schema:
                 $ref: '#/components/schemas/ReviewCommitResult'
         '400':
-          description: The decision set does not exactly cover the records under review.
+          description: >-
+            The decision set does not exactly cover the records under
+            review, no rationale was stated, or the reviewer is not a
+            registered human.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '401':
+          description: No bearer token was presented, it does not match the configured secret, or no secret is configured at all.
           content:
             application/json:
               schema:
@@ -1466,6 +1678,72 @@ paths:
             The review is stale (the ledger moved, the expected version does
             not match, a target was superseded, or the frame checksum no
             longer matches) or was already committed.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+
+  /v1alpha1/pending-decisions:
+    get:
+      operationId: listPendingDecisions
+      tags: [reviews]
+      summary: Every proposed ledger record still awaiting a human decision.
+      description: >-
+        Answers "what is awaiting my decision", per run and across runs,
+        without a hand-maintained manifest of run ids.
+
+        A record is pending when it carries `proposed` authority and no
+        `review` record names it as its subject — whatever the verdict would
+        have been, since a rejection answers the question as completely as a
+        confirmation does. It is NOT simply `authority = proposed`: records
+        are immutable, so committing a confirmation appends a review record
+        rather than changing the claim, and a decided claim reads `proposed`
+        forever. A record a later record supersedes is excluded too — the
+        correction that replaced it is what should be decided now.
+
+        Results are grouped by run and each group carries that run's current
+        `ledger_version`, which is exactly what POST
+        /v1alpha1/runs/{id}/reviews needs to open a review over them.
+
+        An unrecognised query parameter is refused with 400 rather than
+        ignored: a filter silently dropped answers a different question than
+        the one asked while still looking authoritative.
+      parameters:
+        - name: run_id
+          in: query
+          required: false
+          description: Only records belonging to this run.
+          schema:
+            type: string
+        - name: record_type
+          in: query
+          required: false
+          description: Only records of this ledger record type (e.g. `claim`).
+          schema:
+            type: string
+        - name: actor_id
+          in: query
+          required: false
+          description: Only records whose origin actor is this actor.
+          schema:
+            type: string
+        - name: limit
+          in: query
+          required: false
+          description: Maximum number of records to return (default 200, max 1000).
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 1000
+      responses:
+        '200':
+          description: The pending records, grouped by run.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PendingDecisionList'
+        '400':
+          description: An unrecognised query parameter was supplied.
           content:
             application/json:
               schema:
@@ -1522,6 +1800,97 @@ paths:
                 $ref: '#/components/schemas/Error'
         '404':
           description: No run has this id, or grading_actor_id/evaluated_actor_id is not a registered actor.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+
+  /v1alpha1/runs/{id}/suite-verdicts:
+    post:
+      operationId: createSuiteVerdict
+      tags: [ledger]
+      summary: Record what a test suite did to this run's handed-over commit.
+      description: >-
+        The merge gate's mechanical half (task t11, issue #101). A test suite
+        is a DETERMINISTIC VALIDATOR — a commit plus a command produces a
+        number — so PRD §10.4 admits its finding as a `derived` record, with
+        the validator named in `validator_actor_id` as its origin. That is
+        the whole point of the endpoint: an operator reading a green tick and
+        deciding to merge leaves nothing behind that names the suite, the
+        exit code, or the commit, and is not evidence of anything.
+
+
+        Three refusals are load-bearing. `exit_code` is REQUIRED and is never
+        defaulted, because an omitted exit code silently meaning 0 would turn
+        every malformed request into a pass. `commit_sha` must be a full
+        40-character lowercase hex commit id — not `HEAD`, not a branch name,
+        not an abbreviation — because a verdict that does not name what it
+        tested cannot be checked later. And when the control plane has
+        already MEASURED this run's handover (an observed evidence record
+        from a `git_ref_fetch`), a verdict naming a different commit is
+        refused outright rather than recorded with a caveat.
+
+
+        `validator_actor_id` must be a registered actor and must not be one
+        registered as `human`: a person who ran a suite and reported the
+        result is making a claim about it, which is the mirror of the
+        reviewer-must-be-human rule the review surface enforces. The route is
+        gated by the same bearer secret as the review surface — whoever can
+        record a suite verdict can decide a merge.
+      parameters:
+        - $ref: '#/components/parameters/RunID'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CreateSuiteVerdictRequest'
+      responses:
+        '201':
+          description: >-
+            The verdict was recorded as a derived, validator-origin review
+            record. Its `subject_ref` and `provenance_refs` name the run's
+            handover evidence record when the control plane had measured one,
+            and are empty when it had not.
+
+
+            A REJECTING verdict is also ROUTED (task t32, issue #102): the
+            control plane derives where the failure goes next — a bounded
+            repair attempt on a lane whose advertised capability surface shows
+            it can run the suite that failed, or a human — and appends that
+            decision as a second derived record, returned as `routing`. The
+            bound is stated in the record: two repair attempts per run, over a
+            24-hour window measured from the run's first gate rejection, and a
+            human node at either ceiling.
+
+
+            The routing is a DECISION, not an execution: nothing is
+            dispatched, and the record says so in its own payload. Unattended
+            repair is deliberately not enabled — see the record's
+            `dispatch_note`.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SuiteVerdictResult'
+        '400':
+          description: >-
+            The request is malformed, `exit_code` is absent, `commit_sha` is
+            not a full 40-hex commit id, `ref` is outside
+            `refs/culture-nodes/`, the named validator is registered as a
+            human, or the verdict names a commit other than the one this
+            run's handover was measured at.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '401':
+          description: The decision bearer token is missing, malformed, or not valid for this deployment.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '404':
+          description: No run has this id, or validator_actor_id is not a registered actor.
           content:
             application/json:
               schema:
@@ -1637,6 +2006,39 @@ paths:
               schema:
                 $ref: '#/components/schemas/Error'
 
+  /v1alpha1/version:
+    get:
+      operationId: version
+      tags: [operations]
+      summary: Which revision of the control plane is running.
+      description: >-
+        Task t32, issue #104. Before this, "what revision is deployed" was
+        answered by probing feature routes one at a time and inferring from
+        the status code — a `POST` at an artifact route answering `405`
+        instead of `401` is how it was established that a whole merged batch
+        was not running in production, fifteen hours after it merged.
+
+
+        A live test can read this to ASSERT which code it tested rather than
+        assume it, which is why the route is unauthenticated exactly as
+        `healthz` and `readyz` are: a live test that had to hold a decision
+        secret just to learn what it was testing is one nobody runs.
+
+
+        `revision` is a full 40-character lowercase hex commit id or it is
+        ABSENT. `HEAD`, a branch name and an abbreviation are all refused —
+        each means something different tomorrow, and this value exists to be
+        compared later. A build that was never stamped reports no revision and
+        says so in `staleness` rather than returning an empty string a reader
+        has to interpret.
+      responses:
+        '200':
+          description: What this binary was built as.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Version'
+
   /v1alpha1/healthz:
     get:
       operationId: healthz
@@ -1714,9 +2116,13 @@ components:
       scheme: bearer
       description: >-
         The shared secret configured as NODES_HUMAN_DECISION_TOKEN_SECRET.
-        Used only by POST /v1alpha1/human-tasks/{id}/decision — every other
-        operation in this API is authless by phase-1 design (spec decision
-        c45).
+        Used by the three operations that record a human decision — POST
+        /v1alpha1/human-tasks/{id}/decision and the two review operations
+        (POST /v1alpha1/runs/{id}/reviews, POST
+        /v1alpha1/reviews/{id}/commit) — because all three write
+        human-authority records into the ledger on whoever presents the
+        token. Every other operation in this API is authless by phase-1
+        design (spec decision c45).
     actorRegistrationBearerAuth:
       type: http
       scheme: bearer
@@ -1753,6 +2159,19 @@ components:
         durable invocation authority or reading the request body.
 
   schemas:
+    Namespace:
+      type: object
+      required: [id, slug, display_name, created_at]
+      properties:
+        id:
+          type: string
+        slug:
+          type: string
+        display_name:
+          type: string
+        created_at:
+          type: string
+          format: date-time
     CreateWorkflowGeneration:
       type: object
       required: [description, actor_ref]
@@ -2049,6 +2468,174 @@ components:
             MUST treat this as distinct from `name`: it is a guess, not
             something an operator actually said, and must never be
             presented to a user as if it were the given name.
+        actor_affinity:
+          type: object
+          description: >-
+            The routing this run's workflow declared and resolved at
+            creation (task t33, issue #107, migrations/0033), keyed by node
+            id — e.g. `{"fix": {"actor": "actor://company/developer",
+            "rule": "security-findings"}}`. Absent when the run resolved
+            none, which is the case both for a workflow that declares no
+            `spec.affinity` and for a run created by an operator rather
+            than by an event trigger (affinity conditions are evaluated
+            against the triggering event, so a run with no event has
+            nothing to evaluate them against).
+
+
+            `rule` is the declared affinity rule's name, and it is carried
+            rather than dropped because it is what the per-actor
+            comparative record slices by: "actor X ran this node" is
+            already recoverable from the attempt, but "actor X was chosen
+            because the workflow classified this as security-findings
+            work" is only recoverable from here.
+          additionalProperties:
+            type: object
+            required: [actor]
+            properties:
+              actor:
+                type: string
+                description: The actor reference this node dispatched to.
+              rule:
+                type: string
+                description: The declared affinity rule that chose it, if it was named.
+
+    Schedule:
+      type: object
+      required:
+        [id, name, event_name, emitter, payload, interval_seconds, catch_up,
+         enabled, next_fire_at, fire_count, skip_count, created_at, updated_at]
+      properties:
+        id:
+          type: string
+        name:
+          type: string
+          description: >-
+            Unique per namespace. It is the handle an operator disables by,
+            which is why two schedules cannot share one.
+        event_name:
+          type: string
+          description: The signal event this schedule appends on each occurrence.
+        emitter:
+          type: string
+          description: >-
+            Free text naming who emitted the fact. Attribution for
+            operators, never an authority claim (PRD §10.4).
+        payload:
+          description: >-
+            The event body, verbatim. Plain declared data — a schedule reads
+            no external system and holds no credential.
+        interval_seconds:
+          type: integer
+          format: int64
+          minimum: 1
+        catch_up:
+          type: string
+          enum: [fire-once, skip]
+          description: >-
+            What to do about an occurrence that came due while nothing was
+            running — the question a cron line never answers.
+
+
+            `fire-once` (the default) fires late, exactly once, then
+            realigns to the next declared boundary; missed occurrences are
+            counted, never backfilled, because six queued runs would each
+            carry the same freshly-read findings. `skip` declines a MISSED
+            occurrence and waits for the next boundary, which is right for
+            anything whose value is tied to when it happens — a nightly
+            report has no business running at noon. A skip increments
+            `skip_count` and emits
+            `dev.culture.nodes.schedule.skipped`, so "chose not to run" and
+            "never came due" stay distinguishable.
+
+
+            The two differ ONLY for a missed occurrence. One that is merely
+            LATE — overdue by less than one whole interval, which a tick
+            interval and a busy loop produce normally — fires under both.
+        enabled:
+          type: boolean
+        next_fire_at:
+          type: string
+          format: date-time
+          description: >-
+            The next instant this schedule is due, and the whole durable
+            state of the loop: it is advanced only inside the transaction
+            that also appends the event, which is what makes a restart
+            unable to double-start or lose an occurrence.
+        last_fired_at:
+          type: string
+          format: date-time
+          description: Absent until the first fire.
+        last_event_id:
+          type: string
+          description: >-
+            The `signal_events` fact the last fire appended — the audit
+            trail in one field, since the runs it triggered are reachable
+            from it.
+        fire_count:
+          type: integer
+          format: int64
+        skip_count:
+          type: integer
+          format: int64
+          description: Occurrences declined under a `skip` catch-up policy.
+        created_at:
+          type: string
+          format: date-time
+        updated_at:
+          type: string
+          format: date-time
+
+    ScheduleList:
+      type: object
+      required: [items]
+      properties:
+        items:
+          type: array
+          items:
+            $ref: '#/components/schemas/Schedule'
+
+    CreateScheduleRequest:
+      type: object
+      required: [name, event_name, interval_seconds]
+      properties:
+        name:
+          type: string
+          minLength: 1
+        event_name:
+          type: string
+          minLength: 1
+        emitter:
+          type: string
+          description: Defaults to `schedule:<name>` when omitted.
+        payload:
+          description: Defaults to `{}`.
+        interval_seconds:
+          type: integer
+          format: int64
+          minimum: 1
+        catch_up:
+          type: string
+          enum: [fire-once, skip]
+          description: Defaults to `fire-once`.
+        enabled:
+          type: boolean
+          description: >-
+            Defaults to true. An operator who declared a cadence and did not
+            say otherwise meant it to run.
+        first_fire_at:
+          type: string
+          format: date-time
+          description: >-
+            The first instant this schedule is due, and the phase every
+            later occurrence aligns to. Omitted means one interval from now:
+            creating a schedule is not the same act as starting a run.
+
+    PatchScheduleRequest:
+      type: object
+      required: [enabled]
+      properties:
+        enabled:
+          type: boolean
 
     Usage:
       type: object
@@ -2471,7 +3058,7 @@ components:
 
     CreateReviewRequest:
       type: object
-      required: [record_ids, ledger_version]
+      required: [record_ids, ledger_version, reviewer_actor_id]
       properties:
         record_ids:
           type: array
@@ -2483,7 +3070,11 @@ components:
           description: The run's ledger version this request was read at.
         reviewer_actor_id:
           type: string
-          description: The human actor the review is bound to. Required for the review to ever be committable.
+          minLength: 1
+          description: >-
+            The human actor the review is bound to, and the origin stamped
+            on every review record the commit appends. Must be registered
+            with kind `human`.
 
     ReviewRequest:
       type: object
@@ -2513,7 +3104,7 @@ components:
 
     CommitReviewRequest:
       type: object
-      required: [decisions, expected_ledger_version]
+      required: [decisions, expected_ledger_version, rationale]
       properties:
         decisions:
           type: object
@@ -2525,6 +3116,66 @@ components:
           type: integer
           format: int64
           description: The ledger version the caller expects to still hold. A mismatch is refused with 409, nothing written.
+        rationale:
+          type: string
+          minLength: 1
+          description: >-
+            Why the reviewer decided this way — what they read, ran, or
+            checked. Recorded on every review record the commit appends. A
+            confirmation with no stated reason cannot be told apart from an
+            unread one, so an empty rationale is refused with 400.
+
+    PendingDecisionRecord:
+      type: object
+      required: [id, record_type, origin_kind, created_at, data]
+      properties:
+        id:
+          type: string
+        record_type:
+          type: string
+        origin_kind:
+          type: string
+        origin_actor_id:
+          type: string
+        node_run_id:
+          type: string
+        created_at:
+          type: string
+          format: date-time
+        data:
+          type: object
+          description: The record's payload, verbatim — what the decider actually reads.
+
+    PendingDecisionRun:
+      type: object
+      required: [run_id, ledger_version, records]
+      properties:
+        run_id:
+          type: string
+        ledger_version:
+          type: integer
+          format: int64
+          description: >-
+            The run's current ledger version, read in this same request —
+            what POST /v1alpha1/runs/{id}/reviews wants as `ledger_version`.
+        records:
+          type: array
+          items:
+            $ref: '#/components/schemas/PendingDecisionRecord'
+
+    PendingDecisionList:
+      type: object
+      required: [items, record_count]
+      properties:
+        items:
+          type: array
+          items:
+            $ref: '#/components/schemas/PendingDecisionRun'
+        record_count:
+          type: integer
+          description: >-
+            Undecided records across every listed run — the number a stage
+            exit gate compares against zero.
 
     ReviewCommitResult:
       type: object
@@ -2578,6 +3229,161 @@ components:
             (documentary — see grade.schema.json). Per-actor stats
             (GET /v1alpha1/actors/{id}/stats) slice by the graded run's own
             category, not this field.
+
+    CreateSuiteVerdictRequest:
+      type: object
+      required: [suite, exit_code, commit_sha, validator_actor_id]
+      properties:
+        suite:
+          type: string
+          minLength: 1
+          description: >-
+            What ran, in the spelling a reader could re-run it with
+            ("go test ./...", "uv run pytest -n auto", a CI job name). An
+            unnamed suite cannot be re-run, so an empty one is refused.
+        command:
+          type: array
+          items:
+            type: string
+          description: >-
+            The argv the gate actually executed, when it executed one itself.
+            Absent when the verdict came from a suite run elsewhere.
+        exit_code:
+          type: integer
+          description: >-
+            The number the suite exited with. Required and never defaulted —
+            an omitted exit code reading as 0 would make every malformed
+            request a pass. Zero records verdict `confirm`; anything else
+            records `reject`. The label is computed here, never supplied.
+        commit_sha:
+          type: string
+          pattern: '^[0-9a-f]{40}$'
+          description: >-
+            The commit the suite ran against, full 40-character lowercase
+            hex. `HEAD`, a branch name, and an abbreviated sha are all
+            refused: each means something different tomorrow, and a verdict
+            that does not name what it tested is not evidence.
+        ref:
+          type: string
+          description: >-
+            The handover ref that carried the commit, when one did. Validated
+            against the same `refs/culture-nodes/` fence a control-plane fetch
+            is, so a verdict cannot name a ref the collector was never
+            allowed to fetch.
+        validator_actor_id:
+          type: string
+          description: >-
+            The registered actor identifying the deterministic producer. Must
+            not be an actor registered as `human` — a person reporting a
+            suite result is making a claim about it, not producing it.
+        node_run_ref:
+          type: string
+          description: Narrows the verdict to one node run.
+        attempt_ref:
+          type: string
+          description: Narrows the verdict to one attempt.
+        requires_grants:
+          type: array
+          items:
+            type: string
+          description: >-
+            The dispatch grants the SUITE needs beyond running its own binary
+            (`network-egress`, `home-write`, ...), in the vocabulary the
+            bridges' capability surface uses. Only a routing input, never part
+            of the verdict record. The gate is the only party that knows its
+            suite talks to a database, and a repair lane whose posture grants
+            no egress cannot verify one — so declaring it here is what turns
+            #119 into a routing decision rather than a wasted session.
+        implicated_paths:
+          type: array
+          items:
+            type: string
+          description: >-
+            Repo-relative paths the gate knows this failure involves, added to
+            the ones the control plane already measured for the run's
+            handover. A failure implicating `.github/` routes to a human: a
+            repair attempt is a dispatch, and a dispatch may not modify CI
+            configuration.
+        repair_actor_id:
+          type: string
+          description: >-
+            Overrides which lane a repair would be routed to. Omit it to use
+            the actor that authored this run's claims — the party that has the
+            checkout the failure is in.
+
+    SuiteVerdictResult:
+      type: object
+      required: [verdict]
+      description: >-
+        What the gate produced: the suite's verdict, and — for a REJECTING
+        gate — where that failure was routed (task t32, issue #102).
+
+
+        Two records rather than one because a rejecting gate produces two
+        facts, and splitting them across two round trips would put the
+        operator back in the loop the routing exists to take them out of.
+
+
+        `routing` is absent for a passing gate: there is nothing to route, and
+        a ledger row per green gate saying so is noise. `routing_error` is
+        present, with `routing` still absent, when a routing was computed but
+        could not be recorded — the verdict is the primary record and is never
+        failed to protect its derivation, but the failure is stated rather
+        than left as a silence.
+      properties:
+        verdict:
+          $ref: '#/components/schemas/LedgerRecord'
+        routing:
+          $ref: '#/components/schemas/LedgerRecord'
+        routing_error:
+          type: string
+          description: >-
+            Why the gate failure was not recorded as routed. Overwhelmingly
+            this is a repair-router producer identity nobody registered —
+            `ledger_records.origin_actor_id` has a foreign key to
+            `actors(id)`.
+
+    Version:
+      type: object
+      required: [version, staleness]
+      description: >-
+        The control plane's own build identity (task t32, issue #104).
+      properties:
+        version:
+          type: string
+          description: The binary's declared version.
+        revision:
+          type: string
+          pattern: '^[0-9a-f]{40}$'
+          description: >-
+            The commit this binary was built from. ABSENT when nothing
+            established one — never an empty string, and never an
+            abbreviation or a branch name.
+        revision_source:
+          type: string
+          enum: [build_flag, go_vcs_stamp]
+          description: >-
+            How the revision was learned. `build_flag` is what the deploy said
+            it was building (`-ldflags -X main.revision`), which is the only
+            thing that can answer inside a container built from a `git
+            archive` with no .git in it. `go_vcs_stamp` is what the build
+            machine observed, available only for a build that ran inside a
+            checkout — and it is the only one that can also report
+            `revision_is_dirty`.
+        revision_is_dirty:
+          type: boolean
+          description: >-
+            True when the Go toolchain stamped this build from a checkout with
+            uncommitted changes, so the revision names the last commit and not
+            the code that is running. Absent for a `build_flag` revision,
+            which cannot know it — its absence is not a claim that the tree
+            was clean.
+        staleness:
+          type: string
+          description: >-
+            One sentence on what this answer does and does not establish,
+            including the case where the revision cannot be established at
+            all.
 
     HumanTask:
       type: object
@@ -2643,6 +3449,12 @@ components:
         emitter:
           type: string
           description: Free text naming who emitted the fact (an actor ref, a node id, an external system). Attribution for operators, never an authority claim (PRD §10.4) — an inbound event is actor-reported information, not observed evidence. Defaults to `external`.
+        source_key:
+          type: string
+          description: Stable emitter-owned identity whose watermark suppresses duplicate deliveries. Must be supplied with watermark.
+        watermark:
+          type: object
+          description: Opaque per-source position. An exact repeat for source_key returns the original event without delivering it again.
 
     SignalEvent:
       type: object
@@ -2665,7 +3477,7 @@ components:
 
     EventDeliveryResult:
       type: object
-      required: [event, resumed]
+      required: [event, resumed, picked_up, triggered]
       properties:
         event:
           $ref: '#/components/schemas/SignalEvent'
@@ -2711,6 +3523,20 @@ components:
                 description: '"guard", "run_terminal", or the loop bound that had no headroom (max_parallel_tokens, max_visits_per_node, max_transitions).'
               detail:
                 type: string
+        triggered:
+          type: array
+          description: Matching workflow-level handlers that created runs from this event. Empty means no newest published workflow version matched; the event is still recorded.
+          items:
+            type: object
+            required: [workflow_digest, run_id]
+            properties:
+              workflow_digest:
+                type: string
+              run_id:
+                type: string
+        duplicate:
+          type: boolean
+          description: True when source_key and watermark already named a recorded event; resumed, picked_up, and triggered are then empty.
 
     DecideHumanTaskRequest:
       type: object

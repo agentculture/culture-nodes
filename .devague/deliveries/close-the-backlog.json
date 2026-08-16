@@ -1,0 +1,294 @@
+{
+  "plan_slug": "close-the-backlog",
+  "schema_version": 1,
+  "created": "2026-08-15T18:07:41Z",
+  "updated": "2026-08-16T05:15:07Z",
+  "deviations": [
+    {
+      "id": "d1",
+      "what": "the intra-fleet handover medium is plain ssh git transport, not a GitHub push credential fenced by an org ruleset",
+      "task_ref": "t9",
+      "reason": "measured: 'git push ssh://thor/home/thor/git/culture-nodes-agent HEAD:refs/heads/ctb-base' and 'git ls-remote ssh://orin/...' both succeed today from spark with no credential and no GitHub involvement, in both directions. t9's org-admin ruleset prerequisite falls away for the fleet path; a GitHub-side credential is only needed if a ref must reach GitHub itself.",
+      "affects": [
+        "c90"
+      ],
+      "origin": "llm",
+      "status": "proposed",
+      "classification": "acceptable"
+    },
+    {
+      "id": "d2",
+      "what": "codex work packages hand back working-tree changes for the operator to commit, because a dispatched codex session cannot write .git",
+      "task_ref": "t9",
+      "reason": "measured in adapters/codex/src/codex_bridge/codex_cli.py:139 \u2014 the .git widening is gated on a writable_git argument that is threaded through codex_cli but set True by no caller in server.py, so preserve.handover_ref and git_writable_override are built and unit-tested yet unreachable from a real dispatch. Round-1 codex packages C1/C3 were briefed to leave changes in the working tree and list the paths.",
+      "affects": [
+        "t2",
+        "t3",
+        "t16",
+        "t18",
+        "t20"
+      ],
+      "origin": "llm",
+      "status": "proposed",
+      "classification": "needs-follow-up"
+    },
+    {
+      "id": "d3",
+      "what": "t9 moves from the codex lane to the claude lane",
+      "task_ref": "t9",
+      "reason": "t9's remaining work is wiring writable_git and handover_ref through adapters/codex/src/codex_bridge/server.py \u2014 Python that needs pytest to verify. Issue #96 and probe runs 01M03374VAKH0KHN0GDZ466NP4 / 01M0342X60F3NY8MH150G48AZ6 established that neither thor's snap uv nor orin's standalone uv can run a test suite, so the codex hosts cannot verify their own bridge. Routing it there would have produced an unverifiable patch.",
+      "affects": [
+        "t10",
+        "t31"
+      ],
+      "origin": "llm",
+      "status": "proposed",
+      "classification": "acceptable"
+    },
+    {
+      "id": "d4",
+      "what": "t18 moves from codex-orin to codex-thor",
+      "task_ref": "t18",
+      "reason": "measured: 'command -v gh' returns /usr/bin/gh authenticated (as the repo owner's account) on thor and returns nothing on orin. t18 must file an issue on agentculture/headspace-cli, which needs gh; it was dispatched with package C1 on thor instead of C3 on orin.",
+      "affects": [],
+      "origin": "llm",
+      "status": "proposed",
+      "classification": "acceptable"
+    },
+    {
+      "id": "d5",
+      "what": "t1 (the Go CI job) is deferred behind the #98 fix, and package K1 is re-cut as t12-first",
+      "task_ref": "t1",
+      "reason": "live evidence, run 01M039KA0QQ73XM3WQCQEQF1CN: the developer bridge answered HTTP 403 'workflow-scope boundary' before dispatching a model, because adapters/claude-code/src/claude_code_bridge/server.py:325 refuses any instruction whose TEXT contains the CI workflow path \u2014 and t1's brief necessarily names the file it must edit. This is issue #98 reproduced in production on the cycle's first dispatch: the guard matches instruction text rather than the files a session actually changes. t1 cannot be dispatched to a claude bridge until #98 is fixed, so t12 (which contains the #98 fix) runs first and t1 follows it.",
+      "affects": [
+        "t12",
+        "t20"
+      ],
+      "origin": "llm",
+      "status": "proposed",
+      "classification": "needs-follow-up"
+    },
+    {
+      "id": "d6",
+      "what": "the codex dispatch sandbox has no network egress, which re-routes every network-dependent verification out of the agent hosts",
+      "task_ref": "t5",
+      "reason": "measured in run 01M039NZ2TZYFG68YZT93A6DC7 on thor: 'gh issue list' could not connect to api.github.com and pypi.org DNS did not resolve INSIDE the dispatch, while 'gh auth status' over a plain ssh session on the same host reports logged in as the repo owner's account. The capability is present on the host and absent under the dispatch posture. This generalises the probe finding that motivated t19/#96 from uv to the whole network: no agent host can produce evidence that needs GitHub, PyPI or any API, so those verifications join the executable ones in the spark lane.",
+      "affects": [
+        "t6",
+        "t7",
+        "t19"
+      ],
+      "origin": "llm",
+      "status": "proposed",
+      "classification": "needs-follow-up"
+    },
+    {
+      "id": "d7",
+      "what": "t14 moves out of the codex lane to a spark lane",
+      "task_ref": "t14",
+      "reason": "t14 must push a pg_dump to S3, set a public-access block and SSE, then fetch a dump BACK and restore it into a scratch Postgres. All three need AWS credentials, network egress and docker. The codex sandbox has none of them (see the deviation above); spark has all three. Routing it to codex would have produced a config diff with all four acceptance criteria marked 'cannot verify'.",
+      "affects": [],
+      "origin": "llm",
+      "status": "proposed",
+      "classification": "acceptable"
+    },
+    {
+      "id": "d8",
+      "what": "t8's exit gate asks whether every proposed record has been REVIEWED, not whether zero proposed records exist",
+      "task_ref": "t8",
+      "reason": "measured while building the gate: confirming a claim through POST /v1alpha1/reviews/{id}/commit does not mutate the claim \u2014 records are immutable, so it appends a 'review' record whose data.reviewed_refs name the claim decided. Run 01M039PJGX69ZNP59XBQB95XV8's claim ledger_01M039W8E56546KK5C2JQ122Q2 is still authority=proposed after a committed confirm. A gate literally phrased 'filtered to ledger state=proposed and require zero rows' can therefore never pass, however diligently every claim is read \u2014 it would fail on correct behaviour. scripts/ledger-gate.py implements the decidable form and, on its first real run, caught three probe runs whose claims were never decided at all.",
+      "affects": [
+        "c44",
+        "h9"
+      ],
+      "origin": "llm",
+      "status": "proposed",
+      "classification": "acceptable"
+    },
+    {
+      "id": "d9",
+      "what": "the codex lane exhausts by capability after the docs/config packages, not by session budget",
+      "task_ref": "t5",
+      "reason": "measured across four codex packages this cycle (C1, C2, C3, C4, all graded 5/5): once triage, AWS closeout, deployment config, lane split, brief template and the connection audit had landed, every remaining plan task needed Go (t10, t11, t17, t19, t21-t24, t29-t33), docker (t13, t14) or network (t14) \u2014 and the codex hosts have none of the three. The split plan's ~50/50 Claude/codex target was reachable for round 1 and 2 and is not reachable afterwards. This is a capability ceiling on the lane, and it belongs in the #48 session-economics record: routing big packages to codex saves the operator's window only while codex-executable work remains.",
+      "affects": [
+        "t19"
+      ],
+      "origin": "llm",
+      "status": "proposed",
+      "classification": "needs-follow-up"
+    },
+    {
+      "id": "d10",
+      "what": "the bucket-A sweep dispatches as two lane-shaped work packages, not as one run per issue",
+      "task_ref": "t7",
+      "reason": "CLAUDE.md's work-package sizing rule (issue #48): model nodes amortize bootstrap into one persistent warm session with many ledgered sub-actions, never one cold session per small plan task. Nine issues would be nine cold sessions paying nine repeated repo-discovery bootstraps, and last cycle measured ~25k output tokens per task on top of that. The sweep therefore runs as two packages matching t5's committed lanes: Go/shell (#8, #9, #13, #28, #48) and Python-plus-network (#10, #54, #61, #62). Each issue still gets its own rendered brief from scripts/render-verification-brief.py, so t6's 'differ only in issue number, claim and evidence form' still holds \u2014 the briefs are bundled into one session rather than rewritten. #98 is excluded: it already has live evidence from run 01M039KA0QQ73XM3WQCQEQF1CN, which reproduced it in production.",
+      "affects": [
+        "t5",
+        "t6"
+      ],
+      "origin": "llm",
+      "status": "proposed",
+      "classification": "acceptable"
+    },
+    {
+      "id": "d11",
+      "what": "t1 (the Go CI job) becomes operator-lane work, because K1's own fix correctly forbids every bridge from touching CI configuration",
+      "task_ref": "t1",
+      "reason": "K1 propagated the workflow-scope guard to all three bridges per the all-backends rule (it had existed only in claude-code, which was half of #98). The guard now refuses a session that MODIFIES a guarded path, measured from the bridge's own git diff. That boundary is deliberate and correct \u2014 these bridges' push credential excludes CI administration \u2014 so t1, whose entire job is editing .github/workflows/tests.yml, can no longer be dispatched to ANY bridge. #98's fix unblocked t1's brief and correctly blocked t1's execution. Earlier packages C1 and C3 did edit tests.yml from codex, which was possible only because the guard did not exist there yet.",
+      "affects": [
+        "t12",
+        "t20"
+      ],
+      "origin": "llm",
+      "status": "proposed",
+      "classification": "acceptable"
+    },
+    {
+      "id": "d12",
+      "what": "t1's gate proof breaks production code rather than deleting an assertion, because a deleted assertion makes tests pass",
+      "task_ref": "t1",
+      "reason": "measured. Deleting the RunState assertion at internal/engine/humandecision_test.go:83 and running the job's three commands gave build PASS, vet PASS, test ok \u2014 a removed assertion cannot fail, so the criterion as written ('deleting an assertion turns the check red') is unprovable by construction. Injecting a real one-word defect instead (RunCompleted -> RunFailed at humandecision.go:633) gave the proof: 'go test ./internal/engine/' still passed, but 'go test ./...' failed with 'run state = failed, want completed' in TestHumanReviewRejectedDecisionRoutesItsOwnEdge. The CI job runs ./... so it gates. A second finding fell out: internal/engine's own unit test asserts on result.RunState, a struct field assigned the literal RunCompleted at humandecision.go:645 regardless of what was persisted \u2014 the same hardcoded-literal pattern K1 just fixed in DecideContinuation for #95. The integration suite covers the gap; the unit test cannot.",
+      "affects": [
+        "t12",
+        "c125",
+        "h80"
+      ],
+      "origin": "llm",
+      "status": "proposed",
+      "classification": "needs-follow-up"
+    },
+    {
+      "id": "d13",
+      "what": "t9's remote-side fence is replaced by the sandbox's absence of egress, and the weaker guarantee is stated rather than glossed",
+      "task_ref": "t9",
+      "reason": "two measurements remove the need for the ruleset design: the fleet already moves work over plain ssh git transport with no credential (d1), and the codex dispatch sandbox has no network egress at all (d6), so a session cannot push anywhere even though origin still points at GitHub. The handover is therefore unfenced by design and unreachable in practice. This is genuinely WEAKER than a server-side ruleset in one way \u2014 a sandbox that regains egress removes the fence silently, where a ruleset would survive a host-side mistake \u2014 and docs/deviations/2026-08-15-handover-fence.md says so rather than claiming equivalence. t9's third criterion did ship and is proven live by run 01M03CD5V0WE9CBSHBM1Y3E9S7.",
+      "affects": [
+        "c119",
+        "h76",
+        "c123",
+        "h79"
+      ],
+      "origin": "llm",
+      "status": "proposed",
+      "classification": "needs-follow-up"
+    },
+    {
+      "id": "d14",
+      "what": "Go 1.26.6 installed on thor under ~/.local with a pre-warmed module cache, to test whether the codex lane can be reopened for Go work",
+      "task_ref": "t19",
+      "reason": "deviation d9 recorded that the codex lane exhausted by capability rather than budget: after the docs and config packages, all eleven remaining plan tasks need Go, docker or network, and the codex hosts had none. Go is the cheapest of the three to supply. Installed userland (~/.local/go-dist, no root, reversible with one rm -rf) and the module cache pre-warmed from an ssh session OUTSIDE the sandbox, since the sandbox has no network and cannot fetch modules itself. 'go build ./...' succeeds on the host; whether it succeeds INSIDE a dispatch is the open question, because the Go build cache lives outside the workspace and workspace-write blocks writes there. Probe run 01M03CXXZ9N34FP4CYNA0BBS43 answers it. This also gives #115 a second place the Go tree can be compiled that is not the operator's laptop, though CI remains the real answer.",
+      "affects": [
+        "t5",
+        "c109",
+        "h73"
+      ],
+      "origin": "llm",
+      "status": "proposed",
+      "classification": "acceptable"
+    },
+    {
+      "id": "d15",
+      "what": "the control plane now runs git as a subprocess, to fetch a handed-over ref it measures itself",
+      "task_ref": "t10",
+      "reason": "CLAUDE.md states the runtime rule flatly: 'Code executes only through the headspace-cli runner boundary \u2014 never a shell, script, or Docker socket in the control-plane process.' internal/handover runs git fetch/rev-parse/diff-tree via exec.CommandContext. The package argues the distinction in its own doc and the operator verified the implementation matches: fixed binary, argv built from constants plus one ref validated by ValidateRef against refs/culture-nodes/, NO shell (no sh -c anywhere), context deadline on every call, GIT_TERMINAL_PROMPT=0 so a credential challenge fails rather than hangs, and the remote is the control plane's own configuration never the agent's report. What PRD \u00a721 refuses is executing WORK \u2014 a workflow's code, an image, a script \u2014 in the control plane, and that still goes through the runner boundary unchanged. Accepted as infrastructure I/O rather than code execution, but recorded because it is a real widening of a rule this repo states without qualification, and because the alternative (trusting the agent's own account of the ref) is exactly what t10 exists to refuse. The session flagged it for review rather than landing it silently.",
+      "affects": [
+        "c120",
+        "h77"
+      ],
+      "origin": "llm",
+      "status": "proposed",
+      "classification": "needs-follow-up"
+    },
+    {
+      "id": "d16",
+      "what": "internal/handover joins the set of packages allowed to write AuthorityObserved/OriginRunner records",
+      "task_ref": "t10",
+      "reason": "the c17/h15 invariant sweep in internal/ledger caught this itself, which is what it is for: a new writer of observed/runner-origin evidence appeared. The invariant and docs/invariants.md were extended deliberately rather than the test relaxed, restating the standing rule as whether every field came from the WRITER'S OWN MEASUREMENT rather than which package it lives in \u2014 which is the property that actually matters and is what internal/handover satisfies (it reads only the ref NAME from the agent and measures sha and changed paths by fetching). Recorded because a widened invariant is exactly the kind of change that should not pass unremarked; the session named it as deserving the operator's eye.",
+      "affects": [
+        "c120",
+        "h77"
+      ],
+      "origin": "llm",
+      "status": "proposed",
+      "classification": "acceptable"
+    },
+    {
+      "id": "d17",
+      "what": "Go work in the codex lane is capped at build/vet/non-DB tests \u2014 every remaining Go task needs a database or a listener, so t11, t21, t22, t23, t24, t32 and t33 move to the operator lane and the codex lane takes the accounting trio (t4, t26, t28)",
+      "task_ref": "t19",
+      "reason": "d14 installed Go on both codex hosts and reopened the lane for Go work; two rounds of live evidence now bound how far it reopened. Run 01M03F4Y5F3PHVE4DQPNTY36PT (t17b, thor) and run 01M03F5QWW6WQHV9W26WG8Y96A (issue 8, orin) both compiled, vetted and committed Go successfully \u2014 and both reported, unprompted and accurately, that they could NOT run the acceptance tests they had just written: no PostgreSQL, no Docker, and loopback listeners forbidden by the sandbox, so the whole internal/api package is unrunnable there. Both sets of tests passed on first execution in the operator lane, so the code was right and only the verification was missing. That is the precise shape of the cap: the codex lane can author Go but cannot GATE it, and a package whose acceptance criteria are database-backed would land as an unverified claim every time. Every remaining Go task is database-backed or listener-backed.",
+      "affects": [
+        "t11",
+        "t21",
+        "t22",
+        "t23",
+        "t24",
+        "t32",
+        "t33",
+        "t4",
+        "t26",
+        "t28"
+      ],
+      "origin": "llm",
+      "status": "proposed",
+      "classification": "needs-follow-up"
+    },
+    {
+      "id": "d18",
+      "what": "the deployed bridges were stale, so t9/t10's handover shipped working and produced nothing in production for three dispatches \u2014 redeploy is part of landing a bridge change, and #120 makes the silence loud",
+      "task_ref": "t10",
+      "reason": "Live-testing before dispatching t11 found no refs under refs/culture-nodes/ on either codex host, despite three dispatches sent with --handover that all committed successfully. The installed bridges carried the writable_git widening from the earlier redeploy but not K3's preserve.handover_ref call in async_runner.py's terminal branch, and always_async means that is the only path production takes. Reinstalling from source and restarting produced the first handover ref any production dispatch has ever created (run 01M04CJT84WD20GDQEN266J9J6), which then fetched by run-id wildcard \u2014 proving t11's second criterion live. The deviation worth recording is not the staleness but what hid it: internal/handover's correct 'no fetchable ref means no record' rule makes a stale bridge and an honest refusal produce identical evidence, so nothing anywhere reported a problem.",
+      "affects": [
+        "t9",
+        "t11",
+        "t32"
+      ],
+      "origin": "llm",
+      "status": "proposed",
+      "classification": "needs-follow-up"
+    },
+    {
+      "id": "d19",
+      "what": "codex keeps the Go work it can AUTHOR \u2014 d17's reroute narrows from 'all Go tasks' to 'the gating step only', because two rounds of author-there-gate-here merged cleanly",
+      "task_ref": "t19",
+      "reason": "d17 moved every remaining Go task to the operator lane on the grounds that a codex package would land as an unverified claim. Two merges since say that is the wrong cut. t17b and issue-8 both authored correct Go on codex hosts, both declared their unrunnable tests as unrun rather than passed, and both sets of tests passed on FIRST execution in the operator lane \u2014 so the authoring was sound and only the verification was missing. Moving the whole task moves the authoring too, which spends the operator's own subscription window on work another account could do (#48: the operator session, local subagents and same-account bridges share one window). The narrower cut keeps codex authoring where the design is clear and reserves the operator lane for the gate. It is contingent on briefs stating unrunnable criteria explicitly and on the operator actually running them \u2014 a package that quietly claimed a database check would invalidate this.",
+      "affects": [
+        "t21",
+        "t22",
+        "t24",
+        "t11"
+      ],
+      "origin": "llm",
+      "status": "proposed",
+      "classification": "needs-follow-up"
+    },
+    {
+      "id": "d20",
+      "what": "t21's dispatch was refused for touching .github/, and the brief caused it \u2014 every generated work-package brief now carries the workflow-scope boundary",
+      "task_ref": "t21",
+      "reason": "The run ended policy_denied on the bridge-measured change set: the session added its guard to .github/workflows/tests.yml, which no bridge actor may modify. The guard was right and the #98 fix worked exactly as designed. But the cause was the brief, not the session. It said to model the new guard on scripts/check-zero-runtime-deps.sh and scripts/check-vendored-skill-diff.py \u2014 and those ARE wired into CI, so wiring this one into CI was the correct reading of the instruction it was given. This is the second time the boundary has cost a dispatch (d5: K1's first dispatch got HTTP 403 because the brief TEXT contained .github/workflows/), which makes it a recurring brief defect rather than an actor error. scripts/render-work-package.py now emits the boundary in every brief, including the specific trap: a guard 'like the existing ones' looks like it should be wired into CI, and the deliverable in that case is to write the guard and DESCRIBE the CI step for the operator to author. Eight of the nine files were in scope and merged as authored; the CI step was re-authored in the operator lane per d11's precedent.",
+      "affects": [
+        "t22",
+        "t24",
+        "t31",
+        "t32",
+        "t33"
+      ],
+      "origin": "llm",
+      "status": "proposed",
+      "classification": "needs-follow-up"
+    },
+    {
+      "id": "d21",
+      "what": "t23 splits: codex authors the transport-inversion decision, rollback and code; the live cross-fleet demonstration of criterion 2 stays in the operator lane",
+      "task_ref": "t23",
+      "reason": "Criterion 2 requires one dispatch to reach a bridge the control plane holds no address for, which is a live demonstration across three hosts. The codex sandbox denies socket(2) entirely (#119, run 01M04C39ZQK8NHJPQFSG8Z3QNV), so it cannot perform or observe any of it, and a package that claimed it would be claiming something structurally unobservable from where it ran. Splitting along d19's line keeps the authoring \u2014 including the mixed-mode-versus-flag-day decision the criterion says must be made BEFORE the first bridge changes, and the rollback \u2014 in the codex lane, and reserves only the demonstration for a lane with a network. The brief asks for the operator's demonstration steps as an ordered runnable list, so the split hands over an executable procedure rather than an assumption.",
+      "affects": [
+        "t24"
+      ],
+      "origin": "llm",
+      "status": "proposed",
+      "classification": "acceptable"
+    }
+  ]
+}

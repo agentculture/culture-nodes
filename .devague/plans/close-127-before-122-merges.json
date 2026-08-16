@@ -1,0 +1,651 @@
+{
+  "slug": "close-127-before-122-merges",
+  "title": "close #127 before #122 merges",
+  "frame_slug": "close-127-before-122-merges",
+  "schema_version": 4,
+  "status": "exported",
+  "created": "2026-08-16T08:10:43Z",
+  "updated": "2026-08-16T09:33:30Z",
+  "targets": [
+    {
+      "id": "c1",
+      "kind": "announcement",
+      "text": "Issue #127 closed out: PR #122 is green and merged into a clean main, the two intermittent tests are deterministic rather than re-run, and every item #127 listed is either done, decided by the owner, or a tracked successor with a named owner \u2014 nothing left as an unsorted handover blob.",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "h8",
+      "kind": "honesty",
+      "text": "#127 is actually closed on GitHub with a successor issue linked, and #122's merge commit shows a green CI run that was never re-run.",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "c2",
+      "kind": "requirement",
+      "text": "The two CI reds on PR #122 head 49a0e11 are exactly the two tests recorded in #126, and they failed in the SAME push in two different workflows (run 31934728992 'Go/build' = TestSchedulerDeadlineFailsAParkedRunnerOperation, run 31934729001 'Tests/go' = TestChaosDroppedSendRepairedByOutboxRelay). #126 is therefore not a side-issue: it is the only thing standing between #122 and a green merge.",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "h1",
+      "kind": "honesty",
+      "text": "Re-reading both CI logs shows the two named tests are the ONLY failures in their jobs \u2014 no third red hides behind them.",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "c3",
+      "kind": "requirement",
+      "text": "TestSchedulerDeadlineFailsAParkedRunnerOperation races on a two-transaction sequence: internal/scheduler/scheduler.go:658 eng.CompleteAttempt commits the node run as failed/timed_out, and only afterwards line 694 closeWait -> CloseRunnerOperation commits the runner operation as completed. runnerdeadline_test.go:94 waits only for the node run to reach 'failed', then immediately asserts the runner operation at line 111. The fix is test-local: wait explicitly on the runner-operation transition too.",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "h2",
+      "kind": "honesty",
+      "text": "The scheduler fix must be proven by construction, not by passing: inserting an artificial delay between CompleteAttempt and closeWait makes the OLD test fail every time and the NEW test still pass.",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "c4",
+      "kind": "requirement",
+      "text": "TestChaosDroppedSendRepairedByOutboxRelay depends on the global contents of a shared database: internal/events/relay.go:152-158 selects 'FROM outbox WHERE ... LIMIT $1' with NO namespace filter and a default batch of 50, so relay.Run republishes pending outbox rows belonging to every other package running in the same parallel sweep. chaos_test.go:230 then reads only Receive(ctx, 10, 0) and demands the repaired row be among those 10. The fix is test-local: drain until the row appears within a bounded deadline instead of asserting on one 10-message page.",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "h3",
+      "kind": "honesty",
+      "text": "The chaos fix must be proven the same way: seeding foreign pending outbox rows in another namespace before the repair run makes the OLD assertion fail deterministically and the NEW one still pass.",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "c5",
+      "kind": "boundary",
+      "text": "The fix for both #126 tests must not be a retry, a -count reduction, or a t.Skip. #126's 'Done when' explicitly rules that out ('What is not acceptable is quietly adding a retry'), and this repo spent the cycle building the opposite habit (#101's gate-verdict-as-evidence).",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "h9",
+      "kind": "honesty",
+      "text": "The merged diff contains no t.Skip, no retry loop, and no reduction in -count for either test \u2014 checkable by grepping the two test files in the merge commit.",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "c6",
+      "kind": "boundary",
+      "text": "Three of #127's reconcile items are structurally impossible before #122 merges: 'Redeploy thor from main once #122 lands', redeploying the codex bridges onto a merged revision, and 'decide whether the pre-deploy dump is kept once #122 is merged and stable' all require main to already contain the code. Closing #127 before the merge therefore means closing what is decidable now and converting the rest into a named successor issue, not ticking those boxes.",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "h10",
+      "kind": "honesty",
+      "text": "A successor issue exists and is linked from #127 before #127 is closed, holding the thor redeploy, the codex-bridge redeploys, and the dump deletion.",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "c8",
+      "kind": "requirement",
+      "text": "The five Qodo findings on #122 are real review comments with file:line anchors, and exactly one is High/Action-required: 'Nil-wrapped dial-in error' at internal/actors/client.go:266. The other four are Medium: vendored nodes-op.sh edited (.claude/skills/nodes-operator/scripts/nodes-op.sh:121), control-plane shells out to git (internal/handover/git.go:134), no nodes doctor before deploy (deploy/prod/deploy.sh:43), mailbox upsert rewrites actor (internal/store/postgres/inbound_transport.go:84). #127 says nothing has worked any of them; they must be dispositioned rather than batch-dismissed.",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "h4",
+      "kind": "honesty",
+      "text": "Each of the five Qodo findings gets an explicit written disposition (fixed / tracked as issue N / rejected with a reason) \u2014 none is silently dropped or batch-dismissed.",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "c9",
+      "kind": "requirement",
+      "text": "The SONAR_CLOUD_SWEEP/SONAR_TOKEN naming split resolves in favour of SONAR_TOKEN: a full-repo grep finds SONAR_CLOUD_SWEEP in ZERO tracked files, while SONAR_TOKEN is what examples/pr-upkeep/sweep.py:594 reads, what .github/workflows/tests.yml:19 sets, what the sonarclaude skill requires, and what the tests assert. Nothing in-repo needs to change; the operator's .env is the side that gives way.",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "h5",
+      "kind": "honesty",
+      "text": "After the change, a fresh grep for SONAR_CLOUD_SWEEP across tracked files still returns nothing, and the pr-upkeep sweep still authenticates in CI where SONAR_TOKEN is set.",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "c12",
+      "kind": "requirement",
+      "text": "Every hand-turn in this session opens or updates an issue, per CLAUDE.md's every-operator-action rule \u2014 including the flake fixes if typed in-session, and any prod.env or deploy change. The commit message cites the issue so the trail runs both ways.",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "h6",
+      "kind": "honesty",
+      "text": "Every commit in this work names the issue it serves, and every hand-typed fix has a matching issue comment recording that an operator typed it.",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "c13",
+      "kind": "requirement",
+      "text": "The change must bump the version (/version-bump) or the version-check job blocks the merge, and must pass the FULL local lint set including BOTH adapter lint styles (root-config codex paths and adapter-dir claude-code), which is the exact gap that took #122 red on three lint jobs (#123).",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "h7",
+      "kind": "honesty",
+      "text": "The full local gate is run before the PR: pytest, the root lint set, BOTH adapter lint invocation styles, teken cli doctor --strict, and a version bump \u2014 and the CI result matches the local result.",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "c14",
+      "kind": "audience",
+      "text": "The repo owner merging #122, and every future contributor who hits a red CI job on this repo and has to decide whether it is their change or a known flake.",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "h11",
+      "kind": "honesty",
+      "text": "The two test files carry a comment naming the root cause, so the next contributor who sees a red job can tell in one read whether it is their change.",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "c15",
+      "kind": "after_state",
+      "text": "PR #122 merges into a main whose CI is green on its own merits \u2014 no re-run, no retry, no skip. #126's two tests are deterministic with their root causes named in code comments. #127 is closed, having been split into what was decidable pre-merge (done) and a successor issue holding only the genuinely post-merge reconciliation, each item with an owner.",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "h12",
+      "kind": "honesty",
+      "text": "#122 is merged, gh pr view 122 shows MERGED, and the merge commit's CI run is green with attempt=1.",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "c16",
+      "kind": "before_state",
+      "text": "#122 is MERGEABLE but has two red checks that everyone believes are 'just the flakes'; #127 is a 200-line handover blob mixing done facts, blocked reconciliation, unowned findings and owner-only decisions, so nobody can tell what closing it would even mean.",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "h13",
+      "kind": "honesty",
+      "text": "#127's current body does mix done facts, blocked reconciliation, unowned findings and owner-only decisions \u2014 re-readable in the issue as it stands today.",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "c17",
+      "kind": "why_it_matters",
+      "text": "A test that fails once in twenty trains everyone to hit re-run (#126's own framing). Merging #122 red-but-believed-fine would make the re-run reflex the house style on the exact repo that spent this cycle building gate-verdict-as-evidence (#101). Claiming main clean is only worth something if 'clean' is measured, not asserted.",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "h14",
+      "kind": "honesty",
+      "text": "No CI job in this work is re-run to get green; if one is re-run, that is recorded as a failure of this claim rather than quietly repeated.",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "c18",
+      "kind": "success_signal",
+      "text": "A single CI run on the merge commit is green with zero re-runs, and 'go test ./internal/scheduler/ ./internal/queue/sqs/ -count=5' passes under a concurrently running full sweep \u2014 the contention condition under which both tests actually failed. #127 shows closed with a successor issue linked.",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "h15",
+      "kind": "honesty",
+      "text": "The contention condition is actually exercised: the two packages are run with -count=5 while a full go test ./... sweep runs concurrently, not in isolation.",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "c23",
+      "kind": "requirement",
+      "text": "BOTH #126 flakes share ONE root cause, and it is the test ENVIRONMENT, not either test: .github/workflows/tests.yml:93 points every package at a SINGLE shared database (NODES_TEST_DATABASE_URL=.../nodes) for 'go test ./...', while pgtest.Run (internal/store/postgres/pgtest/pgtest.go:50-62) starts a PRIVATE ephemeral postgres per package when that variable is unset. Locally each package is therefore isolated and both tests pass; in CI every package shares one outbox and one timers table. This is exactly why #126 saw 8 consecutive local passes and CI-only failures.",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "h16",
+      "kind": "honesty",
+      "text": "The probe in c27 actually reproduces at least one of the two failures under a shared database, and neither reproduces under per-package private databases.",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "c24",
+      "kind": "requirement",
+      "text": "The shared-database environment is harmful because two components are deliberately deployment-wide: internal/events/relay.go:152-157 selects pending outbox rows with NO namespace filter, and the scheduler's ClaimDueTimers claims due timers across every namespace in one batch. So internal/events/relay_test.go's relay can drain internal/queue/sqs/chaos_test.go's repaired row into a DIFFERENT fake queue and mark it published \u2014 which produces precisely the observed failure (outbox status 'published' yet Receive returns nothing, chaos_test.go:236).",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "h17",
+      "kind": "honesty",
+      "text": "The contamination is demonstrated concretely: a foreign relay is observed marking the chaos test's outbox row published while that test's own Receive returns nothing.",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "c25",
+      "kind": "requirement",
+      "text": "Merging #122 to main is an IRREVERSIBLE outward-facing publish, not just a merge: .github/workflows/publish.yml:5-10 publishes to real PyPI via Trusted Publishing on any push to main touching pyproject.toml or culture_nodes/**, and the mandatory /version-bump touches pyproject.toml. Merging therefore cuts a public release of version 0.31.1+ that cannot be unpublished. deploy.yml and release.yml do NOT auto-deploy prod (kind smoke only; images on tags), so PyPI is the single irreversible side effect.",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "h18",
+      "kind": "honesty",
+      "text": "Before merge, the version in pyproject.toml is confirmed to be the version intended for a public PyPI release, and the owner has agreed the merge cuts that release.",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "c26",
+      "kind": "requirement",
+      "text": "The repo allows squash, merge, and rebase merges (gh repo view: all three true). If #122 is SQUASH-merged, commit 431528d never appears in main, so the successor issue's 'compare /v1alpha1/version revision against main' becomes unresolvable \u2014 the deployed revision would name a commit main does not contain. The merge strategy must be chosen deliberately, or the reconciliation check must compare something else.",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "h19",
+      "kind": "honesty",
+      "text": "The merge strategy for #122 is chosen explicitly and written into the successor issue, along with whatever revision comparison remains valid under it.",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "c29",
+      "kind": "requirement",
+      "text": "The shared-vs-private database hypothesis is cheaply falsifiable and MUST be probed before the fix is designed: run the two packages locally with NODES_TEST_DATABASE_URL pointed at one database while a full 'go test ./...' sweep runs against the SAME database. If the flakes reproduce, the root cause is confirmed and the fix targets isolation; if they do not, c23/c24 are wrong and the test-local fixes stand on their own.",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "h21",
+      "kind": "honesty",
+      "text": "The probe's result is recorded in #126 either way \u2014 including a negative result, which would refute c23/c24 rather than being quietly dropped.",
+      "deferred": false,
+      "deferred_reason": ""
+    }
+  ],
+  "tasks": [
+    {
+      "id": "t1",
+      "summary": "Run the falsification probe: shared vs per-package test database",
+      "origin": "llm",
+      "status": "confirmed",
+      "acceptance_criteria": [
+        "go test ./internal/queue/sqs/ ./internal/scheduler/ -count=5 is run TWICE: once with NODES_TEST_DATABASE_URL set to one scratch database while go test ./... runs concurrently against that same database, and once with the variable unset (per-package private containers)",
+        "At least one of the two named tests reproduces its failure under the shared database, and neither reproduces under private databases \u2014 or the opposite is observed and recorded as refuting c23/c24",
+        "The result is posted to #126 either way, including a negative result",
+        "The probe's own amplification is stated in the #126 write-up: arm A ran two concurrent go test invocations where CI runs one, so it evidences the mechanism and does not measure CI's failure rate"
+      ],
+      "deps": [],
+      "covers": [
+        "c29",
+        "h21",
+        "c23",
+        "h16"
+      ],
+      "instruction": "Probe script and logs are in the session scratchpad (probe.sh, a_*/b_*.log). Arm A points both a full 'go test ./...' and a concurrent '-count=5' focused run at ONE scratch postgres (docker nodes-probe-pg, port 55432); arm B leaves NODES_TEST_DATABASE_URL unset so pgtest starts a private container per package. Note the amplification honestly: CI runs one sweep, this runs two concurrent invocations, so a reproduction evidences the MECHANISM and is not a measurement of CI's rate."
+    },
+    {
+      "id": "t2",
+      "summary": "Re-read both CI failure logs and confirm no third red hides behind the two",
+      "origin": "llm",
+      "status": "confirmed",
+      "acceptance_criteria": [
+        "gh run view 31934728992 --log-failed and 31934729001 --log-failed are both read in full",
+        "A written statement records that TestSchedulerDeadlineFailsAParkedRunnerOperation and TestChaosDroppedSendRepairedByOutboxRelay are the only failures in their respective jobs, or names any third failure found",
+        "VERIFIED: run 31934728992 (Go/build) failed exactly one test, TestSchedulerDeadlineFailsAParkedRunnerOperation in internal/scheduler; run 31934729001 (Tests/go) failed exactly one test, TestChaosDroppedSendRepairedByOutboxRelay in internal/queue/sqs. No third failure hides behind them. c2/h1 confirmed."
+      ],
+      "deps": [],
+      "covers": [
+        "c2",
+        "h1"
+      ],
+      "instruction": "Read-only. gh run view 31934728992 --log-failed (Go/build) and gh run view 31934729001 --log-failed (Tests/go). Do not stop at the first FAIL line \u2014 read to the end of each job."
+    },
+    {
+      "id": "t3",
+      "summary": "Disposition the four Medium Qodo findings in writing",
+      "origin": "llm",
+      "status": "confirmed",
+      "acceptance_criteria": [
+        "Each of the four Mediums (nodes-op.sh:121, handover/git.go:134, deploy.sh:43, inbound_transport.go:84) receives a written disposition: fixed, tracked as issue N, or rejected with a stated reason",
+        "The 'Vendored nodes-op.sh edited' finding is checked against docs/skill-sources.md and CLAUDE.md, and accepted or rejected on that evidence rather than assumed",
+        "No finding is batch-dismissed without a reason"
+      ],
+      "deps": [],
+      "covers": [
+        "h4"
+      ],
+      "instruction": "Anchors: .claude/skills/nodes-operator/scripts/nodes-op.sh:121, internal/handover/git.go:134, deploy/prod/deploy.sh:43, internal/store/postgres/inbound_transport.go:84. Check the nodes-op.sh one against docs/skill-sources.md and CLAUDE.md FIRST \u2014 CLAUDE.md states nodes-operator is first-party and authored here, not vendored, so this finding is likely a false positive. Reply via the cicd skill's pr-reply.sh so the signature is appended automatically."
+    },
+    {
+      "id": "t4",
+      "summary": "Fix the High Qodo finding: nil-wrapped dial-in error",
+      "origin": "llm",
+      "status": "confirmed",
+      "acceptance_criteria": [
+        "internal/actors/client.go:266 no longer returns a nil-wrapped error; the failure path returns a non-nil error carrying the dial-in cause",
+        "A Go test covers the previously nil-wrapped path and fails against the unfixed code",
+        "CORRECTION (evidence, not opinion): Qodo's claim that the nil %w makes the returned error nil is FALSE \u2014 verified by running fmt.Errorf(\"...: %w\", nil), which yields a NON-nil error whose message is 'actors: dial-in 200 response is not a result: %!w(<nil>)' and whose errors.Unwrap is nil. Callers therefore already reject the malformed 200. The real defect is diagnostic: a garbage message and a broken unwrap chain, not a silently dropped response.",
+        "Because the error is already non-nil, a test asserting err != nil would PASS against unfixed code and prove nothing. The failing test must instead assert that the empty-outcome error message contains no '%!w(<nil>)' and that the unmarshal-failure path still unwraps to the json error",
+        "The Qodo thread is answered with this evidence, correcting the stated severity rather than silently implementing the suggested fix"
+      ],
+      "deps": [],
+      "covers": [
+        "c8"
+      ],
+      "instruction": "internal/actors/client.go:266. Write the failing test first \u2014 it must fail against unfixed code \u2014 then fix. This is the only High/Action-required finding on #122."
+    },
+    {
+      "id": "t5",
+      "summary": "Record the SONAR_TOKEN naming resolution; change nothing in-repo",
+      "origin": "llm",
+      "status": "confirmed",
+      "acceptance_criteria": [
+        "A fresh grep for SONAR_CLOUD_SWEEP across tracked files returns nothing, evidencing that no in-repo change is needed",
+        "The closure record states SONAR_TOKEN is the surviving name and the operator .env is the side that changes",
+        "NUANCE on h5: after this session, SONAR_CLOUD_SWEEP DOES appear in tracked files \u2014 but only in this cycle's own spec/plan prose (docs/specs, docs/plans, .devague), which necessarily names the string it is deciding about. The honesty condition is satisfied against code, config, CI and skills: 'git grep -l SONAR_CLOUD_SWEEP -- . :!docs/specs :!docs/plans :!.devague' returns nothing. h5 must be read with that scope, not as a bare repo-wide grep."
+      ],
+      "deps": [],
+      "covers": [
+        "c9",
+        "h5"
+      ],
+      "instruction": "No repo edit. Evidence only: grep tracked files for SONAR_CLOUD_SWEEP (expect zero hits) and note SONAR_TOKEN's real uses at examples/pr-upkeep/sweep.py:594 and .github/workflows/tests.yml:19."
+    },
+    {
+      "id": "t6",
+      "summary": "Open the post-merge successor issue and link it from #127",
+      "origin": "llm",
+      "status": "confirmed",
+      "acceptance_criteria": [
+        "A new issue exists carrying the thor redeploy from main, both codex-bridge redeploys, and the pre-deploy dump deletion",
+        "It states the squash-merge consequence explicitly: 431528d will NOT be an ancestor of main, so prod is verified by GET /v1alpha1/version reporting main HEAD sha after redeploy, never by asking whether main contains 431528d",
+        "It is linked from #127 before #127 is closed"
+      ],
+      "deps": [],
+      "covers": [
+        "c6",
+        "h10",
+        "c26",
+        "h19"
+      ],
+      "instruction": "Open this issue BEFORE closing #127 \u2014 c6's ordering is load-bearing. Carry: redeploy thor from main, redeploy both codex bridges (copied installs, stale silently per #120), delete ~/nodes-predeploy-20260816T064724Z.dump once stable. State the squash consequence explicitly."
+    },
+    {
+      "id": "t7",
+      "summary": "Make the scheduler deadline test wait on the transition it asserts",
+      "origin": "llm",
+      "status": "confirmed",
+      "acceptance_criteria": [
+        "internal/scheduler/runnerdeadline_test.go no longer asserts the runner-operation state immediately after waiting only on the node run; it waits explicitly, with a bounded deadline, for RunnerOperationCompleted",
+        "Proven by construction: with a temporary sleep inserted between CompleteAttempt (scheduler.go:658) and closeWait (scheduler.go:694), the OLD assertion fails on every run and the NEW one still passes; the sleep is then removed",
+        "A comment above the test names the two-transaction root cause and cites #126",
+        "No t.Skip, no retry loop, and no reduction in -count is introduced"
+      ],
+      "deps": [
+        "t1"
+      ],
+      "covers": [
+        "c3",
+        "h2",
+        "c14",
+        "h11"
+      ],
+      "instruction": "internal/scheduler/runnerdeadline_test.go. The race is real and located: scheduler.go:658 CompleteAttempt commits the node run, scheduler.go:694 closeWait commits the runner operation, in SEPARATE transactions. Do not widen a timeout \u2014 wait on the runner-operation transition itself. Prove by construction with a temporary sleep between the two commits."
+    },
+    {
+      "id": "t8",
+      "summary": "Make the chaos relay test robust to foreign sweepers",
+      "origin": "llm",
+      "status": "confirmed",
+      "acceptance_criteria": [
+        "internal/queue/sqs/chaos_test.go no longer depends on the repaired row appearing in a single Receive(ctx,10,0) page",
+        "Proven by construction: seeding pending outbox rows in a second namespace before the repair run makes the OLD assertion fail deterministically and the NEW one pass",
+        "The contamination is demonstrated concretely at least once \u2014 a foreign relay observed marking this test's outbox row published while its own Receive returns nothing",
+        "internal/events/relay.go is NOT given a namespace filter; deployment-wide draining stays intended behaviour per resolved question q1",
+        "A comment above the test names the shared-database root cause and cites #126"
+      ],
+      "deps": [
+        "t1"
+      ],
+      "covers": [
+        "c4",
+        "h3",
+        "c24",
+        "h17"
+      ],
+      "instruction": "internal/queue/sqs/chaos_test.go. Do NOT add a namespace filter to internal/events/relay.go \u2014 deployment-wide draining is intended (resolved question q1). If t1 confirms the shared-database cause, the honest fix may be isolation rather than a drain loop; let t1's result choose."
+    },
+    {
+      "id": "t9",
+      "summary": "Match CI test-database isolation to local isolation",
+      "origin": "llm",
+      "status": "confirmed",
+      "acceptance_criteria": [
+        "Applied ONLY if t1's probe confirms the shared-database cause; if the probe refutes it, this task is closed as not-needed with the evidence recorded",
+        "Each package gets its own database or schema in CI, so that pgtest's per-package isolation and CI isolation agree",
+        "The database-backed-tests-actually-ran guard in tests.yml still passes \u2014 isolation must not turn Postgres-backed tests into skips",
+        "Both previously flaking tests pass under the full parallel sweep after the change",
+        "The fix is verified against the FULL class the probe surfaced, not just the two tests #126 names: TestChaosDroppedSendRepairedByOutboxRelay, TestSchedulerDeadlineTimeoutIsNotRetriedIntoASecondSession, TestSchedulerStandbyTakesOverWhenActiveLosesItsConnection, TestSchedulerTickIsBoundedByNoUnreachableDeadlineBridge, TestSchedulerDeadlinePausesWhenDeclaredContinuationHolds, and internal/engine's TestExhaustedRetriesFailTheRun",
+        "Re-running the probe's arm A (one shared database) after the fix produces zero failures across the class, matching arm B's clean baseline"
+      ],
+      "deps": [
+        "t1"
+      ],
+      "covers": [
+        "c23",
+        "h16"
+      ],
+      "instruction": "GATED ON t1. If the probe refutes c23/c24, close this task as not-needed and record the evidence \u2014 do not implement it anyway. If confirmed: .github/workflows/tests.yml:93 is where the single shared URL is set; internal/store/postgres/pgtest/pgtest.go:50-62 is the per-package fallback. Keep the 'database-backed tests actually ran' guard passing \u2014 isolation must not turn Postgres tests into skips."
+    },
+    {
+      "id": "t10",
+      "summary": "Gate the diff against retries, skips and count reductions",
+      "origin": "llm",
+      "status": "confirmed",
+      "acceptance_criteria": [
+        "Grepping the changed test files shows no t.Skip, no retry loop, and no reduction in -count",
+        "If any such construct is present, the change is rejected rather than explained",
+        "VERIFIED at merge: git diff 49a0e11..HEAD added ZERO t.Skip lines; the only two in the changed files are the pre-existing RequireStore helper in pgtest.go. No retry loops and no -count reductions were introduced. pgtest.Run returns exit 1 on isolation failure rather than skipping."
+      ],
+      "deps": [
+        "t7",
+        "t8",
+        "t9"
+      ],
+      "covers": [
+        "c5",
+        "h9"
+      ],
+      "instruction": "Read-only grep over the changed test files for t.Skip, retry loops, and -count reductions. #126 states plainly that quietly adding a retry is not acceptable; this task is the enforcement of that."
+    },
+    {
+      "id": "t11",
+      "summary": "Verify the fixes under the contention condition that produced the failures",
+      "origin": "llm",
+      "status": "confirmed",
+      "acceptance_criteria": [
+        "go test ./internal/scheduler/ ./internal/queue/sqs/ -count=5 passes while a full go test ./... sweep runs concurrently against the same database",
+        "The run is done in the contention condition, not in isolation, and the command plus result are recorded",
+        "The contention run covers the wider class the probe surfaced, not only internal/scheduler and internal/queue/sqs \u2014 internal/engine is included",
+        "VERIFIED: under a shared PostgreSQL server with a concurrent full 'go test ./...' sweep, 'go test ./internal/scheduler/ ./internal/queue/sqs/ ./internal/engine/ ./internal/events/ -count=5' passed with ZERO failures (exit 0), and the concurrent sweep also exited 0 with zero failures. This is the exact contention condition that previously failed the class 5/5. internal/events -- which t8 reported failing independently -- is resolved structurally by t9's isolation, as predicted. Zero leaked test databases afterwards."
+      ],
+      "deps": [
+        "t7",
+        "t8",
+        "t9"
+      ],
+      "covers": [
+        "c18",
+        "h15"
+      ],
+      "instruction": "Run in the contention condition, not isolation. Serialize this against t12 despite the same wave \u2014 both saturate the machine and share the test database, and running them together would manufacture the very contention being measured."
+    },
+    {
+      "id": "t12",
+      "summary": "Run the full local gate and bump the version",
+      "origin": "llm",
+      "status": "confirmed",
+      "acceptance_criteria": [
+        "uv run pytest -n auto passes",
+        "The four root lint commands pass: black, isort, flake8, bandit",
+        "BOTH adapter lint invocation styles pass exactly as CLAUDE.md spells them out \u2014 root-config codex paths AND the adapter-dir claude-code form",
+        "uv run teken cli doctor . --strict passes",
+        "The version in pyproject.toml is bumped, and the number is confirmed with the owner as the intended public PyPI release, since merging publishes it irreversibly",
+        "The CI result after push matches the local result",
+        "VERIFIED: pytest 304 passed; black/isort/flake8/bandit clean on culture_nodes+tests; BOTH adapter lint styles pass (codex from repo root, claude-code from its own directory); markdownlint 0 errors across 127 files; teken cli doctor --strict PASS. Version bumped 0.31.1 -> 0.31.2 with an accurate CHANGELOG entry. Recorded that culture_nodes/** has zero changed files across the whole PR, so the PyPI artifact is content-identical to 0.23.0."
+      ],
+      "deps": [
+        "t4",
+        "t7",
+        "t8",
+        "t9"
+      ],
+      "covers": [
+        "c13",
+        "h7",
+        "c25",
+        "h18"
+      ],
+      "instruction": "Run CLAUDE.md's commands verbatim, including BOTH adapter lint styles: codex from the repo root (root config applies) and claude-code from inside its own directory (adapter config applies). Skipping the second is what took #122 red on three lint jobs (#123). Confirm the version number with the owner before bumping \u2014 the merge publishes it to real PyPI irreversibly."
+    },
+    {
+      "id": "t13",
+      "summary": "Open or update an issue for every hand-turn in this session",
+      "origin": "llm",
+      "status": "confirmed",
+      "acceptance_criteria": [
+        "Every hand-typed fix in this session has a new issue or a comment on an existing one recording that an operator typed it",
+        "Every commit message names the issue it serves",
+        "The two prod.env edits and the deploy already recorded in #123/#124/#127 are cross-referenced rather than duplicated",
+        "DONE: issue #130 records the session's operator hand-turns (self-inflicted credential-lint failure, hand-editing devague state files, version bump, four hand-gated merges, the probe containers, and 11 orphaned test containers nothing reaps). Issue #131 records the CLAUDE.md doctor drift found while adjudicating Qodo finding 3. Every commit in this cycle cites its issues."
+      ],
+      "deps": [
+        "t12"
+      ],
+      "covers": [
+        "c12",
+        "h6"
+      ],
+      "instruction": "Per CLAUDE.md's every-operator-action rule. Cross-reference #123/#124/#127 rather than duplicating them. Cite the issue in each commit message so the trail runs both ways."
+    },
+    {
+      "id": "t14",
+      "summary": "Squash-merge #122 on a green run that was never re-run",
+      "origin": "llm",
+      "status": "confirmed",
+      "acceptance_criteria": [
+        "gh pr view 122 shows MERGED, merged via SQUASH per the recorded decision",
+        "The CI run the merge relied on is green at attempt=1 \u2014 no job was re-run to get there",
+        "If any job IS re-run during this work, that fact is written into the closure comment rather than silently repeated",
+        "The PyPI publish triggered by the merge is observed to succeed, at the confirmed version"
+      ],
+      "deps": [
+        "t10",
+        "t11",
+        "t12",
+        "t13"
+      ],
+      "covers": [
+        "c15",
+        "h12",
+        "c17",
+        "h14"
+      ],
+      "instruction": "SQUASH merge per the recorded decision. Do NOT re-run a red job to get green \u2014 if a re-run happens, write it into the closure comment. Confirm the PyPI publish succeeded after the merge."
+    },
+    {
+      "id": "t15",
+      "summary": "Close #127 against the successor issue",
+      "origin": "llm",
+      "status": "confirmed",
+      "acceptance_criteria": [
+        "#127's body as it stands today is read first, confirming it mixes done facts, blocked reconciliation, unowned findings and owner-only decisions",
+        "A closure comment records: what was done, the SONAR_TOKEN resolution, the four Qodo dispositions, and that the 21 deviation records moved to their own tracked issue without gating the merge",
+        "#127 is closed on GitHub with the successor issue linked from it",
+        "The closure states plainly which #127 items were NOT done and why, rather than implying the checklist cleared"
+      ],
+      "deps": [
+        "t14",
+        "t6",
+        "t3",
+        "t5",
+        "t2"
+      ],
+      "covers": [
+        "c1",
+        "h8",
+        "c16",
+        "h13"
+      ],
+      "instruction": "Read #127's current body first. The closure must state plainly which items were NOT done and why \u2014 three of them are structurally post-merge and now live on the successor issue. Do not imply the checklist cleared."
+    }
+  ],
+  "risks": [
+    {
+      "id": "r1",
+      "text": "The probe (t1) may refute c23/c24. If so, t9 is dropped and t7/t8 stand alone as test-local fixes \u2014 the plan branches on t1's result and must not be executed as if the shared-database cause were already established.",
+      "kind": "unknown_blocking",
+      "task_id": "t1",
+      "resolved": true,
+      "resolution": "PROBE RESULT: c23/c24 CONFIRMED, not refuted. Arm A (one shared database) reproduced TestChaosDroppedSendRepairedByOutboxRelay 5/5 in round 1 and 4/5 in round 2 \u2014 deterministic, not intermittent \u2014 and additionally failed TestSchedulerDeadlineTimeoutIsNotRetriedIntoASecondSession, TestSchedulerStandbyTakesOverWhenActiveLosesItsConnection, TestSchedulerTickIsBoundedByNoUnreachableDeadlineBridge, TestSchedulerDeadlinePausesWhenDeclaredContinuationHolds and internal/engine's TestExhaustedRetriesFailTheRun. Arm B (private per-package databases) was CLEAN: zero failures across both focused rounds, with queue/sqs, scheduler and engine all ok in the sweeps. t9 therefore proceeds. Two honest limits: arm A ran two concurrent go test invocations where CI runs one, so this evidences the mechanism rather than measuring CI's rate; and the specific test #126 names, TestSchedulerDeadlineFailsAParkedRunnerOperation, did NOT reproduce \u2014 only its neighbours did."
+    },
+    {
+      "id": "r2",
+      "text": "Whether any reconciliation sweep closes a runner operation orphaned by a crash between CompleteAttempt and closeWait is unverified (c27). Making the test wait longer makes the test honest but does not answer this.",
+      "kind": "unknown_nonblocking",
+      "task_id": "t7",
+      "resolved": true,
+      "resolution": "ANSWERED by code read during t7 (not runtime-tested): there is NO reconciliation sweep. internal/store/postgres/runnerasync.go:408 states 'there is no unstick step, no orphan sweep, and no lease to expire.' An orphan stays waiting_external and therefore stays permanently due, re-sampled by ClaimDueRunnerOperations indefinitely; it retires only if the runner returns a terminal status, which by definition never happens in the permanently-silent case the deadline exists for. Filed as issue #129 rather than fixed here \u2014 the absence of a sweep may be a deliberate trade-off per that comment's context."
+    },
+    {
+      "id": "r3",
+      "text": "Concurrent Store.Migrate across ~20 packages on one CI database (c28) was noted but not examined in depth; it may produce further intermittents that t9 would incidentally fix or incidentally hide.",
+      "kind": "unknown_nonblocking",
+      "task_id": "t9",
+      "resolved": false,
+      "resolution": ""
+    },
+    {
+      "id": "r4",
+      "text": "A green CI run after the fix may reflect luck rather than a fixed root cause. t11's contention run is the mitigation, not a proof.",
+      "kind": "unknown_nonblocking",
+      "task_id": "t11",
+      "resolved": false,
+      "resolution": ""
+    },
+    {
+      "id": "r5",
+      "text": "Merging publishes to real PyPI irreversibly (c25). There is no rollback for a published version \u2014 only a subsequent release.",
+      "kind": "follow_up",
+      "task_id": "t14",
+      "resolved": false,
+      "resolution": ""
+    }
+  ]
+}

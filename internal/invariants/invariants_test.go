@@ -208,24 +208,30 @@ var authorityAllowlists = []struct {
 }{
 	{
 		token: "AuthorityObserved",
-		rule: "observed authority belongs to the runner boundary: only internal/runners constructs " +
-			"observed evidence, from facts the boundary directly measured (PRD §10.4). No agent path — " +
-			"worker completions, engine deltas, bridges — may claim it.",
+		rule: "observed authority belongs to a boundary that DIRECTLY MEASURED the fact it records " +
+			"(PRD §10.4): internal/runners for a runner's own Result, internal/handover for a git ref " +
+			"the control plane itself fetched. The test of standing is not which package a writer sits " +
+			"in but whether every field it stamps came from its own measurement rather than from " +
+			"something an actor reported. No agent path — worker completions, engine deltas, bridges — " +
+			"may claim it.",
 		files: map[string]string{
 			"internal/ledger/record.go":      "vocabulary: defines the Authority constants",
 			"internal/ledger/authority.go":   "append-time enforcement: checkRunnerAuthority admits observed evidence only with a runner manifest",
 			"internal/engine/ledgerdelta.go": "refusal gate: a node's declared delta may propose or observe per its contract; everything else is rejected",
 			"internal/runners/dispatch.go":   "THE writer: EvidenceRecord stamps OriginRunner + AuthorityObserved from boundary-measured observations",
+			"internal/handover/handover.go":  "second measuring boundary (task t10, issue #13): the control plane fetches a handed-over ref itself and records the ref, commit sha and changed paths ITS OWN git fetch produced — the agent's report supplies only the ref name to look for (actors.Handover.ClaimedRef is the sole accessor), and an unfetchable ref writes no record at all",
 		},
 	},
 	{
 		token: "OriginRunner",
-		rule: "runner origin is stamped only where the runner boundary itself reports — a worker or " +
-			"engine file constructing an OriginRunner record would be an agent path impersonating the boundary.",
+		rule: "runner origin is stamped only where a boundary reports on its own measurement — a worker " +
+			"or engine file constructing an OriginRunner record would be an agent path impersonating the " +
+			"boundary. A writer here must also be on the AuthorityObserved list: the two travel together.",
 		files: map[string]string{
-			"internal/ledger/record.go":    "vocabulary: defines the Origin kinds",
-			"internal/ledger/authority.go": "append-time enforcement: runners write observed evidence only, manifest-checked",
-			"internal/runners/dispatch.go": "THE writer: the runner boundary's own evidence records",
+			"internal/ledger/record.go":     "vocabulary: defines the Origin kinds",
+			"internal/ledger/authority.go":  "append-time enforcement: runners write observed evidence only, manifest-checked",
+			"internal/runners/dispatch.go":  "THE writer: the runner boundary's own evidence records",
+			"internal/handover/handover.go": "second measuring boundary (task t10): the git-fetch observer, identified by its own configured actor id and refusing to write at all without one",
 		},
 	},
 	{
@@ -255,6 +261,18 @@ var authorityAllowlists = []struct {
 			"internal/worker/acceptance.go":    "validator-origin writer: pre-announced acceptance evaluation (issue 37)",
 			"internal/worker/successsignal.go": "validator-origin writer: mechanical success_signal evaluation (t18, issue 37)",
 			"internal/worker/hooks.go":         "validator-origin writer: assurance-hook rejection reviews at the runner boundary",
+			"internal/handover/verdict.go": "validator-origin writer (task t11, issue #101): a test suite IS a deterministic " +
+				"producer — a commit plus a command yields the same exit code every time — so its finding is derived, " +
+				"where an operator's reading of a green tick is not evidence at all. It sits here rather than in " +
+				"internal/api because the verdict and the ref measurement it judges must name the same commit, and the " +
+				"refusal that enforces that (a full 40-hex sha, or no record) lives with the fetch it is about",
+			"internal/repair/route.go": "validator-origin writer (task t32, issue #102): a gate-failure routing is a " +
+				"PURE FUNCTION of already-recorded facts — a suite's exit code (itself a derived record), the run's own " +
+				"prior routings, the changed paths internal/handover measured, and the lane's advertised capability " +
+				"surface. Same inputs, same destination, every time, which is the §10.4 test for derived. It is " +
+				"emphatically not confirmed: the routing decides where a failure GOES, and a human deciding to merge " +
+				"remains that human's own transaction. It is not proposed either — nothing here is anybody's " +
+				"suggestion, and the record carries no field a caller could use to argue with the bound",
 			"internal/devague/deliverables.go": "engine-origin writer: pre-batch devague import derives delivery summaries",
 			"internal/preflight/records.go":    "engine-origin writer: the clarify-then-commit gate's briefing is a deterministic composition of advertised host state and the pinned task declaration (issue #67, task t14)",
 		},
@@ -270,6 +288,8 @@ var deterministicOriginByFile = map[string]string{
 	"internal/worker/acceptance.go":    "OriginValidator",
 	"internal/worker/successsignal.go": "OriginValidator",
 	"internal/worker/hooks.go":         "OriginValidator",
+	"internal/handover/verdict.go":     "OriginValidator",
+	"internal/repair/route.go":         "OriginValidator",
 	"internal/devague/deliverables.go": "OriginEngine",
 	"internal/preflight/records.go":    "OriginEngine",
 }

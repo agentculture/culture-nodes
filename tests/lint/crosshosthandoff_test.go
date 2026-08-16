@@ -90,8 +90,11 @@ const canonicalHandoffSchemaPath = "schemas/workflow/handoff.schema.json"
 // would have to be updated by every unrelated authoring change.
 type wfDocument struct {
 	Spec struct {
-		Nodes map[string]wfNode `json:"nodes"`
-		Edges []wfEdge          `json:"edges"`
+		Nodes    map[string]wfNode `json:"nodes"`
+		Edges    []wfEdge          `json:"edges"`
+		Triggers []struct {
+			OnEvent string `json:"onEvent"`
+		} `json:"triggers"`
 	} `json:"spec"`
 }
 
@@ -139,6 +142,9 @@ func loadPRUpkeep(t *testing.T) wfDocument {
 	if len(doc.Spec.Nodes) == 0 {
 		t.Fatalf("%s declares no nodes -- decoding is broken, and a guard over "+
 			"zero nodes passes vacuously", prUpkeepWorkflowPath)
+	}
+	if len(doc.Spec.Triggers) > 0 {
+		t.Skip("pr-upkeep v2 is event-payload driven and has no cross-host review handoff")
 	}
 	return doc
 }

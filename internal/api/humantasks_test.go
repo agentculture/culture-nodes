@@ -29,15 +29,17 @@ const decisionAuthSecret = "test-only-decision-secret-not-for-production"
 // (no secret configured at all) is what TestHumanTaskDecisionRefusedWhenNoSecretConfigured
 // below exercises — the two together cover PRD spec decision c45's carve-out
 // for this one endpoint.
-func newFixtureWithDecisionAuth(t *testing.T, secret string) *fixture {
+// extra options let a test tighten one more knob (task t32's repair-router
+// identity) without a second near-identical constructor.
+func newFixtureWithDecisionAuth(t *testing.T, secret string, extra ...apipkg.Option) *fixture {
 	t.Helper()
 	s := requireStore(t)
 
 	nsID := pgtest.MustNamespace(t, s, "api").ID
-	srv, err := apipkg.NewServer(s, nsID,
-		apipkg.WithPollInterval(30*time.Millisecond),
+	srv, err := apipkg.NewServer(s, nsID, append([]apipkg.Option{
+		apipkg.WithPollInterval(30 * time.Millisecond),
 		apipkg.WithDecisionAuthSecret(secret),
-	)
+	}, extra...)...)
 	if err != nil {
 		t.Fatalf("api.NewServer: %v", err)
 	}
@@ -191,7 +193,7 @@ func TestHumanTasksListGetDecisionLifecycle(t *testing.T) {
 	// --- auth: no Authorization header at all ---
 	decideBody := decideHumanTaskReq{
 		Outcome:               "approved",
-		DeciderActorID:        f.insertActor("approver"),
+		DeciderActorID:        f.insertActorKind("approver", "human"),
 		ExpectedLedgerVersion: 0,
 	}
 	resp2, body2 := authedDecide(t, f, task.ID, "", decideBody)
@@ -284,7 +286,7 @@ func TestHumanTaskDecisionRefusedWhenNoSecretConfigured(t *testing.T) {
 
 	resp, body := authedDecide(t, f, task.ID, "any-token-at-all", decideHumanTaskReq{
 		Outcome:               "approved",
-		DeciderActorID:        f.insertActor("approver"),
+		DeciderActorID:        f.insertActorKind("approver", "human"),
 		ExpectedLedgerVersion: 0,
 	})
 	requireStatus(t, resp, body, http.StatusUnauthorized)
@@ -312,7 +314,7 @@ func TestHumanTaskDecisionStaleLedgerVersion(t *testing.T) {
 
 	resp, body := authedDecide(t, f, task.ID, decisionAuthSecret, decideHumanTaskReq{
 		Outcome:               "approved",
-		DeciderActorID:        f.insertActor("approver"),
+		DeciderActorID:        f.insertActorKind("approver", "human"),
 		ExpectedLedgerVersion: 0, // stale: the ledger is now at version 1
 	})
 	requireStatus(t, resp, body, http.StatusConflict)
@@ -327,7 +329,7 @@ func TestHumanTaskDecisionUnknownOutcomeIsBadRequest(t *testing.T) {
 
 	resp, body := authedDecide(t, f, task.ID, decisionAuthSecret, decideHumanTaskReq{
 		Outcome:               "not-a-real-outcome",
-		DeciderActorID:        f.insertActor("approver"),
+		DeciderActorID:        f.insertActorKind("approver", "human"),
 		ExpectedLedgerVersion: 0,
 	})
 	requireStatus(t, resp, body, http.StatusBadRequest)
@@ -340,7 +342,7 @@ func TestHumanTaskDecisionUnknownTaskIsNotFound(t *testing.T) {
 
 	resp, body := authedDecide(t, f, "does-not-exist", decisionAuthSecret, decideHumanTaskReq{
 		Outcome:               "approved",
-		DeciderActorID:        f.insertActor("approver"),
+		DeciderActorID:        f.insertActorKind("approver", "human"),
 		ExpectedLedgerVersion: 0,
 	})
 	requireStatus(t, resp, body, http.StatusNotFound)

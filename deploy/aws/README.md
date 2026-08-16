@@ -1,6 +1,27 @@
 # deploy/aws
 
-The AWS deployment profile (PRD §19.2). One file lives here so far.
+The AWS deployment profile (PRD §19.2).
+
+## Start here: `PREREQUISITES.md` + `preflight.py`
+
+Before provisioning anything, run:
+
+```bash
+./deploy/aws/preflight.py        # read-only; exits 0 when the account is ready
+```
+
+It checks every account-level prerequisite and, for each failure, prints why
+the check exists, who is allowed to fix it, and the exact command that does.
+`PREREQUISITES.md` is the same material written for a DevOps reader who has
+never seen this repository — hand them that page and nothing else.
+
+Two prerequisites need an **account admin**, not the scoped operator profile,
+and both are wrapped by `bootstrap-operator.sh`:
+
+```bash
+./deploy/aws/bootstrap-operator.sh enable-region il-central-1   # opt-in region
+./deploy/aws/bootstrap-operator.sh update-policy                # grant RDS
+```
 
 ## `worker-iam-policy.json`
 

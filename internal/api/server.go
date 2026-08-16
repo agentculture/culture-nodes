@@ -11,6 +11,7 @@ import (
 	"github.com/agentculture/culture-nodes/internal/actors"
 	"github.com/agentculture/culture-nodes/internal/artifacts"
 	"github.com/agentculture/culture-nodes/internal/engine"
+	"github.com/agentculture/culture-nodes/internal/handover"
 	"github.com/agentculture/culture-nodes/internal/ledger"
 	"github.com/agentculture/culture-nodes/internal/store/postgres"
 	"github.com/agentculture/culture-nodes/internal/telemetry"
@@ -54,6 +55,23 @@ type Server struct {
 	// NODES_CALLBACK_TOKEN_SECRET for a token minted by a worker to verify
 	// here.
 	callbackSigner *actors.TokenSigner
+	// handoverObserver measures a handed-over git ref reported on a
+	// `completed` callback event (task t10). Nil in every deployment that
+	// has configured no remote to fetch from — see WithHandoverObserver.
+	handoverObserver *handover.Observer
+
+	// repairRouterActor is the producer identity a gate-failure routing is
+	// derived under (task t32). Empty means DefaultRepairRouterActorID —
+	// see WithRepairRouterActorID.
+	repairRouterActor string
+
+	// buildVersion and buildRevision are what GET /v1alpha1/version reports
+	// (task t32, issue #104). Both are supplied by cmd/nodes from its
+	// -ldflags values; an empty revision falls back to the Go toolchain's
+	// own vcs stamp, and failing that is reported as unknown rather than as
+	// blank. See WithBuildInfo.
+	buildVersion  string
+	buildRevision string
 
 	// artifactRouter is the only artifact content boundary exposed by this
 	// server. artifactInvocationStore deliberately has the one read method the
@@ -98,6 +116,11 @@ type Server struct {
 	// surface this batch ships is authenticated from day one.
 	adhocRunSecret []byte
 
+	// inboundAuthenticator gates every bridge poll and completion before any
+	// mailbox state is exposed. The migration 0031 simple verifier is now on
+	// issue #111's replacement clock because this is the first accepting path.
+	inboundAuthenticator *actors.InboundAuthenticator
+
 	pollInterval time.Duration
 	webAssets    fs.FS
 
@@ -137,6 +160,44 @@ func WithPollInterval(d time.Duration) Option {
 func WithWebAssets(assets fs.FS) Option {
 	return func(s *Server) {
 		s.webAssets = assets
+	}
+}
+
+// WithHandoverObserver gives the actor callback route a handover observer
+// (task t10, issue #13): when a `completed` event reports a ref the session
+// handed over, the control plane fetches it and records what it measured as
+// observed evidence.
+//
+// It is an Option — not a required dependency — for the same reason
+// WithCallbackSigner is: a deployment that has configured no remote to fetch
+// from cannot measure anything, and a control plane that cannot look must
+// record nothing rather than record that it could not. Omitting it leaves the
+// route behaving exactly as it did before this existed.
+//
+// The observer passed here is expected to be the SAME one the worker holds
+// (worker.Options.Handover): one control plane, one remote, one measuring
+// identity, whichever terminal path a dispatch happens to take.
+func WithHandoverObserver(observer *handover.Observer) Option {
+	return func(s *Server) {
+		s.handoverObserver = observer
+	}
+}
+
+// WithRepairRouterActorID names the producer identity a gate-failure routing
+// is derived under (task t32, issue #102), overriding
+// DefaultRepairRouterActorID.
+//
+// Unlike the secret-shaped options above, there is no closed-by-default
+// posture to hold here: the identity is not an authorization, it is an
+// attribution. What it must be is REGISTERED — ledger_records
+// .origin_actor_id has a foreign key to actors(id) — and a deployment whose
+// identity is not registered gets that said to it on every routed gate
+// failure rather than silently recording none.
+func WithRepairRouterActorID(actorID string) Option {
+	return func(s *Server) {
+		if actorID != "" {
+			s.repairRouterActor = actorID
+		}
 	}
 }
 
@@ -279,6 +340,10 @@ func NewServer(store *postgres.Store, namespaceID string, opts ...Option) (*Serv
 		pollInterval:            defaultEventPollInterval,
 		log:                     slog.Default(),
 	}
+	s.inboundAuthenticator, err = actors.NewInboundAuthenticator(store, actors.DefaultInboundAuthenticationConfig, nil)
+	if err != nil {
+		return nil, err
+	}
 	for _, opt := range opts {
 		if opt != nil {
 			opt(s)
@@ -344,8 +409,17 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("GET /v1alpha1/actors/{id}", s.wrap(s.handleGetActor))
 	mux.HandleFunc("GET /v1alpha1/actors/{id}/stats", s.wrap(s.handleGetActorStats))
 	mux.HandleFunc("POST /v1alpha1/actors/{id}/resume", s.wrap(s.handleResumeActor))
+	mux.HandleFunc("POST /v1alpha1/inbound/poll", s.handleInboundPoll)
+	mux.HandleFunc("POST /v1alpha1/inbound/{id}/complete", s.handleInboundComplete)
+
+	mux.HandleFunc("POST /v1alpha1/schedules", s.wrap(s.handleCreateSchedule))
+	mux.HandleFunc("GET /v1alpha1/schedules", s.wrap(s.handleListSchedules))
+	mux.HandleFunc("GET /v1alpha1/schedules/{id}", s.wrap(s.handleGetSchedule))
+	mux.HandleFunc("PATCH /v1alpha1/schedules/{id}", s.wrap(s.handlePatchSchedule))
+	mux.HandleFunc("DELETE /v1alpha1/schedules/{id}", s.wrap(s.handleDeleteSchedule))
 
 	mux.HandleFunc("GET /v1alpha1/dispatch-rates", s.wrap(s.handleListDispatchRates))
+	mux.HandleFunc("GET /v1alpha1/namespaces", s.wrap(s.handleListNamespaces))
 
 	mux.HandleFunc("GET /v1alpha1/preflights", s.wrap(s.handleListPreflights))
 	mux.HandleFunc("GET /v1alpha1/preflights/{id}", s.wrap(s.handleGetPreflight))
@@ -357,13 +431,17 @@ func (s *Server) Handler() http.Handler {
 
 	mux.HandleFunc("POST /v1alpha1/runs/{id}/reviews", s.wrap(s.handleCreateReview))
 	mux.HandleFunc("POST /v1alpha1/reviews/{id}/commit", s.wrap(s.handleCommitReview))
+	mux.HandleFunc("GET /v1alpha1/pending-decisions", s.wrap(s.handleListPendingDecisions))
 
 	mux.HandleFunc("POST /v1alpha1/runs/{id}/grades", s.wrap(s.handleCreateGrade))
+
+	mux.HandleFunc("POST /v1alpha1/runs/{id}/suite-verdicts", s.wrap(s.handleCreateSuiteVerdict))
 
 	mux.HandleFunc("GET /v1alpha1/human-tasks", s.wrap(s.handleListHumanTasks))
 	mux.HandleFunc("GET /v1alpha1/human-tasks/{id}", s.wrap(s.handleGetHumanTask))
 	mux.HandleFunc("POST /v1alpha1/human-tasks/{id}/decision", s.wrap(s.handleDecideHumanTask))
 
+	mux.HandleFunc("GET /v1alpha1/version", s.wrap(s.handleVersion))
 	mux.HandleFunc("GET /v1alpha1/healthz", s.wrap(s.handleHealthz))
 	mux.HandleFunc("GET /v1alpha1/readyz", s.wrap(s.handleReadyz))
 
@@ -383,6 +461,11 @@ func (s *Server) Handler() http.Handler {
 			Engine:    s.Engine,
 			Signer:    s.callbackSigner,
 			Telemetry: s.telemetry,
+			// Task t10: a `completed` event that reports a handover ref gets
+			// the ref fetched and measured. Nil unless the deployment
+			// configured a remote (WithHandoverObserver), in which case
+			// nothing is fetched and nothing is recorded.
+			Handover: s.handoverObserver,
 		})))
 	}
 	// Unlike the unversioned actor callback protocol above, this documented
@@ -400,10 +483,23 @@ func (s *Server) Handler() http.Handler {
 
 // spaHandler serves the embedded web build: real files as-is, everything
 // else (client-side routes like /runs/abc) falls back to index.html. It
-// never shadows /v1alpha1 — the mux's more-specific API patterns win.
+// never shadows a DECLARED /v1alpha1 operation — the mux's more-specific API
+// patterns win — but it is where an UNdeclared one lands, and that is the
+// defect issue #8 records: `GET /v1alpha1/pending-decisions` against a
+// binary that predates the endpoint answered 200 with index.html, so a
+// client could not tell an absent endpoint from an empty one. Any path under
+// the API group is refused here instead. It is deliberately NOT registered
+// as a mux pattern (`mux.HandleFunc("/v1alpha1/", http.NotFound)`): a
+// pattern that broad matches wrong-method requests too, which turns the
+// mux's own 405 for a real operation into a 404 and breaks the route sweep
+// that probes with DELETE.
 func spaHandler(assets fs.FS) http.Handler {
 	fileServer := http.FileServerFS(assets)
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if strings.HasPrefix(r.URL.Path, "/v1alpha1/") {
+			http.NotFound(w, r)
+			return
+		}
 		p := strings.TrimPrefix(r.URL.Path, "/")
 		if p == "" {
 			p = "index.html"

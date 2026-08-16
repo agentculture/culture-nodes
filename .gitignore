@@ -249,3 +249,10 @@ skills.local.yaml
 
 # Session worktrees created by the harness — never part of the repo.
 .claude/worktrees/
+
+# The deploy's revision stamp (task t32). Written by deploy/prod/deploy.sh
+# into the SHIPPED tree just before `uv tool install` copies it, so a copy
+# install can report which revision it is running. Never committed: a stamp
+# in the repo would be a stale answer for every checkout that is not the one
+# that wrote it, and git already answers for a work tree.
+adapters/*/src/*/_revision.json

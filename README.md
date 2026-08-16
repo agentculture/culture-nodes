@@ -166,17 +166,112 @@ curl -X POST http://localhost:8080/v1alpha1/human-tasks/<id>/decision \
   -d '{"outcome": "approved", "decider_actor_id": "ori", "expected_ledger_version": 4}'
 ```
 
-The decision endpoint is the one write in this API that requires a bearer
-token (`NODES_HUMAN_DECISION_TOKEN_SECRET` on `nodes serve`) — every other
-Phase-1 endpoint is authless behind the private network above, but a
-decision here writes a human-authority review into the ledger and resumes
-the run on whoever's behalf the token vouches for. The commit is atomic and
-stale-guarded: a decision against a ledger version the run has since moved
-past is refused, never silently applied. The shipped
+The decision endpoint is one of three writes in this API that require a
+bearer token (`NODES_HUMAN_DECISION_TOKEN_SECRET` on `nodes serve`; the
+other two are the review routes below) — every other Phase-1 endpoint is
+authless behind the private network above, but a decision here writes a
+human-authority review into the ledger and resumes the run on whoever's
+behalf the token vouches for. The commit is atomic and stale-guarded: a
+decision against a ledger version the run has since moved past is refused,
+never silently applied. The shipped
 [`examples/delivery-loop`](examples/delivery-loop) reference workflow does
 not include an approval node yet (see its header comment); the engine, API,
 and worker plumbing above are real and tested independently of that
 fixture.
+
+## Deciding a claim: the affirmative half of the authority model
+
+An agent may only create `proposed` records, and no actor promotes its own
+proposal (PRD §10.4). That refusal is one half of the model; the other half
+is somebody actually deciding. A decision is recorded as its own immutable
+`review` record — human origin naming the reviewer, `confirmed` or
+`rejected` authority, `subject_ref` naming the record decided, and the
+stated reason in its payload.
+
+```bash
+# What is awaiting a decision, across every run (or one, with ?run_id=).
+curl http://localhost:8080/v1alpha1/pending-decisions
+
+# Open a review over the records, at the ledger version you read them at.
+curl -X POST http://localhost:8080/v1alpha1/runs/<run-id>/reviews \
+  -H "Authorization: Bearer $NODES_HUMAN_DECISION_TOKEN_SECRET" \
+  -H 'content-type: application/json' \
+  -d '{"record_ids": ["rec_..."], "ledger_version": 7, "reviewer_actor_id": "actor_..."}'
+
+# Decide it. `rationale` is required, and it is recorded on each decision.
+curl -X POST http://localhost:8080/v1alpha1/reviews/<review-id>/commit \
+  -H "Authorization: Bearer $NODES_HUMAN_DECISION_TOKEN_SECRET" \
+  -H 'content-type: application/json' \
+  -d '{"decisions": {"rec_...": "confirm"}, "expected_ledger_version": 7,
+       "rationale": "re-ran the suite on spark and read the output"}'
+```
+
+Three things this surface refuses to be casual about:
+
+- **Who decided is checked, not asserted.** `reviewer_actor_id` is resolved
+  against the actor registry and must be registered `human`. Without that
+  check the human origin stamped on a review record would be a value the
+  ledger asserts on the caller's behalf, and an agent could decide its own
+  claim by naming itself (rule `reviewer_must_be_human`).
+- **Why is required.** A confirmation with no stated reason cannot be told
+  apart from an unread one.
+- **Nothing is rewritten.** Records are immutable, so a confirmed claim
+  still reads `authority: proposed` forever with a review record pointing at
+  it. That is why "what is still undecided" is `GET /pending-decisions` — a
+  join — and not a filter on authority.
+
+The same thing from a browser: the **Decisions** view (`/decisions`) lists
+every undecided record with its payload in full and records the verdict,
+reviewer and rationale. `scripts/decide-claims.py` is the terminal version,
+and `scripts/ledger-gate.py` is the stage gate that fails while anything is
+still undecided.
+
+### Collecting a handover, and gating a merge on a real suite
+
+A run whose session handed work over left it on a git ref named
+`refs/culture-nodes/<run-id>/<node-run-id>-<attempt-id>-<UTC>-<short-sha>`,
+on whatever machine that session ran on. `scripts/collect-handover.py` turns
+the **run id alone** into a reviewable diff:
+
+```bash
+scripts/collect-handover.py <run-id>            # fetch and show what changed
+scripts/collect-handover.py <run-id> --json
+```
+
+It asks the control plane which actor ran the run, resolves that actor's host
+from the registry, fetches the run's refs by wildcard into `refs/handover/`
+(no branch is touched, nothing is checked out), and reports each ref, its
+commit, and the paths it changed. The remote is **the control plane's
+configuration, never the run's own report** — a session that could point the
+fetch at a repository it prepared would make the measurement real and the
+subject forged — and only `refs/culture-nodes/` is ever fetched. Configure it
+per actor with `metadata.handover_remote` at registration, or fleet-wide with
+`NODES_HANDOVER_REMOTE_TEMPLATE` (`{host}` is substituted from the actor's
+registered `endpoint_ref`). Neither present is a refusal, not a guess.
+
+**No ref is an ambiguous state, and is reported as one.** Either the session
+handed over nothing, or the bridge on that host cannot hand over at all
+(issue #120: bridges deployed before the ref-minting code create no ref even
+on success). The script exits non-zero and names both, because guessing here
+is how a lost handover becomes "the agent did nothing".
+
+`--gate` then runs a suite against the collected commit and records what
+happened:
+
+```bash
+scripts/collect-handover.py <run-id> --gate --suite 'go test ./...' -- go test ./...
+```
+
+The suite runs in a detached worktree at that exact commit, and the result is
+appended through `POST /v1alpha1/runs/{id}/suite-verdicts` as a **`derived`**
+record from the named validator — because a test suite *is* a deterministic
+validator (PRD §10.4), where an operator reading a green tick is not evidence
+of anything. The record names the suite, the exit code, and the commit sha,
+and the sha is read back from the worktree the suite actually ran in rather
+than assumed. A verdict that does not name what it tested is not evidence, so
+`commit_sha` must be a full 40-hex id, an absent `exit_code` is refused rather
+than defaulted to a pass, and a verdict naming a commit other than the one the
+control plane measured as this run's handover is refused outright.
 
 ## Example topology: one machine, or a small production split
 

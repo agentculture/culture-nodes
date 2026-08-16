@@ -61,7 +61,15 @@ that token's allowlist — and each allowlisted file to still mention it
 granularity is deliberate: a new reader is cheap to allowlist in review; a
 new writer hiding as a reader is what a looser sweep would miss.
 
-### `AuthorityObserved` — runner boundary only
+### `AuthorityObserved` — direct measurement only
+
+The standing test is not which package a writer lives in: it is whether
+every field the record stamps came from the writer's **own measurement**
+rather than from something an actor reported. `internal/runners` qualifies
+because a runner watched the process it reports on. `internal/handover`
+qualifies because the control plane fetched the ref itself — the agent's
+report supplies only the ref *name* to look for, and a ref that cannot be
+fetched produces no record at all rather than one marked unmeasured.
 
 | File | Standing |
 | --- | --- |
@@ -69,14 +77,20 @@ new writer hiding as a reader is what a looser sweep would miss.
 | `internal/ledger/authority.go` | Append-time enforcement: observed needs a runner manifest |
 | `internal/engine/ledgerdelta.go` | Refusal gate: node deltas may propose/observe per declared contract only |
 | `internal/runners/dispatch.go` | **The writer**: boundary-measured evidence, `OriginRunner` + observed |
+| `internal/handover/handover.go` | **Second writer** (task t10, issue #13): what a `git fetch` of a handed-over ref measured — ref, commit sha, changed paths. Reads nothing the agent reported except the ref name (`actors.Handover.ClaimedRef` is the only accessor); refuses to write without an identified measuring actor |
 
-### `OriginRunner` — stamped only by the boundary itself
+### `OriginRunner` — stamped only by a boundary reporting its own measurement
+
+A writer here must also appear on the `AuthorityObserved` list above: the
+two travel together, and a file stamping one without the other is claiming
+an identity it is not using or an authority it has not earned.
 
 | File | Standing |
 | --- | --- |
 | `internal/ledger/record.go` | Vocabulary |
 | `internal/ledger/authority.go` | Enforcement: runners write manifest-checked observed evidence only |
 | `internal/runners/dispatch.go` | **The writer** |
+| `internal/handover/handover.go` | **Second writer**: the git-fetch observer, under its own configured actor id |
 
 ### `AuthorityConfirmed` — human acceptance only
 
@@ -102,6 +116,8 @@ sweep; refused at append time by `internal/ledger/authority.go` otherwise).
 | `internal/worker/acceptance.go` | Validator-origin writer: acceptance evaluation (issue 37) |
 | `internal/worker/successsignal.go` | Validator-origin writer: mechanical `success_signal` evaluation (t18) |
 | `internal/worker/hooks.go` | Validator-origin writer: assurance-hook rejection reviews |
+| `internal/handover/verdict.go` | Validator-origin writer (task t11, issue #101): a suite verdict over a handed-over commit. A test suite **is** a deterministic producer — a commit plus a command yields the same exit code every time — where an operator reading a green tick is not evidence of anything, which is precisely the substitution t11 replaces. It sits in `internal/handover` rather than `internal/api` because the verdict and the ref measurement it judges must name the same commit, and the refusal that enforces that (a full 40-hex sha, or no record at all) belongs with the fetch it is about |
+| `internal/repair/route.go` | Validator-origin writer (task t32, issue #102): where a failing merge gate goes next. `Decide` is a pure function of already-recorded facts — the suite's exit code (itself a derived record), the run's own prior routings, the changed paths `internal/handover` measured, and the repair lane's advertised capability surface — so the same inputs yield the same destination every time, which is §10.4's test for `derived`. It is deliberately **not** `confirmed`: routing decides where a failure goes, and a human deciding to merge remains that human's own transaction. Nor `proposed`: nothing in the record is anybody's suggestion, and there is no field a caller can use to argue with the bound |
 | `internal/devague/deliverables.go` | Engine-origin writer: devague delivery-summary derivation (pre-batch) |
 | `internal/preflight/records.go` | Engine-origin writer: the clarify-then-commit gate's briefing (issue #67, task t14) — a deterministic composition of the host capabilities a bridge advertised and the pinned task declaration, computed by the engine and asserted by nobody |
 

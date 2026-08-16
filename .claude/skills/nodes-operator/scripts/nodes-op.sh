@@ -5,8 +5,7 @@
 #
 # API resolution: $NODES_API_URL, else ~/.culture-nodes/operator.env's
 # NODES_API_URL line, else the thor production default. Everything speaks
-# the public v1alpha1 HTTP surface — no psql, no ssh, except the `actors`
-# verb which documents its ssh dependency inline.
+# the public v1alpha1 HTTP surface — no psql, no ssh, no exceptions.
 #
 # Billable guard: `assign` and `create` dispatch real agent sessions.
 # They refuse without --yes (or NODES_OP_YES=1) so a casual invocation
@@ -26,11 +25,16 @@ usage() {
 usage: nodes-op.sh <verb> [args]
 
   status                       healthz + run counts
+  running                      running runs + current node/attempt detail
   workflows                    published workflows (key, digest)
   runs [N]                     newest N runs (default 10)
   run <id>                     one run: state, node outcomes, attempts
   ledger <id>                  a run's ledger records
   tasks                        pending human tasks
+  pending [run-id]             ledger claims still awaiting a human decision
+                                (proposed, and no review record names them —
+                                NOT an authority filter: confirming a claim
+                                appends a review, it never rewrites the claim)
   cancel <id>                  cancel a run (reaps items, propagates actor Cancel)
   validate <file.yaml>         server-side compile check, prints digest
   publish <file.yaml>          validate + publish, prints digest
@@ -49,13 +53,18 @@ usage: nodes-op.sh <verb> [args]
             --category C                           (optional run category tag)
             --no-watch                             (create and return the run id)
             --yes                                  (required: this bills a session)
-  actors                       registered actors (requires `ssh thor`)
+  actors                       registered actor rows, over the API (no ssh)
 
 Actors known to `assign`:
   codex-thor, codex-orin   codex bridges on thor/orin. Cross-machine, separate
-                           identity — but NO Go, npm or working uv on those
-                           hosts (#96), so anything they build needs the
-                           operator's gate on spark before it can be believed.
+                           identity. Go IS installed on both now (~/.local),
+                           so build and vet work — but the sandbox denies
+                           socket(2) outright, for loopback as well as egress
+                           (#119, measured), so NOTHING database-backed and
+                           nothing that binds a listener can run there. They
+                           can author Go; they cannot gate it. npm and uv are
+                           still absent/broken (#96). Route database-backed
+                           work elsewhere rather than accepting an unrun test.
   developer, planner,      claude bridges on spark. Full toolchain, so they can
   verifier, intake         actually run what they write — but all four share
                            ONE subscription window with the operator's own
@@ -106,6 +115,33 @@ import json,sys
 runs=json.load(sys.stdin); runs=runs if isinstance(runs,list) else runs.get('runs',runs.get('items',[]))
 for r in runs[:$n]: print(r['id'], r.get('state','?'), r.get('created_at',''))"
   ;;
+running)
+  tmp=$(mktemp -d)
+  trap 'find "$tmp" -depth -delete' EXIT
+  api_get "/v1alpha1/runs?state=running&limit=500" > "$tmp/runs.json"
+  python3 - "$tmp/runs.json" "$tmp/ids" <<'PYEOF'
+import json, sys
+d = json.load(open(sys.argv[1]))
+runs = d if isinstance(d, list) else d.get("runs", d.get("items", []))
+with open(sys.argv[2], "w") as ids:
+    for run in runs:
+        ids.write(run["id"] + "\n")
+print("running runs:", len(runs))
+PYEOF
+  while IFS= read -r id; do
+    [ -n "$id" ] || continue
+    api_get "/v1alpha1/runs/$id" | py '
+import json, sys
+d = json.load(sys.stdin); r = d.get("run", d)
+print("%s  name=%s  category=%s" % (r.get("id"), r.get("name") or "-", r.get("category") or "-"))
+print("  description:", r.get("description") or "-")
+print("  input:", json.dumps(r.get("input"), ensure_ascii=False))
+for nr in d.get("node_runs", []):
+    attempts = ["%s:%s" % (a.get("actor_id") or "?", a.get("status") or "?") for a in nr.get("attempts", [])]
+    print("  %s: %s outcome=%s attempts=%s" % (
+        nr.get("node_id"), nr.get("state"), nr.get("outcome"), attempts))'
+  done < "$tmp/ids"
+  ;;
 run)
   id="${1:?usage: run <id>}"
   tmp=$(mktemp); api_get "/v1alpha1/runs/$id" > "$tmp"
@@ -128,7 +164,7 @@ import json,sys
 d=json.load(sys.stdin)
 for r in d.get("items",[]):
     o=r.get("origin",{})
-    print(r.get("authority"), r.get("record_type"), o.get("actor_id"), "--", json.dumps(r.get("data",{}))[:160])'
+    print(r.get("authority"), r.get("record_type"), o.get("actor_id"), "--", json.dumps(r.get("data",{}), ensure_ascii=False))'
   ;;
 tasks)
   api_get /v1alpha1/human-tasks | py '
@@ -136,6 +172,22 @@ import json,sys
 d=json.load(sys.stdin); items=d if isinstance(d,list) else d.get("items",d.get("human_tasks",[]))
 if not items: print("no pending human tasks")
 for t in items: print(t.get("id"), t.get("status"), str(t.get("request",""))[:100])'
+  ;;
+pending)
+  # GET /v1alpha1/pending-decisions: the affirmative half of PRD §10.4's
+  # discoverability. Decide what this prints with scripts/decide-claims.py;
+  # both read the same server-side rule, so the gate and the queue cannot
+  # disagree about what "undecided" means.
+  q=""; [ -n "${1:-}" ] && q="?run_id=$1"
+  api_get "/v1alpha1/pending-decisions$q" | py '
+import json,sys
+d=json.load(sys.stdin); items=d.get("items",[])
+if not items: print("nothing awaiting a decision"); raise SystemExit(0)
+print(f"{d.get("record_count",0)} record(s) awaiting a decision across {len(items)} run(s)")
+for g in items:
+    print(f"  {g["run_id"]}  (ledger_version {g["ledger_version"]})")
+    for r in g.get("records",[]):
+        print(f"    {r["id"]}  {r["record_type"]}  from {r.get("origin_actor_id","-")}")'
   ;;
 cancel)
   id="${1:?usage: cancel <id>}"
@@ -271,7 +323,7 @@ print(d.get("id", ""), d.get("authority", ""), origin.get("kind", ""),
 assign)
   actor="${1:?usage: assign <codex-thor|codex-orin|developer|planner|verifier|intake> \"instruction\" [opts]}"; shift
   instruction="${1:?assign needs an instruction}"; shift
-  sandbox=read-only; timeout=15m; retries=1; outcome=completed; watch=1; category=""; repo_override=""
+  sandbox=read-only; timeout=15m; retries=1; outcome=completed; watch=1; category=""; repo_override=""; handover=false
   while [ $# -gt 0 ]; do
     case "$1" in
       --sandbox) sandbox="$2"; shift 2;;
@@ -280,6 +332,12 @@ assign)
       --outcome) outcome="$2"; shift 2;;
       --category) category="$2"; shift 2;;
       --repo) repo_override="$2"; shift 2;;
+      # t9 / #90: ask the actor to hand its changes over as a git ref. On
+      # codex this also opens `.git` for writing, so the session can commit
+      # its own work instead of leaving a working tree for the operator to
+      # collect over ssh. Opt-in: a verification package hands nothing over
+      # and must stay unable to write .git.
+      --handover) handover=true; shift;;
       --no-watch) watch=0; shift;;
       --yes) ASSUME_YES=1; shift;;
       *) echo "nodes-op: unknown assign option $1" >&2; exit 1;;
@@ -315,10 +373,11 @@ assign)
       "$TEMPLATE" > "$wf"
   digest=$("$0" publish "$wf")
   [ -n "$digest" ] || { echo "nodes-op: publish returned no digest" >&2; exit 1; }
-  python3 - "$instruction" "$sandbox" "$outcome" "$repo" <<'PYEOF' > "$wf.json"
+  python3 - "$instruction" "$sandbox" "$outcome" "$repo" "$handover" <<'PYEOF' > "$wf.json"
 import json, sys
 print(json.dumps({"instruction": sys.argv[1], "sandbox": sys.argv[2],
-                  "success_outcome": sys.argv[3], "repo": sys.argv[4]}))
+                  "success_outcome": sys.argv[3], "repo": sys.argv[4],
+                  "handover": sys.argv[5] == "true"}))
 PYEOF
   if [ -n "$category" ]; then
     out=$(NODES_OP_YES=1 "$0" create "$digest" "$wf.json" --category "$category")
@@ -326,13 +385,20 @@ PYEOF
     out=$(NODES_OP_YES=1 "$0" create "$digest" "$wf.json")
   fi
   run_id=$(echo "$out" | awk '{print $1}')
-  echo "assigned: run=$run_id actor=$actor sandbox=$sandbox timeout=$timeout${category:+ category=$category}"
+  echo "assigned: run=$run_id actor=$actor sandbox=$sandbox timeout=$timeout${category:+ category=$category}${handover:+ handover=$handover}"
   [ "$watch" = "1" ] && "$0" watch "$run_id"
   ;;
 actors)
-  # Reads the registry through thor's compose psql — the one verb that
-  # needs the `ssh thor` alias (registration itself stays register-actor.sh).
-  ssh thor 'cd culture-nodes-prod/deploy/prod && docker compose --env-file ~/.culture-nodes/prod.env -f compose.thor.yml exec -T postgres psql -U nodes -d nodes -Atc "SELECT actor_key, revision, endpoint_ref FROM actors ORDER BY actor_key, revision"'
+  # Reads the registry over the public API. This used to shell out to thor's
+  # compose psql and was the ONE verb in this skill needing an `ssh thor`
+  # alias; stage-1 verification (run 01M03BV3DYNB9N7J1Q1RJ55HNB) established
+  # that GET /v1alpha1/actors already returns actor_key, revision AND
+  # endpoint_ref, so the ssh path was answering a question the API answers.
+  # Registration itself still goes through register-actor.sh.
+  api_get /v1alpha1/actors | py 'import json,sys
+rows = json.load(sys.stdin).get("items", [])
+for r in sorted(rows, key=lambda r: (r.get("actor_key",""), r.get("revision",0))):
+    print("|".join([str(r.get("actor_key","")), str(r.get("revision","")), str(r.get("endpoint_ref") or "")]))'
   ;;
 *)
   usage

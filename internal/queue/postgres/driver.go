@@ -32,16 +32,18 @@ const defaultPollInterval = 100 * time.Millisecond
 // concurrent use: every method issues one self-contained statement (or, for
 // Receive, a bounded sequence of them) against the pool.
 type Driver struct {
-	pool *pgxpool.Pool
+	pool        *pgxpool.Pool
+	namespaceID string
 }
 
 var _ queue.Queue = (*Driver)(nil)
 
-// New returns a Driver using pool. Callers typically obtain pool from
+// New returns a Driver using pool, scoped to namespaceID for receives.
+// Callers typically obtain pool from
 // (*postgres.Store).Pool() -- the driver has no other dependency on the
 // store package, so it never needs typed store methods for its own table.
-func New(pool *pgxpool.Pool) *Driver {
-	return &Driver{pool: pool}
+func New(pool *pgxpool.Pool, namespaceID string) *Driver {
+	return &Driver{pool: pool, namespaceID: namespaceID}
 }
 
 // Publish inserts a work signal row for ref, available immediately. It is
@@ -74,6 +76,9 @@ func (d *Driver) Publish(ctx context.Context, ref queue.WorkRef) error {
 // returns whatever it has, which may be an empty, nil-error slice; that is
 // the normal "nothing to do right now" outcome, not an error.
 func (d *Driver) Receive(ctx context.Context, max int, wait time.Duration) ([]queue.Delivery, error) {
+	if d.namespaceID == "" {
+		return nil, fmt.Errorf("queue/postgres: Receive: NamespaceID is required")
+	}
 	if max <= 0 {
 		max = 1
 	}
@@ -118,10 +123,10 @@ func (d *Driver) receiveOnce(ctx context.Context, max int) ([]queue.Delivery, er
 	rows, err := d.pool.Query(ctx, `
 		SELECT id, namespace_id, node_run_id
 		FROM queue_signals
-		WHERE available_at <= now()
+		WHERE namespace_id = $1 AND available_at <= now()
 		ORDER BY available_at, id
-		LIMIT $1
-	`, max)
+		LIMIT $2
+	`, d.namespaceID, max)
 	if err != nil {
 		return nil, fmt.Errorf("queue/postgres: Receive: %w", err)
 	}

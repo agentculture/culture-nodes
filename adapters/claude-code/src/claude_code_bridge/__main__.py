@@ -13,7 +13,7 @@ import json
 import logging
 import sys
 
-from claude_code_bridge import capabilities, claude_cli, preflight, reap, reclaim
+from claude_code_bridge import capabilities, claude_cli, dialin, preflight, reap, reclaim
 from claude_code_bridge.config import Config, ConfigError
 from claude_code_bridge.server import serve_forever
 
@@ -127,6 +127,7 @@ def main(argv: list[str] | None = None) -> int:
         print(f"error: {exc}", file=sys.stderr)
         return 2
 
+    dialin.start("CLAUDE_CODE_BRIDGE", cfg.port)
     serve_forever(cfg)
     return 0
 

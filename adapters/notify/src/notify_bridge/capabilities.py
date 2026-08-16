@@ -16,6 +16,14 @@ absence. The keys that remain are the ones that still mean something —
 which host this runs on, that nothing is written or committed, and that the
 set of paths a dispatch may write is empty.
 
+`dispatch_grants` and `toolchains` (issue #96) are omitted for the same
+reason and are worth naming explicitly, because "which toolchains can
+execute here" is a question with no answer on this bridge rather than one
+whose answer is "none": it starts no session, so there is no posture to
+grant anything and no tool a dispatch could invoke. A `toolchains: []` here
+would read as "this host has no uv", which is a claim about a host nobody
+measured.
+
 The webhook URL is deliberately not a host fact and never will be: this
 module, like every other module outside `webhook.py`, never reads it. See
 `webhook.py`'s docstring for the isolation rule.
@@ -23,9 +31,10 @@ module, like every other module outside `webhook.py`, never reads it. See
 
 from __future__ import annotations
 
+import sys
 from typing import Any, Sequence
 
-from notify_bridge import preflight
+from notify_bridge import deployment, preflight
 from notify_bridge.config import Config
 
 #: No agent session runs here, so there is nothing to confine — stated
@@ -65,4 +74,13 @@ def host_facts(
         commit_policy=_COMMIT_POLICY,
         writable_paths=[],
         artifact_publish="not-applicable-no-workspace",
+        # Which revision of THIS bridge is answering (task t32, issue #120
+        # item 4). Measured from the module object rather than from a
+        # configured path, so it describes the code that is actually running.
+        # The distribution name is the one per-backend value: it is what the
+        # install recorded, and it is how the PEP 610 metadata that decides
+        # editable-vs-copy is looked up.
+        deployment=deployment.deployment_facts(
+            sys.modules[__package__], "culture-nodes-notify-bridge"
+        ),
     )

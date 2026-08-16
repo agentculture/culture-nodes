@@ -44,7 +44,21 @@ type Tx interface {
 	// committed, reporting whether it was the call that did so. A false
 	// return means some other commit got there first.
 	MarkReviewCommitted(ctx context.Context, id string) (bool, error)
+	// ActorKind returns the registered kind of an actor ("human", "agent",
+	// "runner", …), or ErrActorNotFound when no actor has that id.
+	//
+	// It is on this interface because CommitReview stamps the reviewer as
+	// the human origin of the review records it appends, and an origin the
+	// ledger asserts on the caller's behalf is a claim it has to be able to
+	// check. See the reviewer guard in CommitReview.
+	ActorKind(ctx context.Context, actorID string) (string, error)
 }
+
+// ActorKindHuman is the registered actor kind a reviewer must have. It is the
+// same vocabulary POST /v1alpha1/actors accepts, and it deliberately reads as
+// a string rather than as an OriginKind: an actor's kind is a fact about the
+// registry, and OriginKind is what a record asserts about itself.
+const ActorKindHuman = "human"
 
 // Store is a Tx that can also open one.
 type Store interface {
@@ -476,10 +490,20 @@ func buildReviewOptions(opts []ReviewOption) reviewOptions {
 // authority confirmed or rejected, subject_ref naming the target. The
 // reviewed records themselves are untouched, so an agent's proposal remains
 // a proposal with a human decision attached to it.
-func (l *Ledger) CommitReview(ctx context.Context, reviewID string, decisions map[string]Verdict, expectedLedgerVersion int64) (ReviewResult, error) {
+//
+// The reviewer must be an actor the registry records as a human
+// (ActorKindHuman). That check is what makes the human origin these records
+// carry a fact rather than an assertion, and it is the reason an agent cannot
+// decide its own claim by naming itself as the reviewer — the affirmative
+// half of PRD §10.4 needs the same rigour as its refusal half.
+//
+// WithRationale records why the decision was made. It is optional here and
+// required by the HTTP decision surface: see the option's own documentation.
+func (l *Ledger) CommitReview(ctx context.Context, reviewID string, decisions map[string]Verdict, expectedLedgerVersion int64, opts ...CommitOption) (ReviewResult, error) {
 	if reviewID == "" {
 		return ReviewResult{}, errors.New("ledger: CommitReview requires a review id")
 	}
+	options := buildCommitOptions(opts)
 
 	var result ReviewResult
 	err := l.store.InTx(ctx, func(ctx context.Context, tx Tx) error {
@@ -496,12 +520,15 @@ func (l *Ledger) CommitReview(ctx context.Context, reviewID string, decisions ma
 		if req.ReviewerActorID == "" {
 			return fmt.Errorf("ledger: commit review %s: the request names no reviewer; a confirmation nobody is accountable for is not a confirmation", reviewID)
 		}
+		if err := checkReviewerIsHuman(ctx, tx, req); err != nil {
+			return err
+		}
 
 		if err := l.checkReviewIsCurrent(ctx, tx, req, decisions, expectedLedgerVersion); err != nil {
 			return err
 		}
 
-		appended, err := l.appendReviewRecords(ctx, tx, req, decisions)
+		appended, err := l.appendReviewRecords(ctx, tx, req, decisions, options)
 		if err != nil {
 			return err
 		}
@@ -525,6 +552,74 @@ func (l *Ledger) CommitReview(ctx context.Context, reviewID string, decisions ma
 		return ReviewResult{}, err
 	}
 	return result, nil
+}
+
+// CommitOption configures a review commit.
+type CommitOption func(*commitOptions)
+
+type commitOptions struct {
+	rationale string
+}
+
+// WithRationale records the reviewer's stated reason on every review record
+// the commit appends.
+//
+// It is optional at this layer and required by POST
+// /v1alpha1/reviews/{id}/commit, and the asymmetry is deliberate. A
+// confirmation with no stated reason cannot be told apart from an unread one,
+// so the surface a person decides through demands one. The engine's
+// human-task path (internal/engine/humandecision.go) reaches CommitReview
+// with the decider's own reasoning already captured in the decision record's
+// response payload, and making the option mandatory here would only make that
+// path synthesise a sentence nobody wrote.
+//
+// An absent rationale leaves the key out of the payload entirely rather than
+// writing an empty string: absence reads as "no reason was recorded", where
+// "" would read as "a reason was given and it was blank".
+func WithRationale(why string) CommitOption {
+	return func(o *commitOptions) { o.rationale = why }
+}
+
+func buildCommitOptions(opts []CommitOption) commitOptions {
+	var o commitOptions
+	for _, opt := range opts {
+		if opt != nil {
+			opt(&o)
+		}
+	}
+	return o
+}
+
+// checkReviewerIsHuman resolves the named reviewer against the actor registry
+// and refuses anything that is not a registered human.
+//
+// This is the affirmative half of PRD §10.4's authority model doing the same
+// job its refusal half does. checkAuthority already stops an agent-ORIGIN
+// record from carrying confirmed authority, but review records are stamped
+// with human origin by appendReviewRecords from the request's reviewer id, so
+// that check sees a human no matter who was named. The producer/authority
+// matrix cannot catch this one: by the time it runs, the lie is already in the
+// record. It has to be caught here, against the registry.
+func checkReviewerIsHuman(ctx context.Context, tx Tx, req ReviewRequest) error {
+	kind, err := tx.ActorKind(ctx, req.ReviewerActorID)
+	if err != nil {
+		return fmt.Errorf("ledger: commit review %s: reviewer %s: %w", req.ID, req.ReviewerActorID, err)
+	}
+	if kind == ActorKindHuman {
+		return nil
+	}
+	return &AuthorityError{
+		Rule: RuleReviewerNotHuman,
+		// The reviewer's REGISTERED kind, not the human origin the review
+		// record would have carried — naming `human` here would restate the
+		// assumption being refused.
+		Origin:     OriginKind(kind),
+		ActorID:    req.ReviewerActorID,
+		Authority:  AuthorityConfirmed,
+		RecordType: RecordReview,
+		Detail: "a decision on a proposed record is a human's to make (PRD §10.4); an actor registered as " +
+			kind + " deciding a claim would be the producer side of the ledger promoting itself",
+	}
 }
 
 // checkReviewIsCurrent runs every staleness and coverage guard before a
@@ -628,18 +723,22 @@ func checkReviewCoverage(req ReviewRequest, decisions map[string]Verdict) error 
 	return nil
 }
 
-func (l *Ledger) appendReviewRecords(ctx context.Context, tx Tx, req ReviewRequest, decisions map[string]Verdict) ([]Record, error) {
+func (l *Ledger) appendReviewRecords(ctx context.Context, tx Tx, req ReviewRequest, decisions map[string]Verdict, commit commitOptions) ([]Record, error) {
 	options := appendOptions{reviewTransaction: true}
 	appended := make([]Record, 0, len(req.RecordIDs))
 
 	for _, targetID := range req.RecordIDs {
 		verdict := decisions[targetID]
-		payload, err := json.Marshal(map[string]any{
+		data := map[string]any{
 			"verdict":        string(verdict),
 			"reviewed_refs":  []string{targetID},
 			"ledger_version": strconv.FormatInt(req.LedgerVersion, 10),
 			"frame_checksum": req.FrameChecksum,
-		})
+		}
+		if commit.rationale != "" {
+			data["rationale"] = commit.rationale
+		}
+		payload, err := json.Marshal(data)
 		if err != nil {
 			return nil, fmt.Errorf("ledger: encode review payload for %s: %w", targetID, err)
 		}

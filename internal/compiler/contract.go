@@ -54,6 +54,12 @@ var deferredNodeBindingSurfaces = map[string]bool{
 // checkContracts is the §11.4 contract level: schemas are valid, every node
 // declares the outcomes its kind needs, bindings resolve, and CEL compiles.
 func (c *compilation) checkContracts() {
+	for i, trigger := range c.doc.Spec.Triggers {
+		if trigger.When != "" {
+			c.compileCEL(fmt.Sprintf("/spec/triggers/%d/when", i), trigger.When)
+		}
+	}
+	c.checkAffinity()
 	c.checkSchemaSource("/spec/contract/input", c.doc.Spec.Contract.Input)
 	c.checkSchemaSource("/spec/contract/output", c.doc.Spec.Contract.Output)
 

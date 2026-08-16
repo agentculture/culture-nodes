@@ -155,3 +155,32 @@ def test_default_port_differs_from_colleague_bridge():
     # default so both can run on one host without colliding.
     cfg = Config.load(env={})
     assert cfg.port == 8086
+
+
+def test_only_allowed_repo_infers_one_and_refuses_ambiguity():
+    """Issue #125: a trigger-created run's input IS the event payload.
+
+    There is nowhere in a deployment-neutral workflow to put a checkout path
+    — a literal in the graph would make it deployment-specific, and the pure
+    emitter that raises the event knows nothing about checkouts. So a bridge
+    naming exactly one repository infers it; the caller restating it would add
+    no safety, because the allowlist check would reject anything else anyway.
+
+    Ambiguity fails closed. With two entries, or with any prefix rule, the
+    choice is real and guessing it would silently pick a workspace the caller
+    did not name.
+    """
+    cfg = Config(repo_allowlist=("/srv/only",))
+    assert cfg.only_allowed_repo() == "/srv/only"
+
+    assert Config(repo_allowlist=()).only_allowed_repo() is None
+    assert Config(repo_allowlist=("/srv/a", "/srv/b")).only_allowed_repo() is None
+
+    # A prefix rule means the allowlist admits repos it does not enumerate,
+    # so "exactly one entry" no longer means "exactly one possible repo".
+    assert (
+        Config(
+            repo_allowlist=("/srv/only",), repo_allowlist_prefixes=("/srv/scoped",)
+        ).only_allowed_repo()
+        is None
+    )

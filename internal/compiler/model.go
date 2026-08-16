@@ -32,6 +32,8 @@ type metadata struct {
 
 type spec struct {
 	Entry        string           `json:"entry"`
+	Triggers     []trigger        `json:"triggers,omitempty"`
+	Affinity     []affinityRule   `json:"affinity,omitempty"`
 	Contract     workflowContract `json:"contract"`
 	Limits       *limits          `json:"limits,omitempty"`
 	Budget       *budget          `json:"budget,omitempty"`
@@ -39,6 +41,14 @@ type spec struct {
 	Nodes        map[string]*node `json:"nodes"`
 	Edges        []edge           `json:"edges"`
 	Presentation map[string]any   `json:"presentation,omitempty"`
+}
+
+// trigger starts a new run from an inbound event. The event payload becomes
+// the run input; When is evaluated with the same event activation as an
+// onEvent edge guard.
+type trigger struct {
+	OnEvent string `json:"onEvent"`
+	When    string `json:"when,omitempty"`
 }
 
 type workflowContract struct {
@@ -404,6 +414,8 @@ type IR struct {
 
 type irSpec struct {
 	Entry    string           `json:"entry"`
+	Triggers []trigger        `json:"triggers,omitempty"`
+	Affinity []affinityRule   `json:"affinity,omitempty"`
 	Contract workflowContract `json:"contract"`
 	Limits   limits           `json:"limits"`
 	// Budget is carried through unchanged and omitted entirely when the

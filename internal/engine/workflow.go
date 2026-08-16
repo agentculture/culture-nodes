@@ -3,6 +3,7 @@ package engine
 import (
 	"bytes"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"time"
 
@@ -53,10 +54,15 @@ type Workflow struct {
 	Name    string
 	Version string
 
-	Entry  string
-	Limits Limits
-	Budget Budget
-	Ledger LedgerLimits
+	Entry    string
+	Triggers []Trigger
+	// Affinity is the declared actor-routing block (task t33), in
+	// declaration order -- first match per node wins, so the order IS the
+	// semantics and must not be sorted or mapped.
+	Affinity []AffinityRule
+	Limits   Limits
+	Budget   Budget
+	Ledger   LedgerLimits
 
 	Nodes map[string]*Node
 	// Edges are in normalized order (by source node, outcome, target, guard),
@@ -74,6 +80,23 @@ type Workflow struct {
 
 	// IR is the exact normalized JSON this workflow was loaded from.
 	IR json.RawMessage
+}
+
+type Trigger struct {
+	OnEvent   string
+	When      string
+	Condition cel.Program
+}
+
+// AffinityRule is one declared actor-routing rule (task t33). Condition is
+// nil for an unconditional rule, which the compiler guarantees is the last
+// rule declared for its node.
+type AffinityRule struct {
+	Name      string
+	Node      string
+	Actor     string
+	When      string
+	Condition cel.Program
 }
 
 // Limits are the §9.7 loop bounds, already expanded by the compiler so every
@@ -221,6 +244,18 @@ type ContinuationBounds struct {
 // is intentionally not part of it: retry/deadline and continuation bounds
 // are independent clocks.
 type ContinuationState struct {
+	// NodeState is the node run's own durable state, mapped onto the
+	// `node.state` vocabulary by ContinuationNodeState — MEASURED by the
+	// caller from the node_runs row, never a literal (issue #95: the
+	// scheduler used to pass "incomplete" unconditionally, which made the
+	// canonical `node.state == "incomplete"` true in every run for every
+	// node).
+	//
+	// The empty string means "not measured", and it is not a value: a
+	// condition that reads node.state under an empty NodeState is
+	// undecidable (ErrContinuationUndecidable), not false. That is what
+	// stops a future caller fabricating a state by omission the way the
+	// old one did by assignment.
 	NodeState         string
 	RemainingSessions int
 	Continuations     int
@@ -234,35 +269,87 @@ type ContinuationDecision struct {
 	EngineFailure bool
 }
 
+// ErrContinuationUndecidable is returned by DecideContinuation when a declared
+// `continue.while` condition could not be EVALUATED — the CEL program errored,
+// or it produced something that is not a boolean. Neither is a domain
+// decision, and dressing them as one is issue #105: before this, all three of
+// "the condition was false", "the condition errored" and "the condition
+// returned a non-boolean" returned the identical zero ContinuationDecision.
+// The first is the node saying stop; the other two are nobody answering. A
+// reader of the run could not tell them apart, and because the zero value
+// carries no outcome, the author's declared `onExhausted` safety net was
+// bypassed by exactly the kind of trouble it exists to catch.
+var ErrContinuationUndecidable = errors.New("continue.while condition is undecidable")
+
+// ContinuationNodeState maps a node run's durable lifecycle state onto the
+// `node.state` vocabulary a `continue.while` condition is written against
+// (issue #95). Terminal node runs are "complete"; every parked or in-flight
+// one is "incomplete", which is what the canonical
+// `node.state == "incomplete"` means and what its author expects to be able
+// to observe as FALSE.
+//
+// An empty NodeRunState maps to the empty string on purpose: a row nobody
+// read is not a state, and DecideContinuation turns that into an undecidable
+// condition rather than a guess. Callers pass the status they queried; they
+// never pass a literal.
+func ContinuationNodeState(status NodeRunState) string {
+	switch {
+	case status == "":
+		return ""
+	case status.Terminal():
+		return "complete"
+	default:
+		return "incomplete"
+	}
+}
+
 // DecideContinuation evaluates the author-owned condition between turns.
 // Exhaustion is a routable domain answer, never an engine failure.
-func (n *Node) DecideContinuation(state ContinuationState) ContinuationDecision {
+//
+// The error return is reserved for a condition that could not be decided at
+// all (ErrContinuationUndecidable). A condition that decides "stop" is a
+// nil-error zero decision, and bound exhaustion is a nil-error decision
+// carrying OnExhausted: neither is a failure, and the difference between
+// those two and an undecidable one is the whole point of the signature.
+func (n *Node) DecideContinuation(state ContinuationState) (ContinuationDecision, error) {
 	if n == nil || n.Continue == nil {
-		return ContinuationDecision{}
+		return ContinuationDecision{}, nil
 	}
 	b := n.Continue.Bounds
 	if (b.MaxContinuations > 0 && state.Continuations >= b.MaxContinuations) ||
 		(b.MaxWallClock > 0 && state.WallClock >= b.MaxWallClock) ||
 		(b.MaxSessions > 0 && state.Sessions >= b.MaxSessions) {
-		return ContinuationDecision{Outcome: n.Continue.OnExhausted}
+		return ContinuationDecision{Outcome: n.Continue.OnExhausted}, nil
+	}
+	// An unmeasured node state is OMITTED, not defaulted: `node.state` then
+	// fails to resolve and the condition comes back undecidable, instead of
+	// silently comparing against "" (issue #95).
+	nodeVars := map[string]any{}
+	if state.NodeState != "" {
+		nodeVars["state"] = state.NodeState
 	}
 	activation := map[string]any{
-		celVarNode:   map[string]any{"state": state.NodeState},
+		celVarNode:   nodeVars,
 		celVarBudget: map[string]any{"remaining_sessions": state.RemainingSessions},
 		celVarInput:  map[string]any{}, celVarOutput: map[string]any{},
 		celVarOutcome: "", celVarEvent: map[string]any{},
 	}
-	for _, program := range n.Continue.While {
+	for i, program := range n.Continue.While {
 		value, _, err := program.Eval(activation)
 		if err != nil {
-			return ContinuationDecision{}
+			return ContinuationDecision{EngineFailure: true},
+				fmt.Errorf("%w: continue.while[%d]: %w", ErrContinuationUndecidable, i, err)
 		}
 		ok, err := truthy(value)
-		if err != nil || !ok {
-			return ContinuationDecision{}
+		if err != nil {
+			return ContinuationDecision{EngineFailure: true},
+				fmt.Errorf("%w: continue.while[%d]: %w", ErrContinuationUndecidable, i, err)
+		}
+		if !ok {
+			return ContinuationDecision{}, nil
 		}
 	}
-	return ContinuationDecision{Continue: true}
+	return ContinuationDecision{Continue: true}, nil
 }
 
 // bindingLiteralKey is the wrapper the authoring schema uses to declare a
@@ -461,6 +548,35 @@ func LoadWorkflow(digest string, ir []byte) (*Workflow, error) {
 	if err != nil {
 		return fail("%v", err)
 	}
+	for i, raw := range doc.Spec.Triggers {
+		trigger := Trigger{OnEvent: raw.OnEvent, When: raw.When}
+		if trigger.OnEvent == "" {
+			return fail("trigger %d declares no event name", i)
+		}
+		if trigger.When != "" {
+			trigger.Condition, err = compileGuard(env, trigger.When)
+			if err != nil {
+				return fail("trigger %d (onEvent %q) condition: %v", i, trigger.OnEvent, err)
+			}
+		}
+		wf.Triggers = append(wf.Triggers, trigger)
+	}
+	for i, raw := range doc.Spec.Affinity {
+		rule := AffinityRule{Name: raw.Name, Node: raw.Node, Actor: raw.Actor, When: raw.When}
+		if rule.Node == "" || rule.Actor == "" {
+			return fail("affinity rule %d declares no node or no actor", i)
+		}
+		if _, ok := wf.Nodes[rule.Node]; !ok {
+			return fail("affinity rule %d targets node %q, which the IR does not declare", i, rule.Node)
+		}
+		if rule.When != "" {
+			rule.Condition, err = compileGuard(env, rule.When)
+			if err != nil {
+				return fail("affinity rule %d (node %q) condition: %v", i, rule.Node, err)
+			}
+		}
+		wf.Affinity = append(wf.Affinity, rule)
+	}
 	for i, e := range doc.Spec.Edges {
 		edge := Edge{
 			From: e.From, FromNode: e.FromNode, FromOutcome: e.FromOutcome,
@@ -500,6 +616,16 @@ type irDocument struct {
 	} `json:"metadata"`
 	Spec struct {
 		Entry    string `json:"entry"`
+		Triggers []struct {
+			OnEvent string `json:"onEvent"`
+			When    string `json:"when"`
+		} `json:"triggers"`
+		Affinity []struct {
+			Name  string `json:"name"`
+			Node  string `json:"node"`
+			Actor string `json:"actor"`
+			When  string `json:"when"`
+		} `json:"affinity"`
 		Contract struct {
 			Input  *irSchemaSource `json:"input"`
 			Output *irSchemaSource `json:"output"`

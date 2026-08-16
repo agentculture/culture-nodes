@@ -171,6 +171,7 @@ of prod.env is merged around, not overwritten.
 common="POSTGRES_USER=nodes
 POSTGRES_DB=nodes
 POSTGRES_PASSWORD=${POSTGRES_PASSWORD}
+DATABASE_SSLMODE=disable
 MINIO_ROOT_USER=nodesroot
 MINIO_ROOT_PASSWORD=${MINIO_ROOT_PASSWORD}
 NODES_HUMAN_DECISION_TOKEN_SECRET=${NODES_HUMAN_DECISION_TOKEN_SECRET}
@@ -178,9 +179,12 @@ NODES_CALLBACK_TOKEN_SECRET=${NODES_CALLBACK_TOKEN_SECRET}
 NODES_CALLBACK_BASE_URL=http://thor:18080"
 
 install_env "$THOR" "$common
+COMPOSE_PROFILES=bundled-postgres,backup
+NODES_DATABASE_URL=postgres://nodes:${POSTGRES_PASSWORD}@postgres:5432/nodes?sslmode=\${DATABASE_SSLMODE}
 NODES_RUNNER_SECRET=${NODES_RUNNER_SECRET_THOR}"
 
 install_env "$ORIN" "$common
+NODES_DATABASE_URL=postgres://nodes:${POSTGRES_PASSWORD}@thor:5432/nodes?sslmode=\${DATABASE_SSLMODE}
 NODES_RUNNER_SECRET=${NODES_RUNNER_SECRET_ORIN}"
 
 # The runner bearer secrets also land as single-purpose files for

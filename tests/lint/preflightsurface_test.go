@@ -45,8 +45,18 @@ import (
 // job, and what lets human-inbox opt in later without editing this list.
 var advertisingAdapters = []string{"claude-code", "codex", "colleague", "notify"}
 
-// sharedModule is the file that must be identical everywhere.
+// sharedModule is the protocol file — the one guards 2, 3 and 4 read.
 const sharedModule = "preflight.py"
+
+// sharedModules are ALL the files that must be identical everywhere.
+//
+// `deployment.py` (task t32) joined `preflight.py` for a blunt reason:
+// preflight.py was 79 lines from the repo's 1000-line hard limit and the
+// deployed-revision measurement is a self-contained concern. Splitting it
+// without extending guard 1 would have created exactly the thing that guard
+// exists to prevent — a shared module free to diverge between four bridges —
+// so the split and this list are one change.
+var sharedModules = []string{sharedModule, "deployment.py"}
 
 // backendModule is the only per-bridge file in this feature.
 const backendModule = "capabilities.py"
@@ -111,6 +121,14 @@ func (p adapterPackage) read(t *testing.T, name string) string {
 
 // TestTheCapabilitySurfaceIsOneModuleNotFourInlineCopies is guard 1.
 func TestTheCapabilitySurfaceIsOneModuleNotFourInlineCopies(t *testing.T) {
+	for _, module := range sharedModules {
+		t.Run(module, func(t *testing.T) { assertModuleIsIdenticalEverywhere(t, module) })
+	}
+}
+
+// assertModuleIsIdenticalEverywhere is guard 1's body for ONE shared module.
+func assertModuleIsIdenticalEverywhere(t *testing.T, sharedModule string) {
+	t.Helper()
 	digests := map[string][]string{}
 	for _, pkg := range discoverAdapterPackages(t) {
 		if !pkg.has(t, sharedModule) {
@@ -228,6 +246,16 @@ func assertSurfaceIsWholeOrAbsent(t *testing.T, pkg adapterPackage) {
 			"without the facts advertises nothing, and the facts without the protocol are "+
 			"a second dialect", pkg.adapter, sharedModule, hasShared, backendModule, hasBackend)
 	}
+	// Every shared module, not only the protocol one: a bridge carrying
+	// preflight.py without deployment.py advertises a `deployment` key its
+	// capabilities.py cannot fill, which is the half-done state this guard
+	// exists to refuse.
+	for _, module := range sharedModules {
+		if !pkg.has(t, module) {
+			t.Fatalf("adapters/%s advertises the capability surface but does not ship the shared "+
+				"%s: a bridge takes every shared module or none of them", pkg.adapter, module)
+		}
+	}
 
 	server := pkg.read(t, "server.py")
 	requireContains(t, server, "preflight.CAPABILITIES_PATH",
@@ -241,6 +269,9 @@ func assertSurfaceIsWholeOrAbsent(t *testing.T, pkg adapterPackage) {
 		fmt.Sprintf("adapters/%s has no --print-capabilities flag: registering an actor "+
 			"before its bridge has ever started would mean hand-writing host facts", pkg.adapter))
 }
+
+// sharedImportRE matches a `from <package> import ..., preflight, ...` line.
+var sharedImportRE = regexp.MustCompile(`(?m)^from \w+ import (?:[\w, ]*, )?preflight\b`)
 
 // requireContains reports msg when haystack lacks needle. It exists so a run
 // of "this file must mention that symbol" checks stays a flat list of calls
@@ -268,7 +299,11 @@ func TestNoBridgeRedeclaresTheProtocolInItsOwnFile(t *testing.T) {
 			continue
 		}
 		source := pkg.read(t, backendModule)
-		if !strings.Contains(source, "import preflight") {
+		// Matched as an import-list member rather than as the literal
+		// "import preflight": task t32 added a second shared module, so the
+		// real line reads `from <pkg> import deployment, preflight` and a
+		// substring check silently stopped guarding anything.
+		if !sharedImportRE.MatchString(source) {
 			t.Errorf("adapters/%s's %s does not import the shared %s",
 				pkg.adapter, backendModule, sharedModule)
 		}

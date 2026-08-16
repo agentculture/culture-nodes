@@ -157,6 +157,14 @@ Numbered SQL migrations for the authoritative PostgreSQL store (prd-spec
   report twice. Both columns are NULL on every ordinary dispatch, so the
   index constrains only rows a binary that knows about it writes — an N-1
   binary's INSERT cannot start failing under it.
+- `0030_signal_event_watermarks.sql` — expand-only: durable per-source
+  cursors for external emitters. Cursor comparison and advancement run in
+  `DeliverSignalEvent`'s existing `signal_events` transaction, so a repeated
+  discovery returns its original fact without firing handlers again.
+- `0031_inbound_authentication.sql` — the deliberately temporary (#111)
+  inbound verifier record. It keys parties by actor key or host name, rejects
+  address-shaped keys, and stores only a SHA-256 verifier or an environment
+  variable name so database dumps cannot become credential archives.
 
 - `0022_dispatch_rate_state.sql` — expand-only: adds the mutable
   `dispatch_rate_state` table (task t10 of the economy-discord-graphs plan,
@@ -237,6 +245,15 @@ Numbered SQL migrations for the authoritative PostgreSQL store (prd-spec
   writes a `preflight_gate` block for the constraint to refuse.
 
 ## Policy
+
+- `0035_inbound_transport.sql` — address-free actor presence and a durable
+  reverse-transport mailbox. PostgreSQL owns work and responses; long polls
+  are disposable signals and store no peer address.
+- `0036_retire_stored_participant_addresses.sql` — contract: drops
+  `actors.endpoint_ref` and `runner_invocations.endpoint` under the
+  human-approved ADR 0002 bypass. The migration itself records why the
+  coordinated two-worker/one-API restart makes the exception valid and why
+  it must not run until every bridge has left mixed-mode outbound fallback.
 
 Migrations are additive-first (expand-contract). See
 `docs/adr/0002-migration-policy.md` for the full policy, the N-1 binary

@@ -20,10 +20,14 @@
 
 services:
   postgres:
+    profiles: ["bundled-postgres"]
     image: postgres:17-alpine
     environment:
       POSTGRES_USER: ${POSTGRES_USER:-nodes}
-      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?set it in .env (cp .env.example .env)}
+      # Compose interpolates disabled profiles too. Keep this optional here
+      # so external mode needs no irrelevant bundled secret; the bundled
+      # example supplies it explicitly.
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-}
       POSTGRES_DB: ${POSTGRES_DB:-nodes}
     ports:
       - "${POSTGRES_PORT:-5432}:5432"
@@ -67,10 +71,11 @@ services:
     image: culture-nodes:local
     command: ["migrate"]
     environment:
-      NODES_DATABASE_URL: postgres://${POSTGRES_USER:-nodes}:${POSTGRES_PASSWORD:?set it in .env (cp .env.example .env)}@postgres:5432/${POSTGRES_DB:-nodes}?sslmode=disable
+      NODES_DATABASE_URL: ${NODES_DATABASE_URL:?set it to the bundled or external PostgreSQL URL}
     depends_on:
       postgres:
         condition: service_healthy
+        required: false
     restart: "no"
 
   # The API server (`nodes serve`): workflows, runs, ledger, reviews, SSE —
@@ -96,13 +101,32 @@ services:
     image: culture-nodes:local
     command: ["serve"]
     environment:
-      NODES_DATABASE_URL: postgres://${POSTGRES_USER:-nodes}:${POSTGRES_PASSWORD:?set it in .env (cp .env.example .env)}@postgres:5432/${POSTGRES_DB:-nodes}?sslmode=disable
+      NODES_DATABASE_URL: ${NODES_DATABASE_URL:?set it to the bundled or external PostgreSQL URL}
       NODES_LISTEN: ":8080"
       NODES_ARTIFACT_S3_ENDPOINT: minio:9000
       NODES_ARTIFACT_S3_ACCESS_KEY: ${MINIO_ROOT_USER:-nodesroot}
       NODES_ARTIFACT_S3_SECRET_KEY: ${MINIO_ROOT_PASSWORD:?set it in .env (cp .env.example .env)}
       NODES_ARTIFACT_S3_BUCKET: ${NODES_ARTIFACT_S3_BUCKET:-nodes-artifacts}
       NODES_ARTIFACT_S3_USE_TLS: "false"
+      # The API process verifies the attempt-scoped callback token the
+      # worker signed, so both roles read the same secret (task t13: the
+      # actor-callback seam is unreachable in this profile without it).
+      # Empty by default keeps the previous behaviour — .env.example
+      # supplies a dev-only value.
+      NODES_CALLBACK_TOKEN_SECRET: ${NODES_CALLBACK_TOKEN_SECRET:-}
+      # The bearer POST /v1alpha1/actors requires. Closed by default (an
+      # unset secret refuses every registration), which is why registering
+      # the local example actor used to mean an INSERT into the actors
+      # table; with this set, otel-smoke.sh registers over the product's
+      # own surface instead of reaching into its database.
+      NODES_ACTOR_REGISTRATION_TOKEN_SECRET: ${NODES_ACTOR_REGISTRATION_TOKEN_SECRET:-}
+      # Task t13 / issue #5. Empty by default, which is the whole gate:
+      # internal/telemetry.New returns NoOp() when this is unset — no
+      # exporter, no goroutine, no dial — so this line changes nothing
+      # until someone points it somewhere. `--profile telemetry` plus
+      # OTEL_EXPORTER_OTLP_ENDPOINT=http://otel-collector:4317 uses the
+      # bundled collector; any other value uses any other collector.
+      OTEL_EXPORTER_OTLP_ENDPOINT: ${OTEL_EXPORTER_OTLP_ENDPOINT:-}
     ports:
       - "${NODES_API_PORT:-8080}:8080"
     depends_on:
@@ -110,6 +134,7 @@ services:
         condition: service_completed_successfully
       postgres:
         condition: service_healthy
+        required: false
       minio:
         condition: service_healthy
     restart: unless-stopped
@@ -125,12 +150,15 @@ services:
     image: culture-nodes:local
     command: ["scheduler"]
     environment:
-      NODES_DATABASE_URL: postgres://${POSTGRES_USER:-nodes}:${POSTGRES_PASSWORD:?set it in .env (cp .env.example .env)}@postgres:5432/${POSTGRES_DB:-nodes}?sslmode=disable
+      NODES_DATABASE_URL: ${NODES_DATABASE_URL:?set it to the bundled or external PostgreSQL URL}
+      # See the api service's note: unset means telemetry off.
+      OTEL_EXPORTER_OTLP_ENDPOINT: ${OTEL_EXPORTER_OTLP_ENDPOINT:-}
     depends_on:
       migrate:
         condition: service_completed_successfully
       postgres:
         condition: service_healthy
+        required: false
     restart: unless-stopped
 
   # The worker (`nodes worker`): claims ready work and dispatches it to an
@@ -153,20 +181,68 @@ services:
     image: culture-nodes:local
     command: ["worker"]
     environment:
-      NODES_DATABASE_URL: postgres://${POSTGRES_USER:-nodes}:${POSTGRES_PASSWORD:?set it in .env (cp .env.example .env)}@postgres:5432/${POSTGRES_DB:-nodes}?sslmode=disable
+      NODES_DATABASE_URL: ${NODES_DATABASE_URL:?set it to the bundled or external PostgreSQL URL}
       NODES_NAMESPACE_ID: ${NODES_NAMESPACE_ID:-default}
       NODES_ARTIFACT_S3_ENDPOINT: minio:9000
       NODES_ARTIFACT_S3_ACCESS_KEY: ${MINIO_ROOT_USER:-nodesroot}
       NODES_ARTIFACT_S3_SECRET_KEY: ${MINIO_ROOT_PASSWORD:?set it in .env (cp .env.example .env)}
       NODES_ARTIFACT_S3_BUCKET: ${NODES_ARTIFACT_S3_BUCKET:-nodes-artifacts}
       NODES_ARTIFACT_S3_USE_TLS: "false"
+      # The two halves of the asynchronous actor path (§12.6): where the
+      # actor reaches the API to report, and the secret this worker signs
+      # the attempt-scoped token with (the API above verifies it with the
+      # same one). Both empty by default — an actor that answers
+      # synchronously needs neither, which is why the profile worked
+      # without them until task t13 needed a callback.
+      NODES_CALLBACK_BASE_URL: ${NODES_CALLBACK_BASE_URL:-http://api:8080}
+      NODES_CALLBACK_TOKEN_SECRET: ${NODES_CALLBACK_TOKEN_SECRET:-}
+      # See the api service's note: unset means telemetry off.
+      OTEL_EXPORTER_OTLP_ENDPOINT: ${OTEL_EXPORTER_OTLP_ENDPOINT:-}
     depends_on:
       migrate:
         condition: service_completed_successfully
       postgres:
         condition: service_healthy
+        required: false
       minio:
         condition: service_healthy
+    restart: unless-stopped
+
+  # The OTLP collector (task t13, issue #5), behind `--profile telemetry` —
+  # never started by a plain `docker compose up`, and never needed by one:
+  # with OTEL_EXPORTER_OTLP_ENDPOINT unset the three role containers above
+  # build no exporter at all.
+  #
+  # Its config is deploy/otel-collector.yaml, the SAME file
+  # deploy/prod/compose.thor.yml mounts — read its header for what this
+  # collector is (the default sink, not the only one) and why the export
+  # goes to stdout. deploy/compose/otel-smoke.sh drives a real run through
+  # this profile and queries the result.
+  otel-collector:
+    profiles: ["telemetry"]
+    image: otel/opentelemetry-collector-contrib:latest
+    volumes:
+      - ../otel-collector.yaml:/etc/otelcol-contrib/config.yaml:ro
+    restart: unless-stopped
+
+  # A minimal PRD §13 actor, behind `--profile smoke-actor` (task t13).
+  #
+  # The telemetry proof needs a run that reaches all three instrumented
+  # seams, and the third — the actor callback ingest — only happens if some
+  # actor answers 202 and reports back. testdata/smoke_actor.py is that
+  # actor: the protocol and nothing else, stdlib-only, mounted read-only
+  # into a stock python image so this profile grows no image to build. Read
+  # its docstring for why it is not the authoritative reference
+  # implementation (that is tests/conformance/reference.go).
+  #
+  # It authenticates nothing, so it is registered without an
+  # `auth_token_env` and is reachable only on this compose network.
+  smoke-actor:
+    profiles: ["smoke-actor"]
+    image: python:3.12-alpine
+    command: ["python3", "/app/smoke_actor.py"]
+    volumes:
+      - ./testdata/smoke_actor.py:/app/smoke_actor.py:ro
     restart: unless-stopped
 
   # EXAMPLE external agent host, behind `--profile agents` — never started

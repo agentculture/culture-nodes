@@ -645,11 +645,17 @@ type Dispatch struct {
 	WorkflowKey    string
 	WorkflowDigest string
 	NormalizedIR   json.RawMessage
+	// ActorAffinity is the routing this run recorded at creation
+	// (migrations/0034), nil when it resolved none. It is read here, with the
+	// run's input and the pinned IR, because a dispatch has to apply it
+	// BEFORE it reads the node's declared `uses` -- see
+	// internal/worker/affinity.go.
+	ActorAffinity json.RawMessage
 }
 
 const selectDispatchSQL = `
 SELECT nr.namespace_id, nr.run_id, nr.id, nr.token_id, nr.node_key, nr.visit_count,
-       r.input, wv.workflow_key, wv.content_digest, wv.normalized_ir
+       r.input, wv.workflow_key, wv.content_digest, wv.normalized_ir, r.actor_affinity
 FROM node_runs AS nr
 JOIN runs AS r ON r.id = nr.run_id
 JOIN workflow_versions AS wv ON wv.id = r.workflow_version_id
@@ -665,10 +671,11 @@ func (s *Store) LoadDispatch(ctx context.Context, nodeRunID string) (Dispatch, e
 		visitCount int32
 		input      []byte
 		ir         []byte
+		affinity   []byte
 	)
 	err := s.pool.QueryRow(ctx, selectDispatchSQL, nodeRunID).Scan(
 		&d.NamespaceID, &d.RunID, &d.NodeRunID, &tokenID, &d.NodeID, &visitCount,
-		&input, &d.WorkflowKey, &d.WorkflowDigest, &ir,
+		&input, &d.WorkflowKey, &d.WorkflowDigest, &ir, &affinity,
 	)
 	if err != nil {
 		if isNoRows(err) {
@@ -680,6 +687,7 @@ func (s *Store) LoadDispatch(ctx context.Context, nodeRunID string) (Dispatch, e
 	d.VisitCount = int(visitCount)
 	d.RunInput = json.RawMessage(input)
 	d.NormalizedIR = json.RawMessage(ir)
+	d.ActorAffinity = jsonOrNil(affinity)
 	return d, nil
 }
 

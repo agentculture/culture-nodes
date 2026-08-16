@@ -15,8 +15,9 @@ set -euo pipefail
 
 cd "$(dirname "${BASH_SOURCE[0]}")"
 
-PROJECT="t23smoke"
-COMPOSE=(docker compose -p "$PROJECT" --env-file .env.example)
+PROJECT="${COMPOSE_PROJECT_NAME:-t23smoke}"
+ENV_FILE="${COMPOSE_ENV_FILE:-.env.example}"
+COMPOSE=(docker compose -p "$PROJECT" --env-file "$ENV_FILE")
 API_PORT="${NODES_API_PORT:-8080}"
 BASE_URL="http://localhost:${API_PORT}"
 FIXTURE="testdata/smoke.workflow.yaml"
@@ -35,8 +36,13 @@ cleanup() {
 }
 trap cleanup EXIT
 
-log "docker compose up --build -d (project ${PROJECT})"
-"${COMPOSE[@]}" up --build -d
+if [ "${COMPOSE_BUILD:-1}" = "1" ]; then
+	log "docker compose up --build -d (project ${PROJECT})"
+	"${COMPOSE[@]}" up --build -d
+else
+	log "docker compose up --no-build -d (project ${PROJECT})"
+	"${COMPOSE[@]}" up --no-build -d
+fi
 
 log "waiting for ${BASE_URL}/v1alpha1/healthz"
 healthy=""

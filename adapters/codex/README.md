@@ -278,6 +278,8 @@ The document is exactly what an actor registration carries in
 | `confinement` | Whether the bubblewrap helper codex's confinement rests on can start here at all |
 | `commit_policy` | The `preserve_on_failure` / `preserve_push` / `preserve_remote` policy in force |
 | `writable_paths` | `repo_allowlist` — `[]` means this bridge writes nowhere |
+| `dispatch_grants` | What each `--sandbox` mode actually grants a session — writes, egress, the ability to start a nested confinement helper (issue #96) |
+| `toolchains` | `uv`, `go`, `gh` and `codex` itself: where each is, how it was packaged, what version it reports, and **which modes can actually run it** |
 
 The measurement is the point. Issues #18/#63: `--sandbox workspace-write`
 was requested on three hosts whose kernel restricted unprivileged user
@@ -286,6 +288,20 @@ failed and shell commands kept running unconfined. A surface that echoed
 `default_sandbox` would have advertised `workspace-write` and been wrong.
 This one reports it under `sandbox_modes_unavailable` with the sysctl that
 says so.
+
+The same reasoning produced `toolchains` (issue #96). A surface reporting
+`uv: present` was true on thor and on orin and useless on both: thor's uv is
+a snap whose own snap-confine cannot start inside codex's sandbox (run
+`01M03374VAKH0KHN0GDZ466NP4`), orin's is a standalone binary that dies
+initialising a cache under a read-only `$HOME` (run
+`01M0342X60F3NY8MH150G48AZ6`), and neither ran a test suite. `gh` is sharper
+still: `gh auth status` over ssh on thor reports logged in while a dispatch
+on that host reaches neither api.github.com nor pypi.org (run
+`01M039NZ2TZYFG68YZT93A6DC7`) — a true fact about the host, a false one
+about the dispatch. The baseline those findings are pinned to, and the
+re-check that notices a codex-cli bump invalidating them, are
+`docs/baselines/2026-08-15-agent-host-toolchains.md` and
+`scripts/toolchain-baseline.sh`.
 
 The protocol is engine-side and the facts are bridge-side. The shared,
 byte-identical `preflight.py` in every bridge holds the protocol, the agreed

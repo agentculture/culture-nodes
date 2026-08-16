@@ -175,10 +175,67 @@ func TestChaosReorderedDeliveryAllEventuallyProcessed(t *testing.T) {
 // outbox row 'pending' rather than 'published' -- Relay's own documented
 // at-least-once behavior, see relay.go's doc comment -- and once the chaos
 // is lifted, a later Relay.Run republishes it and Receive picks it up.
+//
+// # This test is not alone in the outbox (issue #126)
+//
+// internal/events.Relay selects pending outbox rows with NO namespace filter
+// (see relay.go's runBatch). That is deliberate product behavior, not a bug:
+// the relay is a deployment-level component and draining the whole outbox is
+// exactly its job. The consequence for tests is that "the outbox" is shared
+// state, and how much it is shared depends on how the suite is run:
+//
+//   - locally, pgtest.Run starts a private PostgreSQL per test *package*, so
+//     this package's outbox really does contain only this package's rows;
+//   - in CI, .github/workflows/tests.yml points every package at ONE
+//     NODES_TEST_DATABASE_URL, so every package's rows land in the same
+//     outbox table and every package's relay drains all of them.
+//
+// Under CI that produces two distinct ways for a namespace-blind assumption
+// to fail. Foreign pending rows get published into *this* test's fake queue
+// and crowd this test's own signal out of a single ten-message Receive page;
+// and another package's relay can drain this test's row first, publishing it
+// into a queue this test cannot read and marking it published.
+//
+// So this test must not assume it is alone in the outbox. It seeds foreign
+// pending rows itself (see foreignPendingRows) so the crowding-out case is
+// reproduced deterministically on every run rather than only under CI, it
+// drains until its own row's signal arrives instead of demanding that signal
+// be in the first page, and every assertion a foreign relay could invalidate
+// names that possibility in its failure message rather than blaming the relay
+// under test. The fix is defence-in-depth: it makes this test honest whatever
+// the suite's database isolation happens to be. Refs #126, #122.
 func TestChaosDroppedSendRepairedByOutboxRelay(t *testing.T) {
 	s := pgtest.RequireStore(t, testStore)
 	ctx := context.Background()
 	ns := pgtest.MustNamespace(t, s, "test-sqs-chaos-drop")
+
+	// Pending outbox rows this test does not own, standing in for whatever
+	// else shares the outbox. They are inserted *before* this test's own row
+	// so that -- store.NewULID being monotonic within a process and
+	// relay.runBatch ordering by id -- the relay publishes every one of them
+	// ahead of it, and there are deliberately more of them than
+	// receivePageSize so this test's row cannot land in a single page. This
+	// is the regression guard, not scaffolding: without it the pre-#126
+	// "it must be in the first page" assertion passes locally and fails only
+	// in CI; with it, that assertion fails everywhere.
+	//
+	// The cost, stated plainly: under a shared CI database these rows are
+	// themselves foreign traffic for whatever else is running. They are
+	// pending only between this insert and the repair Run below (tens of
+	// milliseconds) and end up published like any other row, which is a small
+	// price for reproducing the real namespace-blind relay path rather than
+	// faking the symptom by injecting messages straight into the fake queue.
+	const foreignPendingRows = 15
+	foreignNS := pgtest.MustNamespace(t, s, "test-sqs-chaos-drop-foreign")
+	for i := 0; i < foreignPendingRows; i++ {
+		if _, err := s.InsertOutbox(ctx, storepg.InsertOutboxInput{
+			NamespaceID: foreignNS.ID,
+			Topic:       events.TypeNodeRunReady,
+			Payload:     json.RawMessage(fmt.Sprintf(`{"node_run_id":"nr_chaos_drop_foreign_%02d"}`, i)),
+		}); err != nil {
+			t.Fatalf("InsertOutbox foreign row #%d: %v", i, err)
+		}
+	}
 
 	row, err := s.InsertOutbox(ctx, storepg.InsertOutboxInput{
 		NamespaceID: ns.ID,
@@ -200,19 +257,23 @@ func TestChaosDroppedSendRepairedByOutboxRelay(t *testing.T) {
 	relay := events.NewRelay(s.Pool(), d, sink, events.RelayOptions{Source: "nodes-test"})
 
 	if err := relay.Run(ctx); err == nil {
-		t.Fatal("Run with drop-on-send chaos active returned nil, want the simulated SendMessage failure to surface")
+		t.Fatalf("Run with drop-on-send chaos active returned nil, want the simulated SendMessage failure to surface; outbox row %s now reads %q (if that is published, another relay sharing this outbox drained the row before this one reached it -- see this test's doc comment)",
+			row.ID, outboxStatus(t, s, row.ID))
 	}
 
 	if status := outboxStatus(t, s, row.ID); status != "pending" {
-		t.Fatalf("outbox row status = %q after a dropped send, want pending (not yet repaired)", status)
+		t.Fatalf("outbox row %s status = %q after a dropped send, want pending (not yet repaired); this relay's Publish for that row failed, so it cannot have marked it published itself -- %q means another relay sharing this outbox published it into a queue this test cannot read (see this test's doc comment)",
+			row.ID, status, status)
 	}
 
-	deliveries, err := d.Receive(ctx, 10, 0)
-	if err != nil {
-		t.Fatalf("Receive before repair: %v", err)
-	}
-	if hasDelivery(deliveries, row.ID) {
-		t.Fatalf("Receive saw a signal for outbox row %s despite the simulated drop", row.ID)
+	// Drain the queue completely rather than sampling one page: the relay
+	// published every foreign row ahead of this test's row before the forced
+	// failure rolled the batch back (at-least-once by design -- the sends
+	// happened, only the status commit did not), so those foreign signals are
+	// sitting in this fake queue and a single page proves nothing about
+	// absence.
+	if sawSignal := drainQueue(t, d, row.ID); sawSignal {
+		t.Fatalf("a signal for outbox row %s reached the queue despite the simulated drop", row.ID)
 	}
 
 	// Lift the chaos: a later relay run (e.g. the next scheduler tick)
@@ -225,15 +286,17 @@ func TestChaosDroppedSendRepairedByOutboxRelay(t *testing.T) {
 	}
 
 	if status := outboxStatus(t, s, row.ID); status != "published" {
-		t.Fatalf("outbox row status = %q after repair, want published", status)
+		t.Fatalf("outbox row %s status = %q after repair, want published", row.ID, status)
 	}
 
-	deliveries, err = d.Receive(ctx, 10, 0)
-	if err != nil {
-		t.Fatalf("Receive after repair: %v", err)
-	}
-	if !hasDelivery(deliveries, row.ID) {
-		t.Fatalf("Receive after repair did not return a signal for outbox row %s, want the relay to have repaired the dropped publication", row.ID)
+	// The repaired signal is still this exact row.ID -- foreign deliveries are
+	// acked and ignored on the way, never counted as the repair. What is
+	// relaxed relative to the pre-#126 assertion is only *where in the stream*
+	// the signal is allowed to appear, which was never a property of the relay
+	// in the first place.
+	if !awaitDelivery(t, d, row.ID, 10*time.Second) {
+		t.Fatalf("no signal for outbox row %s arrived on this test's queue after the repair run, want the relay to have repaired the dropped publication; the row reads %q (if it reads published, another relay sharing this outbox published it into its own queue -- see this test's doc comment)",
+			row.ID, outboxStatus(t, s, row.ID))
 	}
 }
 
@@ -367,6 +430,84 @@ func countWorkItemsInState(t *testing.T, s *storepg.Store, namespaceID, state st
 		t.Fatalf("count work_items: %v", err)
 	}
 	return count
+}
+
+// receivePageSize is the batch size the drop chaos test's drains ask for. It
+// is named rather than inlined because the #126 failure was precisely a
+// hidden dependency on it: the old test demanded its own signal be inside one
+// page of this size, which is a claim about how much *other* traffic shares
+// the outbox, not a claim about the relay.
+const receivePageSize = 10
+
+// drainQueue receives from d until a page comes back empty, acking every
+// delivery, and reports whether any of them carried workID. It is the
+// negative-assertion counterpart to awaitDelivery: proving a signal is
+// *absent* means emptying the queue, because foreign signals can sit in front
+// of it (see TestChaosDroppedSendRepairedByOutboxRelay's doc comment).
+func drainQueue(t *testing.T, d *queuesqs.Driver, workID string) bool {
+	t.Helper()
+	ctx := context.Background()
+
+	found := false
+	for {
+		deliveries, err := d.Receive(ctx, receivePageSize, 0)
+		if err != nil {
+			t.Fatalf("Receive while draining: %v", err)
+		}
+		if len(deliveries) == 0 {
+			return found
+		}
+		for _, del := range deliveries {
+			if del.WorkID == workID {
+				found = true
+			}
+			if err := d.Ack(ctx, del); err != nil {
+				t.Fatalf("Ack %s while draining: %v", del.WorkID, err)
+			}
+		}
+	}
+}
+
+// awaitDelivery drains d until a signal for workID arrives, acking and
+// ignoring every foreign delivery on the way, and reports whether it found
+// one before timeout. Ignoring foreign deliveries does not weaken the
+// caller's assertion -- this exact workID is still required to arrive -- it
+// only stops the test from insisting on a position in the stream that the
+// relay never promised (see TestChaosDroppedSendRepairedByOutboxRelay's doc
+// comment, and issue #126).
+//
+// An empty page normally ends the loop early: every Relay.Run this test makes
+// has already returned by the time a caller drains, and Relay publishes
+// synchronously, so nothing further can appear. timeout is the outer bound
+// that keeps that reasoning from turning into a hang if it ever stops
+// holding.
+func awaitDelivery(t *testing.T, d *queuesqs.Driver, workID string, timeout time.Duration) bool {
+	t.Helper()
+	ctx := context.Background()
+
+	deadline := time.Now().Add(timeout)
+	for time.Now().Before(deadline) {
+		deliveries, err := d.Receive(ctx, receivePageSize, 250*time.Millisecond)
+		if err != nil {
+			t.Fatalf("Receive while awaiting a signal for %s: %v", workID, err)
+		}
+		if len(deliveries) == 0 {
+			return false
+		}
+		found := false
+		for _, del := range deliveries {
+			if del.WorkID == workID {
+				found = true
+			}
+			if err := d.Ack(ctx, del); err != nil {
+				t.Fatalf("Ack %s while awaiting a signal for %s: %v", del.WorkID, workID, err)
+			}
+		}
+		if found {
+			return true
+		}
+	}
+	return false
 }
 
 // outboxStatus reads status directly from the outbox table, mirroring

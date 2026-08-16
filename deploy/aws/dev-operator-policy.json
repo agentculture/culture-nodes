@@ -35,6 +35,19 @@
       ]
     },
     {
+      "Sid": "BackupBucketStaysPrivateAndEncrypted",
+      "Effect": "Allow",
+      "Action": [
+        "s3:GetBucketPublicAccessBlock",
+        "s3:PutBucketPublicAccessBlock",
+        "s3:GetEncryptionConfiguration",
+        "s3:PutEncryptionConfiguration",
+        "s3:GetLifecycleConfiguration",
+        "s3:PutLifecycleConfiguration"
+      ],
+      "Resource": "arn:aws:s3:::culture-nodes-*"
+    },
+    {
       "Sid": "RunnerImageRepo",
       "Effect": "Allow",
       "Action": [
@@ -99,6 +112,15 @@
           "iam:PassedToService": "lambda.amazonaws.com"
         }
       }
+    },
+    {
+      "Sid": "ReadRegionOptStatusOnly",
+      "Effect": "Allow",
+      "Action": [
+        "account:ListRegions",
+        "account:GetRegionOptStatus"
+      ],
+      "Resource": "*"
     },
     {
       "Sid": "ReadOwnIdentity",

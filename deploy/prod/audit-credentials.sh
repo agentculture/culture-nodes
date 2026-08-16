@@ -163,7 +163,53 @@ NODES_ACTOR_NOTIFY_TOKEN required
 # (compose.orin.yml already says `:?`; this makes the two hosts agree.)
 NODES_NAMESPACE_ID required
 
+# Where the authoritative database is. Task t15 made this a deployment input
+# in every profile rather than four inlined copies of one URL, which means
+# there is no longer a value to fall back to: unset, compose refuses to render
+# at all. Required is therefore a description of what already happens, not a
+# policy this audit adds.
+NODES_DATABASE_URL required
+
+# The bundled database's password. It stopped being unconditionally required
+# when t15 put postgres behind a profile — compose now gives it an open
+# default so a deployment pointing at an EXTERNAL database can render without
+# supplying a password for a container it never starts. It stays required
+# here because a deployment that does run the bundled database and leaves this
+# at its default is running its authoritative store on a published default
+# credential, which is the one outcome this audit exists to prevent.
+POSTGRES_PASSWORD required
+
 # --- optional, closed by default -----------------------------------------
+
+# NOT a credential at all — the git commit this deploy is building the control
+# plane image from (task t32, issue #104). It reaches compose from deploy.sh's
+# OWN environment (`NODES_BUILD_REVISION=$REVISION docker compose ...`), never
+# from prod.env, so an absence here is the normal state for anyone running
+# `docker compose up` by hand rather than through the deploy.
+#
+# What an absence costs is worth stating, because it is quiet: the image is
+# built with no revision stamp, GET /v1alpha1/version answers that its
+# revision cannot be established, and a live test against it can say what it
+# measured but not which code it measured. That is a degraded answer rather
+# than a broken deployment, which is exactly what `optional` means here.
+NODES_BUILD_REVISION optional
+
+
+# Off-host backups (task t14, issue #30). Unset is the deployment that keeps
+# its dumps only on the host they came from — which is every install without
+# an AWS account, and was this deployment until today. Set, each pg_dump is
+# also copied to object storage. The backup loop reads BACKUP_S3_BUCKET and
+# skips the upload entirely when it is empty, so absence closes the off-host
+# copy and breaks nothing; the local seven-dump rotation is unaffected.
+BACKUP_S3_BUCKET optional
+
+# The credentials that off-host copy uses, and nothing else. They are optional
+# for the same reason BACKUP_S3_BUCKET is: without a bucket there is nothing to
+# authenticate to. AWS_REGION carries a default in compose, so it is optional
+# even when the other two are set.
+AWS_ACCESS_KEY_ID optional
+AWS_SECRET_ACCESS_KEY optional
+AWS_REGION optional
 
 # The notifier's webhook. Either name enables delivery, neither is invented
 # here, and internal/notify.ResolveWebhook is fail-open by design: unset, the
@@ -197,6 +243,23 @@ NODES_RUNNER_SERVICES_FILE optional
 # called optional rather than unknown.
 PR_UPKEEP_SWEEP_SOURCE_URL optional
 PR_UPKEEP_SWEEP_SOURCE_SHA256 optional
+
+# The bundled database's password (task t15 made the database a deployment
+# input). It became an OPEN default the moment the bundled postgres service
+# moved behind the `bundled-postgres` profile: compose interpolates disabled
+# profiles too, so a deployment running against an external database must not
+# be made to supply a password nothing reads. It is therefore optional here —
+# and NODES_DATABASE_URL, which every profile does read, is the required key
+# that replaced it. A bundled-postgres deployment absent this value gets a
+# database with no password, which install-secrets.sh is what prevents.
+POSTGRES_PASSWORD optional
+
+# The telemetry collector endpoint (task t13, issue #5). Not a credential at
+# all: it is an address, and its absence is the OFF state
+# (internal/telemetry.New returns NoOp() when it is unset — no exporter, no
+# dial). Classified so an operator who sets it sees it called optional rather
+# than unknown.
+OTEL_EXPORTER_OTLP_ENDPOINT optional
 EOF
 }
 

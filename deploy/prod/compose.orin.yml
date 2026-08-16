@@ -15,9 +15,15 @@ services:
     build:
       context: ../..
       dockerfile: Dockerfile
+      args:
+        # What this image is being built from (task t32, issue #104). The
+        # build context carries no .git, so the Dockerfile cannot discover
+        # it; deploy.sh exports NODES_BUILD_REVISION as the resolved commit
+        # it shipped, and the binary serves it on GET /v1alpha1/version.
+        REVISION: ${NODES_BUILD_REVISION:-}
     command: ["worker"]
     environment:
-      NODES_DATABASE_URL: postgres://${POSTGRES_USER:-nodes}:${POSTGRES_PASSWORD:?install secrets first (install-secrets.sh)}@${THOR_HOST:-thor}:5432/${POSTGRES_DB:-nodes}?sslmode=disable
+      NODES_DATABASE_URL: ${NODES_DATABASE_URL:?set the external PostgreSQL URL in prod.env}
       NODES_NAMESPACE_ID: ${NODES_NAMESPACE_ID:?deploy.sh writes this after thor's first boot}
       NODES_WORKER_ID: orin-worker-1
       NODES_CALLBACK_BASE_URL: ${NODES_CALLBACK_BASE_URL:-http://thor:18080}
@@ -36,6 +42,17 @@ services:
       NODES_ACTOR_CODEX_THOR_TOKEN: ${NODES_ACTOR_CODEX_THOR_TOKEN:-}
       NODES_ACTOR_CODEX_ORIN_TOKEN: ${NODES_ACTOR_CODEX_ORIN_TOKEN:-}
       NODES_RUNNER_SERVICES_FILE: ${NODES_RUNNER_SERVICES_FILE:-}
+      # Task t13 / issue #5. orin runs no collector of its own: it points
+      # at thor's, over the same LAN its Postgres connection already
+      # crosses (set OTEL_EXPORTER_OTLP_ENDPOINT=http://thor:4317 in
+      # prod.env, which the extra_hosts entry below already resolves).
+      # Empty by default — unset means internal/telemetry.New returns
+      # NoOp() and this worker exports nothing, exactly as before.
+      #
+      # This worker is the reason the variable belongs here at all: a trace
+      # taken while both machines work one Postgres is missing half its
+      # worker.dispatch spans if only thor exports.
+      OTEL_EXPORTER_OTLP_ENDPOINT: ${OTEL_EXPORTER_OTLP_ENDPOINT:-}
     volumes:
       - ~/.culture-nodes/runners:/etc/nodes-runners:ro
     extra_hosts:

@@ -22,6 +22,8 @@ func (c *compilation) normalize() (*IR, error) {
 		Metadata:   doc.Metadata,
 		Spec: irSpec{
 			Entry:    doc.Spec.Entry,
+			Triggers: doc.Spec.Triggers,
+			Affinity: doc.Spec.Affinity,
 			Contract: doc.Spec.Contract,
 			Limits:   expandLimits(doc.Spec.Limits),
 			// Carried, never expanded: an absent budget stays absent all the

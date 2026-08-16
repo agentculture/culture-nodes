@@ -5,7 +5,7 @@
   "schema_version": 4,
   "status": "exported",
   "created": "2026-08-16T08:10:43Z",
-  "updated": "2026-08-16T08:38:30Z",
+  "updated": "2026-08-16T09:25:29Z",
   "targets": [
     {
       "id": "c1",
@@ -297,7 +297,8 @@
       "acceptance_criteria": [
         "go test ./internal/queue/sqs/ ./internal/scheduler/ -count=5 is run TWICE: once with NODES_TEST_DATABASE_URL set to one scratch database while go test ./... runs concurrently against that same database, and once with the variable unset (per-package private containers)",
         "At least one of the two named tests reproduces its failure under the shared database, and neither reproduces under private databases \u2014 or the opposite is observed and recorded as refuting c23/c24",
-        "The result is posted to #126 either way, including a negative result"
+        "The result is posted to #126 either way, including a negative result",
+        "The probe's own amplification is stated in the #126 write-up: arm A ran two concurrent go test invocations where CI runs one, so it evidences the mechanism and does not measure CI's failure rate"
       ],
       "deps": [],
       "covers": [
@@ -315,7 +316,8 @@
       "status": "confirmed",
       "acceptance_criteria": [
         "gh run view 31934728992 --log-failed and 31934729001 --log-failed are both read in full",
-        "A written statement records that TestSchedulerDeadlineFailsAParkedRunnerOperation and TestChaosDroppedSendRepairedByOutboxRelay are the only failures in their respective jobs, or names any third failure found"
+        "A written statement records that TestSchedulerDeadlineFailsAParkedRunnerOperation and TestChaosDroppedSendRepairedByOutboxRelay are the only failures in their respective jobs, or names any third failure found",
+        "VERIFIED: run 31934728992 (Go/build) failed exactly one test, TestSchedulerDeadlineFailsAParkedRunnerOperation in internal/scheduler; run 31934729001 (Tests/go) failed exactly one test, TestChaosDroppedSendRepairedByOutboxRelay in internal/queue/sqs. No third failure hides behind them. c2/h1 confirmed."
       ],
       "deps": [],
       "covers": [
@@ -347,7 +349,10 @@
       "status": "confirmed",
       "acceptance_criteria": [
         "internal/actors/client.go:266 no longer returns a nil-wrapped error; the failure path returns a non-nil error carrying the dial-in cause",
-        "A Go test covers the previously nil-wrapped path and fails against the unfixed code"
+        "A Go test covers the previously nil-wrapped path and fails against the unfixed code",
+        "CORRECTION (evidence, not opinion): Qodo's claim that the nil %w makes the returned error nil is FALSE \u2014 verified by running fmt.Errorf(\"...: %w\", nil), which yields a NON-nil error whose message is 'actors: dial-in 200 response is not a result: %!w(<nil>)' and whose errors.Unwrap is nil. Callers therefore already reject the malformed 200. The real defect is diagnostic: a garbage message and a broken unwrap chain, not a silently dropped response.",
+        "Because the error is already non-nil, a test asserting err != nil would PASS against unfixed code and prove nothing. The failing test must instead assert that the empty-outcome error message contains no '%!w(<nil>)' and that the unmarshal-failure path still unwraps to the json error",
+        "The Qodo thread is answered with this evidence, correcting the stated severity rather than silently implementing the suggested fix"
       ],
       "deps": [],
       "covers": [
@@ -362,7 +367,8 @@
       "status": "confirmed",
       "acceptance_criteria": [
         "A fresh grep for SONAR_CLOUD_SWEEP across tracked files returns nothing, evidencing that no in-repo change is needed",
-        "The closure record states SONAR_TOKEN is the surviving name and the operator .env is the side that changes"
+        "The closure record states SONAR_TOKEN is the surviving name and the operator .env is the side that changes",
+        "NUANCE on h5: after this session, SONAR_CLOUD_SWEEP DOES appear in tracked files \u2014 but only in this cycle's own spec/plan prose (docs/specs, docs/plans, .devague), which necessarily names the string it is deciding about. The honesty condition is satisfied against code, config, CI and skills: 'git grep -l SONAR_CLOUD_SWEEP -- . :!docs/specs :!docs/plans :!.devague' returns nothing. h5 must be read with that scope, not as a bare repo-wide grep."
       ],
       "deps": [],
       "covers": [
@@ -444,7 +450,9 @@
         "Applied ONLY if t1's probe confirms the shared-database cause; if the probe refutes it, this task is closed as not-needed with the evidence recorded",
         "Each package gets its own database or schema in CI, so that pgtest's per-package isolation and CI isolation agree",
         "The database-backed-tests-actually-ran guard in tests.yml still passes \u2014 isolation must not turn Postgres-backed tests into skips",
-        "Both previously flaking tests pass under the full parallel sweep after the change"
+        "Both previously flaking tests pass under the full parallel sweep after the change",
+        "The fix is verified against the FULL class the probe surfaced, not just the two tests #126 names: TestChaosDroppedSendRepairedByOutboxRelay, TestSchedulerDeadlineTimeoutIsNotRetriedIntoASecondSession, TestSchedulerStandbyTakesOverWhenActiveLosesItsConnection, TestSchedulerTickIsBoundedByNoUnreachableDeadlineBridge, TestSchedulerDeadlinePausesWhenDeclaredContinuationHolds, and internal/engine's TestExhaustedRetriesFailTheRun",
+        "Re-running the probe's arm A (one shared database) after the fix produces zero failures across the class, matching arm B's clean baseline"
       ],
       "deps": [
         "t1"
@@ -462,7 +470,8 @@
       "status": "confirmed",
       "acceptance_criteria": [
         "Grepping the changed test files shows no t.Skip, no retry loop, and no reduction in -count",
-        "If any such construct is present, the change is rejected rather than explained"
+        "If any such construct is present, the change is rejected rather than explained",
+        "VERIFIED at merge: git diff 49a0e11..HEAD added ZERO t.Skip lines; the only two in the changed files are the pre-existing RequireStore helper in pgtest.go. No retry loops and no -count reductions were introduced. pgtest.Run returns exit 1 on isolation failure rather than skipping."
       ],
       "deps": [
         "t7",
@@ -482,7 +491,9 @@
       "status": "confirmed",
       "acceptance_criteria": [
         "go test ./internal/scheduler/ ./internal/queue/sqs/ -count=5 passes while a full go test ./... sweep runs concurrently against the same database",
-        "The run is done in the contention condition, not in isolation, and the command plus result are recorded"
+        "The run is done in the contention condition, not in isolation, and the command plus result are recorded",
+        "The contention run covers the wider class the probe surfaced, not only internal/scheduler and internal/queue/sqs \u2014 internal/engine is included",
+        "VERIFIED: under a shared PostgreSQL server with a concurrent full 'go test ./...' sweep, 'go test ./internal/scheduler/ ./internal/queue/sqs/ ./internal/engine/ ./internal/events/ -count=5' passed with ZERO failures (exit 0), and the concurrent sweep also exited 0 with zero failures. This is the exact contention condition that previously failed the class 5/5. internal/events -- which t8 reported failing independently -- is resolved structurally by t9's isolation, as predicted. Zero leaked test databases afterwards."
       ],
       "deps": [
         "t7",
@@ -607,8 +618,8 @@
       "text": "Whether any reconciliation sweep closes a runner operation orphaned by a crash between CompleteAttempt and closeWait is unverified (c27). Making the test wait longer makes the test honest but does not answer this.",
       "kind": "unknown_nonblocking",
       "task_id": "t7",
-      "resolved": false,
-      "resolution": ""
+      "resolved": true,
+      "resolution": "ANSWERED by code read during t7 (not runtime-tested): there is NO reconciliation sweep. internal/store/postgres/runnerasync.go:408 states 'there is no unstick step, no orphan sweep, and no lease to expire.' An orphan stays waiting_external and therefore stays permanently due, re-sampled by ClaimDueRunnerOperations indefinitely; it retires only if the runner returns a terminal status, which by definition never happens in the permanently-silent case the deadline exists for. Filed as issue #129 rather than fixed here \u2014 the absence of a sweep may be a deliberate trade-off per that comment's context."
     },
     {
       "id": "r3",

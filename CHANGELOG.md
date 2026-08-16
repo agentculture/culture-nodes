@@ -5,6 +5,52 @@ All notable changes to this project will be documented in this file.
 Format follows [Keep a Changelog](https://keepachangelog.com/). This project
 adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.31.2] - 2026-08-16
+
+The two "timing-sensitive" tests in #126 were neither timing-sensitive nor two.
+
+### Fixed
+
+- **CI gave every package one shared test database while local runs gave each
+  its own.** `.github/workflows/tests.yml` set `NODES_TEST_DATABASE_URL` to a
+  single database, but `pgtest.Run` starts a private ephemeral postgres per
+  package when that variable is unset — so a local run isolated every package
+  and CI shared one `outbox` and one `timers` table across ~20 concurrent ones.
+  That asymmetry is why #126 recorded 8 consecutive local passes against
+  CI-only failures. The variable now names a *server*: `pgtest.IsolatedDatabase`
+  creates a uniquely named database per test binary and drops it on exit.
+  Database rather than schema because `Store.Migrate`'s advisory lock is
+  database-scoped, so schemas would have kept every package serialised behind
+  every other. Failure to isolate exits 1, never skips.
+- **`pg_locks` is cluster-wide, so a test could kill another test binary.**
+  The standby-takeover test selected any granted advisory lock and
+  `pg_terminate_backend`'d it, which under a shared server terminated unrelated
+  packages' connections. Now scoped to `current_database()`. Without this the
+  isolation fix would have looked correct and stayed flaky.
+- **A dial-in empty outcome produced `%!w(<nil>)` instead of a message.**
+  `ParseInvocationResponse` wrapped a nil cause with `%w`. Contrary to the
+  review that filed it, the returned error was never nil and no malformed 200
+  was ever treated as success — the defect was diagnostic: a garbage message
+  and a broken unwrap chain. Unmarshal failures keep `%w`; an empty outcome
+  returns a plain error.
+
+### Changed
+
+- The scheduler deadline test now waits for the runner-operation transition it
+  asserts, rather than assuming it lands atomically with the node-run status —
+  those commit in two separate transactions. Both of its assertions were racy,
+  not the one #126 named.
+- The chaos relay test no longer assumes it is alone in the outbox. The relay
+  is deliberately namespace-unfiltered, so the test drains until its own row
+  arrives instead of demanding it in the first page, and proves absence by
+  emptying the queue. Foreign-row seeding is kept as the regression guard.
+
+### Added
+
+- `tests/lint/testdatabaseisolation_test.go` — a standing guard that fails the
+  build if the test database URL is resolved without isolation, or if
+  `pg_locks`/`pg_stat_activity` are read without naming `current_database()`.
+
 ## [0.31.1] - 2026-08-16
 
 Three CI reds on PR #122, each a different kind of thing.

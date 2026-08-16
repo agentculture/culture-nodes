@@ -14,6 +14,7 @@ slug: `close-127-before-122-merges` · status: `exported` · from frame: `close-
   - go test ./internal/queue/sqs/ ./internal/scheduler/ -count=5 is run TWICE: once with `NODES_TEST_DATABASE_URL` set to one scratch database while go test ./... runs concurrently against that same database, and once with the variable unset (per-package private containers)
   - At least one of the two named tests reproduces its failure under the shared database, and neither reproduces under private databases — or the opposite is observed and recorded as refuting c23/c24
   - The result is posted to #126 either way, including a negative result
+  - The probe's own amplification is stated in the #126 write-up: arm A ran two concurrent go test invocations where CI runs one, so it evidences the mechanism and does not measure CI's failure rate
 
 ### t2 — Re-read both CI failure logs and confirm no third red hides behind the two
 
@@ -90,6 +91,8 @@ slug: `close-127-before-122-merges` · status: `exported` · from frame: `close-
   - Each package gets its own database or schema in CI, so that pgtest's per-package isolation and CI isolation agree
   - The database-backed-tests-actually-ran guard in tests.yml still passes — isolation must not turn Postgres-backed tests into skips
   - Both previously flaking tests pass under the full parallel sweep after the change
+  - The fix is verified against the FULL class the probe surfaced, not just the two tests #126 names: TestChaosDroppedSendRepairedByOutboxRelay, TestSchedulerDeadlineTimeoutIsNotRetriedIntoASecondSession, TestSchedulerStandbyTakesOverWhenActiveLosesItsConnection, TestSchedulerTickIsBoundedByNoUnreachableDeadlineBridge, TestSchedulerDeadlinePausesWhenDeclaredContinuationHolds, and internal/engine's TestExhaustedRetriesFailTheRun
+  - Re-running the probe's arm A (one shared database) after the fix produces zero failures across the class, matching arm B's clean baseline
 
 ### t10 — Gate the diff against retries, skips and count reductions
 
@@ -108,6 +111,7 @@ slug: `close-127-before-122-merges` · status: `exported` · from frame: `close-
 - acceptance:
   - go test ./internal/scheduler/ ./internal/queue/sqs/ -count=5 passes while a full go test ./... sweep runs concurrently against the same database
   - The run is done in the contention condition, not in isolation, and the command plus result are recorded
+  - The contention run covers the wider class the probe surfaced, not only internal/scheduler and internal/queue/sqs — internal/engine is included
 
 ### t12 — Run the full local gate and bump the version
 

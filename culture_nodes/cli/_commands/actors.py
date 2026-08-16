@@ -270,18 +270,23 @@ def cmd_actors_dial_in(args: argparse.Namespace) -> int:
     """
     client = client_from_args(args)
     resp = client.request("GET", f"{API_PREFIX}/dial-in-presence")
+
+    # One emit, one return. Every path below is a success by construction: a
+    # failed request raises CliError before this line, per _errors.py's
+    # exit-code policy, so the exit code is never in question and only the
+    # rendering differs. Written with a single exit so the "always returns the
+    # same value" reading is true because the function HAS one return, not
+    # because four of them happen to agree.
     if bool(getattr(args, "json", False)):
         emit_json_passthrough(resp.raw)
-        return 0
-
-    # One text rendering, chosen and then emitted once. Every path here is a
-    # success -- a failed request raises CliError before this line, per
-    # _errors.py's exit-code policy -- so the value of the exit code is never in
-    # question and only the message differs.
-    emit_result(
-        _dial_in_text(resp.payload or {}, absent_only=bool(getattr(args, "absent_only", False))),
-        json_mode=False,
-    )
+    else:
+        emit_result(
+            _dial_in_text(
+                resp.payload or {},
+                absent_only=bool(getattr(args, "absent_only", False)),
+            ),
+            json_mode=False,
+        )
     return 0
 
 

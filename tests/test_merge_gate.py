@@ -42,7 +42,7 @@ def git(repo: Path, *args: str) -> str:
     return proc.stdout.strip()
 
 
-@pytest.fixture()
+@pytest.fixture
 def repo(tmp_path: Path) -> Path:
     """A worktree with one base commit and one candidate commit, so the gate
     has a real changed-file set to decide applicability against."""
@@ -366,11 +366,13 @@ def test_posts_the_report_and_exits_with_the_recorded_code(repo: Path):
     sent = stub.received
     assert sent["validator_actor_id"] == VALIDATOR
     assert sent["node_run_ref"] == "01M05ZGNT8QW2W1M5PAPXQ8N3C"
-    assert len(sent["commit_sha"]) == 40 and len(sent["base_sha"]) == 40
+    assert len(sent["commit_sha"]) == 40
+    assert len(sent["base_sha"]) == 40
     assert sent["changed_files"] == ["internal/api/gatereports.go"]
     # The counts and the outcome are the control plane's to compute; a gate
     # that could assert its own aggregate could assert a green one.
-    assert "counts" not in sent and "outcome" not in sent
+    assert "counts" not in sent
+    assert "outcome" not in sent
 
 
 def test_a_disagreement_with_the_control_plane_reaches_a_person(repo: Path):

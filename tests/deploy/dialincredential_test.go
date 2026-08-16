@@ -527,7 +527,9 @@ func TestDeliveryFailureIsLoudAndLeavesTheBridgeCopyIntact(t *testing.T) {
 				"disagree and the repair.\nstderr: %s", want, stderr)
 		}
 	}
-	if got := readFileString(t, path); got != before {
+	// Compared, never printed: the contents are a live credential, so the
+	// message names the file and not what it now holds.
+	if readFileString(t, path) != before {
 		t.Errorf("a failed delivery modified %s; the write prepares then replaces, so the previous "+
 			"credential survives intact", path)
 	}
@@ -823,40 +825,58 @@ func TestProbingTheLanesRelaysNoLiveOperatorCredential(t *testing.T) {
 // issue-dialin-credential.sh both read credentials out of their own
 // environment; a test that hands them os.Environ() hands them whatever the
 // operator running `go test` happens to hold.
+// relayRisk is what one _test.go file's AST says about the two facts that
+// matter: does it name a credential-relaying deploy script, and does it inherit
+// the operator's environment. Split out of the test below so the walk is one
+// small function with one job -- the test then reads as the rule it enforces.
+type relayRisk struct {
+	namesARelayingScript   bool
+	inheritsTheEnvironment bool
+}
+
+// inspectRelayRisk parses one file and reports both facts.
+//
+// Parsed rather than grepped: every file here DISCUSSES the hazard in prose,
+// and a scan that could not tell a comment from a call would flag the comment
+// explaining why the call is forbidden.
+func inspectRelayRisk(t *testing.T, path string) relayRisk {
+	t.Helper()
+	parsed, err := parser.ParseFile(token.NewFileSet(), path, nil, 0)
+	if err != nil {
+		t.Fatalf("parse %s: %v", path, err)
+	}
+	var risk relayRisk
+	ast.Inspect(parsed, func(node ast.Node) bool {
+		switch n := node.(type) {
+		case *ast.Ident:
+			if n.Name == "installSecretsPath" || n.Name == "issueDialInPath" {
+				risk.namesARelayingScript = true
+			}
+		case *ast.SelectorExpr:
+			if n.Sel.Name != "Environ" {
+				return true
+			}
+			if pkg, ok := n.X.(*ast.Ident); ok && pkg.Name == "os" {
+				risk.inheritsTheEnvironment = true
+			}
+		}
+		return true
+	})
+	return risk
+}
+
 func TestNoTestPathRunsARelayingScriptWithTheOperatorEnvironment(t *testing.T) {
 	dir := deployTestDir(t)
 	entries, err := os.ReadDir(dir)
 	if err != nil {
 		t.Fatalf("read %s: %v", dir, err)
 	}
-	// Parsed rather than grepped: every file here DISCUSSES the hazard in
-	// prose, and a scan that could not tell a comment from a call would flag
-	// the comment explaining why the call is forbidden.
 	for _, entry := range entries {
 		if entry.IsDir() || !strings.HasSuffix(entry.Name(), "_test.go") {
 			continue
 		}
-		path := filepath.Join(dir, entry.Name())
-		parsed, err := parser.ParseFile(token.NewFileSet(), path, nil, 0)
-		if err != nil {
-			t.Fatalf("parse %s: %v", path, err)
-		}
-		var namesARelayingScript, inheritsTheEnvironment bool
-		ast.Inspect(parsed, func(node ast.Node) bool {
-			ident, ok := node.(*ast.Ident)
-			if ok && (ident.Name == "installSecretsPath" || ident.Name == "issueDialInPath") {
-				namesARelayingScript = true
-			}
-			selector, ok := node.(*ast.SelectorExpr)
-			if !ok || selector.Sel.Name != "Environ" {
-				return true
-			}
-			if pkg, ok := selector.X.(*ast.Ident); ok && pkg.Name == "os" {
-				inheritsTheEnvironment = true
-			}
-			return true
-		})
-		if namesARelayingScript && inheritsTheEnvironment {
+		risk := inspectRelayRisk(t, filepath.Join(dir, entry.Name()))
+		if risk.namesARelayingScript && risk.inheritsTheEnvironment {
 			t.Errorf("%s runs a credential-relaying deploy script and inherits the operator's "+
 				"environment; build it from scratch (scrubbedEnv / fakeCluster.env) so a probe "+
 				"cannot relay a live operator credential into a throwaway file (issue #134)",

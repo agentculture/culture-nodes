@@ -16,7 +16,6 @@ import urllib.request
 from pathlib import Path
 from typing import Any
 
-
 ROOT = Path(__file__).resolve().parent.parent
 
 
@@ -54,15 +53,11 @@ def load_task(
     raise BriefError(f"task {task_id!r} is not in plan {plan_slug!r}")
 
 
-def capability_host(
-    document: dict[str, Any], target_actor: str | None = None
-) -> dict[str, Any]:
+def capability_host(document: dict[str, Any], target_actor: str | None = None) -> dict[str, Any]:
     # Accept both the bridge response and an actor registry row.
     actor_key = document.get("actor_key")
     if target_actor and actor_key is not None and actor_key != target_actor:
-        raise BriefError(
-            f"capability row belongs to actor {actor_key!r}, not {target_actor!r}"
-        )
+        raise BriefError(f"capability row belongs to actor {actor_key!r}, not {target_actor!r}")
     capabilities = document.get("capabilities", document)
     if not isinstance(capabilities, dict):
         raise BriefError("capabilities must be an object")
@@ -126,9 +121,7 @@ def render(
         or not instruction
     ):
         raise BriefError("task must have non-empty summary and instruction")
-    if not isinstance(acceptance, list) or not all(
-        isinstance(v, str) for v in acceptance
-    ):
+    if not isinstance(acceptance, list) or not all(isinstance(v, str) for v in acceptance):
         raise BriefError("task acceptance_criteria must be a string list")
     if not isinstance(covers, list) or not all(isinstance(v, str) for v in covers):
         raise BriefError("task covers must be a string list")
@@ -230,6 +223,19 @@ def render(
             "- Distinguish commands run here from checks that could not run "
             "under this capability surface.",
             "- Report claims as proposed, never confirmed or observed.",
+            "",
+            "Workflow-scope boundary (the dispatch is REFUSED if you cross it):",
+            "- Do not modify anything under .github/. No bridge actor may change CI "
+            "configuration, and the refusal is enforced on the change set this "
+            "session is MEASURED to have produced — not on what the instruction "
+            "asked for — so a well-intentioned CI edit fails the whole run and "
+            "leaves the rest of the work unmerged.",
+            "- This bites hardest where it looks most natural. If the task asks for "
+            "a standing guard 'like the existing ones', note that the existing "
+            "guards ARE wired into CI: write the guard, and say in your claim that "
+            "it still needs a CI step and what that step should be. The operator "
+            "authors it. Describing the change you may not make is the deliverable, "
+            "not a shortfall.",
         ]
     )
     return "\n".join(lines) + "\n"

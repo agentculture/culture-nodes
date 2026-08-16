@@ -2,7 +2,7 @@
   "plan_slug": "close-the-backlog",
   "schema_version": 1,
   "created": "2026-08-15T18:07:41Z",
-  "updated": "2026-08-16T04:24:42Z",
+  "updated": "2026-08-16T04:47:02Z",
   "deviations": [
     {
       "id": "d1",
@@ -257,6 +257,22 @@
         "t22",
         "t24",
         "t11"
+      ],
+      "origin": "llm",
+      "status": "proposed",
+      "classification": "needs-follow-up"
+    },
+    {
+      "id": "d20",
+      "what": "t21's dispatch was refused for touching .github/, and the brief caused it \u2014 every generated work-package brief now carries the workflow-scope boundary",
+      "task_ref": "t21",
+      "reason": "The run ended policy_denied on the bridge-measured change set: the session added its guard to .github/workflows/tests.yml, which no bridge actor may modify. The guard was right and the #98 fix worked exactly as designed. But the cause was the brief, not the session. It said to model the new guard on scripts/check-zero-runtime-deps.sh and scripts/check-vendored-skill-diff.py \u2014 and those ARE wired into CI, so wiring this one into CI was the correct reading of the instruction it was given. This is the second time the boundary has cost a dispatch (d5: K1's first dispatch got HTTP 403 because the brief TEXT contained .github/workflows/), which makes it a recurring brief defect rather than an actor error. scripts/render-work-package.py now emits the boundary in every brief, including the specific trap: a guard 'like the existing ones' looks like it should be wired into CI, and the deliverable in that case is to write the guard and DESCRIBE the CI step for the operator to author. Eight of the nine files were in scope and merged as authored; the CI step was re-authored in the operator lane per d11's precedent.",
+      "affects": [
+        "t22",
+        "t24",
+        "t31",
+        "t32",
+        "t33"
       ],
       "origin": "llm",
       "status": "proposed",

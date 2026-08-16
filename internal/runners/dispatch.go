@@ -43,6 +43,25 @@ type NodeContract struct {
 	// domain answer, and the engine's retry policy applies.
 	FailureOutcome string
 
+	// ExitCodeOutcomes maps individual exit codes onto declared domain
+	// outcomes, and is consulted BEFORE the success/failure pair above.
+	//
+	// It exists because two ports are not always enough, and the merge gate
+	// (task t16, issue #101) is the case that proves it. A gate's exit
+	// status carries three domain answers — the gates passed, a threshold
+	// was missed, or the measurement never happened — and the last two must
+	// not share an edge: "we could not run the Go suite on this host" and
+	// "the Go suite failed" call for entirely different next steps, and
+	// routing the first as the second manufactures a defect nobody observed.
+	//
+	// A code NOT in the table falls through to the success/failure pair, so
+	// a node that declares no table behaves exactly as it did before. A node
+	// that declares one and exits outside it gets whatever FailureOutcome
+	// says — normally nothing, i.e. a technical failure, which is the honest
+	// answer for a tool that crashed: no trustworthy domain measurement was
+	// produced, so there is no domain answer to route.
+	ExitCodeOutcomes map[int]string
+
 	// ActorID is the runner actor that produced the evidence. It is the
 	// identity the ledger's producer matrix checks against the manifest.
 	// Required for the evidence record; without it BuildCompletion emits no
@@ -118,6 +137,8 @@ type CodeNodeOutput struct {
 //
 // The mapping rules, in order:
 //
+//   - completed + an exit code contract.ExitCodeOutcomes names → succeeded,
+//     that outcome (task t16: a gate's three domain answers);
 //   - completed + exit 0 → succeeded, contract.SuccessOutcome;
 //   - completed + exit nonzero → succeeded with contract.FailureOutcome when
 //     the node declares one (a domain answer, PRD §3.4), otherwise failed;
@@ -169,6 +190,8 @@ func mapStatus(res Result, contract NodeContract) (engine.TechStatus, string) {
 		switch {
 		case !ok:
 			return engine.StatusFailed, ""
+		case contract.ExitCodeOutcomes[code] != "":
+			return engine.StatusSucceeded, contract.ExitCodeOutcomes[code]
 		case code == 0:
 			return engine.StatusSucceeded, contract.SuccessOutcome
 		case contract.FailureOutcome != "":

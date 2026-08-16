@@ -296,6 +296,20 @@ func (b *Bridge) validate(op runners.Operation) (profile string, envValues map[s
 				strings.Join(missing, ", ")))
 	}
 
+	// The operation's own run identity, forwarded LAST so it wins over any
+	// same-named grant (task t16, runners.ContextEnvironment). A code node
+	// that writes derived records about its run has to be able to name it,
+	// and the name must come from the operation the control plane composed —
+	// never from a value the executed process or a stray export could choose.
+	if context := runners.ContextEnvironment(op); len(context) > 0 {
+		if envValues == nil {
+			envValues = make(map[string]string, len(context))
+		}
+		for name, value := range context {
+			envValues[name] = value
+		}
+	}
+
 	return profile, envValues, nil
 }
 

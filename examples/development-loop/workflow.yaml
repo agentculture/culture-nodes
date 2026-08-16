@@ -156,11 +156,16 @@
 #     honours that by giving a partial measurement its own routed outcome,
 #     `measurement_incomplete`, which goes to a PERSON rather than onward.
 #
-#  7. THE VALIDATOR ITSELF IS UNWRITTEN. t18 produced a design, not a program.
-#     The operation below fetches and digest-verifies a deployment-supplied
-#     script exactly as pr-upkeep's sweep does; what that script must compute
-#     is the t18 design's per-gate result document. Nothing in this repository
-#     implements it yet.
+#  7. THE VALIDATOR ITSELF WAS UNWRITTEN, AND NOW IS NOT (task t16). t18
+#     produced a design, not a program; `scripts/merge-gate.py` is that
+#     program, and `POST /v1alpha1/runs/{id}/gate-reports` is where its
+#     per-gate results land as `derived` validator records with an aggregate
+#     the control plane computes. The operation below still fetches and
+#     digest-verifies a deployment-supplied script exactly as pr-upkeep's
+#     sweep does, and what it must compute is now implemented rather than
+#     merely specified — see examples/merge-gate/ for the gate on its own,
+#     including the difference between pinning the matrix in argv (there) and
+#     granting it as an environment value (here).
 #
 # ---------------------------------------------------------------------------
 # AUTHORING DECISIONS WORTH STATING OUTRIGHT
@@ -194,16 +199,19 @@
 #     run and a new attempt row. A gate that keeps failing is stopped by the
 #     second; a session that keeps working is stopped by the first.
 #
-#  4. THE GATE IS SPLIT ACROSS TWO NODES ON PURPOSE. A code node's routable
-#     answer is its exit status: the worker maps exactly one success name and
-#     one failure name (internal/worker/code.go's ConventionalCodeOutcomes
-#     recognises `passed`/`failed` and refuses vocabulary it does not know),
-#     and a code node's persisted output is runner metadata rather than the
-#     script's stdout. So `handover-gate` MEASURES and encodes its one
-#     routable domain fact in the exit code, and `gate-verdict` — an ordinary
-#     decision node — turns that into the three domain answers t18 specifies:
-#     `gates_passed`, `changes_required`, `measurement_incomplete`. This is
-#     pr-upkeep's sweep/triage pattern, reused rather than reinvented.
+#  4. THE GATE IS SPLIT ACROSS TWO NODES, AND NO LONGER HAS TO BE (task t16).
+#     When this graph was written a code node's routable answer was one
+#     success name and one failure name, so `handover-gate` MEASURED and
+#     encoded its one routable fact in the exit code while `gate-verdict` — an
+#     ordinary decision node — turned that into the three domain answers t18
+#     specifies: `gates_passed`, `changes_required`, `measurement_incomplete`.
+#     internal/worker/code.go now recognises those three names directly and
+#     maps exit 0/1/2 onto them, so a single code node can declare all three
+#     (see examples/merge-gate/). This graph keeps the split: the decision
+#     node is also where a reader sees the mapping written down, and
+#     rewriting a committed reference loop to save one node is a change with
+#     no behavioural benefit. A NEW gate should declare the three outcomes on
+#     the code node itself.
 #
 #  5. CLEANUP FAILS CLOSED. `cleanup-workspace` may refuse to reap, and its
 #     `retained_reason` is a closed enum. Reaping a worktree destroys work

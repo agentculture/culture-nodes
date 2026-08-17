@@ -85,3 +85,4 @@ issue,bucket,disposition,evidence_pointer
 157,owner decisions,"decide whether to adopt issue types org-wide, whether deviation and audit-record are one type or two, and whether the triage report groups by type","the agentculture org already defines Task/Bug/Feature and 56 of 56 open issues carry none; v0.33.1 closed six issues as records rather than work"
 161,verify-then-close,close on read as a Record once the type backfill lands — it is a hand-turn record and nothing is outstanding,docs/triage/issue-types.md + plan t3
 162,bug tail,"give dispositions() its own exception so a malformed table exits 1 (a finding) instead of 2 (could not measure)",scripts/triage-report.py:355-367 + the comment at :365 that already states the intended rule
+164,bug tail,"add issues:read to the lint job permissions — applied in #163, close once main is green",.github/workflows/tests.yml lint permissions + three consecutive red runs on main from #159

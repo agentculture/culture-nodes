@@ -4,7 +4,7 @@
   "schema_version": 5,
   "status": "exported",
   "created": "2026-08-17T17:56:24Z",
-  "updated": "2026-08-17T18:45:00Z",
+  "updated": "2026-08-17T19:06:41Z",
   "claims": [
     {
       "id": "c1",
@@ -778,7 +778,7 @@
     {
       "id": "s23",
       "surface": "challenge pass / operations lens: .github/workflows/tests.yml lint job + scripts/lint-all.sh exit policy",
-      "finding": "Examined and clean today: the repo is PUBLIC, so issue listing works under the job's contents:read-only token and the triage step is genuinely running in CI rather than silently skipped. The residual exposure is that an unrunnable step exits 2 and fails the job, so a second GitHub call is a second way for lint to go red for reasons unrelated to the diff.",
+      "finding": "CORRECTED after CI proved it wrong. The original entry said this was 'examined and clean -- the repo is PUBLIC, so issue listing works under the job's contents:read-only token and the triage step is genuinely running in CI'. It does not. CI returns 'gh: Resource not accessible by integration': naming any permission sets every unnamed one to none, and a public repo does not rescue an authenticated request with an insufficient token -- it 403s rather than falling back to public access. The step has therefore NEVER run in CI. It 403s, exits 2 (could not measure), and lint-all exits 2, which is why every lint run on main failed from #159 -- the commit that first gave the step a GH_TOKEN -- onward. Three consecutive red runs on main before this branch. Fixed by adding issues:read. The exit-code discipline itself behaved correctly throughout: it reported UNRUNNABLE, never 'the table is wrong'.",
       "seeds": [
         "c29"
       ]

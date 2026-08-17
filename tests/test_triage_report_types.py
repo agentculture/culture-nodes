@@ -343,3 +343,82 @@ def test_a_failed_read_names_which_read_failed():
     message = str(excinfo.value)
     assert "issue-type menu" in message
     assert "ORGANISATION" in message, "the message names why the privilege differs"
+
+
+def _no_org_reads(command):
+    """A seam that fails loudly if anything tries to read the org."""
+    joined = " ".join(command)
+    assert "organization" not in joined, "--check must not read the org's type menu"
+    assert "issueType" not in joined, "--check must not read per-issue types"
+    return 0, json.dumps([{"number": 1}]), ""
+
+
+def test_check_reads_no_types_at_all(tmp_path, monkeypatch):
+    """--check verifies the disposition table and nothing that needs org access.
+
+    CI's GITHUB_TOKEN is repository-scoped, so `organization.issueTypes` is
+    unreachable there no matter what permissions the workflow requests — proven
+    in CI, not assumed. Attempting it made every lint run exit 2 ("could not
+    measure"), so --check now verifies the half it can verify.
+
+    The cost is deliberate and recorded as deviation d1: a stale type block is
+    not caught by CI. This test exists so the *scope* of that cost cannot grow
+    silently — if someone reintroduces a type read on the --check path, this
+    fails.
+    """
+    output = tmp_path / "open-issues.md"
+    table = tmp_path / "dispositions.csv"
+    table.write_text(
+        "issue,bucket,disposition,evidence_pointer\n1,bug tail,do the thing,somewhere\n",
+        encoding="utf-8",
+    )
+    issues = tmp_path / "issues.json"
+    issues.write_text(json.dumps([{"number": 1}]), encoding="utf-8")
+
+    # Generate the table body the way a real run would, then append a type
+    # section that --check must ignore rather than validate.
+    body = MODULE.render([1], MODULE.dispositions(table))
+    output.write_text(body + "\n" + MODULE.TYPES_HEADING + "\n\nstale nonsense\n", encoding="utf-8")
+
+    code = MODULE.main(
+        [
+            "--check",
+            "--issues-json",
+            str(issues),
+            "--table",
+            str(table),
+            "--output",
+            str(output),
+        ],
+        invoke=_no_org_reads,
+    )
+    assert code == 0, "a correct table with an unchecked type section passes"
+
+
+def test_check_still_catches_a_stale_disposition_table(tmp_path):
+    """Dropping the type check must not soften the check that remains."""
+    output = tmp_path / "open-issues.md"
+    table = tmp_path / "dispositions.csv"
+    table.write_text(
+        "issue,bucket,disposition,evidence_pointer\n1,bug tail,do the thing,somewhere\n",
+        encoding="utf-8",
+    )
+    issues = tmp_path / "issues.json"
+    issues.write_text(json.dumps([{"number": 1}]), encoding="utf-8")
+    output.write_text(
+        "# Open-issue triage\n\nwrong content\n" + MODULE.TYPES_HEADING + "\n", encoding="utf-8"
+    )
+
+    code = MODULE.main(
+        [
+            "--check",
+            "--issues-json",
+            str(issues),
+            "--table",
+            str(table),
+            "--output",
+            str(output),
+        ],
+        invoke=_no_org_reads,
+    )
+    assert code == 1, "a stale table is a finding, and findings exit 1"

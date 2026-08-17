@@ -100,6 +100,12 @@ CAPABILITIES_PATH = "/v1/capabilities"
 #:   changes end up. Always present.
 #: * ``writable_paths`` — the paths a dispatch may write in. ``[]`` means
 #:   nowhere.
+#: * ``git_metadata_writable`` — one of ``supported``,
+#:   ``unsupported-by-sandbox`` or ``not-probed``: whether a session can write
+#:   under ``.git`` in a checkout it may write in. It QUALIFIES
+#:   ``writable_paths``, which is silent about the carve-out that decides
+#:   whether a run can hand its work over on a ref. Measured by
+#:   :func:`measure_git_metadata_writable` — see that section for issue #94.
 #: * ``artifact_publish`` — one of ``supported``, ``unsupported-by-host``,
 #:   or ``not-applicable-no-workspace``. Unlike omission, the last value
 #:   explicitly says that this bridge has no workspace to publish from.
@@ -125,6 +131,7 @@ HOST_KEYS = (
     "confinement",
     "commit_policy",
     "writable_paths",
+    "git_metadata_writable",
     "artifact_publish",
     "dispatch_grants",
     "toolchains",
@@ -133,6 +140,17 @@ HOST_KEYS = (
 
 ARTIFACT_PUBLISH_VALUES = frozenset(
     ("supported", "unsupported-by-host", "not-applicable-no-workspace")
+)
+
+#: `git_metadata_writable`'s three values (issue #94): two measured answers
+#: and an explicit "nobody measured this", because a consumer that cannot
+#: tell an unmeasured fact from a negative one reads the absence as negative.
+GIT_METADATA_SUPPORTED = "supported"
+GIT_METADATA_UNSUPPORTED_BY_SANDBOX = "unsupported-by-sandbox"
+GIT_METADATA_NOT_PROBED = "not-probed"
+
+GIT_METADATA_WRITABLE_VALUES = frozenset(
+    (GIT_METADATA_SUPPORTED, GIT_METADATA_UNSUPPORTED_BY_SANDBOX, GIT_METADATA_NOT_PROBED)
 )
 
 #: The two facts every bridge knows about itself without measuring anything.
@@ -635,6 +653,121 @@ def harvest_commit_policy(
     return policy
 
 
+# --- git metadata writability (issue #94) -----------------------------------
+#
+# The fact `writable_paths` cannot state: a reader concludes a ref can be
+# created in a listed checkout, and under codex's `workspace-write` it cannot,
+# because `.git` is carved out of the writable roots. Two dispatched runs paid
+# for that separately, each AFTER its own write probe passed — the probe wrote
+# a file, which works, and then `update-ref` did not. api/actor-protocol/
+# README.md carries the full account.
+#
+# Measured the way `_userns_capability` measures user namespaces: by
+# ATTEMPTING the operation. A sandbox mode name is a declaration, and this
+# module reports no fact read off a declaration.
+#
+# Grow this section and it moves to a sibling shared module, as
+# `deployment.py` did below: the file's hard limit is 1000 lines.
+
+
+def git_metadata_dir(repo: Path) -> Path | None:
+    """The directory holding *repo*'s git metadata, or None if *repo* is not a
+    checkout.
+
+    ``.git`` is a DIRECTORY in a plain clone and a FILE holding
+    ``gitdir: <path>`` in a linked worktree or submodule. Both get dispatched
+    into, so following the pointer is the normal case, not an edge one.
+    """
+    marker = repo / ".git"
+    if marker.is_dir():
+        return marker
+    if not marker.is_file():
+        return None
+    try:
+        pointer = marker.read_text(encoding="utf-8").strip()
+    except OSError:
+        return None
+    prefix = "gitdir:"
+    if not pointer.startswith(prefix):
+        return None
+    target = Path(pointer[len(prefix) :].strip())
+    if not target.is_absolute():
+        target = (repo / target).resolve()
+    return target if target.is_dir() else None
+
+
+def probe_git_metadata_write(git_dir: Path) -> bool:
+    """Attempt one write inside *git_dir* and clean it up. True when it lands.
+
+    An exclusive create, so an existing file is never clobbered, named with
+    this process's pid so two bridges probing one checkout cannot collide. A
+    create that succeeds and an unlink that does not leaves an empty file
+    behind rather than reporting a failure that did not happen: the question
+    asked is whether the WRITE was permitted.
+    """
+    probe = git_dir / f".preflight-write-probe-{os.getpid()}"
+    try:
+        with open(probe, "xb") as handle:
+            handle.write(b"")
+    except OSError:
+        return False
+    try:
+        probe.unlink()
+    except OSError:
+        pass
+    return True
+
+
+def measure_git_metadata_writable(
+    paths: Sequence[str],
+    *,
+    probe: Callable[[Path], bool] | None = probe_git_metadata_write,
+    locate: Callable[[Path], Path | None] = git_metadata_dir,
+) -> str:
+    """Measure `git_metadata_writable` over the checkouts under *paths*.
+
+    *paths* is the bridge's `writable_paths`: each entry is a checkout or a
+    directory workspaces are created under, and both are searched (one level
+    down, sorted, first checkout wins) because an allowlist PREFIX has no
+    checkout at the prefix itself.
+
+    *probe* is the write attempt, and ``None`` is a first-class answer rather
+    than a way to switch the fact off: it says this bridge cannot attempt the
+    write with the authority a DISPATCHED SESSION gets, so ``not-probed`` is
+    the honest report. A bridge whose sessions run with this process's own
+    authority passes the default. A bridge that confines its sessions more
+    tightly must NOT report the process's answer — there the write succeeds
+    here and fails in every dispatch, which is the misreading #94 exists to
+    stop.
+    """
+    if probe is None:
+        return GIT_METADATA_NOT_PROBED
+    for git_dir in _candidate_git_dirs(paths, locate):
+        return GIT_METADATA_SUPPORTED if probe(git_dir) else GIT_METADATA_UNSUPPORTED_BY_SANDBOX
+    return GIT_METADATA_NOT_PROBED
+
+
+def _candidate_git_dirs(
+    paths: Sequence[str], locate: Callable[[Path], Path | None]
+) -> Iterable[Path]:
+    """Yield the git-metadata directory of every checkout reachable from
+    *paths*, nearest first: each path itself, then its immediate children."""
+    for raw in paths:
+        root = Path(raw).expanduser()
+        found = locate(root)
+        if found is not None:
+            yield found
+            continue
+        try:
+            children = sorted(child for child in root.iterdir() if child.is_dir())
+        except OSError:
+            continue
+        for child in children:
+            found = locate(child)
+            if found is not None:
+                yield found
+
+
 # --- deployed revision (task t32, issue #120 item 4) ------------------------
 #
 # The `deployment` host fact is MEASURED in the sibling shared module
@@ -679,6 +812,13 @@ def host_block(**facts: Any) -> dict[str, Any]:
         raise SurfaceError(
             "host fact 'artifact_publish' must be supported, unsupported-by-host, "
             "or not-applicable-no-workspace"
+        )
+
+    git_metadata = facts.get("git_metadata_writable")
+    if git_metadata is not None and git_metadata not in GIT_METADATA_WRITABLE_VALUES:
+        raise SurfaceError(
+            "host fact 'git_metadata_writable' must be supported, unsupported-by-sandbox, "
+            "or not-probed"
         )
 
     host: dict[str, Any] = {}
@@ -783,18 +923,40 @@ def _main(argv: Sequence[str]) -> int:
 
         python3 -m <bridge>.preflight uv go gh
         cat preflight.py | ssh <host> python3 - uv go gh
+        python3 -m <bridge>.preflight --git-metadata <checkout> [...]
 
     The second form is the point. A host where this bridge is not installed
     — or is installed at a version that predates a fact — can still be
     measured by the module that DEFINES the fact, rather than by a second
     implementation of `which` and `readlink` in a shell script that drifts
     from this one. `scripts/toolchain-baseline.sh` is the caller.
+
+    The third form is the same argument applied to `git_metadata_writable`
+    (issue #94): a bridge that confines its sessions reports `not-probed`,
+    and running THIS entry point as the first thing a dispatched session does
+    answers the question with the session's own authority — through the
+    function the surface uses, not a `touch` typed into an instruction.
     """
     import json
 
     names = list(argv)
+    if names and names[0] == "--git-metadata":
+        print(
+            json.dumps(
+                {
+                    "hostname": hostname(),
+                    "git_metadata_writable": measure_git_metadata_writable(names[1:]),
+                },
+                indent=2,
+            )
+        )
+        return 0
     if not names:
-        print("usage: preflight.py <toolchain> [<toolchain> ...]", file=sys.stderr)
+        print(
+            "usage: preflight.py <toolchain> [<toolchain> ...]\n"
+            "       preflight.py --git-metadata <checkout> [<checkout> ...]",
+            file=sys.stderr,
+        )
         return 2
     envelope = {
         "hostname": hostname(),

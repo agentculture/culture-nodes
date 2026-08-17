@@ -10,6 +10,7 @@ Read `src/*/preflight.py`'s module docstring for why the split is this way.
 
 from __future__ import annotations
 
+import os
 import socket
 
 import pytest
@@ -548,3 +549,177 @@ def test_the_version_probe_tries_the_other_spelling_before_giving_up():
         return _Completed(1, "")
 
     assert preflight.toolchain_version("/usr/bin/mystery", run=always_fails) is None
+
+
+# --- git_metadata_writable (issue #94) ----------------------------------
+#
+# The key `writable_paths` could not carry. Every test here goes through the
+# real attempt or through an injected one that stands where the real attempt
+# stands; none of them decides the answer from a sandbox mode name, because
+# that is precisely the derivation the key exists to replace.
+
+
+def _checkout(root, name="repo"):
+    """A directory shaped like a plain clone: a real `.git` DIRECTORY."""
+    repo = root / name
+    (repo / ".git").mkdir(parents=True)
+    return repo
+
+
+def test_git_metadata_writable_is_measured_by_attempting_the_write(tmp_path):
+    """The positive answer is a write that actually landed. Nothing here
+    consults a mode name, a config value or a sysctl."""
+    repo = _checkout(tmp_path)
+    assert preflight.measure_git_metadata_writable([str(repo)]) == preflight.GIT_METADATA_SUPPORTED
+
+
+def test_a_git_dir_that_refuses_the_write_reports_unsupported_by_sandbox(tmp_path):
+    """The negative answer is a write that was actually refused — the state
+    a `workspace-write` dispatch is in, where the worktree accepts a file and
+    `.git` does not (issue #94)."""
+    repo = _checkout(tmp_path)
+    refused = []
+
+    def refuse(git_dir):
+        refused.append(git_dir)
+        return False
+
+    assert preflight.measure_git_metadata_writable([str(repo)], probe=refuse) == (
+        preflight.GIT_METADATA_UNSUPPORTED_BY_SANDBOX
+    )
+    assert refused == [repo / ".git"], "the attempt must be made against .git itself"
+
+
+@pytest.mark.skipif(os.geteuid() == 0, reason="root writes through a read-only directory mode")
+def test_the_refusal_is_the_real_one_a_read_only_git_dir_produces(tmp_path):
+    """The same negative without an injected probe, so the default attempt is
+    proven to REPORT a refusal rather than to raise or to swallow it."""
+    repo = _checkout(tmp_path)
+    git_dir = repo / ".git"
+    git_dir.chmod(0o500)
+    try:
+        assert preflight.measure_git_metadata_writable([str(repo)]) == (
+            preflight.GIT_METADATA_UNSUPPORTED_BY_SANDBOX
+        )
+    finally:
+        git_dir.chmod(0o700)
+
+
+def test_a_linked_worktree_is_followed_to_the_metadata_dir_a_ref_lands_in(tmp_path):
+    """`.git` is a FILE in a linked worktree — which is how this repo's own
+    workforce lanes are checked out, and how colleague isolates a work item.
+    Probing the pointer file's own directory would measure the worktree, which
+    is the half already known to be writable."""
+    repo = _checkout(tmp_path)
+    worktree = tmp_path / "wt"
+    worktree.mkdir()
+    (worktree / ".git").write_text(f"gitdir: {repo / '.git'}\n", encoding="utf-8")
+
+    seen = []
+
+    def observe(git_dir):
+        seen.append(git_dir)
+        return True
+
+    assert preflight.measure_git_metadata_writable([str(worktree)], probe=observe) == (
+        preflight.GIT_METADATA_SUPPORTED
+    )
+    assert seen == [repo / ".git"]
+
+
+def test_a_relative_worktree_pointer_resolves_against_the_worktree(tmp_path):
+    repo = _checkout(tmp_path)
+    worktree = tmp_path / "wt"
+    worktree.mkdir()
+    (worktree / ".git").write_text("gitdir: ../repo/.git\n", encoding="utf-8")
+    assert preflight.git_metadata_dir(worktree) == (repo / ".git").resolve()
+
+
+def test_a_checkout_one_level_under_an_allowlist_prefix_is_found(tmp_path):
+    """`writable_paths` carries repo allowlist PREFIXES as well as repos, and
+    a prefix has no `.git` of its own. A bridge configured only with prefixes
+    would otherwise report `not-probed` on a host full of checkouts."""
+    prefix = tmp_path / "work"
+    repo = _checkout(prefix, "culture-nodes-agent")
+    assert preflight.measure_git_metadata_writable([str(prefix)]) == (
+        preflight.GIT_METADATA_SUPPORTED
+    )
+    assert preflight.git_metadata_dir(repo) == repo / ".git"
+
+
+def test_a_path_that_holds_no_checkout_is_not_probed(tmp_path):
+    """Not `unsupported-by-sandbox`: nothing refused anything. A bridge that
+    reported a refusal here would be inventing the very fact it failed to
+    measure."""
+    (tmp_path / "empty").mkdir()
+    assert preflight.measure_git_metadata_writable([str(tmp_path / "empty")]) == (
+        preflight.GIT_METADATA_NOT_PROBED
+    )
+    assert preflight.measure_git_metadata_writable([]) == preflight.GIT_METADATA_NOT_PROBED
+    assert preflight.git_metadata_dir(tmp_path / "nowhere") is None
+
+
+def test_a_bridge_that_cannot_attempt_the_write_reports_not_probed(tmp_path):
+    """`probe=None` is a bridge saying it cannot run the attempt with a
+    DISPATCHED SESSION's authority — codex, whose sessions are confined by a
+    helper the bridge process is not inside. Reporting what the bridge process
+    can do would answer a different question with the same word."""
+    repo = _checkout(tmp_path)
+    assert preflight.measure_git_metadata_writable([str(repo)], probe=None) == (
+        preflight.GIT_METADATA_NOT_PROBED
+    )
+
+
+def test_the_write_probe_leaves_the_git_dir_as_it_found_it(tmp_path):
+    repo = _checkout(tmp_path)
+    git_dir = repo / ".git"
+    (git_dir / "HEAD").write_text("ref: refs/heads/main\n", encoding="utf-8")
+    assert preflight.probe_git_metadata_write(git_dir) is True
+    assert sorted(p.name for p in git_dir.iterdir()) == ["HEAD"]
+
+
+def test_the_probe_reports_a_refusal_rather_than_raising(tmp_path):
+    assert preflight.probe_git_metadata_write(tmp_path / "no-such-dir") is False
+
+
+def test_git_metadata_writable_rides_the_surface_the_engine_accepts(tmp_path):
+    host = preflight.host_block(
+        hostname="build-host-1",
+        commit_policy="harvest: nothing is committed here",
+        writable_paths=["/srv/work/checkout"],
+        git_metadata_writable=preflight.GIT_METADATA_UNSUPPORTED_BY_SANDBOX,
+    )
+    assert host["git_metadata_writable"] == "unsupported-by-sandbox"
+    preflight.validate_block(preflight.capability_block(host))
+
+
+def test_an_unmeasured_git_metadata_fact_is_omitted_not_nulled():
+    host = preflight.host_block(
+        hostname="build-host-1",
+        commit_policy="harvest: nothing is committed here",
+    )
+    assert "git_metadata_writable" not in host
+
+
+@pytest.mark.parametrize("value", ["yes", "writable", "unsupported", "", "unsupported-by-host"])
+def test_a_git_metadata_value_outside_the_agreed_three_is_refused(value):
+    """Same refusal `artifact_publish` gets, and for the same reason: a
+    consumer that meets a fourth word cannot tell whether it means more or
+    less than the three it knows. `unsupported-by-host` is in the list on
+    purpose — it is the neighbouring key's vocabulary, and the two say
+    different things."""
+    with pytest.raises(preflight.SurfaceError):
+        preflight.host_block(
+            hostname="build-host-1",
+            commit_policy="harvest: nothing is committed here",
+            git_metadata_writable=value,
+        )
+
+
+def test_the_agreed_values_are_exactly_the_three_the_issue_names():
+    assert preflight.GIT_METADATA_WRITABLE_VALUES == {
+        "supported",
+        "unsupported-by-sandbox",
+        "not-probed",
+    }
+    assert "git_metadata_writable" in preflight.HOST_KEYS

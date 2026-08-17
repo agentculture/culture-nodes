@@ -328,3 +328,68 @@ def test_the_codex_cli_version_is_reported_so_a_bump_is_visible(tmp_path):
 
 def test_the_surface_with_toolchains_is_still_a_document_the_engine_accepts(tmp_path):
     preflight.validate_block(preflight.capability_block(_host(THOR, tmp_path)))
+
+
+# --- git_metadata_writable (issue #94) ------------------------------------
+
+
+def test_this_bridge_does_not_report_its_own_processs_git_answer(tmp_path):
+    """The whole point of the key on THIS backend. The bridge process is
+    inside no sandbox, so a write under `.git` succeeds here — while a
+    `workspace-write` session on the same host cannot write one (commit
+    df7d974 at refs/culture-nodes/probe on thor measured both halves). A
+    surface reporting `supported` would state the opposite of what a dispatch
+    gets, in the one field a consumer reads to decide whether a handover ref
+    can be created."""
+    repo = tmp_path / "checkout"
+    (repo / ".git").mkdir(parents=True)
+    cfg = Config(repo_allowlist=(str(repo),))
+
+    # The bridge process really can write there — that is what makes the
+    # reported value a decision rather than a coincidence.
+    assert preflight.probe_git_metadata_write(repo / ".git") is True
+
+    host = capabilities.host_facts(cfg, probes=_permissive(tmp_path))
+    assert host["git_metadata_writable"] == preflight.GIT_METADATA_NOT_PROBED
+
+
+def test_a_caller_with_a_dispatched_sessions_authority_measures_it(tmp_path):
+    """`not-probed` is this bridge's default, not a hard-coded answer: hand
+    `host_facts` a probe that CAN attempt the write the way a dispatch would
+    and the same key reports what that probe found, both ways round."""
+    repo = tmp_path / "checkout"
+    (repo / ".git").mkdir(parents=True)
+    cfg = Config(repo_allowlist=(str(repo),))
+
+    writable = capabilities.host_facts(
+        cfg, probes=_permissive(tmp_path), git_probe=lambda _git_dir: True
+    )
+    refused = capabilities.host_facts(
+        cfg, probes=_permissive(tmp_path), git_probe=lambda _git_dir: False
+    )
+    assert writable["git_metadata_writable"] == preflight.GIT_METADATA_SUPPORTED
+    assert refused["git_metadata_writable"] == preflight.GIT_METADATA_UNSUPPORTED_BY_SANDBOX
+
+
+def test_the_git_answer_is_not_read_off_the_sandbox_mode_name(tmp_path):
+    """A kernel that kills `workspace-write` outright changes `sandbox_modes`
+    and must not change this key by itself: the two are measured by different
+    probes and a surface that let one decide the other would be deriving the
+    fact issue #94 asks to be measured."""
+    repo = tmp_path / "checkout"
+    (repo / ".git").mkdir(parents=True)
+    cfg = Config(repo_allowlist=(str(repo),))
+    probe = lambda _git_dir: True  # noqa: E731 - one expression, named for the assertion
+
+    permissive = capabilities.host_facts(
+        cfg, probes=_permissive(tmp_path), capability_probe=_probe_works, git_probe=probe
+    )
+    restricted = capabilities.host_facts(
+        cfg, probes=_restricted(tmp_path), capability_probe=_probe_fails, git_probe=probe
+    )
+    assert permissive["sandbox_modes"] != restricted["sandbox_modes"]
+    assert (
+        permissive["git_metadata_writable"]
+        == restricted["git_metadata_writable"]
+        == preflight.GIT_METADATA_SUPPORTED
+    )

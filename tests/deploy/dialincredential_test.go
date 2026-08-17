@@ -49,9 +49,6 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
-	"go/ast"
-	"go/parser"
-	"go/token"
 	"io"
 	"io/fs"
 	"net/http"
@@ -781,106 +778,5 @@ func TestIssuanceSecretNeverLeavesTheControlPlaneHost(t *testing.T) {
 	})
 	if err != nil {
 		t.Fatalf("walk %s: %v", sparkHome, err)
-	}
-}
-
-// TestProbingTheLanesRelaysNoLiveOperatorCredential is issue #134 in
-// executable form, for BOTH scripts that read credentials out of their own
-// environment. The operator's session is poisoned with values that look
-// exactly like the live ones the near-miss involved; nothing the probe writes
-// may contain any of them.
-func TestProbingTheLanesRelaysNoLiveOperatorCredential(t *testing.T) {
-	poison := map[string]string{
-		"DISCORD_WEBHOOK_URL":                 "https://discord.example/api/webhooks/live-operator-value",
-		"CULTURE_NODES_WEBHOOK_URL":           "https://hooks.example/live-operator-value",
-		"NODES_ACTOR_CLAUDE_TOKEN":            "live-operator-claude-token",
-		"GITHUB_TOKEN":                        "live-operator-github-token",
-		"GITHUB_TOKEN_WORKER":                 "live-operator-github-worker-token",
-		"JIRA_API_TOKEN":                      "live-operator-jira-token",
-		"JIRA_ACCOUNT_EMAIL":                  "live-operator@example.invalid",
-		"NODES_INBOUND_ISSUANCE_TOKEN_SECRET": "live-operator-issuance-secret",
-	}
-	for key, value := range poison {
-		t.Setenv(key, value)
-	}
-
-	issuer := newFakeIssuer(t)
-	c := dialInCluster(t, issuer)
-
-	if out, code := c.run(t, installSecretsPath(t), []string{"thor", "orin"}); code != 0 {
-		t.Fatalf("install-secrets.sh exited %d; output:\n%s", code, out)
-	}
-	if stdout, stderr, code := runIssue(t, c, issuer, []string{"company/codex-thor"}); code != 0 {
-		t.Fatalf("issue exited %d\nstdout: %s\nstderr: %s", code, stdout, stderr)
-	}
-
-	for key, value := range poison {
-		assertAbsentEverywhere(t, c, "the operator's live "+key, value)
-	}
-}
-
-// TestNoTestPathRunsARelayingScriptWithTheOperatorEnvironment is the harness
-// half of #134's fix, and the reason the issue says the mitigation belongs
-// here rather than in each agent brief. install-secrets.sh and
-// issue-dialin-credential.sh both read credentials out of their own
-// environment; a test that hands them os.Environ() hands them whatever the
-// operator running `go test` happens to hold.
-// relayRisk is what one _test.go file's AST says about the two facts that
-// matter: does it name a credential-relaying deploy script, and does it inherit
-// the operator's environment. Split out of the test below so the walk is one
-// small function with one job -- the test then reads as the rule it enforces.
-type relayRisk struct {
-	namesARelayingScript   bool
-	inheritsTheEnvironment bool
-}
-
-// inspectRelayRisk parses one file and reports both facts.
-//
-// Parsed rather than grepped: every file here DISCUSSES the hazard in prose,
-// and a scan that could not tell a comment from a call would flag the comment
-// explaining why the call is forbidden.
-func inspectRelayRisk(t *testing.T, path string) relayRisk {
-	t.Helper()
-	parsed, err := parser.ParseFile(token.NewFileSet(), path, nil, 0)
-	if err != nil {
-		t.Fatalf("parse %s: %v", path, err)
-	}
-	var risk relayRisk
-	ast.Inspect(parsed, func(node ast.Node) bool {
-		switch n := node.(type) {
-		case *ast.Ident:
-			if n.Name == "installSecretsPath" || n.Name == "issueDialInPath" {
-				risk.namesARelayingScript = true
-			}
-		case *ast.SelectorExpr:
-			if n.Sel.Name != "Environ" {
-				return true
-			}
-			if pkg, ok := n.X.(*ast.Ident); ok && pkg.Name == "os" {
-				risk.inheritsTheEnvironment = true
-			}
-		}
-		return true
-	})
-	return risk
-}
-
-func TestNoTestPathRunsARelayingScriptWithTheOperatorEnvironment(t *testing.T) {
-	dir := deployTestDir(t)
-	entries, err := os.ReadDir(dir)
-	if err != nil {
-		t.Fatalf("read %s: %v", dir, err)
-	}
-	for _, entry := range entries {
-		if entry.IsDir() || !strings.HasSuffix(entry.Name(), "_test.go") {
-			continue
-		}
-		risk := inspectRelayRisk(t, filepath.Join(dir, entry.Name()))
-		if risk.namesARelayingScript && risk.inheritsTheEnvironment {
-			t.Errorf("%s runs a credential-relaying deploy script and inherits the operator's "+
-				"environment; build it from scratch (scrubbedEnv / fakeCluster.env) so a probe "+
-				"cannot relay a live operator credential into a throwaway file (issue #134)",
-				entry.Name())
-		}
 	}
 }

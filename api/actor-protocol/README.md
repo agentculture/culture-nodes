@@ -182,6 +182,7 @@ absence, a null or an empty string reads as a fact about the host.
 | `confinement` | One sentence on what actually confines a session here — including "nothing", when that is the truth. |
 | `commit_policy` | Whether the session commits, and where a dispatch's changes end up. Always present. |
 | `writable_paths` | The paths a dispatch may write in. `[]` means nowhere, which is a fact rather than an absence. |
+| `git_metadata_writable` | Three-valued: `supported`, `unsupported-by-sandbox`, or `not-probed`. Whether a session can write under `.git` in a checkout it may write in — the qualifier `writable_paths` cannot carry. **Measured by attempting the write**, never derived from a sandbox mode name. |
 | `artifact_publish` | Three-valued publication fact: `supported`, `unsupported-by-host`, or `not-applicable-no-workspace`. The last value is explicit for bridges such as notify and human-inbox; it must not be represented by a silent skip. |
 | `dispatch_grants` | Mode → what that mode actually **grants** a session, from the fixed vocabulary `workspace-write`, `tmp-write`, `home-write`, `network-egress`, `nested-confinement`. Omitted by a bridge that runs no session. |
 | `toolchains` | Per tool: whether it is here, how it was packaged, what version it reports, and **which modes can actually run it** — with a reason per mode that cannot. Omitted by a bridge that dispatches no toolchain. |
@@ -215,6 +216,19 @@ could not start, every file write was silently lost, and shell commands kept
 running unconfined. A surface that echoed the config would have advertised
 `workspace-write` and been wrong in the one way that costs a whole session.
 `sandbox_modes_unavailable` is where that measurement becomes visible.
+
+`git_metadata_writable` (issue #94) is the same discipline applied one level
+down. `writable_paths` names a checkout, and a reader concludes a ref can be
+created in it; under codex's `workspace-write` the worktree is writable and
+`.git` is **not**, so `fetch`, `commit` and `update-ref` all fail with
+"Read-only file system" while editing files works fine. Two dispatched runs
+discovered that independently, each *after* its own write probe had passed —
+because the probe wrote a file. So the key is measured by attempting a write
+under `.git` itself, and a bridge that cannot attempt it **with a dispatched
+session's authority** reports `not-probed` rather than its own process's
+answer: a bridge whose sessions are confined more tightly than the bridge
+process would otherwise report `supported` on a host where no dispatch can
+write a ref, which is the misreading this key exists to end.
 
 ### Where a bridge's surface comes from
 

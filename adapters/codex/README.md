@@ -307,6 +307,7 @@ The document is exactly what an actor registration carries in
 | `confinement` | Whether the bubblewrap helper codex's confinement rests on can start here at all |
 | `commit_policy` | The `preserve_on_failure` / `preserve_push` / `preserve_remote` policy in force |
 | `writable_paths` | `repo_allowlist` — `[]` means this bridge writes nowhere |
+| `git_metadata_writable` | `not-probed` — codex confines a session with a helper this bridge process is not inside, so the write this process CAN make under `.git` is not the write a dispatch gets. Measured, not assumed, the moment a probe can run under codex's own sandbox (issue #94) |
 | `dispatch_grants` | What each `--sandbox` mode actually grants a session — writes, egress, the ability to start a nested confinement helper (issue #96) |
 | `toolchains` | `uv`, `go`, `gh` and `codex` itself: where each is, how it was packaged, what version it reports, and **which modes can actually run it** |
 

@@ -210,6 +210,7 @@ The document is exactly what an actor registration carries in
 | `confinement` | **none** — colleague isolates each work item in a throwaway git worktree, which bounds where changes land but not what the session can reach |
 | `commit_policy` | The `preserve_on_failure` / `preserve_push` / `preserve_remote` policy, plus colleague's own clauses: `open_pr` (a completed work item publishes a branch and opens a PR, so "harvest" is only half the story) and `allow_dirty` (a dispatch does not require a clean worktree) |
 | `writable_paths` | `repo_allowlist` — `[]` means this bridge writes nowhere |
+| `git_metadata_writable` | **Measured** by attempting a write under `.git` in an allowlisted checkout — following the `gitdir:` pointer of a linked worktree, which is what colleague dispatches into. A session here runs with this bridge process's own privileges (issue #94) |
 | `dispatch_grants` | What the one `unsandboxed` mode grants a session — everything this bridge process itself has (issue #96) |
 | `toolchains` | `uv`, `go`, `gh` and `colleague` itself: where each is, how it was packaged, what version it reports, and which modes can run it |
 

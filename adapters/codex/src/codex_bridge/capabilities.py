@@ -116,6 +116,37 @@ TOOLCHAINS = (
 )
 
 
+# --- git metadata writability (issue #94) ----------------------------------
+#
+# Why this bridge reports `git_metadata_writable: not-probed` rather than what
+# its own process can do.
+#
+# The measurement rule the shared module states: a bridge that confines its
+# sessions more tightly than the process building this surface must not report
+# the process's answer. codex is that bridge. This process is inside no
+# sandbox, so it writes under `.git` freely — while a `workspace-write`
+# session on the same host cannot, because codex carves `.git` out of its
+# writable roots (`codex_cli.git_writable_override`, and commit df7d974 at
+# refs/culture-nodes/probe on thor, which measured both halves). Reporting
+# `supported` from here would state, in the one field a consumer reads to
+# decide whether a handover ref can be created, the opposite of what a
+# dispatch gets.
+#
+# So the attempt is not made, and that is said out loud rather than guessed at
+# from a mode name in either direction. `not-probed` and NOT
+# `unsupported-by-sandbox`, because this bridge measured nothing: two of
+# codex's three modes carve `.git` out and `danger-full-access` does not, and
+# a dispatch can opt in per-run (`writable_git`) — a single scalar claiming
+# one answer for all of them would be the same class of invention.
+#
+# Making the attempt needs a non-billable way to run one command under `codex
+# exec`'s own sandbox. codex-cli 0.147.0 offers none this bridge can rely on:
+# `codex debug` has only models/app-server/prompt-input, and `codex sandbox`
+# refuses without a `[permissions]` table no deployed host configures. When
+# one exists, `host_facts(git_probe=...)` is where it goes — nothing else
+# changes.
+
+
 def host_facts(
     cfg: Config,
     *,
@@ -123,6 +154,7 @@ def host_facts(
     capability_probe: Callable[[], tuple[str, str]] | None = None,
     locate: Callable[[str], tuple[str | None, bool]] = preflight.locate_toolchain,
     version: Callable[[str], str | None] = preflight.toolchain_version,
+    git_probe: Callable[[Any], bool] | None = None,
 ) -> dict[str, Any]:
     """Measure this host and return the `host` block for its capability
     surface.
@@ -135,6 +167,14 @@ def host_facts(
     is found and asked its version — thor's snap-packaged uv and orin's
     standalone one are both test cases here, and neither host is the one
     running pytest.
+
+    *git_probe* is the write attempt behind `git_metadata_writable` (issue
+    #94), and its default here is `None` — the one backend of the four where
+    that is the honest default; the section comment above explains why. It is
+    a parameter rather than a hard-coded value precisely so a caller that CAN
+    attempt the write with a dispatched session's authority — the session
+    itself, running `python3 -m codex_bridge.preflight --git-metadata <repo>`
+    — measures it with the same function every other bridge measures it with.
     """
     available, unavailable = preflight.measure_sandbox_modes(
         SANDBOX_MODE_CANDIDATES,
@@ -146,6 +186,7 @@ def host_facts(
     # mode the kernel already ruled out must not be reported as a place a
     # toolchain works.
     grants = preflight.dispatch_grants({mode: _MODE_GRANTS[mode] for mode in available})
+    writable_paths = list(cfg.repo_allowlist + cfg.repo_allowlist_prefixes)
     return preflight.host_block(
         hostname=preflight.hostname(),
         sandbox_modes=available,
@@ -166,7 +207,12 @@ def host_facts(
             push=cfg.preserve_push,
             remote=cfg.preserve_remote,
         ),
-        writable_paths=list(cfg.repo_allowlist + cfg.repo_allowlist_prefixes),
+        writable_paths=writable_paths,
+        # `writable_paths` above is the fact issue #94 says gets misread, and
+        # this is the qualifier it needs. See the section comment above.
+        git_metadata_writable=preflight.measure_git_metadata_writable(
+            writable_paths, probe=git_probe
+        ),
         artifact_publish="unsupported-by-host",
         # Which revision of THIS bridge is answering (task t32, issue #120
         # item 4). Measured from the module object rather than from a

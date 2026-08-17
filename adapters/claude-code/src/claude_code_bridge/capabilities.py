@@ -84,6 +84,7 @@ def host_facts(
     probes: Sequence[tuple[str, str]] = preflight.USERNS_SYSCTLS,
     locate: Callable[[str], tuple[str | None, bool]] = preflight.locate_toolchain,
     version: Callable[[str], str | None] = preflight.toolchain_version,
+    git_probe: Callable[[Any], bool] | None = preflight.probe_git_metadata_write,
 ) -> dict[str, Any]:
     """Measure this host and return the `host` block for its capability
     surface.
@@ -99,6 +100,15 @@ def host_facts(
     what this surface says about a host that has a snap-packaged uv and about
     one that has a standalone binary, neither of which is the host running
     pytest.
+
+    *git_probe* is the write attempt behind `git_metadata_writable` (issue
+    #94), injectable so a test can assert both a checkout whose `.git` accepts
+    a write and one whose `.git` refuses it — the second is the state that
+    matters and it is not the state of the machine running pytest. The default
+    is the real attempt, and on THIS backend the process making it has exactly
+    a dispatched session's authority: `claude -p` takes no sandbox flag and
+    runs with this bridge's own privileges (`_CONFINEMENT`), so what this
+    process may write under `.git` is what a session may write under it.
     """
     available, unavailable = preflight.measure_sandbox_modes(
         SANDBOX_MODE_CANDIDATES,
@@ -106,6 +116,7 @@ def host_facts(
         probes=probes,
     )
     grants = preflight.dispatch_grants({mode: _MODE_GRANTS[mode] for mode in available})
+    writable_paths = list(cfg.repo_allowlist + cfg.repo_allowlist_prefixes)
     return preflight.host_block(
         hostname=preflight.hostname(),
         sandbox_modes=available,
@@ -122,7 +133,15 @@ def host_facts(
             push=cfg.preserve_push,
             remote=cfg.preserve_remote,
         ),
-        writable_paths=list(cfg.repo_allowlist + cfg.repo_allowlist_prefixes),
+        writable_paths=writable_paths,
+        # The fact `writable_paths` above cannot state (issue #94): a reader
+        # who sees a checkout listed there concludes a ref can be created in
+        # it, and on a backend that carves `.git` out of its writable roots
+        # that is false. MEASURED by attempting the write, never derived from
+        # a mode name.
+        git_metadata_writable=preflight.measure_git_metadata_writable(
+            writable_paths, probe=git_probe
+        ),
         artifact_publish="unsupported-by-host",
         # Which revision of THIS bridge is answering (task t32, issue #120
         # item 4). Measured from the module object rather than from a

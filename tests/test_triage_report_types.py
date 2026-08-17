@@ -1,0 +1,291 @@
+"""Tests for the issue-type dimension scripts/triage-report.py grew.
+
+The type read is deliberately the only new GitHub call, and it is per-issue
+GraphQL. The search `type:` / `no:type` qualifiers are not an option here: they
+fail OPEN (`type:NotARealType` returns 0 results rather than an error) and the
+search index lags writes, so a report built on them would show a confident zero
+for a type that exists and a stale count right after a backfill.
+"""
+
+from __future__ import annotations
+
+import csv
+import importlib.util
+import json
+import re
+from pathlib import Path
+
+import pytest
+
+ROOT = Path(__file__).parents[1]
+SCRIPT = ROOT / "scripts" / "triage-report.py"
+SPEC = importlib.util.spec_from_file_location("triage_report", SCRIPT)
+MODULE = importlib.util.module_from_spec(SPEC)
+assert SPEC.loader
+SPEC.loader.exec_module(MODULE)
+
+ORG_TYPES = [
+    {"id": "IT_task", "name": "Task", "isEnabled": True},
+    {"id": "IT_bug", "name": "Bug", "isEnabled": True},
+    {"id": "IT_feature", "name": "Feature", "isEnabled": True},
+    {"id": "IT_record", "name": "Record", "isEnabled": True},
+]
+SINCE = "2026-08-01T00:00:00Z"
+
+
+class FakeGh:
+    """The `gh` seam: (command) -> (returncode, stdout, stderr)."""
+
+    def __init__(self, open_issues=(), closed_issues=(), org_types=None, fail=False):
+        self.open_issues = list(open_issues)
+        self.closed_issues = list(closed_issues)
+        self.org_types = ORG_TYPES if org_types is None else org_types
+        self.fail = fail
+        self.commands: list[list[str]] = []
+
+    def __call__(self, command):
+        self.commands.append(list(command))
+        if self.fail:
+            return 1, "", "HTTP 403: Resource not accessible by integration"
+        query = ""
+        for index, token in enumerate(command):
+            if token == "-f" and command[index + 1].startswith("query="):
+                query = command[index + 1]
+        if "issueTypes" in query:
+            payload = {"data": {"organization": {"issueTypes": {"nodes": self.org_types}}}}
+            return 0, json.dumps(payload), ""
+        nodes = self.closed_issues if "CLOSED" in query else self.open_issues
+        payload = {
+            "data": {
+                "repository": {
+                    "issues": {
+                        "pageInfo": {"hasNextPage": False, "endCursor": None},
+                        "nodes": nodes,
+                    }
+                }
+            }
+        }
+        return 0, json.dumps(payload), ""
+
+
+def issue(number, type_name=None, closed_at=None):
+    node = {"number": number, "issueType": None if type_name is None else {"name": type_name}}
+    if closed_at:
+        node["closedAt"] = closed_at
+    return node
+
+
+def fixtures(tmp_path, numbers):
+    issues_json = tmp_path / "issues.json"
+    issues_json.write_text(json.dumps([{"number": n} for n in numbers]), encoding="utf-8")
+    table = tmp_path / "dispositions.csv"
+    with table.open("w", encoding="utf-8", newline="") as handle:
+        writer = csv.writer(handle)
+        writer.writerow(["issue", "bucket", "disposition", "evidence_pointer"])
+        for number in numbers:
+            writer.writerow([number, "finish work", "planned", "fixture"])
+    return issues_json, table
+
+
+def run_main(tmp_path, numbers, gh, extra=()):
+    issues_json, table = fixtures(tmp_path, numbers)
+    argv = [
+        "--issues-json",
+        str(issues_json),
+        "--table",
+        str(table),
+        "--output",
+        str(tmp_path / "open-issues.md"),
+        "--closed-since",
+        SINCE,
+        "--backoff-seconds",
+        "0",
+        *extra,
+    ]
+    return MODULE.main(argv, invoke=gh)
+
+
+def test_types_are_never_read_through_a_search_query(tmp_path):
+    gh = FakeGh(open_issues=[issue(5, "Bug"), issue(6)])
+
+    assert run_main(tmp_path, [5, 6], gh) == 0
+
+    assert gh.commands, "the report must actually read types"
+    for command in gh.commands:
+        joined = " ".join(command)
+        assert command[:3] == ["gh", "api", "graphql"], command
+        assert "search" not in joined
+        assert "no:type" not in joined
+        assert "type:" not in joined
+
+
+def test_the_source_carries_no_search_qualifier():
+    source = SCRIPT.read_text(encoding="utf-8")
+    body = "\n".join(line for line in source.splitlines() if not line.lstrip().startswith("#"))
+    assert "no:type" not in body
+    assert '"search"' not in body
+
+
+def test_unknown_type_name_exits_non_zero_rather_than_counting_zero(tmp_path, capsys):
+    gh = FakeGh(open_issues=[issue(5, "Bogus"), issue(6, "Task")])
+
+    code = run_main(tmp_path, [5, 6], gh)
+
+    err = capsys.readouterr().err
+    assert code == 1
+    assert "Bogus" in err
+
+
+def test_type_names_come_from_the_org_at_run_time(tmp_path):
+    gh = FakeGh(open_issues=[issue(5, "Task")])
+    run_main(tmp_path, [5], gh)
+
+    queries = [
+        argument for command in gh.commands for argument in command if argument.startswith("query=")
+    ]
+    assert any("issueTypes" in query and "organization" in query for query in queries)
+
+
+def test_a_failing_type_read_exits_2_not_1(tmp_path, capsys):
+    gh = FakeGh(fail=True)
+
+    code = run_main(tmp_path, [5], gh)
+
+    assert code == 2
+    assert "could not" in capsys.readouterr().err.lower()
+
+
+def test_the_type_read_reuses_the_shared_retry(tmp_path):
+    gh = FakeGh(fail=True)
+    run_main(tmp_path, [5], gh)
+    assert len(gh.commands) == MODULE.GH_ATTEMPTS
+
+    source = SCRIPT.read_text(encoding="utf-8")
+    assert source.count("for attempt in range(1, GH_ATTEMPTS + 1)") == 1
+    assert source.count("class GitHubUnreachable") == 1
+
+
+def test_rendered_table_carries_open_and_closed_type_blocks(tmp_path):
+    gh = FakeGh(
+        open_issues=[issue(5, "Bug"), issue(6, "Task"), issue(7)],
+        closed_issues=[
+            issue(1, "Record", "2026-08-10T00:00:00Z"),
+            issue(2, "Task", "2026-08-11T00:00:00Z"),
+            issue(3, "Record", "2026-07-01T00:00:00Z"),
+        ],
+    )
+    output = tmp_path / "open-issues.md"
+    issues_json, table = fixtures(tmp_path, [5, 6, 7])
+    code = MODULE.main(
+        [
+            "--issues-json",
+            str(issues_json),
+            "--table",
+            str(table),
+            "--output",
+            str(output),
+            "--closed-since",
+            SINCE,
+            "--backoff-seconds",
+            "0",
+        ],
+        invoke=gh,
+    )
+    assert code == 0
+
+    content = output.read_text(encoding="utf-8")
+    assert "Open issues by type" in content
+    assert "closed since" in content.lower()
+    open_block, _, closed_block = content.partition("closed since")
+    assert "| Bug | 1 |" in open_block
+    assert "| (no type) | 1 |" in open_block
+    # The closed block counts one Record: the third closed before the boundary.
+    assert "| Record | 1 |" in closed_block
+    assert "| Task | 1 |" in closed_block
+
+
+def test_every_type_count_names_the_date_typing_began(tmp_path):
+    gh = FakeGh(
+        open_issues=[issue(5, "Bug"), issue(6)],
+        closed_issues=[issue(1, "Record", "2026-08-10T00:00:00Z")],
+    )
+    output = tmp_path / "open-issues.md"
+    issues_json, table = fixtures(tmp_path, [5, 6])
+    MODULE.main(
+        [
+            "--issues-json",
+            str(issues_json),
+            "--table",
+            str(table),
+            "--output",
+            str(output),
+            "--closed-since",
+            SINCE,
+            "--backoff-seconds",
+            "0",
+        ],
+        invoke=gh,
+    )
+
+    content = output.read_text(encoding="utf-8")
+    type_rows = [
+        line
+        for line in content.splitlines()
+        if re.match(r"^\| (Task|Bug|Feature|Record|\(no type\)) \|", line)
+    ]
+    # Bug, (no type) in the open block; Record in the closed block.
+    assert len(type_rows) >= 3, content
+    for line in type_rows:
+        assert MODULE.TYPING_BEGAN in line, line
+
+
+def test_the_bucket_table_and_its_six_buckets_are_untouched(tmp_path):
+    gh = FakeGh(open_issues=[issue(5, "Bug")])
+    output = tmp_path / "open-issues.md"
+    issues_json, table = fixtures(tmp_path, [5])
+    MODULE.main(
+        [
+            "--issues-json",
+            str(issues_json),
+            "--table",
+            str(table),
+            "--output",
+            str(output),
+            "--closed-since",
+            SINCE,
+            "--backoff-seconds",
+            "0",
+        ],
+        invoke=gh,
+    )
+
+    content = output.read_text(encoding="utf-8")
+    assert "| Issue | Bucket | Disposition | Evidence pointer |" in content
+    assert "| #5 | finish work | planned | fixture |" in content
+    assert "Open issues with dispositions: 1" in content
+    assert MODULE.BUCKETS == {
+        "verify-then-close",
+        "operator-lane enablers",
+        "bug tail",
+        "finish work",
+        "owner decisions",
+        "large bets",
+    }
+
+
+def test_dispositions_csv_keeps_its_exact_four_column_header():
+    header = (
+        (ROOT / "docs" / "triage" / "dispositions.csv").read_text(encoding="utf-8").splitlines()[0]
+    )
+    assert header == "issue,bucket,disposition,evidence_pointer"
+
+
+def test_count_by_type_rejects_a_name_the_org_does_not_define():
+    with pytest.raises(ValueError):
+        MODULE.count_by_type([{"type": "Bogus"}], ["Task", "Bug"])
+
+
+def test_issue_types_is_one_replaceable_function():
+    """c31: a future `gitculture issue list --json issueType` replaces one call."""
+    assert callable(MODULE.issue_types)
+    assert "gitculture" in (MODULE.issue_types.__doc__ or "")

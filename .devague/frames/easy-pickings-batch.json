@@ -1,0 +1,956 @@
+{
+  "slug": "easy-pickings-batch",
+  "title": "easy-pickings batch",
+  "schema_version": 5,
+  "status": "exported",
+  "created": "2026-08-17T13:13:49Z",
+  "updated": "2026-08-17T14:48:18Z",
+  "claims": [
+    {
+      "id": "c1",
+      "kind": "announcement",
+      "text": "Ten open issues close in one batch without any of them being triaged first: each one's fix was already written down in the issue itself, so the work was to apply it, prove it, and close the record",
+      "origin": "user",
+      "status": "confirmed",
+      "honesty_conditions": [
+        {
+          "id": "h1",
+          "text": "none of the ten required an owner decision during execution: if any turns out to need a choice, it is pulled from the batch and recorded as a deviation, not resolved in-session",
+          "status": "confirmed",
+          "instruction": ""
+        }
+      ],
+      "hard_questions": [],
+      "links": [],
+      "instruction": "Execute the four PRs in order PR1..PR4 (c24). Any issue that develops a decision mid-flight leaves the batch through /deviate rather than being decided in-session.",
+      "revisions": []
+    },
+    {
+      "id": "c2",
+      "kind": "requirement",
+      "text": "the batch's selection rule: an issue qualifies only if docs/triage/open-issues.md already carries a disposition for it AND that disposition names an action rather than a decision \u2014 the table has 56 dispositions, so 'without triage' means 'triage already happened', not 'skip it'",
+      "origin": "llm",
+      "status": "confirmed",
+      "honesty_conditions": [
+        {
+          "id": "h2",
+          "text": "each of the ten can be pointed at a row in docs/triage/open-issues.md whose disposition reads as an imperative, and each excluded near-miss at one that reads as a choice",
+          "status": "confirmed",
+          "instruction": ""
+        }
+      ],
+      "hard_questions": [],
+      "links": [],
+      "instruction": "Before touching code, re-run scripts/triage-report.py and diff the table: if a selected issue's disposition has shifted to a choice, drop it from the batch rather than deciding it.",
+      "revisions": []
+    },
+    {
+      "id": "c3",
+      "kind": "requirement",
+      "text": "#153: scripts/merge-gate.py:375-394 local_outcome returns inside the loop, so matrix order decides the verdict; the issue supplies the corrected count-then-decide body verbatim, mirroring internal/handover.GateResults.Outcome, plus a shuffle test in tests/test_merge_gate.py",
+      "origin": "llm",
+      "status": "confirmed",
+      "honesty_conditions": [
+        {
+          "id": "h3",
+          "text": "a test shuffles the gate entries and asserts an unchanged outcome, and that test FAILS against the pre-fix implementation \u2014 order-independence is proved by a failing-first test, not asserted",
+          "status": "confirmed",
+          "instruction": ""
+        }
+      ],
+      "hard_questions": [],
+      "links": [],
+      "instruction": "Rewrite local_outcome to count failures across ALL entries before returning; add tests/test_merge_gate.py::test_local_outcome_is_order_independent permuting a [failing, unavailable] matrix and asserting changes_required for every permutation.",
+      "revisions": []
+    },
+    {
+      "id": "c4",
+      "kind": "requirement",
+      "text": "#152: examples/merge-gate/workflow.yaml:331-337 pins command ['uv','run','flake8','adapters'], which walks adapters/*/.venv; naming explicit paths the way adapter-codex.yml does is a one-entry edit. The real findings it hides are live today: 'uv run flake8 adapters/*/src adapters/*/tests' returns 7, all in adapters/human-inbox (F401 x5, E402 x2)",
+      "origin": "llm",
+      "status": "confirmed",
+      "honesty_conditions": [
+        {
+          "id": "h4",
+          "text": "after the fix 'uv run flake8 adapters/*/src adapters/*/tests' returns 0 findings, and the pinned matrix command yields the same verdict on a checkout with adapters/*/.venv present as on one without",
+          "status": "confirmed",
+          "instruction": ""
+        }
+      ],
+      "hard_questions": [],
+      "links": [],
+      "instruction": "Replace the adapter-lint command with the explicit per-adapter src/tests paths the CI workflows already use; then clear the 7 flake8 findings in adapters/human-inbox (drop the unused imports; move or justify nudge.py's two late imports).",
+      "revisions": []
+    },
+    {
+      "id": "c5",
+      "kind": "requirement",
+      "text": "#148: merge-gate.py reads exactly twelve gate keys (gate, suite, instrument, requires, reaches, responsible_for, command, measurement, repair, cwd, timeout_seconds, version_command \u2014 lines 246-353); anything else is accepted in silence, so a known-key set plus a refusal is a closed, mechanical change",
+      "origin": "llm",
+      "status": "confirmed",
+      "honesty_conditions": [
+        {
+          "id": "h5",
+          "text": "a matrix entry carrying a key the parser does not read is refused by name, and the refusal is exercised by scripts/validate-examples.sh rather than only by a live dispatch",
+          "status": "confirmed",
+          "instruction": ""
+        }
+      ],
+      "hard_questions": [],
+      "links": [],
+      "instruction": "Add a module-level frozenset of the 12 keys the parser reads; refuse any gate entry carrying another key, naming it and listing the valid set in the hint. Extend scripts/validate-examples.sh to run each example's matrix through that validation.",
+      "revisions": []
+    },
+    {
+      "id": "c6",
+      "kind": "requirement",
+      "text": "#146: scripts/toolchain-baseline.sh:93-101 capture() redirects measure output straight into the baseline file, truncating it before the probe's status is known, and the loop swallows failure; temp-file-then-mv plus a per-host failure tally is ~10 lines in one function",
+      "origin": "llm",
+      "status": "confirmed",
+      "honesty_conditions": [
+        {
+          "id": "h6",
+          "text": "a capture against an unreachable host leaves the committed baseline byte-identical and exits non-zero, naming the host it could not measure",
+          "status": "confirmed",
+          "instruction": ""
+        }
+      ],
+      "hard_questions": [],
+      "links": [],
+      "instruction": "In capture(), measure to a temp file, verify it parses as JSON, then mv -f into the baseline path; accumulate per-host failures and exit non-zero naming every host that could not be measured.",
+      "revisions": []
+    },
+    {
+      "id": "c7",
+      "kind": "requirement",
+      "text": "#131: CLAUDE.md's 'Mesh identity' section describes three doctor checks; culture_nodes/cli/_commands/doctor.py implements a fourth (_userns_check) and teken cli doctor --strict reports checks=4 \u2014 a one-sentence correction the owner already confirmed against live output in the issue",
+      "origin": "llm",
+      "status": "confirmed",
+      "honesty_conditions": [
+        {
+          "id": "h7",
+          "text": "CLAUDE.md names the fourth check rather than only counting to four, and the number matches what 'uv run teken cli doctor . --strict' reports",
+          "status": "confirmed",
+          "instruction": ""
+        }
+      ],
+      "hard_questions": [],
+      "links": [],
+      "instruction": "Edit CLAUDE.md's Mesh identity paragraph to name unprivileged_userns as the fourth check alongside the backend-to-prompt-file mapping, prompt-file-present and skills-present.",
+      "revisions": []
+    },
+    {
+      "id": "c8",
+      "kind": "requirement",
+      "text": "#123: no scripts/lint-all.sh exists today (ls scripts/ shows 22 scripts, none of them); the three lint jobs live in .github/workflows/tests.yml, adapter-codex.yml and adapter-claude-code.yml, and CLAUDE.md already carries both invocation styles verbatim \u2014 a script that IS what CI calls is transcription, not design",
+      "origin": "llm",
+      "status": "confirmed",
+      "honesty_conditions": [
+        {
+          "id": "h8",
+          "text": "the three lint workflows invoke scripts/lint-all.sh (or a per-job subset of it), so a green local run of that one script and a red CI lint job cannot coexist",
+          "status": "confirmed",
+          "instruction": ""
+        }
+      ],
+      "hard_questions": [],
+      "links": [],
+      "instruction": "Write scripts/lint-all.sh carrying all three lint jobs verbatim (root scope; adapter-codex from the repo root; adapter-claude-code from its own directory), then have each workflow invoke it with a job selector so CI and local run the same text.",
+      "revisions": []
+    },
+    {
+      "id": "c9",
+      "kind": "requirement",
+      "text": "#150: internal/api/server.go:424-431 registers exactly four undocumented inbound routes (POST inbound/poll, inbound/{id}/complete, inbound/credentials, inbound/credentials/revoke) while GET /v1alpha1/dial-in-presence at openapi.yaml:721 and its three schemas at :4471 are already specified \u2014 the write side is transcribed from Go types that exist",
+      "origin": "llm",
+      "status": "confirmed",
+      "honesty_conditions": [
+        {
+          "id": "h9",
+          "text": "all four inbound routes appear in openapi.yaml with the 204-empty-body idle response, both authentication headers, and issuance's reveal-once semantic stated explicitly \u2014 and the contract sweep that walks documented paths now walks them",
+          "status": "confirmed",
+          "instruction": ""
+        }
+      ],
+      "hard_questions": [],
+      "links": [],
+      "instruction": "Add the four inbound operations to api/openapi/openapi.yaml beside the existing dial-in-presence path, transcribing schemas from internal/api/inboundcredentials.go and the inbound poll handler; pin the 204-empty-body idle response, both auth headers, and reveal-once explicitly.",
+      "revisions": []
+    },
+    {
+      "id": "c10",
+      "kind": "requirement",
+      "text": "#66: internal/notifier/rundetail.go fills Payload.Workflow from run.workflow_digest and internal/notify/payload.go renders an empty actor as a dangling '(actor: )'; the issue fixes the rendering format explicitly \u2014 'parallel-live-proof (8d4c768)' \u2014 and omitting an absent field needs no decision",
+      "origin": "llm",
+      "status": "rejected",
+      "honesty_conditions": [
+        {
+          "id": "h10",
+          "text": "a notifier message for a run whose node has no agent actor contains no actor line at all, and the workflow field reads as a key plus a short digest rather than 64 hex characters",
+          "status": "rejected",
+          "instruction": ""
+        }
+      ],
+      "hard_questions": [
+        {
+          "id": "q1",
+          "text": "contradiction with c26: #66's rendering fix and its test are already at HEAD (rundetail.go workflowLabel/shortDigest/workflowKeyCache, payload.go:109,119, rundetail_test.go:222) \u2014 c10 describes a defect that no longer exists?",
+          "resolved": true,
+          "blocking": true,
+          "resolution": "Upheld: #66 is already shipped at HEAD with its test. c10 is rejected; #66 leaves the fix batch and closes as verify-then-close citing internal/notifier/rundetail_test.go:222. Two replacements are backfilled from the bug tail so the batch still clears ten."
+        }
+      ],
+      "links": [],
+      "instruction": "In internal/notifier/rundetail.go resolve the workflow key from the digest via the workflows surface behind a small immutable-mapping cache and render '<key> (<short-digest>)'; in internal/notify/payload.go omit the actor field and the '(actor: )' fragment entirely when the actor is empty.",
+      "revisions": []
+    },
+    {
+      "id": "c11",
+      "kind": "requirement",
+      "text": "#134: deploy/prod/install-secrets.sh:313 relays DISCORD_WEBHOOK_URL from the invoking environment; the owner decision (note-and-continue, no rotation) is already recorded on the issue, and the named residual is to scrub relay inputs in the test harness that already controls HOME per host",
+      "origin": "llm",
+      "status": "confirmed",
+      "honesty_conditions": [
+        {
+          "id": "h11",
+          "text": "running the install-secrets test harness with DISCORD_WEBHOOK_URL set in the invoking environment produces prod.env files that do not contain its value",
+          "status": "confirmed",
+          "instruction": ""
+        }
+      ],
+      "hard_questions": [],
+      "links": [],
+      "instruction": "Unset the relay-input variables inside the install-secrets test harness itself (it already controls HOME per host), and add a test asserting a generated prod.env contains no value that was present only in the invoking environment.",
+      "revisions": []
+    },
+    {
+      "id": "c12",
+      "kind": "requirement",
+      "text": "#151: the issue supplies the four-step deploy sequence verbatim (issuance secret first, deploy, re-issue, verify with 'nodes actors dial-in --absent-only'); folding it into deploy/prod's runbook \u2014 better, making install-secrets.sh add the secret idempotently \u2014 is transcription of a sequence already performed once on thor",
+      "origin": "llm",
+      "status": "rejected",
+      "honesty_conditions": [
+        {
+          "id": "h12",
+          "text": "the runbook's issuance-secret step precedes the deploy step and is idempotent \u2014 running it twice leaves exactly one NODES_INBOUND_ISSUANCE_TOKEN_SECRET line",
+          "status": "rejected",
+          "instruction": ""
+        }
+      ],
+      "hard_questions": [
+        {
+          "id": "q2",
+          "text": "contradiction with c27: #151's runbook ordering (README.md:14-16), idempotent add-if-absent issuance install (install-secrets.sh:436-455) and re-issue script (issue-dialin-credential.sh) are already at HEAD \u2014 c12 describes transcription work that is largely done?",
+          "resolved": true,
+          "blocking": true,
+          "resolution": "Upheld: #151's runbook ordering, idempotent add-if-absent issuance install and re-issue script are already at HEAD. c12 is rejected; #151 closes as verify-then-close citing deploy/prod/README.md:14-16 and install-secrets.sh:436-455."
+        }
+      ],
+      "links": [],
+      "instruction": "Add the issuance-secret step to the deploy runbook ahead of deploy.sh, implemented as an idempotent add-if-absent in install-secrets.sh, and cite 'nodes actors dial-in --absent-only' as the post-deploy verification.",
+      "revisions": []
+    },
+    {
+      "id": "c13",
+      "kind": "non_goal",
+      "text": "no issue whose disposition still contains a choice enters this batch: #125 ('decide where repo comes from'), #129 ('decide whether the orphan sweep is a deliberate trade-off'), #133 ('either the rotation refreshes the URL, or the audit reports it'), #135 ('settle whether env_has or env_get is right'), #119 ('pick one of four options'), #140 (rename) \u2014 every one of those is a decision wearing a bug's clothes",
+      "origin": "llm",
+      "status": "confirmed",
+      "honesty_conditions": [],
+      "hard_questions": [],
+      "links": [],
+      "instruction": "",
+      "revisions": []
+    },
+    {
+      "id": "c14",
+      "kind": "non_goal",
+      "text": "#116 is excluded despite sitting in the bug tail: the issue says in its own words 'Observed, not diagnosed' and points at where the defect is probably NOT (actorstats.go:452-466 reads correctly), so it needs an investigation of how started_at is stamped on the async callback path before it needs a patch",
+      "origin": "llm",
+      "status": "confirmed",
+      "honesty_conditions": [],
+      "hard_questions": [],
+      "links": [],
+      "instruction": "",
+      "revisions": []
+    },
+    {
+      "id": "c15",
+      "kind": "boundary",
+      "text": "#152 has two fixes and this batch takes only the first: explicit paths in the pinned matrix. The structural version \u2014 refusing a command whose argument list contains a git-untracked path, or running gates against a clean export of the commit \u2014 is a design change to the gate's contract and stays open after the batch",
+      "origin": "llm",
+      "status": "confirmed",
+      "honesty_conditions": [
+        {
+          "id": "h15",
+          "text": "#152 is closed only for the explicit-paths half, and the structural half (refusing untracked paths / gating a clean export) is left on the record as an open successor rather than quietly dropped",
+          "status": "confirmed",
+          "instruction": ""
+        }
+      ],
+      "hard_questions": [],
+      "links": [],
+      "instruction": "When closing #152, state in the closing comment that only the explicit-paths half is done and open (or leave open) the structural half rather than closing the issue outright.",
+      "revisions": []
+    },
+    {
+      "id": "c16",
+      "kind": "boundary",
+      "text": "nothing in the batch mutates production: #136 (five actors at a dead LAN address), #128 (redeploy thor and the codex bridges), #121 (apply migration 0036) all need a deploy or a live re-registration on thor/orin. Every selected issue is verifiable by the repo's own CI, which is what makes 'easy' true rather than merely 'small'",
+      "origin": "llm",
+      "status": "confirmed",
+      "honesty_conditions": [
+        {
+          "id": "h16",
+          "text": "no command run in service of the batch writes to thor or orin, applies a migration, or restarts a bridge \u2014 the batch's whole verification story is 'git push and read CI'",
+          "status": "confirmed",
+          "instruction": ""
+        }
+      ],
+      "hard_questions": [],
+      "links": [],
+      "instruction": "Verify by absence: no ssh, no deploy.sh, no migration apply, no bridge restart appears anywhere in the batch's command history.",
+      "revisions": []
+    },
+    {
+      "id": "c17",
+      "kind": "assumption",
+      "text": "the batch obeys the repo's two standing merge constraints without needing to rediscover them: every PR bumps the version (the version-check job blocks merge otherwise), and any edit to a shared adapter bridge module is formatted once and copied to all five, because tests/lint/ enforces byte-identity and per-adapter formatting is exactly how #123 happened",
+      "origin": "llm",
+      "status": "confirmed",
+      "honesty_conditions": [
+        {
+          "id": "h13",
+          "text": "every PR in the batch carries a version bump, and any shared adapter bridge module it touches is byte-identical across all five adapters afterwards (tests/lint/ passes)",
+          "status": "confirmed",
+          "instruction": ""
+        }
+      ],
+      "hard_questions": [],
+      "links": [],
+      "instruction": "",
+      "revisions": []
+    },
+    {
+      "id": "c18",
+      "kind": "audience",
+      "text": "the operator running culture-nodes cycles, who currently reads a 56-row triage table and cannot tell from it which rows are ready to execute; and the next reader of the backlog, who should be able to see the batch shrink the tail without wondering what was skipped",
+      "origin": "llm",
+      "status": "confirmed",
+      "honesty_conditions": [
+        {
+          "id": "h17",
+          "text": "an operator who did not run this batch can read the regenerated triage table plus the delivery record and tell which rows closed and which were deliberately left, without asking anyone",
+          "status": "confirmed",
+          "instruction": ""
+        }
+      ],
+      "hard_questions": [],
+      "links": [],
+      "instruction": "",
+      "revisions": []
+    },
+    {
+      "id": "c19",
+      "kind": "before_state",
+      "text": "56 open issues all carry a disposition, and the ones whose fix is fully written down sit in the same undifferentiated list as the ones that need an owner to choose. docs/deliveries/close-the-backlog-bootstrap-honesty.md records the backlog growing net-positive every day since 2026-08-08, so the determined fixes are being outpaced by new findings rather than being cheap to clear",
+      "origin": "llm",
+      "status": "confirmed",
+      "honesty_conditions": [
+        {
+          "id": "h18",
+          "text": "the 56-row count and the net-positive backlog growth are both citable \u2014 the first from docs/triage/open-issues.md's own footer, the second from docs/deliveries/close-the-backlog-bootstrap-honesty.md",
+          "status": "confirmed",
+          "instruction": ""
+        }
+      ],
+      "hard_questions": [],
+      "links": [],
+      "instruction": "",
+      "revisions": []
+    },
+    {
+      "id": "c20",
+      "kind": "why_it_matters",
+      "text": "the expensive part of a backlog is deciding, not typing. Ten issues whose fix is already written down are pure execution, and leaving them in the queue makes the queue look harder than it is \u2014 which is how a tail that could close in four PRs reads as a program of work",
+      "origin": "llm",
+      "status": "confirmed",
+      "honesty_conditions": [
+        {
+          "id": "h19",
+          "text": "each of the ten closes without an owner being asked a question during execution; if any needs one, that issue is the counterexample and the claim is weakened in the delivery record rather than restated",
+          "status": "confirmed",
+          "instruction": ""
+        }
+      ],
+      "hard_questions": [],
+      "links": [],
+      "instruction": "",
+      "revisions": []
+    },
+    {
+      "id": "c21",
+      "kind": "after_state",
+      "text": "ten issues are closed across four themed PRs, each PR green on the repo's own CI, and every closure cites the change that closed it. The triage table regenerates to 46 open dispositions, and the batch's own boundary is on the record: what was deliberately NOT taken, and why (a decision, a diagnosis, or a live prod mutation)",
+      "origin": "llm",
+      "status": "rejected",
+      "honesty_conditions": [
+        {
+          "id": "h14",
+          "text": "the regenerated triage table has ten fewer rows, and the delivery record names what was deliberately NOT taken and under which of the three exclusion reasons",
+          "status": "rejected",
+          "instruction": ""
+        }
+      ],
+      "hard_questions": [],
+      "links": [],
+      "instruction": "",
+      "revisions": []
+    },
+    {
+      "id": "c22",
+      "kind": "success_signal",
+      "text": "docs/triage/open-issues.md regenerates with ten fewer rows; the merge gate's own pinned matrix returns changes_required rather than measurement_incomplete on a branch with a real failure (#153's fix, proved on the batch itself); and 'uv run flake8 adapters/*/src adapters/*/tests' returns 0 findings",
+      "origin": "llm",
+      "status": "rejected",
+      "honesty_conditions": [
+        {
+          "id": "h20",
+          "text": "all three signals are measured, not asserted: the regenerated table is committed, the changes_required verdict is produced by an actual gate run on a branch with a real failure, and the flake8 count is a command anyone can re-run",
+          "status": "rejected",
+          "instruction": ""
+        }
+      ],
+      "hard_questions": [],
+      "links": [],
+      "instruction": "",
+      "revisions": []
+    },
+    {
+      "id": "c23",
+      "kind": "boundary",
+      "text": "the batch is repo-only and CI-provable: no deploy, no live re-registration, no migration applied, no bridge restarted. An issue that can only be closed by touching thor or orin is out by construction, however small it looks",
+      "origin": "llm",
+      "status": "confirmed",
+      "honesty_conditions": [
+        {
+          "id": "h21",
+          "text": "if any selected issue turns out to need a prod touch to close, it leaves the batch and is recorded as a deviation rather than the boundary being widened to fit it",
+          "status": "confirmed",
+          "instruction": ""
+        }
+      ],
+      "hard_questions": [],
+      "links": [],
+      "instruction": "If a selected issue turns out to need a prod touch, stop and run /deviate rather than widening the boundary to fit it.",
+      "revisions": []
+    },
+    {
+      "id": "c24",
+      "kind": "decision",
+      "text": "PR shape (resolved q1): four themed PRs \u2014 PR1 merge-gate correctness (#148 #152 #153), PR2 guards that do not lie (#123 #146), PR3 docs match the code (#131 #150), PR4 deploy and notifier (#134 #151 #66). Four version bumps, four CI runs, each PR reverts as a unit",
+      "origin": "user",
+      "status": "confirmed",
+      "honesty_conditions": [],
+      "hard_questions": [],
+      "links": [],
+      "instruction": "",
+      "revisions": []
+    },
+    {
+      "id": "c25",
+      "kind": "decision",
+      "text": "routing (resolved q2): codex-thor/codex-orin take #150 and #148 as READ-ONLY analysis; the operator applies every edit. The bridge write path stays unproven (#18), so no dispatch in this batch is allowed to be the thing that lands a patch",
+      "origin": "user",
+      "status": "confirmed",
+      "honesty_conditions": [],
+      "hard_questions": [],
+      "links": [],
+      "instruction": "",
+      "revisions": []
+    },
+    {
+      "id": "c26",
+      "kind": "requirement",
+      "text": "#66 is ALREADY SHIPPED at HEAD and leaves the batch as a verify-then-close: internal/notifier/rundetail.go carries workflowLabel(), shortDigest() and workflowKeyCache; internal/notify/payload.go:109,119 omits an empty actor from both the description line and the embed field; and internal/notifier/rundetail_test.go:222 asserts the exact 'parallel-live-proof (8d4c768)' format the issue asked for. Close it citing the test \u2014 do not re-implement it",
+      "origin": "llm",
+      "status": "confirmed",
+      "honesty_conditions": [
+        {
+          "id": "h26",
+          "text": "#66's closing comment cites internal/notifier/rundetail_test.go:222 by name, and no commit in the batch touches internal/notifier/ or internal/notify/",
+          "status": "confirmed",
+          "instruction": ""
+        }
+      ],
+      "hard_questions": [],
+      "links": [],
+      "instruction": "Close #66 with the test citation; add nothing.",
+      "revisions": []
+    },
+    {
+      "id": "c27",
+      "kind": "requirement",
+      "text": "#151 is LARGELY SHIPPED at HEAD: deploy/prod/README.md:14-16 already orders install-secrets.sh before deploy.sh; install-secrets.sh:436-455 installs NODES_INBOUND_ISSUANCE_TOKEN_SECRET add-if-absent outside the FORCE_PROD block (exits 3 when present, citing #124 and #133); and deploy/prod/issue-dialin-credential.sh implements the re-issue step with a refusal that names the missing bearer. What remains is at most a named post-deploy step: re-issue whatever 'nodes actors dial-in --absent-only' lists",
+      "origin": "llm",
+      "status": "confirmed",
+      "honesty_conditions": [
+        {
+          "id": "h27",
+          "text": "#151's closing comment cites deploy/prod/README.md:14-16 and install-secrets.sh:436-455, and states explicitly whether the post-deploy re-issue step still needs writing or was already covered by issue-dialin-credential.sh",
+          "status": "confirmed",
+          "instruction": ""
+        }
+      ],
+      "hard_questions": [],
+      "links": [],
+      "instruction": "Re-read issue-dialin-credential.sh before closing; if it already covers step 3, close outright, otherwise close the ordering half and open a successor for the re-issue step.",
+      "revisions": []
+    },
+    {
+      "id": "c28",
+      "kind": "requirement",
+      "text": "the selection rule gains a verification step it did not have: an issue enters the batch only after its defect is REPRODUCED at HEAD, never after its issue text and triage disposition are merely read. Two of the ten were already fixed, and the triage table's own verify-then-close bucket shows this failure mode was already known to the repo before this pass found it again",
+      "origin": "llm",
+      "status": "confirmed",
+      "honesty_conditions": [
+        {
+          "id": "h28",
+          "text": "for each of the eight fixes, the batch can point at the command that reproduced the defect at HEAD before the fix landed \u2014 and for #123 and #131, where reproduction is a missing file and a wrong sentence, it says so rather than claiming a reproduction it did not run",
+          "status": "confirmed",
+          "instruction": ""
+        }
+      ],
+      "hard_questions": [],
+      "links": [],
+      "instruction": "Reproduce first, fix second, per issue. Record the reproducing command in the PR body.",
+      "revisions": []
+    },
+    {
+      "id": "c29",
+      "kind": "requirement",
+      "text": "#150 is not a doc-only change: internal/api/openapi_json_test.go requires api/openapi/openapi.json be regenerated from the YAML (go run ./internal/api/testdata/regen-openapi-json), and internal/api/contract_test.go walks the spec's path+method+operationId inventory against a live server with NO exemption list \u2014 so documenting the four inbound routes activates live contract assertions against four authenticated endpoints",
+      "origin": "llm",
+      "status": "confirmed",
+      "honesty_conditions": [
+        {
+          "id": "h29",
+          "text": "after #150 lands, 'go test ./internal/api/...' passes with the regenerated openapi.json and the four new documented routes exercised by contract_test.go \u2014 not skipped, not exempted",
+          "status": "confirmed",
+          "instruction": ""
+        }
+      ],
+      "hard_questions": [],
+      "links": [],
+      "instruction": "Run go run ./internal/api/testdata/regen-openapi-json and commit openapi.json in the same change as the YAML.",
+      "revisions": []
+    },
+    {
+      "id": "c30",
+      "kind": "requirement",
+      "text": "PR1 merges and is verified before PR2-4 open: it changes scripts/merge-gate.py, the program that gates the batch's own PRs, and c22 wants #153's fix proved on a real branch \u2014 a gate defect shipped in PR1 would otherwise block the remaining three",
+      "origin": "llm",
+      "status": "confirmed",
+      "honesty_conditions": [
+        {
+          "id": "h30",
+          "text": "PR1 is merged and its gate change verified before PR2 opens; the batch can name the order the four PRs merged in",
+          "status": "confirmed",
+          "instruction": ""
+        }
+      ],
+      "hard_questions": [],
+      "links": [],
+      "instruction": "Open PR2 only after PR1 is merged and CI is green on main.",
+      "revisions": []
+    },
+    {
+      "id": "c31",
+      "kind": "requirement",
+      "text": "the four PRs merge SEQUENTIALLY, not concurrently: each bumps the version in pyproject.toml and prepends a CHANGELOG.md entry, so four simultaneously open PRs collide on both files and the version-check job blocks whichever loses the race",
+      "origin": "llm",
+      "status": "confirmed",
+      "honesty_conditions": [
+        {
+          "id": "h31",
+          "text": "no two batch PRs are open against main at the same time, and no PR in the batch is blocked by a version-check or CHANGELOG conflict with another batch PR",
+          "status": "confirmed",
+          "instruction": ""
+        }
+      ],
+      "hard_questions": [],
+      "links": [],
+      "instruction": "One PR open at a time; bump the version as the last commit before opening.",
+      "revisions": []
+    },
+    {
+      "id": "c32",
+      "kind": "boundary",
+      "text": "#152 and #148 edit examples/merge-gate/workflow.yaml's pinned matrix, which examples/merge-gate/README.md:169,191-195 states is part of the PUBLISHED workflow's content digest \u2014 so the repo fix does not change the gate running on thor until that workflow is republished, and republishing is a prod touch c16/c23 forbid. The batch fixes the source of truth and leaves production on the old digest; the delivery record must say exactly that rather than implying the gate is fixed everywhere",
+      "origin": "llm",
+      "status": "confirmed",
+      "honesty_conditions": [
+        {
+          "id": "h32",
+          "text": "the delivery record contains a sentence naming that thor's merge gate still runs the pre-fix pinned digest, and #152/#148's closing comments say the same",
+          "status": "confirmed",
+          "instruction": ""
+        }
+      ],
+      "hard_questions": [],
+      "links": [],
+      "instruction": "Write the sentence before closing either issue, not after.",
+      "revisions": []
+    },
+    {
+      "id": "c33",
+      "kind": "boundary",
+      "text": "#134's fix is CONTAINMENT, not elimination: scrubbing relay inputs in the test harness stops the harness reproducing the near-miss, but deploy/prod/install-secrets.sh:554 still relays DISCORD_WEBHOOK_URL from whatever environment invokes it, so a probe run outside the harness reproduces it exactly. The delivery record says 'contained in the harness', never 'fixed'",
+      "origin": "llm",
+      "status": "confirmed",
+      "honesty_conditions": [
+        {
+          "id": "h33",
+          "text": "#134's closing comment uses the word contained and names install-secrets.sh:554 as the surviving relay, rather than claiming the relay was removed",
+          "status": "confirmed",
+          "instruction": ""
+        }
+      ],
+      "hard_questions": [],
+      "links": [],
+      "instruction": "If the closing comment cannot honestly say 'fixed', it says 'contained' and the issue stays open or gets a successor.",
+      "revisions": []
+    },
+    {
+      "id": "c34",
+      "kind": "requirement",
+      "text": "BACKFILL 1 \u2014 #94: the capability surface reports writable_paths but not whether .git is writable. Verified unfixed at HEAD per c28: HOST_KEYS in the byte-identical preflight.py carries no git_metadata_writable, and the codex bridge's writable_git is a DISPATCH parameter (async_runner.py:147, codex_cli.py:101, server.py:600) that opts a session in \u2014 not a host fact the surface reports. The issue names the shape: three-valued supported / unsupported-by-sandbox / not-probed, measured by trying it rather than inferred from the sandbox mode",
+      "origin": "llm",
+      "status": "confirmed",
+      "honesty_conditions": [
+        {
+          "id": "h22",
+          "text": "a dispatch whose .git is NOT writable and one whose .git IS writable report different git_metadata_writable values from the same bridge \u2014 the fact is measured per dispatch, not derived from the sandbox mode name",
+          "status": "confirmed",
+          "instruction": ""
+        }
+      ],
+      "hard_questions": [],
+      "links": [],
+      "instruction": "Add git_metadata_writable to HOST_KEYS in preflight.py with the three-valued vocabulary, probe it by attempting a write under .git, then copy the file byte-identically to all five adapters and re-run tests/lint/ (c17).",
+      "revisions": []
+    },
+    {
+      "id": "c35",
+      "kind": "requirement",
+      "text": "BACKFILL 2 \u2014 #117: audit every place the ledger stamps an origin on a caller-supplied actor id. Verified unperformed at HEAD per c28: no audit record exists under docs/, and no OriginFor/deriveOrigin-style helper exists, so the audit's first job is establishing the site list. Routed to codex as read-only analysis under c25",
+      "origin": "llm",
+      "status": "confirmed",
+      "honesty_conditions": [
+        {
+          "id": "h23",
+          "text": "the audit names every origin-stamping site by file and line and states, per site, whether the actor id is caller-supplied and whether it is checked against the actor registry \u2014 a site list with no verdict per site is not an audit",
+          "status": "confirmed",
+          "instruction": ""
+        }
+      ],
+      "hard_questions": [],
+      "links": [],
+      "instruction": "Dispatch to codex-thor or codex-orin as read-only analysis (c25); the operator adjudicates the returned claims and lands either a fix or a docs/ record. Completion claims from the actor are claims, not evidence (PRD 10.4).",
+      "revisions": []
+    },
+    {
+      "id": "c36",
+      "kind": "boundary",
+      "text": "#50 was considered as a backfill and rejected under c28: docs/deviations/2026-08-15-headspace-egress-allowlist.md already exists, so its 'record interim deviation' half is done and only the cross-repo tracking remains \u2014 it would have been a third stale pick, and the pass caught it before it entered",
+      "origin": "llm",
+      "status": "confirmed",
+      "honesty_conditions": [
+        {
+          "id": "h34",
+          "text": "the delivery record names #50 as considered-and-rejected with the reason, so the next batch can see the check was run",
+          "status": "confirmed",
+          "instruction": ""
+        }
+      ],
+      "hard_questions": [],
+      "links": [],
+      "instruction": "One line in the delivery record; no separate artifact.",
+      "revisions": []
+    },
+    {
+      "id": "c37",
+      "kind": "after_state",
+      "text": "TWELVE issues close: ten pieces of work across four themed PRs (#131 #146 #148 #150 #152 #153 #123 #134 plus backfills #94 #117), and two verify-then-close closures the challenge pass found already shipped (#66 #151). Each PR is green on the repo's own CI and every closure cites the change or the test that closed it. The triage table regenerates to 44 open dispositions, and the batch's boundary is on the record: what was NOT taken and why \u2014 a decision, a diagnosis, a live prod mutation, or a fix that was already there",
+      "origin": "llm",
+      "status": "confirmed",
+      "honesty_conditions": [
+        {
+          "id": "h24",
+          "text": "the regenerated triage table has twelve fewer rows, and the delivery record separates the ten fixed from the two found-already-fixed rather than presenting twelve closures as twelve pieces of work",
+          "status": "confirmed",
+          "instruction": ""
+        }
+      ],
+      "hard_questions": [],
+      "links": [],
+      "instruction": "Regenerate with python3 scripts/triage-report.py after the last PR merges; do not hand-edit the table.",
+      "revisions": []
+    },
+    {
+      "id": "c38",
+      "kind": "success_signal",
+      "text": "docs/triage/open-issues.md regenerates with twelve fewer rows; the merge gate's local aggregate returns changes_required rather than measurement_incomplete on a matrix ordered unavailable-before-failing (#153, proved by a test that fails first); 'uv run flake8 adapters/*/src adapters/*/tests' returns 0 findings; and the delivery record states that the gate on thor still runs the old pinned digest",
+      "origin": "llm",
+      "status": "confirmed",
+      "honesty_conditions": [
+        {
+          "id": "h25",
+          "text": "all four signals are measured, not asserted: the table is regenerated and committed, the changes_required verdict comes from a test that failed before the fix, the flake8 count is a command anyone can re-run, and the digest gap is stated in prose because no command can show it",
+          "status": "confirmed",
+          "instruction": ""
+        }
+      ],
+      "hard_questions": [],
+      "links": [],
+      "instruction": "Run each signal as a command and paste its output into the delivery record; a signal with no output is not a signal.",
+      "revisions": []
+    }
+  ],
+  "open_vagueness": [
+    {
+      "id": "v1",
+      "text": "whether fixing the 7 human-inbox flake8 findings should come with a CI workflow for the three ungated adapters (colleague, human-inbox, notify), which #152 raises as a third item and which is a bigger commitment than the lint fix",
+      "kind": "unknown_nonblocking",
+      "claim_id": null,
+      "resolved": false,
+      "resolution": "",
+      "resolution_claim_id": null
+    },
+    {
+      "id": "v2",
+      "text": "whether #123's lint-all.sh should also become the merge gate's adapter-lint command, which would collapse #123 and #152 into one fix and one source of truth",
+      "kind": "unknown_nonblocking",
+      "claim_id": null,
+      "resolved": false,
+      "resolution": "",
+      "resolution_claim_id": null
+    },
+    {
+      "id": "v3",
+      "text": "whether scripts/triage-report.py should record the HEAD sha each disposition was last verified against, so the next batch cannot repeat this pass's already-fixed finding",
+      "kind": "unknown_nonblocking",
+      "claim_id": null,
+      "resolved": false,
+      "resolution": "",
+      "resolution_claim_id": null
+    },
+    {
+      "id": "v4",
+      "text": "whether #123's lint-all.sh should also cover go vet (go.yml, tests.yml:93) and web.yml's webglass job, or only the three jobs literally named 'lint' \u2014 #123 says 'every lint job CI runs' and the two readings differ",
+      "kind": "unknown_nonblocking",
+      "claim_id": null,
+      "resolved": false,
+      "resolution": "",
+      "resolution_claim_id": null
+    }
+  ],
+  "scope_entries": [
+    {
+      "id": "s1",
+      "surface": "docs/triage/open-issues.md (generated by scripts/triage-report.py)",
+      "finding": "56 open issues already carry a bucket and a disposition; the buckets separate the batch cleanly \u2014 'bug tail' and 'verify-then-close' hold determined fixes, while 'owner decisions' and 'large bets' hold choices. 'Without triage' is satisfiable because triage is committed, not because it is skipped",
+      "seeds": [
+        "c2",
+        "c13"
+      ]
+    },
+    {
+      "id": "s2",
+      "surface": "gh issue list --state open (57 issues) and the bodies of #66 #116 #123 #125 #131 #134 #146 #148 #150 #151 #152 #153",
+      "finding": "56 open issues (the count docs/triage/open-issues.md reports, verified against gh issue list); read the bodies of #66 #116 #123 #125 #131 #134 #146 #148 #150 #151 #152 #153. The qualifying issues state their own fix \u2014 #153 supplies the corrected function body, #152 names the replacement command, #146 names the temp-file-then-rename shape, #151 supplies the four-step deploy sequence. The excluded ones state a question instead",
+      "seeds": [
+        "c2",
+        "c13"
+      ]
+    },
+    {
+      "id": "s3",
+      "surface": "scripts/merge-gate.py (550 lines; local_outcome at 375-394, gate key reads at 246-353)",
+      "finding": "local_outcome returns from inside the loop so matrix order decides the verdict, and the twelve keys the parser actually reads are enumerable \u2014 both #153 and #148 are closed, local changes to one file with tests/test_merge_gate.py already present",
+      "seeds": [
+        "c3",
+        "c5"
+      ]
+    },
+    {
+      "id": "s4",
+      "surface": "examples/merge-gate/workflow.yaml:315-350 (the pinned gate matrix) and .github/workflows/adapter-codex.yml",
+      "finding": "the matrix pins 'uv run flake8 adapters' while the CI workflow names 'adapters/codex/src adapters/codex/tests'; the generalisation to a bare directory is the whole of #152's first fix. The matrix also proves responsible_for IS a real key, which #148's body got wrong \u2014 the unknown keys are 'tools' and 'threshold'",
+      "seeds": [
+        "c4",
+        "c5"
+      ]
+    },
+    {
+      "id": "s5",
+      "surface": "uv run flake8 adapters/*/src adapters/*/tests (run read-only, exit 0)",
+      "finding": "7 real findings today, all in adapters/human-inbox (nudge.py F401 x2 + E402 x2, test_nudge.py F401 x3) \u2014 not the 12 the issue counted, so the batch fixes what is measured now rather than what was measured in August",
+      "seeds": [
+        "c4"
+      ]
+    },
+    {
+      "id": "s6",
+      "surface": "scripts/toolchain-baseline.sh:93-101 (capture) and :114-122 (check)",
+      "finding": "capture() redirects measure output directly into the baseline path inside a loop that swallows per-host failure; check() already has the drift-accumulator shape capture() lacks, so the fix has a model to copy inside the same file",
+      "seeds": [
+        "c6"
+      ]
+    },
+    {
+      "id": "s7",
+      "surface": "internal/api/server.go:394-465 (every registered route) against api/openapi/openapi.yaml (4794 lines)",
+      "finding": "exactly four inbound routes are registered and unspecified, and the read half of the same lane (GET /v1alpha1/dial-in-presence, openapi.yaml:721, schemas at :4471) is already written \u2014 so #150 is transcription against an existing house style, not schema design",
+      "seeds": [
+        "c9"
+      ]
+    },
+    {
+      "id": "s8",
+      "surface": "scripts/ (22 scripts) and .github/workflows/ (8 workflows)",
+      "finding": "no lint-all.sh exists; check-zero-runtime-deps.sh and check-vendored-skill-diff.py are the precedent #123 asks to copy \u2014 a guard CI calls so local and CI cannot drift. Three workflows lint Python in two invocation styles",
+      "seeds": [
+        "c8"
+      ]
+    },
+    {
+      "id": "s9",
+      "surface": "internal/notifier/ (rundetail.go, lifecycle.go) and internal/notify/payload.go",
+      "finding": "the digest-not-name and empty-actor problems are both in the payload/rundetail pair, and the issue fixes the target rendering format explicitly; the only open sub-question is cache shape for the digest\u2192key lookup, which the issue itself calls safe because the mapping is immutable",
+      "seeds": [
+        "c10"
+      ]
+    },
+    {
+      "id": "s10",
+      "surface": "issue #134's owner decision (2026-08-16, note-and-continue) and deploy/prod/install-secrets.sh:313",
+      "finding": "the credential question is already adjudicated on the issue, so what remains is the mechanical residual the owner named \u2014 scrub relay inputs in the harness rather than in each agent brief",
+      "seeds": [
+        "c11"
+      ]
+    },
+    {
+      "id": "s11",
+      "surface": "CLAUDE.md 'Mesh identity' + culture_nodes/cli/_commands/doctor.py:108-141, cross-checked against #131's owner comment confirming live output",
+      "finding": "the drift is one sentence and the correction is already verified against a live 'uv run nodes doctor' run in the issue thread \u2014 the cheapest close in the set",
+      "seeds": [
+        "c7"
+      ]
+    },
+    {
+      "id": "s12",
+      "surface": "issues #136 #128 #121 (operator-lane / deploy-dependent) and #116 (bug tail, 'Observed, not diagnosed')",
+      "finding": "these are the near-misses: small-sounding, but one needs a live prod mutation on thor/orin and the other needs a diagnosis before a patch exists to apply \u2014 neither is provable by this repo's CI, which is the line the batch draws",
+      "seeds": [
+        "c14",
+        "c16"
+      ]
+    },
+    {
+      "id": "s13",
+      "surface": "CLAUDE.md 'Conventions and workflow' (version-bump rule, byte-identity rule for shared adapter modules, nodes dogfooding reflex, issue-per-operator-hand-turn rule)",
+      "finding": "the batch inherits four standing constraints it must not rediscover: bump the version on every PR, format shared bridge modules once and copy, prefer assigning delegable scoped tasks to codex-thor/codex-orin over doing them in-session, and open or update an issue for anything done by hand",
+      "seeds": [
+        "c17"
+      ]
+    },
+    {
+      "id": "s14",
+      "surface": "challenge pass / counter-evidence lens: internal/notifier/rundetail.go, rundetail_test.go, internal/notify/payload.go",
+      "finding": "#66 is already implemented AND tested at HEAD \u2014 the test asserts the exact format the issue requested. The frame's c10 described a defect that no longer exists; the pass found it only by reading the code the issue named rather than trusting the issue",
+      "seeds": [
+        "c26"
+      ]
+    },
+    {
+      "id": "s15",
+      "surface": "challenge pass / counter-evidence lens: deploy/prod/README.md, install-secrets.sh, issue-dialin-credential.sh",
+      "finding": "#151's runbook ordering and idempotent add-if-absent issuance install already exist, along with a re-issue script whose refusal names the missing bearer \u2014 the same stale-premise failure as #66, found the same way",
+      "seeds": [
+        "c27",
+        "c28"
+      ]
+    },
+    {
+      "id": "s16",
+      "surface": "challenge pass / adjacent-systems lens: examples/merge-gate/README.md:169,191-195 (digest-pinned matrix)",
+      "finding": "the pinned matrix is part of the published workflow's content digest by design, so a repo-only fix to #152/#148 cannot reach the gate running on thor without a republish \u2014 which the batch's no-prod-touch boundary forbids. The fix and its effect are in different places",
+      "seeds": [
+        "c32"
+      ]
+    },
+    {
+      "id": "s17",
+      "surface": "challenge pass / adjacent-systems lens: internal/api/contract_test.go, openapi_json_test.go, testdata/regen-openapi-json",
+      "finding": "openapi.yaml has a generated JSON companion under test and a contract test that walks documented paths against a live server with no exemption list \u2014 documenting four authenticated routes activates assertions, so #150 is the batch's weakest 'easy' rating",
+      "seeds": [
+        "c29"
+      ]
+    },
+    {
+      "id": "s18",
+      "surface": "challenge pass / self-gating + operations lens: scripts/merge-gate.py, pyproject.toml, CHANGELOG.md, the version-check job",
+      "finding": "the batch modifies its own gate and bumps one version file four times; both force a sequential merge order that the four-themed-PR decision (c24) did not state",
+      "seeds": [
+        "c30",
+        "c31"
+      ]
+    },
+    {
+      "id": "s19",
+      "surface": "challenge pass / security lens: deploy/prod/install-secrets.sh:554 (relay), :21 (its own comment naming the hazard)",
+      "finding": "the relay is still live at HEAD and the script documents it; the proposed harness scrub contains recurrence in tests without removing the mechanism, so the honest claim is containment",
+      "seeds": [
+        "c33"
+      ]
+    },
+    {
+      "id": "s20",
+      "surface": "challenge pass / concurrency lens: scripts/merge-gate.py, scripts/toolchain-baseline.sh",
+      "finding": "CLEAN \u2014 both are single-process sequential programs; local_outcome's order-dependence (#153) is a determinism bug, not a race, and capture()'s loop has no parallelism. Residual risk only if a gate ever runs two matrices against one repo concurrently, which nothing today does",
+      "seeds": []
+    },
+    {
+      "id": "s21",
+      "surface": "challenge pass / migration and data-loss lens: migrations/, docs/baselines/toolchains/",
+      "finding": "CLEAN of migrations \u2014 the batch applies none (#121's 0036 is excluded by c16). The single data-loss surface is #146, whose own fix (temp-file-then-rename) is what removes it; the destructive behaviour is therefore in scope and being deleted, not inherited",
+      "seeds": []
+    },
+    {
+      "id": "s22",
+      "surface": "challenge pass / reversibility and rollback lens: the ten issues, git history, workflow publication",
+      "finding": "every change is an ordinary revertable commit and every closure reopens, so rollback is cheap. The one hard-to-reverse act in the neighbourhood is publishing a new workflow version \u2014 which the batch deliberately does not do (c32), so it inherits no irreversible step",
+      "seeds": []
+    },
+    {
+      "id": "s23",
+      "surface": "challenge pass / provenance-decay lens: issue line citations vs HEAD",
+      "finding": "issue #134 cites install-secrets.sh:313; the relay now lives at :554. Line numbers in issue bodies decay silently, which is a second, milder form of the same stale-premise failure c28 addresses \u2014 cite symbols and behaviour, verify line numbers at use",
+      "seeds": []
+    },
+    {
+      "id": "s24",
+      "surface": "challenge pass / reproduction-depth lens: #123 #131 #146 #148 #152 #153",
+      "finding": "PARTIALLY EXAMINED \u2014 #152 was reproduced by running flake8; the other five were verified by READING the named code (local_outcome's early returns, the 12-key parse set, capture()'s redirect, the absent lint-all.sh, CLAUDE.md's three-check sentence) and not by executing the failure. c28's reproduce-at-HEAD requirement is therefore not yet satisfied for five of the eight remaining issues",
+      "seeds": []
+    },
+    {
+      "id": "s25",
+      "surface": "challenge pass / overlooked-actors lens: docs/triage/open-issues.md consumers, docs/deliveries/",
+      "finding": "the batch's readers include whoever regenerates the triage table next and whoever reads the delivery record; both are addressed by c21/c32/c33's honesty requirements. Not examined: whether any Culture mesh agent or sibling repo consumes this triage table, which would make the row-count change visible outside culture-nodes",
+      "seeds": []
+    }
+  ],
+  "lapses": []
+}

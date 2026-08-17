@@ -1,0 +1,812 @@
+{
+  "slug": "easy-pickings-batch",
+  "title": "easy-pickings batch",
+  "frame_slug": "easy-pickings-batch",
+  "schema_version": 4,
+  "status": "exported",
+  "created": "2026-08-17T15:07:41Z",
+  "updated": "2026-08-17T15:40:56Z",
+  "targets": [
+    {
+      "id": "c1",
+      "kind": "announcement",
+      "text": "Ten open issues close in one batch without any of them being triaged first: each one's fix was already written down in the issue itself, so the work was to apply it, prove it, and close the record",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "h1",
+      "kind": "honesty",
+      "text": "none of the ten required an owner decision during execution: if any turns out to need a choice, it is pulled from the batch and recorded as a deviation, not resolved in-session",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "c2",
+      "kind": "requirement",
+      "text": "the batch's selection rule: an issue qualifies only if docs/triage/open-issues.md already carries a disposition for it AND that disposition names an action rather than a decision \u2014 the table has 56 dispositions, so 'without triage' means 'triage already happened', not 'skip it'",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "h2",
+      "kind": "honesty",
+      "text": "each of the ten can be pointed at a row in docs/triage/open-issues.md whose disposition reads as an imperative, and each excluded near-miss at one that reads as a choice",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "c3",
+      "kind": "requirement",
+      "text": "#153: scripts/merge-gate.py:375-394 local_outcome returns inside the loop, so matrix order decides the verdict; the issue supplies the corrected count-then-decide body verbatim, mirroring internal/handover.GateResults.Outcome, plus a shuffle test in tests/test_merge_gate.py",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "h3",
+      "kind": "honesty",
+      "text": "a test shuffles the gate entries and asserts an unchanged outcome, and that test FAILS against the pre-fix implementation \u2014 order-independence is proved by a failing-first test, not asserted",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "c4",
+      "kind": "requirement",
+      "text": "#152: examples/merge-gate/workflow.yaml:331-337 pins command ['uv','run','flake8','adapters'], which walks adapters/*/.venv; naming explicit paths the way adapter-codex.yml does is a one-entry edit. The real findings it hides are live today: 'uv run flake8 adapters/*/src adapters/*/tests' returns 7, all in adapters/human-inbox (F401 x5, E402 x2)",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "h4",
+      "kind": "honesty",
+      "text": "after the fix 'uv run flake8 adapters/*/src adapters/*/tests' returns 0 findings, and the pinned matrix command yields the same verdict on a checkout with adapters/*/.venv present as on one without",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "c5",
+      "kind": "requirement",
+      "text": "#148: merge-gate.py reads exactly twelve gate keys (gate, suite, instrument, requires, reaches, responsible_for, command, measurement, repair, cwd, timeout_seconds, version_command \u2014 lines 246-353); anything else is accepted in silence, so a known-key set plus a refusal is a closed, mechanical change",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "h5",
+      "kind": "honesty",
+      "text": "a matrix entry carrying a key the parser does not read is refused by name, and the refusal is exercised by scripts/validate-examples.sh rather than only by a live dispatch",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "c6",
+      "kind": "requirement",
+      "text": "#146: scripts/toolchain-baseline.sh:93-101 capture() redirects measure output straight into the baseline file, truncating it before the probe's status is known, and the loop swallows failure; temp-file-then-mv plus a per-host failure tally is ~10 lines in one function",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "h6",
+      "kind": "honesty",
+      "text": "a capture against an unreachable host leaves the committed baseline byte-identical and exits non-zero, naming the host it could not measure",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "c7",
+      "kind": "requirement",
+      "text": "#131: CLAUDE.md's 'Mesh identity' section describes three doctor checks; culture_nodes/cli/_commands/doctor.py implements a fourth (_userns_check) and teken cli doctor --strict reports checks=4 \u2014 a one-sentence correction the owner already confirmed against live output in the issue",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "h7",
+      "kind": "honesty",
+      "text": "CLAUDE.md names the fourth check rather than only counting to four, and the number matches what 'uv run teken cli doctor . --strict' reports",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "c8",
+      "kind": "requirement",
+      "text": "#123: no scripts/lint-all.sh exists today (ls scripts/ shows 22 scripts, none of them); the three lint jobs live in .github/workflows/tests.yml, adapter-codex.yml and adapter-claude-code.yml, and CLAUDE.md already carries both invocation styles verbatim \u2014 a script that IS what CI calls is transcription, not design",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "h8",
+      "kind": "honesty",
+      "text": "the three lint workflows invoke scripts/lint-all.sh (or a per-job subset of it), so a green local run of that one script and a red CI lint job cannot coexist",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "c9",
+      "kind": "requirement",
+      "text": "#150: internal/api/server.go:424-431 registers exactly four undocumented inbound routes (POST inbound/poll, inbound/{id}/complete, inbound/credentials, inbound/credentials/revoke) while GET /v1alpha1/dial-in-presence at openapi.yaml:721 and its three schemas at :4471 are already specified \u2014 the write side is transcribed from Go types that exist",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "h9",
+      "kind": "honesty",
+      "text": "all four inbound routes appear in openapi.yaml with the 204-empty-body idle response, both authentication headers, and issuance's reveal-once semantic stated explicitly \u2014 and the contract sweep that walks documented paths now walks them",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "c11",
+      "kind": "requirement",
+      "text": "#134: deploy/prod/install-secrets.sh:313 relays DISCORD_WEBHOOK_URL from the invoking environment; the owner decision (note-and-continue, no rotation) is already recorded on the issue, and the named residual is to scrub relay inputs in the test harness that already controls HOME per host",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "h11",
+      "kind": "honesty",
+      "text": "running the install-secrets test harness with DISCORD_WEBHOOK_URL set in the invoking environment produces prod.env files that do not contain its value",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "c15",
+      "kind": "boundary",
+      "text": "#152 has two fixes and this batch takes only the first: explicit paths in the pinned matrix. The structural version \u2014 refusing a command whose argument list contains a git-untracked path, or running gates against a clean export of the commit \u2014 is a design change to the gate's contract and stays open after the batch",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "h15",
+      "kind": "honesty",
+      "text": "#152 is closed only for the explicit-paths half, and the structural half (refusing untracked paths / gating a clean export) is left on the record as an open successor rather than quietly dropped",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "c16",
+      "kind": "boundary",
+      "text": "nothing in the batch mutates production: #136 (five actors at a dead LAN address), #128 (redeploy thor and the codex bridges), #121 (apply migration 0036) all need a deploy or a live re-registration on thor/orin. Every selected issue is verifiable by the repo's own CI, which is what makes 'easy' true rather than merely 'small'",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "h16",
+      "kind": "honesty",
+      "text": "no command run in service of the batch writes to thor or orin, applies a migration, or restarts a bridge \u2014 the batch's whole verification story is 'git push and read CI'",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "c18",
+      "kind": "audience",
+      "text": "the operator running culture-nodes cycles, who currently reads a 56-row triage table and cannot tell from it which rows are ready to execute; and the next reader of the backlog, who should be able to see the batch shrink the tail without wondering what was skipped",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "h17",
+      "kind": "honesty",
+      "text": "an operator who did not run this batch can read the regenerated triage table plus the delivery record and tell which rows closed and which were deliberately left, without asking anyone",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "c19",
+      "kind": "before_state",
+      "text": "56 open issues all carry a disposition, and the ones whose fix is fully written down sit in the same undifferentiated list as the ones that need an owner to choose. docs/deliveries/close-the-backlog-bootstrap-honesty.md records the backlog growing net-positive every day since 2026-08-08, so the determined fixes are being outpaced by new findings rather than being cheap to clear",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "h18",
+      "kind": "honesty",
+      "text": "the 56-row count and the net-positive backlog growth are both citable \u2014 the first from docs/triage/open-issues.md's own footer, the second from docs/deliveries/close-the-backlog-bootstrap-honesty.md",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "c20",
+      "kind": "why_it_matters",
+      "text": "the expensive part of a backlog is deciding, not typing. Ten issues whose fix is already written down are pure execution, and leaving them in the queue makes the queue look harder than it is \u2014 which is how a tail that could close in four PRs reads as a program of work",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "h19",
+      "kind": "honesty",
+      "text": "each of the ten closes without an owner being asked a question during execution; if any needs one, that issue is the counterexample and the claim is weakened in the delivery record rather than restated",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "c23",
+      "kind": "boundary",
+      "text": "the batch is repo-only and CI-provable: no deploy, no live re-registration, no migration applied, no bridge restarted. An issue that can only be closed by touching thor or orin is out by construction, however small it looks",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "h21",
+      "kind": "honesty",
+      "text": "if any selected issue turns out to need a prod touch to close, it leaves the batch and is recorded as a deviation rather than the boundary being widened to fit it",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "c26",
+      "kind": "requirement",
+      "text": "#66 is ALREADY SHIPPED at HEAD and leaves the batch as a verify-then-close: internal/notifier/rundetail.go carries workflowLabel(), shortDigest() and workflowKeyCache; internal/notify/payload.go:109,119 omits an empty actor from both the description line and the embed field; and internal/notifier/rundetail_test.go:222 asserts the exact 'parallel-live-proof (8d4c768)' format the issue asked for. Close it citing the test \u2014 do not re-implement it",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "h26",
+      "kind": "honesty",
+      "text": "#66's closing comment cites internal/notifier/rundetail_test.go:222 by name, and no commit in the batch touches internal/notifier/ or internal/notify/",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "c27",
+      "kind": "requirement",
+      "text": "#151 is LARGELY SHIPPED at HEAD: deploy/prod/README.md:14-16 already orders install-secrets.sh before deploy.sh; install-secrets.sh:436-455 installs NODES_INBOUND_ISSUANCE_TOKEN_SECRET add-if-absent outside the FORCE_PROD block (exits 3 when present, citing #124 and #133); and deploy/prod/issue-dialin-credential.sh implements the re-issue step with a refusal that names the missing bearer. What remains is at most a named post-deploy step: re-issue whatever 'nodes actors dial-in --absent-only' lists",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "h27",
+      "kind": "honesty",
+      "text": "#151's closing comment cites deploy/prod/README.md:14-16 and install-secrets.sh:436-455, and states explicitly whether the post-deploy re-issue step still needs writing or was already covered by issue-dialin-credential.sh",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "c28",
+      "kind": "requirement",
+      "text": "the selection rule gains a verification step it did not have: an issue enters the batch only after its defect is REPRODUCED at HEAD, never after its issue text and triage disposition are merely read. Two of the ten were already fixed, and the triage table's own verify-then-close bucket shows this failure mode was already known to the repo before this pass found it again",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "h28",
+      "kind": "honesty",
+      "text": "for each of the eight fixes, the batch can point at the command that reproduced the defect at HEAD before the fix landed \u2014 and for #123 and #131, where reproduction is a missing file and a wrong sentence, it says so rather than claiming a reproduction it did not run",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "c29",
+      "kind": "requirement",
+      "text": "#150 is not a doc-only change: internal/api/openapi_json_test.go requires api/openapi/openapi.json be regenerated from the YAML (go run ./internal/api/testdata/regen-openapi-json), and internal/api/contract_test.go walks the spec's path+method+operationId inventory against a live server with NO exemption list \u2014 so documenting the four inbound routes activates live contract assertions against four authenticated endpoints",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "h29",
+      "kind": "honesty",
+      "text": "after #150 lands, 'go test ./internal/api/...' passes with the regenerated openapi.json and the four new documented routes exercised by contract_test.go \u2014 not skipped, not exempted",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "c30",
+      "kind": "requirement",
+      "text": "PR1 merges and is verified before PR2-4 open: it changes scripts/merge-gate.py, the program that gates the batch's own PRs, and c22 wants #153's fix proved on a real branch \u2014 a gate defect shipped in PR1 would otherwise block the remaining three",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "h30",
+      "kind": "honesty",
+      "text": "PR1 is merged and its gate change verified before PR2 opens; the batch can name the order the four PRs merged in",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "c31",
+      "kind": "requirement",
+      "text": "the four PRs merge SEQUENTIALLY, not concurrently: each bumps the version in pyproject.toml and prepends a CHANGELOG.md entry, so four simultaneously open PRs collide on both files and the version-check job blocks whichever loses the race",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "h31",
+      "kind": "honesty",
+      "text": "no two batch PRs are open against main at the same time, and no PR in the batch is blocked by a version-check or CHANGELOG conflict with another batch PR",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "c32",
+      "kind": "boundary",
+      "text": "#152 and #148 edit examples/merge-gate/workflow.yaml's pinned matrix, which examples/merge-gate/README.md:169,191-195 states is part of the PUBLISHED workflow's content digest \u2014 so the repo fix does not change the gate running on thor until that workflow is republished, and republishing is a prod touch c16/c23 forbid. The batch fixes the source of truth and leaves production on the old digest; the delivery record must say exactly that rather than implying the gate is fixed everywhere",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "h32",
+      "kind": "honesty",
+      "text": "the delivery record contains a sentence naming that thor's merge gate still runs the pre-fix pinned digest, and #152/#148's closing comments say the same",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "c33",
+      "kind": "boundary",
+      "text": "#134's fix is CONTAINMENT, not elimination: scrubbing relay inputs in the test harness stops the harness reproducing the near-miss, but deploy/prod/install-secrets.sh:554 still relays DISCORD_WEBHOOK_URL from whatever environment invokes it, so a probe run outside the harness reproduces it exactly. The delivery record says 'contained in the harness', never 'fixed'",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "h33",
+      "kind": "honesty",
+      "text": "#134's closing comment uses the word contained and names install-secrets.sh:554 as the surviving relay, rather than claiming the relay was removed",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "c34",
+      "kind": "requirement",
+      "text": "BACKFILL 1 \u2014 #94: the capability surface reports writable_paths but not whether .git is writable. Verified unfixed at HEAD per c28: HOST_KEYS in the byte-identical preflight.py carries no git_metadata_writable, and the codex bridge's writable_git is a DISPATCH parameter (async_runner.py:147, codex_cli.py:101, server.py:600) that opts a session in \u2014 not a host fact the surface reports. The issue names the shape: three-valued supported / unsupported-by-sandbox / not-probed, measured by trying it rather than inferred from the sandbox mode",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "h22",
+      "kind": "honesty",
+      "text": "a dispatch whose .git is NOT writable and one whose .git IS writable report different git_metadata_writable values from the same bridge \u2014 the fact is measured per dispatch, not derived from the sandbox mode name",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "c35",
+      "kind": "requirement",
+      "text": "BACKFILL 2 \u2014 #117: audit every place the ledger stamps an origin on a caller-supplied actor id. Verified unperformed at HEAD per c28: no audit record exists under docs/, and no OriginFor/deriveOrigin-style helper exists, so the audit's first job is establishing the site list. Routed to codex as read-only analysis under c25",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "h23",
+      "kind": "honesty",
+      "text": "the audit names every origin-stamping site by file and line and states, per site, whether the actor id is caller-supplied and whether it is checked against the actor registry \u2014 a site list with no verdict per site is not an audit",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "c36",
+      "kind": "boundary",
+      "text": "#50 was considered as a backfill and rejected under c28: docs/deviations/2026-08-15-headspace-egress-allowlist.md already exists, so its 'record interim deviation' half is done and only the cross-repo tracking remains \u2014 it would have been a third stale pick, and the pass caught it before it entered",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "h34",
+      "kind": "honesty",
+      "text": "the delivery record names #50 as considered-and-rejected with the reason, so the next batch can see the check was run",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "c37",
+      "kind": "after_state",
+      "text": "TWELVE issues close: ten pieces of work across four themed PRs (#131 #146 #148 #150 #152 #153 #123 #134 plus backfills #94 #117), and two verify-then-close closures the challenge pass found already shipped (#66 #151). Each PR is green on the repo's own CI and every closure cites the change or the test that closed it. The triage table regenerates to 44 open dispositions, and the batch's boundary is on the record: what was NOT taken and why \u2014 a decision, a diagnosis, a live prod mutation, or a fix that was already there",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "h24",
+      "kind": "honesty",
+      "text": "the regenerated triage table has twelve fewer rows, and the delivery record separates the ten fixed from the two found-already-fixed rather than presenting twelve closures as twelve pieces of work",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "c38",
+      "kind": "success_signal",
+      "text": "docs/triage/open-issues.md regenerates with twelve fewer rows; the merge gate's local aggregate returns changes_required rather than measurement_incomplete on a matrix ordered unavailable-before-failing (#153, proved by a test that fails first); 'uv run flake8 adapters/*/src adapters/*/tests' returns 0 findings; and the delivery record states that the gate on thor still runs the old pinned digest",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "h25",
+      "kind": "honesty",
+      "text": "all four signals are measured, not asserted: the table is regenerated and committed, the changes_required verdict comes from a test that failed before the fix, the flake8 count is a command anyone can re-run, and the digest gap is stated in prose because no command can show it",
+      "deferred": false,
+      "deferred_reason": ""
+    }
+  ],
+  "tasks": [
+    {
+      "id": "t1",
+      "summary": "Reproduce all eight defects at HEAD and record the reproducing command per issue",
+      "origin": "llm",
+      "status": "confirmed",
+      "acceptance_criteria": [
+        "each of #123 #131 #134 #146 #148 #150 #152 #153 has either a recorded command that demonstrates the defect at HEAD, or an explicit note that reproduction is not meaningful (a missing file for #123, a wrong sentence for #131)",
+        "any issue that turns out to be already fixed leaves the batch and is closed as verify-then-close instead"
+      ],
+      "deps": [],
+      "covers": [
+        "c2",
+        "h2",
+        "c28",
+        "h28"
+      ],
+      "instruction": "OPERATOR LANE. Run each reproduction read-only and paste the command + output. Already run this session: flake8 adapters (7 findings), the merge-gate key-set read, capture() read. Still to reproduce: #146 (capture against an unreachable host), #148 (a matrix with a bogus key), #153 (a reordered matrix). #123 and #131 are a missing file and a wrong sentence \u2014 say so rather than claiming a reproduction."
+    },
+    {
+      "id": "t2",
+      "summary": "#153: make merge-gate's local_outcome order-independent, proved by a failing-first shuffle test",
+      "origin": "llm",
+      "status": "confirmed",
+      "acceptance_criteria": [
+        "tests/test_merge_gate.py permutes a [failing, instrument_unavailable] matrix and asserts changes_required for every permutation",
+        "that test fails against the pre-fix scripts/merge-gate.py and passes after",
+        "local_outcome counts failures across all entries before returning, mirroring internal/handover.GateResults.Outcome"
+      ],
+      "deps": [
+        "t1"
+      ],
+      "covers": [
+        "c3",
+        "h3"
+      ],
+      "instruction": "WORK PACKAGE A, worktree ../.worktrees.culture-nodes/wp-a, branch easy-pickings/wp-a. Write the shuffle test FIRST and watch it fail, then rewrite local_outcome to count before deciding. Do not also do t3 yet."
+    },
+    {
+      "id": "t3",
+      "summary": "#148: refuse unknown keys in the pinned gate matrix and wire the check into validate-examples.sh",
+      "origin": "llm",
+      "status": "confirmed",
+      "acceptance_criteria": [
+        "a gate entry carrying a key outside the twelve the parser reads is refused, naming the offending key and listing the valid set in the hint",
+        "scripts/validate-examples.sh exercises the refusal, so a malformed matrix fails in CI rather than on a live dispatch",
+        "the twelve-key set is asserted by a test, so a new key added to the parser without adding it to the set fails"
+      ],
+      "deps": [
+        "t2"
+      ],
+      "covers": [
+        "c5",
+        "h5"
+      ],
+      "instruction": "WORK PACKAGE A, same worktree and agent as t2 \u2014 both rewrite scripts/merge-gate.py and tests/test_merge_gate.py, so they must not be split across agents. Land t2 first, then add the unknown-key refusal on top."
+    },
+    {
+      "id": "t4",
+      "summary": "#152a: replace the pinned adapter-lint command with explicit per-adapter src/tests paths",
+      "origin": "llm",
+      "status": "confirmed",
+      "acceptance_criteria": [
+        "examples/merge-gate/workflow.yaml's adapter-lint command names explicit paths and no longer walks adapters/*/.venv",
+        "the command yields the same verdict on a checkout with adapters/*/.venv present as on one without"
+      ],
+      "deps": [
+        "t1"
+      ],
+      "covers": [
+        "c4"
+      ],
+      "instruction": "WORK PACKAGE B, worktree ../.worktrees.culture-nodes/wp-b, branch easy-pickings/wp-b. Copy the path style from .github/workflows/adapter-codex.yml. Changing this file changes the workflow content digest \u2014 see t6."
+    },
+    {
+      "id": "t5",
+      "summary": "#152b: clear the seven real flake8 findings the .venv noise was hiding",
+      "origin": "llm",
+      "status": "confirmed",
+      "acceptance_criteria": [
+        "'uv run flake8 adapters/*/src adapters/*/tests' returns 0 findings",
+        "the two late imports in adapters/human-inbox/src/human_inbox_bridge/nudge.py are either moved to the top or carry a justification, not silenced blindly"
+      ],
+      "deps": [
+        "t1"
+      ],
+      "covers": [
+        "h4"
+      ],
+      "instruction": "WORK PACKAGE B, same worktree as t4. Fix the seven findings measured at HEAD, not the twelve the issue counted. Do not add a CI workflow for the three ungated adapters \u2014 that is parked (v1), not in scope."
+    },
+    {
+      "id": "t6",
+      "summary": "State the digest gap: the repo fix does not reach thor's running gate",
+      "origin": "llm",
+      "status": "confirmed",
+      "acceptance_criteria": [
+        "#152's and #148's closing comments each contain a sentence naming that thor's merge gate still runs the pre-fix pinned digest and a republish is owed",
+        "#152's closing comment states that only the explicit-paths half is done and leaves the structural half (refusing git-untracked paths / gating a clean export) on the record as an open successor"
+      ],
+      "deps": [
+        "t3",
+        "t4"
+      ],
+      "covers": [
+        "c32",
+        "h32",
+        "c15",
+        "h15"
+      ],
+      "instruction": "OPERATOR LANE, after WP-A and WP-B merge. Write the digest-gap sentence into both closing comments before closing either issue."
+    },
+    {
+      "id": "t7",
+      "summary": "#146: stop toolchain-baseline.sh destroying a baseline on a failed probe",
+      "origin": "llm",
+      "status": "confirmed",
+      "acceptance_criteria": [
+        "a capture against an unreachable host leaves the committed baseline byte-identical",
+        "the command exits non-zero and names every host it could not measure",
+        "the JSON is written to a temp file and validated as parseable before it replaces the baseline"
+      ],
+      "deps": [
+        "t1"
+      ],
+      "covers": [
+        "c6",
+        "h6"
+      ],
+      "instruction": "WORK PACKAGE C, worktree ../.worktrees.culture-nodes/wp-c, branch easy-pickings/wp-c. Copy check()'s existing drift-accumulator shape from the same file rather than inventing one."
+    },
+    {
+      "id": "t8",
+      "summary": "#123: one script that runs every lint job CI runs, called by CI itself",
+      "origin": "llm",
+      "status": "confirmed",
+      "acceptance_criteria": [
+        "scripts/lint-all.sh carries all three lint jobs verbatim: root scope, adapter-codex from the repo root, adapter-claude-code from its own directory",
+        "the three lint workflows invoke the script rather than duplicating its commands, so a green local run and a red CI lint job cannot coexist",
+        "shared adapter bridge modules stay byte-identical across all five adapters afterwards (tests/lint/ passes)"
+      ],
+      "deps": [
+        "t1"
+      ],
+      "covers": [
+        "c8",
+        "h8"
+      ],
+      "instruction": "WORK PACKAGE C, same worktree as t7. Scope is the three jobs literally named lint; whether go vet and web.yml's webglass belong is parked (v4) \u2014 do not widen it unilaterally. If you touch a shared adapter bridge module, format once and copy to all five."
+    },
+    {
+      "id": "t9",
+      "summary": "#131: name the fourth doctor check in CLAUDE.md",
+      "origin": "llm",
+      "status": "confirmed",
+      "acceptance_criteria": [
+        "CLAUDE.md's Mesh identity paragraph names unprivileged_userns alongside the backend-to-prompt-file mapping, prompt-file-present and skills-present",
+        "the count in the prose matches what 'uv run teken cli doctor . --strict' reports"
+      ],
+      "deps": [
+        "t1"
+      ],
+      "covers": [
+        "c7",
+        "h7"
+      ],
+      "instruction": "WORK PACKAGE D, worktree ../.worktrees.culture-nodes/wp-d, branch easy-pickings/wp-d. One sentence in the Mesh identity paragraph."
+    },
+    {
+      "id": "t10",
+      "summary": "#150: document the four inbound dial-in routes and regenerate the JSON companion",
+      "origin": "llm",
+      "status": "confirmed",
+      "acceptance_criteria": [
+        "all four routes appear in api/openapi/openapi.yaml with the 204-empty-body idle response, both authentication headers, the mailbox envelope, and issuance's reveal-once semantics stated explicitly",
+        "api/openapi/openapi.json is regenerated from the YAML in the same change and TestOpenAPIJSONIsTheYAMLRendered passes",
+        "'go test ./internal/api/...' passes with the four new documented routes exercised by contract_test.go \u2014 not skipped, not exempted"
+      ],
+      "deps": [
+        "t1"
+      ],
+      "covers": [
+        "c9",
+        "h9",
+        "c29",
+        "h29"
+      ],
+      "instruction": "WORK PACKAGE D, same worktree as t9. This is NOT a doc-only change: run 'go run ./internal/api/testdata/regen-openapi-json' and commit openapi.json alongside the YAML, then 'go test ./internal/api/...'. contract_test.go has no exemption list, so the four routes will be exercised."
+    },
+    {
+      "id": "t11",
+      "summary": "#134: scrub relay inputs in the install-secrets test harness, and say 'contained' not 'fixed'",
+      "origin": "llm",
+      "status": "confirmed",
+      "acceptance_criteria": [
+        "running the harness with DISCORD_WEBHOOK_URL set in the invoking environment produces prod.env files that do not contain its value, asserted by a test",
+        "#134's closing comment uses the word contained and names install-secrets.sh:554 as the surviving relay, rather than claiming the relay was removed"
+      ],
+      "deps": [
+        "t1"
+      ],
+      "covers": [
+        "c11",
+        "h11",
+        "c33",
+        "h33"
+      ],
+      "instruction": "WORK PACKAGE E, worktree ../.worktrees.culture-nodes/wp-e, branch easy-pickings/wp-e. Scrub in the harness, which already controls HOME per host. The relay at install-secrets.sh:554 stays \u2014 the honest word is contained."
+    },
+    {
+      "id": "t12",
+      "summary": "#94 (backfill): report git-metadata writability as a host fact in the capability surface",
+      "origin": "llm",
+      "status": "confirmed",
+      "acceptance_criteria": [
+        "git_metadata_writable joins HOST_KEYS with the three-valued vocabulary supported / unsupported-by-sandbox / not-probed",
+        "the value is measured by attempting a write under .git, never derived from the sandbox mode name",
+        "preflight.py is formatted once and copied byte-identically to all five adapters; tests/lint/ passes"
+      ],
+      "deps": [
+        "t1"
+      ],
+      "covers": [
+        "c34",
+        "h22"
+      ],
+      "instruction": "WORK PACKAGE E, same worktree as t11. preflight.py is byte-identical across five adapters: edit one, copy to the other four, then re-run tests/lint/. Formatting them independently is how #123 happened."
+    },
+    {
+      "id": "t13",
+      "summary": "#117 (backfill): audit every site that stamps an origin on a caller-supplied actor id",
+      "origin": "llm",
+      "status": "confirmed",
+      "acceptance_criteria": [
+        "the audit names every origin-stamping site by file and line",
+        "for each site it states whether the actor id is caller-supplied and whether it is checked against the actor registry \u2014 a site list with no per-site verdict is not an audit",
+        "dispatched to codex as read-only analysis; the returned claims are adjudicated by the operator, since a completion claim is not evidence"
+      ],
+      "deps": [
+        "t1"
+      ],
+      "covers": [
+        "c35",
+        "h23"
+      ],
+      "instruction": "DISPATCH TO codex-thor via the nodes-operator skill as READ-ONLY analysis (c25). The bridge write path is unproven (#18), so this returns an audit, not a patch. Its completion claim is a claim, not evidence \u2014 adjudicate the findings yourself."
+    },
+    {
+      "id": "t14",
+      "summary": "Close #66 and #151 as verify-then-close, citing what already shipped",
+      "origin": "llm",
+      "status": "confirmed",
+      "acceptance_criteria": [
+        "#66's closing comment cites internal/notifier/rundetail_test.go:222 and no commit in the batch touches internal/notifier/ or internal/notify/",
+        "#151's closing comment cites deploy/prod/README.md:14-16 and install-secrets.sh:436-455, and states explicitly whether the post-deploy re-issue step is already covered by issue-dialin-credential.sh or needs a successor issue"
+      ],
+      "deps": [
+        "t1"
+      ],
+      "covers": [
+        "c26",
+        "h26",
+        "c27",
+        "h27"
+      ],
+      "instruction": "OPERATOR LANE. Cite internal/notifier/rundetail_test.go:222 for #66. For #151, re-read deploy/prod/issue-dialin-credential.sh before closing and say whether the post-deploy re-issue step is covered or needs a successor."
+    },
+    {
+      "id": "t15",
+      "summary": "Merge the four PRs one at a time, gate change first",
+      "origin": "llm",
+      "status": "confirmed",
+      "acceptance_criteria": [
+        "PR1 is merged and its gate change verified green on main before PR2 opens",
+        "no two batch PRs are open against main at the same time",
+        "no PR is blocked by a version-check or CHANGELOG conflict with another batch PR, and the batch can name the order they merged in"
+      ],
+      "deps": [
+        "t3",
+        "t5",
+        "t6",
+        "t7",
+        "t8",
+        "t9",
+        "t10",
+        "t11",
+        "t12",
+        "t13"
+      ],
+      "covers": [
+        "c30",
+        "h30",
+        "c31",
+        "h31"
+      ],
+      "instruction": "OPERATOR LANE. One PR open at a time. PR1 (WP-A + WP-B) merges and goes green on main before PR2 opens, because it changes the program that gates the rest. Bump the version as the last commit before opening each PR."
+    },
+    {
+      "id": "t16",
+      "summary": "Verify the no-prod-touch boundary by absence",
+      "origin": "llm",
+      "status": "confirmed",
+      "acceptance_criteria": [
+        "no ssh, no deploy.sh, no migration apply and no bridge restart appears anywhere in the batch's command history",
+        "if a selected issue turns out to need a prod touch to close, the batch stops and runs /deviate rather than widening the boundary to fit it"
+      ],
+      "deps": [
+        "t1"
+      ],
+      "covers": [
+        "c16",
+        "h16",
+        "c23",
+        "h21"
+      ],
+      "instruction": "OPERATOR LANE. Verify by absence across the batch's whole command history. If a selected issue turns out to need a prod touch, stop and run /deviate."
+    },
+    {
+      "id": "t17",
+      "summary": "Write the delivery record and regenerate the triage table",
+      "origin": "llm",
+      "status": "confirmed",
+      "acceptance_criteria": [
+        "docs/triage/open-issues.md is regenerated by scripts/triage-report.py (never hand-edited) and has twelve fewer rows",
+        "the record separates the ten fixed from the two found-already-fixed, rather than presenting twelve closures as twelve pieces of work",
+        "each of the four success signals is run as a command and its output pasted in; the digest gap is stated in prose because no command can show it",
+        "#50 is named as considered-and-rejected with the reason, in one line",
+        "if any of the ten needed an owner decision during execution, that issue is named as the counterexample and the announcement claim is weakened rather than restated"
+      ],
+      "deps": [
+        "t14",
+        "t15",
+        "t16"
+      ],
+      "covers": [
+        "c1",
+        "h1",
+        "c18",
+        "h17",
+        "c19",
+        "h18",
+        "c20",
+        "h19",
+        "c36",
+        "h34",
+        "c37",
+        "h24",
+        "c38",
+        "h25"
+      ],
+      "instruction": "OPERATOR LANE, last. Regenerate with scripts/triage-report.py, never by hand. Ten fixed and two found-already-fixed are different facts \u2014 do not present twelve closures as twelve pieces of work."
+    }
+  ],
+  "risks": [
+    {
+      "id": "r1",
+      "text": "five of the eight original fixes were verified by reading, not by reproducing; t1 is what closes that gap and it may find more already-fixed issues, shrinking the batch again",
+      "kind": "unknown_nonblocking",
+      "task_id": "t1",
+      "resolved": false,
+      "resolution": ""
+    },
+    {
+      "id": "r2",
+      "text": "#150 activates live contract assertions against four authenticated routes; a transcription error surfaces as a red CI job rather than a doc nit",
+      "kind": "unknown_nonblocking",
+      "task_id": "t10",
+      "resolved": false,
+      "resolution": ""
+    },
+    {
+      "id": "r3",
+      "text": "#123's lint-all.sh scope is ambiguous \u2014 the three jobs named 'lint', or every check that can go red including go vet and web.yml's webglass",
+      "kind": "unknown_nonblocking",
+      "task_id": "t8",
+      "resolved": false,
+      "resolution": ""
+    },
+    {
+      "id": "r4",
+      "text": "#117 is an audit whose output is unknown until it runs: it may yield a record, a small fix, or a finding too large for this batch",
+      "kind": "unknown_nonblocking",
+      "task_id": "t13",
+      "resolved": false,
+      "resolution": ""
+    },
+    {
+      "id": "r5",
+      "text": "t1 finding: #146's exit-code half did NOT reproduce at HEAD \u2014 a single-host capture against an unreachable host exits 255, not 0. The baseline-destruction half reproduced exactly (56 bytes -> 0). WP-C must reproduce the exit-0 case in the multi-host ordering the issue reported before claiming to fix it, or qualify the issue's claim.",
+      "kind": "unknown_nonblocking",
+      "task_id": "t7",
+      "resolved": false,
+      "resolution": ""
+    }
+  ]
+}

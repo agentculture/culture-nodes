@@ -4,6 +4,7 @@ operator types and a tick an operator reads.
 
     scripts/merge-gate.py --gates '<matrix json>'
     scripts/merge-gate.py --gates @gates.json --report-only
+    scripts/merge-gate.py --gates @gates.json --check-matrix
 
 # What this replaces
 
@@ -129,6 +130,30 @@ REASON_NO_TEST_INSTRUMENT = "no_test_instrument"
 REASON_UNAVAILABLE = "instrument_unavailable"
 REASON_NO_SOURCE_FILES = "no_source_files"
 
+#: Every key this program reads out of a gate entry — the whole vocabulary, and
+#: nothing beyond it. A matrix is graph content pinned by the published
+#: workflow's digest, so an author reads it as the declaration of what gets
+#: measured; a key nobody reads declares nothing while looking exactly like it
+#: does. `tests/test_merge_gate.py` re-derives this set by walking this module's
+#: own AST, so a key taught to the parser without being added here fails rather
+#: than quietly becoming a second, undeclared vocabulary.
+KNOWN_GATE_KEYS = frozenset(
+    {
+        "gate",
+        "suite",
+        "instrument",
+        "requires",
+        "reaches",
+        "responsible_for",
+        "command",
+        "measurement",
+        "repair",
+        "cwd",
+        "timeout_seconds",
+        "version_command",
+    }
+)
+
 GIT_TIMEOUT_SECONDS = 60.0
 HTTP_TIMEOUT_SECONDS = 60.0
 DEFAULT_SUITE_TIMEOUT_SECONDS = 1800.0
@@ -236,7 +261,50 @@ def load_matrix(spec: str) -> dict[str, Any]:
             "a report over zero gates has no counts to be counts of, and a merge decided on one "
             "would be decided on nothing",
         )
+    for position, gate in enumerate(matrix["gates"], start=1):
+        check_gate_declaration(gate, position)
     return matrix
+
+
+def check_gate_declaration(gate: Any, position: int) -> None:
+    """Refuse a gate entry this program cannot read as written.
+
+    An unrecognised key is not a harmless extra (issue #148). The matrix is
+    graph content: it is pinned in the code node's argv and addressed by the
+    published workflow's digest, so what it says is what a reader believes is
+    being measured — and a key nobody reads says nothing while looking exactly
+    like it does. The reported instance carried `tools` and `threshold`,
+    neither of which this parser has ever read: the tools were never required
+    of the host, the threshold was never compared against anything, and the
+    gate reported `not_applicable` over an empty set. Nothing complained, and a
+    run was decided on it.
+
+    So the refusal happens HERE, at load, before a changed-file set exists and
+    long before any instrument runs. A malformed matrix is not a gate that
+    measured badly; it is a gate whose declaration was never true, and there is
+    nothing it could measure that would make it worth reporting.
+    """
+    vocabulary = ", ".join(sorted(KNOWN_GATE_KEYS))
+    if not isinstance(gate, dict):
+        raise Refusal(
+            f"gate #{position} in the matrix is {type(gate).__name__}, not an object",
+            f"every entry in `gates` is a JSON object declaring one gate; the keys this "
+            f"program reads are: {vocabulary}",
+        )
+    if not gate.get("gate"):
+        raise Refusal(
+            f"gate #{position} in the matrix has no name",
+            "every gate must be named, or its record cannot be counted or queried",
+        )
+    unknown = sorted(set(gate) - KNOWN_GATE_KEYS)
+    if unknown:
+        named = ", ".join(repr(key) for key in unknown)
+        raise Refusal(
+            f"gate {gate['gate']!r} declares {named}, which this gate program never reads",
+            f"a key nobody reads declares nothing while looking like it does; either the key "
+            f"is a typo or the measurement it names does not exist. The keys this program "
+            f"reads are: {vocabulary}",
+        )
 
 
 def instrument_version(gate: dict[str, Any], repo: Path) -> str:
@@ -344,11 +412,9 @@ def evaluate(matrix: dict[str, Any], repo: Path, changed: list[str]) -> list[dic
     the four steps are in this order."""
     entries: list[dict[str, Any]] = []
     for gate in matrix["gates"]:
-        if not gate.get("gate"):
-            raise Refusal(
-                "a declared gate has no name",
-                "every gate must be named, or its record cannot be counted or queried",
-            )
+        # Named, an object, and carrying only keys this parser reads: all of
+        # that was settled by `check_gate_declaration` at load, before a
+        # changed-file set existed to decide anything against.
         reaches = gate.get("reaches", ["**/*"])
         responsible = gate.get("responsible_for", reaches)
 
@@ -491,6 +557,14 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--base", help="what to diff against; overrides the matrix's own `base`")
     parser.add_argument("--run", help="the run these records are about; defaults to $NODES_RUN_ID")
     parser.add_argument(
+        "--check-matrix",
+        action="store_true",
+        help="check the matrix's shape and key vocabulary, print what it declares, and exit "
+             "without measuring or recording anything — the authoring check, and what "
+             "scripts/validate-examples.sh runs so a malformed matrix fails in CI rather than "
+             "on a live dispatch",
+    )
+    parser.add_argument(
         "--report-only",
         action="store_true",
         help="compute the report, print it as JSON, record NOTHING, and exit 2 — because a gate "
@@ -503,6 +577,17 @@ def main(argv: list[str] | None = None) -> int:
     args = build_parser().parse_args(argv)
     try:
         matrix = load_matrix(args.gates)
+
+        if args.check_matrix:
+            # Deliberately exits 0. This mode makes no claim about a change —
+            # it says the declaration is one this program can read, which is a
+            # precondition for measuring and never a substitute for it.
+            print(f"{len(matrix['gates'])} declared gate(s), every key one this program reads:")
+            for gate in matrix["gates"]:
+                print(f"  {gate['gate']}")
+            print("nothing was measured and nothing was recorded (--check-matrix)")
+            return 0
+
         repo = Path(args.repo).resolve()
         base_ref = args.base or matrix.get("base")
         if not base_ref:

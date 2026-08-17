@@ -36,6 +36,7 @@ class GitHubUnreachable(RuntimeError):
     measurement_incomplete and _errors.py reserves for an environment error.
     """
 
+
 ROOT = Path(__file__).resolve().parents[1]
 DEFAULT_TABLE = ROOT / "docs" / "triage" / "dispositions.csv"
 DEFAULT_OUTPUT = ROOT / "docs" / "triage" / "open-issues.md"
@@ -57,7 +58,10 @@ NO_TYPE = "(no type)"
 ORG_TYPES_QUERY = """
 query($org: String!) {
   organization(login: $org) {
-    issueTypes(first: 20) { nodes { name isEnabled } }
+    issueTypes(first: 100) {
+      pageInfo { hasNextPage }
+      nodes { name isEnabled }
+    }
   }
 }
 """
@@ -92,12 +96,24 @@ def invoke_gh(command: list[str]) -> tuple[int, str, str]:
     return proc.returncode, proc.stdout, proc.stderr
 
 
-def run_gh(command: list[str], invoke=None, backoff: float = GH_BACKOFF_SECONDS) -> str:
+def run_gh(
+    command: list[str],
+    invoke=None,
+    backoff: float = GH_BACKOFF_SECONDS,
+    what: str = "GitHub",
+) -> str:
     """Run one `gh` command with the retry, or raise GitHubUnreachable.
 
-    Every GitHub read in this script goes through here -- the open-issue set and
-    the type read alike -- so there is exactly one retry policy and exactly one
-    way to say "could not measure".
+    Every GitHub read in this script goes through here -- the open-issue set,
+    the org's type menu and the per-issue types alike -- so there is exactly one
+    retry policy and exactly one way to say "could not measure".
+
+    `what` names the thing being read, and it is not decoration. The reads need
+    different privileges: the issue reads are repository-scoped, while the org
+    type menu is an ORGANISATION object that a repository-scoped token (every
+    Actions GITHUB_TOKEN is one) cannot see at all. An error that says only
+    "could not read from GitHub" makes those two indistinguishable, which cost
+    a CI round-trip to tell apart.
     """
     invoke = invoke or invoke_gh
     last = ""
@@ -114,9 +130,7 @@ def run_gh(command: list[str], invoke=None, backoff: float = GH_BACKOFF_SECONDS)
             )
             if backoff:
                 time.sleep(backoff * attempt)
-    raise GitHubUnreachable(
-        f"could not read from GitHub after {GH_ATTEMPTS} attempts: {last}"
-    )
+    raise GitHubUnreachable(f"could not read {what} after {GH_ATTEMPTS} attempts: {last}")
 
 
 def graphql_command(query: str, variables: dict[str, str]) -> list[str]:
@@ -126,8 +140,14 @@ def graphql_command(query: str, variables: dict[str, str]) -> list[str]:
     return command
 
 
-def run_graphql(query: str, variables: dict[str, str], invoke=None, backoff=GH_BACKOFF_SECONDS):
-    raw = run_gh(graphql_command(query, variables), invoke=invoke, backoff=backoff)
+def run_graphql(
+    query: str,
+    variables: dict[str, str],
+    invoke=None,
+    backoff=GH_BACKOFF_SECONDS,
+    what: str = "GitHub",
+):
+    raw = run_gh(graphql_command(query, variables), invoke=invoke, backoff=backoff, what=what)
     try:
         payload = json.loads(raw)
     except json.JSONDecodeError as exc:
@@ -145,8 +165,24 @@ def org_type_names(org: str, invoke=None, backoff=GH_BACKOFF_SECONDS) -> list[st
     Hard-coding them would make an unknown name count zero silently, which is
     the failure mode the search `type:` qualifier already has.
     """
-    data = run_graphql(ORG_TYPES_QUERY, {"org": org}, invoke=invoke, backoff=backoff)
-    nodes = (data.get("organization") or {}).get("issueTypes", {}).get("nodes", [])
+    data = run_graphql(
+        ORG_TYPES_QUERY,
+        {"org": org},
+        invoke=invoke,
+        backoff=backoff,
+        what=f"the {org} org's issue-type menu (an ORGANISATION read: a "
+        "repository-scoped token such as an Actions GITHUB_TOKEN cannot do it)",
+    )
+    menu = (data.get("organization") or {}).get("issueTypes", {})
+    # A menu read only in part is worse than no menu: a type that exists but
+    # fell off page one would be reported as unknown, and this function's whole
+    # job is to make "unknown" mean something.
+    if (menu.get("pageInfo") or {}).get("hasNextPage"):
+        raise GitHubUnreachable(
+            f"the {org} org defines more issue types than one page returns; "
+            "the menu was not read in full, so no count can be trusted"
+        )
+    nodes = menu.get("nodes", [])
     return [node["name"] for node in nodes if node.get("isEnabled", True)]
 
 
@@ -177,7 +213,13 @@ def issue_types(
             variables["cursor"] = cursor
         if since:
             variables["since"] = since
-        data = run_graphql(query, variables, invoke=invoke, backoff=backoff)
+        data = run_graphql(
+            query,
+            variables,
+            invoke=invoke,
+            backoff=backoff,
+            what=f"the {state} issues of {repo} and their types",
+        )
         issues = (data.get("repository") or {}).get("issues", {})
         for node in issues.get("nodes", []):
             node_type = node.get("issueType") or {}
@@ -216,9 +258,7 @@ def count_by_type(records: list[dict], known: list[str]) -> list[tuple[str, int]
 def previous_cycle_start(commit: str = PREVIOUS_CYCLE_COMMIT) -> str:
     """The 'previous cycle' boundary: the commit date of the cycle-start commit."""
     command = ["git", "show", "-s", "--format=%cI", commit]
-    proc = subprocess.run(
-        command, cwd=ROOT, check=False, text=True, capture_output=True
-    )
+    proc = subprocess.run(command, cwd=ROOT, check=False, text=True, capture_output=True)
     if proc.returncode != 0:
         raise GitHubUnreachable(
             f"could not resolve the previous-cycle boundary from {commit}: "
@@ -232,11 +272,20 @@ def open_issue_numbers(repo: str, issues_json: Path | None, invoke=None, backoff
         raw = issues_json.read_text(encoding="utf-8")
     else:
         command = [
-            "gh", "issue", "list", "--repo", repo, "--state", "open",
-            "--limit", "1000", "--json", "number",
+            "gh",
+            "issue",
+            "list",
+            "--repo",
+            repo,
+            "--state",
+            "open",
+            "--limit",
+            "1000",
+            "--json",
+            "number",
         ]
         kwargs = {} if backoff is None else {"backoff": backoff}
-        raw = run_gh(command, invoke=invoke, **kwargs)
+        raw = run_gh(command, invoke=invoke, what=f"the open-issue set of {repo}", **kwargs)
     data = json.loads(raw)
     return sorted({int(item["number"]) for item in data})
 
@@ -303,9 +352,7 @@ def render_types(
         "",
     ]
     lines += render_type_block("Open issues by type", open_records, known)
-    lines += render_type_block(
-        f"Issues closed since {since[:10]} by type", closed_records, known
-    )
+    lines += render_type_block(f"Issues closed since {since[:10]} by type", closed_records, known)
     return "\n".join(lines)
 
 
@@ -320,7 +367,9 @@ def render(numbers: list[int], rows: dict[int, dict[str, str]]) -> str:
     ]
     for number in numbers:
         row = rows[number]
-        values = [row[key].replace("|", "\\|") for key in ("bucket", "disposition", "evidence_pointer")]
+        values = [
+            row[key].replace("|", "\\|") for key in ("bucket", "disposition", "evidence_pointer")
+        ]
         lines.append(f"| #{number} | {values[0]} | {values[1]} | {values[2]} |")
     lines.extend(["", f"Open issues with dispositions: {len(numbers)}", ""])
     return "\n".join(lines)
@@ -368,7 +417,11 @@ def main(argv=None, invoke=None) -> int:
 
     missing = sorted(set(numbers) - set(rows))
     if missing:
-        print("triage-report: open issues have no disposition: " + ", ".join(f"#{n}" for n in missing), file=sys.stderr)
+        print(
+            "triage-report: open issues have no disposition: "
+            + ", ".join(f"#{n}" for n in missing),
+            file=sys.stderr,
+        )
         return 1
 
     try:

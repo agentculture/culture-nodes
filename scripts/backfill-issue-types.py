@@ -63,7 +63,10 @@ REQUIRED_TYPE = "Record"
 ISSUE_TYPES_QUERY = """
 query($org: String!) {
   organization(login: $org) {
-    issueTypes(first: 20) { nodes { id name isEnabled } }
+    issueTypes(first: 100) {
+      pageInfo { hasNextPage }
+      nodes { id name isEnabled }
+    }
   }
 }
 """
@@ -132,16 +135,13 @@ def run_graphql(
         last = tail[0]
         if attempt < GH_ATTEMPTS:
             print(
-                f"backfill-issue-types: gh failed ({last}); "
-                f"retry {attempt}/{GH_ATTEMPTS - 1}",
+                f"backfill-issue-types: gh failed ({last}); " f"retry {attempt}/{GH_ATTEMPTS - 1}",
                 file=sys.stderr,
             )
             if backoff:
                 sleep(backoff * attempt)
     else:
-        raise GitHubUnreachable(
-            f"could not reach GitHub after {GH_ATTEMPTS} attempts: {last}"
-        )
+        raise GitHubUnreachable(f"could not reach GitHub after {GH_ATTEMPTS} attempts: {last}")
     try:
         payload = json.loads(raw)
     except json.JSONDecodeError as exc:
@@ -162,12 +162,18 @@ def org_issue_types(org: str, invoke, fixture: Path | None = None, **kwargs) -> 
         nodes = json.loads(fixture.read_text(encoding="utf-8"))
     else:
         data = run_graphql(ISSUE_TYPES_QUERY, {"org": org}, invoke, **kwargs)
-        nodes = (data.get("organization") or {}).get("issueTypes", {}).get("nodes", [])
-    return {
-        node["name"]: node["id"]
-        for node in nodes
-        if node.get("isEnabled", True)
-    }
+        menu = (data.get("organization") or {}).get("issueTypes", {})
+        # A truncated menu is the fail-open shape all over again: a type that
+        # exists but fell off page one would read as "unknown", and the run
+        # would refuse a row that is perfectly valid. Better to stop and say
+        # the menu was not read in full than to act on half of it.
+        if (menu.get("pageInfo") or {}).get("hasNextPage"):
+            raise GitHubUnreachable(
+                f"the {org} org defines more issue types than one page returns; "
+                "the menu was not read in full, so no type name can be trusted"
+            )
+        nodes = menu.get("nodes", [])
+    return {node["name"]: node["id"] for node in nodes if node.get("isEnabled", True)}
 
 
 def open_issues(repo: str, invoke, fixture: Path | None = None, **kwargs) -> dict[int, dict]:
@@ -264,9 +270,7 @@ def render_mapping(table, current, plan) -> str:
         now = state.get("type") or "(none)"
         want = table[issue]["type"]
         evidence = table[issue]["evidence_pointer"].replace("|", "\\|")
-        lines.append(
-            f"| #{issue} | {now} | {want} | {labels[action[issue]]} | {evidence} |"
-        )
+        lines.append(f"| #{issue} | {now} | {want} | {labels[action[issue]]} | {evidence} |")
     return "\n".join(lines)
 
 

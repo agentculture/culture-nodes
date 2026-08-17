@@ -157,8 +157,10 @@ def test_dry_run_prints_the_mapping_and_performs_zero_mutations(tmp_path, capsys
 
     out = capsys.readouterr().out
     assert code == 0
-    assert "#5" in out and "Bug" in out
-    assert "#6" in out and "Record" in out
+    assert "#5" in out
+    assert "Bug" in out
+    assert "#6" in out
+    assert "Record" in out
     assert "dry run" in out.lower()
 
 

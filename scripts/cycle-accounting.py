@@ -42,8 +42,17 @@ def load_issues(path: Path | None, repo: str = "agentculture/culture-nodes") -> 
         raw = path.read_text(encoding="utf-8")
     else:
         command = [
-            "gh", "issue", "list", "--repo", repo, "--state", "all",
-            "--limit", "1000", "--json", "number,state,createdAt,closedAt",
+            "gh",
+            "issue",
+            "list",
+            "--repo",
+            repo,
+            "--state",
+            "all",
+            "--limit",
+            "1000",
+            "--json",
+            "number,state,createdAt,closedAt",
         ]
         raw = subprocess.run(command, check=True, text=True, capture_output=True).stdout
     data = json.loads(raw)
@@ -63,14 +72,17 @@ def load_dispositions(path: Path) -> set[int]:
 def account(issues: list[dict], dispositioned: set[int], start: datetime) -> Accounting:
     opened = [item for item in issues if parse_timestamp(item["createdAt"]) >= start]
     closed = [
-        item for item in issues
+        item
+        for item in issues
         if item.get("closedAt") and parse_timestamp(item["closedAt"]) >= start
     ]
-    undispositioned = tuple(sorted(
-        int(item["number"])
-        for item in opened
-        if item["state"].upper() == "OPEN" and int(item["number"]) not in dispositioned
-    ))
+    undispositioned = tuple(
+        sorted(
+            int(item["number"])
+            for item in opened
+            if item["state"].upper() == "OPEN" and int(item["number"]) not in dispositioned
+        )
+    )
     return Accounting(len(opened), len(closed), len(closed) - len(opened), undispositioned)
 
 
@@ -81,17 +93,19 @@ def metric_value(result: Accounting, metric: str) -> int:
 
 
 def render(result: Accounting, command: str = "python3 scripts/cycle-accounting.py") -> str:
-    return "\n".join([
-        f"Issues opened during cycle: {result.opened}",
-        f"  query: {command} --metric opened",
-        f"Issues closed during cycle: {result.closed}",
-        f"  query: {command} --metric closed",
-        f"Closed minus opened (delta): {result.delta}",
-        f"  query: {command} --metric delta",
-        "Opened-by-cycle issues undispositioned at cycle close: "
-        f"{len(result.undispositioned)}",
-        f"  query: {command} --metric undispositioned",
-    ])
+    return "\n".join(
+        [
+            f"Issues opened during cycle: {result.opened}",
+            f"  query: {command} --metric opened",
+            f"Issues closed during cycle: {result.closed}",
+            f"  query: {command} --metric closed",
+            f"Closed minus opened (delta): {result.delta}",
+            f"  query: {command} --metric delta",
+            "Opened-by-cycle issues undispositioned at cycle close: "
+            f"{len(result.undispositioned)}",
+            f"  query: {command} --metric undispositioned",
+        ]
+    )
 
 
 def main() -> int:
@@ -123,10 +137,7 @@ def main() -> int:
     if args.metric:
         print(metric_value(result, args.metric))
     else:
-        source = (
-            f"--issues-json {args.issues_json}"
-            if args.issues_json else f"--repo {args.repo}"
-        )
+        source = f"--issues-json {args.issues_json}" if args.issues_json else f"--repo {args.repo}"
         print(
             f"Cycle starts at {start.isoformat()} from commit {CYCLE_START_COMMIT}'s "
             "committer timestamp."

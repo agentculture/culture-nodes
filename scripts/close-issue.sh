@@ -30,6 +30,11 @@ done
 
 [[ $issue =~ ^[0-9]+$ && -n $disposition && -n $reason ]] || usage
 
+# An empty $root must not be allowed to reach the artifact checks: `$root/$path`
+# would silently become `/path`, and the operator would be told their artifact
+# "does not exist" when the real fault is that this is not a git checkout. The
+# nick lookup below tolerates an empty root by design (it falls back), so the
+# refusal is scoped to the check that actually needs a repository.
 root=$(git rev-parse --show-toplevel 2>/dev/null || true)
 
 # Exactly one evidence shape. Counted rather than pairwise-compared so adding
@@ -59,6 +64,12 @@ fi
 # cheap one is not the load-bearing one: a record drafted on the author's disk
 # and never committed passes an existence test and is still not evidence.
 if [[ -n $artifact ]]; then
+  if [[ -z $root ]]; then
+    echo "close-issue: --artifact needs a git checkout, and this is not one" >&2
+    echo "hint: the artifact must be a repo-relative path to a COMMITTED record;" >&2
+    echo "      run this from inside the repository that tracks it" >&2
+    exit 2
+  fi
   if [[ ! -e $root/$artifact ]]; then
     echo "close-issue: artifact path does not exist: $artifact" >&2
     exit 2

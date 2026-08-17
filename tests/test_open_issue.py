@@ -310,7 +310,8 @@ def test_the_wrapper_never_creates_or_signs_an_issue_itself():
     body = SCRIPT.read_text()
     assert "gh issue create" not in body, "creation is agtag's job"
     assert "(Claude)" not in body, "signing is agtag's job — it resolves the nick itself"
-    assert "GITHUB_TOKEN" not in body and "GH_TOKEN" not in body, "auth is agtag's/gh's job"
+    assert "GITHUB_TOKEN" not in body, "auth is agtag's/gh's job"
+    assert "GH_TOKEN" not in body, "auth is agtag's/gh's job"
 
     posts = [
         (n, line)
@@ -319,7 +320,9 @@ def test_the_wrapper_never_creates_or_signs_an_issue_itself():
     ]
     assert len(posts) == 1, "exactly one delegation site, so a reviewer sees it at a glance"
     line = posts[0][1]
-    assert "--repo" in line and "--title" in line and "--body-file" in line
+    assert "--repo" in line
+    assert "--title" in line
+    assert "--body-file" in line
 
 
 def test_delegation_is_visible_in_under_twenty_lines():
@@ -339,7 +342,8 @@ def test_delegation_is_visible_in_under_twenty_lines():
     ]
     start = [n for n, line in code if "agtag issue post" in line]
     end = [n for n, line in code if "updateIssue" in line]
-    assert start and end, "delegation block not found"
+    assert start, "no `agtag issue post` call found"
+    assert end, "no `updateIssue` mutation found"
     assert end[-1] >= start[0]
     span = end[-1] - start[0] + 1
     assert span < 20, f"delegation spans {span} lines"

@@ -304,3 +304,32 @@ def test_closing_comment_template_documents_the_artifact_field():
     assert "Artifact: `" in template, "the artifact shape needs the same fixed-label format"
     assert "Culture Nodes run id: `" in template
     assert "Test path: `" in template
+
+
+def test_artifact_outside_a_git_checkout_says_so(tmp_path, gh_stub):
+    """An empty repo root must not silently become a wrong path.
+
+    `$root/$artifact` with an empty root is `/artifact`, so the operator would
+    be told their record "does not exist" when the real fault is that this is
+    not a git checkout. Flagged independently by two reviewers; this pins the
+    fix.
+    """
+    result = subprocess.run(  # nosec B603 - fixed argv, no shell
+        [
+            str(SCRIPT),
+            "1",
+            "closed-with-evidence",
+            "reason",
+            "--artifact",
+            "docs/triage/issue-types.md",
+        ],
+        cwd=str(tmp_path),  # a directory that is not a git repository
+        text=True,
+        capture_output=True,
+        env=gh_stub[0],
+        timeout=60,
+    )
+
+    assert result.returncode != 0
+    assert "not one" in result.stderr or "git checkout" in result.stderr
+    assert "does not exist" not in result.stderr, "the misleading message is the bug"

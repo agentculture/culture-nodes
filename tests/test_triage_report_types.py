@@ -289,3 +289,57 @@ def test_issue_types_is_one_replaceable_function():
     """c31: a future `gitculture issue list --json issueType` replaces one call."""
     assert callable(MODULE.issue_types)
     assert "gitculture" in (MODULE.issue_types.__doc__ or "")
+
+
+def test_a_truncated_org_type_menu_is_refused_not_used():
+    """Half a menu is worse than none: a real type would read as unknown.
+
+    `issueTypes` was requested with a bare `first: 20` and no truncation check,
+    so an org with more types than one page would silently lose the tail — and
+    `count_by_type` would then reject a perfectly valid type as unknown. Same
+    fail-open shape as the search qualifier this whole lane avoids. Flagged in
+    review of PR #163.
+    """
+    calls = []
+
+    def invoke(command):
+        calls.append(command)
+        return (
+            0,
+            json.dumps(
+                {
+                    "data": {
+                        "organization": {
+                            "issueTypes": {
+                                "pageInfo": {"hasNextPage": True},
+                                "nodes": [{"name": "Task", "isEnabled": True}],
+                            }
+                        }
+                    }
+                }
+            ),
+            "",
+        )
+
+    with pytest.raises(MODULE.GitHubUnreachable) as excinfo:
+        MODULE.org_type_names("agentculture", invoke=invoke, backoff=0)
+    assert "not read in full" in str(excinfo.value)
+
+
+def test_a_failed_read_names_which_read_failed():
+    """ "Could not read from GitHub" cannot tell two different failures apart.
+
+    The issue reads are repository-scoped; the org type menu is an
+    ORGANISATION object no repository-scoped token (every Actions GITHUB_TOKEN
+    is one) can see. Conflating them cost a CI round-trip to diagnose, so the
+    message names the read.
+    """
+
+    def forbidden(command):
+        return 1, "", "gh: Resource not accessible by integration"
+
+    with pytest.raises(MODULE.GitHubUnreachable) as excinfo:
+        MODULE.org_type_names("agentculture", invoke=forbidden, backoff=0)
+    message = str(excinfo.value)
+    assert "issue-type menu" in message
+    assert "ORGANISATION" in message, "the message names why the privilege differs"

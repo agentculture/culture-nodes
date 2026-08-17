@@ -23,7 +23,7 @@
 ## Requirements
 
 - The census in issue #157's body is already stale and must be re-measured, not cited: the body says 56 of 56 open issues are untyped; two hours later the live counts are 46 open and 46 'no:type'. Any adoption claim states the count it measured and when.
-  - instruction: Write every count as '<n> (query, date)'. No bare numbers reach the spec, the issue, or the delivery summary.
+  - instruction: Write every count as `N (query, date)`. No bare numbers reach the spec, the issue, or the delivery summary.
   - honesty: Every count that reaches the spec, the issue, or the delivery summary names the query that produced it and the date it ran.
 - Grouping the triage report by type forces a change of data source: the installed gh is 2.45.0 and its 'gh issue list --json' has no issueType field at all, so type is reachable only through GraphQL (repository.issues.nodes.issueType) or the search qualifiers 'type:' / 'no:type'.
   - instruction: Verify before building: run 'gh issue list --repo agentculture/culture-nodes --json issueType' and confirm it still errors with 'Unknown JSON field'. If gh has been upgraded, the simpler --json path is available and this requirement is moot.

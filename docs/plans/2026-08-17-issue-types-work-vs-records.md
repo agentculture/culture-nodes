@@ -26,7 +26,7 @@ slug: `issue-types-work-vs-records` · status: `exported` · from frame: `issue-
   - No type is assigned from the title alone: each row cites a file, test, commit, or issue comment that establishes whether the defect is live
   - The output records both counts separately — issues typed, and issues examined but deliberately left untyped
   - At least one currently-open issue is identified by reading it as history that is already true, and is cited in the spec as the worked example
-  - The open-issue count and the no:type count are re-measured at the time this file is produced and written into it as '<n> (query, date)'
+  - The open-issue count and the no:type count are re-measured at the time this file is produced and written into it as `N (query, date)`
 
 ### t3 — Owner creates the Record issue type in the agentculture org
 

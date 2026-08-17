@@ -4,7 +4,7 @@
   "schema_version": 5,
   "status": "exported",
   "created": "2026-08-17T17:56:24Z",
-  "updated": "2026-08-17T18:27:13Z",
+  "updated": "2026-08-17T18:45:00Z",
   "claims": [
     {
       "id": "c1",
@@ -87,7 +87,7 @@
       ],
       "hard_questions": [],
       "links": [],
-      "instruction": "Write every count as '<n> (query, date)'. No bare numbers reach the spec, the issue, or the delivery summary.",
+      "instruction": "Write every count as `N (query, date)`. No bare numbers reach the spec, the issue, or the delivery summary.",
       "revisions": []
     },
     {

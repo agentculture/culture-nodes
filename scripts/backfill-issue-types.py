@@ -18,6 +18,15 @@ reversibility depends entirely on the pre-state snapshot: every target issue's
 type BEFORE the run, written to disk and its path printed, before the first
 mutation. A resumed run reuses that file rather than overwriting it -- an
 overwritten snapshot taken halfway through is not a way back.
+
+Resume and rollback are two mechanisms, not one, and the snapshot serves only
+the second. Nothing ever READS the snapshot: a resumed run re-reads live state
+and plans again, so issues the first run already wrote come back as
+`already correct` and are skipped. That is why resume is safe to repeat and why
+it needs no cursor. The snapshot exists purely so the whole run can be undone
+later, which is the one thing live state can no longer tell you. Do not
+"improve" resume by consulting it -- reading a stale pre-state to decide what
+to write is how a resumed run would re-apply a type a human had since changed.
 """
 
 from __future__ import annotations

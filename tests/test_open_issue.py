@@ -367,3 +367,58 @@ def test_record_template_uses_the_vendored_placeholder_syntax():
     found = re.findall(r"\{\{([A-Z0-9_]+)\}\}", text)
     assert found, "no placeholders found"
     assert "ARTIFACT_PATH" in found
+
+
+# --- the window between creating and typing ---------------------------------
+
+
+def test_a_failure_after_the_post_names_the_issue_and_the_repair(stubs, tmp_path):
+    """Creating and typing are two calls, so the issue can exist untyped.
+
+    Validating the type up front removes the *likely* cause of a failure here
+    but not the window itself: `agtag issue post` creates, this wrapper types,
+    and nothing makes the pair atomic — which is exactly what agentculture/agtag#19
+    asks upstream to close.
+
+    An untyped issue nobody knows is untyped is the decay this wrapper exists to
+    prevent, arriving through a different door. So a failure past the post must
+    be loud, must name the issue it left behind, and must print the command that
+    finishes the job. Found by an independent review of this branch; this test is
+    why the fix cannot silently regress.
+    """
+    env, _, _ = stubs
+    # Break only the node-id lookup — the post has already succeeded by then.
+    gh = Path(env["PATH"].split(os.pathsep)[0]) / "gh"
+    gh.write_text(
+        gh.read_text().replace(
+            'elif "issue(number" in query:',
+            'elif "issue(number" in query:\n'
+            '    sys.stderr.write("stub gh: node lookup exploded\\n"); sys.exit(7)\n'
+            "elif False:",
+        )
+    )
+
+    result = run_open(
+        env,
+        "--type",
+        "Record",
+        "--title",
+        "half-done",
+        "--template",
+        str(RECORD_TEMPLATE),
+        "--set",
+        "SUMMARY=s",
+        "--set",
+        "ARTIFACT_PATH=docs/triage/issue-types.md",
+        "--set",
+        "WHY_RECORD=w",
+        "--set",
+        "CONTEXT=c",
+    )
+
+    assert result.returncode != 0, "a half-done creation must not look like success"
+    assert "4242" in result.stderr, "the abandoned issue is named"
+    assert "NOT typed" in result.stderr
+    # The repair is printed, not left as an exercise.
+    assert "updateIssue" in result.stderr
+    assert "IT_kwDOEI9FZ84B9t70" in result.stderr, "the resolved type id is carried"

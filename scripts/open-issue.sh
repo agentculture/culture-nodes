@@ -124,6 +124,24 @@ if [[ -z $type_id ]]; then
   exit 2
 fi
 
+# From here on the issue EXISTS. Validating the type up front removes the likely
+# cause of a failure below, but not the window: agtag creates and this script
+# types, and nothing makes the pair atomic -- which is exactly what agtag#19
+# asks upstream to close. So a failure past this point has to be loud and has to
+# name the repair. An untyped issue nobody knows is untyped is the decay this
+# script exists to prevent, arriving through a different door.
+#
+# Defined before the delegation and disarmed after it, so the block below stays
+# the whole of what this wrapper adds over agtag. $node_id and $type_mutation
+# are resolved when the trap FIRES, not when it is declared.
+untyped_warning() {
+  cat >&2 <<WARN
+error: issue #${number} was created but NOT typed -- ${url}
+hint: creating and typing are two calls and only the first succeeded. Repair with:
+      gh api graphql -f id='${node_id:-<node-id>}' -f typeId='${type_id}' -f query='${type_mutation}'
+WARN
+}
+
 # --- delegation ------------------------------------------------------------
 # agtag owns posting, signing and auth. This script adds exactly one thing
 # agtag cannot do yet: the type. Everything between here and the mutation is
@@ -131,11 +149,16 @@ fi
 issue_json=$(agtag issue post --repo "$repo" --title "$title" --body-file "$body_file" --json)
 read -r number url < <(printf '%s' "$issue_json" |
   python3 -c 'import json,sys; d=json.load(sys.stdin); print(d["number"], d["url"])')
+# Bound BEFORE the trap can fire: under `set -u` a warning that references an
+# unset variable dies instead of warning, which is worse than no warning.
+type_mutation='mutation($id:ID!,$typeId:ID!){updateIssue(input:{id:$id,issueTypeId:$typeId}){issue{number}}}'
+trap untyped_warning ERR
+
 node_id=$(gh api graphql -f owner="$org" -f name="$name" -F number="$number" \
   -f query='query($owner:String!,$name:String!,$number:Int!){repository(owner:$owner,name:$name){issue(number:$number){id}}}' |
   python3 -c 'import json,sys; print(json.load(sys.stdin)["data"]["repository"]["issue"]["id"])')
-gh api graphql -f id="$node_id" -f typeId="$type_id" \
-  -f query='mutation($id:ID!,$typeId:ID!){updateIssue(input:{id:$id,issueTypeId:$typeId}){issue{number}}}' >/dev/null
+gh api graphql -f id="$node_id" -f typeId="$type_id" -f query="$type_mutation" >/dev/null
+trap - ERR
 # --- end delegation --------------------------------------------------------
 
 printf '%s\n' "$url"

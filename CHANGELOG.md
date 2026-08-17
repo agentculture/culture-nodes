@@ -5,6 +5,21 @@ All notable changes to this project will be documented in this file.
 Format follows [Keep a Changelog](https://keepachangelog.com/). This project
 adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.33.3] - 2026-08-17
+
+### Added
+
+- scripts/lint-all.sh — one script carrying all three CI lint jobs verbatim, invoked BY the three lint workflows so a green local run and a red CI lint job cannot drift apart by construction (#123)
+- toolchain-baseline.sh capture writes each host's JSON to a temp file, validates it parses, and mv -f into place only then — a probe that fails, or that answers with nothing, now leaves the committed baseline byte-identical (#146)
+
+### Changed
+
+- CLAUDE.md lint block now names scripts/lint-all.sh as the one command, and records why the three jobs invoke the linters in two different styles
+
+### Fixed
+
+- toolchain-baseline.sh capture exits non-zero and names every host it could not measure, instead of reporting success having captured some of them (#146)
+
 ## [0.33.2] - 2026-08-17
 
 ### Fixed

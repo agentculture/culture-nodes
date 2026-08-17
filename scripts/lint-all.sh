@@ -59,7 +59,7 @@
 set -uo pipefail
 
 ROOT=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
-cd "$ROOT"
+cd "$ROOT" || exit 2
 
 # The version tests.yml pins. Pinned here too, and asserted rather than
 # assumed: linting with a different markdownlint than CI's is the same
@@ -69,7 +69,16 @@ MARKDOWNLINT_VERSION=0.21.0
 JOBS=(root adapter-codex adapter-claude-code)
 
 FAILED=()
-SKIPPED=()
+# Two different facts, deliberately not one list. WAIVED is "the operator asked
+# me not to run this"; UNRUNNABLE is "this environment could not run it". Only
+# the second is a measurement that did not happen, and folding it into a green
+# exit is the exact defect #146 is about one directory over: an instrument that
+# reports success without having measured anything. So it gets its own exit
+# code, matching the policy the rest of the repo already uses --
+# scripts/merge-gate.py's exit 2 is `measurement_incomplete`, and
+# culture_nodes/cli/_errors.py reserves 2 for an environment error.
+WAIVED=()
+UNRUNNABLE=()
 
 usage() {
 	sed -n '2,10p' "${BASH_SOURCE[0]}" >&2
@@ -82,7 +91,7 @@ step() {
 	shift
 	if [[ " ${LINT_ALL_SKIP:-} " == *" $name "* ]]; then
 		printf '\n>>> SKIP %s (LINT_ALL_SKIP)\n' "$name"
-		SKIPPED+=("$name")
+		WAIVED+=("$name")
 		return 0
 	fi
 	printf '\n>>> %s\n' "$name"
@@ -93,11 +102,13 @@ step() {
 	FAILED+=("$name")
 }
 
-# skip <name> <reason> records a step this environment cannot run.
+# skip <name> <reason> records a step this environment cannot run. This is NOT
+# a pass: the script exits 2 if any step lands here, so a caller cannot read a
+# partial run as a full one.
 skip() {
 	printf '\n>>> SKIP %s -- %s\n' "$1" "$2"
 	printf '    CI runs it anyway; a green run here does not clear it.\n'
-	SKIPPED+=("$1")
+	UNRUNNABLE+=("$1")
 }
 
 # ---------------------------------------------------------------------------
@@ -220,12 +231,21 @@ for job in "${requested[@]}"; do
 done
 
 printf '\n=== summary ===\n'
-if [ ${#SKIPPED[@]} -gt 0 ]; then
-	printf 'skipped: %s\n' "${SKIPPED[*]}"
-	printf '         CI runs these; this run did not clear them.\n'
+if [ ${#WAIVED[@]} -gt 0 ]; then
+	printf 'waived:     %s (LINT_ALL_SKIP)\n' "${WAIVED[*]}"
 fi
+if [ ${#UNRUNNABLE[@]} -gt 0 ]; then
+	printf 'UNRUNNABLE: %s\n' "${UNRUNNABLE[*]}" >&2
+	printf '            this environment could not run these; CI runs them anyway.\n' >&2
+fi
+# A failure outranks an unrunnable step: a defect you measured is more
+# actionable than one you could not look for.
 if [ ${#FAILED[@]} -gt 0 ]; then
-	printf 'FAILED:  %s\n' "${FAILED[*]}" >&2
+	printf 'FAILED:     %s\n' "${FAILED[*]}" >&2
 	exit 1
+fi
+if [ ${#UNRUNNABLE[@]} -gt 0 ]; then
+	printf 'every step this environment could run passed, but %d could not run -- exiting 2\n' "${#UNRUNNABLE[@]}" >&2
+	exit 2
 fi
 printf 'all lint steps passed\n'

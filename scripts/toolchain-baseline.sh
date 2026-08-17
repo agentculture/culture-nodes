@@ -90,7 +90,8 @@ measure() {
 		python3 - '"${TOOLS[*]}" <"$PROBE"
 }
 
-# parses_as_json <file> succeeds only if the file holds a JSON object.
+# is_toolchain_envelope <file> succeeds only if the file holds the shape
+# `preflight.py` actually emits — not merely "some JSON object".
 #
 # Exit status alone is not enough to decide a probe worked. An ssh that
 # ANSWERS can still hand back nothing: `python3 -` fed an empty stdin runs an
@@ -98,8 +99,30 @@ measure() {
 # issue #146 (a stand-in ssh returning 0 with no output) and is the worse of
 # the two failures, because it emptied a baseline while reporting success.
 # So the content is checked, not just the status.
-parses_as_json() {
-	python3 -c 'import json,sys; d=json.load(open(sys.argv[1])); sys.exit(0 if isinstance(d, dict) else 1)' "$1" 2>/dev/null
+#
+# And "is a JSON object" is a weaker check than it looks. `{}`, or an error
+# envelope a proxy or a wrapper script decided to print, both satisfy it while
+# carrying no measurement at all — and would then be installed as a baseline
+# that `check()` compares future reality against. The three keys asserted here
+# are the ones `check()` depends on: it pops `search_path` before diffing (so
+# a baseline without it cannot be compared correctly), and diffs `hostname`
+# and `toolchains` as the facts themselves.
+is_toolchain_envelope() {
+	python3 -c '
+import json, sys
+try:
+    d = json.load(open(sys.argv[1]))
+except (OSError, json.JSONDecodeError):
+    sys.exit(1)
+ok = (
+    isinstance(d, dict)
+    and isinstance(d.get("hostname"), str) and d["hostname"]
+    and isinstance(d.get("search_path"), str)
+    and isinstance(d.get("toolchains"), list)
+    and all(isinstance(t, dict) and "name" in t and "state" in t for t in d["toolchains"])
+)
+sys.exit(0 if ok else 1)
+' "$1" 2>/dev/null
 }
 
 # capture writes a baseline per host, and NEVER destroys one it could not
@@ -136,7 +159,7 @@ capture() {
 			skipped+=("$host")
 			continue
 		fi
-		if ! parses_as_json "$tmp"; then
+		if ! is_toolchain_envelope "$tmp"; then
 			printf 'FAILED (probe produced no usable JSON) -- %s left unchanged\n' "$target"
 			rm -f "$tmp"
 			skipped+=("$host")

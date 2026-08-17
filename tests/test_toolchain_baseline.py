@@ -20,7 +20,7 @@ the other live:
      stdin runs an empty program, prints nothing and exits 0 -- so an ssh
      that answers can still empty a baseline while the command reports
      success. This is the path that actually exits 0, and it is the one the
-     status check alone does not catch; hence `parses_as_json`.
+     status check alone does not catch; hence `is_toolchain_envelope`.
 
 Every test here works in a tmp_path baseline directory against invented
 hostnames. Nothing in docs/baselines/toolchains/ is ever at risk, which

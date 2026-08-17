@@ -73,6 +73,26 @@ roughly even odds of missing both; checking every symbol mechanically found them
 in seconds. Any future evidence pass should verify citations by resolution, not
 by reading a sample.
 
+## The third correction: a wrong verdict, not a wrong pointer
+
+Before closing anything, each `Record` was checked against the tree. Ten of the
+eleven "already implemented" verdicts held strongly — several cite committed code
+that names its own issue number (`clarifygate_test.go` says "issue #67",
+`examples/pr-upkeep/driver.sh` says "issue #71", `internal/api/suiteverdicts.go`
+says "issue #101", commit `95fd653` says "(#80)").
+
+**#100 did not hold.** It was typed `Record` citing `internal/handover/doc.go` —
+but that file's header names **issue #13**, not #100, and measuring what a
+handed-over ref contains is not the same as replacing the operator's three-step
+`ssh … git diff HEAD --binary` harvest with a node. What #100 asks for does not
+exist. Retyped `Feature`, left open, and the correction is recorded on the issue
+itself.
+
+This is the most serious of the three corrections. The first two were fabricated
+citations behind sound verdicts; this one was a wrong verdict, and an unreviewed
+`Record` would have closed live work as history — precisely the failure #157
+exists to prevent, arriving from the opposite direction.
+
 ## Results
 
 | Type | Count |

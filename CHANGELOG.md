@@ -5,6 +5,17 @@ All notable changes to this project will be documented in this file.
 Format follows [Keep a Changelog](https://keepachangelog.com/). This project
 adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.35.1] - 2026-08-18
+
+### Changed
+
+- Closed eleven issues as `Record` -- history that was already true, each citing the committed artifact that proves it, most of which name their own issue number in code (#13, #50, #54, #61, #62, #67, #71, #80, #101, #102, #104). Closed #164 (the lint job's missing `issues:read`) as fixed. The open backlog went 48 -> 35 with no product code written, because thirteen of those issues were records rather than work.
+- Regenerated `docs/triage/open-issues.md` against the new open set.
+
+### Fixed
+
+- Corrected #100's type from `Record` to `Feature` and left it open. The #157 evidence pass cited `internal/handover/doc.go` as proof the work had shipped, but that file names issue #13, and measuring a handed-over ref is not the same as replacing the operator's ssh harvest with a node. Third correction to that pass and the most serious kind: a wrong verdict rather than a wrong citation, which unreviewed would have closed live work as history.
+
 ## [0.35.0] - 2026-08-17
 
 ### Added

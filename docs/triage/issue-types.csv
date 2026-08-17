@@ -17,7 +17,7 @@ issue,type,evidence_pointer
 89,Feature,"`git grep` on origin/main found the scope→think→challenge chain only in skills/docs, while origin/main:docs/triage/open-issues.md:18 schedules the missing workflow as a large bet."
 93,Feature,origin/main:docs/triage/open-issues.md:20 still calls for automated checkout preparation; commit b96b129 only generated briefs from plans and capabilities.
 97,Feature,"origin/main:docs/adr/0011-declared-economic-budget.md covers declared run budgets, but origin/main:docs/triage/open-issues.md:22 still schedules shared subscription budgets as a separate large bet."
-100,Record,origin/main:internal/handover/doc.go:2 and delivery task t10 record that a handed-over ref is fetched and measured by the control plane.
+100,Feature,"CORRECTED on review before closing: the dispatch typed this Record citing origin/main:internal/handover/doc.go, but that file's header names issue #13, not #100, and measuring a handed-over ref is not the same as replacing the operator's ssh harvest with a node. What this issue asks for does not exist, so it is a Feature and stays open."
 101,Record,origin/main:internal/api/suiteverdicts.go:14 and commit 13b8543 implement derived suite verdicts consumed by the merge gate.
 102,Record,origin/main:internal/repair/doc.go:1-24 and origin/main:internal/api/repairroute_test.go:135 prove bounded gate→repair→gate routing exists.
 104,Record,origin/main:internal/api/version.go:1-20 documents the revision-reporting surface issue #104 said was absent; internal/api/version_test.go:33 TestVersionReportsTheRevisionTheBuildWasStampedWith covers it. (Citation corrected in review: the dispatch named a test TestVersionReportsControlPlaneRevision that does not exist.)

@@ -90,14 +90,103 @@ measure() {
 		python3 - '"${TOOLS[*]}" <"$PROBE"
 }
 
+# is_toolchain_envelope <file> succeeds only if the file holds the shape
+# `preflight.py` actually emits — not merely "some JSON object".
+#
+# Exit status alone is not enough to decide a probe worked. An ssh that
+# ANSWERS can still hand back nothing: `python3 -` fed an empty stdin runs an
+# empty program, prints nothing and exits 0. That path was reproduced for
+# issue #146 (a stand-in ssh returning 0 with no output) and is the worse of
+# the two failures, because it emptied a baseline while reporting success.
+# So the content is checked, not just the status.
+#
+# And "is a JSON object" is a weaker check than it looks. `{}`, or an error
+# envelope a proxy or a wrapper script decided to print, both satisfy it while
+# carrying no measurement at all — and would then be installed as a baseline
+# that `check()` compares future reality against. The three keys asserted here
+# are the ones `check()` depends on: it pops `search_path` before diffing (so
+# a baseline without it cannot be compared correctly), and diffs `hostname`
+# and `toolchains` as the facts themselves.
+is_toolchain_envelope() {
+	python3 -c '
+import json, sys
+try:
+    d = json.load(open(sys.argv[1]))
+except (OSError, json.JSONDecodeError):
+    sys.exit(1)
+ok = (
+    isinstance(d, dict)
+    and isinstance(d.get("hostname"), str) and d["hostname"]
+    and isinstance(d.get("search_path"), str)
+    and isinstance(d.get("toolchains"), list)
+    and all(isinstance(t, dict) and "name" in t and "state" in t for t in d["toolchains"])
+)
+sys.exit(0 if ok else 1)
+' "$1" 2>/dev/null
+}
+
+# capture writes a baseline per host, and NEVER destroys one it could not
+# replace (issue #146, task t7).
+#
+# The bug this replaces was one character of shell: `measure "$host"
+# >"$BASELINE_DIR/$host.json"` opens and TRUNCATES the baseline before the
+# probe's status is known, so an unrelated network problem left a committed
+# 56-byte baseline at 0 bytes -- silently disarming the instrument that
+# exists to notice toolchain drift.
+#
+# The fix is the shape deploy/prod/deploy.sh already uses to replace a running
+# binary: write `<target>.new`, prove the result is good, then `mv -f` over
+# the target. A rename is atomic and a failed probe never reaches it.
+#
+# The loop no longer stops at the first failure either. `set -e` used to abort
+# the run mid-list, so `capture spark thor orin` with thor down never even
+# tried orin and could not say whether orin was fine. Failures are collected
+# the way check()'s `drift` accumulator collects them, every unmeasured host
+# is named, and the command exits non-zero.
 capture() {
 	mkdir -p "$BASELINE_DIR"
-	local host
+	local host target tmp
+	local -a captured=() skipped=()
 	for host in "$@"; do
+		target="$BASELINE_DIR/$host.json"
+		tmp="$target.new"
 		printf 'capturing %s ... ' "$host"
-		measure "$host" >"$BASELINE_DIR/$host.json"
-		printf 'wrote %s\n' "$BASELINE_DIR/$host.json"
+		# `if ! <cond>` exempts only the CONDITION from -e, so a failed
+		# probe lands in this branch instead of killing the script.
+		if ! measure "$host" >"$tmp"; then
+			printf 'FAILED (probe did not complete) -- %s left unchanged\n' "$target"
+			rm -f "$tmp"
+			skipped+=("$host")
+			continue
+		fi
+		if ! is_toolchain_envelope "$tmp"; then
+			printf 'FAILED (probe produced no usable JSON) -- %s left unchanged\n' "$target"
+			rm -f "$tmp"
+			skipped+=("$host")
+			continue
+		fi
+		mv -f "$tmp" "$target"
+		printf 'wrote %s\n' "$target"
+		captured+=("$host")
 	done
+
+	printf 'captured: %s\n' "${captured[*]:-(none)}"
+	if [ ${#skipped[@]} -eq 0 ]; then
+		printf 'skipped:  (none)\n'
+		return 0
+	fi
+	printf 'skipped:  %s\n' "${skipped[*]}" >&2
+	cat >&2 <<EOF
+
+Could not measure: ${skipped[*]}
+
+Their baselines are untouched -- an unreachable host is a network fact, not a
+toolchain fact, and a baseline that quietly became empty would report "no
+drift" forever after. Fix the reachability and re-run:
+
+  scripts/toolchain-baseline.sh capture ${skipped[*]}
+EOF
+	return 1
 }
 
 # facts strips the one field that legitimately varies between two honest

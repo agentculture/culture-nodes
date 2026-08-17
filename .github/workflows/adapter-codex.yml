@@ -63,14 +63,11 @@ jobs:
       # culture_nodes.
       - run: uv sync
 
-      - name: black --check
-        run: uv run black --check adapters/codex/src adapters/codex/tests
-
-      - name: isort --check
-        run: uv run isort --check-only adapters/codex/src adapters/codex/tests
-
-      - name: flake8
-        run: uv run flake8 adapters/codex/src adapters/codex/tests
-
-      - name: bandit
-        run: uv run bandit -c pyproject.toml -r adapters/codex/src
+      # Issue #123. The four commands used to be inline here, and the
+      # difference between them and adapter-claude-code.yml's four — repo root
+      # versus adapter directory, so root config versus adapter config — is
+      # invisible to anyone reading one file. They live in
+      # scripts/lint-all.sh now, which carries both forms, so running that one
+      # script locally covers this job exactly as CI runs it.
+      - name: lint (adapters/codex) — scripts/lint-all.sh adapter-codex
+        run: scripts/lint-all.sh adapter-codex

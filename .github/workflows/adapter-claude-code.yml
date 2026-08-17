@@ -67,14 +67,16 @@ jobs:
 
       - run: uv sync
 
-      - name: black --check
-        run: uv run black --check src tests
-
-      - name: isort --check
-        run: uv run isort --check-only src tests
-
-      - name: flake8
-        run: uv run flake8 src tests
+      # Issue #123. These three used to be inline, and their being `src tests`
+      # rather than `adapters/claude-code/src ...` is load-bearing: run from
+      # this directory, they pick up THIS adapter's black/isort/flake8 config,
+      # while adapter-codex.yml runs the same tools from the repo root under
+      # the ROOT config. scripts/lint-all.sh carries both forms verbatim and
+      # cd's itself, so this step opts out of the job's
+      # defaults.run.working-directory rather than reaching up with `../..`.
+      - name: lint (adapters/claude-code) — scripts/lint-all.sh adapter-claude-code
+        working-directory: ${{ github.workspace }}
+        run: scripts/lint-all.sh adapter-claude-code
 
   conformance:
     # The acceptance check for this whole package (task t12, criterion #1):

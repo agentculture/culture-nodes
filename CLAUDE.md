@@ -82,28 +82,38 @@ uv run pytest -n auto                     # full test suite (xdist)
 uv run pytest tests/test_cli.py::test_whoami_text   # single test
 uv run pytest -n auto --cov=culture_nodes --cov-report=term  # with coverage (CI gates ≥60%)
 
-# Lint — mirrors the ROOT CI lint job exactly:
-uv run black --check culture_nodes tests
-uv run isort --check-only culture_nodes tests
-uv run flake8 culture_nodes tests
-uv run bandit -c pyproject.toml -r culture_nodes
-markdownlint-cli2 "**/*.md" "#node_modules" "#.local" "#.claude/skills" "#.teken"
-uv run teken cli doctor . --strict        # agent-first CLI rubric gate
-
-# …and the adapter lint jobs, which the root scope does NOT cover. Skipping
-# them is how PR #122 went red on three `lint` jobs after a green local run.
-#
-# The two adapter workflows invoke the linters DIFFERENTLY, and the difference
-# is load-bearing: `adapter-codex.yml` runs from the repo root against adapter
-# paths (so the ROOT isort/black config applies), while
-# `adapter-claude-code.yml` runs inside the adapter directory (so the ADAPTER's
-# own config applies). Running only the adapter-dir form for codex passes
-# locally and fails in CI. Run each exactly as its workflow does:
-uv run black --check adapters/codex/src adapters/codex/tests
-uv run isort --check-only adapters/codex/src adapters/codex/tests
-uv run flake8 adapters/codex/src adapters/codex/tests
-(cd adapters/claude-code && uv run black --check src tests && uv run isort --check-only src tests && uv run flake8 src tests)
+# Lint — ONE command, and it is the one CI runs (issue #123):
+scripts/lint-all.sh                       # all three jobs named `lint`
+scripts/lint-all.sh root                  # or one job: root | adapter-codex | adapter-claude-code
+scripts/lint-all.sh --list
 ```
+
+`scripts/lint-all.sh` is not a convenience wrapper around the commands below —
+the three `lint` workflows *invoke it*, so a green local run and a red CI lint
+job cannot drift apart by construction. That is the same shape as
+`scripts/check-zero-runtime-deps.sh`. Before it existed, an operator had to know
+that three workflows lint Python in two different styles over
+overlapping-but-different paths, and that knowledge lived only here — which is
+exactly how PR #122 went red on three `lint` jobs after a fully green local run.
+
+Two root steps need context a laptop may lack — `vendored-skills` (a merge
+range) and `triage` (an authenticated `gh`). Neither is skipped silently: an
+unrunnable step says so and is named in the summary, and failures accumulate
+rather than fail-fast, so the script can only ever report *more* red than CI,
+never less.
+
+The difference the script encodes, and the reason it must not be "simplified":
+`adapter-codex.yml` runs from the **repo root** against adapter paths (so the
+ROOT isort/black config applies), while `adapter-claude-code.yml` runs **inside
+the adapter directory** (so the ADAPTER's own config applies). Running only the
+adapter-dir form for codex passes locally and fails in CI.
+
+Scope is deliberately the three jobs literally named `lint`. `go vet` and
+`web.yml`'s `webglass` are **not** included: #123's defect is same-named jobs
+with different invocations, which those do not have, and pulling a Go toolchain
+and an npm install into a script authors run casually would change what "lint is
+green" means for every caller. `tests/test_lint_all.py` pins that exactly three
+workflow jobs are named `lint`, so widening this is a decision, not a drift.
 
 **A shared bridge module must stay byte-identical across all five adapters**
 (`tests/lint/` enforces it for `preflight.py`, `dialin.py`, `deployment.py`,

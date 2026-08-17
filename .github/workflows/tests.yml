@@ -187,38 +187,19 @@ jobs:
 
       - run: uv sync
 
-      - name: Vendored skills unchanged in merge range
+      # Issue #123. This job's steps used to be spelled out here, and so did
+      # the two adapter `lint` jobs' — three jobs with the same name running
+      # the same linters with DIFFERENT arguments and working directories, and
+      # no single command an author could run that meant "CI's lint is green".
+      # PR #122 went red on all three after a fully green local run. The
+      # commands now live in scripts/lint-all.sh and CI calls it, the way CI
+      # already calls check-zero-runtime-deps.sh rather than inlining it, so a
+      # green local run and a red lint job cannot coexist by construction.
+      - name: lint (root scope) — scripts/lint-all.sh root
         env:
           RANGE_BASE: ${{ github.event.pull_request.base.sha || github.event.before }}
-        run: python3 scripts/check-vendored-skill-diff.py "$RANGE_BASE" "$GITHUB_SHA"
-
-      - name: Zero-dependency CLI works in a bare environment
-        run: scripts/check-zero-runtime-deps.sh
-
-      - name: black --check
-        run: uv run black --check culture_nodes tests
-
-      - name: isort --check
-        run: uv run isort --check-only culture_nodes tests
-
-      - name: flake8
-        run: uv run flake8 culture_nodes tests
-
-      - name: bandit
-        run: uv run bandit -c pyproject.toml -r culture_nodes
-
-      - name: markdownlint-cli2
-        run: |
-          npm install -g markdownlint-cli2@0.21.0
-          markdownlint-cli2 "**/*.md" "#node_modules" "#.local" "#.claude/skills" "#.teken"
-
-      - name: afi rubric gate
-        run: uv run teken cli doctor . --strict
-
-      - name: open-issue triage is complete and current
-        env:
           GH_TOKEN: ${{ github.token }}
-        run: python3 scripts/triage-report.py --check
+        run: scripts/lint-all.sh root
 
   version-check:
     # Only run on PR events. On push to main after a merged PR, the comparison

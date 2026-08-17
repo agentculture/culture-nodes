@@ -5,6 +5,26 @@ All notable changes to this project will be documented in this file.
 Format follows [Keep a Changelog](https://keepachangelog.com/). This project
 adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.35.0] - 2026-08-17
+
+### Added
+
+- GitHub issue types as a first-class backlog dimension (#157). The agentculture org gains a fourth type, `Record` -- an issue that is complete when written (a deviation, an audit snapshot, a counted operator hand-turn) and closes on read. All 46 open issues typed from evidence rather than titles: Feature 14, Task 13, Record 12, Bug 6, one (#136) left UNDETERMINED on purpose because settling it needs a live actor-registry probe the tree cannot supply.
+- `scripts/backfill-issue-types.py` -- stdlib-only bulk type writer with `--dry-run`, a pre-state snapshot written before the first mutation, resume-without-rewrite, and a preflight that refuses to start when the target type does not exist (one error, not 46). Every `gh` call goes through one injectable seam, so the tests exercise real control flow with no network.
+- `scripts/open-issue.sh` -- renders a `{{PLACEHOLDER}}` body template and sets the issue type at creation, delegating posting, signing and auth to `agtag issue post` in an eight-line block. Refuses an unsubstituted placeholder or an unknown type before posting. Written to be deleted when agentculture/agtag#19 lands.
+- `scripts/close-issue.sh --artifact PATH` -- a third evidence shape for closures, alongside a run id and a test path. A Record has neither, so it names the committed record it points at; the path must exist AND be tracked by git, because a file that lives only on the author's disk is not evidence.
+- Type-grouped blocks in `docs/triage/open-issues.md`: open issues by type, and issues closed since a boundary date by type. The second block exists because a Record is closed on write, so an open-only report is structurally blind to the thing #157 wanted counted.
+
+### Changed
+
+- `scripts/triage-report.py` reads issue types per-issue through GraphQL and never through the search `type:`/`no:type` qualifiers. Both reasons were reproduced live: the qualifier fails open (`type:NotARealType` returns 0 rather than erroring) and its index lags writes (`no:type` reported 47 while two of those issues were confirmed typed). `run_gh()` was extracted so both GitHub calls share one retry loop and one `GitHubUnreachable`, keeping exit 2 meaning 'could not measure' rather than 'the table is wrong'.
+- `dispositions.csv` is deliberately unchanged -- four columns, same two consumers. The type is read live from GitHub instead of stored, so `scripts/cycle-accounting.py` and its test are untouched.
+- CLAUDE.md documents the four types, what `Record` means, the pointer-is-not-a-home rule, and both silent traps. The every-operator-hand-turn rule is restated as kept: it is why records accumulate beside defects, and the type is what stops them reading as outstanding workload.
+
+### Fixed
+
+- The committed triage table was stale on main -- it reported 50 open against a live 46 -- so the `triage` lint step was already red before this change. Regenerated; `scripts/lint-all.sh root` is green end to end.
+
 ## [0.34.0] - 2026-08-17
 
 ### Added

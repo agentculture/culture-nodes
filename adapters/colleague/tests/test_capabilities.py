@@ -207,3 +207,36 @@ def test_an_absent_toolchain_is_still_absent(tmp_path):
 
 def test_the_surface_with_toolchains_is_still_a_document_the_engine_accepts(tmp_path):
     preflight.validate_block(preflight.capability_block(_host({}, tmp_path)))
+
+
+# --- git_metadata_writable (issue #94) ------------------------------------
+
+
+def test_the_git_answer_is_measured_because_a_session_has_this_processs_authority(tmp_path):
+    """This backend takes no sandbox flag and runs a session with the bridge
+    process's own privileges, so the write this process attempts is the write
+    a dispatch attempts. Both answers come from the attempt, never from a mode
+    name."""
+    repo = tmp_path / "checkout"
+    (repo / ".git").mkdir(parents=True)
+    cfg = Config(repo_allowlist=(str(repo),))
+
+    measured = capabilities.host_facts(cfg, probes=_permissive(tmp_path))
+    assert measured["git_metadata_writable"] == preflight.GIT_METADATA_SUPPORTED
+
+    refused = capabilities.host_facts(
+        cfg, probes=_permissive(tmp_path), git_probe=lambda _git_dir: False
+    )
+    assert refused["git_metadata_writable"] == preflight.GIT_METADATA_UNSUPPORTED_BY_SANDBOX
+
+
+def test_a_host_with_no_checkout_to_probe_says_so(tmp_path):
+    """`not-probed` rather than a refusal: an allowlist that names no checkout
+    gives this bridge nothing to attempt, and reporting
+    `unsupported-by-sandbox` would blame a sandbox that refused nothing."""
+    empty = tmp_path / "no-checkout"
+    empty.mkdir()
+    host = capabilities.host_facts(
+        Config(repo_allowlist=(str(empty),)), probes=_permissive(tmp_path)
+    )
+    assert host["git_metadata_writable"] == preflight.GIT_METADATA_NOT_PROBED

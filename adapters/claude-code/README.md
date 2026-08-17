@@ -239,6 +239,7 @@ The document is exactly what an actor registration carries in
 | `confinement` | **none** — `claude -p` takes no sandbox flag and runs with this bridge process's own privileges |
 | `commit_policy` | The `preserve_on_failure` / `preserve_push` / `preserve_remote` policy in force |
 | `writable_paths` | `repo_allowlist` — `[]` means this bridge writes nowhere |
+| `git_metadata_writable` | **Measured** by attempting a write under `.git` in an allowlisted checkout. A session here runs with this bridge process's own privileges, so the attempt this process makes is the attempt a dispatch makes (issue #94) |
 | `dispatch_grants` | What each `--permission-mode` grants a session — here, everything this bridge process itself has, because `claude -p` takes no sandbox flag (issue #96) |
 | `toolchains` | `uv`, `go`, `gh` and `claude` itself: where each is, how it was packaged, what version it reports, and which modes can run it |
 

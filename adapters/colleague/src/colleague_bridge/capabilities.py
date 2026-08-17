@@ -66,6 +66,7 @@ def host_facts(
     probes: Sequence[tuple[str, str]] = preflight.USERNS_SYSCTLS,
     locate: Callable[[str], tuple[str | None, bool]] = preflight.locate_toolchain,
     version: Callable[[str], str | None] = preflight.toolchain_version,
+    git_probe: Callable[[Any], bool] | None = preflight.probe_git_metadata_write,
 ) -> dict[str, Any]:
     """Measure this host and return the `host` block for its capability
     surface.
@@ -80,12 +81,24 @@ def host_facts(
     *locate* and *version* are injectable so a test can assert what this
     surface says about a snap-packaged toolchain and a standalone one alike,
     neither of which is the host running pytest.
+
+    *git_probe* is the write attempt behind `git_metadata_writable` (issue
+    #94), injectable for the same reason: the state worth asserting is a
+    checkout whose `.git` REFUSES a write, and that is not the state of the
+    machine running pytest. The default is the real attempt, and on THIS
+    backend the process making it has exactly a dispatched session's
+    authority: `colleague work` takes no sandbox flag and runs with this
+    bridge's own privileges (`_CONFINEMENT`). The worktree colleague isolates
+    each work item in is a linked worktree, whose `.git` is a FILE pointing at
+    the parent repo's metadata directory — which `preflight.git_metadata_dir`
+    follows, so the answer is about the directory a ref would really land in.
     """
     available, unavailable = preflight.measure_sandbox_modes(
         SANDBOX_MODE_CANDIDATES,
         probes=probes,
     )
     grants = preflight.dispatch_grants({mode: _MODE_GRANTS[mode] for mode in available})
+    writable_paths = list(cfg.repo_allowlist + cfg.repo_allowlist_prefixes)
     return preflight.host_block(
         hostname=preflight.hostname(),
         sandbox_modes=available,
@@ -103,7 +116,15 @@ def host_facts(
             remote=cfg.preserve_remote,
             extra=_publication_clause(cfg),
         ),
-        writable_paths=list(cfg.repo_allowlist + cfg.repo_allowlist_prefixes),
+        writable_paths=writable_paths,
+        # The fact `writable_paths` above cannot state (issue #94): a reader
+        # who sees a checkout listed there concludes a ref can be created in
+        # it, and on a backend that carves `.git` out of its writable roots
+        # that is false. MEASURED by attempting the write, never derived from
+        # a mode name.
+        git_metadata_writable=preflight.measure_git_metadata_writable(
+            writable_paths, probe=git_probe
+        ),
         artifact_publish="unsupported-by-host",
         # Which revision of THIS bridge is answering (task t32, issue #120
         # item 4). Measured from the module object rather than from a

@@ -70,9 +70,27 @@ design into confirmed, planned work.
 `backend: colleague`, pinned Qwen model. The colleague resident's prompt file
 is `AGENTS.colleague.md` — **not** this file; a colleague-backend agent never
 loads CLAUDE.md, so mesh-agent behavior rules belong there. `nodes doctor`
-enforces the backend → prompt-file mapping (`claude` → `CLAUDE.md`,
-`colleague` → `AGENTS.colleague.md`, `acp` → `AGENTS.md`, `gemini` →
-`GEMINI.md`) plus prompt-file-present and skills-present.
+reports **four** checks — `uv run teken cli doctor . --strict` asserts
+`checks=4`, so this count is gated, not prose:
+
+1. `prompt_file_present` — the backend → prompt-file mapping (`claude` →
+   `CLAUDE.md`, `colleague` → `AGENTS.colleague.md`, `acp` → `AGENTS.md`,
+   `gemini` → `GEMINI.md`) *and* that the mapped file is on disk. An
+   unrecognised backend fails as `backend_consistency` instead. This is the
+   only `error`-severity check, so it alone decides `healthy` and the exit
+   code.
+2. `skills_present` — the vendored `.claude/skills/` kit exists and is
+   non-empty.
+3. `nodes_api_reachable` — a `GET /v1alpha1/healthz` probe against the
+   resolved API URL.
+4. `unprivileged_userns` — reads the AppArmor / userns sysctls to say whether
+   a bwrap-backed actor sandbox can start on this host at all. That is the
+   fact a codex `--sandbox workspace-write` dispatch needs *before* it
+   silently loses every file write while still running shell commands (#63).
+
+Checks 2–4 are `warning` severity: they can fail without flipping `healthy`
+or the exit code. Doctor is read-only and probes sysctls directly — it never
+shells out to `bwrap`, and it is not what verifies userns on a deploy host.
 
 ## Commands
 

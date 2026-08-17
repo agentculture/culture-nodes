@@ -378,17 +378,34 @@ def local_outcome(entries: list[dict[str, Any]]) -> str:
 
     It is computed only to be CHECKED against the control plane's, never to be
     reported in its place: the recorded aggregate is the one a reader sees, and
-    the node must route on the same answer the ledger holds.
+    the node must route on the same answer the ledger holds. Which is exactly
+    why the PRECEDENCE has to be the same one, and why every entry is counted
+    before any of them decides (issue #153).
+
+    Deciding inside the loop made the first decisive entry the verdict: one
+    failing gate and one unavailable instrument reported `changes_required`
+    written in that order and `measurement_incomplete` written in the other.
+    The two answers are not near neighbours — one routes the run back for
+    repair over a defect that was measured, the other says nothing was measured
+    and reaches a person — and a matrix's authoring order is not evidence about
+    a change. Failures dominate, and are counted across ALL entries first; then
+    an unavailable instrument; then a report that measured nothing.
     """
     applicable = 0
+    failed = 0
+    unavailable = False
     for entry in entries:
         skipped = entry.get("not_applicable")
         if skipped is None:
             applicable += 1
             if entry["exit_code"] != 0:
-                return CHANGES_REQUIRED
+                failed += 1
         elif skipped["reason"] == REASON_UNAVAILABLE:
-            return MEASUREMENT_INCOMPLETE
+            unavailable = True
+    if failed > 0:
+        return CHANGES_REQUIRED
+    if unavailable:
+        return MEASUREMENT_INCOMPLETE
     if applicable == 0:
         return MEASUREMENT_INCOMPLETE
     return GATES_PASSED

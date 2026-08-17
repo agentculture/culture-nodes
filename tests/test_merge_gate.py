@@ -14,6 +14,7 @@ path through it can report a pass it did not measure.
 
 from __future__ import annotations
 
+import itertools
 import json
 import os
 import subprocess
@@ -218,6 +219,57 @@ def test_every_gate_passing_computes_gates_passed(repo: Path):
     )
 
     assert report_of(proc)["outcome"] == "gates_passed"
+
+
+#: The two decisive shapes an entry can take, keyed by what they say about the
+#: change. A matrix that declares both has one honest answer, and the order the
+#: author happened to write them in is not part of it.
+DECISIVE_GATES = {
+    "failing": {
+        "gate": "go-test",
+        "reaches": ["**/*.go"],
+        "command": [sys.executable, "-c", "raise SystemExit(1)"],
+    },
+    "unavailable": {
+        "gate": "markdownlint",
+        "reaches": ["**/*.go"],
+        "requires": ["definitely-not-a-real-binary-t16"],
+        "command": ["true"],
+    },
+}
+
+GATE_ORDERS = list(itertools.permutations(sorted(DECISIVE_GATES)))
+
+
+@pytest.mark.parametrize("order", GATE_ORDERS, ids=["-then-".join(o) for o in GATE_ORDERS])
+def test_a_failure_dominates_an_unavailable_instrument_in_any_declared_order(
+    repo: Path, order: tuple[str, ...]
+):
+    """Issue #153. A matrix holding one failing gate and one unavailable
+    instrument says two things at once, and only one of them can be the run's
+    outcome. `internal/handover.GateResults.Outcome` settles it by counting
+    failures across every entry BEFORE looking for an unavailable instrument,
+    so a failure dominates however the matrix is written.
+
+    `local_outcome` used to return from inside its loop, which made whichever
+    decisive entry appeared first the verdict: the same two gates reported
+    `changes_required` in one order and `measurement_incomplete` in the other.
+    That is not a near-miss. `changes_required` is a domain outcome that routes
+    the run back for repair; `measurement_incomplete` says nothing was measured
+    and reaches a person. Declaration order decided which, and the node routes
+    on this answer.
+    """
+    commit(repo, "internal/api/gatereports.go")
+    proc = run_gate(repo, {"gates": [DECISIVE_GATES[name] for name in order]}, "--report-only")
+
+    report = report_of(proc)
+    assert gate_named(report, "go-test")["exit_code"] == 1
+    assert (
+        gate_named(report, "markdownlint")["not_applicable"]["reason"] == "instrument_unavailable"
+    )
+    assert report["outcome"] == "changes_required", (
+        f"declared in the order {order}, the same two gates reported " f"{report['outcome']!r}"
+    )
 
 
 def test_report_only_never_exits_zero(repo: Path):

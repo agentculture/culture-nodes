@@ -1,0 +1,551 @@
+{
+  "slug": "issue-types-work-vs-records",
+  "title": "issue-types-work-vs-records",
+  "frame_slug": "issue-types-work-vs-records",
+  "schema_version": 4,
+  "status": "exported",
+  "created": "2026-08-17T18:27:23Z",
+  "updated": "2026-08-17T18:31:05Z",
+  "targets": [
+    {
+      "id": "c1",
+      "kind": "announcement",
+      "text": "Every AgentCulture issue declares what it is \u2014 bug, feature, task, deviation, or record \u2014 so the backlog reports outstanding work and accumulated history as two different numbers instead of one.",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "h1",
+      "kind": "honesty",
+      "text": "The type is assigned at creation, not only backfilled once. A one-time backfill of 46 issues decays the moment the next issue is opened, and nothing in this repo sets a type at creation: there are no issue templates, and the agtag wrapper agents post through has no type flag.",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "h2",
+      "kind": "honesty",
+      "text": "The counts the report prints come from the org's real type list, not from a hand-written string: 'type:NotARealType' returns 0 rather than erroring, so an unvalidated query reports a clean backlog for a typo.",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "h3",
+      "kind": "honesty",
+      "text": "A record closed as a record is still findable. If closing it makes it invisible, the change has traded one loss of information for another \u2014 the trail CLAUDE.md's rule exists to keep is the thing being closed.",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "c2",
+      "kind": "before_state",
+      "text": "The agentculture org defines exactly three issue types \u2014 Task, Bug, Feature \u2014 all enabled, and no open culture-nodes issue carries any of them: 46 of 46 open issues match the 'no:type' search qualifier.",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "h4",
+      "kind": "honesty",
+      "text": "The count is re-measured at build time, never carried forward from this frame. It moved from 56 to 46 in the two hours between #157's body and this survey.",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "c3",
+      "kind": "requirement",
+      "text": "The census in issue #157's body is already stale and must be re-measured, not cited: the body says 56 of 56 open issues are untyped; two hours later the live counts are 46 open and 46 'no:type'. Any adoption claim states the count it measured and when.",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "h5",
+      "kind": "honesty",
+      "text": "Every count that reaches the spec, the issue, or the delivery summary names the query that produced it and the date it ran.",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "c4",
+      "kind": "boundary",
+      "text": "Creating an org issue type is an org-owner action that no agent in this repo can perform: the session token carries scopes 'gist, read:org, repo, workflow' and no admin:org, so Deviation and Audit/Record must be added by the human owner in org settings before any backfill can run.",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "h6",
+      "kind": "honesty",
+      "text": "The owner's type-creation happens before any backfill task starts. A backfill against a type that does not exist yet fails 46 times, not once, and each failure looks like a bug in the backfill.",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "c5",
+      "kind": "boundary",
+      "text": "Issue types are org-level, so adding two of them lands across all 96 agentculture repositories and the 605 open issues in them \u2014 culture-nodes' 46 are 7.6% of what the change touches. The decision belongs to the org owner, not to this repo.",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "h7",
+      "kind": "honesty",
+      "text": "Adding a type to the org menu is not adopting the practice. The spec names which repos adopt, so the other 95 are offered a vocabulary rather than committed to a convention.",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "c6",
+      "kind": "requirement",
+      "text": "Grouping the triage report by type forces a change of data source: the installed gh is 2.45.0 and its 'gh issue list --json' has no issueType field at all, so type is reachable only through GraphQL (repository.issues.nodes.issueType) or the search qualifiers 'type:' / 'no:type'.",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "h8",
+      "kind": "honesty",
+      "text": "Re-checked at build time. If gh has been upgraded since 2.45.0 and now carries issueType, the GraphQL path is unnecessary complexity and the simpler --json is used instead.",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "c7",
+      "kind": "boundary",
+      "text": "A type-counting script must validate type names against the org's own list: a misspelled qualifier fails open, not loud \u2014 'type:NotARealType' returns 0 results rather than an error, so a typo would report zero bugs and read as good news.",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "h9",
+      "kind": "honesty",
+      "text": "The type names the report queries are resolved from organization.issueTypes at run time. An unknown name exits non-zero; it never counts zero.",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "c8",
+      "kind": "requirement",
+      "text": "Adding a type column to the triage data is a three-file change with a schema assertion in the way: triage-report.py rejects any header that is not exactly {issue, bucket, disposition, evidence_pointer} (set equality, not a superset check), cycle-accounting.py reads the same file, and tests/test_cycle_accounting.py writes that exact header in its fixture.",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "h10",
+      "kind": "honesty",
+      "text": "dispositions.csv's four-column header is unchanged by this work. A task proposing a fifth column is a deviation from the live-read decision, not an implementation detail.",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "c11",
+      "kind": "boundary",
+      "text": "A Deviation or Audit type labels a pointer, not a home: durable records already live in the tree \u2014 docs/deviations/ (2 records, written by devague deviate), docs/audits/, docs/decisions/, docs/adr/ (10 ADRs), docs/deliveries/. Adopting the type must not become an excuse to write the record only into an issue.",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "h11",
+      "kind": "honesty",
+      "text": "Every Record issue names the committed artifact it points at. A Record whose only content lives in GitHub is precisely the failure this claim exists to prevent.",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "c12",
+      "kind": "boundary",
+      "text": "The closing contract has no shape for a record: scripts/close-issue.sh always closes reason=completed and refuses a closure that lacks a disposition, a reason, and either a Culture Nodes run id or a test path plus its command. A record that is complete when written has no run and no test, so adopting Deviation/Audit means either a fourth evidence shape (the artifact it points at) or an explicit exemption.",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "h12",
+      "kind": "honesty",
+      "text": "close-issue.sh still refuses a bare closure after the change. The artifact shape is a third alternative added to the evidence gate, not a hole in it.",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "c13",
+      "kind": "audience",
+      "text": "The operator reading the backlog to decide what to do next, the owner deciding whether the project is in trouble, and every agent that opens an issue under CLAUDE.md's every-hand-turn rule. Because types are org-level, the audience is also the other 95 agentculture repos, which inherit the vocabulary whether or not they adopt the practice.",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "h13",
+      "kind": "honesty",
+      "text": "The spec names which repos adopt the practice, so 'the audience is the org' cannot quietly become 'someone else's problem'.",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "c14",
+      "kind": "why_it_matters",
+      "text": "An undifferentiated count misreads the project's state in both directions. It inflates: a large share of the 46 open issues are history that is already true. And it hides staleness: the 2026-08-17 easy-pickings batch picked ten issues whose fix was already written down and found two of them (#66, #151) already shipped, tests included \u2014 caught only by reading the code, because nothing in the tracker distinguished a live defect from a record of a state that had since changed.",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "h14",
+      "kind": "honesty",
+      "text": "The both-directions claim stays testable: at least one currently-open issue is identified, by reading it, as history that is already true.",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "c15",
+      "kind": "after_state",
+      "text": "Every open culture-nodes issue carries a type, and the generated triage table reports counts per type alongside the existing per-bucket dispositions \u2014 so 'how many real bugs are open' is a query with an answer, and a record can be closed on read while staying findable and countable as a record.",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "h15",
+      "kind": "honesty",
+      "text": "Both halves land. Issues typed with the report unchanged is not this after-state \u2014 it is a backfill that decays.",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "c16",
+      "kind": "success_signal",
+      "text": "Two measurements, both re-runnable: the 'no:type' open count for culture-nodes is 0 (it is 46 today), and docs/triage/open-issues.md's summary line reports a per-type breakdown instead of a single 'Open issues with dispositions: N'. A third, softer signal: the next cycle's delivery summary quotes a work-only backlog number and says what it excluded.",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "h16",
+      "kind": "honesty",
+      "text": "The 'no:type reaches 0' signal is measured per-issue through GraphQL, not through the search qualifier, because search lags the write.",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "c20",
+      "kind": "boundary",
+      "text": "The report must read types through GraphQL per issue, not through the search API's type:/no:type qualifiers: search is an index and it lags. Immediately after #157 was typed Task (confirmed by GraphQL in the mutation response), 'no:type' still returned 46 \u2014 the same count as before the write. A search-backed report would have reported the backfill as not having happened.",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "h17",
+      "kind": "honesty",
+      "text": "The lag is re-observed rather than assumed permanent. Even if search catches up, the GraphQL read is kept for the validation reason in c7.",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "c24",
+      "kind": "requirement",
+      "text": "The backfill types from evidence, not from titles. Deciding Bug versus Record for an existing issue requires knowing whether the defect still reproduces \u2014 the 2026-08-17 easy-pickings batch read ten issues that stated their own fix and found two (#66, #151) already shipped, tests included, catching it only by reading the code. A title-driven backfill would stamp already-fixed issues as Bug and give #157's exact defect the authority of a structured field.",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "h19",
+      "kind": "honesty",
+      "text": "The number of issues typed is reported alongside the number examined-but-left-untyped. A backfill that reports 46 of 46 typed without saying how each was verified is the failure this claim names.",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "c25",
+      "kind": "boundary",
+      "text": "Typing covers the 46 open issues; the 81 closed ones stay untyped. Any per-type history is therefore uncomputable for everything before adoption \u2014 including a type-cut of the net-positive-every-day table #155 leans on, which reads closed issues via cycle-accounting.py's state=all query.",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "h22",
+      "kind": "honesty",
+      "text": "The before/after seam is stated in the report itself, not discovered later: any per-type count names the date typing began, so nobody reads a type-cut of pre-adoption history as complete.",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "c26",
+      "kind": "requirement",
+      "text": "The type-grouped report covers open AND recently-closed issues, not open alone. A Record is closed on write \u2014 that is its entire point \u2014 so an open-only breakdown will show approximately zero Records and display the payoff nowhere. The question #157 actually asks ('how much of what we did was work and how much was history') is answered over closed issues, not open ones.",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "h20",
+      "kind": "honesty",
+      "text": "The report is checked against a period in which at least one Record was opened and closed, so the Records column is demonstrated non-empty rather than assumed.",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "c27",
+      "kind": "requirement",
+      "text": "The backfill is dry-runnable and undoable: it prints the issue-to-type mapping without writing under --dry-run, and it records each issue's pre-existing type before writing. Rollback is trivial only while every issue is untyped (clear to null); the moment a second pass runs over already-typed issues, an unrecorded pre-state is unrecoverable.",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "h23",
+      "kind": "honesty",
+      "text": "The dry-run is exercised before the real run, and the pre-state snapshot is committed or archived rather than left in a shell scrollback \u2014 a rollback that depends on a terminal buffer is not a rollback.",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "c29",
+      "kind": "requirement",
+      "text": "The type read inherits the exit-2 discipline exactly: tests.yml's lint job runs scripts/lint-all.sh root with permissions contents:read and GH_TOKEN=github.token, and lint-all.sh exits 2 when a step is unrunnable \u2014 which fails the job. Adding a second GitHub call to triage-report.py therefore doubles the surface on which a 503 or a permissions change turns lint red, and every one of those must exit 2 (could not measure), never 1 (finding).",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "h24",
+      "kind": "honesty",
+      "text": "A test asserts the failing-type-read path returns 2, not 1. Without it the distinction between 'could not measure' and 'the table is wrong' survives only as a comment.",
+      "deferred": false,
+      "deferred_reason": ""
+    }
+  ],
+  "tasks": [
+    {
+      "id": "t1",
+      "summary": "scripts/backfill-issue-types.py: dry-run, pre-state snapshot, resumable GraphQL writer",
+      "origin": "llm",
+      "status": "confirmed",
+      "acceptance_criteria": [
+        "--dry-run prints the full issue-to-type mapping and performs zero mutations, asserted by a test that fails if any write is attempted",
+        "The script writes a pre-state snapshot of every target issue's current type BEFORE the first mutation, to a file path it prints",
+        "A preflight resolves type names from organization.issueTypes and exits non-zero on an unknown name, with a test covering a bogus name",
+        "A run interrupted partway is resumable from the snapshot without re-writing already-correct issues, covered by a test",
+        "The script refuses to start if the Record type does not exist, with one clear error rather than one error per issue"
+      ],
+      "deps": [],
+      "covers": [
+        "c27",
+        "h23",
+        "c7",
+        "h9"
+      ],
+      "instruction": "Stdlib only, no third-party imports \u2014 the runtime package is zero-dependency and scripts/ follows the same discipline. Model it on scripts/triage-report.py: same GH_ATTEMPTS/GH_BACKOFF_SECONDS retry, same GitHubUnreachable-to-exit-2 shape. gh 2.45.0 cannot set a type, so shell out to 'gh api graphql' with updateIssue(input:{id, issueTypeId}); issue node ids come from repository.issues.nodes.id. Verified working under the plain 'repo' scope."
+    },
+    {
+      "id": "t2",
+      "summary": "Evidence-driven type assignment for all 46 open issues -> docs/triage/issue-types.csv",
+      "origin": "llm",
+      "status": "confirmed",
+      "acceptance_criteria": [
+        "Every one of the 46 open issues appears exactly once with a type and an evidence pointer explaining why that type, or appears with type=UNDETERMINED and the reason it could not be decided",
+        "No type is assigned from the title alone: each row cites a file, test, commit, or issue comment that establishes whether the defect is live",
+        "The output records both counts separately \u2014 issues typed, and issues examined but deliberately left untyped",
+        "At least one currently-open issue is identified by reading it as history that is already true, and is cited in the spec as the worked example",
+        "The open-issue count and the no:type count are re-measured at the time this file is produced and written into it as '<n> (query, date)'"
+      ],
+      "deps": [],
+      "covers": [
+        "c24",
+        "h19",
+        "c2",
+        "h4",
+        "c3",
+        "h5",
+        "c14",
+        "h14"
+      ],
+      "instruction": "This is the judgement half and it cannot be done from titles. For each open issue decide: is the defect still live (Bug), does the thing not exist yet (Feature), is it scoped work that is neither (Task), or is it history that is already true (Record)? #66 and #151 are the worked warnings \u2014 both read as live defects and both were already shipped with tests. When the evidence does not settle it, write UNDETERMINED and say what would settle it. Do not let an actor's 'already fixed' claim stand without a file, test or commit behind it."
+    },
+    {
+      "id": "t3",
+      "summary": "Owner creates the Record issue type in the agentculture org",
+      "origin": "llm",
+      "status": "confirmed",
+      "acceptance_criteria": [
+        "GraphQL organization.issueTypes returns four enabled types: Task, Bug, Feature, Record",
+        "The creation is performed as a citable command (createIssueType) or a settings change recorded in an issue, not an uncited click",
+        "A culture-nodes issue records the hand-turn per CLAUDE.md's every-operator-step rule, and names who ran it"
+      ],
+      "deps": [],
+      "covers": [
+        "c4",
+        "h6"
+      ],
+      "instruction": "Supply the operator the exact command rather than a settings-UI walkthrough, so the hand-turn is citable: gh api graphql with mutation createIssueType against organization agentculture, name Record, plus a description saying complete-when-written and closed-on-read. Needs an admin:org token, which the normal session token lacks. File the culture-nodes issue recording the hand-turn either way."
+    },
+    {
+      "id": "t4",
+      "summary": "scripts/triage-report.py groups by type: live GraphQL read, open plus recently-closed blocks",
+      "origin": "llm",
+      "status": "confirmed",
+      "acceptance_criteria": [
+        "Types are read per-issue via GraphQL issueType, never via the search type:/no:type qualifiers, and a test pins that no search query is constructed",
+        "Type names are resolved from organization.issueTypes at run time; an unknown name exits non-zero rather than counting zero, covered by a test",
+        "A failing or forbidden type read returns exit code 2 (could not measure), never 1 (finding), covered by a test that simulates the failure",
+        "docs/triage/dispositions.csv keeps its exact four-column header; git diff shows no change to scripts/cycle-accounting.py or tests/test_cycle_accounting.py",
+        "The rendered table carries two blocks \u2014 open issues by type, and issues closed since the previous cycle by type \u2014 and the closed block is demonstrated non-empty for at least one Record",
+        "Every per-type count names the date typing began, so a pre-adoption type-cut cannot be read as complete",
+        "The existing GH_ATTEMPTS retry and GitHubUnreachable path are reused for the new call rather than duplicated"
+      ],
+      "deps": [],
+      "covers": [
+        "c6",
+        "h8",
+        "c7",
+        "h9",
+        "c8",
+        "h10",
+        "c20",
+        "h17",
+        "c26",
+        "h20",
+        "c29",
+        "h24",
+        "c25",
+        "h22"
+      ],
+      "instruction": "The type read is a second GitHub call \u2014 isolate it in one small function so a future 'gitculture issue list --json issueType' replaces it in one edit (c31). Never build a search query from a type string: search fails open on a bad name and lags writes. Keep dispositions.csv's header untouched; if a column feels necessary, that is the live-read decision being abandoned and needs a deviation record, not a quiet edit."
+    },
+    {
+      "id": "t5",
+      "summary": "scripts/close-issue.sh gains --artifact: a third evidence shape for Records",
+      "origin": "llm",
+      "status": "confirmed",
+      "acceptance_criteria": [
+        "--artifact PATH is accepted as a third alternative alongside --run-id and --test-path/--test-command, and the three remain mutually exclusive",
+        "A closure naming a path that does not exist, or exists but is untracked by git, is refused with a non-zero exit, covered by tests for both cases",
+        "reason=completed is unchanged and a bare close is still impossible: a test asserts a closure with no evidence of any of the three shapes is refused",
+        "docs/triage/closing-comment-template.md documents the artifact field with the same fixed-label format as the run-id and test-path shapes",
+        "The closing comment for an artifact closure renders the artifact path so a reader can open the record from the closed issue"
+      ],
+      "deps": [],
+      "covers": [
+        "c12",
+        "h12",
+        "c11",
+        "h11",
+        "h3"
+      ],
+      "instruction": "Pure bash, matching the existing style. Validate the artifact path with 'git ls-files --error-unmatch' so an untracked file is refused \u2014 a path that only exists on the author's disk is not evidence. Keep the three evidence shapes mutually exclusive with the same explicit refusal the script already uses for run-id plus test-path."
+    },
+    {
+      "id": "t6",
+      "summary": "scripts/open-issue.sh: a thin, deletable template-plus-type wrapper around agtag issue post",
+      "origin": "llm",
+      "status": "confirmed",
+      "acceptance_criteria": [
+        "The wrapper renders a body template with {{PLACEHOLDER}} substitution and sets the issue type at creation, in one command",
+        "The type is validated against organization.issueTypes before posting; an unknown name fails before any issue is created, covered by a test",
+        "git diff shows no change to .claude/skills/communicate/scripts/post-issue.sh or anything else under .claude/skills/ \u2014 the wrapper is a first-party script beside the vendored one",
+        "The wrapper delegates posting, signing and auth to agtag rather than reimplementing them; a reviewer can see the delegation in under 20 lines of its body",
+        "At least one body template exists for the Record type and names the committed-artifact field the issue must point at"
+      ],
+      "deps": [],
+      "covers": [
+        "h1"
+      ],
+      "instruction": "Thin means thin: render {{PLACEHOLDER}} substitutions into a template, validate the type, call 'agtag issue post', then set the type on the returned issue. Do not reimplement signing or auth \u2014 agtag resolves the nick from culture.yaml already. The vendored .claude/skills/communicate/scripts/post-issue.sh is not edited under any circumstance. Write it so deleting it after agtag#19 lands is a one-file removal."
+    },
+    {
+      "id": "t7",
+      "summary": "Document the convention: types, Record semantics, and which repos adopt",
+      "origin": "llm",
+      "status": "confirmed",
+      "acceptance_criteria": [
+        "CLAUDE.md states the four types, what Record means (complete when written, closed on read via --artifact), and that scripts/open-issue.sh is how an issue is opened here",
+        "The docs state explicitly that culture-nodes adopts the practice and every other agentculture repo is offered the vocabulary, not enrolled by this work",
+        "The every-operator-hand-turn rule is restated as kept, with the type named as what stops those issues reading as outstanding workload",
+        "markdownlint-cli2 passes on every touched markdown file"
+      ],
+      "deps": [],
+      "covers": [
+        "c5",
+        "h7",
+        "c13",
+        "h13"
+      ],
+      "instruction": "Update CLAUDE.md's Conventions section, keeping the every-operator-hand-turn rule intact and adding the type as what stops those issues reading as workload. State plainly that culture-nodes adopts and other repos are offered, so nobody reads this as an org mandate. Run markdownlint-cli2 before finishing."
+    },
+    {
+      "id": "t8",
+      "summary": "Run the backfill and land the typed backlog",
+      "origin": "llm",
+      "status": "confirmed",
+      "acceptance_criteria": [
+        "A --dry-run is executed and its output reviewed before any write, and the run is cited in the delivery",
+        "Every open issue that docs/triage/issue-types.csv assigns a type receives exactly that type, verified per-issue through GraphQL issueType",
+        "Issues marked UNDETERMINED are left untyped, and the count of them is reported rather than quietly rounded to zero",
+        "The pre-state snapshot is committed or archived at a path named in the delivery, not left only in terminal output"
+      ],
+      "deps": [
+        "t1",
+        "t2",
+        "t3"
+      ],
+      "covers": [],
+      "instruction": "Dry-run first and read the output, do not skim it. This is the only irreversible step in the plan and its reversibility depends entirely on the snapshot t1 writes \u2014 confirm the snapshot exists and is non-empty before the first write. Report the UNDETERMINED count as a number in the delivery; rounding it away is the failure c24 exists to prevent."
+    },
+    {
+      "id": "t9",
+      "summary": "Verify the after-state and regenerate the triage table",
+      "origin": "llm",
+      "status": "confirmed",
+      "acceptance_criteria": [
+        "python3 scripts/triage-report.py regenerates docs/triage/open-issues.md and --check then passes, so the committed table matches live GitHub",
+        "Both halves are demonstrated in the same delivery: issues typed AND the report grouped by type; a delivery claim carrying only one is rejected",
+        "The typed-coverage measurement is taken per-issue through GraphQL, and the search no:type count is reported separately as the lagging figure it is",
+        "scripts/lint-all.sh passes, including the triage step, on the final tree",
+        "The version is bumped and a CHANGELOG entry added, per the repo rule that every PR bumps the version"
+      ],
+      "deps": [
+        "t4",
+        "t8",
+        "t6"
+      ],
+      "covers": [
+        "c1",
+        "c15",
+        "h15",
+        "c16",
+        "h16",
+        "h2"
+      ],
+      "instruction": "Regenerate docs/triage/open-issues.md and run --check; it is stale on main right now (reports 50 open against a live 46), so expect a real diff. Measure typed coverage per-issue through GraphQL and report the search no:type figure separately, labelled as lagging. Run scripts/lint-all.sh, not the individual linters. Bump the version and add a CHANGELOG entry."
+    }
+  ],
+  "risks": [
+    {
+      "id": "r1",
+      "text": "The evidence pass is judgement work an actor can fake cheaply: asserting 'already fixed' is one sentence, proving it means reading code. Prior experience in this repo is explicit that a codex actor's 'already delivered' claim must never be taken at face value.",
+      "kind": "unknown_nonblocking",
+      "task_id": "t2",
+      "resolved": false,
+      "resolution": ""
+    },
+    {
+      "id": "r2",
+      "text": "t3 is a human gate with an external dependency (org-owner privileges this session does not hold), and t8 cannot start until it lands. Wave 2 is blocked on a person, not on compute.",
+      "kind": "unknown_blocking",
+      "task_id": "t3",
+      "resolved": true,
+      "resolution": "Accepted and assigned: the operator runs the createIssueType call with an admin-scoped token from a command this session supplies; wave 2 starts once organization.issueTypes reports Record. Not an unknown \u2014 a scheduled human gate with a named owner (user decision, 2026-08-17)."
+    },
+    {
+      "id": "r3",
+      "text": "Whether to also backfill the 81 closed issues. Deferring keeps a permanent before/after seam in any per-type history; doing it means 81 more judgement calls on settled work nobody will re-read.",
+      "kind": "follow_up",
+      "task_id": null,
+      "resolved": false,
+      "resolution": ""
+    },
+    {
+      "id": "r4",
+      "text": "deleteIssueType exists but its behaviour against issues already carrying the type was deliberately not probed \u2014 the probe is destructive across 96 repos. The rollback story for the org-level half is therefore documented, not demonstrated.",
+      "kind": "unknown_nonblocking",
+      "task_id": "t3",
+      "resolved": false,
+      "resolution": ""
+    },
+    {
+      "id": "r5",
+      "text": "agtag#19 or gitculture-cli#17 could land mid-flight and make t6 redundant. That is a good outcome, not a blocker \u2014 t6 is written to be deleted \u2014 but a wave that has already fanned out will still build it.",
+      "kind": "follow_up",
+      "task_id": "t6",
+      "resolved": false,
+      "resolution": ""
+    }
+  ]
+}

@@ -1,0 +1,47 @@
+issue,type,evidence_pointer
+6,Task,origin/main:docs/decisions/issue-6-oidc-workload-authentication.md:59 leaves an owner decision that can close the issue as won’t-do.
+8,Feature,"origin/main:internal/api/actors.go:158 confirms actor registration exists, while origin/main:docs/triage/open-issues.md:8 still calls for verification of the remaining registration tooling."
+10,Bug,"origin/main:adapters/claude-code/README.md:148 still documents `always_async` defaulting to false, preserving the sync-timeout condition described by the issue."
+12,Task,origin/main:docs/decisions/issue-12-remaining-web-ux-scope.md:8 asks the owner to disposition the remaining UI scope.
+13,Record,origin/main:adapters/claude-code/tests/test_mapping.py:595-613 proves bridge-measured changed files are distinct from model-claimed output; origin/main:internal/worker/handover_test.go:26 covers observed handover evidence.
+50,Record,origin/main:docs/deviations/2026-08-15-headspace-egress-allowlist.md:4-32 records the measured allowlist deviation and its current cross-repo status.
+54,Record,origin/main:adapters/human-inbox/tests/test_tracker.py:612-623 proves a GitHub merge is observed and auto-submitted with its merge commit.
+61,Record,origin/main:tests/test_pr_upkeep_sweep.py:536 class TestCheckRunWorkItems names issue #61 in its docstring; test_recorded_fixture_yields_the_failed_lint_check covers the third CI-check finding source. (Citation corrected in review: the dispatch named a test test_failed_check_run_becomes_finding that does not exist.)
+62,Record,"origin/main:adapters/colleague/src/colleague_bridge/colleague_cli.py:72 passes `--continue`, and origin/main:adapters/colleague/tests/test_mapping.py:286-301 proves the work-item ID becomes `continuation_ref`."
+67,Record,origin/main:internal/worker/clarifygate_test.go:20 and origin/main:tests/lint/preflightsurface_test.go:3 cover the engine gate and all-backends surface.
+71,Record,origin/main:examples/pr-upkeep/driver.sh:18 and origin/main:examples/pr-upkeep/README.md:58 document that idle now loops instead of parking on a human.
+76,Feature,origin/main:tests/test_pr_upkeep_sweep.py:332 explicitly says Jira acceptance is fixture-only and the live backlog proof is absent.
+80,Record,commit 95fd653 (`t8: declare continuation as a contract the engine evaluates (#80)`) and origin/main:internal/compiler/budget_test.go confirm the declared continuation machinery shipped.
+87,Feature,"origin/main:docs/deliveries/2026-08-15-own-the-work-end-to-end.md:268-276 lists unverified handoff/deployment outcomes, so the end-to-end ownership goal is not complete."
+88,Feature,origin/main:examples/development-loop/README.md:78 says coverage and complexity instruments still do not reach most of the repository.
+89,Feature,"`git grep` on origin/main found the scope→think→challenge chain only in skills/docs, while origin/main:docs/triage/open-issues.md:18 schedules the missing workflow as a large bet."
+93,Feature,origin/main:docs/triage/open-issues.md:20 still calls for automated checkout preparation; commit b96b129 only generated briefs from plans and capabilities.
+97,Feature,"origin/main:docs/adr/0011-declared-economic-budget.md covers declared run budgets, but origin/main:docs/triage/open-issues.md:22 still schedules shared subscription budgets as a separate large bet."
+100,Record,origin/main:internal/handover/doc.go:2 and delivery task t10 record that a handed-over ref is fetched and measured by the control plane.
+101,Record,origin/main:internal/api/suiteverdicts.go:14 and commit 13b8543 implement derived suite verdicts consumed by the merge gate.
+102,Record,origin/main:internal/repair/doc.go:1-24 and origin/main:internal/api/repairroute_test.go:135 prove bounded gate→repair→gate routing exists.
+104,Record,origin/main:internal/api/version.go:1-20 documents the revision-reporting surface issue #104 said was absent; internal/api/version_test.go:33 TestVersionReportsTheRevisionTheBuildWasStampedWith covers it. (Citation corrected in review: the dispatch named a test TestVersionReportsControlPlaneRevision that does not exist.)
+109,Feature,origin/main:docs/triage/open-issues.md:29 still schedules the one-human-review autonomous-cycle outcome as a large bet.
+110,Task,"origin/main:docs/decisions/issue-110-managed-postgres-trial.md:1-63 is an unresolved costed trial decision, including a won’t-do branch."
+111,Feature,origin/main:internal/actors/inbound_credential.go:13-14 explicitly labels the shipped credential record temporary and points to #111 for its replacement.
+112,Task,"origin/main:docs/decisions/issue-112-database-target.md:9-71 leaves the deployment-target selection to the owner, conditional on #110."
+113,Feature,origin/main:docs/triage/open-issues.md:33 schedules the containerized bridge support contract as an unbuilt large bet.
+114,Feature,origin/main:docs/triage/open-issues.md:34 schedules repository-configured agent identity as an unbuilt large bet.
+116,Bug,origin/main:docs/triage/open-issues.md:35 attributes live zero percentiles to attempt timestamps; origin/main:internal/store/postgres/actorstats.go:456-463 still derives durations directly from those timestamps.
+117,Task,origin/main:docs/triage/open-issues.md:36 explicitly scopes an audit of every origin-stamping site after the one known instance was fixed.
+118,Feature,origin/main:docs/triage/open-issues.md:37 records 15 hand-merges and calls for the combining step and Jira-driven loop to be built.
+119,Task,"origin/main:docs/triage/open-issues.md:40 asks for a choice among four verification approaches and an AF_UNIX probe, rather than asserting a repository defect."
+120,Bug,origin/main:docs/triage/open-issues.md:41 says attempted-but-empty handover is still indistinguishable from not-attempted; origin/main:internal/api/repairroute_test.go:378 preserves that ambiguity as a known cost.
+121,Task,origin/main:migrations/pending/0036_retire_stored_participant_addresses.sql and origin/main:docs/triage/open-issues.md:42 confirm the migration is written but intentionally awaits cutover.
+125,Bug,origin/main:CHANGELOG.md:125-166 says the instruction binding was fixed but the multi-lane developer bridge still cannot infer `repo`.
+128,Task,"origin/main:docs/triage/open-issues.md:46 lists post-merge redeploy, environment reconciliation, and dump cleanup as explicit operator work."
+129,Task,origin/main:internal/scheduler/scheduler.go:659 and :694 confirm the two-commit window; origin/main:docs/triage/open-issues.md:47 asks for a deliberate trade-off decision because no runtime reproduction exists.
+133,Bug,"origin/main:CHANGELOG.md:17 states `FORCE_PROD=1` no longer rewrites `NODES_DATABASE_URL`, allowing its embedded password to diverge from `POSTGRES_PASSWORD`."
+135,Bug,origin/main:docs/triage/open-issues.md:52 confirms the contradictory SSL mode and duplicate-key asymmetry remain; origin/main:deploy/compose/.env.example:20-21 carries both settings.
+136,UNDETERMINED,"The issue reports live actor-registry and network state, but those are not stored in the tree; a current `GET /v1alpha1/actors` plus connectivity/dispatch probes would settle whether it still reproduces."
+140,Task,Issue body proposes a product rename and asks for a decision; `git grep 'Culture Protocols' origin/main` returned no implementation matches.
+141,Task,Issue body explicitly requests an exploration of websocket trade-offs; origin/main:docs/decisions/transport-inversion.md:56 discusses overlap but contains no websocket implementation decision.
+145,Feature,Issue body states the instrumentation is not built; `git grep 'execution overlap|overlap instrumentation' origin/main` found only the existing decision text in docs/decisions/transport-inversion.md.
+147,Feature,"origin/main:adapters/claude-code/src/claude_code_bridge/dialin.py:18-20 confirms dial-in identity is environment-only under a backend-wide prefix, with no per-bridge configuration surface."
+155,Task,Issue body asks for a design of the full cycle; origin/main:CLAUDE.md:62 still presents scope→think→challenge as a vendored operator skill chain rather than Culture Nodes flows.
+157,Task,"The prompt confirms the four issue types now exist; the remaining scoped work is assigning/migrating issues, while the issue body describes that backlog-classification task."

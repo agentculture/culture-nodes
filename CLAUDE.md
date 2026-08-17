@@ -243,6 +243,52 @@ wave against the remaining subscription window.
 
   Cite the issue in the commit message, so the trail runs both ways.
 
+  **The rule is kept, and the issue type is what stops it reading as
+  workload.** Filing every hand-turn is what makes un-automated steps
+  countable; it is also why records pile up in the same list as defects, so a
+  bare "N open issues" overstates the work outstanding. The type separates the
+  two — see below.
+
+- **Every issue declares a type.** The `agentculture` org defines four
+  (`gh api graphql -f query='{ organization(login:"agentculture") {
+  issueTypes(first:20) { nodes { name } } } }'`):
+
+  | Type | What it is | Closes when |
+  |---|---|---|
+  | `Bug` | broken now, and the defect still reproduces | it no longer reproduces |
+  | `Feature` | wanted, does not exist | it exists |
+  | `Task` | scoped work that is neither — chores, migrations, follow-ups | the work is done |
+  | `Record` | **complete when written** — a deviation, an audit snapshot, a counted hand-turn | on read, citing the artifact it points at |
+
+  `Record` is the load-bearing one. A record is not work: leaving it open
+  makes the backlog look like a workload, and closing it untyped makes the
+  trail invisible. The type lets it be closed *and* stay countable as history.
+  **A Record issue is a pointer, not a home** — the record itself lives in the
+  tree (`docs/deviations/`, `docs/audits/`, `docs/decisions/`, `docs/adr/`,
+  `docs/deliveries/`), and the issue names it. Close one with
+  `scripts/close-issue.sh --artifact <path>`; the script refuses a path that is
+  missing or untracked, so "it points at something" is enforced rather than
+  trusted. #161 is the worked example.
+
+  Open issues with `scripts/open-issue.sh` — it renders a body template and
+  sets the type at creation, which is the half that keeps the taxonomy from
+  decaying. It is a deliberately thin wrapper over `agtag issue post` and is
+  meant to be **deleted** once `agentculture/agtag#19` lands template and type
+  support upstream (`agentculture/gitculture-cli#17` covers the lifecycle and
+  reporting half).
+
+  Two things to know before reaching for the GitHub CLI directly: the installed
+  `gh` (2.45.0) has **no `issueType` field at all**, so types are GraphQL-only
+  here; and the search `type:` qualifier **fails open** — `type:NotARealType`
+  returns `0` rather than an error, and the index lags writes. Read types
+  per-issue via GraphQL and validate names against the org's list; never count
+  them with a search query.
+
+  **Scope of adoption**: culture-nodes adopts this practice. Issue types are
+  org-level, so the vocabulary is *visible* in all 96 agentculture repos — but
+  every other repo is offered it, not enrolled by this work. Do not cite this
+  section as an org mandate.
+
 - **Nodes dogfooding reflex**: when a scoped task is delegable, assign it
   through the system instead of doing it in-session — invoke the
   `/nodes-operator` skill and run its `assign <actor> "instruction" --yes`

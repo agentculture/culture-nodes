@@ -253,9 +253,13 @@ def load_matrix(spec: str) -> dict[str, Any]:
     except json.JSONDecodeError as exc:
         raise Refusal(
             f"the gate matrix is not valid JSON: {exc}",
-            "the matrix is a JSON object: {\"base\": \"...\", \"gates\": [...]}",
+            'the matrix is a JSON object: {"base": "...", "gates": [...]}',
         ) from exc
-    if not isinstance(matrix, dict) or not isinstance(matrix.get("gates"), list) or not matrix["gates"]:
+    if (
+        not isinstance(matrix, dict)
+        or not isinstance(matrix.get("gates"), list)
+        or not matrix["gates"]
+    ):
         raise Refusal(
             "the gate matrix declares no gates",
             "a report over zero gates has no counts to be counts of, and a merge decided on one "
@@ -315,13 +319,15 @@ def instrument_version(gate: dict[str, Any], repo: Path) -> str:
     if not command:
         return ""
     try:
-        proc = subprocess.run(  # noqa: S603 # nosec B603 - argv list from the pinned matrix, no shell
-            command,
-            cwd=str(repo),
-            capture_output=True,
-            text=True,
-            timeout=VERSION_TIMEOUT_SECONDS,
-            check=False,
+        proc = (
+            subprocess.run(  # noqa: S603 # nosec B603 - argv list from the pinned matrix, no shell
+                command,
+                cwd=str(repo),
+                capture_output=True,
+                text=True,
+                timeout=VERSION_TIMEOUT_SECONDS,
+                check=False,
+            )
         )
     except (OSError, subprocess.SubprocessError):
         return ""
@@ -334,8 +340,13 @@ def missing_tools(gate: dict[str, Any]) -> list[str]:
     return [tool for tool in gate.get("requires", []) if shutil.which(tool) is None]
 
 
-def not_applicable(gate: dict[str, Any], reason: str, uncovered: list[str],
-                   considered: list[str], version: str = "") -> dict[str, Any]:
+def not_applicable(
+    gate: dict[str, Any],
+    reason: str,
+    uncovered: list[str],
+    considered: list[str],
+    version: str = "",
+) -> dict[str, Any]:
     entry: dict[str, Any] = {
         "gate": gate["gate"],
         "not_applicable": {"reason": reason, "uncovered_paths": uncovered},
@@ -349,7 +360,9 @@ def not_applicable(gate: dict[str, Any], reason: str, uncovered: list[str],
     return entry
 
 
-def run_gate(gate: dict[str, Any], repo: Path, considered: list[str], version: str) -> dict[str, Any]:
+def run_gate(
+    gate: dict[str, Any], repo: Path, considered: list[str], version: str
+) -> dict[str, Any]:
     """Run one gate's declared command and report what it did.
 
     A command that cannot be launched at all is `instrument_unavailable`, not
@@ -374,13 +387,15 @@ def run_gate(gate: dict[str, Any], repo: Path, considered: list[str], version: s
             "something else",
         )
     try:
-        proc = subprocess.run(  # noqa: S603 # nosec B603 - argv list from the pinned matrix, no shell
-            command,
-            cwd=str(workdir),
-            capture_output=True,
-            text=True,
-            timeout=timeout,
-            check=False,
+        proc = (
+            subprocess.run(  # noqa: S603 # nosec B603 - argv list from the pinned matrix, no shell
+                command,
+                cwd=str(workdir),
+                capture_output=True,
+                text=True,
+                timeout=timeout,
+                check=False,
+            )
         )
         exit_code = proc.returncode
     except FileNotFoundError:
@@ -496,14 +511,18 @@ def post_report(report: dict[str, Any], run_id: str) -> dict[str, Any]:
         "the route is gated by the same secret the review surface uses",
     )
     url = base.rstrip("/") + f"/v1alpha1/runs/{run_id}/gate-reports"
-    request = urllib.request.Request(  # noqa: S310 # nosec B310 - http(s) URL from deployment config
-        url,
-        data=json.dumps(report).encode("utf-8"),
-        headers={"Content-Type": "application/json", "Authorization": f"Bearer {token}"},
-        method="POST",
+    request = (
+        urllib.request.Request(  # noqa: S310 # nosec B310 - http(s) URL from deployment config
+            url,
+            data=json.dumps(report).encode("utf-8"),
+            headers={"Content-Type": "application/json", "Authorization": f"Bearer {token}"},
+            method="POST",
+        )
     )
     try:
-        with urllib.request.urlopen(request, timeout=HTTP_TIMEOUT_SECONDS) as resp:  # noqa: S310 # nosec B310
+        with urllib.request.urlopen(
+            request, timeout=HTTP_TIMEOUT_SECONDS
+        ) as resp:  # noqa: S310 # nosec B310
             return json.loads(resp.read().decode("utf-8"))
     except urllib.error.HTTPError as exc:
         body = exc.read().decode("utf-8", "replace")
@@ -535,12 +554,16 @@ def render(result: dict[str, Any], entries: list[dict[str, Any]]) -> None:
         else:
             uncovered = skipped["uncovered_paths"]
             names = ", ".join(uncovered[:3]) + ("..." if len(uncovered) > 3 else "")
-            print(f"  {'NOT APPLICABLE':<16} {entry['gate']}  {skipped['reason']}"
-                  + (f"  uncovered: {names}" if uncovered else ""))
+            print(
+                f"  {'NOT APPLICABLE':<16} {entry['gate']}  {skipped['reason']}"
+                + (f"  uncovered: {names}" if uncovered else "")
+            )
     print(f"outcome: {result['outcome']} (exit {result['exit_code']})")
     print(f"aggregate record: {result['aggregate']['id']}")
-    print("a not-applicable gate is NOT a pass: it measured nothing, and the aggregate counts it "
-          "separately so an empty scan cannot look green.")
+    print(
+        "a not-applicable gate is NOT a pass: it measured nothing, and the aggregate counts it "
+        "separately so an empty scan cannot look green."
+    )
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -560,15 +583,15 @@ def build_parser() -> argparse.ArgumentParser:
         "--check-matrix",
         action="store_true",
         help="check the matrix's shape and key vocabulary, print what it declares, and exit "
-             "without measuring or recording anything — the authoring check, and what "
-             "scripts/validate-examples.sh runs so a malformed matrix fails in CI rather than "
-             "on a live dispatch",
+        "without measuring or recording anything — the authoring check, and what "
+        "scripts/validate-examples.sh runs so a malformed matrix fails in CI rather than "
+        "on a live dispatch",
     )
     parser.add_argument(
         "--report-only",
         action="store_true",
         help="compute the report, print it as JSON, record NOTHING, and exit 2 — because a gate "
-             "whose finding is not in the ledger gated nothing",
+        "whose finding is not in the ledger gated nothing",
     )
     return parser
 
@@ -598,7 +621,11 @@ def main(argv: list[str] | None = None) -> int:
             )
         candidate = full_sha(repo, "HEAD")
         base = full_sha(repo, base_ref)
-        changed = [line for line in git(repo, "diff", "--name-only", f"{base}..{candidate}").splitlines() if line]
+        changed = [
+            line
+            for line in git(repo, "diff", "--name-only", f"{base}..{candidate}").splitlines()
+            if line
+        ]
 
         entries = evaluate(matrix, repo, changed)
         report = {
@@ -609,9 +636,14 @@ def main(argv: list[str] | None = None) -> int:
         }
 
         if args.report_only:
-            json.dump({**report, "outcome": local_outcome(entries)}, sys.stdout, indent=2, sort_keys=True)
+            json.dump(
+                {**report, "outcome": local_outcome(entries)}, sys.stdout, indent=2, sort_keys=True
+            )
             sys.stdout.write("\n")
-            print("nothing was recorded (--report-only), so this is not a gate verdict", file=sys.stderr)
+            print(
+                "nothing was recorded (--report-only), so this is not a gate verdict",
+                file=sys.stderr,
+            )
             return GATE_EXIT_CODES[MEASUREMENT_INCOMPLETE]
 
         run_id = args.run or env_or_refuse(
@@ -625,7 +657,10 @@ def main(argv: list[str] | None = None) -> int:
             "a derived record needs an identified deterministic producer (PRD §10.4); register a "
             "non-human validator actor and grant its id to the operation",
         )
-        for key, name in (("node_run_ref", "NODES_NODE_RUN_ID"), ("attempt_ref", "NODES_ATTEMPT_ID")):
+        for key, name in (
+            ("node_run_ref", "NODES_NODE_RUN_ID"),
+            ("attempt_ref", "NODES_ATTEMPT_ID"),
+        ):
             if os.environ.get(name):
                 report[key] = os.environ[name]
 

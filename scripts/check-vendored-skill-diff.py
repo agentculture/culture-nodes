@@ -8,7 +8,6 @@ import subprocess
 import sys
 from pathlib import Path
 
-
 ROOT = Path(__file__).resolve().parents[1]
 SOURCES = ROOT / "docs" / "skill-sources.md"
 
@@ -47,7 +46,10 @@ def main() -> int:
     prefixes = vendored_paths()
     violations = sorted(path for path in changed if any(path.startswith(p) for p in prefixes))
     if violations:
-        print("vendored skill files changed; update the source repository and re-vendor:", file=sys.stderr)
+        print(
+            "vendored skill files changed; update the source repository and re-vendor:",
+            file=sys.stderr,
+        )
         print("\n".join(violations), file=sys.stderr)
         return 1
     print(f"ok: {len(changed)} changed path(s), none under {len(prefixes)} vendored skills")

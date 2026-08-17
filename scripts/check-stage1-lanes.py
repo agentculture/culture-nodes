@@ -6,7 +6,6 @@ from __future__ import annotations
 import csv
 from pathlib import Path
 
-
 ROOT = Path(__file__).resolve().parent.parent
 LANES = {
     "spark-go-shell": {8, 9, 13, 28, 48},

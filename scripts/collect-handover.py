@@ -304,7 +304,9 @@ def _reject_option_like(remote: str) -> str:
 # ---------------------------------------------------------------------------
 
 
-def git(repo: Path, *args: str, timeout: float = GIT_TIMEOUT_SECONDS) -> subprocess.CompletedProcess[str]:
+def git(
+    repo: Path, *args: str, timeout: float = GIT_TIMEOUT_SECONDS
+) -> subprocess.CompletedProcess[str]:
     """One bounded, shell-free `git` subprocess.
 
     Prompting is disabled so a remote wanting a credential this process does
@@ -430,7 +432,9 @@ def changed_paths(repo: Path, sha: str) -> list[str]:
     ``--root`` makes a root commit report its whole tree instead of nothing;
     ``-z`` is what keeps a path containing a newline or a quote intact.
     """
-    raw = git_or_refuse(repo, "diff-tree", "--no-commit-id", "--name-only", "-r", "--root", "-z", sha)
+    raw = git_or_refuse(
+        repo, "diff-tree", "--no-commit-id", "--name-only", "-r", "--root", "-z", sha
+    )
     return sorted(part for part in raw.split("\0") if part)
 
 
@@ -527,7 +531,9 @@ def render_collection(result: dict) -> None:
             # deliberately: this reports what the commit changed, and points
             # at where to look further rather than guessing a wider base.
             print("  changed 0 paths against its first parent")
-            print(f"    the handover commit's tree is identical to {handover['parent_sha'][:12]}, which")
+            print(
+                f"    the handover commit's tree is identical to {handover['parent_sha'][:12]}, which"
+            )
             print("    normally means the session committed its own work before the bridge")
             print(f"    minted the ref. Review the parent: git show {handover['parent_sha']}")
     if not result["handovers"]:
@@ -572,10 +578,18 @@ def run_suite(repo: Path, sha: str, command: list[str]) -> tuple[int, str]:
             git(repo, "worktree", "remove", "--force", str(worktree))
 
 
-def record_verdict(base: str, result: dict, handover: dict, suite: str, command: list[str],
-                   exit_code: int, tested_sha: str, validator: str,
-                   requires_grants: list[str] | None = None,
-                   implicates: list[str] | None = None) -> dict:
+def record_verdict(
+    base: str,
+    result: dict,
+    handover: dict,
+    suite: str,
+    command: list[str],
+    exit_code: int,
+    tested_sha: str,
+    validator: str,
+    requires_grants: list[str] | None = None,
+    implicates: list[str] | None = None,
+) -> dict:
     """POST the verdict and return the whole SuiteVerdictResult — the verdict
     record and, for a rejecting gate, where the control plane routed it.
 
@@ -648,8 +662,16 @@ def gate(base: str, repo: Path, result: dict, args: argparse.Namespace) -> tuple
         )
 
     record = record_verdict(
-        base, result, handover, args.suite, args.command, exit_code, tested_sha, validator,
-        args.requires_grant, args.implicates,
+        base,
+        result,
+        handover,
+        args.suite,
+        args.command,
+        exit_code,
+        tested_sha,
+        validator,
+        args.requires_grant,
+        args.implicates,
     )
     return exit_code, record
 
@@ -685,23 +707,29 @@ def render_routing(result: dict) -> None:
 
     print()
     if selected == "repair":
-        print(f"gate: routed to a REPAIR attempt {data.get('attempt_number', '?')} of "
-              f"{bound.get('max_attempts', '?')} on {lane}")
+        print(
+            f"gate: routed to a REPAIR attempt {data.get('attempt_number', '?')} of "
+            f"{bound.get('max_attempts', '?')} on {lane}"
+        )
     else:
         print(f"gate: routed to a HUMAN — {data.get('reason', '?')}")
     print(f"      {data.get('rationale', '')}")
     for path in data.get("guarded_paths") or []:
         print(f"      out of scope: {path}")
     window_hours = int(bound.get("window_seconds", 0)) // 3600
-    print(f"      bound: {bound.get('max_attempts', '?')} attempts per run over {window_hours}h; "
-          f"at the ceiling, {bound.get('at_ceiling', '?')}")
+    print(
+        f"      bound: {bound.get('max_attempts', '?')} attempts per run over {window_hours}h; "
+        f"at the ceiling, {bound.get('at_ceiling', '?')}"
+    )
     print(f"      recorded as derived record {routing.get('id', '?')}")
     if data.get("dispatched") is False:
         # Said every time, not only when it might be missed. A routing a
         # reader takes for an execution is the failure mode that leaves
         # nobody looking for the dispatch that never happened.
-        print("      NOTE: this was decided and recorded, not dispatched — "
-              "unattended repair is deliberately not enabled")
+        print(
+            "      NOTE: this was decided and recorded, not dispatched — "
+            "unattended repair is deliberately not enabled"
+        )
 
 
 # ---------------------------------------------------------------------------
@@ -716,7 +744,9 @@ def build_parser() -> argparse.ArgumentParser:
     )
     parser.add_argument("run_id", help="the run whose handover to collect")
     parser.add_argument("--json", action="store_true", help="machine-readable result on stdout")
-    parser.add_argument("--repo", help="the checkout to fetch into (default: the enclosing repository)")
+    parser.add_argument(
+        "--repo", help="the checkout to fetch into (default: the enclosing repository)"
+    )
     parser.add_argument("--ref", help="gate this one ref, when a run handed over more than once")
     parser.add_argument(
         "--gate",
@@ -724,15 +754,17 @@ def build_parser() -> argparse.ArgumentParser:
         help="run a suite against the collected commit and record the verdict",
     )
     parser.add_argument("--suite", help="what ran, in the spelling a reader could re-run it with")
-    parser.add_argument("--validator", help="the registered non-human actor the verdict is attributed to")
+    parser.add_argument(
+        "--validator", help="the registered non-human actor the verdict is attributed to"
+    )
     parser.add_argument(
         "--requires-grant",
         action="append",
         default=[],
         metavar="GRANT",
         help="a dispatch grant this suite needs beyond its own binary "
-             "(network-egress, home-write, ...); repeatable. A repair lane whose posture lacks it "
-             "cannot verify a fix, so it routes to a human instead",
+        "(network-egress, home-write, ...); repeatable. A repair lane whose posture lacks it "
+        "cannot verify a fix, so it routes to a human instead",
     )
     parser.add_argument(
         "--implicates",
@@ -740,7 +772,7 @@ def build_parser() -> argparse.ArgumentParser:
         default=[],
         metavar="PATH",
         help="a repo-relative path this failure involves, beyond the ones the control plane already "
-             "measured; repeatable. A failure implicating .github/ routes to a human",
+        "measured; repeatable. A failure implicating .github/ routes to a human",
     )
     return parser
 
@@ -828,7 +860,10 @@ def main(argv: list[str] | None = None) -> int:
         return refusal.code
     except subprocess.TimeoutExpired as exc:
         print(f"error: a git subprocess did not finish within its deadline: {exc}", file=sys.stderr)
-        print("hint: a stuck fetch is not an empty one; check the remote's reachability", file=sys.stderr)
+        print(
+            "hint: a stuck fetch is not an empty one; check the remote's reachability",
+            file=sys.stderr,
+        )
         return 2
 
 

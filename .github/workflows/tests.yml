@@ -172,6 +172,14 @@ jobs:
     runs-on: ubuntu-latest
     permissions:
       contents: read
+      # The `triage` step runs `gh issue list`, which needs issues:read.
+      # Naming any permission sets every unnamed one to `none`, and a public
+      # repo does NOT rescue that: an authenticated request with an
+      # insufficient token gets 403, it does not fall back to public access.
+      # Without this the step 403s, exits 2 (could not measure), and lint-all
+      # exits 2 -- which is why every lint run on main failed from #159, the
+      # commit that first gave this step a GH_TOKEN, until it was fixed.
+      issues: read
     steps:
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
         with:

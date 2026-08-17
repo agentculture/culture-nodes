@@ -6,7 +6,6 @@ from __future__ import annotations
 import argparse
 from pathlib import Path
 
-
 ROOT = Path(__file__).resolve().parent.parent
 TEMPLATE = ROOT / "docs" / "triage" / "verification-brief.template"
 
@@ -18,9 +17,7 @@ def one_line(parser: argparse.ArgumentParser, name: str, value: str) -> str:
 
 
 def main() -> None:
-    parser = argparse.ArgumentParser(
-        description="render a read-only stage-1 verification brief"
-    )
+    parser = argparse.ArgumentParser(description="render a read-only stage-1 verification brief")
     parser.add_argument("issue_number", type=int)
     parser.add_argument("claim")
     parser.add_argument("evidence_form")

@@ -10,7 +10,6 @@ import subprocess
 import sys
 from pathlib import Path
 
-
 TABLE = "inbound_authentication"
 CANARY = "ATTACKER_CAN_PRESENT_ME"
 UNSAFE_COLUMN = re.compile(
@@ -20,9 +19,7 @@ UNSAFE_COLUMN = re.compile(
 
 def check_files(schema: str, dump: str) -> list[str]:
     problems = []
-    match = re.search(
-        rf"CREATE TABLE (?:public\.)?{TABLE}\s*\((.*?)\n\);", schema, re.DOTALL
-    )
+    match = re.search(rf"CREATE TABLE (?:public\.)?{TABLE}\s*\((.*?)\n\);", schema, re.DOTALL)
     if not match:
         problems.append(f"schema does not define {TABLE}")
     elif found := UNSAFE_COLUMN.search(match.group(1)):
@@ -42,20 +39,37 @@ def live_dump(database_url: str) -> tuple[str, str]:
             raise RuntimeError(f"{program} is not installed")
 
     psql = ["psql", database_url, "-X", "-v", "ON_ERROR_STOP=1"]
-    cleanup = psql + ["-c",
-                      f"DELETE FROM {TABLE} WHERE party_kind = 'host' AND party_key = 'credential-dump-guard.invalid'"]
+    cleanup = psql + [
+        "-c",
+        f"DELETE FROM {TABLE} WHERE party_kind = 'host' AND party_key = 'credential-dump-guard.invalid'",
+    ]
     canary_hash = hashlib.sha256(CANARY.encode()).hexdigest()
-    insert = run(psql + ["-c", f"""
+    insert = run(
+        psql
+        + [
+            "-c",
+            f"""
         INSERT INTO {TABLE} (party_kind, party_key, verifier_sha256)
         VALUES ('host', 'credential-dump-guard.invalid', decode('{canary_hash}', 'hex'))
         ON CONFLICT (party_kind, party_key) DO UPDATE
         SET verifier_sha256 = EXCLUDED.verifier_sha256, verifier_env_name = NULL
-    """])
+    """,
+        ]
+    )
     if insert.returncode != 0:
         raise RuntimeError(insert.stderr.strip() or "could not seed dump guard row")
     try:
         schema = run(["pg_dump", database_url, "--schema-only", "--no-owner", "--no-privileges"])
-        data = run(["pg_dump", database_url, "--data-only", "--no-owner", "--no-privileges", f"--table={TABLE}"])
+        data = run(
+            [
+                "pg_dump",
+                database_url,
+                "--data-only",
+                "--no-owner",
+                "--no-privileges",
+                f"--table={TABLE}",
+            ]
+        )
         if schema.returncode != 0 or data.returncode != 0:
             raise RuntimeError((schema.stderr + data.stderr).strip())
         return schema.stdout, data.stdout
@@ -76,19 +90,27 @@ def main() -> int:
     else:
         database_url = os.environ.get("NODES_TEST_DATABASE_URL")
         if not database_url:
-            print("SKIP: inbound authentication schema/dump guard needs NODES_TEST_DATABASE_URL", file=sys.stderr)
+            print(
+                "SKIP: inbound authentication schema/dump guard needs NODES_TEST_DATABASE_URL",
+                file=sys.stderr,
+            )
             return 2
         try:
             schema, dump = live_dump(database_url)
         except RuntimeError as exc:
-            print(f"SKIP: inbound authentication schema/dump guard could not reach PostgreSQL: {exc}", file=sys.stderr)
+            print(
+                f"SKIP: inbound authentication schema/dump guard could not reach PostgreSQL: {exc}",
+                file=sys.stderr,
+            )
             return 2
 
     problems = check_files(schema, dump)
     if problems:
         print("FAIL: " + "; ".join(problems), file=sys.stderr)
         return 1
-    print("PASS: authentication and lockout state have no plaintext-capable column and dump has no presentable canary")
+    print(
+        "PASS: authentication and lockout state have no plaintext-capable column and dump has no presentable canary"
+    )
     return 0
 
 

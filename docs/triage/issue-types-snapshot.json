@@ -1,0 +1,191 @@
+{
+  "captured_at": "2026-08-17T18:48:40.634584Z",
+  "repo": "agentculture/culture-nodes",
+  "note": "Pre-state for scripts/backfill-issue-types.py. Restore a type with updateIssue(input:{id, issueTypeId}); a null type is cleared with issueTypeId:null.",
+  "issues": {
+    "6": {
+      "id": "I_kwDOTya_vs8AAAABMAyqWw",
+      "type": null
+    },
+    "8": {
+      "id": "I_kwDOTya_vs8AAAABMBm19g",
+      "type": null
+    },
+    "10": {
+      "id": "I_kwDOTya_vs8AAAABMBm4uA",
+      "type": null
+    },
+    "12": {
+      "id": "I_kwDOTya_vs8AAAABMBxpig",
+      "type": null
+    },
+    "13": {
+      "id": "I_kwDOTya_vs8AAAABMBzZLQ",
+      "type": null
+    },
+    "50": {
+      "id": "I_kwDOTya_vs8AAAABMmOT4A",
+      "type": null
+    },
+    "54": {
+      "id": "I_kwDOTya_vs8AAAABMm4Hvg",
+      "type": null
+    },
+    "61": {
+      "id": "I_kwDOTya_vs8AAAABMpLUBg",
+      "type": null
+    },
+    "62": {
+      "id": "I_kwDOTya_vs8AAAABMpqlzg",
+      "type": null
+    },
+    "67": {
+      "id": "I_kwDOTya_vs8AAAABMuBOAg",
+      "type": null
+    },
+    "71": {
+      "id": "I_kwDOTya_vs8AAAABMu_-sg",
+      "type": null
+    },
+    "76": {
+      "id": "I_kwDOTya_vs8AAAABMw8FHA",
+      "type": null
+    },
+    "80": {
+      "id": "I_kwDOTya_vs8AAAABMyoFiA",
+      "type": null
+    },
+    "87": {
+      "id": "I_kwDOTya_vs8AAAABMzyTZQ",
+      "type": null
+    },
+    "88": {
+      "id": "I_kwDOTya_vs8AAAABM2uPiw",
+      "type": null
+    },
+    "89": {
+      "id": "I_kwDOTya_vs8AAAABM3FI6Q",
+      "type": null
+    },
+    "93": {
+      "id": "I_kwDOTya_vs8AAAABM3ZzOQ",
+      "type": null
+    },
+    "97": {
+      "id": "I_kwDOTya_vs8AAAABM3jg_A",
+      "type": null
+    },
+    "100": {
+      "id": "I_kwDOTya_vs8AAAABM3rfsQ",
+      "type": null
+    },
+    "101": {
+      "id": "I_kwDOTya_vs8AAAABM3roeQ",
+      "type": null
+    },
+    "102": {
+      "id": "I_kwDOTya_vs8AAAABM3ryCA",
+      "type": null
+    },
+    "104": {
+      "id": "I_kwDOTya_vs8AAAABM3sE-w",
+      "type": null
+    },
+    "109": {
+      "id": "I_kwDOTya_vs8AAAABM4Y2ug",
+      "type": null
+    },
+    "110": {
+      "id": "I_kwDOTya_vs8AAAABM5Bx6w",
+      "type": null
+    },
+    "111": {
+      "id": "I_kwDOTya_vs8AAAABM5HZ0Q",
+      "type": null
+    },
+    "112": {
+      "id": "I_kwDOTya_vs8AAAABM5O3GQ",
+      "type": null
+    },
+    "113": {
+      "id": "I_kwDOTya_vs8AAAABM5UrLg",
+      "type": null
+    },
+    "114": {
+      "id": "I_kwDOTya_vs8AAAABM5VGVw",
+      "type": null
+    },
+    "116": {
+      "id": "I_kwDOTya_vs8AAAABM5ykIQ",
+      "type": null
+    },
+    "117": {
+      "id": "I_kwDOTya_vs8AAAABM5-pHQ",
+      "type": null
+    },
+    "118": {
+      "id": "I_kwDOTya_vs8AAAABM5_NDw",
+      "type": null
+    },
+    "119": {
+      "id": "I_kwDOTya_vs8AAAABM7f9Dw",
+      "type": null
+    },
+    "120": {
+      "id": "I_kwDOTya_vs8AAAABM7hVUg",
+      "type": null
+    },
+    "121": {
+      "id": "I_kwDOTya_vs8AAAABM73yaQ",
+      "type": null
+    },
+    "125": {
+      "id": "I_kwDOTya_vs8AAAABM7_3qQ",
+      "type": null
+    },
+    "128": {
+      "id": "I_kwDOTya_vs8AAAABM8TcfA",
+      "type": null
+    },
+    "129": {
+      "id": "I_kwDOTya_vs8AAAABM8VNuQ",
+      "type": null
+    },
+    "133": {
+      "id": "I_kwDOTya_vs8AAAABM9oySw",
+      "type": null
+    },
+    "135": {
+      "id": "I_kwDOTya_vs8AAAABM9rC-A",
+      "type": null
+    },
+    "136": {
+      "id": "I_kwDOTya_vs8AAAABM98EQQ",
+      "type": null
+    },
+    "140": {
+      "id": "I_kwDOTya_vs8AAAABM-ipKA",
+      "type": null
+    },
+    "141": {
+      "id": "I_kwDOTya_vs8AAAABM-mbTg",
+      "type": null
+    },
+    "145": {
+      "id": "I_kwDOTya_vs8AAAABM-pQ7Q",
+      "type": null
+    },
+    "147": {
+      "id": "I_kwDOTya_vs8AAAABM-sJFg",
+      "type": null
+    },
+    "155": {
+      "id": "I_kwDOTya_vs8AAAABM_nMOQ",
+      "type": null
+    },
+    "157": {
+      "id": "I_kwDOTya_vs8AAAABNFkByg",
+      "type": "Task"
+    }
+  }
+}

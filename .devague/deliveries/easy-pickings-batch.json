@@ -1,0 +1,24 @@
+{
+  "plan_slug": "easy-pickings-batch",
+  "schema_version": 1,
+  "created": "2026-08-17T16:55:51Z",
+  "updated": "2026-08-17T16:55:51Z",
+  "deviations": [
+    {
+      "id": "d1",
+      "what": "PR3 and PR4 merge as ONE pull request instead of two, so the batch ships three PRs rather than the four c24 confirmed",
+      "task_ref": "t15",
+      "reason": "Operator instruction, and it satisfies the reasons behind the constraint rather than breaking them. c31 required sequential merges because four concurrently-open PRs collide on pyproject.toml and CHANGELOG.md and the version-check job blocks whichever loses the race -- one PR cannot collide with itself. c30 required PR1 first because it changed scripts/merge-gate.py, the program gating the rest; PR1 (#158) and PR2 (#159) are both merged, so that ordering is already honoured. What changes is only c24's four-PR split.",
+      "affects": [
+        "t15",
+        "t9",
+        "t10",
+        "t11",
+        "t12"
+      ],
+      "origin": "user",
+      "status": "approved",
+      "classification": "acceptable"
+    }
+  ]
+}

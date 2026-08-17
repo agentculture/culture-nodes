@@ -5,6 +5,22 @@ All notable changes to this project will be documented in this file.
 Format follows [Keep a Changelog](https://keepachangelog.com/). This project
 adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.34.0] - 2026-08-17
+
+### Added
+
+- nodes doctor's git_metadata_writable host fact — three-valued supported / unsupported-by-sandbox / not-probed, MEASURED by attempting a write under .git rather than inferred from the sandbox mode name (#94)
+- api/openapi/openapi.yaml now specifies the four inbound dial-in routes, pinning the 204-empty-body idle response, both authentication headers, the mailbox envelope, and issuance's reveal-once semantics (#150)
+- install-secrets test harness scrubs relay inputs, with a canary test proven to fail in both directions, and an AST-derived guard so the relay list cannot go stale (#134)
+
+### Changed
+
+- CLAUDE.md names all four doctor checks by id — the drift was two checks, not one: nodes_api_reachable was undocumented alongside unprivileged_userns (#131)
+
+### Fixed
+
+- triage-report.py retries a failing gh call and returns 2 (could not measure) rather than 1 (the table is wrong) when GitHub cannot be read; lint-all.sh routes an exit-2 step to UNRUNNABLE. A transient GitHub 503 had turned PR #159 red with FAILED: triage on a tree whose table was fine
+
 ## [0.33.3] - 2026-08-17
 
 ### Added

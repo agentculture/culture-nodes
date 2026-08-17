@@ -15,10 +15,14 @@ info:
     listener. Do not expose this API on a public network without a fronting
     proxy that adds authentication.
 
-    Every error response, on every operation, uses the Error schema below —
-    the same {code, message, remediation} shape internal/clifmt.CliError
-    renders for the CLI — with the HTTP status line carrying the specific
-    condition.
+    Every error response uses the Error schema below — the same
+    {code, message, remediation} shape internal/clifmt.CliError renders for
+    the CLI — with the HTTP status line carrying the specific condition. The
+    two reverse-transport routes are the documented exception: POST
+    /v1alpha1/inbound/poll and POST /v1alpha1/inbound/{id}/complete are not
+    mounted through the wrapper that renders Error, so their 400/401
+    refusals are `text/plain` while their 500s still carry Error. Each of
+    those responses says so where it is declared.
   license:
     name: Apache-2.0
 
@@ -61,6 +65,52 @@ tags:
       Registered actor identities and their aggregate stats (task t15).
       Read-only — registering an actor stays
       deploy/prod/register-actor.sh (issue #8).
+  - name: dial-in
+    description: >-
+      The reverse transport, and the credential lane that admits it. The
+      control plane stores no address for a bridge — the bridge dials OUT,
+      claims work from a durable mailbox, and posts the result back — so
+      these four operations are the write side of the same lane
+      GET /v1alpha1/dial-in-presence reads.
+
+      Two DIFFERENT authentications live here, and confusing them is the
+      easiest mistake to make against this API:
+
+      - The transport (`/v1alpha1/inbound/poll`,
+        `/v1alpha1/inbound/{id}/complete`) authenticates a BRIDGE, and needs
+        both headers on every call: `X-Culture-Nodes-Actor-Key: <namespace>/<name>`
+        naming the party, and `Authorization: Bearer <credential>` carrying
+        the `cnd_`-prefixed value this control plane issued for it.
+      - Issuance and revocation (`/v1alpha1/inbound/credentials`,
+        `/v1alpha1/inbound/credentials/revoke`) authenticate an OPERATOR,
+        with one bearer secret and no actor-key header at all.
+
+      A bridge's dial is refused with one of five named reasons, evaluated
+      in this order under a per-credential lock:
+
+      - `revoked` — authority was ended by the revoke operation. Checked
+        first, so a revoked credential is refused before anything else.
+      - `not_control_plane_issued` — a verifier record exists but this
+        control plane did not MINT it (a hand-inserted digest, or a
+        `verifier_env_name` pointing at an operator-invented token). This is
+        a property of the RECORD, not of what was presented, so it is
+        answered before lockout and before the rate window and consumes
+        neither — the answer cannot vary with the presentation, so refusing
+        early discloses nothing. On by default
+        (`RequireControlPlaneIssued`); a deployment wanting the older
+        operator-provisioned record must ask for it explicitly.
+      - `locked_out` — 5 consecutive bad presentations lock the credential
+        for 15 minutes. Carries the retry instant. A successful
+        authentication clears the counter; so does re-issuing.
+      - `rate_limited` — at most 10 presentations per credential per
+        60-second window, GOOD OR BAD. Deliberately separate from lockout,
+        so neither control stands in for the other. Carries the instant the
+        window reopens.
+      - `invalid_credential` — the presented value does not verify. Only
+        this one increments the failure counter.
+
+      Every refusal renders as 401. The decision object carries no
+      credential material by construction.
   - name: artifacts
     description: >-
       Attempt-authenticated publication of opaque artifact bytes. This
@@ -757,6 +807,347 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/DialInPresenceList'
+
+  /v1alpha1/inbound/poll:
+    post:
+      operationId: pollInbound
+      tags: [dial-in]
+      summary: Long-poll for one unit of work addressed to this bridge.
+      description: >-
+        The claim half of the reverse transport (issue #150 documented what
+        `internal/api/inbound_transport.go` has served since the transport
+        inversion). The control plane holds no address for a bridge: the
+        bridge dials OUT and asks for work, so this operation — not a
+        dispatch to a participant URL — is how every unit of agent work
+        reaches an agent.
+
+        Semantics, exactly as served:
+
+        - The request body is IGNORED. Bridges send an empty body; nothing is
+          read, decoded or validated.
+        - A successful poll REFRESHES this actor's `last_seen_at` in
+          `inbound_actor_presence` before it looks for work, which is the
+          same fact `GET /v1alpha1/dial-in-presence` reads to answer
+          "connected". Presence therefore tracks polling, not claiming: a
+          bridge that polls for 25 idle seconds is connected.
+        - The mailbox is polled every 250ms for up to 25 SECONDS. The first
+          claimable envelope for this actor key returns 200 immediately; the
+          claim takes a 90-second lease (`claim_until`), after which an
+          uncompleted envelope becomes claimable again by the next poll.
+        - When the 25 seconds elapse with nothing claimable the response is
+          **204 with a completely EMPTY body** — not `{}`, not an Error
+          envelope, not a 4xx. This is the single most load-bearing sentence
+          on this operation. 204 is 2xx, so an HTTP client does NOT raise for
+          it; a client that unconditionally parses the body will throw on
+          `json.loads("")`, mistake a normal idle poll for a connection
+          fault, and reconnect forever without ever claiming work. That is
+          not hypothetical — it is the outage-shaped bug the shipped
+          `dialin.py` now guards against explicitly (check `status == 204`
+          OR an empty payload, then pause and re-poll).
+        - If the CLIENT disconnects mid-poll the server simply stops; no
+          status is written and no work is claimed.
+
+        Authentication is per-bridge and takes BOTH headers together (see the
+        `dial-in` tag): `X-Culture-Nodes-Actor-Key` names the party and
+        `Authorization: Bearer` carries the credential this control plane
+        issued for it. Both are checked on EVERY poll — the authenticator
+        reads revocation, lockout and rate state from PostgreSQL per call and
+        caches nothing, which is what makes revocation take effect on the
+        next dial with nothing restarted.
+
+        The party kind is hardcoded to `actor` on this route. A `host`-kind
+        credential (which `POST /v1alpha1/inbound/credentials` will happily
+        mint) cannot dial in here.
+      security:
+        - inboundDialBearerAuth: []
+          inboundActorKeyAuth: []
+      responses:
+        '200':
+          description: >-
+            One claimed mailbox envelope. The claim is already recorded when
+            this is written, so an envelope returned here is leased to this
+            bridge for 90 seconds whether or not it is ever completed.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/InboundEnvelope'
+        '204':
+          description: >-
+            The long poll expired with nothing claimable. The body is EMPTY —
+            zero bytes. Do not attempt to parse it; pause briefly and poll
+            again.
+        '401':
+          description: >-
+            The dial was refused. `X-Culture-Nodes-Actor-Key` was absent, or
+            the authenticator returned one of the named refusal reasons
+            (`invalid_credential`, `revoked`, `not_control_plane_issued`,
+            `locked_out`, `rate_limited` — see the `dial-in` tag).
+
+            NOTE: unlike every other operation in this API, this body is
+            `text/plain`, not the Error schema — the route is not mounted
+            through the wrapper that renders Error. It reads
+            `dial-in refused: <reason>` or
+            `dial-in authentication is not configured`.
+          content:
+            text/plain:
+              schema:
+                type: string
+        '500':
+          description: >-
+            The presence touch, the authentication state read, or the mailbox
+            claim failed. This one IS the Error schema — store failures on
+            this route go through the standard renderer even though the
+            401 above does not.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+
+  /v1alpha1/inbound/{id}/complete:
+    post:
+      operationId: completeInbound
+      tags: [dial-in]
+      summary: Return one claimed envelope's response to the control plane.
+      description: >-
+        The settle half of the reverse transport. The bridge forwards the
+        envelope's `request` to its own local invocation handler, then posts
+        whatever that handler answered — status line and body, verbatim —
+        back here. The control plane is waiting synchronously on exactly this
+        row: `InvokeInbound` polls `inbound_actor_mailbox` for
+        `completed_at IS NOT NULL` and then parses `{status, body}` as the
+        invocation response, so a completion is the dispatch's return value,
+        not a notification about it.
+
+        `id` is the envelope's `id` from the poll response — NOT its
+        `attempt_id`. The two are different identifiers and only one of them
+        addresses this route.
+
+        A completion is scoped to the claiming actor: the UPDATE is keyed on
+        (`id`, namespace, actor key, `completed_at IS NULL`), so one bridge
+        cannot complete another's envelope and no envelope completes twice.
+
+        Both dial-in headers are required again, and are re-authenticated
+        from durable state on this call as well — a credential revoked while
+        the bridge was working is refused here even though the poll that
+        handed out the work succeeded.
+      security:
+        - inboundDialBearerAuth: []
+          inboundActorKeyAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          description: >-
+            The envelope id from the poll response's `id` field. Not
+            `attempt_id`.
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/InboundCompletion'
+      responses:
+        '204':
+          description: >-
+            The envelope is settled and the waiting dispatch has its
+            response. Empty body.
+        '400':
+          description: >-
+            The body did not decode as JSON (including a body over the 8 MiB
+            limit), or `status` was outside 100-599, or `body` was absent.
+
+            Like the poll's 401, this body is `text/plain`, not the Error
+            schema: `invalid completion`, or
+            `status and body are required`.
+          content:
+            text/plain:
+              schema:
+                type: string
+        '401':
+          description: >-
+            The dial was refused — same header requirements, same named
+            reasons, and same `text/plain` body as `POST
+            /v1alpha1/inbound/poll`.
+          content:
+            text/plain:
+              schema:
+                type: string
+        '500':
+          description: >-
+            The Error schema. Documented as 500 because that is what the
+            route actually returns, including for the caller-caused case of
+            an envelope id that is unknown, belongs to another actor, or was
+            already completed — the store returns a plain error there, so it
+            is rendered as an unclassified environment failure rather than a
+            404 or a 409. That is a known wart in the implementation, not a
+            gap in this description.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+
+  /v1alpha1/inbound/credentials:
+    post:
+      operationId: issueInboundCredential
+      tags: [dial-in]
+      summary: Mint one party's dial-in credential and reveal it exactly once.
+      description: >-
+        Issuance (issue #111's dial-in half, decided for #136). A bridge's
+        identity is a token THIS control plane minted — that is what lets
+        "who issued this identity?" have an answer at all, and it is the
+        precondition the transport-inversion decision names for enabling a
+        production bridge.
+
+        The control plane chooses the value with `crypto/rand` (32 bytes,
+        rendered `cnd_<base64url>`). There is no way to register a value a
+        caller supplies: the request names only the PARTY, and every field
+        name an operator might reach for to smuggle one in — `credential`,
+        `token`, `secret`, `verifier`, `verifier_sha256`,
+        `verifier_env_name`, `digest_sha256` — is a declared honeypot that
+        earns a 400 naming the offending field. Any OTHER unknown field is
+        also refused (the decoder disallows unknown fields); the honeypots
+        exist so the common mistake gets an explanation rather than a
+        generic refusal.
+
+        REVEAL-ONCE, and it is structural rather than a convention:
+
+        - The plaintext lives in an `InboundCredentialSecret`, not a string.
+          Its `String`, `GoString`, `MarshalJSON` and `LogValue` all render
+          `[redacted inbound credential]`, so no `%v`, no `json.Marshal` and
+          no log attribute can leak it.
+        - `Reveal()` returns the plaintext once, zeroes the backing buffer
+          byte by byte, and drops it. A second `Reveal()` is an error.
+        - Only the SHA-256 digest is persistable — `IssuedInboundCredential`
+          has no field the plaintext could occupy.
+        - There is NO read endpoint, on this API or any other, that can
+          return the value again. This 201 response body is the only time it
+          exists outside the minting process. Losing it means issuing a new
+          one, which is the intended cost.
+        - The reveal happens only AFTER the verifier row commits: a
+          credential handed out for a row that failed to write would be a
+          secret nothing could verify.
+
+        Re-issuing for a party that already has a credential REPLACES it in
+        place: the new verifier is stored, `verifier_env_name` is cleared,
+        `issuance_count` increments, and `revoked_at`, `failure_count`,
+        `locked_until` and the rate window are all RESET. The previous value
+        stops admitting dials immediately, with nothing restarted — so
+        re-issuance is also the way to clear a lockout.
+
+        The party key travels in the BODY, never the path: an actor key
+        contains a slash (`namespace/name`), and a path-embedded key would
+        be an escaping bug waiting to become a security bug.
+
+        Authenticated with its own bearer secret
+        (`NODES_INBOUND_ISSUANCE_TOKEN_SECRET`) — NOT the dial-in headers a
+        bridge uses, and not the decision or registration secrets. Issuing a
+        bridge's identity is its own standing.
+      security:
+        - inboundIssuanceBearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/InboundCredentialPartyRequest'
+      responses:
+        '201':
+          description: >-
+            The credential was minted and the verifier is durable. This body
+            carries the plaintext. It is the only time it will ever be
+            returned.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/IssuedInboundCredential'
+        '400':
+          description: >-
+            The body did not decode, carried an unknown field, tried to
+            supply credential material through one of the named honeypot
+            fields, or named a party that is not a valid identity —
+            `party_kind` outside {actor, host}, an actor key that is not
+            `namespace/name`, or an address-shaped key (a dotted quad, or
+            anything containing `:`), which is refused on shape so an
+            address-like typo cannot become durable identity.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '401':
+          description: >-
+            No bearer token was presented, it does not match the configured
+            issuance secret, or no issuance secret is configured at all —
+            closed by default, never mounted-but-authless.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+
+  /v1alpha1/inbound/credentials/revoke:
+    post:
+      operationId: revokeInboundCredential
+      tags: [dial-in]
+      summary: End one party's dial-in authority.
+      description: >-
+        Revocation is scoped to exactly one (`party_kind`, `party_key`) row.
+        No other bridge's session is touched and no process is restarted:
+        the authenticator reads revocation state from PostgreSQL on every
+        dial rather than caching it, so this takes effect on the revoked
+        bridge's NEXT poll or completion and is unobservable to every other
+        bridge.
+
+        It records rather than deletes. Deletion is not revocation — a
+        restore or a replay could recreate a usable verifier — so the row
+        survives carrying `revoked_at`, which is durable evidence of when
+        authority ended. Re-revoking keeps the ORIGINAL instant: the fact
+        being recorded is when authority ended, and that does not move.
+
+        Takes the same body and the same issuance bearer secret as
+        `POST /v1alpha1/inbound/credentials`, including the honeypot
+        refusals. To restore a revoked party, issue again — issuance clears
+        `revoked_at`.
+      security:
+        - inboundIssuanceBearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/InboundCredentialPartyRequest'
+      responses:
+        '200':
+          description: >-
+            Authority has ended. `revoked_at` is the original revocation
+            instant, which a re-revocation does not move.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/RevokedInboundCredential'
+        '400':
+          description: >-
+            Same refusals as issuance — undecodable body, unknown field,
+            honeypot credential material, or an invalid/address-shaped
+            party.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '401':
+          description: >-
+            No bearer token, the wrong one, or no configured issuance
+            secret.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '404':
+          description: No inbound credential exists for this party.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
 
   /v1alpha1/actors/{id}/stats:
     get:
@@ -2294,6 +2685,41 @@ components:
         The short-lived callback token minted for exactly one attempt. The
         route verifies it against the attempt id in the path before loading
         durable invocation authority or reading the request body.
+    inboundIssuanceBearerAuth:
+      type: http
+      scheme: bearer
+      description: >-
+        The shared secret configured as
+        NODES_INBOUND_ISSUANCE_TOKEN_SECRET. Used only by POST
+        /v1alpha1/inbound/credentials and POST
+        /v1alpha1/inbound/credentials/revoke (issue #111's dial-in half) —
+        its own secret again, so the standing to mint or end a bridge's
+        IDENTITY is granted independently of decision, registration, event
+        and ad-hoc power. Absent configuration leaves both routes refusing
+        with 401 rather than mounted-but-authless.
+    inboundDialBearerAuth:
+      type: http
+      scheme: bearer
+      description: >-
+        The credential the control plane ISSUED for one dialling party —
+        the `cnd_`-prefixed value returned exactly once by POST
+        /v1alpha1/inbound/credentials. Presented by a bridge on every poll
+        and every completion, alongside inboundActorKeyAuth; neither header
+        is sufficient alone. Verified against a SHA-256 verifier read from
+        PostgreSQL per call, never cached, which is what makes revocation
+        effective on the next dial.
+    inboundActorKeyAuth:
+      type: apiKey
+      in: header
+      name: X-Culture-Nodes-Actor-Key
+      description: >-
+        Names the party whose credential is being presented — an actor key
+        (`namespace/name`), which is also the mailbox partition the poll
+        claims from and the completion is scoped to. Required together with
+        inboundDialBearerAuth: an absent or empty header is a 401 before the
+        credential is examined at all. The transport routes hardcode the
+        party KIND to `actor`, so a `host`-kind credential cannot dial in
+        even though issuance will mint one.
 
   schemas:
     Namespace:
@@ -4595,6 +5021,173 @@ components:
           format: date-time
         failure_count:
           type: integer
+
+    InboundEnvelope:
+      type: object
+      description: >-
+        One unit of work claimed from `inbound_actor_mailbox` by
+        POST /v1alpha1/inbound/poll — the mailbox envelope. Returned ONLY
+        with 200; an idle poll answers 204 with an empty body and this
+        schema is not involved.
+
+        The envelope is a wrapper, not the work: `request` is the payload,
+        and the other three fields exist so the bridge can settle the
+        envelope and label the work correctly.
+      required: [id, actor_key, attempt_id, request]
+      properties:
+        id:
+          type: string
+          description: >-
+            The mailbox row id, and the ONLY value that addresses
+            POST /v1alpha1/inbound/{id}/complete. Do not send `attempt_id`
+            there.
+        actor_key:
+          type: string
+          description: >-
+            The party this envelope was addressed to — the same value the
+            bridge sent in `X-Culture-Nodes-Actor-Key`.
+        attempt_id:
+          type: string
+          description: >-
+            The protocol attempt id, and the value the bridge MUST forward
+            to its local invocation handler as the `Idempotency-Key`
+            header. That is what makes a redelivery safe: an envelope whose
+            90-second claim lease expires becomes claimable again, so the
+            same attempt can legitimately reach the bridge more than once,
+            and the local handler's replay store is what turns the second
+            arrival into the first arrival's recorded response instead of a
+            second billable run. The bridge does not invent this key and
+            must not substitute the envelope `id` for it — a fresh key per
+            delivery would defeat the whole mechanism.
+        request:
+          description: >-
+            The invocation request, verbatim, to be POSTed to the bridge's
+            own local invocation endpoint. Opaque here on purpose: the
+            control plane stores what it marshalled and this operation is
+            transport, not interpretation.
+          type: object
+          additionalProperties: true
+
+    InboundCompletion:
+      type: object
+      description: >-
+        POST /v1alpha1/inbound/{id}/complete' body: the local handler's
+        answer, relayed verbatim. The control plane parses `status` and
+        `body` together as the invocation response the waiting dispatch
+        receives, so an error from the local handler is reported by sending
+        ITS status and ITS body here — not by omitting the completion.
+      required: [status, body]
+      properties:
+        status:
+          type: integer
+          description: >-
+            The HTTP status the bridge's local handler returned. Must be
+            100-599; anything outside that is a 400.
+          minimum: 100
+          maximum: 599
+        body:
+          description: >-
+            The local handler's response body, as JSON. Required: an absent
+            `body` is a 400. It is stored raw and parsed as the invocation
+            response, so it must be the handler's actual payload rather
+            than a summary of it.
+
+    InboundCredentialPartyRequest:
+      type: object
+      description: >-
+        The body of BOTH credential operations, and the whole body: which
+        party. No field may carry credential material — the control plane
+        chooses the value.
+
+        Seven field names are declared honeypots (`credential`, `token`,
+        `secret`, `verifier`, `verifier_sha256`, `verifier_env_name`,
+        `digest_sha256`): sending any of them is a 400 that NAMES the
+        offending field and tells the caller to remove it. They are checked
+        in a fixed order, so a request carrying two of them is always
+        refused by the same one. Unknown fields are refused too, just
+        without the explanation — the honeypots exist to make the likely
+        mistake legible.
+      required: [party_key]
+      properties:
+        party_kind:
+          type: string
+          enum: [actor, host]
+          default: actor
+          description: >-
+            Defaults to `actor` when omitted or empty. Note that the
+            transport routes only ever authenticate `actor`, so a `host`
+            credential is mintable but not dialable.
+        party_key:
+          type: string
+          description: >-
+            For `actor`, an actor key: `namespace/name` (at least one
+            slash; each segment `[A-Za-z0-9._-]+`). For `host`, a host
+            NAME. Address-shaped keys are refused on shape — a dotted quad,
+            or anything containing `:` — so that an address-like typo
+            cannot become durable identity even if one octet is out of
+            range. The key travels here rather than in the path precisely
+            because it contains a slash.
+      additionalProperties: false
+
+    IssuedInboundCredential:
+      type: object
+      description: >-
+        POST /v1alpha1/inbound/credentials' 201 body. The `credential` field
+        is the one and only time the plaintext leaves the process: it is
+        held in a self-redacting secret type until this response is written,
+        the reveal zeroes its buffer, and no operation on this API can
+        return it again. Capture it at issuance or issue a new one.
+      required: [party_kind, party_key, credential, digest_sha256, issued_at, revealed_once]
+      properties:
+        party_kind:
+          type: string
+          enum: [actor, host]
+        party_key:
+          type: string
+        credential:
+          type: string
+          description: >-
+            The plaintext, `cnd_` + base64url of 32 crypto/rand bytes. The
+            prefix makes a leaked value recognisable to a secret scanner
+            without disclosing anything — all the entropy is after it.
+            Present exactly once, here.
+          example: cnd_REDACTED-32-random-bytes-base64url
+        digest_sha256:
+          type: string
+          description: >-
+            The SHA-256 verifier, hex. This is what the database holds, so
+            returning it discloses nothing new; it lets an operator confirm
+            which credential a stored record corresponds to.
+        issued_at:
+          type: string
+          format: date-time
+          description: >-
+            When the verifier row committed. The reveal happens only after
+            this, so a credential in hand always has a verifier behind it.
+        revealed_once:
+          type: boolean
+          description: >-
+            Always `true`. It is a statement about the contract, not a mode
+            to be varied: there is no configuration under which the value
+            can be read a second time.
+
+    RevokedInboundCredential:
+      type: object
+      description: >-
+        POST /v1alpha1/inbound/credentials/revoke' 200 body.
+      required: [party_kind, party_key, revoked_at]
+      properties:
+        party_kind:
+          type: string
+          enum: [actor, host]
+        party_key:
+          type: string
+        revoked_at:
+          type: string
+          format: date-time
+          description: >-
+            When authority ENDED. Re-revoking returns the original instant
+            rather than moving it, because that is the fact being recorded.
 
     RegisterActorRequest:
       type: object

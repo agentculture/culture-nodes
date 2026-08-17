@@ -8,7 +8,24 @@ import csv
 import json
 import subprocess
 import sys
+import time
 from pathlib import Path
+
+# GitHub answers 503 often enough to matter: this check ran six times in one
+# cycle and failed twice on a transient API error, once turning a PR red for a
+# reason unrelated to its change. A retry is what actually stops that.
+GH_ATTEMPTS = 4
+GH_BACKOFF_SECONDS = 3
+
+
+class GitHubUnreachable(RuntimeError):
+    """The open-issue set could not be READ. Distinct from a stale table.
+
+    Folding the two together is the same defect scripts/lint-all.sh was just
+    corrected for: "could not check" must not render as "checked and it is
+    wrong". This one exits 2 -- the code merge-gate.py uses for
+    measurement_incomplete and _errors.py reserves for an environment error.
+    """
 
 ROOT = Path(__file__).resolve().parents[1]
 DEFAULT_TABLE = ROOT / "docs" / "triage" / "dispositions.csv"
@@ -31,7 +48,24 @@ def open_issue_numbers(repo: str, issues_json: Path | None) -> list[int]:
             "gh", "issue", "list", "--repo", repo, "--state", "open",
             "--limit", "1000", "--json", "number",
         ]
-        raw = subprocess.run(command, check=True, text=True, capture_output=True).stdout
+        last = ""
+        for attempt in range(1, GH_ATTEMPTS + 1):
+            proc = subprocess.run(command, check=False, text=True, capture_output=True)
+            if proc.returncode == 0:
+                raw = proc.stdout
+                break
+            last = (proc.stderr or proc.stdout).strip().splitlines()[-1:] or [""]
+            last = last[0]
+            if attempt < GH_ATTEMPTS:
+                print(
+                    f"triage-report: gh failed ({last}); retry {attempt}/{GH_ATTEMPTS - 1}",
+                    file=sys.stderr,
+                )
+                time.sleep(GH_BACKOFF_SECONDS * attempt)
+        else:
+            raise GitHubUnreachable(
+                f"could not read the open-issue set after {GH_ATTEMPTS} attempts: {last}"
+            )
     data = json.loads(raw)
     return sorted({int(item["number"]) for item in data})
 
@@ -85,6 +119,7 @@ def main() -> int:
         numbers = open_issue_numbers(args.repo, args.issues_json)
         rows = dispositions(args.table)
     except (
+        GitHubUnreachable,
         KeyError,
         OSError,
         TypeError,
@@ -93,6 +128,8 @@ def main() -> int:
         subprocess.CalledProcessError,
     ) as exc:
         print(f"triage-report: {exc}", file=sys.stderr)
+        # 2 == could not measure. A stale table or a missing disposition is a
+        # finding and returns 1 further down; this is the absence of a reading.
         return 2
 
     missing = sorted(set(numbers) - set(rows))

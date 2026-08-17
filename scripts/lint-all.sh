@@ -95,7 +95,22 @@ step() {
 		return 0
 	fi
 	printf '\n>>> %s\n' "$name"
-	if "$@"; then
+	local rc=0
+	"$@" || rc=$?
+	if [ "$rc" -eq 0 ]; then
+		return 0
+	fi
+	# A step is allowed to say "I could not measure" rather than "this is
+	# wrong", and the repo has one code for it: merge-gate.py exits 2 for
+	# measurement_incomplete, culture_nodes/cli/_errors.py reserves 2 for an
+	# environment error, and triage-report.py returns 2 when GitHub cannot be
+	# read. Treating that as FAILED is the conflation this script was just
+	# corrected for, one level up -- and it is not hypothetical: a transient
+	# GitHub 503 turned PR #159 red with `FAILED: triage` on a tree whose
+	# table was fine.
+	if [ "$rc" -eq 2 ]; then
+		printf '<<< UNRUNNABLE %s (exit 2 -- could not measure, not a finding)\n' "$name"
+		UNRUNNABLE+=("$name")
 		return 0
 	fi
 	printf '<<< FAILED %s\n' "$name"

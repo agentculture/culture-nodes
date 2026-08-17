@@ -941,6 +941,21 @@ def _main(argv: Sequence[str]) -> int:
 
     names = list(argv)
     if names and names[0] == "--git-metadata":
+        # "the caller named no checkout" and "this host has no checkout" are
+        # different facts, and only the second one is a measurement.
+        # `not-probed` is the honest answer to the second; answering it to the
+        # first would report a host fact nobody asked for -- and an empty
+        # variable expansion (`--git-metadata $CHECKOUT` with CHECKOUT unset)
+        # would look exactly like a successful run. Same arity rule the
+        # toolchain path below already enforces, and the same exit code.
+        if len(names) == 1:
+            print(
+                "usage: preflight.py --git-metadata <checkout> [<checkout> ...]\n"
+                "       named no checkout to measure; `not-probed` is a host "
+                "fact, not an answer to an empty argument list",
+                file=sys.stderr,
+            )
+            return 2
         print(
             json.dumps(
                 {

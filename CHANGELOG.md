@@ -5,6 +5,15 @@ All notable changes to this project will be documented in this file.
 Format follows [Keep a Changelog](https://keepachangelog.com/). This project
 adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.33.2] - 2026-08-17
+
+### Fixed
+
+- merge-gate: local_outcome counts failures across every entry before deciding, mirroring internal/handover.GateResults.Outcome — the same two gates declared in a different order no longer produce different verdicts, which had made changes_required effectively unreachable and turned every real gate failure into a reconciliation refusal (#153)
+- merge-gate: a pinned gate matrix carrying a key the parser does not read is refused by name at load, before any instrument runs, with the twelve valid keys listed in the hint; validate-examples.sh exercises the refusal in both directions so a guard that stops refusing also fails (#148)
+- merge-gate: the pinned adapter-lint command names explicit per-adapter src/tests paths instead of walking adapters/, so its verdict no longer depends on whether anyone has materialised adapters/*/.venv — the same commit measured 7 findings on a clean checkout and 40912 on a developer machine (#152)
+- adapters/human-inbox: cleared the seven flake8 findings the .venv noise was hiding — five unused imports and two module-level imports that were late for no reason (#152)
+
 ## [0.33.1] - 2026-08-17
 
 ### Changed

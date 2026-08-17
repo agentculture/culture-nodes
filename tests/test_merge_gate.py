@@ -14,11 +14,15 @@ path through it can report a pass it did not measure.
 
 from __future__ import annotations
 
+import ast
+import importlib.util
+import itertools
 import json
 import os
 import subprocess
 import sys
 import threading
+import types
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 
@@ -218,6 +222,57 @@ def test_every_gate_passing_computes_gates_passed(repo: Path):
     )
 
     assert report_of(proc)["outcome"] == "gates_passed"
+
+
+#: The two decisive shapes an entry can take, keyed by what they say about the
+#: change. A matrix that declares both has one honest answer, and the order the
+#: author happened to write them in is not part of it.
+DECISIVE_GATES = {
+    "failing": {
+        "gate": "go-test",
+        "reaches": ["**/*.go"],
+        "command": [sys.executable, "-c", "raise SystemExit(1)"],
+    },
+    "unavailable": {
+        "gate": "markdownlint",
+        "reaches": ["**/*.go"],
+        "requires": ["definitely-not-a-real-binary-t16"],
+        "command": ["true"],
+    },
+}
+
+GATE_ORDERS = list(itertools.permutations(sorted(DECISIVE_GATES)))
+
+
+@pytest.mark.parametrize("order", GATE_ORDERS, ids=["-then-".join(o) for o in GATE_ORDERS])
+def test_a_failure_dominates_an_unavailable_instrument_in_any_declared_order(
+    repo: Path, order: tuple[str, ...]
+):
+    """Issue #153. A matrix holding one failing gate and one unavailable
+    instrument says two things at once, and only one of them can be the run's
+    outcome. `internal/handover.GateResults.Outcome` settles it by counting
+    failures across every entry BEFORE looking for an unavailable instrument,
+    so a failure dominates however the matrix is written.
+
+    `local_outcome` used to return from inside its loop, which made whichever
+    decisive entry appeared first the verdict: the same two gates reported
+    `changes_required` in one order and `measurement_incomplete` in the other.
+    That is not a near-miss. `changes_required` is a domain outcome that routes
+    the run back for repair; `measurement_incomplete` says nothing was measured
+    and reaches a person. Declaration order decided which, and the node routes
+    on this answer.
+    """
+    commit(repo, "internal/api/gatereports.go")
+    proc = run_gate(repo, {"gates": [DECISIVE_GATES[name] for name in order]}, "--report-only")
+
+    report = report_of(proc)
+    assert gate_named(report, "go-test")["exit_code"] == 1
+    assert (
+        gate_named(report, "markdownlint")["not_applicable"]["reason"] == "instrument_unavailable"
+    )
+    assert report["outcome"] == "changes_required", (
+        f"declared in the order {order}, the same two gates reported " f"{report['outcome']!r}"
+    )
 
 
 def test_report_only_never_exits_zero(repo: Path):
@@ -428,6 +483,171 @@ def test_a_gate_runs_in_its_declared_subdirectory(repo: Path):
     )
 
     assert gate_named(report_of(proc), "web-build")["exit_code"] == 0
+
+
+FULL_VOCABULARY_MATRIX = {
+    "base": "origin/main",
+    "gates": [
+        {
+            "gate": "go-test",
+            "suite": "go test ./...",
+            "instrument": "go test",
+            "version_command": ["go", "version"],
+            "requires": ["go"],
+            "reaches": ["**/*.go", "go.mod"],
+            "responsible_for": ["**/*.go", "go.mod"],
+            "command": ["go", "test", "./..."],
+            "measurement": {"unit": "failures", "threshold": {"maximum": 0}},
+            "repair": {"requires_grants": ["network-egress"]},
+            "cwd": ".",
+            "timeout_seconds": 1800,
+        }
+    ],
+}
+
+
+def _gate_module() -> types.ModuleType:
+    """Import scripts/merge-gate.py by path — the filename's hyphen makes it
+    un-importable by name, and it is a program rather than a package member."""
+    spec = importlib.util.spec_from_file_location("merge_gate_under_test", SCRIPT)
+    assert spec is not None
+    assert spec.loader is not None
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
+def _keys_the_parser_reads() -> set[str]:
+    """Every string literal the module reads off a `gate` mapping, found by
+    walking its own AST rather than by anybody remembering to write it down."""
+    keys: set[str] = set()
+
+    def is_gate(node: ast.AST) -> bool:
+        return isinstance(node, ast.Name) and node.id == "gate"
+
+    for node in ast.walk(ast.parse(SCRIPT.read_text(encoding="utf-8"))):
+        if isinstance(node, ast.Subscript) and is_gate(node.value):
+            index = node.slice
+            if isinstance(index, ast.Constant) and isinstance(index.value, str):
+                keys.add(index.value)
+        elif (
+            isinstance(node, ast.Call)
+            and isinstance(node.func, ast.Attribute)
+            and node.func.attr == "get"
+            and is_gate(node.func.value)
+            and node.args
+        ):
+            first = node.args[0]
+            if isinstance(first, ast.Constant) and isinstance(first.value, str):
+                keys.add(first.value)
+    return keys
+
+
+def test_the_declared_key_vocabulary_is_the_one_the_parser_actually_reads():
+    """Issue #148's other half. Refusing unknown keys is only honest if the
+    known set is the set the code reads; a hand-maintained list drifts the
+    moment a key is taught to the parser and not to it, and the refusal then
+    rejects a legitimate matrix by name.
+
+    So the set is re-derived here from the module's own AST. The scan sees
+    literal access (`gate["x"]`, `gate.get("x")`) and NOT dynamic access — the
+    `for key in ("suite", "instrument")` loop in `not_applicable` is invisible
+    to it, and both of those keys are only in this comparison because they are
+    also read literally in `run_gate`. It is a floor on the vocabulary, not a
+    proof of it, and it fails on exactly the drift #148 is about: a key added
+    to the parser and not to `KNOWN_GATE_KEYS`.
+    """
+    module = _gate_module()
+
+    assert _keys_the_parser_reads() == set(module.KNOWN_GATE_KEYS)
+    assert len(module.KNOWN_GATE_KEYS) == 12, (
+        "the gate vocabulary changed size; that is a deliberate change to what a pinned "
+        "matrix may declare, so update this count along with KNOWN_GATE_KEYS"
+    )
+
+
+def test_a_gate_carrying_keys_the_parser_never_reads_is_refused_by_name(repo: Path):
+    """Issue #148. The reported matrix carried `tools` and `threshold`, neither
+    of which the parser has ever read: the tools were never required of the
+    host, the threshold was never compared against anything, and the gate
+    reported `not_applicable` over an empty uncovered set. Nothing complained.
+
+    A key nobody reads declares nothing while looking exactly like it does, and
+    the matrix is pinned graph content — what it says is what a reader believes
+    was measured.
+    """
+    commit(repo, "internal/api/gatereports.go")
+    proc = run_gate(
+        repo,
+        {"gates": [{**GO_GATE, "tools": ["go"], "threshold": 0}]},
+        "--report-only",
+    )
+
+    assert proc.returncode == 2
+    # Separate assertions: the refusal must name EVERY unknown key, so a
+    # failure that names one and not the other has to say which one is missing.
+    assert "'threshold'" in proc.stderr
+    assert "'tools'" in proc.stderr
+    hint = next(line for line in proc.stderr.splitlines() if line.startswith("hint:"))
+    for key in _gate_module().KNOWN_GATE_KEYS:
+        assert key in hint, f"the hint must list the valid set; {key!r} is missing"
+
+
+def test_an_unknown_key_is_refused_before_anything_is_measured(repo: Path):
+    """The refusal is at load, before a changed-file set exists — a malformed
+    matrix is not a gate that measured badly, it is a gate whose declaration
+    was never true, and nothing it could measure would be worth reporting."""
+    commit(repo, "docs/notes.md")
+    proc = run_gate(
+        repo,
+        {
+            "gates": [
+                {
+                    "gate": "go-test",
+                    "reaches": ["**/*.go"],
+                    "command": [sys.executable, "-c", "raise SystemExit(0)"],
+                    "tools": ["go"],
+                }
+            ]
+        },
+        "--report-only",
+    )
+
+    assert proc.returncode == 2
+    assert proc.stdout == "", "a refused matrix must not also produce a report"
+
+
+def test_an_unnamed_gate_is_refused(repo: Path):
+    commit(repo, "internal/api/gatereports.go")
+    proc = run_gate(
+        repo, {"gates": [{"reaches": ["**/*.go"], "command": ["true"]}]}, "--report-only"
+    )
+
+    assert proc.returncode == 2
+    assert "no name" in proc.stderr
+
+
+def test_check_matrix_accepts_the_whole_vocabulary_and_measures_nothing(repo: Path):
+    """The positive half, and the one scripts/validate-examples.sh runs first:
+    a guard that refused everything would satisfy the negative check alone."""
+    commit(repo, "internal/api/gatereports.go")
+    proc = run_gate(repo, FULL_VOCABULARY_MATRIX, "--check-matrix")
+
+    assert proc.returncode == 0, proc.stderr
+    assert "go-test" in proc.stdout
+    assert "nothing was measured" in proc.stdout
+
+
+def test_check_matrix_refuses_an_unknown_key(repo: Path):
+    commit(repo, "internal/api/gatereports.go")
+    broken = {
+        "base": "origin/main",
+        "gates": [{**FULL_VOCABULARY_MATRIX["gates"][0], "tools": ["go"]}],
+    }
+    proc = run_gate(repo, broken, "--check-matrix")
+
+    assert proc.returncode == 2
+    assert "'tools'" in proc.stderr
 
 
 def test_a_gate_cannot_measure_outside_the_worktree(repo: Path):

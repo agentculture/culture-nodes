@@ -422,3 +422,52 @@ def test_check_still_catches_a_stale_disposition_table(tmp_path):
         invoke=_no_org_reads,
     )
     assert code == 1, "a stale table is a finding, and findings exit 1"
+
+
+def test_check_does_not_need_git_history(tmp_path, monkeypatch):
+    """--check must not resolve the previous-cycle commit.
+
+    previous_cycle_start() reads a hardcoded SHA through `git show`, which
+    fails on a SHALLOW checkout — and publish.yml checks out shallow. Computing
+    it unconditionally made --check exit 2 there for a boundary date it never
+    uses; only the closed-issue type block needs one.
+
+    An independent review flagged the hardcoded SHA as a rot hazard and it was
+    dismissed after checking tests.yml (fetch-depth: 0) and not publish.yml.
+    This test is the correction: it fails if the boundary is ever computed on
+    the --check path again, whatever the checkout depth.
+    """
+
+    def explode():
+        raise AssertionError("--check must not resolve the previous-cycle commit")
+
+    monkeypatch.setattr(MODULE, "previous_cycle_start", explode)
+
+    output = tmp_path / "open-issues.md"
+    table = tmp_path / "dispositions.csv"
+    table.write_text(
+        "issue,bucket,disposition,evidence_pointer\n1,bug tail,do the thing,somewhere\n",
+        encoding="utf-8",
+    )
+    issues = tmp_path / "issues.json"
+    issues.write_text(json.dumps([{"number": 1}]), encoding="utf-8")
+    output.write_text(
+        MODULE.render([1], MODULE.dispositions(table)) + "\n" + MODULE.TYPES_HEADING + "\n",
+        encoding="utf-8",
+    )
+
+    assert (
+        MODULE.main(
+            [
+                "--check",
+                "--issues-json",
+                str(issues),
+                "--table",
+                str(table),
+                "--output",
+                str(output),
+            ],
+            invoke=_no_org_reads,
+        )
+        == 0
+    )

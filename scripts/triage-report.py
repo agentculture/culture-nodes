@@ -398,7 +398,6 @@ def main(argv=None, invoke=None) -> int:
     try:
         numbers = open_issue_numbers(args.repo, args.issues_json, invoke=invoke, backoff=backoff)
         rows = dispositions(args.table)
-        since = args.closed_since or previous_cycle_start()
         # --check deliberately reads NO types. The org's issue-type menu is an
         # ORGANISATION object, and CI's GITHUB_TOKEN is repository-scoped, so
         # the validating read cannot run there at all -- proven in CI, not
@@ -409,8 +408,17 @@ def main(argv=None, invoke=None) -> int:
         #
         # The cost is stated rather than hidden: a stale type block is NOT
         # caught by CI. Recorded as deviation d1 against claims c16/h15/c26.
+        #
+        # `since` is computed inside this branch for the same reason, and it is
+        # not a tidiness point: previous_cycle_start() resolves a hardcoded
+        # commit through `git show`, which FAILS on a shallow checkout.
+        # publish.yml checks out shallow, so computing it unconditionally made
+        # --check depend on git history it does not use. Only the closed-issue
+        # type block needs a boundary date.
+        since = ""
         known, open_records, closed_records = [], [], []
         if not args.check:
+            since = args.closed_since or previous_cycle_start()
             known = org_type_names(args.org, invoke=invoke, backoff=backoff)
             open_records = issue_types(args.repo, "open", invoke=invoke, backoff=backoff)
             closed_records = closed_since(

@@ -152,10 +152,17 @@ for name in sys.argv[2:]:
         if not isinstance(matrix, dict) or "gates" not in matrix:
             continue
         found += 1
-        # Named after where it came from, so a refusal below names the
-        # workflow an author has to go and fix rather than a temporary file.
-        target = destination / f"{found:02d}.{name.replace('/', '_')}.json"
+        # The temp file is numbered, and the workflow it came from is recorded
+        # BESIDE it rather than encoded into its name, so a refusal below names
+        # the workflow an author has to go and fix rather than a temporary file.
+        # Encoding the path into the filename (replacing '/' with '_') was
+        # lossy: decoding it back turned every underscore into a slash, so any
+        # workflow path containing one would be misreported. No example carries
+        # an underscore today, which is exactly why a name-mangling scheme
+        # survives until the day it silently mislabels a failure.
+        target = destination / f"{found:02d}.json"
         target.write_text(json.dumps(matrix), encoding="utf-8")
+        target.with_suffix(".origin").write_text(name, encoding="utf-8")
         print(f"  {len(matrix['gates'])} gate(s) at line {index + 1} of {name}")
 PY
 
@@ -174,10 +181,9 @@ fi
 
 bad_matrices=()
 for matrix in "${matrices[@]}"; do
-	origin="$(basename "$matrix")"
-	origin="${origin#*.}"
-	origin="${origin%.json}"
-	origin="${origin//_//}"
+	# Read the origin the extractor recorded rather than decoding it out of
+	# the filename; the mapping is exact for any path, underscores included.
+	origin="$(cat "${matrix%.json}.origin")"
 	if output="$(python3 "$gate_program" --gates "@$matrix" --check-matrix 2>&1)"; then
 		echo "ok   $origin -- $(head -n 1 <<<"$output")"
 	else

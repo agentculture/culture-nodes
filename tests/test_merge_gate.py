@@ -510,7 +510,8 @@ def _gate_module() -> types.ModuleType:
     """Import scripts/merge-gate.py by path — the filename's hyphen makes it
     un-importable by name, and it is a program rather than a package member."""
     spec = importlib.util.spec_from_file_location("merge_gate_under_test", SCRIPT)
-    assert spec is not None and spec.loader is not None
+    assert spec is not None
+    assert spec.loader is not None
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)
     return module
@@ -583,7 +584,10 @@ def test_a_gate_carrying_keys_the_parser_never_reads_is_refused_by_name(repo: Pa
     )
 
     assert proc.returncode == 2
-    assert "'threshold'" in proc.stderr and "'tools'" in proc.stderr
+    # Separate assertions: the refusal must name EVERY unknown key, so a
+    # failure that names one and not the other has to say which one is missing.
+    assert "'threshold'" in proc.stderr
+    assert "'tools'" in proc.stderr
     hint = next(line for line in proc.stderr.splitlines() if line.startswith("hint:"))
     for key in _gate_module().KNOWN_GATE_KEYS:
         assert key in hint, f"the hint must list the valid set; {key!r} is missing"

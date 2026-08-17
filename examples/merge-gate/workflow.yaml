@@ -259,6 +259,20 @@ spec:
           # or `web/` gets `not_applicable/instrument_not_reaching_tree`
           # naming those files. That is issue #88's gap, reported per run
           # rather than silently counted as satisfied.
+          #
+          # `adapter-lint` names each adapter's `src`/`tests` explicitly
+          # rather than the `adapters` tree, and that is load-bearing (#152).
+          # flake8 walks whatever it is handed: `flake8 adapters` descends
+          # into `adapters/*/.venv`, which `uv run` materialises the first
+          # time anyone runs an adapter's test suite. The verdict then
+          # depends on the state of the working directory rather than on the
+          # change under test: measured on one and the same commit, the old
+          # `flake8 adapters` reported 40912 findings on a machine that had
+          # run those suites and 7 on a clean checkout. A digest-pinned
+          # matrix exists precisely so nothing can influence a verdict after
+          # the fact; the filesystem must not be the exception. The path style
+          # is copied from .github/workflows/adapter-codex.yml, which never
+          # had the problem because it, too, names paths.
           - |
             {
               "base": "origin/main",
@@ -330,11 +344,16 @@ spec:
                 },
                 {
                   "gate": "adapter-lint",
-                  "suite": "uv run flake8 adapters",
+                  "suite": "uv run flake8 adapters/*/src adapters/*/tests",
                   "instrument": "flake8",
                   "requires": ["uv"],
                   "reaches": ["adapters/**"],
-                  "command": ["uv", "run", "flake8", "adapters"]
+                  "command": ["uv", "run", "flake8",
+                              "adapters/claude-code/src", "adapters/claude-code/tests",
+                              "adapters/codex/src", "adapters/codex/tests",
+                              "adapters/colleague/src", "adapters/colleague/tests",
+                              "adapters/human-inbox/src", "adapters/human-inbox/tests",
+                              "adapters/notify/src", "adapters/notify/tests"]
                 },
                 {
                   "gate": "markdownlint",

@@ -16,8 +16,8 @@ import json
 import logging
 import os
 import subprocess
-import time
-from dataclasses import dataclass, field
+from dataclasses import asdict, dataclass
+from datetime import datetime, timezone
 from typing import Any
 
 logger = logging.getLogger("human_inbox_bridge.nudge")
@@ -380,7 +380,9 @@ def _float_env(env: dict[str, str], name: str, default: float) -> float:
 
 # --- Re-export for tracker integration ----------------------------------
 
-from dataclasses import asdict
-from datetime import datetime, timezone
-
+# `asdict` and `datetime`/`timezone` used to be imported here, below the code
+# that uses them, which flake8 flagged as E402. They are stdlib and this
+# module is import-cycle-free, so there was never a reason for them to be
+# late — they are at the top now. Only the public alias stays here, because
+# it must be defined after the private constant it re-exports.
 DEFAULT_USERNAME = _DEFAULT_USERNAME

@@ -28,9 +28,12 @@ type artifactInvocationStore interface {
 }
 
 // artifactRunnerOpSource is the fallback association source for RUNNER
-// attempts: the runner_operations rows recorded at dispatch. Implemented by
-// *postgres.Store.
+// attempts. Two tables, two lifecycle phases: the parked runner_invocations
+// row (RunnerOperation) exists from dispatch — which is when a mid-execution
+// upload arrives — and the runner_operations audit row exists from
+// completion, for anything published late. Implemented by *postgres.Store.
 type artifactRunnerOpSource interface {
+	RunnerOperation(ctx context.Context, namespaceID, attemptID string) (postgres.RunnerOperation, error)
 	ListRunnerOperationsByAttempt(ctx context.Context, attemptID string) ([]postgres.RunnerOperationRecord, error)
 }
 
@@ -250,6 +253,21 @@ func (s *Server) handleGetAttemptArtifact(w http.ResponseWriter, r *http.Request
 func (s *Server) runnerAttemptAssociations(ctx context.Context, attemptID string) (actors.PendingInvocation, error) {
 	if s.artifactRunnerOps == nil {
 		return actors.PendingInvocation{}, actors.ErrUnknownAttempt
+	}
+	// In-flight first: the parked runner_invocations row exists from the
+	// moment of dispatch, which is when the runner's mid-execution upload
+	// arrives (the completion-time audit row does not exist yet — measured
+	// live on the 18:36Z sweep, whose upload 404'd against the audit table).
+	parked, err := s.artifactRunnerOps.RunnerOperation(ctx, s.NamespaceID, attemptID)
+	if err == nil {
+		return actors.PendingInvocation{
+			NamespaceID: parked.NamespaceID,
+			RunID:       parked.RunID,
+			AttemptID:   attemptID,
+		}, nil
+	}
+	if !errors.Is(err, postgres.ErrNotFound) {
+		return actors.PendingInvocation{}, err
 	}
 	ops, err := s.artifactRunnerOps.ListRunnerOperationsByAttempt(ctx, attemptID)
 	if err != nil {

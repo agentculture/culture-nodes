@@ -34,6 +34,15 @@ func (s fakeArtifactInvocationStore) Invocation(_ context.Context, attemptID str
 // runner attempt, att_runner, dispatched for run_runner in ns_runner.
 type fakeRunnerOpSource struct{}
 
+// The parked (in-flight) row: att_runner_parked is known here and NOT in the
+// audit table, mirroring a mid-execution upload.
+func (fakeRunnerOpSource) RunnerOperation(_ context.Context, _, attemptID string) (pgstore.RunnerOperation, error) {
+	if attemptID != "att_runner_parked" {
+		return pgstore.RunnerOperation{}, pgstore.ErrNotFound
+	}
+	return pgstore.RunnerOperation{AttemptID: "att_runner_parked", NamespaceID: "ns_runner", RunID: "run_runner"}, nil
+}
+
 func (fakeRunnerOpSource) ListRunnerOperationsByAttempt(_ context.Context, attemptID string) ([]pgstore.RunnerOperationRecord, error) {
 	if attemptID != "att_runner" {
 		return nil, nil
@@ -404,5 +413,30 @@ func TestArtifactWriteRouteResolvesRunnerAttempts(t *testing.T) {
 	if store.meta.NamespaceID != "ns_runner" || store.meta.RunID != "run_runner" || store.meta.AttemptID != "att_runner" {
 		t.Fatalf("associations = (%q, %q, %q), want the runner operation's (ns_runner, run_runner, att_runner)",
 			store.meta.NamespaceID, store.meta.RunID, store.meta.AttemptID)
+	}
+}
+
+// TestArtifactWriteRouteResolvesParkedRunnerAttempts pins the second half of
+// the d1 lifecycle gap (18:36Z sweep): mid-execution, only the parked
+// runner_invocations row exists — the audit table is written at completion.
+func TestArtifactWriteRouteResolvesParkedRunnerAttempts(t *testing.T) {
+	now := time.Date(2026, 8, 15, 9, 0, 0, 0, time.UTC)
+	ts, signer, store, _ := newArtifactRouteTestServer(t, now)
+	token, err := signer.Mint("att_runner_parked")
+	if err != nil {
+		t.Fatalf("Mint: %v", err)
+	}
+	req := artifactRequest(t, http.MethodPost, ts.URL+"/v1alpha1/attempts/att_runner_parked/artifacts", token, "text/plain", "stdout", bytes.NewReader([]byte(`{"emitted": 1}`)))
+	resp, err := ts.Client().Do(req)
+	if err != nil {
+		t.Fatalf("POST artifact: %v", err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusCreated {
+		got, _ := io.ReadAll(resp.Body)
+		t.Fatalf("status = %d, want 201; body=%s", resp.StatusCode, got)
+	}
+	if store.meta.NamespaceID != "ns_runner" || store.meta.RunID != "run_runner" || store.meta.AttemptID != "att_runner_parked" {
+		t.Fatalf("associations = (%q, %q, %q), want the parked invocation's", store.meta.NamespaceID, store.meta.RunID, store.meta.AttemptID)
 	}
 }

@@ -1,0 +1,177 @@
+# jira-driven idea-to-shipped loop
+
+> A Jira issue moves to the right state and, with no operator shell command in the transcript, a PR appears against a feature branch whose every constituent task was dispatched, gated, merged and decided by the system - the idea-to-shipped loop runs as Culture Nodes flows and the combining step is a node instead of the operator
+> instruction: Demonstrate on the seeded backlog: move a Jira issue to the trigger state, then read the resulting run(s) and the PR with zero operator shell commands in between; h1 is the acceptance read
+
+## Audience
+
+- The operator (whose merge loop this replaces), the human decider replying on Jira, the actor fleet (codex-thor/codex-orin, the claude/colleague bridges, human-inbox), and any agentculture repo that loads the committed workflows as worked examples
+
+## Before → After
+
+- Before: The components exist but the loop lives in the operator's interactive session: fourteen hand-steps per package measured across nine packages (STATE.md section 11), merges typed by hand, the orchestration neither durable nor resumable nor inspectable, and the latest cycle still counted five hand-turns
+- After: A Jira reply is the human's only transport: issue state changes and comment answers drive flows; the combining loop harvests, gates, merges, decides claims and releases waves as nodes; mid-flow questions round-trip as Jira comments that resume the same warm session; every step leaves derived/observed evidence so the run explains itself with no companion document
+
+## Requirements
+
+- The combining loop (#118 step 7) becomes a committed workflow: per finished task, harvest -> merge-gate -> merge into the feature branch -> decide the claim -> release the next wave once dependencies are satisfied. The components already shipped - the merge-gate code node emitting derived validator records (examples/merge-gate, #101 closed), bounded repair routing (internal/repair, #102 closed), the decision surface (GET /v1alpha1/pending-decisions + human-tasks decision route, #99 closed), brief composition (scripts/render-work-package.py, #103 closed) - so the new build is the loop that strings them plus wave release, not the components
+  - instruction: Author the combining-loop workflow (yaml, compiled by nodes validate) that sequences harvest -> gate-on-combination -> merge -> decision round-trip -> wave release, reusing merge-gate.py, internal/repair routing, pending-decisions, and render-work-package.py as-is
+  - honesty: The merge depends on a recorded derived gate verdict queryable from the ledger - and a gate that could not measure lands `measurement_incomplete`, never green; go-test's ok-with-all-skips trap is explicitly covered
+- Harvest is the one missing component in the combining loop: #100 is open and was explicitly retyped from Record to Feature because internal/handover measures what a handed-over ref contains (#13) while nothing replaces the operator's 'ssh ... git diff HEAD --binary' collection with a node
+  - instruction: Build the harvest node (#100): a code node that fetches the actor's ref via the internal/handover seam and stages it into the integration worktree - no operator ssh; preserve-on-failure verified by killing it mid-run
+  - honesty: The harvest node collects changes off the actor's host with no operator ssh, and a failed gate or timeout preserves the work rather than silently dropping it
+- The Jira question/answer round trip: a leg's question is posted as a comment on the originating Jira issue by a NEW write-credentialed actor bridge (the adapters/notify shape, #68 precedent), the flow parks on an until.signal wait, and the existing sweep's newest-comment watermark emits the resume event - until{signal}, CEL 'event' on onEvent edges, and run-creating triggers all already exist in internal/compiler
+  - instruction: Extend sweep.py: post-question via the Jira actor, park the flow on until.signal, resume on the answer event; keep watermark advance + event append in one transaction (already t17's shape) and name the originating question in the resume event payload
+  - honesty: The watermark advance and the signal-event append stay one transaction (a restart cannot re-emit or skip an answer), and the resume event names the originating question so the consumer treats it as a continuation, not new work
+- The spec chain (#89) runs as a graph: deterministic devague moves as code nodes, judgement as agent nodes, human gates as human-inbox approval nodes. internal/devague already maps devague JSON onto authority-honest ledger records with deterministic `dv_` ids (a confirmed claim becomes proposed-record + human review record, matching the ledger's own review transaction), and devague itself makes no LLM calls (devague#20) - which is exactly what makes the moves expressible as code nodes
+  - instruction: Author the spec-chain workflow: devague moves as code nodes operating on the frame artifact, judgement as agent nodes, human-inbox approvals at the gates; map outputs through internal/devague into the run ledger
+  - honesty: The resulting frame is structurally indistinguishable from a hand-run one, and every deterministic move lands as a derived record rather than an agent's claim that it ran
+- A Jira issue entering a named state raises a distinct event name from 'a comment appeared' - #118 step 1 calls this the only structural gap left in the sweep
+  - instruction: Add per-state-transition event names to sweep.py's emitter (distinct from comment events); pin with a fixture test that a trigger subscribed to transitions never receives comments
+  - honesty: A state-transition event and a comment event carry distinct names, and a workflow trigger can subscribe to one without receiving the other
+- Every automated step verifies its own outcome rather than reporting success: #118's evidence comment records a deploy that exited 0 with a passing per-key credential audit on a host whose worker could not start, and five actors unreachable at a stale address with nothing watching - a step that runs itself but does not verify moves work out of the count without moving it out of the risk
+  - instruction: For each automated step define its measured post-condition (worker started, actor reachable, ref present) and record it as the step's evidence; include one test where the command exits 0 and verification still fails
+  - honesty: Each automated step's success is a measured post-condition (worker actually started, actor actually reachable), not exit code 0 - demonstrated by at least one step whose verification fails while its command exits 0
+- \#8's residue enters scope only where the loop needs it: runner-services reload still requires a worker restart (its 'advanced, not closed' comment) and namespace discovery remains the PRD 26 open question - while actor registration itself (POST/GET /v1alpha1/actors, 'nodes runner-services list/register') already shipped and is reused, not rebuilt
+  - instruction: Take the runner-services live-reload gap and namespace discovery only if the loop's deploy story trips on them; otherwise record a scoping decision deferring them - never silence
+  - honesty: Runner-service changes take effect without a worker restart, or the spec re-scopes that out with a recorded decision - not by silence
+- Session continuity across the question gap: when a question is posted to Jira and the sweep later picks up the human's answer, the emitted event resumes the SAME consumer session - the resumed dispatch carries the original `session_key`/`continuation_ref` so the provider thread continues warm (context + prompt cache) instead of being treated as new work. The machinery exists: bridges map `continuation_ref` to the provider's --resume and guard one conversation per `session_key` (adapters/\*/`session_registry.py`, ADR 0010 s4); the new part is the flow threading that identity from the asking node through the wait to the resumed node
+  - instruction: Thread session identity through the graph: the asking node's `session_key`/`continuation_ref` ride the parked state and the resume dispatch; verify per h22
+  - honesty: When the provider session is still resumable the resumed dispatch reuses the asker's `session_key` and `continuation_ref` (bridge registry, matching provider session id); when it is not, the c30 fork-observable path applies - silence is the only failure. Supersedes h9
+- The gate verdict that authorizes a machine-decided merge is measured on the POST-MERGE CANDIDATE tree (feature branch + package), not the package branch alone: #118 measured two parallel packages breaking each other at merge and two more colliding on pyproject.toml/CHANGELOG.md. scripts/merge-gate.py measures whatever tree it is pointed at and the control plane computes the aggregate (POST /runs/{id}/gate-reports), so pointing it at the combination is the loop's job; a merge conflict is a domain outcome with an edge, never an engine failure
+  - instruction: Make the gate node's workspace the post-merge candidate: harvest merges the package into a candidate of the feature branch first, gate measures that tree, merge fast-forwards only what was measured; conflict lands its own domain outcome edge
+  - honesty: A wave-2 package whose own branch is green but whose combination with the feature branch is red lands `changes_required` measured on the combination - demonstrated by a test that makes the combination fail while both constituents pass
+- The resume path filters comments authored by the system's own Jira account: sweep.py's watermark is newest-comment-timestamp with NO author discrimination (probed: no author/`account_id` handling), so the flow's own posted question would advance the watermark, emit the comment event, and feed the question back as its own answer - a self-echo loop
+  - instruction: Record the bot account id in sweep config; skip self-authored comments when computing the resume event (watermark still advances); fixture-test per h13
+  - honesty: Posting a question does not resume the flow: a sweep pass over an issue whose newest comment is the system's own emits nothing - demonstrated against a recorded fixture
+- Resume-preferred, fork-observable: a Jira reply can arrive after the provider session is no longer resumable (unbounded wait; in-memory session registry - no persistence found in adapters/\*/`session_registry.py`; provider expiry; bridge restart). The consumer resumes warm when `continuation_ref` is still valid, otherwise falls back to a cold session with an observable ForkEvent and the question context re-briefed - never silent loss, never a hard failure because warmth was impossible. This amends success signal c21, whose 'no ForkEvent' absolute is unmeetable as written
+  - instruction: In the resume dispatch: attempt `continuation_ref`; on provider refusal fall back to a cold session, emit/record the ForkEvent, and prepend the re-brief (question + answer + minimal context) to the instruction
+  - honesty: Both paths are demonstrated: a prompt reply resumes warm (`continuation_ref` reused), and a reply after forced session loss produces a cold session WITH a ForkEvent record and the re-briefed question - neither silent
+- At most one active run per originating Jira issue: a second state change or comment while a flow is mid-flight must resume or queue against the existing run, never spawn a parallel run on the same subject - duplicate feature branches and double dispatch are the failure. Whether the engine's trigger layer can dedup per-subject or the workflow must guard it is parked for plan time
+  - instruction: Guard one-active-run-per-issue at the consumer: the sweep emits with the issue key as subject, and the trigger layer or a guard node routes events for an in-flight subject onto the existing run (mechanism measured at plan time, park v4)
+  - honesty: Two events on one issue during a single flight yield exactly one active run, shown in the run list; the second event's effect is visible on the existing run, not a sibling
+- The question loop is bounded: an answer that does not resolve the question re-asks under a declared bound with backoff, and exhaustion routes to a human node - mirroring internal/repair's bounded shape (2 attempts per 24h window, ceilings reach a human) rather than inventing a new one
+  - instruction: Declare the question loop bound in the workflow (continue.while + onExhausted edge to human-inbox), mirroring the repair bound's shape
+  - honesty: An unresolved question exhausts its declared bound and lands on a human node - the run shows the bound spent and the routing record, never an unbounded re-ask loop
+- Merge execution has named credential custody: #90 (worker push credential) is CLOSED, so the seam exists - the spec names where merges execute (which host, which checkout) and which credential pushes the feature branch, honoring the #68 rule that a credential-holding real-world-acting step is actor/bridge-shaped, never a bare code node with ambient credentials
+  - instruction: Name in the workflow/deploy docs which host+checkout performs merges and which credential pushes the feature branch, reusing the #90 seam; verify per h18
+  - honesty: The merge push succeeds from the loop's own custody with no operator credential dance, and the credential appears in no committed artifact, argv, or log line
+- The always-on loop is budget-bounded: wave release and dispatch consult the shipped session-window pacing arithmetic (internal/pacing, #48 c43) so a Jira trigger storm cannot burn the subscription window; unpaceable demand queues rather than dispatches
+  - instruction: Route wave-release dispatches through the existing pacing arithmetic (worker-side, #48 c43); demonstrate queue-not-dispatch on an exhausted window per h19
+  - honesty: A burst of triggers beyond the window's remaining sessions queues the excess - the pacing decision is visible per dispatch, and the window is never overdrawn
+- Many Jira items run concurrently under declared policy (#166): a configurable max on simultaneous Jira-driven runs, constraint/tag-scoped limits such as one ticket per machine, and machine-specific items routed by tag to their host - per-issue dedup (c31) stays underneath as the floor, and the limits compose with internal/pacing's window arithmetic rather than rivaling it
+  - instruction: Implement per #166: configurable max concurrent Jira runs, per-machine limits, tag-pinned placement - composing pacing and the placement registry; acceptance per h21
+  - honesty: Two items proceed on two machines while a third queues, with max and per-machine limits read from configuration; a tag-pinned item queues for its machine rather than spilling; and per-issue dedup still holds underneath
+- Decision-reply parsing is conservative and explicit: the posted decision comment names the record id and the accepted verbs (e.g. approve `dv_x` / reject `dv_x`), and only an unambiguous reply commits a review - anything else re-asks. A misread reply must not promote a claim: transcription of human judgement, never inference of it
+  - instruction: Define the decision-comment format (verb + record id) and the conservative parser in the consumer; commit reviews via the ledger's review route naming the Jira comment; fixture-test both paths per h23
+  - honesty: An ambiguous or partial reply commits nothing and produces a re-ask; only an exact-match verb+id commits a review record - both paths demonstrated against fixtures, and the committed review names the Jira comment it transcribed
+
+## Honesty conditions
+
+- The done test is read from the run, not from a summary: the transcript between the Jira state change and the PR appearing contains zero operator shell commands, checked by a reader given only the run
+- At run time the sweep holds only the event-ingress token - no Jira write credential in its environment or argv - and the Jira-writing actor's credential never appears in control-plane configuration or any committed artifact
+- No code path added by this work writes confirmed/rejected authority except the ledger's review transaction, and every agent-origin record in a loop run is proposed - checked against the run, not asserted
+- Each named audience actually touches the shipped result: the operator stops merging by hand, the decider acts from Jira, the fleet executes dispatches, and the committed workflows compile as loadable examples
+- Demonstrated on one real cycle end to end: every human act in it was a Jira reply, and the run's ledger explains the cycle with no companion document
+- The before-state is the already-written record, not a narrative: STATE.md section 11's fourteen-step table and the 2026-08-17 delivery's five hand-turns are cited as-is
+- The transcript of the demonstrating session is the evidence: zero operator shell commands between the hand-emitted event and the merged, decided package
+- Both resume paths are shown live on a real Jira issue: a warm resume reusing `continuation_ref`, and a forced-loss fork carrying a ForkEvent and the re-briefed question
+- A real Jira state transition on the seeded backlog starts a run whose triggering event name is the transition-specific one, readable from the run's event stream
+- No code path in the Jira actor calls a transition endpoint, and a live-proof run shows issue state changed only by the human
+- A package diff touching .github/ parks at a human gate before merge - demonstrated with a fixture package; the gate cannot be bypassed by a green verdict
+
+## Success signals
+
+- One work package goes dispatch -> gated -> merged -> decided with no operator shell command in the transcript, driven by a hand-emitted event - plan t8's stage-exit criterion, never yet met
+- A question raised mid-flow appears as a comment on the originating Jira issue; the human's reply resumes the flow - warm (`continuation_ref` reused, no fork) when the provider session survives the wait, otherwise a cold session with an observable ForkEvent and the re-briefed question; either way the flow proceeds from where it parked, never restarts
+- A Jira issue state transition starts a run through a workflow trigger under a distinct event name - live if the backlog has content, else against recorded fixtures with live proof gated separately
+
+## Scope / boundaries
+
+- The sweep stays read-only and holds only the event-ingress token (sweep.py's own docstring; #76's boundary). The Jira write credential lives in a separate actor bridge outside the deployment; the control-plane process gains no Jira egress - the same rule adapters/notify/README.md states for Discord
+  - instruction: Verify by inspection + test: sweep's env carries only the event-ingress token; the Jira actor's credential lives in its bridge env on its host, absent from control-plane config and all committed artifacts
+- PRD 10.4 authority is untouched: agent records land proposed, confirmation is a human act through a review record, no actor promotes its own proposal, and reviewing the final PR stays a human step by design - #109's measure of success is that the human's only work is judgement, not that judgement disappears
+- The Jira-writing actor posts comments only and never transitions issue state: state transitions are the human-only signal that starts flows, so an actor that could transition state could emit the events that trigger its own runs. The Jira Cloud token is account-scoped, not verb-scoped, so the bridge enforces comment-only, the same way notify's bridge owns its webhook discipline
+  - instruction: Build the Jira actor bridge from the adapters/notify layout: one comment-post verb, no transition code path; audit per h14
+- A package whose diff touches .github/ is never machine-merged: internal/repair already routes any failure implicating .github/ to a person because a dispatch may not modify CI configuration - the machine-decided merge step extends the same rule, else the loop would apply CI changes no human saw until the PR
+  - instruction: In the merge node: diff the candidate against the feature branch for .github/ paths before merging; a hit routes to the human node regardless of verdict; fixture-test per h20
+
+## Non-goals
+
+- No new node kind: internal/compiler/vocabulary.go closes the enum at nine (agent, code, action.http, decision, approval, wait, parallel, join, end; TestNodeKindEnumStaysClosedAtNine). Gates are code nodes because a deterministic validator may emit derived records; credentialed real-world writers are actor bridges, never node kinds (#68)
+- devague gains no orchestration and no LLM calls (devague#20): the graph orchestrates, the CLI stays a deterministic recorder, and internal/devague never runs the binary - it is a pure JSON-to-ledger mapping
+- Not a rewrite (#87's own boundary): every capability composes shipped components. The codex write path is proven (#18 closed: workspace-write sessions landed multi-file diffs up to 16 files on codex-thor/codex-orin; .git writable per-dispatch via `writable_roots` after #91), so dispatch soundness is not part of this idea's build
+
+## Assumptions
+
+- Flow composition needs no new engine capability: schedules fire signal events whose triggers create runs (internal/scheduler/schedules.go, #107/t17b) for repeating flows; POST /v1alpha1/adhoc-runs renders+publishes+creates in one call for ad hoc flows; cross-run signal events let flows trigger each other; and 'easy to define new flows' composes these with the offline 'nodes validate' compiler
+- The carrier question #89 parked is materially changed since it was filed: #79 is closed, the artifact ingest route is mounted (POST /v1alpha1/attempts/{attemptID}/artifacts; internal/artifacts Router with Postgres/S3 backends), and `git_ref` handles now have a validated grammar (tests/lint/`crosshosthandoff_test.go`) consumed by internal/handover - frame state travelling as an artifact between nodes is now possible rather than aspirational
+
+## Scope exploration
+
+- `s1` — `issues #118 + #109 (bodies + evidence comments)`: the umbrella asks: step 7 (the combining loop) is #118's declared crux and its decomposition step 1; #109 keeps PR review human deliberately; #118's comment shows a cycle that removed one hand-turn while performing six, and a deploy that reported success it did not verify
+  - seeds: `c2`, `c9`, `c11`
+- `s2` — `docs/deliveries/2026-08-15-own-the-work-end-to-end-STATE.md section 11`: the fourteen-step per-package hand-turn table, nine packages each; the issues covering most rows (#99 #101 #102 #103 #107) have since closed - the rows still open are harvest (#100) and the loop itself
+  - seeds: `c2`, `c3`
+- `s3` — `issue #100 (latest comment)`: retyped Record->Feature before closing was refused: internal/handover measures a handed-over ref (#13), which is a different job from replacing the operator's ssh git-diff harvest with a node - harvest does not exist
+  - seeds: `c3`
+- `s4` — `examples/pr-upkeep/sweep.py`: Jira Cloud REST v3 is already a third finding source (#106): site/project from run config, email+token from env, durable per-issue watermarks (update timestamp + newest comment timestamp), read-only by docstring
+  - seeds: `c4`, `c5`, `c8`
+- `s5` — `adapters/notify/README.md`: the precedent a Jira-writing actor follows: a credentialed real-world write is an actor bridge running outside the deployment, the control-plane process gains no egress, human-inbox is the layout precedent (#68)
+  - seeds: `c4`, `c5`, `c10`
+- `s6` — `adapters/claude-code/src/claude_code_bridge/session_registry.py + claude_cli.py`: resumable conversations are first-class: `session_key` = actor+repo+workstream (ADR 0010 s4), `continuation_ref` maps to --resume, same-key concurrent dispatches FORK observably rather than interleave - so resuming the asker's thread after a Jira answer is a dispatch-identity question, not new bridge capability
+  - seeds: `c16`
+- `s7` — `internal/api/server.go route table`: already mounted: POST/SSE /v1alpha1/events, actor register/list/get/stats/resume, GET /v1alpha1/pending-decisions + POST human-tasks/{id}/decision, POST /v1alpha1/adhoc-runs (own bearer secret, closed by default), POST /v1alpha1/attempts/{attemptID}/artifacts - the decision, ad-hoc, event and artifact surfaces the loop composes are production routes, not plans
+  - seeds: `c2`, `c7`, `c13`, `c14`
+- `s8` — `internal/compiler (model.go, cel.go, contract.go, vocabulary.go)`: workflow triggers start runs from inbound events; until{duration,timestamp,signal} on wait nodes; CEL exposes the delivered signal event on onEvent edges (#43); the node-kind enum is closed at nine and test-pinned
+  - seeds: `c4`, `c7`, `c10`
+- `s9` — `internal/scheduler (doc.go, schedules.go)`: durable timers under a single advisory-lock-elected active instance; schedules fire signal events in one transaction with the cursor advance, and triggers turn them into runs (t17b, #107) - repeating flows are shipped engine behavior
+  - seeds: `c7`
+- `s10` — `examples/merge-gate/workflow.yaml`: the TDD gate is a code node (deliberately not a tenth kind): one derived validator-origin record per declared gate plus a control-plane aggregate, three domain outcomes with `measurement_incomplete` kept distinct because folding 'could not measure' into pass or fail both lie
+  - seeds: `c2`, `c9`, `c10`
+- `s11` — `internal/repair + internal/handover (doc.go, route.go, gate.go)`: a rejecting verdict composes a derived routing record bounded at 2 repair attempts per run per 24h with both ceilings reaching a human, .github/ always human; handover fetches the claimed ref itself from control-plane-configured remotes and only under refs/culture-nodes/ - measured evidence, not the agent's account
+  - seeds: `c2`, `c3`
+- `s12` — `internal/devague/doc.go`: pure offline mapping of devague CLI JSON onto ledger records with deterministic `dv_` ids; a devague-confirmed claim maps to proposed record + separate human review record, matching the ledger's own review transaction - never runs the binary, never orchestrates
+  - seeds: `c6`, `c12`
+- `s13` — `examples/development-loop/workflow.yaml + self-hosting-loop + delivery-loop`: the provision->work->gate->merge-review->cleanup order is a compiled, refused-if-incoherent graph, but its 'does not work yet' list is partially stale: artifact ingest (#79) and `git_ref` handles (`crosshosthandoff_test.go`) and bridge reap.py have landed since it was written; provisioner wiring and worktree events need a fresh measure at plan time
+  - seeds: `c13`
+- `s14` — `internal/artifacts + tests/lint/crosshosthandoff_test.go`: Router Put/Get with size-routed Postgres/S3 backends and a mounted ingest route; the cross-host handle grammar now validates `git_ref` handles (git+https/git+ssh pinned to refs/culture-nodes/) alongside artifact:// - both carriers of the two-carrier rule exist
+  - seeds: `c13`
+- `s15` — `issues #8 and #76 (latest comments)`: \#8 'advanced, not closed': runner-services reload still needs a worker restart, namespace discovery still open; #76 'partially delivered by #106': fixture-backed Jira source landed, live proof deliberately blocked on an empty backlog
+  - seeds: `c14`, `c5`
+- `s16` — `issue #18 closure + #87 body`: the codex write path is proven (workspace-write landed multi-file diffs on codex-thor/orin; .git writable per-dispatch after #91), and #87 scopes itself as composition-not-rewrite with autonomous merging explicitly left an open question
+  - seeds: `c15`, `c11`
+- `s17` — `challenge pass / adjacent-systems lens: scripts/merge-gate.py + examples/merge-gate + gate-reports route`: the gate measures whatever tree it is pointed at and the control plane owns the aggregate - nothing yet points it at the post-merge combination; merge credential custody settled by #90 (closed) but unnamed in this frame until now
+  - seeds: `c27`, `c33`
+- `s18` — `challenge pass / feedback-loop lens: examples/pr-upkeep/sweep.py watermark + comment handling`: watermark is newest-comment-timestamp with no author discrimination (probed: no author/`account_id` anywhere in sweep.py) - the system's own question comment would emit the resume event; and at the state level, an actor that could transition issues could trigger its own flows
+  - seeds: `c28`, `c29`
+- `s19` — `challenge pass / lifecycle lens: adapters/*/session_registry.py + unbounded reply latency`: the registry is in-memory (no persist/load path found) and the question-to-answer gap is unbounded - warm resume cannot be guaranteed, so the c21 'no ForkEvent' success signal was unmeetable as an absolute; amended by c30 to resume-preferred, fork-observable
+  - seeds: `c30`, `c32`
+- `s20` — `challenge pass / concurrency lens: engine trigger layer (not probed) + one-issue-many-events`: whether triggers can dedup per-subject was NOT examined - the requirement (one active run per issue) is captured and the mechanism is parked for plan time
+  - seeds: `c31`
+- `s21` — `challenge pass / operations lens: internal/pacing/pacing.go + #48 session windows`: session-window pacing arithmetic is shipped and two callers already use it - budget-bounding the always-on loop is composition, not new capability
+  - seeds: `c34`
+- `s22` — `challenge pass / security lens: Jira token scope + .github merge containment + internal/repair person-routing`: Jira Cloud tokens are account-scoped not verb-scoped, so comment-only is bridge-enforced; repair already routes .github/ implicating failures to a person and the machine-merge step must extend that rule or silently widen machine authority over CI
+  - seeds: `c29`, `c35`
+- `s23` — `challenge pass / overlooked-actors lens: pending-decisions surface vs Jira-only transport`: c18's 'only transport' collides with claim decisions living on the /decisions web view - routed as question q6 rather than papered over
+- `s24` — `challenge pass / observability-recovery lens: durable timers, outbox relay, SSE event streams, run projections`: clean pass - the engine's durability story is exactly what the loop inherits by being a workflow; no new gap found beyond what c9 (self-verifying steps) already carries
+- `s25` — `issue #166 (opened this pass, user direction)`: the user widened c31's neighborhood mid-challenge: serial-per-issue stays as dedup, but cross-issue concurrency becomes declared policy - max, per-machine limits, tag-pinned items
+  - seeds: `c36`
+- `s26` — `challenge pass / adjudication follow-through: q6 decision (Jira round-trips claim decisions)`: the user chose one surface for everything - the decision-parsing path is new build routed as c38 with a conservative-parse honesty condition, composing the review commit route (#99) with the comment round trip (c4)
+  - seeds: `c37`, `c38`
+
+## Decisions
+
+- Build order adopts #118's decomposition: (1) combining loop on hand-emitted events, (2) Jira round trip, (3) spec artifacts + approval gate, (4) PR wiring
+- Feature-branch merges are machine-decided on a green derived verdict; human judgement concentrates at claim decisions and the final PR review; red routes to bounded repair or a human
+- Spec-chain frame state travels as an artifact between nodes (the #79 carrier); deterministic devague moves stay code nodes on any host
+- Jira alone drives this idea (GitHub backlog issues stay out of its finding sources), and the user seeds the SCRUM backlog so the end-to-end proof runs live
+- Claim decisions round-trip through Jira: the loop posts a pending decision as a comment on the originating issue, and the human's reply is the deciding act, recorded through the ledger's review commit route (10.4 intact - the human decides, the system transcribes)
+
+## Open parks
+
+- [unknown_nonblocking] Which of development-loop's four 'does not work yet' gaps still hold at HEAD - at least three have moved (artifact ingest, `git_ref` grammar, bridge reap.py) but provisioner wiring and worktree-event vocabulary were not re-measured in this survey
+- [unknown_nonblocking] Whether #106's Jira source joined the unified `_SEVERITY_RANK` vocabulary or kept a Jira-local ordering - decides how mixed-source triage prioritises, verify at plan time
+- [unknown_nonblocking] Whether a signal-wait can also declare a timeout (until combining signal + duration) was not settled - it decides the reminder/escalation shape on unanswered Jira questions; measure at plan time
+- [unknown_nonblocking] Engine trigger-dedup semantics (does a second matching event mid-run create a second run?) were not probed - c31 captures the requirement, the mechanism is plan-time work
+- [unknown_nonblocking] Residual surprise risk that survives this pass: Jira Cloud API behavior under real latency, permissions and rate limits has never been live-proven (the backlog was empty for every probe) - fixtures cover the shapes, not the site

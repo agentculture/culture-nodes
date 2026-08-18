@@ -96,7 +96,7 @@ slug: `hands-free-scrum-2-pickup` · status: `exported` · from frame: `hands-fr
 
 ### t10 — Delivery summary + dispositions: close the loop with counted evidence
 
-- instruction: Write docs/deliveries/ per the summarize-delivery skill: planned-vs-actual per task, every hand-turn with its issue number, kill-switch runbook verbatim, spark named as required host. Close #187 with scripts/close-issue.sh --artifact <delivery doc> citing the prod run id; disposition #188/#189; update #118. Check each c18 signal individually — unchecked signals are reported unchecked.
+- instruction: Write docs/deliveries/ per the summarize-delivery skill: planned-vs-actual per task, every hand-turn with its issue number, kill-switch runbook verbatim, spark named as required host. Close #187 with scripts/close-issue.sh --artifact `<delivery-doc>` citing the prod run id; disposition #188/#189; update #118. Check each c18 signal individually — unchecked signals are reported unchecked.
 - depends on: t9
 - covers: c9, h6, c16, h13, c17, h14, c18, h15, h17, c21
 - acceptance:

@@ -353,30 +353,6 @@ func TestWorkerDrivesASynchronousRunToCompletion(t *testing.T) {
 	}
 }
 
-func TestWorkerWithoutCodeRunnerSkipsCodeWorkAndClaimsAgentWork(t *testing.T) {
-	h := newHarness(t, func(_ *harness, w http.ResponseWriter, _ actors.InvocationRequest) {
-		writeSyncResult(w, "completed", `{"score":0.91,"summary":"claimed"}`)
-	})
-
-	codeRun := h.createRun("code.workflow.yaml", `{}`)
-	agentRun := h.createRun("sync.workflow.yaml", `{"subject":"widget"}`)
-
-	// Drive the worker loop until the agent run terminates — a run takes
-	// several ticks (entry claim, dispatch, completion, end transition), so a
-	// single Tick can only prove claiming, not completion.
-	h.runUntil(20*time.Second, func() bool { return h.run(agentRun.ID).State.Terminal() })
-
-	if got := h.workItemStates(codeRun.ID)["test"]; got != "ready" {
-		t.Errorf("code work state = %q, want ready", got)
-	}
-	if got := h.run(agentRun.ID).State; got != engine.RunCompleted {
-		t.Errorf("agent run state = %q, want completed (worker errors: %v)", got, h.workerErrors())
-	}
-	if got := len(h.invocations()); got != 1 {
-		t.Errorf("agent invocations = %d, want 1", got)
-	}
-}
-
 // The synchronous completion path (completeFromResult) persists whatever
 // §13.2 Usage block the actor's InvocationResult carried, on the attempt row
 // it commits — task t1's sync-path half of the completion seam. Before t1

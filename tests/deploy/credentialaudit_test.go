@@ -58,6 +58,7 @@ NODES_ACTOR_CLAUDE_TOKEN=placeholder-claude-bridge-token
 NODES_ACTOR_CODEX_THOR_TOKEN=placeholder-codex-thor-token
 NODES_ACTOR_CODEX_ORIN_TOKEN=placeholder-codex-orin-token
 NODES_ACTOR_NOTIFY_TOKEN=placeholder-notify-token
+NODES_ACTOR_JIRA_TOKEN=placeholder-jira-token
 `
 
 // auditPlaceholderValues are the secret VALUES of the fixture above. None may
@@ -73,6 +74,7 @@ var auditPlaceholderValues = []string{
 	"placeholder-callback-secret",
 	"placeholder-runner-secret",
 	"placeholder-claude-bridge-token",
+	"placeholder-jira-token",
 	"placeholder-codex-thor-token",
 	"placeholder-codex-orin-token",
 	"placeholder-notify-token",

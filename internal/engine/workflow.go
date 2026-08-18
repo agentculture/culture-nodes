@@ -106,6 +106,16 @@ type Limits struct {
 	MaxTransitions    int
 	MaxVisitsPerNode  int
 	MaxParallelTokens int
+	// MaxConcurrentSubjectRuns bounds how many active runs this workflow may
+	// hold at once across every subject-bearing trigger together (task t16,
+	// spec c36/h21) -- e.g. at most N Jira issues in flight simultaneously.
+	// Zero means uncapped, the same reading Budget's fields use: the
+	// compiler carries this field rather than expanding a default (see
+	// compiler.expandLimits), so "the author declared no ceiling" and "the
+	// author declared a ceiling of one that no other authored value could
+	// mean" are never confused the way MaxParallelTokens' opt-in default
+	// would. See internal/engine/trigger.go's TriggerEvent for enforcement.
+	MaxConcurrentSubjectRuns int
 }
 
 // Budget is the workflow's declared ECONOMIC contract (PRD §9.7's "optional
@@ -631,10 +641,11 @@ type irDocument struct {
 			Output *irSchemaSource `json:"output"`
 		} `json:"contract"`
 		Limits struct {
-			MaxDuration       string `json:"maxDuration"`
-			MaxTransitions    *int   `json:"maxTransitions"`
-			MaxVisitsPerNode  *int   `json:"maxVisitsPerNode"`
-			MaxParallelTokens *int   `json:"maxParallelTokens"`
+			MaxDuration              string `json:"maxDuration"`
+			MaxTransitions           *int   `json:"maxTransitions"`
+			MaxVisitsPerNode         *int   `json:"maxVisitsPerNode"`
+			MaxParallelTokens        *int   `json:"maxParallelTokens"`
+			MaxConcurrentSubjectRuns *int   `json:"maxConcurrentSubjectRuns"`
 		} `json:"limits"`
 		// A pointer, unlike Limits: the compiler expands no defaults here,
 		// so an absent block is the IR saying "unbudgeted" rather than an
@@ -818,15 +829,17 @@ func decodeNode(id string, raw *irNode) (*Node, error) {
 }
 
 func decodeLimits(raw struct {
-	MaxDuration       string `json:"maxDuration"`
-	MaxTransitions    *int   `json:"maxTransitions"`
-	MaxVisitsPerNode  *int   `json:"maxVisitsPerNode"`
-	MaxParallelTokens *int   `json:"maxParallelTokens"`
+	MaxDuration              string `json:"maxDuration"`
+	MaxTransitions           *int   `json:"maxTransitions"`
+	MaxVisitsPerNode         *int   `json:"maxVisitsPerNode"`
+	MaxParallelTokens        *int   `json:"maxParallelTokens"`
+	MaxConcurrentSubjectRuns *int   `json:"maxConcurrentSubjectRuns"`
 }) (Limits, error) {
 	limits := Limits{
-		MaxTransitions:    valueOr(raw.MaxTransitions, 0),
-		MaxVisitsPerNode:  valueOr(raw.MaxVisitsPerNode, 0),
-		MaxParallelTokens: valueOr(raw.MaxParallelTokens, 1),
+		MaxTransitions:           valueOr(raw.MaxTransitions, 0),
+		MaxVisitsPerNode:         valueOr(raw.MaxVisitsPerNode, 0),
+		MaxParallelTokens:        valueOr(raw.MaxParallelTokens, 1),
+		MaxConcurrentSubjectRuns: valueOr(raw.MaxConcurrentSubjectRuns, 0),
 	}
 	if raw.MaxDuration != "" {
 		d, err := time.ParseDuration(raw.MaxDuration)

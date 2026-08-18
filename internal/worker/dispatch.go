@@ -81,6 +81,18 @@ func (w *Worker) dispatchActor(
 		return w.deferForPause(ctx, claimed, node, dc, pause)
 	}
 
+	// The per-actor concurrency ceiling (task t16, issue #166's second
+	// half), checked right after the breaker and for the same reason: it is
+	// a statement about capacity, not a verdict on the work, so it DEFERS —
+	// see concurrency.go's package doc comment for what it counts, why it is
+	// a concurrency ceiling rather than a rate, and the async-only gap it
+	// inherits from the durable fact (actor_invocations) it is built on.
+	// session.ActorRowID is already resolved above; this never re-resolves
+	// it.
+	if limit, inFlight, atCapacity := w.atActorCapacity(ctx, node, session.ActorRowID); atCapacity {
+		return w.deferForCapacity(ctx, claimed, node, dc, session.ActorRowID, limit, inFlight)
+	}
+
 	// The clarify-then-commit gate (task t14, issue #67), checked between the
 	// breaker and pacing. Before pacing deliberately: a dispatch about to be
 	// deferred for want of an acknowledgement must not spend a slot of a rate

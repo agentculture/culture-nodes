@@ -181,6 +181,13 @@ func cmdWorker(args []string, jsonMode bool) (int, error) {
 	if cliErr != nil {
 		return 0, cliErr
 	}
+	// Task t16: the declared per-actor concurrency ceilings. Same failure
+	// posture as pacing: absent configuration is no ceiling, malformed
+	// configuration refuses to start (see concurrency.go).
+	concurrencyOpts, cliErr := concurrencyConfig()
+	if cliErr != nil {
+		return 0, cliErr
+	}
 
 	// Task t10: measure a handed-over ref, when the deployment named a
 	// remote to fetch from and an identity to attribute the observation to.
@@ -194,6 +201,7 @@ func cmdWorker(args []string, jsonMode bool) (int, error) {
 		WorkerID:           os.Getenv(envWorkerIdentifier),
 		Handover:           handoverObs,
 		Pacing:             pacingOpts,
+		Concurrency:        concurrencyOpts,
 		NamespaceID:        namespace,
 		ClaimBatch:         *batch,
 		LeaseDuration:      *leaseDuration,
@@ -489,6 +497,10 @@ func buildWorker(db *postgres.Store, namespace string, telemetryProvider *teleme
 	if cliErr != nil {
 		return nil, nil, cliErr
 	}
+	concurrencyOpts, cliErr := concurrencyConfig()
+	if cliErr != nil {
+		return nil, nil, cliErr
+	}
 	handoverObs, cliErr := handoverObserver(db, namespace)
 	if cliErr != nil {
 		return nil, nil, cliErr
@@ -498,6 +510,7 @@ func buildWorker(db *postgres.Store, namespace string, telemetryProvider *teleme
 		NamespaceID:        namespace,
 		Handover:           handoverObs,
 		Pacing:             pacingOpts,
+		Concurrency:        concurrencyOpts,
 		Registry:           registry,
 		Signer:             signer,
 		CallbackBaseURL:    callbackBase,

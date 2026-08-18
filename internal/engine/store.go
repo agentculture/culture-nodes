@@ -108,6 +108,36 @@ type Tx interface {
 	// that run instead of spawning a sibling (task t15, spec c31/h16).
 	ActiveRunBySubject(ctx context.Context, workflowKey, subject string) (Run, bool, error)
 
+	// ActiveSubjectRunCount is ActiveRunBySubject's cross-subject sibling
+	// (task t16, spec c36/h21): how many active (non-terminal) runs of
+	// workflowKey currently carry ANY subject, counted together. TriggerEvent
+	// compares it against the workflow's configured MaxConcurrentSubjectRuns
+	// before creating a run for a subject with no active run of its own.
+	ActiveSubjectRunCount(ctx context.Context, workflowKey string) (int, error)
+
+	// FindDeferredTrigger returns the still-queued deferred trigger for
+	// (workflowKey, subject), or (zero, false, nil) when this subject has
+	// nothing queued. TriggerEvent calls it before deciding whether to queue
+	// a NEW entry, so a second event for a subject already waiting refreshes
+	// that entry (TouchDeferredTrigger) instead of creating a sibling.
+	FindDeferredTrigger(ctx context.Context, workflowKey, subject string) (DeferredTrigger, bool, error)
+	// TouchDeferredTrigger replaces an already-queued entry's triggering
+	// event with a fresher one, bumping its attempt count. The subject's
+	// place in FIFO drain order (its original CreatedAt) is unchanged.
+	TouchDeferredTrigger(ctx context.Context, id string, in DeferredTriggerInput) error
+	// InsertDeferredTrigger records a brand-new queued trigger -- called only
+	// once FindDeferredTrigger has confirmed this subject holds nothing
+	// already.
+	InsertDeferredTrigger(ctx context.Context, in DeferredTriggerInput) (DeferredTrigger, error)
+	// OldestDeferredTrigger returns the longest-queued deferred trigger for
+	// workflowKey, across every subject (FIFO fairness, not per-subject) --
+	// or (zero, false, nil) when nothing is queued. DrainSubjectTriggerQueue
+	// calls it once a subject-bearing run of this workflow goes terminal.
+	OldestDeferredTrigger(ctx context.Context, workflowKey string) (DeferredTrigger, bool, error)
+	// DeleteDeferredTrigger removes a queued trigger once
+	// DrainSubjectTriggerQueue has popped it to create its run.
+	DeleteDeferredTrigger(ctx context.Context, id string) error
+
 	InsertToken(ctx context.Context, token Token) error
 	ConsumeToken(ctx context.Context, tokenID string) error
 	// Token reads one token row — the completion's way to learn the consumed

@@ -1,0 +1,62 @@
+# A trigger-bearing workflow with a configured subject-run ceiling (task
+# t16, spec c36/h21): otherwise identical to trigger-subject.workflow.yaml
+# (same entry shape, same "stays open until a test completes it" design so a
+# test can hold several runs active at once), with
+# limits.maxConcurrentSubjectRuns declared so TriggerEvent's cross-subject
+# queueing path is reachable.
+apiVersion: nodes.culture.dev/v1alpha1
+kind: Workflow
+
+metadata:
+  name: engine-trigger-subject-concurrency
+  version: 1.0.0
+  ownerRef: team/platform-ai
+
+spec:
+  entry: work
+
+  contract:
+    input:
+      schema:
+        type: object
+    output:
+      schema:
+        type: object
+
+  triggers:
+    - onEvent: test.subject-concurrency-event
+
+  limits:
+    maxDuration: 1h
+    maxTransitions: 8
+    maxVisitsPerNode: 4
+    maxParallelTokens: 1
+    maxConcurrentSubjectRuns: 2
+
+  nodes:
+    work:
+      kind: agent
+      ownerRef: team/platform-ai
+      uses: actor://company/worker@sha256:111111
+      input:
+        from: /run/input
+      contract:
+        outcomes:
+          completed:
+            schema:
+              type: object
+      policy:
+        timeout: 1m
+        retry:
+          maxAttempts: 1
+          backoff: none
+
+    finish:
+      kind: end
+      ownerRef: team/platform-ai
+      output:
+        from: /nodes/work/output
+
+  edges:
+    - from: work.completed
+      to: finish

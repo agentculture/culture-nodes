@@ -92,6 +92,17 @@ const (
 	// EXISTING run's own stream, exactly where an operator inspecting that
 	// run would look for it.
 	TypeTriggerEventAttached = "dev.culture.nodes.trigger.event-attached"
+
+	// TypeTriggerQueueDrained records a run created from a deferred-trigger
+	// queue entry (task t16, spec c36/h21) rather than at first match: its
+	// workflow's MaxConcurrentSubjectRuns ceiling had no headroom when the
+	// triggering event arrived, so it waited until another subject-bearing
+	// run of the same workflow reached a terminal state and freed a slot
+	// (DrainSubjectTriggerQueue). There was no run to record this against
+	// while it waited -- the queued row's own created_at was the only trace
+	// until now -- so this lands on the NEW run's own stream, carrying how
+	// long it waited and which run's completion freed its slot.
+	TypeTriggerQueueDrained = "dev.culture.nodes.trigger.queue-drained"
 )
 
 // event builds an EventInput, encoding data into the payload. Encoding cannot

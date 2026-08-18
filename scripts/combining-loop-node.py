@@ -812,10 +812,6 @@ def cmd_merge(_args: argparse.Namespace) -> int:
             code=EXIT_ENVIRONMENT,
         )
 
-    # Atomic compare-and-swap: refused rather than overwritten if the branch
-    # moved between the read above and this write.
-    git(workspace, "update-ref", branch_ref, candidate_commit, feature_tip)
-
     askpass_dir = Path(tempfile.mkdtemp(prefix="combining-loop-askpass-"))
     try:
         askpass = askpass_dir / "askpass.sh"
@@ -830,6 +826,12 @@ def cmd_merge(_args: argparse.Namespace) -> int:
         # A configured credential helper SILENTLY outranks GIT_ASKPASS on
         # push — measured on this fleet, and the exact fix
         # internal/handover/merge.go just landed for the Go merge path.
+        # Push the CANDIDATE OBJECT to the branch ref; the local branch is
+        # advanced only after the remote accepted it, so a failed push
+        # (network, credential, hook) leaves the same gated candidate
+        # retryable instead of tripping the feature-tip staleness check on
+        # a branch this very process moved (PR #180 review finding; the Go
+        # merge path carries the identical fix).
         git(
             workspace,
             *RESET_ARGS,
@@ -837,9 +839,12 @@ def cmd_merge(_args: argparse.Namespace) -> int:
             "--porcelain",
             "--",
             MERGE_REMOTE,
-            f"{branch_ref}:{branch_ref}",
+            f"{candidate_commit}:{branch_ref}",
             env=push_env,
         )
+        # Atomic compare-and-swap: refused rather than overwritten if the
+        # branch moved between the read above and this write.
+        git(workspace, "update-ref", branch_ref, candidate_commit, feature_tip)
 
         # Post-condition (h7): re-read the remote, not trust the push's exit code.
         ls_remote_out = git(

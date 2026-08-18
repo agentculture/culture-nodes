@@ -248,6 +248,15 @@ func (rl *runnerServiceReloader) checkAndReload() (bool, *clifmt.CliError) {
 	if cliErr != nil {
 		return false, cliErr
 	}
+	// The registry swap and the secrets swap are two separate atomic writes,
+	// not one transaction, so the ORDER decides what the brief window
+	// between them can look like. Secrets go FIRST: a superset secret map
+	// beside the old registry is harmless (an unresolvable name never asks
+	// for its credential), whereas the reverse order lets a dispatch resolve
+	// a newly added identity whose SecretRef is not yet in the map and fail
+	// authentication for no reason a caller can see (PR #180 review
+	// finding — the original ordering argued the opposite and was wrong).
+	rl.secrets.Store(secrets)
 	if err := rl.registry.ReloadServices(services); err != nil {
 		return false, &clifmt.CliError{
 			Code:        clifmt.ExitEnvError,
@@ -255,15 +264,6 @@ func (rl *runnerServiceReloader) checkAndReload() (bool, *clifmt.CliError) {
 			Remediation: "fix the entries in " + rl.path,
 		}
 	}
-	// The registry swap and the secrets swap are two separate atomic writes,
-	// not one transaction, and the order is deliberate: the registry is
-	// updated first only after the identities validated, so a dispatch that
-	// resolves a newly-added name before this line reaches the secrets store
-	// simply cannot happen -- the name is not resolvable yet. Storing secrets
-	// second means the brief window between the two swaps can only ever look
-	// like "the old world, slightly early" rather than "a name resolves to an
-	// identity whose credential is not there yet".
-	rl.secrets.Store(secrets)
 	rl.lastMod = info.ModTime()
 	return true, nil
 }
@@ -320,10 +320,11 @@ func runnerServiceConfig() (worker.RunnerServiceOptions, *runnerServiceReloader,
 			Remediation: `expected a JSON array: [{"name","endpoint","image_digest","secret_file",...}]`,
 		}
 	}
-	if len(entries) == 0 {
-		return worker.RunnerServiceOptions{}, nil, nil
-	}
-
+	// A CONFIGURED registry that is currently empty still builds the full
+	// reloadable plumbing: a worker started before its first registration
+	// must observe later additions without a restart, which is the whole
+	// point of the reloader (PR #180 review finding). Only an UNSET env var
+	// disables the protocol path, and that decision happened above.
 	services, secretsMap, cliErr := buildRunnerServices(entries)
 	if cliErr != nil {
 		return worker.RunnerServiceOptions{}, nil, cliErr

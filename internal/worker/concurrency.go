@@ -118,6 +118,13 @@ type ConcurrencyOptions struct {
 }
 
 // Enabled reports whether any ceiling is declared at all.
+// APPROXIMATE ENFORCEMENT, stated: the ceiling counts waiting invocations in
+// one query and the counted row is inserted later in a separate transaction,
+// so two workers can both observe headroom and dispatch past the limit by
+// the width of that race. The check defers rather than fails, so the
+// consequence is a soft overshoot, never a refusal — making it exact means
+// reserving capacity inside the invocation-insert transaction, tracked as a
+// typed follow-up issue (PR #180 review finding).
 func (c ConcurrencyOptions) Enabled() bool {
 	if c.ActorDefault > 0 {
 		return true

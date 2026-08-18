@@ -121,7 +121,17 @@ spec:
   entry: post-question
 
   triggers:
+    # The guard declines the handler for events that do not carry the
+    # question contract: the sweep's bare transition events (a generic work
+    # item: id/title/status) share this event name's FAMILY but not its
+    # payload, and an unguarded trigger would mint a run whose entry node
+    # cannot resolve its required inputs (PR #180 review finding). The
+    # producer of a conforming event is a question-raising flow or the
+    # operator, never the bare state sweep.
     - onEvent: pr-upkeep.jira.transitioned.needs-answer
+      when: >-
+        has(event.payload.issue) && has(event.payload.question_id) &&
+        has(event.payload.question)
 
   contract:
     input:

@@ -100,3 +100,5 @@ issue,bucket,disposition,evidence_pointer
 177,bug tail,"fix landed on the integration branch (ExitCodeOutcomes in runnerCompletionFor, test-pinned); close when it reaches main",internal/worker/runnerasync.go + runnerasynccompletion_test.go
 178,bug tail,"choose fix 1 (durable attempts row at dispatch) or 2 (lenient attempt_ref) and land it; blocks every graph-dispatched gate verdict",internal/api/gatereports.go + migration 0009 design + t8 demo runs 01M09ZZV/01M0A0KW/01M0A0R8
 179,verify-then-close,"human reviews deviation d6 (devague deviate --confirm d6), then close on read",docs/deviations/2026-08-18-wave-0-spec-corrections.md
+181,bug tail,"make the actor ceiling exact: reserve capacity inside the invocation-insert transaction; doc states approximate posture meanwhile",internal/worker/concurrency.go package doc + PR #180 review
+182,bug tail,"extend t12's lost-resume recovery to the codex async path (classification, ForkEvent, cold re-brief), then all-backends mirror",adapters/codex/src/codex_bridge/server.py:596-659 + PR #180 review

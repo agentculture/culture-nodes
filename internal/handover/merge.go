@@ -93,10 +93,6 @@ func MergeCandidate(ctx context.Context, req MergeRequest) error {
 	if featureTip != parent[0] {
 		return fmt.Errorf("feature branch moved: %s is %s, candidate was built on %s", branchRef, featureTip, parent[0])
 	}
-	if err := mergeRun(ctx, git, req.Repository, nil, "update-ref", branchRef, req.Candidate, featureTip); err != nil {
-		return fmt.Errorf("advance feature branch: %w", err)
-	}
-
 	askpassDir, err := os.MkdirTemp("", "culture-nodes-askpass-")
 	if err != nil {
 		return fmt.Errorf("prepare push credential helper: %w", err)
@@ -114,11 +110,20 @@ func MergeCandidate(ctx context.Context, req MergeRequest) error {
 	// say so (measured on this fleet; see the operator memory that #90's
 	// correction comment records). The two empty -c flags reset the helper
 	// list for this one invocation so the askpass identity is the ONLY one.
+	// Push the CANDIDATE OBJECT to the branch ref, and advance the local
+	// branch only after the remote accepted it: a failed push (network,
+	// credential, hook) must leave the local branch untouched so the same
+	// gated candidate is retryable — the first-parent check above would
+	// otherwise refuse the retry against a branch this very process moved
+	// (review finding on PR #180).
 	if err := mergeRun(ctx, git, req.Repository, env,
 		"-c", "credential.helper=",
 		"-c", "credential.https://github.com.helper=",
-		"push", "--porcelain", "--", req.Remote, branchRef+":"+branchRef); err != nil {
+		"push", "--porcelain", "--", req.Remote, req.Candidate+":"+branchRef); err != nil {
 		return fmt.Errorf("push feature branch: %w", err)
+	}
+	if err := mergeRun(ctx, git, req.Repository, nil, "update-ref", branchRef, req.Candidate, featureTip); err != nil {
+		return fmt.Errorf("advance feature branch after push: %w", err)
 	}
 	return nil
 }

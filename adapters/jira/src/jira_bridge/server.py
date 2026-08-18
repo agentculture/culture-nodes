@@ -46,7 +46,23 @@ class Handler(BaseHTTPRequestHandler):
             self._json(404, {"error": "not found"})
 
     def do_POST(self) -> None:  # noqa: N802
-        length = int(self.headers.get("Content-Length", "0") or "0")
+        # Defensive header parse BEFORE any read: a non-numeric value must be
+        # a controlled 400, a negative one must never become read(-1) (which
+        # blocks this single-threaded server until client EOF, pre-auth), and
+        # the size cap applies before a byte is accepted (PR #180 review
+        # finding).
+        try:
+            length = int(self.headers.get("Content-Length", "0") or "0")
+        except ValueError:
+            self._json(
+                400, {"error": "Content-Length is not an integer", "class": "actor_rejected_input"}
+            )
+            return
+        if length < 0:
+            self._json(
+                400, {"error": "Content-Length is negative", "class": "actor_rejected_input"}
+            )
+            return
         if length > MAX_BODY_BYTES:
             self._json(413, {"error": "request too large", "class": "actor_rejected_input"})
             return
@@ -57,23 +73,33 @@ class Handler(BaseHTTPRequestHandler):
         expected = self.cfg.auth_token or ""
         presented = self.headers.get("Authorization", "")
         if expected and not hmac.compare_digest(presented, f"Bearer {expected}"):
-            self._json(401, {"error": "a scoped workload token is required", "class": "auth_or_policy"})
+            self._json(
+                401, {"error": "a scoped workload token is required", "class": "auth_or_policy"}
+            )
             return
         try:
             request = json.loads(raw)
         except ValueError:
-            self._json(400, {"error": "request body is not valid JSON", "class": "actor_rejected_input"})
+            self._json(
+                400, {"error": "request body is not valid JSON", "class": "actor_rejected_input"}
+            )
             return
         parsed, refusal = mapping.parse(request.get("input") if isinstance(request, dict) else None)
         if refusal:
             self._json(400, {"error": refusal, "class": "actor_rejected_input"})
             return
-        email, token = os.environ.get("JIRA_ACCOUNT_EMAIL", ""), os.environ.get("JIRA_API_TOKEN", "")
+        email, token = os.environ.get("JIRA_ACCOUNT_EMAIL", ""), os.environ.get(
+            "JIRA_API_TOKEN", ""
+        )
         if not email or not token:
-            self._json(500, {"error": "Jira actor credential is not configured", "class": "execution"})
+            self._json(
+                500, {"error": "Jira actor credential is not configured", "class": "execution"}
+            )
             return
         assert parsed is not None
-        posted = client.post_comment(self.cfg.jira_site, parsed.issue, parsed.marked_text, email, token)
+        posted = client.post_comment(
+            self.cfg.jira_site, parsed.issue, parsed.marked_text, email, token
+        )
         if not posted.ok:
             self._json(502, {"error": posted.error, "class": "execution"})
             return

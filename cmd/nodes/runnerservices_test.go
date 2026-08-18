@@ -355,3 +355,44 @@ func TestRunnerServicesReloaderPollAppliesAFileChangeOnItsOwn(t *testing.T) {
 	}
 	cancel()
 }
+
+// A CONFIGURED registry that is currently empty still builds the reloadable
+// plumbing: a worker started before its first service registration must
+// observe later additions without a restart (PR #180 review finding).
+func TestRunnerServicesEmptyConfiguredFileStillBuildsTheReloader(t *testing.T) {
+	dir := t.TempDir()
+	cfgPath := filepath.Join(dir, "services.json")
+	if err := os.WriteFile(cfgPath, []byte("[]\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv(envRunnerServicesFile, cfgPath)
+
+	opts, reloader, cliErr := runnerServiceConfig()
+	if cliErr != nil {
+		t.Fatalf("empty configured file errored: %v", cliErr)
+	}
+	if reloader == nil {
+		t.Fatal("an explicitly configured (empty) registry file must produce a reloader")
+	}
+	if opts.Registry == nil {
+		t.Fatal("an explicitly configured (empty) registry file must produce a registry")
+	}
+
+	before, err := os.Stat(cfgPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// The first-ever registration lands with no restart.
+	writeRunnerServiceEntry(t, dir, cfgPath, "delivery-loop/first", "http://thor:17070", "first-secret")
+	touchForward(t, cfgPath, before.ModTime())
+	reloaded, cliErr := reloader.checkAndReload()
+	if cliErr != nil {
+		t.Fatalf("reload errored: %v", cliErr)
+	}
+	if !reloaded {
+		t.Fatal("the appended first entry was not observed")
+	}
+	if _, err := opts.Registry.ResolveService("delivery-loop/first"); err != nil {
+		t.Fatalf("the first registered service must resolve after reload: %v", err)
+	}
+}

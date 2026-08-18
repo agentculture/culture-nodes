@@ -277,6 +277,14 @@ spec:
   # maxParallelTokens is 8 for a fan-out of 4 — the four lens branches must
   # be able to exist at once, and the headroom means adding a fifth lens is a
   # node-and-edge edit rather than a limits edit somebody forgets.
+  # SESSION ACCOUNTING (issue #48): the token ceiling below is a GRAPH
+  # bound, not the split plan. Before dispatching this workflow's fan-out a
+  # deployment declares per-wave model-session counts against its remaining
+  # subscription window (the split-plan lane in the nodes-operator skill);
+  # engine-side, every dispatch already passes the pacing arithmetic
+  # (internal/pacing), so a burst queues rather than overdraws. The ceiling
+  # here only prevents a single run from parallelising beyond what the
+  # graph's own lens fan-out declares (PR #180 review finding).
   limits:
     maxDuration: 336h
     maxTransitions: 64

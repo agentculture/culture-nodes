@@ -95,3 +95,5 @@ issue,bucket,disposition,evidence_pointer
 172,bug tail,"rewrite examples/pr-upkeep/README.md against the v2 event-driven workflow it ships beside",examples/pr-upkeep/README.md v1 nodes vs workflow.yaml v2
 173,finish work,"give a signal wait a declared timeout edge (reminder/escalation on silence); timer rows already exist, the wait-park path just never writes one",internal/worker/wait.go decodeUntil + examples/jira-question-round-trip header gap note
 174,verify-then-close,"human reviews deviation d4 (devague deviate --confirm d4), then close on read",docs/deviations/2026-08-18-d4-fix-170-in-cycle.md
+175,large bets,"placement redesign: actors register tags, a selection policy with recorded placement, h21's tag-pinned acceptance demonstrated end to end",internal/worker/concurrency.go package doc + deviation d5
+176,verify-then-close,"human reviews deviation d5 (devague deviate --confirm d5), then close on read",docs/deviations/2026-08-18-wave-0-spec-corrections.md

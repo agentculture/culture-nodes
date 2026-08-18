@@ -188,3 +188,14 @@ author/publish workflows, and assign billable work to registered actors via
 (Claude, the colleague backend, codex sessions, humans) may use it; steward
 may broadcast it to the mesh, and downstream repos copy it (cite, don't
 import). Maintained here; not subject to the re-sync procedure above.
+
+## First-party: jira-status
+
+`jira-status` is **authored in this repo** (2026-08-18), not vendored:
+operator-lane Jira status reads and moves (`status <ISSUE>` /
+`move <ISSUE> <target>`) via `scripts/jira-status.sh`. The script runs its
+REST calls over ssh on thor, where the Jira credential pair already granted
+to the sweep lives — the credential never leaves that host. It is the
+operator's own hand on the board; the system's board moves go through the
+jira bridge actor's allowlisted transition verb, never through this.
+Maintained here; not subject to the re-sync procedure above.

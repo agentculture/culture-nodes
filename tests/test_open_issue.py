@@ -13,8 +13,12 @@ lands, deleting this wrapper must be a one-file removal. So:
   * posting, signing and auth are DELEGATED to `agtag issue post` — the
     wrapper never calls `gh issue create`, never resolves a nick, never
     touches a token (`test_delegates_posting_to_agtag`);
-  * the vendored `.claude/skills/` tree is untouched — the wrapper is a
-    first-party script beside it, not an edit to it
+  * the skills declared vendored by `docs/skill-sources.md` are untouched —
+    the wrapper is a first-party script beside them, not an edit to them.
+    The check delegates to the same guard CI's lint job runs
+    (`scripts/check-vendored-skill-diff.py`), so this test and that guard
+    cannot disagree about which skills are vendored; first-party skills
+    authored in this repo (nodes-operator, jira-status) may change freely
     (`test_vendored_skill_tree_is_untouched`).
 
 Validation order is the other load-bearing property. GitHub's `type:` search
@@ -28,9 +32,11 @@ Both `gh` and `agtag` are stubbed by prepending a temporary directory to
 PATH. No issue is ever created by this suite.
 """
 
+import importlib.util
 import json
 import os
 import subprocess  # nosec B404 - runs an in-repo shell script, no external input
+import sys
 from pathlib import Path
 
 import pytest
@@ -258,11 +264,28 @@ def test_missing_template_fails_before_posting(stubs):
 # --- AC3: the vendored skill tree is not touched -----------------------------
 
 
+def _vendored_skill_prefixes():
+    """The vendored set, parsed by the SAME code CI's lint guard runs.
+
+    `.claude/skills/` is not all-vendored: first-party skills
+    (nodes-operator, jira-status) are authored here and may change freely.
+    Which skills are vendored is declared by `docs/skill-sources.md`, and
+    `scripts/check-vendored-skill-diff.py` is the parser of record — loading
+    it means this test cannot disagree with the lint job about the set.
+    """
+    guard = ROOT / "scripts" / "check-vendored-skill-diff.py"
+    spec = importlib.util.spec_from_file_location("check_vendored_skill_diff", guard)
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module.vendored_paths()
+
+
 def test_vendored_skill_tree_is_untouched():
-    """The wrapper lives in scripts/, never inside `.claude/skills/`."""
+    """The wrapper lives in scripts/, never inside a vendored skill."""
     assert SCRIPT.exists()
     assert not (ROOT / ".claude" / "skills" / "communicate" / "scripts" / "open-issue.sh").exists()
 
+    prefixes = _vendored_skill_prefixes()
     dirty = subprocess.run(  # nosec B603 - fixed argv, no shell
         ["git", "status", "--porcelain", "--", ".claude/skills"],
         cwd=str(ROOT),
@@ -270,7 +293,10 @@ def test_vendored_skill_tree_is_untouched():
         capture_output=True,
         timeout=60,
     )
-    assert dirty.stdout.strip() == "", f"vendored tree modified: {dirty.stdout}"
+    touched = [
+        line for line in dirty.stdout.splitlines() if any(prefix in line for prefix in prefixes)
+    ]
+    assert touched == [], f"vendored skill files modified: {touched}"
 
     base = subprocess.run(  # nosec B603 - fixed argv, no shell
         ["git", "merge-base", "HEAD", "origin/main"],
@@ -281,14 +307,19 @@ def test_vendored_skill_tree_is_untouched():
     )
     if base.returncode != 0:
         pytest.skip("origin/main not available to diff against")
-    changed = subprocess.run(  # nosec B603 - fixed argv, no shell
-        ["git", "diff", "--name-only", base.stdout.strip(), "HEAD", "--", ".claude/skills"],
+    guard = subprocess.run(  # nosec B603 - fixed argv, no shell
+        [
+            sys.executable,
+            str(ROOT / "scripts" / "check-vendored-skill-diff.py"),
+            base.stdout.strip(),
+            "HEAD",
+        ],
         cwd=str(ROOT),
         text=True,
         capture_output=True,
         timeout=60,
     )
-    assert changed.stdout.strip() == "", f"vendored tree changed on this branch: {changed.stdout}"
+    assert guard.returncode == 0, f"vendored skill files changed on this branch: {guard.stderr}"
 
 
 # --- AC4: posting, signing and auth are delegated, not reimplemented ---------

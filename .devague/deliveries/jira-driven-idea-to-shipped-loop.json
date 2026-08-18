@@ -1,0 +1,43 @@
+{
+  "plan_slug": "jira-driven-idea-to-shipped-loop",
+  "schema_version": 1,
+  "created": "2026-08-18T06:44:06Z",
+  "updated": "2026-08-18T06:44:06Z",
+  "deviations": [
+    {
+      "id": "d1",
+      "what": "t10 partial harvest: codex-orin removed the sweep's Jira READ path (fetch, auth, tests) on a literal reading of boundary c5's 'holds only the event-ingress token'; staging kept the bridge and rejected the removal, and the custody audit's sweep half now forbids a write-shaped endpoint instead of the read pair. c5 needs rewording: read credentials stay in the sweep, WRITE authority is actor-only",
+      "task_ref": "t10",
+      "reason": "spec boundary c5 over-compressed the #76 design; the finding source and resume emitter would have died",
+      "affects": [
+        "t11",
+        "t17"
+      ],
+      "origin": "llm",
+      "status": "proposed",
+      "classification": "needs-follow-up"
+    },
+    {
+      "id": "d2",
+      "what": "spec claim c13 is half-true at HEAD: the artifact carrier has an ingest route but NO read side (POST-only, pinned by TestArtifactSurfaceExposesOnlyAuthenticatedPost), so decision c25's frame-as-artifact travel is not yet implementable for consumers; t18's workflow declares it honestly in its gap list",
+      "task_ref": "t18",
+      "reason": "measured at HEAD by the t18 build; c13 as confirmed overstates #79's closure",
+      "affects": [
+        "t20"
+      ],
+      "origin": "llm",
+      "status": "proposed",
+      "classification": "needs-follow-up"
+    },
+    {
+      "id": "d3",
+      "what": "spec claim c6 names 'human-inbox approval nodes', a composition that does not exist: an approval node parks on the engine's pending-decisions surface; human-inbox is a section-13 actor bridge serving agent nodes. t18 used the engine's own approval surface and said so",
+      "task_ref": "t18",
+      "reason": "vocabulary conflated two human surfaces; grep of adapters/ for human_tasks/pending-decisions returns zero",
+      "affects": [],
+      "origin": "llm",
+      "status": "proposed",
+      "classification": "acceptable"
+    }
+  ]
+}

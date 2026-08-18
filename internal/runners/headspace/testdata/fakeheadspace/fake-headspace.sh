@@ -91,9 +91,15 @@ case "$verb" in
     fi
 
     exit_code="${NODES_FAKE_RUN_EXIT:-0}"
+    # NODES_FAKE_RUN_EXCERPT_JSON overrides the exit-0 captured-output
+    # excerpt. Its value is spliced verbatim inside the JSON string literal,
+    # so it must be pre-escaped JSON string content (e.g. '{\"emitted\": 3}\n').
+    # The ${VAR-default} form (no colon) honours a set-but-empty value, so a
+    # test can model a process that printed nothing at all.
+    excerpt="${NODES_FAKE_RUN_EXCERPT_JSON-hello\\n}"
     case "$exit_code" in
       0)
-        result_package "success" '["the command completed with exit status 0"]' '[{"label": "captured output", "kind": "excerpt", "source": "'"$job"'", "truncated": false, "excerpt": "hello\n"}]' '[]' '{"wall_time_seconds": 0.3, "cpu_seconds": 0.02, "max_memory_bytes": 5242880, "max_memory_basis": "sampled peak", "storage_bytes": 0, "output_bytes": 6}'
+        result_package "success" '["the command completed with exit status 0"]' '[{"label": "captured output", "kind": "excerpt", "source": "'"$job"'", "truncated": false, "excerpt": "'"$excerpt"'"}]' '[]' '{"wall_time_seconds": 0.3, "cpu_seconds": 0.02, "max_memory_bytes": 5242880, "max_memory_basis": "sampled peak", "storage_bytes": 0, "output_bytes": 6}'
         exit 0
         ;;
       1|2|3|7)

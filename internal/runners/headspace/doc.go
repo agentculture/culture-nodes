@@ -151,7 +151,11 @@
 //     headspace-cli's own retrieval path for the untruncated capture
 //     (`headspace inspect <job_id> --logs`) no longer resolves once Execute
 //     returns. The excerpt this bridge captured is the only capture that
-//     survives the call, and the Logs observation's note says so.
+//     survives the call, and the Logs observation's note says so. When
+//     BridgeConfig carries an ArtifactStore, that surviving excerpt is
+//     additionally stored as a durable, attempt-tied artifact referenced
+//     from artifacts.stdout_ref (issue #189; see stdout.go and the
+//     stdout_artifact observation).
 //
 // # Cancellation
 //
@@ -208,19 +212,22 @@
 // # Local artifact staging (a recorded t18 scope boundary)
 //
 // internal/artifacts defines a pod-agnostic "artifact://<namespace>/<id>"
-// ref, resolved only through a Store (internal/artifacts/doc.go). This
-// bridge does not hold or accept a Store: BridgeConfig has no such field,
-// matching this task's own specified configuration surface. Workspace.
-// SourceRef is instead treated as a path already present on the local
-// filesystem this bridge's process runs on, staged directly with
-// headspace-cli's `put`; exported declared artifacts come back as local
-// filesystem paths under a per-Execute temp directory, recorded verbatim on
-// Result.Artifacts.Additional -- not as artifact:// refs. A caller that hands
-// this bridge an artifact:// ref for source_ref gets a clear, typed refusal
-// (os.Stat fails on it) rather than a silent misinterpretation. Wiring an
-// artifacts.Store resolution step in front of put, and a Store.Put call
-// after export, is follow-up work for whichever task connects this bridge
-// to the worker.
+// ref, resolved only through a Store (internal/artifacts/doc.go). The t18
+// boundary -- no Store in BridgeConfig at all -- has since been narrowed by
+// issue #189: BridgeConfig now accepts an optional ArtifactStore (plus its
+// required ArtifactNamespace), used for exactly one thing today -- storing
+// the run's captured stdout durably, tied to the attempt, and referencing
+// it from Result.Artifacts.StdoutRef (see stdout.go). Everything else about
+// the t18 boundary still stands: Workspace.SourceRef is treated as a path
+// already present on the local filesystem this bridge's process runs on,
+// staged directly with headspace-cli's `put`; exported declared artifacts
+// come back as local filesystem paths under a per-Execute temp directory,
+// recorded verbatim on Result.Artifacts.Additional -- not as artifact://
+// refs. A caller that hands this bridge an artifact:// ref for source_ref
+// gets a clear, typed refusal (os.Stat fails on it) rather than a silent
+// misinterpretation. Wiring an artifacts.Store resolution step in front of
+// put, and a Store.Put call after export, is still follow-up work for
+// whichever task connects this bridge to the worker.
 //
 // # Testing
 //

@@ -7,6 +7,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/agentculture/culture-nodes/internal/artifacts"
 	"github.com/agentculture/culture-nodes/internal/contracts"
 	"github.com/agentculture/culture-nodes/internal/runners"
 )
@@ -99,6 +100,22 @@ type BridgeConfig struct {
 	// StopTimeout bounds `headspace stop --apply` (cancellation) and the
 	// `destroy` cleanup call. Zero defaults to defaultStopTimeout.
 	StopTimeout time.Duration
+
+	// ArtifactStore, when non-nil, makes Execute persist the run's
+	// captured-output excerpt (the code process's stdout, as headspace-cli
+	// captured it) as a durable artifact via Store.Put, tied to the
+	// operation's attempt through ArtifactMeta.AttemptID, and record the
+	// returned artifact:// ref on Result.Artifacts.StdoutRef (issue #189:
+	// without this, a green run discards what the process printed). Nil --
+	// the default -- keeps the pre-existing local-only behaviour; see
+	// stdout.go and doc.go's "Local artifact staging" section.
+	ArtifactStore artifacts.Store
+
+	// ArtifactNamespace is the namespace id every artifact this bridge
+	// stores is scoped to (ArtifactMeta.NamespaceID, which the Store
+	// contract requires). Required when ArtifactStore is set; ignored
+	// otherwise.
+	ArtifactNamespace string
 }
 
 // Bridge is the headspace-cli runners.Runner: it drives the real CLI by
@@ -106,13 +123,15 @@ type BridgeConfig struct {
 // nine-section result package onto a schema-valid runners.Result. See doc.go
 // for the verb flow and the exit-band-to-outcome table.
 type Bridge struct {
-	bin         string
-	profile     map[string]string
-	home        string
-	provider    string
-	revision    string
-	now         func() time.Time
-	stopTimeout time.Duration
+	bin               string
+	profile           map[string]string
+	home              string
+	provider          string
+	revision          string
+	now               func() time.Time
+	stopTimeout       time.Duration
+	artifactStore     artifacts.Store
+	artifactNamespace string
 }
 
 var _ runners.Runner = (*Bridge)(nil)
@@ -140,6 +159,12 @@ func New(cfg BridgeConfig) (*Bridge, error) {
 				"headspace-cli 0.11.0 registers only %q upstream, and a bridge with no mapping refuses every operation, "+
 				"which is a misconfiguration worth failing at startup", DefaultProfilePython312)
 	}
+	if cfg.ArtifactStore != nil && cfg.ArtifactNamespace == "" {
+		return nil, fmt.Errorf(
+			"runners/headspace: New requires ArtifactNamespace when ArtifactStore is set; " +
+				"the artifacts Store contract requires every Put to carry a namespace id, and a bridge that " +
+				"cannot store what it captured is a misconfiguration worth failing at startup")
+	}
 	now := cfg.Clock
 	if now == nil {
 		now = time.Now
@@ -155,13 +180,15 @@ func New(cfg BridgeConfig) (*Bridge, error) {
 	}
 
 	return &Bridge{
-		bin:         bin,
-		profile:     profile,
-		home:        cfg.HeadspaceHome,
-		provider:    provider,
-		revision:    revision,
-		now:         now,
-		stopTimeout: stopTimeout,
+		bin:               bin,
+		profile:           profile,
+		home:              cfg.HeadspaceHome,
+		provider:          provider,
+		revision:          revision,
+		now:               now,
+		stopTimeout:       stopTimeout,
+		artifactStore:     cfg.ArtifactStore,
+		artifactNamespace: cfg.ArtifactNamespace,
 	}, nil
 }
 

@@ -188,7 +188,17 @@ func (b *Bridge) runAndBuildResult(
 		return runners.Result{}, classifyErr
 	}
 
-	return buildResult(op, pkg, started, finished, b.revision)
+	result, buildErr := buildResult(op, pkg, started, finished, b.revision)
+	if buildErr != nil {
+		return runners.Result{}, buildErr
+	}
+	// Persist the code process's captured stdout as a durable, attempt-tied
+	// artifact (issue #189) -- after the Result is built, so the capture is
+	// recorded on the same document its honesty observations live in, and
+	// before export/cleanup, though the store write itself is independent of
+	// the workspace's remaining lifetime. See stdout.go.
+	b.storeCapturedStdout(ctx, op, pkg, &result)
+	return result, nil
 }
 
 // requestStop asks headspace-cli's engine to end the job running in ws, from

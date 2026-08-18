@@ -2,6 +2,7 @@ package api
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"io"
 	"net/http"
@@ -9,6 +10,7 @@ import (
 
 	"github.com/agentculture/culture-nodes/internal/actors"
 	"github.com/agentculture/culture-nodes/internal/artifacts"
+	postgres "github.com/agentculture/culture-nodes/internal/store/postgres"
 )
 
 // MaxArtifactBytes bounds a single artifact publication.
@@ -23,6 +25,13 @@ const MaxArtifactBytes = 64 << 20 // 64 MiB
 
 type artifactInvocationStore interface {
 	Invocation(context.Context, string) (actors.PendingInvocation, error)
+}
+
+// artifactRunnerOpSource is the fallback association source for RUNNER
+// attempts: the runner_operations rows recorded at dispatch. Implemented by
+// *postgres.Store.
+type artifactRunnerOpSource interface {
+	ListRunnerOperationsByAttempt(ctx context.Context, attemptID string) ([]postgres.RunnerOperationRecord, error)
 }
 
 type artifactWriteResponse struct {
@@ -53,13 +62,25 @@ func (s *Server) handlePutArtifact(w http.ResponseWriter, r *http.Request) error
 
 	inv, err := s.artifactInvocationStore.Invocation(r.Context(), attemptID)
 	if err != nil {
-		if errors.Is(err, actors.ErrUnknownAttempt) {
-			return notFound("check that the attempt is a durable pending invocation", "artifact attempt not found")
+		if !errors.Is(err, actors.ErrUnknownAttempt) {
+			return internalError(err)
 		}
-		return internalError(err)
+		// Not an async ACTOR attempt. A RUNNER attempt is just as durable —
+		// its runner_operations row is written at dispatch, before the runner
+		// could possibly hold this attempt's callback token — so resolve the
+		// associations there (deviation d1's production gap, found live: the
+		// green 18:10Z sweep's stdout upload 404'd here because only actor
+		// attempts have pending invocations).
+		inv, err = s.runnerAttemptAssociations(r.Context(), attemptID)
+		if err != nil {
+			if errors.Is(err, actors.ErrUnknownAttempt) {
+				return notFound("check that the attempt is a durable pending invocation or a dispatched runner operation", "artifact attempt not found")
+			}
+			return internalError(err)
+		}
 	}
-	if inv.NamespaceID == "" || inv.RunID == "" || inv.AttemptID == "" || inv.AttemptID != attemptID {
-		return internalError(errors.New("artifact publication: durable invocation lacks required namespace, run, or matching attempt association"))
+	if inv.NamespaceID == "" || inv.AttemptID == "" || inv.AttemptID != attemptID {
+		return internalError(errors.New("artifact publication: durable invocation lacks required namespace or matching attempt association"))
 	}
 
 	mediaType := strings.TrimSpace(r.Header.Get("Content-Type"))
@@ -217,4 +238,35 @@ func (s *Server) handleGetAttemptArtifact(w http.ResponseWriter, r *http.Request
 		return nil
 	}
 	return nil
+}
+
+// runnerAttemptAssociations resolves a RUNNER attempt's durable associations
+// from its runner_operations row (written at dispatch), shaped as the same
+// PendingInvocation the actor path yields so handlePutArtifact treats both
+// attempt kinds identically. The run id rides inside the recorded operation's
+// context; a row without one still associates namespace and attempt — RunID
+// stays optional metadata on the artifact row, exactly as ArtifactMeta
+// documents.
+func (s *Server) runnerAttemptAssociations(ctx context.Context, attemptID string) (actors.PendingInvocation, error) {
+	if s.artifactRunnerOps == nil {
+		return actors.PendingInvocation{}, actors.ErrUnknownAttempt
+	}
+	ops, err := s.artifactRunnerOps.ListRunnerOperationsByAttempt(ctx, attemptID)
+	if err != nil {
+		return actors.PendingInvocation{}, err
+	}
+	if len(ops) == 0 {
+		return actors.PendingInvocation{}, actors.ErrUnknownAttempt
+	}
+	var req struct {
+		Context struct {
+			RunID string `json:"run_id"`
+		} `json:"context"`
+	}
+	_ = json.Unmarshal(ops[0].Request, &req) // absent context stays empty, not an error
+	return actors.PendingInvocation{
+		NamespaceID: ops[0].NamespaceID,
+		RunID:       req.Context.RunID,
+		AttemptID:   attemptID,
+	}, nil
 }

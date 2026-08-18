@@ -14,6 +14,7 @@ import (
 
 	"github.com/agentculture/culture-nodes/internal/actors"
 	"github.com/agentculture/culture-nodes/internal/artifacts"
+	pgstore "github.com/agentculture/culture-nodes/internal/store/postgres"
 )
 
 const artifactTestSecret = "0123456789abcdef0123456789abcdef"
@@ -27,6 +28,22 @@ func (s fakeArtifactInvocationStore) Invocation(_ context.Context, attemptID str
 		return actors.PendingInvocation{}, actors.ErrUnknownAttempt
 	}
 	return s.inv, nil
+}
+
+// fakeRunnerOpSource serves the runner-attempt fallback: it knows exactly one
+// runner attempt, att_runner, dispatched for run_runner in ns_runner.
+type fakeRunnerOpSource struct{}
+
+func (fakeRunnerOpSource) ListRunnerOperationsByAttempt(_ context.Context, attemptID string) ([]pgstore.RunnerOperationRecord, error) {
+	if attemptID != "att_runner" {
+		return nil, nil
+	}
+	return []pgstore.RunnerOperationRecord{{
+		ID:          "runop_1",
+		NamespaceID: "ns_runner",
+		AttemptID:   "att_runner",
+		Request:     []byte(`{"context":{"run_id":"run_runner"}}`),
+	}}, nil
 }
 
 type memoryArtifactStore struct {
@@ -95,6 +112,7 @@ func newArtifactRouteTestServer(t *testing.T, now time.Time) (*httptest.Server, 
 		callbackSigner:          signer,
 		artifactRouter:          router,
 		artifactInvocationStore: fakeArtifactInvocationStore{inv: inv},
+		artifactRunnerOps:       fakeRunnerOpSource{},
 	}
 	ts := httptest.NewServer(srv.Handler())
 	t.Cleanup(ts.Close)
@@ -356,5 +374,35 @@ func TestArtifactReadBackRoundTrip(t *testing.T) {
 	missing.Body.Close()
 	if missing.StatusCode != http.StatusNotFound {
 		t.Fatalf("missing-name status = %d, want 404", missing.StatusCode)
+	}
+}
+
+// TestArtifactWriteRouteResolvesRunnerAttempts pins the d1 production gap
+// found live on the 2026-08-18 18:10Z sweep: a RUNNER attempt has no pending
+// invocation, but its runner_operations row (written at dispatch) is just as
+// durable — the PUT must resolve namespace/run from it instead of 404ing.
+func TestArtifactWriteRouteResolvesRunnerAttempts(t *testing.T) {
+	now := time.Date(2026, 8, 15, 9, 0, 0, 0, time.UTC)
+	ts, signer, store, _ := newArtifactRouteTestServer(t, now)
+	// A runner attempt: unknown to the invocation store, known to the
+	// runner-op source the server falls back to.
+	token, err := signer.Mint("att_runner")
+	if err != nil {
+		t.Fatalf("Mint: %v", err)
+	}
+	body := []byte(`{"sweep": "pr-upkeep", "emitted": 2}`)
+	req := artifactRequest(t, http.MethodPost, ts.URL+"/v1alpha1/attempts/att_runner/artifacts", token, "text/plain", "stdout", bytes.NewReader(body))
+	resp, err := ts.Client().Do(req)
+	if err != nil {
+		t.Fatalf("POST artifact: %v", err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusCreated {
+		got, _ := io.ReadAll(resp.Body)
+		t.Fatalf("status = %d, want 201; body=%s", resp.StatusCode, got)
+	}
+	if store.meta.NamespaceID != "ns_runner" || store.meta.RunID != "run_runner" || store.meta.AttemptID != "att_runner" {
+		t.Fatalf("associations = (%q, %q, %q), want the runner operation's (ns_runner, run_runner, att_runner)",
+			store.meta.NamespaceID, store.meta.RunID, store.meta.AttemptID)
 	}
 }

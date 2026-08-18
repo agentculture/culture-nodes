@@ -79,6 +79,7 @@ type Server struct {
 	// the path-bound callback token verifies.
 	artifactRouter          *artifacts.Router
 	artifactInvocationStore artifactInvocationStore
+	artifactRunnerOps       artifactRunnerOpSource
 
 	// decisionAuthSecret gates POST /v1alpha1/human-tasks/{id}/decision (see
 	// (*Server).requireDecisionAuth in humantasks.go). Every other operation
@@ -346,6 +347,7 @@ func NewServer(store *postgres.Store, namespaceID string, opts ...Option) (*Serv
 		engineStore:             engineStore,
 		callbackStore:           callbackStore,
 		artifactInvocationStore: callbackStore,
+		artifactRunnerOps:       store,
 		pollInterval:            defaultEventPollInterval,
 		log:                     slog.Default(),
 	}

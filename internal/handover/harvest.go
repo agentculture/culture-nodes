@@ -37,6 +37,28 @@ type Result struct {
 	Worktree    string `json:"worktree"`
 }
 
+// CandidateOutcome is the closed set of domain answers candidate staging can
+// produce. Errors are reserved for failures to run the staging machinery;
+// merge conflicts and protected CI changes are expected routing outcomes.
+type CandidateOutcome string
+
+const (
+	CandidateStaged      CandidateOutcome = "candidate_staged"
+	CandidateConflict    CandidateOutcome = "merge_conflict"
+	CandidateRoutesHuman CandidateOutcome = "routes_to_human"
+)
+
+// CandidateResult describes the feature-based worktree after the harvested
+// package has been applied to it. ChangedPaths is measured against the pinned
+// feature tip, not taken from the package's report.
+type CandidateResult struct {
+	Result
+	FeatureCommit string           `json:"feature_commit"`
+	Outcome       CandidateOutcome `json:"outcome"`
+	ChangedPaths  []string         `json:"changed_paths,omitempty"`
+	GuardedPaths  []string         `json:"guarded_paths,omitempty"`
+}
+
 // Harvest fetches the named handover into a durable, run-scoped ref before it
 // creates the integration worktree. Git updates the ref atomically only after
 // receiving its objects, so process termination can never leave a ref that
@@ -71,6 +93,69 @@ func Harvest(ctx context.Context, req Request) (Result, error) {
 		return Result{}, fmt.Errorf("stage worktree (fetched commit preserved at %s): %w", recovery, err)
 	}
 	return Result{Commit: got, RecoveryRef: recovery, Worktree: req.Worktree}, nil
+}
+
+// StageCandidate harvests the package, then applies it without committing on
+// a detached worktree pinned to featureRef. This phase precedes suite verdicts:
+// a green verdict therefore cannot turn a protected .github change into an
+// ordinary merge candidate.
+func StageCandidate(ctx context.Context, req Request, featureRef string) (CandidateResult, error) {
+	if strings.TrimSpace(featureRef) == "" || strings.HasPrefix(featureRef, "-") {
+		return CandidateResult{}, errors.New("feature ref is required and must not begin with '-'")
+	}
+	harvested, err := Harvest(ctx, req)
+	if err != nil {
+		return CandidateResult{}, err
+	}
+	featureCommit, err := output(ctx, req.Repository, "rev-parse", "--verify", featureRef+"^{commit}")
+	if err != nil {
+		return CandidateResult{}, fmt.Errorf("resolve feature ref %q: %w", featureRef, err)
+	}
+	result := CandidateResult{Result: harvested, FeatureCommit: featureCommit}
+	if err := run(ctx, req.Worktree, "reset", "--hard", featureCommit); err != nil {
+		return CandidateResult{}, fmt.Errorf("pin candidate to feature commit %s: %w", featureCommit, err)
+	}
+
+	mergeErr := run(ctx, req.Worktree, "merge", "--no-commit", "--no-ff", harvested.Commit)
+	if mergeErr != nil {
+		unmerged, readErr := output(ctx, req.Worktree, "diff", "--name-only", "--diff-filter=U", "-z")
+		if readErr != nil {
+			return CandidateResult{}, fmt.Errorf("merge package and inspect conflict: %v; %w", mergeErr, readErr)
+		}
+		if paths := splitZeroPaths(unmerged); len(paths) > 0 {
+			result.Outcome = CandidateConflict
+			result.ChangedPaths = paths
+			return result, nil
+		}
+		return CandidateResult{}, fmt.Errorf("merge harvested package: %w", mergeErr)
+	}
+
+	changed, err := output(ctx, req.Worktree, "diff", "--name-only", "-z", featureCommit)
+	if err != nil {
+		return CandidateResult{}, fmt.Errorf("measure candidate diff: %w", err)
+	}
+	result.ChangedPaths = splitZeroPaths(changed)
+	for _, path := range result.ChangedPaths {
+		if path == ".github" || strings.HasPrefix(path, ".github/") {
+			result.GuardedPaths = append(result.GuardedPaths, path)
+		}
+	}
+	if len(result.GuardedPaths) > 0 {
+		result.Outcome = CandidateRoutesHuman
+	} else {
+		result.Outcome = CandidateStaged
+	}
+	return result, nil
+}
+
+func splitZeroPaths(raw string) []string {
+	var paths []string
+	for _, path := range strings.Split(raw, "\x00") {
+		if path != "" {
+			paths = append(paths, path)
+		}
+	}
+	return paths
 }
 
 func validate(req Request) error {

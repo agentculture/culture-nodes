@@ -1,0 +1,17 @@
+# Jira comment actor: an ordinary kind=agent bridge with exactly one Jira
+# operation. Jira credentials are held only by its private EnvironmentFile.
+[Unit]
+Description=Culture Nodes Jira comment actor bridge
+After=network-online.target
+
+[Service]
+Type=simple
+EnvironmentFile=%h/.culture-nodes/jira-bridge.env
+EnvironmentFile=%h/.culture-nodes/jira-bridge-auth.env
+EnvironmentFile=%h/.culture-nodes/jira-bridge-jira.env
+ExecStart=%h/.local/bin/jira-bridge serve
+Restart=on-failure
+RestartSec=2
+
+[Install]
+WantedBy=default.target

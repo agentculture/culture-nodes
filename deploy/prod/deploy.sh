@@ -648,6 +648,36 @@ deploy_notify() { # host
   assert_unit_healthy "$host" notify-bridge
 }
 
+# --- Jira comment actor lane ----------------------------------------------
+# An ordinary actor registration supplies routing and the worker-facing
+# token name. Jira Basic auth is not consumed here and never enters control-
+# plane configuration; systemd loads it from jira-bridge-jira.env directly.
+deploy_jira() { # host
+  local host=$1
+  case "$host" in thor*) ;; *) return 0 ;; esac
+  if [ -z "${JIRA_SITE:-}" ]; then
+    say "JIRA_SITE unset: Jira comment actor is not configured on $host"
+    return 0
+  fi
+  ssh "$host" 'test -s ~/.culture-nodes/jira-bridge-jira.env && test -s ~/.culture-nodes/jira-bridge-auth.env' || {
+    say "WARNING: Jira actor env files missing on $host — run install-secrets.sh"
+    return 0
+  }
+  JIRA_ACTOR_ID=$(resolve_actor_row_id "company/jira-comment")
+  if [ -z "$JIRA_ACTOR_ID" ]; then
+    say "WARNING: company/jira-comment is not registered; use register-actor.sh and re-deploy"
+    return 0
+  fi
+  say "installing the single-verb Jira comment actor on $host"
+  ssh "$host" "bash -lc 'command -v uv >/dev/null || curl -LsSf https://astral.sh/uv/install.sh | sh; \$HOME/.local/bin/uv tool install --force ./$REMOTE_DIR/adapters/jira || uv tool install --force ./$REMOTE_DIR/adapters/jira'"
+  JIRA_BIN=$(ssh "$host" 'bash -lc "command -v jira-bridge"' | tr -d '\r')
+  [ -n "$JIRA_BIN" ] || { echo "jira-bridge not on PATH after install" >&2; return 1; }
+  printf 'JIRA_BRIDGE_HOST=0.0.0.0\nJIRA_BRIDGE_PORT=8089\nJIRA_BRIDGE_ACTOR_ID=%s\nJIRA_SITE=%s\n' "$JIRA_ACTOR_ID" "$JIRA_SITE" \
+    | ssh "$host" 'umask 077; cat > ~/.culture-nodes/jira-bridge.env; chmod 600 ~/.culture-nodes/jira-bridge.env'
+  ssh "$host" "export XDG_RUNTIME_DIR=/run/user/\$(id -u); sed \"s#%h/.local/bin/jira-bridge#$JIRA_BIN#\" $REMOTE_DIR/deploy/prod/jira-bridge.service > ~/.config/systemd/user/jira-bridge.service && systemctl --user daemon-reload && systemctl --user restart jira-bridge && systemctl --user enable jira-bridge"
+  assert_unit_healthy "$host" jira-bridge
+}
+
 case "$HOST" in
   thor*)
     say "starting thor control plane"
@@ -668,6 +698,7 @@ case "$HOST" in
     # other than this deploy's target.
     deploy_human_inbox
     deploy_notify "$HOST"
+    deploy_jira "$HOST"
     # LAST, on purpose: the audit reports on the environment this deploy
     # actually shipped, so it runs after every lane above has had its say. It
     # is a detector, not a gate — the stack is already up when it speaks, and

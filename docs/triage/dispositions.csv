@@ -97,3 +97,5 @@ issue,bucket,disposition,evidence_pointer
 174,verify-then-close,"human reviews deviation d4 (devague deviate --confirm d4), then close on read",docs/deviations/2026-08-18-d4-fix-170-in-cycle.md
 175,large bets,"placement redesign: actors register tags, a selection policy with recorded placement, h21's tag-pinned acceptance demonstrated end to end",internal/worker/concurrency.go package doc + deviation d5
 176,verify-then-close,"human reviews deviation d5 (devague deviate --confirm d5), then close on read",docs/deviations/2026-08-18-wave-0-spec-corrections.md
+177,bug tail,"fix landed on the integration branch (ExitCodeOutcomes in runnerCompletionFor, test-pinned); close when it reaches main",internal/worker/runnerasync.go + runnerasynccompletion_test.go
+178,bug tail,"choose fix 1 (durable attempts row at dispatch) or 2 (lenient attempt_ref) and land it; blocks every graph-dispatched gate verdict",internal/api/gatereports.go + migration 0009 design + t8 demo runs 01M09ZZV/01M0A0KW/01M0A0R8

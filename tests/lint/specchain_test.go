@@ -398,19 +398,27 @@ func TestSpecChainEveryLensReconvenes(t *testing.T) {
 				"is not fanned out is a lens that runs in somebody else's context, which "+
 				"is the shape this leg exists to leave behind", lens, fanned)
 		}
-		for _, outcome := range []string{"findings", "clean_pass"} {
-			source := lens + "." + outcome
-			targets := doc.targetsOf(source)
-			if len(targets) == 0 {
-				t.Errorf("no edge carries %s anywhere", source)
-				continue
-			}
-			for _, target := range targets {
-				if target != specChainJoinNode {
-					t.Errorf("%s routes to %q, want %q. A branch that leaves the split "+
-						"without passing the barrier strands its siblings.",
-						source, target, specChainJoinNode)
-				}
+		assertLensPortsReachBarrier(t, doc, lens)
+	}
+}
+
+// assertLensPortsReachBarrier checks that both of one lens's ports route to
+// the join barrier and nowhere else (split out of the loop above to keep the
+// test's cognitive load, and the linter's measure of it, low).
+func assertLensPortsReachBarrier(t *testing.T, doc specChainDoc, lens string) {
+	t.Helper()
+	for _, outcome := range []string{"findings", "clean_pass"} {
+		source := lens + "." + outcome
+		targets := doc.targetsOf(source)
+		if len(targets) == 0 {
+			t.Errorf("no edge carries %s anywhere", source)
+			continue
+		}
+		for _, target := range targets {
+			if target != specChainJoinNode {
+				t.Errorf("%s routes to %q, want %q. A branch that leaves the split "+
+					"without passing the barrier strands its siblings.",
+					source, target, specChainJoinNode)
 			}
 		}
 	}

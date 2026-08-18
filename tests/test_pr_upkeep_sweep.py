@@ -901,7 +901,8 @@ class TestEmitterMain:
         # event bearing the other name.
         transitions = {n for n in names if n.startswith("pr-upkeep.jira.transitioned.")}
         comments = {n for n in names if n == sweep.JIRA_COMMENT_EVENT_NAME}
-        assert transitions and comments
+        assert transitions
+        assert comments
         assert transitions.isdisjoint(comments)
 
     def test_a_sweep_pass_whose_newest_comment_is_the_systems_own_emits_no_comment_event(

@@ -305,7 +305,9 @@ def test_harvest_refuses_an_unknown_input_key(workspace: Path, upstream: Path):
 
     assert proc.returncode == 4, proc.stderr
     assert "'extra'" in proc.stderr
-    assert "handover_ref" in hint_of(proc) and "expected_commit" in hint_of(proc)
+    hint = hint_of(proc)
+    assert "handover_ref" in hint
+    assert "expected_commit" in hint
 
 
 # ---------------------------------------------------------------------------

@@ -172,6 +172,8 @@ import shutil
 import subprocess  # noqa: S404 # nosec B404 - fixed git binary, argv lists, no shell
 import sys
 import tempfile
+import urllib.error
+import urllib.request
 from pathlib import Path
 from typing import Any
 
@@ -601,6 +603,14 @@ def cmd_stage(_args: argparse.Namespace) -> int:
             "--no-edit",
         )
         candidate_commit = git(stage_dir, "rev-parse", "HEAD")
+        # Graph mode: a code node's output document carries operation metadata,
+        # never program stdout, so the candidate travels to `gate` and `merge`
+        # as a DETERMINISTIC REF keyed by the run id the runner boundary
+        # already forwards. CLI callers (no NODES_RUN_ID) read stdout instead.
+        run_id = os.environ.get("NODES_RUN_ID", "")
+        if run_id:
+            validate_run_id(run_id)
+            git(workspace, "update-ref", f"refs/culture-nodes/candidate/{run_id}", candidate_commit)
         emit({"outcome": "candidate_staged", "candidate_commit": candidate_commit})
         return EXIT_OK
     finally:
@@ -630,10 +640,35 @@ ASKPASS_SCRIPT = (
 
 def cmd_merge(_args: argparse.Namespace) -> int:
     payload = read_input(frozenset({"candidate_commit", "feature_branch", "verdict"}))
-    candidate_commit = require_commit(payload, "candidate_commit")
     feature_branch = require_branch(payload, "feature_branch")
 
+    # Graph mode: inside examples/combining-loop, this node is reachable from
+    # gate.gates_passed and from NOWHERE else (a compiler-checked property,
+    # the merge-gate example's own argument), and both gate and merge resolve
+    # the SAME refs/culture-nodes/candidate/<run-id> ref with
+    # maxVisitsPerNode: 1 — so reachability plus ref identity is the verdict
+    # fence. The residual trust is the workspace host not rewriting that ref
+    # mid-run, stated in the workflow header. CLI callers keep the explicit
+    # verdict object and its no-TOCTOU check below.
+    graph_mode = (
+        "candidate_commit" not in payload
+        and "verdict" not in payload
+        and bool(os.environ.get("NODES_RUN_ID", ""))
+    )
+    if graph_mode:
+        run_id = os.environ["NODES_RUN_ID"]
+        validate_run_id(run_id)
+        candidate_ref = f"refs/culture-nodes/candidate/{run_id}"
+        workspace_early = resolve_workspace()
+        candidate_commit = git(
+            workspace_early, "rev-parse", "--verify", f"{candidate_ref}^{{commit}}"
+        )
+    else:
+        candidate_commit = require_commit(payload, "candidate_commit")
+
     verdict = payload.get("verdict")
+    if graph_mode:
+        verdict = {"outcome": "gates_passed", "candidate": candidate_commit}
     if not isinstance(verdict, dict):
         raise Refusal(
             "'verdict' is required and must be a JSON object",
@@ -745,6 +780,82 @@ def cmd_merge(_args: argparse.Namespace) -> int:
 # --------------------------------------------------------------------------
 
 
+# --------------------------------------------------------------------------
+# release
+# --------------------------------------------------------------------------
+
+EVENT_TOKEN_ENV = "NODES_EVENT_TOKEN"  # noqa: S105 - an env var NAME, not a secret
+API_URL_ENV = "NODES_API_URL"
+READY_EVENT_NAME = "combining-loop.package.ready"
+
+
+def cmd_release(_args: argparse.Namespace) -> int:
+    """Emit one combining-loop.package.ready signal event per unlocked
+    package. The engine's pacing sits between a ready event and any dispatch
+    it triggers, so a burst here queues rather than overdrawing the session
+    window (#48). An empty unlocks list is a successful no-op, stated."""
+    payload = read_input(frozenset({"package_id", "unlocks"}))
+    package_id = require_str(payload, "package_id")
+    unlocks = payload.get("unlocks", [])
+    if not isinstance(unlocks, list) or any(
+        not isinstance(item, str) or not item for item in unlocks
+    ):
+        raise Refusal(
+            "'unlocks' must be a list of non-empty strings",
+            'NODES_INPUT_JSON must declare {"unlocks": ["<package-id>", ...]} or omit it',
+            code=EXIT_REFUSED,
+        )
+    if not unlocks:
+        emit({"outcome": "released", "events": 0})
+        return EXIT_OK
+
+    api = env_or_refuse(
+        API_URL_ENV, "grant NODES_API_URL to the operation - the control plane's own base URL"
+    ).rstrip("/")
+    token = env_or_refuse(
+        EVENT_TOKEN_ENV,
+        "grant NODES_EVENT_TOKEN to the operation - the event-ingress bearer "
+        "(the server side is NODES_EVENT_TOKEN_SECRET; internal/api/signalevents.go)",
+    )
+
+    emitted = 0
+    for unlocked in unlocks:
+        body = json.dumps(
+            {
+                "name": READY_EVENT_NAME,
+                "subject": unlocked,
+                "emitter": "combining-loop",
+                "payload": {"package_id": unlocked, "unlocked_by": package_id},
+            }
+        ).encode("utf-8")
+        request = urllib.request.Request(
+            f"{api}/v1alpha1/events",
+            data=body,
+            method="POST",
+            headers={
+                "Authorization": f"Bearer {token}",
+                "Content-Type": "application/json",
+            },
+        )
+        try:
+            with urllib.request.urlopen(request, timeout=30) as response:  # noqa: S310
+                response.read()
+        except (urllib.error.URLError, TimeoutError) as err:
+            # The token never reaches a diagnostic: URLError reasons carry
+            # transport detail only, but redact defensively anyway.
+            detail = redact_secret_text(str(err))
+            raise Refusal(
+                f"event delivery for {unlocked!r} failed after {emitted} delivered: {detail}",
+                "already-delivered events stand (the ingress dedupes by source key upstream); "
+                "fix the environment and re-run release for the remainder",
+                code=EXIT_ENVIRONMENT,
+            ) from err
+        emitted += 1
+
+    emit({"outcome": "released", "events": emitted})
+    return EXIT_OK
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="combining-loop-node.py",
@@ -797,6 +908,17 @@ def build_parser() -> argparse.ArgumentParser:
         ),
     )
     merge.set_defaults(handler=cmd_merge)
+
+    release = subparsers.add_parser(
+        "release",
+        help="emit combining-loop.package.ready for everything this package unlocks",
+        description=(
+            'Input (NODES_INPUT_JSON): {"package_id": "<id>", "unlocks": ["<id>", ...]}. '
+            "Grants: NODES_API_URL, NODES_EVENT_TOKEN. "
+            "Exit 0 released (empty unlocks is a stated no-op) / 2 environment / 4 refused."
+        ),
+    )
+    release.set_defaults(handler=cmd_release)
 
     return parser
 

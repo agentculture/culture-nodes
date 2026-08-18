@@ -12,7 +12,7 @@ Start it with one durable event (hand-emitted in the stage-1 demo):
 
 ```bash
 curl -s -X POST "$NODES_API_URL/v1alpha1/events" \
-  -H "Authorization: Bearer $NODES_EVENT_INGRESS_TOKEN" \
+  -H "Authorization: Bearer $NODES_EVENT_TOKEN" \
   -H 'Content-Type: application/json' \
   -d '{
         "name": "combining-loop.package.finished",

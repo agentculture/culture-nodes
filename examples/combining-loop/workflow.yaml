@@ -15,21 +15,31 @@
 # rather than spawning a sibling (t15, runs.subject).
 #
 # ---------------------------------------------------------------------------
-# WHY THE DOMAIN ANSWERS RIDE OUTPUT JSON, NOT EXIT CODES
+# HOW DOMAIN ANSWERS AND DATA TRAVEL (two measured constraints)
 # ---------------------------------------------------------------------------
 #
-# internal/worker/code.go's outcome resolver recognises exactly two
-# vocabularies: the conventional passed/failed pair, and the merge gate's
-# three-answer set (gates_passed / changes_required / measurement_incomplete,
-# each with its published exit code). A graph cannot declare its own
-# exit-code map. So `stage` answers passed/failed like any code node, writes
-# its DOMAIN answer ({"result": "staged" | "merge_conflict" |
-# "routes_to_human"}) to stdout, and the `stage-verdict` decision node routes
-# on that field — the development-loop idiom. The gate node speaks the
-# recognised three-answer vocabulary directly. scripts/combining-loop-node.py
-# still publishes distinct exit codes for CLI callers; inside this graph the
-# bootstrap forwards the domain answer as JSON and reserves process failure
-# for technical faults, which is what passed/failed means.
+# 1. ANSWERS RIDE EXIT CODES, ROUTED BY A DECISION NODE. The worker's
+#    outcome resolver recognises exactly two vocabularies (passed/failed and
+#    the gate trio); a graph cannot declare its own exit-code map. And a code
+#    node's output document is operation metadata — operation_id, state,
+#    exit_code (internal/runners' buildOutput) — NEVER program stdout. So
+#    `stage` answers passed/failed, and `stage-verdict` routes its failure
+#    port on `output.exit_code` (1 = merge_conflict, 3 = routes_to_human,
+#    anything else = environment) — the development-loop idiom. The gate node
+#    speaks the recognised three-answer vocabulary directly.
+#
+# 2. DATA TRAVELS AS A DETERMINISTIC REF, NOT A PAYLOAD. Because stdout never
+#    reaches the output document, the candidate SHA cannot ride node output.
+#    `stage` therefore pins it at refs/culture-nodes/candidate/<run-id> (the
+#    run id the runner boundary already forwards), and `gate` and `merge`
+#    resolve that same ref. `merge`'s verdict fence in graph mode is
+#    structural: it is reachable from gate.gates_passed and from NOWHERE else
+#    (compiler-checked), both nodes resolve the same ref, and
+#    maxVisitsPerNode: 1 forbids restaging between them. RESIDUAL TRUST,
+#    stated: a workspace host that rewrites that ref mid-run defeats the
+#    fence — the host is already trusted with the checkout and the push
+#    credential, so this adds no new authority, but it is a fence against
+#    mistakes, not against the host.
 #
 # ---------------------------------------------------------------------------
 # WHAT THIS GRAPH DECLARES THAT A DEPLOYMENT MUST SUPPLY
@@ -47,7 +57,7 @@
 #                                         prepared (internal/handover's rule).
 #   GITHUB_TOKEN_WORKER                   the push credential, environment
 #                                         only, helpers reset on push.
-#   NODES_EVENT_INGRESS_TOKEN             release-next's authority to append
+#   NODES_EVENT_TOKEN             release-next's authority to append
 #                                         signal events.
 #
 # Per-run values (handover ref, expected commit, feature branch, unlocks)
@@ -144,7 +154,8 @@ spec:
             sys.exit(subprocess.run([sys.executable, path, "harvest"]).returncode)
       input:
         bindings:
-          package: /run/input
+          handover_ref: /run/input/handover_ref
+          expected_commit: /run/input/expected_commit
       contract:
         outcomes:
           passed:
@@ -179,22 +190,25 @@ spec:
                 sys.exit("combining-loop: fetched bytes do not match the granted digest; refusing to run unverified code")
             path = os.path.join(tempfile.mkdtemp(), "combining-loop-node.py")
             open(path, "wb").write(body)
-            sys.exit(subprocess.run([sys.executable, path, "stage", "--emit-result-json"]).returncode)
+            sys.exit(subprocess.run([sys.executable, path, "stage"]).returncode)
       input:
         bindings:
-          package: /run/input
-          harvested: /nodes/harvest/output
+          harvested_commit: /run/input/expected_commit
+          feature_branch: /run/input/feature_branch
       contract:
         outcomes:
           passed:
             schema:
               type: object
-              required: [result]
+              required: [operation_id, state]
               properties:
-                result: {type: string}
-                candidate_commit: {type: string}
+                state: {type: string}
           failed:
-            schema: {type: object}
+            schema:
+              type: object
+              required: [operation_id, state]
+              properties:
+                exit_code: {type: integer}
       ledger:
         observe: [evidence]
       policy:
@@ -208,11 +222,11 @@ spec:
       input:
         from: /nodes/stage/output
       select:
-        - outcome: staged
-          when: "output.result == 'staged'"
         - outcome: merge_conflict
-          when: "output.result == 'merge_conflict'"
+          when: "output.exit_code == 1"
         - outcome: routes_to_human
+          when: "output.exit_code == 3"
+        - outcome: environment_failure
           when: "true"
 
     # The combination gate: merge-gate.py, unchanged, measuring the staged
@@ -270,10 +284,6 @@ spec:
                 }
               ]
             }
-      input:
-        bindings:
-          package: /run/input
-          candidate: /nodes/stage/output
       contract:
         outcomes:
           gates_passed:
@@ -328,9 +338,7 @@ spec:
             sys.exit(subprocess.run([sys.executable, path, "merge"]).returncode)
       input:
         bindings:
-          package: /run/input
-          candidate: /nodes/stage/output
-          verdict: /nodes/gate/output
+          feature_branch: /run/input/feature_branch
       contract:
         outcomes:
           passed:
@@ -381,7 +389,8 @@ spec:
             sys.exit(subprocess.run([sys.executable, path, "release"]).returncode)
       input:
         bindings:
-          package: /run/input
+          package_id: /run/input/package_id
+          unlocks: /run/input/unlocks
       contract:
         outcomes:
           passed:
@@ -457,16 +466,16 @@ spec:
       to: not-integrated
 
     - from: stage.passed
-      to: stage-verdict
-    - from: stage.failed
-      to: not-integrated
-
-    - from: stage-verdict.staged
       to: gate
+    - from: stage.failed
+      to: stage-verdict
+
     - from: stage-verdict.merge_conflict
       to: human-conflict
     - from: stage-verdict.routes_to_human
       to: human-containment
+    - from: stage-verdict.environment_failure
+      to: not-integrated
 
     - from: gate.gates_passed
       to: merge

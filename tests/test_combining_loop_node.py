@@ -600,3 +600,134 @@ def test_top_level_help_names_every_subcommand():
     assert proc.returncode == 0, proc.stderr
     for subcommand in ("harvest", "stage", "merge"):
         assert subcommand in proc.stdout
+
+
+# ---------------------------------------------------------------------------
+# graph mode (task t5's workflow: deterministic candidate ref + reachability)
+# ---------------------------------------------------------------------------
+
+
+def test_stage_graph_mode_writes_the_deterministic_candidate_ref(workspace: Path):
+    harvested_sha = commit_on_detached_branch(workspace, "main", "package.txt", "payload\n")
+
+    proc = run_node(
+        workspace, "stage", {"harvested_commit": harvested_sha, "feature_branch": "feature/combine"}
+    )
+
+    assert proc.returncode == 0, proc.stderr
+    candidate = result_of(proc)["candidate_commit"]
+    pinned = git(workspace, "rev-parse", f"refs/culture-nodes/candidate/{RUN_ID}")
+    assert pinned == candidate
+
+
+def test_merge_graph_mode_resolves_the_candidate_from_the_run_ref(
+    workspace_with_origin: tuple[Path, Path],
+):
+    workspace, origin = workspace_with_origin
+    harvested_sha = commit_on_detached_branch(workspace, "main", "package.txt", "payload\n")
+    staged = run_node(
+        workspace, "stage", {"harvested_commit": harvested_sha, "feature_branch": "feature/combine"}
+    )
+    assert staged.returncode == 0, staged.stderr
+    candidate = result_of(staged)["candidate_commit"]
+
+    # No candidate_commit and no verdict in the input: graph mode. The ref
+    # written by stage is the only carrier, exactly as the workflow uses it.
+    proc = run_node(
+        workspace,
+        "merge",
+        {"feature_branch": "feature/combine"},
+        env={"GITHUB_TOKEN_WORKER": TOKEN},
+    )
+
+    assert proc.returncode == 0, proc.stderr
+    assert git(workspace, "rev-parse", "feature/combine") == candidate
+    assert git(origin, "rev-parse", "feature/combine") == candidate
+
+
+def test_merge_without_run_id_still_requires_the_explicit_contract(
+    workspace_with_origin: tuple[Path, Path],
+):
+    workspace, _ = workspace_with_origin
+    proc = run_node(
+        workspace,
+        "merge",
+        {"feature_branch": "feature/combine"},
+        env={"GITHUB_TOKEN_WORKER": TOKEN},
+        run_id="",
+    )
+    assert proc.returncode == 4
+    assert "candidate_commit" in proc.stderr
+
+
+# ---------------------------------------------------------------------------
+# release
+# ---------------------------------------------------------------------------
+
+
+def _release_server():
+    import http.server
+    import threading
+
+    received: list[dict] = []
+
+    class Handler(http.server.BaseHTTPRequestHandler):
+        def do_POST(self):  # noqa: N802 - stdlib naming
+            length = int(self.headers.get("Content-Length", "0"))
+            received.append(
+                {
+                    "path": self.path,
+                    "auth": self.headers.get("Authorization", ""),
+                    "body": json.loads(self.rfile.read(length)),
+                }
+            )
+            self.send_response(200)
+            self.send_header("Content-Type", "application/json")
+            self.end_headers()
+            self.wfile.write(b"{}")
+
+        def log_message(self, *args):  # silence
+            return
+
+    server = http.server.HTTPServer(("127.0.0.1", 0), Handler)
+    thread = threading.Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+    return server, received
+
+
+def test_release_emits_one_ready_event_per_unlocked_package(workspace: Path):
+    server, received = _release_server()
+    try:
+        proc = run_node(
+            workspace,
+            "release",
+            {"package_id": "t2", "unlocks": ["t3", "t4"]},
+            env={
+                "NODES_API_URL": f"http://127.0.0.1:{server.server_address[1]}",
+                "NODES_EVENT_TOKEN": "event-token-fixture",
+            },
+        )
+    finally:
+        server.shutdown()
+
+    assert proc.returncode == 0, proc.stderr
+    assert result_of(proc) == {"outcome": "released", "events": 2}
+    assert [r["body"]["subject"] for r in received] == ["t3", "t4"]
+    for r in received:
+        assert r["path"] == "/v1alpha1/events"
+        assert r["auth"] == "Bearer event-token-fixture"
+        assert r["body"]["name"] == "combining-loop.package.ready"
+        assert r["body"]["payload"]["unlocked_by"] == "t2"
+    # The token reaches the header and nowhere else.
+    assert "event-token-fixture" not in proc.stdout + proc.stderr
+
+
+def test_release_with_nothing_to_unlock_is_a_stated_no_op(workspace: Path):
+    proc = run_node(workspace, "release", {"package_id": "t2", "unlocks": []})
+    assert proc.returncode == 0, proc.stderr
+    assert result_of(proc) == {"outcome": "released", "events": 0}
+
+
+def test_release_refuses_a_malformed_unlocks_list(workspace: Path):
+    proc = run_node(workspace, "release", {"package_id": "t2", "unlocks": ["ok", 5]})
+    assert proc.returncode == 4

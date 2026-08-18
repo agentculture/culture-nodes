@@ -568,6 +568,14 @@ def cmd_stage(_args: argparse.Namespace) -> int:
                 "git",
                 "-C",
                 str(stage_dir),
+                # Identity on the MERGE too, not only the commit below: a
+                # bare container has no git config, and merge refuses
+                # without a committer identity even under --no-commit
+                # (measured in the t8 live demo's sandbox).
+                "-c",
+                "user.name=Culture Nodes Combining Loop",
+                "-c",
+                "user.email=combining-loop@culture-nodes.invalid",
                 "merge",
                 "--no-commit",
                 "--no-ff",

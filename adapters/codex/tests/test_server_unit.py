@@ -220,12 +220,72 @@ def test_sync_dispatch_reads_top_level_continuation_ref_and_resumes(bridge_url, 
         )
 
     monkeypatch.setattr(codex_cli, "run_sync", fake_run_sync)
-    payload = _invocation_body(str(repo))
+    payload = _invocation_body(str(repo), session_key="session-gap")
     payload["continuation_ref"] = "thread-prior-999"
     headers = {**_auth_header(cfg), "Idempotency-Key": "att_resume"}
     status, _body = _request(base, server.INVOCATIONS_PATH, body=payload, headers=headers)
     assert status == 200
     assert captured["continuation_ref"] == "thread-prior-999"
+
+
+def test_lost_resume_forks_cold_with_question_answer_rebrief(bridge_url, monkeypatch):
+    base, cfg, repo = bridge_url
+    calls = []
+    forks = []
+
+    def fake_run_sync(
+        cfg_, instruction, repo_, *, model, sandbox, continuation_ref=None, writable_git=False
+    ):
+        calls.append((continuation_ref, instruction))
+        if continuation_ref:
+            return codex_cli.SyncRunResult(
+                exit_code=1,
+                stdout="",
+                stderr="session not found",
+                task_result=None,
+                timed_out=False,
+            )
+        return codex_cli.SyncRunResult(
+            exit_code=0,
+            stdout="",
+            stderr="",
+            task_result={
+                "task_id": "new-thread",
+                "status": "ok",
+                "summary": "continued cold",
+                "changed_files": [],
+                "usage": {},
+                "error": None,
+            },
+            timed_out=False,
+        )
+
+    monkeypatch.setattr(codex_cli, "run_sync", fake_run_sync)
+    monkeypatch.setattr(
+        server.SessionRegistry,
+        "record_lost_resume",
+        lambda _registry, session_key, holder: forks.append((session_key, holder)),
+    )
+    payload = _invocation_body(
+        str(repo),
+        session_key="session-gap",
+        question_id="q-17",
+        question="Which rollout window should we use?",
+        resume_event={
+            "originating_question_id": "q-17",
+            "payload": {"answer": {"comment_id": "1009", "body": "Tuesday"}},
+        },
+    )
+    payload["continuation_ref"] = "lost-thread"
+    headers = {**_auth_header(cfg), "Idempotency-Key": "att_lost_resume"}
+
+    status, _body = _request(base, server.INVOCATIONS_PATH, body=payload, headers=headers)
+
+    assert status == 200
+    assert [call[0] for call in calls] == ["lost-thread", None]
+    assert "Which rollout window should we use?" in calls[1][1]
+    assert "Tuesday" in calls[1][1]
+    assert forks == [("session-gap", "att_lost_resume")]
 
 
 def test_sync_dispatch_without_a_prior_ref_dispatches_cold(bridge_url, monkeypatch):

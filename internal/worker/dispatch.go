@@ -2,6 +2,7 @@ package worker
 
 import (
 	"context"
+	"crypto/sha256"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -165,7 +166,10 @@ func (w *Worker) dispatchActor(
 		// is the one the registry holds — an input that names a repository
 		// loses the argument, and an actor that registers no identity is
 		// dispatched without one. See actors.WithRepositoryIdentity.
-		Input:           actors.WithRepositoryIdentity(dc.Input, endpoint.RepositoryIdentity),
+		Input: actors.WithSessionKey(
+			actors.WithRepositoryIdentity(dc.Input, endpoint.RepositoryIdentity),
+			sessionKey(dc.RunID, session.ActorRowID, endpoint.RepositoryIdentity),
+		),
 		ContinuationRef: session.ContinuationRef,
 	}
 	if !dc.Deadline.IsZero() {
@@ -228,6 +232,21 @@ func (w *Worker) dispatchActor(
 		return w.refuseAsyncPostRun(ctx, claimed, d, node, dc, preRun)
 	}
 	return w.park(ctx, claimed, d, node, dc, response.Accepted)
+}
+
+// sessionKey names the conversation lane whose continuation_ref accompanies
+// it. The digest keeps actor/repository identities out of logs and prompts;
+// run scope is the currently supported workstream boundary (ADR 0010).
+func sessionKey(runID, actorRowID, repositoryIdentity string) string {
+	// No registered repository identity means no ADR 0010 lane to name:
+	// the actor dispatches exactly as it did before session keys existed
+	// (TestDispatchWithoutARegisteredIdentityIsUnchanged pins that), and
+	// continuation still works run-scoped via priorContinuationRef.
+	if runID == "" || actorRowID == "" || repositoryIdentity == "" {
+		return ""
+	}
+	sum := sha256.Sum256([]byte(actorRowID + "\x00" + repositoryIdentity + "\x00" + runID))
+	return fmt.Sprintf("session:%x", sum[:16])
 }
 
 // priorContinuationRef is §13.1's continuation_ref for this dispatch: the

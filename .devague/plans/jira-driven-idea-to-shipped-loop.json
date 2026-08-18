@@ -5,7 +5,7 @@
   "schema_version": 4,
   "status": "exported",
   "created": "2026-08-18T05:57:58Z",
-  "updated": "2026-08-18T07:10:53Z",
+  "updated": "2026-08-18T07:16:23Z",
   "targets": [
     {
       "id": "c1",
@@ -794,8 +794,8 @@
       "text": "Whether a signal-wait can also declare a timeout (until signal + duration together) is unsettled - decides the reminder/escalation shape on unanswered questions",
       "kind": "unknown_nonblocking",
       "task_id": "t14",
-      "resolved": false,
-      "resolution": ""
+      "resolved": true,
+      "resolution": "Measured (t14): until refuses signal+duration together at dispatch (TestDispatchWaitValidatesUntilShapes), and DecideContinuation is reached only from async-agent deadline timers - a signal wait has NO timeout path today, so the two-ask bound is structural and pure silence parks forever. Follow-up filed as a Feature issue"
     },
     {
       "id": "r3",

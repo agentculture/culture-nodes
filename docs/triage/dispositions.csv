@@ -93,3 +93,4 @@ issue,bucket,disposition,evidence_pointer
 170,bug tail,"make a code node's resolved input reach its process; blocks code-to-code data flow for the combining loop (t2-t5) and spec-chain moves",internal/worker/code.go buildCodeOperation vs worker.go:395 + examples/spec-chain gap 1
 171,finish work,"build the artifact GET/consume side with the POST's custody discipline; unblocks decision c25 frame-as-artifact travel",internal/artifacts Router.Get with no HTTP caller + deviation d2
 172,bug tail,"rewrite examples/pr-upkeep/README.md against the v2 event-driven workflow it ships beside",examples/pr-upkeep/README.md v1 nodes vs workflow.yaml v2
+173,finish work,"give a signal wait a declared timeout edge (reminder/escalation on silence); timer rows already exist, the wait-park path just never writes one",internal/worker/wait.go decodeUntil + examples/jira-question-round-trip header gap note

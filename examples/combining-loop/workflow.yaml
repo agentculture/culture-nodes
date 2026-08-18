@@ -42,8 +42,17 @@
 #    mistakes, not against the host.
 #
 # ---------------------------------------------------------------------------
-# WHAT THIS GRAPH DECLARES THAT A DEPLOYMENT MUST SUPPLY
+# Deployment configuration — WHAT THIS GRAPH NEEDS FROM OUTSIDE THE FILE
 # ---------------------------------------------------------------------------
+#
+#   RUNNER REGISTRY (ids in `uses:`, resolved against this deployment's
+#   runner-services registry — `nodes runner-services register`):
+#     runner://headspace/combining-loop   the runner service executing the
+#                                         harvest/stage/merge/release
+#                                         operations on a host that owns the
+#                                         integration checkout.
+#     runner://headspace/tdd-gate         the gate runner, exactly as
+#                                         examples/merge-gate registers it.
 #
 #   COMBINING_LOOP_SOURCE_URL / _SHA256   where the node program is fetched
 #                                         from and the digest the bootstrap

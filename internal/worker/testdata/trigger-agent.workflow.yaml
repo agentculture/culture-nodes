@@ -1,0 +1,68 @@
+# A trigger-bearing, agent-entry workflow for task t6's burst-pacing tests
+# (plan jira-driven-idea-to-shipped-loop, spec c34/h19): the smallest
+# workflow whose entry node dispatches to a real actor and completes,
+# reached through Store.DeliverSignalEvent rather than engine.CreateRun --
+# the same inbound path a real Jira ready-event takes
+# (internal/api/signalevents.go's handleDeliverEvent), so the pacing tests
+# in pacing_trigger_test.go exercise dispatch pacing against runs the engine
+# itself created from a burst of matching events, not runs a test handed it
+# directly.
+apiVersion: nodes.culture.dev/v1alpha1
+kind: Workflow
+
+metadata:
+  name: worker-trigger-agent-slice
+  version: 1.0.0
+  ownerRef: team/platform-ai
+
+spec:
+  entry: work
+
+  contract:
+    input:
+      schema:
+        type: object
+        required: [subject]
+        properties:
+          subject:
+            type: string
+    output:
+      schema:
+        type: object
+
+  triggers:
+    - onEvent: test.jira-ready
+
+  limits:
+    maxDuration: 1h
+    maxTransitions: 8
+    maxVisitsPerNode: 4
+    maxParallelTokens: 1
+
+  nodes:
+    work:
+      kind: agent
+      ownerRef: team/platform-ai
+      uses: actor://company/analyzer@sha256:aaaaaa
+      input:
+        from: /run/input
+      contract:
+        outcomes:
+          completed:
+            schema:
+              type: object
+      policy:
+        timeout: 2m
+        retry:
+          maxAttempts: 1
+          backoff: none
+
+    finish:
+      kind: end
+      ownerRef: team/platform-ai
+      output:
+        from: /nodes/work/output
+
+  edges:
+    - from: work.completed
+      to: finish

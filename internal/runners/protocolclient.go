@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"sync/atomic"
 	"time"
 )
 
@@ -90,6 +91,43 @@ func (s StaticSecrets) ResolveSecret(_ context.Context, ref string) (string, err
 		return "", fmt.Errorf("runners: no secret is configured for reference %q", ref)
 	}
 	return secret, nil
+}
+
+// ReloadableSecrets is a SecretResolver whose backing StaticSecrets can be
+// replaced atomically while requests are in flight (task t19, issue #8: a
+// runner-service registry change should not need a worker restart to take
+// effect). A ProtocolClient is built with one once and keeps it for its
+// whole lifetime; a reload calls Store with the freshly parsed secret set
+// instead of rebuilding the client — the client's own construction stays a
+// one-time cost, and only the credential material underneath it changes.
+//
+// The swap is one atomic pointer write, so a request resolving a secret
+// concurrently with a Store call sees either the complete old map or the
+// complete new one, never a partial mix of the two.
+type ReloadableSecrets struct {
+	current atomic.Pointer[StaticSecrets]
+}
+
+// NewReloadableSecrets returns a resolver seeded with initial.
+func NewReloadableSecrets(initial StaticSecrets) *ReloadableSecrets {
+	r := &ReloadableSecrets{}
+	r.Store(initial)
+	return r
+}
+
+// Store atomically replaces the backing secrets.
+func (r *ReloadableSecrets) Store(next StaticSecrets) {
+	r.current.Store(&next)
+}
+
+// ResolveSecret implements SecretResolver, delegating to whichever
+// StaticSecrets was most recently Stored.
+func (r *ReloadableSecrets) ResolveSecret(ctx context.Context, ref string) (string, error) {
+	current := r.current.Load()
+	if current == nil {
+		return "", fmt.Errorf("runners: no secrets have been loaded for reference %q", ref)
+	}
+	return current.ResolveSecret(ctx, ref)
 }
 
 // CallbackOffer is the optional completion-callback block a dispatch offers.

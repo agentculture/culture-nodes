@@ -270,18 +270,20 @@ func (eq engineQueries) EnqueueWork(ctx context.Context, nodeRunID string, avail
 
 const insertRunSQL = `
 INSERT INTO runs (id, namespace_id, workflow_version_id, status, input, created_at, updated_at,
-                  name, description, category, actor_affinity)
-VALUES ($1, $2, $3, $4, $5, $6, $6, NULLIF($7, ''), NULLIF($8, ''), NULLIF($9, ''), $10)
+                  name, description, category, actor_affinity, subject)
+VALUES ($1, $2, $3, $4, $5, $6, $6, NULLIF($7, ''), NULLIF($8, ''), NULLIF($9, ''), $10, NULLIF($11, ''))
 `
 
 // InsertRun records a new run. Metadata rides the same INSERT so POST
 // /v1alpha1/runs has no post-commit failure window (empty string -> NULL,
-// matching migrations/0013's nullable columns).
+// matching migrations/0013's nullable columns). Subject (migrations/0038,
+// task t15) follows the same empty-string-is-NULL rule: an operator-created
+// run, or a triggered run whose event carried none, stores NULL.
 func (eq engineQueries) InsertRun(ctx context.Context, run engine.Run) error {
 	_, err := eq.q.Exec(ctx, insertRunSQL,
 		run.ID, eq.namespaceID, run.WorkflowVersionID, string(run.State),
 		jsonOrEmptyObject(run.Input), tsOrNow(run.CreatedAt),
-		run.Name, run.Description, run.Category, jsonOrNil(run.ActorAffinity),
+		run.Name, run.Description, run.Category, jsonOrNil(run.ActorAffinity), run.Subject,
 	)
 	if err != nil {
 		return fmt.Errorf("postgres: engine: InsertRun: %w", err)
@@ -315,7 +317,7 @@ func (eq engineQueries) UpdateRunState(ctx context.Context, runID string, state 
 
 const selectRunSQL = `
 SELECT r.id, r.namespace_id, r.workflow_version_id, wv.content_digest, r.status,
-       r.input, r.output, r.created_at, r.updated_at, r.completed_at, r.actor_affinity
+       r.input, r.output, r.created_at, r.updated_at, r.completed_at, r.actor_affinity, r.subject
 FROM runs AS r
 JOIN workflow_versions AS wv ON wv.id = r.workflow_version_id
 WHERE r.id = $1 AND r.namespace_id = $2
@@ -334,10 +336,11 @@ func (eq engineQueries) Run(ctx context.Context, runID string) (engine.Run, erro
 		updatedAt   pgtype.Timestamptz
 		completedAt pgtype.Timestamptz
 		affinity    []byte
+		subject     pgtype.Text
 	)
 	err := eq.q.QueryRow(ctx, selectRunSQL, runID, eq.namespaceID).Scan(
 		&run.ID, &run.NamespaceID, &run.WorkflowVersionID, &run.WorkflowDigest, &status,
-		&input, &output, &createdAt, &updatedAt, &completedAt, &affinity,
+		&input, &output, &createdAt, &updatedAt, &completedAt, &affinity, &subject,
 	)
 	if err != nil {
 		if isNoRows(err) {
@@ -355,6 +358,7 @@ func (eq engineQueries) Run(ctx context.Context, runID string) (engine.Run, erro
 	// bytes "null": a run that resolved no affinity must read back as absent,
 	// which is what every caller branches on.
 	run.ActorAffinity = jsonOrNil(affinity)
+	run.Subject = textOrEmpty(subject)
 	return run, nil
 }
 

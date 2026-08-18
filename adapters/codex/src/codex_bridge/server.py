@@ -79,6 +79,58 @@ def _now_iso() -> str:
     return datetime.now(timezone.utc).isoformat()
 
 
+def _resume_session_lost(result: codex_cli.SyncRunResult) -> bool:
+    """Recognise only provider diagnostics that say the resume handle died."""
+    text = "\n".join(
+        part
+        for part in (
+            result.stderr,
+            json.dumps(result.task_result, sort_keys=True) if result.task_result else "",
+        )
+        if part
+    ).lower()
+    return any(
+        marker in text
+        for marker in (
+            "session not found",
+            "thread not found",
+            "unknown session",
+            "unknown thread",
+            "invalid continuation",
+            "expired session",
+            "expired thread",
+        )
+    )
+
+
+def _prepend_resume_rebrief(instruction: str, raw_input: dict[str, Any]) -> str:
+    """Bound the cold fork's context to the facts needed to answer safely."""
+    resume_event = raw_input.get("resume_event")
+    question = raw_input.get("question")
+    answer: Any = None
+    if isinstance(resume_event, dict):
+        payload = resume_event.get("payload", resume_event)
+        if isinstance(payload, dict):
+            answer = payload.get("answer")
+    minimal = {
+        "question_id": raw_input.get("question_id"),
+        "originating_question_id": (
+            resume_event.get("originating_question_id") if isinstance(resume_event, dict) else None
+        ),
+    }
+    rebrief = {
+        "question": question,
+        "answer": answer,
+        "context": {key: value for key, value in minimal.items() if value is not None},
+    }
+    return (
+        "RESUME RE-BRIEF (provider session was lost):\n"
+        + json.dumps(rebrief, ensure_ascii=False, sort_keys=True)
+        + "\n\n"
+        + instruction
+    )
+
+
 class Bridge:
     """The long-lived state one bridge process holds: config, idempotency
     store, and the async invocation registry. One instance is shared by
@@ -564,6 +616,7 @@ class Handler(BaseHTTPRequestHandler):
             resolved_repo,
             model,
             sandbox,
+            raw_input=raw_input,
             handover=handover,
             session_key=session_key,
             held=held,
@@ -579,6 +632,7 @@ class Handler(BaseHTTPRequestHandler):
         model: str | None,
         sandbox: str | None,
         *,
+        raw_input: dict[str, Any] | None = None,
         handover: bool = False,
         session_key: str | None = None,
         held: bool = False,
@@ -599,6 +653,20 @@ class Handler(BaseHTTPRequestHandler):
                 continuation_ref=ctx.continuation_ref,
                 writable_git=handover,
             )
+            if ctx.continuation_ref and session_key and _resume_session_lost(result):
+                self.bridge.session_registry.record_lost_resume(session_key, idem_key)
+                cold_instruction = _prepend_resume_rebrief(instruction, raw_input or {})
+                ctx = dataclasses.replace(ctx, continuation_ref=None)
+                forked = True
+                result = codex_cli.run_sync(
+                    cfg,
+                    cold_instruction,
+                    repo,
+                    model=model,
+                    sandbox=sandbox,
+                    continuation_ref=None,
+                    writable_git=handover,
+                )
         finally:
             # t6 (c44/h37): the provider call is over (successfully or
             # not) — release the session_key slot so the NEXT invocation

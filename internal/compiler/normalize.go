@@ -90,6 +90,14 @@ func expandLimits(authored *limits) limits {
 	if authored.MaxParallelTokens != nil {
 		out.MaxParallelTokens = authored.MaxParallelTokens
 	}
+	// MaxConcurrentSubjectRuns is carried, not expanded -- see the field's
+	// doc comment (model.go) and Budget's identical treatment just below in
+	// this file: absent means uncapped, and inventing a ceiling for a
+	// workflow that declared none would refuse subject-bearing triggers a
+	// workflow author never asked to be bounded.
+	if authored.MaxConcurrentSubjectRuns != nil {
+		out.MaxConcurrentSubjectRuns = authored.MaxConcurrentSubjectRuns
+	}
 	return out
 }
 

@@ -2,6 +2,7 @@ package worker
 
 import (
 	"context"
+	"crypto/sha256"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -78,6 +79,18 @@ func (w *Worker) dispatchActor(
 	// verdict on this work. See breaker.go for the whole argument.
 	if pause, paused := w.activePauseFor(ctx, node); paused {
 		return w.deferForPause(ctx, claimed, node, dc, pause)
+	}
+
+	// The per-actor concurrency ceiling (task t16, issue #166's second
+	// half), checked right after the breaker and for the same reason: it is
+	// a statement about capacity, not a verdict on the work, so it DEFERS —
+	// see concurrency.go's package doc comment for what it counts, why it is
+	// a concurrency ceiling rather than a rate, and the async-only gap it
+	// inherits from the durable fact (actor_invocations) it is built on.
+	// session.ActorRowID is already resolved above; this never re-resolves
+	// it.
+	if limit, inFlight, atCapacity := w.atActorCapacity(ctx, node, session.ActorRowID); atCapacity {
+		return w.deferForCapacity(ctx, claimed, node, dc, session.ActorRowID, limit, inFlight)
 	}
 
 	// The clarify-then-commit gate (task t14, issue #67), checked between the
@@ -165,7 +178,10 @@ func (w *Worker) dispatchActor(
 		// is the one the registry holds — an input that names a repository
 		// loses the argument, and an actor that registers no identity is
 		// dispatched without one. See actors.WithRepositoryIdentity.
-		Input:           actors.WithRepositoryIdentity(dc.Input, endpoint.RepositoryIdentity),
+		Input: actors.WithSessionKey(
+			actors.WithRepositoryIdentity(dc.Input, endpoint.RepositoryIdentity),
+			sessionKey(dc.RunID, session.ActorRowID, endpoint.RepositoryIdentity),
+		),
 		ContinuationRef: session.ContinuationRef,
 	}
 	if !dc.Deadline.IsZero() {
@@ -228,6 +244,21 @@ func (w *Worker) dispatchActor(
 		return w.refuseAsyncPostRun(ctx, claimed, d, node, dc, preRun)
 	}
 	return w.park(ctx, claimed, d, node, dc, response.Accepted)
+}
+
+// sessionKey names the conversation lane whose continuation_ref accompanies
+// it. The digest keeps actor/repository identities out of logs and prompts;
+// run scope is the currently supported workstream boundary (ADR 0010).
+func sessionKey(runID, actorRowID, repositoryIdentity string) string {
+	// No registered repository identity means no ADR 0010 lane to name:
+	// the actor dispatches exactly as it did before session keys existed
+	// (TestDispatchWithoutARegisteredIdentityIsUnchanged pins that), and
+	// continuation still works run-scoped via priorContinuationRef.
+	if runID == "" || actorRowID == "" || repositoryIdentity == "" {
+		return ""
+	}
+	sum := sha256.Sum256([]byte(actorRowID + "\x00" + repositoryIdentity + "\x00" + runID))
+	return fmt.Sprintf("session:%x", sum[:16])
 }
 
 // priorContinuationRef is §13.1's continuation_ref for this dispatch: the

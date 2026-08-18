@@ -510,3 +510,89 @@ func TestKindOfAnUnregisteredNameIsNotAGuess(t *testing.T) {
 		t.Errorf("Kind of an unregistered name = %q/%v, want \"\"/false", kind, ok)
 	}
 }
+
+// TestReloadServicesReplacesTheWholeServiceSet is task t19's core registry
+// property (issue #8's "runner services load at worker start only" gap): a
+// name repointed through ReloadServices is accepted -- unlike RegisterService,
+// which refuses exactly that -- and a name dropped from the reload's map is
+// no longer resolvable, because the reload's set is the new complete truth.
+func TestReloadServicesReplacesTheWholeServiceSet(t *testing.T) {
+	registry := runners.NewFunctionRegistry()
+	first := runners.ServiceIdentity{Endpoint: testEndpoint, ImageDigest: testDigest, SecretRef: testSecret}
+	if err := registry.RegisterService("delivery-loop/keep", first); err != nil {
+		t.Fatalf("RegisterService: %v", err)
+	}
+	if err := registry.RegisterService("delivery-loop/drop", first); err != nil {
+		t.Fatalf("RegisterService: %v", err)
+	}
+
+	moved := first
+	moved.Endpoint = "https://runner.orin.internal:8443"
+	if err := registry.ReloadServices(map[string]runners.ServiceIdentity{
+		"delivery-loop/keep": moved, // repointed -- refused by RegisterService, accepted here
+		"delivery-loop/new":  first, // newly added
+		// "delivery-loop/drop" is absent: it must stop resolving.
+	}); err != nil {
+		t.Fatalf("ReloadServices: %v", err)
+	}
+
+	kept, err := registry.ResolveService("delivery-loop/keep")
+	if err != nil {
+		t.Fatalf("ResolveService(keep): %v", err)
+	}
+	if kept.Endpoint != moved.Endpoint {
+		t.Errorf("reload did not repoint delivery-loop/keep: got %s", kept.Endpoint)
+	}
+	if _, err := registry.ResolveService("delivery-loop/new"); err != nil {
+		t.Errorf("ResolveService(new): %v", err)
+	}
+	if _, err := registry.ResolveService("delivery-loop/drop"); err == nil {
+		t.Error("delivery-loop/drop should no longer resolve after a reload that omitted it")
+	}
+}
+
+// TestReloadServicesRefusesAnInvalidEntryWithoutChangingAnything is the
+// all-or-nothing property: one malformed identity in the reload set must
+// leave every already-registered name exactly as it was, not half-replaced.
+func TestReloadServicesRefusesAnInvalidEntryWithoutChangingAnything(t *testing.T) {
+	registry := runners.NewFunctionRegistry()
+	good := runners.ServiceIdentity{Endpoint: testEndpoint, ImageDigest: testDigest, SecretRef: testSecret}
+	if err := registry.RegisterService("delivery-loop/keep", good); err != nil {
+		t.Fatalf("RegisterService: %v", err)
+	}
+
+	err := registry.ReloadServices(map[string]runners.ServiceIdentity{
+		"delivery-loop/keep": good,
+		"delivery-loop/bad":  {Endpoint: testEndpoint}, // no digest, no secret ref: invalid
+	})
+	if err == nil {
+		t.Fatal("ReloadServices with an invalid entry must be refused")
+	}
+
+	kept, resolveErr := registry.ResolveService("delivery-loop/keep")
+	if resolveErr != nil {
+		t.Fatalf("a refused reload must not disturb an already-registered name: %v", resolveErr)
+	}
+	if kept.Endpoint != testEndpoint {
+		t.Errorf("delivery-loop/keep changed despite the refused reload: %s", kept.Endpoint)
+	}
+	if _, err := registry.ResolveService("delivery-loop/bad"); err == nil {
+		t.Error("the invalid entry must not have been registered either")
+	}
+}
+
+// TestReloadServicesRefusesCollidingWithAFunctionIdentity keeps the
+// registry's one-name-one-kind invariant across a reload the same way it
+// holds across two direct RegisterX calls.
+func TestReloadServicesRefusesCollidingWithAFunctionIdentity(t *testing.T) {
+	registry := testRegistry(t) // registers "deliver-change/run-tests" as a function
+	err := registry.ReloadServices(map[string]runners.ServiceIdentity{
+		"deliver-change/run-tests": {Endpoint: testEndpoint, ImageDigest: testDigest, SecretRef: testSecret},
+	})
+	if err == nil {
+		t.Fatal("a reload that collides with a registered function identity must be refused")
+	}
+	if kind, ok := registry.Kind("deliver-change/run-tests"); !ok || kind != runners.IdentityFunction {
+		t.Errorf("the function identity must survive the refused reload, got kind=%q ok=%v", kind, ok)
+	}
+}

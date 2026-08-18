@@ -69,6 +69,11 @@ type PickupEvent struct {
 	Name    string
 	Emitter string
 	Payload json.RawMessage
+	// Subject is the caller-supplied correlation key (task t15, spec
+	// c31/h16) -- e.g. a Jira issue key. Empty when the deliverer supplied
+	// none, which is every caller that predates this task. TriggerEvent is
+	// the only reader today; event-route pickup does not consult it.
+	Subject string
 }
 
 // Pickup refusal reasons (design D13). `guard` is the ordinary answer for a

@@ -1,0 +1,80 @@
+{
+  "plan_slug": "jira-driven-idea-to-shipped-loop",
+  "schema_version": 1,
+  "created": "2026-08-18T06:44:06Z",
+  "updated": "2026-08-18T08:53:00Z",
+  "deviations": [
+    {
+      "id": "d1",
+      "what": "t10 partial harvest: codex-orin removed the sweep's Jira READ path (fetch, auth, tests) on a literal reading of boundary c5's 'holds only the event-ingress token'; staging kept the bridge and rejected the removal, and the custody audit's sweep half now forbids a write-shaped endpoint instead of the read pair. c5 needs rewording: read credentials stay in the sweep, WRITE authority is actor-only",
+      "task_ref": "t10",
+      "reason": "spec boundary c5 over-compressed the #76 design; the finding source and resume emitter would have died",
+      "affects": [
+        "t11",
+        "t17"
+      ],
+      "origin": "llm",
+      "status": "proposed",
+      "classification": "needs-follow-up"
+    },
+    {
+      "id": "d2",
+      "what": "spec claim c13 is half-true at HEAD: the artifact carrier has an ingest route but NO read side (POST-only, pinned by TestArtifactSurfaceExposesOnlyAuthenticatedPost), so decision c25's frame-as-artifact travel is not yet implementable for consumers; t18's workflow declares it honestly in its gap list",
+      "task_ref": "t18",
+      "reason": "measured at HEAD by the t18 build; c13 as confirmed overstates #79's closure",
+      "affects": [
+        "t20"
+      ],
+      "origin": "llm",
+      "status": "proposed",
+      "classification": "needs-follow-up"
+    },
+    {
+      "id": "d3",
+      "what": "spec claim c6 names 'human-inbox approval nodes', a composition that does not exist: an approval node parks on the engine's pending-decisions surface; human-inbox is a section-13 actor bridge serving agent nodes. t18 used the engine's own approval surface and said so",
+      "task_ref": "t18",
+      "reason": "vocabulary conflated two human surfaces; grep of adapters/ for human_tasks/pending-decisions returns zero",
+      "affects": [],
+      "origin": "llm",
+      "status": "proposed",
+      "classification": "acceptable"
+    },
+    {
+      "id": "d4",
+      "what": "Scope addition: fix #170 (a code node's resolved input never reaches its process) inside this cycle - the combining loop's harvest/stage/merge code nodes cannot receive per-run values (ref, candidate SHA) without it, so t5's graph would compile but t8's live demo could not feed a single code step. The fix is small at the measured seam (buildCodeOperation lowers dc.Input into the operation environment) and is a Bug repair, not new design",
+      "task_ref": "t5",
+      "reason": "every wave-0/2 honest-gap list converged on the same blocker; documented-around is not runnable",
+      "affects": [
+        "t8",
+        "t20"
+      ],
+      "origin": "llm",
+      "status": "proposed",
+      "classification": "acceptable"
+    },
+    {
+      "id": "d5",
+      "what": "t16 partial coverage: tag-pinned placement (the third leg of #166/c36) is deferred - no tag concept exists in the actors table, registry, or affinity resolution, so building it is a placement redesign (registry schema + selection policy + recorded-placement durability), not a fit for the dispatch seam t16 built on. The configurable max and per-machine ceiling shipped; h21's tag-pinned clause is split out to a follow-up Feature",
+      "task_ref": "t16",
+      "reason": "measured absence of any tag concept; forcing it through the wrong seam would fake the acceptance",
+      "affects": [
+        "t20"
+      ],
+      "origin": "llm",
+      "status": "proposed",
+      "classification": "acceptable"
+    },
+    {
+      "id": "d6",
+      "what": "t8 demonstration adaptations: (a) headspace-cli 0.11.0 ships exactly one profile (python:3.12-slim, no git, registry is a code literal), so the committed combining-loop workflow cannot execute its git operations through the shipped runner profile - the demo published a LOCAL variant (1.0.x, not committed) whose bootstraps apt-install git and clone from the granted remote; (b) the in-attempt gate-report FK bug (#178) is worked around in the variant by dropping NODES_ATTEMPT_ID before the gate runs. Both adaptations are deployment-side, the committed example is unchanged, and the full loop ran live to a merged feature branch under them",
+      "task_ref": "t8",
+      "reason": "measured live: one git-less profile; ledger FK on attempts written only at completion",
+      "affects": [
+        "t20"
+      ],
+      "origin": "llm",
+      "status": "proposed",
+      "classification": "acceptable"
+    }
+  ]
+}

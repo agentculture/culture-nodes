@@ -83,6 +83,26 @@ const (
 	// the loser of an any/quorum barrier, or a live branch retired because
 	// a terminal branch failure (or cancellation, or a bound) ended the run.
 	TypeBranchCancelled = "dev.culture.nodes.branch.cancelled"
+
+	// TypeTriggerEventAttached records a matching trigger event that did
+	// NOT spawn a new run (task t15, spec c31/h16): an ACTIVE run already
+	// claims the event's subject, so this is the "second event's effect...
+	// visible on the existing run, not a sibling" the honesty condition
+	// asks for. It carries the attaching event's id/name/payload on the
+	// EXISTING run's own stream, exactly where an operator inspecting that
+	// run would look for it.
+	TypeTriggerEventAttached = "dev.culture.nodes.trigger.event-attached"
+
+	// TypeTriggerQueueDrained records a run created from a deferred-trigger
+	// queue entry (task t16, spec c36/h21) rather than at first match: its
+	// workflow's MaxConcurrentSubjectRuns ceiling had no headroom when the
+	// triggering event arrived, so it waited until another subject-bearing
+	// run of the same workflow reached a terminal state and freed a slot
+	// (DrainSubjectTriggerQueue). There was no run to record this against
+	// while it waited -- the queued row's own created_at was the only trace
+	// until now -- so this lands on the NEW run's own stream, carrying how
+	// long it waited and which run's completion freed its slot.
+	TypeTriggerQueueDrained = "dev.culture.nodes.trigger.queue-drained"
 )
 
 // event builds an EventInput, encoding data into the payload. Encoding cannot

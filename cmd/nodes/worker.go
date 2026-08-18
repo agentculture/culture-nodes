@@ -170,7 +170,7 @@ func cmdWorker(args []string, jsonMode bool) (int, error) {
 	if err != nil {
 		return 0, err
 	}
-	runnerSvc, cliErr := runnerServiceConfig()
+	runnerSvc, runnerReloader, cliErr := runnerServiceConfig()
 	if cliErr != nil {
 		return 0, cliErr
 	}
@@ -178,6 +178,13 @@ func cmdWorker(args []string, jsonMode bool) (int, error) {
 	// pacing; malformed configuration refuses to start rather than silently
 	// dispatching unpaced (see pacing.go).
 	pacingOpts, cliErr := pacingConfig()
+	if cliErr != nil {
+		return 0, cliErr
+	}
+	// Task t16: the declared per-actor concurrency ceilings. Same failure
+	// posture as pacing: absent configuration is no ceiling, malformed
+	// configuration refuses to start (see concurrency.go).
+	concurrencyOpts, cliErr := concurrencyConfig()
 	if cliErr != nil {
 		return 0, cliErr
 	}
@@ -194,6 +201,7 @@ func cmdWorker(args []string, jsonMode bool) (int, error) {
 		WorkerID:           os.Getenv(envWorkerIdentifier),
 		Handover:           handoverObs,
 		Pacing:             pacingOpts,
+		Concurrency:        concurrencyOpts,
 		NamespaceID:        namespace,
 		ClaimBatch:         *batch,
 		LeaseDuration:      *leaseDuration,
@@ -220,15 +228,28 @@ func cmdWorker(args []string, jsonMode bool) (int, error) {
 		}
 	}
 
+	// task t19 (issue #8): a registered runner-service file change takes
+	// effect on this worker's next reload check, no restart required. The
+	// checker shares the same registry and secrets wk was just built with, so
+	// there is nothing to hand back to wk once it starts -- reloading mutates
+	// state wk already holds a reference to. It stops with the worker, on the
+	// same ctx.
+	if runnerReloader != nil {
+		go runnerReloader.poll(ctx, *pollInterval, func(err error) {
+			clifmt.EmitDiagnostic(fmt.Sprintf("nodes worker: runner-service reload: %v", err))
+		})
+	}
+
 	startup := map[string]any{
-		"mode":              "worker",
-		"worker_id":         wk.ID(),
-		"namespace_id":      namespace,
-		"batch":             *batch,
-		"poll_interval":     pollInterval.String(),
-		"lease":             leaseDuration.String(),
-		"callback_base_url": callbackBase,
-		"async_capable":     signer != nil && callbackBase != "",
+		"mode":                     "worker",
+		"worker_id":                wk.ID(),
+		"namespace_id":             namespace,
+		"batch":                    *batch,
+		"poll_interval":            pollInterval.String(),
+		"lease":                    leaseDuration.String(),
+		"callback_base_url":        callbackBase,
+		"async_capable":            signer != nil && callbackBase != "",
+		"runner_services_reloaded": runnerReloader != nil,
 	}
 	if jsonMode {
 		if err := clifmt.EmitResultJSON(startup); err != nil {
@@ -439,10 +460,10 @@ Stops cleanly on SIGINT or SIGTERM.
 // set, it instruments both this worker's dispatch seam and the engine
 // instance it drives, so a node completed by this in-process worker emits
 // the same engine-transition telemetry the API server's own engine would.
-func buildWorker(db *postgres.Store, namespace string, telemetryProvider *telemetry.Provider) (*worker.Worker, *clifmt.CliError) {
+func buildWorker(db *postgres.Store, namespace string, telemetryProvider *telemetry.Provider) (*worker.Worker, *runnerServiceReloader, *clifmt.CliError) {
 	eng, err := postgres.NewEngine(db, namespace, engine.WithTelemetry(telemetryProvider))
 	if err != nil {
-		return nil, &clifmt.CliError{
+		return nil, nil, &clifmt.CliError{
 			Code:        clifmt.ExitEnvError,
 			Message:     fmt.Sprintf("building the engine: %v", err),
 			Remediation: "run 'nodes migrate' and verify the namespace exists",
@@ -450,7 +471,7 @@ func buildWorker(db *postgres.Store, namespace string, telemetryProvider *teleme
 	}
 	registry, err := worker.NewDBRegistry(db, namespace)
 	if err != nil {
-		return nil, &clifmt.CliError{
+		return nil, nil, &clifmt.CliError{
 			Code:        clifmt.ExitEnvError,
 			Message:     fmt.Sprintf("building the actor registry: %v", err),
 			Remediation: "verify the namespace exists and the actors table is populated",
@@ -466,25 +487,30 @@ func buildWorker(db *postgres.Store, namespace string, telemetryProvider *teleme
 				Remediation: "check the NODES_CALLBACK_* environment variables",
 			}
 		}
-		return nil, ce
+		return nil, nil, ce
 	}
-	runnerSvc, cliErr := runnerServiceConfig()
+	runnerSvc, runnerReloader, cliErr := runnerServiceConfig()
 	if cliErr != nil {
-		return nil, cliErr
+		return nil, nil, cliErr
 	}
 	pacingOpts, cliErr := pacingConfig()
 	if cliErr != nil {
-		return nil, cliErr
+		return nil, nil, cliErr
+	}
+	concurrencyOpts, cliErr := concurrencyConfig()
+	if cliErr != nil {
+		return nil, nil, cliErr
 	}
 	handoverObs, cliErr := handoverObserver(db, namespace)
 	if cliErr != nil {
-		return nil, cliErr
+		return nil, nil, cliErr
 	}
 
 	wk, err := worker.New(db, eng, worker.Options{
 		NamespaceID:        namespace,
 		Handover:           handoverObs,
 		Pacing:             pacingOpts,
+		Concurrency:        concurrencyOpts,
 		Registry:           registry,
 		Signer:             signer,
 		CallbackBaseURL:    callbackBase,
@@ -498,11 +524,11 @@ func buildWorker(db *postgres.Store, namespace string, telemetryProvider *teleme
 		},
 	})
 	if err != nil {
-		return nil, &clifmt.CliError{
+		return nil, nil, &clifmt.CliError{
 			Code:        clifmt.ExitEnvError,
 			Message:     fmt.Sprintf("building the worker: %v", err),
 			Remediation: "this is an environment fault; file a bug if it persists",
 		}
 	}
-	return wk, nil
+	return wk, runnerReloader, nil
 }

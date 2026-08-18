@@ -263,6 +263,11 @@
             "maxParallelTokens": {
               "type": "integer",
               "minimum": 1
+            },
+            "maxConcurrentSubjectRuns": {
+              "type": "integer",
+              "minimum": 1,
+              "description": "Task t16, spec c36/h21: the most active runs this workflow may hold at once for subject-bearing triggers (e.g. one per Jira issue in flight), counted across ALL subjects together. Unlike the other limits above, this is carried, not expanded -- an omitted value means uncapped, exactly like `budget`, because a workflow that never uses `triggers[].onEvent` with a subject has nothing for it to bound. A trigger that would exceed it does not create a run; the event is queued and drained by a later matching event or run completion (internal/engine/trigger.go's TriggerEvent)."
             }
           }
         },

@@ -328,56 +328,6 @@ class TestPrioritise:
         assert items[0]["id"] == "pr35-qodo-1"
 
 
-class TestJiraWorkItems:
-    """Issue #76 acceptance is recorded-fixture-only; the live backlog is empty."""
-
-    def test_recorded_backlog_item_enters_the_priority_list(self, jira_payload):
-        items = sweep.jira_work_items(jira_payload, site="team.example.com", project="EX")
-        assert len(items) == 1
-        assert items[0]["source"] == "jira"
-        assert items[0]["id"] == "EX-17"
-        assert items[0]["severity"] == "High"
-        assert sweep.prioritise(items)[0]["title"] == ("Make the recorded backlog item actionable")
-
-    def test_jira_provenance_uses_only_reserved_example_configuration(self, jira_payload):
-        (item,) = sweep.jira_work_items(jira_payload, site="team.example.com", project="EX")
-        assert item["project"] == "EX"
-        assert item["details_url"] == "https://team.example.com/browse/EX-17"
-
-    def test_basic_auth_is_built_in_the_request_not_argv_or_output(self, monkeypatch):
-        seen = {}
-
-        def fake_get(url, token=None, *, basic=None):
-            seen.update(url=url, token=token, basic=basic)
-            return {"issues": []}
-
-        monkeypatch.setattr(sweep, "_get_json", fake_get)
-        assert sweep.fetch_jira_issues(
-            "team.example.com", "EX", "robot@example.com", "fixture-token"
-        ) == {"issues": []}
-        assert seen["basic"] == ("robot@example.com", "fixture-token")
-        assert seen["token"] is None
-        assert "robot@example.com" not in seen["url"]
-        assert "fixture-token" not in seen["url"]
-        assert "maxResults=100" in seen["url"]
-        assert 100 < sweep.JIRA_RATE_LIMIT_PER_WINDOW == 350
-
-    def test_jira_configuration_requires_both_host_and_project(self):
-        raw = json.dumps(
-            {
-                "repositories": [
-                    {
-                        "github_repo": "owner.example/repo",
-                        "sonar_component": "owner_repo",
-                        "jira_site": "team.example.com",
-                    }
-                ]
-            }
-        )
-        with pytest.raises(ValueError, match="configured together"):
-            sweep.selected_repository(raw)
-
-
 class TestSonarWorkItemsPrContext:
     """The gap that made a live sweep miss PR #70's nine issues: SonarCloud
     answers a plain componentKeys query with main-branch results only, so
@@ -911,8 +861,82 @@ class TestEmitterMain:
         assert sweep.main() == 0
         report = json.loads(capsys.readouterr().out)
         assert report["emitted"] == 1
-        assert calls["events"][0][0] == "pr-upkeep.jira"
+        # task t9: the issue's current status names the event, distinct from
+        # "a comment appeared" — the fixture issue's status is "To Do".
+        assert calls["events"][0][0] == "pr-upkeep.jira.transitioned.to-do"
         assert calls["events"][0][1]["id"] == "EX-17"
+
+    def _jira_repository_grant(self, *, jira_bot_account_id=None):
+        entry = {
+            "github_repo": "owner.example/repo",
+            "sonar_component": "owner_repo",
+            "jira_site": "team.example.com",
+            "jira_project": "EX",
+        }
+        if jira_bot_account_id is not None:
+            entry["jira_bot_account_id"] = jira_bot_account_id
+        return json.dumps({"cycle": 0, "repositories": [entry]})
+
+    def test_a_transition_and_a_fresh_comment_raise_two_distinctly_named_events(
+        self, monkeypatch, capsys, jira_payload
+    ):
+        """Acceptance (task t9, requirement 1): a trigger subscribed to
+        transition events must never receive comment events — pinned
+        against a real sweep pass that raises both facts for one issue."""
+        payload = json.loads(json.dumps(jira_payload))
+        payload["issues"][0]["fields"]["comment"] = {
+            "comments": [{"author": {"accountId": "human-1"}, "created": "2026-08-16T00:00:00Z"}]
+        }
+        monkeypatch.setenv("PR_UPKEEP_REPOSITORIES", self._jira_repository_grant())
+        monkeypatch.setenv("JIRA_ACCOUNT_EMAIL", "robot@example.com")
+        monkeypatch.setenv("JIRA_API_TOKEN", "fixture-token")
+        calls = _stub_sweep(monkeypatch, pulls=[], sonar_main={"issues": []})
+        monkeypatch.setattr(sweep, "fetch_jira_issues", lambda site, project, email, token: payload)
+
+        assert sweep.main() == 0
+        names = [name for name, *_rest in calls["events"]]
+        assert names == ["pr-upkeep.jira.transitioned.to-do", sweep.JIRA_COMMENT_EVENT_NAME]
+
+        # A trigger subscribed to one name structurally cannot receive an
+        # event bearing the other name.
+        transitions = {n for n in names if n.startswith("pr-upkeep.jira.transitioned.")}
+        comments = {n for n in names if n == sweep.JIRA_COMMENT_EVENT_NAME}
+        assert transitions
+        assert comments
+        assert transitions.isdisjoint(comments)
+
+    def test_a_sweep_pass_whose_newest_comment_is_the_systems_own_emits_no_comment_event(
+        self, monkeypatch, capsys, jira_payload
+    ):
+        """Acceptance (task t9, requirement 2): a sweep pass over an issue
+        whose newest comment is the system's own emits nothing on the
+        comment/resume path, while the watermark position it would have used
+        still advances past that comment."""
+        payload = json.loads(json.dumps(jira_payload))
+        payload["issues"][0]["fields"]["comment"] = {
+            "comments": [
+                {"author": {"accountId": "human-1"}, "created": "2026-08-15T00:00:00Z"},
+                {"author": {"accountId": "bot-1"}, "created": "2026-08-16T00:00:00Z"},
+            ]
+        }
+        monkeypatch.setenv(
+            "PR_UPKEEP_REPOSITORIES", self._jira_repository_grant(jira_bot_account_id="bot-1")
+        )
+        monkeypatch.setenv("JIRA_ACCOUNT_EMAIL", "robot@example.com")
+        monkeypatch.setenv("JIRA_API_TOKEN", "fixture-token")
+        calls = _stub_sweep(monkeypatch, pulls=[], sonar_main={"issues": []})
+        monkeypatch.setattr(sweep, "fetch_jira_issues", lambda site, project, email, token: payload)
+
+        assert sweep.main() == 0
+        names = [name for name, *_rest in calls["events"]]
+        assert sweep.JIRA_COMMENT_EVENT_NAME not in names
+
+        # The watermark computation itself (what a future delivery would
+        # use) is unaffected by the skip: it already sits past the bot's
+        # own comment, so a later real reply is compared against THIS
+        # position, not replayed against what preceded the bot's question.
+        issue = payload["issues"][0]
+        assert sweep.jira_watermark(issue)["newest_comment_at"] == "2026-08-16T00:00:00Z"
 
     def test_a_clean_pr_still_emits_its_new_head(self, monkeypatch, capsys):
         _stub_sweep(

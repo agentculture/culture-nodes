@@ -111,6 +111,30 @@ type InvocationRequest struct {
 	Callback        Callback        `json:"callback"`
 }
 
+// WithSessionKey adds the bridge-only conversation serialization key to an
+// object input without exposing it to workflow bindings. Non-object inputs
+// are returned unchanged: changing their JSON shape at the transport edge
+// would violate the node contract.
+func WithSessionKey(input json.RawMessage, sessionKey string) json.RawMessage {
+	if sessionKey == "" {
+		return input
+	}
+	var object map[string]json.RawMessage
+	if err := json.Unmarshal(input, &object); err != nil || object == nil {
+		return input
+	}
+	encoded, err := json.Marshal(sessionKey)
+	if err != nil {
+		return input
+	}
+	object["session_key"] = encoded
+	result, err := json.Marshal(object)
+	if err != nil {
+		return input
+	}
+	return result
+}
+
 // Usage is the §13.2 telemetry block. Cost and Currency are pointers because
 // §13.2 shows both as nullable: an actor that does not price its work says so
 // with null rather than with a zero that reads as "free".

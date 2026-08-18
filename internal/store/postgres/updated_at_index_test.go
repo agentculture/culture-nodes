@@ -2,6 +2,7 @@ package postgres_test
 
 import (
 	"context"
+	"fmt"
 	"strings"
 	"testing"
 	"time"
@@ -228,8 +229,28 @@ func TestRunsUpdatedAtSortedListingQueryUsesIndexScan(t *testing.T) {
 	`, ns.ID, wv.ID, ids, updatedAts); err != nil {
 		t.Fatalf("bulk insert fixture runs: %v", err)
 	}
+	// Production has many workflow versions; a near-empty
+	// workflow_versions table makes the seq-scan+sort side of a merge join
+	// spuriously cheap, and neighboring tests' seed data has flipped the
+	// plan on CI's shared package database. Seed enough versions that the
+	// intended namespace_updated_at path wins on its merits.
+	for i := 0; i < 150; i++ {
+		if _, err := s.CreateWorkflowVersion(ctx, postgres.CreateWorkflowVersionInput{
+			NamespaceID:   ns.ID,
+			WorkflowKey:   fmt.Sprintf("explain-filler-%d", i),
+			Version:       1,
+			SourceFormat:  "yaml",
+			Source:        "entrypoint: intake\n",
+			ContentDigest: "sha256:" + store.NewULID(),
+		}); err != nil {
+			t.Fatalf("seed filler workflow version %d: %v", i, err)
+		}
+	}
 	if _, err := s.Pool().Exec(ctx, `ANALYZE runs`); err != nil {
 		t.Fatalf("ANALYZE runs: %v", err)
+	}
+	if _, err := s.Pool().Exec(ctx, `ANALYZE workflow_versions`); err != nil {
+		t.Fatalf("ANALYZE workflow_versions: %v", err)
 	}
 
 	windowStart := updatedAts[total-24]

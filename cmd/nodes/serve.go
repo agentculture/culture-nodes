@@ -21,6 +21,7 @@ import (
 	"github.com/agentculture/culture-nodes/internal/scheduler"
 	"github.com/agentculture/culture-nodes/internal/store/postgres"
 	"github.com/agentculture/culture-nodes/internal/telemetry"
+	"github.com/agentculture/culture-nodes/internal/worker"
 )
 
 // defaultListenAddr is NODES_LISTEN's default (PRD §12.1's `nodes serve`).
@@ -279,10 +280,18 @@ func runServeMode(args []string, verb string, withScheduler bool) (int, error) {
 			}
 		}()
 
-		wk, buildErr := buildWorker(db, namespaceID, telemetryProvider)
+		wk, runnerReloader, buildErr := buildWorker(db, namespaceID, telemetryProvider)
 		if buildErr != nil {
 			stop()
 			return 0, buildErr
+		}
+		// task t19 (issue #8): same live-reload wk.opts.RunnerService gets
+		// under `nodes worker` -- a runner-service file change takes effect
+		// on the next check, no restart of this in-process worker required.
+		if runnerReloader != nil {
+			go runnerReloader.poll(ctx, worker.DefaultPollInterval, func(err error) {
+				clifmt.EmitDiagnostic(fmt.Sprintf("nodes %s: runner-service reload: %v", verb, err))
+			})
 		}
 		workerErrs = make(chan error, 1)
 		go func() {

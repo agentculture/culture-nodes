@@ -67,6 +67,10 @@ type limits struct {
 	MaxTransitions    *int   `json:"maxTransitions,omitempty"`
 	MaxVisitsPerNode  *int   `json:"maxVisitsPerNode,omitempty"`
 	MaxParallelTokens *int   `json:"maxParallelTokens,omitempty"`
+	// MaxConcurrentSubjectRuns bounds active subject-bearing runs (task t16,
+	// spec c36/h21). It is carried through normalization, never expanded to a
+	// default the way the three fields above are -- see expandLimits.
+	MaxConcurrentSubjectRuns *int `json:"maxConcurrentSubjectRuns,omitempty"`
 }
 
 // bounded reports whether the author declared any loop bound at all. It is

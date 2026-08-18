@@ -58,6 +58,16 @@ import (
 //     and a subscription created LATER can now consume it — see
 //     internal/store/postgres/signalreplay.go. Delivery itself is unchanged
 //     by that; it remains a broadcast over what is waiting now.
+//
+// A third addition, task t15 (spec c31/h16): an optional `subject` field.
+// Measuring the trigger layer at HEAD found it had no way to recognize "this
+// event is about a subject a run is already in flight for" — every matching
+// trigger created a new run, so a second Jira state-change or comment event
+// on an issue mid-flight spawned a sibling run rather than resuming the one
+// already open. When `subject` is set and a trigger matches, delivery now
+// attaches the event to the existing active run for that (workflow, subject)
+// pair instead — see engine.TriggeredRun.Attached and
+// internal/engine/trigger.go's TriggerEvent.
 
 // deliverEventRequest is components.schemas.DeliverEventRequest.
 type deliverEventRequest struct {
@@ -67,6 +77,14 @@ type deliverEventRequest struct {
 	Emitter   string          `json:"emitter"`
 	SourceKey string          `json:"source_key"`
 	Watermark json.RawMessage `json:"watermark"`
+	// Subject is an optional correlation key (task t15, spec c31/h16) — e.g.
+	// a Jira issue key. It has nothing to do with the SourceKey/Watermark
+	// exact-redelivery cursor above: a different real event (a state change,
+	// then a comment) on the same subject still gets appended, but if it
+	// matches a trigger, the run it produces is the SAME run an earlier
+	// subject-bearing event for this workflow already opened — see
+	// engine.TriggeredRun.Attached.
+	Subject string `json:"subject"`
 }
 
 // SignalEventOut is one appended signal event fact on the wire
@@ -158,6 +176,7 @@ func (s *Server) handleDeliverEvent(w http.ResponseWriter, r *http.Request) erro
 		Trigger:     s.Engine,
 		SourceKey:   req.SourceKey,
 		Watermark:   req.Watermark,
+		Subject:     req.Subject,
 	})
 	if err != nil {
 		return internalError(err)

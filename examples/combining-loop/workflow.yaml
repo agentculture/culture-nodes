@@ -1,0 +1,544 @@
+# The COMBINING LOOP (plan task t5, issue #118 step 7 — the crux).
+#
+# This is the operator's actual job, as a graph: per finished work package,
+# harvest the handed-over ref, stage it onto a candidate of the feature
+# branch, gate the COMBINATION, merge on a green derived verdict, surface the
+# agent's claim for a human decision, and release whatever the package
+# unlocks. Fifteen times by hand in the #87 batch; here it is edges a
+# compiler refuses when they do not cohere.
+#
+# It starts from a durable `combining-loop.package.finished` event — in the
+# stage-1 demonstration (task t8) that event is hand-emitted; in the full
+# loop the developer flow emits it on completion. The wire-level `subject`
+# on the delivering event (the package id) is what the trigger layer dedups
+# on: a second event for a package mid-flight attaches to the existing run
+# rather than spawning a sibling (t15, runs.subject).
+#
+# ---------------------------------------------------------------------------
+# HOW DOMAIN ANSWERS AND DATA TRAVEL (two measured constraints)
+# ---------------------------------------------------------------------------
+#
+# 1. ANSWERS RIDE EXIT CODES, ROUTED BY A DECISION NODE. The worker's
+#    outcome resolver recognises exactly two vocabularies (passed/failed and
+#    the gate trio); a graph cannot declare its own exit-code map. And a code
+#    node's output document is operation metadata — operation_id, state,
+#    exit_code (internal/runners' buildOutput) — NEVER program stdout. So
+#    `stage` answers passed/failed, and `stage-verdict` routes its failure
+#    port on `output.exit_code` (1 = merge_conflict, 3 = routes_to_human,
+#    anything else = environment) — the development-loop idiom. The gate node
+#    speaks the recognised three-answer vocabulary directly.
+#
+# 2. DATA TRAVELS AS A DETERMINISTIC REF, NOT A PAYLOAD. Because stdout never
+#    reaches the output document, the candidate SHA cannot ride node output.
+#    `stage` therefore pins it at refs/culture-nodes/candidate/<run-id> (the
+#    run id the runner boundary already forwards), and `gate` and `merge`
+#    resolve that same ref. `merge`'s verdict fence in graph mode is
+#    structural: it is reachable from gate.gates_passed and from NOWHERE else
+#    (compiler-checked), both nodes resolve the same ref, and
+#    maxVisitsPerNode: 1 forbids restaging between them. RESIDUAL TRUST,
+#    stated: a workspace host that rewrites that ref mid-run defeats the
+#    fence — the host is already trusted with the checkout and the push
+#    credential, so this adds no new authority, but it is a fence against
+#    mistakes, not against the host.
+#
+# ---------------------------------------------------------------------------
+# Deployment configuration — WHAT THIS GRAPH NEEDS FROM OUTSIDE THE FILE
+# ---------------------------------------------------------------------------
+#
+#   RUNNER REGISTRY (ids in `uses:`, resolved against this deployment's
+#   runner-services registry — `nodes runner-services register`):
+#     runner://headspace/combining-loop   the runner service executing the
+#                                         harvest/stage/merge/release
+#                                         operations on a host that owns the
+#                                         integration checkout.
+#     runner://headspace/tdd-gate         the gate runner, exactly as
+#                                         examples/merge-gate registers it.
+#
+#   COMBINING_LOOP_SOURCE_URL / _SHA256   where the node program is fetched
+#   COMBINING_LOOP_RELEASE_URL / _SHA256  the standalone release program
+#                                         (split file, own digest)
+#                                         from and the digest the bootstrap
+#                                         refuses to run without (the
+#                                         merge-gate discipline).
+#   MERGE_GATE_SOURCE_URL / _SHA256       the gate program, unchanged.
+#   HARVEST_REMOTE                        the control-plane-configured remote
+#                                         harvest fetches from. NEVER taken
+#                                         from input: a session could point
+#                                         the measurement at a repository it
+#                                         prepared (internal/handover's rule).
+#   GITHUB_TOKEN_WORKER                   the push credential, environment
+#                                         only, helpers reset on push.
+#   NODES_EVENT_TOKEN             release-next's authority to append
+#                                         signal events.
+#
+# Per-run values (handover ref, expected commit, feature branch, unlocks)
+# arrive as the triggering event's payload — the run input — and reach each
+# code process as NODES_INPUT_JSON (issue #170's fix, deviation d4).
+#
+# ---------------------------------------------------------------------------
+# WHAT DOES NOT WORK YET — read before believing the graph
+# ---------------------------------------------------------------------------
+#
+#  1. `changes_required` terminates at an end node here, exactly as
+#     examples/merge-gate does: the control plane's own bounded repair
+#     routing (internal/repair, task t32) composes the derived routing
+#     record when the gate rejects. This graph deliberately does not
+#     re-dispatch repairs itself — two routers deciding one failure is how
+#     a repair gets dispatched twice.
+#  2. A human override of `measurement_incomplete` routes to a terminal
+#     node, not to `merge`: the merge program refuses any verdict that is
+#     not gates_passed for the exact candidate (no TOCTOU), and a human
+#     merging over an unmeasured combination is a human act outside this
+#     graph's machine authority — §10.4 kept structural.
+#  3. The claim decision (approval below) records the human's verdict on the
+#     agent's completion claim; it does not block wave release. The merge
+#     already happened on measured evidence; the claim decision is judgement
+#     about the CLAIM, and release-next runs on either answer.
+apiVersion: nodes.culture.dev/v1alpha1
+kind: Workflow
+
+metadata:
+  name: combining-loop
+  version: 1.0.0
+  ownerRef: team/platform-ai
+
+spec:
+  entry: harvest
+
+  triggers:
+    - onEvent: combining-loop.package.finished
+      when: >-
+        event.payload.handover_ref.startsWith("refs/culture-nodes/") &&
+        size(event.payload.expected_commit) > 0
+
+  contract:
+    input:
+      schema:
+        type: object
+        required: [package_id, handover_ref, expected_commit, feature_branch]
+        additionalProperties: false
+        properties:
+          package_id: {type: string, minLength: 1}
+          handover_ref: {type: string, minLength: 1}
+          expected_commit: {type: string, minLength: 7}
+          feature_branch: {type: string, minLength: 1}
+          claim_record_id: {type: string}
+          unlocks:
+            type: array
+            items: {type: string, minLength: 1}
+    output:
+      schema: {type: object}
+
+  limits:
+    maxDuration: 168h
+    maxTransitions: 16
+    maxVisitsPerNode: 1
+    maxParallelTokens: 1
+
+  ledger:
+    schemaVersion: nodes.culture.dev/ledger/v1alpha1
+    maxRecordsPerNode: 100
+
+  nodes:
+    # Fetch the handed-over ref from the DEPLOYMENT'S remote, verify the
+    # commit, and save it under refs/culture-nodes/harvested/<run-id> BEFORE
+    # any staging — a later failure leaves the work recoverable from the run
+    # alone (h3). The agent's own account of where its ref lives is never
+    # read (internal/handover's fence).
+    harvest:
+      kind: code
+      ownerRef: team/platform-ai
+      uses: runner://headspace/combining-loop@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
+      operation:
+        image: python:3.12-slim@sha256:57cd7c3a7a273101a6485ba99423ee568157882804b1124b4dd04266317710de
+        # network: full, exactly as examples/merge-gate declares for the same
+        # fetch-by-digest bootstrap (#50: an egress allowlist is not yet
+        # expressible; the posture is documented, not chosen).
+        network: full
+        argv:
+          - python3
+          - -c
+          - |
+            import hashlib, os, subprocess, sys, tempfile, urllib.request
+            want = os.environ["COMBINING_LOOP_SOURCE_SHA256"]
+            body = urllib.request.urlopen(os.environ["COMBINING_LOOP_SOURCE_URL"], timeout=60).read()
+            if hashlib.sha256(body).hexdigest() != want:
+                sys.exit("combining-loop: fetched bytes do not match the granted digest; refusing to run unverified code")
+            path = os.path.join(tempfile.mkdtemp(), "combining-loop-node.py")
+            open(path, "wb").write(body)
+            sys.exit(subprocess.run([sys.executable, path, "harvest"]).returncode)
+      input:
+        bindings:
+          handover_ref: /run/input/handover_ref
+          expected_commit: /run/input/expected_commit
+      contract:
+        outcomes:
+          passed:
+            schema: {type: object}
+          failed:
+            schema: {type: object}
+      ledger:
+        observe: [evidence]
+      policy:
+        timeout: 15m
+        retry:
+          maxAttempts: 1
+
+    # Stage the candidate: feature branch + harvested commit as a detached
+    # merge commit. The domain answer rides stdout JSON (see header); the
+    # candidate SHA in the output is what the gate measures and the merge
+    # fences on.
+    stage:
+      kind: code
+      ownerRef: team/platform-ai
+      uses: runner://headspace/combining-loop@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
+      operation:
+        image: python:3.12-slim@sha256:57cd7c3a7a273101a6485ba99423ee568157882804b1124b4dd04266317710de
+        # network: full, exactly as examples/merge-gate declares for the same
+        # fetch-by-digest bootstrap (#50: an egress allowlist is not yet
+        # expressible; the posture is documented, not chosen).
+        network: full
+        argv:
+          - python3
+          - -c
+          - |
+            import hashlib, os, subprocess, sys, tempfile, urllib.request
+            want = os.environ["COMBINING_LOOP_SOURCE_SHA256"]
+            body = urllib.request.urlopen(os.environ["COMBINING_LOOP_SOURCE_URL"], timeout=60).read()
+            if hashlib.sha256(body).hexdigest() != want:
+                sys.exit("combining-loop: fetched bytes do not match the granted digest; refusing to run unverified code")
+            path = os.path.join(tempfile.mkdtemp(), "combining-loop-node.py")
+            open(path, "wb").write(body)
+            sys.exit(subprocess.run([sys.executable, path, "stage"]).returncode)
+      input:
+        bindings:
+          harvested_commit: /run/input/expected_commit
+          feature_branch: /run/input/feature_branch
+      contract:
+        outcomes:
+          passed:
+            schema:
+              type: object
+              required: [operation_id, state]
+              properties:
+                state: {type: string}
+          failed:
+            schema:
+              type: object
+              required: [operation_id, state]
+              properties:
+                exit_code: {type: integer}
+      ledger:
+        observe: [evidence]
+      policy:
+        timeout: 15m
+        retry:
+          maxAttempts: 1
+
+    stage-verdict:
+      kind: decision
+      ownerRef: team/platform-ai
+      input:
+        from: /nodes/stage/output
+      select:
+        - outcome: merge_conflict
+          when: "output.exit_code == 1"
+        - outcome: routes_to_human
+          when: "output.exit_code == 3"
+        - outcome: environment_failure
+          when: "true"
+
+    # The combination gate: merge-gate.py, unchanged, measuring the staged
+    # candidate — the verdict names the combination, never the package branch
+    # alone (t3, c27). Three answers, each with its own edge.
+    gate:
+      kind: code
+      ownerRef: team/quality-platform
+      uses: runner://headspace/tdd-gate@sha256:9f2b1c4d6a8e0f31527394a6b8d0e2f4176a3c58bd91e07f4a2c6b8d0e1f3a25
+      operation:
+        image: python:3.12-slim@sha256:57cd7c3a7a273101a6485ba99423ee568157882804b1124b4dd04266317710de
+        # network: full, exactly as examples/merge-gate declares for the same
+        # fetch-by-digest bootstrap (#50: an egress allowlist is not yet
+        # expressible; the posture is documented, not chosen).
+        network: full
+        argv:
+          - python3
+          - -c
+          - |
+            import hashlib, os, subprocess, sys, tempfile, urllib.request
+            want = os.environ["MERGE_GATE_SOURCE_SHA256"]
+            body = urllib.request.urlopen(os.environ["MERGE_GATE_SOURCE_URL"], timeout=60).read()
+            got = hashlib.sha256(body).hexdigest()
+            if got != want:
+                sys.exit("combining-loop: fetched gate digest %s, granted digest %s; refusing to run unverified code" % (got, want))
+            path = os.path.join(tempfile.mkdtemp(), "merge-gate.py")
+            open(path, "wb").write(body)
+            sys.exit(subprocess.run([sys.executable, path, "--gates", sys.argv[1]]).returncode)
+          - |
+            {
+              "base": "origin/main",
+              "gates": [
+                {
+                  "gate": "go-build",
+                  "suite": "go build ./...",
+                  "instrument": "go",
+                  "requires": ["go"],
+                  "reaches": ["**/*.go", "go.mod", "go.sum"],
+                  "command": ["go", "build", "./..."],
+                  "measurement": {"unit": "exit_status", "threshold": {"equals": 0}}
+                },
+                {
+                  "gate": "go-test",
+                  "suite": "go test ./...",
+                  "instrument": "go test",
+                  "requires": ["go"],
+                  "reaches": ["**/*.go", "go.mod", "go.sum"],
+                  "command": ["go", "test", "./..."],
+                  "measurement": {"unit": "failed_packages", "threshold": {"maximum": 0}}
+                },
+                {
+                  "gate": "pytest",
+                  "suite": "uv run pytest -n auto",
+                  "instrument": "pytest",
+                  "requires": ["uv"],
+                  "reaches": ["culture_nodes/**", "tests/**", "scripts/**", "pyproject.toml"],
+                  "command": ["uv", "run", "pytest", "-n", "auto"],
+                  "measurement": {"unit": "failures", "threshold": {"maximum": 0}}
+                }
+              ]
+            }
+      contract:
+        outcomes:
+          gates_passed:
+            schema:
+              type: object
+              required: [operation_id, state]
+              properties:
+                state: {type: string}
+          changes_required:
+            schema:
+              type: object
+              required: [operation_id, state]
+              properties:
+                state: {type: string}
+          measurement_incomplete:
+            schema:
+              type: object
+              required: [operation_id, state]
+              properties:
+                state: {type: string}
+      ledger:
+        observe: [evidence]
+      acceptance:
+        requires:
+          - kind: process_exit
+            equals: 0
+      policy:
+        timeout: 15m
+        retry:
+          maxAttempts: 1
+
+    # The merge: refuses anything but gates_passed on the EXACT candidate,
+    # atomic update-ref, push with helpers reset (the GIT_ASKPASS-outranking
+    # trap measured on this fleet).
+    merge:
+      kind: code
+      ownerRef: team/platform-ai
+      uses: runner://headspace/combining-loop@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
+      operation:
+        image: python:3.12-slim@sha256:57cd7c3a7a273101a6485ba99423ee568157882804b1124b4dd04266317710de
+        # network: full, exactly as examples/merge-gate declares for the same
+        # fetch-by-digest bootstrap (#50: an egress allowlist is not yet
+        # expressible; the posture is documented, not chosen).
+        network: full
+        argv:
+          - python3
+          - -c
+          - |
+            import hashlib, os, subprocess, sys, tempfile, urllib.request
+            want = os.environ["COMBINING_LOOP_SOURCE_SHA256"]
+            body = urllib.request.urlopen(os.environ["COMBINING_LOOP_SOURCE_URL"], timeout=60).read()
+            if hashlib.sha256(body).hexdigest() != want:
+                sys.exit("combining-loop: fetched bytes do not match the granted digest; refusing to run unverified code")
+            path = os.path.join(tempfile.mkdtemp(), "combining-loop-node.py")
+            open(path, "wb").write(body)
+            sys.exit(subprocess.run([sys.executable, path, "merge"]).returncode)
+      input:
+        bindings:
+          feature_branch: /run/input/feature_branch
+      contract:
+        outcomes:
+          passed:
+            schema: {type: object}
+          failed:
+            schema: {type: object}
+      ledger:
+        observe: [evidence]
+      policy:
+        timeout: 15m
+        retry:
+          maxAttempts: 1
+
+    # The human decides the agent's completion claim — through the product,
+    # not a script (#99). Recording judgement, not blocking release.
+    decide-claim:
+      kind: approval
+      ownerRef: team/platform-ai
+      approverRef: group/platform-maintainers
+      decisionSchemaRef: schema://combining-loop/claim-decision/v1
+      deadline: 168h
+      input:
+        bindings:
+          package: /run/input
+          merge: /nodes/merge/output
+          gateEvidence: /ledger/projections/evidence
+
+    # Emit combining-loop.package.ready for everything this package unlocks.
+    # The engine's pacing (#48) sits between a ready event and a dispatch, so
+    # a burst here queues rather than overdraws the window.
+    release-next:
+      kind: code
+      ownerRef: team/platform-ai
+      uses: runner://headspace/combining-loop@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
+      operation:
+        image: python:3.12-slim@sha256:57cd7c3a7a273101a6485ba99423ee568157882804b1124b4dd04266317710de
+        # network: full, exactly as examples/merge-gate declares for the same
+        # fetch-by-digest bootstrap (#50: an egress allowlist is not yet
+        # expressible; the posture is documented, not chosen).
+        network: full
+        argv:
+          - python3
+          - -c
+          - |
+            import hashlib, os, subprocess, sys, tempfile, urllib.request
+            want = os.environ["COMBINING_LOOP_RELEASE_SHA256"]
+            body = urllib.request.urlopen(os.environ["COMBINING_LOOP_RELEASE_URL"], timeout=60).read()
+            if hashlib.sha256(body).hexdigest() != want:
+                sys.exit("combining-loop: fetched bytes do not match the granted digest; refusing to run unverified code")
+            path = os.path.join(tempfile.mkdtemp(), "combining-loop-release.py")
+            open(path, "wb").write(body)
+            sys.exit(subprocess.run([sys.executable, path, "release"]).returncode)
+      input:
+        bindings:
+          package_id: /run/input/package_id
+          unlocks: /run/input/unlocks
+      contract:
+        outcomes:
+          passed:
+            schema: {type: object}
+          failed:
+            schema: {type: object}
+      policy:
+        timeout: 5m
+        retry:
+          maxAttempts: 1
+
+    human-conflict:
+      kind: approval
+      ownerRef: team/platform-ai
+      approverRef: group/platform-maintainers
+      decisionSchemaRef: schema://combining-loop/conflict-decision/v1
+      deadline: 168h
+      input:
+        bindings:
+          package: /run/input
+          stage: /nodes/stage/output
+
+    human-containment:
+      kind: approval
+      ownerRef: team/platform-ai
+      approverRef: group/platform-maintainers
+      decisionSchemaRef: schema://combining-loop/containment-decision/v1
+      deadline: 168h
+      input:
+        bindings:
+          package: /run/input
+          stage: /nodes/stage/output
+
+    human-overrides:
+      kind: approval
+      ownerRef: team/platform-ai
+      approverRef: group/platform-maintainers
+      decisionSchemaRef: schema://combining-loop/override-decision/v1
+      deadline: 168h
+      input:
+        bindings:
+          package: /run/input
+          gate: /nodes/gate/output
+
+    integrated:
+      kind: end
+      ownerRef: team/platform-ai
+      output:
+        from: /nodes/merge/output
+
+    changes-requested:
+      kind: end
+      ownerRef: team/platform-ai
+      output:
+        from: /nodes/gate/output
+
+    not-integrated:
+      kind: end
+      ownerRef: team/platform-ai
+      output:
+        from: /run/input
+
+    release-failed:
+      kind: end
+      ownerRef: team/platform-ai
+      output:
+        from: /run/input
+
+  edges:
+    - from: harvest.passed
+      to: stage
+    - from: harvest.failed
+      to: not-integrated
+
+    - from: stage.passed
+      to: gate
+    - from: stage.failed
+      to: stage-verdict
+
+    - from: stage-verdict.merge_conflict
+      to: human-conflict
+    - from: stage-verdict.routes_to_human
+      to: human-containment
+    - from: stage-verdict.environment_failure
+      to: not-integrated
+
+    - from: gate.gates_passed
+      to: merge
+    - from: gate.changes_required
+      to: changes-requested
+    - from: gate.measurement_incomplete
+      to: human-overrides
+
+    - from: merge.passed
+      to: decide-claim
+    - from: merge.failed
+      to: not-integrated
+
+    - from: decide-claim.approved
+      to: release-next
+    - from: decide-claim.rejected
+      to: release-next
+
+    - from: human-conflict.approved
+      to: not-integrated
+    - from: human-conflict.rejected
+      to: not-integrated
+    - from: human-containment.approved
+      to: not-integrated
+    - from: human-containment.rejected
+      to: not-integrated
+    - from: human-overrides.approved
+      to: not-integrated
+    - from: human-overrides.rejected
+      to: not-integrated
+
+    - from: release-next.passed
+      to: integrated
+    - from: release-next.failed
+      to: release-failed

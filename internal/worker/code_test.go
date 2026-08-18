@@ -559,6 +559,126 @@ func TestCodeNodeWithUnmappableOutcomesIsRefusedRatherThanGuessed(t *testing.T) 
 	}
 }
 
+// TestCodeNodeInputBindingReachesTheOperationEnvironment (issue #170): a
+// code node's resolved §11.2 input document is no longer discarded after
+// worker.go resolves it — it round-trips into the operation the runner
+// receives, as the NODES_INPUT_JSON environment value ContextEnvironment
+// (internal/runners) builds from Operation.Input, the same seam that
+// already forwarded NODES_RUN_ID/NODES_NODE_RUN_ID/NODES_ATTEMPT_ID.
+func TestCodeNodeInputBindingReachesTheOperationEnvironment(t *testing.T) {
+	h := newCodeHarness(t, func(op runners.Operation, _ int) (runners.Result, error) {
+		return codeRunResult(op, 0), nil
+	})
+
+	run := h.createRun("code-input.workflow.yaml", `{"subject":"widget"}`)
+	h.runUntil(20*time.Second, func() bool { return h.run(run.ID).State.Terminal() })
+
+	if state := h.run(run.ID).State; state != engine.RunCompleted {
+		t.Fatalf("run state = %s, want completed (worker errors: %v)", state, h.workerErrors())
+	}
+
+	ops := h.runner.operations()
+	if len(ops) != 1 {
+		t.Fatalf("runner executed %d operations, want 1", len(ops))
+	}
+	op := ops[0]
+
+	if got, want := string(op.Input), `{"subject":"widget"}`; got != want {
+		t.Errorf("operation.Input = %q, want the resolved /run/input document %q", got, want)
+	}
+
+	// The proof that matters: the environment a runner actually builds from
+	// this operation (internal/runners.ContextEnvironment, the same helper
+	// the headspace bridge calls) carries the bound value under the
+	// reserved name, alongside the run/node-run/attempt ids it already
+	// carried.
+	env := runners.ContextEnvironment(op)
+	if got, want := env[runners.EnvInputJSON], `{"subject":"widget"}`; got != want {
+		t.Errorf("%s = %q, want %q", runners.EnvInputJSON, got, want)
+	}
+	if env[runners.EnvRunID] != run.ID {
+		t.Errorf("%s = %q, want %q (the input fix must not disturb the existing context forwarding)",
+			runners.EnvRunID, env[runners.EnvRunID], run.ID)
+	}
+}
+
+// TestCodeNodeWithNoInputBindingForwardsNoEnvironmentVariable (issue #170,
+// the pinned no-change invariant): the overwhelming default — a code node
+// that declares no `input` binding — must keep dispatching a
+// byte-identical operation to the one this worker built before
+// NODES_INPUT_JSON existed. resolveNodeInput's own default for an
+// undeclared binding is the literal `{}`, and that must forward nothing.
+func TestCodeNodeWithNoInputBindingForwardsNoEnvironmentVariable(t *testing.T) {
+	h := newCodeHarness(t, func(op runners.Operation, _ int) (runners.Result, error) {
+		return codeRunResult(op, 0), nil
+	})
+
+	run := h.createRun("code.workflow.yaml", `{"subject":"widget"}`)
+	h.runUntil(20*time.Second, func() bool { return h.run(run.ID).State.Terminal() })
+
+	if state := h.run(run.ID).State; state != engine.RunCompleted {
+		t.Fatalf("run state = %s, want completed (worker errors: %v)", state, h.workerErrors())
+	}
+
+	ops := h.runner.operations()
+	if len(ops) != 1 {
+		t.Fatalf("runner executed %d operations, want 1", len(ops))
+	}
+	op := ops[0]
+
+	if len(op.Input) != 0 {
+		t.Errorf("operation.Input = %q, want empty for a node that declares no input binding", op.Input)
+	}
+	if _, ok := runners.ContextEnvironment(op)[runners.EnvInputJSON]; ok {
+		t.Errorf("%s is set for a node that declared no input binding: %v",
+			runners.EnvInputJSON, runners.ContextEnvironment(op))
+	}
+}
+
+// TestCodeNodeUnresolvableInputBindingStillRefuses (issue #170): the
+// pre-existing refusal this fix must not touch. worker.go resolves a code
+// node's input binding BEFORE buildCodeOperation ever runs, and an
+// unresolvable one refuses the dispatch as contract_rejected — the runner
+// must never be called, exactly as before this fix.
+func TestCodeNodeUnresolvableInputBindingStillRefuses(t *testing.T) {
+	var invoked int
+	h := newCodeHarness(t, func(op runners.Operation, _ int) (runners.Result, error) {
+		invoked++
+		return codeRunResult(op, 0), nil
+	})
+
+	run := h.createRun("code-input.workflow.yaml", `{"subject":"widget"}`)
+	// Rewrite the pinned IR's binding to one that cannot resolve, the same
+	// technique TestWorkerRefusesToDispatchAnUnresolvableBinding
+	// (worker_test.go) uses for an agent node: the run still executes
+	// whatever IR its pinned version carries, and this is the only way to
+	// reach the refusal branch without publishing a definition the compiler
+	// would reject outright.
+	if _, err := h.store.Pool().Exec(h.ctx, `
+		UPDATE workflow_versions
+		SET normalized_ir = jsonb_set(normalized_ir, '{spec,nodes,test,input,from}', '"/nodes/absent/output"')
+		WHERE id = (SELECT workflow_version_id FROM runs WHERE id = $1)
+	`, run.ID); err != nil {
+		t.Fatalf("rewrite pinned IR: %v", err)
+	}
+
+	h.runUntil(20*time.Second, func() bool { return h.run(run.ID).State.Terminal() })
+
+	if invoked != 0 {
+		t.Errorf("the runner was invoked %d times; an unresolvable binding must not dispatch", invoked)
+	}
+	attempts := h.attemptRows(run.ID, "test")
+	if len(attempts) == 0 {
+		t.Fatal("no attempt was recorded for the refused dispatch")
+	}
+	if engine.TechStatus(attempts[0].Status) != engine.StatusContractRejected {
+		t.Errorf("attempt status = %q, want contract_rejected", attempts[0].Status)
+	}
+	if !strings.Contains(string(attempts[0].Result), "input binding") {
+		t.Errorf("attempt result = %s, want a diagnostic naming the input binding", attempts[0].Result)
+	}
+}
+
 // The higher-level RunnerDispatcher seam still wins when both are configured:
 // a deployment that registered one has already said how it wants code
 // dispatched, and a lower-level option must not silently override it.

@@ -430,6 +430,67 @@ def test_posts_the_report_and_exits_with_the_recorded_code(repo: Path):
     assert "outcome" not in sent
 
 
+def test_gate_measures_feature_plus_package_not_green_package_alone(repo: Path):
+    """A package and feature are independently green; their merge is red.
+    The posted subject is the merge commit and the handover binding remains
+    the package commit, so the control-plane verdict is about the combination."""
+    (repo / "gate.py").write_text(
+        "from pathlib import Path\n"
+        "raise SystemExit(Path('feature').exists() and Path('package').exists())\n"
+    )
+    git(repo, "add", "gate.py")
+    git(repo, "commit", "-q", "-m", "gate fixture")
+    base = git(repo, "rev-parse", "HEAD")
+
+    git(repo, "switch", "-q", "-c", "package", base)
+    commit(repo, "package")
+    package_sha = git(repo, "rev-parse", "HEAD")
+    assert subprocess.run([sys.executable, "gate.py"], cwd=repo).returncode == 0
+
+    git(repo, "switch", "-q", "-c", "feature", base)
+    commit(repo, "feature")
+    assert subprocess.run([sys.executable, "gate.py"], cwd=repo).returncode == 0
+    git(repo, "merge", "-q", "--no-ff", "package", "-m", "candidate")
+    candidate_sha = git(repo, "rev-parse", "HEAD")
+
+    matrix = {"gates": [{"gate": "combination", "command": [sys.executable, "gate.py"]}]}
+    proc = run_gate(repo, matrix, "--report-only")
+    report = report_of(proc)
+    assert report["outcome"] == "changes_required"
+    assert report["commit_sha"] == candidate_sha
+    assert report["package_commit_sha"] == package_sha
+    assert report["gates"][0]["exit_code"] == 1
+
+
+def test_go_test_all_skips_is_measurement_incomplete(repo: Path, tmp_path: Path):
+    commit(repo, "internal/example/example.go", "package example\n")
+    fake_bin = tmp_path / "bin"
+    fake_bin.mkdir()
+    fake_go = fake_bin / "go"
+    fake_go.write_text(
+        "#!/bin/sh\n"
+        "printf '%s\\n' "
+        '\'{"Action":"run","Package":"example","Test":"TestSkipped"}\' '
+        '\'{"Action":"skip","Package":"example","Test":"TestSkipped"}\' '
+        '\'{"Action":"pass","Package":"example"}\'\n'
+    )
+    fake_go.chmod(0o755)
+    proc = run_gate(
+        repo,
+        {
+            "gates": [
+                {"gate": "go-test", "reaches": ["**/*.go"], "command": ["go", "test", "./..."]}
+            ]
+        },
+        "--report-only",
+        env={"PATH": f"{fake_bin}:{os.environ['PATH']}"},
+    )
+
+    report = report_of(proc)
+    assert report["outcome"] == "measurement_incomplete"
+    assert gate_named(report, "go-test")["not_applicable"]["reason"] == "no_tests_executed"
+
+
 def test_a_disagreement_with_the_control_plane_reaches_a_person(repo: Path):
     """The node routes on an edge and a reader reads the ledger. If the two
     disagree about the outcome, neither answer may be taken — it exits

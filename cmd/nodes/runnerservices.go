@@ -1,12 +1,14 @@
 package main
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"os"
 	"path/filepath"
 	"sort"
 	"strings"
+	"time"
 
 	"github.com/agentculture/culture-nodes/internal/clifmt"
 	"github.com/agentculture/culture-nodes/internal/runners"
@@ -155,45 +157,23 @@ func cmdRunnerServices(args []string, jsonMode bool) (int, error) {
 	if jsonMode {
 		return 0, clifmt.EmitResultJSON(e)
 	}
-	clifmt.EmitResult(fmt.Sprintf("registered runner service %s in %s; restart each worker to load it", e.Name, path))
+	clifmt.EmitResult(fmt.Sprintf("registered runner service %s in %s; a running worker picks it up on its next reload check, no restart required", e.Name, path))
 	return 0, nil
 }
 
-// runnerServiceConfig builds the worker's runner-service options from the
-// environment. Every failure is an environment error with a remediation —
-// a worker that half-loads its execution allowlist would dispatch some nodes
-// and mysteriously refuse others.
-func runnerServiceConfig() (worker.RunnerServiceOptions, *clifmt.CliError) {
-	path := os.Getenv(envRunnerServicesFile)
-	if path == "" {
-		return worker.RunnerServiceOptions{}, nil
-	}
-	raw, err := os.ReadFile(path) // #nosec G304 -- the operator names this file by env on purpose
-	if err != nil {
-		return worker.RunnerServiceOptions{}, &clifmt.CliError{
-			Code:        clifmt.ExitEnvError,
-			Message:     fmt.Sprintf("reading %s %q: %v", envRunnerServicesFile, path, err),
-			Remediation: "point NODES_RUNNER_SERVICES_FILE at a readable JSON file of runner services",
-		}
-	}
-	var entries []runnerServiceEntry
-	if err := json.Unmarshal(raw, &entries); err != nil {
-		return worker.RunnerServiceOptions{}, &clifmt.CliError{
-			Code:        clifmt.ExitEnvError,
-			Message:     fmt.Sprintf("parsing %q: %v", path, err),
-			Remediation: `expected a JSON array: [{"name","endpoint","image_digest","secret_file",...}]`,
-		}
-	}
-	if len(entries) == 0 {
-		return worker.RunnerServiceOptions{}, nil
-	}
-
-	registry := runners.NewFunctionRegistry()
+// buildRunnerServices turns parsed registry entries into the two things a
+// registration needs: the identities to register (keyed by name) and the
+// bearer material each one's SecretRef resolves to. It is the shared core of
+// both the worker's initial load and a later reload — the two must build the
+// exact same shape from the exact same file, or "reload" would mean
+// something subtly different from "start".
+func buildRunnerServices(entries []runnerServiceEntry) (map[string]runners.ServiceIdentity, runners.StaticSecrets, *clifmt.CliError) {
+	services := make(map[string]runners.ServiceIdentity, len(entries))
 	secrets := runners.StaticSecrets{}
 	for _, e := range entries {
 		material, err := os.ReadFile(e.SecretFile) // #nosec G304 -- deployment-named secret file
 		if err != nil {
-			return worker.RunnerServiceOptions{}, &clifmt.CliError{
+			return nil, nil, &clifmt.CliError{
 				Code:        clifmt.ExitEnvError,
 				Message:     fmt.Sprintf("runner service %q: reading secret file %q: %v", e.Name, e.SecretFile, err),
 				Remediation: "install the runner's bearer secret file (deploy/prod/install-secrets.sh) before starting the worker",
@@ -203,28 +183,170 @@ func runnerServiceConfig() (worker.RunnerServiceOptions, *clifmt.CliError) {
 		// mistaken for material); the file path stays in this process only.
 		ref := "runner-secret:" + e.Name
 		secrets[ref] = strings.TrimSpace(string(material))
-		identity := runners.ServiceIdentity{
+		services[e.Name] = runners.ServiceIdentity{
 			Endpoint:               e.Endpoint,
 			ImageDigest:            e.ImageDigest,
 			SecretRef:              ref,
 			AllowInsecureTransport: e.AllowInsecureTransport,
 			Description:            e.Description,
 		}
-		if err := registry.RegisterService(e.Name, identity); err != nil {
-			return worker.RunnerServiceOptions{}, &clifmt.CliError{
-				Code:        clifmt.ExitEnvError,
-				Message:     fmt.Sprintf("runner service %q: %v", e.Name, err),
-				Remediation: "fix the entry in " + path,
+	}
+	return services, secrets, nil
+}
+
+// runnerServiceReloader re-reads NODES_RUNNER_SERVICES_FILE and applies a
+// changed registry to an already-running worker's registry and secrets,
+// without a process restart (task t19, issue #8's "runner services load at
+// worker start only" residue).
+//
+// It holds the same *runners.FunctionRegistry and *runners.ReloadableSecrets
+// the worker was built with — not a copy of them — so a successful reload is
+// visible to the worker's very next dispatch: nothing in the worker itself
+// has to be told a reload happened. It is deliberately mtime-gated: a check
+// that finds the file unchanged does no parsing, no secret-file reads, and
+// touches neither the registry nor the secrets — an operator who has changed
+// nothing pays nothing beyond one stat(2) per check.
+type runnerServiceReloader struct {
+	path     string
+	registry *runners.FunctionRegistry
+	secrets  *runners.ReloadableSecrets
+	lastMod  time.Time
+}
+
+// checkAndReload reloads the registry only if the file's mtime has advanced
+// since the last successful load (construction counts as one). It reports
+// whether a reload was applied, so a caller — this file's tests, or poll
+// below — can tell "unchanged" from "changed and applied" without inspecting
+// the registry itself.
+//
+// A failed reload changes nothing: the registry and secrets this worker
+// already validated keep dispatching exactly as before, the same way a
+// malformed file at startup refuses to start rather than half-apply. The
+// broken file is reported, not silently retried into the void — the next
+// tick will try again and keep trying until the operator fixes it.
+func (rl *runnerServiceReloader) checkAndReload() (bool, *clifmt.CliError) {
+	info, err := os.Stat(rl.path)
+	if err != nil {
+		return false, &clifmt.CliError{
+			Code:        clifmt.ExitEnvError,
+			Message:     fmt.Sprintf("stat %s: %v", rl.path, err),
+			Remediation: "verify " + envRunnerServicesFile + " still names a readable file",
+		}
+	}
+	if !info.ModTime().After(rl.lastMod) {
+		return false, nil
+	}
+	entries, err := loadRunnerServiceEntries(rl.path)
+	if err != nil {
+		return false, &clifmt.CliError{
+			Code:        clifmt.ExitEnvError,
+			Message:     fmt.Sprintf("reloading %s: %v", rl.path, err),
+			Remediation: "verify the registry file is readable JSON",
+		}
+	}
+	services, secrets, cliErr := buildRunnerServices(entries)
+	if cliErr != nil {
+		return false, cliErr
+	}
+	// The registry swap and the secrets swap are two separate atomic writes,
+	// not one transaction, so the ORDER decides what the brief window
+	// between them can look like. Secrets go FIRST: a superset secret map
+	// beside the old registry is harmless (an unresolvable name never asks
+	// for its credential), whereas the reverse order lets a dispatch resolve
+	// a newly added identity whose SecretRef is not yet in the map and fail
+	// authentication for no reason a caller can see (PR #180 review
+	// finding — the original ordering argued the opposite and was wrong).
+	rl.secrets.Store(secrets)
+	if err := rl.registry.ReloadServices(services); err != nil {
+		return false, &clifmt.CliError{
+			Code:        clifmt.ExitEnvError,
+			Message:     fmt.Sprintf("reloading runner services: %v", err),
+			Remediation: "fix the entries in " + rl.path,
+		}
+	}
+	rl.lastMod = info.ModTime()
+	return true, nil
+}
+
+// poll runs checkAndReload every interval until ctx is done, reporting a
+// failed reload through onError. It never stops on a failure: a config file
+// left broken for one interval must not cost every interval after it too.
+func (rl *runnerServiceReloader) poll(ctx context.Context, interval time.Duration, onError func(error)) {
+	if interval <= 0 {
+		interval = worker.DefaultPollInterval
+	}
+	ticker := time.NewTicker(interval)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+			if _, cliErr := rl.checkAndReload(); cliErr != nil && onError != nil {
+				onError(cliErr)
 			}
 		}
 	}
+}
+
+// runnerServiceConfig builds the worker's runner-service options from the
+// environment, and — when the protocol path is enabled — a reloader that can
+// apply a later change to the same file without rebuilding either the
+// registry or the client. Every failure is an environment error with a
+// remediation — a worker that half-loads its execution allowlist would
+// dispatch some nodes and mysteriously refuse others.
+//
+// The returned reloader is nil exactly when the protocol path is disabled
+// (no env, or an empty registry file): a worker with nothing to dispatch to
+// runner services has nothing worth watching for changes either.
+func runnerServiceConfig() (worker.RunnerServiceOptions, *runnerServiceReloader, *clifmt.CliError) {
+	path := strings.TrimSpace(os.Getenv(envRunnerServicesFile))
+	if path == "" {
+		return worker.RunnerServiceOptions{}, nil, nil
+	}
+	info, err := os.Stat(path)
+	if err != nil {
+		return worker.RunnerServiceOptions{}, nil, &clifmt.CliError{
+			Code:        clifmt.ExitEnvError,
+			Message:     fmt.Sprintf("reading %s %q: %v", envRunnerServicesFile, path, err),
+			Remediation: "point NODES_RUNNER_SERVICES_FILE at a readable JSON file of runner services",
+		}
+	}
+	entries, err := loadRunnerServiceEntries(path)
+	if err != nil {
+		return worker.RunnerServiceOptions{}, nil, &clifmt.CliError{
+			Code:        clifmt.ExitEnvError,
+			Message:     fmt.Sprintf("parsing %q: %v", path, err),
+			Remediation: `expected a JSON array: [{"name","endpoint","image_digest","secret_file",...}]`,
+		}
+	}
+	// A CONFIGURED registry that is currently empty still builds the full
+	// reloadable plumbing: a worker started before its first registration
+	// must observe later additions without a restart, which is the whole
+	// point of the reloader (PR #180 review finding). Only an UNSET env var
+	// disables the protocol path, and that decision happened above.
+	services, secretsMap, cliErr := buildRunnerServices(entries)
+	if cliErr != nil {
+		return worker.RunnerServiceOptions{}, nil, cliErr
+	}
+
+	registry := runners.NewFunctionRegistry()
+	if err := registry.ReloadServices(services); err != nil {
+		return worker.RunnerServiceOptions{}, nil, &clifmt.CliError{
+			Code:        clifmt.ExitEnvError,
+			Message:     fmt.Sprintf("registering runner services: %v", err),
+			Remediation: "fix the entries in " + path,
+		}
+	}
+	secrets := runners.NewReloadableSecrets(secretsMap)
 	client, err := runners.NewProtocolClient(secrets)
 	if err != nil {
-		return worker.RunnerServiceOptions{}, &clifmt.CliError{
+		return worker.RunnerServiceOptions{}, nil, &clifmt.CliError{
 			Code:        clifmt.ExitEnvError,
 			Message:     fmt.Sprintf("building the runner protocol client: %v", err),
 			Remediation: "check the runner service entries in " + path,
 		}
 	}
-	return worker.RunnerServiceOptions{Registry: registry, Client: client}, nil
+	reloader := &runnerServiceReloader{path: path, registry: registry, secrets: secrets, lastMod: info.ModTime()}
+	return worker.RunnerServiceOptions{Registry: registry, Client: client}, reloader, nil
 }

@@ -197,6 +197,15 @@ type Options struct {
 	// dispatch path exactly as it was. See pacing.go.
 	Pacing PacingOptions
 
+	// Concurrency declares the per-actor "one ticket per machine" ceiling
+	// this worker holds itself to (task t16, issue #166's second half): how
+	// many invocations of one actor may be in flight at once, enforced at
+	// the dispatch site against actor_invocations. The zero value declares
+	// no ceiling, which is what every deployment that has not configured it
+	// gets — no count query, and the dispatch path exactly as it was. See
+	// concurrency.go.
+	Concurrency ConcurrencyOptions
+
 	// Telemetry instruments the actor dispatch seam (task t19,
 	// internal/worker/dispatch.go's dispatchActor) through
 	// internal/telemetry. The zero value, a nil *telemetry.Provider, is a

@@ -1,0 +1,24 @@
+[project]
+name = "culture-nodes-jira-bridge"
+version = "0.1.0"
+description = "Single-verb actor bridge for posting Jira issue comments"
+readme = "README.md"
+requires-python = ">=3.12"
+dependencies = []
+
+[project.scripts]
+jira-bridge = "jira_bridge.__main__:main"
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/jira_bridge"]
+
+[dependency-groups]
+dev = ["pytest>=8.0"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-ra"

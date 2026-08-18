@@ -1,0 +1,409 @@
+# Jira question round trip (plan task t11, spec claims c4/h4), now with a
+# BOUNDED ask/re-ask loop (plan task t14, spec claims c32/h17).
+#
+# The t11 boundary still holds for one pass: the narrow Jira actor posts a
+# marked question, the run parks without a held lease on `until.signal`, and
+# the next human comment is emitted by `pr-upkeep/sweep.py` with
+# `originating_question_id`. The wait output carries that immutable event
+# into `continue-leg`; its instruction and bindings make this a continuation
+# of the parked leg, not a new trigger-created unit of work.
+#
+# The sweep supplies `source_key` and `watermark` to the event API. PostgreSQL
+# appends the answer event, advances that watermark, and wakes the subscription
+# in one transaction. `TestAnswerDeliveryRollsBackWatermarkAndEventTogether`
+# injects a failure between append and watermark write, then retries twice to
+# pin no-skip and no-re-emit restart behavior.
+#
+# ---------------------------------------------------------------------------
+# WHAT T14 ADDS: A BOUND, A BACKOFF, AND A HUMAN ESCALATION
+# ---------------------------------------------------------------------------
+#
+# A reply that arrives but does not resolve the question is a domain outcome
+# now: `continue-leg` may report `needs_clarification` instead of
+# `completed` (the resuming actor's own judgment that the reply it read
+# could not be acted on -- an agent's word, `proposed`, exactly like any
+# other agent-reported outcome; nothing here promotes it). That routes
+# through ONE bounded backoff-and-reask cycle -- `ask-backoff` waits 30
+# minutes, mirroring `examples/development-loop`'s `gate-backoff`, then the
+# question is posted again and parked again -- before a second
+# `needs_clarification` lands on a human node instead of asking a third
+# time. Two total asks, deliberately mirroring `internal/repair`'s
+# `MaxAttempts: 2` (internal/repair/doc.go) -- the same "the bound is the
+# feature" reasoning, applied to a human reply instead of a repair session.
+#
+# Both ceilings `internal/repair` declares reach a human at the end
+# (DestinationHuman, never a stall). This graph reaches one too:
+# `needs-human` below is a `kind: approval` node, the same primitive
+# `examples/development-loop` parks a spent budget on.
+#
+# ---------------------------------------------------------------------------
+# HONEST GAP 1 (resolves the plan's own open risk): SILENCE HAS NO TIMEOUT
+# ---------------------------------------------------------------------------
+#
+# The plan's risk list carried this as unknown_nonblocking: "Whether a
+# signal-wait can also declare a timeout (until signal + duration together)
+# is unsettled." It is now settled, and the answer is no. The workflow
+# schema's `until` block (`schemas/workflow/workflow.schema.json`) allows
+# `duration` and `signal` to be set together -- `minProperties: 1`, no
+# mutual-exclusion constraint -- so a document declaring both PASSES `nodes
+# validate`. The runtime disagrees: `internal/worker/wait.go`'s
+# `decodeUntil` requires EXACTLY one of `duration` / `timestamp` / `signal`
+# and refuses dispatch otherwise ("until block must declare exactly one
+# resume condition"), pinned by `internal/worker/wait_test.go`'s
+# `TestDispatchWaitValidatesUntilShapes`, case `"duration and signal both"`.
+#
+# So `await-answer` and `await-answer-retry` below carry `until.signal`
+# alone, with no wall-clock ceiling of their own. The bound this file
+# enforces is triggered by a REPLY ARRIVING that does not resolve the
+# question -- it has no answer for a question that is never answered AT
+# ALL. Pure silence still parks this run forever, exactly as the single-pass
+# version already did; t14 narrows that gap without pretending to close it.
+#
+# ---------------------------------------------------------------------------
+# HONEST GAP 2: `continue.while` / `bounds` / `onExhausted` DOES NOT REACH A
+# SIGNAL-PARKED LOOP -- DECLARED HERE ANYWAY, PER TASK T14, AND MEASURED
+# ---------------------------------------------------------------------------
+#
+# Task t14 asks for "continue.while with a declared bound ... mirroring
+# internal/repair's 2-per-24h shape", reading how `examples/development-loop`
+# declares `continue` and `onExhausted` on its `work` node. It is declared
+# below, on `continue-leg-retry`, exactly that way -- and it is measured
+# here as INERT for this graph's shape, not silently assumed to work:
+#
+#  * Nothing in `internal/compiler` gates `continue` by node kind:
+#    `model.go`'s `node.Continue` is a plain sibling field, `contract.go`'s
+#    `checkNodeOutcomes` never inspects it, and `graph.go`'s
+#    `onExhausted`-must-be-routed check (`CodeGraphExhaustedUnrouted`,
+#    pinned by `internal/compiler/continuation_test.go`'s
+#    `TestExhaustedOutcomeMustBeRouted`) is kind-agnostic too. So the block
+#    below compiles, and its `onExhausted` outcome must be routed by an edge
+#    or this document does not validate -- both true today.
+#  * The ENGINE only ever evaluates a `continue` block through
+#    `internal/scheduler/scheduler.go`'s `deadlineContinuationHolds`, and
+#    that function has exactly one caller: the handler for a fired
+#    `TimerKindDeadline` on an ASYNC agent invocation
+#    (`internal/store/postgres/async.go`'s `StartAsyncWait`). A `kind: wait`
+#    node's own park never sets that timer kind --
+#    `internal/worker/wait.go`'s `parkWait` and `parkSignalWait` both
+#    explicitly write NO deadline timer (their own comments say so). Nothing
+#    in `internal/worker` -- which owns wait dispatch -- ever calls
+#    `DecideContinuation` at all.
+#
+# The consequence stated plainly: `continue-leg-retry`'s block below would
+# only ever fire if THAT node's own agent dispatch were asynchronous and its
+# own deadline expired -- a different event from "the Jira round trip never
+# got a resolving reply", which is what this loop is actually bounded
+# against. It compiles, it is routed (`continue-leg-retry.session_exhausted
+# -> needs-human`), and `nodes validate` accepts it -- and it is not what
+# stops this loop. What stops this loop is structural: TWO literally
+# distinct ask/wait/continue node triples, `spec.limits.maxVisitsPerNode: 1`
+# on each (each is visited at most once by construction), and the second
+# triple's `needs_clarification` routed straight to `needs-human` instead of
+# to another `ask-backoff`. That mirrors repair's NUMBER (two attempts, then
+# a human) without claiming to mirror its MECHANISM (an engine-evaluated
+# counter) -- the mechanism does not exist yet for this node shape, and
+# `examples/development-loop`'s own gap 5 is the precedent for declaring an
+# aspirational condition beside the edge that actually does the steering
+# rather than leaving the gap silent.
+apiVersion: nodes.culture.dev/v1alpha1
+kind: Workflow
+
+metadata:
+  name: jira-question-round-trip
+  version: 1.1.0
+  ownerRef: team/platform-ai
+
+# Deployment configuration: register actor://company/jira-comment at the narrow Jira
+# bridge and actor://company/codex-orin at the continuing leg's actor endpoint. The
+# actor digests below are illustrative pins and must resolve in that registry.
+
+spec:
+  entry: post-question
+
+  triggers:
+    # The guard declines the handler for events that do not carry the
+    # question contract: the sweep's bare transition events (a generic work
+    # item: id/title/status) share this event name's FAMILY but not its
+    # payload, and an unguarded trigger would mint a run whose entry node
+    # cannot resolve its required inputs (PR #180 review finding). The
+    # producer of a conforming event is a question-raising flow or the
+    # operator, never the bare state sweep.
+    - onEvent: pr-upkeep.jira.transitioned.needs-answer
+      when: >-
+        has(event.payload.issue) && has(event.payload.question_id) &&
+        has(event.payload.question)
+
+  contract:
+    input:
+      schema:
+        type: object
+        required: [issue, question_id, question]
+        properties:
+          issue: {type: string, minLength: 1}
+          question_id: {type: string, minLength: 1}
+          question: {type: string, minLength: 1}
+    output:
+      schema: {type: object}
+
+  # maxTransitions covers the longest path this graph now has: post-question
+  # -> await-answer -> continue-leg -> ask-backoff -> post-question-retry ->
+  # await-answer-retry -> continue-leg-retry -> needs-human -> an end node
+  # (8 hops); 12 leaves headroom without hiding a runaway loop. Every node id
+  # below is distinct and reachable at most once, so maxVisitsPerNode stays
+  # 1 -- there is no cold re-entry edge anywhere in this file, unlike
+  # development-loop's `work`/`handover-gate` loops. maxDuration is doubled
+  # from the single-pass version's 168h to 336h (14 days): a run can now
+  # spend up to two Jira round trips plus a 24h human decision deadline
+  # before any terminal edge is reachable.
+  limits:
+    maxDuration: 336h
+    maxTransitions: 12
+    maxVisitsPerNode: 1
+    maxParallelTokens: 1
+
+  nodes:
+    # -----------------------------------------------------------------------
+    # ATTEMPT 1: ask, park, resume.
+    # -----------------------------------------------------------------------
+    post-question:
+      kind: agent
+      ownerRef: team/platform-ai
+      uses: actor://company/jira-comment@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
+      input:
+        bindings:
+          verb:
+            literal: post_comment
+          issue: /run/input/issue
+          comment: /run/input/question
+          question_id: /run/input/question_id
+      contract:
+        outcomes:
+          comment_posted:
+            schema:
+              type: object
+              required: [issue, comment_id]
+
+    await-answer:
+      kind: wait
+      ownerRef: team/platform-ai
+      until:
+        signal: pr-upkeep.jira.comment
+
+    continue-leg:
+      kind: agent
+      ownerRef: team/platform-ai
+      uses: actor://company/codex-orin@sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb
+      # A real bridge's completion proposes a claim (PRD 10.4); a node
+      # that declares no propose types rejects every honest actor completion
+      # as contract_rejected (measured live in the t17 round trip).
+      ledger:
+        propose: [claim]
+      input:
+        bindings:
+          instruction:
+            literal: Continue the parked leg using the correlated Jira answer; do not start new work.
+          question_id: /run/input/question_id
+          question: /run/input/question
+          resume_event: /nodes/await-answer/output
+      contract:
+        outcomes:
+          completed:
+            schema: {type: object}
+          # A reply arrived (this node was resumed) but the resuming actor
+          # judges it did not answer the question -- a domain outcome, not
+          # an engine failure (PRD §3.4): the run is not stuck, it is one
+          # backoff cycle away from asking again.
+          needs_clarification:
+            schema:
+              type: object
+              required: [reason]
+              properties:
+                reason:
+                  type: string
+                  minLength: 1
+
+    # -----------------------------------------------------------------------
+    # THE BACKOFF. Same shape as development-loop's gate-backoff: a durable
+    # park with no lease held, between a domain failure and a bounded retry.
+    # -----------------------------------------------------------------------
+    ask-backoff:
+      kind: wait
+      ownerRef: team/platform-ai
+      until:
+        duration: 30m
+
+    # -----------------------------------------------------------------------
+    # ATTEMPT 2 (the last one): ask, park, resume. Structurally identical to
+    # attempt 1 -- distinct node ids are what makes "two attempts, then a
+    # human" a property `nodes validate` can see, rather than a runtime
+    # counter nothing here can evaluate (see the header's Honest Gap 2).
+    # -----------------------------------------------------------------------
+    post-question-retry:
+      kind: agent
+      ownerRef: team/platform-ai
+      uses: actor://company/jira-comment@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
+      input:
+        bindings:
+          verb:
+            literal: post_comment
+          issue: /run/input/issue
+          # Re-posted verbatim rather than reworded: composing a "reminder:"
+          # prefix around a run-input pointer would need either a template
+          # binding or a code node, and neither exists for a one-line
+          # cosmetic change. The same question_id keeps the marker
+          # correlating both attempts to the one original question.
+          comment: /run/input/question
+          question_id: /run/input/question_id
+      contract:
+        outcomes:
+          comment_posted:
+            schema:
+              type: object
+              required: [issue, comment_id]
+
+    await-answer-retry:
+      kind: wait
+      ownerRef: team/platform-ai
+      until:
+        signal: pr-upkeep.jira.comment
+
+    continue-leg-retry:
+      kind: agent
+      ownerRef: team/platform-ai
+      uses: actor://company/codex-orin@sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb
+      # A real bridge's completion proposes a claim (PRD 10.4); a node
+      # that declares no propose types rejects every honest actor completion
+      # as contract_rejected (measured live in the t17 round trip).
+      ledger:
+        propose: [claim]
+      input:
+        bindings:
+          instruction:
+            literal: Continue the parked leg using the correlated Jira answer; do not start new work.
+          question_id: /run/input/question_id
+          question: /run/input/question
+          resume_event: /nodes/await-answer-retry/output
+      # See the header's Honest Gap 2 in full. This is the literal shape
+      # task t14 asked for, declared and routed so the compiler enforces
+      # what it can (onExhausted must reach an edge), while the comment
+      # above states plainly that the engine never evaluates it for a node
+      # whose own dispatch is not an async invocation with a fired deadline
+      # -- which nothing in this file arranges. `node.state` and
+      # `budget.remaining_sessions` are the only two variables the engine's
+      # CEL activation populates for a continuation condition
+      # (development-loop's gap 5 records the same fact for `output`).
+      continue:
+        while:
+          - node.state == "incomplete"
+          - budget.remaining_sessions > 0
+        bounds:
+          maxContinuations: 2
+          maxWallClock: 24h
+          maxSessions: 2
+        onExhausted: session_exhausted
+      contract:
+        outcomes:
+          completed:
+            schema: {type: object}
+          needs_clarification:
+            schema:
+              type: object
+              required: [reason]
+              properties:
+                reason:
+                  type: string
+                  minLength: 1
+
+    # -----------------------------------------------------------------------
+    # THE ESCALATION. A token arriving here creates a human task and the run
+    # PAUSES -- no lease held, same as `await-answer`. Two structurally
+    # different reasons reach it: the second attempt's own domain judgment
+    # that the reply still did not resolve the question, and the declared
+    # (measured-inert, see Honest Gap 2) continuation exhaustion. Both are
+    # real answers to "we cannot resolve this ourselves any further" and
+    # both belong on the same human decision.
+    # -----------------------------------------------------------------------
+    needs-human:
+      kind: approval
+      ownerRef: team/platform-ai
+      approverRef: group/platform-ai-approvers
+      deadline: 24h
+      input:
+        from: /nodes/continue-leg-retry/output
+
+    # -----------------------------------------------------------------------
+    # FOUR NAMED ENDINGS, not one generic terminus -- the same reasoning
+    # development-loop gives for its own four: a run whose output does not
+    # name why it stopped, or on which attempt, is the illegible failure
+    # this file is against.
+    # -----------------------------------------------------------------------
+
+    # Resolved on the first ask.
+    finish:
+      kind: end
+      ownerRef: team/platform-ai
+      output:
+        from: /nodes/continue-leg/output
+
+    # Resolved on the second ask, after one backoff-and-reask cycle.
+    finish-after-retry:
+      kind: end
+      ownerRef: team/platform-ai
+      output:
+        from: /nodes/continue-leg-retry/output
+
+    # Neither ask resolved it; a human decided (approved or rejected) within
+    # the 24h deadline. What they decided is the ledger's own record of the
+    # human task, not re-encoded here.
+    escalated-resolved:
+      kind: end
+      ownerRef: team/platform-ai
+      output:
+        from: /nodes/needs-human/output
+
+    # Nobody answered the escalation within its deadline either. The run
+    # stops rather than guessing on a person's silence.
+    abandoned:
+      kind: end
+      ownerRef: team/platform-ai
+      output:
+        from: /nodes/needs-human/output
+
+  edges:
+    # --- attempt 1 ---------------------------------------------------------
+    - from: post-question.comment_posted
+      to: await-answer
+    - from: await-answer.completed
+      to: continue-leg
+    - from: continue-leg.completed
+      to: finish
+    - from: continue-leg.needs_clarification
+      to: ask-backoff
+
+    # --- the backoff ---------------------------------------------------------
+    - from: ask-backoff.completed
+      to: post-question-retry
+
+    # --- attempt 2 (the last one) -------------------------------------------
+    - from: post-question-retry.comment_posted
+      to: await-answer-retry
+    - from: await-answer-retry.completed
+      to: continue-leg-retry
+    - from: continue-leg-retry.completed
+      to: finish-after-retry
+    - from: continue-leg-retry.needs_clarification
+      to: needs-human
+    # THE onExhausted EDGE (see Honest Gap 2): required by the compiler the
+    # moment `continue.onExhausted` is declared above
+    # (CodeGraphExhaustedUnrouted), regardless of whether the engine can
+    # ever actually produce this outcome for this node's dispatch shape.
+    - from: continue-leg-retry.session_exhausted
+      to: needs-human
+
+    # --- the escalation ------------------------------------------------------
+    - from: needs-human.approved
+      to: escalated-resolved
+    - from: needs-human.rejected
+      to: escalated-resolved
+    - from: needs-human.expired
+      to: abandoned

@@ -36,6 +36,13 @@ type Operation struct {
 	Evidence EvidenceRequest `json:"evidence"`
 	// Context correlates back to the graph. The runner treats it as opaque.
 	Context *Context `json:"context,omitempty"`
+	// Input is a code node's resolved §11.2 input document, set only when it
+	// carries more than the `{}` an unbound node resolves to (issue #170).
+	// It is forwarded into the executed process by ContextEnvironment,
+	// alongside the run/node-run/attempt ids in Context — never read by the
+	// runner as anything but an opaque document to lower into the operation's
+	// environment.
+	Input json.RawMessage `json:"input,omitempty"`
 }
 
 // WriteMode is how a runner may write to the input workspace.

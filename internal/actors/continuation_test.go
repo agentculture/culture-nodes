@@ -63,6 +63,20 @@ func TestInvocationRequestCarriesContinuationRef(t *testing.T) {
 	}
 }
 
+func TestWithSessionKeyAddsTransportIdentityToObjectInput(t *testing.T) {
+	got := actors.WithSessionKey(json.RawMessage(`{"instruction":"continue"}`), "session-17")
+	var decoded map[string]any
+	if err := json.Unmarshal(got, &decoded); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	if decoded["session_key"] != "session-17" {
+		t.Fatalf("session_key = %#v, want session-17 (input %s)", decoded["session_key"], got)
+	}
+	if decoded["instruction"] != "continue" {
+		t.Fatalf("instruction changed: %#v", decoded["instruction"])
+	}
+}
+
 // The async twin of a synchronous result's ref: a `completed` callback's
 // `continuation_ref` lands on the attempt row this callback commits, exactly
 // as its Usage block does (task t1's TestCallbackCompletedPersistsUsage).

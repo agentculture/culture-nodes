@@ -211,6 +211,73 @@ func TestDeliverSignalEventWatermarkSuppressesRestartDuplicate(t *testing.T) {
 	}
 }
 
+// TestAnswerDeliveryRollsBackWatermarkAndEventTogether is t11's restart
+// fixture. A database failure after signal_events has been appended but while
+// its answer watermark is advancing must leave NEITHER half committed. The
+// next sweep pass then emits exactly once: no skipped answer, no duplicate.
+func TestAnswerDeliveryRollsBackWatermarkAndEventTogether(t *testing.T) {
+	s := requireStore(t)
+	ctx := context.Background()
+	ns := mustNamespace(t, s, "jira-answer-transaction")
+	sourceKey := "jira:team.example.com:EX-17:comment-answer-transaction"
+	in := postgres.DeliverSignalEventInput{
+		NamespaceID: ns.ID, Name: "pr-upkeep.jira.comment", Emitter: "pr-upkeep/sweep",
+		Payload:   json.RawMessage(`{"originating_question_id":"q-17","answer":{"comment_id":"1009"}}`),
+		SourceKey: sourceKey,
+		Watermark: json.RawMessage(`{"updated_at":"2026-08-17T00:00:00Z","newest_comment_at":"2026-08-17T00:00:00Z"}`),
+	}
+
+	// Conditional failure keeps the fixture isolated even when database tests
+	// share one PostgreSQL instance.
+	if _, err := s.Pool().Exec(ctx, `
+		CREATE OR REPLACE FUNCTION fail_t11_answer_watermark() RETURNS trigger AS $$
+		BEGIN
+			IF NEW.source_key = 'jira:team.example.com:EX-17:comment-answer-transaction' THEN
+				RAISE EXCEPTION 'fixture crash between answer append and watermark advance';
+			END IF;
+			RETURN NEW;
+		END $$ LANGUAGE plpgsql;
+		CREATE TRIGGER fail_t11_answer_watermark
+		BEFORE INSERT OR UPDATE ON signal_event_watermarks
+		FOR EACH ROW EXECUTE FUNCTION fail_t11_answer_watermark();
+	`); err != nil {
+		t.Fatalf("install failure fixture: %v", err)
+	}
+	t.Cleanup(func() {
+		_, _ = s.Pool().Exec(context.Background(), `DROP TRIGGER IF EXISTS fail_t11_answer_watermark ON signal_event_watermarks`)
+		_, _ = s.Pool().Exec(context.Background(), `DROP FUNCTION IF EXISTS fail_t11_answer_watermark()`)
+	})
+
+	if _, err := s.DeliverSignalEvent(ctx, in); err == nil {
+		t.Fatal("failure fixture unexpectedly committed the answer")
+	}
+	var events, watermarks int
+	if err := s.Pool().QueryRow(ctx, `SELECT count(*) FROM signal_events WHERE namespace_id=$1 AND name=$2`, ns.ID, in.Name).Scan(&events); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.Pool().QueryRow(ctx, `SELECT count(*) FROM signal_event_watermarks WHERE namespace_id=$1 AND source_key=$2`, ns.ID, sourceKey).Scan(&watermarks); err != nil {
+		t.Fatal(err)
+	}
+	if events != 0 || watermarks != 0 {
+		t.Fatalf("failed pass left (events=%d, watermarks=%d), want (0, 0)", events, watermarks)
+	}
+
+	if _, err := s.Pool().Exec(ctx, `DROP TRIGGER fail_t11_answer_watermark ON signal_event_watermarks`); err != nil {
+		t.Fatalf("remove failure fixture: %v", err)
+	}
+	first, err := s.DeliverSignalEvent(ctx, in)
+	if err != nil {
+		t.Fatalf("restart delivery: %v", err)
+	}
+	second, err := s.DeliverSignalEvent(ctx, in)
+	if err != nil {
+		t.Fatalf("next sweep delivery: %v", err)
+	}
+	if !second.Duplicate || second.Event.ID != first.Event.ID {
+		t.Fatalf("next pass = (duplicate=%v, event=%s), want original %s", second.Duplicate, second.Event.ID, first.Event.ID)
+	}
+}
+
 func TestDeliverSignalEventFiresPendingSubscription(t *testing.T) {
 	s := requireStore(t)
 	ctx := context.Background()

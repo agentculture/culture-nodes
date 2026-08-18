@@ -648,3 +648,113 @@ func TestACallbackToAnUnusableURLNeverFailsTheOperation(t *testing.T) {
 			observed.State)
 	}
 }
+
+// fakeRegistrar records the d1 artifact-session bracket: Register with the
+// operation's attempt id and callback credential before Execute, Release
+// after (issue #189).
+type fakeRegistrar struct {
+	mu       sync.Mutex
+	register []string
+	release  []string
+}
+
+func (f *fakeRegistrar) Register(attemptID, callbackURL, token string) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.register = append(f.register, attemptID+"|"+callbackURL+"|"+token)
+	return nil
+}
+
+func (f *fakeRegistrar) Release(attemptID string) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.release = append(f.release, attemptID)
+}
+
+func TestExecuteBracketsArtifactSessionAroundTheRunner(t *testing.T) {
+	reg := &fakeRegistrar{}
+	sawRegistered := make(chan int, 1)
+	runner := runnerFunc(func(_ context.Context, op runners.Operation) (runners.Result, error) {
+		reg.mu.Lock()
+		sawRegistered <- len(reg.register)
+		reg.mu.Unlock()
+		return completedResult(op), nil
+	})
+	h := newHarness(t, runner, func(cfg *runnerservice.Config) {
+		cfg.ArtifactSessions = reg
+	})
+
+	op := testOperation("op-artifact-session")
+	op.Context = &runners.Context{RunID: "run-1", AttemptID: "att-1"}
+	body, err := json.Marshal(op)
+	if err != nil {
+		t.Fatalf("marshal: %v", err)
+	}
+	status, resp := h.request(t, http.MethodPost, runners.OperationsPath, testSecret, body, map[string]string{
+		runners.IdempotencyKeyHeader: op.OperationID,
+		runners.CallbackURLHeader:    "http://control-plane/v1/runner-operations/op-artifact-session/events",
+		runners.CallbackTokenHeader:  "cb-token",
+	})
+	if status != http.StatusAccepted {
+		t.Fatalf("execute status = %d: %s", status, resp)
+	}
+
+	select {
+	case n := <-sawRegistered:
+		if n != 1 {
+			t.Fatalf("runner saw %d registrations mid-Execute, want 1 (Register precedes Execute)", n)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("runner never ran")
+	}
+
+	deadline := time.Now().Add(5 * time.Second)
+	for {
+		reg.mu.Lock()
+		released := len(reg.release)
+		reg.mu.Unlock()
+		if released == 1 {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatal("Release was never called after Execute")
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	reg.mu.Lock()
+	defer reg.mu.Unlock()
+	want := "att-1|http://control-plane/v1/runner-operations/op-artifact-session/events|cb-token"
+	if reg.register[0] != want {
+		t.Fatalf("Register = %q, want %q", reg.register[0], want)
+	}
+	if reg.release[0] != "att-1" {
+		t.Fatalf("Release = %q, want att-1", reg.release[0])
+	}
+}
+
+func TestExecuteWithoutCallbackRegistersNoArtifactSession(t *testing.T) {
+	reg := &fakeRegistrar{}
+	done := make(chan struct{})
+	runner := runnerFunc(func(_ context.Context, op runners.Operation) (runners.Result, error) {
+		defer close(done)
+		return completedResult(op), nil
+	})
+	h := newHarness(t, runner, func(cfg *runnerservice.Config) {
+		cfg.ArtifactSessions = reg
+	})
+	op := testOperation("op-no-callback")
+	op.Context = &runners.Context{RunID: "run-1", AttemptID: "att-1"}
+	if status, _ := h.execute(t, op, testSecret); status != http.StatusAccepted {
+		t.Fatalf("execute status = %d, want 202", status)
+	}
+	select {
+	case <-done:
+	case <-time.After(5 * time.Second):
+		t.Fatal("runner never ran")
+	}
+	reg.mu.Lock()
+	defer reg.mu.Unlock()
+	if len(reg.register) != 0 {
+		t.Fatalf("registrations = %v, want none for a callback-less operation", reg.register)
+	}
+}

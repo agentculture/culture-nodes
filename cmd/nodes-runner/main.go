@@ -29,6 +29,7 @@ import (
 
 	"github.com/agentculture/culture-nodes/internal/clifmt"
 	"github.com/agentculture/culture-nodes/internal/runners"
+	"github.com/agentculture/culture-nodes/internal/runners/artifactclient"
 	"github.com/agentculture/culture-nodes/internal/runners/headspace"
 	"github.com/agentculture/culture-nodes/internal/runners/runnerservice"
 )
@@ -363,12 +364,21 @@ func serve(args []string, jsonMode bool) error {
 		return cliErr
 	}
 
+	// The d1 artifact session registry (issue #189): the bridge persists each
+	// run's captured stdout through the control plane's publication route,
+	// authorized by the operation's own attempt-scoped callback token — this
+	// host process holds no store credential. The registry is both the
+	// bridge's artifacts.Store and the service's per-operation registrar.
+	artifactSessions := artifactclient.New(nil)
+
 	bridge, err := headspace.New(headspace.BridgeConfig{
-		HeadspaceBin:  resolved.headspaceBin,
-		Profile:       resolved.profiles,
-		HeadspaceHome: resolved.headspaceHome,
-		Provider:      resolved.provider,
-		StopTimeout:   resolved.stopTimeout,
+		HeadspaceBin:      resolved.headspaceBin,
+		Profile:           resolved.profiles,
+		HeadspaceHome:     resolved.headspaceHome,
+		Provider:          resolved.provider,
+		StopTimeout:       resolved.stopTimeout,
+		ArtifactStore:     artifactSessions,
+		ArtifactNamespace: artifactclient.NamespaceServerDerived,
 	})
 	if err != nil {
 		return &clifmt.CliError{
@@ -388,14 +398,15 @@ func serve(args []string, jsonMode bool) error {
 	}
 
 	svc, err := runnerservice.New(runnerservice.Config{
-		Runner:          bridge,
-		Store:           store,
-		Secret:          resolved.secret,
-		Concurrency:     resolved.concurrency,
-		QueueDepth:      resolved.queueDepth,
-		StatusRetention: resolved.retention,
-		PollAfter:       resolved.pollAfter,
-		OnError:         func(err error) { clifmt.EmitDiagnostic(err.Error()) },
+		Runner:           bridge,
+		Store:            store,
+		Secret:           resolved.secret,
+		Concurrency:      resolved.concurrency,
+		QueueDepth:       resolved.queueDepth,
+		StatusRetention:  resolved.retention,
+		PollAfter:        resolved.pollAfter,
+		ArtifactSessions: artifactSessions,
+		OnError:          func(err error) { clifmt.EmitDiagnostic(err.Error()) },
 	})
 	if err != nil {
 		return &clifmt.CliError{

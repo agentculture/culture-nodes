@@ -2,7 +2,7 @@
   "plan_slug": "jira-driven-idea-to-shipped-loop",
   "schema_version": 1,
   "created": "2026-08-18T06:44:06Z",
-  "updated": "2026-08-18T07:22:45Z",
+  "updated": "2026-08-18T07:46:16Z",
   "deviations": [
     {
       "id": "d1",
@@ -46,6 +46,18 @@
       "reason": "every wave-0/2 honest-gap list converged on the same blocker; documented-around is not runnable",
       "affects": [
         "t8",
+        "t20"
+      ],
+      "origin": "llm",
+      "status": "proposed",
+      "classification": "acceptable"
+    },
+    {
+      "id": "d5",
+      "what": "t16 partial coverage: tag-pinned placement (the third leg of #166/c36) is deferred - no tag concept exists in the actors table, registry, or affinity resolution, so building it is a placement redesign (registry schema + selection policy + recorded-placement durability), not a fit for the dispatch seam t16 built on. The configurable max and per-machine ceiling shipped; h21's tag-pinned clause is split out to a follow-up Feature",
+      "task_ref": "t16",
+      "reason": "measured absence of any tag concept; forcing it through the wrong seam would fake the acceptance",
+      "affects": [
         "t20"
       ],
       "origin": "llm",

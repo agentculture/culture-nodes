@@ -58,3 +58,12 @@ and says so in its header. Claim c6 is amended to name the engine surface
 - `adapters/jira` shipped without the byte-identical `dialin.py` the
   transport guard demands of every bridge; copied verbatim from
   `adapters/notify` at staging.
+
+## d5 — t16 partial coverage: tag-pinned placement deferred (added 2026-08-18, execution phase)
+
+t16 shipped the configurable subject-run ceiling (transactional
+deferred-trigger queue, drained at run completion) and the per-actor
+in-flight ceiling. The tag-pinned third leg of #166 was deferred after
+measurement: no tag concept exists in the actors table, the registry, or
+affinity resolution, so it is a placement redesign — filed as #175, with
+h21's tag-pinned clause split to it. Proposed as deviation d5.

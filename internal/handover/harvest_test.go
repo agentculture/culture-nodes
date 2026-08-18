@@ -174,3 +174,21 @@ func TestStageCandidateRoutesGitHubChangeToHumanBeforeVerdict(t *testing.T) {
 	// StageCandidate has no verdict input: routing is computed from the
 	// candidate diff before a green suite result can enter the lane.
 }
+
+func TestStageCandidateMaterializesTheCombinationForTheGate(t *testing.T) {
+	repo, ref, packageCommit := candidateFixture(t, "", "package.txt", "package\n")
+	worktree := filepath.Join(t.TempDir(), "candidate")
+	result, err := handover.StageCandidate(context.Background(), handover.Request{
+		Repository: repo, Remote: "handover", Ref: ref, Commit: packageCommit,
+		RunID: "combined-fixture", Worktree: worktree, AllowFileFixture: true,
+	}, "feature")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.CandidateCommit == "" || git(t, worktree, "rev-parse", "HEAD") != result.CandidateCommit {
+		t.Fatalf("candidate commit = %q, want materialized HEAD", result.CandidateCommit)
+	}
+	if got := git(t, worktree, "rev-parse", "HEAD^2"); got != packageCommit {
+		t.Fatalf("candidate second parent = %s, want package %s", got, packageCommit)
+	}
+}

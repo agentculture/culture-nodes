@@ -53,10 +53,11 @@ const (
 // feature tip, not taken from the package's report.
 type CandidateResult struct {
 	Result
-	FeatureCommit string           `json:"feature_commit"`
-	Outcome       CandidateOutcome `json:"outcome"`
-	ChangedPaths  []string         `json:"changed_paths,omitempty"`
-	GuardedPaths  []string         `json:"guarded_paths,omitempty"`
+	FeatureCommit   string           `json:"feature_commit"`
+	CandidateCommit string           `json:"candidate_commit,omitempty"`
+	Outcome         CandidateOutcome `json:"outcome"`
+	ChangedPaths    []string         `json:"changed_paths,omitempty"`
+	GuardedPaths    []string         `json:"guarded_paths,omitempty"`
 }
 
 // Harvest fetches the named handover into a durable, run-scoped ref before it
@@ -95,8 +96,10 @@ func Harvest(ctx context.Context, req Request) (Result, error) {
 	return Result{Commit: got, RecoveryRef: recovery, Worktree: req.Worktree}, nil
 }
 
-// StageCandidate harvests the package, then applies it without committing on
-// a detached worktree pinned to featureRef. This phase precedes suite verdicts:
+// StageCandidate harvests the package, then applies it on a detached worktree
+// pinned to featureRef. An eligible combination is materialized as a detached
+// merge commit so the suite verdict and later branch update name the same tree.
+// This phase precedes suite verdicts:
 // a green verdict therefore cannot turn a protected .github change into an
 // ordinary merge candidate.
 func StageCandidate(ctx context.Context, req Request, featureRef string) (CandidateResult, error) {
@@ -143,6 +146,19 @@ func StageCandidate(ctx context.Context, req Request, featureRef string) (Candid
 	if len(result.GuardedPaths) > 0 {
 		result.Outcome = CandidateRoutesHuman
 	} else {
+		// Materialize the exact tree the gate will measure.  This is a detached
+		// merge commit: it moves no branch, but gives the combination a durable
+		// object id which the gate report and the later merge step can both name.
+		if err := run(ctx, req.Worktree,
+			"-c", "user.name=Culture Nodes Candidate",
+			"-c", "user.email=candidate@culture-nodes.invalid",
+			"commit", "--no-edit"); err != nil {
+			return CandidateResult{}, fmt.Errorf("materialize candidate commit: %w", err)
+		}
+		result.CandidateCommit, err = output(ctx, req.Worktree, "rev-parse", "HEAD")
+		if err != nil {
+			return CandidateResult{}, fmt.Errorf("resolve candidate commit: %w", err)
+		}
 		result.Outcome = CandidateStaged
 	}
 	return result, nil

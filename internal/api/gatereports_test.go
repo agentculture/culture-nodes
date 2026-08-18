@@ -16,6 +16,7 @@ import (
 
 type gateReportReq struct {
 	CommitSHA        string         `json:"commit_sha"`
+	PackageCommitSHA string         `json:"package_commit_sha,omitempty"`
 	BaseSHA          string         `json:"base_sha,omitempty"`
 	Ref              string         `json:"ref,omitempty"`
 	ChangedFiles     []string       `json:"changed_files,omitempty"`
@@ -223,6 +224,29 @@ func TestGateReportRefusesAReportAgainstAnotherCommit(t *testing.T) {
 		ValidatorActorID: validator,
 		Gates:            []gateEntryReq{{Gate: "go-test", ExitCode: exitCode(0)}},
 	}, http.StatusBadRequest)
+}
+
+func TestGateReportRecordsVerdictOnCombinationBoundToMeasuredPackage(t *testing.T) {
+	f := newFixtureWithDecisionAuth(t, decisionAuthSecret)
+	run, _ := createMinimalRun(t, f)
+	validator := f.insertActorKind("merge-gate-node", "validator")
+	seedHandoverEvidence(t, f, run.ID, gateCommit)
+
+	out, _ := postGateReport(t, f, run.ID, gateReportReq{
+		CommitSHA:        otherCommit,
+		PackageCommitSHA: gateCommit,
+		BaseSHA:          gateCommit,
+		ValidatorActorID: validator,
+		Gates:            []gateEntryReq{{Gate: "combination", ExitCode: exitCode(1)}},
+	}, http.StatusCreated)
+
+	if out.Outcome != handover.OutcomeChangesRequired {
+		t.Fatalf("outcome = %q, want %q", out.Outcome, handover.OutcomeChangesRequired)
+	}
+	data := verdictPayload(t, out.Aggregate)
+	if data["commit_sha"] != otherCommit || data["handover_evidence_ref"] == "" {
+		t.Fatalf("aggregate payload = %v, want candidate commit bound to handover evidence", data)
+	}
 }
 
 // TestGateReportRoutesEachFailingGate proves a red gate inside a report

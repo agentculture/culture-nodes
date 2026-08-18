@@ -652,6 +652,11 @@
             "description": "Narrows the records to one node run.",
             "type": "string"
           },
+          "package_commit_sha": {
+            "description": "When commit_sha is a post-merge candidate, the harvested package commit this combination contains. The control plane binds this to the run's measured handover while recording the verdict on the candidate itself.",
+            "pattern": "^[0-9a-f]{40}$",
+            "type": "string"
+          },
           "ref": {
             "description": "The handover ref that carried the commit, validated against the same `refs/culture-nodes/` fence a control-plane fetch is.",
             "type": "string"
@@ -1371,6 +1376,7 @@
               "instrument_not_reaching_tree",
               "no_test_instrument",
               "instrument_unavailable",
+              "no_tests_executed",
               "no_source_files"
             ],
             "type": "string"

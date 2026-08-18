@@ -3932,6 +3932,14 @@ components:
           description: >-
             The candidate the gates ran against, full 40-character lowercase
             hex, read back from the worktree the suites actually ran in.
+        package_commit_sha:
+          type: string
+          pattern: '^[0-9a-f]{40}$'
+          description: >-
+            When commit_sha is a post-merge candidate, the harvested package
+            commit this combination contains. The control plane binds this to
+            the run's measured handover while recording the verdict on the
+            candidate itself.
         base_sha:
           type: string
           pattern: '^[0-9a-f]{40}$'
@@ -4030,6 +4038,7 @@ components:
             - instrument_not_reaching_tree
             - no_test_instrument
             - instrument_unavailable
+            - no_tests_executed
             - no_source_files
           description: >-
             The vocabulary is closed so "which trees does no instrument reach

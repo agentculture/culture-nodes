@@ -72,19 +72,26 @@
 # at HEAD while authoring this example, is named again at the node it affects,
 # and is the reason "the spec chain runs as a graph" is not yet true of a run.
 #
-#  1. NOTHING CARRIES DATA INTO A CODE OPERATION. A code node's declared
-#     `input` bindings ARE resolved — internal/worker/worker.go resolves them
-#     for every kind, and an unresolvable one refuses the dispatch as
-#     `contract_rejected` — and are then DISCARDED: buildCodeOperation
-#     (internal/worker/code.go) lowers only the image, argv, working
-#     directory, environmentRefs, network posture and workspaceRef into the
-#     runner Operation, and `DispatchContext.Input` appears nowhere on the
-#     code path (it is read only by dispatchActor and by decision nodes).
-#     So a move node below can be REFUSED for a binding that does not
-#     resolve, and can never READ the binding that does. The bindings are
-#     declared anyway, and deliberately: deleting them would hide the gap
-#     rather than close it, and they still state which surfaces this node's
-#     work is a function of.
+#  1. CLOSED at HEAD by issue #170. A code node's declared `input` bindings
+#     ARE resolved — internal/worker/worker.go resolves them for every kind,
+#     and an unresolvable one still refuses the dispatch as
+#     `contract_rejected` — and, until this issue, were then DISCARDED:
+#     buildCodeOperation (internal/worker/code.go) lowered only the image,
+#     argv, working directory, environmentRefs, network posture and
+#     workspaceRef into the runner Operation, and `DispatchContext.Input`
+#     appeared nowhere on the code path. It now does: buildCodeOperation
+#     canonicalizes the resolved document and lowers it onto the operation
+#     as `Operation.Input`, and internal/runners.ContextEnvironment forwards
+#     it into the executed process as NODES_INPUT_JSON — the same seam that
+#     already forwarded NODES_RUN_ID/NODES_NODE_RUN_ID/NODES_ATTEMPT_ID, so a
+#     move node below can now READ the document its bindings resolved, not
+#     only be refused when one does not. Two honest limits stay: a resolved
+#     document over 64 KiB refuses the dispatch rather than truncating it
+#     (Linux's execve(2) bounds a single environment value to 128 KiB), and a
+#     node that declares no binding still forwards nothing at all —
+#     resolveNodeInput's own `{}` default is treated as "nothing to
+#     forward", so an unbound node's dispatch stays byte-identical to before
+#     this issue.
 #
 #  2. THE ARTIFACT CARRIER IS ONE-WAY. `POST /v1alpha1/attempts/{attemptID}
 #     /artifacts` is mounted, and it is the ONLY artifact route on the HTTP
@@ -366,10 +373,12 @@ spec:
       kind: code
       ownerRef: team/platform-ai
       uses: runner://headspace/devague-moves@sha256:5555555555555555555555555555555555555555555555555555555555555555
-      # DECLARED AND NOT HONOURED (gap 1). These pointers resolve — and an
-      # unresolvable one would refuse this dispatch — but nothing carries the
-      # resolved document into the operation. Left in place so the graph says
-      # what this move is a function of.
+      # RESOLVED AND HONOURED (gap 1, closed by issue #170). These pointers
+      # resolve — and an unresolvable one still refuses this dispatch — and
+      # the resolved document now reaches the operation's process as the
+      # NODES_INPUT_JSON environment value. The bootstrap below does not read
+      # it (gap 5: no real move program is committed to this repo), but a
+      # move program that IS committed can.
       input:
         bindings:
           sweep: /nodes/scope-sweep/output

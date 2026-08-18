@@ -1,6 +1,7 @@
 package worker
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -8,6 +9,7 @@ import (
 	"slices"
 	"strings"
 
+	"github.com/agentculture/culture-nodes/internal/contracts"
 	"github.com/agentculture/culture-nodes/internal/engine"
 	"github.com/agentculture/culture-nodes/internal/runners"
 	"github.com/agentculture/culture-nodes/internal/store/postgres"
@@ -69,6 +71,55 @@ import (
 // node's own dispatch is recorded under, distinguishing it from the
 // pre_run/post_run rows hooks.go writes.
 const codeOperationKind = "code"
+
+// maxCodeInputEnvBytes bounds the canonical JSON this worker will lower into
+// a code operation's NODES_INPUT_JSON environment value (issue #170).
+//
+// The number is not invented: Linux's execve(2) caps a single argv/envp
+// element at MAX_ARG_STRLEN, 32 pages — 128 KiB on every page size this
+// runs on — and a runner that hands NODES_INPUT_JSON=<value> to a subprocess
+// hits that ceiling directly (verified against headspace-cli 0.11.0, whose
+// own `--env`/`--env-file` flags document no size limit of their own; the
+// kernel is the only real ceiling in the path). This worker refuses well
+// below it rather than at it: a resolved input document is graph-handoff
+// data, not a bulk payload — a node that needs to move something larger
+// belongs on workspaceRef, not an input binding — so a dispatch that would
+// have failed opaquely inside the runner subprocess with a bare E2BIG is
+// instead refused here, at dispatch, with a diagnostic naming the actual
+// byte count.
+const maxCodeInputEnvBytes = 64 * 1024
+
+// codeOperationInput canonicalizes a code node's resolved input document for
+// NODES_INPUT_JSON, or reports that this dispatch carries nothing worth
+// forwarding.
+//
+// resolveNodeInput (bindings.go) returns the literal `{}` for every node
+// that declares no input binding — the overwhelming default across today's
+// workflows — and this helper treats that value, like a genuinely absent
+// one, as "nothing to forward": that is what keeps every such dispatch
+// byte-identical to the operation this worker built before NODES_INPUT_JSON
+// existed. A binding that resolves to anything else, including one that
+// happens to also resolve to an empty object, is forwarded.
+func codeOperationInput(input json.RawMessage) (json.RawMessage, error) {
+	if len(bytes.TrimSpace(input)) == 0 {
+		return nil, nil
+	}
+	canonical, err := contracts.CanonicalJSON(input)
+	if err != nil {
+		return nil, fmt.Errorf("resolved input could not be canonicalized: %w", err)
+	}
+	if bytes.Equal(canonical, []byte("{}")) {
+		return nil, nil
+	}
+	if len(canonical) > maxCodeInputEnvBytes {
+		return nil, fmt.Errorf(
+			"resolved input is %d bytes, over the %d-byte limit this worker forwards as %s "+
+				"(Linux's execve(2) MAX_ARG_STRLEN bounds a single environment value to 128 KiB; "+
+				"move data this size through a workspace ref instead of an input binding)",
+			len(canonical), maxCodeInputEnvBytes, runners.EnvInputJSON)
+	}
+	return canonical, nil
+}
 
 // CodeOutcomes names the domain outcomes a code node's exit status routes to.
 // Failure may be empty: a node that declares no domain answer for a nonzero
@@ -277,6 +328,16 @@ func (w *Worker) buildCodeOperation(node *nodeSpec, dc DispatchContext) (runners
 		timeoutSeconds = int(node.Timeout.Seconds())
 	}
 
+	// The node's resolved §11.2 input document, lowered into the operation
+	// so ContextEnvironment can forward it as NODES_INPUT_JSON alongside the
+	// run/node-run/attempt ids below (issue #170). dc.Input has already
+	// survived worker.go's own refusal: an unresolvable binding never
+	// reaches here at all.
+	resolvedInput, err := codeOperationInput(dc.Input)
+	if err != nil {
+		return runners.Operation{}, fmt.Errorf("node %q %w", node.ID, err)
+	}
+
 	requiresShell := op.RequiresShell
 	captureResourceUsage := true
 	operation := runners.Operation{
@@ -309,6 +370,7 @@ func (w *Worker) buildCodeOperation(node *nodeSpec, dc DispatchContext) (runners
 			NodeRunID: dc.NodeRunID,
 			AttemptID: dc.AttemptID,
 		},
+		Input: resolvedInput,
 	}
 	if operation.Policy.Network == "" {
 		// The §13.7 safe default, stated rather than left to the adapter.

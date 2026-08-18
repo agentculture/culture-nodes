@@ -167,6 +167,39 @@ func (s *Store) GetArtifactByURI(ctx context.Context, namespaceID, uri string) (
 	return rec, nil
 }
 
+// ListArtifactsByAttempt returns every artifact metadata row recorded for one
+// attempt, oldest first. Attempt ids are ULIDs minted by this store, so the
+// attempt id alone identifies the rows without a namespace qualifier -- the
+// same single-metadata-table property Router relies on for Get.
+func (s *Store) ListArtifactsByAttempt(ctx context.Context, attemptID string) ([]ArtifactRecord, error) {
+	if attemptID == "" {
+		return nil, fmt.Errorf("postgres: ListArtifactsByAttempt: attemptID is required")
+	}
+	rows, err := s.pool.Query(ctx, `
+		SELECT `+artifactColumns+`
+		FROM artifacts
+		WHERE attempt_id = $1
+		ORDER BY created_at, id`,
+		attemptID,
+	)
+	if err != nil {
+		return nil, fmt.Errorf("postgres: ListArtifactsByAttempt: %w", err)
+	}
+	defer rows.Close()
+	var out []ArtifactRecord
+	for rows.Next() {
+		rec, scanErr := scanArtifactRow(rows)
+		if scanErr != nil {
+			return nil, fmt.Errorf("postgres: ListArtifactsByAttempt: %w", scanErr)
+		}
+		out = append(out, rec)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("postgres: ListArtifactsByAttempt: %w", err)
+	}
+	return out, nil
+}
+
 func (s *Store) GetArtifactTombstone(ctx context.Context, artifactID string) (ArtifactTombstoneRecord, error) {
 	return getArtifactTombstone(ctx, s.pool, artifactID)
 }

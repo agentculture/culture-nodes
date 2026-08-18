@@ -3,6 +3,7 @@ package api
 import (
 	"context"
 	"errors"
+	"io"
 	"net/http"
 	"strings"
 
@@ -121,4 +122,99 @@ func bearerToken(header string) (string, bool) {
 	}
 	token := strings.TrimSpace(header[len(prefix):])
 	return token, token != ""
+}
+
+// artifactListEntry is one row of the attempt-artifact listing: the same
+// fields the write response reports, so a reader can correlate what a PUT
+// returned with what the listing now shows.
+type artifactListEntry struct {
+	Ref       artifacts.Ref     `json:"ref"`
+	Name      string            `json:"name"`
+	MediaType string            `json:"media_type"`
+	SizeBytes int64             `json:"size_bytes"`
+	Digest    string            `json:"digest"`
+	Backend   artifacts.Backend `json:"backend"`
+	CreatedAt string            `json:"created_at"`
+}
+
+// handleListAttemptArtifacts is the read-back half of the artifact route
+// (issue #189): GET /v1alpha1/attempts/{attemptID}/artifacts lists what the
+// attempt published. Like the other read surfaces in this package it carries
+// no bearer token -- attempt ids are store-minted ULIDs, and the listing is
+// exactly what the run's ledger evidence already references by ref.
+func (s *Server) handleListAttemptArtifacts(w http.ResponseWriter, r *http.Request) error {
+	attemptID := r.PathValue("attemptID")
+	if attemptID == "" {
+		return badRequest("name the attempt in the path", "attempt id is required")
+	}
+	if s.artifactRouter == nil {
+		return unavailable("configure the artifact router", "artifact reads are not configured")
+	}
+	listed, err := s.artifactRouter.ListByAttempt(r.Context(), attemptID)
+	if err != nil {
+		return internalError(err)
+	}
+	out := make([]artifactListEntry, 0, len(listed))
+	for _, l := range listed {
+		out = append(out, artifactListEntry{
+			Ref:       l.Ref,
+			Name:      l.Meta.Name,
+			MediaType: l.Meta.MediaType,
+			SizeBytes: l.Meta.SizeBytes,
+			Digest:    l.Meta.Digest,
+			Backend:   l.Meta.Backend,
+			CreatedAt: l.Meta.CreatedAt.UTC().Format("2006-01-02T15:04:05.999999999Z07:00"),
+		})
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"attempt_id": attemptID, "artifacts": out})
+	return nil
+}
+
+// handleGetAttemptArtifact streams one named artifact's content:
+// GET /v1alpha1/attempts/{attemptID}/artifacts/{name}. The name is the
+// descriptive Artifact-Name recorded at PUT time ("stdout" for the runner's
+// captured output); when an attempt recorded several artifacts under one
+// name, the newest wins -- same row order the listing shows.
+func (s *Server) handleGetAttemptArtifact(w http.ResponseWriter, r *http.Request) error {
+	attemptID := r.PathValue("attemptID")
+	name := r.PathValue("name")
+	if attemptID == "" || name == "" {
+		return badRequest("name both the attempt and the artifact in the path", "attempt id and artifact name are required")
+	}
+	if s.artifactRouter == nil {
+		return unavailable("configure the artifact router", "artifact reads are not configured")
+	}
+	listed, err := s.artifactRouter.ListByAttempt(r.Context(), attemptID)
+	if err != nil {
+		return internalError(err)
+	}
+	var match *artifacts.Listed
+	for i := range listed {
+		if listed[i].Meta.Name == name {
+			match = &listed[i] // keep scanning: newest (last, by created_at order) wins
+		}
+	}
+	if match == nil {
+		return notFound("list the attempt's artifacts to see recorded names", "attempt %s has no artifact named %q", attemptID, name)
+	}
+	content, meta, err := s.artifactRouter.Get(r.Context(), match.Ref)
+	if err != nil {
+		var reaped *artifacts.ReapedError
+		if errors.As(err, &reaped) {
+			return notFound("the artifact was reaped: "+reaped.Tombstone.Reason, "artifact %s content was reaped", match.Ref)
+		}
+		return internalError(err)
+	}
+	defer content.Close()
+	if meta.MediaType != "" {
+		w.Header().Set("Content-Type", meta.MediaType)
+	}
+	w.Header().Set("Artifact-Ref", string(match.Ref))
+	w.WriteHeader(http.StatusOK)
+	if _, err := io.Copy(w, content); err != nil {
+		// Headers are gone; all we can do is stop. The verifying reader has
+		// already surfaced size/digest mismatches as read errors here.
+		return nil
+	}
+	return nil
 }

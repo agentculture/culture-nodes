@@ -492,6 +492,8 @@ func (s *Server) Handler() http.Handler {
 	// closed in the handler; it must never turn a declared operation into an
 	// accidental 404 or an authless write surface.
 	mux.HandleFunc("POST /v1alpha1/attempts/{attemptID}/artifacts", s.wrap(s.handlePutArtifact))
+	mux.HandleFunc("GET /v1alpha1/attempts/{attemptID}/artifacts", s.wrap(s.handleListAttemptArtifacts))
+	mux.HandleFunc("GET /v1alpha1/attempts/{attemptID}/artifacts/{name}", s.wrap(s.handleGetAttemptArtifact))
 
 	if s.webAssets != nil {
 		mux.Handle("GET /", spaHandler(s.webAssets))

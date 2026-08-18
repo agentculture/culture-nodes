@@ -32,6 +32,7 @@ func (s fakeArtifactInvocationStore) Invocation(_ context.Context, attemptID str
 type memoryArtifactStore struct {
 	meta artifacts.ArtifactMeta
 	body []byte
+	ref  artifacts.Ref
 }
 
 func (s *memoryArtifactStore) Put(_ context.Context, meta artifacts.ArtifactMeta, r io.Reader) (artifacts.Ref, error) {
@@ -45,15 +46,28 @@ func (s *memoryArtifactStore) Put(_ context.Context, meta artifacts.ArtifactMeta
 	meta.Backend = artifacts.BackendPostgres
 	meta.CreatedAt = time.Date(2026, 8, 15, 10, 0, 0, 0, time.UTC)
 	s.meta, s.body = meta, body
-	return artifacts.NewRef(meta.NamespaceID, "01K2TESTARTIFACT0000000000"), nil
+	s.ref = artifacts.NewRef(meta.NamespaceID, "01K2TESTARTIFACT0000000000")
+	return s.ref, nil
 }
 
 func (s *memoryArtifactStore) Stat(_ context.Context, _ artifacts.Ref) (artifacts.ArtifactMeta, error) {
 	return s.meta, nil
 }
 
-func (*memoryArtifactStore) Get(context.Context, artifacts.Ref) (io.ReadCloser, artifacts.ArtifactMeta, error) {
-	panic("GET must not be exposed by the write route")
+func (s *memoryArtifactStore) Get(_ context.Context, ref artifacts.Ref) (io.ReadCloser, artifacts.ArtifactMeta, error) {
+	if ref != s.ref || s.ref == "" {
+		return nil, artifacts.ArtifactMeta{}, artifacts.ErrNotFound
+	}
+	return io.NopCloser(bytes.NewReader(s.body)), s.meta, nil
+}
+
+// ListByAttempt makes the fake usable by the read-back routes (issue #189):
+// it lists the one artifact the fake holds when the attempt matches.
+func (s *memoryArtifactStore) ListByAttempt(_ context.Context, attemptID string) ([]artifacts.Listed, error) {
+	if s.ref == "" || s.meta.AttemptID != attemptID {
+		return nil, nil
+	}
+	return []artifacts.Listed{{Ref: s.ref, Meta: s.meta}}, nil
 }
 
 func (*memoryArtifactStore) Delete(context.Context, artifacts.Ref) error {
@@ -200,8 +214,13 @@ func TestArtifactSurfaceExposesOnlyAuthenticatedPost(t *testing.T) {
 		name, method, path, token string
 		wantStatus                int
 	}{
-		{"no_unauthenticated_get", http.MethodGet, "/v1alpha1/attempts/" + inv.AttemptID + "/artifacts", "", http.StatusMethodNotAllowed},
-		{"no_delete", http.MethodDelete, "/v1alpha1/attempts/" + inv.AttemptID + "/artifacts/artifact-id", token, http.StatusNotFound},
+		// The listing GET became a real route with the #189 read-back half —
+		// unauthenticated like every other read surface here (runs, ledger),
+		// which already expose run outputs without a token. The pin is now
+		// that it answers 200, not that it is refused.
+		{"unauthenticated_get_lists", http.MethodGet, "/v1alpha1/attempts/" + inv.AttemptID + "/artifacts", "", http.StatusOK},
+		// 405 since the named path exists for GET; the refusal is the pin.
+		{"no_delete", http.MethodDelete, "/v1alpha1/attempts/" + inv.AttemptID + "/artifacts/artifact-id", token, http.StatusMethodNotAllowed},
 		{"ref_is_not_authorization", http.MethodGet, "/v1alpha1/artifacts/artifact://ns_durable/01K2TESTARTIFACT0000000000", "", http.StatusNotFound},
 		{"filesystem_paths_never_resolve", http.MethodGet, "/v1alpha1/artifacts/etc/passwd", token, http.StatusNotFound},
 	} {
@@ -282,5 +301,60 @@ func TestArtifactWriteRouteAcceptsAnyCaseBearerScheme(t *testing.T) {
 				t.Fatalf("status = %d, want 201 for scheme %q; body=%s", resp.StatusCode, scheme, got)
 			}
 		})
+	}
+}
+
+// TestArtifactReadBackRoundTrip pins the #189 read-back half: what an attempt
+// published via the authenticated PUT is listable and fetchable by name —
+// {"emitted": 0} and {"emitted": 7} become distinguishable by one GET.
+func TestArtifactReadBackRoundTrip(t *testing.T) {
+	now := time.Date(2026, 8, 15, 9, 0, 0, 0, time.UTC)
+	ts, signer, _, inv := newArtifactRouteTestServer(t, now)
+	token, err := signer.Mint(inv.AttemptID)
+	if err != nil {
+		t.Fatalf("Mint: %v", err)
+	}
+
+	body := []byte(`{"sweep": "pr-upkeep", "emitted": 7}`)
+	req := artifactRequest(t, http.MethodPost, ts.URL+"/v1alpha1/attempts/"+inv.AttemptID+"/artifacts", token, "text/plain; charset=utf-8", "stdout", bytes.NewReader(body))
+	resp, err := ts.Client().Do(req)
+	if err != nil {
+		t.Fatalf("POST artifact: %v", err)
+	}
+	resp.Body.Close()
+	if resp.StatusCode != http.StatusCreated {
+		t.Fatalf("PUT status = %d, want 201", resp.StatusCode)
+	}
+
+	listResp, err := ts.Client().Get(ts.URL + "/v1alpha1/attempts/" + inv.AttemptID + "/artifacts")
+	if err != nil {
+		t.Fatalf("GET listing: %v", err)
+	}
+	defer listResp.Body.Close()
+	listing, _ := io.ReadAll(listResp.Body)
+	if listResp.StatusCode != http.StatusOK || !bytes.Contains(listing, []byte(`"name":"stdout"`)) {
+		t.Fatalf("listing status=%d body=%s, want 200 naming stdout", listResp.StatusCode, listing)
+	}
+
+	getResp, err := ts.Client().Get(ts.URL + "/v1alpha1/attempts/" + inv.AttemptID + "/artifacts/stdout")
+	if err != nil {
+		t.Fatalf("GET content: %v", err)
+	}
+	defer getResp.Body.Close()
+	content, _ := io.ReadAll(getResp.Body)
+	if getResp.StatusCode != http.StatusOK || !bytes.Equal(content, body) {
+		t.Fatalf("content status=%d body=%q, want 200 with the published bytes", getResp.StatusCode, content)
+	}
+	if ct := getResp.Header.Get("Content-Type"); !strings.HasPrefix(ct, "text/plain") {
+		t.Fatalf("Content-Type = %q, want the recorded media type", ct)
+	}
+
+	missing, err := ts.Client().Get(ts.URL + "/v1alpha1/attempts/" + inv.AttemptID + "/artifacts/no-such-name")
+	if err != nil {
+		t.Fatalf("GET missing: %v", err)
+	}
+	missing.Body.Close()
+	if missing.StatusCode != http.StatusNotFound {
+		t.Fatalf("missing-name status = %d, want 404", missing.StatusCode)
 	}
 }

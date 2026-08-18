@@ -23,6 +23,8 @@ class Config:
     auth_token: str | None = None
     state_dir: str = ".jira-bridge-state"
     jira_site: str = ""
+    transition_project_prefix: str = ""
+    transition_target: str = ""
 
     @classmethod
     def load(cls, config_path: str | None = None, env: dict[str, str] | None = None) -> "Config":
@@ -46,6 +48,8 @@ class Config:
             "JIRA_BRIDGE_AUTH_TOKEN": "auth_token",
             "JIRA_BRIDGE_STATE_DIR": "state_dir",
             "JIRA_SITE": "jira_site",
+            "JIRA_TRANSITION_PROJECT_PREFIX": "transition_project_prefix",
+            "JIRA_TRANSITION_TARGET": "transition_target",
         }.items():
             if name in env:
                 values[field] = env[name]

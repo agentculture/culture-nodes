@@ -1,4 +1,4 @@
-"""Actor protocol HTTP surface for the single Jira verb."""
+"""Actor protocol HTTP surface for the narrow Jira verbs."""
 
 from __future__ import annotations
 
@@ -8,7 +8,7 @@ import os
 from http.server import BaseHTTPRequestHandler, HTTPServer
 from typing import Any
 
-from . import client, mapping
+from . import client, mapping, transition_issue
 from .config import Config
 
 INVOCATIONS_PATH = "/v1/invocations"
@@ -84,7 +84,15 @@ class Handler(BaseHTTPRequestHandler):
                 400, {"error": "request body is not valid JSON", "class": "actor_rejected_input"}
             )
             return
-        parsed, refusal = mapping.parse(request.get("input") if isinstance(request, dict) else None)
+        input_ = request.get("input") if isinstance(request, dict) else None
+        if isinstance(input_, dict) and input_.get("verb") == transition_issue.VERB:
+            parsed, refusal = transition_issue.parse(
+                input_,
+                project_prefix=self.cfg.transition_project_prefix,
+                allowed_target=self.cfg.transition_target,
+            )
+        else:
+            parsed, refusal = mapping.parse(input_)
         if refusal:
             self._json(400, {"error": refusal, "class": "actor_rejected_input"})
             return
@@ -97,6 +105,17 @@ class Handler(BaseHTTPRequestHandler):
             )
             return
         assert parsed is not None
+        if isinstance(parsed, transition_issue.Transition):
+            posted = transition_issue.transition(
+                self.cfg.jira_site, parsed.issue, parsed.target, email, token
+            )
+            if not posted.ok:
+                self._json(502, {"error": posted.error, "class": "execution"})
+                return
+            self._json(
+                200, transition_issue.result(parsed.issue, parsed.target, self.cfg.actor_id)
+            )
+            return
         posted = client.post_comment(
             self.cfg.jira_site, parsed.issue, parsed.marked_text, email, token
         )

@@ -1,7 +1,7 @@
 [project]
 name = "culture-nodes-jira-bridge"
 version = "0.1.0"
-description = "Single-verb actor bridge for posting Jira issue comments"
+description = "Narrow actor bridge for Jira comments and allowlisted issue transitions"
 readme = "README.md"
 requires-python = ">=3.12"
 dependencies = []

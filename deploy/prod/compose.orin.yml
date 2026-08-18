@@ -49,6 +49,7 @@ services:
       NODES_ACTOR_CLAUDE_TOKEN: ${NODES_ACTOR_CLAUDE_TOKEN:-}
       NODES_ACTOR_CODEX_THOR_TOKEN: ${NODES_ACTOR_CODEX_THOR_TOKEN:-}
       NODES_ACTOR_CODEX_ORIN_TOKEN: ${NODES_ACTOR_CODEX_ORIN_TOKEN:-}
+      NODES_ACTOR_JIRA_TOKEN: ${NODES_ACTOR_JIRA_TOKEN:-}
       NODES_RUNNER_SERVICES_FILE: ${NODES_RUNNER_SERVICES_FILE:-}
       # Task t13 / issue #5. orin runs no collector of its own: it points
       # at thor's, over the same LAN its Postgres connection already

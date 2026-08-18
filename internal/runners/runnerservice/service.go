@@ -74,12 +74,29 @@ type Config struct {
 	// policy here.
 	AllowCallbackURL func(*url.URL) bool
 
+	// ArtifactSessions, when non-nil, is told each operation's attempt-scoped
+	// callback credential just before Execute and told to forget it right
+	// after (deviation d1, issue #189): the wrapped runner can then persist
+	// attempt artifacts through the control plane's publication route without
+	// this host ever holding a store credential. Operations that offered no
+	// callback register nothing — the runner's artifact store then reports
+	// "no upload target" for them, which is the honest outcome.
+	ArtifactSessions ArtifactSessionRegistrar
+
 	// Clock overrides time.Now, for tests that assert exact timings.
 	Clock func() time.Time
 	// OnError receives diagnostics — a callback that did not land, a status
 	// record that could not be written. It is never how a caller learns an
 	// operation's outcome; that is the status endpoint's job.
 	OnError func(error)
+}
+
+// ArtifactSessionRegistrar brackets an operation's execution with its upload
+// credential: Register before Execute, Release after. Implemented by
+// internal/runners/artifactclient.Registry.
+type ArtifactSessionRegistrar interface {
+	Register(attemptID, callbackURL, token string) error
+	Release(attemptID string)
 }
 
 // Service is an api/runner-protocol runner service wrapping one
@@ -97,6 +114,7 @@ type Service struct {
 	allowCallback   func(*url.URL) bool
 	now             func() time.Time
 	onError         func(error)
+	artifactSess    ArtifactSessionRegistrar
 
 	queue   chan runners.Operation
 	rootCtx context.Context //nolint:containedctx // the pool's lifetime context, cancelled by Close
@@ -154,6 +172,7 @@ func New(cfg Config) (*Service, error) {
 		allowCallback:   cfg.AllowCallbackURL,
 		now:             cfg.Clock,
 		onError:         cfg.OnError,
+		artifactSess:    cfg.ArtifactSessions,
 		queue:           make(chan runners.Operation, orInt(cfg.QueueDepth, DefaultQueueDepth)),
 		inflight:        map[string]context.CancelFunc{},
 		cancelled:       map[string]bool{},
@@ -502,6 +521,23 @@ func (s *Service) execute(op runners.Operation) {
 
 	started := s.now().UTC()
 	s.markRunning(operationID, started)
+
+	// The d1 artifact-session bracket: hand the wrapped runner this
+	// operation's attempt-scoped upload credential for exactly the duration
+	// of Execute. Reading s.callbacks without deleting — finish() still owns
+	// the entry's lifecycle for the completion notification.
+	if s.artifactSess != nil && op.Context != nil && op.Context.AttemptID != "" {
+		s.mu.Lock()
+		cb, hasCallback := s.callbacks[operationID]
+		s.mu.Unlock()
+		if hasCallback {
+			if regErr := s.artifactSess.Register(op.Context.AttemptID, cb.url, cb.token); regErr != nil {
+				s.report(regErr)
+			} else {
+				defer s.artifactSess.Release(op.Context.AttemptID)
+			}
+		}
+	}
 
 	result, err := s.runner.Execute(ctx, op)
 	s.finish(operationID, result, err, started, s.now().UTC())

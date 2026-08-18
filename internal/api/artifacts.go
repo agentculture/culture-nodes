@@ -2,12 +2,16 @@ package api
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
+	"io"
 	"net/http"
+	"strconv"
 	"strings"
 
 	"github.com/agentculture/culture-nodes/internal/actors"
 	"github.com/agentculture/culture-nodes/internal/artifacts"
+	postgres "github.com/agentculture/culture-nodes/internal/store/postgres"
 )
 
 // MaxArtifactBytes bounds a single artifact publication.
@@ -22,6 +26,16 @@ const MaxArtifactBytes = 64 << 20 // 64 MiB
 
 type artifactInvocationStore interface {
 	Invocation(context.Context, string) (actors.PendingInvocation, error)
+}
+
+// artifactRunnerOpSource is the fallback association source for RUNNER
+// attempts. Two tables, two lifecycle phases: the parked runner_invocations
+// row (RunnerOperation) exists from dispatch — which is when a mid-execution
+// upload arrives — and the runner_operations audit row exists from
+// completion, for anything published late. Implemented by *postgres.Store.
+type artifactRunnerOpSource interface {
+	RunnerOperation(ctx context.Context, namespaceID, attemptID string) (postgres.RunnerOperation, error)
+	ListRunnerOperationsByAttempt(ctx context.Context, attemptID string) ([]postgres.RunnerOperationRecord, error)
 }
 
 type artifactWriteResponse struct {
@@ -52,13 +66,25 @@ func (s *Server) handlePutArtifact(w http.ResponseWriter, r *http.Request) error
 
 	inv, err := s.artifactInvocationStore.Invocation(r.Context(), attemptID)
 	if err != nil {
-		if errors.Is(err, actors.ErrUnknownAttempt) {
-			return notFound("check that the attempt is a durable pending invocation", "artifact attempt not found")
+		if !errors.Is(err, actors.ErrUnknownAttempt) {
+			return internalError(err)
 		}
-		return internalError(err)
+		// Not an async ACTOR attempt. A RUNNER attempt is just as durable —
+		// its runner_operations row is written at dispatch, before the runner
+		// could possibly hold this attempt's callback token — so resolve the
+		// associations there (deviation d1's production gap, found live: the
+		// green 18:10Z sweep's stdout upload 404'd here because only actor
+		// attempts have pending invocations).
+		inv, err = s.runnerAttemptAssociations(r.Context(), attemptID)
+		if err != nil {
+			if errors.Is(err, actors.ErrUnknownAttempt) {
+				return notFound("check that the attempt is a durable pending invocation or a dispatched runner operation", "artifact attempt not found")
+			}
+			return internalError(err)
+		}
 	}
-	if inv.NamespaceID == "" || inv.RunID == "" || inv.AttemptID == "" || inv.AttemptID != attemptID {
-		return internalError(errors.New("artifact publication: durable invocation lacks required namespace, run, or matching attempt association"))
+	if inv.NamespaceID == "" || inv.AttemptID == "" || inv.AttemptID != attemptID {
+		return internalError(errors.New("artifact publication: durable invocation lacks required namespace or matching attempt association"))
 	}
 
 	mediaType := strings.TrimSpace(r.Header.Get("Content-Type"))
@@ -121,4 +147,171 @@ func bearerToken(header string) (string, bool) {
 	}
 	token := strings.TrimSpace(header[len(prefix):])
 	return token, token != ""
+}
+
+// artifactListEntry is one row of the attempt-artifact listing: the same
+// fields the write response reports, so a reader can correlate what a PUT
+// returned with what the listing now shows.
+type artifactListEntry struct {
+	Ref       artifacts.Ref     `json:"ref"`
+	Name      string            `json:"name"`
+	MediaType string            `json:"media_type"`
+	SizeBytes int64             `json:"size_bytes"`
+	Digest    string            `json:"digest"`
+	Backend   artifacts.Backend `json:"backend"`
+	CreatedAt string            `json:"created_at"`
+}
+
+// handleListAttemptArtifacts is the read-back half of the artifact route
+// (issue #189): GET /v1alpha1/attempts/{attemptID}/artifacts lists what the
+// attempt published. Like the other read surfaces in this package it carries
+// no bearer token -- attempt ids are store-minted ULIDs, and the listing is
+// exactly what the run's ledger evidence already references by ref.
+func (s *Server) handleListAttemptArtifacts(w http.ResponseWriter, r *http.Request) error {
+	attemptID := r.PathValue("attemptID")
+	if attemptID == "" {
+		return badRequest("name the attempt in the path", "attempt id is required")
+	}
+	if s.artifactRouter == nil {
+		return unavailable("configure the artifact router", "artifact reads are not configured")
+	}
+	listed, err := s.artifactRouter.ListByAttempt(r.Context(), attemptID)
+	if err != nil {
+		return internalError(err)
+	}
+	out := make([]artifactListEntry, 0, len(listed))
+	for _, l := range listed {
+		out = append(out, artifactListEntry{
+			Ref:       l.Ref,
+			Name:      l.Meta.Name,
+			MediaType: l.Meta.MediaType,
+			SizeBytes: l.Meta.SizeBytes,
+			Digest:    l.Meta.Digest,
+			Backend:   l.Meta.Backend,
+			CreatedAt: l.Meta.CreatedAt.UTC().Format("2006-01-02T15:04:05.999999999Z07:00"),
+		})
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"attempt_id": attemptID, "artifacts": out})
+	return nil
+}
+
+// handleGetAttemptArtifact streams one named artifact's content:
+// GET /v1alpha1/attempts/{attemptID}/artifacts/{name}. The name is the
+// descriptive Artifact-Name recorded at PUT time ("stdout" for the runner's
+// captured output); when an attempt recorded several artifacts under one
+// name, the newest wins -- same row order the listing shows.
+func (s *Server) handleGetAttemptArtifact(w http.ResponseWriter, r *http.Request) error {
+	attemptID := r.PathValue("attemptID")
+	name := r.PathValue("name")
+	if attemptID == "" || name == "" {
+		return badRequest("name both the attempt and the artifact in the path", "attempt id and artifact name are required")
+	}
+	if s.artifactRouter == nil {
+		return unavailable("configure the artifact router", "artifact reads are not configured")
+	}
+	listed, err := s.artifactRouter.ListByAttempt(r.Context(), attemptID)
+	if err != nil {
+		return internalError(err)
+	}
+	var match *artifacts.Listed
+	for i := range listed {
+		if listed[i].Meta.Name == name {
+			match = &listed[i] // keep scanning: newest (last, by created_at order) wins
+		}
+	}
+	if match == nil {
+		return notFound("list the attempt's artifacts to see recorded names", "attempt %s has no artifact named %q", attemptID, name)
+	}
+	content, meta, err := s.artifactRouter.Get(r.Context(), match.Ref)
+	if err != nil {
+		var reaped *artifacts.ReapedError
+		if errors.As(err, &reaped) {
+			return notFound("the artifact was reaped: "+reaped.Tombstone.Reason, "artifact %s content was reaped", match.Ref)
+		}
+		return internalError(err)
+	}
+	defer content.Close()
+	if meta.MediaType != "" {
+		w.Header().Set("Content-Type", meta.MediaType)
+	}
+	// The media type is PUBLISHER-controlled (the Content-Type header of the
+	// authenticated PUT), and this route is an unauthenticated read on the
+	// API origin — an artifact published as text/html or image/svg+xml must
+	// never execute as active content here (stored XSS, PR #190 review).
+	// Three independent locks: no inline rendering, no MIME sniffing, and a
+	// fully sandboxed CSP for anything that renders anyway.
+	w.Header().Set("Content-Disposition", "attachment; filename="+strconv.Quote(sanitizeFilename(name)))
+	w.Header().Set("X-Content-Type-Options", "nosniff")
+	w.Header().Set("Content-Security-Policy", "sandbox")
+	w.Header().Set("Artifact-Ref", string(match.Ref))
+	w.WriteHeader(http.StatusOK)
+	if _, err := io.Copy(w, content); err != nil {
+		// Headers are gone; all we can do is stop. The verifying reader has
+		// already surfaced size/digest mismatches as read errors here.
+		return nil
+	}
+	return nil
+}
+
+// runnerAttemptAssociations resolves a RUNNER attempt's durable associations
+// from its runner_operations row (written at dispatch), shaped as the same
+// PendingInvocation the actor path yields so handlePutArtifact treats both
+// attempt kinds identically. The run id rides inside the recorded operation's
+// context; a row without one still associates namespace and attempt — RunID
+// stays optional metadata on the artifact row, exactly as ArtifactMeta
+// documents.
+func (s *Server) runnerAttemptAssociations(ctx context.Context, attemptID string) (actors.PendingInvocation, error) {
+	if s.artifactRunnerOps == nil {
+		return actors.PendingInvocation{}, actors.ErrUnknownAttempt
+	}
+	// In-flight first: the parked runner_invocations row exists from the
+	// moment of dispatch, which is when the runner's mid-execution upload
+	// arrives (the completion-time audit row does not exist yet — measured
+	// live on the 18:36Z sweep, whose upload 404'd against the audit table).
+	parked, err := s.artifactRunnerOps.RunnerOperation(ctx, s.NamespaceID, attemptID)
+	if err == nil {
+		return actors.PendingInvocation{
+			NamespaceID: parked.NamespaceID,
+			RunID:       parked.RunID,
+			AttemptID:   attemptID,
+		}, nil
+	}
+	if !errors.Is(err, postgres.ErrNotFound) {
+		return actors.PendingInvocation{}, err
+	}
+	ops, err := s.artifactRunnerOps.ListRunnerOperationsByAttempt(ctx, attemptID)
+	if err != nil {
+		return actors.PendingInvocation{}, err
+	}
+	if len(ops) == 0 {
+		return actors.PendingInvocation{}, actors.ErrUnknownAttempt
+	}
+	var req struct {
+		Context struct {
+			RunID string `json:"run_id"`
+		} `json:"context"`
+	}
+	_ = json.Unmarshal(ops[0].Request, &req) // absent context stays empty, not an error
+	return actors.PendingInvocation{
+		NamespaceID: ops[0].NamespaceID,
+		RunID:       req.Context.RunID,
+		AttemptID:   attemptID,
+	}, nil
+}
+
+// sanitizeFilename bounds a publisher-controlled artifact name to something
+// safe inside a quoted Content-Disposition filename: header-breaking and
+// quote-relevant bytes become underscores. Display-only; the artifact's
+// recorded Name is untouched.
+func sanitizeFilename(name string) string {
+	out := []rune(name)
+	for i, r := range out {
+		if r < 0x20 || r == '"' || r == '\\' || r == 0x7f {
+			out[i] = '_'
+		}
+	}
+	if len(out) > 128 {
+		out = out[:128]
+	}
+	return string(out)
 }

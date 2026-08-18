@@ -348,7 +348,13 @@ func (w *Worker) Run(ctx context.Context) error {
 // per-item dispatch failure is — every parked operation has a deadline timer
 // behind it, so a pass that could not sample is a delay, not a loss.
 func (w *Worker) Tick(ctx context.Context) (int, error) {
-	claimed, err := w.db.ClaimWork(ctx, w.opts.NamespaceID, w.opts.WorkerID, w.opts.LeaseDuration, w.opts.ClaimBatch)
+	var claimed []postgres.ClaimedWork
+	var err error
+	if w.opts.Runner != nil || w.opts.CodeRunner != nil || w.runnerServiceConfigured() {
+		claimed, err = w.db.ClaimWork(ctx, w.opts.NamespaceID, w.opts.WorkerID, w.opts.LeaseDuration, w.opts.ClaimBatch)
+	} else {
+		claimed, err = w.db.ClaimWorkWithoutCode(ctx, w.opts.NamespaceID, w.opts.WorkerID, w.opts.LeaseDuration, w.opts.ClaimBatch)
+	}
 	if err != nil {
 		return 0, fmt.Errorf("worker: claim: %w", err)
 	}

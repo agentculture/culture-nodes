@@ -1,0 +1,617 @@
+{
+  "slug": "hands-free-scrum-2-pickup",
+  "title": "hands-free SCRUM-2 pickup",
+  "schema_version": 5,
+  "status": "exported",
+  "created": "2026-08-18T15:01:04Z",
+  "updated": "2026-08-18T15:37:31Z",
+  "claims": [
+    {
+      "id": "c1",
+      "kind": "announcement",
+      "text": "A new Jira issue in SCRUM is picked up by the prod control plane hands-free: the sweep's transition fact triggers a published intake workflow, an actor acts on the issue through the engine, and the round trip is verifiable from prod run and ledger records alone \u2014 every blockage found on the way is fixed through the system itself",
+      "origin": "user",
+      "status": "confirmed",
+      "honesty_conditions": [
+        {
+          "id": "h1",
+          "text": "Between the human creating the Jira issue and the intake comment + board transition appearing, NO human step occurs: no manual run creation, no manual event POST, no manual dispatch \u2014 the sweep schedule, the trigger, and the engine do it all, observed on prod",
+          "status": "confirmed",
+          "instruction": ""
+        }
+      ],
+      "hard_questions": [],
+      "links": [],
+      "instruction": "Verify by creating one fresh unresolved SCRUM issue and then touching nothing: within one sweep interval a run must appear on thor (GET /v1alpha1/runs) whose trigger event names that issue; its ledger must show the intake actor's claims; the issue must show the comment and the transition",
+      "revisions": []
+    },
+    {
+      "id": "c2",
+      "kind": "requirement",
+      "text": "A new published workflow on thor subscribes to the sweep's bare Jira transition events (pr-upkeep.jira.transitioned.to-do, guarded on event.payload.source == \"jira\") and routes the issue to a registered agent actor \u2014 issue #187's acceptance; nothing on prod subscribes to any pr-upkeep.jira.* name today (read back live from GET /v1alpha1/workflows: only assign-*, pr-upkeep v10 guarded to github_pr, pr-upkeep-sweep-cycle v1, cross-machine-proof, signal5-merge-as-action)",
+      "origin": "llm",
+      "status": "confirmed",
+      "honesty_conditions": [
+        {
+          "id": "h2",
+          "text": "After publishing, the newest version of the intake workflow key on thor carries the trigger onEvent pr-upkeep.jira.transitioned.to-do with when event.payload.source == \"jira\" (read back from its normalized IR), and one sweep-emitted transition fact creates exactly one run \u2014 the subject key jira:<site>:<id>:status prevents a sibling run on the next unchanged sweep",
+          "status": "confirmed",
+          "instruction": ""
+        }
+      ],
+      "hard_questions": [],
+      "links": [],
+      "instruction": "",
+      "revisions": []
+    },
+    {
+      "id": "c3",
+      "kind": "boundary",
+      "text": "The existing jira-question-round-trip workflow is NOT the missing subscriber and must not be un-guarded: its trigger on pr-upkeep.jira.transitioned.needs-answer deliberately declines bare sweep transition events (guard requires event.payload.question_id and question, PR #180 review finding) \u2014 the new intake workflow is a separate document consuming the bare transition contract",
+      "origin": "llm",
+      "status": "confirmed",
+      "honesty_conditions": [
+        {
+          "id": "h8",
+          "text": "The published intake workflow is a NEW workflow_key; jira-question-round-trip's trigger and guard are untouched by this frame's diff",
+          "status": "confirmed",
+          "instruction": ""
+        }
+      ],
+      "hard_questions": [],
+      "links": [],
+      "instruction": "",
+      "revisions": []
+    },
+    {
+      "id": "c4",
+      "kind": "assumption",
+      "text": "The bare transition event payload is sufficient for an intake node's input contract: sweep.py's jira_work_items emits {source: jira, id: <SCRUM-N>, project, severity, kind, title, status, details_url} and raises pr-upkeep.jira.transitioned.<status-slug> on source key jira:<site>:<id>:status with a status watermark, so an unchanged status is deduped by the control plane, not by the emitter",
+      "origin": "llm",
+      "status": "confirmed",
+      "honesty_conditions": [],
+      "hard_questions": [],
+      "links": [],
+      "instruction": "",
+      "revisions": []
+    },
+    {
+      "id": "c5",
+      "kind": "requirement",
+      "text": "Issue #188 is fixed before hands-free is claimed: orin's worker either carries a complete NODES_CODE_RUNNER_{NAME,REVISION,ACTOR_ID} identity or stops claiming code-node work items it cannot run \u2014 a sweep that fails on a coin-flip of which worker claims first (44 failed of newest 200 runs) makes every downstream Jira trigger a 50% lottery",
+      "origin": "llm",
+      "status": "confirmed",
+      "honesty_conditions": [
+        {
+          "id": "h3",
+          "text": "After the Go fix and orin redeploy, a worker whose code-runner tuple is ABSENT never claims a code-node work item (pinned by a test), and the scheduled sweep stops alternating: the next consecutive scheduled sweep runs are all green regardless of which worker polls first",
+          "status": "confirmed",
+          "instruction": ""
+        }
+      ],
+      "hard_questions": [],
+      "links": [],
+      "instruction": "",
+      "revisions": []
+    },
+    {
+      "id": "c6",
+      "kind": "boundary",
+      "text": "The sweep emitter and sweep-cycle workflow stay as-is: sweep-cycle.workflow.yaml declares the emitter pure (read credentials + event ingress only, no triage, no merge credential, boundary c5 of its own spec) and explicitly does not know its consumers \u2014 the fix is a new subscriber, never renaming Jira facts onto pr-upkeep.pr or teaching the emitter about listeners",
+      "origin": "llm",
+      "status": "confirmed",
+      "honesty_conditions": [
+        {
+          "id": "h9",
+          "text": "This frame's diff changes neither sweep.py's emit logic nor sweep-cycle.workflow.yaml's graph; every event keeps its name and source key",
+          "status": "confirmed",
+          "instruction": ""
+        }
+      ],
+      "hard_questions": [],
+      "links": [],
+      "instruction": "",
+      "revisions": []
+    },
+    {
+      "id": "c7",
+      "kind": "requirement",
+      "text": "Acceptance is observed on prod, not claimed: a run on thor whose trigger event is SCRUM-2's transition fact, its ledger records showing the actor's proposed claims, and a Jira-side effect visible on the issue \u2014 demo-stack evidence is explicitly inadmissible (the t17 run 01M0A5QG2Q0EDG16BEFG9MG4TZ 404s on prod, which is how #187 hid). Verification uses the system's own read surfaces: GET /v1alpha1/runs?\u2026, /runs/{id}/ledger, /events",
+      "origin": "llm",
+      "status": "confirmed",
+      "honesty_conditions": [
+        {
+          "id": "h4",
+          "text": "Every run id, ledger record, and event cited as acceptance evidence resolves via GET against thor's API at verification time \u2014 any artifact that 404s on prod is inadmissible, whatever it proved elsewhere",
+          "status": "confirmed",
+          "instruction": ""
+        }
+      ],
+      "hard_questions": [],
+      "links": [],
+      "instruction": "",
+      "revisions": []
+    },
+    {
+      "id": "c8",
+      "kind": "requirement",
+      "text": "Issue #189 lands as part of the loop's verifiability: the emitted count sweep.py already prints reaches durable run state (the runner protocol already defines stdout_ref / result_payload_ref artifact fields), so 'did the sweep see SCRUM-2' becomes one query instead of an inspection",
+      "origin": "llm",
+      "status": "confirmed",
+      "honesty_conditions": [
+        {
+          "id": "h5",
+          "text": "A green scheduled sweep run's durable prod record (run output, artifact, or evidence \u2014 whichever layer the plan picks) contains the emitted count, such that emitted:0 and emitted:N are distinguishable by one API query without inspecting worker logs",
+          "status": "confirmed",
+          "instruction": ""
+        }
+      ],
+      "hard_questions": [],
+      "links": [],
+      "instruction": "",
+      "revisions": []
+    },
+    {
+      "id": "c9",
+      "kind": "requirement",
+      "text": "Blockages are overcome through the system itself, per the operator's instruction: new capability lands as published workflows and engine dispatches (author -> nodes validate -> POST /v1alpha1/workflows -> trigger/run), delegable work routes to registered actors through assign or the new intake path, and any divergence from this frame is recorded as a first-class deviation \u2014 never a silent hand-fix that leaves no countable trail",
+      "origin": "llm",
+      "status": "confirmed",
+      "honesty_conditions": [
+        {
+          "id": "h6",
+          "text": "Every fix this frame ships either landed through the system (authored workflow -> nodes validate -> POST /v1alpha1/workflows -> engine-created run) or, where it could not (Go code fix, bridge redeploy), is counted: a hand-turn issue or deviation record exists naming the manual step \u2014 zero silent hand-fixes",
+          "status": "confirmed",
+          "instruction": ""
+        }
+      ],
+      "hard_questions": [],
+      "links": [],
+      "instruction": "",
+      "revisions": []
+    },
+    {
+      "id": "c10",
+      "kind": "non_goal",
+      "text": "No CI configuration changes (.github/ stays untouched \u2014 a repair dispatch may never modify CI, internal/repair rule), no PRD-scale control-plane features beyond the minimal #188/#189 fixes, and no attempt to close #18's codex write path inside this frame: if picking up SCRUM-2 requires landing a patch, the write leg routes to an actor with a proven write path or parks on a human, it does not silently extend scope",
+      "origin": "llm",
+      "status": "confirmed",
+      "honesty_conditions": [],
+      "hard_questions": [],
+      "links": [],
+      "instruction": "",
+      "revisions": []
+    },
+    {
+      "id": "c11",
+      "kind": "boundary",
+      "text": "Hands-free never means unbounded: every automated leg keeps the system's existing ceilings \u2014 repair's 2-attempts-per-24h reaching a human, the round-trip's two-asks-then-approval-node shape, wait nodes that park on silence rather than guessing \u2014 and the ledger authority model holds (actors propose, humans confirm; an agent's done is a claim, not evidence)",
+      "origin": "llm",
+      "status": "confirmed",
+      "honesty_conditions": [
+        {
+          "id": "h10",
+          "text": "The intake workflow declares finite limits (maxDuration, maxTransitions, maxVisitsPerNode) and every failure or exhaustion outcome is routed to an end or human node \u2014 nodes validate accepts no unrouted or unbounded path",
+          "status": "confirmed",
+          "instruction": ""
+        }
+      ],
+      "hard_questions": [],
+      "links": [],
+      "instruction": "",
+      "revisions": []
+    },
+    {
+      "id": "c12",
+      "kind": "assumption",
+      "text": "Trigger event-name matching is EXACT (internal/engine/trigger.go: trigger.OnEvent != ev.Name, no wildcard) \u2014 #187's 'consumes pr-upkeep.jira.transitioned.*' cannot be implemented literally; the intake workflow declares one onEvent entry per status slug it handles (at least transitioned.to-do). Run-stampede protection already exists: the control plane's watermark-equality dedup silences unchanged statuses, and one-active-run-per-subject (t15/c31) holds when the event carries a subject",
+      "origin": "llm",
+      "status": "confirmed",
+      "honesty_conditions": [],
+      "hard_questions": [],
+      "links": [],
+      "instruction": "",
+      "revisions": []
+    },
+    {
+      "id": "c13",
+      "kind": "requirement",
+      "text": "The transition half of acceptance requires deliberately widening the Jira actor surface: adapters/jira today supports exactly one verb (post_comment) and tests/test_no_transitions.py PINS that no code path reaches a Jira transitions endpoint \u2014 an audited custody boundary, not an accident. Adding a narrow transition verb means changing that pinned test on purpose, with a decision record naming the new custody (which transitions, which project), never deleting the audit",
+      "origin": "llm",
+      "status": "confirmed",
+      "honesty_conditions": [
+        {
+          "id": "h7",
+          "text": "After widening, the Jira actor supports exactly two verbs (post_comment, transition_issue or equivalent narrow transition); the audit test still exists and still pins every OTHER path to the transitions endpoint unreachable; a committed decision record names the new custody (which project, which transitions) \u2014 the audit is narrowed, never deleted",
+          "status": "confirmed",
+          "instruction": ""
+        }
+      ],
+      "hard_questions": [
+        {
+          "id": "q1",
+          "text": "Does the transition verb need its own guard against transitioning issues outside the SCRUM project or outside the to-do->in-progress edge \u2014 i.e. what stops a buggy or prompted actor from moving arbitrary board state?",
+          "resolved": true,
+          "blocking": true,
+          "resolution": "Bridge-enforced allowlist: the Jira bridge itself refuses any transition outside the configured project prefix (SCRUM-) and the single configured target transition (-> In Progress), supplied as deployment config exactly like jira_bot_account_id \u2014 the same narrow-custody pattern that makes post_comment the only verb today. Workflow guards may add to this but the bridge is the enforcement point, so no actor prompt or sibling workflow can widen board-state custody."
+        }
+      ],
+      "links": [],
+      "instruction": "",
+      "revisions": []
+    },
+    {
+      "id": "c14",
+      "kind": "audience",
+      "text": "The operator (Ori) and the culture-nodes agent fleet \u2014 and, as reader, anyone auditing the prod ledger: the loop's acceptance is written for someone who trusts only prod records, not session claims. Issue #118 (the idea-to-shipped loop) is the downstream consumer of this joint",
+      "origin": "llm",
+      "status": "confirmed",
+      "honesty_conditions": [
+        {
+          "id": "h11",
+          "text": "Every acceptance artifact is readable by a plain GET against thor's v1alpha1 API \u2014 no session context, no local demo stack, no operator memory required to audit the loop",
+          "status": "confirmed",
+          "instruction": ""
+        }
+      ],
+      "hard_questions": [],
+      "links": [],
+      "instruction": "",
+      "revisions": []
+    },
+    {
+      "id": "c15",
+      "kind": "after_state",
+      "text": "Creating an unresolved issue in the SCRUM project leads, within one sweep interval (~30 min) plus dispatch time, to: a prod run on thor triggered by the issue's transition fact, an intake comment posted on the issue by claude-intake through the engine, and the issue transitioned on the Jira board \u2014 with the entire trail (trigger event, run, ledger claims, actor attribution) readable from prod's v1alpha1 API",
+      "origin": "llm",
+      "status": "confirmed",
+      "honesty_conditions": [
+        {
+          "id": "h12",
+          "text": "Measured live at least once end-to-end: issue created, then hands off \u2014 the comment and transition appear within one sweep interval plus dispatch time, and the run id is recorded in the delivery summary",
+          "status": "confirmed",
+          "instruction": ""
+        }
+      ],
+      "hard_questions": [],
+      "links": [],
+      "instruction": "",
+      "revisions": []
+    },
+    {
+      "id": "c16",
+      "kind": "before_state",
+      "text": "Today a new SCRUM issue produces nothing: the sweep reads it and emits pr-upkeep.jira.transitioned.to-do to a topic no published workflow subscribes to (#187); half of scheduled sweeps fail on which worker claims them (#188, 44 of the newest 200 runs); and a green sweep's record cannot say whether it emitted anything (#189). The apparent prior success was demo-stack evidence \u2014 the t17 run 404s on prod",
+      "origin": "llm",
+      "status": "confirmed",
+      "honesty_conditions": [
+        {
+          "id": "h13",
+          "text": "The before-state is the filed measurements of #187/#188/#189 (2026-08-18, thor) \u2014 each issue body cites its reproduction, and this frame's work is traceable to exactly those three defects plus the intake gap",
+          "status": "confirmed",
+          "instruction": ""
+        }
+      ],
+      "hard_questions": [],
+      "links": [],
+      "instruction": "",
+      "revisions": []
+    },
+    {
+      "id": "c17",
+      "kind": "why_it_matters",
+      "text": "This is the joint that blocks #118 end-to-end: every piece either side of it is deployed and healthy, so publishing the subscriber turns an idle-but-running system into one that actually starts work from a human's issue. Equally it repairs evidential honesty \u2014 the gap hid behind demo-stack proof that read as prod proof",
+      "origin": "llm",
+      "status": "confirmed",
+      "honesty_conditions": [
+        {
+          "id": "h14",
+          "text": "On completion, #187 closes citing prod evidence, and #118's open-gap list no longer contains 'no subscriber for Jira facts'",
+          "status": "confirmed",
+          "instruction": ""
+        }
+      ],
+      "hard_questions": [],
+      "links": [],
+      "instruction": "",
+      "revisions": []
+    },
+    {
+      "id": "c18",
+      "kind": "success_signal",
+      "text": "A fresh SCRUM issue (SCRUM-2 or a sibling created as the test) shows a system-authored intake comment AND a board transition it did not get from a human; a prod run id resolves on thor whose trigger event is that issue's transition fact and whose ledger carries the actor's proposed claims; scheduled sweeps stop failing on orin's claim lottery; and a green sweep's run record answers 'emitted?' in one query",
+      "origin": "llm",
+      "status": "confirmed",
+      "honesty_conditions": [
+        {
+          "id": "h15",
+          "text": "Each success signal is individually checked and cited with prod ids (run id, ledger record ids, Jira comment id) in the delivery summary \u2014 a signal not checked is reported as unchecked, not assumed",
+          "status": "confirmed",
+          "instruction": ""
+        }
+      ],
+      "hard_questions": [],
+      "links": [],
+      "instruction": "",
+      "revisions": []
+    },
+    {
+      "id": "c19",
+      "kind": "decision",
+      "text": "Transition custody is bridge-enforced: project prefix + single target transition come from deployment configuration, refused at the bridge boundary, not trusted to workflow documents or actor instructions",
+      "origin": "user",
+      "status": "confirmed",
+      "honesty_conditions": [],
+      "hard_questions": [],
+      "links": [],
+      "instruction": "",
+      "revisions": []
+    },
+    {
+      "id": "c20",
+      "kind": "requirement",
+      "text": "The Jira actor must be DEPLOYED and REGISTERED on prod before the intake workflow can act on an issue: thor's live actor registry has no company/jira-comment at all (probed GET /v1alpha1/actors + /dial-in-presence, 2026-08-18T15:32Z) \u2014 the t17 round trip ran it on the demo stack only. deploy/prod/deploy.sh already carries the deploy_jira lane (installs adapters/jira, requires jira-bridge-jira.env + jira-bridge-auth.env on the host, and itself warns 'company/jira-comment is not registered; use register-actor.sh and re-deploy')",
+      "origin": "llm",
+      "status": "confirmed",
+      "honesty_conditions": [
+        {
+          "id": "h16",
+          "text": "Before the intake workflow's first live run, GET /v1alpha1/actors on thor resolves a company/jira-comment registration whose endpoint answers its health/capabilities probe, and the jira-bridge systemd unit on the deploy host is active",
+          "status": "confirmed",
+          "instruction": ""
+        }
+      ],
+      "hard_questions": [],
+      "links": [],
+      "instruction": "",
+      "revisions": []
+    },
+    {
+      "id": "c21",
+      "kind": "requirement",
+      "text": "A kill switch ships with the subscriber: because only the NEWEST version of a workflow_key is a trigger candidate (internal/store/postgres/eventtriggers.go), publishing a version of the intake workflow with the trigger removed disables all future pickup in one POST \u2014 and in-flight runs are individually stoppable via POST /v1alpha1/runs/{id}/cancel. The spec's runbook states both, so 'hands-free' is reversible in minutes without touching the sweep or the schedule",
+      "origin": "llm",
+      "status": "confirmed",
+      "honesty_conditions": [
+        {
+          "id": "h17",
+          "text": "The rollback is rehearsed or at minimum stated with exact commands in the delivery summary: which document to publish and which endpoint cancels a run \u2014 an operator who has never seen this system can stop pickup with it",
+          "status": "confirmed",
+          "instruction": ""
+        }
+      ],
+      "hard_questions": [],
+      "links": [],
+      "instruction": "",
+      "revisions": []
+    },
+    {
+      "id": "c22",
+      "kind": "requirement",
+      "text": "The intake trigger declares a cross-subject concurrency ceiling (maxConcurrentSubjectRuns, shipped in t16 \u2014 schemas/workflow/workflow.schema.json + internal/compiler/model.go): a first publish that meets N existing To Do issues, or a bulk issue creation, may start at most the declared number of concurrent intake runs \u2014 bounding claude-intake session burn on the shared subscription window (economy lane #48) by construction, not by hope",
+      "origin": "llm",
+      "status": "confirmed",
+      "honesty_conditions": [
+        {
+          "id": "h18",
+          "text": "The published intake workflow's normalized IR carries an explicit maxConcurrentSubjectRuns value, and the chosen value is recorded with a one-line justification against the session window",
+          "status": "confirmed",
+          "instruction": ""
+        }
+      ],
+      "hard_questions": [],
+      "links": [],
+      "instruction": "",
+      "revisions": []
+    },
+    {
+      "id": "c23",
+      "kind": "assumption",
+      "text": "The prod hands-free loop has a hidden host dependency on SPARK: claude-intake is a push-transport actor (protocol http, endpoint 192.168.1.157:8086 \u2014 spark's LAN address, probed alive and auth-gated 2026-08-18) whose systemd unit and pinned workspace worktree (.worktrees.culture-nodes/owe-intake, currently checked out at db13388) live on the dev machine. A spark outage stalls the intake leg; the run then fails or parks along its routed edges (c11) rather than silently \u2014 accepted for now, the operator's machine is part of prod's actor fleet",
+      "origin": "llm",
+      "status": "confirmed",
+      "honesty_conditions": [
+        {
+          "id": "h19",
+          "text": "The delivery summary names spark as a required host for the intake leg (alongside thor and orin), and a spark-down dispatch produces a visibly failed/parked node run on prod, not a hung run with no record",
+          "status": "confirmed",
+          "instruction": ""
+        }
+      ],
+      "hard_questions": [],
+      "links": [],
+      "instruction": "",
+      "revisions": []
+    },
+    {
+      "id": "c24",
+      "kind": "decision",
+      "text": "Rollout is staged (SCRUM-2-only guard first, then open) and To Do re-entry deliberately re-fires pickup as re-triage",
+      "origin": "user",
+      "status": "confirmed",
+      "honesty_conditions": [],
+      "hard_questions": [],
+      "links": [],
+      "instruction": "",
+      "revisions": []
+    }
+  ],
+  "open_vagueness": [
+    {
+      "id": "v1",
+      "text": "Which layer should durably record sweep.py's emitted count for #189 \u2014 the headspace runner uploading stdout_ref/result_payload_ref artifacts, an output binding in sweep-cycle's workflow document, or a new observed-evidence field \u2014 is undecided; the runner protocol already defines the artifact fields",
+      "kind": "unknown_nonblocking",
+      "claim_id": null,
+      "resolved": false,
+      "resolution": "",
+      "resolution_claim_id": null
+    },
+    {
+      "id": "v2",
+      "text": "SCRUM-2's existence and current Jira status slug are unverified from this machine (Jira read credentials live on the prod hosts, not spark); the exact transition event name it raises can be read back live from prod's event surfaces during a sweep firing before the intake trigger is finalized",
+      "kind": "unknown_nonblocking",
+      "claim_id": null,
+      "resolved": false,
+      "resolution": "",
+      "resolution_claim_id": null
+    },
+    {
+      "id": "v3",
+      "text": "Whether the Jira bridge's account can actually execute the To Do -> In Progress transition in the SCRUM project (permission, available transition id from the current status) is unverifiable from spark \u2014 no Jira credentials here; the first live dispatch settles it, and a refusal is a routed domain failure, not a silent stall",
+      "kind": "unknown_nonblocking",
+      "claim_id": null,
+      "resolved": false,
+      "resolution": "",
+      "resolution_claim_id": null
+    }
+  ],
+  "scope_entries": [
+    {
+      "id": "s1",
+      "surface": "prod thor GET /v1alpha1/workflows (live read-back)",
+      "finding": "10 workflow keys published; no trigger consumes pr-upkeep.jira.*; pr-upkeep v10's when-guard requires source == github_pr, double-locking Jira facts out",
+      "seeds": [
+        "c2"
+      ]
+    },
+    {
+      "id": "s2",
+      "surface": "examples/jira-question-round-trip/workflow.yaml",
+      "finding": "trigger guard has(event.payload.question_id) && has(event.payload.question) exists precisely to decline the sweep's bare transition events; publishing it unchanged would not fire for SCRUM-2",
+      "seeds": [
+        "c3"
+      ]
+    },
+    {
+      "id": "s3",
+      "surface": "examples/pr-upkeep/sweep.py (jira_work_items, jira_transition_event_name, emit loop)",
+      "finding": "payload shape and watermark semantics read from source: transition fact always attempted; comment fact is a different name on a different source key; self-echo comments raise nothing",
+      "seeds": [
+        "c4"
+      ]
+    },
+    {
+      "id": "s4",
+      "surface": "deploy/prod/compose.orin.yml + cmd/nodes/worker.go preflight",
+      "finding": "compose parameterizes the tuple from host .env (empty on orin); worker.go refuses a PARTIAL tuple but permits an ABSENT one, then the worker still claims code work \u2014 the preflight hole named in #188",
+      "seeds": [
+        "c5"
+      ]
+    },
+    {
+      "id": "s5",
+      "surface": "examples/pr-upkeep/sweep-cycle.workflow.yaml (header + exit contract)",
+      "finding": "emitter purity and 'consumed by OTHER published workflows' triggers; this graph neither knows nor cares which' read from the file header",
+      "seeds": [
+        "c6"
+      ]
+    },
+    {
+      "id": "s6",
+      "surface": "prod thor /v1alpha1/version + /actors + api routes (internal/api/server.go)",
+      "finding": "prod is serving revision 7d6a4a520f44 (build-flag stamped); actors registered include claude_intake/planner/developer/verifier, codex register entries, headspace runner, human ori; read surfaces for verification exist (runs, ledger, events SSE, node-runs)",
+      "seeds": [
+        "c7"
+      ]
+    },
+    {
+      "id": "s7",
+      "surface": "internal/runners/result.go artifact fields",
+      "finding": "stdout_ref and result_payload_ref exist in the runner result protocol; the sweep run record on prod carries neither, so the emitted count is measured then discarded at the boundary",
+      "seeds": [
+        "c8"
+      ]
+    },
+    {
+      "id": "s8",
+      "surface": ".claude/skills/nodes-operator/SKILL.md (validate/publish/assign lane)",
+      "finding": "the operator lane already covers author + server-side validate + publish + create-run + assign against the public v1alpha1 API; publishing to prod is the live-deploy step the user has now put in scope for this work",
+      "seeds": [
+        "c9"
+      ]
+    },
+    {
+      "id": "s9",
+      "surface": "CLAUDE.md conventions (repair boundary, #18 write path unproven)",
+      "finding": "a failing gate implicating .github/ always routes to a person; codex write path unproven until a workspace-write dispatch lands a patch",
+      "seeds": [
+        "c10"
+      ]
+    },
+    {
+      "id": "s10",
+      "surface": "examples/jira-question-round-trip/workflow.yaml (bounds + needs-human) + internal/repair/doc.go per its citations",
+      "finding": "both existing ceilings reach a human; maxVisitsPerNode structural bound is the mechanism, engine continuation counters are measured-inert for signal-parked shapes (Honest Gap 2)",
+      "seeds": [
+        "c11"
+      ]
+    },
+    {
+      "id": "s11",
+      "surface": "internal/engine/trigger.go (TriggerEvent) + eventtriggers.go",
+      "finding": "exact string match on event name; only the newest version of each workflow_key is a trigger candidate; per-subject advisory-locked single-active-run exists on the pickup path",
+      "seeds": [
+        "c12"
+      ]
+    },
+    {
+      "id": "s12",
+      "surface": "adapters/jira (mapping.py verbs + tests/test_no_transitions.py)",
+      "finding": "only verb is post_comment; an AST-level audit test asserts the transition endpoint is unreachable across the whole package \u2014 the user's chosen acceptance collides with this pinned boundary and must widen it deliberately",
+      "seeds": [
+        "c13"
+      ]
+    },
+    {
+      "id": "s13",
+      "surface": "challenge pass / adjacent-systems lens: thor actor registry + deploy/prod/deploy.sh deploy_jira",
+      "finding": "no Jira actor registered on prod; the deploy lane and register script exist and name the exact steps; the missing pieces are secrets on the host and one registration",
+      "seeds": [
+        "c20"
+      ]
+    },
+    {
+      "id": "s14",
+      "surface": "challenge pass / reversibility lens: eventtriggers.go newest-version candidacy + runs cancel route",
+      "finding": "rollback = republish without trigger (append-only, no deletion needed); per-run cancel exists; the sweep and schedule need no changes to stop pickup",
+      "seeds": [
+        "c21"
+      ]
+    },
+    {
+      "id": "s15",
+      "surface": "challenge pass / concurrency+economy lens: workflow.schema.json maxConcurrentSubjectRuns + intake bridge always_async",
+      "finding": "the ceiling exists as first-class trigger config; without it, publish-day fan-out equals the count of unresolved To Do issues, each a claude session",
+      "seeds": [
+        "c22"
+      ]
+    },
+    {
+      "id": "s16",
+      "surface": "challenge pass / hidden-dependency lens: actor endpoint_ref + intake.json + owe-intake worktree",
+      "finding": "intake bridge active on spark, workspace allowlist resolves, always_async; spark is a single point of failure for the intake leg and nothing on thor can dispatch intake without it",
+      "seeds": [
+        "c23"
+      ]
+    },
+    {
+      "id": "s17",
+      "surface": "challenge pass / feedback-loop lens: adapters/jira mapping.py marked_text + sweep.py jira_comment_is_self_echo",
+      "finding": "clean pass \u2014 the self-echo loop is closed by construction: every bridge-posted comment carries the culture-nodes:jira-actor marker and the sweep filters marked comments regardless of which Jira account posted them; no new claim needed",
+      "seeds": []
+    },
+    {
+      "id": "s18",
+      "surface": "challenge pass / observability lens: notify-discord actor + #189 requirement + run/ledger read surfaces",
+      "finding": "clean pass \u2014 sweep observability is already c8's requirement; per-run visibility comes from existing read surfaces; notify-discord is registered for step notifications if the plan wants them; residual: nothing pages a human when a run parks on a failure edge, the human-inbox tracker covers approval nodes only",
+      "seeds": []
+    },
+    {
+      "id": "s19",
+      "surface": "challenge pass / overlooked-actors lens: dial-in presence full list",
+      "finding": "clean pass with one note \u2014 company/developer shows disconnected (last seen ~6h), planner/verifier/operator-claude never dialled; none are on the intake path, but any plan task that routes work to them must re-probe presence first, not assume the t17-era topology",
+      "seeds": []
+    }
+  ],
+  "lapses": []
+}

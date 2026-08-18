@@ -103,6 +103,9 @@ services:
       # named here explicitly: the env-file reaches compose, not the
       # container, so an unlisted token is simply absent at dispatch.
       NODES_ACTOR_NOTIFY_TOKEN: ${NODES_ACTOR_NOTIFY_TOKEN:-}
+      # The single-verb Jira actor bridge (widened with the allowlisted
+      # transition verb by the hands-free-scrum-2-pickup cycle).
+      NODES_ACTOR_JIRA_TOKEN: ${NODES_ACTOR_JIRA_TOKEN:-}
       # The three bearer secrets the attempts-evidence-humans-loops batch
       # added (t13 registration, t10 event delivery, t19+t15 ad-hoc lane).
       # Optional on purpose: closed-by-default means an unset secret leaves
@@ -192,6 +195,9 @@ services:
       # named here explicitly: the env-file reaches compose, not the
       # container, so an unlisted token is simply absent at dispatch.
       NODES_ACTOR_NOTIFY_TOKEN: ${NODES_ACTOR_NOTIFY_TOKEN:-}
+      # The single-verb Jira actor bridge (widened with the allowlisted
+      # transition verb by the hands-free-scrum-2-pickup cycle).
+      NODES_ACTOR_JIRA_TOKEN: ${NODES_ACTOR_JIRA_TOKEN:-}
       NODES_RUNNER_SERVICES_FILE: ${NODES_RUNNER_SERVICES_FILE:-}
       # See the api service's note: unset means telemetry off. This is the
       # seam #5 cares most about — worker.dispatch — and it is instrumented

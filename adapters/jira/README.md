@@ -1,17 +1,25 @@
 # culture-nodes-jira-bridge
 
-An ordinary `kind: agent` actor-protocol bridge with one capability: post a
-comment on a named Jira issue. It has no transition operation and exposes no
-generic Jira request surface.
+An ordinary `kind: agent` actor-protocol bridge with two narrow capabilities:
+post a comment on a named Jira issue, or perform one bridge-allowlisted issue
+transition. It exposes no generic Jira request surface.
 
 The bridge reads `JIRA_ACCOUNT_EMAIL` and `JIRA_API_TOKEN` directly from its
 own process environment. Those values are deliberately not valid JSON config
 keys and must never be placed in control-plane or runner configuration.
+`JIRA_TRANSITION_PROJECT_PREFIX` and `JIRA_TRANSITION_TARGET` set the transition
+custody boundary when the process starts; for example, `SCRUM-` and `Done`.
 
 Invocation input is exactly:
 
 ```json
 {"verb":"post_comment","issue":"EX-123","comment":"What should this do?","question_id":"q-01"}
+```
+
+or:
+
+```json
+{"verb":"transition_issue","issue":"SCRUM-17","target":"Done"}
 ```
 
 `question_id` is optional for ordinary notices and required by a question

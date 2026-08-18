@@ -246,3 +246,27 @@ func TestGetDetectsCorruptedBlob(t *testing.T) {
 		t.Fatalf("read error = %v, want ErrDigestMismatch (Get must fail loudly on corrupted content)", readErr)
 	}
 }
+
+func TestListByAttemptQueryShape(t *testing.T) {
+	// attempt_id is an FK into attempts; populating the runs/node_runs
+	// fixture chain here is disproportionate for a SELECT, so this pins the
+	// query's shape (column name, scan, ordering clause parse) via the empty
+	// path and the required-argument refusal. The row-returning path is
+	// covered by internal/api's read-back round trip (fake store) and by the
+	// live t8 verification against a real attempt.
+	s := requireStore(t)
+	ctx := context.Background()
+	d := artifactpg.New(s, artifactpg.DefaultCapBytes)
+
+	listed, err := d.ListByAttempt(ctx, "att_no_such_attempt")
+	if err != nil {
+		t.Fatalf("ListByAttempt: %v", err)
+	}
+	if len(listed) != 0 {
+		t.Fatalf("ListByAttempt = %d rows, want 0", len(listed))
+	}
+
+	if _, err := d.ListByAttempt(ctx, ""); err == nil {
+		t.Fatal("ListByAttempt(\"\") = nil error, want required-argument refusal")
+	}
+}

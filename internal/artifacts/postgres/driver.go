@@ -250,3 +250,22 @@ func tombstoneFromRecord(row pgstore.ArtifactTombstoneRecord, meta artifacts.Art
 		Reason: row.Reason, Meta: meta, Supersedes: row.Supersedes,
 	}
 }
+
+// ListByAttempt implements artifacts.AttemptLister over the authoritative
+// metadata table this driver shares with the object backend: the listing
+// covers every artifact recorded for the attempt, whichever backend holds
+// its bytes. Reaped artifacts keep their metadata row and appear in the
+// listing; a Get on their ref reports the tombstone.
+func (d *Driver) ListByAttempt(ctx context.Context, attemptID string) ([]artifacts.Listed, error) {
+	rows, err := d.store.ListArtifactsByAttempt(ctx, attemptID)
+	if err != nil {
+		return nil, fmt.Errorf("artifacts/postgres: ListByAttempt: %w", err)
+	}
+	out := make([]artifacts.Listed, 0, len(rows))
+	for _, row := range rows {
+		out = append(out, artifacts.Listed{Ref: artifacts.Ref(row.URI), Meta: metaFromRecord(row)})
+	}
+	return out, nil
+}
+
+var _ artifacts.AttemptLister = (*Driver)(nil)

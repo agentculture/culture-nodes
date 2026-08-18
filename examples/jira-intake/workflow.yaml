@@ -1,0 +1,254 @@
+# JIRA INTAKE (plan hands-free-scrum-2-pickup, task t4; issue #187's
+# acceptance): the missing subscriber for the sweep's bare Jira transition
+# facts. The sweep-cycle emitter has been appending
+# `pr-upkeep.jira.transitioned.to-do` to a topic with no listener — every
+# piece either side of this joint was deployed and healthy, and the joint
+# itself was never published. This file is the joint.
+#
+# It is deliberately NOT the jira-question-round-trip workflow: that graph's
+# trigger guard (`has(event.payload.question_id)`) exists precisely to
+# DECLINE the bare transition events this graph consumes (PR #180 review
+# finding). This is a separate document with a new workflow key, consuming
+# the bare transition contract sweep.py's `jira_work_items` emits:
+#   {source: "jira", id, project, severity, kind, file, line, title,
+#    status, details_url}
+# on source key `jira:<site>:<id>:status` with a status watermark — so an
+# unchanged status is deduped by the control plane, and trigger matching is
+# EXACT (internal/engine/trigger.go): one onEvent entry per status slug,
+# starting with `to-do`.
+#
+# ---------------------------------------------------------------------------
+# ROLLOUT (frame decision c24 — opened by task t9)
+# ---------------------------------------------------------------------------
+# The staged SCRUM-2-only guard shipped in v1.0.0 was dropped after the loop
+# was proven live (run 01M0B7ETAGQ2MS0YDCZP9762WX, 2026-08-18: comment
+# 10071 + board transition, all nodes green). Pickup is open to every issue
+# whose status TRANSITIONS to To Do — the watermark dedup means already-idle
+# To Do issues do not fire on publish; only a fresh transition does. The
+# `limits.maxConcurrentSubjectRuns` ceiling below bounds concurrent pickups.
+# An issue moved back to To Do re-fires pickup BY DESIGN — a human's
+# re-triage signal (same decision c24).
+#
+# ---------------------------------------------------------------------------
+# KILL SWITCH (spec requirement c21 — exact commands, no memory required)
+# ---------------------------------------------------------------------------
+# Only the NEWEST version of a workflow key is a trigger candidate
+# (internal/store/postgres/eventtriggers.go). To disable pickup entirely:
+#   1. Copy this file, DELETE the `triggers:` block, bump metadata.version.
+#   2. bash .claude/skills/nodes-operator/scripts/nodes-op.sh publish <file>
+#      (or: POST the rendered JSON to $NODES_API_URL/v1alpha1/workflows)
+# Future pickup stops with that one POST; the sweep and its schedule need no
+# changes. To stop one in-flight run:
+#   curl -X POST $NODES_API_URL/v1alpha1/runs/<run-id>/cancel
+#
+# ---------------------------------------------------------------------------
+# SESSION CEILING (spec requirement c22, economy lane #48)
+# ---------------------------------------------------------------------------
+# `maxConcurrentSubjectRuns: 2` — every intake run dispatches one
+# claude-intake bridge session on the operator's shared subscription window.
+# Two concurrent pickups is deliberate headroom for the staged phase and a
+# hard bound for the open phase; raising it is a publish, i.e. a decision.
+#
+# ---------------------------------------------------------------------------
+# Deployment configuration — WHAT THIS GRAPH NEEDS FROM OUTSIDE THE FILE
+# ---------------------------------------------------------------------------
+#   actor://company/intake        the claude-intake push bridge on spark
+#                                 (registered on thor; endpoint answers
+#                                 /v1/capabilities). spark up is a REQUIRED
+#                                 host condition (frame assumption c23).
+#   actor://company/jira-comment  the narrow Jira bridge on thor, widened by
+#                                 task t2 with a transition verb behind a
+#                                 bridge-enforced allowlist (decision c19):
+#                                 project prefix + single target transition
+#                                 come from the bridge's env, and any other
+#                                 issue or target is refused at the bridge.
+#                                 The transition node's bindings below must
+#                                 match the verb contract t2 ships — pinned
+#                                 by adapters/jira tests, reconciled at the
+#                                 wave-0 merge gate.
+#
+# A technical failure at any node fails the run visibly (no silent stall) —
+# including a completion whose outcome or output shape the contract rejects,
+# which is how both live intake failures surfaced (h10).
+apiVersion: nodes.culture.dev/v1alpha1
+kind: Workflow
+
+metadata:
+  name: jira-intake
+  version: 1.2.0
+  ownerRef: team/platform-ai
+
+spec:
+  entry: intake
+
+  triggers:
+    # The one permanent guard: only the sweep's Jira facts — pr-upkeep.pr
+    # events carry source == "github_pr" and must never mint an intake run.
+    - onEvent: pr-upkeep.jira.transitioned.to-do
+      when: >-
+        event.payload.source == "jira"
+
+  contract:
+    input:
+      schema:
+        type: object
+        required: [source, id, title, status]
+        properties:
+          source: {type: string, const: jira}
+          id: {type: string, minLength: 1}
+          project: {type: string}
+          severity: {type: string}
+          kind: {type: string}
+          title: {type: string}
+          status: {type: string}
+          details_url: {type: string}
+    output:
+      schema: {type: object}
+
+  # Longest path: intake -> post-comment -> transition -> picked-up (4 hops);
+  # 8 leaves headroom without hiding a loop — there is none: every node id is
+  # distinct and visited at most once by construction.
+  limits:
+    maxDuration: 2h
+    maxTransitions: 8
+    maxVisitsPerNode: 1
+    maxParallelTokens: 1
+    maxConcurrentSubjectRuns: 2
+
+  ledger:
+    schemaVersion: nodes.culture.dev/ledger/v1alpha1
+    maxRecordsPerNode: 20
+
+  nodes:
+    # The judgment leg: read the issue fields the event carries and draft the
+    # intake comment. A real bridge completion proposes a claim (PRD 10.4);
+    # a node that declares no propose types rejects every honest actor
+    # completion as contract_rejected (measured live in the t17 round trip).
+    intake:
+      kind: agent
+      ownerRef: team/platform-ai
+      uses: actor://company/intake@sha256:6666666666666666666666666666666666666666666666666666666666666666
+      ledger:
+        propose: [claim]
+      # The claude bridge does not parse outcomes out of model text: it
+      # reports the outcome named by input.success_outcome and an output
+      # whose comment-bearing field is `summary` (the session's final
+      # message). Measured live on run 01M0B5QWGSG2F86P0NC76AJT8V, whose
+      # honest draft arrived wrapped in prose and was contract_rejected.
+      # The instruction therefore makes the final message BE the comment.
+      input:
+        bindings:
+          success_outcome:
+            literal: intake_drafted
+          instruction:
+            literal: >-
+              You are the intake leg of the jira-intake workflow. Using ONLY
+              the issue fields in your input (id, title, status, severity,
+              kind, details_url), draft a short intake comment for the Jira
+              issue: acknowledge pickup, restate the request in one or two
+              sentences, and name the single most important clarifying
+              question if one exists. End with the line
+              '- culture-nodes (Claude)'. Your FINAL message must be ONLY
+              the comment text itself - no headers, no JSON, no code fences,
+              no commentary about the task - because it is posted to the
+              issue verbatim. Do not start any other work.
+          issue: /run/input/id
+          title: /run/input/title
+          status: /run/input/status
+          severity: /run/input/severity
+          kind: /run/input/kind
+          details_url: /run/input/details_url
+      contract:
+        outcomes:
+          intake_drafted:
+            schema:
+              type: object
+              required: [summary]
+              properties:
+                summary: {type: string, minLength: 1}
+      policy:
+        timeout: 30m
+        retry:
+          maxAttempts: 1
+
+    # The narrow write: post the drafted comment. The bridge stamps the
+    # culture-nodes:jira-actor marker on every comment it posts, which is
+    # what keeps the sweep's self-echo filter closed (sweep.py
+    # jira_comment_is_self_echo) — this graph must NOT add its own marker.
+    post-comment:
+      kind: agent
+      ownerRef: team/platform-ai
+      uses: actor://company/jira-comment@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
+      ledger:
+        propose: [claim]
+      input:
+        bindings:
+          verb:
+            literal: post_comment
+          issue: /run/input/id
+          comment: /nodes/intake/output/summary
+      contract:
+        outcomes:
+          comment_posted:
+            schema:
+              type: object
+              required: [issue, comment_id]
+      policy:
+        timeout: 10m
+        retry:
+          maxAttempts: 1
+
+    # The board move: the t2 transition verb. Its input contract requires an
+    # explicit target (exactly {verb, issue, target} — adapters/jira
+    # transition_issue.parse), and the BRIDGE refuses any target other than
+    # its configured single transition (decision c19). The literal below must
+    # therefore match the bridge's JIRA_TRANSITION_TARGET; a mismatch is a
+    # policy refusal at dispatch, visible in the run, and binding a different
+    # value here could not widen custody.
+    transition:
+      kind: agent
+      ownerRef: team/platform-ai
+      uses: actor://company/jira-comment@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
+      ledger:
+        propose: [claim]
+      input:
+        bindings:
+          verb:
+            literal: transition_issue
+          issue: /run/input/id
+          target:
+            literal: In Progress
+      contract:
+        outcomes:
+          # The name is the BRIDGE's (transition_issue.result reports
+          # `issue_transitioned`); measured live on run
+          # 01M0B6WGCQNSQD4TBY5J5HBG61, whose board move succeeded and whose
+          # completion was rejected over exactly this name.
+          issue_transitioned:
+            schema:
+              type: object
+              required: [issue]
+      policy:
+        timeout: 10m
+        retry:
+          maxAttempts: 1
+
+    # -------------------------------------------------------------------------
+    # NAMED ENDINGS — a run whose output does not name why it stopped is the
+    # illegible failure this repo's example graphs are against.
+    # -------------------------------------------------------------------------
+
+    # The full loop: comment posted, board moved.
+    picked-up:
+      kind: end
+      ownerRef: team/platform-ai
+      output:
+        from: /nodes/transition/output
+
+  edges:
+    - from: intake.intake_drafted
+      to: post-comment
+    - from: post-comment.comment_posted
+      to: transition
+    - from: transition.issue_transitioned
+      to: picked-up

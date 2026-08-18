@@ -1,0 +1,150 @@
+# The SWEEP CYCLE (issue #185): the clock-driven half that pr-upkeep v2
+# deliberately externalised, expressed as the smallest possible graph so a
+# SCHEDULE can run it.
+#
+# pr-upkeep v2's header says "no discovery credentials or sweep process are
+# part of this graph" — correct for the upkeep graph, and it left the sweep
+# emitter with no driver except a human (driver.sh's own header calls itself
+# a LIVE-ONLY MANUAL DRIVER). #107/t33 then shipped engine schedules: a
+# durable row fires a signal event, and a published workflow's trigger turns
+# it into a run. This file is the missing joint — a one-code-node workflow
+# triggered by the schedule's event, whose node runs sweep.py through the
+# runner boundary. The sweep is stdlib-only HTTP, so the stock python3.12
+# profile suffices (no git; headspace-cli#24 does not apply here).
+#
+# The emitter stays a pure emitter: it holds read credentials and the
+# event-ingress token, performs no triage, and holds no merge credential
+# (boundary c5). What it emits — pr-upkeep.pr, pr-upkeep.jira.transitioned.*,
+# pr-upkeep.jira.comment — is consumed by OTHER published workflows'
+# triggers; this graph neither knows nor cares which.
+#
+# ---------------------------------------------------------------------------
+# Deployment configuration — WHAT THIS GRAPH NEEDS FROM OUTSIDE THE FILE
+# ---------------------------------------------------------------------------
+#
+#   RUNNER REGISTRY (id in `uses:`):
+#     runner://headspace/pr-upkeep-sweep   a runner service on a host whose
+#                                          env carries the grants below.
+#
+#   PR_UPKEEP_SWEEP_SOURCE_URL             where sweep.py is fetched from
+#                                          (deploy.sh already stamps it).
+#   PR_UPKEEP_SWEEP_SOURCE_SHA256          the digest the bootstrap refuses
+#                                          to run without.
+#   PR_UPKEEP_REPOSITORIES                 the swept repositories document
+#                                          (github_repo, sonar_component,
+#                                          optional jira_site/jira_project/
+#                                          jira_bot_account_id).
+#   GITHUB_TOKEN                           PR + check-run reads.
+#   SONAR_TOKEN                            SonarCloud reads (optional; absent
+#                                          means Sonar findings are skipped
+#                                          per sweep.py's own handling).
+#   JIRA_ACCOUNT_EMAIL / JIRA_API_TOKEN    Jira READ pair (the c5-preserved
+#                                          custody: reads stay in the sweep).
+#   NODES_API_URL / NODES_EVENT_TOKEN      where facts are appended.
+#
+#   THE SCHEDULE (the whole point — one POST, seeded per deployment):
+#     POST /v1alpha1/schedules {"name": "pr-upkeep-sweep",
+#       "event_name": "pr-upkeep.sweep.due", "emitter": "schedule",
+#       "payload": {}, "interval_seconds": 1800}
+#
+# The sweep's own exit contract (0 emitted-or-empty / 10 / other) is not
+# routed as domain outcomes here: the emitter's job is to append facts, and
+# a pass that appended nothing is a successful pass. A technical failure
+# routes to the failed port and the run says so.
+apiVersion: nodes.culture.dev/v1alpha1
+kind: Workflow
+
+metadata:
+  name: pr-upkeep-sweep-cycle
+  version: 1.0.0
+  ownerRef: team/platform-ai
+
+spec:
+  entry: sweep
+
+  triggers:
+    - onEvent: pr-upkeep.sweep.due
+
+  contract:
+    input:
+      schema: {type: object}
+    output:
+      schema: {type: object}
+
+  limits:
+    maxDuration: 1h
+    maxTransitions: 4
+    maxVisitsPerNode: 1
+    maxParallelTokens: 1
+
+  ledger:
+    schemaVersion: nodes.culture.dev/ledger/v1alpha1
+    maxRecordsPerNode: 20
+
+  nodes:
+    sweep:
+      kind: code
+      ownerRef: team/platform-ai
+      uses: runner://headspace/pr-upkeep-sweep@sha256:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc
+      operation:
+        image: python:3.12-slim@sha256:57cd7c3a7a273101a6485ba99423ee568157882804b1124b4dd04266317710de
+        network: full
+        environmentRefs:
+          - PR_UPKEEP_SWEEP_SOURCE_URL
+          - PR_UPKEEP_SWEEP_SOURCE_SHA256
+          - PR_UPKEEP_REPOSITORIES
+          - GITHUB_TOKEN
+          - SONAR_TOKEN
+          - JIRA_ACCOUNT_EMAIL
+          - JIRA_API_TOKEN
+          - NODES_API_URL
+          - NODES_EVENT_TOKEN
+        argv:
+          - python3
+          - -c
+          - |
+            import hashlib, os, subprocess, sys, tempfile, urllib.request
+            want = os.environ["PR_UPKEEP_SWEEP_SOURCE_SHA256"]
+            body = urllib.request.urlopen(os.environ["PR_UPKEEP_SWEEP_SOURCE_URL"], timeout=60).read()
+            if hashlib.sha256(body).hexdigest() != want:
+                sys.exit("sweep-cycle: fetched bytes do not match the granted digest; refusing to run unverified code")
+            path = os.path.join(tempfile.mkdtemp(), "sweep.py")
+            open(path, "wb").write(body)
+            code = subprocess.run([sys.executable, path]).returncode
+            # 0 = emitted, 10 = empty sweep: both are successful emitter
+            # passes (the facts, or the absence of new facts, are appended /
+            # not needed). Anything else is a technical failure.
+            sys.exit(0 if code in (0, 10) else code)
+      input:
+        bindings:
+          cycle: /run/input
+      contract:
+        outcomes:
+          passed:
+            schema: {type: object}
+          failed:
+            schema: {type: object}
+      ledger:
+        observe: [evidence]
+      policy:
+        timeout: 15m
+        retry:
+          maxAttempts: 1
+
+    swept:
+      kind: end
+      ownerRef: team/platform-ai
+      output:
+        from: /nodes/sweep/output
+
+    sweep-failed:
+      kind: end
+      ownerRef: team/platform-ai
+      output:
+        from: /nodes/sweep/output
+
+  edges:
+    - from: sweep.passed
+      to: swept
+    - from: sweep.failed
+      to: sweep-failed

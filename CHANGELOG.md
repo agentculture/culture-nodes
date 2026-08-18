@@ -5,6 +5,12 @@ All notable changes to this project will be documented in this file.
 Format follows [Keep a Changelog](https://keepachangelog.com/). This project
 adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.38.1] - 2026-08-18
+
+### Fixed
+
+- triage table regenerated after the post-merge closes (#185, #195; #187/#188/#189 rode PR #190)
+
 ## [0.38.0] - 2026-08-18
 
 ### Added

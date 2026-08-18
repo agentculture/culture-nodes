@@ -18,14 +18,16 @@
 # starting with `to-do`.
 #
 # ---------------------------------------------------------------------------
-# STAGED ROLLOUT (frame decision c24)
+# ROLLOUT (frame decision c24 — opened by task t9)
 # ---------------------------------------------------------------------------
-# This version carries a temporary second guard: only SCRUM-2 fires. The
-# moment the loop is proven live on prod, a follow-up publish drops the
-# `event.payload.id == "SCRUM-2"` clause (task t9) and pickup opens to every
-# To Do issue, contained by `limits.maxConcurrentSubjectRuns` below. An issue
-# moved back to To Do re-fires pickup BY DESIGN — that is a human's re-triage
-# signal (same decision c24).
+# The staged SCRUM-2-only guard shipped in v1.0.0 was dropped after the loop
+# was proven live (run 01M0B7ETAGQ2MS0YDCZP9762WX, 2026-08-18: comment
+# 10071 + board transition, all nodes green). Pickup is open to every issue
+# whose status TRANSITIONS to To Do — the watermark dedup means already-idle
+# To Do issues do not fire on publish; only a fresh transition does. The
+# `limits.maxConcurrentSubjectRuns` ceiling below bounds concurrent pickups.
+# An issue moved back to To Do re-fires pickup BY DESIGN — a human's
+# re-triage signal (same decision c24).
 #
 # ---------------------------------------------------------------------------
 # KILL SWITCH (spec requirement c21 — exact commands, no memory required)
@@ -73,19 +75,18 @@ kind: Workflow
 
 metadata:
   name: jira-intake
-  version: 1.1.1
+  version: 1.2.0
   ownerRef: team/platform-ai
 
 spec:
   entry: intake
 
   triggers:
-    # Guard 1 (permanent): only the sweep's Jira facts — pr-upkeep.pr events
-    # carry source == "github_pr" and must never mint an intake run.
-    # Guard 2 (staged, dropped by t9's follow-up publish): SCRUM-2 only.
+    # The one permanent guard: only the sweep's Jira facts — pr-upkeep.pr
+    # events carry source == "github_pr" and must never mint an intake run.
     - onEvent: pr-upkeep.jira.transitioned.to-do
       when: >-
-        event.payload.source == "jira" && event.payload.id == "SCRUM-2"
+        event.payload.source == "jira"
 
   contract:
     input:

@@ -6,6 +6,7 @@ import (
 	"errors"
 	"io"
 	"net/http"
+	"strconv"
 	"strings"
 
 	"github.com/agentculture/culture-nodes/internal/actors"
@@ -233,6 +234,15 @@ func (s *Server) handleGetAttemptArtifact(w http.ResponseWriter, r *http.Request
 	if meta.MediaType != "" {
 		w.Header().Set("Content-Type", meta.MediaType)
 	}
+	// The media type is PUBLISHER-controlled (the Content-Type header of the
+	// authenticated PUT), and this route is an unauthenticated read on the
+	// API origin — an artifact published as text/html or image/svg+xml must
+	// never execute as active content here (stored XSS, PR #190 review).
+	// Three independent locks: no inline rendering, no MIME sniffing, and a
+	// fully sandboxed CSP for anything that renders anyway.
+	w.Header().Set("Content-Disposition", "attachment; filename="+strconv.Quote(sanitizeFilename(name)))
+	w.Header().Set("X-Content-Type-Options", "nosniff")
+	w.Header().Set("Content-Security-Policy", "sandbox")
 	w.Header().Set("Artifact-Ref", string(match.Ref))
 	w.WriteHeader(http.StatusOK)
 	if _, err := io.Copy(w, content); err != nil {
@@ -287,4 +297,21 @@ func (s *Server) runnerAttemptAssociations(ctx context.Context, attemptID string
 		RunID:       req.Context.RunID,
 		AttemptID:   attemptID,
 	}, nil
+}
+
+// sanitizeFilename bounds a publisher-controlled artifact name to something
+// safe inside a quoted Content-Disposition filename: header-breaking and
+// quote-relevant bytes become underscores. Display-only; the artifact's
+// recorded Name is untouched.
+func sanitizeFilename(name string) string {
+	out := []rune(name)
+	for i, r := range out {
+		if r < 0x20 || r == '"' || r == '\\' || r == 0x7f {
+			out[i] = '_'
+		}
+	}
+	if len(out) > 128 {
+		out = out[:128]
+	}
+	return string(out)
 }

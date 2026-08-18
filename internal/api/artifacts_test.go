@@ -375,6 +375,17 @@ func TestArtifactReadBackRoundTrip(t *testing.T) {
 	if ct := getResp.Header.Get("Content-Type"); !strings.HasPrefix(ct, "text/plain") {
 		t.Fatalf("Content-Type = %q, want the recorded media type", ct)
 	}
+	// Stored-XSS locks (PR #190 review): publisher-controlled bytes must
+	// never render as active content on the API origin.
+	if cd := getResp.Header.Get("Content-Disposition"); !strings.HasPrefix(cd, "attachment") {
+		t.Fatalf("Content-Disposition = %q, want attachment", cd)
+	}
+	if xcto := getResp.Header.Get("X-Content-Type-Options"); xcto != "nosniff" {
+		t.Fatalf("X-Content-Type-Options = %q, want nosniff", xcto)
+	}
+	if csp := getResp.Header.Get("Content-Security-Policy"); csp != "sandbox" {
+		t.Fatalf("Content-Security-Policy = %q, want sandbox", csp)
+	}
 
 	missing, err := ts.Client().Get(ts.URL + "/v1alpha1/attempts/" + inv.AttemptID + "/artifacts/no-such-name")
 	if err != nil {

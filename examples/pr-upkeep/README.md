@@ -281,13 +281,13 @@ gap in the sweep):
   process, is what makes an unchanged status a silent no-op instead of a
   repeat delivery.
 - A fresh comment separately raises `pr-upkeep.jira.comment` on its own
-  `:comment` source key. When the newest comment on an issue was authored by
-  the system's own Jira account (`jira_bot_account_id`, see the deployment
-  configuration table above), `jira_comment_is_self_echo` is true and the
-  sweep raises no comment event for that pass — a posted question must never
-  resume the flow that asked it. The watermark position used for the
-  comment fact is computed unfiltered either way, so it already sits past
-  the bot's own comment once a real reply lands.
+  `:comment` source key. `jira_comment_is_self_echo` accepts either the
+  configured `jira_bot_account_id` or the Jira actor's fixed body marker;
+  the marker keeps filtering correct while the deployed token belongs to a
+  person. A question marker carries its `question_id`, and the next human
+  reply's event copies that value as `originating_question_id` alongside the
+  answer comment. The watermark position is unfiltered, so it already sits
+  past the actor's own comment once a real reply lands.
 
 ## The cross-machine handoff (issue #74)
 

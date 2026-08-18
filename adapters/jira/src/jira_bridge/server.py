@@ -73,7 +73,7 @@ class Handler(BaseHTTPRequestHandler):
             self._json(500, {"error": "Jira actor credential is not configured", "class": "execution"})
             return
         assert parsed is not None
-        posted = client.post_comment(self.cfg.jira_site, parsed.issue, parsed.text, email, token)
+        posted = client.post_comment(self.cfg.jira_site, parsed.issue, parsed.marked_text, email, token)
         if not posted.ok:
             self._json(502, {"error": posted.error, "class": "execution"})
             return

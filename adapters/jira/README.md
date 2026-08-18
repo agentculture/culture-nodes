@@ -11,8 +11,14 @@ keys and must never be placed in control-plane or runner configuration.
 Invocation input is exactly:
 
 ```json
-{"verb":"post_comment","issue":"EX-123","comment":"The change shipped."}
+{"verb":"post_comment","issue":"EX-123","comment":"What should this do?","question_id":"q-01"}
 ```
+
+`question_id` is optional for ordinary notices and required by a question
+round trip. The actor appends a fixed `[culture-nodes:jira-actor ...]` marker
+to every comment. The sweep filters that marker as a self-echo even when the
+deployed Jira credential belongs to a person; for questions the marker also
+carries the identifier copied into the human answer event.
 
 Register it through the ordinary actor registry path, for example:
 

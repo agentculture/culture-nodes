@@ -38,42 +38,8 @@ fetched issue, same as `pr-upkeep.pr`; the control plane's watermark
 equality dedup — not this process — is what makes an unchanged status or an
 already-seen comment a silent no-op rather than a repeat delivery.
 
-The comment/resume event is also filtered for self-echo (task t9, honesty
-condition: "posting a question does not resume the flow"): when the newest
-comment on an issue was authored by the system's OWN Jira account —
-`jira_bot_account_id`, configured per repository exactly like `jira_site`
-and `jira_project`, never a module constant — `jira_comment_is_self_echo`
-is true and the sweep raises no comment event for that issue this pass.
-The watermark POSITION (`jira_watermark`) is computed unfiltered either
-way, so the position a later real reply is compared against already sits
-past the bot's own comment rather than replaying it as its own answer.
-
-SonarCloud sees the MAIN branch only unless a query names a `pullRequest`
-(found live: `?componentKeys=...&resolved=false` alone answered `total: 0`
-against this repo while nine real issues sat on open PR #70's own analysis
-context — three `python:S3516` BLOCKERs among them). The sweep queries BOTH:
-the main-branch surface (unchanged) PLUS one `&pullRequest=<n>` query per
-currently open PR, so a PR's own findings are visible before it merges —
-the concrete gap that made a "clean" sweep miss PR #70's nine issues
-entirely. See `MAX_PRS_PER_SWEEP` for the request-budget bound and
-`dedupe_sonar_items` for how a finding that shows up on more than one query
-in the same sweep collapses to one work item.
-
-A red CI check is the THIRD finding source (issue #61, found live on PR
-#60: the spec PR sat with a failed `lint` job while a sweep ran and
-honestly reported nothing for it, because a check conclusion is neither a
-SonarCloud issue nor a Qodo review body). `check_run_work_items` reads
-`GET /repos/{repo}/commits/{head_sha}/check-runs` for each swept PR — the
-SAME capped PR set the other two per-PR queries use, one more request per
-PR — and emits a work item per failed check run. Sonar-named checks are
-skipped there: a red quality gate already arrives as SonarCloud issues
-above, and counting its check run too would book the same work twice.
-
-Dependencies: Python 3.12 stdlib only, mirroring the reference bridges'
-no-PyPI-graph constraint (enforced by a test that walks this module's
-import statements against `sys.stdlib_module_names`). Unit tests:
-tests/test_pr_upkeep_sweep.py runs the parsing functions against recorded
-fixtures (see fixtures/).
+Self-echo uses configured identity or the actor marker, which also correlates
+answers to question ids. See the README for source budgets and deduplication.
 """
 
 from __future__ import annotations
@@ -127,6 +93,10 @@ JIRA_RATE_LIMIT_PER_WINDOW = 350
 #: output — see the module docstring's "different facts" paragraph — so a
 #: trigger's `onEvent` match can never confuse the two.
 JIRA_COMMENT_EVENT_NAME = "pr-upkeep.jira.comment"
+JIRA_ACTOR_MARKER = "culture-nodes:jira-actor"
+_JIRA_QUESTION_MARKER_RE = re.compile(
+    r"\[culture-nodes:jira-actor question_id=([A-Za-z0-9][A-Za-z0-9._:-]{0,127})\]"
+)
 
 #: Anything that is not a lowercase letter or digit becomes one hyphen in a
 #: transition event's status slug. Jira status names are short, human-typed
@@ -602,6 +572,40 @@ def _comment_account_id(comment: dict) -> str:
     return (comment.get("author") or {}).get("accountId") or ""
 
 
+def jira_comment_text(comment: dict) -> str:
+    """Flatten text leaves in Jira Cloud v3's ADF comment body."""
+    body = comment.get("body")
+    if isinstance(body, str):
+        return body
+    parts: list[str] = []
+
+    def visit(value: object) -> None:
+        if isinstance(value, dict):
+            if isinstance(value.get("text"), str):
+                parts.append(value["text"])
+            for child in value.get("content") or []:
+                visit(child)
+        elif isinstance(value, list):
+            for child in value:
+                visit(child)
+    visit(body)
+    return "".join(parts)
+
+
+def jira_question_id_for_answer(comments: list[dict]) -> str:
+    """Return the marked question preceding the newest human answer."""
+    ordered = sorted(comments, key=_comment_timestamp)
+    if not ordered or JIRA_ACTOR_MARKER in jira_comment_text(ordered[-1]):
+        return ""
+    matches = (
+        _JIRA_QUESTION_MARKER_RE.search(jira_comment_text(c)) for c in reversed(ordered[:-1])
+    )
+    for match in matches:
+        if match:
+            return match.group(1)
+    return ""
+
+
 def _newest_comment(comments: list[dict]) -> dict | None:
     """The single comment with the latest timestamp, or None for an empty
     list. Shares `newest_comment_timestamp`'s field preference so "the
@@ -619,10 +623,12 @@ def jira_comment_is_self_echo(comments: list[dict], bot_account_id: str | None) 
     is run-input configuration (jira_bot_account_id), never a module
     constant, so its absence means the deployment made no claim to check
     against rather than a default identity."""
-    if not bot_account_id:
-        return False
     latest = _newest_comment(comments)
-    return latest is not None and _comment_account_id(latest) == bot_account_id
+    if latest is None:
+        return False
+    return JIRA_ACTOR_MARKER in jira_comment_text(latest) or bool(
+        bot_account_id and _comment_account_id(latest) == bot_account_id
+    )
 
 
 def fetch_jira_issues(site: str, project: str, email: str, token: str) -> dict:
@@ -953,13 +959,22 @@ def main() -> int:
                 # already sits past the bot's own comment.
                 watermark = jira_watermark(issue)
                 if comments and not jira_comment_is_self_echo(comments, bot_account_id):
+                    comment_payload = dict(item)
+                    question_id = jira_question_id_for_answer(comments)
+                    if question_id:
+                        comment_payload["originating_question_id"] = question_id
+                    latest = _newest_comment(comments) or {}
+                    comment_payload["answer"] = {
+                        "comment_id": str(latest.get("id") or ""),
+                        "body": jira_comment_text(latest),
+                    }
                     with attempting(
                         f"emitting {JIRA_COMMENT_EVENT_NAME} for {item['id']} (control plane)"
                     ):
                         emitted.append(
                             raise_event(
                                 JIRA_COMMENT_EVENT_NAME,
-                                item,
+                                comment_payload,
                                 f"jira:{site}:{item['id']}:comment",
                                 watermark,
                             )

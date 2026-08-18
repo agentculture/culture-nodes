@@ -10,7 +10,7 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 ### Added
 
 - The combining loop (#118 step 7): examples/combining-loop workflow + scripts/combining-loop-node.py + combining-loop-release.py - harvest, candidate staging with .github containment, gate-on-combination, verdict-fenced merge with credential-helper reset, claim-decision surfacing, and paced wave release
-- Harvest node (#100): cmd/nodes-harvest + internal/handover/harvest.go fetching a handed-over ref into a recoverable refs/culture-nodes/harvested/<run> pin
+- Harvest node (#100): cmd/nodes-harvest + internal/handover/harvest.go fetching a handed-over ref into a recoverable `refs/culture-nodes/harvested/<run>` pin
 - Gated merge execution (#90 seam): cmd/nodes-merge + internal/handover/merge.go with no-TOCTOU verdict/SHA fencing and ls-remote post-push verification
 - Jira comment actor bridge (adapters/jira, #68 shape): comment-only, marker-stamped, transition-path audited
 - Jira question round trip (examples/jira-question-round-trip): post -> until.signal park -> marker/author-filtered resume carrying originating_question_id, with a structural two-ask bound routing exhaustion to a human

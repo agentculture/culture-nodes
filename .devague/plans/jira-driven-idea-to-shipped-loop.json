@@ -5,7 +5,7 @@
   "schema_version": 4,
   "status": "exported",
   "created": "2026-08-18T05:57:58Z",
-  "updated": "2026-08-18T06:06:47Z",
+  "updated": "2026-08-18T06:30:00Z",
   "targets": [
     {
       "id": "c1",
@@ -416,7 +416,7 @@
         "c3",
         "h3"
       ],
-      "instruction": ""
+      "instruction": "Build the harvest node program (scripts/harvest.py or internal/, your judgment matching repo layout): fetch a refs/culture-nodes/ ref from a control-plane-configured remote through the internal/handover seam and stage it into an integration worktree. TDD: fixture-remote tests first. No ssh, no operator credential anywhere. Preserve-on-failure: killed mid-run, the fetched work must be recoverable from the run alone. Re-verify which development-loop gaps still hold at HEAD before reusing that skeleton (plan risk r5)."
     },
     {
       "id": "t2",
@@ -434,7 +434,7 @@
         "c35",
         "h20"
       ],
-      "instruction": ""
+      "instruction": "Extend the harvest/staging lane: stage the harvested package onto a candidate worktree of the feature branch. A merge conflict exits with its own distinct code mapping to a domain outcome (mirror scripts/merge-gate.py's 0/1/2 contract discipline). Detect any candidate-vs-feature-branch diff touching .github/ and exit with a distinct routes-to-human code that a green verdict cannot bypass. Fixture-tested both ways."
     },
     {
       "id": "t3",
@@ -453,7 +453,7 @@
         "h12",
         "h2"
       ],
-      "instruction": ""
+      "instruction": "Point scripts/merge-gate.py at the staged candidate tree and report through POST /v1alpha1/runs/{id}/gate-reports. Add the test that builds a package green on its own branch but red combined with the feature branch and shows changes_required measured on the combination. Cover the go-test all-skips trap explicitly (a suite that skipped everything is measurement_incomplete, not green)."
     },
     {
       "id": "t4",
@@ -471,7 +471,7 @@
         "c33",
         "h18"
       ],
-      "instruction": ""
+      "instruction": "The merge step: on gates_passed over the candidate, perform the --no-ff merge and push the feature branch using the #90 credential seam. Document in the workflow/deploy docs which host, checkout and credential perform it. Tests assert the credential reaches no argv, log line, or committed artifact."
     },
     {
       "id": "t5",
@@ -580,7 +580,7 @@
         "c5",
         "h10"
       ],
-      "instruction": ""
+      "instruction": "New adapter adapters/jira following adapters/notify's layout and discipline exactly: one verb - post a comment on a named issue - holding JIRA_ACCOUNT_EMAIL + JIRA_API_TOKEN from its own env (never control-plane config). No code path may reach a transition endpoint; add the audit test asserting that. Register as an ordinary actor; include fixture-backed unit tests runnable with no network and no credential."
     },
     {
       "id": "t11",
@@ -599,7 +599,7 @@
         "c4",
         "h4"
       ],
-      "instruction": ""
+      "instruction": "Question round trip: a workflow leg posts a question via the jira actor, parks on until.signal; the sweep's answer event resumes it. Keep watermark advance + event append in one transaction (t17's shape - verify it holds for answers). The resume event payload names the originating question id. Fixture-test restart safety: no re-emit, no skip."
     },
     {
       "id": "t12",
@@ -619,7 +619,7 @@
         "c30",
         "h15"
       ],
-      "instruction": ""
+      "instruction": "Thread session identity through the gap: the asking node's session_key/continuation_ref ride the parked state into the resume dispatch. Warm path reuses continuation_ref (registry shows no ForkEvent); forced-loss path produces a cold session WITH a ForkEvent and a re-brief (question + answer + minimal context) prepended to the instruction. Tests cover both; neither path silent."
     },
     {
       "id": "t13",
@@ -818,6 +818,14 @@
       "text": "development-loop's remaining gaps (provisioner wiring, worktree-event vocabulary) were not re-measured; t1/t5 must re-verify which still hold at HEAD before reusing that skeleton",
       "kind": "unknown_nonblocking",
       "task_id": "t1",
+      "resolved": false,
+      "resolution": ""
+    },
+    {
+      "id": "r6",
+      "text": "Jira actor identity (#167): the available token is the operator's personal account, so author-based echo filtering cannot separate bot questions from human answers - needs a machine account (preferred) or marker-based filtering before t11/t17 can pass",
+      "kind": "unknown_nonblocking",
+      "task_id": "t11",
       "resolved": false,
       "resolution": ""
     }

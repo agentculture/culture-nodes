@@ -112,3 +112,4 @@ issue,bucket,disposition,evidence_pointer
 192,large bets,"design the flow-store surface (catalog of proven flows + evidence, pull-into-deployment, user-local additions) through its own devague chain before any build",issue #192 body + operator direction 2026-08-18
 193,finish work,"make the sweep history-aware: emit per unseen changelog entry and comment, watermark by history position (kills the between-polls blindness measured live 2026-08-18)",issue #193 body + operator direction during the hands-free-scrum-2-pickup live run
 194,finish work,"bounded control-plane re-mint of a fact whose trigger-created run failed technically (backoff, 2-per-window, then human) — composes with #193's history-aware emission",issue #194 body + live failed intake run 01M0B4K8JSY3QRQJ3M7D2WTZDC
+195,verify-then-close,"Record: session audit of the hands-free evening — closed on read, artifact committed",docs/audits/2026-08-18-hands-free-session-effectiveness.md

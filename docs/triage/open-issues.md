@@ -74,5 +74,5 @@ Types are read per-issue from GitHub at render time, never from the search `type
 | Task | 2 | 2026-08-17 |
 | Bug | 7 | 2026-08-17 |
 | Feature | 4 | 2026-08-17 |
-| Record | 16 | 2026-08-17 |
+| Record | 17 | 2026-08-17 |
 | (no type) | 39 | 2026-08-17 |

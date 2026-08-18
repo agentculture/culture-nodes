@@ -408,6 +408,25 @@ refuses to start:
 Set them on **both** `api` (the async `completed` callback lands there) and
 `worker` (the synchronous 200 lands there), with the same values.
 
+### Automated feature-branch merge custody
+
+The Jira-driven shipped loop has one concrete merge custody point: the
+`company/codex-thor` actor on host **thor**, in checkout
+`/home/thor/git/culture-nodes-agent`. Its merge operation runs `nodes-merge`
+after the gate-report response says `gates_passed` for the exact candidate
+commit. The command rechecks that digest, requires the candidate to be the
+two-parent commit produced by `merge --no-ff`, atomically advances the feature
+branch from the candidate's first parent, and pushes that same commit.
+
+The push credential is `GITHUB_TOKEN_WORKER`, the #90 seam already installed
+as mode-0600 `~/.culture-nodes/bridge-push.env` and loaded by
+`codex-bridge.service`. The value is environment-only. `nodes-merge` accepts
+no credential flag, supplies the value to Git through a temporary
+`GIT_ASKPASS` helper, disables terminal prompting, removes the helper after
+the push, and redacts the credential even if a remote echoes it in an error.
+Consequently this step needs no operator token handoff and places no token in
+argv, logs, workflow content, or the checkout.
+
 With neither set, nothing is fetched and no record is written — which is the
 honest default: a control plane that cannot look must not write a record
 saying it did. A ref that is claimed but not fetchable also writes nothing;

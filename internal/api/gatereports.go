@@ -64,10 +64,14 @@ type createGateReportRequest struct {
 	// CommitSHA is the candidate the gates ran against, full 40-hex. BaseSHA
 	// is what it was compared to; ChangedFiles is the set every applicability
 	// decision below was made against.
-	CommitSHA    string   `json:"commit_sha"`
-	BaseSHA      string   `json:"base_sha"`
-	Ref          string   `json:"ref"`
-	ChangedFiles []string `json:"changed_files"`
+	CommitSHA string `json:"commit_sha"`
+	// PackageCommitSHA binds a post-merge candidate to the handover this run
+	// measured. It is required when CommitSHA names the combination rather
+	// than the package branch itself.
+	PackageCommitSHA string   `json:"package_commit_sha"`
+	BaseSHA          string   `json:"base_sha"`
+	Ref              string   `json:"ref"`
+	ChangedFiles     []string `json:"changed_files"`
 
 	ValidatorActorID string `json:"validator_actor_id"`
 	NodeRunRef       string `json:"node_run_ref"`
@@ -183,13 +187,17 @@ func (s *Server) handleCreateGateReport(w http.ResponseWriter, r *http.Request) 
 		return internalError(err)
 	}
 	measured, _ := handover.Measured(records)
-	if measured.CommitSHA != "" && measured.CommitSHA != req.CommitSHA {
+	measuredSubject := req.CommitSHA
+	if req.PackageCommitSHA != "" {
+		measuredSubject = req.PackageCommitSHA
+	}
+	if measured.CommitSHA != "" && measured.CommitSHA != measuredSubject {
 		return badRequest(
 			"re-run the gate against the commit the run handed over, or collect the handover again "+
 				"(scripts/collect-handover.py <run-id>)",
 			"this run's handover was measured at commit %s, but the gate report names %s: the gates ran "+
 				"against something other than what this run handed over",
-			measured.CommitSHA, req.CommitSHA)
+			measured.CommitSHA, measuredSubject)
 	}
 
 	revision := strconv.FormatInt(int64(validator.Revision), 10)

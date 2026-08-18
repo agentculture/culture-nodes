@@ -98,6 +98,10 @@ const (
 	// defined over — a docs-only or config-only change. The only reason that
 	// may name no uncovered path, because there are none.
 	ReasonNoSourceFiles = "no_source_files"
+	// ReasonNoTestsExecuted means the test process returned success but its
+	// machine-readable event stream contained no executed test. Go reports
+	// success when every test skips; that is not a measurement of the tree.
+	ReasonNoTestsExecuted = "no_tests_executed"
 )
 
 // notApplicableReasons is the vocabulary as a set, with whether a reason may
@@ -107,6 +111,7 @@ var notApplicableReasons = map[string]bool{
 	ReasonNoTestInstrument:          false,
 	ReasonInstrumentUnavailable:     false,
 	ReasonNoSourceFiles:             true,
+	ReasonNoTestsExecuted:           false,
 }
 
 // NotApplicableReasons returns the closed reason vocabulary, sorted. Exported
@@ -365,7 +370,8 @@ func (r GateResults) Outcome() string {
 		return OutcomeChangesRequired
 	}
 	for _, result := range r {
-		if result.Status == GateStatusNotApplicable && result.Reason == ReasonInstrumentUnavailable {
+		if result.Status == GateStatusNotApplicable &&
+			(result.Reason == ReasonInstrumentUnavailable || result.Reason == ReasonNoTestsExecuted) {
 			return OutcomeMeasurementIncomplete
 		}
 	}

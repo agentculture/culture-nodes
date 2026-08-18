@@ -129,6 +129,7 @@ REASON_NOT_REACHING = "instrument_not_reaching_tree"
 REASON_NO_TEST_INSTRUMENT = "no_test_instrument"
 REASON_UNAVAILABLE = "instrument_unavailable"
 REASON_NO_SOURCE_FILES = "no_source_files"
+REASON_NO_TESTS_EXECUTED = "no_tests_executed"
 
 #: Every key this program reads out of a gate entry — the whole vocabulary, and
 #: nothing beyond it. A matrix is graph content pinned by the published
@@ -216,6 +217,14 @@ def git(repo: Path, *args: str) -> str:
             "an unknown subject",
         )
     return proc.stdout.strip()
+
+
+def git_optional(repo: Path, *args: str) -> str:
+    proc = subprocess.run(
+        ["git", *args], cwd=repo, capture_output=True, text=True, check=False,
+        env={**os.environ, "GIT_TERMINAL_PROMPT": "0"},
+    )
+    return proc.stdout.strip() if proc.returncode == 0 else ""
 
 
 def full_sha(repo: Path, revision: str) -> str:
@@ -387,9 +396,13 @@ def run_gate(
             "something else",
         )
     try:
+        run_command = list(command)
+        go_json = len(run_command) >= 2 and run_command[:2] == ["go", "test"]
+        if go_json and "-json" not in run_command:
+            run_command.insert(2, "-json")
         proc = (
             subprocess.run(  # noqa: S603 # nosec B603 - argv list from the pinned matrix, no shell
-                command,
+                run_command,
                 cwd=str(workdir),
                 capture_output=True,
                 text=True,
@@ -402,6 +415,21 @@ def run_gate(
         return not_applicable(gate, REASON_UNAVAILABLE, considered, considered, version)
     except subprocess.TimeoutExpired:
         exit_code = 124
+
+    if exit_code == 0 and go_json:
+        executed = False
+        for line in proc.stdout.splitlines():
+            try:
+                event = json.loads(line)
+            except json.JSONDecodeError:
+                continue
+            if event.get("Test") and event.get("Action") in {"pass", "fail"}:
+                executed = True
+                break
+        if not executed:
+            return not_applicable(
+                gate, REASON_NO_TESTS_EXECUTED, considered, considered, version
+            )
 
     entry: dict[str, Any] = {
         "gate": gate["gate"],
@@ -481,7 +509,7 @@ def local_outcome(entries: list[dict[str, Any]]) -> str:
             applicable += 1
             if entry["exit_code"] != 0:
                 failed += 1
-        elif skipped["reason"] == REASON_UNAVAILABLE:
+        elif skipped["reason"] in {REASON_UNAVAILABLE, REASON_NO_TESTS_EXECUTED}:
             unavailable = True
     if failed > 0:
         return CHANGES_REQUIRED
@@ -634,6 +662,9 @@ def main(argv: list[str] | None = None) -> int:
             "changed_files": changed,
             "gates": entries,
         }
+        merge_head = git_optional(repo, "rev-parse", "--verify", "HEAD^2")
+        if merge_head:
+            report["package_commit_sha"] = merge_head
 
         if args.report_only:
             json.dump(

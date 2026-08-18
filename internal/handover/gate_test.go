@@ -211,6 +211,16 @@ func TestAnUnavailableInstrumentIsIncompleteNotGreenAndNotRed(t *testing.T) {
 	}
 }
 
+func TestAllSkippedGoSuiteIsIncompleteNotGreen(t *testing.T) {
+	results := handover.GateResults{
+		{Gate: "lint", Status: handover.GateStatusPassed},
+		{Gate: "go-test", Status: handover.GateStatusNotApplicable, Reason: handover.ReasonNoTestsExecuted},
+	}
+	if got := results.Outcome(); got != handover.OutcomeMeasurementIncomplete {
+		t.Fatalf("Outcome = %q, want %q; all-skipped tests are not green", got, handover.OutcomeMeasurementIncomplete)
+	}
+}
+
 // TestKnownInstrumentGapsDoNotBlockAPassingGate is the counterweight. The
 // coverage and complexity instruments genuinely do not reach `internal/` yet
 // (issue #88); if that recorded gap made every run incomplete, the outcome

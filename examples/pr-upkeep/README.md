@@ -24,7 +24,7 @@ means supplying these — it never means editing `workflow.yaml`.
 | `runner://headspace/docker` | **Runner registry.** The code-node runner boundary the sweep dispatches through. |
 | `PR_UPKEEP_SWEEP_SOURCE_URL` | **Granted environment value** on the sweep operation. Where `sweep.py` is fetched from at dispatch time. |
 | `PR_UPKEEP_SWEEP_SOURCE_SHA256` | **Granted environment value.** The sha256 those fetched bytes must have; the bootstrap refuses to execute anything else. |
-| `PR_UPKEEP_REPOSITORIES` | **Granted environment value.** An ordered JSON object containing `cycle` and the closed `repositories` set. Each entry supplies `github_repo` and `sonar_component`; optional `jira_site` and `jira_project` enable Jira for that repo. The cycle index selects exactly one entry per sweep. |
+| `PR_UPKEEP_REPOSITORIES` | **Granted environment value.** An ordered JSON object containing `cycle` and the closed `repositories` set. Each entry supplies `github_repo` and `sonar_component`; optional `jira_site` and `jira_project` (required together) enable Jira for that repo. `jira_bot_account_id` is independently optional: the system's own Jira `accountId`, used only to filter self-authored comments out of the comment/resume event (task t9) — see "Jira event vocabulary" below. The cycle index selects exactly one entry per sweep. |
 | `JIRA_ACCOUNT_EMAIL`, `JIRA_API_TOKEN` | **Granted environment values.** The two separately configured Jira Cloud Basic-auth values. They are never run input, argv, output, or fixture data. |
 | `PR_UPKEEP_MAX_PRS_PER_SWEEP`, `PR_UPKEEP_REQUIRED_CHECKS`, `GITHUB_TOKEN` | **Process environment of the sweep.** These remain optional; the GitHub token only changes rate-limit headroom. |
 
@@ -265,6 +265,29 @@ exists; it is not a success signal for this batch.
 - the `repo` run input is the local checkout path the fix/review bridges
   allowlist; a run naming a non-allowlisted repo is refused by the bridges
   themselves.
+
+### Jira event vocabulary (task t9)
+
+A Jira issue's current state and "a comment appeared" are different facts
+and carry different event names, so a workflow trigger can subscribe to one
+without ever receiving the other (#118 step 1's only remaining structural
+gap in the sweep):
+
+- Every fetched issue raises `pr-upkeep.jira.transitioned.<status-slug>`
+  (`jira_transition_event_name`) on its own `:status` source key — e.g. an
+  issue in `Ready for Dev` raises `pr-upkeep.jira.transitioned.ready-for-dev`.
+  This is attempted every sweep pass for every fetched issue, the same as
+  `pr-upkeep.pr`; the control plane's watermark-equality dedup, not this
+  process, is what makes an unchanged status a silent no-op instead of a
+  repeat delivery.
+- A fresh comment separately raises `pr-upkeep.jira.comment` on its own
+  `:comment` source key. When the newest comment on an issue was authored by
+  the system's own Jira account (`jira_bot_account_id`, see the deployment
+  configuration table above), `jira_comment_is_self_echo` is true and the
+  sweep raises no comment event for that pass — a posted question must never
+  resume the flow that asked it. The watermark position used for the
+  comment fact is computed unfiltered either way, so it already sits past
+  the bot's own comment once a real reply lands.
 
 ## The cross-machine handoff (issue #74)
 

@@ -65,15 +65,15 @@
 #                                 by adapters/jira tests, reconciled at the
 #                                 wave-0 merge gate.
 #
-# A technical failure at any node fails the run visibly (no silent stall);
-# the two agent-judgment outcomes that are not plain success are routed to
-# named ends so a reader can count them (h10).
+# A technical failure at any node fails the run visibly (no silent stall) —
+# including a completion whose outcome or output shape the contract rejects,
+# which is how both live intake failures surfaced (h10).
 apiVersion: nodes.culture.dev/v1alpha1
 kind: Workflow
 
 metadata:
   name: jira-intake
-  version: 1.0.0
+  version: 1.1.0
   ownerRef: team/platform-ai
 
 spec:
@@ -129,20 +129,28 @@ spec:
       uses: actor://company/intake@sha256:6666666666666666666666666666666666666666666666666666666666666666
       ledger:
         propose: [claim]
+      # The claude bridge does not parse outcomes out of model text: it
+      # reports the outcome named by input.success_outcome and an output
+      # whose comment-bearing field is `summary` (the session's final
+      # message). Measured live on run 01M0B5QWGSG2F86P0NC76AJT8V, whose
+      # honest draft arrived wrapped in prose and was contract_rejected.
+      # The instruction therefore makes the final message BE the comment.
       input:
         bindings:
+          success_outcome:
+            literal: intake_drafted
           instruction:
             literal: >-
               You are the intake leg of the jira-intake workflow. Using ONLY
               the issue fields in your input (id, title, status, severity,
               kind, details_url), draft a short intake comment for the Jira
-              issue: acknowledge pickup, restate the request in one sentence,
-              and name the single most important clarifying question if one
-              exists. Return outcome intake_drafted with output field
-              `comment` (the comment text, plain text, no markdown tables).
-              If the input fields are insufficient to say anything honest,
-              return outcome cannot_draft with a `reason` instead. Do not
-              start any other work.
+              issue: acknowledge pickup, restate the request in one or two
+              sentences, and name the single most important clarifying
+              question if one exists. End with the line
+              '- culture-nodes (Claude)'. Your FINAL message must be ONLY
+              the comment text itself - no headers, no JSON, no code fences,
+              no commentary about the task - because it is posted to the
+              issue verbatim. Do not start any other work.
           issue: /run/input/id
           title: /run/input/title
           status: /run/input/status
@@ -154,17 +162,9 @@ spec:
           intake_drafted:
             schema:
               type: object
-              required: [comment]
+              required: [summary]
               properties:
-                comment: {type: string, minLength: 1}
-          # The actor's own judgment that the event payload was too thin to
-          # act on — a domain outcome, not an engine failure (PRD §3.4).
-          cannot_draft:
-            schema:
-              type: object
-              required: [reason]
-              properties:
-                reason: {type: string, minLength: 1}
+                summary: {type: string, minLength: 1}
       policy:
         timeout: 30m
         retry:
@@ -185,7 +185,7 @@ spec:
           verb:
             literal: post_comment
           issue: /run/input/id
-          comment: /nodes/intake/output/comment
+          comment: /nodes/intake/output/summary
       contract:
         outcomes:
           comment_posted:
@@ -240,19 +240,9 @@ spec:
       output:
         from: /nodes/transition/output
 
-    # The actor judged the event too thin to act on. The run ends and says
-    # so; the issue is untouched, and a human reads the reason in the ledger.
-    not-actionable:
-      kind: end
-      ownerRef: team/platform-ai
-      output:
-        from: /nodes/intake/output
-
   edges:
     - from: intake.intake_drafted
       to: post-comment
-    - from: intake.cannot_draft
-      to: not-actionable
     - from: post-comment.comment_posted
       to: transition
     - from: transition.transitioned

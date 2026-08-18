@@ -115,9 +115,7 @@ def _prepend_resume_rebrief(instruction: str, raw_input: dict[str, Any]) -> str:
     minimal = {
         "question_id": raw_input.get("question_id"),
         "originating_question_id": (
-            resume_event.get("originating_question_id")
-            if isinstance(resume_event, dict)
-            else None
+            resume_event.get("originating_question_id") if isinstance(resume_event, dict) else None
         ),
     }
     rebrief = {
@@ -125,9 +123,12 @@ def _prepend_resume_rebrief(instruction: str, raw_input: dict[str, Any]) -> str:
         "answer": answer,
         "context": {key: value for key, value in minimal.items() if value is not None},
     }
-    return "RESUME RE-BRIEF (provider session was lost):\n" + json.dumps(
-        rebrief, ensure_ascii=False, sort_keys=True
-    ) + "\n\n" + instruction
+    return (
+        "RESUME RE-BRIEF (provider session was lost):\n"
+        + json.dumps(rebrief, ensure_ascii=False, sort_keys=True)
+        + "\n\n"
+        + instruction
+    )
 
 
 class Bridge:

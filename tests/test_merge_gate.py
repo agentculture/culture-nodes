@@ -470,14 +470,18 @@ def test_go_test_all_skips_is_measurement_incomplete(repo: Path, tmp_path: Path)
     fake_go.write_text(
         "#!/bin/sh\n"
         "printf '%s\\n' "
-        "'{\"Action\":\"run\",\"Package\":\"example\",\"Test\":\"TestSkipped\"}' "
-        "'{\"Action\":\"skip\",\"Package\":\"example\",\"Test\":\"TestSkipped\"}' "
-        "'{\"Action\":\"pass\",\"Package\":\"example\"}'\n"
+        '\'{"Action":"run","Package":"example","Test":"TestSkipped"}\' '
+        '\'{"Action":"skip","Package":"example","Test":"TestSkipped"}\' '
+        '\'{"Action":"pass","Package":"example"}\'\n'
     )
     fake_go.chmod(0o755)
     proc = run_gate(
         repo,
-        {"gates": [{"gate": "go-test", "reaches": ["**/*.go"], "command": ["go", "test", "./..."]}]},
+        {
+            "gates": [
+                {"gate": "go-test", "reaches": ["**/*.go"], "command": ["go", "test", "./..."]}
+            ]
+        },
         "--report-only",
         env={"PATH": f"{fake_bin}:{os.environ['PATH']}"},
     )

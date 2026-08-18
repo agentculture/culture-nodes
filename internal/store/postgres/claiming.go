@@ -240,8 +240,10 @@ FROM (
     FROM work_items AS w2
     JOIN node_runs AS nr ON nr.id = w2.node_run_id
     JOIN runs AS r ON r.id = nr.run_id
+    JOIN workflow_versions AS wv ON wv.id = r.workflow_version_id
     WHERE w2.namespace_id = $4 AND w2.state = 'ready' AND w2.available_at <= now()
       AND r.status <> ALL ($5::text[])
+      AND ($6 OR COALESCE(wv.normalized_ir #>> ARRAY['spec', 'nodes', nr.node_key, 'kind'], '') <> 'code')
     ORDER BY w2.available_at, w2.id
     FOR UPDATE OF w2 SKIP LOCKED
     LIMIT $3
@@ -257,6 +259,17 @@ RETURNING w.id, w.namespace_id, w.node_run_id, w.state, w.state_version,
 // possibly fewer than limit, possibly zero when nothing is claimable right
 // now -- never an error merely because there was nothing to claim.
 func (s *Store) ClaimWork(ctx context.Context, namespaceID, workerID string, leaseDuration time.Duration, limit int) ([]ClaimedWork, error) {
+	return s.claimWork(ctx, namespaceID, workerID, leaseDuration, limit, true)
+}
+
+// ClaimWorkWithoutCode is ClaimWork for a worker that has no code dispatcher.
+// Code-node items remain ready for a code-capable worker; all other kinds stay
+// claimable through the same atomic selection and lease update.
+func (s *Store) ClaimWorkWithoutCode(ctx context.Context, namespaceID, workerID string, leaseDuration time.Duration, limit int) ([]ClaimedWork, error) {
+	return s.claimWork(ctx, namespaceID, workerID, leaseDuration, limit, false)
+}
+
+func (s *Store) claimWork(ctx context.Context, namespaceID, workerID string, leaseDuration time.Duration, limit int, claimCode bool) ([]ClaimedWork, error) {
 	switch {
 	case namespaceID == "":
 		return nil, fmt.Errorf("postgres: ClaimWork: namespaceID is required (claiming is namespace-scoped: a worker serves one namespace and must never lease another's work)")
@@ -269,7 +282,7 @@ func (s *Store) ClaimWork(ctx context.Context, namespaceID, workerID string, lea
 	}
 
 	rows, err := s.pool.Query(ctx, claimWorkSQL,
-		workerID, leaseDuration.Seconds(), int64(limit), namespaceID, TerminalRunStatuses())
+		workerID, leaseDuration.Seconds(), int64(limit), namespaceID, TerminalRunStatuses(), claimCode)
 	if err != nil {
 		return nil, fmt.Errorf("postgres: ClaimWork: %w", err)
 	}

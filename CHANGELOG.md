@@ -5,6 +5,12 @@ All notable changes to this project will be documented in this file.
 Format follows [Keep a Changelog](https://keepachangelog.com/). This project
 adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.37.1] - 2026-08-18
+
+### Fixed
+
+- #183 context: the t17 round trip completed live after the origin-identity fix; delivery record updated with run 01M0A5QG2Q0EDG16BEFG9MG4TZ and the triage table carries #183
+
 ## [0.37.0] - 2026-08-18
 
 ### Added

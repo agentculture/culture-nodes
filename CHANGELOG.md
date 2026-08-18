@@ -5,6 +5,12 @@ All notable changes to this project will be documented in this file.
 Format follows [Keep a Changelog](https://keepachangelog.com/). This project
 adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.36.0] - 2026-08-18
+
+### Added
+
+- Runner-service registry changes (nodes runner-services register) now take effect on a running worker without a restart: FunctionRegistry.ReloadServices and a new ReloadableSecrets resolver let cmd/nodes worker and nodes serve/all poll NODES_RUNNER_SERVICES_FILE for changes and apply them atomically to the same registry/client the worker already holds (task t19, issue #8).
+
 ## [0.35.1] - 2026-08-18
 
 ### Changed

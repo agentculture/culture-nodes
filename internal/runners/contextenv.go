@@ -30,16 +30,37 @@ package runners
 //  3. They are omitted, not blanked, when the control plane did not set them.
 //     A gate program reading an absent NODES_RUN_ID refuses; one reading an
 //     empty string could mistake it for a run.
-
-// Reserved environment names carrying an operation's own run identity into the
-// executed process. They are reserved in the sense that a deployment must not
-// grant values under these names through `environment_refs`: the boundary
-// overwrites them with the operation's own context, which is the point.
+//
+// # NODES_INPUT_JSON (issue #170)
+//
+// A code node's declared `input` bindings are resolved for every dispatch —
+// worker.go refuses the dispatch as `contract_rejected` when one cannot
+// resolve — but until now the resolved document was discarded rather than
+// reaching the process it was resolved for: buildCodeOperation
+// (internal/worker/code.go) lowered the image, argv, working directory,
+// environment_refs, network posture and workspace ref, and nothing else. A
+// graph author paid the cost of the input contract (a binding can refuse the
+// dispatch) with none of the benefit (the process could never read the
+// value).
+//
+// The fix rides the same seam as the run/node-run/attempt ids above, for the
+// same reasons: it is an environment value, never argv (argv is the pinned,
+// digest-addressed half of an operation), and it is omitted — not set to
+// `{}` or `null` — when the resolved input carries nothing an unbound node's
+// own default (`{}`, from resolveNodeInput) would not have carried anyway.
+// That is what keeps every code node that declares no input binding — the
+// overwhelming default — dispatching a byte-identical operation to the one
+// built before this env var existed.
 const (
 	EnvRunID       = "NODES_RUN_ID"
 	EnvNodeRunID   = "NODES_NODE_RUN_ID"
 	EnvAttemptID   = "NODES_ATTEMPT_ID"
 	EnvOperationID = "NODES_OPERATION_ID"
+	// EnvInputJSON carries the canonical JSON of a code node's resolved
+	// input document (Operation.Input), set only when buildCodeOperation
+	// judged it non-trivial. See the package doc's "NODES_INPUT_JSON"
+	// section.
+	EnvInputJSON = "NODES_INPUT_JSON"
 )
 
 // ContextEnvironment returns the environment values an adapter forwards into
@@ -52,6 +73,9 @@ func ContextEnvironment(op Operation) map[string]string {
 	out := map[string]string{}
 	if op.OperationID != "" {
 		out[EnvOperationID] = op.OperationID
+	}
+	if len(op.Input) > 0 {
+		out[EnvInputJSON] = string(op.Input)
 	}
 	if op.Context == nil {
 		return out

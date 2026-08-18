@@ -229,6 +229,10 @@
           "$ref": "#/$defs/identifier"
         }
       }
+    },
+    "input": {
+      "description": "A code node's resolved PRD §11.2 input document, present only when it carries more than the `{}` an unbound node resolves to (issue #170). Forwarded into the executed process as NODES_INPUT_JSON, the same way `context` is forwarded as environment values — the runner treats it as an opaque document, not a shape to validate.",
+      "$comment": "Deliberately unconstrained: what a node's resolved input may contain is the receiving node's own contract to state, not this schema's."
     }
   },
   "$defs": {

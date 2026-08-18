@@ -2,7 +2,7 @@
   "plan_slug": "jira-driven-idea-to-shipped-loop",
   "schema_version": 1,
   "created": "2026-08-18T06:44:06Z",
-  "updated": "2026-08-18T06:44:06Z",
+  "updated": "2026-08-18T07:37:34Z",
   "deviations": [
     {
       "id": "d1",
@@ -35,6 +35,18 @@
       "task_ref": "t18",
       "reason": "vocabulary conflated two human surfaces; grep of adapters/ for human_tasks/pending-decisions returns zero",
       "affects": [],
+      "origin": "llm",
+      "status": "proposed",
+      "classification": "acceptable"
+    },
+    {
+      "id": "d4",
+      "what": "closed t18's gap 1 (issue #170): a code node's resolved \u00a711.2 input document now reaches its process as NODES_INPUT_JSON \u2014 buildCodeOperation lowers the resolved input onto Operation.Input and internal/runners.ContextEnvironment forwards it, canonicalized and capped at 64 KiB, alongside the run/node-run/attempt ids it already forwarded; an undeclared binding still forwards nothing so every unbound code node's dispatch stays byte-identical",
+      "task_ref": "t18",
+      "reason": "t18 shipped the spec-chain graph with gap 1 honestly documented rather than closed (input bindings resolved and could refuse a dispatch, but the resolved document was discarded before ever reaching the operation); this was not one of the plan's t1-t20 tasks, it closes the gap t18 and deviation d2 left open",
+      "affects": [
+        "t18"
+      ],
       "origin": "llm",
       "status": "proposed",
       "classification": "acceptable"

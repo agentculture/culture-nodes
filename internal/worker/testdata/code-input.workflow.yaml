@@ -1,0 +1,86 @@
+# A clone of code.workflow.yaml with one difference: the `test` node
+# declares an `input` binding (issue #170). code_test.go's input-forwarding
+# tests drive this fixture to prove the resolved document reaches the
+# operation's NODES_INPUT_JSON — code.workflow.yaml itself stays undeclared
+# so it keeps proving the no-binding default forwards nothing.
+apiVersion: nodes.culture.dev/v1alpha1
+kind: Workflow
+
+metadata:
+  name: worker-code-input-slice
+  version: 1.0.0
+  ownerRef: team/platform-ai
+
+spec:
+  entry: test
+
+  contract:
+    input:
+      schema:
+        type: object
+        required: [subject]
+        properties:
+          subject:
+            type: string
+    output:
+      schema:
+        type: object
+
+  limits:
+    maxDuration: 1h
+    maxTransitions: 8
+    maxVisitsPerNode: 3
+    maxParallelTokens: 1
+
+  ledger:
+    schemaVersion: nodes.culture.dev/ledger/v1alpha1
+    maxRecordsPerNode: 10
+
+  nodes:
+    test:
+      kind: code
+      ownerRef: team/developer-experience
+      uses: runner://headspace/docker@sha256:5555555555555555555555555555555555555555555555555555555555555555
+      input:
+        from: /run/input
+      operation:
+        image: python:3.12-slim@sha256:57cd7c3a7a273101a6485ba99423ee568157882804b1124b4dd04266317710de
+        argv: [python3, -c, "raise SystemExit(0)"]
+        network: none
+        allowedOutputPaths: []
+      contract:
+        outcomes:
+          passed:
+            schema:
+              type: object
+          failed:
+            schema:
+              type: object
+      ledger:
+        observe: [evidence]
+      acceptance:
+        requires:
+          - kind: process_exit
+            equals: 0
+      policy:
+        timeout: 5m
+        retry:
+          maxAttempts: 1
+
+    finish:
+      kind: end
+      ownerRef: team/platform-ai
+      output:
+        from: /nodes/test/output
+
+    giveup:
+      kind: end
+      ownerRef: team/platform-ai
+      output:
+        from: /nodes/test/output
+
+  edges:
+    - from: test.passed
+      to: finish
+    - from: test.failed
+      to: giveup

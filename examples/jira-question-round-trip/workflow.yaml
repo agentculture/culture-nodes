@@ -193,6 +193,11 @@ spec:
       kind: agent
       ownerRef: team/platform-ai
       uses: actor://company/codex-orin@sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb
+      # A real bridge's completion proposes a claim (PRD 10.4); a node
+      # that declares no propose types rejects every honest actor completion
+      # as contract_rejected (measured live in the t17 round trip).
+      ledger:
+        propose: [claim]
       input:
         bindings:
           instruction:
@@ -266,6 +271,11 @@ spec:
       kind: agent
       ownerRef: team/platform-ai
       uses: actor://company/codex-orin@sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb
+      # A real bridge's completion proposes a claim (PRD 10.4); a node
+      # that declares no propose types rejects every honest actor completion
+      # as contract_rejected (measured live in the t17 round trip).
+      ledger:
+        propose: [claim]
       input:
         bindings:
           instruction:

@@ -5,6 +5,19 @@ All notable changes to this project will be documented in this file.
 Format follows [Keep a Changelog](https://keepachangelog.com/). This project
 adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.38.0] - 2026-08-18
+
+### Added
+
+- jira-intake workflow (examples/jira-intake/): the subscriber for the sweep's bare Jira transition facts — staged SCRUM-2 guard, maxConcurrentSubjectRuns ceiling, kill-switch runbook (#187)
+- narrow transition_issue verb in adapters/jira behind a bridge-enforced allowlist, audit test narrowed not deleted (t2)
+- headspace runner captures code-process stdout as a durable attempt artifact so a green sweep answers emitted-or-not in one query (#189)
+- hands-free-scrum-2-pickup spec + plan (devague scope/think/challenge/spec-to-plan chain)
+
+### Fixed
+
+- worker with an entirely absent code-runner identity no longer claims code-node work items it cannot run (#188)
+
 ## [0.37.1] - 2026-08-18
 
 ### Fixed

@@ -264,6 +264,19 @@ Numbered SQL migrations for the authoritative PostgreSQL store (prd-spec
   admission default refuses as `not_control_plane_issued`. Both columns are
   an instant and a count, so the no-plaintext-at-rest posture 0031 and 0032
   set is unchanged.
+- `0038_run_trigger_subject.sql` — expand-only: adds nullable `runs.subject`
+  plus a partial index over `(namespace_id, subject)` on non-terminal
+  status (task t15, spec c31/h16). It is the durable half of the
+  one-active-run-per-Jira-issue guard: measuring the trigger layer at HEAD
+  found no subject/correlation concept anywhere on the inbound event path,
+  so `internal/engine/trigger.go`'s `TriggerEvent` created a new run for
+  every matching event unconditionally. `TriggerEvent` now persists the
+  triggering event's subject on the run it creates and, before creating
+  one, looks up whether an ACTIVE run already carries the same
+  `(workflow_key, subject)` — found, it attaches (an audit event on the
+  existing run) instead of spawning a sibling. NULL means no subject was
+  supplied, exactly as every pre-migration caller of `POST /v1alpha1/events`
+  behaves today.
 
 Migrations are additive-first (expand-contract). See
 `docs/adr/0002-migration-policy.md` for the full policy, the N-1 binary

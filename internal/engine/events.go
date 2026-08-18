@@ -83,6 +83,15 @@ const (
 	// the loser of an any/quorum barrier, or a live branch retired because
 	// a terminal branch failure (or cancellation, or a bound) ended the run.
 	TypeBranchCancelled = "dev.culture.nodes.branch.cancelled"
+
+	// TypeTriggerEventAttached records a matching trigger event that did
+	// NOT spawn a new run (task t15, spec c31/h16): an ACTIVE run already
+	// claims the event's subject, so this is the "second event's effect...
+	// visible on the existing run, not a sibling" the honesty condition
+	// asks for. It carries the attaching event's id/name/payload on the
+	// EXISTING run's own stream, exactly where an operator inspecting that
+	// run would look for it.
+	TypeTriggerEventAttached = "dev.culture.nodes.trigger.event-attached"
 )
 
 // event builds an EventInput, encoding data into the payload. Encoding cannot

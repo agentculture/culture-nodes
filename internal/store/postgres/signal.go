@@ -79,6 +79,17 @@ type SignalEvent struct {
 	Payload     json.RawMessage
 	Emitter     string
 	CreatedAt   time.Time
+
+	// Subject is the caller-supplied correlation key (task t15, spec
+	// c31/h16), carried from DeliverSignalEventInput.Subject through this one
+	// delivery call so runEventTriggers can build a PickupEvent with it. It
+	// is DELIBERATELY not a signal_events column: the durable record of a
+	// subject that mattered lives on the run it created or attached to
+	// (runs.subject, migrations/0038) and on that run's own event stream
+	// (TypeRunCreated / TypeTriggerEventAttached), not duplicated onto the
+	// immutable fact row. A row read back from the database (SignalEventByID,
+	// the duplicate-watermark path) therefore always reads Subject == "".
+	Subject string
 }
 
 // SignalSubscription is a signal_subscriptions row: one node run parked on
@@ -332,6 +343,18 @@ type DeliverSignalEventInput struct {
 	SourceKey string
 	Watermark json.RawMessage
 
+	// Subject is an optional correlation key (task t15, spec c31/h16) — e.g.
+	// a Jira issue key. It has nothing to do with SourceKey/Watermark's
+	// exact-redelivery idempotency: two DIFFERENT real events on the same
+	// subject (a state change, then a comment) are two different facts with
+	// two different watermarks, and both are meant to be appended. What
+	// Subject changes is trigger creation: TriggerEvent attaches a
+	// subject-bearing event to an already-ACTIVE run for the same
+	// (workflow key, subject) instead of creating a sibling. Empty (the
+	// default) reproduces the pre-task-t15 behavior exactly — every trigger
+	// match creates a new run.
+	Subject string
+
 	// Pickup performs event-route pickup (issue #43, design D9) inside this
 	// delivery's transaction. Nil disables route pickup entirely, which is
 	// what every caller that only cares about signal waits wants — and what
@@ -467,6 +490,9 @@ func (s *Store) deliverSignalEventTx(ctx context.Context, tx pgx.Tx, in DeliverS
 		Name:        in.Name,
 		Payload:     jsonOrEmptyObject(in.Payload),
 		Emitter:     in.Emitter,
+		// In-memory only — see the field's doc comment for why this never
+		// reaches the signal_events INSERT below.
+		Subject: in.Subject,
 	}
 	var createdAt pgtype.Timestamptz
 	if err := tx.QueryRow(ctx,
@@ -512,11 +538,20 @@ func (s *Store) deliverSignalEventTx(ctx context.Context, tx pgx.Tx, in DeliverS
 	// One outbox row for the delivery itself, whether or not anything was
 	// waiting — the same transactional audit discipline every other state
 	// change in this store follows (appendRunEventTx, the API's cancelRun).
+	// subject reads back nil (JSON null) rather than "" when the delivery
+	// carried none — omitting a `subject` key entirely would leave a reader
+	// unable to tell "no subject" from "field predates this version of the
+	// payload".
+	var subject any
+	if ev.Subject != "" {
+		subject = ev.Subject
+	}
 	deliveredPayload, _ := json.Marshal(map[string]any{
 		"event_id":  ev.ID,
 		"name":      ev.Name,
 		"emitter":   ev.Emitter,
 		"run_id":    ev.RunID,
+		"subject":   subject,
 		"resumed":   len(fired),
 		"picked_up": admittedPickups(pickups),
 		"triggered": len(triggered),

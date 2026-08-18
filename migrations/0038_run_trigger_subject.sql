@@ -1,0 +1,44 @@
+-- 0038_run_trigger_subject.sql
+--
+-- Where a triggered run records the subject its triggering event named
+-- (task t15, spec c31/h16): "at most one active run per originating Jira
+-- issue -- a second state change or comment while a flow is mid-flight
+-- must resume or queue against the existing run, never spawn a parallel
+-- run on the same subject". Measuring the trigger layer at HEAD (task t15
+-- risk r1) found nothing that could answer that question: neither the
+-- compiler's trigger struct (onEvent + a CEL condition,
+-- internal/compiler/model.go) nor the inbound signal-delivery path
+-- (internal/engine's PickupEvent, internal/store/postgres's SignalEvent)
+-- carried any subject/correlation concept, and
+-- internal/engine/trigger.go's TriggerEvent created one run per matching
+-- event unconditionally -- two events on the same Jira issue during one
+-- flight produced two runs.
+--
+-- This column is the durable half of the fix: TriggerEvent now persists
+-- the triggering event's subject on the run it creates, so a LATER
+-- delivery (a different HTTP request, a different transaction) can find
+-- that run and attach to it instead of creating a sibling. Expand-only
+-- (docs/adr/0002-migration-policy.md): one nullable column with no
+-- default, following 0034_run_actor_affinity.sql's shape for exactly the
+-- same reason -- a binary built before this migration names its columns
+-- explicitly (internal/store/postgres/engine_store.go's insertRunSQL /
+-- selectRunSQL never use SELECT *), so it inserts and reads runs exactly
+-- as it does today and simply never sees this column.
+--
+-- NULL means the run was not created from a subject-bearing event: an
+-- operator-created run, or a triggered run whose event carried no subject
+-- (the wire field is optional, and every deliverer that predates this
+-- migration keeps creating runs exactly as before). NULL is deliberately
+-- excluded from the partial index below -- it is never a value the
+-- active-run-by-subject lookup should be able to "match" against another
+-- NULL.
+ALTER TABLE runs ADD COLUMN subject TEXT;
+
+-- Serves ActiveRunBySubject (internal/store/postgres/engine_store.go): the
+-- lookup TriggerEvent performs, under a per-(workflow_key, subject)
+-- advisory lock, before creating a run for a matching trigger. Partial on
+-- non-terminal status so the index (and the query it serves) only ever
+-- sees runs that could still be "the one this event attaches to" -- a
+-- completed, failed, or cancelled run is not a flight anything is mid of.
+CREATE INDEX runs_active_subject_idx ON runs (namespace_id, subject)
+    WHERE subject IS NOT NULL AND status NOT IN ('completed', 'failed', 'cancelled');

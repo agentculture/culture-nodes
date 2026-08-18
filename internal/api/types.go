@@ -92,6 +92,13 @@ type RunOut struct {
 	// comparative record -- what the workflow said this work WAS, readable
 	// beside the run's own state, timings, and usage.
 	ActorAffinity json.RawMessage `json:"actor_affinity,omitempty"`
+	// Subject is the triggering event's correlation key (task t15,
+	// migrations/0038, spec c31/h16), e.g. a Jira issue key. Empty for an
+	// operator-created run, or a triggered run whose event carried none. It
+	// is what makes "exactly one active run in the run list" for a subject a
+	// question this listing can actually answer, rather than one that needs
+	// a database query — see honesty condition h16.
+	Subject string `json:"subject,omitempty"`
 }
 
 // runOut renders r with usage (the run-level §13.2 rollup task t2 adds,
@@ -116,6 +123,7 @@ func runOut(r engine.Run, usage postgres.UsageRollup, meta runMetadata) RunOut {
 		Description:    meta.Description,
 		Category:       meta.Category,
 		ActorAffinity:  r.ActorAffinity,
+		Subject:        r.Subject,
 	}
 	if meta.Name == "" {
 		out.DisplayHint = deriveDisplayHint(r.Input)

@@ -16,10 +16,17 @@ type TriggerWorkflow struct {
 	IR                           json.RawMessage
 }
 
-// TriggeredRun reports a handler that matched and the run it created.
+// TriggeredRun reports a handler that matched, and which run the event
+// belongs to as a result.
 type TriggeredRun struct {
 	WorkflowDigest string `json:"workflow_digest"`
 	RunID          string `json:"run_id"`
+	// Attached is true when RunID names a run that ALREADY existed for this
+	// event's subject (task t15, spec c31/h16) -- the trigger matched but no
+	// new run was created; the event was recorded on the existing run
+	// instead. False (the default) means RunID is a brand-new run, exactly
+	// this field's pre-task-t15 behavior.
+	Attached bool `json:"attached,omitempty"`
 }
 
 // EventTriggerRunner is the engine slice used by signal delivery.
@@ -61,6 +68,53 @@ func (e *Engine) TriggerEvent(ctx context.Context, tx Tx, candidate TriggerWorkf
 		if err := validatePayload(wf.InputSchema, ev.Payload); err != nil {
 			return nil, &ContractError{What: "triggered run input", Detail: err.Error()}
 		}
+
+		// One-active-run-per-subject (task t15, spec c31/h16). Measuring this
+		// code at HEAD found no subject/correlation concept anywhere on the
+		// inbound event path -- this trigger loop created a new run for every
+		// matching event, so a second state-change or comment on the same
+		// Jira issue produced a sibling run rather than resuming the one
+		// already in flight. The fix lives HERE, the one place that already
+		// knows both "this event matches this workflow's trigger" and "a run
+		// is about to be created for it" -- attaching anywhere else would mean
+		// re-deriving the match.
+		//
+		// The advisory lock is taken BEFORE the read so two concurrent
+		// deliveries for the same subject cannot both see "no active run" and
+		// both create one; it uses the same hashtextextended scheme every
+		// other advisory lock in this store does (ledger.RunLockKey,
+		// DeliverSignalEvent's watermark lock), scoped to
+		// (namespace, workflow key, subject) so it can never collide with a
+		// run-id lock or another subject's lock.
+		//
+		// A caller that supplies no subject (every caller that predates this
+		// task) gets exactly the old behavior: ev.Subject == "" skips this
+		// block entirely, and a run is created every time, as before.
+		if ev.Subject != "" {
+			if err := tx.Lock(ctx, triggerSubjectLockKey(e.store.NamespaceID(), wf.Name, ev.Subject)); err != nil {
+				return nil, err
+			}
+			active, found, err := tx.ActiveRunBySubject(ctx, wf.Name, ev.Subject)
+			if err != nil {
+				return nil, err
+			}
+			if found {
+				// "The second event's effect is visible on the existing run,
+				// not a sibling" (h16): the attaching event is recorded on the
+				// EXISTING run's own stream, not merely dropped or logged
+				// elsewhere. No new run, token, or node run is created.
+				if _, err := tx.AppendEvent(ctx, active.ID, event(TypeTriggerEventAttached, map[string]any{
+					"run_id": active.ID, "trigger_event_id": ev.ID, "event_name": ev.Name,
+					"emitter": ev.Emitter, "subject": ev.Subject, "workflow_key": wf.Name,
+					"workflow_digest": candidate.Digest,
+				})); err != nil {
+					return nil, err
+				}
+				out = append(out, TriggeredRun{WorkflowDigest: candidate.Digest, RunID: active.ID, Attached: true})
+				continue
+			}
+		}
+
 		run, err := e.createTriggeredRunTx(ctx, tx, wf, candidate, ev)
 		if err != nil {
 			return nil, err
@@ -68,6 +122,16 @@ func (e *Engine) TriggerEvent(ctx context.Context, tx Tx, candidate TriggerWorkf
 		out = append(out, TriggeredRun{WorkflowDigest: candidate.Digest, RunID: run.ID})
 	}
 	return out, nil
+}
+
+// triggerSubjectLockKey is the advisory-lock key TriggerEvent takes before
+// deciding whether an event's subject already has an active run. It is
+// scoped to the namespace and workflow key (not just the subject) so a
+// subject string that happens to collide across two different workflows, or
+// two different namespaces, cannot make one workflow's dedup decision block
+// on -- or be satisfied by -- another's run.
+func triggerSubjectLockKey(namespaceID, workflowKey, subject string) string {
+	return "trigger-subject:" + namespaceID + ":" + workflowKey + ":" + subject
 }
 
 func (e *Engine) createTriggeredRunTx(ctx context.Context, tx Tx, wf *Workflow, candidate TriggerWorkflow, ev PickupEvent) (Run, error) {
@@ -83,7 +147,7 @@ func (e *Engine) createTriggeredRunTx(ctx context.Context, tx Tx, wf *Workflow, 
 	}
 	run := Run{ID: e.newID(), NamespaceID: e.store.NamespaceID(), WorkflowDigest: candidate.Digest,
 		State: RunRunning, Input: jsonOrNull(ev.Payload), CreatedAt: now, UpdatedAt: now,
-		ActorAffinity: affinityJSON(affinity)}
+		ActorAffinity: affinityJSON(affinity), Subject: ev.Subject}
 	format := candidate.SourceFormat
 	if format != string(compiler.FormatJSON) {
 		format = string(compiler.FormatYAML)

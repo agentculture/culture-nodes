@@ -5,6 +5,34 @@ All notable changes to this project will be documented in this file.
 Format follows [Keep a Changelog](https://keepachangelog.com/). This project
 adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.37.0] - 2026-08-18
+
+### Added
+
+- The combining loop (#118 step 7): examples/combining-loop workflow + scripts/combining-loop-node.py + combining-loop-release.py - harvest, candidate staging with .github containment, gate-on-combination, verdict-fenced merge with credential-helper reset, claim-decision surfacing, and paced wave release
+- Harvest node (#100): cmd/nodes-harvest + internal/handover/harvest.go fetching a handed-over ref into a recoverable refs/culture-nodes/harvested/<run> pin
+- Gated merge execution (#90 seam): cmd/nodes-merge + internal/handover/merge.go with no-TOCTOU verdict/SHA fencing and ls-remote post-push verification
+- Jira comment actor bridge (adapters/jira, #68 shape): comment-only, marker-stamped, transition-path audited
+- Jira question round trip (examples/jira-question-round-trip): post -> until.signal park -> marker/author-filtered resume carrying originating_question_id, with a structural two-ask bound routing exhaustion to a human
+- Session identity across the parked gap: digest session_key, warm resume, fork-observable cold fallback with re-brief
+- Per-state-transition Jira event names and the self-echo filter in the pr-upkeep sweep
+- Subject-correlated trigger dedup (runs.subject, attach-to-existing-run) and the #166 concurrency policy: subject-run ceiling with a transactional deferred-trigger queue plus a per-actor in-flight ceiling
+- Conservative Jira decision-reply parser committing reviews through the decide-claims custody path
+- The spec chain as a compiled graph (examples/spec-chain, #89)
+- Runner-services live reload without a worker restart (#8)
+- NODES_INPUT_JSON: a code node?s resolved input reaches its process (#170)
+
+### Changed
+
+- Triggered-burst pacing pinned by tests on the real inbound path (no engine change needed)
+- Every combining-loop subcommand emits measured post-conditions (h7)
+
+### Fixed
+
+- #168: the Jira comment watermark read GitHub field names and was silently empty on real payloads
+- #177: async parked completions dropped the gate exit-code map, killing runs on measurement_incomplete
+- Candidate staging refuses without git identity in bare containers; the push resets credential helpers that outrank GIT_ASKPASS
+
 ## [0.36.0] - 2026-08-18
 
 ### Added

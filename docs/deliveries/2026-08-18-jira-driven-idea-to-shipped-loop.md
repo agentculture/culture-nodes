@@ -136,8 +136,14 @@ in that skeleton and `docs/plans/2026-08-18-jira-driven-idea-to-shipped-loop.md`
 
 ## Remaining Work / Follow-up
 
-- `t17` — the human replies on SCRUM-1 (watcher armed; sweep every 3 min);
-  then force a session loss for the fork half. Owner: operator + human.
+- `t17` — CLOSED after the summary was first written: run
+  `01M0A5QG2Q0EDG16BEFG9MG4TZ` completed the full round trip live (engine
+  question on SCRUM-1 → human reply → filtered resume → continuing actor →
+  terminal, claim `proposed` under the registered actor). Three live
+  failures on the way each exposed a distinct defect: an under-declared
+  `ledger.propose` (fixed in the committed example), and the silent
+  origin-identity budget burn (#183). The forced-session-loss fork half
+  remains test-pinned rather than live-forced.
 - `t20` — prod deploy (operator permission was denied to the agent —
   `deploy/prod/deploy.sh thor` is the user's command), headspace-cli#24, and
   a #178 fix, then re-run the single-thread demonstration.

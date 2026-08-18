@@ -2,7 +2,7 @@
   "plan_slug": "jira-driven-idea-to-shipped-loop",
   "schema_version": 1,
   "created": "2026-08-18T06:44:06Z",
-  "updated": "2026-08-18T06:44:06Z",
+  "updated": "2026-08-18T07:22:45Z",
   "deviations": [
     {
       "id": "d1",
@@ -35,6 +35,19 @@
       "task_ref": "t18",
       "reason": "vocabulary conflated two human surfaces; grep of adapters/ for human_tasks/pending-decisions returns zero",
       "affects": [],
+      "origin": "llm",
+      "status": "proposed",
+      "classification": "acceptable"
+    },
+    {
+      "id": "d4",
+      "what": "Scope addition: fix #170 (a code node's resolved input never reaches its process) inside this cycle - the combining loop's harvest/stage/merge code nodes cannot receive per-run values (ref, candidate SHA) without it, so t5's graph would compile but t8's live demo could not feed a single code step. The fix is small at the measured seam (buildCodeOperation lowers dc.Input into the operation environment) and is a Bug repair, not new design",
+      "task_ref": "t5",
+      "reason": "every wave-0/2 honest-gap list converged on the same blocker; documented-around is not runnable",
+      "affects": [
+        "t8",
+        "t20"
+      ],
       "origin": "llm",
       "status": "proposed",
       "classification": "acceptable"

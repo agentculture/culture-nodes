@@ -197,11 +197,13 @@ spec:
         retry:
           maxAttempts: 1
 
-    # The board move: the t2 transition verb. Target comes from the BRIDGE'S
-    # env (single allowed transition), not from this document — binding a
-    # target here could not widen custody anyway (the bridge refuses), but
-    # not binding one keeps the contract honest about where the decision
-    # lives.
+    # The board move: the t2 transition verb. Its input contract requires an
+    # explicit target (exactly {verb, issue, target} — adapters/jira
+    # transition_issue.parse), and the BRIDGE refuses any target other than
+    # its configured single transition (decision c19). The literal below must
+    # therefore match the bridge's JIRA_TRANSITION_TARGET; a mismatch is a
+    # policy refusal at dispatch, visible in the run, and binding a different
+    # value here could not widen custody.
     transition:
       kind: agent
       ownerRef: team/platform-ai
@@ -213,6 +215,8 @@ spec:
           verb:
             literal: transition_issue
           issue: /run/input/id
+          target:
+            literal: In Progress
       contract:
         outcomes:
           transitioned:

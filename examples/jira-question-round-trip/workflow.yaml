@@ -1,0 +1,90 @@
+apiVersion: nodes.culture.dev/v1alpha1
+kind: Workflow
+
+metadata:
+  name: jira-question-round-trip
+  version: 1.0.0
+  ownerRef: team/platform-ai
+
+# Deployment configuration: register actor://company/jira-comment at the narrow Jira
+# bridge and actor://company/codex-orin at the continuing leg's actor endpoint. The
+# actor digests below are illustrative pins and must resolve in that registry.
+
+spec:
+  entry: post-question
+
+  triggers:
+    - onEvent: pr-upkeep.jira.transitioned.needs-answer
+
+  contract:
+    input:
+      schema:
+        type: object
+        required: [issue, question_id, question]
+        properties:
+          issue: {type: string, minLength: 1}
+          question_id: {type: string, minLength: 1}
+          question: {type: string, minLength: 1}
+    output:
+      schema: {type: object}
+
+  limits:
+    maxDuration: 168h
+    maxTransitions: 8
+    maxVisitsPerNode: 1
+    maxParallelTokens: 1
+
+  nodes:
+    post-question:
+      kind: agent
+      ownerRef: team/platform-ai
+      uses: actor://company/jira-comment@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
+      input:
+        bindings:
+          verb:
+            literal: post_comment
+          issue: /run/input/issue
+          comment: /run/input/question
+          question_id: /run/input/question_id
+      contract:
+        outcomes:
+          comment_posted:
+            schema:
+              type: object
+              required: [issue, comment_id]
+
+    await-answer:
+      kind: wait
+      ownerRef: team/platform-ai
+      until:
+        signal: pr-upkeep.jira.comment
+
+    continue-leg:
+      kind: agent
+      ownerRef: team/platform-ai
+      uses: actor://company/codex-orin@sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb
+      input:
+        bindings:
+          instruction:
+            literal: Continue the parked leg using the correlated Jira answer; do not start new work.
+          question_id: /run/input/question_id
+          question: /run/input/question
+          resume_event: /nodes/await-answer/output
+      contract:
+        outcomes:
+          completed:
+            schema: {type: object}
+
+    finish:
+      kind: end
+      ownerRef: team/platform-ai
+      output:
+        from: /nodes/continue-leg/output
+
+  edges:
+    - from: post-question.comment_posted
+      to: await-answer
+    - from: await-answer.completed
+      to: continue-leg
+    - from: continue-leg.completed
+      to: finish

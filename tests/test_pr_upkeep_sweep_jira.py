@@ -6,7 +6,7 @@ import json
 
 import pytest
 
-from tests.test_pr_upkeep_sweep import EXAMPLE_DIR, FIXTURES, sweep
+from tests.test_pr_upkeep_sweep import EXAMPLE_DIR, FIXTURES, _stub_sweep, sweep
 
 
 @pytest.fixture(scope="module")
@@ -170,6 +170,52 @@ class TestJiraSelfEcho:
         comments = self._comments(("bot-1", "2026-08-16T00:00:00Z"))
         assert sweep.jira_comment_is_self_echo(comments, "") is False
         assert sweep.jira_comment_is_self_echo(comments, None) is False
+
+    def test_actor_marker_filters_self_echo_when_personal_account_identity_cannot(self):
+        comments = [{
+            "author": {"accountId": "operators-personal-account"},
+            "created": "2026-08-16T00:00:00Z",
+            "body": {"type": "doc", "content": [{"type": "paragraph", "content": [
+                {"type": "text", "text": "Question\n\n[culture-nodes:jira-actor question_id=q-17]"}
+            ]}]},
+        }]
+        assert sweep.jira_comment_is_self_echo(comments, "different-bot-id") is True
+
+    def test_human_answer_names_the_nearest_originating_question(self):
+        comments = [
+            {"created": "2026-08-15T00:00:00Z", "body": "old answer"},
+            {"created": "2026-08-16T00:00:00Z", "body": "Question\n\n[culture-nodes:jira-actor question_id=q-17]"},
+            {"id": "answer-9", "created": "2026-08-17T00:00:00Z", "body": "Use the bounded option."},
+        ]
+        assert sweep.jira_question_id_for_answer(comments) == "q-17"
+
+    def test_answer_event_payload_carries_question_id_for_continuation(
+        self, monkeypatch, capsys, jira_payload
+    ):
+        payload = json.loads(json.dumps(jira_payload))
+        payload["issues"][0]["fields"]["comment"] = {"comments": [
+            {"id": "1008", "author": {"accountId": "personal-operator"},
+             "created": "2026-08-16T00:00:00Z",
+             "body": "Which bound?\n\n[culture-nodes:jira-actor question_id=q-17]"},
+            {"id": "1009", "author": {"accountId": "human-1"},
+             "created": "2026-08-17T00:00:00Z", "body": "Use three attempts."},
+        ]}
+        grant = {"cycle": 0, "repositories": [{
+            "github_repo": "owner.example/repo", "sonar_component": "owner_repo",
+            "jira_site": "team.example.com", "jira_project": "EX",
+            "jira_bot_account_id": "a-different-machine-account",
+        }]}
+        monkeypatch.setenv("PR_UPKEEP_REPOSITORIES", json.dumps(grant))
+        monkeypatch.setenv("JIRA_ACCOUNT_EMAIL", "robot@example.com")
+        monkeypatch.setenv("JIRA_API_TOKEN", "fixture-token")
+        calls = _stub_sweep(monkeypatch, pulls=[], sonar_main={"issues": []})
+        monkeypatch.setattr(sweep, "fetch_jira_issues", lambda *_args: payload)
+
+        assert sweep.main() == 0
+        capsys.readouterr()
+        comment = next(event for event in calls["events"] if event[0] == sweep.JIRA_COMMENT_EVENT_NAME)
+        assert comment[1]["originating_question_id"] == "q-17"
+        assert comment[1]["answer"] == {"comment_id": "1009", "body": "Use three attempts."}
 
     def test_the_watermark_position_advances_past_the_bots_own_comment(self):
         # jira_watermark is unfiltered by design: it must keep advancing to

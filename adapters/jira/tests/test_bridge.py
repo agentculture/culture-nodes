@@ -36,6 +36,27 @@ def test_exactly_one_verb_and_closed_input_shape():
         assert mapping.parse(bad)[0] is None
 
 
+def test_question_comment_carries_the_fixed_actor_marker_and_question_id():
+    parsed, error = mapping.parse({
+        "verb": "post_comment", "issue": "EX-123",
+        "comment": "Which behavior is intended?", "question_id": "run-17.q1",
+    })
+    assert error is None
+    assert parsed.marked_text.endswith("[culture-nodes:jira-actor question_id=run-17.q1]")
+
+
+def test_question_id_is_closed_and_injection_safe():
+    for question_id in ("", "run-17:q1", "bad id", "bad]\nanswer"):
+        parsed, error = mapping.parse({
+            "verb": "post_comment", "issue": "EX-123", "comment": "Question",
+            "question_id": question_id,
+        })
+        if question_id in {"", "run-17:q1"}:
+            assert error is None
+        else:
+            assert parsed is None and "question_id" in error
+
+
 def test_credentials_cannot_be_loaded_from_config(tmp_path):
     path = tmp_path / "jira.json"
     path.write_text('{"jira_site":"team.example.com","JIRA_API_TOKEN":"committed"}')

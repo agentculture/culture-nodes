@@ -120,3 +120,20 @@ class SessionRegistry:
                 current.remove(holder)
             if not current:
                 del self._holders[session_key]
+
+    def record_lost_resume(self, session_key: str, holder: str) -> None:
+        """Record a provider-ref loss before the caller retries cold."""
+        with self._lock:
+            event = ForkEvent(
+                session_key=session_key,
+                at=_now_iso(),
+                owner_holders=(),
+                forked_holder=holder,
+            )
+            self.fork_events.append(event)
+            logger.warning(
+                "provider session for session_key %r was lost; forking invocation %s "
+                "cold with a question/answer re-brief (t12, c30/h15)",
+                session_key,
+                holder,
+            )

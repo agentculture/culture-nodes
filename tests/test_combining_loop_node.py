@@ -217,6 +217,9 @@ def test_harvest_happy_path_pins_the_fetched_commit(workspace: Path, upstream: P
     assert result["harvested_commit"] == sha
     assert result["recovery_ref"] == f"refs/culture-nodes/harvested/{RUN_ID}"
     assert git(workspace, "rev-parse", "--verify", result["recovery_ref"]) == sha
+    # h7: the post-condition is IN the run's own output, not only implied by
+    # exit 0.
+    assert result["verified"] == {"recovery_ref": result["recovery_ref"], "commit": sha}
 
 
 def test_harvest_refuses_a_ref_outside_the_handover_namespace(workspace: Path, upstream: Path):
@@ -325,6 +328,8 @@ def test_stage_happy_path_creates_a_two_parent_candidate(workspace: Path):
     assert parents == [feature_commit, harvested_sha]
     changed = git(workspace, "diff", "--name-only", feature_commit, candidate).splitlines()
     assert "package.txt" in changed
+    # h7: the post-condition is the SAME re-read fact, carried in the output.
+    assert result["verified"] == {"candidate_parents": parents}
 
     # The staging worktree is cleaned up either way.
     worktrees = git(workspace, "worktree", "list", "--porcelain")
@@ -425,6 +430,9 @@ def test_merge_happy_path_fast_forwards_and_pushes(workspace_with_origin: tuple[
     assert result["merged_commit"] == candidate
     assert git(workspace, "rev-parse", "feature/combine") == candidate
     assert bare_ref(bare, "refs/heads/feature/combine") == candidate
+    # h7: the push's exit 0 is not what this asserts — `verified.remote_sha`
+    # is the SAME fact re-read independently with `git ls-remote`.
+    assert result["verified"] == {"remote": "origin", "remote_sha": candidate}
 
 
 def test_merge_refuses_a_verdict_that_does_not_match_the_candidate(
@@ -573,6 +581,66 @@ def test_merge_requires_the_worker_credential_grant(workspace_with_origin: tuple
     assert bare_ref(bare, "refs/heads/feature/combine") == before
 
 
+def _lying_push_shim(tmp_path: Path) -> Path:
+    """A `git` on PATH that exits 0 for `push` WITHOUT touching the remote —
+    h7's exact motivating shape: a transport whose exit code lies about what
+    it left behind. Every OTHER invocation (including the `ls-remote`
+    verification below) passes straight through to the real binary, so this
+    drives the REAL verification against the REAL, untouched remote."""
+    real_git = shutil.which("git")
+    assert real_git, "this test environment has no git on PATH"
+    shim_dir = tmp_path / "lying-push-shim"
+    shim_dir.mkdir()
+    shim = shim_dir / "git"
+    shim.write_text(
+        "#!/bin/sh\n"
+        'for arg in "$@"; do\n'
+        '  if [ "$arg" = "push" ]; then\n'
+        "    exit 0\n"
+        "  fi\n"
+        "done\n"
+        f'exec "{real_git}" "$@"\n'
+    )
+    shim.chmod(0o755)
+    return shim_dir
+
+
+def test_merge_refuses_when_push_exits_0_but_the_remote_never_moved(
+    workspace_with_origin: tuple[Path, Path], tmp_path: Path
+):
+    """h7's acceptance case: a command (`git push`) exits 0 while the fact
+    it actually left behind — the remote's own advertised tip — shows
+    nothing happened. This is only caught because merge independently
+    RE-READS the remote with `git ls-remote` instead of trusting the push's
+    exit code."""
+    workspace, bare = workspace_with_origin
+    candidate, feature_commit = build_candidate(workspace)
+    before = bare_ref(bare, "refs/heads/feature/combine")
+    shim_dir = _lying_push_shim(tmp_path)
+
+    proc = run_node(
+        workspace,
+        "merge",
+        {
+            "candidate_commit": candidate,
+            "feature_branch": "feature/combine",
+            "verdict": {"outcome": "gates_passed", "candidate": candidate},
+        },
+        env={
+            "GITHUB_TOKEN_WORKER": TOKEN,
+            "PATH": f"{shim_dir}:{os.environ['PATH']}",
+        },
+    )
+
+    assert proc.returncode == 2, proc.stderr
+    # Both shas are named: what was pushed, and what the remote actually has.
+    assert candidate in proc.stderr
+    assert before in proc.stderr
+    assert "ls-remote" in proc.stderr
+    # The remote genuinely never moved — the lying push did nothing to it.
+    assert bare_ref(bare, "refs/heads/feature/combine") == before
+
+
 # ---------------------------------------------------------------------------
 # --help documents the whole contract
 # ---------------------------------------------------------------------------
@@ -665,7 +733,13 @@ def test_merge_without_run_id_still_requires_the_explicit_contract(
 # ---------------------------------------------------------------------------
 
 
-def _release_server():
+def _release_server(response_builder=None):
+    """A fixture inbound-events server. By default it responds the way
+    internal/api/signalevents.go's handleDeliverEvent actually does — 200
+    with an EventDeliveryResult body carrying a real `event.id` — so the
+    happy-path test exercises the SAME shape the production verification
+    parses. `response_builder(body, n) -> (status, bytes)` overrides that,
+    for a test that wants a 200 whose body is NOT a real delivery (h7)."""
     import http.server
     import threading
 
@@ -674,17 +748,20 @@ def _release_server():
     class Handler(http.server.BaseHTTPRequestHandler):
         def do_POST(self):  # noqa: N802 - stdlib naming
             length = int(self.headers.get("Content-Length", "0"))
+            body = json.loads(self.rfile.read(length))
             received.append(
-                {
-                    "path": self.path,
-                    "auth": self.headers.get("Authorization", ""),
-                    "body": json.loads(self.rfile.read(length)),
-                }
+                {"path": self.path, "auth": self.headers.get("Authorization", ""), "body": body}
             )
-            self.send_response(200)
+            if response_builder is not None:
+                status, out = response_builder(body, len(received))
+            else:
+                status = 200
+                out = json.dumps({"event": {"id": f"evt-{len(received)}", "name": body["name"]}})
+                out = out.encode("utf-8")
+            self.send_response(status)
             self.send_header("Content-Type", "application/json")
             self.end_headers()
-            self.wfile.write(b"{}")
+            self.wfile.write(out)
 
         def log_message(self, *args):  # silence
             return
@@ -711,7 +788,13 @@ def test_release_emits_one_ready_event_per_unlocked_package(workspace: Path):
         server.shutdown()
 
     assert proc.returncode == 0, proc.stderr
-    assert result_of(proc) == {"outcome": "released", "events": 2}
+    # h7: "released" rests on `verified.event_ids` — each response's OWN
+    # event.id, parsed from the body, not merely on the POSTs having 200'd.
+    assert result_of(proc) == {
+        "outcome": "released",
+        "events": 2,
+        "verified": {"event_ids": ["evt-1", "evt-2"]},
+    }
     assert [r["body"]["subject"] for r in received] == ["t3", "t4"]
     for r in received:
         assert r["path"] == "/v1alpha1/events"
@@ -731,3 +814,34 @@ def test_release_with_nothing_to_unlock_is_a_stated_no_op(workspace: Path):
 def test_release_refuses_a_malformed_unlocks_list(workspace: Path):
     proc = run_node(workspace, "release", {"package_id": "t2", "unlocks": ["ok", 5]})
     assert proc.returncode == 4
+
+
+def test_release_refuses_a_2xx_response_that_is_not_shaped_like_a_delivery(workspace: Path):
+    """h7's acceptance case, one level up the stack: the POST itself
+    succeeds (HTTP 200 — the transport's own "exit 0") but the body is
+    error-shaped, exactly the gap between a passing per-key audit and a
+    worker that never started. The verification — requiring the response
+    body's own event.id — is what must catch this, not the 200 alone."""
+
+    def deceptive(_body, _n):
+        return 200, json.dumps({"error": "signal ingest degraded, event not recorded"}).encode()
+
+    server, received = _release_server(response_builder=deceptive)
+    try:
+        proc = run_node(
+            workspace,
+            "release",
+            {"package_id": "t2", "unlocks": ["t3"]},
+            env={
+                "NODES_API_URL": f"http://127.0.0.1:{server.server_address[1]}",
+                "NODES_EVENT_TOKEN": "event-token-fixture",
+            },
+        )
+    finally:
+        server.shutdown()
+
+    assert proc.returncode == 2, proc.stderr
+    assert "event.id" in proc.stderr
+    # The request WAS sent and the server DID answer 200 — this is not a
+    # transport failure, it is a 200 this program refuses to trust.
+    assert len(received) == 1

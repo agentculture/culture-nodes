@@ -1,0 +1,1417 @@
+# The devague SPEC CHAIN — scope -> think -> challenge — expressed as a graph
+# (task t18, issue #89; spec claims c6/c11/c13/c25, honesty conditions h5/h11).
+#
+# The spec this file's own plan came from was produced by running that chain by
+# hand, in ONE operator session. It worked. It also had every property issue
+# #87 objects to elsewhere: the operator was the transport (every `devague`
+# move typed in one context), the operator was the memory (which lenses were
+# swept, over which surfaces, lived in a context window), the evidence was
+# self-reported (every "I read file X" is a completion claim), and it cost the
+# single most expensive session shape there is (#48).
+#
+# The chain is already move-driven and deterministic — devague makes no LLM
+# calls at all (devague#20) — which is exactly what makes it expressible here:
+#
+#   the MOVES are code nodes, the JUDGEMENT is agent nodes,
+#   the GATES are human decisions, and the frame is a carried artifact.
+#
+# ---------------------------------------------------------------------------
+# THE SHAPE, AND THE FOUR DECISIONS INSIDE IT
+# ---------------------------------------------------------------------------
+#
+#   scope-sweep -> record-scope -> think-frame -> interrogate -> record-frame
+#     -> [HUMAN GATE] confirm-proposed-set
+#       -> converge-export -> converge-verdict
+#         -> challenge-fan =|= four lens agents =|= challenge-join
+#           -> record-findings -> [HUMAN GATE] adjudicate-findings
+#             -> reconverge -> reconverge-verdict -> spec-exported
+#
+#  1. NO NEW NODE KIND. internal/compiler/vocabulary.go closes the enum at
+#     nine — agent, code, action.http, decision, approval, wait, parallel,
+#     join, end — and TestNodeKindEnumStaysClosedAtNine holds it there. Every
+#     leg below is one of those nine. In particular there is no "devague node"
+#     and no "lens node": a deterministic move is what `code` already means,
+#     and a lens sweep is what `agent` already means.
+#
+#  2. THE DETERMINISTIC MOVES ARE CODE NODES, NOT AGENT NODES. This is the
+#     same argument examples/merge-gate makes about the gate. An agent may
+#     only produce `proposed` records (PRD §10.4), so an agent reporting "I
+#     ran `devague converge`" is a completion claim about a deterministic
+#     program — the actor grading its own homework. A code node runs the
+#     program through the runner boundary and routes on what it exited with,
+#     and it is the only kind that may declare `ledger.observe` (the runner's
+#     own measured facts, appended with `observed` authority inside the same
+#     transaction as the transition they justify).
+#
+#  3. THE FRAME TRAVELS AS AN ARTIFACT (decision c25, assumption c13). A
+#     lens agent on another host cannot read `.devague/` in somebody's working
+#     tree, and a filesystem path between nodes is issue #74 all over again.
+#     So each move node's `passed` contract REQUIRES an `artifacts` map: a
+#     move that exported nothing cannot report success, and the engine's own
+#     output validation (internal/engine/complete.go's checkOutput) is what
+#     enforces that rather than a habit. See gap 3 for what the shipped
+#     runner actually puts in that map today.
+#
+#  4. AGENT-ORIGIN CONTENT LANDS `proposed`; A CONFIRMATION IS A SEPARATE
+#     HUMAN ACT (claim c11 / honesty h11). Every agent node below declares
+#     `ledger.propose` and none declares anything stronger — the compiler
+#     refuses an agent that tries (internal/compiler/ledger.go's
+#     checkLedgerDelta). The two approval nodes are where a person decides,
+#     and a decision there is committed through the ledger's review
+#     transaction, never by an actor rewriting its own record's authority.
+#     internal/devague already models exactly this: a devague-`confirmed`
+#     claim maps to a `proposed` record PLUS a separate `review` record whose
+#     subject_ref names it, because "confirmation is a human act regardless
+#     of who authored the claim" (internal/devague/doc.go).
+#
+# ---------------------------------------------------------------------------
+# WHAT DOES NOT WORK YET — read this before believing the graph
+# ---------------------------------------------------------------------------
+#
+# This file compiles. Compiling is not the claim. Each gap below was measured
+# at HEAD while authoring this example, is named again at the node it affects,
+# and is the reason "the spec chain runs as a graph" is not yet true of a run.
+#
+#  1. NOTHING CARRIES DATA INTO A CODE OPERATION. A code node's declared
+#     `input` bindings ARE resolved — internal/worker/worker.go resolves them
+#     for every kind, and an unresolvable one refuses the dispatch as
+#     `contract_rejected` — and are then DISCARDED: buildCodeOperation
+#     (internal/worker/code.go) lowers only the image, argv, working
+#     directory, environmentRefs, network posture and workspaceRef into the
+#     runner Operation, and `DispatchContext.Input` appears nowhere on the
+#     code path (it is read only by dispatchActor and by decision nodes).
+#     So a move node below can be REFUSED for a binding that does not
+#     resolve, and can never READ the binding that does. The bindings are
+#     declared anyway, and deliberately: deleting them would hide the gap
+#     rather than close it, and they still state which surfaces this node's
+#     work is a function of.
+#
+#  2. THE ARTIFACT CARRIER IS ONE-WAY. `POST /v1alpha1/attempts/{attemptID}
+#     /artifacts` is mounted, and it is the ONLY artifact route on the HTTP
+#     surface — there is no GET, by test
+#     (internal/api/artifacts_test.go's TestArtifactSurfaceExposesOnly
+#     AuthenticatedPost). So even once a frame handle exists, no later node
+#     can fetch the bytes back through the control plane. Publishing also
+#     needs the per-attempt callback token, and
+#     internal/runners.ContextEnvironment forwards only NODES_RUN_ID,
+#     NODES_NODE_RUN_ID and NODES_ATTEMPT_ID into the executed process — not
+#     a credential — so an operation cannot authenticate a publish either.
+#     Claim c13 says the carrier is "possible rather than aspirational"; the
+#     honest measure at HEAD is HALF possible: ingest exists, retrieval does
+#     not.
+#
+#  3. THE SHIPPED RUNNER REPORTS PATHS, NOT `artifact://` HANDLES. The
+#     headspace bridge holds no artifacts Store: it exports each declared
+#     output path with headspace-cli and records the result verbatim on
+#     `Result.Artifacts.Additional` "as local filesystem paths ... not as
+#     artifact:// refs" (internal/runners/headspace/doc.go's "Local artifact
+#     staging"), keyed BY THE DECLARED PATH. That is why the `artifacts`
+#     schemas below require the map to be non-empty but do not constrain the
+#     ref VALUE to `^artifact://`: constraining it would reject every
+#     completion the shipped runner can produce, and accepting a path as a
+#     portable handle is exactly issue #74. The constraint belongs here the
+#     day the bridge resolves through a Store; until then the requirement is
+#     "the move exported something", which is true and enforced.
+#
+#  4. NO ROUTE LANDS A devague FRAME IN THE WORK LEDGER, so honesty condition
+#     h5's second half is declared here and unmet. internal/devague's
+#     MapFrameClaims — the authority-honest mapping, proposed record plus a
+#     separate review record — has ZERO callers outside its own package.
+#     What does exist is `POST /v1alpha1/plan-imports`, which imports a
+#     devague PLAN into the plan-import tables and is "deliberately NOT the
+#     append-only work ledger" (internal/api/planimports.go). So the moves
+#     below can leave `observed` runner evidence, and cannot yet leave the
+#     `derived` per-claim records h5 asks for.
+#
+#  5. NO IMAGE IN THIS REPO CARRIES devague, AND NO MOVE PROGRAM IS
+#     COMMITTED. examples/merge-gate can point at scripts/merge-gate.py;
+#     there is no scripts/spec-chain-move.py, so the granted origin below is
+#     a contract with nothing in this repository satisfying it. That is the
+#     sharpest gap in this file and the most honest thing in it: the graph
+#     names what a deployment must supply, refuses bytes whose digest does
+#     not match, and does not pretend the program exists.
+#
+#  6. THE LENS SET IS STATIC, WHICH THE METHOD IS NOT. A parallel node fans
+#     one token per eligible `split` EDGE (internal/compiler/parallel.go), so
+#     the four lenses below are fixed at publish time and addressed by this
+#     workflow's content digest. The /challenge skill selects lenses
+#     RISK-SCALED, per frame. A per-run lens list is not expressible as a
+#     fan-out in this vocabulary; widening or narrowing the sweep is a graph
+#     edit, which is at least a versioned, reviewable one.
+#
+#  7. AN APPROVAL NODE IS NOT SERVED BY adapters/human-inbox. The two gates
+#     below are `approval` nodes, so the engine parks their tokens by writing
+#     `human_tasks` rows and a person answers through the decision endpoint
+#     (`GET /v1alpha1/pending-decisions`, `POST /v1alpha1/human-tasks/{id}
+#     /decision`). The human-inbox bridge is a §13 ACTOR bridge that serves
+#     AGENT nodes placed on a `kind=human` actor; no adapter reads
+#     `human_tasks` or `pending-decisions` (grepped: zero matches under
+#     adapters/). "human-inbox approval nodes" names a composition that does
+#     not exist. Both surfaces put a person in the path and neither can be
+#     satisfied by an agent; which one a deployment prefers is a real choice,
+#     and this file takes the engine's own, matching examples/merge-gate and
+#     examples/pr-upkeep.
+#
+# ---------------------------------------------------------------------------
+# WHAT IS REAL TODAY
+# ---------------------------------------------------------------------------
+#
+#  * The compiler accepts every kind, contract, port and edge below, with no
+#    control plane (scripts/validate-examples.sh compiles it offline).
+#  * The split/join is structurally checked, not hoped for: a parallel node
+#    with no split edge, a join nothing reaches, an end reachable from inside
+#    a split, and a join reachable outside one are all refused at publish
+#    (internal/compiler/parallel.go). The four lens branches provably
+#    reconvene before any ending.
+#  * The authority split is compiler-enforced: `ledger.observe` on an agent
+#    node is an error, so the deterministic legs and the judgement legs
+#    cannot quietly swap authorities.
+#  * The human gates are unbypassable by construction: `converge-export` is
+#    reachable only from `confirm-proposed-set.approved`, and `reconverge`
+#    only from `adjudicate-findings.approved`. That is a property of the
+#    EDGES, checked by the compiler, not a habit somebody has to keep.
+#
+# ---------------------------------------------------------------------------
+# Deployment configuration (task t16) — everything this graph needs from the
+# world outside it, and where each value comes from. Loading this example into
+# another deployment means supplying these; it never means editing the graph.
+#
+#   RUN INPUT (the run's input document, authored per run):
+#     idea         the vague statement the chain starts from — the thing that
+#                  is not yet buildable.
+#     slug         the devague frame slug this run reads and writes. A plain
+#                  identifier, not a path.
+#     repository   which repository the idea concerns, as an identifier the
+#                  actors interpret; never a path on any particular host.
+#
+#   ACTOR / RUNNER REGISTRY (an id in `uses:`, resolved by
+#   internal/worker/registry.go against this deployment's actors table with
+#   the @sha256 revision suffix stripped — register the SAME ids against your
+#   own endpoints):
+#     actor://company/spec-scout        the scope sweep. One coherent view of
+#                                       the surfaces an idea touches.
+#     actor://company/spec-author       the frame author: announcement,
+#                                       claims, honesty conditions, hard
+#                                       questions. Two nodes share it so the
+#                                       second can continue the first's warm
+#                                       session rather than pay a cold start.
+#     actor://company/spec-challenger   the lens sweeps. All four lens nodes
+#                                       name this one id: a deployment may
+#                                       point it at one actor or, through its
+#                                       own placement rules, at four.
+#     runner://headspace/devague-moves  the runner boundary every deterministic
+#                                       move dispatches through. A SEPARATE
+#                                       identity from a general-purpose runner
+#                                       so a deployment can put the moves on
+#                                       the host that has the devague
+#                                       distribution without moving every
+#                                       other code node there too.
+#
+#   APPROVER GROUPS (resolved in the deployment's human decision surface):
+#     group/spec-approvers   decides both gates: the proposed set, and the
+#                            adjudication of challenge findings.
+#
+#   GRANTED ENVIRONMENT VALUES (named here, supplied by the worker process
+#   that dispatches the operation; the runner boundary refuses the operation
+#   BY NAME when one is unset — internal/runners/headspace/bridge.go's
+#   resolveEnv):
+#     SPEC_CHAIN_MOVE_URL      where the move program is fetched from. A
+#                              granted value rather than a committed URL for
+#                              the reason pr-upkeep's sweep records: a fixed
+#                              origin in a graph means every loader silently
+#                              runs the demo author's bytes.
+#     SPEC_CHAIN_MOVE_SHA256   the sha256 those bytes must have. Both are
+#                              required; without the digest the origin is a
+#                              deployment's choice but the CONTENT is free to
+#                              change under a mutable ref.
+#
+#   NOT deployment configuration, deliberately: the move plan each node
+#   applies travels in argv, so it is pinned by this workflow's own content
+#   digest. Which moves a run applies must not be selectable after seeing the
+#   frame — that is the same argument examples/merge-gate makes for keeping
+#   its gate matrix out of the environment.
+apiVersion: nodes.culture.dev/v1alpha1
+kind: Workflow
+
+metadata:
+  name: spec-chain
+  version: 1.0.0
+  ownerRef: team/platform-ai
+
+spec:
+  entry: scope-sweep
+
+  contract:
+    input:
+      schema:
+        type: object
+        required: [idea, slug]
+        additionalProperties: false
+        properties:
+          idea:
+            type: string
+            minLength: 1
+          slug:
+            type: string
+            minLength: 1
+            pattern: "^[a-z0-9][a-z0-9-]*$"
+          repository:
+            type: string
+    output:
+      schema:
+        type: object
+
+  # PRD §9.7: every loop is bounded by the engine, not by an agent deciding
+  # when to stop. Two loops exist here and both re-enter `interrogate`: a
+  # frame that did not converge before the challenge pass, and one that did
+  # not converge after it. maxVisitsPerNode is 3 so each may legitimately
+  # happen once before the bound stops the run.
+  #
+  # maxParallelTokens is 8 for a fan-out of 4 — the four lens branches must
+  # be able to exist at once, and the headroom means adding a fifth lens is a
+  # node-and-edge edit rather than a limits edit somebody forgets.
+  limits:
+    maxDuration: 336h
+    maxTransitions: 64
+    maxVisitsPerNode: 3
+    maxParallelTokens: 8
+
+  ledger:
+    schemaVersion: nodes.culture.dev/ledger/v1alpha1
+    maxRecordsPerNode: 200
+
+  nodes:
+    # -------------------------------------------------------------------
+    # 1. THE SCOPE LEG (/scope). One coherent sweep, not a fan-out: the
+    # question "what does this idea touch" is answered badly by four agents
+    # who each see a quarter of the tree. Issue #89 asks outright whether
+    # /scope fans out at all; this file answers no, and records the answer
+    # here rather than leaving it to be re-litigated per run.
+    #
+    # Everything it writes is `proposed`. A scope entry is an agent's account
+    # of what it read, which is a completion claim, not a measurement — the
+    # provenance is worth having, and it is not evidence.
+    # -------------------------------------------------------------------
+    scope-sweep:
+      kind: agent
+      ownerRef: team/platform-ai
+      uses: actor://company/spec-scout@sha256:1111111111111111111111111111111111111111111111111111111111111111
+      input:
+        bindings:
+          # A LITERAL because it is graph authoring, not deployment
+          # configuration: it says what this node does, it is the same in
+          # every deployment, and it is fixed at publish time and addressed
+          # by this workflow's content digest like everything else here.
+          instruction:
+            literal: |
+              Survey the surfaces this idea touches — code, docs, skills, CI,
+              sibling repos — and report what you ACTUALLY read.
+
+              Every entry names the surface (a path, an issue, a route table)
+              and what reading it established. An entry that cites nothing is
+              a generic disclaimer; do not write one.
+
+              Seed boundary, non-goal and assumption claims from what you
+              found, and say plainly where you did NOT look. A named unswept
+              surface is worth more than an implied complete sweep.
+
+              You are proposing. Nothing you write is confirmed by writing it.
+          idea: /run/input
+      contract:
+        outcomes:
+          surveyed:
+            schema:
+              type: object
+              required: [entries]
+              properties:
+                entries:
+                  type: array
+                  items:
+                    type: object
+                unswept:
+                  type: array
+                  items:
+                    type: string
+          # The honest failure. An idea whose surfaces cannot be identified
+          # at all is not a frame waiting to be written; it is a question for
+          # a person, and it ends the run rather than feeding an empty scope
+          # into the frame author.
+          insufficient_context:
+            schema:
+              type: object
+              required: [detail]
+              properties:
+                detail:
+                  type: string
+      ledger:
+        read: [current_scope]
+        propose: [claim, assumption, question]
+      policy:
+        timeout: 30m
+        retry:
+          maxAttempts: 2
+          backoff: exponential
+
+    # -------------------------------------------------------------------
+    # 2. THE FIRST DETERMINISTIC MOVES: `capture` and `scope`. Gaps 1, 3, 4
+    # and 5 all land on this node and on its two siblings below.
+    #
+    # Two ports and no more, because the worker maps exactly one success
+    # name and one failure name onto a code node's exit status and refuses
+    # vocabulary it does not recognise (internal/worker/code.go's
+    # ConventionalCodeOutcomes). Where a move genuinely has three answers,
+    # the third lives one node down in a `decision` — see converge-verdict.
+    # -------------------------------------------------------------------
+    record-scope:
+      kind: code
+      ownerRef: team/platform-ai
+      uses: runner://headspace/devague-moves@sha256:5555555555555555555555555555555555555555555555555555555555555555
+      # DECLARED AND NOT HONOURED (gap 1). These pointers resolve — and an
+      # unresolvable one would refuse this dispatch — but nothing carries the
+      # resolved document into the operation. Left in place so the graph says
+      # what this move is a function of.
+      input:
+        bindings:
+          sweep: /nodes/scope-sweep/output
+          run: /run/input
+      operation:
+        # Pinned by digest like every code operation: an unpinned image is
+        # not an execution environment the runner boundary will dispatch to.
+        # This image carries no devague (gap 5), which is why the bootstrap
+        # fetches a deployment-granted program instead of pretending one is
+        # baked in.
+        image: python:3.12-slim@sha256:57cd7c3a7a273101a6485ba99423ee568157882804b1124b4dd04266317710de
+        environmentRefs:
+          - SPEC_CHAIN_MOVE_URL
+          - SPEC_CHAIN_MOVE_SHA256
+        argv:
+          - python3
+          - -c
+          # The bootstrap, and nothing else: fetch the granted origin, refuse
+          # bytes whose sha256 is not the granted one, hand the pinned move
+          # plan through unchanged. Deliberately tiny — everything it can get
+          # wrong, it gets wrong before any move has been applied, and its own
+          # refusal is a nonzero exit this node's `failed` port carries away.
+          - |
+            import hashlib, os, sys, urllib.request
+            names = ("SPEC_CHAIN_MOVE_URL", "SPEC_CHAIN_MOVE_SHA256")
+            src, want = (os.environ.get(name, "").strip() for name in names)
+            missing = [n for n, v in zip(names, (src, want)) if not v]
+            if missing:
+                sys.exit("spec-chain move: %s unset. The deployment grants the move "
+                         "program's source and its sha256 -- see this workflow's "
+                         "Deployment configuration block." % ", ".join(missing))
+            body = urllib.request.urlopen(src, timeout=60).read()
+            got = hashlib.sha256(body).hexdigest()
+            if got != want.lower():
+                sys.exit("spec-chain move: the configured source serves sha256:%s, not the "
+                         "configured sha256:%s. Refusing to execute unverified code."
+                         % (got, want.lower()))
+            sys.argv = ["spec_chain_move.py"] + sys.argv[1:]
+            exec(compile(body.decode(), "spec_chain_move.py", "exec"))
+          # The move plan: graph content, addressed by this workflow's digest,
+          # so which moves ran is answerable from the published version rather
+          # than from a log line.
+          - '{"moves": ["capture", "scope"], "export": "/workspace/frame.json"}'
+        # `full` because the operation must reach the granted origin it
+        # fetches the move program from. The DECLARED intent is
+        # `egress-allowlist` scoped to that host; headspace-cli 0.11.0
+        # supports only a disabled/enabled posture and refuses an allowlist by
+        # name, so this records the wider posture rather than a narrower one
+        # nothing enforces.
+        network: full
+        # The frame is the declared output, and the only one. The bridge
+        # exports each declared path and records the reference it got back
+        # under THAT PATH as the key (gap 3).
+        allowedOutputPaths:
+          - /workspace/frame.json
+      contract:
+        outcomes:
+          passed:
+            schema:
+              type: object
+              required: [operation_id, state, artifacts]
+              properties:
+                state:
+                  type: string
+                exit_code:
+                  type: integer
+                # THE CARRIER (decision c25). Non-empty is required: a move
+                # that exported no frame cannot report success, and the
+                # engine's outcome validation is what enforces that. The ref
+                # VALUE is unconstrained on purpose — see gap 3.
+                artifacts:
+                  type: object
+                  minProperties: 1
+                  additionalProperties:
+                    type: string
+          failed:
+            schema:
+              type: object
+              required: [operation_id, state]
+              properties:
+                state:
+                  type: string
+                exit_code:
+                  type: integer
+      # The one authority a code node has that no agent node does: the
+      # runner's own measured facts, appended with `observed` authority
+      # inside the same transaction as the transition they justify (PRD
+      # §10.4). It is NOT the per-claim `derived` record honesty condition h5
+      # asks for — that needs a frame-import route, which does not exist
+      # (gap 4).
+      ledger:
+        read: [current_scope]
+        observe: [evidence]
+      acceptance:
+        # `enforce` omitted, so this evaluates to a derived acceptance record
+        # and leaves routing alone — the exit code has already routed a real
+        # domain answer, and two rules deciding one edge is how a token ends
+        # up somewhere neither rule intended.
+        requires:
+          - kind: process_exit
+            equals: 0
+      policy:
+        # 15m is the ceiling, not a preference: the compiler refuses a
+        # code-node timeout above the smallest cap any registered runner
+        # declares (900s, from the Lambda adapter).
+        timeout: 10m
+        # One attempt. A move over a fixed frame is deterministic; a retry
+        # either does the same thing again or hides a flake worth seeing.
+        retry:
+          maxAttempts: 1
+
+    # -------------------------------------------------------------------
+    # 3. THE THINK LEG (/think), part one: work backwards from the
+    # announcement. Proposes; confirms nothing.
+    # -------------------------------------------------------------------
+    think-frame:
+      kind: agent
+      ownerRef: team/platform-ai
+      uses: actor://company/spec-author@sha256:2222222222222222222222222222222222222222222222222222222222222222
+      input:
+        bindings:
+          instruction:
+            literal: |
+              Pretend it shipped. Write the announcement first — one sentence
+              a reader outside this project would understand — and then the
+              claims that announcement commits you to.
+
+              Classify every claim: requirement, boundary, non-goal,
+              assumption, decision. A sentence that is not one of those is
+              prose, not a claim.
+
+              Do not resolve vagueness by guessing. Genuine unknowns are
+              parked as first-class objects, not smoothed over.
+
+              Everything you write lands `proposed`. A human confirms, later,
+              at a gate you do not control.
+          frame: /nodes/record-scope/output
+          run: /run/input
+          scope: /ledger/projections/current_scope
+      contract:
+        outcomes:
+          framed:
+            schema:
+              type: object
+              required: [announcement, claims]
+              properties:
+                announcement:
+                  type: string
+                  minLength: 1
+                claims:
+                  type: array
+                  items:
+                    type: object
+      ledger:
+        read: [current_scope, open_assumptions, open_questions]
+        propose: [announcement, claim, assumption]
+      policy:
+        timeout: 45m
+        retry:
+          maxAttempts: 2
+          backoff: exponential
+
+    # -------------------------------------------------------------------
+    # 4. THE THINK LEG, part two: interrogation. A separate node on the SAME
+    # actor, which is the point — a second cold session would pay the whole
+    # bootstrap tax again to re-read a frame the first session just wrote
+    # (#48). It is a separate NODE because it is separately routable: both
+    # convergence failures below re-enter here, and neither should re-run the
+    # announcement.
+    # -------------------------------------------------------------------
+    interrogate:
+      kind: agent
+      ownerRef: team/platform-ai
+      uses: actor://company/spec-author@sha256:2222222222222222222222222222222222222222222222222222222222222222
+      input:
+        bindings:
+          instruction:
+            literal: |
+              Interrogate the frame. For every claim, write the honesty
+              condition that would be observably false if the claim were
+              wrong — a condition someone could check, not a restatement of
+              the claim in confident language.
+
+              Ask the hard questions the claim set is avoiding, and park what
+              is genuinely unknown as open vagueness rather than answering it
+              with a plausible sentence.
+
+              If you are re-entering after a failed convergence, work the OPEN
+              items: the frame did not converge because something is still
+              vague, and re-writing settled claims will not change that.
+          frame: /nodes/record-scope/output
+          claims: /ledger/projections/confirmed_claims
+          assumptions: /ledger/projections/open_assumptions
+          questions: /ledger/projections/open_questions
+      contract:
+        outcomes:
+          interrogated:
+            schema:
+              type: object
+              required: [honesty_conditions]
+              properties:
+                honesty_conditions:
+                  type: array
+                  items:
+                    type: object
+                open_vagueness:
+                  type: array
+                  items:
+                    type: object
+      ledger:
+        read: [current_scope, confirmed_claims, open_assumptions, open_questions]
+        propose: [assumption, question, claim]
+      policy:
+        timeout: 45m
+        retry:
+          maxAttempts: 2
+          backoff: exponential
+
+    # -------------------------------------------------------------------
+    # 5. THE SECOND DETERMINISTIC MOVE SET: `capture` the interrogation onto
+    # the frame. Same shape, same gaps, as record-scope.
+    # -------------------------------------------------------------------
+    record-frame:
+      kind: code
+      ownerRef: team/platform-ai
+      uses: runner://headspace/devague-moves@sha256:5555555555555555555555555555555555555555555555555555555555555555
+      input:
+        bindings:
+          framed: /nodes/think-frame/output
+          interrogated: /nodes/interrogate/output
+          run: /run/input
+      operation:
+        image: python:3.12-slim@sha256:57cd7c3a7a273101a6485ba99423ee568157882804b1124b4dd04266317710de
+        environmentRefs:
+          - SPEC_CHAIN_MOVE_URL
+          - SPEC_CHAIN_MOVE_SHA256
+        argv:
+          - python3
+          - -c
+          - |
+            import hashlib, os, sys, urllib.request
+            names = ("SPEC_CHAIN_MOVE_URL", "SPEC_CHAIN_MOVE_SHA256")
+            src, want = (os.environ.get(name, "").strip() for name in names)
+            missing = [n for n, v in zip(names, (src, want)) if not v]
+            if missing:
+                sys.exit("spec-chain move: %s unset. The deployment grants the move "
+                         "program's source and its sha256 -- see this workflow's "
+                         "Deployment configuration block." % ", ".join(missing))
+            body = urllib.request.urlopen(src, timeout=60).read()
+            got = hashlib.sha256(body).hexdigest()
+            if got != want.lower():
+                sys.exit("spec-chain move: the configured source serves sha256:%s, not the "
+                         "configured sha256:%s. Refusing to execute unverified code."
+                         % (got, want.lower()))
+            sys.argv = ["spec_chain_move.py"] + sys.argv[1:]
+            exec(compile(body.decode(), "spec_chain_move.py", "exec"))
+          - '{"moves": ["capture", "interrogate"], "export": "/workspace/frame.json"}'
+        network: full
+        allowedOutputPaths:
+          - /workspace/frame.json
+      contract:
+        outcomes:
+          passed:
+            schema:
+              type: object
+              required: [operation_id, state, artifacts]
+              properties:
+                state:
+                  type: string
+                exit_code:
+                  type: integer
+                artifacts:
+                  type: object
+                  minProperties: 1
+                  additionalProperties:
+                    type: string
+          failed:
+            schema:
+              type: object
+              required: [operation_id, state]
+              properties:
+                state:
+                  type: string
+                exit_code:
+                  type: integer
+      ledger:
+        read: [current_scope, open_assumptions, open_questions]
+        observe: [evidence]
+      acceptance:
+        requires:
+          - kind: process_exit
+            equals: 0
+      policy:
+        timeout: 10m
+        retry:
+          maxAttempts: 1
+
+    # -------------------------------------------------------------------
+    # 6. THE FIRST HUMAN GATE (PRD §9.9). A token arriving here creates a
+    # human task — decision schema, approver group, deadline, context
+    # references, audit identity, allowed outcomes — and the run PAUSES: no
+    # work item is enqueued, so no worker can claim it and no lease is held
+    # while it waits. It resumes only when a person answers.
+    #
+    # This is where `proposed` becomes something else, and the only place in
+    # the graph where that can happen (claim c11 / honesty h11). No agent
+    # node below or above promotes its own record; a devague-`confirmed`
+    # claim is a proposed record PLUS a separate human review record naming
+    # it, which is what internal/devague already emits and what the ledger's
+    # own review transaction produces.
+    #
+    # `expired` is the third implied port (PRD §9.2) and is deliberately left
+    # unrouted, as PRD §11.1's own listing leaves it: a decision nobody made
+    # has no edge to follow, and a run that reaches it stops with a
+    # diagnostic rather than picking a branch on the approver's behalf.
+    # -------------------------------------------------------------------
+    confirm-proposed-set:
+      kind: approval
+      ownerRef: team/platform-ai
+      approverRef: group/spec-approvers
+      decisionSchemaRef: schema://spec-chain/proposed-set-decision/v1
+      deadline: 168h
+      input:
+        bindings:
+          frame: /nodes/record-frame/output
+          announcement: /nodes/think-frame/output
+          interrogation: /nodes/interrogate/output
+          openAssumptions: /ledger/projections/open_assumptions
+          openQuestions: /ledger/projections/open_questions
+
+    # -------------------------------------------------------------------
+    # 7. CONVERGE AND EXPORT. Deterministic, and the one move set with three
+    # real answers, so its third lives in the decision node below.
+    #
+    # The published exit-status contract the move program must honour:
+    #    0  the moves applied and the frame CONVERGED and exported
+    #   10  the moves applied and the frame did NOT converge (open vagueness
+    #       remains) — a DOMAIN answer that loops, not a failure
+    #   11  a move could not be applied at all (no devague, unreadable frame,
+    #       no carrier) — a question for a person, not a defect in the frame
+    #  else the move program itself broke
+    # -------------------------------------------------------------------
+    converge-export:
+      kind: code
+      ownerRef: team/platform-ai
+      uses: runner://headspace/devague-moves@sha256:5555555555555555555555555555555555555555555555555555555555555555
+      input:
+        bindings:
+          frame: /nodes/record-frame/output
+          decision: /nodes/confirm-proposed-set/output
+          run: /run/input
+      operation:
+        image: python:3.12-slim@sha256:57cd7c3a7a273101a6485ba99423ee568157882804b1124b4dd04266317710de
+        environmentRefs:
+          - SPEC_CHAIN_MOVE_URL
+          - SPEC_CHAIN_MOVE_SHA256
+        argv:
+          - python3
+          - -c
+          - |
+            import hashlib, os, sys, urllib.request
+            names = ("SPEC_CHAIN_MOVE_URL", "SPEC_CHAIN_MOVE_SHA256")
+            src, want = (os.environ.get(name, "").strip() for name in names)
+            missing = [n for n, v in zip(names, (src, want)) if not v]
+            if missing:
+                sys.exit("spec-chain move: %s unset. The deployment grants the move "
+                         "program's source and its sha256 -- see this workflow's "
+                         "Deployment configuration block." % ", ".join(missing))
+            body = urllib.request.urlopen(src, timeout=60).read()
+            got = hashlib.sha256(body).hexdigest()
+            if got != want.lower():
+                sys.exit("spec-chain move: the configured source serves sha256:%s, not the "
+                         "configured sha256:%s. Refusing to execute unverified code."
+                         % (got, want.lower()))
+            sys.argv = ["spec_chain_move.py"] + sys.argv[1:]
+            exec(compile(body.decode(), "spec_chain_move.py", "exec"))
+          - '{"moves": ["converge", "export"], "export": "/workspace/frame.json"}'
+        network: full
+        allowedOutputPaths:
+          - /workspace/frame.json
+      contract:
+        outcomes:
+          passed:
+            schema:
+              type: object
+              required: [operation_id, state, artifacts]
+              properties:
+                state:
+                  type: string
+                exit_code:
+                  type: integer
+                artifacts:
+                  type: object
+                  minProperties: 1
+                  additionalProperties:
+                    type: string
+          failed:
+            schema:
+              type: object
+              required: [operation_id, state]
+              properties:
+                state:
+                  type: string
+                exit_code:
+                  type: integer
+      ledger:
+        read: [current_scope, confirmed_claims, open_assumptions, open_questions]
+        observe: [evidence]
+      acceptance:
+        requires:
+          - kind: process_exit
+            equals: 0
+      policy:
+        timeout: 10m
+        retry:
+          maxAttempts: 1
+
+    # A decision node's `output` variable is its RESOLVED INPUT
+    # (internal/worker/decision.go's convention) — here the move node's own
+    # output document — and first match wins, so the ports read top-down.
+    # Both of the code node's exit-status ports feed this node: `failed`
+    # there is a DOMAIN answer, and telling "did not converge" from "could
+    # not run" is exactly what a two-port code node cannot do.
+    converge-verdict:
+      kind: decision
+      ownerRef: team/platform-ai
+      input:
+        from: /nodes/converge-export/output
+      select:
+        - outcome: converged
+          when: "output.state == 'completed' && output.exit_code == 0"
+        - outcome: not_converged
+          when: "output.state == 'completed' && output.exit_code == 10"
+        - outcome: move_unavailable
+          when: "output.state == 'completed' && output.exit_code == 11"
+        - outcome: move_broken
+          when: "true"
+
+    # -------------------------------------------------------------------
+    # 8. THE CHALLENGE LEG (/challenge). This is the leg that most wants to
+    # be a graph: a challenge pass is N independent lens sweeps over disjoint
+    # surfaces, and running them in one context is the single most expensive
+    # shape available (#48) as well as the one where each lens sees the
+    # previous lens's conclusions and stops being independent.
+    #
+    # A parallel node carries no contract and does no domain work: its one
+    # outcome, `split`, is implied by the kind, and it fans one token per
+    # eligible split edge.
+    # -------------------------------------------------------------------
+    challenge-fan:
+      kind: parallel
+      ownerRef: team/platform-ai
+
+    # The four lenses. Each is an `agent` node on the same registered
+    # challenger identity, and each declares the SAME two ports for a reason
+    # the /challenge skill is emphatic about: a clean pass records which
+    # surfaces were examined and what residual uncertainty remains, and never
+    # claims there are no unknown unknowns. `clean_pass` therefore REQUIRES
+    # `examined` and `residual_uncertainty` — a lens that found nothing still
+    # has to say what it looked at.
+    lens-adjacent-systems:
+      kind: agent
+      ownerRef: team/platform-ai
+      uses: actor://company/spec-challenger@sha256:3333333333333333333333333333333333333333333333333333333333333333
+      input:
+        bindings:
+          instruction:
+            literal: |
+              ADJACENT-SYSTEMS LENS. Read the exported frame against the
+              systems it will sit beside: the surfaces it calls, the surfaces
+              that call it, and the ones that merely share a host, a table or
+              a credential with it.
+
+              Report findings as PROPOSED claims naming the surface you read.
+              A finding you cannot cite is a hunch; say so as a question
+              instead.
+
+              If you find nothing, say what you examined and what residual
+              uncertainty survives your pass. Do not report that there is
+              nothing to find.
+          frame: /nodes/converge-export/output
+          claims: /ledger/projections/confirmed_claims
+      contract:
+        outcomes:
+          findings:
+            schema:
+              type: object
+              required: [lens, findings]
+              properties:
+                lens:
+                  type: string
+                findings:
+                  type: array
+                  minItems: 1
+                  items:
+                    type: object
+          clean_pass:
+            schema:
+              type: object
+              required: [lens, examined, residual_uncertainty]
+              properties:
+                lens:
+                  type: string
+                examined:
+                  type: array
+                  items:
+                    type: string
+                residual_uncertainty:
+                  type: string
+      ledger:
+        read: [current_scope, confirmed_claims, open_assumptions]
+        propose: [claim, question]
+      policy:
+        timeout: 30m
+        retry:
+          maxAttempts: 2
+          backoff: exponential
+
+    lens-feedback-loops:
+      kind: agent
+      ownerRef: team/platform-ai
+      uses: actor://company/spec-challenger@sha256:3333333333333333333333333333333333333333333333333333333333333333
+      input:
+        bindings:
+          instruction:
+            literal: |
+              FEEDBACK-LOOP LENS. Look for the loops the frame creates and
+              does not name: a step whose output becomes its own input, a
+              watermark that advances past the thing it was watching for, a
+              notification that triggers the flow that sends it.
+
+              Report findings as PROPOSED claims naming the surface you read.
+
+              If you find nothing, say what you examined and what residual
+              uncertainty survives your pass.
+          frame: /nodes/converge-export/output
+          claims: /ledger/projections/confirmed_claims
+      contract:
+        outcomes:
+          findings:
+            schema:
+              type: object
+              required: [lens, findings]
+              properties:
+                lens:
+                  type: string
+                findings:
+                  type: array
+                  minItems: 1
+                  items:
+                    type: object
+          clean_pass:
+            schema:
+              type: object
+              required: [lens, examined, residual_uncertainty]
+              properties:
+                lens:
+                  type: string
+                examined:
+                  type: array
+                  items:
+                    type: string
+                residual_uncertainty:
+                  type: string
+      ledger:
+        read: [current_scope, confirmed_claims, open_assumptions]
+        propose: [claim, question]
+      policy:
+        timeout: 30m
+        retry:
+          maxAttempts: 2
+          backoff: exponential
+
+    lens-lifecycle:
+      kind: agent
+      ownerRef: team/platform-ai
+      uses: actor://company/spec-challenger@sha256:3333333333333333333333333333333333333333333333333333333333333333
+      input:
+        bindings:
+          instruction:
+            literal: |
+              LIFECYCLE LENS. Read the frame for what happens before the happy
+              path starts and after it ends: cold starts, restarts, expiry,
+              unbounded waits, state that lives only in memory, and the second
+              run of the same thing.
+
+              Report findings as PROPOSED claims naming the surface you read.
+
+              If you find nothing, say what you examined and what residual
+              uncertainty survives your pass.
+          frame: /nodes/converge-export/output
+          claims: /ledger/projections/confirmed_claims
+      contract:
+        outcomes:
+          findings:
+            schema:
+              type: object
+              required: [lens, findings]
+              properties:
+                lens:
+                  type: string
+                findings:
+                  type: array
+                  minItems: 1
+                  items:
+                    type: object
+          clean_pass:
+            schema:
+              type: object
+              required: [lens, examined, residual_uncertainty]
+              properties:
+                lens:
+                  type: string
+                examined:
+                  type: array
+                  items:
+                    type: string
+                residual_uncertainty:
+                  type: string
+      ledger:
+        read: [current_scope, confirmed_claims, open_assumptions]
+        propose: [claim, question]
+      policy:
+        timeout: 30m
+        retry:
+          maxAttempts: 2
+          backoff: exponential
+
+    lens-security:
+      kind: agent
+      ownerRef: team/platform-ai
+      uses: actor://company/spec-challenger@sha256:3333333333333333333333333333333333333333333333333333333333333333
+      input:
+        bindings:
+          instruction:
+            literal: |
+              SECURITY LENS. Read the frame for authority it widens without
+              saying so: which credential is held by which process, what a
+              compromised step could reach, which verbs a token actually
+              grants versus which the design assumes, and which changes a
+              machine would be allowed to make that a person should review.
+
+              Report findings as PROPOSED claims naming the surface you read.
+
+              If you find nothing, say what you examined and what residual
+              uncertainty survives your pass.
+          frame: /nodes/converge-export/output
+          claims: /ledger/projections/confirmed_claims
+      contract:
+        outcomes:
+          findings:
+            schema:
+              type: object
+              required: [lens, findings]
+              properties:
+                lens:
+                  type: string
+                findings:
+                  type: array
+                  minItems: 1
+                  items:
+                    type: object
+          clean_pass:
+            schema:
+              type: object
+              required: [lens, examined, residual_uncertainty]
+              properties:
+                lens:
+                  type: string
+                examined:
+                  type: array
+                  items:
+                    type: string
+                residual_uncertainty:
+                  type: string
+      ledger:
+        read: [current_scope, confirmed_claims, open_assumptions]
+        propose: [claim, question]
+      policy:
+        timeout: 30m
+        retry:
+          maxAttempts: 2
+          backoff: exponential
+
+    # The barrier. `all` because a challenge pass with three of four lenses
+    # reported is not a challenge pass — it is a partial sweep wearing one's
+    # clothes, and the adjudicating human would be deciding on an unstated
+    # subset. A join node carries no contract; its `joined` outcome is
+    # implied by the kind.
+    challenge-join:
+      kind: join
+      ownerRef: team/platform-ai
+      join:
+        policy: all
+
+    # -------------------------------------------------------------------
+    # 9. RECORD THE FINDINGS. Deterministic again: the findings are captured
+    # back onto the frame as PROPOSED content. This is the move that makes
+    # the challenge pass part of the frame rather than a conversation about
+    # it, and it is a code node for the same reason every other move here is.
+    # -------------------------------------------------------------------
+    record-findings:
+      kind: code
+      ownerRef: team/platform-ai
+      uses: runner://headspace/devague-moves@sha256:5555555555555555555555555555555555555555555555555555555555555555
+      input:
+        bindings:
+          frame: /nodes/converge-export/output
+          run: /run/input
+      operation:
+        image: python:3.12-slim@sha256:57cd7c3a7a273101a6485ba99423ee568157882804b1124b4dd04266317710de
+        environmentRefs:
+          - SPEC_CHAIN_MOVE_URL
+          - SPEC_CHAIN_MOVE_SHA256
+        argv:
+          - python3
+          - -c
+          - |
+            import hashlib, os, sys, urllib.request
+            names = ("SPEC_CHAIN_MOVE_URL", "SPEC_CHAIN_MOVE_SHA256")
+            src, want = (os.environ.get(name, "").strip() for name in names)
+            missing = [n for n, v in zip(names, (src, want)) if not v]
+            if missing:
+                sys.exit("spec-chain move: %s unset. The deployment grants the move "
+                         "program's source and its sha256 -- see this workflow's "
+                         "Deployment configuration block." % ", ".join(missing))
+            body = urllib.request.urlopen(src, timeout=60).read()
+            got = hashlib.sha256(body).hexdigest()
+            if got != want.lower():
+                sys.exit("spec-chain move: the configured source serves sha256:%s, not the "
+                         "configured sha256:%s. Refusing to execute unverified code."
+                         % (got, want.lower()))
+            sys.argv = ["spec_chain_move.py"] + sys.argv[1:]
+            exec(compile(body.decode(), "spec_chain_move.py", "exec"))
+          - '{"moves": ["capture", "scope"], "origin": "llm", "export": "/workspace/frame.json"}'
+        network: full
+        allowedOutputPaths:
+          - /workspace/frame.json
+      contract:
+        outcomes:
+          passed:
+            schema:
+              type: object
+              required: [operation_id, state, artifacts]
+              properties:
+                state:
+                  type: string
+                exit_code:
+                  type: integer
+                artifacts:
+                  type: object
+                  minProperties: 1
+                  additionalProperties:
+                    type: string
+          failed:
+            schema:
+              type: object
+              required: [operation_id, state]
+              properties:
+                state:
+                  type: string
+                exit_code:
+                  type: integer
+      ledger:
+        read: [current_scope, confirmed_claims, open_questions]
+        observe: [evidence]
+      acceptance:
+        requires:
+          - kind: process_exit
+            equals: 0
+      policy:
+        timeout: 10m
+        retry:
+          maxAttempts: 1
+
+    # -------------------------------------------------------------------
+    # 10. THE SECOND HUMAN GATE. A finding is a proposal about the spec, and
+    # adopting one changes what the spec commits to — which is a judgement,
+    # and the §10.4 authority model puts judgement here rather than in the
+    # lens that produced the finding. It is a SEPARATE approval node from the
+    # first with its own decision schema on purpose: confirming a proposed
+    # claim set and adjudicating what a challenge pass turned up are
+    # different acts, and the ledger has to be able to tell them apart
+    # afterwards.
+    # -------------------------------------------------------------------
+    adjudicate-findings:
+      kind: approval
+      ownerRef: team/platform-ai
+      approverRef: group/spec-approvers
+      decisionSchemaRef: schema://spec-chain/challenge-adjudication/v1
+      deadline: 168h
+      input:
+        bindings:
+          frame: /nodes/record-findings/output
+          adjacentSystems: /nodes/lens-adjacent-systems/output
+          feedbackLoops: /nodes/lens-feedback-loops/output
+          lifecycle: /nodes/lens-lifecycle/output
+          security: /nodes/lens-security/output
+          openQuestions: /ledger/projections/open_questions
+
+    # -------------------------------------------------------------------
+    # 11. RECONVERGE AND RE-EXPORT. A challenge pass reopens a converged
+    # frame, so the frame has to converge again — against the same dated
+    # file, with the adjudicated findings in it. Same exit-status contract as
+    # converge-export, same three-answer decision node below it.
+    # -------------------------------------------------------------------
+    reconverge:
+      kind: code
+      ownerRef: team/platform-ai
+      uses: runner://headspace/devague-moves@sha256:5555555555555555555555555555555555555555555555555555555555555555
+      input:
+        bindings:
+          frame: /nodes/record-findings/output
+          adjudication: /nodes/adjudicate-findings/output
+          run: /run/input
+      operation:
+        image: python:3.12-slim@sha256:57cd7c3a7a273101a6485ba99423ee568157882804b1124b4dd04266317710de
+        environmentRefs:
+          - SPEC_CHAIN_MOVE_URL
+          - SPEC_CHAIN_MOVE_SHA256
+        argv:
+          - python3
+          - -c
+          - |
+            import hashlib, os, sys, urllib.request
+            names = ("SPEC_CHAIN_MOVE_URL", "SPEC_CHAIN_MOVE_SHA256")
+            src, want = (os.environ.get(name, "").strip() for name in names)
+            missing = [n for n, v in zip(names, (src, want)) if not v]
+            if missing:
+                sys.exit("spec-chain move: %s unset. The deployment grants the move "
+                         "program's source and its sha256 -- see this workflow's "
+                         "Deployment configuration block." % ", ".join(missing))
+            body = urllib.request.urlopen(src, timeout=60).read()
+            got = hashlib.sha256(body).hexdigest()
+            if got != want.lower():
+                sys.exit("spec-chain move: the configured source serves sha256:%s, not the "
+                         "configured sha256:%s. Refusing to execute unverified code."
+                         % (got, want.lower()))
+            sys.argv = ["spec_chain_move.py"] + sys.argv[1:]
+            exec(compile(body.decode(), "spec_chain_move.py", "exec"))
+          - '{"moves": ["converge", "export"], "export": "/workspace/frame.json"}'
+        network: full
+        allowedOutputPaths:
+          - /workspace/frame.json
+      contract:
+        outcomes:
+          passed:
+            schema:
+              type: object
+              required: [operation_id, state, artifacts]
+              properties:
+                state:
+                  type: string
+                exit_code:
+                  type: integer
+                artifacts:
+                  type: object
+                  minProperties: 1
+                  additionalProperties:
+                    type: string
+          failed:
+            schema:
+              type: object
+              required: [operation_id, state]
+              properties:
+                state:
+                  type: string
+                exit_code:
+                  type: integer
+      ledger:
+        read: [current_scope, confirmed_claims, open_assumptions, open_questions]
+        observe: [evidence]
+      acceptance:
+        requires:
+          - kind: process_exit
+            equals: 0
+      policy:
+        timeout: 10m
+        retry:
+          maxAttempts: 1
+
+    reconverge-verdict:
+      kind: decision
+      ownerRef: team/platform-ai
+      input:
+        from: /nodes/reconverge/output
+      select:
+        - outcome: converged
+          when: "output.state == 'completed' && output.exit_code == 0"
+        - outcome: not_converged
+          when: "output.state == 'completed' && output.exit_code == 10"
+        - outcome: move_unavailable
+          when: "output.state == 'completed' && output.exit_code == 11"
+        - outcome: move_broken
+          when: "true"
+
+    # -------------------------------------------------------------------
+    # 12. THE THREE ENDINGS. Named separately because they are different
+    # answers, and a reader of a finished run should not have to reconstruct
+    # which one happened from a payload.
+    # -------------------------------------------------------------------
+
+    # The spec exported, after the challenge pass, with both gates passed.
+    spec-exported:
+      kind: end
+      ownerRef: team/platform-ai
+      output:
+        from: /nodes/reconverge/output
+
+    # A person declined — either the proposed set or the adjudication. The
+    # output is the run input rather than a node's output because this node
+    # is reachable from two different gates, and binding one of them would
+    # fail to resolve on the other path.
+    not-adopted:
+      kind: end
+      ownerRef: team/platform-ai
+      output:
+        from: /run/input
+
+    # The chain could not run: a sweep with no surfaces, a move that could
+    # not be applied, or a move program that broke. Distinct from
+    # `not-adopted` because "nobody decided this was wrong" and "nobody could
+    # decide at all" are different facts, and folding them together is the
+    # same mistake `measurement_incomplete` exists to prevent one node down.
+    chain-blocked:
+      kind: end
+      ownerRef: team/platform-ai
+      output:
+        from: /run/input
+
+  edges:
+    # --- scope -----------------------------------------------------------
+    - from: scope-sweep.surveyed
+      to: record-scope
+    - from: scope-sweep.insufficient_context
+      to: chain-blocked
+
+    - from: record-scope.passed
+      to: think-frame
+    - from: record-scope.failed
+      to: chain-blocked
+
+    # --- think -----------------------------------------------------------
+    - from: think-frame.framed
+      to: interrogate
+
+    - from: interrogate.interrogated
+      to: record-frame
+
+    - from: record-frame.passed
+      to: confirm-proposed-set
+    - from: record-frame.failed
+      to: chain-blocked
+
+    # --- the first human gate --------------------------------------------
+    # `converge-export` is reachable from HERE AND NOWHERE ELSE, which is
+    # what makes "the proposed set cannot converge without a person" a
+    # compiler-checked property of the edges rather than a habit.
+    - from: confirm-proposed-set.approved
+      to: converge-export
+    - from: confirm-proposed-set.rejected
+      to: not-adopted
+
+    # --- converge --------------------------------------------------------
+    # Both of the code node's exit-status ports feed the verdict: `failed`
+    # here is a DOMAIN answer, and the verdict tells "did not converge" from
+    # "could not run" from "the program broke" by exit code.
+    - from: converge-export.passed
+      to: converge-verdict
+    - from: converge-export.failed
+      to: converge-verdict
+
+    - from: converge-verdict.converged
+      to: challenge-fan
+    # A frame that did not converge is not a failure; it is the method
+    # working. It loops back to interrogation, bounded by
+    # spec.limits.maxVisitsPerNode rather than by anyone's judgement.
+    - from: converge-verdict.not_converged
+      to: interrogate
+    - from: converge-verdict.move_unavailable
+      to: chain-blocked
+    - from: converge-verdict.move_broken
+      to: chain-blocked
+
+    # --- challenge -------------------------------------------------------
+    # Four split edges, four branches, one barrier. The compiler refuses a
+    # parallel node with no split edge, a join nothing reaches, and an end
+    # node reachable from inside the split without passing the join.
+    - from: challenge-fan.split
+      to: lens-adjacent-systems
+    - from: challenge-fan.split
+      to: lens-feedback-loops
+    - from: challenge-fan.split
+      to: lens-lifecycle
+    - from: challenge-fan.split
+      to: lens-security
+
+    # Both ports of every lens reach the barrier. A clean pass is an ANSWER,
+    # not an absence: it carries the examined surfaces and the residual
+    # uncertainty, and the adjudicating human needs it.
+    - from: lens-adjacent-systems.findings
+      to: challenge-join
+    - from: lens-adjacent-systems.clean_pass
+      to: challenge-join
+    - from: lens-feedback-loops.findings
+      to: challenge-join
+    - from: lens-feedback-loops.clean_pass
+      to: challenge-join
+    - from: lens-lifecycle.findings
+      to: challenge-join
+    - from: lens-lifecycle.clean_pass
+      to: challenge-join
+    - from: lens-security.findings
+      to: challenge-join
+    - from: lens-security.clean_pass
+      to: challenge-join
+
+    - from: challenge-join.joined
+      to: record-findings
+
+    - from: record-findings.passed
+      to: adjudicate-findings
+    - from: record-findings.failed
+      to: chain-blocked
+
+    # --- the second human gate -------------------------------------------
+    - from: adjudicate-findings.approved
+      to: reconverge
+    - from: adjudicate-findings.rejected
+      to: not-adopted
+
+    # --- reconverge ------------------------------------------------------
+    - from: reconverge.passed
+      to: reconverge-verdict
+    - from: reconverge.failed
+      to: reconverge-verdict
+
+    - from: reconverge-verdict.converged
+      to: spec-exported
+    - from: reconverge-verdict.not_converged
+      to: interrogate
+    - from: reconverge-verdict.move_unavailable
+      to: chain-blocked
+    - from: reconverge-verdict.move_broken
+      to: chain-blocked

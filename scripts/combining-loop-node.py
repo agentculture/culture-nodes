@@ -72,6 +72,10 @@ record was produced"; a domain outcome (0 on harvest/merge, or 0/1/3 on
 stage) always means the git objects this program's caller relies on are
 exactly what it says.
 
+Nor is the exit code the whole story (h7): each subcommand also emits `verified` with the fact
+its own exit code claims — harvest's `commit`, stage's `candidate_parents`, merge's `remote_sha`,
+release's `event_ids` — never inferred from a status alone.
+
 # harvest — fetch what a session claims to have produced, and pin it first
 
 Input: {"handover_ref": "refs/culture-nodes/<run>/<node-run>",
@@ -138,6 +142,10 @@ verbatim, not reinvented). The token is never placed in argv; it is read once
 from the environment and, if a git diagnostic happens to have echoed it back,
 that occurrence is redacted before this program ever writes the diagnostic
 anywhere.
+
+`git push`'s exit 0 is not trusted as proof (h7): some transports report success while their own
+`--porcelain` line carries a rejection. Right after, `git ls-remote` re-reads the SAME remote and
+refuses on any mismatch.
 
 # What is deliberately NOT here
 
@@ -515,7 +523,14 @@ def cmd_harvest(_args: argparse.Namespace) -> int:
             code=EXIT_REFUSED,
         )
 
-    emit({"harvested_commit": got, "recovery_ref": recovery_ref})
+    # Post-condition (h7): the comparison's own fact, restated as evidence.
+    emit(
+        {
+            "harvested_commit": got,
+            "recovery_ref": recovery_ref,
+            "verified": {"recovery_ref": recovery_ref, "commit": got},
+        }
+    )
     return EXIT_OK
 
 
@@ -603,6 +618,8 @@ def cmd_stage(_args: argparse.Namespace) -> int:
             "--no-edit",
         )
         candidate_commit = git(stage_dir, "rev-parse", "HEAD")
+        # Post-condition (h7): re-read the parents, not assume them from inputs.
+        candidate_parents = git(stage_dir, "show", "-s", "--format=%P", candidate_commit).split()
         # Graph mode: a code node's output document carries operation metadata,
         # never program stdout, so the candidate travels to `gate` and `merge`
         # as a DETERMINISTIC REF keyed by the run id the runner boundary
@@ -611,7 +628,13 @@ def cmd_stage(_args: argparse.Namespace) -> int:
         if run_id:
             validate_run_id(run_id)
             git(workspace, "update-ref", f"refs/culture-nodes/candidate/{run_id}", candidate_commit)
-        emit({"outcome": "candidate_staged", "candidate_commit": candidate_commit})
+        emit(
+            {
+                "outcome": "candidate_staged",
+                "candidate_commit": candidate_commit,
+                "verified": {"candidate_parents": candidate_parents},
+            }
+        )
         return EXIT_OK
     finally:
         # Remove unconditionally: the candidate commit, if one was created,
@@ -636,6 +659,10 @@ ASKPASS_SCRIPT = (
     "  *) printf '%s\\n' \"$" + WORKER_PUSH_CREDENTIAL + '" ;;\n'
     "esac\n"
 )
+
+
+#: Reset for the push AND its post-push `git ls-remote` verification (same askpass identity).
+RESET_ARGS = ("-c", "credential.helper=", "-c", "credential.https://github.com.helper=")
 
 
 def cmd_merge(_args: argparse.Namespace) -> int:
@@ -752,15 +779,10 @@ def cmd_merge(_args: argparse.Namespace) -> int:
         }
         # A configured credential helper SILENTLY outranks GIT_ASKPASS on
         # push — measured on this fleet, and the exact fix
-        # internal/handover/merge.go just landed for the Go merge path. The
-        # two empty -c flags reset the helper list for this ONE invocation
-        # so the askpass identity is the only one a push can use.
+        # internal/handover/merge.go just landed for the Go merge path.
         git(
             workspace,
-            "-c",
-            "credential.helper=",
-            "-c",
-            "credential.https://github.com.helper=",
+            *RESET_ARGS,
             "push",
             "--porcelain",
             "--",
@@ -768,16 +790,32 @@ def cmd_merge(_args: argparse.Namespace) -> int:
             f"{branch_ref}:{branch_ref}",
             env=push_env,
         )
+
+        # Post-condition (h7): re-read the remote, not trust the push's exit code.
+        ls_remote_out = git(
+            workspace, *RESET_ARGS, "ls-remote", "--", MERGE_REMOTE, branch_ref, env=push_env
+        )
     finally:
         shutil.rmtree(askpass_dir, ignore_errors=True)
 
-    emit({"merged_commit": candidate_commit, "feature_branch": feature_branch})
+    remote_sha = (ls_remote_out.split() or [""])[0]
+    if remote_sha != candidate_commit:
+        raise Refusal(
+            f"push to {MERGE_REMOTE} {branch_ref} exited 0, but git ls-remote reports "
+            f"{remote_sha or '<no ref>'} there, not the pushed candidate {candidate_commit}",
+            "a push that exits 0 is not proof the remote advanced; this catches a transport "
+            "that reports success on a rejected update",
+            code=EXIT_ENVIRONMENT,
+        )
+
+    emit(
+        {
+            "merged_commit": candidate_commit,
+            "feature_branch": feature_branch,
+            "verified": {"remote": MERGE_REMOTE, "remote_sha": remote_sha},
+        }
+    )
     return EXIT_OK
-
-
-# --------------------------------------------------------------------------
-# CLI
-# --------------------------------------------------------------------------
 
 
 # --------------------------------------------------------------------------
@@ -787,6 +825,17 @@ def cmd_merge(_args: argparse.Namespace) -> int:
 EVENT_TOKEN_ENV = "NODES_EVENT_TOKEN"  # noqa: S105 - an env var NAME, not a secret
 API_URL_ENV = "NODES_API_URL"
 READY_EVENT_NAME = "combining-loop.package.ready"
+
+
+def delivered_event_id(status: int, raw_body: bytes) -> str:
+    """Post-condition (h7): EventDeliveryResult's `event.id`. ValueError on
+    anything short of that — non-2xx, bad JSON, or a 2xx error-shaped body."""
+    if not 200 <= status < 300:
+        raise ValueError(f"HTTP {status}")
+    event_id = json.loads(raw_body)["event"]["id"]
+    if not isinstance(event_id, str) or not event_id:
+        raise ValueError("no usable event.id")
+    return event_id
 
 
 def cmd_release(_args: argparse.Namespace) -> int:
@@ -819,6 +868,7 @@ def cmd_release(_args: argparse.Namespace) -> int:
     )
 
     emitted = 0
+    delivered_ids: list[str] = []
     for unlocked in unlocks:
         body = json.dumps(
             {
@@ -839,7 +889,8 @@ def cmd_release(_args: argparse.Namespace) -> int:
         )
         try:
             with urllib.request.urlopen(request, timeout=30) as response:  # noqa: S310
-                response.read()
+                status = response.status
+                raw_body = response.read()
         except (urllib.error.URLError, TimeoutError) as err:
             # The token never reaches a diagnostic: URLError reasons carry
             # transport detail only, but redact defensively anyway.
@@ -850,9 +901,20 @@ def cmd_release(_args: argparse.Namespace) -> int:
                 "fix the environment and re-run release for the remainder",
                 code=EXIT_ENVIRONMENT,
             ) from err
+        try:
+            event_id = delivered_event_id(status, raw_body)
+        except (ValueError, json.JSONDecodeError, KeyError, TypeError) as exc:
+            raise Refusal(
+                f"event delivery for {unlocked!r} did not verify ({exc}), after {emitted} "
+                "delivered",
+                "a 2xx status is not delivery on its own; EventDeliveryResult must carry a "
+                "usable event.id",
+                code=EXIT_ENVIRONMENT,
+            ) from exc
+        delivered_ids.append(event_id)
         emitted += 1
 
-    emit({"outcome": "released", "events": emitted})
+    emit({"outcome": "released", "events": emitted, "verified": {"event_ids": delivered_ids}})
     return EXIT_OK
 
 

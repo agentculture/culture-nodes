@@ -55,6 +55,8 @@
 #                                         examples/merge-gate registers it.
 #
 #   COMBINING_LOOP_SOURCE_URL / _SHA256   where the node program is fetched
+#   COMBINING_LOOP_RELEASE_URL / _SHA256  the standalone release program
+#                                         (split file, own digest)
 #                                         from and the digest the bootstrap
 #                                         refuses to run without (the
 #                                         merge-gate discipline).
@@ -409,11 +411,11 @@ spec:
           - -c
           - |
             import hashlib, os, subprocess, sys, tempfile, urllib.request
-            want = os.environ["COMBINING_LOOP_SOURCE_SHA256"]
-            body = urllib.request.urlopen(os.environ["COMBINING_LOOP_SOURCE_URL"], timeout=60).read()
+            want = os.environ["COMBINING_LOOP_RELEASE_SHA256"]
+            body = urllib.request.urlopen(os.environ["COMBINING_LOOP_RELEASE_URL"], timeout=60).read()
             if hashlib.sha256(body).hexdigest() != want:
                 sys.exit("combining-loop: fetched bytes do not match the granted digest; refusing to run unverified code")
-            path = os.path.join(tempfile.mkdtemp(), "combining-loop-node.py")
+            path = os.path.join(tempfile.mkdtemp(), "combining-loop-release.py")
             open(path, "wb").write(body)
             sys.exit(subprocess.run([sys.executable, path, "release"]).returncode)
       input:

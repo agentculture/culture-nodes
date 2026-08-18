@@ -180,8 +180,6 @@ import shutil
 import subprocess  # noqa: S404 # nosec B404 - fixed git binary, argv lists, no shell
 import sys
 import tempfile
-import urllib.error
-import urllib.request
 from pathlib import Path
 from typing import Any
 
@@ -523,6 +521,11 @@ def cmd_harvest(_args: argparse.Namespace) -> int:
             code=EXIT_REFUSED,
         )
 
+    # A containerized graph node's local refs die with its workspace, so the
+    # recovery ref is durable only on the REMOTE. Pushing back to the same
+    # env-granted remote we fetched from adds no new authority.
+    git(workspace, "push", "--", remote, f"+{recovery_ref}:{recovery_ref}")
+
     # Post-condition (h7): the comparison's own fact, restated as evidence.
     emit(
         {
@@ -627,7 +630,14 @@ def cmd_stage(_args: argparse.Namespace) -> int:
         run_id = os.environ.get("NODES_RUN_ID", "")
         if run_id:
             validate_run_id(run_id)
-            git(workspace, "update-ref", f"refs/culture-nodes/candidate/{run_id}", candidate_commit)
+            candidate_ref = f"refs/culture-nodes/candidate/{run_id}"
+            git(workspace, "update-ref", candidate_ref, candidate_commit)
+            # Ephemeral-workspace rule (same as harvest's recovery ref): the
+            # ref must survive this container, so graph mode also pushes it
+            # to the granted remote; `gate` and `merge` fetch it back.
+            remote = os.environ.get(HARVEST_REMOTE_ENV, "")
+            if remote:
+                git(workspace, "push", "--", remote, f"+{candidate_ref}:{candidate_ref}")
         emit(
             {
                 "outcome": "candidate_staged",
@@ -687,6 +697,38 @@ def cmd_merge(_args: argparse.Namespace) -> int:
         validate_run_id(run_id)
         candidate_ref = f"refs/culture-nodes/candidate/{run_id}"
         workspace_early = resolve_workspace()
+        # Ephemeral-workspace rule: `stage` pushed the candidate ref to the
+        # granted remote; a fresh workspace fetches it back before resolving.
+        # A workspace that already has it (shared checkouts, the CLI tests)
+        # skips the fetch.
+        probe = subprocess.run(  # noqa: S603 # nosec B603 - fixed binary, argv list
+            [
+                "git",
+                "-C",
+                str(workspace_early),
+                "rev-parse",
+                "--verify",
+                "--quiet",
+                f"{candidate_ref}^{{commit}}",
+            ],
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+        if probe.returncode != 0:
+            fetch_remote = env_or_refuse(
+                HARVEST_REMOTE_ENV,
+                "graph-mode merge in a fresh workspace fetches the candidate ref from "
+                "the deployment's granted remote",
+            )
+            git(
+                workspace_early,
+                "fetch",
+                "--no-tags",
+                "--",
+                fetch_remote,
+                f"+{candidate_ref}:{candidate_ref}",
+            )
         candidate_commit = git(
             workspace_early, "rev-parse", "--verify", f"{candidate_ref}^{{commit}}"
         )
@@ -818,106 +860,6 @@ def cmd_merge(_args: argparse.Namespace) -> int:
     return EXIT_OK
 
 
-# --------------------------------------------------------------------------
-# release
-# --------------------------------------------------------------------------
-
-EVENT_TOKEN_ENV = "NODES_EVENT_TOKEN"  # noqa: S105 - an env var NAME, not a secret
-API_URL_ENV = "NODES_API_URL"
-READY_EVENT_NAME = "combining-loop.package.ready"
-
-
-def delivered_event_id(status: int, raw_body: bytes) -> str:
-    """Post-condition (h7): EventDeliveryResult's `event.id`. ValueError on
-    anything short of that — non-2xx, bad JSON, or a 2xx error-shaped body."""
-    if not 200 <= status < 300:
-        raise ValueError(f"HTTP {status}")
-    event_id = json.loads(raw_body)["event"]["id"]
-    if not isinstance(event_id, str) or not event_id:
-        raise ValueError("no usable event.id")
-    return event_id
-
-
-def cmd_release(_args: argparse.Namespace) -> int:
-    """Emit one combining-loop.package.ready signal event per unlocked
-    package. The engine's pacing sits between a ready event and any dispatch
-    it triggers, so a burst here queues rather than overdrawing the session
-    window (#48). An empty unlocks list is a successful no-op, stated."""
-    payload = read_input(frozenset({"package_id", "unlocks"}))
-    package_id = require_str(payload, "package_id")
-    unlocks = payload.get("unlocks", [])
-    if not isinstance(unlocks, list) or any(
-        not isinstance(item, str) or not item for item in unlocks
-    ):
-        raise Refusal(
-            "'unlocks' must be a list of non-empty strings",
-            'NODES_INPUT_JSON must declare {"unlocks": ["<package-id>", ...]} or omit it',
-            code=EXIT_REFUSED,
-        )
-    if not unlocks:
-        emit({"outcome": "released", "events": 0})
-        return EXIT_OK
-
-    api = env_or_refuse(
-        API_URL_ENV, "grant NODES_API_URL to the operation - the control plane's own base URL"
-    ).rstrip("/")
-    token = env_or_refuse(
-        EVENT_TOKEN_ENV,
-        "grant NODES_EVENT_TOKEN to the operation - the event-ingress bearer "
-        "(the server side is NODES_EVENT_TOKEN_SECRET; internal/api/signalevents.go)",
-    )
-
-    emitted = 0
-    delivered_ids: list[str] = []
-    for unlocked in unlocks:
-        body = json.dumps(
-            {
-                "name": READY_EVENT_NAME,
-                "subject": unlocked,
-                "emitter": "combining-loop",
-                "payload": {"package_id": unlocked, "unlocked_by": package_id},
-            }
-        ).encode("utf-8")
-        request = urllib.request.Request(
-            f"{api}/v1alpha1/events",
-            data=body,
-            method="POST",
-            headers={
-                "Authorization": f"Bearer {token}",
-                "Content-Type": "application/json",
-            },
-        )
-        try:
-            with urllib.request.urlopen(request, timeout=30) as response:  # noqa: S310
-                status = response.status
-                raw_body = response.read()
-        except (urllib.error.URLError, TimeoutError) as err:
-            # The token never reaches a diagnostic: URLError reasons carry
-            # transport detail only, but redact defensively anyway.
-            detail = redact_secret_text(str(err))
-            raise Refusal(
-                f"event delivery for {unlocked!r} failed after {emitted} delivered: {detail}",
-                "already-delivered events stand (the ingress dedupes by source key upstream); "
-                "fix the environment and re-run release for the remainder",
-                code=EXIT_ENVIRONMENT,
-            ) from err
-        try:
-            event_id = delivered_event_id(status, raw_body)
-        except (ValueError, json.JSONDecodeError, KeyError, TypeError) as exc:
-            raise Refusal(
-                f"event delivery for {unlocked!r} did not verify ({exc}), after {emitted} "
-                "delivered",
-                "a 2xx status is not delivery on its own; EventDeliveryResult must carry a "
-                "usable event.id",
-                code=EXIT_ENVIRONMENT,
-            ) from exc
-        delivered_ids.append(event_id)
-        emitted += 1
-
-    emit({"outcome": "released", "events": emitted, "verified": {"event_ids": delivered_ids}})
-    return EXIT_OK
-
-
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="combining-loop-node.py",
@@ -970,17 +912,6 @@ def build_parser() -> argparse.ArgumentParser:
         ),
     )
     merge.set_defaults(handler=cmd_merge)
-
-    release = subparsers.add_parser(
-        "release",
-        help="emit combining-loop.package.ready for everything this package unlocks",
-        description=(
-            'Input (NODES_INPUT_JSON): {"package_id": "<id>", "unlocks": ["<id>", ...]}. '
-            "Grants: NODES_API_URL, NODES_EVENT_TOKEN. "
-            "Exit 0 released (empty unlocks is a stated no-op) / 2 environment / 4 refused."
-        ),
-    )
-    release.set_defaults(handler=cmd_release)
 
     return parser
 

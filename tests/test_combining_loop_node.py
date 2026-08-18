@@ -31,6 +31,7 @@ from pathlib import Path
 import pytest
 
 SCRIPT = Path(__file__).parents[1] / "scripts" / "combining-loop-node.py"
+RELEASE_SCRIPT = Path(__file__).parents[1] / "scripts" / "combining-loop-release.py"
 RUN_ID = "01M0COMBININGLOOPRUNID0"
 TOKEN = "s3cr3t-worker-token-should-never-leak"  # noqa: S105 - fixture value, not a real credential
 
@@ -177,8 +178,9 @@ def run_node(
         "NODES_WORKSPACE": str(workspace),
         **(env or {}),
     }
+    script = RELEASE_SCRIPT if subcommand == "release" else SCRIPT
     return subprocess.run(
-        [sys.executable, str(SCRIPT), subcommand],
+        [sys.executable, str(script), subcommand],
         capture_output=True,
         text=True,
         env=full_env,

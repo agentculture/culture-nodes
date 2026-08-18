@@ -185,6 +185,17 @@ means editing `workflow.yaml`.
 There is **no run input**. The gate measures the workspace the runner gives it
 and reads its own commit back out of that worktree.
 
+The consuming shipped-loop merge node is actor-shaped because it performs a
+credentialed real-world write. It is placed on `company/codex-thor`, host
+**thor**, checkout `/home/thor/git/culture-nodes-agent`, and consumes this
+endpoint's gate-report response on `nodes-merge` stdin. Only an aggregate with
+outcome `gates_passed` whose `data.commit_sha` equals the about-to-merge
+candidate is accepted. The push uses the actor service's environment-only
+`GITHUB_TOKEN_WORKER` (#90, loaded from mode-0600
+`~/.culture-nodes/bridge-push.env`); the credential is neither a workflow
+input nor argv. The later combining-loop workflow owns the edge into that
+node; this gate example owns the authorization contract it consumes.
+
 Two things are deliberately *not* deployment configuration:
 
 - **The gate matrix and its thresholds travel in `argv`**, so they are pinned

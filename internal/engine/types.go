@@ -78,6 +78,17 @@ type Run struct {
 	// run row; unlike them it IS populated by the read path, because a
 	// dispatch has to be able to read it back.
 	ActorAffinity json.RawMessage
+
+	// Subject is the triggering event's correlation key (task t15,
+	// migrations/0038, spec c31/h16): "at most one active run per
+	// originating Jira issue". Empty for an operator-created run, and for a
+	// triggered run whose event carried no subject -- POST /v1alpha1/events'
+	// subject field is optional, so a caller that predates this task keeps
+	// working exactly as before. When non-empty, TriggerEvent uses it (paired
+	// with the workflow key) to find whether an ACTIVE run already claims
+	// this subject before creating a new one -- see
+	// internal/engine/trigger.go and Tx.ActiveRunBySubject.
+	Subject string
 }
 
 // RunOption adjusts the Run a CreateRun call is about to persist, inside

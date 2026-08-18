@@ -100,6 +100,13 @@ type Tx interface {
 	InsertRun(ctx context.Context, run Run) error
 	UpdateRunState(ctx context.Context, runID string, state RunState, output json.RawMessage) error
 	Run(ctx context.Context, runID string) (Run, error)
+	// ActiveRunBySubject returns the oldest non-terminal run created for
+	// (workflowKey, subject), or (zero, false, nil) when none exists -- the
+	// ordinary "first event for this subject" case, not an error. TriggerEvent
+	// calls it, under a per-subject advisory lock (see Lock), before creating
+	// a run for a matching trigger: found, the triggering event attaches to
+	// that run instead of spawning a sibling (task t15, spec c31/h16).
+	ActiveRunBySubject(ctx context.Context, workflowKey, subject string) (Run, bool, error)
 
 	InsertToken(ctx context.Context, token Token) error
 	ConsumeToken(ctx context.Context, tokenID string) error

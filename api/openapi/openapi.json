@@ -973,6 +973,10 @@
             "description": "Stable emitter-owned identity whose watermark suppresses duplicate deliveries. Must be supplied with watermark.",
             "type": "string"
           },
+          "subject": {
+            "description": "Optional correlation key (e.g. a Jira issue key) distinct from source_key/watermark's exact-redelivery cursor — two different real events on the same subject are both appended, but if the event matches a trigger and an ACTIVE run already exists for (workflow, subject), the event attaches to that run instead of creating a sibling (see triggered[].attached).",
+            "type": "string"
+          },
           "watermark": {
             "description": "Opaque per-source position. An exact repeat for source_key returns the original event without delivering it again.",
             "type": "object"
@@ -1324,9 +1328,13 @@
             "type": "array"
           },
           "triggered": {
-            "description": "Matching workflow-level handlers that created runs from this event. Empty means no newest published workflow version matched; the event is still recorded.",
+            "description": "Matching workflow-level handlers, one entry per match. Empty means no newest published workflow version matched; the event is still recorded.",
             "items": {
               "properties": {
+                "attached": {
+                  "description": "True when run_id names a run that already existed for this event's subject — the trigger matched but no new run was created; the event was recorded on the existing run instead. False/absent means run_id is a brand-new run.",
+                  "type": "boolean"
+                },
                 "run_id": {
                   "type": "string"
                 },
@@ -2717,6 +2725,10 @@
           },
           "state": {
             "$ref": "#/components/schemas/RunState"
+          },
+          "subject": {
+            "description": "The triggering event's correlation key (task t15, migrations/0038, spec c31/h16) — e.g. a Jira issue key. Absent for an operator-created run, or a triggered run whose event carried none. When present, POST /v1alpha1/events attaches a LATER matching event on the same subject to this run instead of creating a sibling (see EventDeliveryResult.triggered[].attached) — this is what makes \"exactly one active run per subject\" (spec c31) a fact GET /v1alpha1/runs/{id} can show.",
+            "type": "string"
           },
           "updated_at": {
             "format": "date-time",

@@ -38,7 +38,7 @@ func runEventTriggers(ctx context.Context, tx pgx.Tx, namespaceID string, runner
 	}
 	rows.Close()
 	inner := &engineTx{engineQueries: engineQueries{q: tx, namespaceID: namespaceID}}
-	fact := engine.PickupEvent{ID: ev.ID, Name: ev.Name, Emitter: ev.Emitter, Payload: ev.Payload}
+	fact := engine.PickupEvent{ID: ev.ID, Name: ev.Name, Emitter: ev.Emitter, Payload: ev.Payload, Subject: ev.Subject}
 	var out []engine.TriggeredRun
 	for _, candidate := range candidates {
 		created, err := runner.TriggerEvent(ctx, inner, candidate, fact)

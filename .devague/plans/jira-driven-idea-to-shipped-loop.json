@@ -5,7 +5,7 @@
   "schema_version": 4,
   "status": "exported",
   "created": "2026-08-18T05:57:58Z",
-  "updated": "2026-08-18T06:30:00Z",
+  "updated": "2026-08-18T07:10:53Z",
   "targets": [
     {
       "id": "c1",
@@ -786,8 +786,8 @@
       "text": "Engine trigger-dedup semantics unmeasured: t15 starts with a measurement; the guard's home (engine vs workflow) follows the finding",
       "kind": "unknown_nonblocking",
       "task_id": "t15",
-      "resolved": false,
-      "resolution": ""
+      "resolved": true,
+      "resolution": "Measured (task t15): the trigger layer had NO subject/correlation concept anywhere on the inbound event path. internal/compiler's trigger struct is onEvent + a CEL condition only; internal/engine's PickupEvent and internal/store/postgres's SignalEvent carried no correlation key; internal/engine/trigger.go's TriggerEvent created one run per matching event unconditionally, so two events on the same Jira issue mid-flight produced two runs. The guard's home is engine-side, at the exact point TriggerEvent is about to create a run (the natural seam): it now takes an event-supplied subject, locks per (namespace, workflow key, subject), and checks Tx.ActiveRunBySubject before creating a run -- found, the event attaches to the existing run (TypeTriggerEventAttached on that run's stream) instead of spawning a sibling. Durable via migrations/0038 (runs.subject). Tests: internal/engine/trigger_test.go, 4 cases, all passing against real Postgres."
     },
     {
       "id": "r2",

@@ -1,0 +1,16 @@
+-- 0041: drop the artifacts.attempt_id foreign key (deviation d1, issue #189).
+--
+-- The attempts row is written at COMPLETION (engine InsertAttempt), while an
+-- attempt's artifact publication legitimately happens MID-EXECUTION: the
+-- callback token authorizing the publication route is minted per attempt at
+-- dispatch, and the runner uploads its captured stdout while the process's
+-- result is still being assembled. Measured live (2026-08-18, the 18:51Z
+-- sweep on thor): the upload resolved its associations and then failed on
+-- exactly this constraint, every time, because the FK demands a row that by
+-- design does not exist yet.
+--
+-- The column and its associations stay; only the timing-hostile constraint
+-- goes. Orphan protection is not lost in practice: the attempt id comes from
+-- a path-bound verified token, and the durable parked runner_invocations /
+-- pending actor invocation row is checked before any insert.
+ALTER TABLE artifacts DROP CONSTRAINT IF EXISTS artifacts_attempt_id_fkey;

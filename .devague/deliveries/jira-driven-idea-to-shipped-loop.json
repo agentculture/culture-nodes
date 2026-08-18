@@ -2,7 +2,7 @@
   "plan_slug": "jira-driven-idea-to-shipped-loop",
   "schema_version": 1,
   "created": "2026-08-18T06:44:06Z",
-  "updated": "2026-08-18T07:46:16Z",
+  "updated": "2026-08-18T08:53:00Z",
   "deviations": [
     {
       "id": "d1",
@@ -57,6 +57,18 @@
       "what": "t16 partial coverage: tag-pinned placement (the third leg of #166/c36) is deferred - no tag concept exists in the actors table, registry, or affinity resolution, so building it is a placement redesign (registry schema + selection policy + recorded-placement durability), not a fit for the dispatch seam t16 built on. The configurable max and per-machine ceiling shipped; h21's tag-pinned clause is split out to a follow-up Feature",
       "task_ref": "t16",
       "reason": "measured absence of any tag concept; forcing it through the wrong seam would fake the acceptance",
+      "affects": [
+        "t20"
+      ],
+      "origin": "llm",
+      "status": "proposed",
+      "classification": "acceptable"
+    },
+    {
+      "id": "d6",
+      "what": "t8 demonstration adaptations: (a) headspace-cli 0.11.0 ships exactly one profile (python:3.12-slim, no git, registry is a code literal), so the committed combining-loop workflow cannot execute its git operations through the shipped runner profile - the demo published a LOCAL variant (1.0.x, not committed) whose bootstraps apt-install git and clone from the granted remote; (b) the in-attempt gate-report FK bug (#178) is worked around in the variant by dropping NODES_ATTEMPT_ID before the gate runs. Both adaptations are deployment-side, the committed example is unchanged, and the full loop ran live to a merged feature branch under them",
+      "task_ref": "t8",
+      "reason": "measured live: one git-less profile; ledger FK on attempts written only at completion",
       "affects": [
         "t20"
       ],

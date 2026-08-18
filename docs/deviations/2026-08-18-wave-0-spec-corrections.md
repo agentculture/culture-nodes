@@ -67,3 +67,26 @@ in-flight ceiling. The tag-pinned third leg of #166 was deferred after
 measurement: no tag concept exists in the actors table, the registry, or
 affinity resolution, so it is a placement redesign — filed as #175, with
 h21's tag-pinned clause split to it. Proposed as deviation d5.
+
+## d6 — t8's demonstration ran under two recorded adaptations (added during the live demo)
+
+The full combining loop ran live on the local stack — hand-emitted
+`combining-loop.package.finished` → harvest → stage → gate (`gates_passed`,
+real unittest suite on the real candidate) → merge (feature branch tip ==
+gated candidate SHA on the remote) → claim decision parked for a human. Two
+adaptations were required, both deployment-side (the committed example is
+unchanged):
+
+1. **headspace-cli 0.11.0 has one git-less profile** and a code-literal
+   profile registry, so the demo published a local workflow variant whose
+   bootstraps apt-install git and clone from the granted remote. Filed
+   upstream as agentculture/headspace-cli#24.
+2. **In-attempt gate reports violate `ledger_records_attempt_id_fkey`**
+   (attempts rows exist only after completion) — filed as #178; the variant
+   drops `NODES_ATTEMPT_ID` before the gate runs so the verdict records
+   without attempt binding.
+
+The demo also found and fixed #177 (async completions dropped the gate
+exit-code map) and injected one operator gate-report aggregate into run
+`01M0A0R8RPM7STFDBZQJRZ1AVB`'s ledger while diagnosing (stated here so the
+demo namespace's ledger reads honestly).

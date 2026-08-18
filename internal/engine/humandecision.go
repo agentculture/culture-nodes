@@ -633,6 +633,9 @@ func (d *humanTaskDecision) completeRun(ctx context.Context, endNodeID string, t
 	if err := d.tx.UpdateRunState(ctx, d.run.ID, RunCompleted, output); err != nil {
 		return err
 	}
+	if err := d.engine.DrainSubjectTriggerQueue(ctx, d.tx, d.wf, d.run); err != nil {
+		return err
+	}
 	if err := d.emit(ctx, TypeRunCompleted, map[string]any{
 		"run_id":      d.run.ID,
 		"node_run_id": d.nodeRun.ID,
@@ -663,6 +666,9 @@ func (d *humanTaskDecision) failRun(ctx context.Context, nodeRunState NodeRunSta
 	if err := d.tx.UpdateRunState(ctx, d.run.ID, RunFailed, nil); err != nil {
 		return err
 	}
+	if err := d.engine.DrainSubjectTriggerQueue(ctx, d.tx, d.wf, d.run); err != nil {
+		return err
+	}
 	if err := d.emit(ctx, TypeRunFailed, map[string]any{
 		"run_id":        d.run.ID,
 		"node_run_id":   d.nodeRun.ID,
@@ -685,6 +691,9 @@ func (d *humanTaskDecision) failBound(ctx context.Context, bound *BoundExceeded,
 		return err
 	}
 	if err := d.tx.UpdateRunState(ctx, d.run.ID, RunFailed, nil); err != nil {
+		return err
+	}
+	if err := d.engine.DrainSubjectTriggerQueue(ctx, d.tx, d.wf, d.run); err != nil {
 		return err
 	}
 	if err := d.emit(ctx, TypeRunBounded, map[string]any{

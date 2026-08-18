@@ -410,6 +410,9 @@ func (c *completion) cancel(ctx context.Context) error {
 	if err := c.tx.UpdateRunState(ctx, c.run.ID, RunCancelled, nil); err != nil {
 		return err
 	}
+	if err := c.engine.DrainSubjectTriggerQueue(ctx, c.tx, c.wf, c.run); err != nil {
+		return err
+	}
 	if err := c.emit(ctx, TypeRunCancelled, map[string]any{
 		"run_id":      c.run.ID,
 		"node_run_id": c.nodeRun.ID,
@@ -690,6 +693,9 @@ func (c *completion) completeRun(ctx context.Context, endNodeID string, transiti
 	if err := c.tx.UpdateRunState(ctx, c.run.ID, RunCompleted, output); err != nil {
 		return err
 	}
+	if err := c.engine.DrainSubjectTriggerQueue(ctx, c.tx, c.wf, c.run); err != nil {
+		return err
+	}
 	if err := c.emit(ctx, TypeRunCompleted, map[string]any{
 		"run_id":      c.run.ID,
 		"node_run_id": c.nodeRun.ID,
@@ -722,6 +728,9 @@ func (c *completion) failRun(ctx context.Context, nodeRunState NodeRunState, det
 	if err := c.tx.UpdateRunState(ctx, c.run.ID, RunFailed, nil); err != nil {
 		return err
 	}
+	if err := c.engine.DrainSubjectTriggerQueue(ctx, c.tx, c.wf, c.run); err != nil {
+		return err
+	}
 	if err := c.emit(ctx, TypeRunFailed, map[string]any{
 		"run_id":      c.run.ID,
 		"node_run_id": c.nodeRun.ID,
@@ -750,6 +759,9 @@ func (c *completion) failBound(ctx context.Context, bound *BoundExceeded, transi
 		return err
 	}
 	if err := c.tx.UpdateRunState(ctx, c.run.ID, RunFailed, nil); err != nil {
+		return err
+	}
+	if err := c.engine.DrainSubjectTriggerQueue(ctx, c.tx, c.wf, c.run); err != nil {
 		return err
 	}
 	if err := c.emit(ctx, TypeRunBounded, map[string]any{

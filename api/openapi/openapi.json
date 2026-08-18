@@ -1335,6 +1335,14 @@
                   "description": "True when run_id names a run that already existed for this event's subject — the trigger matched but no new run was created; the event was recorded on the existing run instead. False/absent means run_id is a brand-new run.",
                   "type": "boolean"
                 },
+                "deferred": {
+                  "description": "True when the workflow's configured limits.maxConcurrentSubjectRuns ceiling had no headroom for a new subject — no run was created and run_id is empty. deferred_trigger_id names the queued row a later matching event for this subject, or a run of this workflow reaching a terminal state, will drain into a run.",
+                  "type": "boolean"
+                },
+                "deferred_trigger_id": {
+                  "description": "Set exactly when deferred is true.",
+                  "type": "string"
+                },
                 "run_id": {
                   "type": "string"
                 },

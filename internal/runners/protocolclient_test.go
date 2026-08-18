@@ -433,6 +433,76 @@ func assertDispatchKind(t *testing.T, err error, want runners.ErrorKind) *runner
 	return de
 }
 
+// TestReloadableSecretsStoreReplacesWhatDispatchSends is task t19's client-
+// side half of the live-reload gap (issue #8): a ProtocolClient built once
+// over a *ReloadableSecrets must send whichever secret was most recently
+// Stored, proven the same way every other secret assertion in this file is
+// proven — by reading the Authorization header a real Dispatch call sends,
+// never by reaching into the client's own fields.
+func TestReloadableSecretsStoreReplacesWhatDispatchSends(t *testing.T) {
+	var gotAuth string
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotAuth = r.Header.Get("Authorization")
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusAccepted)
+		_ = json.NewEncoder(w).Encode(runners.Acceptance{OperationID: "op_reload"})
+	}))
+	defer server.Close()
+
+	secrets := runners.NewReloadableSecrets(runners.StaticSecrets{pcSecretRef: "first-secret"})
+	client := newTestClient(t, secrets)
+	identity := pcIdentity(server.URL)
+
+	if _, err := client.Dispatch(context.Background(), identity, pcOperation("op_reload"), runners.CallbackOffer{}); err != nil {
+		t.Fatalf("Dispatch (before reload): %v", err)
+	}
+	if gotAuth != "Bearer first-secret" {
+		t.Fatalf("Authorization before reload = %q, want Bearer first-secret", gotAuth)
+	}
+
+	secrets.Store(runners.StaticSecrets{pcSecretRef: "second-secret"})
+
+	if _, err := client.Dispatch(context.Background(), identity, pcOperation("op_reload"), runners.CallbackOffer{}); err != nil {
+		t.Fatalf("Dispatch (after reload): %v", err)
+	}
+	if gotAuth != "Bearer second-secret" {
+		t.Fatalf("Authorization after reload = %q, want Bearer second-secret; the client kept the pre-reload secret", gotAuth)
+	}
+}
+
+// TestReloadableSecretsResolveBeforeAnyStoreIsAnError matches
+// StaticSecrets.ResolveSecret's own contract for an unknown reference: a
+// *ReloadableSecrets built with NewReloadableSecrets always has an initial
+// map (even if empty), so this only exercises the belt-and-braces nil guard
+// a zero-value ReloadableSecrets would otherwise hit.
+func TestReloadableSecretsResolveBeforeAnyStoreIsAnError(t *testing.T) {
+	var secrets runners.ReloadableSecrets
+	if _, err := secrets.ResolveSecret(context.Background(), pcSecretRef); err == nil {
+		t.Fatal("resolving before any Store must error, not panic or return an empty secret")
+	}
+}
+
+// TestReloadableSecretsStoreIsSafeConcurrentlyWithResolve is the property the
+// whole type exists for: a reload happening while a dispatch is mid-flight
+// must never race. go test -race is what actually enforces this; the
+// assertion below just keeps the goroutines honest about what they saw.
+func TestReloadableSecretsStoreIsSafeConcurrentlyWithResolve(t *testing.T) {
+	secrets := runners.NewReloadableSecrets(runners.StaticSecrets{pcSecretRef: "initial"})
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		for i := 0; i < 100; i++ {
+			secrets.Store(runners.StaticSecrets{pcSecretRef: "generation"})
+		}
+	}()
+	for i := 0; i < 100; i++ {
+		if _, err := secrets.ResolveSecret(context.Background(), pcSecretRef); err != nil {
+			t.Fatalf("ResolveSecret raced a concurrent Store: %v", err)
+		}
+	}
+	<-done
+}
+
 // completedResultJSON is a minimal schema-shaped runner result document.
 func completedResultJSON(operationID string, exitCode int) string {
 	res := runners.Result{

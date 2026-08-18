@@ -448,3 +448,56 @@ func (r *FunctionRegistry) Len() int {
 	defer r.mu.RUnlock()
 	return len(r.byKey)
 }
+
+// ReloadServices atomically replaces every SERVICE identity in the registry
+// with services, in one swap: every entry is validated before anything is
+// changed, so a single malformed identity refuses the whole reload and
+// leaves the registry exactly as it was — a worker mid-dispatch must never
+// observe half of a rebuild (task t19, issue #8's "runner services load at
+// worker start only" gap).
+//
+// This is the "rebuild the registry" RegisterService's own doc comment
+// points an operator at when a name's identity genuinely needs to change —
+// endpoint, digest, or secret reference — without a process restart.
+// RegisterService refuses that same change as a repoint; ReloadServices is
+// the sanctioned way to do it, because it is explicit about replacing the
+// whole service set rather than quietly repointing one name underneath a
+// caller that thinks it is still talking to what it registered.
+//
+// It is for a registry whose SERVICE entries all come from one reloadable
+// source (cmd/nodes/runnerservices.go's NODES_RUNNER_SERVICES_FILE), not a
+// mix of independently-managed RegisterService callers: a name registered
+// through RegisterService directly and not present in a later
+// ReloadServices call is removed, because the reload's services map is
+// treated as the complete, authoritative set. Any FUNCTION identity already
+// registered is left untouched, unless an incoming service claims the same
+// name — the registry's one-name-one-kind invariant holds across a reload
+// exactly as it holds across two RegisterX calls, so that collision is
+// refused rather than silently resolved either way.
+func (r *FunctionRegistry) ReloadServices(services map[string]ServiceIdentity) error {
+	next := make(map[string]registryEntry, len(services))
+	for name, identity := range services {
+		if !namePattern.MatchString(name) {
+			return fmt.Errorf("runners: registry name %q is not a valid identity name", name)
+		}
+		if err := identity.Validate(); err != nil {
+			return fmt.Errorf("runners: reloading service %q: %w", name, err)
+		}
+		next[name] = registryEntry{kind: IdentityService, service: identity}
+	}
+
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	for name, entry := range r.byKey {
+		if entry.kind != IdentityFunction {
+			continue
+		}
+		if _, clash := next[name]; clash {
+			return fmt.Errorf("runners: reload cannot register service %q: "+
+				"the name is already bound to %s", name, entry.describe())
+		}
+		next[name] = entry
+	}
+	r.byKey = next
+	return nil
+}

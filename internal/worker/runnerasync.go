@@ -619,8 +619,14 @@ func (w *Worker) runnerCompletionFor(node *nodeSpec, result runners.Result) (run
 		NodeID:         node.ID,
 		SuccessOutcome: outcomes.Success,
 		FailureOutcome: outcomes.Failure,
-		ActorID:        w.codeRunnerActorID(),
-		ActorRevision:  w.opts.CodeRunnerRevision,
+		// The gate vocabulary's exit-code map rides here too — dropping it
+		// made a parked gate's exit 2 a technical failure instead of
+		// measurement_incomplete, while the same node completing
+		// synchronously routed correctly (found live by the t8 demo; the
+		// sync path in code.go has always set it).
+		ExitCodeOutcomes: outcomes.ByExitCode,
+		ActorID:          w.codeRunnerActorID(),
+		ActorRevision:    w.opts.CodeRunnerRevision,
 	})
 }
 

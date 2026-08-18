@@ -94,3 +94,4 @@ issue,bucket,disposition,evidence_pointer
 171,finish work,"build the artifact GET/consume side with the POST's custody discipline; unblocks decision c25 frame-as-artifact travel",internal/artifacts Router.Get with no HTTP caller + deviation d2
 172,bug tail,"rewrite examples/pr-upkeep/README.md against the v2 event-driven workflow it ships beside",examples/pr-upkeep/README.md v1 nodes vs workflow.yaml v2
 173,finish work,"give a signal wait a declared timeout edge (reminder/escalation on silence); timer rows already exist, the wait-park path just never writes one",internal/worker/wait.go decodeUntil + examples/jira-question-round-trip header gap note
+174,verify-then-close,"human reviews deviation d4 (devague deviate --confirm d4), then close on read",docs/deviations/2026-08-18-d4-fix-170-in-cycle.md

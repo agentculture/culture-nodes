@@ -73,7 +73,7 @@ kind: Workflow
 
 metadata:
   name: jira-intake
-  version: 1.1.0
+  version: 1.1.1
   ownerRef: team/platform-ai
 
 spec:
@@ -219,7 +219,11 @@ spec:
             literal: In Progress
       contract:
         outcomes:
-          transitioned:
+          # The name is the BRIDGE's (transition_issue.result reports
+          # `issue_transitioned`); measured live on run
+          # 01M0B6WGCQNSQD4TBY5J5HBG61, whose board move succeeded and whose
+          # completion was rejected over exactly this name.
+          issue_transitioned:
             schema:
               type: object
               required: [issue]
@@ -245,5 +249,5 @@ spec:
       to: post-comment
     - from: post-comment.comment_posted
       to: transition
-    - from: transition.transitioned
+    - from: transition.issue_transitioned
       to: picked-up

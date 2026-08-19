@@ -4,7 +4,7 @@
   "schema_version": 5,
   "status": "exported",
   "created": "2026-08-18T04:57:43Z",
-  "updated": "2026-08-18T06:44:40Z",
+  "updated": "2026-08-18T14:33:27Z",
   "claims": [
     {
       "id": "c1",
@@ -87,7 +87,7 @@
       "kind": "boundary",
       "text": "The sweep stays read-only: it holds its event-ingress token and its Jira READ pair (backlog fetch is not a real-world act - #76/#106 place that read in the sweep deliberately), and it never holds WRITE authority. The Jira write credential lives in a separate actor bridge outside the deployment (adapters/jira); the control-plane process gains no Jira egress",
       "origin": "llm",
-      "status": "proposed",
+      "status": "confirmed",
       "honesty_conditions": [
         {
           "id": "h10",
@@ -112,7 +112,7 @@
       "kind": "requirement",
       "text": "The spec chain (#89) runs as a graph: deterministic devague moves as code nodes, judgement as agent nodes, human gates as APPROVAL nodes on the engine's own pending-decisions surface (an approval node parks a human_tasks row; adapters/human-inbox is an actor bridge for agent nodes and is not wired to approvals). internal/devague maps devague JSON onto authority-honest ledger records, and devague itself makes no LLM calls - which is what makes the moves expressible as code nodes",
       "origin": "llm",
-      "status": "proposed",
+      "status": "confirmed",
       "honesty_conditions": [
         {
           "id": "h5",
@@ -230,7 +230,7 @@
       "kind": "assumption",
       "text": "The carrier question #89 parked is HALF-changed since filing: the artifact ingest route is mounted (POST /v1alpha1/attempts/{attemptID}/artifacts) and git_ref handles validate, but the artifact surface has NO read side (POST-only, test-pinned), so frame-as-artifact travel works for publishing and not yet for consuming - the read side is tracked as its own Feature",
       "origin": "llm",
-      "status": "proposed",
+      "status": "confirmed",
       "honesty_conditions": [],
       "hard_questions": [],
       "links": [],

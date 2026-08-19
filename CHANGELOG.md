@@ -5,6 +5,20 @@ All notable changes to this project will be documented in this file.
 Format follows [Keep a Changelog](https://keepachangelog.com/). This project
 adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.38.2] - 2026-08-19
+
+### Added
+
+- spec: `docs/specs/2026-08-19-jira-operating-surface-flow-store.md` — the
+  Jira-operating-surface + flow-store cycle (#192 #193 #194 #197 #198 #199
+  #200), specced, challenged, and adjudicated end-to-end through Jira ticket
+  SCRUM-3; every frame decision (q1–q7, three confirm rounds, h18) was made
+  by the operator as board comments and transacted by the session acting as
+  the layer (#197's target made concrete)
+- frame state for `jira-operating-surface-flow-store` (19 claims, 18 honesty
+  conditions, 14 provenance scope entries, 7 board-resolved questions, 2
+  parks) plus the prior cycle's devague record-close state that rode this PR
+
 ## [0.38.1] - 2026-08-18
 
 ### Fixed

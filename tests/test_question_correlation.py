@@ -16,13 +16,16 @@ pinned against each other rather than each against its own fixture.
 
 from __future__ import annotations
 
+import importlib
 import importlib.util
 import sys
 from pathlib import Path
 
 import pytest
 
-from tests.test_pr_upkeep_sweep import sweep
+from tests.test_pr_upkeep_sweep import sweep  # noqa: F401 — loads the example dir onto sys.path
+
+jira = importlib.import_module("pr_upkeep_jira")
 
 EXAMPLE_DIR = Path(__file__).resolve().parents[1] / "examples" / "jira-question-round-trip"
 
@@ -93,7 +96,7 @@ class TestMarkerContract:
         assert match and match.group(1) == QUESTION_ID
         # The sweep's own extraction pattern (the emitter side of the
         # contract) accepts exactly the same line.
-        assert sweep._JIRA_QUESTION_MARKER_RE.search(marker).group(1) == QUESTION_ID
+        assert jira._JIRA_QUESTION_MARKER_RE.search(marker).group(1) == QUESTION_ID
 
     def test_an_id_the_bridge_would_refuse_fails_at_the_asker(self):
         with pytest.raises(ValueError):

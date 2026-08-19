@@ -165,6 +165,17 @@ Numbered SQL migrations for the authoritative PostgreSQL store (prd-spec
   inbound verifier record. It keys parties by actor key or host name, rejects
   address-shaped keys, and stores only a SHA-256 verifier or an environment
   variable name so database dumps cannot become credential archives.
+- `0041_jira_history_watermark_cutover.sql` — expand-only Jira history
+  cutover markers. SQL derives known issues from legacy `:status` / `:comment`
+  rows, but Jira owns the current head. The first history-aware pass must
+  adopt each pending issue's observed cumulative head through the control
+  plane before offering history facts; adoption emits nothing and facts at
+  or behind that head are suppressed across per-position source keys.
+  **Deploy order is atomic:** migration 0041, the adoption-aware control
+  plane, and the history-aware emitter are one deploy unit; start the emitter
+  only after the migration and control-plane binary are live. Never deploy
+  the emitter first or let its first pass emit before adoption, because
+  pre-cutover ticket history could become billable intake runs.
 
 - `0022_dispatch_rate_state.sql` — expand-only: adds the mutable
   `dispatch_rate_state` table (task t10 of the economy-discord-graphs plan,

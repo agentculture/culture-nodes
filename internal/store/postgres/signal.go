@@ -5,7 +5,9 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"math/big"
 	"sort"
+	"strings"
 	"time"
 
 	"github.com/jackc/pgx/v5"
@@ -365,6 +367,38 @@ type DeliverSignalEventInput struct {
 	Trigger engine.EventTriggerRunner
 }
 
+// JiraHistoryWatermark is the cumulative cursor carried by each fact from
+// the history-aware Jira emitter. Jira ids remain decimal strings on the
+// wire; comparison below uses arbitrary precision integers.
+type JiraHistoryWatermark struct {
+	ChangelogID string `json:"changelog_id"`
+	CommentID   string `json:"comment_id"`
+}
+
+// AdoptJiraHistoryHead records Jira's observed current head without
+// appending a signal event. Migration 0041 cannot fill this value because
+// Jira, not PostgreSQL, owns it. The first history-aware sweep calls this
+// before offering any recorded entries for a pending issue.
+func (s *Store) AdoptJiraHistoryHead(ctx context.Context, namespaceID, issueSourceKey string, watermark json.RawMessage) error {
+	if namespaceID == "" || !jiraIssueSourceKey(issueSourceKey) {
+		return errors.New("postgres: AdoptJiraHistoryHead requires namespace and jira:<site>:<issue> source key")
+	}
+	parsed, err := parseJiraHistoryWatermark(watermark)
+	if err != nil {
+		return fmt.Errorf("postgres: AdoptJiraHistoryHead: %w", err)
+	}
+	encoded, _ := json.Marshal(parsed)
+	_, err = s.pool.Exec(ctx, `INSERT INTO jira_history_watermark_cutovers
+		(namespace_id, issue_source_key, watermark, adopted_at)
+		VALUES ($1,$2,$3,now())
+		ON CONFLICT (namespace_id, issue_source_key) DO UPDATE SET
+		watermark=EXCLUDED.watermark, adopted_at=EXCLUDED.adopted_at`, namespaceID, issueSourceKey, encoded)
+	if err != nil {
+		return fmt.Errorf("postgres: AdoptJiraHistoryHead: %w", err)
+	}
+	return nil
+}
+
 // selectCandidateSubscriptionsSQL is the unlocked first read of the pending
 // subscriptions an event may resume — only good enough to learn WHICH runs'
 // advisory locks to take. The authoritative read is
@@ -457,6 +491,15 @@ func (in DeliverSignalEventInput) validate() error {
 // It does not commit and does not roll back: the caller owns tx's lifetime,
 // including the rollback that undoes everything this wrote.
 func (s *Store) deliverSignalEventTx(ctx context.Context, tx pgx.Tx, in DeliverSignalEventInput) (SignalDelivery, error) {
+	if issueKey, ok := jiraHistoryIssueSourceKey(in.SourceKey); ok {
+		suppressed, err := suppressPreCutoverJiraHistory(ctx, tx, in.NamespaceID, issueKey, in.Watermark)
+		if err != nil {
+			return SignalDelivery{}, err
+		}
+		if suppressed {
+			return SignalDelivery{Duplicate: true, Suppressed: true}, nil
+		}
+	}
 	if in.SourceKey != "" {
 		if _, err := tx.Exec(ctx, `SELECT pg_advisory_xact_lock(hashtextextended($1, 0))`,
 			"signal-watermark:"+in.NamespaceID+":"+in.SourceKey); err != nil {
@@ -579,6 +622,70 @@ type SignalDelivery struct {
 	Pickups   []engine.EventPickupResult
 	Triggered []engine.TriggeredRun
 	Duplicate bool
+	// Suppressed is a pre-cutover history fact adopted without emission,
+	// rather than an exact redelivery of an already-appended event.
+	Suppressed bool
+}
+
+func jiraIssueSourceKey(key string) bool {
+	parts := strings.Split(key, ":")
+	return len(parts) == 3 && parts[0] == "jira" && parts[1] != "" && parts[2] != ""
+}
+
+func jiraHistoryIssueSourceKey(key string) (string, bool) {
+	parts := strings.Split(key, ":")
+	if len(parts) != 6 || parts[0] != "jira" || parts[1] == "" || parts[2] == "" || parts[3] != "history" || (parts[4] != "changelog" && parts[4] != "comment") || parts[5] == "" {
+		return "", false
+	}
+	return strings.Join(parts[:3], ":"), true
+}
+
+func parseJiraHistoryWatermark(raw json.RawMessage) (JiraHistoryWatermark, error) {
+	var watermark JiraHistoryWatermark
+	if err := json.Unmarshal(raw, &watermark); err != nil {
+		return watermark, fmt.Errorf("invalid watermark: %w", err)
+	}
+	for _, value := range []string{watermark.ChangelogID, watermark.CommentID} {
+		if value != "" {
+			if _, ok := new(big.Int).SetString(value, 10); !ok {
+				return watermark, errors.New("watermark ids must be empty or decimal strings")
+			}
+		}
+	}
+	return watermark, nil
+}
+
+func suppressPreCutoverJiraHistory(ctx context.Context, tx pgx.Tx, namespaceID, issueSourceKey string, raw json.RawMessage) (bool, error) {
+	incoming, err := parseJiraHistoryWatermark(raw)
+	if err != nil {
+		return false, fmt.Errorf("postgres: DeliverSignalEvent: jira history watermark: %w", err)
+	}
+	var adoptedRaw []byte
+	err = tx.QueryRow(ctx, `SELECT watermark FROM jira_history_watermark_cutovers
+		WHERE namespace_id=$1 AND issue_source_key=$2 AND adopted_at IS NOT NULL`, namespaceID, issueSourceKey).Scan(&adoptedRaw)
+	if isNoRows(err) {
+		return false, nil
+	}
+	if err != nil {
+		return false, fmt.Errorf("postgres: DeliverSignalEvent: read jira cutover: %w", err)
+	}
+	adopted, err := parseJiraHistoryWatermark(adoptedRaw)
+	if err != nil {
+		return false, fmt.Errorf("postgres: DeliverSignalEvent: stored jira cutover: %w", err)
+	}
+	return decimalAtOrBefore(incoming.ChangelogID, adopted.ChangelogID) && decimalAtOrBefore(incoming.CommentID, adopted.CommentID), nil
+}
+
+func decimalAtOrBefore(value, head string) bool {
+	if value == "" {
+		return true
+	}
+	if head == "" {
+		return false
+	}
+	v, _ := new(big.Int).SetString(value, 10)
+	h, _ := new(big.Int).SetString(head, 10)
+	return v.Cmp(h) <= 0
 }
 
 func signalEventByIDTx(ctx context.Context, tx pgx.Tx, id string) (SignalEvent, error) {

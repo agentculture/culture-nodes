@@ -115,7 +115,8 @@ def _get_json(url: str, *, basic: tuple[str, str]) -> dict:
     request = urllib.request.Request(url)  # noqa: S310 -- configured https Jira host
     request.add_header("Accept", "application/json")
     request.add_header(
-        "Authorization", f"Basic {b64encode(f'{basic[0]}:{basic[1]}'.encode()).decode()}",
+        "Authorization",
+        f"Basic {b64encode(f'{basic[0]}:{basic[1]}'.encode()).decode()}",
     )
     with urllib.request.urlopen(request, timeout=30) as response:  # noqa: S310
         return json.load(response)
@@ -148,17 +149,31 @@ def fetch_jira_issues(site: str, project: str, email: str, token: str) -> dict:
         changelog = issue.setdefault("changelog", {})
         histories = list(changelog.get("histories") or [])
         _extend_jira_issue_collection(
-            site, issue_key, "changelog", histories, int(changelog.get("total") or len(histories)), basic
+            site,
+            issue_key,
+            "changelog",
+            histories,
+            int(changelog.get("total") or len(histories)),
+            basic,
         )
-        changelog["histories"] = sorted(histories, key=lambda entry: _history_id_key(entry.get("id")))
+        changelog["histories"] = sorted(
+            histories, key=lambda entry: _history_id_key(entry.get("id"))
+        )
 
         fields = issue.setdefault("fields", {})
         comment_page = fields.setdefault("comment", {})
         comments = list(comment_page.get("comments") or [])
         _extend_jira_issue_collection(
-            site, issue_key, "comment", comments, int(comment_page.get("total") or len(comments)), basic
+            site,
+            issue_key,
+            "comment",
+            comments,
+            int(comment_page.get("total") or len(comments)),
+            basic,
         )
-        comment_page["comments"] = sorted(comments, key=lambda entry: _history_id_key(entry.get("id")))
+        comment_page["comments"] = sorted(
+            comments, key=lambda entry: _history_id_key(entry.get("id"))
+        )
     return {"issues": issues, "isLast": True}
 
 

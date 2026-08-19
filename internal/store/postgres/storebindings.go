@@ -3,6 +3,7 @@ package postgres
 import (
 	"context"
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/jackc/pgx/v5/pgtype"
@@ -20,6 +21,17 @@ import (
 // (entry, required_ref). The graph document is never touched: resolution
 // consults these rows at publish time (internal/api/storebindings.go) and
 // at dispatch time (internal/worker/registry.go).
+//
+// Dispatch resolution is namespace-wide — the worker registry sees a ref,
+// not an entry — while binding and publish validation are entry-scoped.
+// Those two scopes only compose when every entry that binds a ref agrees on
+// the local key: otherwise whichever entry bound last would silently
+// redirect every OTHER entry's dispatches (PR #208 finding 4). So the
+// resolution read reduces the trail to each entry's CURRENT binding and
+// answers only on agreement (disagreement is ErrStoreBindingConflict, named
+// per entry), and the create path refuses an entry JOINING an already-bound
+// ref with a different key — while an entry that already binds the ref may
+// rebind, so migrating a shared mapping has a first mover.
 
 // CreateStoreEntryBindingInput is the input to CreateStoreEntryBinding.
 type CreateStoreEntryBindingInput struct {
@@ -81,30 +93,74 @@ func (s *Store) CurrentActorByKey(ctx context.Context, namespaceID, actorKey str
 	return a, nil
 }
 
-// ResolveStoreBoundActorKey returns the local actor key the newest binding
-// maps a graph-pinned ref to, across every entry in the namespace —
-// the dispatch-resolution read (internal/worker/registry.go's fallback when
-// no local registration answers for the ref directly). ErrNotFound when
-// nothing binds the ref.
+// ResolveStoreBoundActorKey returns the local actor key the current
+// bindings map a graph-pinned ref to — the dispatch-resolution read
+// (internal/worker/registry.go's fallback when no local registration
+// answers for the ref directly). Bindings are created and superseded PER
+// ENTRY, so "current" is computed per entry, and the namespace-wide answer
+// exists only when every entry that binds the ref agrees on the key.
+// Disagreement is ErrStoreBindingConflict, named per entry; a ref nothing
+// binds is ErrNotFound.
 func (s *Store) ResolveStoreBoundActorKey(ctx context.Context, namespaceID, requiredRef string) (string, error) {
-	if namespaceID == "" {
-		return "", fmt.Errorf("postgres: ResolveStoreBoundActorKey: namespaceID is required")
-	}
-	if requiredRef == "" {
-		return "", fmt.Errorf("postgres: ResolveStoreBoundActorKey: requiredRef is required")
-	}
-	var key string
-	err := s.pool.QueryRow(ctx, `SELECT bound_actor_key
-		FROM store_entry_bindings
-		WHERE namespace_id = $1 AND required_ref = $2
-		ORDER BY created_at DESC, id DESC LIMIT 1`, namespaceID, requiredRef).Scan(&key)
+	current, err := s.CurrentStoreEntryBindingsByRef(ctx, namespaceID, requiredRef)
 	if err != nil {
-		if isNoRows(err) {
-			return "", fmt.Errorf("postgres: binding for %s: %w", requiredRef, ErrNotFound)
+		return "", err
+	}
+	if len(current) == 0 {
+		return "", fmt.Errorf("postgres: binding for %s: %w", requiredRef, ErrNotFound)
+	}
+	key := current[0].BoundActorKey
+	for _, b := range current[1:] {
+		if b.BoundActorKey == key {
+			continue
 		}
-		return "", fmt.Errorf("postgres: ResolveStoreBoundActorKey %s: %w", requiredRef, err)
+		pairs := make([]string, 0, len(current))
+		for _, c := range current {
+			pairs = append(pairs, fmt.Sprintf("entry %s -> %s", c.EntryID, c.BoundActorKey))
+		}
+		return "", fmt.Errorf("postgres: %w: %s: %s — rebind the disagreeing entries to one key",
+			ErrStoreBindingConflict, requiredRef, strings.Join(pairs, ", "))
 	}
 	return key, nil
+}
+
+// CurrentStoreEntryBindingsByRef returns each entry's CURRENT binding for a
+// ref — the newest row per (entry, required_ref) — across the namespace,
+// ordered by entry id for a stable read. This is the resolution view
+// ResolveStoreBoundActorKey reduces, and the agreement set
+// createStoreEntryBinding checks a joining entry against.
+func (s *Store) CurrentStoreEntryBindingsByRef(ctx context.Context, namespaceID, requiredRef string) ([]StoreEntryBinding, error) {
+	return currentStoreEntryBindingsByRef(ctx, s.pool, namespaceID, requiredRef)
+}
+
+func currentStoreEntryBindingsByRef(ctx context.Context, pool *pgxpool.Pool, namespaceID, requiredRef string) ([]StoreEntryBinding, error) {
+	if namespaceID == "" {
+		return nil, fmt.Errorf("postgres: CurrentStoreEntryBindingsByRef: namespaceID is required")
+	}
+	if requiredRef == "" {
+		return nil, fmt.Errorf("postgres: CurrentStoreEntryBindingsByRef: requiredRef is required")
+	}
+	rows, err := pool.Query(ctx, `SELECT DISTINCT ON (entry_id) `+storeEntryBindingColumns+`
+		FROM store_entry_bindings
+		WHERE namespace_id = $1 AND required_ref = $2
+		ORDER BY entry_id, created_at DESC, id DESC`, namespaceID, requiredRef)
+	if err != nil {
+		return nil, fmt.Errorf("postgres: CurrentStoreEntryBindingsByRef: %w", err)
+	}
+	defer rows.Close()
+
+	out := make([]StoreEntryBinding, 0)
+	for rows.Next() {
+		b, err := scanStoreEntryBinding(rows)
+		if err != nil {
+			return nil, fmt.Errorf("postgres: CurrentStoreEntryBindingsByRef: scan: %w", err)
+		}
+		out = append(out, b)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("postgres: CurrentStoreEntryBindingsByRef: %w", err)
+	}
+	return out, nil
 }
 
 // The namespace-bound mirrors for the API surface (storeentries.go's
@@ -156,24 +212,33 @@ func createStoreEntryBinding(ctx context.Context, pool *pgxpool.Pool, in CreateS
 		return StoreEntryBinding{}, fmt.Errorf("postgres: CreateStoreEntryBinding: boundBy is required")
 	}
 
-	// Dispatch resolution (ResolveStoreBoundActorKey) is namespace-wide and
-	// newest-wins by required_ref: two entries binding one ref to DIFFERENT
-	// actors would silently race to the newest. Refuse that shape by name;
-	// binding the same ref to the same actor from another entry, or
-	// re-binding within one entry, stays allowed (append-only corrections).
-	var otherEntry, otherActor string
-	err := pool.QueryRow(ctx, `SELECT entry_id, bound_actor_key
-		FROM store_entry_bindings
-		WHERE namespace_id = $1 AND required_ref = $2 AND entry_id <> $3
-		ORDER BY created_at DESC, id DESC LIMIT 1`,
-		in.NamespaceID, in.RequiredRef, in.EntryID).Scan(&otherEntry, &otherActor)
-	if err != nil && !isNoRows(err) {
+	// Dispatch resolution (ResolveStoreBoundActorKey) is namespace-wide:
+	// two entries binding one ref to DIFFERENT actors would leave it no
+	// honest single answer. So an entry JOINING an already-bound ref must
+	// agree with every other entry's CURRENT binding — refused by name
+	// otherwise. An entry that already binds the ref may still rebind
+	// (append-only corrections, and migrating a shared mapping needs a
+	// first mover); until the other entries follow, resolution refuses the
+	// ref as conflicting rather than picking a side.
+	current, err := currentStoreEntryBindingsByRef(ctx, pool, in.NamespaceID, in.RequiredRef)
+	if err != nil {
 		return StoreEntryBinding{}, fmt.Errorf("postgres: CreateStoreEntryBinding: conflict probe: %w", err)
 	}
-	if err == nil && otherActor != in.BoundActorKey {
+	entryAlreadyBinds := false
+	var disagreeing *StoreEntryBinding
+	for i := range current {
+		if current[i].EntryID == in.EntryID {
+			entryAlreadyBinds = true
+			continue
+		}
+		if current[i].BoundActorKey != in.BoundActorKey {
+			disagreeing = &current[i]
+		}
+	}
+	if !entryAlreadyBinds && disagreeing != nil {
 		return StoreEntryBinding{}, fmt.Errorf(
-			"postgres: CreateStoreEntryBinding: entry %s currently binds %s to %q: %w",
-			otherEntry, in.RequiredRef, otherActor, ErrStoreBindingConflict)
+			"postgres: CreateStoreEntryBinding: entry %s currently binds %s to %q, so binding it to %q here would make dispatch resolution ambiguous: %w",
+			disagreeing.EntryID, in.RequiredRef, disagreeing.BoundActorKey, in.BoundActorKey, ErrStoreBindingConflict)
 	}
 
 	id := store.NewULID()

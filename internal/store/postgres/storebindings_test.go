@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"strings"
 	"testing"
 
 	"github.com/agentculture/culture-nodes/internal/store"
@@ -109,6 +110,95 @@ func TestStoreEntryBindingRoundTripAndTrail(t *testing.T) {
 	}
 	if key != "local/codex-second" {
 		t.Fatalf("resolved key = %q, want local/codex-second", key)
+	}
+}
+
+// TestStoreEntryBindingCrossEntryAgreement pins the resolution scope fix
+// (PR #208 finding 4): bindings are entry-scoped records but the dispatch
+// read is namespace-wide, so it answers only when every entry's CURRENT
+// binding for the ref agrees — disagreement is ErrStoreBindingConflict
+// naming each entry, never a silent newest-entry-wins pick that would let
+// one pulled flow's mapping redirect another flow's dispatches.
+func TestStoreEntryBindingCrossEntryAgreement(t *testing.T) {
+	s := requireStore(t)
+	ctx := context.Background()
+	ns := pgtest.MustNamespace(t, s, "storebinding-agreement").ID
+
+	newEntry := func(entryDigest string) string {
+		in := sampleStoreEntryInput(ns)
+		in.Origin = "pulled"
+		in.SourceRegistry = "https://nodes.thor.internal:8443"
+		in.EntryDigest = entryDigest
+		entry, err := s.CreateStoreEntry(ctx, in)
+		if err != nil {
+			t.Fatalf("CreateStoreEntry: %v", err)
+		}
+		return entry.ID
+	}
+	entryA := newEntry("sha256:aaaa000000000000000000000000000000000000000000000000000000000000")
+	entryB := newEntry("sha256:bbbb000000000000000000000000000000000000000000000000000000000000")
+
+	oneActor := insertBindingActor(t, s, ns, "local/lane-one")
+	twoActor := insertBindingActor(t, s, ns, "local/lane-two")
+
+	const ref = "actor://codex@sha256:bbbb"
+	bind := func(entryID, actorID, actorKey string) {
+		t.Helper()
+		if _, err := s.CreateStoreEntryBinding(ctx, postgres.CreateStoreEntryBindingInput{
+			NamespaceID:   ns,
+			EntryID:       entryID,
+			RequiredRef:   ref,
+			RequiredKind:  "actor",
+			BoundActorID:  actorID,
+			BoundActorKey: actorKey,
+			BoundBy:       "operator@spark",
+		}); err != nil {
+			t.Fatalf("CreateStoreEntryBinding(%s -> %s): %v", entryID, actorKey, err)
+		}
+	}
+
+	// Two entries agreeing on the key resolve to it.
+	bind(entryA, oneActor, "local/lane-one")
+	bind(entryB, oneActor, "local/lane-one")
+	if key, err := s.ResolveStoreBoundActorKey(ctx, ns, ref); err != nil || key != "local/lane-one" {
+		t.Fatalf("agreeing resolve = %q, %v; want local/lane-one", key, err)
+	}
+
+	// Entry B migrates to lane-two: the entries now DISAGREE, and the
+	// namespace-wide read refuses with both entries named — even though
+	// B's row is the globally newest, which the pre-fix query would have
+	// silently answered with.
+	bind(entryB, twoActor, "local/lane-two")
+	_, err := s.ResolveStoreBoundActorKey(ctx, ns, ref)
+	if !errors.Is(err, postgres.ErrStoreBindingConflict) {
+		t.Fatalf("disagreeing resolve error = %v, want ErrStoreBindingConflict", err)
+	}
+	for _, name := range []string{entryA, entryB, "local/lane-one", "local/lane-two"} {
+		if !strings.Contains(err.Error(), name) {
+			t.Fatalf("conflict error does not name %s: %v", name, err)
+		}
+	}
+
+	// The agreement set is each entry's CURRENT binding, one row per entry.
+	current, err := s.CurrentStoreEntryBindingsByRef(ctx, ns, ref)
+	if err != nil {
+		t.Fatalf("CurrentStoreEntryBindingsByRef: %v", err)
+	}
+	if len(current) != 2 {
+		t.Fatalf("current bindings = %d rows, want one per entry: %+v", len(current), current)
+	}
+	byEntry := map[string]string{}
+	for _, b := range current {
+		byEntry[b.EntryID] = b.BoundActorKey
+	}
+	if byEntry[entryA] != "local/lane-one" || byEntry[entryB] != "local/lane-two" {
+		t.Fatalf("per-entry current bindings = %v", byEntry)
+	}
+
+	// Entry A follows the migration: agreement restored, the ref resolves.
+	bind(entryA, twoActor, "local/lane-two")
+	if key, err := s.ResolveStoreBoundActorKey(ctx, ns, ref); err != nil || key != "local/lane-two" {
+		t.Fatalf("converged resolve = %q, %v; want local/lane-two", key, err)
 	}
 }
 

@@ -309,6 +309,75 @@ func TestStoreBindingRefusals(t *testing.T) {
 	}
 }
 
+// TestStoreBindingCrossEntryConflict pins the namespace-wide agreement rule
+// (PR #208 finding 4): dispatch resolution reads a ref, not an entry, so two
+// pulled entries sharing a pinned ref must map it to the same local key. An
+// entry JOINING an already-bound ref with a different key is refused 409
+// with the standing mapping named; joining with the same key is allowed, and
+// an entry that already binds the ref may rebind (the migration first-mover)
+// — resolution stays refused-loud until the others follow, which the store
+// and worker tests pin.
+func TestStoreBindingCrossEntryConflict(t *testing.T) {
+	sourcePlane := newFixture(t)
+	importingPlane := newFixture(t)
+
+	digest, _, runID := publishAndRun(t, sourcePlane)
+
+	// Two exports of the same flow with distinct evidence — distinct entries
+	// on the importing plane, sharing the graph's pinned refs verbatim.
+	export := func(note string) storeEntryResp {
+		evidence := portableEvidence(runID)
+		evidence.DeviationRecords[0].Note = note
+		var exported storeEntryResp
+		resp, body := doJSONBearer(t, sourcePlane.client, http.MethodPost, sourcePlane.url("/v1alpha1/store/entries"), fixtureStoreSecret,
+			storeEntryCreateReq{GraphDigest: digest, Evidence: evidence}, &exported)
+		requireStatus(t, resp, body, http.StatusCreated)
+		return exported
+	}
+	entryA := pullOnto(t, sourcePlane, importingPlane, export("first export").ID)
+	entryB := pullOnto(t, sourcePlane, importingPlane, export("second export").ID)
+	if entryA.ID == entryB.ID {
+		t.Fatal("fixture defect: the two pulls resolved to one entry, so nothing here tests cross-entry state")
+	}
+
+	insertActorWithCaps(t, importingPlane, "local/lane-one", "agent", `{"shell": true}`)
+	insertActorWithCaps(t, importingPlane, "local/lane-two", "agent", `{"shell": true}`)
+
+	bind := func(entryID, actorKey string) (*http.Response, []byte) {
+		return doJSONBearer(t, importingPlane.client, http.MethodPost,
+			importingPlane.url("/v1alpha1/store/entries/"+entryID+"/bindings"), fixtureStoreSecret,
+			storeBindingCreateReq{Ref: startRef, ActorKey: actorKey, BoundBy: "operator@spark"}, nil)
+	}
+
+	// Entry A establishes the mapping.
+	resp, body := bind(entryA.ID, "local/lane-one")
+	requireStatus(t, resp, body, http.StatusCreated)
+
+	// Entry B joining the ref with a DIFFERENT key is refused, and the
+	// refusal names the standing mapping and its entry.
+	resp, body = bind(entryB.ID, "local/lane-two")
+	requireStatus(t, resp, body, http.StatusConflict)
+	refusal := decodeAPIError(t, body)
+	for _, name := range []string{startRef, "local/lane-one", entryA.ID, "local/lane-two"} {
+		if !strings.Contains(refusal.Message, name) {
+			t.Fatalf("cross-entry refusal does not name %s: %s", name, refusal.Message)
+		}
+	}
+
+	// Joining with the SAME key agrees, so it is allowed.
+	resp, body = bind(entryB.ID, "local/lane-one")
+	requireStatus(t, resp, body, http.StatusCreated)
+
+	// An entry that already binds the ref may rebind — the migration's
+	// first mover is not deadlocked by its follower.
+	resp, body = bind(entryA.ID, "local/lane-two")
+	requireStatus(t, resp, body, http.StatusCreated)
+
+	// And the follower converges.
+	resp, body = bind(entryB.ID, "local/lane-two")
+	requireStatus(t, resp, body, http.StatusCreated)
+}
+
 // TestStorePublishSatisfiedByDirectRegistration pins unboundRequirements'
 // other satisfaction arm: a plane that registers the ref's own key (the
 // same-fleet case) publishes without any binding.

@@ -21,6 +21,13 @@ package api
 //     key the same way). Missing ones are refused BY NAME.
 //   - Bindings are records: who bound what to what, when — append-only,
 //     readable back in full (superseded rows included).
+//   - Entries sharing a pinned ref must agree on the local key, because
+//     dispatch resolution is namespace-wide: an entry may not JOIN an
+//     already-bound ref with a different key (the store layer refuses with
+//     postgres.ErrStoreBindingConflict, classified 409 here), and while
+//     entries that already bind a ref migrate it, resolution refuses the
+//     ref as conflicting rather than letting the newest entry win
+//     (PR #208 finding 4).
 
 import (
 	"encoding/json"

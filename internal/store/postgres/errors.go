@@ -21,12 +21,14 @@ const pgUniqueViolation = "23505"
 // existing row should follow up with GetWorkflowVersion.
 var ErrDuplicateDigest = errors.New("postgres: workflow version with this content digest already exists")
 
-// ErrStoreBindingConflict refuses a binding that would make the
-// namespace-wide newest-wins dispatch lookup ambiguous: another entry's
-// CURRENT binding for the same required ref names a different actor
-// (PR #208 review finding 4). Rebinding the SAME pair is fine — that is
-// the append-only correction path.
-var ErrStoreBindingConflict = errors.New("postgres: another entry currently binds this required ref to a different actor")
+// ErrStoreBindingConflict marks a cross-entry binding disagreement — the
+// namespace-wide dispatch lookup has no honest single answer when two
+// entries' CURRENT bindings map one required ref to different actors
+// (PR #208 review finding 4). It refuses an entry JOINING an already-bound
+// ref with a different key at create time, and it refuses RESOLUTION while
+// entries disagree mid-migration (an entry that already binds the ref may
+// rebind; the others must follow before the ref resolves again).
+var ErrStoreBindingConflict = errors.New("postgres: entries bind this required ref to different local actors")
 
 // ErrNotFound is returned by lookup methods when no row matches.
 var ErrNotFound = errors.New("postgres: not found")

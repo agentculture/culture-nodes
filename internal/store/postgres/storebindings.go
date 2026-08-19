@@ -128,7 +128,10 @@ func (s *Store) ResolveStoreBoundActorKey(ctx context.Context, namespaceID, requ
 // ref — the newest row per (entry, required_ref) — across the namespace,
 // ordered by entry id for a stable read. This is the resolution view
 // ResolveStoreBoundActorKey reduces, and the agreement set
-// createStoreEntryBinding checks a joining entry against.
+// createStoreEntryBinding checks a joining entry against. The query is
+// served by store_entry_bindings_ref_current_idx (migrations/0045) —
+// bindings are insert-only, so without it every dispatch-path resolution
+// walks the whole append-only table rather than just the ref's own rows.
 func (s *Store) CurrentStoreEntryBindingsByRef(ctx context.Context, namespaceID, requiredRef string) ([]StoreEntryBinding, error) {
 	return currentStoreEntryBindingsByRef(ctx, s.pool, namespaceID, requiredRef)
 }

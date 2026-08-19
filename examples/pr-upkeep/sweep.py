@@ -19,7 +19,7 @@ that is not this one runs ITS copy of this script — with its own two
 constants — rather than ours (task t16).
 
 Each PR watermark is its head SHA plus newest comment timestamp. Each Jira
-watermark is the issue update timestamp plus newest comment timestamp. The
+history watermark is its last consumed changelog id plus comment id. The
 control plane advances that watermark in the same transaction that appends
 the signal event, so restarting this process cannot report the same position
 twice.
@@ -93,6 +93,7 @@ JIRA_RATE_LIMIT_PER_WINDOW = 350
 #: output — see the module docstring's "different facts" paragraph — so a
 #: trigger's `onEvent` match can never confuse the two.
 JIRA_COMMENT_EVENT_NAME = "pr-upkeep.jira.comment"
+JIRA_CHANGELOG_EVENT_NAME = "pr-upkeep.jira.changed"
 JIRA_ACTOR_MARKER = "culture-nodes:jira-actor"
 _JIRA_QUESTION_MARKER_RE = re.compile(
     r"\[culture-nodes:jira-actor question_id=([A-Za-z0-9][A-Za-z0-9._:-]{0,127})\]"
@@ -632,15 +633,76 @@ def jira_comment_is_self_echo(comments: list[dict], bot_account_id: str | None) 
 
 
 def fetch_jira_issues(site: str, project: str, email: str, token: str) -> dict:
-    """Fetch one project's unresolved backlog using Jira Cloud Basic auth."""
-    query = urllib.parse.urlencode(
-        {
-            "jql": f'project = "{project}" AND resolution IS EMPTY ORDER BY priority ASC',
-            "fields": "summary,priority,status,issuetype,updated,comment",
-            "maxResults": "100",
-        }
-    )
-    return _get_json(f"https://{site}{JIRA_SEARCH_PATH}?{query}", basic=(email, token))
+    """Fetch one project's issues and fully hydrate ordered Jira history."""
+    basic = (email, token)
+    params = {
+        "jql": f'project = "{project}" AND resolution IS EMPTY ORDER BY priority ASC',
+        "fields": "summary,priority,status,issuetype,updated,comment",
+        "expand": "changelog",
+        "maxResults": "100",
+    }
+    issues = []
+    while True:
+        query = urllib.parse.urlencode(params)
+        page = _get_json(f"https://{site}{JIRA_SEARCH_PATH}?{query}", basic=basic)
+        issues.extend(page.get("issues") or [])
+        next_page_token = page.get("nextPageToken")
+        if page.get("isLast", not next_page_token) or not next_page_token:
+            break
+        params["nextPageToken"] = str(next_page_token)
+
+    for issue in issues:
+        issue_key = urllib.parse.quote(str(issue.get("key") or ""), safe="")
+        changelog = issue.setdefault("changelog", {})
+        histories = list(changelog.get("histories") or [])
+        _extend_jira_issue_collection(
+            site,
+            issue_key,
+            "changelog",
+            histories,
+            int(changelog.get("total") or len(histories)),
+            basic,
+        )
+        changelog["histories"] = sorted(
+            histories, key=lambda entry: _history_id_key(entry.get("id"))
+        )
+
+        fields = issue.setdefault("fields", {})
+        comment_page = fields.setdefault("comment", {})
+        comments = list(comment_page.get("comments") or [])
+        _extend_jira_issue_collection(
+            site,
+            issue_key,
+            "comment",
+            comments,
+            int(comment_page.get("total") or len(comments)),
+            basic,
+        )
+        comment_page["comments"] = sorted(
+            comments, key=lambda entry: _history_id_key(entry.get("id"))
+        )
+    return {"issues": issues, "isLast": True}
+
+
+def _extend_jira_issue_collection(
+    site: str,
+    issue_key: str,
+    collection: str,
+    entries: list[dict],
+    total: int,
+    basic: tuple[str, str],
+) -> None:
+    """Fetch expansion overflow from Jira's issue-scoped paginated APIs."""
+    while len(entries) < total:
+        query = urllib.parse.urlencode({"startAt": len(entries), "maxResults": 100})
+        page = _get_json(
+            f"https://{site}/rest/api/3/issue/{issue_key}/{collection}?{query}", basic=basic
+        )
+        values = page.get("values" if collection == "changelog" else "comments") or []
+        if not values:
+            break
+        entries.extend(values)
+        total = int(page.get("total") or total)
 
 
 def prioritise(items: list[dict]) -> list[dict]:
@@ -759,13 +821,121 @@ def newest_comment_timestamp(comments: list[dict]) -> str:
     return max((_comment_timestamp(c) for c in comments), default="")
 
 
+def _history_id(value: object) -> str:
+    """A Jira history position as a comparable decimal string."""
+    return str(value or "")
+
+
+def _history_id_key(value: object) -> tuple[int, int | str]:
+    text = _history_id(value)
+    return (0, int(text)) if text.isdigit() else (1, text)
+
+
 def jira_watermark(issue: dict) -> dict:
-    fields = issue.get("fields") or {}
-    comments = (fields.get("comment") or {}).get("comments") or []
+    """The terminal Jira history position present in one issue response."""
+    histories = (issue.get("changelog") or {}).get("histories") or []
+    comments = ((issue.get("fields") or {}).get("comment") or {}).get("comments") or []
     return {
-        "updated_at": fields.get("updated") or "",
-        "newest_comment_at": newest_comment_timestamp(comments),
+        "changelog_id": max(
+            (_history_id(h.get("id")) for h in histories),
+            key=_history_id_key,
+            default="",
+        ),
+        "comment_id": max(
+            (_history_id(c.get("id")) for c in comments),
+            key=_history_id_key,
+            default="",
+        ),
     }
+
+
+def jira_history_facts(
+    issue: dict, bot_account_id: str | None, base_payload: dict | None = None
+) -> list[tuple[str, dict, dict, str, str]]:
+    """Replay an issue's changelog and comments as ordered, pure facts.
+
+    WATERMARK FORMAT (WP-A/WP-D contract): every fact carries exactly
+    ``{"changelog_id": "<decimal Jira changelog id or empty>",
+    "comment_id": "<decimal Jira comment id or empty>"}``. Values are
+    strings because Jira Cloud v3 represents both identifiers as strings.
+    The pair is cumulative at that fact's point in the merged history.
+
+    The returned position kind/id gives the caller a per-history-position
+    source key. This is required by the control plane's equality-only dedup:
+    replaying an older position against one issue-wide key after a newer
+    position would otherwise append the older fact again.
+    """
+    fields = issue.get("fields") or {}
+    payload_template = dict(base_payload or {})
+    payload_template.setdefault("id", str(issue.get("key") or ""))
+    histories = sorted(
+        (issue.get("changelog") or {}).get("histories") or [],
+        key=lambda history: _history_id_key(history.get("id")),
+    )
+    comments = sorted(
+        (fields.get("comment") or {}).get("comments") or [],
+        key=lambda comment: _history_id_key(comment.get("id")),
+    )
+    timeline = [
+        (
+            str(history.get("created") or ""),
+            0,
+            _history_id_key(history.get("id")),
+            "changelog",
+            history,
+        )
+        for history in histories
+    ] + [
+        (
+            str(comment.get("created") or comment.get("updated") or ""),
+            1,
+            _history_id_key(comment.get("id")),
+            "comment",
+            comment,
+        )
+        for comment in comments
+    ]
+    timeline.sort(key=lambda entry: entry[:3])
+
+    facts = []
+    changelog_id = ""
+    comment_id = ""
+    comments_seen = []
+    for _created, _kind_order, _id_key, kind, entry in timeline:
+        position_id = _history_id(entry.get("id"))
+        if kind == "changelog":
+            changelog_id = position_id
+        else:
+            comment_id = position_id
+            comments_seen.append(entry)
+        watermark = {"changelog_id": changelog_id, "comment_id": comment_id}
+
+        if kind == "comment":
+            if jira_comment_is_self_echo([entry], bot_account_id):
+                continue
+            payload = dict(payload_template)
+            question_id = jira_question_id_for_answer(comments_seen)
+            if question_id:
+                payload["originating_question_id"] = question_id
+            payload["answer"] = {"comment_id": position_id, "body": jira_comment_text(entry)}
+            facts.append((JIRA_COMMENT_EVENT_NAME, payload, watermark, kind, position_id))
+            continue
+
+        status_item = next(
+            (item for item in entry.get("items") or [] if item.get("field") == "status"), None
+        )
+        payload = dict(payload_template)
+        payload["changelog_id"] = position_id
+        payload["actor_account_id"] = _comment_account_id(entry)
+        if status_item is None:
+            payload["changes"] = list(entry.get("items") or [])
+            name = JIRA_CHANGELOG_EVENT_NAME
+        else:
+            payload["status"] = str(status_item.get("toString") or "")
+            payload["from_status"] = str(status_item.get("fromString") or "")
+            name = jira_transition_event_name(payload["status"])
+        facts.append((name, payload, watermark, kind, position_id))
+    return facts
 
 
 def raise_event(name: str, payload: dict, source_key: str, watermark: dict) -> dict:
@@ -933,49 +1103,18 @@ def main() -> int:
             by_key = {issue.get("key"): issue for issue in jira_payload.get("issues", [])}
             for item in jira_items:
                 issue = by_key.get(item["id"], {})
-                fields = issue.get("fields") or {}
-                comments = (fields.get("comment") or {}).get("comments") or []
-
-                # Fact 1: the issue's current state (task t9) — always
-                # attempted, same as pr-upkeep.pr; the control plane's
-                # watermark-equality dedup, not this process, is what makes
-                # an unchanged status a silent no-op rather than a repeat.
-                transition_name = jira_transition_event_name(item["status"])
-                with attempting(f"emitting {transition_name} for {item['id']} (control plane)"):
-                    emitted.append(
-                        raise_event(
-                            transition_name,
-                            item,
-                            f"jira:{site}:{item['id']}:status",
-                            {"status": item["status"]},
-                        )
-                    )
-
-                # Fact 2: a fresh comment — a DIFFERENT name, on a DIFFERENT
-                # source key, so a trigger subscribed to one never receives
-                # the other. Self-echoed (the system's own posted comment)
-                # raises nothing; the watermark computation below stays
-                # unfiltered either way, so the position it would have used
-                # already sits past the bot's own comment.
-                watermark = jira_watermark(issue)
-                if comments and not jira_comment_is_self_echo(comments, bot_account_id):
-                    comment_payload = dict(item)
-                    question_id = jira_question_id_for_answer(comments)
-                    if question_id:
-                        comment_payload["originating_question_id"] = question_id
-                    latest = _newest_comment(comments) or {}
-                    comment_payload["answer"] = {
-                        "comment_id": str(latest.get("id") or ""),
-                        "body": jira_comment_text(latest),
-                    }
-                    with attempting(
-                        f"emitting {JIRA_COMMENT_EVENT_NAME} for {item['id']} (control plane)"
-                    ):
+                for name, payload, watermark, position_kind, position_id in jira_history_facts(
+                    issue, bot_account_id, item
+                ):
+                    with attempting(f"emitting {name} for {item['id']} (control plane)"):
                         emitted.append(
                             raise_event(
-                                JIRA_COMMENT_EVENT_NAME,
-                                comment_payload,
-                                f"jira:{site}:{item['id']}:comment",
+                                name,
+                                payload,
+                                (
+                                    f"jira:{site}:{item['id']}:history:"
+                                    f"{position_kind}:{position_id}"
+                                ),
                                 watermark,
                             )
                         )

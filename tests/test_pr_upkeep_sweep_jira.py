@@ -14,6 +14,60 @@ def jira_payload():
     return json.loads((FIXTURES / "jira-search.json").read_text())
 
 
+@pytest.fixture(scope="module")
+def jira_round_trip():
+    return json.loads((FIXTURES / "jira-history-round-trip.json").read_text())
+
+
+@pytest.fixture(scope="module")
+def jira_round_trip_complete():
+    return json.loads((FIXTURES / "jira-history-round-trip-complete.json").read_text())
+
+
+class TestJiraHistoryReplay:
+    def test_to_do_round_trip_between_polls_replays_both_transitions_in_order(
+        self, jira_round_trip, jira_round_trip_complete
+    ):
+        before = sweep.jira_history_facts(jira_round_trip["issues"][0], "bot-1")
+        after = sweep.jira_history_facts(jira_round_trip_complete["issues"][0], "bot-1")
+
+        assert [fact[0] for fact in before] == ["pr-upkeep.jira.transitioned.to-do"]
+        assert [fact[0] for fact in after] == [
+            "pr-upkeep.jira.transitioned.to-do",
+            "pr-upkeep.jira.transitioned.in-progress",
+            sweep.JIRA_COMMENT_EVENT_NAME,
+            sweep.JIRA_COMMENT_EVENT_NAME,
+            "pr-upkeep.jira.transitioned.done",
+        ]
+        transitions = [fact for fact in after if fact[0].startswith("pr-upkeep.jira.transitioned.")]
+        assert [fact[1]["status"] for fact in transitions] == ["To Do", "In Progress", "Done"]
+
+    def test_two_comment_reply_replays_two_facts_with_cumulative_history_watermarks(
+        self, jira_round_trip_complete
+    ):
+        facts = sweep.jira_history_facts(jira_round_trip_complete["issues"][0], "bot-1")
+        comments = [fact for fact in facts if fact[0] == sweep.JIRA_COMMENT_EVENT_NAME]
+
+        assert [fact[1]["answer"]["comment_id"] for fact in comments] == ["30000", "30001"]
+        assert [fact[2] for fact in comments] == [
+            {"changelog_id": "20001", "comment_id": "30000"},
+            {"changelog_id": "20001", "comment_id": "30001"},
+        ]
+
+    def test_history_ids_are_monotonic_even_when_jira_returns_entries_out_of_order(
+        self, jira_round_trip_complete
+    ):
+        issue = json.loads(json.dumps(jira_round_trip_complete["issues"][0]))
+        issue["changelog"]["histories"].reverse()
+        facts = sweep.jira_history_facts(issue, "bot-1")
+        transitions = [fact for fact in facts if fact[0].startswith("pr-upkeep.jira.transitioned.")]
+        assert [fact[1].get("changelog_id") for fact in transitions] == [
+            "20000",
+            "20001",
+            "20002",
+        ]
+
+
 class TestJiraWorkItems:
     """Issue #76 acceptance is recorded-fixture-only; the live backlog is empty."""
 
@@ -40,13 +94,62 @@ class TestJiraWorkItems:
         monkeypatch.setattr(sweep, "_get_json", fake_get)
         assert sweep.fetch_jira_issues(
             "team.example.com", "EX", "robot@example.com", "fixture-token"
-        ) == {"issues": []}
+        ) == {"issues": [], "isLast": True}
         assert seen["basic"] == ("robot@example.com", "fixture-token")
         assert seen["token"] is None
         assert "robot@example.com" not in seen["url"]
         assert "fixture-token" not in seen["url"]
         assert "maxResults=100" in seen["url"]
+        assert "expand=changelog" in seen["url"]
         assert 100 < sweep.JIRA_RATE_LIMIT_PER_WINDOW == 350
+
+    def test_search_changelog_and_comment_pages_are_collected_in_monotonic_id_order(
+        self, monkeypatch
+    ):
+        issue = {
+            "id": "10002",
+            "key": "SCRUM-2",
+            "fields": {
+                "comment": {
+                    "startAt": 0,
+                    "maxResults": 1,
+                    "total": 2,
+                    "comments": [{"id": "30001", "created": "2026-08-19T08:05:00Z"}],
+                }
+            },
+            "changelog": {
+                "startAt": 0,
+                "maxResults": 1,
+                "total": 2,
+                "histories": [{"id": "20001", "created": "2026-08-19T08:03:00Z"}],
+            },
+        }
+        seen = []
+
+        def fake_get(url, token=None, *, basic=None):
+            seen.append(url)
+            if "/changelog?" in url:
+                return {"startAt": 1, "maxResults": 100, "total": 2, "values": [{"id": "20000"}]}
+            if "/comment?" in url:
+                return {"startAt": 1, "maxResults": 100, "total": 2, "comments": [{"id": "30000"}]}
+            return {"issues": [issue], "isLast": True}
+
+        monkeypatch.setattr(sweep, "_get_json", fake_get)
+        payload = sweep.fetch_jira_issues(
+            "team.example.com", "EX", "robot@example.com", "fixture-token"
+        )
+
+        fetched = payload["issues"][0]
+        assert [entry["id"] for entry in fetched["changelog"]["histories"]] == [
+            "20000",
+            "20001",
+        ]
+        assert [entry["id"] for entry in fetched["fields"]["comment"]["comments"]] == [
+            "30000",
+            "30001",
+        ]
+        assert any("startAt=1" in url and "/changelog?" in url for url in seen)
+        assert any("startAt=1" in url and "/comment?" in url for url in seen)
 
     def test_jira_configuration_requires_both_host_and_project(self):
         raw = json.dumps(
@@ -142,8 +245,8 @@ class TestJiraSelfEcho:
     @staticmethod
     def _comments(*pairs):
         return [
-            {"author": {"accountId": account_id}, "created": created}
-            for account_id, created in pairs
+            {"id": str(30000 + index), "author": {"accountId": account_id}, "created": created}
+            for index, (account_id, created) in enumerate(pairs)
         ]
 
     def test_newest_comment_by_the_bot_is_self_echo(self):
@@ -271,4 +374,4 @@ class TestJiraSelfEcho:
                 },
             }
         }
-        assert sweep.jira_watermark(issue)["newest_comment_at"] == "2026-08-16T00:00:00Z"
+        assert sweep.jira_watermark(issue)["comment_id"] == "30001"

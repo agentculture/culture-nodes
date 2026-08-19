@@ -1,0 +1,35 @@
+{
+  "issues": [
+    {
+      "id": "10002",
+      "key": "SCRUM-2",
+      "fields": {
+        "summary": "Complete a round trip between sweeps",
+        "priority": {"name": "High"},
+        "status": {"name": "Done"},
+        "issuetype": {"name": "Task"},
+        "updated": "2026-08-19T08:08:00.000+0000",
+        "comment": {
+          "startAt": 0,
+          "maxResults": 100,
+          "total": 2,
+          "comments": [
+            {"id": "30000", "author": {"accountId": "712020:alice"}, "created": "2026-08-19T08:04:00.000+0000", "body": {"type": "doc", "version": 1, "content": [{"type": "paragraph", "content": [{"type": "text", "text": "Starting now."}]}]}},
+            {"id": "30001", "author": {"accountId": "712020:bob"}, "created": "2026-08-19T08:05:00.000+0000", "body": {"type": "doc", "version": 1, "content": [{"type": "paragraph", "content": [{"type": "text", "text": "Finished and checked."}]}]}}
+          ]
+        }
+      },
+      "changelog": {
+        "startAt": 0,
+        "maxResults": 100,
+        "total": 3,
+        "histories": [
+          {"id": "20000", "author": {"accountId": "712020:reporter"}, "created": "2026-08-19T08:00:00.000+0000", "items": [{"field": "status", "fieldtype": "jira", "from": null, "fromString": null, "to": "10000", "toString": "To Do"}]},
+          {"id": "20001", "author": {"accountId": "712020:alice"}, "created": "2026-08-19T08:03:00.000+0000", "items": [{"field": "status", "fieldtype": "jira", "from": "10000", "fromString": "To Do", "to": "3", "toString": "In Progress"}]},
+          {"id": "20002", "author": {"accountId": "712020:bob"}, "created": "2026-08-19T08:06:00.000+0000", "items": [{"field": "status", "fieldtype": "jira", "from": "3", "fromString": "In Progress", "to": "10001", "toString": "Done"}]}
+        ]
+      }
+    }
+  ],
+  "isLast": true
+}

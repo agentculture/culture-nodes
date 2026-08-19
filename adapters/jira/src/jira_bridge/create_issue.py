@@ -39,7 +39,12 @@ class CreateResult:
     error: str = ""
 
 
-def parse(raw: Any, *, allowed_projects: tuple[str, ...]) -> tuple[CreateIssue | None, str | None]:
+def parse(
+    raw: Any,
+    *,
+    allowed_projects: tuple[str, ...],
+    allowed_issue_types: tuple[str, ...] = ("Task",),
+) -> tuple[CreateIssue | None, str | None]:
     if not isinstance(raw, dict):
         return None, "input must be a JSON object"
     required = {"verb", "project", "summary"}
@@ -63,9 +68,13 @@ def parse(raw: Any, *, allowed_projects: tuple[str, ...]) -> tuple[CreateIssue |
     description = raw.get("description", "")
     if not isinstance(description, str):
         return None, "description must be a string when supplied"
-    issue_type = raw.get("issue_type", "Task")
+    issue_type = raw.get("issue_type", allowed_issue_types[0] if allowed_issue_types else "Task")
     if not isinstance(issue_type, str) or not issue_type.strip():
         return None, "issue_type must be a non-empty string when supplied"
+    if issue_type not in allowed_issue_types:
+        return None, (
+            f"policy: issue_type must be one of the configured types {allowed_issue_types!r}"
+        )
     return (
         CreateIssue(
             project=project, summary=summary, description=description, issue_type=issue_type

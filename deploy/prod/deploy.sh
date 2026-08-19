@@ -730,6 +730,15 @@ case "$HOST" in
     # a non-zero exit here means an operator hears about a missing credential
     # now instead of 18 hours later from a 401 (issue #69 item 2).
     "$SCRIPT_DIR/audit-credentials.sh" "$HOST"
+    # Doctor is the second detector (PR #208 review finding 2): after the
+    # stack is up, the Python nodes CLI's four checks say whether the agent
+    # lane this deploy just reconfigured can actually work — prompt file,
+    # skills kit, API reachability, and the userns sysctl a workspace-write
+    # dispatch silently loses writes without (#63). Same posture as the
+    # credential audit above: a detector that fails the deploy LOUDLY at
+    # the end, not a gate that leaves the stack half-shipped.
+    say "running nodes doctor on $HOST"
+    ssh "$HOST" "cd \$HOME/git/culture-nodes-agent && \$HOME/.local/bin/nodes doctor" || { echo "nodes doctor reports unhealthy on $HOST" >&2; exit 1; }
     say "thor deploy complete (namespace $NS)"
     ;;
   orin*)
@@ -744,6 +753,9 @@ case "$HOST" in
     # Same detector, same reason, against compose.orin.yml's own declared set
     # (see the thor lane's comment).
     "$SCRIPT_DIR/audit-credentials.sh" "$HOST"
+    # Same doctor detector as the thor lane (PR #208 review finding 2).
+    say "running nodes doctor on $HOST"
+    ssh "$HOST" "cd \$HOME/git/culture-nodes-agent && \$HOME/.local/bin/nodes doctor" || { echo "nodes doctor reports unhealthy on $HOST" >&2; exit 1; }
     say "orin deploy complete (worker joined namespace $NS)"
     ;;
   *)

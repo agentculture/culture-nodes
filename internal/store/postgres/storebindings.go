@@ -156,8 +156,28 @@ func createStoreEntryBinding(ctx context.Context, pool *pgxpool.Pool, in CreateS
 		return StoreEntryBinding{}, fmt.Errorf("postgres: CreateStoreEntryBinding: boundBy is required")
 	}
 
+	// Dispatch resolution (ResolveStoreBoundActorKey) is namespace-wide and
+	// newest-wins by required_ref: two entries binding one ref to DIFFERENT
+	// actors would silently race to the newest. Refuse that shape by name;
+	// binding the same ref to the same actor from another entry, or
+	// re-binding within one entry, stays allowed (append-only corrections).
+	var otherEntry, otherActor string
+	err := pool.QueryRow(ctx, `SELECT entry_id, bound_actor_key
+		FROM store_entry_bindings
+		WHERE namespace_id = $1 AND required_ref = $2 AND entry_id <> $3
+		ORDER BY created_at DESC, id DESC LIMIT 1`,
+		in.NamespaceID, in.RequiredRef, in.EntryID).Scan(&otherEntry, &otherActor)
+	if err != nil && !isNoRows(err) {
+		return StoreEntryBinding{}, fmt.Errorf("postgres: CreateStoreEntryBinding: conflict probe: %w", err)
+	}
+	if err == nil && otherActor != in.BoundActorKey {
+		return StoreEntryBinding{}, fmt.Errorf(
+			"postgres: CreateStoreEntryBinding: entry %s currently binds %s to %q: %w",
+			otherEntry, in.RequiredRef, otherActor, ErrStoreBindingConflict)
+	}
+
 	id := store.NewULID()
-	_, err := pool.Exec(ctx, `
+	_, err = pool.Exec(ctx, `
 		INSERT INTO store_entry_bindings (
 			id, namespace_id, entry_id, required_ref, required_kind,
 			bound_actor_id, bound_actor_key, bound_by

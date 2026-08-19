@@ -3,6 +3,7 @@ package postgres_test
 import (
 	"context"
 	"errors"
+	"fmt"
 	"testing"
 
 	"github.com/agentculture/culture-nodes/internal/store"
@@ -175,5 +176,52 @@ func TestStoreEntryBindingValidationAndScope(t *testing.T) {
 	}
 	if _, err := s.CurrentActorByKey(ctx, ns, "local/nobody"); !errors.Is(err, postgres.ErrNotFound) {
 		t.Fatalf("unknown actor key error = %v, want ErrNotFound", err)
+	}
+}
+
+func TestStoreEntryBindingRefusesCrossEntryConflictByName(t *testing.T) {
+	s := requireStore(t)
+	ctx := context.Background()
+	ns := pgtest.MustNamespace(t, s, "storebinding-conflict").ID
+
+	mkEntry := func(name string) string {
+		t.Helper()
+		in := sampleStoreEntryInput(ns)
+		in.Name = name
+		in.Origin = "pulled"
+		in.SourceRegistry = "https://nodes.thor.internal:8443"
+		// Identity is (namespace, origin, entry_digest): a distinct digest
+		// per entry, or ON CONFLICT DO NOTHING hands back the same row.
+		in.EntryDigest = "sha256:" + fmt.Sprintf("%064x", len(name)+int(name[len(name)-1]))
+		entry, err := s.CreateStoreEntry(ctx, in)
+		if err != nil {
+			t.Fatalf("CreateStoreEntry %s: %v", name, err)
+		}
+		return entry.ID
+	}
+	entryA, entryB := mkEntry("flow-a"), mkEntry("flow-b")
+	actorOne := insertBindingActor(t, s, ns, "local/one")
+	insertBindingActor(t, s, ns, "local/two")
+
+	const ref = "actor://codex@sha256:cccc"
+	bind := func(entryID, actorID, actorKey string) error {
+		_, err := s.CreateStoreEntryBinding(ctx, postgres.CreateStoreEntryBindingInput{
+			NamespaceID: ns, EntryID: entryID, RequiredRef: ref, RequiredKind: "actor",
+			BoundActorID: actorID, BoundActorKey: actorKey, BoundBy: "act_test_operator",
+		})
+		return err
+	}
+	if err := bind(entryA, actorOne, "local/one"); err != nil {
+		t.Fatalf("first binding: %v", err)
+	}
+	// Same ref, DIFFERENT actor, from another entry: the namespace-wide
+	// newest-wins dispatch lookup would silently flip — refused by name.
+	err := bind(entryB, insertBindingActor(t, s, ns, "local/three"), "local/three")
+	if !errors.Is(err, postgres.ErrStoreBindingConflict) {
+		t.Fatalf("cross-entry different-actor binding = %v, want ErrStoreBindingConflict", err)
+	}
+	// Same ref, SAME actor, from another entry: unambiguous, allowed.
+	if err := bind(entryB, actorOne, "local/one"); err != nil {
+		t.Fatalf("cross-entry same-actor binding should be allowed: %v", err)
 	}
 }

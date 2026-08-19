@@ -214,3 +214,23 @@ def test_server_dispatches_create_and_advertises_the_verb_surface(monkeypatch):
     finally:
         srv.shutdown()
         srv.server_close()
+
+
+def test_create_parse_refuses_issue_type_outside_configured_allowlist_by_name():
+    parsed, error = create_issue.parse(
+        {"verb": "create_issue", "project": "SCRUM", "summary": "A ticket", "issue_type": "Epic"},
+        allowed_projects=("SCRUM",),
+        allowed_issue_types=("Task", "Bug"),
+    )
+    assert parsed is None
+    assert error == "policy: issue_type must be one of the configured types ('Task', 'Bug')"
+
+
+def test_create_parse_defaults_issue_type_to_first_configured_type():
+    parsed, error = create_issue.parse(
+        {"verb": "create_issue", "project": "SCRUM", "summary": "A ticket"},
+        allowed_projects=("SCRUM",),
+        allowed_issue_types=("Bug", "Task"),
+    )
+    assert error is None
+    assert parsed is not None and parsed.issue_type == "Bug"

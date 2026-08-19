@@ -109,6 +109,9 @@ func classify(err error) *apiError {
 	case errors.Is(err, postgres.ErrDuplicateDigest):
 		return conflict("fetch the existing version instead of publishing again", "%v", err)
 
+	case errors.Is(err, postgres.ErrStoreBindingConflict):
+		return conflict("bind the ref to the same actor as the other entry, or supersede that entry's binding first", "%v", err)
+
 	case errors.Is(err, engine.ErrHumanTaskAlreadyDecided):
 		return conflict("re-read the task; it has already been decided and accepts no further decision", "%v", err)
 

@@ -122,7 +122,9 @@ class Handler(BaseHTTPRequestHandler):
             )
         elif isinstance(input_, dict) and input_.get("verb") == create_issue.VERB:
             parsed, refusal = create_issue.parse(
-                input_, allowed_projects=self.cfg.create_projects
+                input_,
+                allowed_projects=self.cfg.create_projects,
+                allowed_issue_types=self.cfg.create_issue_types,
             )
         else:
             parsed, refusal = mapping.parse(input_)

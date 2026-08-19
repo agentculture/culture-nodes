@@ -359,9 +359,15 @@ func (s *Server) handleStoreEntryPull(w http.ResponseWriter, r *http.Request) er
 	// The inner seal: the embedded source must actually be the graph the
 	// digest names. A digest-consistent envelope around a forged graph
 	// would otherwise catalog a flow nobody proved.
+	// A compile error here is the CALLER's document failing, not this
+	// server failing (PR #208 review finding 6): the source is
+	// caller-supplied, so a malformed graph is a 400 with the compiler's
+	// reason, the same posture as the digest mismatches beside it.
 	compiled, _, err := compiler.Compile([]byte(e.Graph.Source), compiler.Format(e.Graph.SourceFormat))
 	if err != nil {
-		return internalError(fmt.Errorf("compiler: %w", err))
+		return badRequest(
+			"the entry's embedded workflow source does not compile — re-fetch it from the source registry",
+			"embedded workflow source does not compile: %v", err)
 	}
 	if compiled == nil {
 		return badRequest(

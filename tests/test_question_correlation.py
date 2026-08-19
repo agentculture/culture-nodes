@@ -93,7 +93,8 @@ class TestMarkerContract:
         marker = correlation.question_marker(QUESTION_ID)
         assert marker == f"[culture-nodes:jira-actor question_id={QUESTION_ID}]"
         match = correlation.QUESTION_MARKER_RE.search(f"Which one?\n\n{marker}")
-        assert match and match.group(1) == QUESTION_ID
+        assert match
+        assert match.group(1) == QUESTION_ID
         # The sweep's own extraction pattern (the emitter side of the
         # contract) accepts exactly the same line.
         assert jira._JIRA_QUESTION_MARKER_RE.search(marker).group(1) == QUESTION_ID

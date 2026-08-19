@@ -1,0 +1,533 @@
+{
+  "slug": "jira-operating-surface-flow-store",
+  "title": "Jira operating surface + flow store",
+  "frame_slug": "jira-operating-surface-flow-store",
+  "schema_version": 4,
+  "status": "exported",
+  "created": "2026-08-19T17:59:50Z",
+  "updated": "2026-08-19T18:20:42Z",
+  "targets": [
+    {
+      "id": "c1",
+      "kind": "announcement",
+      "text": "Jira is a peer operating surface for culture-nodes: the sweep replays issue history faithfully instead of sampling point-in-time state, a technically-failed pickup re-arms bounded by the control plane, and proven flows live in a browsable store users pull into their own control plane and extend on their own machine/db",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "h7",
+      "kind": "honesty",
+      "text": "All three legs ship in one plan (the q2 decision) and each is proven on the live prod lane, not in a demo namespace: history-faithful emission on a real ticket, a bounded re-mint on a real technical failure, a store pull between two real control planes",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "c2",
+      "kind": "requirement",
+      "text": "The sweep emits one fact per UNSEEN changelog entry and per unseen comment, watermarked by history position (changelog id / comment id) instead of comparing current status to last-recorded status \u2014 examples/pr-upkeep/sweep.py's fact-1/fact-2 blocks sample point-in-time state today, and Jira Cloud exposes expand=changelog on the read credential the sweep already holds (#193). History replay is only as complete as discovery: fetch_jira_issues's 'resolution IS EMPTY' JQL drops an issue the moment it resolves, so an issue resolved between two polls vanishes before its terminal changelog entry is ever read \u2014 discovery must keep an issue eligible until its terminal history has been consumed (a bounded recently-resolved lookback in the JQL; the control plane's watermark-equality dedup already makes the re-reads idempotent)",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "h1",
+      "kind": "honesty",
+      "text": "A To Do round trip completed entirely between two polls emits both transition facts in order, a two-comment reply emits two comment facts, and a resolution-terminal transition (the SCRUM-2 Done case) still emits - replayed from changelog/comment history positions, never sampled from current state",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "c3",
+      "kind": "requirement",
+      "text": "On TECHNICAL failure of a trigger-created run, the control plane re-mints a run from the same delivered event after backoff, bounded the way internal/repair bounds repairs (N attempts per window, then a human task), with a ledger-visible derived record naming the original event and attempt count (#194; measured live: run 01M0B4K8JSY3QRQJ3M7D2WTZDC consumed its fact, failed in 8s, and nothing re-armed)",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "h2",
+      "kind": "honesty",
+      "text": "A technically-failed trigger-created run re-mints after backoff at most N times per window with a ledger-visible derived record naming the original event and attempt count, then parks on a human; a domain-outcome failure never re-mints",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "c4",
+      "kind": "boundary",
+      "text": "The re-arm lives in the control plane ONLY: the sweep stays a pure emitter \u2014 read credentials plus the event-ingress token, no triage, blind to its consumers (sweep-cycle header boundary c5; #194's 'where the fix must not go')",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "h8",
+      "kind": "honesty",
+      "text": "No re-mint, retry, or consumer-awareness logic lands in sweep.py or the sweep-cycle graph - the sweep's diff for this cycle is emission-only",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "c5",
+      "kind": "boundary",
+      "text": "A run that fails with a DOMAIN outcome never re-mints: changes_required and its kin are answers that stand, not engine failures (PRD domain-outcome-vs-technical-status ground rule; #194 acceptance)",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "h9",
+      "kind": "honesty",
+      "text": "The re-mint trigger keys off technical failure exclusively; a domain outcome (changes_required and kin) in the test matrix never produces a re-mint record",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "c6",
+      "kind": "requirement",
+      "text": "A store entry is graph PLUS evidence: the proving prod run ids, the deviations recorded against it, and the actors it needs \u2014 browsable, pullable into a user's own control plane without hand-editing digests, and coexisting with the user's local additions (#192 acceptance sketch; 'every result has evidence' applies to the catalog too)",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "h3",
+      "kind": "honesty",
+      "text": "A flow pulled from the store carries its proving evidence (run ids, deviations recorded against it, required actors) and publishes into a foreign control plane without hand-editing digests; local additions coexist with pulled flows",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "c8",
+      "kind": "requirement",
+      "text": "Operating the system via Jira reaches parity with the operator lane only when human comments on a ticket have a consumer: engine-originated questions round-trip live (t17, SCRUM-1), but a human's answer to an OPERATOR question only emits pr-upkeep.jira.comment with no subscriber, and ticket CREATION has no verb in any lane \u2014 the system bridge is comment+transition only behind the c19 allowlist, and this scope's SCRUM-3 needed an ad-hoc widening of the jira-status ssh custody pattern",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "h4",
+      "kind": "honesty",
+      "text": "An operator can create work, answer questions back and forth, and continue into planning and task assignment from the board, with every such act becoming an engine fact - no operator session polling as a hidden dependency (the bar set on SCRUM-3 comment 10106)",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "c9",
+      "kind": "requirement",
+      "text": "Jira-originated work reports back to its ticket: an engine-driven start update when a consumer picks the fact up (run id + workflow + trigger event id) and a finish update with the terminal outcome, through the narrow jira bridge, never the emitter (#198; operator direction 2026-08-19)",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "h5",
+      "kind": "honesty",
+      "text": "A run minted from a ticket-derived fact posts a start update (run id, workflow, trigger event id) and a finish update (terminal outcome) through the narrow jira bridge, even when the run starts and finishes between two sweep passes",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "c10",
+      "kind": "audience",
+      "text": "The operator working from the Jira board as a peer surface, the culture-nodes agent fleet consuming ticket-derived facts, and users pulling proven flows from the store into their own control planes",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "h10",
+      "kind": "honesty",
+      "text": "Each named audience can run its leg with no other role's tooling: the operator from the board, the fleet from facts, store users from the registry API",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "c11",
+      "kind": "after_state",
+      "text": "A ticket carries the whole loop: history-faithful facts (every transition and comment, in order), technically-failed pickups re-arm bounded, consumers report start and finish on the ticket, and the flows that ran it are pullable from a browsable store with their evidence",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "h11",
+      "kind": "honesty",
+      "text": "The end-to-end demonstration runs ticket-to-store with zero operator shell commands, verifiable from prod records",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "c12",
+      "kind": "why_it_matters",
+      "text": "Point-in-time sampling loses human input (comment 10106 skipped live), silent non-consumption makes the board lie by omission (10109/10110 heard by nobody but a polling session), and proven flows are locked inside single deployments - today the loop cannot be operated from where the work is filed",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "h12",
+      "kind": "honesty",
+      "text": "Each cited failure has a regression proof: the 10106 skip caught by history replay, unheard board acts caught by consumed-fact checks, deployment-locked flows caught by a cross-plane pull test",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "c13",
+      "kind": "success_signal",
+      "text": "A human answers on a ticket and the engine consumes it with no operator session polling; a two-comment reply emits two facts; a killed pickup re-arms and the ticket shows the attempt; a flow proven on one control plane runs on another after a store pull - all verifiable from prod records alone",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "h13",
+      "kind": "honesty",
+      "text": "Every listed signal is measured from prod records alone - no session context or operator memory needed to audit",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "c14",
+      "kind": "requirement",
+      "text": "Watermark cutover, not just new emission: migrating signal_event_watermarks from status-value/comment-timestamp to history-position must seed each known issue's watermark at its CURRENT history head, so the first history-aware pass re-emits nothing already consumed - a naive deploy would replay old transitions and mint spurious (billable) intake runs",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "h14",
+      "kind": "honesty",
+      "text": "The first sweep pass after deploy on a board with prior watermarks emits zero facts for history that predates the cutover, proven by a replay test over recorded prod watermark rows",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "c15",
+      "kind": "requirement",
+      "text": "Transition facts need the self-echo discipline comments already have: changelog entries carry an author, and the system's own board moves (the intake flow's To Do -> In Progress, changelog entry 10180 on SCRUM-3) must not become trigger-firing facts, or a flow subscribing to transitioned.in-progress fires on its own move",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "h15",
+      "kind": "honesty",
+      "text": "A transition performed by the bridge account (or marker-correlated to a system verb) emits either no fact or a fact flagged as self-originated that exact-match triggers can exclude; the intake flow's own move demonstrably re-fires nothing",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "c16",
+      "kind": "requirement",
+      "text": "Re-mints pass through the same EnqueueWork seam as triggered and manual runs, so the one-active-run-per-subject ceiling and pacing/breaker gates bound them identically - a re-mint never doubles an active subject and never bypasses the session economy gates",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "h16",
+      "kind": "honesty",
+      "text": "A postgres-backed test shows a re-mint deferred while a subject run is active and admitted after it terminates, through the identical inbound path (no re-mint-only side door)",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "c17",
+      "kind": "requirement",
+      "text": "Store portability is an actor-mapping problem, not only a digest problem: a pulled flow pins actor://...@sha256 and runner:// ids that do not exist on the importing plane; the store entry's evidence manifest declares required actor/runner capabilities and the import binds them to local registrations without hand-editing the graph",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "h17",
+      "kind": "honesty",
+      "text": "A flow exported from thor imports into a second control plane whose actors have different ids/digests, and runs after a declared mapping step - the graph document itself is byte-identical before and after",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "c19",
+      "kind": "success_signal",
+      "text": "Measurable: a board act becomes an engine fact within one sweep interval (<=5 min) with ZERO session-polling consumptions across a full cycle; a two-comment reply emits exactly two facts in order; a technically-failed pickup re-mints and parks on a human after exactly its bounded attempt count; one flow proven on thor runs on a second plane after one pull",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "h18",
+      "kind": "honesty",
+      "text": "Each number in the signal is read from prod records alone - sweep stdout artifacts, run and ledger rows, store API responses - by an auditor with no session context, and the cycle demonstration publishes the measured values beside the record ids they came from",
+      "deferred": false,
+      "deferred_reason": ""
+    }
+  ],
+  "tasks": [
+    {
+      "id": "t1",
+      "summary": "Sweep emits history-position facts: one fact per unseen changelog entry and per unseen comment, in order, watermarked by changelog id / comment id",
+      "origin": "llm",
+      "status": "confirmed",
+      "acceptance_criteria": [
+        "A To Do round trip completed entirely between two polls emits both transition facts in order, and a two-comment reply emits two comment facts \u2014 unit-tested against recorded Jira changelog/comment fixtures",
+        "Facts carry history-position watermarks (changelog id / comment id); the fact-1/fact-2 point-in-time status-comparison blocks in examples/pr-upkeep/sweep.py are removed, not bypassed"
+      ],
+      "deps": [],
+      "covers": [
+        "c2",
+        "h1"
+      ],
+      "instruction": "Work in examples/pr-upkeep/sweep.py: replace the fact-1/fact-2 point-in-time blocks (~lines 920-980) with history replay from expand=changelog (paginated, monotonic ids) and the comment list. Watermark = last consumed changelog id + comment id per issue. Emit facts in history order. Keep the emitter pure (c4): read creds + event-ingress token only. Fixtures: record real SCRUM-3 changelog/comment JSON via the thor ssh custody pattern before coding."
+    },
+    {
+      "id": "t2",
+      "summary": "Discovery keeps a resolved issue eligible until its terminal history is consumed: bounded recently-resolved lookback in fetch_jira_issues JQL",
+      "origin": "llm",
+      "status": "confirmed",
+      "acceptance_criteria": [
+        "An issue resolved between two polls still yields its terminal transition fact (the SCRUM-2 Done case reproduced as a test); re-reads inside the lookback window emit nothing new thanks to watermark-equality dedup (idempotence asserted)"
+      ],
+      "deps": [
+        "t1"
+      ],
+      "covers": [
+        "c2"
+      ],
+      "instruction": "fetch_jira_issues (sweep.py ~line 638): add a bounded recently-resolved lookback to the JQL (e.g. resolution IS EMPTY OR resolved >= -Xd where X covers several sweep intervals). The control plane's watermark-equality dedup makes re-reads idempotent \u2014 assert that in the test. Reproduce the SCRUM-2 case: resolved between two polls, terminal transition fact still emitted."
+    },
+    {
+      "id": "t3",
+      "summary": "Watermark cutover migration: seed every known issue's signal_event_watermarks row at its current history head so the first history-aware pass replays nothing",
+      "origin": "llm",
+      "status": "confirmed",
+      "acceptance_criteria": [
+        "A replay test over recorded prod watermark rows proves the first post-deploy history-aware pass emits zero facts for history that predates the cutover",
+        "The migration is one deploy unit with the history-aware emitter \u2014 no window where old watermark semantics meet the new reader"
+      ],
+      "deps": [
+        "t1"
+      ],
+      "covers": [
+        "c14",
+        "h14"
+      ],
+      "instruction": "Control-plane side: a migration over signal_event_watermarks translating status-value/comment-timestamp rows to history-position rows seeded at each issue's CURRENT history head. Replay test uses recorded prod watermark rows (capture them read-only via the API/artifacts first). Coordinate with r4: this ships in the same deploy unit as t1/t2."
+    },
+    {
+      "id": "t4",
+      "summary": "Transition self-echo discipline: changelog entries carry an author, and the system's own board moves never become trigger-firing facts",
+      "origin": "llm",
+      "status": "confirmed",
+      "acceptance_criteria": [
+        "A transition performed by the bridge account (or marker-correlated to a system verb) emits either no fact or a fact flagged self-originated that exact-match triggers exclude; a test replaying SCRUM-3 changelog entry 10180 (the intake flow's own To Do -> In Progress) asserts nothing re-fires"
+      ],
+      "deps": [
+        "t2"
+      ],
+      "covers": [
+        "c15",
+        "h15"
+      ],
+      "instruction": "sweep.py: changelog entries carry author accountId. Suppress (or flag self-originated) entries authored by the bridge account id \u2014 same discipline jira_comment_is_self_echo applies to comments, but author-id based, NOT marker-substring (s14 showed substring matching is fragile). Replay SCRUM-3 entry 10180 in the test. r1 (second Jira account) may sharpen identity later \u2014 key off configured bot_account_id now."
+    },
+    {
+      "id": "t5",
+      "summary": "Control-plane re-mint of technically-failed trigger-created runs: backoff, N-attempts-per-window bound, derived ledger record naming the original event and attempt count, then park on a human",
+      "origin": "llm",
+      "status": "confirmed",
+      "acceptance_criteria": [
+        "PG-backed test: a technical failure re-mints after backoff at most N times per window, each re-mint carrying a derived record with the original event id and attempt count, then parks on a human task (mirrors internal/repair bounds)",
+        "Domain outcomes (changes_required and kin) in the test matrix never produce a re-mint record",
+        "The cycle's diff to examples/pr-upkeep/sweep.py and the sweep-cycle graph is emission-only: no re-mint, retry, or consumer-awareness logic lands sweep-side (asserted at review; the boundary is the diff scope)"
+      ],
+      "deps": [],
+      "covers": [
+        "c3",
+        "h2",
+        "c5",
+        "h9",
+        "c4",
+        "h8"
+      ],
+      "instruction": "Go control plane, model on internal/repair's bounds (N per window then human task). New code lives beside the trigger/EnqueueWork seam, NOT in the sweep. Re-mint = new run from the same delivered event after backoff; derived ledger record names original event id + attempt count. Domain outcomes (changes_required and kin) are answers, never re-mint triggers \u2014 table-test the outcome taxonomy. Measured baseline: run 01M0B4K8JSY3QRQJ3M7D2WTZDC failed in 8s, nothing re-armed."
+    },
+    {
+      "id": "t6",
+      "summary": "Re-mints enter the same EnqueueWork seam as triggered and manual runs: subject ceiling, pacing, and breaker gates bound them identically",
+      "origin": "llm",
+      "status": "confirmed",
+      "acceptance_criteria": [
+        "PG-backed test shows a re-mint deferred while a subject run is active and admitted after that run terminates, through the identical inbound path \u2014 no re-mint-only side door exists in the code (asserted by the test entering via EnqueueWork)"
+      ],
+      "deps": [
+        "t5"
+      ],
+      "covers": [
+        "c16",
+        "h16"
+      ],
+      "instruction": "Route t5's re-mints through EnqueueWork itself \u2014 no parallel insert path. PG-backed test: subject with active run defers the re-mint, admits after terminal. Coordinate with the #202 trigger-seam failure breaker (r5): one breaker design at this seam covers both watermark-churn mints and re-mints."
+    },
+    {
+      "id": "t7",
+      "summary": "Store entry model and private registry API: a catalog entry is graph digest PLUS evidence manifest (proving prod run ids, deviations recorded against it, required actor/runner capabilities), full fidelity, internal server",
+      "origin": "llm",
+      "status": "confirmed",
+      "acceptance_criteria": [
+        "The registry lists entries with graph digest and evidence manifest; an entry created from a proven prod flow carries its run ids and deviation records verbatim (full fidelity per the q6 decision); the server is internal/private",
+        "Local additions coexist with pulled entries \u2014 pulling never overwrites or shadows a locally-authored flow (collision test)"
+      ],
+      "deps": [],
+      "covers": [
+        "c6"
+      ],
+      "instruction": "Go control plane + API: store entry = graph digest + evidence manifest (proving run ids, deviation record refs, required actor/runner capabilities). Internal/private server, full fidelity (q6 decision on SCRUM-3 comment 10118). Registry API and repos stay config (q1). Include the collision test: local flows and pulled flows coexist."
+    },
+    {
+      "id": "t8",
+      "summary": "Store pull with actor mapping: the import binds the entry's declared actor/runner capability requirements to local registrations; the graph document stays byte-identical",
+      "origin": "llm",
+      "status": "confirmed",
+      "acceptance_criteria": [
+        "A flow exported from one control plane imports into a second whose actor/runner ids and digests differ; after a declared mapping step it publishes and runs; the graph document is byte-identical before and after (hash-compared) and no digest was hand-edited",
+        "The pulled entry carries its proving evidence (run ids, deviations, required actors) into the importing plane's catalog view"
+      ],
+      "deps": [
+        "t7"
+      ],
+      "covers": [
+        "c17",
+        "h17",
+        "h3"
+      ],
+      "instruction": "Import verb: reads the entry's capability requirements, binds actor://...@sha256 and runner:// ids to local registrations via an explicit mapping step (declared, not inferred). The graph document must hash-compare byte-identical pre/post import (c17/h17) \u2014 mapping lives in bindings, never in the graph. r3: the second plane for the live proof is unscoped setup; the task's own test can use two schemas/instances locally."
+    },
+    {
+      "id": "t9",
+      "summary": "Board-parity consumers: a human's bare comment on a tracked ticket has a consumer, operator questions round-trip on the board, and ticket creation gets a lane verb",
+      "origin": "llm",
+      "status": "confirmed",
+      "acceptance_criteria": [
+        "A human's bare comment (not an engine-question answer) on a tracked ticket mints a consumer run within one sweep interval \u2014 the four dead go-signals from SCRUM-3 (10106/10107/10109/10110) have a subscriber class",
+        "Ticket creation is available through a lane verb behind the allowlist \u2014 no ad-hoc ssh custody widening (the SCRUM-3 gap)",
+        "An operator question posted to a ticket resumes its flow on the human's marked answer (the t17 mechanism, generalized past intake)"
+      ],
+      "deps": [],
+      "covers": [
+        "c8"
+      ],
+      "instruction": "Three legs: (1) a subscriber class for bare human comments on tracked tickets (the four dead SCRUM-3 go-signals); (2) a ticket-creation verb in the allowlisted bridge lane (jira adapter has comment+transition today); (3) generalize the t17 marked-question resume past intake. Self-echo via t4's discipline so the consumer never fires on bridge-authored comments."
+    },
+    {
+      "id": "t10",
+      "summary": "Board-driven planning continuation: the spec-chain leg is reachable from the ticket \u2014 frame decisions land as marked questions, the human's reply transacts exactly the stated decision, plan and assignment continue from the board",
+      "origin": "llm",
+      "status": "confirmed",
+      "acceptance_criteria": [
+        "From the board alone an operator creates work, answers questions back and forth, and continues into planning and task assignment; every act becomes a consumed engine fact \u2014 zero operator-session polling anywhere in the chain (the bar from SCRUM-3 comment 10106)",
+        "devague confirmations transact only in response to a human's on-ticket answer correlated to the asking comment \u2014 never inferred; frame-state custody runs through a declared checkout lane, not silent operator-tree mutation"
+      ],
+      "deps": [
+        "t9"
+      ],
+      "covers": [
+        "h4"
+      ],
+      "instruction": "Wire examples/spec-chain/workflow.yaml (22 nodes, compiles, unpublished) to ticket facts. Frame decisions -> marked ticket questions; human reply -> transact exactly the stated decision (devague confirm only on correlated human answer \u2014 never inferred, the devague contract). r2: declare the .devague/ custody lane before dispatching this; if undeclared by dispatch time, park and route to the operator."
+    },
+    {
+      "id": "t11",
+      "summary": "Start/finish ticket reports: a run minted from a ticket-derived fact posts an engine-driven start update (run id, workflow, trigger event id) and a finish update (terminal outcome) through the narrow jira bridge, never the emitter",
+      "origin": "llm",
+      "status": "confirmed",
+      "acceptance_criteria": [
+        "Both updates post through the narrow jira bridge even when the run starts and finishes between two sweep passes (sub-interval run in the test matrix); the sweep's credentials and code are untouched by this path",
+        "The start update lands when the consumer picks the fact up, not when the sweep next notices \u2014 engine-driven, verified by timestamp ordering against the sweep schedule"
+      ],
+      "deps": [
+        "t6"
+      ],
+      "covers": [
+        "c9",
+        "h5"
+      ],
+      "instruction": "Engine lifecycle hooks -> transactional outbox -> narrow jira bridge: start update on fact pickup (run id, workflow, trigger event id), finish update on terminal outcome. Never the emitter (c4). EVERY node on the posting path declares ledger.propose [claim] \u2014 the #202 trap killed 4 runs on exactly this (mapping.py:516/:593 attaches claim records unconditionally)."
+    },
+    {
+      "id": "t12",
+      "summary": "Regression-proof suite for the cited live failures: every failure named in the spec's why-it-matters maps to a named test",
+      "origin": "llm",
+      "status": "confirmed",
+      "acceptance_criteria": [
+        "The comment-10106 skip is caught by a history-replay regression test; an unheard board act is caught by a consumed-fact check; the deployment-lock/cutover hazard is caught by the t3 replay test \u2014 each cited failure names its test in the plan's delivery record"
+      ],
+      "deps": [
+        "t4",
+        "t9"
+      ],
+      "covers": [
+        "c12",
+        "h12"
+      ],
+      "instruction": "One named regression test per cited failure: comment-10106 skip (history replay), unheard board acts (consumed-fact check), cutover replay (t3's test counts). Deliverable includes the failure->test mapping table for the delivery record."
+    },
+    {
+      "id": "t13",
+      "summary": "Live prod proof cycle, ticket-to-store, measured from prod records alone: the whole announcement demonstrated on the real lane with zero operator shell commands",
+      "origin": "llm",
+      "status": "confirmed",
+      "acceptance_criteria": [
+        "On the live prod lane: a board act becomes an engine fact within one sweep interval (<=5 min) with ZERO session-polling consumptions across the full cycle; a two-comment reply emits exactly two facts in order; a killed pickup re-arms bounded and the ticket shows the attempt; a flow proven on thor runs on a second plane after one pull",
+        "Every number is read from prod records alone \u2014 sweep stdout artifacts, run and ledger rows, store API responses \u2014 by an auditor with no session context; the demonstration involves zero operator shell commands",
+        "Each audience runs its leg with no other role's tooling: operator from the board, fleet from facts, store users from the registry API"
+      ],
+      "deps": [
+        "t3",
+        "t6",
+        "t8",
+        "t10",
+        "t11",
+        "t12"
+      ],
+      "covers": [
+        "c1",
+        "h7",
+        "c10",
+        "h10",
+        "c11",
+        "h11",
+        "c13",
+        "h13",
+        "c19",
+        "h18"
+      ],
+      "instruction": "Operator-lane task, not a dispatch: run the live cycle on prod, zero shell commands in the demonstrated path, then audit purely from prod records (sweep stdout artifacts via GET /v1alpha1/attempts/<id>/artifacts/stdout, run/ledger rows, store API). Numbers to hit are c19's: fact <=5min, two comments -> exactly two facts in order, bounded re-arm visible on ticket, one pull runs on second plane."
+    }
+  ],
+  "risks": [
+    {
+      "id": "r1",
+      "text": "The q7 second/per-agent Jira account mechanism is undecided in detail (API keys vs platform users vs per-machine accounts): author-identity self-echo (t4) and the bridge's own identity depend on it; the marker-correlation fallback exists but was live-demonstrated fragile (s14 substring suppression)",
+      "kind": "unknown_nonblocking",
+      "task_id": "t4",
+      "resolved": false,
+      "resolution": ""
+    },
+    {
+      "id": "r2",
+      "text": "Frame-state custody for board-driven planning (t10): the codex write path is proven for repo commits (#18) but no declared lane exists for mutating .devague/ working-tree state from an engine-driven run \u2014 the custody story must be declared before the spec-chain leg dispatches, and may need its own design decision",
+      "kind": "unknown_nonblocking",
+      "task_id": "t10",
+      "resolved": false,
+      "resolution": ""
+    },
+    {
+      "id": "r3",
+      "text": "The second control plane for the store-pull proof (t8, t13) does not exist yet as a deployment: spark's dev plane is the natural candidate, but standing one up with its own postgres and actor registrations is unscoped setup work that gates the h17/c19 proof legs",
+      "kind": "unknown_nonblocking",
+      "task_id": "t8",
+      "resolved": false,
+      "resolution": ""
+    },
+    {
+      "id": "r4",
+      "text": "Deploy sequencing for the cutover: t3's migration and t1/t2's history-aware emitter must land as one deploy unit on thor \u2014 the sweep is a uv-tool-installed copy that goes stale silently (the #104/#120 lesson), so a partial deploy replays history into spurious billable intake runs",
+      "kind": "unknown_nonblocking",
+      "task_id": "t3",
+      "resolved": false,
+      "resolution": ""
+    },
+    {
+      "id": "r5",
+      "text": "Bug #202's trigger-seam failure breaker overlaps t6's breaker/gate work: the fix-node ledger rejection is a separate bug-tail PR, but the per-subject failure breaker should be designed once at the EnqueueWork seam, not built twice \u2014 coordinate the #202 fix with t6 before either dispatches",
+      "kind": "follow_up",
+      "task_id": "t6",
+      "resolved": false,
+      "resolution": ""
+    }
+  ]
+}

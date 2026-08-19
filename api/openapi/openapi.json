@@ -2945,6 +2945,191 @@
         ],
         "type": "object"
       },
+      "StoreCapabilityRequirement": {
+        "description": "One actor/runner capability the graph pins. `ref` is the graph's pinned identifier (actor://…, runner://…) carried verbatim; `capabilities` is what a substitute registration on an importing plane must advertise. Requirements live here — in the evidence manifest — never as graph rewrites, so an import can bind them to local registrations without touching the graph document or its digest.",
+        "properties": {
+          "capabilities": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          },
+          "kind": {
+            "enum": [
+              "actor",
+              "runner"
+            ],
+            "type": "string"
+          },
+          "ref": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "kind",
+          "ref",
+          "capabilities"
+        ],
+        "type": "object"
+      },
+      "StoreDeviationRecordRef": {
+        "description": "A pointer to one deviation record recorded against the flow — a tree path (docs/deviations/…) or URL, carried verbatim.",
+        "properties": {
+          "note": {
+            "type": "string"
+          },
+          "ref": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "ref"
+        ],
+        "type": "object"
+      },
+      "StoreEntry": {
+        "description": "One catalog entry: a graph plus its evidence. `entry_digest` is the canonical digest of the entry's portable content (name + graph + evidence) — per-plane row identity (id, origin, source_registry, created_at) is excluded, which is what makes re-pulls idempotent and lets a pulling plane verify integrity.",
+        "properties": {
+          "created_at": {
+            "format": "date-time",
+            "type": "string"
+          },
+          "entry_digest": {
+            "type": "string"
+          },
+          "evidence": {
+            "$ref": "#/components/schemas/StoreEvidenceManifest"
+          },
+          "graph": {
+            "$ref": "#/components/schemas/StoreEntryGraph"
+          },
+          "id": {
+            "type": "string"
+          },
+          "name": {
+            "type": "string"
+          },
+          "origin": {
+            "enum": [
+              "local",
+              "pulled"
+            ],
+            "type": "string"
+          },
+          "source_registry": {
+            "description": "Where a pulled entry came from; absent on local entries.",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "name",
+          "origin",
+          "graph",
+          "evidence",
+          "entry_digest",
+          "created_at"
+        ],
+        "type": "object"
+      },
+      "StoreEntryCreateRequest": {
+        "description": "Catalog a locally proven flow. `name` defaults to the workflow key of the version `graph_digest` resolves to.",
+        "properties": {
+          "evidence": {
+            "$ref": "#/components/schemas/StoreEvidenceManifest"
+          },
+          "graph_digest": {
+            "type": "string"
+          },
+          "name": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "graph_digest",
+          "evidence"
+        ],
+        "type": "object"
+      },
+      "StoreEntryGraph": {
+        "description": "The graph half of an entry. `source` is present on the single-entry document (which must be self-contained enough to republish elsewhere) and omitted from listings.",
+        "properties": {
+          "digest": {
+            "type": "string"
+          },
+          "source": {
+            "type": "string"
+          },
+          "source_format": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "digest",
+          "source_format"
+        ],
+        "type": "object"
+      },
+      "StoreEntryList": {
+        "properties": {
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/StoreEntry"
+            },
+            "type": "array"
+          }
+        },
+        "required": [
+          "items"
+        ],
+        "type": "object"
+      },
+      "StoreEntryPullRequest": {
+        "description": "Ingest an entry fetched from another registry. `entry` is the full document that registry's GET /v1alpha1/store/entries/{id} served, verbatim; `source_registry` names where it was fetched from and is recorded on the row.",
+        "properties": {
+          "entry": {
+            "$ref": "#/components/schemas/StoreEntry"
+          },
+          "source_registry": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "source_registry",
+          "entry"
+        ],
+        "type": "object"
+      },
+      "StoreEvidenceManifest": {
+        "description": "The full-fidelity evidence half of a store entry: the prod run ids that proved the flow, the deviation records recorded against it, and the capability requirements its graph pins.",
+        "properties": {
+          "deviation_records": {
+            "items": {
+              "$ref": "#/components/schemas/StoreDeviationRecordRef"
+            },
+            "type": "array"
+          },
+          "proving_run_ids": {
+            "items": {
+              "type": "string"
+            },
+            "minItems": 1,
+            "type": "array"
+          },
+          "required_capabilities": {
+            "items": {
+              "$ref": "#/components/schemas/StoreCapabilityRequirement"
+            },
+            "type": "array"
+          }
+        },
+        "required": [
+          "proving_run_ids",
+          "deviation_records",
+          "required_capabilities"
+        ],
+        "type": "object"
+      },
       "SuiteVerdictResult": {
         "description": "What the gate produced: the suite's verdict, and — for a REJECTING gate — where that failure was routed (task t32, issue #102).\n\nTwo records rather than one because a rejecting gate produces two facts, and splitting them across two round trips would put the operator back in the loop the routing exists to take them out of.\n\n`routing` is absent for a passing gate: there is nothing to route, and a ledger row per green gate saying so is noise. `routing_error` is present, with `routing` still absent, when a routing was computed but could not be recorded — the verdict is the primary record and is never failed to protect its derivation, but the failure is stated rather than left as a silence.",
         "properties": {
@@ -3286,6 +3471,11 @@
       },
       "inboundIssuanceBearerAuth": {
         "description": "The shared secret configured as NODES_INBOUND_ISSUANCE_TOKEN_SECRET. Used only by POST /v1alpha1/inbound/credentials and POST /v1alpha1/inbound/credentials/revoke (issue #111's dial-in half) — its own secret again, so the standing to mint or end a bridge's IDENTITY is granted independently of decision, registration, event and ad-hoc power. Absent configuration leaves both routes refusing with 401 rather than mounted-but-authless.",
+        "scheme": "bearer",
+        "type": "http"
+      },
+      "storeWriteBearerAuth": {
+        "description": "The shared secret configured as NODES_STORE_TOKEN_SECRET. Used only by the flow store's two write routes — POST /v1alpha1/store/entries and POST /v1alpha1/store/entries/pull (task t7, issue #192) — its own secret, so the standing to write the catalog is granted independently of decision, registration, event, and ad-hoc power. Store reads take no secret at all: the registry is an internal, mesh-private surface whose read side serves everyone on the mesh.",
         "scheme": "bearer",
         "type": "http"
       }
@@ -5742,6 +5932,203 @@
         "summary": "Enable or disable a schedule.",
         "tags": [
           "schedules"
+        ]
+      }
+    },
+    "/v1alpha1/store/entries": {
+      "get": {
+        "description": "Every entry with its graph digest and full evidence manifest — the browsing surface (#192 acceptance (a)). The graph source is omitted here; GET /v1alpha1/store/entries/{id} serves the self-contained document. Optionally filtered to one flow name, under which a locally-authored entry and a pulled one may both appear — origins coexist and neither shadows the other.",
+        "operationId": "listStoreEntries",
+        "parameters": [
+          {
+            "description": "Restrict the listing to entries with this flow name.",
+            "in": "query",
+            "name": "name",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/StoreEntryList"
+                }
+              }
+            },
+            "description": "The catalog, newest first."
+          }
+        },
+        "summary": "Browse the store's catalog entries, newest first.",
+        "tags": [
+          "store"
+        ]
+      },
+      "post": {
+        "description": "Task t7 (issue #192): a store entry is a graph PLUS its evidence. The graph digest must resolve to a workflow version published on this plane — its source is embedded in the entry verbatim, making the entry self-contained enough to republish on another plane without hand-editing digests — and every proving run id in the evidence manifest must name a run this plane actually holds. The capability requirements the graph pins live in the manifest, never as graph rewrites, so a later import can bind them to local registrations without touching the graph document. Identical content resolves to the existing entry with 200 rather than duplicating (the same idempotent-by-digest shape as workflow publication). The registry is an internal, mesh-private surface: reads are open to the mesh, and this write route is bearer-gated.",
+        "operationId": "createStoreEntry",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/StoreEntryCreateRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/StoreEntry"
+                }
+              }
+            },
+            "description": "Identical content was already cataloged; this is that entry."
+          },
+          "201": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/StoreEntry"
+                }
+              }
+            },
+            "description": "The entry was cataloged."
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "description": "The evidence manifest is missing, empty, or malformed, or a proving run does not exist here."
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "description": "No published workflow version with this graph digest."
+          }
+        },
+        "security": [
+          {
+            "storeWriteBearerAuth": []
+          }
+        ],
+        "summary": "Catalog a flow this control plane has published and proven.",
+        "tags": [
+          "store"
+        ]
+      }
+    },
+    "/v1alpha1/store/entries/pull": {
+      "post": {
+        "description": "Task t7 (issue #192): the ingest half of a pull. The client fetches the full entry document from a source registry it is configured with (which registry to pull from is client configuration, never server code) and posts it here with the source named. The entry's own digest is recomputed over the carried name/graph/evidence and must match — the integrity seal — and the embedded graph source is compiled to prove it digests to the declared graph digest. Evidence rides verbatim: the proving runs live on the source plane and are not re-validated here (full fidelity, the q6 decision). The ingested row is minted locally with origin `pulled`, so a pull can never overwrite or shadow a locally-authored entry (#192 acceptance (b)); re-pulling identical content resolves to the existing pulled entry with 200.",
+        "operationId": "pullStoreEntry",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/StoreEntryPullRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/StoreEntry"
+                }
+              }
+            },
+            "description": "This exact entry was already pulled; this is that row."
+          },
+          "201": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/StoreEntry"
+                }
+              }
+            },
+            "description": "The pulled entry was cataloged beside any local entries."
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "description": "The document is incomplete, its content does not digest to its entry_digest, or its embedded source does not digest to its declared graph digest."
+          }
+        },
+        "security": [
+          {
+            "storeWriteBearerAuth": []
+          }
+        ],
+        "summary": "Ingest an entry fetched from another registry, verbatim.",
+        "tags": [
+          "store"
+        ]
+      }
+    },
+    "/v1alpha1/store/entries/{id}": {
+      "get": {
+        "operationId": "getStoreEntry",
+        "parameters": [
+          {
+            "description": "The store entry id.",
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/StoreEntry"
+                }
+              }
+            },
+            "description": "The full entry — exactly what a client of this registry hands to its own plane's pull route."
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "description": "No store entry with this id."
+          }
+        },
+        "summary": "Fetch one entry as a self-contained document, graph source included.",
+        "tags": [
+          "store"
         ]
       }
     },

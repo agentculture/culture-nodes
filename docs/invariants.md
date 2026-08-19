@@ -46,6 +46,7 @@ Sanctioned kind-aware file (the only allowed match):
 | --- | --- |
 | `internal/api/grades.go` | Grade authority follows the grader's registered kind: a human grading directly is their own confirmation; an agent grading is a proposal. Outside dispatch — the c16 precedent. |
 | `internal/api/preflights.go` | A clarify-then-commit acknowledgement's ledger **origin** follows the acknowledging actor's registered kind — `agent` when a bridge answers for itself, `human` when an operator answers on its behalf (issue #67, task t14). The authority is `proposed` either way, so the kind decides who the record says produced it, never what the control plane does with it; the gate's dispatch-side half (`internal/worker/clarifygate.go`) reads no kind at all. |
+| `internal/api/storebindings.go` | Store-binding **admission** (task t8, issue #192): a pulled entry's `runner` requirement may only be bound to a registration of kind `runner`, and an `actor` requirement to a non-runner — a category-fit check at mapping time, the grades-API shape. Dispatch stays kind-blind: the worker registry's binding fallback resolves `endpoint_ref` and metadata only, exactly like a direct registration. |
 
 ## Invariant 2 — The ledger authority ladder (spec c17, honesty h15)
 

@@ -128,6 +128,11 @@ var sanctionedKindAware = map[string]string{
 		"operator answers on its behalf. The authority is proposed either way (issue #67, task t14), so " +
 		"the kind decides who the record says produced it, never what the control plane does with it: " +
 		"the gate's dispatch-side half (internal/worker/clarifygate.go) reads no kind at all",
+	"internal/api/storebindings.go": "store-binding ADMISSION checks that a pulled entry's runner " +
+		"requirement is bound to a runner registration and an actor requirement to a non-runner one " +
+		"(task t8, issue #192) — a category-fit validation at mapping time, the grades-API shape. " +
+		"Dispatch itself stays kind-blind: the worker registry's binding fallback resolves " +
+		"endpoint_ref and metadata only, exactly like a direct registration",
 }
 
 // TestActorKindReadsStayOutOfDispatch is the c16 sweep the neutrality test

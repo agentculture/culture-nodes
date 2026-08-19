@@ -262,6 +262,11 @@ def jira_history_facts(
         status_item = next(
             (item for item in entry.get("items") or [] if item.get("field") == "status"), None
         )
+        # Transition self-echo is exact author identity only. Do not inspect
+        # marker substrings here: s14 proved that quoted marker text can
+        # suppress unrelated human activity for an entire sweep interval.
+        if status_item is not None and bot_account_id and _account_id(entry) == bot_account_id:
+            continue
         payload = dict(payload_template)
         payload["changelog_id"] = position_id
         payload["actor_account_id"] = _account_id(entry)

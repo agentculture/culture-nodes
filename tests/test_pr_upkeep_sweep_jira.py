@@ -28,7 +28,32 @@ def jira_round_trip_complete():
     return json.loads((FIXTURES / "jira-history-round-trip-complete.json").read_text())
 
 
+@pytest.fixture(scope="module")
+def jira_scrum_3_self_echo():
+    return json.loads((FIXTURES / "jira-scrum-3-transition-self-echo.json").read_text())
+
+
 class TestJiraHistoryReplay:
+    def test_scrum_3_entry_10180_bridge_transition_does_not_refire_but_human_transition_emits(
+        self, jira_scrum_3_self_echo
+    ):
+        facts = jira.jira_history_facts(
+            jira_scrum_3_self_echo["issues"][0], "712020:bridge-account"
+        )
+
+        transition_ids = [fact[1]["changelog_id"] for fact in facts]
+        assert "10180" not in transition_ids
+        assert transition_ids == ["10179", "10181"]
+
+    def test_transition_self_echo_uses_exact_author_id_not_marker_substrings(
+        self, jira_scrum_3_self_echo
+    ):
+        facts = jira.jira_history_facts(
+            jira_scrum_3_self_echo["issues"][0], "712020:bridge-account"
+        )
+
+        assert any(fact[1]["changelog_id"] == "10179" for fact in facts)
+
     def test_to_do_round_trip_between_polls_replays_both_transitions_in_order(
         self, jira_round_trip, jira_round_trip_complete
     ):

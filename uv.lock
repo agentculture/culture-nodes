@@ -156,7 +156,7 @@ wheels = [
 
 [[package]]
 name = "culture-nodes"
-version = "0.38.1"
+version = "0.38.2"
 source = { editable = "." }
 
 [package.dev-dependencies]

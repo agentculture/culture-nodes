@@ -32,6 +32,37 @@ refuses that), so pure silence — a question nobody ever replies to — still
 has no timeout; only a reply that *arrives* and fails to resolve the
 question is what this bound counts.
 
+## The marker contract, and the shared correlation helper (task t9 leg 3)
+
+The mechanism above is not intake-specific, and as of task t9 its
+consumer-side half has one citable home: `question_correlation.py`, a
+stdlib-only sibling of this file. Any flow that posts a marked question and
+parks on `pr-upkeep.jira.comment` — this round trip, the claim-decision loop
+below, the spec-chain leg (plan task t10) — cites that module instead of
+re-deriving the correlation. Its module docstring is the normative statement
+of the three-party contract; in brief:
+
+1. **The asker** binds `question_id` on the `post_comment` verb; the bridge
+   (`adapters/jira/src/jira_bridge/mapping.py`, `Comment.marked_text`)
+   appends `[culture-nodes:jira-actor question_id=<id>]` to the posted
+   comment. The workflow never writes the marker itself.
+2. **The emitter** (`examples/pr-upkeep/sweep.py`) stamps the next human
+   comment's fact with `originating_question_id` (from the nearest preceding
+   marked question) and `answer: {comment_id, body}`; its self-echo filter
+   means a marker-bearing or bot-authored comment never becomes a fact.
+3. **The resumed consumer** calls `question_correlation.answer_for(payload,
+   question_id)`: the answer object exactly when the fact names *its*
+   question, carries an answer, and is not flagged `self_originated` — None
+   otherwise, and what a non-answer means (re-ask, re-park, escalate) stays
+   the caller's policy.
+
+`tests/test_question_correlation.py` pins the helper against the *real*
+emitter's output — sweep facts in, helper verdicts out — so the three
+parties cannot drift apart silently. A bare human comment (no
+`originating_question_id`) correlates with nothing by construction; the
+bare-comment subscriber (`examples/jira-comment-consumer/workflow.yaml`)
+consumes exactly that complement.
+
 ## Claim decisions round-trip through Jira (task t13)
 
 The same ask/wait/resume channel this fixture demonstrates is reused,

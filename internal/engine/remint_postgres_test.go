@@ -27,9 +27,21 @@ func makeRemintDue(t *testing.T, f *fixture) {
 	}
 }
 
+// registerRemintProducer registers the identity the derived re-mint decision
+// is written under — before the enqueue that writes under it, the order a
+// deployment does it in. A generated id rather than the literal
+// RemintSchedulerActorID because these tests share one PostgreSQL and
+// actors.id is a global primary key (same reasoning as the api package's
+// repair-router tests).
+func registerRemintProducer(t *testing.T, f *fixture) string {
+	t.Helper()
+	return f.insertActorKind("engine/remint-scheduler", "validator")
+}
+
 func TestTechnicalTriggerFailureRemintsWithinBoundThenParksOnHuman(t *testing.T) {
 	f := newFixture(t, "trigger-subject.workflow.yaml")
 	publishFixtureWorkflow(t, f)
+	producer := registerRemintProducer(t, f)
 	first := deliverSubjectEvent(t, f, "SCRUM-194", "initial")
 	originalEventID := first.Event.ID
 	runID := first.Triggered[0].RunID
@@ -40,7 +52,7 @@ func TestTechnicalTriggerFailureRemintsWithinBoundThenParksOnHuman(t *testing.T)
 			t.Fatalf("ScheduleRunRemint attempt %d: %v", attempt, err)
 		}
 		makeRemintDue(t, f)
-		if got, err := f.store.EnqueueDueRemints(f.ctx, f.ns.ID, f.engine, time.Now()); err != nil || got != 1 {
+		if got, err := f.store.EnqueueDueRemints(f.ctx, f.ns.ID, f.engine, producer, time.Now()); err != nil || got != 1 {
 			t.Fatalf("EnqueueDueRemints attempt %d = (%d,%v), want (1,nil)", attempt, got, err)
 		}
 		if err := f.store.Pool().QueryRow(f.ctx, `SELECT minted_run_id FROM trigger_remints WHERE namespace_id=$1 AND original_event_id=$2 AND attempt=$3`, f.ns.ID, originalEventID, attempt).Scan(&runID); err != nil {
@@ -71,6 +83,7 @@ func TestTechnicalTriggerFailureRemintsWithinBoundThenParksOnHuman(t *testing.T)
 func TestDueRemintUsesTriggerEnqueuePathAndWaitsForActiveSubject(t *testing.T) {
 	f := newFixture(t, "trigger-subject.workflow.yaml")
 	publishFixtureWorkflow(t, f)
+	producer := registerRemintProducer(t, f)
 	first := deliverSubjectEvent(t, f, "SCRUM-203", "initial")
 	failedRun := first.Triggered[0].RunID
 	nodeRun := failRunForRemint(t, f, failedRun)
@@ -80,7 +93,7 @@ func TestDueRemintUsesTriggerEnqueuePathAndWaitsForActiveSubject(t *testing.T) {
 	makeRemintDue(t, f)
 
 	active := deliverSubjectEvent(t, f, "SCRUM-203", "fresh-while-backed-off").Triggered[0].RunID
-	if got, err := f.store.EnqueueDueRemints(f.ctx, f.ns.ID, f.engine, time.Now()); err != nil || got != 0 {
+	if got, err := f.store.EnqueueDueRemints(f.ctx, f.ns.ID, f.engine, producer, time.Now()); err != nil || got != 0 {
 		t.Fatalf("due re-mint with active subject = (%d,%v), want deferred", got, err)
 	}
 	if got := f.countScalar(`SELECT COUNT(*)::int FROM trigger_remints WHERE source_run_id=$1 AND status='pending'`, failedRun); got != 1 {
@@ -88,7 +101,7 @@ func TestDueRemintUsesTriggerEnqueuePathAndWaitsForActiveSubject(t *testing.T) {
 	}
 
 	failRunForRemint(t, f, active)
-	if got, err := f.store.EnqueueDueRemints(f.ctx, f.ns.ID, f.engine, time.Now()); err != nil || got != 1 {
+	if got, err := f.store.EnqueueDueRemints(f.ctx, f.ns.ID, f.engine, producer, time.Now()); err != nil || got != 1 {
 		t.Fatalf("due re-mint after active termination = (%d,%v), want admitted", got, err)
 	}
 	var minted string

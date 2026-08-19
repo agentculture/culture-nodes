@@ -17,6 +17,15 @@ const (
 	RemintMaxAttempts = 2
 	RemintWindow      = 24 * time.Hour
 	RemintBackoff     = time.Minute
+
+	// RemintSchedulerActorID is the default producer identity the derived
+	// decision record of a minted re-mint is written under. It names the
+	// SCHEDULER, not the process that ran it — the same argument
+	// api.DefaultRepairRouterActorID makes. Like that identity it must be
+	// REGISTERED: ledger_records.origin_actor_id is a foreign key to
+	// actors(id), so a deployment that never registered it gets that said
+	// to it on every due re-mint rather than silently recording none.
+	RemintSchedulerActorID = "engine_remint_scheduler"
 )
 
 // ScheduleRunRemint records the next bounded re-mint for a technically
@@ -87,9 +96,15 @@ func (s *Store) ScheduleRunRemint(ctx context.Context, namespaceID, runID, nodeR
 // the identical inbound path used by delivered events and it terminates in
 // dispatchNode -> Tx.EnqueueWork; there is no re-mint-only work insertion.
 // A subject already active leaves the request pending for a later tick.
-func (s *Store) EnqueueDueRemints(ctx context.Context, namespaceID string, runner engine.EventTriggerRunner, now time.Time) (int, error) {
+//
+// producerActorID is the registered identity the derived decision record is
+// written under; empty selects RemintSchedulerActorID.
+func (s *Store) EnqueueDueRemints(ctx context.Context, namespaceID string, runner engine.EventTriggerRunner, producerActorID string, now time.Time) (int, error) {
 	if runner == nil {
 		return 0, nil
+	}
+	if producerActorID == "" {
+		producerActorID = RemintSchedulerActorID
 	}
 	if now.IsZero() {
 		now = time.Now().UTC()
@@ -152,7 +167,7 @@ func (s *Store) EnqueueDueRemints(ctx context.Context, namespaceID string, runne
 			}
 			newRunID := created[0].RunID
 			data, _ := json.Marshal(map[string]any{"kind": "trigger_remint", "original_event_id": d.eventID, "attempt": d.attempt, "source_run_id": d.sourceRunID})
-			if _, err := etx.Ledger().Append(ctx, ledger.Record{RecordType: ledger.RecordDecision, RunID: newRunID, Origin: ledger.Origin{Kind: ledger.OriginEngine}, Authority: ledger.AuthorityDerived, Data: data}); err != nil {
+			if _, err := etx.Ledger().Append(ctx, ledger.Record{RecordType: ledger.RecordDecision, RunID: newRunID, Origin: ledger.Origin{Kind: ledger.OriginEngine, ActorID: producerActorID}, Authority: ledger.AuthorityDerived, Data: data}); err != nil {
 				return err
 			}
 			if _, err := tx.q.Exec(ctx, `UPDATE trigger_remints SET status='minted',minted_run_id=$2,updated_at=$3 WHERE id=$1`, d.id, newRunID, now); err != nil {

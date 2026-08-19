@@ -56,6 +56,12 @@ type Options struct {
 	// Required.
 	NamespaceID string
 
+	// RemintProducerActorID is the registered identity the derived decision
+	// record of a minted trigger re-mint is written under. Empty selects
+	// postgres.RemintSchedulerActorID; either way the id must exist in
+	// actors(id) or every due re-mint fails its ledger append visibly.
+	RemintProducerActorID string
+
 	// ClaimBatch, LeaseDuration, HeartbeatInterval, PollInterval pace the
 	// loop; see the Default* constants.
 	ClaimBatch        int
@@ -352,7 +358,7 @@ func (w *Worker) Tick(ctx context.Context) (int, error) {
 	// Their entry nodes are enqueued by the engine's normal dispatchNode ->
 	// EnqueueWork path, so everything below (claiming, pacing, concurrency and
 	// breakers) sees no alternate provenance-specific queue.
-	if _, err := w.db.EnqueueDueRemints(ctx, w.opts.NamespaceID, w.engine, w.opts.Now()); err != nil {
+	if _, err := w.db.EnqueueDueRemints(ctx, w.opts.NamespaceID, w.engine, w.opts.RemintProducerActorID, w.opts.Now()); err != nil {
 		return 0, fmt.Errorf("worker: enqueue due re-mints: %w", err)
 	}
 	var claimed []postgres.ClaimedWork

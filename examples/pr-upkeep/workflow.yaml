@@ -127,6 +127,14 @@ spec:
                 summary: {type: string}
           no_change:
             schema: {type: object}
+      # A real bridge completion proposes a claim (PRD §10.4); a node that
+      # declares no propose types rejects every honest actor completion as
+      # contract_rejected. That is bug #202, measured twice: four failed fix
+      # runs on PR #201 (2026-08-19) and again on PR #208 — the work landed
+      # each time, then the run died on this missing block. jira-intake
+      # documented the same trap from the t17 round trip.
+      ledger:
+        propose: [claim]
 
     human-merges-pr:
       kind: approval

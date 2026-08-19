@@ -176,7 +176,7 @@ Numbered SQL migrations for the authoritative PostgreSQL store (prd-spec
   only after the migration and control-plane binary are live. Never deploy
   the emitter first or let its first pass emit before adoption, because
   pre-cutover ticket history could become billable intake runs.
-- `0042_jira_ticket_report_outbox.sql` — expand-only trigger provenance on
+- `0043_jira_ticket_report_outbox.sql` — expand-only trigger provenance on
   signal events/runs and the engine lifecycle → Jira bridge transactional
   outbox. `(run_id, phase)` makes start and finish independently durable and
   idempotent even when both occur between scheduler passes.

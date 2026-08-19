@@ -5,6 +5,13 @@ All notable changes to this project will be documented in this file.
 Format follows [Keep a Changelog](https://keepachangelog.com/). This project
 adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.39.1] - 2026-08-20
+
+### Fixed
+
+- Store bindings: entries sharing a required ref must agree on the local actor key. Dispatch resolution (ResolveStoreBoundActorKey) now reduces the trail to each entry's current binding and refuses a cross-entry disagreement by name (ErrStoreBindingConflict) instead of silently dispatching one flow on another entry's newest mapping; the create guard from the PR #208 operator gate is relaxed to join-must-agree so an entry that already binds a ref can still start a migration (PR #208 qodo finding 4, refs #192 #203).
+- Store bindings: migration 0045 adds store_entry_bindings_ref_current_idx, matching the new per-entry DISTINCT ON resolution query — bindings are insert-only, so without it every bound-ref dispatch walked the whole append-only table rather than just the ref's own rows (PR #209 qodo finding 1); an EXPLAIN test pins that the planner actually uses it.
+
 ## [0.39.0] - 2026-08-20
 
 ### Added

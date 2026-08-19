@@ -372,7 +372,7 @@ func (e *Engine) createTriggeredRunTx(ctx context.Context, tx Tx, wf *Workflow, 
 	}
 	run := Run{ID: e.newID(), NamespaceID: e.store.NamespaceID(), WorkflowDigest: candidate.Digest,
 		State: RunRunning, Input: jsonOrNull(ev.Payload), CreatedAt: now, UpdatedAt: now,
-		ActorAffinity: affinityJSON(affinity), Subject: ev.Subject}
+		ActorAffinity: affinityJSON(affinity), Subject: ev.Subject, TriggerEventID: ev.ID}
 	format := candidate.SourceFormat
 	if format != string(compiler.FormatJSON) {
 		format = string(compiler.FormatYAML)

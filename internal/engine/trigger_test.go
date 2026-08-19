@@ -3,10 +3,16 @@ package engine_test
 import (
 	"context"
 	"encoding/json"
+	"net/http"
+	"net/http/httptest"
+	"strings"
+	"sync"
 	"testing"
 
 	"github.com/agentculture/culture-nodes/internal/engine"
+	"github.com/agentculture/culture-nodes/internal/store"
 	storepg "github.com/agentculture/culture-nodes/internal/store/postgres"
+	"github.com/agentculture/culture-nodes/internal/ticketreport"
 )
 
 // Task t15 (spec c31/h16): "at most one active run per originating Jira
@@ -44,6 +50,71 @@ func publishFixtureWorkflow(t *testing.T, f *fixture) {
 		ContentDigest: f.cw.Digest,
 	}); err != nil {
 		t.Fatalf("publish fixture workflow: %v", err)
+	}
+}
+
+// TestTicketDerivedSubIntervalRunPostsStartThenFinishThroughBridge proves the
+// report path is engine lifecycle -> transactional outbox -> registered Jira
+// actor. Both lifecycle transitions commit before one dispatcher pass, the
+// timing that sweep-based reporting would lose.
+func TestTicketDerivedSubIntervalRunPostsStartThenFinishThroughBridge(t *testing.T) {
+	f := newFixture(t, "trigger-subject.workflow.yaml")
+	publishFixtureWorkflow(t, f)
+
+	var mu sync.Mutex
+	var comments []string
+	bridge := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var invocation struct {
+			Input struct{ Verb, Issue, Comment string } `json:"input"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&invocation); err != nil {
+			t.Errorf("decode invocation: %v", err)
+		}
+		if invocation.Input.Verb != "post_comment" || invocation.Input.Issue != "SCRUM-203" {
+			t.Errorf("narrow bridge input = %+v", invocation.Input)
+		}
+		mu.Lock()
+		comments = append(comments, invocation.Input.Comment)
+		mu.Unlock()
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"outcome":"comment_posted","output":{},"ledger_delta":{"records":[]}}`))
+	}))
+	defer bridge.Close()
+	if _, err := f.store.Pool().Exec(f.ctx, `INSERT INTO actors
+		(id,namespace_id,actor_key,revision,kind,protocol,endpoint_ref)
+		VALUES ($1,$2,$3,1,'bridge','actor-protocol',$4)`, store.NewULID(), f.ns.ID, storepg.JiraTicketReporterActorKey, bridge.URL); err != nil {
+		t.Fatalf("register Jira bridge: %v", err)
+	}
+
+	delivery := deliverSubjectEvent(t, f, "SCRUM-203", "jira:team.example.com:SCRUM-203:status")
+	runID := delivery.Triggered[0].RunID
+	var startRows int
+	if err := f.store.Pool().QueryRow(f.ctx, `SELECT count(*) FROM jira_ticket_report_outbox WHERE run_id=$1 AND phase='start'`, runID).Scan(&startRows); err != nil || startRows != 1 {
+		t.Fatalf("engine pickup start report before any scheduler pass = %d (err=%v), want 1", startRows, err)
+	}
+	if err := f.engine.Store().InTx(f.ctx, func(ctx context.Context, tx engine.Tx) error {
+		if err := tx.UpdateRunState(ctx, runID, engine.RunCompleted, nil); err != nil {
+			return err
+		}
+		_, err := tx.AppendEvent(ctx, runID, engine.EventInput{Type: engine.TypeRunCompleted, Data: json.RawMessage(`{"run_id":"` + runID + `"}`)})
+		return err
+	}); err != nil {
+		t.Fatalf("finish run before report pass: %v", err)
+	}
+
+	if err := ticketreport.New(f.store, nil).Run(f.ctx); err != nil {
+		t.Fatalf("dispatch reports: %v", err)
+	}
+	mu.Lock()
+	defer mu.Unlock()
+	if len(comments) != 2 {
+		t.Fatalf("bridge comments = %d, want start and finish", len(comments))
+	}
+	if !strings.Contains(comments[0], "started run") || !strings.Contains(comments[0], runID) || !strings.Contains(comments[0], delivery.Event.ID) {
+		t.Errorf("start comment = %q", comments[0])
+	}
+	if !strings.Contains(comments[1], "finished run") || !strings.Contains(comments[1], "completed") {
+		t.Errorf("finish comment = %q", comments[1])
 	}
 }
 

@@ -55,6 +55,8 @@ type Run struct {
 	CreatedAt         time.Time
 	UpdatedAt         time.Time
 	CompletedAt       time.Time
+	// TriggerEventID is set only for runs minted from an external fact.
+	TriggerEventID string
 
 	// Name/Description/Category are operator-facing run metadata
 	// (migrations/0013). The engine never branches on them — they ride

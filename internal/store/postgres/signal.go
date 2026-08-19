@@ -539,10 +539,10 @@ func (s *Store) deliverSignalEventTx(ctx context.Context, tx pgx.Tx, in DeliverS
 	}
 	var createdAt pgtype.Timestamptz
 	if err := tx.QueryRow(ctx,
-		`INSERT INTO signal_events (id, namespace_id, run_id, name, payload, emitter)
-		 VALUES ($1, $2, $3, $4, $5, $6)
+		`INSERT INTO signal_events (id, namespace_id, run_id, name, payload, emitter, source_key)
+		 VALUES ($1, $2, $3, $4, $5, $6, NULLIF($7,''))
 		 RETURNING created_at`,
-		ev.ID, ev.NamespaceID, textOrNull(ev.RunID), ev.Name, ev.Payload, ev.Emitter,
+		ev.ID, ev.NamespaceID, textOrNull(ev.RunID), ev.Name, ev.Payload, ev.Emitter, in.SourceKey,
 	).Scan(&createdAt); err != nil {
 		return SignalDelivery{}, fmt.Errorf("postgres: DeliverSignalEvent: append event: %w", err)
 	}

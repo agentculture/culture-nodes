@@ -595,6 +595,7 @@ def jira_comment_text(comment: dict) -> str:
         elif isinstance(value, list):
             for child in value:
                 visit(child)
+
     visit(body)
     return "".join(parts)
 

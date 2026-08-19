@@ -216,7 +216,7 @@ def test_jira_watermark_carries_issue_and_comment_positions():
         "fields": {
             "updated": "2026-08-15T03:00:00Z",
             "comment": {"comments": [{"id": "30001", "updated_at": "2026-08-15T02:00:00Z"}]},
-        }
+        },
     }
     assert sweep.jira_watermark(issue) == {
         "changelog_id": "20002",

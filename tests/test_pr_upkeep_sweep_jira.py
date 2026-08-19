@@ -159,8 +159,7 @@ class TestJiraWorkItems:
         monkeypatch.setattr(
             sweep,
             "_get_json",
-            lambda url, token=None, **kwargs: seen.append(url)
-            or {"issues": [], "isLast": True},
+            lambda url, token=None, **kwargs: seen.append(url) or {"issues": [], "isLast": True},
         )
 
         sweep.fetch_jira_issues("team.example.com", "EX", "robot@example.com", "token")

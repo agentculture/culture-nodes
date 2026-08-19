@@ -277,6 +277,11 @@ Numbered SQL migrations for the authoritative PostgreSQL store (prd-spec
   existing run) instead of spawning a sibling. NULL means no subject was
   supplied, exactly as every pre-migration caller of `POST /v1alpha1/events`
   behaves today.
+- `0040_trigger_remints.sql` — expand-only: adds the durable due queue for
+  bounded re-mints of technically failed trigger-created runs. Rows retain
+  the original delivered event, attempt/window counter, backoff instant and
+  minted run, allowing the trigger seam to defer an active subject and later
+  admit the same fact through the ordinary engine `EnqueueWork` path.
 
 Migrations are additive-first (expand-contract). See
 `docs/adr/0002-migration-policy.md` for the full policy, the N-1 binary

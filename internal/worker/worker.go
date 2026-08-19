@@ -348,6 +348,13 @@ func (w *Worker) Run(ctx context.Context) error {
 // per-item dispatch failure is — every parked operation has a deadline timer
 // behind it, so a pass that could not sample is a delay, not a loss.
 func (w *Worker) Tick(ctx context.Context) (int, error) {
+	// Re-mints are admitted at the trigger seam before ordinary claiming.
+	// Their entry nodes are enqueued by the engine's normal dispatchNode ->
+	// EnqueueWork path, so everything below (claiming, pacing, concurrency and
+	// breakers) sees no alternate provenance-specific queue.
+	if _, err := w.db.EnqueueDueRemints(ctx, w.opts.NamespaceID, w.engine, w.opts.Now()); err != nil {
+		return 0, fmt.Errorf("worker: enqueue due re-mints: %w", err)
+	}
 	var claimed []postgres.ClaimedWork
 	var err error
 	if w.opts.Runner != nil || w.opts.CodeRunner != nil || w.runnerServiceConfigured() {
@@ -563,6 +570,12 @@ func (w *Worker) complete(ctx context.Context, claimed postgres.ClaimedWork, req
 	// run) has already retired them transactionally. Telling their actors to
 	// stop is the best-effort, post-commit half — see branchcancel.go.
 	w.propagateBranchCancellations(ctx, result)
+	if result.RunState == engine.RunFailed {
+		if err := w.db.ScheduleRunRemint(ctx, w.opts.NamespaceID, result.RunID, result.NodeRunID,
+			result.TechStatus, result.Outcome, w.opts.Now()); err != nil {
+			return result, fmt.Errorf("worker: schedule trigger re-mint: %w", err)
+		}
+	}
 	return result, nil
 }
 

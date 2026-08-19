@@ -377,8 +377,8 @@ type JiraHistoryWatermark struct {
 
 // AdoptJiraHistoryHead records Jira's observed current head without
 // appending a signal event. Migration 0041 cannot fill this value because
-// Jira, not PostgreSQL, owns it. The first history-aware sweep calls this
-// before offering any recorded entries for a pending issue.
+// Jira, not PostgreSQL, owns it. The host-side cutover-adopt command calls
+// this before the history-aware sweep is allowed to resume.
 func (s *Store) AdoptJiraHistoryHead(ctx context.Context, namespaceID, issueSourceKey string, watermark json.RawMessage) error {
 	if namespaceID == "" || !jiraIssueSourceKey(issueSourceKey) {
 		return errors.New("postgres: AdoptJiraHistoryHead requires namespace and jira:<site>:<issue> source key")
@@ -397,6 +397,32 @@ func (s *Store) AdoptJiraHistoryHead(ctx context.Context, namespaceID, issueSour
 		return fmt.Errorf("postgres: AdoptJiraHistoryHead: %w", err)
 	}
 	return nil
+}
+
+// PendingJiraHistoryCutover is one migration-seeded issue whose Jira head
+// has not yet been adopted by the deployment one-shot.
+type PendingJiraHistoryCutover struct {
+	NamespaceID    string
+	IssueSourceKey string
+}
+
+func (s *Store) ListPendingJiraHistoryCutovers(ctx context.Context) ([]PendingJiraHistoryCutover, error) {
+	rows, err := s.pool.Query(ctx, `SELECT namespace_id, issue_source_key
+		FROM jira_history_watermark_cutovers WHERE adopted_at IS NULL
+		ORDER BY namespace_id, issue_source_key`)
+	if err != nil {
+		return nil, fmt.Errorf("postgres: list pending Jira history cutovers: %w", err)
+	}
+	defer rows.Close()
+	var pending []PendingJiraHistoryCutover
+	for rows.Next() {
+		var row PendingJiraHistoryCutover
+		if err := rows.Scan(&row.NamespaceID, &row.IssueSourceKey); err != nil {
+			return nil, fmt.Errorf("postgres: scan pending Jira history cutover: %w", err)
+		}
+		pending = append(pending, row)
+	}
+	return pending, rows.Err()
 }
 
 // selectCandidateSubscriptionsSQL is the unlocked first read of the pending
@@ -661,13 +687,22 @@ func suppressPreCutoverJiraHistory(ctx context.Context, tx pgx.Tx, namespaceID, 
 		return false, fmt.Errorf("postgres: DeliverSignalEvent: jira history watermark: %w", err)
 	}
 	var adoptedRaw []byte
-	err = tx.QueryRow(ctx, `SELECT watermark FROM jira_history_watermark_cutovers
-		WHERE namespace_id=$1 AND issue_source_key=$2 AND adopted_at IS NOT NULL`, namespaceID, issueSourceKey).Scan(&adoptedRaw)
+	var isAdopted bool
+	err = tx.QueryRow(ctx, `SELECT watermark, adopted_at IS NOT NULL FROM jira_history_watermark_cutovers
+		WHERE namespace_id=$1 AND issue_source_key=$2`, namespaceID, issueSourceKey).Scan(&adoptedRaw, &isAdopted)
 	if isNoRows(err) {
 		return false, nil
 	}
 	if err != nil {
 		return false, fmt.Errorf("postgres: DeliverSignalEvent: read jira cutover: %w", err)
+	}
+	// Fail closed: a pending marker means deployment resumed Jira history
+	// delivery before the credential-isolated adopter completed. Refusing the
+	// transaction makes the ordering violation loud and prevents replayed
+	// history from creating billable runs; silently delivering or discarding
+	// it would conceal an unsafe rollout.
+	if !isAdopted {
+		return false, errors.New("postgres: DeliverSignalEvent: Jira history cutover is pending; run nodes cutover-adopt before resuming sweeps")
 	}
 	adopted, err := parseJiraHistoryWatermark(adoptedRaw)
 	if err != nil {

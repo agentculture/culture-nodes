@@ -25,6 +25,7 @@ Commands
   nodes doctor               Environment/identity checks.
   nodes cli overview         Describe the CLI surface itself.
   nodes validate <file>      Compile a workflow definition; report diagnostics.
+  nodes cutover-adopt        Adopt Jira history heads during deployment.
   nodes serve                Run the control-plane API (api/openapi/openapi.yaml).
   nodes all                  serve + scheduler, for local development.
   nodes scheduler|worker|run|inspect
@@ -73,6 +74,7 @@ func newLearnPayload() learnPayload {
 		{Path: []string{"doctor"}, Summary: "Environment/identity checks."},
 		{Path: []string{"cli", "overview"}, Summary: "Describe the CLI surface itself."},
 		{Path: []string{"validate"}, Summary: "Compile a workflow definition and report diagnostics."},
+		{Path: []string{"cutover-adopt"}, Summary: "Adopt Jira history heads during deployment."},
 	}
 	implementedModeSummaries := map[string]string{
 		"serve": "Run the control-plane API (api/openapi/openapi.yaml).",

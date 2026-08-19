@@ -150,6 +150,14 @@ func TestJiraHistoryCutoverAdoptsHeadWithoutReplayingRecordedHistory(t *testing.
 		AND source_key ~ '^jira:[^:]+:[^:]+:(status|comment)$' ON CONFLICT DO NOTHING`, ns.ID); err != nil {
 		t.Fatalf("translate legacy rows: %v", err)
 	}
+	// Fail closed while the deploy one-shot has not yet adopted Jira's head.
+	if _, err := s.DeliverSignalEvent(ctx, postgres.DeliverSignalEventInput{
+		NamespaceID: ns.ID, Name: "pr-upkeep.jira.comment", Emitter: "recorded-replay",
+		SourceKey: "jira:team.example.com:SCRUM-3:history:comment:10118",
+		Watermark: json.RawMessage(`{"changelog_id":"10180","comment_id":"10118"}`),
+	}); err == nil {
+		t.Fatal("pending Jira cutover accepted history fact; want deploy-order error")
+	}
 	if err := s.AdoptJiraHistoryHead(ctx, ns.ID, "jira:team.example.com:SCRUM-3", json.RawMessage(`{"changelog_id":"10180","comment_id":"10118"}`)); err != nil {
 		t.Fatalf("AdoptJiraHistoryHead: %v", err)
 	}
@@ -176,6 +184,14 @@ func TestJiraHistoryCutoverAdoptsHeadWithoutReplayingRecordedHistory(t *testing.
 	}
 	if after != before {
 		t.Fatalf("first post-cutover replay appended %d facts, want zero", after-before)
+	}
+	beyond, err := s.DeliverSignalEvent(ctx, postgres.DeliverSignalEventInput{
+		NamespaceID: ns.ID, Name: "pr-upkeep.jira.comment", Emitter: "live-history",
+		SourceKey: "jira:team.example.com:SCRUM-3:history:comment:10119",
+		Watermark: json.RawMessage(`{"changelog_id":"10180","comment_id":"10119"}`),
+	})
+	if err != nil || beyond.Suppressed || beyond.Event.ID == "" {
+		t.Fatalf("post-head history fact = %+v, err=%v; want delivered", beyond, err)
 	}
 }
 

@@ -167,19 +167,21 @@ Numbered SQL migrations for the authoritative PostgreSQL store (prd-spec
   variable name so database dumps cannot become credential archives.
 - `0041_jira_history_watermark_cutover.sql` — expand-only Jira history
   cutover markers. SQL derives known issues from legacy `:status` / `:comment`
-  rows, but Jira owns the current head. The first history-aware pass must
-  adopt each pending issue's observed cumulative head through the control
-  plane before offering history facts; adoption emits nothing and facts at
+  rows, but Jira owns the current head. The host-side `nodes cutover-adopt`
+  one-shot must adopt each pending issue's observed cumulative head before
+  offering history facts; adoption emits nothing and facts at
   or behind that head are suppressed across per-position source keys.
-  **Deploy order is atomic:** migration 0041, the adoption-aware control
-  plane, and the history-aware emitter are one deploy unit; start the emitter
-  only after the migration and control-plane binary are live. Never deploy
-  the emitter first or let its first pass emit before adoption, because
-  pre-cutover ticket history could become billable intake runs.
+  **Deploy order is fail-closed:** stop the sweep schedule, apply migration
+  0041, run the host-side adopter with the runner-owned Jira read credentials,
+  then resume the sweep schedule. A history fact whose marker remains pending
+  is refused as a delivery error: this makes a deploy-order violation loud
+  and prevents pre-cutover ticket history from becoming billable intake runs.
 - `0043_jira_ticket_report_outbox.sql` — expand-only trigger provenance on
   signal events/runs and the engine lifecycle → Jira bridge transactional
   outbox. `(run_id, phase)` makes start and finish independently durable and
-  idempotent even when both occur between scheduler passes.
+  idempotent even when both occur between scheduler passes. Failed dispatches
+  record an error and bounded backoff; the fifth failure parks the row as
+  `failed`, allowing later reports to proceed.
 
 - `0022_dispatch_rate_state.sql` — expand-only: adds the mutable
   `dispatch_rate_state` table (task t10 of the economy-discord-graphs plan,

@@ -67,6 +67,18 @@ if ! ssh "$HOST" "bash -lc 'cd $REMOTE_DIR && go build -o ~/.culture-nodes/bin/n
 fi
 ssh "$HOST" 'mv -f ~/.culture-nodes/bin/nodes-runner.new ~/.culture-nodes/bin/nodes-runner'
 
+# cutover-adopt is deliberately a host process: it briefly reads the runner's
+# Jira Basic-auth pair, which must never enter any long-lived control-plane
+# container. Ship the matching one-shot binary beside nodes-runner.
+say "building nodes cutover one-shot host binary on $HOST"
+if ! ssh "$HOST" "bash -lc 'cd $REMOTE_DIR && go build -o ~/.culture-nodes/bin/nodes.new ./cmd/nodes'"; then
+  echo "remote Go missing — building nodes one-shot here and copying (same arch)"
+  go build -o /tmp/nodes-cutover ./cmd/nodes
+  scp -q /tmp/nodes-cutover "$HOST":.culture-nodes/bin/nodes.new
+  rm -f /tmp/nodes-cutover
+fi
+ssh "$HOST" 'mv -f ~/.culture-nodes/bin/nodes.new ~/.culture-nodes/bin/nodes'
+
 say "ensuring headspace CLI on $HOST (uv tool)"
 ssh "$HOST" 'bash -lc "command -v headspace >/dev/null || { command -v uv >/dev/null || curl -LsSf https://astral.sh/uv/install.sh | sh; \$HOME/.local/bin/uv tool install headspace-cli || uv tool install headspace-cli; }; command -v headspace"'
 
@@ -683,6 +695,14 @@ deploy_jira() { # host
 case "$HOST" in
   thor*)
     say "starting thor control plane"
+	# Stop history-producing services, apply migrations alone, then adopt all
+	# pending Jira heads before any scheduler/worker can resume the sweep.
+	ssh "$HOST" "cd $REMOTE_DIR/deploy/prod && docker compose --env-file ~/.culture-nodes/prod.env -f compose.thor.yml stop scheduler worker api || true"
+	ssh "$HOST" "cd $REMOTE_DIR/deploy/prod && NODES_BUILD_REVISION=$REVISION docker compose --env-file ~/.culture-nodes/prod.env -f compose.thor.yml up -d postgres"
+	ssh "$HOST" "cd $REMOTE_DIR/deploy/prod && NODES_BUILD_REVISION=$REVISION docker compose --env-file ~/.culture-nodes/prod.env -f compose.thor.yml run --rm migrate"
+	# systemd parses the two EnvironmentFiles without shell-evaluating secret
+	# values, and applies them only to this transient host-side process.
+	ssh "$HOST" 'systemd-run --user --wait --pipe --collect --property=EnvironmentFile=$HOME/.culture-nodes/prod.env --property=EnvironmentFile=$HOME/.culture-nodes/runner-secrets.env $HOME/.culture-nodes/bin/nodes cutover-adopt'
     ssh "$HOST" "cd $REMOTE_DIR/deploy/prod && NODES_BUILD_REVISION=$REVISION docker compose --env-file ~/.culture-nodes/prod.env -f compose.thor.yml up -d --build"
     say "waiting for readyz"
     ssh "$HOST" 'for i in $(seq 1 60); do curl -fsS http://localhost:18080/v1alpha1/readyz >/dev/null 2>&1 && echo READY && exit 0; sleep 2; done; echo NOT_READY; exit 1'

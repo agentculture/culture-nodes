@@ -167,7 +167,7 @@ Numbered SQL migrations for the authoritative PostgreSQL store (prd-spec
   variable name so database dumps cannot become credential archives.
 - `0041_jira_history_watermark_cutover.sql` — expand-only Jira history
   cutover markers. SQL derives known issues from legacy `:status` / `:comment`
-  rows, but Jira owns the current head. The host-side `nodes cutover-adopt`
+  rows, but Jira owns the current head. The host-side `nodes-cutover` one-shot
   one-shot must adopt each pending issue's observed cumulative head before
   offering history facts; adoption emits nothing and facts at
   or behind that head are suppressed across per-position source keys.

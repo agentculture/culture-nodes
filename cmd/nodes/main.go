@@ -58,7 +58,6 @@ Introspection:
 
 Database:
   migrate            apply pending schema migrations (NODES_DATABASE_URL)
-  cutover-adopt      adopt Jira history heads before resuming sweeps
 
 Workflows:
   validate <file>    compile a workflow definition and report diagnostics
@@ -111,7 +110,6 @@ func commands() map[string]handlerFunc {
 		"migrate": func(args []string, _ bool) (int, error) {
 			return runMigrate(args), nil
 		},
-		"cutover-adopt": cmdCutoverAdopt,
 	}
 	for _, name := range processModes {
 		m[name] = stubModeHandler(name)

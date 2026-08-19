@@ -1,0 +1,21 @@
+{
+  "plan_slug": "hands-free-scrum-2-pickup",
+  "schema_version": 1,
+  "created": "2026-08-18T16:15:26Z",
+  "updated": "2026-08-18T16:15:26Z",
+  "deviations": [
+    {
+      "id": "d1",
+      "what": "t3's runner-side stdout capture only functions when the bridge holds an in-process artifact store; prod's sweep executes through the runner-service process on thor, which correctly holds no DB credentials \u2014 so on the real path the emitted count is captured but unreadable and h5 cannot be met live. Approved extension: the runner service uploads captured stdout through the existing attempt-scoped artifact PUT route using its per-operation callback token, and the API gains the read-back GET route. Operator-lane, ~2 commits, tests included.",
+      "task_ref": "t3",
+      "reason": "t3's boundary assumed runner-side capture suffices; the production dispatch path (runner-service, not in-process CodeRunner) was only established during the merge gate",
+      "affects": [
+        "t3",
+        "t8"
+      ],
+      "origin": "llm",
+      "status": "approved",
+      "classification": "acceptable"
+    }
+  ]
+}

@@ -3,6 +3,7 @@ test_pr_upkeep_sweep.py to stay under the 1000-line hard limit; see
 tests/lint filelength gate). Shares fixtures via test helpers below."""
 
 import json
+import urllib.parse
 
 import pytest
 
@@ -150,6 +151,74 @@ class TestJiraWorkItems:
         ]
         assert any("startAt=1" in url and "/changelog?" in url for url in seen)
         assert any("startAt=1" in url and "/comment?" in url for url in seen)
+
+    def test_discovery_jql_keeps_recently_resolved_issues_inside_the_bounded_lookback(
+        self, monkeypatch
+    ):
+        seen = []
+        monkeypatch.setattr(
+            sweep,
+            "_get_json",
+            lambda url, token=None, **kwargs: seen.append(url)
+            or {"issues": [], "isLast": True},
+        )
+
+        sweep.fetch_jira_issues("team.example.com", "EX", "robot@example.com", "token")
+
+        query = urllib.parse.parse_qs(urllib.parse.urlparse(seen[0]).query)
+        assert query["jql"] == [
+            'project = "EX" AND '
+            f"(resolution IS EMPTY OR resolved >= -{sweep.JIRA_RESOLVED_LOOKBACK_DAYS}d) "
+            "ORDER BY priority ASC"
+        ]
+        assert sweep.JIRA_RESOLVED_LOOKBACK_DAYS >= 2
+
+    def test_scrum_2_resolved_between_polls_emits_terminal_transition_once(
+        self, monkeypatch, capsys, jira_round_trip, jira_round_trip_complete
+    ):
+        grant = {
+            "cycle": 0,
+            "repositories": [
+                {
+                    "github_repo": "owner.example/repo",
+                    "sonar_component": "owner_repo",
+                    "jira_site": "team.example.com",
+                    "jira_project": "SCRUM",
+                }
+            ],
+        }
+        monkeypatch.setenv("PR_UPKEEP_REPOSITORIES", json.dumps(grant))
+        monkeypatch.setenv("JIRA_ACCOUNT_EMAIL", "robot@example.com")
+        monkeypatch.setenv("JIRA_API_TOKEN", "fixture-token")
+        _stub_sweep(monkeypatch, pulls=[], sonar_main={"issues": []})
+        polls = iter([jira_round_trip, jira_round_trip_complete, jira_round_trip_complete])
+        monkeypatch.setattr(sweep, "fetch_jira_issues", lambda *_args: next(polls))
+
+        cursors = {}
+        appended = []
+
+        def equality_dedup(name, payload, source_key, watermark):
+            encoded = json.dumps(watermark, sort_keys=True)
+            if cursors.get(source_key) == encoded:
+                return {"duplicate": True}
+            cursors[source_key] = encoded
+            appended.append((name, payload, source_key, watermark))
+            return {"duplicate": False}
+
+        monkeypatch.setattr(sweep, "raise_event", equality_dedup)
+
+        assert sweep.main() == 0
+        first_count = len(appended)
+        assert sweep.main() == 0
+        second_count = len(appended)
+        assert [event[0] for event in appended if event[0].endswith(".done")] == [
+            "pr-upkeep.jira.transitioned.done"
+        ]
+        assert second_count > first_count
+
+        assert sweep.main() == 0
+        assert len(appended) == second_count
+        capsys.readouterr()
 
     def test_jira_configuration_requires_both_host_and_project(self):
         raw = json.dumps(

@@ -7,6 +7,7 @@
         "summary": "Complete a round trip between sweeps",
         "priority": {"name": "High"},
         "status": {"name": "To Do"},
+        "resolution": null,
         "issuetype": {"name": "Task"},
         "updated": "2026-08-19T08:03:00.000+0000",
         "comment": {"startAt": 0, "maxResults": 100, "total": 0, "comments": []}

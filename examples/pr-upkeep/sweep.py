@@ -88,6 +88,12 @@ GITHUB_API = "https://api.github.com"
 JIRA_SEARCH_PATH = "/rest/api/3/search/jql"
 JIRA_RATE_LIMIT_PER_WINDOW = 350
 
+#: Keep terminal issues discoverable after Jira removes them from
+#: ``resolution IS EMPTY``. Seven days spans several normal sweep intervals
+#: and bounds the replay/read cost; per-position watermark equality makes
+#: every reread inside this window idempotent.
+JIRA_RESOLVED_LOOKBACK_DAYS = 7
+
 #: The event name a fresh, non-self-echoed Jira comment raises (task t9).
 #: Deliberately not a prefix or suffix of `jira_transition_event_name`'s
 #: output — see the module docstring's "different facts" paragraph — so a
@@ -636,7 +642,10 @@ def fetch_jira_issues(site: str, project: str, email: str, token: str) -> dict:
     """Fetch one project's issues and fully hydrate ordered Jira history."""
     basic = (email, token)
     params = {
-        "jql": f'project = "{project}" AND resolution IS EMPTY ORDER BY priority ASC',
+        "jql": (
+            f'project = "{project}" AND (resolution IS EMPTY OR resolved >= '
+            f"-{JIRA_RESOLVED_LOOKBACK_DAYS}d) ORDER BY priority ASC"
+        ),
         "fields": "summary,priority,status,issuetype,updated,comment",
         "expand": "changelog",
         "maxResults": "100",

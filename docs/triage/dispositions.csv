@@ -121,3 +121,4 @@ issue,bucket,disposition,evidence_pointer
 203,finish work,run the flow-store build cycle to its final PR then close on the delivery record,issue #203
 204,owner decisions,scope the lane-tag model against the actor registry and #48/#28 surfaces,issue #204
 205,bug tail,name the 401 cause then fix the credential or disable dial-in with a recorded decision,issue #205
+206,finish work,bump the pinned cortex model id in culture.yaml and redeploy the colleague resident,issue #206

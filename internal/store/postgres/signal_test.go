@@ -120,6 +120,81 @@ func TestStartDurableSignalWaitParksWorkItemOnPendingSubscription(t *testing.T) 
 	}
 }
 
+// TestJiraHistoryCutoverAdoptsHeadWithoutReplayingRecordedHistory is the
+// prod-shaped cutover replay: legacy status/comment rows identify a known
+// issue, the first history pass adopts Jira's observed cumulative head, and
+// every older per-position fact is suppressed without appending anything.
+func TestJiraHistoryCutoverAdoptsHeadWithoutReplayingRecordedHistory(t *testing.T) {
+	s := requireStore(t)
+	ctx := context.Background()
+	ns := mustNamespace(t, s, "jira-history-cutover")
+	legacyEvent := store.NewULID()
+	if _, err := s.Pool().Exec(ctx, `INSERT INTO signal_events
+		(id, namespace_id, name, payload, emitter) VALUES ($1,$2,'legacy','{}','recorded-prod')`, legacyEvent, ns.ID); err != nil {
+		t.Fatalf("seed legacy event: %v", err)
+	}
+	for key, watermark := range map[string]string{
+		"jira:team.example.com:SCRUM-3:status":  `{"status":"In Progress"}`,
+		"jira:team.example.com:SCRUM-3:comment": `{"updated_at":"2026-08-19T12:00:00Z","newest_comment_at":"2026-08-19T11:59:00Z"}`,
+	} {
+		if _, err := s.Pool().Exec(ctx, `INSERT INTO signal_event_watermarks
+			(namespace_id,source_key,watermark,event_id) VALUES ($1,$2,$3,$4)`, ns.ID, key, watermark, legacyEvent); err != nil {
+			t.Fatalf("seed recorded watermark %s: %v", key, err)
+		}
+	}
+	// This is migration 0041's data statement, rerun after the recorded rows
+	// are installed so the test exercises its exact translation.
+	if _, err := s.Pool().Exec(ctx, `INSERT INTO jira_history_watermark_cutovers (namespace_id, issue_source_key)
+		SELECT DISTINCT namespace_id, regexp_replace(source_key, ':(status|comment)$', '')
+		FROM signal_event_watermarks WHERE namespace_id=$1
+		AND source_key ~ '^jira:[^:]+:[^:]+:(status|comment)$' ON CONFLICT DO NOTHING`, ns.ID); err != nil {
+		t.Fatalf("translate legacy rows: %v", err)
+	}
+	// Fail closed while the deploy one-shot has not yet adopted Jira's head.
+	if _, err := s.DeliverSignalEvent(ctx, postgres.DeliverSignalEventInput{
+		NamespaceID: ns.ID, Name: "pr-upkeep.jira.comment", Emitter: "recorded-replay",
+		SourceKey: "jira:team.example.com:SCRUM-3:history:comment:10118",
+		Watermark: json.RawMessage(`{"changelog_id":"10180","comment_id":"10118"}`),
+	}); err == nil {
+		t.Fatal("pending Jira cutover accepted history fact; want deploy-order error")
+	}
+	if err := s.AdoptJiraHistoryHead(ctx, ns.ID, "jira:team.example.com:SCRUM-3", json.RawMessage(`{"changelog_id":"10180","comment_id":"10118"}`)); err != nil {
+		t.Fatalf("AdoptJiraHistoryHead: %v", err)
+	}
+
+	var before int
+	if err := s.Pool().QueryRow(ctx, `SELECT count(*) FROM signal_events WHERE namespace_id=$1`, ns.ID).Scan(&before); err != nil {
+		t.Fatal(err)
+	}
+	for _, fact := range []postgres.DeliverSignalEventInput{
+		{NamespaceID: ns.ID, Name: "pr-upkeep.jira.transitioned.to-do", Emitter: "recorded-replay", SourceKey: "jira:team.example.com:SCRUM-3:history:changelog:10179", Watermark: json.RawMessage(`{"changelog_id":"10179","comment_id":""}`)},
+		{NamespaceID: ns.ID, Name: "pr-upkeep.jira.comment", Emitter: "recorded-replay", SourceKey: "jira:team.example.com:SCRUM-3:history:comment:10118", Watermark: json.RawMessage(`{"changelog_id":"10180","comment_id":"10118"}`)},
+	} {
+		delivery, err := s.DeliverSignalEvent(ctx, fact)
+		if err != nil {
+			t.Fatalf("replay %s: %v", fact.SourceKey, err)
+		}
+		if !delivery.Suppressed || !delivery.Duplicate {
+			t.Errorf("replay %s = %+v, want adopted suppression", fact.SourceKey, delivery)
+		}
+	}
+	var after int
+	if err := s.Pool().QueryRow(ctx, `SELECT count(*) FROM signal_events WHERE namespace_id=$1`, ns.ID).Scan(&after); err != nil {
+		t.Fatal(err)
+	}
+	if after != before {
+		t.Fatalf("first post-cutover replay appended %d facts, want zero", after-before)
+	}
+	beyond, err := s.DeliverSignalEvent(ctx, postgres.DeliverSignalEventInput{
+		NamespaceID: ns.ID, Name: "pr-upkeep.jira.comment", Emitter: "live-history",
+		SourceKey: "jira:team.example.com:SCRUM-3:history:comment:10119",
+		Watermark: json.RawMessage(`{"changelog_id":"10180","comment_id":"10119"}`),
+	})
+	if err != nil || beyond.Suppressed || beyond.Event.ID == "" {
+		t.Fatalf("post-head history fact = %+v, err=%v; want delivered", beyond, err)
+	}
+}
+
 func TestStartDurableSignalWaitRefusesStaleFencing(t *testing.T) {
 	s := requireStore(t)
 	ns := mustNamespace(t, s, "signal-stale")

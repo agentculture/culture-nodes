@@ -80,6 +80,17 @@ const envAdhocRunSecret = "NODES_ADHOC_RUN_TOKEN_SECRET"
 // with whatever it already holds.
 const envInboundIssuanceSecret = "NODES_INBOUND_ISSUANCE_TOKEN_SECRET"
 
+// envStoreWriteSecret is the bearer secret the flow store's two write
+// routes require — POST /v1alpha1/store/entries and POST
+// /v1alpha1/store/entries/pull (api.WithStoreWriteSecret; task t7, issue
+// #192). Its own secret for the same separation-of-standing reason as the
+// five above: writing the mesh's flow catalog is a distinct standing from
+// deciding, registering, emitting, or starting billable work. Store READS
+// take no secret: the registry is an internal, mesh-private surface and
+// everyone on the mesh reads. Unset is not an error: store writes are
+// simply refused with 401 until an operator sets it.
+const envStoreWriteSecret = "NODES_STORE_TOKEN_SECRET"
+
 const (
 	envArtifactS3Endpoint  = "NODES_ARTIFACT_S3_ENDPOINT"
 	envArtifactS3AccessKey = "NODES_ARTIFACT_S3_ACCESS_KEY"
@@ -250,6 +261,12 @@ func runServeMode(args []string, verb string, withScheduler bool) (int, error) {
 		return 0, err
 	}
 	opts = append(opts, api.WithInboundIssuanceSecret(inboundIssuanceSecret))
+
+	storeWriteSecret, err := authSecretFromEnv(envStoreWriteSecret)
+	if err != nil {
+		return 0, err
+	}
+	opts = append(opts, api.WithStoreWriteSecret(storeWriteSecret))
 	// What this binary was built as, so a live test can assert which code it
 	// is testing rather than assume it (task t32, issue #104).
 	opts = append(opts, api.WithBuildInfo(version, revision))

@@ -19,7 +19,7 @@ that is not this one runs ITS copy of this script — with its own two
 constants — rather than ours (task t16).
 
 Each PR watermark is its head SHA plus newest comment timestamp. Each Jira
-watermark is the issue update timestamp plus newest comment timestamp. The
+history watermark is its last consumed changelog id plus comment id. The
 control plane advances that watermark in the same transaction that appends
 the signal event, so restarting this process cannot report the same position
 twice.
@@ -54,6 +54,20 @@ import urllib.parse
 import urllib.request
 from base64 import b64encode
 
+from pr_upkeep_jira import (
+    JIRA_CHANGELOG_EVENT_NAME,
+    JIRA_COMMENT_EVENT_NAME,
+    JIRA_RATE_LIMIT_PER_WINDOW,
+    JIRA_RESOLVED_LOOKBACK_DAYS,
+    fetch_jira_issues,
+    jira_comment_is_self_echo,
+    jira_history_facts,
+    jira_question_id_for_answer,
+    jira_transition_event_name,
+    jira_watermark,
+    jira_work_items,
+)
+
 # The blast radius used to be one repo pinned in this module. That narrowing
 # existed because fetch_open_pulls enumerates EVERY open PR and then reads
 # comments and checks with the sweep credential: accepting a repo from run
@@ -85,23 +99,6 @@ SONAR_PR_ISSUES_URL = (
     "?componentKeys={key}&resolved=false&pullRequest={pr}&ps=100"
 )
 GITHUB_API = "https://api.github.com"
-JIRA_SEARCH_PATH = "/rest/api/3/search/jql"
-JIRA_RATE_LIMIT_PER_WINDOW = 350
-
-#: The event name a fresh, non-self-echoed Jira comment raises (task t9).
-#: Deliberately not a prefix or suffix of `jira_transition_event_name`'s
-#: output — see the module docstring's "different facts" paragraph — so a
-#: trigger's `onEvent` match can never confuse the two.
-JIRA_COMMENT_EVENT_NAME = "pr-upkeep.jira.comment"
-JIRA_ACTOR_MARKER = "culture-nodes:jira-actor"
-_JIRA_QUESTION_MARKER_RE = re.compile(
-    r"\[culture-nodes:jira-actor question_id=([A-Za-z0-9][A-Za-z0-9._:-]{0,127})\]"
-)
-
-#: Anything that is not a lowercase letter or digit becomes one hyphen in a
-#: transition event's status slug. Jira status names are short, human-typed
-#: labels ("To Do", "Ready for Dev!") — never trusted as identifiers as-is.
-_JIRA_STATUS_SLUG_RE = re.compile(r"[^a-z0-9]+")
 
 #: Check runs for one PR's head commit. GitHub's default `filter=latest`
 #: already collapses re-runs to the current attempt, so a job that failed
@@ -533,116 +530,6 @@ def qodo_work_items(bodies: list[str], pr_numbers: list[int]) -> list[dict]:
     return items
 
 
-def jira_work_items(payload: dict, *, site: str, project: str) -> list[dict]:
-    """Recorded Jira Cloud REST v3 search response -> work items."""
-    items = []
-    for issue in payload.get("issues", []):
-        fields = issue.get("fields") or {}
-        priority = (fields.get("priority") or {}).get("name") or "Medium"
-        status = (fields.get("status") or {}).get("name") or ""
-        key = issue.get("key") or ""
-        items.append(
-            {
-                "source": "jira",
-                "id": key,
-                "project": project,
-                "severity": priority,
-                "kind": (fields.get("issuetype") or {}).get("name") or "Jira issue",
-                "file": "",
-                "line": None,
-                "title": fields.get("summary") or "",
-                "status": status,
-                "details_url": f"https://{site}/browse/{urllib.parse.quote(key)}",
-            }
-        )
-    return items
-
-
-def jira_transition_event_name(status: str) -> str:
-    """The distinct event name a Jira issue currently in `status` raises
-    (task t9). Never equal to, nor a prefix/suffix of, `JIRA_COMMENT_EVENT_NAME`
-    — see the module docstring's "different facts" paragraph.
-    """
-    slug = _JIRA_STATUS_SLUG_RE.sub("-", status.strip().lower()).strip("-")
-    return f"pr-upkeep.jira.transitioned.{slug or 'unspecified'}"
-
-
-def _comment_account_id(comment: dict) -> str:
-    """Jira Cloud v3 comment author identity, or '' if absent."""
-    return (comment.get("author") or {}).get("accountId") or ""
-
-
-def jira_comment_text(comment: dict) -> str:
-    """Flatten text leaves in Jira Cloud v3's ADF comment body."""
-    body = comment.get("body")
-    if isinstance(body, str):
-        return body
-    parts: list[str] = []
-
-    def visit(value: object) -> None:
-        if isinstance(value, dict):
-            if isinstance(value.get("text"), str):
-                parts.append(value["text"])
-            for child in value.get("content") or []:
-                visit(child)
-        elif isinstance(value, list):
-            for child in value:
-                visit(child)
-    visit(body)
-    return "".join(parts)
-
-
-def jira_question_id_for_answer(comments: list[dict]) -> str:
-    """Return the marked question preceding the newest human answer."""
-    ordered = sorted(comments, key=_comment_timestamp)
-    if not ordered or JIRA_ACTOR_MARKER in jira_comment_text(ordered[-1]):
-        return ""
-    matches = (
-        _JIRA_QUESTION_MARKER_RE.search(jira_comment_text(c)) for c in reversed(ordered[:-1])
-    )
-    for match in matches:
-        if match:
-            return match.group(1)
-    return ""
-
-
-def _newest_comment(comments: list[dict]) -> dict | None:
-    """The single comment with the latest timestamp, or None for an empty
-    list. Shares `newest_comment_timestamp`'s field preference so "the
-    newest comment" and "the newest comment's timestamp" never disagree."""
-    if not comments:
-        return None
-    return max(comments, key=_comment_timestamp)
-
-
-def jira_comment_is_self_echo(comments: list[dict], bot_account_id: str | None) -> bool:
-    """True when there IS a newest comment and the system's own Jira
-    account (task t9's self-echo filter) authored it — the sweep must not
-    raise a comment/resume event for its own posted question, or the flow
-    would answer itself. An unconfigured bot_account_id never filters: it
-    is run-input configuration (jira_bot_account_id), never a module
-    constant, so its absence means the deployment made no claim to check
-    against rather than a default identity."""
-    latest = _newest_comment(comments)
-    if latest is None:
-        return False
-    return JIRA_ACTOR_MARKER in jira_comment_text(latest) or bool(
-        bot_account_id and _comment_account_id(latest) == bot_account_id
-    )
-
-
-def fetch_jira_issues(site: str, project: str, email: str, token: str) -> dict:
-    """Fetch one project's unresolved backlog using Jira Cloud Basic auth."""
-    query = urllib.parse.urlencode(
-        {
-            "jql": f'project = "{project}" AND resolution IS EMPTY ORDER BY priority ASC',
-            "fields": "summary,priority,status,issuetype,updated,comment",
-            "maxResults": "100",
-        }
-    )
-    return _get_json(f"https://{site}{JIRA_SEARCH_PATH}?{query}", basic=(email, token))
-
-
 def prioritise(items: list[dict]) -> list[dict]:
     """Stable severity-ranked ordering: the list IS the priority."""
     return sorted(items, key=lambda item: severity_rank(item["severity"]))
@@ -757,15 +644,6 @@ def _comment_timestamp(comment: dict) -> str:
 
 def newest_comment_timestamp(comments: list[dict]) -> str:
     return max((_comment_timestamp(c) for c in comments), default="")
-
-
-def jira_watermark(issue: dict) -> dict:
-    fields = issue.get("fields") or {}
-    comments = (fields.get("comment") or {}).get("comments") or []
-    return {
-        "updated_at": fields.get("updated") or "",
-        "newest_comment_at": newest_comment_timestamp(comments),
-    }
 
 
 def raise_event(name: str, payload: dict, source_key: str, watermark: dict) -> dict:
@@ -933,49 +811,18 @@ def main() -> int:
             by_key = {issue.get("key"): issue for issue in jira_payload.get("issues", [])}
             for item in jira_items:
                 issue = by_key.get(item["id"], {})
-                fields = issue.get("fields") or {}
-                comments = (fields.get("comment") or {}).get("comments") or []
-
-                # Fact 1: the issue's current state (task t9) — always
-                # attempted, same as pr-upkeep.pr; the control plane's
-                # watermark-equality dedup, not this process, is what makes
-                # an unchanged status a silent no-op rather than a repeat.
-                transition_name = jira_transition_event_name(item["status"])
-                with attempting(f"emitting {transition_name} for {item['id']} (control plane)"):
-                    emitted.append(
-                        raise_event(
-                            transition_name,
-                            item,
-                            f"jira:{site}:{item['id']}:status",
-                            {"status": item["status"]},
-                        )
-                    )
-
-                # Fact 2: a fresh comment — a DIFFERENT name, on a DIFFERENT
-                # source key, so a trigger subscribed to one never receives
-                # the other. Self-echoed (the system's own posted comment)
-                # raises nothing; the watermark computation below stays
-                # unfiltered either way, so the position it would have used
-                # already sits past the bot's own comment.
-                watermark = jira_watermark(issue)
-                if comments and not jira_comment_is_self_echo(comments, bot_account_id):
-                    comment_payload = dict(item)
-                    question_id = jira_question_id_for_answer(comments)
-                    if question_id:
-                        comment_payload["originating_question_id"] = question_id
-                    latest = _newest_comment(comments) or {}
-                    comment_payload["answer"] = {
-                        "comment_id": str(latest.get("id") or ""),
-                        "body": jira_comment_text(latest),
-                    }
-                    with attempting(
-                        f"emitting {JIRA_COMMENT_EVENT_NAME} for {item['id']} (control plane)"
-                    ):
+                for name, payload, watermark, position_kind, position_id in jira_history_facts(
+                    issue, bot_account_id, item
+                ):
+                    with attempting(f"emitting {name} for {item['id']} (control plane)"):
                         emitted.append(
                             raise_event(
-                                JIRA_COMMENT_EVENT_NAME,
-                                comment_payload,
-                                f"jira:{site}:{item['id']}:comment",
+                                name,
+                                payload,
+                                (
+                                    f"jira:{site}:{item['id']}:history:"
+                                    f"{position_kind}:{position_id}"
+                                ),
                                 watermark,
                             )
                         )

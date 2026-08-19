@@ -67,6 +67,21 @@ if ! ssh "$HOST" "bash -lc 'cd $REMOTE_DIR && go build -o ~/.culture-nodes/bin/n
 fi
 ssh "$HOST" 'mv -f ~/.culture-nodes/bin/nodes-runner.new ~/.culture-nodes/bin/nodes-runner'
 
+# The cutover adopter is deliberately a host one-shot: it briefly reads the
+# runner's Jira Basic-auth pair, which must never enter any long-lived
+# control-plane container. It ships as its own binary (nodes-cutover) beside
+# nodes-runner — NOT as ./cmd/nodes, which deviation d1 removed from this
+# lane (tests/deploy/codexdeploylane_test.go): the host query CLI stays the
+# Python nodes package.
+say "building nodes-cutover one-shot host binary on $HOST"
+if ! ssh "$HOST" "bash -lc 'cd $REMOTE_DIR && go build -o ~/.culture-nodes/bin/nodes-cutover.new ./cmd/nodes-cutover'"; then
+  echo "remote Go missing — building nodes-cutover here and copying (same arch)"
+  go build -o /tmp/nodes-cutover ./cmd/nodes-cutover
+  scp -q /tmp/nodes-cutover "$HOST":.culture-nodes/bin/nodes-cutover.new
+  rm -f /tmp/nodes-cutover
+fi
+ssh "$HOST" 'mv -f ~/.culture-nodes/bin/nodes-cutover.new ~/.culture-nodes/bin/nodes-cutover'
+
 say "ensuring headspace CLI on $HOST (uv tool)"
 ssh "$HOST" 'bash -lc "command -v headspace >/dev/null || { command -v uv >/dev/null || curl -LsSf https://astral.sh/uv/install.sh | sh; \$HOME/.local/bin/uv tool install headspace-cli || uv tool install headspace-cli; }; command -v headspace"'
 
@@ -96,6 +111,8 @@ ssh "$HOST" 'umask 077; mkdir -p ~/.culture-nodes/bin ~/.culture-nodes/runner-st
 # copy is intentional, and its URL and digest can be supplied by the operator.
 PR_UPKEEP_SWEEP_SOURCE_URL=${PR_UPKEEP_SWEEP_SOURCE_URL:-"https://raw.githubusercontent.com/agentculture/culture-nodes/$REVISION/examples/pr-upkeep/sweep.py"}
 PR_UPKEEP_SWEEP_SOURCE_SHA256=${PR_UPKEEP_SWEEP_SOURCE_SHA256:-$(git show "$REVISION:examples/pr-upkeep/sweep.py" | sha256sum | cut -d' ' -f1)}
+PR_UPKEEP_SWEEP_JIRA_SOURCE_URL=${PR_UPKEEP_SWEEP_JIRA_SOURCE_URL:-"https://raw.githubusercontent.com/agentculture/culture-nodes/$REVISION/examples/pr-upkeep/pr_upkeep_jira.py"}
+PR_UPKEEP_SWEEP_JIRA_SOURCE_SHA256=${PR_UPKEEP_SWEEP_JIRA_SOURCE_SHA256:-$(git show "$REVISION:examples/pr-upkeep/pr_upkeep_jira.py" | sha256sum | cut -d' ' -f1)}
 if [ -z "${PR_UPKEEP_REPOSITORIES:-}" ]; then
 	PR_UPKEEP_REPOSITORIES='{"cycle":0,"repositories":[{"github_repo":"agentculture/culture-nodes","sonar_component":"agentculture_culture-nodes"}]}'
 fi
@@ -123,17 +140,17 @@ case "$PR_UPKEEP_REPOSITORIES" in
 		exit 1
 		;;
 esac
-if [ -n "$PR_UPKEEP_SWEEP_SOURCE_URL" ] && [ -n "$PR_UPKEEP_SWEEP_SOURCE_SHA256" ]; then
+if [ -n "$PR_UPKEEP_SWEEP_SOURCE_URL" ] && [ -n "$PR_UPKEEP_SWEEP_SOURCE_SHA256" ] && [ -n "$PR_UPKEEP_SWEEP_JIRA_SOURCE_URL" ] && [ -n "$PR_UPKEEP_SWEEP_JIRA_SOURCE_SHA256" ]; then
 	# Piped over stdin rather than built into the ssh command string: the
 	# repositories value is single-quoted (see above) and interpolating quotes
 	# into a double-quoted remote command is how you get a value that is
 	# correct locally and reshaped remotely.
-	printf "PR_UPKEEP_SWEEP_SOURCE_URL=%s\nPR_UPKEEP_SWEEP_SOURCE_SHA256=%s\nPR_UPKEEP_REPOSITORIES='%s'\n" \
-		"$PR_UPKEEP_SWEEP_SOURCE_URL" "$PR_UPKEEP_SWEEP_SOURCE_SHA256" "$PR_UPKEEP_REPOSITORIES" \
+	printf "PR_UPKEEP_SWEEP_SOURCE_URL=%s\nPR_UPKEEP_SWEEP_SOURCE_SHA256=%s\nPR_UPKEEP_SWEEP_JIRA_SOURCE_URL=%s\nPR_UPKEEP_SWEEP_JIRA_SOURCE_SHA256=%s\nPR_UPKEEP_REPOSITORIES='%s'\n" \
+		"$PR_UPKEEP_SWEEP_SOURCE_URL" "$PR_UPKEEP_SWEEP_SOURCE_SHA256" "$PR_UPKEEP_SWEEP_JIRA_SOURCE_URL" "$PR_UPKEEP_SWEEP_JIRA_SOURCE_SHA256" "$PR_UPKEEP_REPOSITORIES" \
 		| ssh "$HOST" "umask 077; cat >> ~/.culture-nodes/runner.env"
 	say "granted the pr-upkeep sweep source and closed repository set to the runner on $HOST"
 else
-	say "PR_UPKEEP_SWEEP_SOURCE_URL/_SHA256 empty: pr-upkeep's sweep is not configured on $HOST (see examples/pr-upkeep/README.md)"
+	say "a PR_UPKEEP_SWEEP source URL/digest pair is empty: pr-upkeep's sweep is not configured on $HOST (see examples/pr-upkeep/README.md)"
 fi
 ssh "$HOST" "loginctl enable-linger \$(id -un) 2>/dev/null || true"
 ssh "$HOST" "export XDG_RUNTIME_DIR=/run/user/\$(id -u); mkdir -p ~/.config/systemd/user && cp $REMOTE_DIR/deploy/prod/nodes-runner.service ~/.config/systemd/user/ && systemctl --user daemon-reload && systemctl --user restart nodes-runner && systemctl --user enable nodes-runner"
@@ -681,6 +698,14 @@ deploy_jira() { # host
 case "$HOST" in
   thor*)
     say "starting thor control plane"
+	# Stop history-producing services, apply migrations alone, then adopt all
+	# pending Jira heads before any scheduler/worker can resume the sweep.
+	ssh "$HOST" "cd $REMOTE_DIR/deploy/prod && docker compose --env-file ~/.culture-nodes/prod.env -f compose.thor.yml stop scheduler worker api || true"
+	ssh "$HOST" "cd $REMOTE_DIR/deploy/prod && NODES_BUILD_REVISION=$REVISION docker compose --env-file ~/.culture-nodes/prod.env -f compose.thor.yml up -d postgres"
+	ssh "$HOST" "cd $REMOTE_DIR/deploy/prod && NODES_BUILD_REVISION=$REVISION docker compose --env-file ~/.culture-nodes/prod.env -f compose.thor.yml run --rm migrate"
+	# systemd parses the two EnvironmentFiles without shell-evaluating secret
+	# values, and applies them only to this transient host-side process.
+	ssh "$HOST" 'systemd-run --user --wait --pipe --collect --property=EnvironmentFile=$HOME/.culture-nodes/prod.env --property=EnvironmentFile=$HOME/.culture-nodes/runner-secrets.env $HOME/.culture-nodes/bin/nodes-cutover'
     ssh "$HOST" "cd $REMOTE_DIR/deploy/prod && NODES_BUILD_REVISION=$REVISION docker compose --env-file ~/.culture-nodes/prod.env -f compose.thor.yml up -d --build"
     say "waiting for readyz"
     ssh "$HOST" 'for i in $(seq 1 60); do curl -fsS http://localhost:18080/v1alpha1/readyz >/dev/null 2>&1 && echo READY && exit 0; sleep 2; done; echo NOT_READY; exit 1'
@@ -705,6 +730,15 @@ case "$HOST" in
     # a non-zero exit here means an operator hears about a missing credential
     # now instead of 18 hours later from a 401 (issue #69 item 2).
     "$SCRIPT_DIR/audit-credentials.sh" "$HOST"
+    # Doctor is the second detector (PR #208 review finding 2): after the
+    # stack is up, the Python nodes CLI's four checks say whether the agent
+    # lane this deploy just reconfigured can actually work — prompt file,
+    # skills kit, API reachability, and the userns sysctl a workspace-write
+    # dispatch silently loses writes without (#63). Same posture as the
+    # credential audit above: a detector that fails the deploy LOUDLY at
+    # the end, not a gate that leaves the stack half-shipped.
+    say "running nodes doctor on $HOST"
+    ssh "$HOST" "cd \$HOME/git/culture-nodes-agent && \$HOME/.local/bin/nodes doctor" || { echo "nodes doctor reports unhealthy on $HOST" >&2; exit 1; }
     say "thor deploy complete (namespace $NS)"
     ;;
   orin*)
@@ -719,6 +753,9 @@ case "$HOST" in
     # Same detector, same reason, against compose.orin.yml's own declared set
     # (see the thor lane's comment).
     "$SCRIPT_DIR/audit-credentials.sh" "$HOST"
+    # Same doctor detector as the thor lane (PR #208 review finding 2).
+    say "running nodes doctor on $HOST"
+    ssh "$HOST" "cd \$HOME/git/culture-nodes-agent && \$HOME/.local/bin/nodes doctor" || { echo "nodes doctor reports unhealthy on $HOST" >&2; exit 1; }
     say "orin deploy complete (worker joined namespace $NS)"
     ;;
   *)

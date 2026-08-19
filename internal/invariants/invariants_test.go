@@ -128,6 +128,11 @@ var sanctionedKindAware = map[string]string{
 		"operator answers on its behalf. The authority is proposed either way (issue #67, task t14), so " +
 		"the kind decides who the record says produced it, never what the control plane does with it: " +
 		"the gate's dispatch-side half (internal/worker/clarifygate.go) reads no kind at all",
+	"internal/api/storebindings.go": "store-binding ADMISSION checks that a pulled entry's runner " +
+		"requirement is bound to a runner registration and an actor requirement to a non-runner one " +
+		"(task t8, issue #192) — a category-fit validation at mapping time, the grades-API shape. " +
+		"Dispatch itself stays kind-blind: the worker registry's binding fallback resolves " +
+		"endpoint_ref and metadata only, exactly like a direct registration",
 }
 
 // TestActorKindReadsStayOutOfDispatch is the c16 sweep the neutrality test
@@ -283,6 +288,13 @@ var authorityAllowlists = []struct {
 				"suggestion, and the record carries no field a caller could use to argue with the bound",
 			"internal/devague/deliverables.go": "engine-origin writer: pre-batch devague import derives delivery summaries",
 			"internal/preflight/records.go":    "engine-origin writer: the clarify-then-commit gate's briefing is a deterministic composition of advertised host state and the pinned task declaration (issue #67, task t14)",
+			"internal/store/postgres/remint.go": "engine-origin writer (plan t5, issues #194/#203): the decision record a minted " +
+				"trigger re-mint carries is a pure composition of already-recorded facts — the original delivered " +
+				"event id, the failed source run, and the attempt counter the bounded schedule itself maintains. Same " +
+				"inputs, same record, every time (§10.4). It is not proposed: no actor suggested re-minting, the " +
+				"engine's bound did; and not confirmed: no human transacted it. The write sits inside the same " +
+				"transaction as the TriggerEvent admission so a minted run and its attribution cannot exist without " +
+				"each other",
 		},
 	},
 }
@@ -293,14 +305,15 @@ var authorityAllowlists = []struct {
 // to actually claim that origin, so the sweep checks the pairing at source
 // level too.
 var deterministicOriginByFile = map[string]string{
-	"internal/worker/acceptance.go":    "OriginValidator",
-	"internal/worker/successsignal.go": "OriginValidator",
-	"internal/worker/hooks.go":         "OriginValidator",
-	"internal/handover/verdict.go":     "OriginValidator",
-	"internal/handover/gate.go":        "OriginValidator",
-	"internal/repair/route.go":         "OriginValidator",
-	"internal/devague/deliverables.go": "OriginEngine",
-	"internal/preflight/records.go":    "OriginEngine",
+	"internal/worker/acceptance.go":     "OriginValidator",
+	"internal/worker/successsignal.go":  "OriginValidator",
+	"internal/worker/hooks.go":          "OriginValidator",
+	"internal/handover/verdict.go":      "OriginValidator",
+	"internal/handover/gate.go":         "OriginValidator",
+	"internal/repair/route.go":          "OriginValidator",
+	"internal/devague/deliverables.go":  "OriginEngine",
+	"internal/preflight/records.go":     "OriginEngine",
+	"internal/store/postgres/remint.go": "OriginEngine",
 }
 
 // TestAuthorityLadderWritersAreAllowlisted is the c17/h15 gate: for each

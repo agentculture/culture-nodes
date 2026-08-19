@@ -8,6 +8,21 @@
         "priority": {"name": "High"},
         "status": {"name": "To Do"},
         "issuetype": {"name": "Task"}
+      },
+      "changelog": {
+        "startAt": 0,
+        "maxResults": 100,
+        "total": 1,
+        "histories": [
+          {
+            "id": "19999",
+            "author": {"accountId": "712020:reporter"},
+            "created": "2026-08-15T03:00:00.000+0000",
+            "items": [
+              {"field": "status", "fieldtype": "jira", "from": null, "fromString": null, "to": "10000", "toString": "To Do"}
+            ]
+          }
+        ]
       }
     }
   ],

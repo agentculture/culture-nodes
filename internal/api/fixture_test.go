@@ -44,7 +44,10 @@ func newFixture(t *testing.T) *fixture {
 		api.WithPollInterval(30*time.Millisecond),
 		// The ad-hoc lane is auth-gated (t15, spec c27); the fixture
 		// configures its secret so adhoc tests exercise the authed path.
-		api.WithAdhocRunSecret(fixtureAdhocSecret))
+		api.WithAdhocRunSecret(fixtureAdhocSecret),
+		// The flow store's two write routes are gated the same way (t7);
+		// see storeentries_test.go.
+		api.WithStoreWriteSecret(fixtureStoreSecret))
 	if err != nil {
 		t.Fatalf("api.NewServer: %v", err)
 	}

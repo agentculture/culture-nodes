@@ -30,6 +30,8 @@
 #                                          (deploy.sh already stamps it).
 #   PR_UPKEEP_SWEEP_SOURCE_SHA256          the digest the bootstrap refuses
 #                                          to run without.
+#   PR_UPKEEP_SWEEP_JIRA_SOURCE_URL        where pr_upkeep_jira.py is fetched.
+#   PR_UPKEEP_SWEEP_JIRA_SOURCE_SHA256     its independently verified digest.
 #   PR_UPKEEP_REPOSITORIES                 the swept repositories document
 #                                          (github_repo, sonar_component,
 #                                          optional jira_site/jira_project/
@@ -92,6 +94,8 @@ spec:
         environmentRefs:
           - PR_UPKEEP_SWEEP_SOURCE_URL
           - PR_UPKEEP_SWEEP_SOURCE_SHA256
+          - PR_UPKEEP_SWEEP_JIRA_SOURCE_URL
+          - PR_UPKEEP_SWEEP_JIRA_SOURCE_SHA256
           - PR_UPKEEP_REPOSITORIES
           - GITHUB_TOKEN
           - SONAR_TOKEN
@@ -104,12 +108,17 @@ spec:
           - -c
           - |
             import hashlib, os, subprocess, sys, tempfile, urllib.request
-            want = os.environ["PR_UPKEEP_SWEEP_SOURCE_SHA256"]
-            body = urllib.request.urlopen(os.environ["PR_UPKEEP_SWEEP_SOURCE_URL"], timeout=60).read()
-            if hashlib.sha256(body).hexdigest() != want:
-                sys.exit("sweep-cycle: fetched bytes do not match the granted digest; refusing to run unverified code")
-            path = os.path.join(tempfile.mkdtemp(), "sweep.py")
-            open(path, "wb").write(body)
+            sources = (
+                ("sweep.py", "PR_UPKEEP_SWEEP_SOURCE_URL", "PR_UPKEEP_SWEEP_SOURCE_SHA256"),
+                ("pr_upkeep_jira.py", "PR_UPKEEP_SWEEP_JIRA_SOURCE_URL", "PR_UPKEEP_SWEEP_JIRA_SOURCE_SHA256"),
+            )
+            directory = tempfile.mkdtemp()
+            for filename, url_ref, digest_ref in sources:
+                body = urllib.request.urlopen(os.environ[url_ref], timeout=60).read()
+                if hashlib.sha256(body).hexdigest() != os.environ[digest_ref]:
+                    sys.exit(f"sweep-cycle: fetched {filename} bytes do not match the granted digest; refusing to run unverified code")
+                open(os.path.join(directory, filename), "wb").write(body)
+            path = os.path.join(directory, "sweep.py")
             code = subprocess.run([sys.executable, path]).returncode
             # 0 = emitted, 10 = empty sweep: both are successful emitter
             # passes (the facts, or the absence of new facts, are appended /

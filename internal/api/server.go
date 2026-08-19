@@ -117,6 +117,17 @@ type Server struct {
 	// surface this batch ships is authenticated from day one.
 	adhocRunSecret []byte
 
+	// storeWriteSecret gates the flow store's two write routes — POST
+	// /v1alpha1/store/entries and POST /v1alpha1/store/entries/pull (see
+	// (*Server).requireStoreWriteAuth in storeentries.go) — its own secret
+	// (NODES_STORE_TOKEN_SECRET), separate from the five above so an
+	// operator can grant catalog-writing standing without granting
+	// decision, registration, event, or ad-hoc power. Reads stay authless:
+	// the registry is internal and everyone on the mesh reads (the flow
+	// store's q6 decision). Same closed-by-default posture: nil refuses
+	// every store write with 401.
+	storeWriteSecret []byte
+
 	// inboundAuthenticator gates every bridge poll and completion before any
 	// mailbox state is exposed. The migration 0031 simple verifier is now on
 	// issue #111's replacement clock because this is the first accepting path.
@@ -287,6 +298,21 @@ func WithAdhocRunSecret(secret string) Option {
 	}
 }
 
+// WithStoreWriteSecret configures the bearer secret the flow store's two
+// write routes require (see requireStoreWriteAuth in storeentries.go).
+// Omitting it (or passing "") leaves every store write refused with 401
+// rather than mounted-but-authless — the same closed-by-default rule the
+// decision, registration, event, and ad-hoc secrets follow. Store reads
+// need no secret at all: the registry is an internal, mesh-private surface
+// whose read side serves everyone on the mesh.
+func WithStoreWriteSecret(secret string) Option {
+	return func(s *Server) {
+		if secret != "" {
+			s.storeWriteSecret = []byte(secret)
+		}
+	}
+}
+
 // WithTelemetry instruments the engine's §12.5 completion transaction and
 // the actor callback ingest route (task t19) through p. Omitting this
 // option (or passing nil) leaves both uninstrumented — p's zero value, a
@@ -444,6 +470,21 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("GET /v1alpha1/preflights", s.wrap(s.handleListPreflights))
 	mux.HandleFunc("GET /v1alpha1/preflights/{id}", s.wrap(s.handleGetPreflight))
 	mux.HandleFunc("POST /v1alpha1/preflights/{id}/acknowledge", s.wrap(s.handleAcknowledgePreflight))
+
+	// The flow store's registry surface (task t7, issue #192). The literal
+	// /pull route is registered alongside the {id} wildcard; Go's mux
+	// prefers the more specific literal pattern, the same shape the inbound
+	// credential routes rely on above.
+	mux.HandleFunc("POST /v1alpha1/store/entries", s.wrap(s.handleCreateStoreEntry))
+	mux.HandleFunc("POST /v1alpha1/store/entries/pull", s.wrap(s.handleStoreEntryPull))
+	mux.HandleFunc("GET /v1alpha1/store/entries", s.wrap(s.handleListStoreEntries))
+	mux.HandleFunc("GET /v1alpha1/store/entries/{id}", s.wrap(s.handleGetStoreEntry))
+	// The import mapping step (task t8): bind a pulled entry's declared
+	// capability requirements to local registrations, read the record trail
+	// back, and publish the embedded graph verbatim once nothing is unbound.
+	mux.HandleFunc("POST /v1alpha1/store/entries/{id}/bindings", s.wrap(s.handleCreateStoreBinding))
+	mux.HandleFunc("GET /v1alpha1/store/entries/{id}/bindings", s.wrap(s.handleListStoreBindings))
+	mux.HandleFunc("POST /v1alpha1/store/entries/{id}/publish", s.wrap(s.handlePublishStoreEntry))
 
 	mux.HandleFunc("POST /v1alpha1/plan-imports", s.wrap(s.handleImportPlan))
 	mux.HandleFunc("GET /v1alpha1/plan-imports", s.wrap(s.handleListPlanImports))

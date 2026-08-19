@@ -10,6 +10,7 @@ import (
 	"github.com/agentculture/culture-nodes/internal/scheduler"
 	"github.com/agentculture/culture-nodes/internal/store/postgres"
 	"github.com/agentculture/culture-nodes/internal/telemetry"
+	"github.com/agentculture/culture-nodes/internal/ticketreport"
 )
 
 // `nodes scheduler`: the process that fires durable timers and sweeps expired
@@ -77,10 +78,11 @@ func cmdScheduler(args []string, jsonMode bool) (int, error) {
 	defer db.Close()
 
 	sch := scheduler.New(db, scheduler.Options{
-		OwnerID:      os.Getenv("NODES_SCHEDULER_ID"),
-		TickInterval: *tickInterval,
-		BatchSize:    *batchSize,
-		Telemetry:    telemetryProvider,
+		OwnerID:       os.Getenv("NODES_SCHEDULER_ID"),
+		TickInterval:  *tickInterval,
+		BatchSize:     *batchSize,
+		Telemetry:     telemetryProvider,
+		TicketReports: ticketreport.New(db, nil),
 	})
 
 	startup := map[string]any{

@@ -112,6 +112,9 @@ type Options struct {
 	// without this option (every existing caller, every existing test)
 	// behaves exactly as it did before this option existed.
 	Telemetry *telemetry.Provider
+	// TicketReports drains lifecycle report intents after engine work. Nil
+	// disables the optional Jira operating surface.
+	TicketReports interface{ Run(context.Context) error }
 	// Now is the clock this scheduler reads when it asks what is due.
 	// Defaults to time.Now.
 	//
@@ -398,7 +401,15 @@ func (sch *Scheduler) Tick(ctx context.Context) error {
 		// comment.
 		_ = sch.fireOne(ctx, t)
 	}
-	return sch.fireDueSchedules(ctx)
+	if err := sch.fireDueSchedules(ctx); err != nil {
+		return err
+	}
+	if sch.opts.TicketReports != nil {
+		if err := sch.opts.TicketReports.Run(ctx); err != nil {
+			return fmt.Errorf("scheduler: tick: ticket reports: %w", err)
+		}
+	}
+	return nil
 }
 
 // fireOne processes exactly one claimed timer inside exactly one

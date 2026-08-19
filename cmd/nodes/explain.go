@@ -24,15 +24,16 @@ var explainCatalog = map[string]string{
 	"cli":          explainCLI,
 	"cli overview": explainCLI,
 
-	"serve":        explainServe,
-	"scheduler":    explainScheduler,
-	"worker":       explainWorker,
-	"all":          explainAll,
-	"validate":     explainValidate,
-	"run":          explainRun,
-	"plan-import":  explainPlanImport,
-	"chain-verify": explainChainVerify,
-	"inspect":      explainStubMode("inspect", "inspect ledger records for a run"),
+	"serve":         explainServe,
+	"scheduler":     explainScheduler,
+	"worker":        explainWorker,
+	"all":           explainAll,
+	"validate":      explainValidate,
+	"run":           explainRun,
+	"plan-import":   explainPlanImport,
+	"chain-verify":  explainChainVerify,
+	"cutover-adopt": explainCutoverAdopt,
+	"inspect":       explainStubMode("inspect", "inspect ledger records for a run"),
 }
 
 const explainRoot = `# nodes
@@ -188,6 +189,20 @@ scheduler only — stated here rather than left to be discovered.
 ## Environment
 
 Same as ` + "`nodes serve`" + `: ` + "`NODES_LISTEN`" + `, ` + "`NODES_DATABASE_URL`" + `.
+`
+
+const explainCutoverAdopt = `# nodes cutover-adopt
+
+One-shot production cutover command. It reads pending Jira history cutover
+markers, fetches each issue's current Jira Cloud REST v3 changelog/comment
+head, and adopts that head without emitting signal facts. Re-running it skips
+already-adopted rows. Run host-side after migrations and before resuming the
+history sweep; never give Jira read credentials to a control-plane process.
+
+## Environment
+
+- ` + "`NODES_DATABASE_URL`" + ` — PostgreSQL connection URL.
+- ` + "`JIRA_ACCOUNT_EMAIL`" + ` and ` + "`JIRA_API_TOKEN`" + ` — Jira Basic-auth pair.
 `
 
 func explainStubMode(name, summary string) string {

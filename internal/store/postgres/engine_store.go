@@ -270,8 +270,8 @@ func (eq engineQueries) EnqueueWork(ctx context.Context, nodeRunID string, avail
 
 const insertRunSQL = `
 INSERT INTO runs (id, namespace_id, workflow_version_id, status, input, created_at, updated_at,
-                  name, description, category, actor_affinity, subject)
-VALUES ($1, $2, $3, $4, $5, $6, $6, NULLIF($7, ''), NULLIF($8, ''), NULLIF($9, ''), $10, NULLIF($11, ''))
+                  name, description, category, actor_affinity, subject, trigger_event_id)
+VALUES ($1, $2, $3, $4, $5, $6, $6, NULLIF($7, ''), NULLIF($8, ''), NULLIF($9, ''), $10, NULLIF($11, ''), NULLIF($12, ''))
 `
 
 // InsertRun records a new run. Metadata rides the same INSERT so POST
@@ -283,7 +283,7 @@ func (eq engineQueries) InsertRun(ctx context.Context, run engine.Run) error {
 	_, err := eq.q.Exec(ctx, insertRunSQL,
 		run.ID, eq.namespaceID, run.WorkflowVersionID, string(run.State),
 		jsonOrEmptyObject(run.Input), tsOrNow(run.CreatedAt),
-		run.Name, run.Description, run.Category, jsonOrNil(run.ActorAffinity), run.Subject,
+		run.Name, run.Description, run.Category, jsonOrNil(run.ActorAffinity), run.Subject, run.TriggerEventID,
 	)
 	if err != nil {
 		return fmt.Errorf("postgres: engine: InsertRun: %w", err)
@@ -317,7 +317,7 @@ func (eq engineQueries) UpdateRunState(ctx context.Context, runID string, state 
 
 const selectRunSQL = `
 SELECT r.id, r.namespace_id, r.workflow_version_id, wv.content_digest, r.status,
-       r.input, r.output, r.created_at, r.updated_at, r.completed_at, r.actor_affinity, r.subject
+       r.input, r.output, r.created_at, r.updated_at, r.completed_at, r.actor_affinity, r.subject, r.trigger_event_id
 FROM runs AS r
 JOIN workflow_versions AS wv ON wv.id = r.workflow_version_id
 WHERE r.id = $1 AND r.namespace_id = $2
@@ -328,19 +328,19 @@ WHERE r.id = $1 AND r.namespace_id = $2
 // not be pinned to anything.
 func (eq engineQueries) Run(ctx context.Context, runID string) (engine.Run, error) {
 	var (
-		run         engine.Run
-		status      string
-		input       []byte
-		output      []byte
-		createdAt   pgtype.Timestamptz
-		updatedAt   pgtype.Timestamptz
-		completedAt pgtype.Timestamptz
-		affinity    []byte
-		subject     pgtype.Text
+		run                     engine.Run
+		status                  string
+		input                   []byte
+		output                  []byte
+		createdAt               pgtype.Timestamptz
+		updatedAt               pgtype.Timestamptz
+		completedAt             pgtype.Timestamptz
+		affinity                []byte
+		subject, triggerEventID pgtype.Text
 	)
 	err := eq.q.QueryRow(ctx, selectRunSQL, runID, eq.namespaceID).Scan(
 		&run.ID, &run.NamespaceID, &run.WorkflowVersionID, &run.WorkflowDigest, &status,
-		&input, &output, &createdAt, &updatedAt, &completedAt, &affinity, &subject,
+		&input, &output, &createdAt, &updatedAt, &completedAt, &affinity, &subject, &triggerEventID,
 	)
 	if err != nil {
 		if isNoRows(err) {
@@ -359,6 +359,7 @@ func (eq engineQueries) Run(ctx context.Context, runID string) (engine.Run, erro
 	// which is what every caller branches on.
 	run.ActorAffinity = jsonOrNil(affinity)
 	run.Subject = textOrEmpty(subject)
+	run.TriggerEventID = textOrEmpty(triggerEventID)
 	return run, nil
 }
 
@@ -903,6 +904,11 @@ INSERT INTO outbox (id, namespace_id, topic, payload, status, available_at)
 VALUES ($1, $2, $3, $4, 'pending', now())
 `
 
+// JiraTicketReporterActorKey is the registered narrow bridge deployment must
+// provide before ticket reports can drain. It is a target identity, not an
+// emitter credential; the sweep never reads it.
+const JiraTicketReporterActorKey = "company/jira-comment"
+
 // AppendEvent writes one audit event for a run and its outbox row (PRD §12.5
 // steps 7 and 10).
 //
@@ -938,6 +944,9 @@ func (eq engineQueries) AppendEvent(ctx context.Context, runID string, in engine
 		store.NewULID(), eq.namespaceID, in.Type, []byte(payload),
 	); err != nil {
 		return 0, fmt.Errorf("postgres: engine: AppendEvent: outbox: %w", err)
+	}
+	if err := eq.appendJiraTicketReport(ctx, runID, in.Type, payload); err != nil {
+		return 0, err
 	}
 	return sequence, nil
 }

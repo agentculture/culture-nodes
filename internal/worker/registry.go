@@ -110,7 +110,29 @@ func (r *DBRegistry) Resolve(ctx context.Context, ref string) (actors.Endpoint, 
 		LIMIT 1
 	`, r.namespaceID, key).Scan(&endpointRef, &metadata)
 	if err != nil {
-		return actors.Endpoint{}, fmt.Errorf("worker: resolve %q: %w: %v", ref, ErrUnknownActor, err)
+		// The store-pull mapping step (task t8, issue #192): a pulled flow's
+		// graph pins refs minted on the SOURCE plane, and the binding that
+		// makes it runnable here lives outside the graph document — so this
+		// is exactly where it applies. When no local registration answers
+		// for the ref's own key, the newest binding for the VERBATIM ref
+		// supplies the local key to resolve instead. A binding never
+		// overrides a direct registration, and an unbound foreign ref stays
+		// ErrUnknownActor.
+		boundKey, bindErr := r.store.ResolveStoreBoundActorKey(ctx, r.namespaceID, ref)
+		if bindErr != nil {
+			return actors.Endpoint{}, fmt.Errorf("worker: resolve %q: %w: %v", ref, ErrUnknownActor, err)
+		}
+		key = boundKey
+		err = r.store.Pool().QueryRow(ctx, `
+			SELECT endpoint_ref, metadata
+			FROM actors
+			WHERE namespace_id = $1 AND actor_key = $2
+			ORDER BY revision DESC
+			LIMIT 1
+		`, r.namespaceID, key).Scan(&endpointRef, &metadata)
+		if err != nil {
+			return actors.Endpoint{}, fmt.Errorf("worker: resolve %q via binding to %q: %w: %v", ref, key, ErrUnknownActor, err)
+		}
 	}
 	url := endpointRef.String
 	endpoint := actors.Endpoint{URL: url}
@@ -218,7 +240,23 @@ func (r *DBRegistry) ActorRowID(ctx context.Context, ref string) (string, error)
 		LIMIT 1
 	`, r.namespaceID, key).Scan(&id)
 	if err != nil {
-		return "", fmt.Errorf("worker: actor row for %q: %w: %v", ref, ErrUnknownActor, err)
+		// The same store-binding fallback Resolve applies (task t8): a
+		// dispatch that resolved through a binding must attribute to the
+		// registration the binding named, not go unattributed.
+		boundKey, bindErr := r.store.ResolveStoreBoundActorKey(ctx, r.namespaceID, ref)
+		if bindErr != nil {
+			return "", fmt.Errorf("worker: actor row for %q: %w: %v", ref, ErrUnknownActor, err)
+		}
+		err = r.store.Pool().QueryRow(ctx, `
+			SELECT id
+			FROM actors
+			WHERE namespace_id = $1 AND actor_key = $2
+			ORDER BY revision DESC
+			LIMIT 1
+		`, r.namespaceID, boundKey).Scan(&id)
+		if err != nil {
+			return "", fmt.Errorf("worker: actor row for %q via binding to %q: %w: %v", ref, boundKey, ErrUnknownActor, err)
+		}
 	}
 	return id, nil
 }

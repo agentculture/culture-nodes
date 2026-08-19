@@ -24,6 +24,8 @@ means supplying these — it never means editing `workflow.yaml`.
 | `runner://headspace/docker` | **Runner registry.** The code-node runner boundary the sweep dispatches through. |
 | `PR_UPKEEP_SWEEP_SOURCE_URL` | **Granted environment value** on the sweep operation. Where `sweep.py` is fetched from at dispatch time. |
 | `PR_UPKEEP_SWEEP_SOURCE_SHA256` | **Granted environment value.** The sha256 those fetched bytes must have; the bootstrap refuses to execute anything else. |
+| `PR_UPKEEP_SWEEP_JIRA_SOURCE_URL` | **Granted environment value.** Where the sibling `pr_upkeep_jira.py` read/replay module is fetched from. |
+| `PR_UPKEEP_SWEEP_JIRA_SOURCE_SHA256` | **Granted environment value.** The independently checked sha256 for the Jira module. |
 | `PR_UPKEEP_REPOSITORIES` | **Granted environment value.** An ordered JSON object containing `cycle` and the closed `repositories` set. Each entry supplies `github_repo` and `sonar_component`; optional `jira_site` and `jira_project` (required together) enable Jira for that repo. `jira_bot_account_id` is independently optional: the system's own Jira `accountId`, used only to filter self-authored comments out of the comment/resume event (task t9) — see "Jira event vocabulary" below. The cycle index selects exactly one entry per sweep. |
 | `JIRA_ACCOUNT_EMAIL`, `JIRA_API_TOKEN` | **Granted environment values.** The two separately configured Jira Cloud Basic-auth values. They are never run input, argv, output, or fixture data. |
 | `PR_UPKEEP_MAX_PRS_PER_SWEEP`, `PR_UPKEEP_REQUIRED_CHECKS`, `GITHUB_TOKEN` | **Process environment of the sweep.** These remain optional; the GitHub token only changes rate-limit headroom. |
@@ -41,7 +43,7 @@ supply-chain property, not a portability wart. Fork `sweep.py`, publish your
 copy, and grant its URL and digest:
 
 ```bash
-sha256sum examples/pr-upkeep/sweep.py   # the value for PR_UPKEEP_SWEEP_SOURCE_SHA256
+sha256sum examples/pr-upkeep/sweep.py examples/pr-upkeep/pr_upkeep_jira.py
 ```
 
 Both values are resolved by the **runner** process, from its own

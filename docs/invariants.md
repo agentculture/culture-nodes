@@ -46,6 +46,7 @@ Sanctioned kind-aware file (the only allowed match):
 | --- | --- |
 | `internal/api/grades.go` | Grade authority follows the grader's registered kind: a human grading directly is their own confirmation; an agent grading is a proposal. Outside dispatch — the c16 precedent. |
 | `internal/api/preflights.go` | A clarify-then-commit acknowledgement's ledger **origin** follows the acknowledging actor's registered kind — `agent` when a bridge answers for itself, `human` when an operator answers on its behalf (issue #67, task t14). The authority is `proposed` either way, so the kind decides who the record says produced it, never what the control plane does with it; the gate's dispatch-side half (`internal/worker/clarifygate.go`) reads no kind at all. |
+| `internal/api/storebindings.go` | Store-binding **admission** (task t8, issue #192): a pulled entry's `runner` requirement may only be bound to a registration of kind `runner`, and an `actor` requirement to a non-runner — a category-fit check at mapping time, the grades-API shape. Dispatch stays kind-blind: the worker registry's binding fallback resolves `endpoint_ref` and metadata only, exactly like a direct registration. |
 
 ## Invariant 2 — The ledger authority ladder (spec c17, honesty h15)
 
@@ -121,6 +122,7 @@ sweep; refused at append time by `internal/ledger/authority.go` otherwise).
 | `internal/repair/route.go` | Validator-origin writer (task t32, issue #102): where a failing merge gate goes next. `Decide` is a pure function of already-recorded facts — the suite's exit code (itself a derived record), the run's own prior routings, the changed paths `internal/handover` measured, and the repair lane's advertised capability surface — so the same inputs yield the same destination every time, which is §10.4's test for `derived`. It is deliberately **not** `confirmed`: routing decides where a failure goes, and a human deciding to merge remains that human's own transaction. Nor `proposed`: nothing in the record is anybody's suggestion, and there is no field a caller can use to argue with the bound |
 | `internal/devague/deliverables.go` | Engine-origin writer: devague delivery-summary derivation (pre-batch) |
 | `internal/preflight/records.go` | Engine-origin writer: the clarify-then-commit gate's briefing (issue #67, task t14) — a deterministic composition of the host capabilities a bridge advertised and the pinned task declaration, computed by the engine and asserted by nobody |
+| `internal/store/postgres/remint.go` | Engine-origin writer (plan t5, issues #194/#203): the decision record a minted trigger re-mint carries is a pure composition of already-recorded facts — the original delivered event id, the failed source run, and the attempt counter the bounded schedule itself maintains, so the same inputs yield the same record every time (§10.4). Not `proposed` (no actor suggested re-minting; the engine's bound did) and not `confirmed` (no human transacted it). The append shares the transaction with the `TriggerEvent` admission, so a minted run and its attribution cannot exist without each other |
 
 ## Invariant 3 — Every committed example compiles (#73)
 

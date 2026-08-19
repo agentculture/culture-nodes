@@ -67,6 +67,8 @@ REPOSITORY_GRANT = json.dumps(
 
 
 def _load_sweep():
+    if str(EXAMPLE_DIR) not in sys.path:
+        sys.path.insert(0, str(EXAMPLE_DIR))
     spec = importlib.util.spec_from_file_location("pr_upkeep_sweep", EXAMPLE_DIR / "sweep.py")
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)
@@ -212,14 +214,15 @@ def test_pr_watermark_uses_latest_comment_timestamp():
 
 def test_jira_watermark_carries_issue_and_comment_positions():
     issue = {
+        "changelog": {"histories": [{"id": "20002"}]},
         "fields": {
             "updated": "2026-08-15T03:00:00Z",
-            "comment": {"comments": [{"updated_at": "2026-08-15T02:00:00Z"}]},
-        }
+            "comment": {"comments": [{"id": "30001", "updated_at": "2026-08-15T02:00:00Z"}]},
+        },
     }
     assert sweep.jira_watermark(issue) == {
-        "updated_at": "2026-08-15T03:00:00Z",
-        "newest_comment_at": "2026-08-15T02:00:00Z",
+        "changelog_id": "20002",
+        "comment_id": "30001",
     }
 
 
@@ -670,7 +673,21 @@ class TestStdlibOnlyImports:
         non_stdlib = {
             root for root in roots if root != "__future__" and root not in sys.stdlib_module_names
         }
-        assert non_stdlib == set()
+        assert non_stdlib == {"pr_upkeep_jira"}
+
+        jira_tree = ast.parse((EXAMPLE_DIR / "pr_upkeep_jira.py").read_text())
+        jira_roots = {
+            (node.module or "").split(".")[0]
+            for node in ast.walk(jira_tree)
+            if isinstance(node, ast.ImportFrom) and not node.level
+        }
+        jira_roots.update(
+            alias.name.split(".")[0]
+            for node in ast.walk(jira_tree)
+            if isinstance(node, ast.Import)
+            for alias in node.names
+        )
+        assert {root for root in jira_roots if root != "__future__"} <= sys.stdlib_module_names
 
 
 class TestTheSweptRepoIsDeploymentGrantedAndSaysSo:
@@ -794,7 +811,12 @@ class TestTheSweptRepoIsDeploymentGrantedAndSaysSo:
         # they resolve in the worker process's environment, not in the file.
         readme = (EXAMPLE_DIR / "README.md").read_text()
         assert "## Deployment configuration" in readme
-        for ref in ("PR_UPKEEP_SWEEP_SOURCE_URL", "PR_UPKEEP_SWEEP_SOURCE_SHA256"):
+        for ref in (
+            "PR_UPKEEP_SWEEP_SOURCE_URL",
+            "PR_UPKEEP_SWEEP_SOURCE_SHA256",
+            "PR_UPKEEP_SWEEP_JIRA_SOURCE_URL",
+            "PR_UPKEEP_SWEEP_JIRA_SOURCE_SHA256",
+        ):
             assert ref in readme, f"the README never names the granted value {ref}"
 
 
@@ -915,8 +937,16 @@ class TestEmitterMain:
         payload = json.loads(json.dumps(jira_payload))
         payload["issues"][0]["fields"]["comment"] = {
             "comments": [
-                {"author": {"accountId": "human-1"}, "created": "2026-08-15T00:00:00Z"},
-                {"author": {"accountId": "bot-1"}, "created": "2026-08-16T00:00:00Z"},
+                {
+                    "id": "30000",
+                    "author": {"accountId": "human-1"},
+                    "created": "2026-08-15T00:00:00Z",
+                },
+                {
+                    "id": "30001",
+                    "author": {"accountId": "bot-1"},
+                    "created": "2026-08-16T00:00:00Z",
+                },
             ]
         }
         monkeypatch.setenv(
@@ -929,14 +959,14 @@ class TestEmitterMain:
 
         assert sweep.main() == 0
         names = [name for name, *_rest in calls["events"]]
-        assert sweep.JIRA_COMMENT_EVENT_NAME not in names
+        assert names.count(sweep.JIRA_COMMENT_EVENT_NAME) == 1
 
         # The watermark computation itself (what a future delivery would
         # use) is unaffected by the skip: it already sits past the bot's
         # own comment, so a later real reply is compared against THIS
         # position, not replayed against what preceded the bot's question.
         issue = payload["issues"][0]
-        assert sweep.jira_watermark(issue)["newest_comment_at"] == "2026-08-16T00:00:00Z"
+        assert sweep.jira_watermark(issue)["comment_id"] == "30001"
 
     def test_a_clean_pr_still_emits_its_new_head(self, monkeypatch, capsys):
         _stub_sweep(

@@ -15,6 +15,9 @@ func TestSweepSourceDefaultsFollowShippedRevisionAndRemainOverridable(t *testing
 		`PR_UPKEEP_SWEEP_SOURCE_URL=${PR_UPKEEP_SWEEP_SOURCE_URL:-`,
 		`PR_UPKEEP_SWEEP_SOURCE_SHA256=${PR_UPKEEP_SWEEP_SOURCE_SHA256:-`,
 		`git show "$REVISION:examples/pr-upkeep/sweep.py"`,
+		`PR_UPKEEP_SWEEP_JIRA_SOURCE_URL=${PR_UPKEEP_SWEEP_JIRA_SOURCE_URL:-`,
+		`PR_UPKEEP_SWEEP_JIRA_SOURCE_SHA256=${PR_UPKEEP_SWEEP_JIRA_SOURCE_SHA256:-`,
+		`git show "$REVISION:examples/pr-upkeep/pr_upkeep_jira.py"`,
 	} {
 		if !strings.Contains(script, want) {
 			t.Errorf("deploy.sh does not derive the sweep grant from its shipped revision; missing %q", want)

@@ -1,0 +1,207 @@
+# JIRA COMMENT CONSUMER (plan jira-operating-surface-flow-store, task t9
+# leg 1; the core of issue #197): the missing subscriber for the sweep's
+# BARE human comment facts. Measured live on SCRUM-3 (2026-08-19): a human's
+# comment on a tracked ticket emits `pr-upkeep.jira.comment` and NOTHING
+# consumed it — four go-signals (comments 10106/10107/10109/10110) died
+# unheard and the operator session had to poll the board. This file is the
+# subscriber class those facts were missing.
+#
+# It is deliberately NOT the jira-question-round-trip workflow: parked
+# question flows resume on the SAME event name, and the two consumers split
+# the payload space exactly:
+#
+#   * a fact carrying `originating_question_id` is a human ANSWER to a
+#     marked engine question — it belongs to whichever parked flow asked
+#     (see examples/jira-question-round-trip/question_correlation.py, the
+#     shared correlation helper and marker contract), and this trigger
+#     DECLINES it;
+#   * a fact without one is a bare go-signal — nothing is parked waiting for
+#     it, so this graph mints a consumer run that reads the comment in
+#     context and replies on the ticket.
+#
+# ---------------------------------------------------------------------------
+# SELF-ECHO DISCIPLINE (three layers, none of them this file's alone)
+# ---------------------------------------------------------------------------
+# 1. THE EMITTER already suppresses the system's own comments: sweep.py's
+#    `jira_comment_is_self_echo` uses the configured bot account id
+#    authoritatively, with the marker only as an unconfigured fallback,
+#    before any fact exists.
+# 2. THIS TRIGGER additionally declines any fact flagged `self_originated`
+#    (the author-id discipline WP-E lands in parallel stamps it; older facts
+#    simply lack the flag) — so even a fact that slips the emitter's filter
+#    while carrying the flag cannot mint a run here.
+# 3. THE REPLY this graph posts goes through the narrow jira-comment bridge,
+#    which stamps its `[culture-nodes:jira-actor]` marker on every comment
+#    it posts — which is exactly what layer 1 filters. The loop cannot feed
+#    itself: this graph must NOT add its own marker.
+# Plus the ceiling: `maxConcurrentSubjectRuns: 2` bounds concurrent pickups,
+# and a subject-bearing delivery for an issue already mid-flight ATTACHES to
+# the open run instead of minting a sibling (internal/engine/trigger.go,
+# task t15). HONEST GAP: the sweep does not yet send `subject` on its event
+# deliveries (it is untouched by t9), so today the ceiling and attach
+# discipline arm only once the emitter or its deployment supplies subject —
+# declared here so the graph is already correct when it does.
+#
+# ---------------------------------------------------------------------------
+# Deployment configuration — WHAT THIS GRAPH NEEDS FROM OUTSIDE THE FILE
+# ---------------------------------------------------------------------------
+#   actor://company/intake        the claude intake-style push bridge (same
+#                                 actor jira-intake dispatches): reads the
+#                                 comment in the issue's context and drafts
+#                                 the acknowledging/actioning reply.
+#   actor://company/jira-comment  the narrow Jira bridge (post_comment verb
+#                                 — never raw Jira HTTP). The bridge stamps
+#                                 the self-echo marker; see above.
+#
+# A technical failure at any node fails the run visibly (no silent stall).
+apiVersion: nodes.culture.dev/v1alpha1
+kind: Workflow
+
+metadata:
+  name: jira-comment-consumer
+  version: 1.0.0
+  ownerRef: team/platform-ai
+
+spec:
+  entry: read-signal
+
+  triggers:
+    # Ordered so every field access is guarded by has() before comparison:
+    # the sweep's github_pr facts and any hand-raised event lacking these
+    # fields must decline cleanly, never error the delivery.
+    - onEvent: pr-upkeep.jira.comment
+      when: >-
+        has(event.payload.answer) && has(event.payload.id) &&
+        has(event.payload.source) && event.payload.source == "jira" &&
+        !has(event.payload.originating_question_id) &&
+        !(has(event.payload.self_originated) &&
+          event.payload.self_originated == true)
+
+  contract:
+    input:
+      schema:
+        type: object
+        required: [source, id, answer]
+        properties:
+          source: {type: string, const: jira}
+          id: {type: string, minLength: 1}
+          project: {type: string}
+          severity: {type: string}
+          kind: {type: string}
+          title: {type: string}
+          status: {type: string}
+          details_url: {type: string}
+          answer:
+            type: object
+            required: [comment_id, body]
+            properties:
+              comment_id: {type: string}
+              body: {type: string}
+    output:
+      schema: {type: object}
+
+  # Longest path: read-signal -> post-reply -> heard (3 hops); 6 leaves
+  # headroom without hiding a loop — every node id is distinct and visited
+  # at most once by construction.
+  limits:
+    maxDuration: 2h
+    maxTransitions: 6
+    maxVisitsPerNode: 1
+    maxParallelTokens: 1
+    maxConcurrentSubjectRuns: 2
+
+  ledger:
+    schemaVersion: nodes.culture.dev/ledger/v1alpha1
+    maxRecordsPerNode: 20
+
+  nodes:
+    # The judgment leg: read the human's comment against the issue fields
+    # the event carries and draft the reply. A real bridge completion
+    # proposes a claim (PRD 10.4); a node that declares no propose types
+    # rejects every honest actor completion as contract_rejected — the #202
+    # trap, which killed 4 runs for omitting exactly this block.
+    read-signal:
+      kind: agent
+      ownerRef: team/platform-ai
+      uses: actor://company/intake@sha256:6666666666666666666666666666666666666666666666666666666666666666
+      ledger:
+        propose: [claim]
+      # Same measured constraint as jira-intake's intake node: the claude
+      # bridge reports the outcome named by input.success_outcome and an
+      # output whose comment-bearing field is `summary` (the session's final
+      # message), so the instruction makes the final message BE the reply.
+      input:
+        bindings:
+          success_outcome:
+            literal: reply_drafted
+          instruction:
+            literal: >-
+              You are the consumer leg of the jira-comment-consumer
+              workflow. A human commented on a tracked Jira issue; your
+              input carries the issue fields (id, title, status,
+              details_url) and the comment itself (comment_body,
+              comment_id). Read the comment IN the issue's context and
+              draft a short reply that acknowledges it and either states
+              the concrete action being taken or asks the single most
+              important clarifying question. End with the line
+              '- culture-nodes (Claude)'. Your FINAL message must be ONLY
+              the reply text itself - no headers, no JSON, no code fences,
+              no commentary about the task - because it is posted to the
+              issue verbatim. Do not start any other work.
+          issue: /run/input/id
+          title: /run/input/title
+          status: /run/input/status
+          details_url: /run/input/details_url
+          comment_body: /run/input/answer/body
+          comment_id: /run/input/answer/comment_id
+      contract:
+        outcomes:
+          reply_drafted:
+            schema:
+              type: object
+              required: [summary]
+              properties:
+                summary: {type: string, minLength: 1}
+      policy:
+        timeout: 30m
+        retry:
+          maxAttempts: 1
+
+    # The narrow write: post the drafted reply. The bridge stamps the
+    # self-echo marker (layer 3 above); this graph adds nothing to it.
+    post-reply:
+      kind: agent
+      ownerRef: team/platform-ai
+      uses: actor://company/jira-comment@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
+      ledger:
+        propose: [claim]
+      input:
+        bindings:
+          verb:
+            literal: post_comment
+          issue: /run/input/id
+          comment: /nodes/read-signal/output/summary
+      contract:
+        outcomes:
+          comment_posted:
+            schema:
+              type: object
+              required: [issue, comment_id]
+      policy:
+        timeout: 10m
+        retry:
+          maxAttempts: 1
+
+    # The one named ending: the go-signal was heard and answered on the
+    # board — the run's output is the posted reply's own receipt.
+    heard:
+      kind: end
+      ownerRef: team/platform-ai
+      output:
+        from: /nodes/post-reply/output
+
+  edges:
+    - from: read-signal.reply_drafted
+      to: post-reply
+    - from: post-reply.comment_posted
+      to: heard

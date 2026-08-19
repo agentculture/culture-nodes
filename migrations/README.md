@@ -165,6 +165,23 @@ Numbered SQL migrations for the authoritative PostgreSQL store (prd-spec
   inbound verifier record. It keys parties by actor key or host name, rejects
   address-shaped keys, and stores only a SHA-256 verifier or an environment
   variable name so database dumps cannot become credential archives.
+- `0041_jira_history_watermark_cutover.sql` — expand-only Jira history
+  cutover markers. SQL derives known issues from legacy `:status` / `:comment`
+  rows, but Jira owns the current head. The host-side `nodes-cutover` one-shot
+  one-shot must adopt each pending issue's observed cumulative head before
+  offering history facts; adoption emits nothing and facts at
+  or behind that head are suppressed across per-position source keys.
+  **Deploy order is fail-closed:** stop the sweep schedule, apply migration
+  0041, run the host-side adopter with the runner-owned Jira read credentials,
+  then resume the sweep schedule. A history fact whose marker remains pending
+  is refused as a delivery error: this makes a deploy-order violation loud
+  and prevents pre-cutover ticket history from becoming billable intake runs.
+- `0043_jira_ticket_report_outbox.sql` — expand-only trigger provenance on
+  signal events/runs and the engine lifecycle → Jira bridge transactional
+  outbox. `(run_id, phase)` makes start and finish independently durable and
+  idempotent even when both occur between scheduler passes. Failed dispatches
+  record an error and bounded backoff; the fifth failure parks the row as
+  `failed`, allowing later reports to proceed.
 
 - `0022_dispatch_rate_state.sql` — expand-only: adds the mutable
   `dispatch_rate_state` table (task t10 of the economy-discord-graphs plan,
@@ -277,6 +294,11 @@ Numbered SQL migrations for the authoritative PostgreSQL store (prd-spec
   existing run) instead of spawning a sibling. NULL means no subject was
   supplied, exactly as every pre-migration caller of `POST /v1alpha1/events`
   behaves today.
+- `0040_trigger_remints.sql` — expand-only: adds the durable due queue for
+  bounded re-mints of technically failed trigger-created runs. Rows retain
+  the original delivered event, attempt/window counter, backoff instant and
+  minted run, allowing the trigger seam to defer an active subject and later
+  admit the same fact through the ordinary engine `EnqueueWork` path.
 
 Migrations are additive-first (expand-contract). See
 `docs/adr/0002-migration-policy.md` for the full policy, the N-1 binary

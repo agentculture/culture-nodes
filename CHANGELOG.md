@@ -5,6 +5,30 @@ All notable changes to this project will be documented in this file.
 Format follows [Keep a Changelog](https://keepachangelog.com/). This project
 adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.39.0] - 2026-08-20
+
+### Added
+
+- History-faithful Jira sweep (#193, t1/t2): one fact per unseen changelog entry and comment, watermarked by history position; bounded recently-resolved JQL lookback so a between-polls resolution still emits its terminal transition
+- Bounded control-plane re-mint of technically-failed trigger-created runs (#194, t5/t6): backoff, 2-per-24h window, derived record naming the original event and attempt, human park at the ceiling; re-mints enter the same EnqueueWork seam as every other run (RemintSchedulerActorID producer identity, registered per PRD §9.5)
+- Flow store (#192, t7/t8): insert-only store_entries (graph digest + full-fidelity evidence manifest), registry API (catalog/browse/pull), and actor-mapping bindings that make a pulled flow runnable without touching the graph document — byte-identical before and after import
+- Board parity (#197, t9): the jira-comment-consumer workflow gives bare human comments a consumer; create_issue verb in the jira adapter behind an exact-match configured project allowlist; question-resume correlation extracted to a citable shared helper
+- Start/finish ticket reports (#198, t11): engine-driven outbox posts run-start (run id, workflow, trigger event id) and run-finish through the narrow jira bridge, surviving sub-interval runs
+- Watermark cutover (t3): migration + adopt-don't-emit semantics so the first history-aware pass replays nothing; deploy-order contract in migrations/README.md
+- Regression map (t12): every live failure cited in the spec maps to a named test (docs/audits/2026-08-20-flow-store-regression-map.md)
+
+### Changed
+
+- sweep.py split per approved deviation d1: Jira read/replay layer lives in examples/pr-upkeep/pr_upkeep_jira.py; the sweep-cycle bootstrap fetches and digest-verifies both files (new PR_UPKEEP_SWEEP_JIRA_SOURCE_URL/_SHA256 pair)
+- Jira credential guard narrowed twice, deliberately: pins the exact GET-only pagination read and the single control-plane POST across the two-file layout
+- engine_store.go's ticket-report seam split to jiraticketreport.go (t4 line limit)
+
+### Fixed
+
+- s14 live bug: a human comment quoting the [culture-nodes:jira-actor] marker no longer suppresses the comment fact — self-echo keys on the authoritative bot account id
+- Transition self-echo (t4): the system's own board moves no longer become trigger-firing facts (accountId-exact, SCRUM-3 entry 10180 replay fixture)
+- NULL source_key on non-Jira trigger events 500'd every /v1alpha1/events delivery (caught at the WP-D merge gate)
+
 ## [0.38.2] - 2026-08-19
 
 ### Added

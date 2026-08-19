@@ -8,10 +8,11 @@ import os
 from http.server import BaseHTTPRequestHandler, HTTPServer
 from typing import Any
 
-from . import client, mapping, transition_issue
+from . import client, create_issue, mapping, transition_issue
 from .config import Config
 
 INVOCATIONS_PATH = "/v1/invocations"
+CAPABILITIES_PATH = "/v1/capabilities"
 MAX_BODY_BYTES = 1024 * 1024
 
 
@@ -39,9 +40,39 @@ class Handler(BaseHTTPRequestHandler):
         self.end_headers()
         self.wfile.write(raw)
 
+    def _authorized(self) -> bool:
+        expected = self.cfg.auth_token or ""
+        if not expected:
+            return True
+        presented = self.headers.get("Authorization", "")
+        return hmac.compare_digest(presented, f"Bearer {expected}")
+
     def do_GET(self) -> None:  # noqa: N802
         if self.path == "/healthz":
             self._json(200, {"status": "ok"})
+        elif self.path == CAPABILITIES_PATH:
+            # The advertisement names the verb surface AND the custody
+            # configuration behind it (all non-secret): a reader learns not
+            # just that create_issue exists but exactly which project keys
+            # this deployment allows it to target (task t9). Authenticated
+            # like invocations -- the config values are policy, not public.
+            if not self._authorized():
+                self._json(
+                    401,
+                    {"error": "a scoped workload token is required", "class": "auth_or_policy"},
+                )
+                return
+            self._json(
+                200,
+                {
+                    "verbs": [mapping.VERB, transition_issue.VERB, create_issue.VERB],
+                    "custody": {
+                        "transition_project_prefix": self.cfg.transition_project_prefix,
+                        "transition_target": self.cfg.transition_target,
+                        "create_projects": list(self.cfg.create_projects),
+                    },
+                },
+            )
         else:
             self._json(404, {"error": "not found"})
 
@@ -70,9 +101,7 @@ class Handler(BaseHTTPRequestHandler):
         if self.path != INVOCATIONS_PATH:
             self._json(404, {"error": "not found"})
             return
-        expected = self.cfg.auth_token or ""
-        presented = self.headers.get("Authorization", "")
-        if expected and not hmac.compare_digest(presented, f"Bearer {expected}"):
+        if not self._authorized():
             self._json(
                 401, {"error": "a scoped workload token is required", "class": "auth_or_policy"}
             )
@@ -91,6 +120,10 @@ class Handler(BaseHTTPRequestHandler):
                 project_prefix=self.cfg.transition_project_prefix,
                 allowed_target=self.cfg.transition_target,
             )
+        elif isinstance(input_, dict) and input_.get("verb") == create_issue.VERB:
+            parsed, refusal = create_issue.parse(
+                input_, allowed_projects=self.cfg.create_projects
+            )
         else:
             parsed, refusal = mapping.parse(input_)
         if refusal:
@@ -105,6 +138,13 @@ class Handler(BaseHTTPRequestHandler):
             )
             return
         assert parsed is not None
+        if isinstance(parsed, create_issue.CreateIssue):
+            created = create_issue.create(self.cfg.jira_site, parsed, email, token)
+            if not created.ok:
+                self._json(502, {"error": created.error, "class": "execution"})
+                return
+            self._json(200, create_issue.result(created.key, created.issue_id, self.cfg.actor_id))
+            return
         if isinstance(parsed, transition_issue.Transition):
             posted = transition_issue.transition(
                 self.cfg.jira_site, parsed.issue, parsed.target, email, token

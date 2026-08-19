@@ -23,8 +23,9 @@
 # SELF-ECHO DISCIPLINE (three layers, none of them this file's alone)
 # ---------------------------------------------------------------------------
 # 1. THE EMITTER already suppresses the system's own comments: sweep.py's
-#    `jira_comment_is_self_echo` drops marker-bearing and bot-authored
-#    (`jira_bot_account_id`) comments before any fact exists.
+#    `jira_comment_is_self_echo` uses the configured bot account id
+#    authoritatively, with the marker only as an unconfigured fallback,
+#    before any fact exists.
 # 2. THIS TRIGGER additionally declines any fact flagged `self_originated`
 #    (the author-id discipline WP-E lands in parallel stamps it; older facts
 #    simply lack the flag) — so even a fact that slips the emitter's filter

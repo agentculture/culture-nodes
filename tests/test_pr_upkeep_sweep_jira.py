@@ -4,6 +4,7 @@ tests/lint filelength gate). Shares fixtures via test helpers below."""
 
 import importlib
 import json
+import re
 import urllib.parse
 
 import pytest
@@ -330,6 +331,12 @@ class TestJiraEventNames:
             assert not name.startswith(jira.JIRA_COMMENT_EVENT_NAME)
         assert not jira.JIRA_COMMENT_EVENT_NAME.startswith("pr-upkeep.jira.transitioned.")
 
+    def test_comment_consumer_trigger_exactly_matches_sweep_comment_event_name(self):
+        workflow = (EXAMPLE_DIR.parent / "jira-comment-consumer" / "workflow.yaml").read_text()
+        declared = re.findall(r"^\s*- onEvent:\s*(\S+)\s*$", workflow, re.MULTILINE)
+
+        assert declared == [jira.JIRA_COMMENT_EVENT_NAME]
+
 
 class TestJiraSelfEcho:
     """Task t9, requirement 2: the sweep must skip comments authored by the
@@ -370,7 +377,7 @@ class TestJiraSelfEcho:
         assert jira.jira_comment_is_self_echo(comments, "") is False
         assert jira.jira_comment_is_self_echo(comments, None) is False
 
-    def test_actor_marker_filters_self_echo_when_personal_account_identity_cannot(self):
+    def test_actor_marker_filters_self_echo_when_bot_identity_is_unconfigured(self):
         comments = [
             {
                 "author": {"accountId": "operators-personal-account"},
@@ -392,7 +399,34 @@ class TestJiraSelfEcho:
                 },
             }
         ]
-        assert jira.jira_comment_is_self_echo(comments, "different-bot-id") is True
+        assert jira.jira_comment_is_self_echo(comments, None) is True
+
+    def test_human_quoting_actor_marker_is_not_silenced_when_bot_identity_is_known(self):
+        issue = {
+            "key": "SCRUM-3",
+            "fields": {
+                "comment": {
+                    "comments": [
+                        {
+                            "id": "10117",
+                            "author": {"accountId": "human-operator"},
+                            "created": "2026-08-19T16:16:00Z",
+                            "body": (
+                                "The prior reply contained "
+                                "[culture-nodes:jira-actor question_id=q-17]; continue now."
+                            ),
+                        }
+                    ]
+                }
+            },
+            "changelog": {"histories": []},
+        }
+
+        facts = jira.jira_history_facts(issue, "bridge-bot")
+
+        assert [(fact[0], fact[1]["answer"]["comment_id"]) for fact in facts] == [
+            (jira.JIRA_COMMENT_EVENT_NAME, "10117")
+        ]
 
     def test_human_answer_names_the_nearest_originating_question(self):
         comments = [
@@ -437,7 +471,7 @@ class TestJiraSelfEcho:
                     "sonar_component": "owner_repo",
                     "jira_site": "team.example.com",
                     "jira_project": "EX",
-                    "jira_bot_account_id": "a-different-machine-account",
+                    "jira_bot_account_id": "personal-operator",
                 }
             ],
         }

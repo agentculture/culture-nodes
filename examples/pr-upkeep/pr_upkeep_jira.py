@@ -100,15 +100,16 @@ def jira_question_id_for_answer(comments: list[dict]) -> str:
 def jira_comment_is_self_echo(comments: list[dict], bot_account_id: str | None) -> bool:
     """Whether the newest comment is the bridge's own comment.
 
-    Comment behavior deliberately retains both exact author identity and the
-    actor marker fallback. Transition filtering is separate and exact-id-only.
+    A configured account id is authoritative, so a human quoting the actor
+    marker cannot suppress their own fact. The marker remains a fallback for
+    deployments that cannot provide a distinct bridge account identity.
     """
     if not comments:
         return False
     latest = max(comments, key=_comment_timestamp)
-    return JIRA_ACTOR_MARKER in jira_comment_text(latest) or bool(
-        bot_account_id and _account_id(latest) == bot_account_id
-    )
+    if bot_account_id:
+        return _account_id(latest) == bot_account_id
+    return JIRA_ACTOR_MARKER in jira_comment_text(latest)
 
 
 def _get_json(url: str, *, basic: tuple[str, str]) -> dict:

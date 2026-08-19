@@ -1782,6 +1782,138 @@ paths:
               schema:
                 $ref: '#/components/schemas/Error'
 
+  /v1alpha1/store/entries/{id}/bindings:
+    post:
+      operationId: createStoreBinding
+      tags: [store]
+      summary: Bind one of a pulled entry's capability requirements to a local registration.
+      security:
+        - storeWriteBearerAuth: []
+      description: >-
+        Task t8 (issue #192): the explicit mapping step that makes a pulled
+        entry runnable here. `ref` must name one of the entry's declared
+        required_capabilities refs verbatim; `actor_key` must name a
+        registration on this plane whose kind fits the requirement and
+        whose capabilities document advertises every required capability as
+        a top-level key — a registration missing any is refused with the
+        missing names listed. The binding lives outside the graph document
+        (the workflow source and its digest stay byte-identical to the
+        exported original) and is applied where refs resolve to
+        registrations, at publish and dispatch resolution. Bindings are
+        append-only records; re-binding a ref appends and the newest wins.
+      parameters:
+        - name: id
+          in: path
+          required: true
+          description: The store entry id.
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/StoreBindingCreateRequest'
+      responses:
+        '201':
+          description: The binding record was appended.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/StoreBinding'
+        '400':
+          description: >-
+            The entry is not a pulled one, the ref is not one the entry
+            declares, the actor key names no local registration, its kind
+            does not fit the requirement, or it does not advertise the
+            required capabilities (named in the error).
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '404':
+          description: No store entry with this id.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+    get:
+      operationId: listStoreBindings
+      tags: [store]
+      summary: Read a store entry's binding records, newest first.
+      description: >-
+        The full trail — who bound what to what, when — superseded records
+        included; the current binding per ref is the newest.
+      parameters:
+        - name: id
+          in: path
+          required: true
+          description: The store entry id.
+          schema:
+            type: string
+      responses:
+        '200':
+          description: The binding record trail, newest first.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/StoreBindingList'
+        '404':
+          description: No store entry with this id.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+
+  /v1alpha1/store/entries/{id}/publish:
+    post:
+      operationId: publishStoreEntry
+      tags: [store]
+      summary: Publish an entry's embedded workflow source, verbatim, once every requirement is bound.
+      security:
+        - storeWriteBearerAuth: []
+      description: >-
+        Task t8 (issue #192): publish resolution for an imported flow. Every
+        declared capability requirement must be satisfied — by a current
+        binding, or by a local registration under the ref's own key — or
+        the publish is refused with the unbound refs named. The embedded
+        source is published byte-for-byte, so the resulting workflow
+        version digests to entry.graph.digest exactly; no digest is
+        hand-edited. Re-publishing resolves to the existing version with
+        200, the generic publish lane's idempotency.
+      parameters:
+        - name: id
+          in: path
+          required: true
+          description: The store entry id.
+          schema:
+            type: string
+      responses:
+        '201':
+          description: The workflow version was published from the entry's embedded source.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/WorkflowVersion'
+        '200':
+          description: This graph was already published here; this is that version.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/WorkflowVersion'
+        '404':
+          description: No store entry with this id.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '409':
+          description: The entry has unbound capability requirements, named in the error.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+
   /v1alpha1/runs/{id}:
     get:
       operationId: getRun
@@ -5722,3 +5854,56 @@ components:
           type: string
         entry:
           $ref: '#/components/schemas/StoreEntry'
+
+    StoreBindingCreateRequest:
+      type: object
+      description: >-
+        Bind one declared capability requirement (`ref`, verbatim from the
+        entry's evidence manifest) to the local registration `actor_key`
+        names. `bound_by` identifies who declared the mapping — a binding
+        is a record.
+      required: [ref, actor_key, bound_by]
+      properties:
+        ref:
+          type: string
+        actor_key:
+          type: string
+        bound_by:
+          type: string
+
+    StoreBinding:
+      type: object
+      description: >-
+        One binding record: which graph-pinned requirement was bound to
+        which local registration (row id current at bind time + key), by
+        whom, when. Append-only; the current binding per ref is the newest
+        record.
+      required: [id, entry_id, ref, kind, actor_id, actor_key, bound_by, created_at]
+      properties:
+        id:
+          type: string
+        entry_id:
+          type: string
+        ref:
+          type: string
+        kind:
+          type: string
+          enum: [actor, runner]
+        actor_id:
+          type: string
+        actor_key:
+          type: string
+        bound_by:
+          type: string
+        created_at:
+          type: string
+          format: date-time
+
+    StoreBindingList:
+      type: object
+      required: [items]
+      properties:
+        items:
+          type: array
+          items:
+            $ref: '#/components/schemas/StoreBinding'

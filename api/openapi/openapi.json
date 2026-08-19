@@ -2945,6 +2945,85 @@
         ],
         "type": "object"
       },
+      "StoreBinding": {
+        "description": "One binding record: which graph-pinned requirement was bound to which local registration (row id current at bind time + key), by whom, when. Append-only; the current binding per ref is the newest record.",
+        "properties": {
+          "actor_id": {
+            "type": "string"
+          },
+          "actor_key": {
+            "type": "string"
+          },
+          "bound_by": {
+            "type": "string"
+          },
+          "created_at": {
+            "format": "date-time",
+            "type": "string"
+          },
+          "entry_id": {
+            "type": "string"
+          },
+          "id": {
+            "type": "string"
+          },
+          "kind": {
+            "enum": [
+              "actor",
+              "runner"
+            ],
+            "type": "string"
+          },
+          "ref": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "entry_id",
+          "ref",
+          "kind",
+          "actor_id",
+          "actor_key",
+          "bound_by",
+          "created_at"
+        ],
+        "type": "object"
+      },
+      "StoreBindingCreateRequest": {
+        "description": "Bind one declared capability requirement (`ref`, verbatim from the entry's evidence manifest) to the local registration `actor_key` names. `bound_by` identifies who declared the mapping — a binding is a record.",
+        "properties": {
+          "actor_key": {
+            "type": "string"
+          },
+          "bound_by": {
+            "type": "string"
+          },
+          "ref": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "ref",
+          "actor_key",
+          "bound_by"
+        ],
+        "type": "object"
+      },
+      "StoreBindingList": {
+        "properties": {
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/StoreBinding"
+            },
+            "type": "array"
+          }
+        },
+        "required": [
+          "items"
+        ],
+        "type": "object"
+      },
       "StoreCapabilityRequirement": {
         "description": "One actor/runner capability the graph pins. `ref` is the graph's pinned identifier (actor://…, runner://…) carried verbatim; `capabilities` is what a substitute registration on an importing plane must advertise. Requirements live here — in the evidence manifest — never as graph rewrites, so an import can bind them to local registrations without touching the graph document or its digest.",
         "properties": {
@@ -6127,6 +6206,183 @@
           }
         },
         "summary": "Fetch one entry as a self-contained document, graph source included.",
+        "tags": [
+          "store"
+        ]
+      }
+    },
+    "/v1alpha1/store/entries/{id}/bindings": {
+      "get": {
+        "description": "The full trail — who bound what to what, when — superseded records included; the current binding per ref is the newest.",
+        "operationId": "listStoreBindings",
+        "parameters": [
+          {
+            "description": "The store entry id.",
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/StoreBindingList"
+                }
+              }
+            },
+            "description": "The binding record trail, newest first."
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "description": "No store entry with this id."
+          }
+        },
+        "summary": "Read a store entry's binding records, newest first.",
+        "tags": [
+          "store"
+        ]
+      },
+      "post": {
+        "description": "Task t8 (issue #192): the explicit mapping step that makes a pulled entry runnable here. `ref` must name one of the entry's declared required_capabilities refs verbatim; `actor_key` must name a registration on this plane whose kind fits the requirement and whose capabilities document advertises every required capability as a top-level key — a registration missing any is refused with the missing names listed. The binding lives outside the graph document (the workflow source and its digest stay byte-identical to the exported original) and is applied where refs resolve to registrations, at publish and dispatch resolution. Bindings are append-only records; re-binding a ref appends and the newest wins.",
+        "operationId": "createStoreBinding",
+        "parameters": [
+          {
+            "description": "The store entry id.",
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/StoreBindingCreateRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/StoreBinding"
+                }
+              }
+            },
+            "description": "The binding record was appended."
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "description": "The entry is not a pulled one, the ref is not one the entry declares, the actor key names no local registration, its kind does not fit the requirement, or it does not advertise the required capabilities (named in the error)."
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "description": "No store entry with this id."
+          }
+        },
+        "security": [
+          {
+            "storeWriteBearerAuth": []
+          }
+        ],
+        "summary": "Bind one of a pulled entry's capability requirements to a local registration.",
+        "tags": [
+          "store"
+        ]
+      }
+    },
+    "/v1alpha1/store/entries/{id}/publish": {
+      "post": {
+        "description": "Task t8 (issue #192): publish resolution for an imported flow. Every declared capability requirement must be satisfied — by a current binding, or by a local registration under the ref's own key — or the publish is refused with the unbound refs named. The embedded source is published byte-for-byte, so the resulting workflow version digests to entry.graph.digest exactly; no digest is hand-edited. Re-publishing resolves to the existing version with 200, the generic publish lane's idempotency.",
+        "operationId": "publishStoreEntry",
+        "parameters": [
+          {
+            "description": "The store entry id.",
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/WorkflowVersion"
+                }
+              }
+            },
+            "description": "This graph was already published here; this is that version."
+          },
+          "201": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/WorkflowVersion"
+                }
+              }
+            },
+            "description": "The workflow version was published from the entry's embedded source."
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "description": "No store entry with this id."
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "description": "The entry has unbound capability requirements, named in the error."
+          }
+        },
+        "security": [
+          {
+            "storeWriteBearerAuth": []
+          }
+        ],
+        "summary": "Publish an entry's embedded workflow source, verbatim, once every requirement is bound.",
         "tags": [
           "store"
         ]

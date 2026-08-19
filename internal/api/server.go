@@ -479,6 +479,12 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("POST /v1alpha1/store/entries/pull", s.wrap(s.handleStoreEntryPull))
 	mux.HandleFunc("GET /v1alpha1/store/entries", s.wrap(s.handleListStoreEntries))
 	mux.HandleFunc("GET /v1alpha1/store/entries/{id}", s.wrap(s.handleGetStoreEntry))
+	// The import mapping step (task t8): bind a pulled entry's declared
+	// capability requirements to local registrations, read the record trail
+	// back, and publish the embedded graph verbatim once nothing is unbound.
+	mux.HandleFunc("POST /v1alpha1/store/entries/{id}/bindings", s.wrap(s.handleCreateStoreBinding))
+	mux.HandleFunc("GET /v1alpha1/store/entries/{id}/bindings", s.wrap(s.handleListStoreBindings))
+	mux.HandleFunc("POST /v1alpha1/store/entries/{id}/publish", s.wrap(s.handlePublishStoreEntry))
 
 	mux.HandleFunc("POST /v1alpha1/plan-imports", s.wrap(s.handleImportPlan))
 	mux.HandleFunc("GET /v1alpha1/plan-imports", s.wrap(s.handleListPlanImports))

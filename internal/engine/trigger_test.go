@@ -286,3 +286,104 @@ func TestTriggerEventWithNoSubjectAlwaysCreatesANewRun(t *testing.T) {
 		t.Fatalf("subject-less deliveries must not be deduped against each other")
 	}
 }
+
+// TestFailingTicketReportBacksOffAndDoesNotBlockLaterReports is the
+// regression test for the PR #208 head-of-line finding: the dispatcher
+// drains the globally oldest eligible row, so a report whose bridge
+// dispatch fails must be recorded (attempts+1, future available_at,
+// status='failed' once the attempt budget is spent) rather than left as the
+// eligible head where it would block every later report on each pass.
+func TestFailingTicketReportBacksOffAndDoesNotBlockLaterReports(t *testing.T) {
+	f := newFixture(t, "trigger-subject.workflow.yaml")
+	publishFixtureWorkflow(t, f)
+
+	var mu sync.Mutex
+	var posted []string
+	var badCalls int
+	bridge := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var invocation struct {
+			Input struct{ Verb, Issue, Comment string } `json:"input"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&invocation); err != nil {
+			t.Errorf("decode invocation: %v", err)
+		}
+		mu.Lock()
+		defer mu.Unlock()
+		if invocation.Input.Issue == "SCRUM-BAD" {
+			badCalls++
+			http.Error(w, "boom", http.StatusInternalServerError)
+			return
+		}
+		posted = append(posted, invocation.Input.Issue)
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"outcome":"comment_posted","output":{},"ledger_delta":{"records":[]}}`))
+	}))
+	defer bridge.Close()
+	if _, err := f.store.Pool().Exec(f.ctx, `INSERT INTO actors
+		(id,namespace_id,actor_key,revision,kind,protocol,endpoint_ref)
+		VALUES ($1,$2,$3,1,'bridge','actor-protocol',$4)`, store.NewULID(), f.ns.ID, storepg.JiraTicketReporterActorKey, bridge.URL); err != nil {
+		t.Fatalf("register Jira bridge: %v", err)
+	}
+
+	deliverSubjectEvent(t, f, "SCRUM-BAD", "jira:team.example.com:SCRUM-BAD:status")
+	deliverSubjectEvent(t, f, "SCRUM-OK", "jira:team.example.com:SCRUM-OK:status")
+	// Pin the poison row to the head of the ORDER BY id drain so the test
+	// exercises exactly the blocked-queue shape, whatever the ULIDs drew.
+	if _, err := f.store.Pool().Exec(f.ctx, `UPDATE jira_ticket_report_outbox
+		SET id='00000000000000000000000000' WHERE issue_key='SCRUM-BAD'`); err != nil {
+		t.Fatalf("pin poison row: %v", err)
+	}
+
+	if err := ticketreport.New(f.store, nil).Run(f.ctx); err == nil {
+		t.Fatal("Run with a failing report returned nil, want the recorded per-row failure joined in")
+	}
+	mu.Lock()
+	if len(posted) != 1 || posted[0] != "SCRUM-OK" {
+		t.Fatalf("posted = %v, want the later SCRUM-OK report to drain past the failing head", posted)
+	}
+	mu.Unlock()
+	var attempts int
+	var status string
+	var backedOff bool
+	if err := f.store.Pool().QueryRow(f.ctx, `SELECT attempts,status,available_at>now()
+		FROM jira_ticket_report_outbox WHERE issue_key='SCRUM-BAD'`).Scan(&attempts, &status, &backedOff); err != nil {
+		t.Fatalf("read poison row: %v", err)
+	}
+	if attempts != 1 || status != "pending" || !backedOff {
+		t.Fatalf("poison row after one failure = (attempts=%d, status=%q, backedOff=%v), want (1, pending, true)", attempts, status, backedOff)
+	}
+
+	// Burn through the remaining budget: each pass re-fails and backs off,
+	// and the row dead-letters once its attempts are spent.
+	for status == "pending" {
+		if attempts > 10 {
+			t.Fatalf("poison row never dead-lettered: attempts=%d status=%q", attempts, status)
+		}
+		if _, err := f.store.Pool().Exec(f.ctx, `UPDATE jira_ticket_report_outbox
+			SET available_at=now()-interval '1 second' WHERE issue_key='SCRUM-BAD'`); err != nil {
+			t.Fatalf("re-arm poison row: %v", err)
+		}
+		_ = ticketreport.New(f.store, nil).Run(f.ctx)
+		if err := f.store.Pool().QueryRow(f.ctx, `SELECT attempts,status FROM jira_ticket_report_outbox
+			WHERE issue_key='SCRUM-BAD'`).Scan(&attempts, &status); err != nil {
+			t.Fatalf("read poison row: %v", err)
+		}
+	}
+	if status != "failed" || attempts != 5 {
+		t.Fatalf("poison row terminal state = (attempts=%d, status=%q), want (5, failed)", attempts, status)
+	}
+	mu.Lock()
+	callsAtDeadLetter := badCalls
+	mu.Unlock()
+
+	// A dead-lettered row is out of the queue for good: another pass makes
+	// no further bridge call for it and has nothing left to report.
+	if err := ticketreport.New(f.store, nil).Run(f.ctx); err != nil {
+		t.Fatalf("Run after dead-letter: %v", err)
+	}
+	mu.Lock()
+	defer mu.Unlock()
+	if badCalls != callsAtDeadLetter {
+		t.Fatalf("dead-lettered report was re-dispatched: %d bridge calls after, %d at dead-letter", badCalls, callsAtDeadLetter)
+	}
+}

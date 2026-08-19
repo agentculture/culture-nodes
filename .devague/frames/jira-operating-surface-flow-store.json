@@ -4,7 +4,7 @@
   "schema_version": 5,
   "status": "exported",
   "created": "2026-08-19T13:00:05Z",
-  "updated": "2026-08-19T17:03:53Z",
+  "updated": "2026-08-19T17:15:20Z",
   "claims": [
     {
       "id": "c1",
@@ -28,9 +28,9 @@
     {
       "id": "c2",
       "kind": "requirement",
-      "text": "The sweep emits one fact per UNSEEN changelog entry and per unseen comment, watermarked by history position (changelog id / comment id) instead of comparing current status to last-recorded status \u2014 examples/pr-upkeep/sweep.py's fact-1/fact-2 blocks sample point-in-time state today, and Jira Cloud exposes expand=changelog on the read credential the sweep already holds (#193)",
+      "text": "The sweep emits one fact per UNSEEN changelog entry and per unseen comment, watermarked by history position (changelog id / comment id) instead of comparing current status to last-recorded status \u2014 examples/pr-upkeep/sweep.py's fact-1/fact-2 blocks sample point-in-time state today, and Jira Cloud exposes expand=changelog on the read credential the sweep already holds (#193). History replay is only as complete as discovery: fetch_jira_issues's 'resolution IS EMPTY' JQL drops an issue the moment it resolves, so an issue resolved between two polls vanishes before its terminal changelog entry is ever read \u2014 discovery must keep an issue eligible until its terminal history has been consumed (a bounded recently-resolved lookback in the JQL; the control plane's watermark-equality dedup already makes the re-reads idempotent)",
       "origin": "llm",
-      "status": "confirmed",
+      "status": "proposed",
       "honesty_conditions": [
         {
           "id": "h1",
@@ -41,8 +41,14 @@
       ],
       "hard_questions": [],
       "links": [],
-      "instruction": "Extend sweep.py to read expand=changelog plus full comment pages; emit one fact per unseen changelog entry and per unseen comment, watermarked by history position (changelog id / comment id); acceptance replays: a between-polls round trip emits both transitions in order, a two-comment reply emits two facts, and a resolution-terminal transition (the SCRUM-2 Done case) emits before the issue leaves the JQL window",
-      "revisions": []
+      "instruction": "Extend sweep.py to read expand=changelog plus full comment pages; emit one fact per unseen changelog entry and per unseen comment, watermarked by history position (changelog id / comment id); widen fetch_jira_issues so a resolved issue stays discoverable until its terminal changelog entries are consumed \u2014 the JQL gains a bounded recently-resolved window (resolution IS EMPTY OR resolutiondate within a lookback covering at least two sweep intervals plus expected downtime), with control-plane watermark dedup keeping the extra reads emission-idempotent; acceptance replays: a between-polls round trip emits both transitions in order, a two-comment reply emits two facts, and an issue resolved entirely between two polls (the SCRUM-2 Done case) still emits its terminal transition on the following pass, which 'resolution IS EMPTY' alone can never show",
+      "revisions": [
+        {
+          "text": "The sweep emits one fact per UNSEEN changelog entry and per unseen comment, watermarked by history position (changelog id / comment id) instead of comparing current status to last-recorded status \u2014 examples/pr-upkeep/sweep.py's fact-1/fact-2 blocks sample point-in-time state today, and Jira Cloud exposes expand=changelog on the read credential the sweep already holds (#193)",
+          "kind": "requirement",
+          "reason": "qodo PR #201 finding 1 (terminal transitions remain invisible): the claim required replaying the SCRUM-2 Done transition but named no discovery change, and the state-based 'resolution IS EMPTY' JQL cannot return an issue resolved between polls"
+        }
+      ]
     },
     {
       "id": "c3",

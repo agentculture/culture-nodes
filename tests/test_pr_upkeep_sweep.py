@@ -67,6 +67,8 @@ REPOSITORY_GRANT = json.dumps(
 
 
 def _load_sweep():
+    if str(EXAMPLE_DIR) not in sys.path:
+        sys.path.insert(0, str(EXAMPLE_DIR))
     spec = importlib.util.spec_from_file_location("pr_upkeep_sweep", EXAMPLE_DIR / "sweep.py")
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)
@@ -671,7 +673,21 @@ class TestStdlibOnlyImports:
         non_stdlib = {
             root for root in roots if root != "__future__" and root not in sys.stdlib_module_names
         }
-        assert non_stdlib == set()
+        assert non_stdlib == {"pr_upkeep_jira"}
+
+        jira_tree = ast.parse((EXAMPLE_DIR / "pr_upkeep_jira.py").read_text())
+        jira_roots = {
+            (node.module or "").split(".")[0]
+            for node in ast.walk(jira_tree)
+            if isinstance(node, ast.ImportFrom) and not node.level
+        }
+        jira_roots.update(
+            alias.name.split(".")[0]
+            for node in ast.walk(jira_tree)
+            if isinstance(node, ast.Import)
+            for alias in node.names
+        )
+        assert {root for root in jira_roots if root != "__future__"} <= sys.stdlib_module_names
 
 
 class TestTheSweptRepoIsDeploymentGrantedAndSaysSo:
@@ -795,7 +811,12 @@ class TestTheSweptRepoIsDeploymentGrantedAndSaysSo:
         # they resolve in the worker process's environment, not in the file.
         readme = (EXAMPLE_DIR / "README.md").read_text()
         assert "## Deployment configuration" in readme
-        for ref in ("PR_UPKEEP_SWEEP_SOURCE_URL", "PR_UPKEEP_SWEEP_SOURCE_SHA256"):
+        for ref in (
+            "PR_UPKEEP_SWEEP_SOURCE_URL",
+            "PR_UPKEEP_SWEEP_SOURCE_SHA256",
+            "PR_UPKEEP_SWEEP_JIRA_SOURCE_URL",
+            "PR_UPKEEP_SWEEP_JIRA_SOURCE_SHA256",
+        ):
             assert ref in readme, f"the README never names the granted value {ref}"
 
 

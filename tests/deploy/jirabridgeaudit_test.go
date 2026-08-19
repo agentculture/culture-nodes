@@ -37,20 +37,33 @@ func TestJiraCredentialIsActorOnly(t *testing.T) {
 	// history replay (spec c2, #193, plan t1/#203) legitimately reads the
 	// issue-scoped changelog and comment collections through that path, so
 	// the guard was narrowed — deliberately, at the WP-A merge gate — to pin
-	// the read shape instead: exactly one issue-scoped URL, the GET-only
-	// pagination helper's, and exactly one POST anywhere in the file, the
-	// control-plane event emit. A second occurrence of either is a new
-	// endpoint someone must argue for here.
+	// the read shape instead. Approved deviation d1 (#193/#203) then split
+	// that read/replay layer into pr_upkeep_jira.py: sweep.py must now have
+	// zero issue-scoped URLs, the sibling module exactly one GET-only
+	// pagination URL, and sweep.py exactly one POST for control-plane event
+	// emission. A second occurrence of either is a new endpoint someone must
+	// argue for here.
 	raw, err := os.ReadFile(filepath.Join(root, "examples/pr-upkeep/sweep.py"))
 	if err != nil {
 		t.Fatal(err)
 	}
 	sweep := string(raw)
-	if got := strings.Count(sweep, "/rest/api/3/issue/"); got != 1 {
-		t.Errorf("sweep.py has %d issue-scoped Jira endpoints, want exactly the pagination read; comment authority belongs to the Jira actor bridge", got)
+	if got := strings.Count(sweep, "/rest/api/3/issue/"); got != 0 {
+		t.Errorf("sweep.py has %d issue-scoped Jira endpoints, want none after the d1 split", got)
 	}
-	if !strings.Contains(sweep, `f"https://{site}/rest/api/3/issue/{issue_key}/{collection}?{query}", basic=basic`) {
-		t.Error("sweep.py's one issue-scoped Jira endpoint is no longer the GET-only pagination read (_extend_jira_issue_collection via _get_json)")
+	jiraRaw, err := os.ReadFile(filepath.Join(root, "examples/pr-upkeep/pr_upkeep_jira.py"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	jira := string(jiraRaw)
+	if got := strings.Count(jira, "/rest/api/3/issue/"); got != 1 {
+		t.Errorf("pr_upkeep_jira.py has %d issue-scoped Jira endpoints, want exactly the pagination read", got)
+	}
+	if !strings.Contains(jira, `f"https://{site}/rest/api/3/issue/{issue_key}/{collection}?{query}", basic=basic`) {
+		t.Error("pr_upkeep_jira.py's issue-scoped endpoint is no longer the GET-only pagination read")
+	}
+	if strings.Contains(jira, `method="POST"`) {
+		t.Error("pr_upkeep_jira.py contains a POST; the Jira layer is read-only")
 	}
 	if got := strings.Count(sweep, `method="POST"`); got != 1 {
 		t.Errorf("sweep.py has %d POSTs, want exactly the control-plane event emit", got)

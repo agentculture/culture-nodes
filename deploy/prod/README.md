@@ -322,11 +322,13 @@ the deploying operator's environment:
 ```bash
 PR_UPKEEP_SWEEP_SOURCE_URL=https://…/sweep.py \
 PR_UPKEEP_SWEEP_SOURCE_SHA256=$(sha256sum examples/pr-upkeep/sweep.py | cut -d' ' -f1) \
+PR_UPKEEP_SWEEP_JIRA_SOURCE_URL=https://…/pr_upkeep_jira.py \
+PR_UPKEEP_SWEEP_JIRA_SOURCE_SHA256=$(sha256sum examples/pr-upkeep/pr_upkeep_jira.py | cut -d' ' -f1) \
   deploy/prod/deploy.sh thor
 ```
 
-Those two are `examples/pr-upkeep`'s sweep script source and its expected
-digest (task t16): the workflow names *that it needs a script*, this
+Those four values are `examples/pr-upkeep`'s sweep script and Jira module
+sources plus their expected digests (task t16): the workflow names *that it needs code*, this
 deployment decides *whose*. Leave them unset on a host that does not run the
 pr-upkeep loop — the sweep is then refused there by name, which is the
 correct answer and not a silent fallback to someone else's code.

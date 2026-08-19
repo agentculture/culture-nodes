@@ -96,6 +96,8 @@ ssh "$HOST" 'umask 077; mkdir -p ~/.culture-nodes/bin ~/.culture-nodes/runner-st
 # copy is intentional, and its URL and digest can be supplied by the operator.
 PR_UPKEEP_SWEEP_SOURCE_URL=${PR_UPKEEP_SWEEP_SOURCE_URL:-"https://raw.githubusercontent.com/agentculture/culture-nodes/$REVISION/examples/pr-upkeep/sweep.py"}
 PR_UPKEEP_SWEEP_SOURCE_SHA256=${PR_UPKEEP_SWEEP_SOURCE_SHA256:-$(git show "$REVISION:examples/pr-upkeep/sweep.py" | sha256sum | cut -d' ' -f1)}
+PR_UPKEEP_SWEEP_JIRA_SOURCE_URL=${PR_UPKEEP_SWEEP_JIRA_SOURCE_URL:-"https://raw.githubusercontent.com/agentculture/culture-nodes/$REVISION/examples/pr-upkeep/pr_upkeep_jira.py"}
+PR_UPKEEP_SWEEP_JIRA_SOURCE_SHA256=${PR_UPKEEP_SWEEP_JIRA_SOURCE_SHA256:-$(git show "$REVISION:examples/pr-upkeep/pr_upkeep_jira.py" | sha256sum | cut -d' ' -f1)}
 if [ -z "${PR_UPKEEP_REPOSITORIES:-}" ]; then
 	PR_UPKEEP_REPOSITORIES='{"cycle":0,"repositories":[{"github_repo":"agentculture/culture-nodes","sonar_component":"agentculture_culture-nodes"}]}'
 fi
@@ -123,17 +125,17 @@ case "$PR_UPKEEP_REPOSITORIES" in
 		exit 1
 		;;
 esac
-if [ -n "$PR_UPKEEP_SWEEP_SOURCE_URL" ] && [ -n "$PR_UPKEEP_SWEEP_SOURCE_SHA256" ]; then
+if [ -n "$PR_UPKEEP_SWEEP_SOURCE_URL" ] && [ -n "$PR_UPKEEP_SWEEP_SOURCE_SHA256" ] && [ -n "$PR_UPKEEP_SWEEP_JIRA_SOURCE_URL" ] && [ -n "$PR_UPKEEP_SWEEP_JIRA_SOURCE_SHA256" ]; then
 	# Piped over stdin rather than built into the ssh command string: the
 	# repositories value is single-quoted (see above) and interpolating quotes
 	# into a double-quoted remote command is how you get a value that is
 	# correct locally and reshaped remotely.
-	printf "PR_UPKEEP_SWEEP_SOURCE_URL=%s\nPR_UPKEEP_SWEEP_SOURCE_SHA256=%s\nPR_UPKEEP_REPOSITORIES='%s'\n" \
-		"$PR_UPKEEP_SWEEP_SOURCE_URL" "$PR_UPKEEP_SWEEP_SOURCE_SHA256" "$PR_UPKEEP_REPOSITORIES" \
+	printf "PR_UPKEEP_SWEEP_SOURCE_URL=%s\nPR_UPKEEP_SWEEP_SOURCE_SHA256=%s\nPR_UPKEEP_SWEEP_JIRA_SOURCE_URL=%s\nPR_UPKEEP_SWEEP_JIRA_SOURCE_SHA256=%s\nPR_UPKEEP_REPOSITORIES='%s'\n" \
+		"$PR_UPKEEP_SWEEP_SOURCE_URL" "$PR_UPKEEP_SWEEP_SOURCE_SHA256" "$PR_UPKEEP_SWEEP_JIRA_SOURCE_URL" "$PR_UPKEEP_SWEEP_JIRA_SOURCE_SHA256" "$PR_UPKEEP_REPOSITORIES" \
 		| ssh "$HOST" "umask 077; cat >> ~/.culture-nodes/runner.env"
 	say "granted the pr-upkeep sweep source and closed repository set to the runner on $HOST"
 else
-	say "PR_UPKEEP_SWEEP_SOURCE_URL/_SHA256 empty: pr-upkeep's sweep is not configured on $HOST (see examples/pr-upkeep/README.md)"
+	say "a PR_UPKEEP_SWEEP source URL/digest pair is empty: pr-upkeep's sweep is not configured on $HOST (see examples/pr-upkeep/README.md)"
 fi
 ssh "$HOST" "loginctl enable-linger \$(id -un) 2>/dev/null || true"
 ssh "$HOST" "export XDG_RUNTIME_DIR=/run/user/\$(id -u); mkdir -p ~/.config/systemd/user && cp $REMOTE_DIR/deploy/prod/nodes-runner.service ~/.config/systemd/user/ && systemctl --user daemon-reload && systemctl --user restart nodes-runner && systemctl --user enable nodes-runner"

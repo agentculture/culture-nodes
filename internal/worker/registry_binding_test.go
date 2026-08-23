@@ -3,6 +3,7 @@ package worker_test
 import (
 	"context"
 	"errors"
+	"strings"
 	"testing"
 
 	"github.com/agentculture/culture-nodes/internal/store/postgres"
@@ -101,5 +102,56 @@ func TestDBRegistryResolvesThroughStoreBinding(t *testing.T) {
 	direct, err := r.Resolve(ctx, "actor://local/dev-lane")
 	if err != nil || direct.URL != "http://127.0.0.1:7001" {
 		t.Fatalf("direct Resolve = %+v, %v", direct, err)
+	}
+
+	// A SECOND entry binding the same ref to a different local key makes
+	// the namespace-wide lookup ambiguous: resolution refuses, naming the
+	// conflict, rather than dispatching this flow on the other entry's
+	// newer mapping (PR #208 finding 4) — and attribution refuses the same
+	// way, so an attempt can never be attributed to an actor Resolve would
+	// not have dispatched to.
+	if _, err := s.Pool().Exec(ctx, `
+		INSERT INTO actors (id, namespace_id, actor_key, revision, kind, protocol, endpoint_ref)
+		VALUES ('actor_binding_other', $1, 'local/other-lane', 1, 'agent', 'nodes.actor/v1alpha1', 'http://127.0.0.1:7002')
+	`, ns.ID); err != nil {
+		t.Fatalf("insert second local actor: %v", err)
+	}
+	otherEntry, err := s.CreateStoreEntry(ctx, postgres.CreateStoreEntryInput{
+		NamespaceID:       ns.ID,
+		Name:              "edge-order-second",
+		Origin:            "pulled",
+		SourceRegistry:    "https://nodes.source.internal:8443",
+		GraphDigest:       "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+		GraphSourceFormat: "yaml",
+		GraphSource:       "name: edge-order-second\nspec: {}\n",
+		Evidence: postgres.EvidenceManifest{
+			ProvingRunIDs: []string{"01RUNBBBBBBBBBBBBBBBBBBBBB"},
+			RequiredCapabilities: []postgres.CapabilityRequirement{
+				{Kind: "actor", Ref: pinnedRef, Capabilities: []string{"shell"}},
+			},
+		},
+		EntryDigest: "sha256:eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+	})
+	if err != nil {
+		t.Fatalf("CreateStoreEntry (second): %v", err)
+	}
+	// Raw insert: CreateStoreEntryBinding refuses this join at create time
+	// (ErrStoreBindingConflict), so a conflicting row can only exist from a
+	// race or from before the guard — which is exactly the state the
+	// resolution-side agreement check defends against.
+	if _, err := s.Pool().Exec(ctx, `
+		INSERT INTO store_entry_bindings (id, namespace_id, entry_id, required_ref, required_kind,
+			bound_actor_id, bound_actor_key, bound_by)
+		VALUES ('binding_conflicting_row', $1, $2, $3, 'actor', 'actor_binding_other', 'local/other-lane', 'operator@spark')
+	`, ns.ID, otherEntry.ID, pinnedRef); err != nil {
+		t.Fatalf("insert conflicting binding row: %v", err)
+	}
+	if _, err := r.Resolve(ctx, pinnedRef); !errors.Is(err, worker.ErrUnknownActor) ||
+		!strings.Contains(err.Error(), "different local actors") {
+		t.Fatalf("Resolve(conflicting) error = %v, want ErrUnknownActor naming the conflict", err)
+	}
+	if _, err := r.ActorRowID(ctx, pinnedRef); !errors.Is(err, worker.ErrUnknownActor) ||
+		!strings.Contains(err.Error(), "different local actors") {
+		t.Fatalf("ActorRowID(conflicting) error = %v, want ErrUnknownActor naming the conflict", err)
 	}
 }

@@ -114,12 +114,18 @@ func (r *DBRegistry) Resolve(ctx context.Context, ref string) (actors.Endpoint, 
 		// graph pins refs minted on the SOURCE plane, and the binding that
 		// makes it runnable here lives outside the graph document — so this
 		// is exactly where it applies. When no local registration answers
-		// for the ref's own key, the newest binding for the VERBATIM ref
-		// supplies the local key to resolve instead. A binding never
-		// overrides a direct registration, and an unbound foreign ref stays
-		// ErrUnknownActor.
+		// for the ref's own key, the current binding for the VERBATIM ref
+		// supplies the local key to resolve instead — and only when every
+		// entry that binds the ref agrees on it: entries disagreeing is a
+		// named refusal, never a newest-entry-wins pick that would dispatch
+		// this flow on another flow's mapping (PR #208 finding 4). A binding
+		// never overrides a direct registration, and an unbound foreign ref
+		// stays ErrUnknownActor.
 		boundKey, bindErr := r.store.ResolveStoreBoundActorKey(ctx, r.namespaceID, ref)
 		if bindErr != nil {
+			if errors.Is(bindErr, postgres.ErrStoreBindingConflict) {
+				return actors.Endpoint{}, fmt.Errorf("worker: resolve %q: %w: %v", ref, ErrUnknownActor, bindErr)
+			}
 			return actors.Endpoint{}, fmt.Errorf("worker: resolve %q: %w: %v", ref, ErrUnknownActor, err)
 		}
 		key = boundKey
@@ -242,9 +248,14 @@ func (r *DBRegistry) ActorRowID(ctx context.Context, ref string) (string, error)
 	if err != nil {
 		// The same store-binding fallback Resolve applies (task t8): a
 		// dispatch that resolved through a binding must attribute to the
-		// registration the binding named, not go unattributed.
+		// registration the binding named, not go unattributed — and the
+		// same agreement rule holds, so attribution can never name a
+		// different actor than Resolve dispatched to.
 		boundKey, bindErr := r.store.ResolveStoreBoundActorKey(ctx, r.namespaceID, ref)
 		if bindErr != nil {
+			if errors.Is(bindErr, postgres.ErrStoreBindingConflict) {
+				return "", fmt.Errorf("worker: actor row for %q: %w: %v", ref, ErrUnknownActor, bindErr)
+			}
 			return "", fmt.Errorf("worker: actor row for %q: %w: %v", ref, ErrUnknownActor, err)
 		}
 		err = r.store.Pool().QueryRow(ctx, `

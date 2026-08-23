@@ -182,6 +182,16 @@ Numbered SQL migrations for the authoritative PostgreSQL store (prd-spec
   idempotent even when both occur between scheduler passes. Failed dispatches
   record an error and bounded backoff; the fifth failure parks the row as
   `failed`, allowing later reports to proceed.
+- `0045_store_entry_bindings_resolution_idx.sql` — expand-only: adds
+  `store_entry_bindings_ref_current_idx (namespace_id, required_ref,
+  entry_id, created_at DESC, id DESC)`, supplying the exact ordering of the
+  per-entry current-binding read PR #209 moved dispatch resolution onto
+  (`DISTINCT ON (entry_id)` under a namespace+ref equality filter). Bindings
+  are insert-only records, so without this index every bound-ref dispatch
+  walks the whole append-only table rather than just the ref's own rows
+  (PR #209 qodo finding 1).
+  0044's `store_entry_bindings_ref_idx` is subsumed by the new prefix but is
+  kept — dropping an index is a later contract migration, per the ADR.
 
 - `0022_dispatch_rate_state.sql` — expand-only: adds the mutable
   `dispatch_rate_state` table (task t10 of the economy-discord-graphs plan,

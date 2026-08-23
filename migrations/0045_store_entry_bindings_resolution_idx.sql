@@ -1,0 +1,40 @@
+-- 0045_store_entry_bindings_resolution_idx.sql
+--
+-- The per-entry current-binding read's index (PR #209 qodo finding 1).
+-- PR #209 changed dispatch resolution from "newest row for the ref" to
+-- "newest row PER ENTRY for the ref, answered only on agreement"
+-- (internal/store/postgres/storebindings.go, currentStoreEntryBindingsByRef):
+--
+--     SELECT DISTINCT ON (entry_id) ...
+--     WHERE namespace_id = $1 AND required_ref = $2
+--     ORDER BY entry_id, created_at DESC, id DESC
+--
+-- Neither 0044 index serves that shape well: entry_idx has a different
+-- equality prefix (namespace+entry, not namespace+ref), and ref_idx orders
+-- by created_at DESC directly under the ref rather than per entry. Bindings
+-- are insert-only records whose superseded rows accumulate by design
+-- (0044's header), and this read sits on the dispatch path — the worker
+-- registry's binding fallback and actor attribution both issue it — so its
+-- cost grows with history exactly where latency matters.
+--
+-- This index's order IS the query's order once the two equality columns are
+-- pinned: (namespace_id, required_ref) by equality, then entry_id ASC,
+-- created_at DESC, id DESC. Honest scope of the win (measured in
+-- storebindings_index_test.go): DISTINCT ON visits every matched row either
+-- way — PostgreSQL has no skip scan — so what the index guarantees is that
+-- the read touches only the ref's own rows, never the whole ever-growing
+-- table, and the planner may additionally take the ordered walk and skip
+-- the sort when its cost model prices that cheaper than a bitmap scan plus
+-- an in-memory sort of the matched rows.
+--
+-- Expand-only (docs/adr/0002-migration-policy.md): one new index, nothing
+-- dropped, renamed, or tightened. 0044's store_entry_bindings_ref_idx is now
+-- fully subsumed by this index's (namespace_id, required_ref) prefix and no
+-- shipped query needs its created_at-under-ref ordering anymore — but
+-- dropping an index is a contract change, so its removal is a later
+-- contract migration, not a rider on this one. Plain CREATE INDEX, not
+-- CONCURRENTLY: Migrate applies each file inside a transaction (where
+-- CONCURRENTLY is illegal), and the table is one release old.
+
+CREATE INDEX store_entry_bindings_ref_current_idx
+    ON store_entry_bindings (namespace_id, required_ref, entry_id, created_at DESC, id DESC);

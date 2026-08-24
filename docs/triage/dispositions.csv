@@ -123,3 +123,4 @@ issue,bucket,disposition,evidence_pointer
 205,bug tail,name the 401 cause then fix the credential or disable dial-in with a recorded decision,issue #205
 206,finish work,bump the pinned cortex model id in culture.yaml and redeploy the colleague resident,issue #206
 207,bug tail,fix the boundary to measure committed diff vs base; #204 lane tags remove in-session base moves,issue #207
+211,verify-then-close,verify the ask-colleague 1.63.0 re-vendor in #210 and close with it,PR #210

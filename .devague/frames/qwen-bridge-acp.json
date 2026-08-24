@@ -4,7 +4,7 @@
   "schema_version": 5,
   "status": "exported",
   "created": "2026-08-23T15:08:30Z",
-  "updated": "2026-08-23T21:01:02Z",
+  "updated": "2026-08-24T03:43:06Z",
   "claims": [
     {
       "id": "c1",
@@ -379,6 +379,30 @@
           "instruction": ""
         }
       ],
+      "hard_questions": [],
+      "links": [],
+      "instruction": "",
+      "revisions": []
+    },
+    {
+      "id": "c22",
+      "kind": "decision",
+      "text": "disposition rule for every plan version: it is either implemented in this checkout, or tracked as a continuation issue opened on agentculture/culture-nodes (posted through the agtag-backed communicate skill) with traceability back to the plan task and the spec claim - nothing is silently dropped (operator instruction, 2026-08-24)",
+      "origin": "user",
+      "status": "confirmed",
+      "honesty_conditions": [],
+      "hard_questions": [],
+      "links": [],
+      "instruction": "",
+      "revisions": []
+    },
+    {
+      "id": "c23",
+      "kind": "decision",
+      "text": "workforce and live-testing constraint: dogfood on the culture-nodes repository itself - the codex and claude-code bridges, which already work on culture-nodes, carry the live-testing, and the qwen bridge joins them once it exists; the colleague bridge is explicitly OUT of use for this work (operator instruction, 2026-08-24)",
+      "origin": "user",
+      "status": "confirmed",
+      "honesty_conditions": [],
       "hard_questions": [],
       "links": [],
       "instruction": "",

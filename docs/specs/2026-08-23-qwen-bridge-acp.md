@@ -103,6 +103,11 @@
 - `s17` — `challenge pass / hardware lens: fleet architectures (ssh probes, 2026-08-23)`: examined clean: all three fleet hosts are aarch64 (spark, thor, orin) - the image targets a single architecture today, no multi-arch requirement; residual: if an x86 host ever joins the fleet, the 113 image contract needs a build matrix (not in scope now)
 - `s18` — `challenge pass / overlooked-actors lens: the frame's own roles`: examined: the ACP CLIENT role (the bridge answering craft/drainMidTurnQueue and future unknown ext methods) was a new actor the think frame never named - it is now named by c17 (process model) and the v1 decision (lenient ext handling), with the queue-semantics residual parked as v5
 
+## Decisions
+
+- disposition rule for every plan version: it is either implemented in this checkout, or tracked as a continuation issue opened on agentculture/culture-nodes (posted through the agtag-backed communicate skill) with traceability back to the plan task and the spec claim - nothing is silently dropped (operator instruction, 2026-08-24)
+- workforce and live-testing constraint: dogfood on the culture-nodes repository itself - the codex and claude-code bridges, which already work on culture-nodes, carry the live-testing, and the qwen bridge joins them once it exists; the colleague bridge is explicitly OUT of use for this work (operator instruction, 2026-08-24)
+
 ## Open parks
 
 - [unknown_nonblocking] resume mapping: how the PRD-13.1 `continuation_ref` rides on qwen sessions (session/load with a qwen session id? do session ids survive a qwen process restart?) is unmeasured; the sync/async dispatch threshold works either way, so this bounds the resume feature, not the first cut

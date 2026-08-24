@@ -1,0 +1,466 @@
+{
+  "slug": "qwen-bridge-acp",
+  "title": "qwen-bridge-acp",
+  "frame_slug": "qwen-bridge-acp",
+  "schema_version": 4,
+  "status": "exported",
+  "created": "2026-08-23T21:45:19Z",
+  "updated": "2026-08-24T04:31:57Z",
+  "targets": [
+    {
+      "id": "c1",
+      "kind": "announcement",
+      "text": "culture-nodes officially supports Qwen Code as a fourth actor backend: adapters/qwen ships qwen-bridge, a PRD-13 actor-protocol implementation that drives Qwen Code over ACP (qwen --acp, stdio JSON-RPC), with the container image as the support contract (#113) and the configured repository as the agent's identity (#114), running on spark/thor/orin where qwen 0.22.0 already lives",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "h1",
+      "kind": "honesty",
+      "text": "the exported spec names adapters/qwen as a fourth PRD-13 reference implementation driven over ACP, and its boundaries read back as image-contract (#113) + repo-config (#114); verify by reading docs/specs/qwen-bridge-acp.md after export and diffing its claims against this frame",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "c2",
+      "kind": "requirement",
+      "text": "qwen-bridge is the fourth reference implementation of the PRD 13 actor protocol: a standalone package at adapters/qwen (own pyproject, tests, README, Dockerfile), mirroring the sibling layout field for field; it passes tests/conformance unmodified and emits proposed-only ledger authority (provenance: api/actor-protocol/README.md provider-neutral clause + adapters/{claude-code,colleague,codex} layout)",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "h2",
+      "kind": "honesty",
+      "text": "the adapters/qwen package mirrors the sibling layout module-for-module and the conformance kit runs against it UNMODIFIED; verify by a green tests/conformance run in the qwen adapter's CI job",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "c4",
+      "kind": "requirement",
+      "text": "terminal-event discipline carries over: a qwen process that exits 0 without an explicit ACP terminal session event is incomplete and maps to an execution failure, never ok; only Qwen's own completed-session event (with no failure event before it) counts as a completed turn (provenance: adapters/codex/README.md load-bearing crash case + tests/test_codex_cli.py exit-zero rule)",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "h3",
+      "kind": "honesty",
+      "text": "a qwen process that exits without a terminal session/prompt event is classified incomplete and the run reports execution failure, never ok; verify by a qwen-suite test reproducing the codex-bridge crash case (exit 0, no terminal event) asserting incomplete",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "c5",
+      "kind": "boundary",
+      "text": "no PRD-13 wire-protocol change: the actor contract is provider-neutral and input is opaque JSON; qwen-specific knobs (model, ACP flags, approval policy) ride on input fields the bridge itself defines, exactly as codex rides sandbox/model (provenance: api/actor-protocol/README.md + adapters/codex/README.md invocation-input table)",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "h4",
+      "kind": "honesty",
+      "text": "the PRD-13 wire contract stays untouched: no diff in api/actor-protocol/README.md or tests/conformance from this work; verify by git diff of those paths after implementation",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "c6",
+      "kind": "boundary",
+      "text": "the image IS the support contract (issue #113): qwen-bridge ships a pinned Dockerfile (node + qwen-code install + stdlib-only python bridge), a stated toolchain contract, a CI build, and documented build+run; a qwen backend on a host without the image is unsupported (provenance: issue #113 body via agtag issue fetch, 2026-08-23)",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "h5",
+      "kind": "honesty",
+      "text": "the qwen-bridge image is buildable from a pinned Dockerfile (node + qwen-code versions stated), CI-built, and qwen-bridge refuses to serve invokes when the contract leg is missing; verify by the documented build+boot run and a negative boot test",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "c7",
+      "kind": "boundary",
+      "text": "the repository IS the agent's configuration (issue #114): the image carries no agent identity; at startup the bridge consumes culture.yaml + prompt file + skills from the configured repo, refuses to start with a distinct message when any leg is missing, and reports the loaded config repo + revision on the capability surface in the #96 shape (provenance: issue #114 body via agtag issue fetch, 2026-08-23)",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "h6",
+      "kind": "honesty",
+      "text": "the bridge loads culture.yaml + prompt file + skills from the configured repository at startup, refuses with DISTINCT messages per missing leg, and reports the loaded config repo + revision on the capability surface; verify by three negative tests (one per leg) plus an assertion on the capability document contents",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "c10",
+      "kind": "requirement",
+      "text": "host drift is measured, not assumed: the capability surface reports the bundled node version (measured drift: spark bundles v22.23.2 vs thor v18.19.1 under the SAME qwen 0.22.0), the qwen install layout, and PATH independence (qwen is not on the non-interactive ssh PATH on thor/orin - the image entrypoint must not rely on it) (provenance: ssh probes, 2026-08-23; issue #96 toolchain discipline as cited by #113)",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "h7",
+      "kind": "honesty",
+      "text": "the capability surface reports measured host facts - qwen version, bundled node version, model identity, context budget - not assumed defaults; verify by booting on spark/thor/orin and diffing the capability documents against the 2026-08-23 probes (node v22.23.2 vs v18.19.1; NVFP4-27B vs cortex)",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "c11",
+      "kind": "audience",
+      "text": "the spec's readers: (1) the engineer implementing adapters/qwen, (2) the operators deploying the qwen-bridge image on the spark/thor/orin fleet, (3) the control plane and the nodes CLI users who will schedule qwen actors and read its preflight capability surface",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "h8",
+      "kind": "honesty",
+      "text": "a fresh implementer can answer who/what/where from the spec alone, without re-deriving the fleet facts; verify by having a new agent session state the audience, the seam, and the three host constraints from docs/specs/qwen-bridge-acp.md only",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "c12",
+      "kind": "before_state",
+      "text": "Qwen Code runs on the fleet as an ad-hoc session surface (spark/thor/orin, qwen 0.22.0 measured 2026-08-23) but is NOT a supported actor backend of culture-nodes: there is no adapters/qwen, no container image, no preflight capability surface - qwen invocations have no PRD-13 lifecycle (no callbacks, no idempotent replay, no cancellation, no ledger authority) and the support question 'do we officially support this agent' has no answer for qwen",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "h9",
+      "kind": "honesty",
+      "text": "the absence of today is real, not imagined: no adapters/qwen directory, no qwen image target, no qwen capability surface in the control plane; verify by ls adapters, the image-build matrix, and the preflight actor list before implementation",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "c13",
+      "kind": "after_state",
+      "text": "adapters/qwen ships qwen-bridge - a fourth PRD-13 reference implementation that passes tests/conformance unmodified, speaks the ACP client seam (initialize / session/new / session/prompt / session/cancel over stdio, classified by the terminal session/prompt response, not by exit code), boots from a pinned Dockerfile carrying node + qwen-code (#113 image contract) with the configured repository as its identity (#114), and advertises a preflight capability surface reporting measured host facts (qwen version, bundled node version, model identity, context budget)",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "h10",
+      "kind": "honesty",
+      "text": "every after_state leg is checkable as a command: conformance run, image boot + capability fetch, one synthetic invoke; verify by running those three commands after implementation",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "c14",
+      "kind": "why_it_matters",
+      "text": "every other schedulable backend (claude-code, colleague, codex) already has a containerized, contract-gated bridge, while qwen is the surface this repo's own session work runs on today - and the fleet is heterogeneous (measured: bundled node v22.23.2 vs v18.19.1 under the same qwen 0.22.0; models NVFP4-27B vs cortex) - so without the bridge + image + capability surface, qwen work stays unsupported, host-drift-prone, and invisible to the preflight gate",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "h11",
+      "kind": "honesty",
+      "text": "the heterogeneity driving this work is measured, not asserted: the 2026-08-23 fleet probes (node version drift, model identity split, PATH absence) are reproducible on demand; verify by re-running the three ssh probes",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "c15",
+      "kind": "success_signal",
+      "text": "the conformance kit passes against qwen-bridge with 0 failures; the pinned image boots and serves a preflight capability document on all 3/3 fleet hosts; a synthetic PRD-13 invoke returns a terminal-event-classified result; and 0 crashes are classified ok - the codex-bridge crash case (exit 0, no terminal event) is reproduced as a passing test in the qwen suite",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "h12",
+      "kind": "honesty",
+      "text": "each success-signal token maps to a runnable check with a stated threshold (0 failures, 3/3 hosts, 0 crashes-as-ok); verify by the commands named in the spec producing those exact numbers",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "c16",
+      "kind": "requirement",
+      "text": "classifier grounded on MEASURED terminal shapes (challenge probe2, 2026-08-23): stopReason end_turn -> ok (a tool-level failure still ends end_turn with error null - the tool failure rides in the transcript, not the run status, as measured); stopReason cancelled -> the 13 cancellation outcome; a JSON-RPC error on the session/prompt response -> error; no terminal response (process death/timeout) -> incomplete, never ok (provenance: /tmp/acp-probe2 measurements - failing cat ended end_turn; cancelled list turn ended stopReason cancelled error null)",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "h13",
+      "kind": "honesty",
+      "text": "the measured shapes are replayable: a failing-tool turn ends end_turn with error null and a cancelled turn ends stopReason cancelled - verified by the qwen suite test that synthesizes both terminal responses and asserts ok and the 13 cancellation outcome respectively, and by re-running the probe2 script while the evidence exists on spark",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "c18",
+      "kind": "boundary",
+      "text": "the ACP session mode is qwen's approval-policy surface: measured modes are plan (analyze only, no files/commands), default (approval-gated), auto-edit, auto (classifier-approved) with currentModeId defaulting to auto in a scratch session; the bridge maps input.sandbox + the preflight gate onto mode selection, fails closed (never a silently-wider mode), and reports the effective mode on the capability surface - this is the concrete candidate mapping for parked v3 (provenance: challenge probe2 session/new responses, 2026-08-23)",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "h15",
+      "kind": "honesty",
+      "text": "the mode mapping is verified per mode before the bridge relies on it: a plan-mode session refuses a shell command (measured refusal, not a silent no-op) and the capability surface reports the effective mode - until then the bridge sets the mode from the input/preflight policy and never falls back to the measured default auto",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "c19",
+      "kind": "requirement",
+      "text": "the bridge validates the initialize handshake before serving: the negotiated protocolVersion must be supported (measured: 1), agentInfo.version is recorded (measured: qwen-code 0.22.0), and a disagreement fails closed with a distinct message - because qwen 0.22.0 still advertises --acp alongside --experimental-acp, ACP is treated as an experimental seam: the image pins the qwen version and the conformance suite pins the handshake shape (provenance: challenge probe2 initialize response + qwen --help flag pair, 2026-08-23)",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "h16",
+      "kind": "honesty",
+      "text": "an unsupported handshake is refused: verified by a unit test feeding the measured initialize response with protocolVersion 2 (or agentInfo.version mismatch) and asserting the distinct refusal message before any session is served",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "c20",
+      "kind": "boundary",
+      "text": "qwen's model credentials and endpoint configuration are host-supplied (measured authMethods include an OPENAI_API_KEY env path; this fleet uses per-host settings.json endpoints) and are NEVER baked into the image or the configured repository; the capability surface reports the config source and model identity without reporting values (provenance: challenge probe2 initialize authMethods + the measured per-host model.name split, 2026-08-23)",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "h17",
+      "kind": "honesty",
+      "text": "no credentials in the image or the config repo: verified by grepping the built image filesystem for key material and asserting the capability document names the config source (env or settings path) without its values",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "c21",
+      "kind": "requirement",
+      "text": "the 13 result payload carries a DOWNSAMPLED transcript - final assistant text, tool_call summaries with measured statuses (pending/in_progress/failed), usage_update totals - not the raw session/update firehose (measured ~72 notifications for one simple turn, dominated by thought chunks); the full stream is retained in the bridge's local transcript file for debugging (provenance: challenge probes 1+2 stream counts, 2026-08-23)",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "h18",
+      "kind": "honesty",
+      "text": "the result payload stays small: verified by asserting the payload for a turn measured at ~72 session/update notifications is <= 64 KB, against the bridge's local transcript file which retains the full stream",
+      "deferred": false,
+      "deferred_reason": ""
+    }
+  ],
+  "tasks": [
+    {
+      "id": "t1",
+      "summary": "Port the 19-module shared core into the adapters/qwen package",
+      "origin": "llm",
+      "status": "confirmed",
+      "acceptance_criteria": [
+        "the package imports cleanly and the ported core test suite runs green (0 failures) under uv run --project adapters/qwen pytest -q",
+        "preflight.py is byte-identical to the codex sibling's (a committed diff test asserts it; if tests/lint/preflightsurface_test.go enumerates bridges explicitly, the list gains qwen and the Go lint passes with all four surfaces equal)",
+        "the c12 absence check is recorded: ls adapters shows no qwen entry and .github/workflows contains no adapter-qwen.yml before t6 (the thor actor-list leg is dispositioned to t8 per c22)"
+      ],
+      "deps": [],
+      "covers": [
+        "c2",
+        "c12",
+        "h9"
+      ],
+      "instruction": "Copy the module set from adapters/codex/src/codex_bridge (the 19-module core) into adapters/qwen/src/qwen_bridge, renaming the package only; do NOT copy codex_cli.py (t2 writes qwen_cli.py in its place). Port the codex core tests, re-aimed at the qwen package. The design source of truth is docs/specs/2026-08-23-qwen-bridge-acp.md (c2/c12/h9)."
+    },
+    {
+      "id": "t2",
+      "summary": "Build qwen_cli.py: the ACP client seam and the terminal-event classifier",
+      "origin": "llm",
+      "status": "confirmed",
+      "acceptance_criteria": [
+        "the classifier maps the measured terminal shapes with one passing test each: stopReason end_turn -> ok (including the tool-failure fixture where a failed cat still ends end_turn with error null), stopReason cancelled -> the 13 cancellation outcome, a JSON-RPC error on the session/prompt response -> error, no terminal response (fake agent dies) -> incomplete",
+        "exit-0-without-terminal-event is asserted incomplete, never ok - the crash-case test mirrors codex's test_codex_cli.py rule",
+        "the handshake gate refuses an unsupported protocolVersion or an agentInfo.version mismatch with a distinct message before serving (unit test feeds the measured initialize response with protocolVersion 2)",
+        "the result payload for the 72-notification turn fixture is <= 64 KB while the full session/update stream is retained in the bridge's local transcript file",
+        "the session mode is set from the input/preflight policy at session creation and never falls back to the measured default auto; the effective mode is exposed to the capability surface; the h14 named probe (kill process, session/load the recorded sessionId) is a committed script whose result is recorded, and continuation_ref is NOT implemented in the first cut",
+        "unknown ext methods (the craft/drainMidTurnQueue fixture, id 0) are answered leniently and the turn completes"
+      ],
+      "deps": [
+        "t1"
+      ],
+      "covers": [
+        "c4",
+        "c16",
+        "c18",
+        "c19",
+        "c21",
+        "h3",
+        "h13",
+        "h15",
+        "h16",
+        "h18"
+      ],
+      "instruction": "Build test-first against a fake ACP agent: a stdio JSON-RPC script under tests/fixtures/acp/ that replays the MEASURED shapes from the 2026-08-23 probes (scripts /tmp/acp-probe/probe.py and /tmp/acp-probe2/probe2.py on spark - re-run them if absent and regenerate the fixtures). The measured facts: initialize returns protocolVersion 1 + agentInfo qwen-code 0.22.0 + authMethods + agentCapabilities{loadSession:true}; session/new returns sessionId + modes{plan,default,auto-edit,auto}; failed tool calls end end_turn; cancel is a notification answered by stopReason cancelled; the terminal response carries _meta.qwen.branchPoint. The spec's c16/c19/c21 are the classifier contract; the v1 frame decision is the client-obligation contract (no fs/terminal handlers in the first cut). h14 (the resume probe) is a claim-side verification, not a plan target - the committed probe script satisfies it without covering a target."
+    },
+    {
+      "id": "t3",
+      "summary": "qwen capabilities + deployment: the measured host-facts surface",
+      "origin": "llm",
+      "status": "confirmed",
+      "acceptance_criteria": [
+        "the capability document reports qwen version, bundled node version, model identity, config source (env or settings path, WITHOUT values), and the effective session mode - parsed from the measured initialize response plus qwen --version and node --version fixtures, 0 failures",
+        "the context budget is reported only from a measured source; where qwen 0.22.0 does not expose it, the field is null - asserted on the orin/cortex fixture",
+        "the deployment leg refuses to serve invokes when a contract leg is missing: the negative boot test boots the bridge without the qwen binary and asserts the distinct message (h5)"
+      ],
+      "deps": [
+        "t1"
+      ],
+      "covers": [
+        "c6",
+        "c10",
+        "c20",
+        "h5",
+        "h7",
+        "h17"
+      ],
+      "instruction": "Parse, never hard-code: the 2026-08-23 probe values (node v22.23.2 vs v18.19.1, unsloth/Qwen3.8-27B-NVFP4 vs cortex) are DIFF fixtures for the capability document, not constants in the code. The host-local model fact (c8, a confirmed assumption) is what this surface reports; c20: the measured authMethods (OPENAI_API_KEY env path) + per-host settings.json endpoints are the config source the surface names without leaking. Spec c10/c20 are the contract."
+    },
+    {
+      "id": "t4",
+      "summary": "config.py: the #114 configured-repo load, fail-closed per leg",
+      "origin": "llm",
+      "status": "confirmed",
+      "acceptance_criteria": [
+        "the bridge loads the culture.yaml + AGENTS.md + .qwen/skills triple from the configured repository at startup, and three negative tests (one per missing leg) assert three DISTINCT refusal messages with no invoke served",
+        "the capability document carries the loaded config repo + revision (the clone HEAD), asserted against a fixture clone at a known revision"
+      ],
+      "deps": [
+        "t1"
+      ],
+      "covers": [
+        "c7",
+        "h6"
+      ],
+      "instruction": "The qwen prompt-file leg is AGENTS.md (the measured qwen context file on this repo). Per issue #114 (spec c7): the image carries no identity; the repo is the config; missing legs refuse with distinct messages (fail closed). The .qwen/skills surface vendored 2026-08-23 (9 lineage-marked skills) is the skills leg this repo would load."
+    },
+    {
+      "id": "t5",
+      "summary": "Bridge entrypoint + 13 integration: invoke/cancel/replay against the fake ACP agent",
+      "origin": "llm",
+      "status": "confirmed",
+      "acceptance_criteria": [
+        "POST /v1/invocations against the fake ACP agent returns 200 with the classified ok result for a completed turn, and a cancelled invoke returns the 13 cancellation outcome - integration tests, 0 failures",
+        "an idempotent replay of a finished invoke returns the same result without re-executing the model turn (the fake agent asserts exactly one session/prompt call for the replayed invocation id)",
+        "the 202 async path emits the callback sequence (stable invocation id, increasing sequence) against the fake agent, and the every-after_state-leg check runs as commands: conformance-style invoke, boot + capability fetch, synthetic invoke"
+      ],
+      "deps": [
+        "t2",
+        "t3",
+        "t4"
+      ],
+      "covers": [
+        "c1",
+        "c13",
+        "h10"
+      ],
+      "instruction": "Wire the ported core (dialin/async_runner/callbacks/idempotency/scope_guard/session_registry - already in the package from t1) to qwen_cli (t2) behind the config (t4) and capabilities (t3). Boot the server on a localhost port in tests; the 13 shapes are api/actor-protocol/README.md - do NOT extend them (c5). The entrypoint is src/qwen_bridge/__main__.py so t1's pyproject stays untouched by this task."
+    },
+    {
+      "id": "t6",
+      "summary": "Dockerfile + CI workflow + conformance kit script (the #113 image contract)",
+      "origin": "llm",
+      "status": "confirmed",
+      "acceptance_criteria": [
+        "the image builds on aarch64 (the measured uniform fleet architecture) and contains node + pinned qwen 0.22.0 + the stdlib-only python bridge; a grep of the built image filesystem finds zero credential material",
+        "run_conformance_kit.sh passes against the built image with the kit UNMODIFIED (0 failures), and the workflow mirrors adapter-codex.yml (test + lint + conformance jobs, fake-driven so no real qwen in CI)",
+        "the diff check passes: nothing lands outside adapters/qwen, .github/workflows/adapter-qwen.yml, and the docs this task names - api/actor-protocol/ and tests/conformance are byte-identical (git diff assertion in the workflow, enforcing the c9 non-goal)"
+      ],
+      "deps": [
+        "t5"
+      ],
+      "covers": [
+        "c2",
+        "c5",
+        "c6",
+        "c15",
+        "h2",
+        "h4",
+        "h12"
+      ],
+      "instruction": "Base the Dockerfile on the adapters/codex/Dockerfile pattern (python:slim + the qwen install layout). The entrypoint must NOT rely on the ssh PATH: qwen is absent from the non-interactive PATH on thor/orin (measured) - invoke the install layout directly (the image controls its own layout). Copy scripts/run_conformance_kit.sh from a sibling UNMODIFIED. The success-signal commands (c15/h12) are named in the workflow job names so the 0-failures / 3-of-3-hosts tokens map to checks."
+    },
+    {
+      "id": "t7",
+      "summary": "README: trust model, the ACP seam, build+run runbook",
+      "origin": "llm",
+      "status": "confirmed",
+      "acceptance_criteria": [
+        "a fresh agent session, given ONLY adapters/qwen/README.md + docs/specs/2026-08-23-qwen-bridge-acp.md, states the audience, the ACP seam (client-side methods, no fs/terminal handlers), and the three fleet constraints (aarch64 uniform, host-local models, PATH absence) correctly - the h11 check",
+        "the build+run section is executable as written: the commands boot the bridge on a scratch checkout and the runbook names the three continuation issues from t8 (per c22, nothing is silently dropped)",
+        "the measured ACP facts are documented: the modes (plan/default/auto-edit/auto), the craft/drainMidTurnQueue ext method, the _meta.qwen.branchPoint handle, the tool-call-in-process behavior"
+      ],
+      "deps": [
+        "t5"
+      ],
+      "covers": [
+        "c11",
+        "c14",
+        "c15",
+        "h1",
+        "h8",
+        "h11"
+      ],
+      "instruction": "Model the structure on adapters/codex/README.md (trust model, crash mapping, the invocation-input table, the capability surface, configuration). The ACP seam section is where the challenge-pass measurements live (the s10-s18 frame scope entries are the source). The why-it-matters section states the support-contract framing (#113/#114) the audience claims (c11/c14) are about."
+    },
+    {
+      "id": "t8",
+      "summary": "Continuation issues: disposition every off-checkout leg (the c22 routing, the c23 dogfood)",
+      "origin": "llm",
+      "status": "confirmed",
+      "acceptance_criteria": [
+        "three continuation issues are posted on agentculture/culture-nodes via the agtag-backed communicate skill, each tracing back to the plan task and the spec claim: (a) live dogfood - culture-nodes work items through the codex and claude-code bridges (which already work on culture-nodes), then through the qwen bridge once it exists; the colleague bridge is OUT of use for this work (c23); (b) control-plane actor registration on thor + the h9 actor-list leg (c12); (c) fleet 3-of-3 boot + capability-doc diff against the 2026-08-23 probes (c15/h7)",
+        "each posted issue body states the disposition of the leg it carries (implement-here vs continuation-issue) and the plan's task list records the three posted issue numbers"
+      ],
+      "deps": [
+        "t6"
+      ],
+      "covers": [],
+      "instruction": "Directive task carrying the operator decisions c22 (disposition rule) and c23 (workforce constraint) - decisions are descriptive, so this task covers no frame target; its contract IS the decisions. Use the agtag-backed communicate skill vendored into .qwen/skills/communicate (scripts/post-issue.sh, the culture-nodes signature resolved from culture.yaml). Post (a)(b)(c) as one issue each, tagged for the qwen-bridge work; the dogfood issue body quotes c23 verbatim (codex + claude-code on culture-nodes, qwen joins when live, NO colleague). Record the three issue numbers in the plan state and in the README runbook (t7's second acceptance). This task owns no repo files - its artifacts are the posted issues + the plan record."
+    }
+  ],
+  "risks": [
+    {
+      "id": "r1",
+      "text": "resume/continuation_ref is OUT of the first cut (frame park v2): the session/load cross-process measurement (h14's named probe) has not been run - any dispatch needing resume stays on the codex/claude-code bridges until it is, and the t2 committed probe script is the named verification",
+      "kind": "unknown_nonblocking",
+      "task_id": "t2",
+      "resolved": false,
+      "resolution": ""
+    },
+    {
+      "id": "r2",
+      "text": "the model/API JSON-RPC error shape is SYNTHESIZED in the t2 suite, not measured live (frame park v4): the only measured failure was a tool failure ending end_turn - the first live occurrence must be captured and diffed against the synthesized fixture before the error leg is trusted",
+      "kind": "unknown_nonblocking",
+      "task_id": "t2",
+      "resolved": false,
+      "resolution": ""
+    },
+    {
+      "id": "r3",
+      "text": "craft/drainMidTurnQueue semantics are unmeasured (frame park v5): the lenient empty-answer is the first-cut behavior (measured to let turns complete) - do not rely on mid-turn queueing until the real handler contract is validated",
+      "kind": "unknown_nonblocking",
+      "task_id": "t2",
+      "resolved": false,
+      "resolution": ""
+    },
+    {
+      "id": "r4",
+      "text": "the mode mapping (c18) is a candidate from the measured session/new modes: h15's per-mode live verification (plan-mode refusing a shell command, etc.) has not been run - the bridge must never fall back to the measured default auto, and the t2 selection logic is tested until h15 passes live",
+      "kind": "unknown_nonblocking",
+      "task_id": "t2",
+      "resolved": false,
+      "resolution": ""
+    },
+    {
+      "id": "r5",
+      "text": "h9's thor control-plane actor-list leg is unmeasured (it lives off-checkout on thor): continuation issue (b) from t8 must run it before the qwen image is declared supported on the fleet",
+      "kind": "follow_up",
+      "task_id": "t8",
+      "resolved": false,
+      "resolution": ""
+    }
+  ]
+}

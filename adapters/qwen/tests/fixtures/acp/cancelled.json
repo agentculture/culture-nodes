@@ -1,0 +1,58 @@
+{
+ "provenance": "The measured cancellation of challenge probe 2 (2026-08-23): the 'write 1..500' turn was cancelled ~8s in by a session/cancel NOTIFICATION (no id - ACP v1's zCancelNotification {sessionId}); the agent answered the pending session/prompt with stopReason cancelled and error null (spec c16; the bundle's controlledAbort path returns exactly {stopReason: 'cancelled'} - no _meta.qwen.branchPoint, which is only recorded on a turn that completes through its recording path). The pre-cancel notifications (partial thought/message/usage stream) are reconstructed at the measured shape.",
+ "session_id": "8c9f1b2e-4a6d-4e7f-9b3c-1d2e3f4a5b6c",
+ "ext_request": null,
+ "updates": [
+  {
+   "sessionUpdate": "agent_thought_chunk",
+   "content": {
+    "type": "text",
+    "text": "The user wants a numbered list from 1 to 500, one number per line."
+   },
+   "_meta": {
+    "timestamp": "2026-08-23T21:12:25.000Z"
+   }
+  },
+  {
+   "sessionUpdate": "agent_thought_chunk",
+   "content": {
+    "type": "text",
+    "text": "I will write the numbers sequentially and must not stop early."
+   },
+   "_meta": {
+    "timestamp": "2026-08-23T21:12:25.250Z"
+   }
+  },
+  {
+   "sessionUpdate": "agent_message_chunk",
+   "content": {
+    "type": "text",
+    "text": "1\n2\n3\n"
+   },
+   "_meta": {
+    "timestamp": "2026-08-23T21:12:25.500Z"
+   }
+  },
+  {
+   "sessionUpdate": "agent_message_chunk",
+   "content": {
+    "type": "text",
+    "text": "4\n5\n6\n"
+   },
+   "_meta": {
+    "timestamp": "2026-08-23T21:12:25.750Z"
+   }
+  },
+  {
+   "sessionUpdate": "usage_update",
+   "used": 6120,
+   "size": 32768
+  }
+ ],
+ "terminal": {
+  "result": {
+   "stopReason": "cancelled"
+  }
+ },
+ "terminal_only_after_cancel": true
+}

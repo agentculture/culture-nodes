@@ -1,0 +1,46 @@
+{
+ "provenance": "The crash case for the qwen seam (spec c4/h3, mirroring codex-bridge's load-bearing measured case where a SIGTERM'd codex session exited 0 WITHOUT a terminal turn event): the ACP agent process dies mid-turn - here it exits 0 after 4 session/update notifications and the session/prompt terminal response is NEVER emitted. The classifier must map this to incomplete, never ok; the process exit code is not even visible to parse_session, exactly as in the codex sibling.",
+ "session_id": "8c9f1b2e-4a6d-4e7f-9b3c-1d2e3f4a5b6c",
+ "ext_request": null,
+ "updates": [
+  {
+   "sessionUpdate": "agent_thought_chunk",
+   "content": {
+    "type": "text",
+    "text": "The user asked for a long sequential task."
+   },
+   "_meta": {
+    "timestamp": "2026-08-23T21:12:25.000Z"
+   }
+  },
+  {
+   "sessionUpdate": "agent_thought_chunk",
+   "content": {
+    "type": "text",
+    "text": "Working through the first batch."
+   },
+   "_meta": {
+    "timestamp": "2026-08-23T21:12:25.250Z"
+   }
+  },
+  {
+   "sessionUpdate": "tool_call",
+   "toolCallId": "call_deadbeef1234",
+   "title": "sleep 30",
+   "kind": "execute",
+   "status": "pending",
+   "rawInput": {
+    "command": "sleep 30"
+   }
+  },
+  {
+   "sessionUpdate": "tool_call_update",
+   "toolCallId": "call_deadbeef1234",
+   "status": "in_progress",
+   "_meta": {
+    "toolName": "run_shell"
+   }
+  }
+ ],
+ "terminal": null
+}

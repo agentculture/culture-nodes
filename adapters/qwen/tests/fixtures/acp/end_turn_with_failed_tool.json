@@ -1,0 +1,168 @@
+{
+ "provenance": "The measured failure corner of the challenge probe 2 turn (2026-08-23, /tmp/acp-probe2/probe2.py): a failing `cat /nonexistent-file-acp-probe` shell call - tool_call_update status 'failed' with the tool's stderr content - and the turn STILL ended stopReason end_turn with error null (spec c16/h13: the tool-level failure rides in the transcript, not the run status). Thought/message chunk and tool_call shapes are the bundle's own (createTranscriptMessageUpdate, zToolCall/zToolCallUpdate with the measured status sequence pending -> in_progress -> failed). The craft/drainMidTurnQueue ext request is injected mid-stream after the 5th notification, as measured in both probes. Terminal carries the measured _meta.qwen.branchPoint handle.",
+ "session_id": "8c9f1b2e-4a6d-4e7f-9b3c-1d2e3f4a5b6c",
+ "ext_request": {
+  "jsonrpc": "2.0",
+  "id": 0,
+  "method": "craft/drainMidTurnQueue",
+  "params": {
+   "sessionId": "8c9f1b2e-4a6d-4e7f-9b3c-1d2e3f4a5b6c",
+   "todoStopGuardWatchQueuedPrompt": true
+  }
+ },
+ "ext_after": 5,
+ "updates": [
+  {
+   "sessionUpdate": "agent_thought_chunk",
+   "content": {
+    "type": "text",
+    "text": "The user asked me to run `cat /nonexistent-file-acp-probe` and report what happened."
+   },
+   "_meta": {
+    "timestamp": "2026-08-23T21:12:25.000Z"
+   }
+  },
+  {
+   "sessionUpdate": "agent_thought_chunk",
+   "content": {
+    "type": "text",
+    "text": "That is a direct shell invocation of cat against a path I can check."
+   },
+   "_meta": {
+    "timestamp": "2026-08-23T21:12:25.250Z"
+   }
+  },
+  {
+   "sessionUpdate": "agent_thought_chunk",
+   "content": {
+    "type": "text",
+    "text": "I will run it and report the outcome honestly."
+   },
+   "_meta": {
+    "timestamp": "2026-08-23T21:12:25.500Z"
+   }
+  },
+  {
+   "sessionUpdate": "agent_thought_chunk",
+   "content": {
+    "type": "text",
+    "text": "If the file does not exist, cat will print an error to stderr."
+   },
+   "_meta": {
+    "timestamp": "2026-08-23T21:12:25.750Z"
+   }
+  },
+  {
+   "sessionUpdate": "tool_call",
+   "toolCallId": "call_7a1e9d3c5b8f",
+   "title": "cat /nonexistent-file-acp-probe",
+   "kind": "execute",
+   "status": "pending",
+   "rawInput": {
+    "command": "cat /nonexistent-file-acp-probe",
+    "description": "Read the probe file"
+   }
+  },
+  {
+   "sessionUpdate": "tool_call_update",
+   "toolCallId": "call_7a1e9d3c5b8f",
+   "status": "in_progress",
+   "_meta": {
+    "toolName": "run_shell"
+   }
+  },
+  {
+   "sessionUpdate": "tool_call_update",
+   "toolCallId": "call_7a1e9d3c5b8f",
+   "status": "failed",
+   "content": [
+    {
+     "type": "content",
+     "content": {
+      "type": "text",
+      "text": "cat: /nonexistent-file-acp-probe: No such file or directory\n"
+     }
+    }
+   ],
+   "_meta": {
+    "toolName": "run_shell"
+   }
+  },
+  {
+   "sessionUpdate": "agent_thought_chunk",
+   "content": {
+    "type": "text",
+    "text": "The command failed as expected - the file does not exist."
+   },
+   "_meta": {
+    "timestamp": "2026-08-23T21:12:26.000Z"
+   }
+  },
+  {
+   "sessionUpdate": "agent_thought_chunk",
+   "content": {
+    "type": "text",
+    "text": "I will report the failure briefly and factually."
+   },
+   "_meta": {
+    "timestamp": "2026-08-23T21:12:26.250Z"
+   }
+  },
+  {
+   "sessionUpdate": "agent_message_chunk",
+   "content": {
+    "type": "text",
+    "text": "The command failed. "
+   },
+   "_meta": {
+    "timestamp": "2026-08-23T21:12:26.500Z"
+   }
+  },
+  {
+   "sessionUpdate": "agent_message_chunk",
+   "content": {
+    "type": "text",
+    "text": "`cat` could not open `/nonexistent-file-acp-probe`: "
+   },
+   "_meta": {
+    "timestamp": "2026-08-23T21:12:26.750Z"
+   }
+  },
+  {
+   "sessionUpdate": "agent_message_chunk",
+   "content": {
+    "type": "text",
+    "text": "`No such file or directory`. "
+   },
+   "_meta": {
+    "timestamp": "2026-08-23T21:12:27.000Z"
+   }
+  },
+  {
+   "sessionUpdate": "agent_message_chunk",
+   "content": {
+    "type": "text",
+    "text": "The file does not exist at that path."
+   },
+   "_meta": {
+    "timestamp": "2026-08-23T21:12:27.250Z"
+   }
+  },
+  {
+   "sessionUpdate": "usage_update",
+   "used": 12417,
+   "size": 32768
+  }
+ ],
+ "terminal": {
+  "result": {
+   "stopReason": "end_turn",
+   "_meta": {
+    "qwen.branchPoint": {
+     "assistantRecordUuid": "2b4c6d8e-f0a2-4b3c-9d1e-3f5a7b9c1d2e",
+     "checkpointUuid": "4d6e8f0a-2b4c-4d5e-9f1a-3b5c7d9e1f2a"
+    }
+   }
+  }
+ }
+}

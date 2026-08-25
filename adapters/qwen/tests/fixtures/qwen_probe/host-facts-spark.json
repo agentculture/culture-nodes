@@ -1,0 +1,11 @@
+{
+  "provenance": "The qwen section measured 2026-08-25 on spark: qwen 0.22.0 at the ~/.local/lib/qwen-code layout (spec s4: absent from the non-interactive PATH), the bundled node v22.23.2 the launcher execs from <layout>/node/bin/node, the model identity from the session/new wire answer (tests/fixtures/acp/session_new_measured.json), and the config source from the host settings path. context_budget is absent: the committed 2026-08-23 session/new replay shape declares the field and measures it null — the section omits an unexposed budget rather than guess one (the 2026-08-25 fresh-session shape measured _meta.contextLimit 262144, session-new-with-yolo.json).",
+  "section": {
+    "qwen_version": "0.22.0",
+    "node_version": "v22.23.2",
+    "node_path": "/home/spark/.local/lib/qwen-code/node/bin/node",
+    "model_identity": "unsloth/Qwen3.8-27B-NVFP4",
+    "config_source": "/home/spark/.qwen/settings.json",
+    "supported_modes": ["plan", "default", "auto-edit", "auto"]
+  }
+}

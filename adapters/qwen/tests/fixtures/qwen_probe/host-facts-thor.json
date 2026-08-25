@@ -1,0 +1,11 @@
+{
+  "provenance": "The qwen section measured 2026-08-25 on thor over a read-only ssh probe: qwen 0.22.0 at the same ~/.local/lib/qwen-code layout, the bundled node v22.23.2 (the 2026-08-23 pre-measurement recorded a v18.19.1 drift here — today's re-measurement shows the fleet aligned, which is exactly the fact this key exists to make visible), the model identity from the host's settings, and the config source from the host settings path.",
+  "section": {
+    "qwen_version": "0.22.0",
+    "node_version": "v22.23.2",
+    "node_path": "/home/thor/.local/lib/qwen-code/node/bin/node",
+    "model_identity": "unsloth/Qwen3.8-27B-NVFP4",
+    "config_source": "/home/thor/.qwen/settings.json",
+    "supported_modes": ["plan", "default", "auto-edit", "auto"]
+  }
+}

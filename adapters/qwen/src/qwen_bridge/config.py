@@ -19,6 +19,10 @@ plane. Its configuration is deliberately small and readable in one place:
 * the **sync/async dispatch threshold** (`sync_max_steps` / `always_async`)
   — a dispatch-timing decision only; qwen has no `--max-steps` flag to
   forward it to (see README's "argv this bridge generates");
+* the **identity repository** (issue #114) — the clone whose
+  culture.yaml + AGENTS.md + .qwen/skills triple the bridge loads at
+  startup (`load_agent_config_source`); the image carries no agent
+  identity, and a missing leg is a boot refusal, not a warning;
 * a **state dir** for the idempotency store and per-invocation bookkeeping.
 
 Precedence: JSON config file (if present) sets the baseline; environment
@@ -34,6 +38,7 @@ from __future__ import annotations
 
 import json
 import os
+import subprocess
 from dataclasses import dataclass, field
 from pathlib import Path
 
@@ -55,6 +60,7 @@ _ENV_STRING_FIELDS = {
     "QWEN_BRIDGE_PRESERVE_BRANCH_PREFIX": "preserve_branch_prefix",
     "QWEN_BRIDGE_PRESERVE_REMOTE": "preserve_remote",
     "QWEN_BRIDGE_HANDOVER_REMOTE": "handover_remote",
+    "QWEN_BRIDGE_CONFIG_REPO": "config_repo",
 }
 _ENV_INT_FIELDS = {
     "QWEN_BRIDGE_PORT": "port",
@@ -92,9 +98,107 @@ ENV_REPO_ALLOWLIST_PREFIXES = "QWEN_BRIDGE_REPO_ALLOWLIST_PREFIXES"
 #: separator the allowlist uses, so the two read alike in a unit file.
 ENV_REPO_IDENTITIES = "QWEN_BRIDGE_REPO_IDENTITIES"
 
+#: `QWEN_BRIDGE_CONFIG_REPO` names the repository this bridge's IDENTITY is
+#: loaded from (issue #114, plan task t4): the clone whose
+#: culture.yaml + AGENTS.md + .qwen/skills triple the startup load consumes.
+#: The image carries no agent identity — the repository IS the config. When
+#: unset, the load falls back to the allowlist holding exactly one entry
+#: (`only_allowed_repo`): the image deployment clones exactly one
+#: repository, and that one is both what the identity loads from and what
+#: the bridge may dispatch into. Set it explicitly when the two differ
+#: (e.g. the allowlist scopes worktrees under a prefix while the identity
+#: loads from the main clone).
+ENV_CONFIG_REPO = "QWEN_BRIDGE_CONFIG_REPO"
+
+# --- the #114 identity triple (issue #114, plan task t4) ------------------
+#
+# The leg names below are what the per-leg refusals quote, so the three
+# file legs stay grep-distinct from each other and from the support legs
+# (configured-repo resolution, revision). What a qwen ACP session reads at
+# run time is exactly these paths: AGENTS.md is the measured qwen context
+# file for a project, and .qwen/skills is the project's skill set — the
+# bridge verifies their presence at startup and reports which revision it
+# verified them in; it never feeds the contents to qwen itself.
+
+CULTURE_YAML_NAME = "culture.yaml"
+PROMPT_FILE_NAME = "AGENTS.md"
+SKILLS_DIR_NAME = ".qwen/skills"
+SKILL_MANIFEST_NAME = "SKILL.md"
+
+#: How long a `git` probe here gets. Same rule as `deployment.py`'s: a boot
+#: measurement must never be the reason startup hangs.
+_GIT_PROBE_TIMEOUT_SECONDS = 5.0
+
 
 class ConfigError(Exception):
     """Raised for a config file/env value the bridge cannot use."""
+
+
+class ConfigLegError(ConfigError):
+    """A leg of the #114 identity triple cannot be loaded (issue #114).
+
+    Distinct from a malformed bridge config (a plain `ConfigError`): these
+    are the per-leg REFUSALS the startup load raises when the configured
+    repository fails closed. Each message names the leg it refuses on —
+    the operator fixing one leg must hear that leg's name, not another
+    leg's — and every leg has its own message, so a refusal is never a
+    shared string two causes could both produce. Being a `ConfigError` is
+    load-bearing: the entrypoint catches `ConfigError` at boot (print +
+    exit 2) before dialin/serve, so a refused leg serves no invoke.
+    """
+
+
+@dataclass(frozen=True)
+class AgentIdentity:
+    """The first agent block of a culture.yaml — the identity leg.
+
+    `suffix` is WHO the agent is (its nick); `backend` is WHAT it declares
+    it runs on; `model` the model it names, "" when it names none. Parsed
+    with the dependency-free scalar scan `nodes whoami` uses (see
+    `culture_nodes/cli/_commands/whoami.py`'s `read_agent_fields`), so the
+    bridge and the CLI answer the same question the same way. The loader
+    does not FILTER on these values — the qwen bridge serving an identity
+    that declares another backend is a spec-leg decision (spec scope s9),
+    not a config-leg refusal.
+    """
+
+    suffix: str
+    backend: str
+    model: str = ""
+
+
+@dataclass(frozen=True)
+class AgentConfigSource:
+    """The #114 identity triple loaded from the configured repository.
+
+    The image carries no agent identity: this record IS the identity the
+    bridge loaded at startup — the repository, the revision of that
+    repository (the clone HEAD), and the three legs the load verified. The
+    capability surface reports `repo` + `revision` as the loaded config
+    repo + revision (plan tasks t3/t5 wire this record, read off
+    `Config.agent_config`, into the capability document); the leg paths are
+    what a qwen ACP session then reads on its own, which is why only the
+    paths and the skill COUNT are recorded here, never the contents — what
+    the skills (or the prompt file) contain is qwen's business, not the
+    config load's.
+    """
+
+    #: Resolved (symlink-collapsed) path of the configured repository.
+    repo: str
+    #: The clone HEAD: the full 40-char lowercase commit sha the triple was
+    #: loaded from, measured at startup (never cached).
+    revision: str
+    #: The culture.yaml identity leg: the first agent block.
+    agent: AgentIdentity
+    #: `<repo>/culture.yaml` — the path the identity leg was read from.
+    culture_path: str
+    #: `<repo>/AGENTS.md` — the qwen prompt-file leg.
+    prompt_file: str
+    #: `<repo>/.qwen/skills` — the skills leg.
+    skills_dir: str
+    #: How many skills (subdirectories holding a SKILL.md) the skills leg
+    #: holds. Always >= 1: an empty or missing directory is a refusal.
+    skill_count: int
 
 
 @dataclass
@@ -116,6 +220,27 @@ class Config:
     #: case — an identity whose repository segment matches an allowlisted
     #: checkout's directory name resolves with no declaration at all.
     repo_identities: dict[str, str] = field(default_factory=dict)
+
+    # --- the #114 identity triple (issue #114, plan task t4) ------------
+    #: The repository this bridge's IDENTITY is loaded from: the clone whose
+    #: culture.yaml + AGENTS.md + .qwen/skills triple `load_agent_config_source`
+    #: consumes at startup. The image carries no agent identity — the
+    #: repository IS the config. When None, the load falls back to
+    #: `only_allowed_repo()`; when that is None too, the load refuses,
+    #: because a bridge that cannot name its identity repository has no
+    #: identity. NOT re-checked against the allowlist: reading the identity
+    #: repository is a boot-time identity load, not a dispatch, and a
+    #: prefix-scoped allowlist would refuse the very main clone it is
+    #: scoped from.
+    config_repo: str | None = None
+    #: The #114 identity triple loaded at startup, set by
+    #: `load_agent_config_source`. None until that load has run and
+    #: succeeded: the capability layer receives this very Config object,
+    #: and `agent_config.repo` + `agent_config.revision` is what it reports
+    #: as the loaded config repo + revision (plan tasks t3/t5). A None here
+    #: where the bridge is serving would mean the startup load never ran —
+    #: a boot refusal, not a servable state.
+    agent_config: AgentConfigSource | None = None
 
     # --- qwen dispatch --------------------------------------------------
     qwen_bin: str = "qwen"
@@ -300,6 +425,230 @@ class Config:
         return cfg
 
 
+# --- the #114 identity triple load (issue #114, plan task t4) -------------
+
+
+def load_agent_config_source(cfg: Config) -> AgentConfigSource:
+    """Load the #114 identity triple from the configured repository.
+
+    Called ONCE at startup, before the bridge serves anything: the
+    entrypoint catches `ConfigError` at boot (print + exit 2) before
+    dialin/serve, and `ConfigLegError` is one, so a missing leg is a boot
+    refusal that serves no invoke — never a warning the bridge starts up
+    behind, and never a fallback to an invented identity.
+
+    The configured repository is `cfg.config_repo` when the operator named
+    it (`QWEN_BRIDGE_CONFIG_REPO` / the config file's `config_repo`), else
+    the allowlist's single entry (`only_allowed_repo`): the image
+    deployment clones exactly one repository, and that one is the identity
+    source. Ambiguity — no entry, several entries, or a prefix rule —
+    refuses, because guessing which repository an agent's identity comes
+    from is the failure this issue exists to close.
+
+    The legs are verified in the order a missing one is most likely to be
+    noticed: the identity (culture.yaml), the qwen prompt file (AGENTS.md),
+    the skills (.qwen/skills), and only then the revision (the clone HEAD).
+    Each refusal names its own leg and no other (see `ConfigLegError`), so
+    the operator fixing one leg hears that leg's name.
+
+    On success the loaded record is stored on `cfg.agent_config` — the very
+    Config object the capability layer receives — and returned; that is the
+    field plan tasks t3/t5 consume for the capability document's loaded
+    config repo + revision.
+    """
+    repo = _configured_repo(cfg)
+    agent, culture_path = _load_culture_leg(repo)
+    prompt_file = _load_prompt_leg(repo)
+    skills_dir, skill_count = _load_skills_leg(repo)
+    revision = _load_revision(repo)
+    source = AgentConfigSource(
+        repo=str(repo),
+        revision=revision,
+        agent=agent,
+        culture_path=str(culture_path),
+        prompt_file=str(prompt_file),
+        skills_dir=str(skills_dir),
+        skill_count=skill_count,
+    )
+    cfg.agent_config = source
+    return source
+
+
+def _configured_repo(cfg: Config) -> Path:
+    """The one repository the identity loads from, or a named refusal."""
+    raw = cfg.config_repo
+    if raw is None:
+        raw = cfg.only_allowed_repo()
+    if raw is None:
+        raise ConfigLegError(
+            "configured repository: this bridge cannot name the one repository its "
+            f"identity loads from (issue #114) — set {ENV_CONFIG_REPO}, or allowlist "
+            "exactly one repository without prefix rules; the image carries no agent "
+            "identity, so the bridge refuses to start"
+        )
+    repo = Path(raw).expanduser().resolve()
+    if not repo.is_dir():
+        raise ConfigLegError(
+            f"configured repository: {repo} is not a directory — the #114 identity "
+            "triple loads from a repository checkout; the bridge refuses to start"
+        )
+    return repo
+
+
+def _load_culture_leg(repo: Path) -> tuple[AgentIdentity, Path]:
+    """The identity leg: culture.yaml present, readable, declaring an agent."""
+    path = repo / CULTURE_YAML_NAME
+    if not path.is_file():
+        raise ConfigLegError(
+            f"{CULTURE_YAML_NAME}: the configured repository {repo} has no "
+            f"{CULTURE_YAML_NAME} — the identity leg of the #114 config triple is "
+            "missing; the image carries no agent identity, so the bridge refuses to "
+            "start"
+        )
+    return _read_agent_identity(path), path
+
+
+def _read_agent_identity(path: Path) -> AgentIdentity:
+    """The first agent block of culture.yaml, parsed without a YAML
+    dependency.
+
+    The same scalar scan `nodes whoami` runs (see
+    `culture_nodes/cli/_commands/whoami.py`'s `read_agent_fields`): the
+    top-level fields of the FIRST `- suffix:` entry. A culture.yaml that
+    declares no agent block, or whose first block names no suffix or no
+    backend, is an EMPTY identity leg — a refusal, never a fallback to an
+    invented nick.
+    """
+    try:
+        text = path.read_text(encoding="utf-8")
+    except (OSError, UnicodeDecodeError) as exc:
+        raise ConfigLegError(
+            f"{CULTURE_YAML_NAME}: {path} could not be read as UTF-8 text ({exc}) — the "
+            "identity leg of the #114 config triple is unusable; the bridge refuses to "
+            "start"
+        ) from exc
+    seen_agent = False
+    suffix = backend = model = ""
+    for line in text.splitlines():
+        stripped = line.strip()
+        if stripped.startswith(("- suffix:", "suffix:")):
+            if seen_agent:  # a second agent block: the identity is the first
+                break
+            seen_agent = True
+            suffix = _culture_scalar(stripped, "suffix")
+        elif seen_agent and stripped.startswith("backend:"):
+            backend = _culture_scalar(stripped, "backend")
+        elif seen_agent and stripped.startswith("model:"):
+            model = _culture_scalar(stripped, "model")
+    if not (seen_agent and suffix and backend):
+        raise ConfigLegError(
+            f"{CULTURE_YAML_NAME}: the configured repository's {CULTURE_YAML_NAME} "
+            "declares no agent identity (a first agent block with suffix + backend) — "
+            "the identity leg of the #114 config triple is empty; the image carries no "
+            "agent identity, so the bridge refuses to start"
+        )
+    return AgentIdentity(suffix=suffix, backend=backend, model=model)
+
+
+def _load_prompt_leg(repo: Path) -> Path:
+    """The qwen prompt-file leg: AGENTS.md present."""
+    path = repo / PROMPT_FILE_NAME
+    if not path.is_file():
+        raise ConfigLegError(
+            f"{PROMPT_FILE_NAME}: the configured repository {repo} has no "
+            f"{PROMPT_FILE_NAME} — the qwen prompt-file leg of the #114 config triple "
+            "is missing; the bridge refuses to start"
+        )
+    return path
+
+
+def _load_skills_leg(repo: Path) -> tuple[Path, int]:
+    """The skills leg: a .qwen/skills directory holding at least one skill
+    (a subdirectory with a SKILL.md). An empty or missing directory is the
+    same refusal — what the skills CONTAIN is out of scope; their presence
+    is the leg."""
+    path = repo / SKILLS_DIR_NAME
+    skill_count = 0
+    if path.is_dir():
+        skill_count = sum(
+            1
+            for entry in path.iterdir()
+            if entry.is_dir() and (entry / SKILL_MANIFEST_NAME).is_file()
+        )
+    if skill_count == 0:
+        raise ConfigLegError(
+            f"{SKILLS_DIR_NAME}: the configured repository {repo} carries no usable "
+            f"skills leg — the #114 config triple requires a {SKILLS_DIR_NAME} "
+            f"directory holding at least one skill (a subdirectory with a "
+            f"{SKILL_MANIFEST_NAME}); an empty or missing directory is a refusal, so "
+            "the bridge refuses to start"
+        )
+    return path, skill_count
+
+
+def _load_revision(repo: Path) -> str:
+    """The clone HEAD: which revision of the configured repository the
+    triple was loaded from. The capability surface reports it (issue
+    #114), and a revision nobody can measure is a refusal — never an
+    invented one."""
+    try:
+        proc = subprocess.run(  # noqa: S603,S607 # nosec B603,B607 - fixed binary, no shell
+            # (the argv is the constant list below); B607 is deliberate: `git` resolves from
+            # PATH, as every other git call in this project does.
+            ["git", "-C", str(repo), "rev-parse", "HEAD"],
+            capture_output=True,
+            text=True,
+            check=False,
+            timeout=_GIT_PROBE_TIMEOUT_SECONDS,
+        )
+    except (OSError, subprocess.SubprocessError) as exc:
+        raise ConfigLegError(
+            f"revision: git could not be run in the configured repository {repo} ({exc}) "
+            "— the clone revision the capability surface must report is unmeasurable; "
+            "the bridge refuses to start"
+        ) from exc
+    if proc.returncode != 0:
+        raise ConfigLegError(
+            f"revision: the configured repository {repo} has no resolvable git HEAD "
+            "(unborn branch or not a work tree) — the clone revision the capability "
+            "surface must report is unmeasurable; the bridge refuses to start"
+        )
+    sha = _full_commit_sha(proc.stdout.strip())
+    if not sha:
+        raise ConfigLegError(
+            f"revision: git answered {proc.stdout.strip()!r} for the configured "
+            f"repository {repo}'s HEAD, which is not a full commit id — the clone "
+            "revision the capability surface must report is unmeasurable; the bridge "
+            "refuses to start"
+        )
+    return sha
+
+
+def _culture_scalar(line: str, key: str) -> str:
+    """The scalar after `key:` on a culture.yaml line, quotes stripped.
+
+    Mirrors `nodes whoami`'s own parser (the CLI and the bridge must answer
+    the identity question the same way); empty values come back as "" —
+    the caller decides that a missing identity is a refusal.
+    """
+    _, _, value = line.partition(f"{key}:")
+    return value.strip().strip("'\"")
+
+
+def _full_commit_sha(value: str) -> str:
+    """*value* if it is an unambiguous 40-character lowercase hex commit id,
+    else "".
+
+    The same refusal `deployment.py`'s `_full_commit_sha` makes, for the
+    same reason: `HEAD`, a branch name and an abbreviation each mean
+    something different tomorrow, and a record nobody can resolve later is
+    not a record.
+    """
+    if len(value) != 40:
+        return ""
+    return value if all(c in "0123456789abcdef" for c in value) else ""
+
+
 def _read_config_file(path: str) -> dict:
     try:
         raw = Path(path).read_text(encoding="utf-8")
@@ -322,6 +671,7 @@ _FILE_FIELDS = {
     "repo_allowlist": lambda v: tuple(str(x) for x in v),
     "repo_allowlist_prefixes": lambda v: tuple(str(x) for x in v),
     "repo_identities": lambda v: {str(k): str(x) for k, x in dict(v).items()},
+    "config_repo": str,
     "qwen_bin": str,
     "qwen_env": lambda v: {str(k): str(x) for k, x in dict(v).items()},
     "default_sandbox": str,

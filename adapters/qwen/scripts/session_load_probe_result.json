@@ -1,0 +1,306 @@
+{
+  "probe": "h14: kill process, session/load the recorded sessionId",
+  "backend": "real",
+  "started_at": "2026-08-25T10:31:02.887968+00:00",
+  "host": "spark-f8a9",
+  "python": "3.12.12",
+  "timeout_seconds": 30.0,
+  "sequence": [
+    {
+      "gen": 1,
+      "step": "spawn",
+      "note": "real qwen binary at /home/spark/.local/lib/qwen-code/bin/qwen (located by qwen_cli.locate_qwen_bin - the known install paths, never PATH)"
+    },
+    {
+      "gen": 1,
+      "step": "initialize",
+      "response": {
+        "jsonrpc": "2.0",
+        "id": 1,
+        "result": {
+          "protocolVersion": 1,
+          "agentInfo": {
+            "name": "qwen-code",
+            "title": "Qwen Code",
+            "version": "0.22.0"
+          },
+          "authMethods": [
+            {
+              "id": "openai",
+              "name": "Use OpenAI API key",
+              "description": "Requires setting the `OPENAI_API_KEY` environment variable",
+              "_meta": {
+                "type": "terminal",
+                "args": [
+                  "--auth-type=openai"
+                ]
+              }
+            }
+          ],
+          "agentCapabilities": {
+            "loadSession": true,
+            "promptCapabilities": {
+              "image": true,
+              "audio": true,
+              "embeddedContext": true
+            },
+            "sessionCapabilities": {
+              "list": {},
+              "resume": {}
+            },
+            "mcpCapabilities": {
+              "sse": true,
+              "http": true
+            },
+            "_meta": {
+              "imageCapability": {
+                "autoHandlesWrongModel": true,
+                "maxBytes": 10380902,
+                "maxImagesPerTurn": 4
+              }
+            }
+          }
+        }
+      }
+    },
+    {
+      "gen": 1,
+      "step": "session/new",
+      "response": {
+        "jsonrpc": "2.0",
+        "id": 2,
+        "result": {
+          "sessionId": "899540dc-0e07-459c-9d18-99fd495c24d7",
+          "models": {
+            "currentModelId": "unsloth/Qwen3.8-27B-NVFP4(openai)",
+            "availableModels": [
+              {
+                "modelId": "unsloth/Qwen3.8-27B-NVFP4(openai)",
+                "name": "unsloth/Qwen3.8-27B-NVFP4",
+                "description": null,
+                "_meta": {
+                  "contextLimit": 262144
+                }
+              }
+            ]
+          },
+          "modes": {
+            "currentModeId": "auto",
+            "availableModes": [
+              {
+                "id": "plan",
+                "name": "Plan",
+                "description": "Analyze only, do not modify files or execute commands"
+              },
+              {
+                "id": "default",
+                "name": "Default",
+                "description": "Require approval for file edits or shell commands"
+              },
+              {
+                "id": "auto-edit",
+                "name": "Auto Edit",
+                "description": "Automatically approve file edits"
+              },
+              {
+                "id": "auto",
+                "name": "Auto",
+                "description": "LLM classifier auto-approves safe actions, blocks risky ones"
+              },
+              {
+                "id": "yolo",
+                "name": "YOLO",
+                "description": "Automatically approve all tools"
+              }
+            ]
+          },
+          "configOptions": [
+            {
+              "id": "mode",
+              "name": "Mode",
+              "description": "Session permission mode",
+              "category": "mode",
+              "type": "select",
+              "currentValue": "auto",
+              "options": [
+                {
+                  "value": "plan",
+                  "name": "Plan",
+                  "description": "Analyze only, do not modify files or execute commands"
+                },
+                {
+                  "value": "default",
+                  "name": "Default",
+                  "description": "Require approval for file edits or shell commands"
+                },
+                {
+                  "value": "auto-edit",
+                  "name": "Auto Edit",
+                  "description": "Automatically approve file edits"
+                },
+                {
+                  "value": "auto",
+                  "name": "Auto",
+                  "description": "LLM classifier auto-approves safe actions, blocks risky ones"
+                },
+                {
+                  "value": "yolo",
+                  "name": "YOLO",
+                  "description": "Automatically approve all tools"
+                }
+              ]
+            },
+            {
+              "id": "model",
+              "name": "Model",
+              "description": "AI model to use",
+              "category": "model",
+              "type": "select",
+              "currentValue": "unsloth/Qwen3.8-27B-NVFP4(openai)",
+              "options": [
+                {
+                  "value": "unsloth/Qwen3.8-27B-NVFP4(openai)",
+                  "name": "unsloth/Qwen3.8-27B-NVFP4",
+                  "description": ""
+                }
+              ]
+            },
+            {
+              "id": "reasoning_effort",
+              "name": "Reasoning effort",
+              "description": "How hard reasoning-capable models should think",
+              "category": "thought_level",
+              "type": "select",
+              "currentValue": "default",
+              "options": [
+                {
+                  "value": "default",
+                  "name": "Default",
+                  "description": "Use the model or provider default"
+                },
+                {
+                  "value": "low",
+                  "name": "Low",
+                  "description": "Providers map or clamp the requested tier for the active model"
+                },
+                {
+                  "value": "medium",
+                  "name": "Medium",
+                  "description": "Providers map or clamp the requested tier for the active model"
+                },
+                {
+                  "value": "high",
+                  "name": "High",
+                  "description": "Providers map or clamp the requested tier for the active model"
+                },
+                {
+                  "value": "xhigh",
+                  "name": "Extra high",
+                  "description": "Providers map or clamp the requested tier for the active model"
+                },
+                {
+                  "value": "max",
+                  "name": "Max",
+                  "description": "Providers map or clamp the requested tier for the active model"
+                }
+              ]
+            }
+          ]
+        }
+      }
+    },
+    {
+      "gen": 1,
+      "step": "kill",
+      "signal": "SIGKILL",
+      "exit_code": -9
+    },
+    {
+      "gen": 2,
+      "step": "spawn",
+      "note": "a FRESH process, same state dir"
+    },
+    {
+      "gen": 2,
+      "step": "initialize",
+      "response": {
+        "jsonrpc": "2.0",
+        "id": 1,
+        "result": {
+          "protocolVersion": 1,
+          "agentInfo": {
+            "name": "qwen-code",
+            "title": "Qwen Code",
+            "version": "0.22.0"
+          },
+          "authMethods": [
+            {
+              "id": "openai",
+              "name": "Use OpenAI API key",
+              "description": "Requires setting the `OPENAI_API_KEY` environment variable",
+              "_meta": {
+                "type": "terminal",
+                "args": [
+                  "--auth-type=openai"
+                ]
+              }
+            }
+          ],
+          "agentCapabilities": {
+            "loadSession": true,
+            "promptCapabilities": {
+              "image": true,
+              "audio": true,
+              "embeddedContext": true
+            },
+            "sessionCapabilities": {
+              "list": {},
+              "resume": {}
+            },
+            "mcpCapabilities": {
+              "sse": true,
+              "http": true
+            },
+            "_meta": {
+              "imageCapability": {
+                "autoHandlesWrongModel": true,
+                "maxBytes": 10380902,
+                "maxImagesPerTurn": 4
+              }
+            }
+          }
+        }
+      }
+    },
+    {
+      "gen": 2,
+      "step": "session/load",
+      "response": {
+        "jsonrpc": "2.0",
+        "id": 2,
+        "error": {
+          "code": -32002,
+          "message": "Resource not found: session:899540dc-0e07-459c-9d18-99fd495c24d7",
+          "data": {
+            "uri": "session:899540dc-0e07-459c-9d18-99fd495c24d7"
+          }
+        }
+      }
+    }
+  ],
+  "outcome": "load-refused: the fresh process's session/load answered with a JSON-RPC error (code -32002, 'Resource not found: session:899540dc-0e07-459c-9d18-99fd495c24d7') - the session did not survive the process kill on this backend",
+  "agent_info": {
+    "name": "qwen-code",
+    "title": "Qwen Code",
+    "version": "0.22.0"
+  },
+  "session_id": "899540dc-0e07-459c-9d18-99fd495c24d7",
+  "load_error": {
+    "code": -32002,
+    "message": "Resource not found: session:899540dc-0e07-459c-9d18-99fd495c24d7",
+    "data": {
+      "uri": "session:899540dc-0e07-459c-9d18-99fd495c24d7"
+    }
+  },
+  "finished_at": "2026-08-25T10:31:03.944724+00:00"
+}

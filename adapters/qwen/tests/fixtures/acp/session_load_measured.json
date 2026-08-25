@@ -1,0 +1,50 @@
+{
+  "provenance": "qwen 0.22.0 ACP `session/load` request/response shapes (the h14 resume-probe exchange). The request shape is the SDK's zLoadSessionRequest {cwd, mcpServers, sessionId}; the response shape is the bundle's loadSession response builder: {modes, models, configOptions} (+ artifactSnapshot when the persisted session carries one) - notably NO sessionId in the response, because the client names the session it loads. agentCapabilities.loadSession was measured true in the 2026-08-23 initialize response (spec c17). Whether a real qwen session SURVIVES its process restart and loads in a fresh process is what the named h14 probe (scripts/session_load_probe.py) measures per backend - the recorded result lives beside the probe script; the first-cut dispatch path does NOT consume this (continuation_ref is not implemented in the first cut, frame park v2).",
+  "request": {
+    "jsonrpc": "2.0",
+    "id": 2,
+    "method": "session/load",
+    "params": {
+      "cwd": "/tmp/acp-probe2",
+      "mcpServers": [],
+      "sessionId": "8c9f1b2e-4a6d-4e7f-9b3c-1d2e3f4a5b6c"
+    }
+  },
+  "response": {
+    "jsonrpc": "2.0",
+    "id": 2,
+    "result": {
+      "modes": {
+        "currentModeId": "auto",
+        "availableModes": [
+          { "id": "plan", "name": "Plan", "description": "Analyze only, do not modify files or execute commands" },
+          { "id": "default", "name": "Default", "description": "Require approval for file edits or shell commands" },
+          { "id": "auto-edit", "name": "Auto Edit", "description": "Automatically approve file edits" },
+          { "id": "auto", "name": "Auto", "description": "LLM classifier auto-approves safe actions, blocks risky ones" }
+        ]
+      },
+      "models": {
+        "currentModelId": "unsloth/Qwen3.8-27B-NVFP4",
+        "availableModels": [
+          { "modelId": "unsloth/Qwen3.8-27B-NVFP4", "name": "unsloth/Qwen3.8-27B-NVFP4", "contextWindowSize": null }
+        ]
+      },
+      "configOptions": [
+        {
+          "id": "mode",
+          "name": "Mode",
+          "description": "Session permission mode",
+          "category": "mode",
+          "type": "select",
+          "currentValue": "auto",
+          "options": [
+            { "value": "plan", "name": "Plan" },
+            { "value": "default", "name": "Default" },
+            { "value": "auto-edit", "name": "Auto Edit" },
+            { "value": "auto", "name": "Auto" }
+          ]
+        }
+      ]
+    }
+  }
+}

@@ -16,7 +16,7 @@ import json
 import logging
 import sys
 
-from qwen_bridge import capabilities, dialin, preflight, reap, reclaim
+from qwen_bridge import capabilities, dialin, reap, reclaim
 from qwen_bridge.config import Config, ConfigError
 from qwen_bridge.server import serve_forever
 
@@ -33,10 +33,14 @@ def main(argv: list[str] | None = None) -> int:
         "--print-capabilities",
         action="store_true",
         help=(
-            "Print this host's preflight capability surface (issue #67) as the JSON an actor "
-            "registration carries in `capabilities`, then exit without serving. The running "
-            "bridge serves the same document at GET /v1/capabilities; this flag is for "
-            "registering an actor before its bridge has ever started."
+            "Print the document an actor registration carries in `capabilities` (issue #67, "
+            "plan t3): the shared preflight host block plus the qwen section this host "
+            "measures (the qwen and bundled-node versions, the model identity and config "
+            "source, the agent's mode exposure), then exit without serving. The running "
+            "bridge serves the shared preflight block at GET /v1/capabilities; the qwen "
+            "section is registration-time, because measuring it takes the agent a scratch "
+            "session. This flag is for registering an actor before its bridge has ever "
+            "started."
         ),
     )
     parser.add_argument(
@@ -87,7 +91,7 @@ def main(argv: list[str] | None = None) -> int:
         cfg.port = args.port
 
     if args.print_capabilities:
-        print(json.dumps(preflight.capability_block(capabilities.host_facts(cfg)), indent=2))
+        print(json.dumps(capabilities.registration_capabilities(cfg), indent=2))
         return 0
 
     # Read-only unless --reap-perform, and (like --print-capabilities) ahead

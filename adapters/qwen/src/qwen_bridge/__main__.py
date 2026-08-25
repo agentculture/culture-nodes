@@ -18,6 +18,7 @@ import sys
 
 from qwen_bridge import capabilities, dialin, reap, reclaim
 from qwen_bridge.config import Config, ConfigError
+from qwen_bridge.qwen_cli import QwenAgentMissingError
 from qwen_bridge.server import serve_forever
 
 
@@ -91,7 +92,14 @@ def main(argv: list[str] | None = None) -> int:
         cfg.port = args.port
 
     if args.print_capabilities:
-        print(json.dumps(capabilities.registration_capabilities(cfg), indent=2))
+        try:
+            print(json.dumps(capabilities.registration_capabilities(cfg), indent=2))
+        except QwenAgentMissingError as exc:
+            # the named boot refusal (h5): an operator registering a host
+            # whose qwen install is missing reads the remedy, not a
+            # traceback — the same refusal a dispatch would get
+            print(f"error: {exc}", file=sys.stderr)
+            return 2
         return 0
 
     # Read-only unless --reap-perform, and (like --print-capabilities) ahead

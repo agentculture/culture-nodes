@@ -190,6 +190,22 @@ def test_the_missing_binary_is_a_named_refusal_not_a_crash(tmp_path):
         capabilities.host_facts(Config(repo_allowlist=(str(tmp_path),), qwen_bin=str(missing)))
 
 
+def test_the_missing_binary_prints_the_named_error_not_a_traceback(
+    tmp_path, capsys, monkeypatch
+):
+    """The operator leg of h5: `--print-capabilities` on a host whose qwen
+    install is missing exits 2 with the named refusal (the same message a
+    dispatch would get — the remedy, not a traceback)."""
+    missing = tmp_path / "elsewhere" / "qwen"
+    monkeypatch.setattr(
+        qwen_main.Config,
+        "load",
+        staticmethod(lambda _path=None: Config(qwen_bin=str(missing))),
+    )
+    assert qwen_main.main(["--print-capabilities"]) == 2
+    assert "qwen-agent-missing" in capsys.readouterr().err
+
+
 # --- the host facts the codex template kept ----------------------------------
 
 

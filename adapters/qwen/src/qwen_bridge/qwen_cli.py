@@ -47,6 +47,7 @@ from qwen_bridge.acp.dispatch import (
     SyncRunResult,
     _driver_argv,
     git_writable_override,
+    refusal_detail,
     run_sync,
     spawn,
 )
@@ -117,6 +118,7 @@ __all__ = [
     "SANDBOX_MODES",
     "SANDBOX_WORKSPACE_WRITE",
     "REFUSAL_EXIT_CODE",
+    "refusal_detail",
     "REFUSAL_MARKER",
     "TRANSCRIPT_MARKER",
     "CANCEL_DRAIN_SECONDS",

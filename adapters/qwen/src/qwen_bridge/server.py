@@ -490,6 +490,42 @@ class Handler(BaseHTTPRequestHandler):
             )
             return
 
+        # #227: the ACP session mode. Read HERE and threaded all the way to
+        # `qwen_cli.spawn`/`run_sync`, because it was previously read nowhere:
+        # `spawn` accepted a `mode=` kwarg, `build_argv` emitted `--mode`, and
+        # the gate refused the empty string that always arrived — the wire was
+        # built from both ends and never joined, so every dispatch this bridge
+        # ever served died at the mode gate.
+        #
+        # Absence is refused here rather than defaulted, which is h15's posture
+        # moved to the boundary: the bridge sets the mode from policy and never
+        # falls back to the agent's measured default, so a session in a mode
+        # nobody chose is not reachable. Refusing at the input makes that a
+        # legible 400 naming the field, instead of a driver-side refusal whose
+        # message the async path drops (#225).
+        mode = raw_input.get("mode") or None
+        if mode is None:
+            self._write_json(
+                400,
+                {
+                    "error": (
+                        "input.mode is required: this bridge sets the ACP session mode "
+                        f"from policy and never defaults it (one of {sorted(qwen_cli.ACP_MODES)})"
+                    ),
+                    "class": mapping.CLASS_ACTOR_REJECTED_INPUT,
+                },
+            )
+            return
+        if mode not in qwen_cli.ACP_MODES:
+            self._write_json(
+                400,
+                {
+                    "error": f"mode {mode!r} is not one of {sorted(qwen_cli.ACP_MODES)}",
+                    "class": mapping.CLASS_ACTOR_REJECTED_INPUT,
+                },
+            )
+            return
+
         sandbox = raw_input.get("sandbox") or None
         if sandbox is not None and sandbox not in qwen_cli.SANDBOX_MODES:
             self._write_json(
@@ -602,6 +638,7 @@ class Handler(BaseHTTPRequestHandler):
                 resolved_repo,
                 model,
                 sandbox,
+                mode,
                 handover=handover,
                 session_key=session_key,
                 held=held,
@@ -616,6 +653,7 @@ class Handler(BaseHTTPRequestHandler):
             resolved_repo,
             model,
             sandbox,
+            mode,
             raw_input=raw_input,
             handover=handover,
             session_key=session_key,
@@ -631,6 +669,7 @@ class Handler(BaseHTTPRequestHandler):
         repo: str,
         model: str | None,
         sandbox: str | None,
+        mode: str | None,
         *,
         raw_input: dict[str, Any] | None = None,
         handover: bool = False,
@@ -650,6 +689,7 @@ class Handler(BaseHTTPRequestHandler):
                 repo,
                 model=model,
                 sandbox=sandbox,
+                mode=mode,
                 continuation_ref=ctx.continuation_ref,
                 writable_git=handover,
             )
@@ -664,6 +704,7 @@ class Handler(BaseHTTPRequestHandler):
                     repo,
                     model=model,
                     sandbox=sandbox,
+                    mode=mode,
                     continuation_ref=None,
                     writable_git=handover,
                 )
@@ -780,6 +821,7 @@ class Handler(BaseHTTPRequestHandler):
         repo: str,
         model: str | None,
         sandbox: str | None,
+        mode: str | None,
         *,
         handover: bool = False,
         session_key: str | None = None,
@@ -808,6 +850,7 @@ class Handler(BaseHTTPRequestHandler):
                 repo=repo,
                 model=model,
                 sandbox=sandbox,
+                mode=mode,
                 continuation_ref=ctx.continuation_ref,
                 writable_git=handover,
                 handover=handover,

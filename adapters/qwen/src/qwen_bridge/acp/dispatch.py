@@ -63,6 +63,22 @@ class SyncRunResult:
 
 
 _REFUSAL_LINE_RE = re.compile(rf"^{re.escape(wire.REFUSAL_MARKER)}\s*(.+)$", re.M)
+
+
+def refusal_detail(stderr: str | None) -> str | None:
+    """The driver's refusal message from *stderr*, or None if it did not
+    refuse.
+
+    Public because BOTH dispatch paths need it and only one of them had it:
+    `run_sync` below parsed the marker while `async_runner` never read stderr
+    at all, so an ACP policy refusal on the async path — the path production
+    uses — was reported as "killed, crashed, or timed out" (#225). One regex,
+    two callers, so the two can no longer disagree about what a refusal is.
+    """
+    match = _REFUSAL_LINE_RE.search(stderr or "")
+    return match.group(1).strip() if match else None
+
+
 _TRANSCRIPT_LINE_RE = re.compile(rf"^{re.escape(wire.TRANSCRIPT_MARKER)}\s*(\S+)$", re.M)
 
 
@@ -226,9 +242,9 @@ def run_sync(
         timed_out = True
 
     refusal: str | None = None
-    marker = _REFUSAL_LINE_RE.search(stderr or "")
+    marker = refusal_detail(stderr)
     if proc.returncode == wire.REFUSAL_EXIT_CODE and marker:
-        refusal = marker.group(1).strip()
+        refusal = marker
         raise errors.QwenSeamRefusal(refusal)
     if proc.returncode == wire.REFUSAL_EXIT_CODE and not marker:
         # the driver signalled a refusal it did not write: an honest

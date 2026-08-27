@@ -47,6 +47,7 @@ usage: nodes-op.sh <verb> [args]
                                 Human --as lands confirmed; agent --as lands proposed.
   assign <actor> "<instruction>" [opts]   one-node workflow -> publish -> run -> watch
       opts: --sandbox read-only|workspace-write   (default read-only)
+            --mode plan|default|auto-edit|auto    (qwen actors only; required there)
             --timeout DUR                          (default 15m)
             --retries N                            (default 1 — no auto-retry)
             --outcome NAME                         (default completed)
@@ -321,12 +322,19 @@ print(d.get("id", ""), d.get("authority", ""), origin.get("kind", ""),
       "rating=" + str(data.get("rating", "")), "actor=" + str(data.get("evaluated_actor_id", "")))'
   ;;
 assign)
-  actor="${1:?usage: assign <codex-thor|codex-orin|developer|planner|verifier|intake> \"instruction\" [opts]}"; shift
+  actor="${1:?usage: assign <codex-thor|codex-orin|developer|planner|verifier|intake|qwen-developer> \"instruction\" [opts]}"; shift
   instruction="${1:?assign needs an instruction}"; shift
-  sandbox=read-only; timeout=15m; retries=1; outcome=completed; watch=1; category=""; repo_override=""; handover=false
+  sandbox=read-only; timeout=15m; retries=1; outcome=completed; watch=1; category=""; repo_override=""; handover=false; mode=""
   while [ $# -gt 0 ]; do
     case "$1" in
       --sandbox) sandbox="$2"; shift 2;;
+      # ACP session mode, required by the qwen bridge and ignored by the
+      # others. The qwen gate sets the mode from policy and NEVER falls back
+      # to the agent's measured default (h15), so a dispatch that names none
+      # is refused -- and on the async path that refusal loses its message and
+      # reads as "killed, crashed, or timed out" (#225). Until #225 lands,
+      # forgetting this flag costs a confusing round trip, not a clear error.
+      --mode) mode="$2"; shift 2;;
       --timeout) timeout="$2"; shift 2;;
       --retries) retries="$2"; shift 2;;
       --outcome) outcome="$2"; shift 2;;
@@ -358,7 +366,14 @@ assign)
     planner)   ref="actor://company/planner@sha256:4444444444444444444444444444444444444444444444444444444444444444";   repo=/home/spark/git/.worktrees.culture-nodes/owe-planner;;
     verifier)  ref="actor://company/verifier@sha256:5555555555555555555555555555555555555555555555555555555555555555";  repo=/home/spark/git/.worktrees.culture-nodes/owe-verifier;;
     intake)    ref="actor://company/intake@sha256:6666666666666666666666666666666666666666666666666666666666666666";    repo=/home/spark/git/.worktrees.culture-nodes/owe-intake;;
-    *) echo "nodes-op: unknown actor '$actor' (codex-thor|codex-orin|developer|planner|verifier|intake)" >&2; exit 1;;
+    # The qwen bridge on spark:8092 (adapters/qwen, registered 2026-08-27).
+    # Same reasoning as the claude bridges above, and then some: its own
+    # capability surface reports `confinement: qwen-code runs its own tools
+    # in-process as the bridge user` -- the ACP session modes are an approval
+    # policy, not a kernel boundary -- so the exact-match repo allowlist is the
+    # only thing standing between a dispatch and this operator's checkout.
+    qwen-developer) ref="actor://company/qwen-developer@sha256:7777777777777777777777777777777777777777777777777777777777777777"; repo=/home/spark/git/.worktrees.culture-nodes/qwen-dev;;
+    *) echo "nodes-op: unknown actor '$actor' (codex-thor|codex-orin|developer|planner|verifier|intake|qwen-developer)" >&2; exit 1;;
   esac
   # --repo pins a dispatch to one isolated worktree; the bridge's own
   # repo_allowlist is the real gate (exact-match), so an unlisted path is
@@ -373,11 +388,17 @@ assign)
       "$TEMPLATE" > "$wf"
   digest=$("$0" publish "$wf")
   [ -n "$digest" ] || { echo "nodes-op: publish returned no digest" >&2; exit 1; }
-  python3 - "$instruction" "$sandbox" "$outcome" "$repo" "$handover" <<'PYEOF' > "$wf.json"
+  python3 - "$instruction" "$sandbox" "$outcome" "$repo" "$handover" "$mode" <<'PYEOF' > "$wf.json"
 import json, sys
-print(json.dumps({"instruction": sys.argv[1], "sandbox": sys.argv[2],
-                  "success_outcome": sys.argv[3], "repo": sys.argv[4],
-                  "handover": sys.argv[5] == "true"}))
+payload = {"instruction": sys.argv[1], "sandbox": sys.argv[2],
+           "success_outcome": sys.argv[3], "repo": sys.argv[4],
+           "handover": sys.argv[5] == "true"}
+# omitted rather than sent empty: the qwen gate rejects a blank mode with the
+# same refusal as a missing one, and an empty string in the run input would
+# read as "the operator chose this" in the ledger.
+if sys.argv[6]:
+    payload["mode"] = sys.argv[6]
+print(json.dumps(payload))
 PYEOF
   if [ -n "$category" ]; then
     out=$(NODES_OP_YES=1 "$0" create "$digest" "$wf.json" --category "$category")
@@ -385,7 +406,7 @@ PYEOF
     out=$(NODES_OP_YES=1 "$0" create "$digest" "$wf.json")
   fi
   run_id=$(echo "$out" | awk '{print $1}')
-  echo "assigned: run=$run_id actor=$actor sandbox=$sandbox timeout=$timeout${category:+ category=$category}${handover:+ handover=$handover}"
+  echo "assigned: run=$run_id actor=$actor sandbox=$sandbox${mode:+ mode=$mode} timeout=$timeout${category:+ category=$category}${handover:+ handover=$handover}"
   [ "$watch" = "1" ] && "$0" watch "$run_id"
   ;;
 actors)

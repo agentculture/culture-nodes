@@ -5,6 +5,64 @@ All notable changes to this project will be documented in this file.
 Format follows [Keep a Changelog](https://keepachangelog.com/). This project
 adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.42.0] - 2026-08-27
+
+### Added
+
+- `company/qwen-developer`: the `adapters/qwen` bridge is registered and
+  running as a real actor for the first time (spark:8092, qwen-code 0.22.0,
+  model `unsloth/Qwen3.8-27B-NVFP4`, 262144-token context), pinned to its own
+  worktree by exact-match allowlist. `nodes-op.sh` gains the matching actor
+  case, so `assign qwen-developer` works like any other lane.
+- `NODES_ACTOR_QWEN_TOKEN` in `deploy/prod/compose.thor.yml`, in both the
+  `api` and `worker` environment blocks.
+
+### Fixed
+
+- `NODES_ACTOR_QWEN_TOKEN` is classified `required` in
+  `deploy/prod/audit-credentials.sh`. Adding it to compose as an open default
+  (`${KEY:-}`) without classifying it made every thor credential audit warn
+  that the key was unclassified and then fail the deployment as incomplete —
+  which is what the `go` job's four `TestAudit*` failures were. The actor
+  cannot dispatch without the bearer, so `required` is the honest class.
+- **The qwen bridge could not execute a single dispatch** (#227). `server.py`
+  never read `input.mode` and `async_runner` never forwarded it to
+  `qwen_cli.spawn`, so every invocation reached the ACP mode gate with the
+  empty string and was refused. Both ends of the wire were built — `spawn`
+  accepted a `mode=` kwarg, `build_argv` emitted `--mode`, the gate validated
+  it — and the two links between them were not. `mode` is now read, validated
+  against `ACP_MODES` at the input boundary, and threaded through both the
+  sync and async paths. Absence is refused with a legible 400 rather than
+  defaulted: h15's posture moved to the boundary.
+- **An ACP policy refusal keeps its message on the async path** (#225). The
+  driver writes its reason to stderr and exits `REFUSAL_EXIT_CODE`;
+  `run_sync` parsed that and `async_runner` never read stderr at all, so a
+  refusal arrived as the generic "killed, crashed, or timed out" execution
+  failure. stderr is now drained by a dedicated thread and a refusal is
+  reported as `actor_rejected_input` carrying the driver's own text.
+  `refusal_detail` is shared by both paths so they cannot drift about what a
+  refusal is.
+- Draining stderr also removes a latent deadlock: `spawn` opens it as a PIPE,
+  and an unread pipe has a finite kernel buffer — a session chatty enough on
+  stderr would have blocked the child while the runner waited on a stdout EOF
+  that could never arrive.
+- `deploy/prod/compose.orin.yml` was missing `NODES_ACTOR_NOTIFY_TOKEN` and
+  `NODES_ACTOR_QWEN_TOKEN`, both present on thor (#224). thor and orin run
+  workers on the same namespace, so whichever polled first decided whether a
+  dispatch authenticated; `company/notify-discord` had been in that split
+  state in production.
+- Nothing yet on the registration coupling itself: the compose additions
+  unblock these actors, they do not close #222. `register-actor.sh` still
+  accepts any `auth_token_env` name while three separate files enumerate that
+  list by hand.
+
+### Added (operator)
+
+- `nodes-op.sh assign --mode plan|default|auto-edit|auto`, and the matching
+  optional `mode` field in the assign workflow template. Without it, no
+  dispatch through the standard operator path could supply a mode even once
+  the bridge read one.
+
 ## [0.41.0] - 2026-08-27
 
 ### Added

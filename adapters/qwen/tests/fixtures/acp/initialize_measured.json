@@ -1,0 +1,48 @@
+{
+  "provenance": "qwen 0.22.0 ACP `initialize` response, measured 2026-08-23 (challenge probe2, /tmp/acp-probe2/probe2.py on spark) and re-pinned against the installed 0.22.0 bundle (the acpAgent initialize-response builder and buildAuthMethods under ~/.local/lib/qwen-code/lib/chunks): protocolVersion 1, agentInfo qwen-code 0.22.0, authMethods carrying the OPENAI_API_KEY env path (spec c20: the config source the capability surface names, without values), agentCapabilities.loadSession true (spec c17). The agentCapabilities._meta image-capability flag was not captured by the 2026-08-23 probes; it was re-measured 2026-08-25 by the h14 probe's own initialize (scripts/session_load_probe.py, same 0.22.0 on the same host) and is included as measured. The client request shown is what the bridge's first cut sends: it advertises NO fs or terminal client capabilities, because the frame's resolved v1 decision is the client-obligation contract - no fs/terminal handlers in the first cut (the 2026-08-23 measurements show qwen 0.22.0 runs its own tools in-process and sent none; the probe had advertised them defensively and measured the same agent response shape either way).",
+  "request": {
+    "jsonrpc": "2.0",
+    "id": 1,
+    "method": "initialize",
+    "params": {
+      "protocolVersion": 1,
+      "clientCapabilities": {
+        "fs": { "readTextFile": false, "writeTextFile": false },
+        "terminal": false
+      }
+    }
+  },
+  "response": {
+    "jsonrpc": "2.0",
+    "id": 1,
+    "result": {
+      "protocolVersion": 1,
+      "agentInfo": {
+        "name": "qwen-code",
+        "title": "Qwen Code",
+        "version": "0.22.0"
+      },
+      "authMethods": [
+        {
+          "id": "openai",
+          "name": "Use OpenAI API key",
+          "description": "Requires setting the `OPENAI_API_KEY` environment variable",
+          "_meta": { "type": "terminal", "args": ["--auth-type=openai"] }
+        }
+      ],
+      "agentCapabilities": {
+        "loadSession": true,
+        "promptCapabilities": { "image": true, "audio": true, "embeddedContext": true },
+        "sessionCapabilities": { "list": {}, "resume": {} },
+        "mcpCapabilities": { "sse": true, "http": true },
+        "_meta": {
+          "imageCapability": {
+            "autoHandlesWrongModel": true,
+            "maxBytes": 10380902,
+            "maxImagesPerTurn": 4
+          }
+        }
+      }
+    }
+  }
+}

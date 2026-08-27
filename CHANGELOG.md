@@ -5,6 +5,22 @@ All notable changes to this project will be documented in this file.
 Format follows [Keep a Changelog](https://keepachangelog.com/). This project
 adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.39.2] - 2026-08-27
+
+### Added
+
+- `tests/test_vendored_skill_diff.py` — the guard had no dedicated test. Pins both directions: a re-vendor with a ledger bump passes, and each way of *not* earning a pass fails separately (no bump, a bump on a different skill, a Notes-only edit).
+
+### Changed
+
+- `docs/skill-sources.md`: the re-sync procedure now states that the re-sync commit must advance the skill's `Last synced` cell and that CI enforces it — the page documented the copy steps but not what made the copy legal.
+
+### Fixed
+
+- **The vendored-skill guard no longer blocks the operation it recommends** (#212). `scripts/check-vendored-skill-diff.py` failed on *any* change under a skill declared vendored by `docs/skill-sources.md`, so a re-vendor — the exact remediation its own error message named — could never pass CI, and a vendored skill could not be updated through a PR at all. It now distinguishes a re-vendor from a local patch by the ledger: files under `.claude/skills/<name>/` may change in a commit range only if the same range advances that skill's `Last synced` cell. A first vendoring (no row at base) passes; editing the row's Notes cell is not a re-sync.
+- An unresolvable commit range now exits `2` with `error: could not diff <base>...<head>` instead of raising `CalledProcessError` and printing a traceback — "could not check" must not read as "checked and it is clean".
+- `tests/test_open_issue.py::test_vendored_skill_tree_is_untouched`'s work-tree assertion exempts an in-progress re-vendor via the guard's own `resynced_in_worktree()`, so the re-sync procedure in `docs/skill-sources.md` can be performed locally. The work tree and the commit range are judged by one rule with one implementation.
+
 ## [0.39.1] - 2026-08-20
 
 ### Fixed

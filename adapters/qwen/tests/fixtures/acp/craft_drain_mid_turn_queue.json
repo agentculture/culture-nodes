@@ -1,0 +1,17 @@
+{
+  "provenance": "The qwen-specific agent-to-client ext method measured twice on 2026-08-23 (probes 1 and 2): qwen's ACP agent sends `craft/drainMidTurnQueue` (id 0) mid-turn to drain a client-queued prompt; the only agent-to-client request observed in either probe (the frame's resolved v1 decision names it). The parameter `todoStopGuardWatchQueuedPrompt` is the bundle's legacy wire name (acpAgent source: 'Keep the legacy wire name for ACP host compatibility'). Answering it with an empty result lets the prompt complete normally - the lenient unknown-ext behavior the first cut implements (frame park v5: the real handler contract is unvalidated, so the bridge must not rely on mid-turn queueing).",
+  "request": {
+    "jsonrpc": "2.0",
+    "id": 0,
+    "method": "craft/drainMidTurnQueue",
+    "params": {
+      "sessionId": "8c9f1b2e-4a6d-4e7f-9b3c-1d2e3f4a5b6c",
+      "todoStopGuardWatchQueuedPrompt": true
+    }
+  },
+  "response": {
+    "jsonrpc": "2.0",
+    "id": 0,
+    "result": {}
+  }
+}

@@ -1,0 +1,57 @@
+{
+  "provenance": "Reconstruction of the FRESH-session shape measured 2026-08-25 (the h14 re-measurement, scripts/session_load_probe.py, a fresh non-scratch cwd on the same 0.22.0 as the committed tests/fixtures/acp/session_new_measured.json, whose own provenance records it): a FIFTH mode 'yolo' (Automatically approve all tools — the widest grant), a currentModelId carrying the provider suffix, and availableModels[0]._meta.contextLimit 262144 — so mode exposure, the model-id format, and the context-budget field are environment-dependent, not a stable agent contract. The four mode entries and the models block mirror the 2026-08-23 committed fixture field for field; the yolo entry and the suffix/contextLimit additions are the measured 2026-08-25 facts. The seam's mode POLICY vocabulary stays the four measured modes (qwen_cli.ACP_MODES): 'yolo' fails closed with a distinct refusal until h15 verifies the per-mode mapping live.",
+  "request": {
+    "jsonrpc": "2.0",
+    "id": 2,
+    "method": "session/new",
+    "params": { "cwd": "/tmp/acp-probe2", "mcpServers": [] }
+  },
+  "response": {
+    "jsonrpc": "2.0",
+    "id": 2,
+    "result": {
+      "sessionId": "probe-fresh-session",
+      "modes": {
+        "currentModeId": "auto",
+        "availableModes": [
+          {
+            "id": "plan",
+            "name": "Plan",
+            "description": "Analyze only, do not modify files or execute commands"
+          },
+          {
+            "id": "default",
+            "name": "Default",
+            "description": "Require approval for file edits or shell commands"
+          },
+          {
+            "id": "auto-edit",
+            "name": "Auto Edit",
+            "description": "Automatically approve file edits"
+          },
+          {
+            "id": "auto",
+            "name": "Auto",
+            "description": "LLM classifier auto-approves safe actions, blocks risky ones"
+          },
+          {
+            "id": "yolo",
+            "name": "YOLO",
+            "description": "Automatically approve all tools"
+          }
+        ]
+      },
+      "models": {
+        "currentModelId": "unsloth/Qwen3.8-27B-NVFP4(openai)",
+        "availableModels": [
+          {
+            "modelId": "unsloth/Qwen3.8-27B-NVFP4(openai)",
+            "name": "unsloth/Qwen3.8-27B-NVFP4",
+            "contextWindowSize": null,
+            "_meta": { "contextLimit": 262144 }
+          }
+        ]
+      }
+    }
+  }
+}

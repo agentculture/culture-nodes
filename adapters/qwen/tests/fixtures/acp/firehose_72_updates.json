@@ -1,0 +1,745 @@
+{
+ "provenance": "One simple qwen 0.22.0 ACP turn (the probe 1 'echo acp-probe-marker' prompt), reconstructed at the measured 2026-08-23 stream count of ~72 session/update notifications dominated by thought chunks (spec c21, challenge probes 1+2 stream counts). Per-notification shapes are the bundle's own: createTranscriptMessageUpdate (agent_thought_chunk / agent_message_chunk), the ACP SDK's zToolCall / zToolCallUpdate (status pending -> in_progress -> completed) and the measured usage_update (context-window used/size counters - NOT token counts). The agent-to-client craft/drainMidTurnQueue ext request (id 0, answered leniently with an empty result - see craft_drain_mid_turn_queue.json) is injected mid-stream after the 40th notification, as measured. The terminal response carries the measured _meta.qwen.branchPoint resume/branch handle (frame v1 resolution).",
+ "session_id": "8c9f1b2e-4a6d-4e7f-9b3c-1d2e3f4a5b6c",
+ "ext_request": {
+  "jsonrpc": "2.0",
+  "id": 0,
+  "method": "craft/drainMidTurnQueue",
+  "params": {
+   "sessionId": "8c9f1b2e-4a6d-4e7f-9b3c-1d2e3f4a5b6c",
+   "todoStopGuardWatchQueuedPrompt": true
+  }
+ },
+ "ext_after": 40,
+ "updates": [
+  {
+   "sessionUpdate": "agent_thought_chunk",
+   "content": {
+    "type": "text",
+    "text": "The user asked to run a shell command and report its output. (fragment 1)"
+   },
+   "_meta": {
+    "timestamp": "2026-08-23T19:35:02.500Z"
+   }
+  },
+  {
+   "sessionUpdate": "agent_thought_chunk",
+   "content": {
+    "type": "text",
+    "text": "The command is `echo acp-probe-marker` - a trivial probe, no files involved. (fragment 2)"
+   },
+   "_meta": {
+    "timestamp": "2026-08-23T19:35:02.750Z"
+   }
+  },
+  {
+   "sessionUpdate": "agent_thought_chunk",
+   "content": {
+    "type": "text",
+    "text": "I will use the shell tool for this. (fragment 3)"
+   },
+   "_meta": {
+    "timestamp": "2026-08-23T19:35:03.000Z"
+   }
+  },
+  {
+   "sessionUpdate": "agent_thought_chunk",
+   "content": {
+    "type": "text",
+    "text": "No approval mode concerns: this is a plain echo. (fragment 4)"
+   },
+   "_meta": {
+    "timestamp": "2026-08-23T19:35:03.250Z"
+   }
+  },
+  {
+   "sessionUpdate": "agent_thought_chunk",
+   "content": {
+    "type": "text",
+    "text": "Preparing the tool call now. (fragment 5)"
+   },
+   "_meta": {
+    "timestamp": "2026-08-23T19:35:03.500Z"
+   }
+  },
+  {
+   "sessionUpdate": "agent_thought_chunk",
+   "content": {
+    "type": "text",
+    "text": "The output should be the marker string itself. (fragment 6)"
+   },
+   "_meta": {
+    "timestamp": "2026-08-23T19:35:03.750Z"
+   }
+  },
+  {
+   "sessionUpdate": "agent_thought_chunk",
+   "content": {
+    "type": "text",
+    "text": "After the tool returns, I will summarize the result briefly. (fragment 7)"
+   },
+   "_meta": {
+    "timestamp": "2026-08-23T19:35:04.000Z"
+   }
+  },
+  {
+   "sessionUpdate": "agent_thought_chunk",
+   "content": {
+    "type": "text",
+    "text": "The user asked to run a shell command and report its output. (fragment 8)"
+   },
+   "_meta": {
+    "timestamp": "2026-08-23T19:35:04.250Z"
+   }
+  },
+  {
+   "sessionUpdate": "agent_thought_chunk",
+   "content": {
+    "type": "text",
+    "text": "The command is `echo acp-probe-marker` - a trivial probe, no files involved. (fragment 9)"
+   },
+   "_meta": {
+    "timestamp": "2026-08-23T19:35:04.500Z"
+   }
+  },
+  {
+   "sessionUpdate": "agent_thought_chunk",
+   "content": {
+    "type": "text",
+    "text": "I will use the shell tool for this. (fragment 10)"
+   },
+   "_meta": {
+    "timestamp": "2026-08-23T19:35:04.750Z"
+   }
+  },
+  {
+   "sessionUpdate": "agent_thought_chunk",
+   "content": {
+    "type": "text",
+    "text": "No approval mode concerns: this is a plain echo. (fragment 11)"
+   },
+   "_meta": {
+    "timestamp": "2026-08-23T19:35:05.000Z"
+   }
+  },
+  {
+   "sessionUpdate": "agent_thought_chunk",
+   "content": {
+    "type": "text",
+    "text": "Preparing the tool call now. (fragment 12)"
+   },
+   "_meta": {
+    "timestamp": "2026-08-23T19:35:05.250Z"
+   }
+  },
+  {
+   "sessionUpdate": "agent_thought_chunk",
+   "content": {
+    "type": "text",
+    "text": "The output should be the marker string itself. (fragment 13)"
+   },
+   "_meta": {
+    "timestamp": "2026-08-23T19:35:05.500Z"
+   }
+  },
+  {
+   "sessionUpdate": "agent_thought_chunk",
+   "content": {
+    "type": "text",
+    "text": "After the tool returns, I will summarize the result briefly. (fragment 14)"
+   },
+   "_meta": {
+    "timestamp": "2026-08-23T19:35:05.750Z"
+   }
+  },
+  {
+   "sessionUpdate": "agent_thought_chunk",
+   "content": {
+    "type": "text",
+    "text": "The user asked to run a shell command and report its output. (fragment 15)"
+   },
+   "_meta": {
+    "timestamp": "2026-08-23T19:35:06.000Z"
+   }
+  },
+  {
+   "sessionUpdate": "agent_thought_chunk",
+   "content": {
+    "type": "text",
+    "text": "The command is `echo acp-probe-marker` - a trivial probe, no files involved. (fragment 16)"
+   },
+   "_meta": {
+    "timestamp": "2026-08-23T19:35:06.250Z"
+   }
+  },
+  {
+   "sessionUpdate": "agent_thought_chunk",
+   "content": {
+    "type": "text",
+    "text": "I will use the shell tool for this. (fragment 17)"
+   },
+   "_meta": {
+    "timestamp": "2026-08-23T19:35:06.500Z"
+   }
+  },
+  {
+   "sessionUpdate": "agent_thought_chunk",
+   "content": {
+    "type": "text",
+    "text": "No approval mode concerns: this is a plain echo. (fragment 18)"
+   },
+   "_meta": {
+    "timestamp": "2026-08-23T19:35:06.750Z"
+   }
+  },
+  {
+   "sessionUpdate": "agent_thought_chunk",
+   "content": {
+    "type": "text",
+    "text": "Preparing the tool call now. (fragment 19)"
+   },
+   "_meta": {
+    "timestamp": "2026-08-23T19:35:07.000Z"
+   }
+  },
+  {
+   "sessionUpdate": "agent_thought_chunk",
+   "content": {
+    "type": "text",
+    "text": "The output should be the marker string itself. (fragment 20)"
+   },
+   "_meta": {
+    "timestamp": "2026-08-23T19:35:07.250Z"
+   }
+  },
+  {
+   "sessionUpdate": "agent_thought_chunk",
+   "content": {
+    "type": "text",
+    "text": "After the tool returns, I will summarize the result briefly. (fragment 21)"
+   },
+   "_meta": {
+    "timestamp": "2026-08-23T19:35:07.500Z"
+   }
+  },
+  {
+   "sessionUpdate": "agent_thought_chunk",
+   "content": {
+    "type": "text",
+    "text": "The user asked to run a shell command and report its output. (fragment 22)"
+   },
+   "_meta": {
+    "timestamp": "2026-08-23T19:35:07.750Z"
+   }
+  },
+  {
+   "sessionUpdate": "agent_thought_chunk",
+   "content": {
+    "type": "text",
+    "text": "The command is `echo acp-probe-marker` - a trivial probe, no files involved. (fragment 23)"
+   },
+   "_meta": {
+    "timestamp": "2026-08-23T19:35:08.000Z"
+   }
+  },
+  {
+   "sessionUpdate": "agent_thought_chunk",
+   "content": {
+    "type": "text",
+    "text": "I will use the shell tool for this. (fragment 24)"
+   },
+   "_meta": {
+    "timestamp": "2026-08-23T19:35:08.250Z"
+   }
+  },
+  {
+   "sessionUpdate": "agent_thought_chunk",
+   "content": {
+    "type": "text",
+    "text": "No approval mode concerns: this is a plain echo. (fragment 25)"
+   },
+   "_meta": {
+    "timestamp": "2026-08-23T19:35:08.500Z"
+   }
+  },
+  {
+   "sessionUpdate": "agent_thought_chunk",
+   "content": {
+    "type": "text",
+    "text": "Preparing the tool call now. (fragment 26)"
+   },
+   "_meta": {
+    "timestamp": "2026-08-23T19:35:08.750Z"
+   }
+  },
+  {
+   "sessionUpdate": "agent_thought_chunk",
+   "content": {
+    "type": "text",
+    "text": "The output should be the marker string itself. (fragment 27)"
+   },
+   "_meta": {
+    "timestamp": "2026-08-23T19:35:09.000Z"
+   }
+  },
+  {
+   "sessionUpdate": "agent_thought_chunk",
+   "content": {
+    "type": "text",
+    "text": "After the tool returns, I will summarize the result briefly. (fragment 28)"
+   },
+   "_meta": {
+    "timestamp": "2026-08-23T19:35:09.250Z"
+   }
+  },
+  {
+   "sessionUpdate": "tool_call",
+   "toolCallId": "call_9f3c2a1b4e5d",
+   "title": "echo acp-probe-marker",
+   "kind": "execute",
+   "status": "pending",
+   "rawInput": {
+    "command": "echo acp-probe-marker",
+    "description": "Run the probe marker command"
+   }
+  },
+  {
+   "sessionUpdate": "tool_call_update",
+   "toolCallId": "call_9f3c2a1b4e5d",
+   "status": "in_progress",
+   "_meta": {
+    "toolName": "run_shell"
+   }
+  },
+  {
+   "sessionUpdate": "tool_call_update",
+   "toolCallId": "call_9f3c2a1b4e5d",
+   "status": "completed",
+   "content": [
+    {
+     "type": "content",
+     "content": {
+      "type": "text",
+      "text": "acp-probe-marker\n"
+     }
+    }
+   ]
+  },
+  {
+   "sessionUpdate": "agent_thought_chunk",
+   "content": {
+    "type": "text",
+    "text": "The user asked to run a shell command and report its output. (fragment 29)"
+   },
+   "_meta": {
+    "timestamp": "2026-08-23T19:35:09.500Z"
+   }
+  },
+  {
+   "sessionUpdate": "agent_thought_chunk",
+   "content": {
+    "type": "text",
+    "text": "The command is `echo acp-probe-marker` - a trivial probe, no files involved. (fragment 30)"
+   },
+   "_meta": {
+    "timestamp": "2026-08-23T19:35:09.750Z"
+   }
+  },
+  {
+   "sessionUpdate": "agent_thought_chunk",
+   "content": {
+    "type": "text",
+    "text": "I will use the shell tool for this. (fragment 31)"
+   },
+   "_meta": {
+    "timestamp": "2026-08-23T19:35:10.000Z"
+   }
+  },
+  {
+   "sessionUpdate": "agent_thought_chunk",
+   "content": {
+    "type": "text",
+    "text": "No approval mode concerns: this is a plain echo. (fragment 32)"
+   },
+   "_meta": {
+    "timestamp": "2026-08-23T19:35:10.250Z"
+   }
+  },
+  {
+   "sessionUpdate": "agent_thought_chunk",
+   "content": {
+    "type": "text",
+    "text": "Preparing the tool call now. (fragment 33)"
+   },
+   "_meta": {
+    "timestamp": "2026-08-23T19:35:10.500Z"
+   }
+  },
+  {
+   "sessionUpdate": "agent_thought_chunk",
+   "content": {
+    "type": "text",
+    "text": "The output should be the marker string itself. (fragment 34)"
+   },
+   "_meta": {
+    "timestamp": "2026-08-23T19:35:10.750Z"
+   }
+  },
+  {
+   "sessionUpdate": "agent_thought_chunk",
+   "content": {
+    "type": "text",
+    "text": "After the tool returns, I will summarize the result briefly. (fragment 35)"
+   },
+   "_meta": {
+    "timestamp": "2026-08-23T19:35:11.000Z"
+   }
+  },
+  {
+   "sessionUpdate": "agent_thought_chunk",
+   "content": {
+    "type": "text",
+    "text": "The user asked to run a shell command and report its output. (fragment 36)"
+   },
+   "_meta": {
+    "timestamp": "2026-08-23T19:35:11.250Z"
+   }
+  },
+  {
+   "sessionUpdate": "agent_thought_chunk",
+   "content": {
+    "type": "text",
+    "text": "The command is `echo acp-probe-marker` - a trivial probe, no files involved. (fragment 37)"
+   },
+   "_meta": {
+    "timestamp": "2026-08-23T19:35:11.500Z"
+   }
+  },
+  {
+   "sessionUpdate": "agent_thought_chunk",
+   "content": {
+    "type": "text",
+    "text": "I will use the shell tool for this. (fragment 38)"
+   },
+   "_meta": {
+    "timestamp": "2026-08-23T19:35:11.750Z"
+   }
+  },
+  {
+   "sessionUpdate": "agent_thought_chunk",
+   "content": {
+    "type": "text",
+    "text": "No approval mode concerns: this is a plain echo. (fragment 39)"
+   },
+   "_meta": {
+    "timestamp": "2026-08-23T19:35:12.000Z"
+   }
+  },
+  {
+   "sessionUpdate": "agent_thought_chunk",
+   "content": {
+    "type": "text",
+    "text": "Preparing the tool call now. (fragment 40)"
+   },
+   "_meta": {
+    "timestamp": "2026-08-23T19:35:12.250Z"
+   }
+  },
+  {
+   "sessionUpdate": "agent_thought_chunk",
+   "content": {
+    "type": "text",
+    "text": "The output should be the marker string itself. (fragment 41)"
+   },
+   "_meta": {
+    "timestamp": "2026-08-23T19:35:12.500Z"
+   }
+  },
+  {
+   "sessionUpdate": "agent_thought_chunk",
+   "content": {
+    "type": "text",
+    "text": "After the tool returns, I will summarize the result briefly. (fragment 42)"
+   },
+   "_meta": {
+    "timestamp": "2026-08-23T19:35:12.750Z"
+   }
+  },
+  {
+   "sessionUpdate": "agent_thought_chunk",
+   "content": {
+    "type": "text",
+    "text": "The user asked to run a shell command and report its output. (fragment 43)"
+   },
+   "_meta": {
+    "timestamp": "2026-08-23T19:35:13.000Z"
+   }
+  },
+  {
+   "sessionUpdate": "agent_thought_chunk",
+   "content": {
+    "type": "text",
+    "text": "The command is `echo acp-probe-marker` - a trivial probe, no files involved. (fragment 44)"
+   },
+   "_meta": {
+    "timestamp": "2026-08-23T19:35:13.250Z"
+   }
+  },
+  {
+   "sessionUpdate": "agent_thought_chunk",
+   "content": {
+    "type": "text",
+    "text": "I will use the shell tool for this. (fragment 45)"
+   },
+   "_meta": {
+    "timestamp": "2026-08-23T19:35:13.500Z"
+   }
+  },
+  {
+   "sessionUpdate": "agent_thought_chunk",
+   "content": {
+    "type": "text",
+    "text": "No approval mode concerns: this is a plain echo. (fragment 46)"
+   },
+   "_meta": {
+    "timestamp": "2026-08-23T19:35:13.750Z"
+   }
+  },
+  {
+   "sessionUpdate": "agent_thought_chunk",
+   "content": {
+    "type": "text",
+    "text": "Preparing the tool call now. (fragment 47)"
+   },
+   "_meta": {
+    "timestamp": "2026-08-23T19:35:14.000Z"
+   }
+  },
+  {
+   "sessionUpdate": "agent_thought_chunk",
+   "content": {
+    "type": "text",
+    "text": "The output should be the marker string itself. (fragment 48)"
+   },
+   "_meta": {
+    "timestamp": "2026-08-23T19:35:14.250Z"
+   }
+  },
+  {
+   "sessionUpdate": "agent_thought_chunk",
+   "content": {
+    "type": "text",
+    "text": "After the tool returns, I will summarize the result briefly. (fragment 49)"
+   },
+   "_meta": {
+    "timestamp": "2026-08-23T19:35:14.500Z"
+   }
+  },
+  {
+   "sessionUpdate": "agent_thought_chunk",
+   "content": {
+    "type": "text",
+    "text": "The user asked to run a shell command and report its output. (fragment 50)"
+   },
+   "_meta": {
+    "timestamp": "2026-08-23T19:35:14.750Z"
+   }
+  },
+  {
+   "sessionUpdate": "agent_thought_chunk",
+   "content": {
+    "type": "text",
+    "text": "The command is `echo acp-probe-marker` - a trivial probe, no files involved. (fragment 51)"
+   },
+   "_meta": {
+    "timestamp": "2026-08-23T19:35:15.000Z"
+   }
+  },
+  {
+   "sessionUpdate": "agent_thought_chunk",
+   "content": {
+    "type": "text",
+    "text": "I will use the shell tool for this. (fragment 52)"
+   },
+   "_meta": {
+    "timestamp": "2026-08-23T19:35:15.250Z"
+   }
+  },
+  {
+   "sessionUpdate": "agent_thought_chunk",
+   "content": {
+    "type": "text",
+    "text": "No approval mode concerns: this is a plain echo. (fragment 53)"
+   },
+   "_meta": {
+    "timestamp": "2026-08-23T19:35:15.500Z"
+   }
+  },
+  {
+   "sessionUpdate": "agent_thought_chunk",
+   "content": {
+    "type": "text",
+    "text": "Preparing the tool call now. (fragment 54)"
+   },
+   "_meta": {
+    "timestamp": "2026-08-23T19:35:15.750Z"
+   }
+  },
+  {
+   "sessionUpdate": "agent_thought_chunk",
+   "content": {
+    "type": "text",
+    "text": "The output should be the marker string itself. (fragment 55)"
+   },
+   "_meta": {
+    "timestamp": "2026-08-23T19:35:16.000Z"
+   }
+  },
+  {
+   "sessionUpdate": "agent_thought_chunk",
+   "content": {
+    "type": "text",
+    "text": "After the tool returns, I will summarize the result briefly. (fragment 56)"
+   },
+   "_meta": {
+    "timestamp": "2026-08-23T19:35:16.250Z"
+   }
+  },
+  {
+   "sessionUpdate": "agent_thought_chunk",
+   "content": {
+    "type": "text",
+    "text": "The user asked to run a shell command and report its output. (fragment 57)"
+   },
+   "_meta": {
+    "timestamp": "2026-08-23T19:35:16.500Z"
+   }
+  },
+  {
+   "sessionUpdate": "agent_thought_chunk",
+   "content": {
+    "type": "text",
+    "text": "The command is `echo acp-probe-marker` - a trivial probe, no files involved. (fragment 58)"
+   },
+   "_meta": {
+    "timestamp": "2026-08-23T19:35:16.750Z"
+   }
+  },
+  {
+   "sessionUpdate": "agent_thought_chunk",
+   "content": {
+    "type": "text",
+    "text": "I will use the shell tool for this. (fragment 59)"
+   },
+   "_meta": {
+    "timestamp": "2026-08-23T19:35:17.000Z"
+   }
+  },
+  {
+   "sessionUpdate": "agent_thought_chunk",
+   "content": {
+    "type": "text",
+    "text": "No approval mode concerns: this is a plain echo. (fragment 60)"
+   },
+   "_meta": {
+    "timestamp": "2026-08-23T19:35:17.250Z"
+   }
+  },
+  {
+   "sessionUpdate": "agent_message_chunk",
+   "content": {
+    "type": "text",
+    "text": "The comm"
+   },
+   "_meta": {
+    "timestamp": "2026-08-23T19:35:18.000Z"
+   }
+  },
+  {
+   "sessionUpdate": "agent_message_chunk",
+   "content": {
+    "type": "text",
+    "text": "and ran "
+   },
+   "_meta": {
+    "timestamp": "2026-08-23T19:35:18.250Z"
+   }
+  },
+  {
+   "sessionUpdate": "agent_message_chunk",
+   "content": {
+    "type": "text",
+    "text": "successf"
+   },
+   "_meta": {
+    "timestamp": "2026-08-23T19:35:18.500Z"
+   }
+  },
+  {
+   "sessionUpdate": "agent_message_chunk",
+   "content": {
+    "type": "text",
+    "text": "ully. Ou"
+   },
+   "_meta": {
+    "timestamp": "2026-08-23T19:35:18.750Z"
+   }
+  },
+  {
+   "sessionUpdate": "agent_message_chunk",
+   "content": {
+    "type": "text",
+    "text": "tput:\n``"
+   },
+   "_meta": {
+    "timestamp": "2026-08-23T19:35:19.000Z"
+   }
+  },
+  {
+   "sessionUpdate": "agent_message_chunk",
+   "content": {
+    "type": "text",
+    "text": "`\nacp-pr"
+   },
+   "_meta": {
+    "timestamp": "2026-08-23T19:35:19.250Z"
+   }
+  },
+  {
+   "sessionUpdate": "agent_message_chunk",
+   "content": {
+    "type": "text",
+    "text": "obe-mark"
+   },
+   "_meta": {
+    "timestamp": "2026-08-23T19:35:19.500Z"
+   }
+  },
+  {
+   "sessionUpdate": "agent_message_chunk",
+   "content": {
+    "type": "text",
+    "text": "er\n```\n"
+   },
+   "_meta": {
+    "timestamp": "2026-08-23T19:35:19.750Z"
+   }
+  },
+  {
+   "sessionUpdate": "usage_update",
+   "used": 9842,
+   "size": 32768
+  }
+ ],
+ "terminal": {
+  "result": {
+   "stopReason": "end_turn",
+   "_meta": {
+    "qwen.branchPoint": {
+     "assistantRecordUuid": "c1a2b3c4-d5e6-4f70-8192-a3b4c5d6e7f8",
+     "checkpointUuid": "f8e7d6c5-b4a3-2198-0817-654321fedcba"
+    }
+   }
+  }
+ }
+}

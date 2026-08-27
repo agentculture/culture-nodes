@@ -302,6 +302,18 @@ def dispositions(path: Path) -> dict[int, dict[str, str]]:
         raise ValueError(f"{path}: expected columns {sorted(required)}")
     result: dict[int, dict[str, str]] = {}
     for line, row in enumerate(rows, 2):
+        # A row with the wrong field count is a REFUSAL, not a warning. Only the
+        # header was checked before, so an unquoted comma inside a disposition
+        # silently shifted every later field left -- the evidence pointer became
+        # a fragment of the disposition, the tail was dropped under DictReader's
+        # restkey, and the generated table rendered a plausible-looking wrong
+        # row that --check then approved. A malformed row must not be able to
+        # produce an accurate-looking disposition (#215).
+        if None in row or any(value is None for value in row.values()):
+            raise ValueError(
+                f"{path}:{line}: expected exactly {len(required)} fields; a value "
+                "containing a comma must be quoted"
+            )
         issue = int(row["issue"])
         if issue in result:
             raise ValueError(f"{path}:{line}: duplicate issue #{issue}")

@@ -117,7 +117,7 @@ issue,bucket,disposition,evidence_pointer
 198,finish work,"engine-driven start/finish reports on the originating ticket specced as c9/h5 of the same spec (start: run id + workflow + trigger event id; finish: terminal outcome; between-sweeps safe); close on a live prod run showing both comments",issue #198 body + docs/specs/2026-08-19-jira-operating-surface-flow-store.md
 199,large bets,"Jira-driven /think: ticket facts mint the spec chain and frame decisions round-trip as marked ticket questions (confirmations stay human); design through its own devague chain after this cycle's plan lands - today's lane ran through the operator session five polled go-signals",issue #199 body + examples/spec-chain/workflow.yaml + SCRUM-3 comments 10109-10120
 200,finish work,"deterministic HTML reflection of the frame/spec posted and updated in place on the ticket from intake until PR merge; lands with the #198/#199 board-visibility work; close on a ticket carrying the final spec page",issue #200 body + SCRUM-3 comment 10114
-202,bug tail,"declare ledger.propose [claim] on pr-upkeep's fix node (and/or make the bridge's claim_record conditional on node capability), give contract_rejected a routed edge, and add the trigger-seam per-subject failure breaker; close on a green fix run that lands work AND completes",issue #202 body (4 failed runs on PR #201, engine contract.rejected events, mapping.py:516/:593)
+202,bug tail,"declare ledger.propose [claim] on pr-upkeep's fix node (and/or make the bridge's claim_record conditional on node capability), give contract_rejected a routed edge, and add the trigger-seam per-subject failure breaker; close on a green fix run that lands work AND completes","issue #202 body (4 failed runs on PR #201, engine contract.rejected events, mapping.py:516/:593)"
 203,finish work,run the flow-store build cycle to its final PR then close on the delivery record,issue #203
 204,owner decisions,scope the lane-tag model against the actor registry and #48/#28 surfaces,issue #204
 205,bug tail,name the 401 cause then fix the credential or disable dial-in with a recorded decision,issue #205
@@ -125,3 +125,4 @@ issue,bucket,disposition,evidence_pointer
 207,bug tail,fix the boundary to measure committed diff vs base; #204 lane tags remove in-session base moves,issue #207
 211,verify-then-close,verify the ask-colleague 1.63.0 re-vendor in #210 and close with it,PR #210
 212,finish work,make the vendored-skill guard ledger-keyed so a re-vendor can land; unblocks #210,issue #212
+214,owner decisions,"decide the #213 bundling, .qwen/ tracking, and whether t5-t8 are re-planned or dropped",issue #214

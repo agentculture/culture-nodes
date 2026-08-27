@@ -5,6 +5,14 @@ All notable changes to this project will be documented in this file.
 Format follows [Keep a Changelog](https://keepachangelog.com/). This project
 adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.40.1] - 2026-08-27
+
+### Fixed
+
+- `docs/triage/open-issues.md` regenerated — it went stale on `main` when #212 closed and #214 opened, failing the lint job's `triage` step. Adds the disposition row for #214 (the `qwen-bridge-acp` focus-treat issue).
+- `scripts/triage-report.py` refuses a dispositions row with the wrong field count instead of silently truncating it. Only the header's column set was validated, so an unquoted comma inside a disposition shifted every later field left — the evidence pointer became a fragment of the disposition and the tail vanished under `csv.DictReader`'s restkey, producing a plausible-looking wrong table that `--check` then approved.
+- Two corrupted rows in `docs/triage/dispositions.csv` found by that check: #214's disposition (added in this PR, caught by qodo on the PR) and #202's evidence pointer, which had been rendering truncated at `issue #202 body (4 failed runs on PR #201` since it was written.
+
 ## [0.40.0] - 2026-08-24
 
 ### Added

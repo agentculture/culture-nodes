@@ -322,7 +322,7 @@ print(d.get("id", ""), d.get("authority", ""), origin.get("kind", ""),
       "rating=" + str(data.get("rating", "")), "actor=" + str(data.get("evaluated_actor_id", "")))'
   ;;
 assign)
-  actor="${1:?usage: assign <codex-thor|codex-orin|developer|planner|verifier|intake> \"instruction\" [opts]}"; shift
+  actor="${1:?usage: assign <codex-thor|codex-orin|developer|planner|verifier|intake|qwen-developer> \"instruction\" [opts]}"; shift
   instruction="${1:?assign needs an instruction}"; shift
   sandbox=read-only; timeout=15m; retries=1; outcome=completed; watch=1; category=""; repo_override=""; handover=false; mode=""
   while [ $# -gt 0 ]; do

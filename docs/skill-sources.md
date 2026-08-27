@@ -73,6 +73,20 @@ If a re-sync would lose a culture-nodes adaptation, lift the change
 upstream into guildmaster first (per guildmaster's `docs/skill-sources.md`) and
 re-vendor.
 
+**The re-sync commit must advance that skill's `Last synced` cell in the table
+above, and CI enforces it.** `scripts/check-vendored-skill-diff.py` (the lint
+job's `vendored-skills` step, and `tests/test_vendored_skill_diff.py`) allows
+files under `.claude/skills/<name>/` to change in a commit range only when the
+same range advances `<name>`'s sync cell. That is what distinguishes the two
+operations this document describes: a **re-vendor** advances the ledger, a
+**local edit** does not — and a local edit to a vendored skill is not allowed at
+all. Editing the row's Notes cell is not a re-sync; only the sync cell counts.
+
+The guard used to refuse *any* change under a vendored skill, which made the
+re-sync procedure on this page impossible to perform through a PR while its own
+error message told you to perform it (#212). Adding a skill to the table in the
+same commit as its files is a first vendoring and passes.
+
 ### Local divergence — `agex` → `devex` rename (2026-05-30)
 
 The PR-lifecycle CLI was renamed `agex` → `devex` (same tool, new name). The

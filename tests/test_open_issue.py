@@ -273,11 +273,15 @@ def _vendored_skill_prefixes():
     `scripts/check-vendored-skill-diff.py` is the parser of record — loading
     it means this test cannot disagree with the lint job about the set.
     """
+    return _guard_module().vendored_paths()
+
+
+def _guard_module():
     guard = ROOT / "scripts" / "check-vendored-skill-diff.py"
     spec = importlib.util.spec_from_file_location("check_vendored_skill_diff", guard)
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)
-    return module.vendored_paths()
+    return module
 
 
 def test_vendored_skill_tree_is_untouched():
@@ -293,10 +297,18 @@ def test_vendored_skill_tree_is_untouched():
         capture_output=True,
         timeout=60,
     )
+    # An in-progress re-vendor is exempt, by the SAME rule the range check
+    # below applies to commits: the ledger row for that skill has advanced in
+    # the work tree. Without this, the re-sync procedure documented in
+    # docs/skill-sources.md could not be performed locally (#212).
+    resynced = _guard_module().resynced_in_worktree()
+    exempt = tuple(f".claude/skills/{name}/" for name in resynced)
     touched = [
-        line for line in dirty.stdout.splitlines() if any(prefix in line for prefix in prefixes)
+        line
+        for line in dirty.stdout.splitlines()
+        if any(prefix in line for prefix in prefixes) and not any(p in line for p in exempt)
     ]
-    assert touched == [], f"vendored skill files modified: {touched}"
+    assert touched == [], f"vendored skill files modified without a ledger sync: {touched}"
 
     base = subprocess.run(  # nosec B603 - fixed argv, no shell
         ["git", "merge-base", "HEAD", "origin/main"],

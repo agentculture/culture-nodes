@@ -5,6 +5,12 @@ All notable changes to this project will be documented in this file.
 Format follows [Keep a Changelog](https://keepachangelog.com/). This project
 adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.40.1] - 2026-08-27
+
+### Fixed
+
+- `docs/triage/open-issues.md` regenerated — it went stale on `main` when #212 closed and #214 opened, failing the lint job's `triage` step. Adds the disposition row for #214 (the `qwen-bridge-acp` focus-treat issue).
+
 ## [0.40.0] - 2026-08-24
 
 ### Added

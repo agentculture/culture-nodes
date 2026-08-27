@@ -5,6 +5,18 @@ All notable changes to this project will be documented in this file.
 Format follows [Keep a Changelog](https://keepachangelog.com/). This project
 adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.42.1] - 2026-08-27
+
+### Added
+
+- `adapters/qwen/README.md` is the real thing instead of a placeholder pointing
+  at an unstarted task (#214 t7): trust model, the ACP seam, the
+  invocation-input table, the build+run runbook, and the four-place actor-token
+  registration ritual that #222 and #224 are both about. The bridge is parked,
+  so the README's job is to make reigniting it possible without re-deriving
+  what the first dispatch cost to learn — including that h15's live check is
+  already satisfied, and that #228 is the blocker to answer first.
+
 ## [0.42.0] - 2026-08-27
 
 ### Added

@@ -59,6 +59,21 @@ def _row_name(line: str) -> str | None:
     return match.group(1) if match else None
 
 
+# A vendored skill's files live under one of these roots, per agent surface.
+# `.claude/` is the Claude backend's kit; `.qwen/` is the qwen surface's, whose
+# SKILL.md files are deliberately adapted but whose scripts/ bodies are
+# byte-identical copies of the same vendored originals. A copy the guard does
+# not know about is a copy that can be edited or go stale silently, which is
+# what the ledger exists to prevent -- so both roots are protected by the same
+# ledger row.
+SKILL_ROOTS = (".claude/skills/", ".qwen/skills/")
+
+
+def skill_prefixes(names: set[str]) -> set[str]:
+    """Every guarded path prefix for the given skill names, across all roots."""
+    return {f"{root}{name}/" for root in SKILL_ROOTS for name in names}
+
+
 def skill_names(text: str) -> set[str]:
     """Every skill name the given ledger body declares vendored.
 
@@ -80,7 +95,7 @@ def vendored_paths() -> set[str]:
     names = skill_names(SOURCES.read_text(encoding="utf-8"))
     if not names:
         raise SystemExit(f"no vendored skills parsed from {SOURCES_REL}")
-    return {f".claude/skills/{name}/" for name in names}
+    return skill_prefixes(names)
 
 
 def ledger_rows(text: str) -> dict[str, str]:
@@ -142,8 +157,21 @@ def resynced_in_worktree() -> set[str]:
 
 
 def _skill_of(path: str) -> str:
-    # Every violating path starts with `.claude/skills/<name>/`.
+    # Every violating path starts with `<root>/skills/<name>/`.
     return path.split("/")[2]
+
+
+def _root_of(path: str) -> str:
+    for root in SKILL_ROOTS:
+        if path.startswith(root):
+            return root
+    raise AssertionError(f"path outside every skill root: {path}")
+
+
+def _existed_at(rev: str, prefix: str) -> bool:
+    """Did any tracked file live under `prefix` at `rev`?"""
+    listed = _git("ls-tree", "-r", "--name-only", rev, "--", prefix)
+    return listed.returncode == 0 and bool(listed.stdout.strip())
 
 
 def main() -> int:
@@ -168,7 +196,7 @@ def main() -> int:
     base_ledger, head_ledger = _ledger_at(base), _ledger_at(head)
     base_rows = ledger_rows(base_ledger) if base_ledger is not None else {}
     head_rows = ledger_rows(head_ledger) if head_ledger is not None else {}
-    prefixes = {f".claude/skills/{name}/" for name in set(base_rows) | set(head_rows)}
+    prefixes = skill_prefixes(set(base_rows) | set(head_rows))
     if not prefixes:
         print(
             f"error: no vendored skills declared by {SOURCES_REL} at either {base} or {head}",
@@ -189,12 +217,22 @@ def main() -> int:
     unsynced: dict[str, list[str]] = {}
     resynced: set[str] = set()
     unvendored: set[str] = set()
+    first_copy: set[str] = set()
     for path in touched:
         skill = _skill_of(path)
+        root = _root_of(path)
         if skill not in base_rows:
             # No row at base: this range is the skill's FIRST vendoring, and
             # its files arrive with it.
             resynced.add(skill)
+        elif not _existed_at(base, f"{root}{skill}/"):
+            # The row exists, but this ROOT had no copy of the skill at base:
+            # a surface is gaining its first copy. That is a new copy, not an
+            # edit to an existing one, so there is no sync to advance -- the
+            # ledger row already declares the skill vendored and now governs
+            # this root too. Byte-identity of any shared script bodies is a
+            # separate check (tests/test_qwen_skill_surface.py).
+            first_copy.add(f"{root}{skill}")
         elif skill not in head_rows:
             # The row was REMOVED. The skill stops being vendored, so its files
             # are free -- but say so, because the diff of the ledger is the only
@@ -231,6 +269,8 @@ def main() -> int:
         notes.append(f"re-vendored with a ledger sync: {', '.join(sorted(resynced))}")
     if unvendored:
         notes.append(f"un-vendored (ledger row removed): {', '.join(sorted(unvendored))}")
+    if first_copy:
+        notes.append(f"first copy under a new skill root: {', '.join(sorted(first_copy))}")
     print(f"ok: {len(changed)} changed path(s); " + "; ".join(notes))
     return 0
 

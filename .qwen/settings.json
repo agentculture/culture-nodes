@@ -1,0 +1,20 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(touch *)",
+      "Bash(uv *)",
+      "Bash(sed *)",
+      "Bash(go *)",
+      "Bash(cd *)",
+      "Bash(tail *)",
+      "Bash(echo *)",
+      "Bash(ls *)",
+      "Bash(wc *)",
+      "Bash(grep *)",
+      "Bash(which *)",
+      "Bash(find *)",
+      "Bash(python3 *)"
+    ]
+  },
+  "$version": 4
+}

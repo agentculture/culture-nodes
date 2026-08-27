@@ -289,9 +289,15 @@ def test_vendored_skill_tree_is_untouched():
     assert SCRIPT.exists()
     assert not (ROOT / ".claude" / "skills" / "communicate" / "scripts" / "open-issue.sh").exists()
 
+    guard = _guard_module()
     prefixes = _vendored_skill_prefixes()
+    # Ask git about EVERY skill root the guard protects, not just `.claude`.
+    # Hardcoding one root here while SKILL_ROOTS declared two meant an
+    # uncommitted edit to a tracked `.qwen` vendored file never appeared in
+    # this status output and sailed past the work-tree check -- the guard said
+    # the path was protected and the test never looked at it.
     dirty = subprocess.run(  # nosec B603 - fixed argv, no shell
-        ["git", "status", "--porcelain", "--", ".claude/skills"],
+        ["git", "status", "--porcelain", "--", *guard.SKILL_ROOTS],
         cwd=str(ROOT),
         text=True,
         capture_output=True,
@@ -300,9 +306,9 @@ def test_vendored_skill_tree_is_untouched():
     # An in-progress re-vendor is exempt, by the SAME rule the range check
     # below applies to commits: the ledger row for that skill has advanced in
     # the work tree. Without this, the re-sync procedure documented in
-    # docs/skill-sources.md could not be performed locally (#212).
-    resynced = _guard_module().resynced_in_worktree()
-    exempt = tuple(f".claude/skills/{name}/" for name in resynced)
+    # docs/skill-sources.md could not be performed locally (#212). The exempt
+    # set comes from the guard's own helper so it covers every root too.
+    exempt = tuple(guard.skill_prefixes(guard.resynced_in_worktree()))
     touched = [
         line
         for line in dirty.stdout.splitlines()

@@ -5,6 +5,25 @@ All notable changes to this project will be documented in this file.
 Format follows [Keep a Changelog](https://keepachangelog.com/). This project
 adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.41.0] - 2026-08-27
+
+### Added
+
+- `tests/test_qwen_skill_surface.py` records the three CLI-forwarding wrappers the qwen surface deliberately does not carry (`think`, `spec-to-plan`, `assign-to-workforce`), with two staleness guards: a recorded absence that reappears fails, and a recorded absence naming no `.claude/skills` script fails. An *unrecorded* one-sided absence fails outright.
+
+- **`.qwen/` is tracked** — the qwen backend's skill surface (9 skills + `settings.json`) is now in the repo instead of existing on one operator's disk. `docs/skill-sources.md` gains a "The `.qwen/` surface" section explaining what is adapted per surface (`SKILL.md`, with a `<!-- lineage: -->` comment recording the claude → colleague → qwen chain) and what must never be (`scripts/*.sh`, byte-identical copies of the same vendored bodies).
+- `tests/test_qwen_skill_surface.py` — pins byte-identity of every `scripts/*.sh` across the two skill roots, so re-vendoring one surface and not the other is a red test rather than a silent divergence; also pins the lineage comments and the single-H1 shape.
+
+### Changed
+
+- `scripts/check-vendored-skill-diff.py` guards **both** skill roots. Prefixes are built from a new `SKILL_ROOTS` constant, so a change under `.qwen/skills/<name>/` needs the same ledger sync as one under `.claude/skills/<name>/` — one ledger row governs every surface's copy of a vendored skill. A surface gaining its *first* copy of an already-declared skill is a new copy rather than an unsynced edit, so it passes and is named (`first copy under a new skill root: …`); once the copy exists, editing it needs a ledger sync like any other.
+
+### Fixed
+
+- **The work-tree check only looked at one skill root** (qodo, PR #219). `tests/test_open_issue.py::test_vendored_skill_tree_is_untouched` asked `git status` about `.claude/skills` while `SKILL_ROOTS` declared two, so an uncommitted edit to a tracked `.qwen` vendored file never appeared in that status output and passed the check — the guard called the path protected and the test never looked at it. The pathspec and the re-vendor exemption both come from the guard's own helpers now.
+- **The byte-identity check enumerated only one side** (qodo, PR #219). It walked qwen-side scripts only, so a script added on the claude side by a re-vendor, or a qwen script deleted during one, had no test case and passed by not being looked at — the exact one-surface stale copy the test claims to prevent. It now compares the union of both roots (and every file under `scripts/`, not just `*.sh`, since `communicate` ships vendored `scripts/templates/*.md` under the same rule). This immediately found three real one-sided absences.
+- Seven of the nine `.qwen` `SKILL.md` files carried a stray duplicate `# <name>` heading directly above their real title — a generation artifact that made `markdownlint` fail with `MD025` for anyone with the directory on disk (a local-only false red, since the tree was untracked and CI never saw it). Removed, so the surface lints clean with no exclusion.
+
 ## [0.40.2] - 2026-08-27
 
 ### Fixed

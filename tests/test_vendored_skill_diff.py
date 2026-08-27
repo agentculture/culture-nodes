@@ -327,3 +327,36 @@ def test_removing_a_row_in_the_work_tree_counts_as_a_ledger_change(repo):
     """The work-tree helper closes the same bypass main() does."""
     _write(repo, "docs/skill-sources.md", _ledger({"cicd": ("Notes.", "2026-06-12 (1.0.0)")}))
     assert "ask-colleague" in _resynced_in_worktree(repo)
+
+
+# --- a second skill root (.qwen/) is governed by the same ledger row ---------
+
+
+def test_a_skill_root_other_than_claude_is_guarded_too(repo):
+    """One ledger row governs every surface's copy of a vendored skill."""
+    _write(repo, ".qwen/skills/ask-colleague/SKILL.md", "---\nname: ask-colleague\n---\nv1\n")
+    _commit(repo, "give the qwen surface its first ask-colleague copy")
+    # First copy under a new root: a new copy, not an edit -- allowed, named.
+    first = run_guard(repo)
+    assert first.returncode == 0, first.stderr
+    assert "first copy under a new skill root" in first.stdout
+    assert ".qwen/skills/ask-colleague" in first.stdout
+
+    # Now that the copy EXISTS, editing it is an edit like any other.
+    _write(repo, ".qwen/skills/ask-colleague/SKILL.md", "---\nname: ask-colleague\n---\nhacked\n")
+    _commit(repo, "patch the qwen copy in place")
+    second = run_guard(repo)
+    assert second.returncode == 1
+    assert ".qwen/skills/ask-colleague/SKILL.md" in second.stderr
+
+
+def test_the_first_copy_exemption_does_not_leak_to_the_existing_root(repo):
+    """Adding a .qwen copy must not license editing the .claude one."""
+    _write(repo, ".qwen/skills/ask-colleague/SKILL.md", "---\nname: ask-colleague\n---\nnew\n")
+    _write(repo, ".claude/skills/ask-colleague/SKILL.md", "---\ntype: command\n---\nsmuggled\n")
+    _commit(repo, "add the qwen copy, and edit the claude one alongside it")
+
+    result = run_guard(repo)
+    assert result.returncode == 1
+    assert ".claude/skills/ask-colleague/SKILL.md" in result.stderr
+    assert ".qwen/skills/ask-colleague/SKILL.md" not in result.stderr

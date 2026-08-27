@@ -87,6 +87,46 @@ re-sync procedure on this page impossible to perform through a PR while its own
 error message told you to perform it (#212). Adding a skill to the table in the
 same commit as its files is a first vendoring and passes.
 
+## The `.qwen/` surface
+
+`.claude/skills/` is not the only skill kit in this repo. `.qwen/` is the qwen
+backend's surface, and nine of its skills are adapted from the same vendored
+originals. The two roots are **not** copies of each other, and the difference is
+per-file, not per-skill:
+
+| Part | Relationship | Why |
+|---|---|---|
+| `SKILL.md` | **Adapted**, deliberately | The surfaces differ. qwen drives the devague CLI straight through its shell tool, so there is no curated tool allow-list to navigate; the prose says so. Each file carries a `<!-- lineage: ... -->` comment naming the chain it came down (claude → colleague → qwen) and the adaptation applied. |
+| `scripts/*.sh` | **Byte-identical** | *Cite, don't import* — a vendored script body is never edited downstream, on any surface. All nine are exact copies of their `.claude/skills/` twins. |
+
+Two consequences worth stating plainly, because both were invisible while
+`.qwen/` was untracked:
+
+1. **A second copy is a second thing that can go stale.** Re-vendoring `cicd`
+   or `communicate` advances `.claude/skills/<name>/` and the ledger row;
+   nothing makes the `.qwen/` copy follow.
+   `tests/test_qwen_skill_surface.py` checks byte-identity of every
+   `scripts/*.sh` across the two roots, so drift is a red test rather than a
+   quiet divergence. **Re-vendor both roots, never patch one in place.**
+   The duplication itself is **accepted for vendored skills** — folding a
+   cited script body into our own CLI would fork it from its origin and
+   destroy `diff -r` as a re-vendor check. Issue #218 covers the structural
+   answer for *first-party* skills: move the logic into `nodes` so a skill
+   instructs rather than implements, leaving nothing per-surface to duplicate.
+2. **The guard covers both roots.** `scripts/check-vendored-skill-diff.py`
+   builds its protected prefixes from `SKILL_ROOTS`, so a change under
+   `.qwen/skills/<name>/` needs the same ledger sync as one under
+   `.claude/skills/<name>/`. One ledger row governs every surface's copy.
+
+The ledger table above is keyed by skill name and is the declaration for both
+roots; there is no separate `.qwen` table, and there should not be one — two
+tables is how the two copies would start disagreeing about what they are.
+
+Open question, not decided here: seven of the nine qwen `SKILL.md` files omit
+the `type: command` frontmatter that is load-bearing for the culture/claude
+`core.skill_loader` (`cicd` and `communicate` carry it). Whether qwen's own
+loader needs it is unverified — see issue #217.
+
 ### Local divergence — `agex` → `devex` rename (2026-05-30)
 
 The PR-lifecycle CLI was renamed `agex` → `devex` (same tool, new name). The

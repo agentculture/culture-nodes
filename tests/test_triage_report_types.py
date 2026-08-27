@@ -471,3 +471,54 @@ def test_check_does_not_need_git_history(tmp_path, monkeypatch):
         )
         == 0
     )
+
+
+def test_an_unquoted_comma_in_a_row_is_refused_not_silently_truncated(tmp_path):
+    """A malformed row must not render as an accurate-looking disposition (#215).
+
+    Only the HEADER's column set was validated, so an unquoted comma inside a
+    disposition shifted every later field left: the evidence pointer became a
+    fragment of the disposition and the tail vanished under DictReader's
+    restkey. The generated table then showed a plausible wrong row, and
+    `--check` approved it. Two rows in the real file were corrupted this way
+    before the check existed.
+    """
+    csv_path = tmp_path / "dispositions.csv"
+    # A LATER row is the real case: the first row is well-formed, so the
+    # header-shape check that already existed passes and the file reaches the
+    # per-row walk.
+    csv_path.write_text(
+        "issue,bucket,disposition,evidence_pointer\n"
+        "1,bug tail,fine,issue #1\n"
+        "2,bug tail,a disposition, with an unquoted comma,issue #2\n",
+        encoding="utf-8",
+    )
+    with pytest.raises(ValueError, match="must be quoted"):
+        MODULE.dispositions(csv_path)
+
+
+def test_a_short_row_is_refused_too(tmp_path):
+    csv_path = tmp_path / "dispositions.csv"
+    csv_path.write_text(
+        "issue,bucket,disposition,evidence_pointer\n"
+        "1,bug tail,fine,issue #1\n"
+        "2,bug tail,only three\n",
+        encoding="utf-8",
+    )
+    with pytest.raises(ValueError, match="must be quoted"):
+        MODULE.dispositions(csv_path)
+
+
+def test_a_correctly_quoted_comma_still_round_trips(tmp_path):
+    csv_path = tmp_path / "dispositions.csv"
+    body = "a disposition, with a quoted comma"
+    with csv_path.open("w", encoding="utf-8", newline="") as handle:
+        writer = csv.writer(handle)
+        writer.writerow(["issue", "bucket", "disposition", "evidence_pointer"])
+        writer.writerow(["1", "bug tail", body, "issue #1"])
+    assert MODULE.dispositions(csv_path)[1]["disposition"] == body
+
+
+def test_the_checked_in_dispositions_file_has_no_unquoted_commas():
+    """The real file is the thing that was broken; pin it directly."""
+    MODULE.dispositions(ROOT / "docs" / "triage" / "dispositions.csv")

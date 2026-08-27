@@ -1,0 +1,17 @@
+{
+  "provenance": "Host-local qwen settings shape, measured 2026-08-25 on spark (~/.qwen/settings.json): model.name + model.baseUrl, an env section referencing the API-key variable by name, and security.auth.selectedType. Per h17 the values are placeholders: the capability surface reports names and paths, never values — the tests assert the baseUrl value and the env value never appear in a section's output.",
+  "settings": {
+    "model": {
+      "name": "unsloth/Qwen3.8-27B-NVFP4",
+      "baseUrl": "http://localhost:8001/v1"
+    },
+    "env": {
+      "QWEN_CUSTOM_API_KEY_PLACEHOLDER": "sk-placeholder-not-a-real-key"
+    },
+    "security": {
+      "auth": {
+        "selectedType": "openai"
+      }
+    }
+  }
+}

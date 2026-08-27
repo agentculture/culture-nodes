@@ -37,13 +37,15 @@ import (
 	"github.com/agentculture/culture-nodes/internal/preflight"
 )
 
-// advertisingAdapters are the four bridges task t15 puts the surface on.
+// advertisingAdapters are the five bridges that advertise the surface
+// (task t15 put it on four; the qwen port, plan qwen-bridge-acp t1, carries
+// the byte-identical preflight.py and so joins the all-backends rule).
 // adapters/human-inbox is deliberately absent: it advertises nothing, and it
 // is the living subject of the task's second acceptance criterion — a bridge
 // that does not advertise the surface leaves its actor dispatching exactly as
 // before. Guard 3 below is what keeps that a choice rather than a half-done
 // job, and what lets human-inbox opt in later without editing this list.
-var advertisingAdapters = []string{"claude-code", "codex", "colleague", "notify"}
+var advertisingAdapters = []string{"claude-code", "codex", "colleague", "notify", "qwen"}
 
 // sharedModule is the protocol file — the one guards 2, 3 and 4 read.
 const sharedModule = "preflight.py"

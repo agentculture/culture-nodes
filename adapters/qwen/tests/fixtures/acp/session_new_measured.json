@@ -1,0 +1,67 @@
+{
+  "provenance": "qwen 0.22.0 ACP `session/new` response, measured 2026-08-23 (challenge probe2, scratch cwd): sessionId + modes {plan, default, auto-edit, auto} with currentModeId auto in a scratch session (spec c18 - the measured default the bridge must NEVER fall back to, h15). Mode names/descriptions are the bundle's APPROVAL_MODE_INFO entries verbatim (qwen 0.22.0, ~/.local/lib/qwen-code/lib/chunks); the fixture keeps the four modes the 2026-08-23 scratch measurement exposed. RE-MEASURED 2026-08-25 (the h14 probe, scripts/session_load_probe.py, a FRESH non-scratch cwd on the same 0.22.0): the response there exposed a FIFTH mode 'yolo' (Automatically approve all tools) and a currentModelId carrying the provider suffix ('unsloth/Qwen3.8-27B-NVFP4(openai)') with availableModels[0]._meta.contextLimit 262144 - so mode exposure and the model-id format are environment-dependent, not a stable agent contract. The fixture keeps the 2026-08-23 replay shape deliberately: the seam's mode POLICY vocabulary is the four measured modes (qwen_cli.ACP_MODES), and 'yolo' - the widest grant - fails closed with a distinct refusal until h15 verifies per-mode mapping live; parse_session and the seam facts carry currentModelId VERBATIM (never pinned), so the suffixed form rides through unchanged when a host sends it. models.currentModelId is this host's measured settings.json model (spec assumption, spark: unsloth/Qwen3.8-27B-NVFP4); the availableModels entry's contextWindowSize was not captured by the 2026-08-23 probes and is null rather than invented (plan t3 reports the context budget only from a measured source, null otherwise). configOptions is truncated to the one option the measured response's mode select carries (the bundle's buildConfigOptions emits more - the 2026-08-25 re-measurement shows model + reasoning_effort selects; the seam consumes none of them).",
+  "request": {
+    "jsonrpc": "2.0",
+    "id": 2,
+    "method": "session/new",
+    "params": { "cwd": "/tmp/acp-probe2", "mcpServers": [] }
+  },
+  "response": {
+    "jsonrpc": "2.0",
+    "id": 2,
+    "result": {
+      "sessionId": "8c9f1b2e-4a6d-4e7f-9b3c-1d2e3f4a5b6c",
+      "modes": {
+        "currentModeId": "auto",
+        "availableModes": [
+          {
+            "id": "plan",
+            "name": "Plan",
+            "description": "Analyze only, do not modify files or execute commands"
+          },
+          {
+            "id": "default",
+            "name": "Default",
+            "description": "Require approval for file edits or shell commands"
+          },
+          {
+            "id": "auto-edit",
+            "name": "Auto Edit",
+            "description": "Automatically approve file edits"
+          },
+          {
+            "id": "auto",
+            "name": "Auto",
+            "description": "LLM classifier auto-approves safe actions, blocks risky ones"
+          }
+        ]
+      },
+      "models": {
+        "currentModelId": "unsloth/Qwen3.8-27B-NVFP4",
+        "availableModels": [
+          {
+            "modelId": "unsloth/Qwen3.8-27B-NVFP4",
+            "name": "unsloth/Qwen3.8-27B-NVFP4",
+            "contextWindowSize": null
+          }
+        ]
+      },
+      "configOptions": [
+        {
+          "id": "mode",
+          "name": "Mode",
+          "description": "Session permission mode",
+          "category": "mode",
+          "type": "select",
+          "currentValue": "auto",
+          "options": [
+            { "value": "plan", "name": "Plan" },
+            { "value": "default", "name": "Default" },
+            { "value": "auto-edit", "name": "Auto Edit" },
+            { "value": "auto", "name": "Auto" }
+          ]
+        }
+      ]
+    }
+  }
+}

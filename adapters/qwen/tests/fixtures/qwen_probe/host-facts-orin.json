@@ -1,0 +1,11 @@
+{
+  "provenance": "The qwen section measured 2026-08-25 on orin over a read-only ssh probe: qwen 0.22.0 at the same ~/.local/lib/qwen-code layout, the bundled node v22.23.2, the model identity from the host's settings (the operator's 2026-08-23 note 'orin is slower, and less context' is host knowledge, not a qwen-measured fact: 0.22.0's committed session/new replay shape measures contextWindowSize null, so context_budget stays absent here — the fleet's context differences ride in the README (plan t7), never in a number the agent did not measure).",
+  "section": {
+    "qwen_version": "0.22.0",
+    "node_version": "v22.23.2",
+    "node_path": "/home/orin/.local/lib/qwen-code/node/bin/node",
+    "model_identity": "unsloth/Qwen3.8-27B-NVFP4",
+    "config_source": "/home/orin/.qwen/settings.json",
+    "supported_modes": ["plan", "default", "auto-edit", "auto"]
+  }
+}

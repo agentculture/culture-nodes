@@ -1,0 +1,33 @@
+{
+ "provenance": "SYNTHESIZED - not measured (frame park v4): the only measured failure shape was a tool failure ending end_turn with error null, so the model/API failure leg is grounded by protocol expectation, not observation. The ACP SDK's RequestError serializes to a JSON-RPC error object on the session/prompt response (this fixture: code -32603 internal error, the shape a provider failure would surface as). The plan risk register requires the first live occurrence to be captured and diffed against this fixture before the error leg is trusted.",
+ "session_id": "8c9f1b2e-4a6d-4e7f-9b3c-1d2e3f4a5b6c",
+ "ext_request": null,
+ "updates": [
+  {
+   "sessionUpdate": "agent_thought_chunk",
+   "content": {
+    "type": "text",
+    "text": "Starting the requested turn."
+   },
+   "_meta": {
+    "timestamp": "2026-08-23T21:12:25.000Z"
+   }
+  },
+  {
+   "sessionUpdate": "agent_thought_chunk",
+   "content": {
+    "type": "text",
+    "text": "Calling the model for the first completion."
+   },
+   "_meta": {
+    "timestamp": "2026-08-23T21:12:25.250Z"
+   }
+  }
+ ],
+ "terminal": {
+  "error": {
+   "code": -32603,
+   "message": "Internal error: upstream model request failed (HTTP 500)"
+  }
+ }
+}

@@ -33,6 +33,7 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   sync, and the re-sync procedure drops the now-retired re-localization step —
   upstream's Provenance paragraph is consumer-neutral, so the copy is
   byte-verbatim.
+
 ## [0.39.2] - 2026-08-27
 
 ### Added

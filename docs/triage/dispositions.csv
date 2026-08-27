@@ -126,3 +126,5 @@ issue,bucket,disposition,evidence_pointer
 211,verify-then-close,verify the ask-colleague 1.63.0 re-vendor in #210 and close with it,PR #210
 212,finish work,make the vendored-skill guard ledger-keyed so a re-vendor can land; unblocks #210,issue #212
 214,owner decisions,"decide the #213 bundling, .qwen/ tracking, and whether t5-t8 are re-planned or dropped",issue #214
+217,owner decisions,"read qwen's skill loader (or list the resident's skills) and either add type: command to the seven or record that qwen does not need it",issue #217
+218,large bets,"fold first-party skill script logic into the nodes CLI so skills instruct rather than implement; vendored skills keep their scripts",issue #218

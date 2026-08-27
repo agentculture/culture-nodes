@@ -5,6 +5,13 @@ All notable changes to this project will be documented in this file.
 Format follows [Keep a Changelog](https://keepachangelog.com/). This project
 adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.40.2] - 2026-08-27
+
+### Fixed
+
+- **Un-vendoring no longer hides an edit** (qodo, PR #213). `scripts/check-vendored-skill-diff.py` derived its protected path set from the *head* ledger alone, so a range that dropped a skill's row and rewrote its files matched no prefix — the guard printed `none under N vendored skills` over a rewritten tree. The set is now the union of the skills declared at **both** ends of the range, and a removed row is reported as `un-vendored (ledger row removed): <skill>` rather than passing silently. `resynced_in_worktree()` closes the same gap on the work-tree side.
+- **A missing ledger is an environment error, not a silent substitution** (qodo, PR #213). `vendored_paths()` took an optional body and could not tell an explicit `None` (that revision has no ledger) from no argument at all (read the work tree), so the head revision's ledger was quietly replaced by whatever was on disk — or raised `FileNotFoundError`. The revision-scoped parse is now `skill_names(text)`, which is pure and takes no default; `vendored_paths()` keeps its no-argument, disk-reading contract for `tests/test_open_issue.py`.
+
 ## [0.40.1] - 2026-08-27
 
 ### Fixed

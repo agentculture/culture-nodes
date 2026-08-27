@@ -262,3 +262,68 @@ def test_an_uncommitted_revendor_is_recognised(repo):
 def test_an_uncommitted_local_patch_is_not_exempt(repo):
     _write(repo, ".claude/skills/ask-colleague/SKILL.md", "---\ntype: command\n---\nhacked\n")
     assert _resynced_in_worktree(repo) == set()
+
+
+# --- the bypasses qodo found on PR #213 --------------------------------------
+
+
+def test_deleting_the_ledger_row_does_not_hide_edits_to_the_skill(repo):
+    """Un-vendoring is legitimate, but it must be SEEN, not hide the edit.
+
+    The protected set used to come from the HEAD ledger alone. Drop a skill's
+    row and rewrite its files in one range and those paths matched no prefix,
+    so the guard printed "none under N vendored skills" over a rewritten tree.
+    The set is now the union of base and head, so the removal is reported.
+    """
+    _write(repo, ".claude/skills/ask-colleague/SKILL.md", "---\ntype: command\n---\nrewritten\n")
+    _write(repo, "docs/skill-sources.md", _ledger({"cicd": ("Notes.", "2026-06-12 (1.0.0)")}))
+    _commit(repo, "drop the ask-colleague row and rewrite its files")
+
+    result = run_guard(repo)
+    assert result.returncode == 0, result.stderr
+    assert "un-vendored" in result.stdout
+    assert "ask-colleague" in result.stdout
+    # The old wording claimed nothing vendored was touched. It was.
+    assert "none under" not in result.stdout
+
+
+def test_deleting_the_row_still_does_not_unlock_a_different_skill(repo):
+    both = {
+        "ask-colleague": ("Notes.", "2026-06-12 (1.7.0)"),
+        "cicd": ("Notes.", "2026-06-12 (1.0.0)"),
+    }
+    _write(repo, "docs/skill-sources.md", _ledger(both))
+    _write(repo, ".claude/skills/cicd/SKILL.md", "---\ntype: command\n---\ncicd\n")
+    _commit(repo, "add cicd as a second vendored skill")
+
+    # Drop ask-colleague's row -- cicd's row is untouched -- and edit both.
+    _write(repo, "docs/skill-sources.md", _ledger({"cicd": both["cicd"]}))
+    _write(repo, ".claude/skills/ask-colleague/SKILL.md", "---\ntype: command\n---\ngone\n")
+    _write(repo, ".claude/skills/cicd/SKILL.md", "---\ntype: command\n---\nsmuggled\n")
+    _commit(repo, "un-vendor ask-colleague, and sneak an edit into cicd")
+
+    result = run_guard(repo)
+    assert result.returncode == 1
+    assert "cicd" in result.stderr
+    assert "ask-colleague" not in result.stderr
+
+
+def test_no_ledger_at_either_end_is_an_environment_error_not_a_pass(repo):
+    """A missing ledger must not silently fall back to the work tree's copy.
+
+    `vendored_paths(head_ledger)` used to be called with an explicit None,
+    which the default-argument check could not tell from "no argument", so the
+    head revision's body was quietly replaced by whatever was on disk.
+    """
+    (repo / "docs" / "skill-sources.md").unlink()
+    _commit(repo, "remove the ledger entirely")
+    # Range base -> head where neither side is usable as a declaration.
+    result = run_guard(repo, base="HEAD", head="HEAD")
+    assert result.returncode == 2
+    assert "no vendored skills declared" in result.stderr
+
+
+def test_removing_a_row_in_the_work_tree_counts_as_a_ledger_change(repo):
+    """The work-tree helper closes the same bypass main() does."""
+    _write(repo, "docs/skill-sources.md", _ledger({"cicd": ("Notes.", "2026-06-12 (1.0.0)")}))
+    assert "ask-colleague" in _resynced_in_worktree(repo)

@@ -59,16 +59,25 @@ def _row_name(line: str) -> str | None:
     return match.group(1) if match else None
 
 
-def vendored_paths(text: str | None = None) -> set[str]:
-    """Path prefixes of every skill the ledger declares vendored.
+def skill_names(text: str) -> set[str]:
+    """Every skill name the given ledger body declares vendored.
 
-    tests/test_open_issue.py imports this as the parser of record and calls it
-    with no arguments, so the no-argument form must keep reading the ledger
-    from disk. `text` exists so main() can read one side of a commit range and
-    derive the skill set and its sync cells from that single body.
+    Pure: it never touches disk, so main() can ask the question of a specific
+    revision. An EXPLICIT `None` is not accepted here -- conflating "caller
+    passed nothing" with "that revision genuinely has no ledger" is what let
+    the head-revision body be silently replaced by the work tree's copy.
     """
-    body = SOURCES.read_text(encoding="utf-8") if text is None else text
-    names = {name for name in (_row_name(line) for line in _table_lines(body)) if name is not None}
+    return {name for name in (_row_name(line) for line in _table_lines(text)) if name is not None}
+
+
+def vendored_paths() -> set[str]:
+    """Path prefixes of every skill the CHECKED-OUT ledger declares vendored.
+
+    tests/test_open_issue.py imports this as the parser of record, so its
+    no-argument, disk-reading shape is a contract. Revision-scoped callers use
+    skill_names() instead.
+    """
+    names = skill_names(SOURCES.read_text(encoding="utf-8"))
     if not names:
         raise SystemExit(f"no vendored skills parsed from {SOURCES_REL}")
     return {f".claude/skills/{name}/" for name in names}
@@ -122,8 +131,13 @@ def resynced_in_worktree() -> set[str]:
         return set()
     working = SOURCES.read_text(encoding="utf-8")
     head_rows, work_rows = ledger_rows(committed), ledger_rows(working)
+    # Rows on EITHER side, so a removed row counts as a ledger change too --
+    # otherwise deleting a row is a way to edit the skill's files unnoticed,
+    # the same bypass main() closes by unioning base and head.
     return {
-        name for name in work_rows if name not in head_rows or head_rows[name] != work_rows[name]
+        name
+        for name in set(head_rows) | set(work_rows)
+        if head_rows.get(name) != work_rows.get(name)
     }
 
 
@@ -145,8 +159,26 @@ def main() -> int:
         return 2
     changed = diff.stdout.splitlines()
 
-    head_ledger = _ledger_at(head)
-    prefixes = vendored_paths(head_ledger)
+    # The protected set is the UNION of what the ledger declared at BOTH ends
+    # of the range. Deriving it from head alone left a bypass: drop a skill's
+    # row and edit its files in one range, and those paths matched no prefix,
+    # so the guard reported "none under N vendored skills" while the tree was
+    # rewritten. Un-vendoring is a legitimate operation -- but it has to be
+    # SEEN, not be the thing that hides the edit.
+    base_ledger, head_ledger = _ledger_at(base), _ledger_at(head)
+    base_rows = ledger_rows(base_ledger) if base_ledger is not None else {}
+    head_rows = ledger_rows(head_ledger) if head_ledger is not None else {}
+    prefixes = {f".claude/skills/{name}/" for name in set(base_rows) | set(head_rows)}
+    if not prefixes:
+        print(
+            f"error: no vendored skills declared by {SOURCES_REL} at either {base} or {head}",
+            file=sys.stderr,
+        )
+        print(
+            f"hint: the ledger table under '{TABLE_HEADER}' is missing or empty.", file=sys.stderr
+        )
+        return 2
+
     touched = sorted(path for path in changed if any(path.startswith(p) for p in prefixes))
     if not touched:
         print(f"ok: {len(changed)} changed path(s), none under {len(prefixes)} vendored skills")
@@ -154,23 +186,21 @@ def main() -> int:
 
     # A vendored skill's files changed. Whether that is a re-vendor or a local
     # edit is decided per skill, by its ledger row across the range.
-    base_ledger = _ledger_at(base)
-    base_rows = ledger_rows(base_ledger) if base_ledger is not None else {}
-    head_rows = (
-        ledger_rows(head_ledger)
-        if head_ledger is not None
-        else ledger_rows(SOURCES.read_text(encoding="utf-8"))
-    )
-
     unsynced: dict[str, list[str]] = {}
     resynced: set[str] = set()
+    unvendored: set[str] = set()
     for path in touched:
         skill = _skill_of(path)
         if skill not in base_rows:
             # No row at base: this range is the skill's FIRST vendoring, and
             # its files arrive with it.
             resynced.add(skill)
-        elif base_rows[skill] != head_rows.get(skill):
+        elif skill not in head_rows:
+            # The row was REMOVED. The skill stops being vendored, so its files
+            # are free -- but say so, because the diff of the ledger is the only
+            # other place that fact appears.
+            unvendored.add(skill)
+        elif base_rows[skill] != head_rows[skill]:
             resynced.add(skill)
         else:
             unsynced.setdefault(skill, []).append(path)
@@ -196,8 +226,12 @@ def main() -> int:
         )
         return 1
 
-    synced = ", ".join(sorted(resynced))
-    print(f"ok: {len(changed)} changed path(s); re-vendored with a ledger sync: {synced}")
+    notes = []
+    if resynced:
+        notes.append(f"re-vendored with a ledger sync: {', '.join(sorted(resynced))}")
+    if unvendored:
+        notes.append(f"un-vendored (ledger row removed): {', '.join(sorted(unvendored))}")
+    print(f"ok: {len(changed)} changed path(s); " + "; ".join(notes))
     return 0
 
 

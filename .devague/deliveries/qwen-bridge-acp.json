@@ -1,0 +1,21 @@
+{
+  "plan_slug": "qwen-bridge-acp",
+  "schema_version": 1,
+  "created": "2026-08-25T18:48:39Z",
+  "updated": "2026-08-25T18:48:39Z",
+  "deviations": [
+    {
+      "id": "d1",
+      "what": "t3 capability facts: keep the shared preflight capability document frozen (byte-identical host block, protocol 1.0); qwen version + bundled node version ride as TOOLCHAINS entries in the host block; model identity, config source (env name or settings path, no values), supported session modes (host fact, gate-excluded yolo), and context budget (None where unexposed) are measured by a new qwen_probe module and advertised by t5's registration as a sibling capabilities.qwen section (engine-ignored, operator-visible via GET /v1alpha1/actors)",
+      "task_ref": "t3",
+      "reason": "t3 AC1 as written assumes the capability document is qwen-ownable; reality: the document is the shared preflight host block with a frozen HOST_KEYS tuple (preflight.py byte-identical across the four bridges; unagreed keys refused; the Go lint compares only PROTOCOL_VERSION/CAPABILITY_KEY and engine checkHost/ParseSurface is lenient to sibling keys). Human adjudicated 2026-08-25: qwen-namespaced sibling section in the registration capabilities document + supported-modes-as-host-fact. Verified: ParseSurface inspects only capabilities.preflight; CheckConfiguration is a no-op gate-off; zero Go changes (c9).",
+      "affects": [
+        "t5",
+        "c10"
+      ],
+      "origin": "user",
+      "status": "approved",
+      "classification": "acceptable"
+    }
+  ]
+}

@@ -1,0 +1,21 @@
+{
+  "plan_slug": "jira-operating-surface-flow-store",
+  "schema_version": 1,
+  "created": "2026-08-19T19:53:29Z",
+  "updated": "2026-08-19T20:22:14Z",
+  "deviations": [
+    {
+      "id": "d1",
+      "what": "sweep.py crossed the 1000-line hard limit (1149) at the WP-A merge gate: the t4 file-length contract collides with the t16 single-script bootstrap, so the sweep splits into sweep.py + a Jira history module and sweep-cycle's bootstrap fetches N declared (URL, SHA-256) source pairs instead of one; rides the r4 single deploy unit; adds one codex session beyond the approved split plan",
+      "task_ref": "t1",
+      "reason": "WP-A's spec-required history replay (+183 lines) pushed an already-966-line file over a hard limit that has no exemption mechanism, and the file deploys as one fetched script so a plain module split breaks the bootstrap",
+      "affects": [
+        "t4",
+        "t13"
+      ],
+      "origin": "llm",
+      "status": "approved",
+      "classification": "needs-follow-up"
+    }
+  ]
+}

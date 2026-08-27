@@ -5,6 +5,26 @@ All notable changes to this project will be documented in this file.
 Format follows [Keep a Changelog](https://keepachangelog.com/). This project
 adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.42.0] - 2026-08-27
+
+### Added
+
+- `company/qwen-developer`: the `adapters/qwen` bridge is registered and
+  running as a real actor for the first time (spark:8092, qwen-code 0.22.0,
+  model `unsloth/Qwen3.8-27B-NVFP4`, 262144-token context), pinned to its own
+  worktree by exact-match allowlist. `nodes-op.sh` gains the matching actor
+  case, so `assign qwen-developer` works like any other lane.
+- `NODES_ACTOR_QWEN_TOKEN` in `deploy/prod/compose.thor.yml`, in both the
+  `api` and `worker` environment blocks.
+
+### Fixed
+
+- Nothing yet: the compose addition above unblocks this one actor, it does not
+  close #222. `register-actor.sh` still accepts any `auth_token_env` name while
+  the compose file hardcodes that list with no `env_file:`, so a newly
+  registered actor still registers clean and 401s at dispatch, blaming the
+  bridge.
+
 ## [0.41.0] - 2026-08-27
 
 ### Added

@@ -50,6 +50,13 @@ services:
       NODES_ACTOR_CODEX_THOR_TOKEN: ${NODES_ACTOR_CODEX_THOR_TOKEN:-}
       NODES_ACTOR_CODEX_ORIN_TOKEN: ${NODES_ACTOR_CODEX_ORIN_TOKEN:-}
       NODES_ACTOR_JIRA_TOKEN: ${NODES_ACTOR_JIRA_TOKEN:-}
+      # BOTH of these were absent here while present in compose.thor.yml, and
+      # that divergence is a defect in its own right (#224): thor and orin run
+      # workers on the SAME namespace, so whichever polls first decides whether
+      # a dispatch authenticates. notify-discord (#68) was already live in that
+      # split state -- denied when orin claimed the item, fine when thor did.
+      NODES_ACTOR_NOTIFY_TOKEN: ${NODES_ACTOR_NOTIFY_TOKEN:-}
+      NODES_ACTOR_QWEN_TOKEN: ${NODES_ACTOR_QWEN_TOKEN:-}
       NODES_RUNNER_SERVICES_FILE: ${NODES_RUNNER_SERVICES_FILE:-}
       # Task t13 / issue #5. orin runs no collector of its own: it points
       # at thor's, over the same LAN its Postgres connection already

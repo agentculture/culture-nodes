@@ -40,6 +40,11 @@ spec:
           # REQUIRED field would have broken every already-published digest.
           handover:
             type: boolean
+          # The ACP session mode, required by the qwen bridge and ignored by
+          # every other actor. Optional here for the same reason handover is:
+          # making it required would invalidate every already-published digest.
+          mode:
+            type: string
     output:
       schema:
         type: object
@@ -66,6 +71,7 @@ spec:
           sandbox: /run/input/sandbox
           success_outcome: /run/input/success_outcome
           handover: /run/input/handover
+          mode: /run/input/mode
       contract:
         input:
           schema:

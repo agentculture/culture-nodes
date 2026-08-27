@@ -93,6 +93,31 @@ def _stdout_reader(stdout, q: "queue.Queue[Any]") -> None:
         q.put(_EOF)
 
 
+def _stderr_reader(stderr, sink: list[str]) -> None:
+    """Runs in its own daemon thread: drains the child's stderr into *sink*.
+
+    Two jobs, and the second one is the reason it cannot be dropped:
+
+    1. The driver writes its refusal line (`wire.REFUSAL_MARKER`) to stderr.
+       Nothing on this path read it, so an ACP policy refusal arrived as the
+       generic "killed, crashed, or timed out" incomplete-session failure and
+       the actionable message was computed and discarded (#225).
+    2. `dispatch.spawn` opens stderr as a PIPE. An unread pipe has a finite
+       kernel buffer (~64KB): a session chatty enough on stderr would block
+       the child forever, and this runner would sit on a stdout EOF that never
+       comes until its own deadline fired and reported a timeout. Draining is
+       what makes that unreachable.
+
+    No queue: unlike stdout, nothing streams from stderr as it arrives — it is
+    only ever read once the process is done.
+    """
+    try:
+        for line in iter(stderr.readline, ""):
+            sink.append(line)
+    except (ValueError, OSError):  # pipe closed under us; nothing to salvage
+        pass
+
+
 @dataclass
 class AsyncInvocation:
     invocation_id: str
@@ -134,6 +159,12 @@ class AsyncRunner:
         repo: str,
         model: str | None,
         sandbox: str | None,
+        # #227: the ACP session mode, forwarded to `qwen_cli.spawn`. `spawn`
+        # has always accepted it; this method never passed it, so every async
+        # dispatch reached the mode gate with the empty string and was refused.
+        # Async is the path production uses (`always_async: true`), so the
+        # omission here meant the bridge executed nothing at all.
+        mode: str | None,
         ctx: mapping.InvocationContext,
         callback_url: str,
         callback_token: str,
@@ -182,6 +213,7 @@ class AsyncRunner:
             repo,
             model=model,
             sandbox=sandbox,
+            mode=mode,
             continuation_ref=continuation_ref,
             writable_git=writable_git,
         )
@@ -252,7 +284,9 @@ class AsyncRunner:
         )
 
         try:
-            stdout_text, timed_out = self._stream_until_done(inv, emitter, heartbeat_after_seconds)
+            stdout_text, timed_out, stderr_text = self._stream_until_done(
+                inv, emitter, heartbeat_after_seconds
+            )
         finally:
             # t6 (c44/h37): qwen's own turn is over (successfully,
             # failed, or timed out) — release the session_key slot the
@@ -268,22 +302,47 @@ class AsyncRunner:
         # and the diff bracket the actual qwen subprocess's lifetime.
         measured = workspace.measure(inv.workspace_handle)
 
-        ev = mapping.terminal_event(
-            task_result,
-            inv.ctx,
-            default_success_outcome=self._cfg.default_success_outcome,
-            actor_id=self._cfg.actor_id,
-            created_at=_now_iso(),
-            timed_out=timed_out,
-            workspace_measured=measured,
-        )
+        # #225: a driver REFUSAL is not an execution failure and must not be
+        # reported as one. The driver writes its reason to stderr and exits
+        # REFUSAL_EXIT_CODE; both halves are checked, mirroring `run_sync`,
+        # because an exit code with no marker is a driver fault worth saying
+        # out loud rather than silently re-classing as a crash.
+        refusal = qwen_cli.refusal_detail(stderr_text)
+        refused = refusal is not None or inv.proc.returncode == qwen_cli.REFUSAL_EXIT_CODE
+        if refused:
+            ev = mapping.TerminalEvent(
+                kind="failed",
+                payload={
+                    "class": mapping.CLASS_ACTOR_REJECTED_INPUT,
+                    "message": refusal
+                    or (
+                        "the qwen ACP driver refused before serving but wrote no marker "
+                        "line - driver fault"
+                    ),
+                    "detail": (
+                        "refused by the bridge's own ACP policy gate before the turn began; "
+                        "nothing ran and the workspace is untouched"
+                    ),
+                    "workspace_measured": measured,
+                },
+            )
+        else:
+            ev = mapping.terminal_event(
+                task_result,
+                inv.ctx,
+                default_success_outcome=self._cfg.default_success_outcome,
+                actor_id=self._cfg.actor_id,
+                created_at=_now_iso(),
+                timed_out=timed_out,
+                workspace_measured=measured,
+            )
         # Issue #98: the same workflow-scope boundary server.py applies to a
         # synchronous response, applied to the terminal event — decided on
         # the change set THIS bridge measured, never on the instruction text
         # or on qwen's own account of what it touched. Before the preserve
         # hook below, so a refused change set is preserved rather than lost.
         scope_violations = scope_guard.violations(inv.workspace_handle.repo, measured)
-        if scope_violations:
+        if scope_violations and not refused:
             ev = mapping.TerminalEvent(
                 kind="failed",
                 payload=scope_guard.refusal_payload(scope_violations, measured),
@@ -345,7 +404,7 @@ class AsyncRunner:
         the only way this bridge ever ends a session it did not simply see
         finish on its own).
 
-        Returns `(full_stdout_text, timed_out)`. `timed_out` is only True
+        Returns `(full_stdout_text, timed_out, full_stderr_text)`. `timed_out` is only True
         when THIS bridge's own deadline fired — a session that ends because
         it was cancelled, crashed, or exited early on its own is reported
         via `parse_session`'s ordinary "incomplete" classification instead
@@ -361,11 +420,21 @@ class AsyncRunner:
         reader = threading.Thread(target=_stdout_reader, args=(proc.stdout, q), daemon=True)
         reader.start()
 
+        # #225: drained in parallel with stdout, never after it — a stderr
+        # pipe that fills while this loop waits on stdout is a deadlock, not
+        # a slow read.
+        stderr_lines: list[str] = []
+        stderr_reader = threading.Thread(
+            target=_stderr_reader, args=(proc.stderr, stderr_lines), daemon=True
+        )
+        stderr_reader.start()
+
         while True:
             now = time.monotonic()
             if now >= deadline:
                 self._terminate_and_drain(proc, q, lines)
-                return "\n".join(lines), True
+                stderr_reader.join(timeout=2.0)
+                return "\n".join(lines), True, "".join(stderr_lines)
 
             remaining_heartbeat = heartbeat_interval - (now - last_event_at)
             wait_for = max(
@@ -395,7 +464,8 @@ class AsyncRunner:
             logger.warning(
                 "qwen process for %s did not exit promptly after stdout EOF", inv.invocation_id
             )
-        return "\n".join(lines), False
+        stderr_reader.join(timeout=2.0)
+        return "\n".join(lines), False, "".join(stderr_lines)
 
     @staticmethod
     def _terminate_and_drain(

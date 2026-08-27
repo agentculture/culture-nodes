@@ -155,6 +155,16 @@ NODES_ACTOR_CODEX_ORIN_TOKEN required
 # authentication with nothing obviously wrong on either host.
 NODES_ACTOR_NOTIFY_TOKEN required
 
+# The qwen bridge's bearer (adapters/qwen on spark, registered as
+# company/qwen-developer). Required for the same reason the four bearers
+# above are: the actor is registered and every dispatch to it presents this
+# token, so an absent value is not a closed feature — it is an actor that
+# answers 401 on work the worker legitimately claimed, with nothing in the
+# run or the ledger naming the cause. Registration does not check that a
+# compose line exists for the auth_token_env it accepts (issue #222), which
+# is precisely why the audit has to.
+NODES_ACTOR_QWEN_TOKEN required
+
 # Not an open default — an override. compose.thor.yml defaults this to the
 # literal string "default", which is a bootstrap placeholder rather than a
 # namespace id: a worker started with it polls a namespace that does not exist

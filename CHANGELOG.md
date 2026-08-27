@@ -19,7 +19,13 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Fixed
 
-- Nothing yet: the compose addition above unblocks this one actor, it does not
+- `NODES_ACTOR_QWEN_TOKEN` is classified `required` in
+  `deploy/prod/audit-credentials.sh`. Adding it to compose as an open default
+  (`${KEY:-}`) without classifying it made every thor credential audit warn
+  that the key was unclassified and then fail the deployment as incomplete —
+  which is what the `go` job's four `TestAudit*` failures were. The actor
+  cannot dispatch without the bearer, so `required` is the honest class.
+- Nothing yet on the coupling itself: the compose addition above unblocks this one actor, it does not
   close #222. `register-actor.sh` still accepts any `auth_token_env` name while
   the compose file hardcodes that list with no `env_file:`, so a newly
   registered actor still registers clean and 401s at dispatch, blaming the

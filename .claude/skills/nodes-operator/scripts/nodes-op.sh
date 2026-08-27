@@ -358,7 +358,14 @@ assign)
     planner)   ref="actor://company/planner@sha256:4444444444444444444444444444444444444444444444444444444444444444";   repo=/home/spark/git/.worktrees.culture-nodes/owe-planner;;
     verifier)  ref="actor://company/verifier@sha256:5555555555555555555555555555555555555555555555555555555555555555";  repo=/home/spark/git/.worktrees.culture-nodes/owe-verifier;;
     intake)    ref="actor://company/intake@sha256:6666666666666666666666666666666666666666666666666666666666666666";    repo=/home/spark/git/.worktrees.culture-nodes/owe-intake;;
-    *) echo "nodes-op: unknown actor '$actor' (codex-thor|codex-orin|developer|planner|verifier|intake)" >&2; exit 1;;
+    # The qwen bridge on spark:8092 (adapters/qwen, registered 2026-08-27).
+    # Same reasoning as the claude bridges above, and then some: its own
+    # capability surface reports `confinement: qwen-code runs its own tools
+    # in-process as the bridge user` -- the ACP session modes are an approval
+    # policy, not a kernel boundary -- so the exact-match repo allowlist is the
+    # only thing standing between a dispatch and this operator's checkout.
+    qwen-developer) ref="actor://company/qwen-developer@sha256:7777777777777777777777777777777777777777777777777777777777777777"; repo=/home/spark/git/.worktrees.culture-nodes/qwen-dev;;
+    *) echo "nodes-op: unknown actor '$actor' (codex-thor|codex-orin|developer|planner|verifier|intake|qwen-developer)" >&2; exit 1;;
   esac
   # --repo pins a dispatch to one isolated worktree; the bridge's own
   # repo_allowlist is the real gate (exact-match), so an unlisted path is

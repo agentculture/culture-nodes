@@ -130,3 +130,4 @@ issue,bucket,disposition,evidence_pointer
 218,large bets,"fold first-party skill script logic into the nodes CLI so skills instruct rather than implement; vendored skills keep their scripts",issue #218
 220,owner decisions,"declare which skills the qwen surface carries and why; port nodes-operator or close the gap via #218",issue #220
 221,owner decisions,"decide where the SonarCloud boundary lives — a nodes verb, or a written split — then make the callers obey it",issue #221
+222,bug tail,"guard the register-actor.sh -> compose.*.yml auth_token_env coupling (warn on an unlisted name, and a test asserting every registered actor's token is in both the api and worker env blocks) or remove it with a prefix passthrough; close on a new actor whose token cannot register clean and 401 at dispatch",issue #222 body + the hand-added NODES_ACTOR_QWEN_TOKEN lines in deploy/prod/compose.thor.yml

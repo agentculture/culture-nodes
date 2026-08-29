@@ -54,6 +54,10 @@ const (
 	// The actor-identity contract makes registration a deployment
 	// prerequisite: attempts.actor_id is a foreign key.
 	envCodeRunnerActorID = "NODES_CODE_RUNNER_ACTOR_ID"
+	// envRemintProducerActorID names the registered engine identity used for
+	// derived trigger re-mint records. The stable default is registered by the
+	// production deploy before workers can encounter a due re-mint.
+	envRemintProducerActorID = "NODES_REMINT_PRODUCER_ACTOR_ID"
 )
 
 func cmdWorker(args []string, jsonMode bool) (int, error) {
@@ -198,22 +202,23 @@ func cmdWorker(args []string, jsonMode bool) (int, error) {
 	}
 
 	wk, err := worker.New(db, eng, worker.Options{
-		WorkerID:           os.Getenv(envWorkerIdentifier),
-		Handover:           handoverObs,
-		Pacing:             pacingOpts,
-		Concurrency:        concurrencyOpts,
-		NamespaceID:        namespace,
-		ClaimBatch:         *batch,
-		LeaseDuration:      *leaseDuration,
-		PollInterval:       *pollInterval,
-		Registry:           registry,
-		Signer:             signer,
-		CallbackBaseURL:    callbackBase,
-		RunnerService:      runnerSvc,
-		CodeRunnerName:     os.Getenv(envCodeRunnerName),
-		CodeRunnerRevision: os.Getenv(envCodeRunnerRevision),
-		CodeRunnerActorID:  os.Getenv(envCodeRunnerActorID),
-		Telemetry:          telemetryProvider,
+		WorkerID:              os.Getenv(envWorkerIdentifier),
+		Handover:              handoverObs,
+		Pacing:                pacingOpts,
+		Concurrency:           concurrencyOpts,
+		NamespaceID:           namespace,
+		ClaimBatch:            *batch,
+		LeaseDuration:         *leaseDuration,
+		PollInterval:          *pollInterval,
+		Registry:              registry,
+		Signer:                signer,
+		CallbackBaseURL:       callbackBase,
+		RunnerService:         runnerSvc,
+		CodeRunnerName:        os.Getenv(envCodeRunnerName),
+		CodeRunnerRevision:    os.Getenv(envCodeRunnerRevision),
+		CodeRunnerActorID:     os.Getenv(envCodeRunnerActorID),
+		RemintProducerActorID: remintProducerActorIDFromEnv(),
+		Telemetry:             telemetryProvider,
 		OnError: func(err error) {
 			// Diagnostics go to stderr; the stdout stream stays clean for
 			// results, per the CLI's output contract.
@@ -394,6 +399,10 @@ func firstNonEmpty(values ...string) string {
 		}
 	}
 	return ""
+}
+
+func remintProducerActorIDFromEnv() string {
+	return firstNonEmpty(os.Getenv(envRemintProducerActorID), postgres.RemintSchedulerActorID)
 }
 
 // Compile-time proof the flag defaults stay in the same units the worker

@@ -2,13 +2,19 @@ package engine_test
 
 import (
 	"encoding/json"
+	"net/http"
+	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"strings"
+	"sync"
 	"testing"
 
 	"github.com/agentculture/culture-nodes/internal/compiler"
+	"github.com/agentculture/culture-nodes/internal/store"
 	storepg "github.com/agentculture/culture-nodes/internal/store/postgres"
 	"github.com/agentculture/culture-nodes/internal/store/postgres/pgtest"
+	"github.com/agentculture/culture-nodes/internal/ticketreport"
 )
 
 // Task t13 (plan jira-flow-spec-read-related-bugs, issue #199 / #230; spec
@@ -46,15 +52,64 @@ func compileSpecChainLaneExample(t *testing.T) *compiler.CompiledWorkflow {
 
 type specChainLaneFixture struct {
 	f *fixture
+
+	mu       sync.Mutex
+	comments []string
 }
 
+// newSpecChainLaneFixture publishes the lane workflow AND registers the
+// narrow Jira reporter actor at a fake bridge, then drains the ticket-report
+// outbox on cleanup. A run minted from a ticket fact is ticket-derived
+// (internal/store/postgres/jiraticketreport.go), so the engine enqueues a
+// `start` report for it in the same transaction; the report dispatcher
+// drains that outbox ACROSS namespaces, so a row this fixture left pending
+// with no actor to resolve would surface as a joined error in whichever
+// later test next ran a dispatcher pass (found by running the package).
 func newSpecChainLaneFixture(t *testing.T) *specChainLaneFixture {
 	t.Helper()
 	s := pgtest.RequireStore(t, testStore)
 	f := newFixtureOn(t, s, "trigger-subject.workflow.yaml")
 	f.cw = compileSpecChainLaneExample(t)
 	publishFixtureWorkflow(t, f)
-	return &specChainLaneFixture{f: f}
+	c := &specChainLaneFixture{f: f}
+
+	bridge := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var invocation struct {
+			Input struct{ Verb, Issue, Comment string } `json:"input"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&invocation); err != nil {
+			t.Errorf("decode reporter invocation: %v", err)
+		}
+		c.mu.Lock()
+		c.comments = append(c.comments, invocation.Input.Issue+": "+invocation.Input.Comment)
+		c.mu.Unlock()
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"outcome":"comment_posted","output":{},"ledger_delta":{"records":[]}}`))
+	}))
+	if _, err := f.store.Pool().Exec(f.ctx, `INSERT INTO actors
+		(id,namespace_id,actor_key,revision,kind,protocol,endpoint_ref)
+		VALUES ($1,$2,$3,1,'bridge','actor-protocol',$4)`, store.NewULID(), f.ns.ID, storepg.JiraTicketReporterActorKey, bridge.URL); err != nil {
+		t.Fatalf("register Jira reporter bridge: %v", err)
+	}
+	t.Cleanup(func() {
+		if err := ticketreport.New(f.store, nil).Run(f.ctx); err != nil {
+			t.Errorf("drain ticket reports: %v", err)
+		}
+		bridge.Close()
+	})
+	return c
+}
+
+// drainReports runs one dispatcher pass and returns every comment the fake
+// reporter bridge has received so far.
+func (c *specChainLaneFixture) drainReports(t *testing.T) []string {
+	t.Helper()
+	if err := ticketreport.New(c.f.store, nil).Run(c.f.ctx); err != nil {
+		t.Fatalf("dispatch reports: %v", err)
+	}
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return append([]string(nil), c.comments...)
 }
 
 // deliver raises one transition fact exactly the way the sweep does: the
@@ -127,6 +182,14 @@ func TestTicketFactMintsSpecChainLaneRunInOneDelivery(t *testing.T) {
 	}
 	if input.Source != "jira" || input.ID != "SCRUM-9" || input.Status != "In Progress" || input.Title == "" {
 		t.Fatalf("the ticket fact is not the run's input verbatim: %+v", input)
+	}
+
+	// Ticket-derived: the engine enqueued a start report for the run in the
+	// same transaction, and one dispatcher pass posts it to the ticket — the
+	// "started run <id>" comment t8's signal reads on a real ticket.
+	comments := c.drainReports(t)
+	if len(comments) != 1 || !strings.HasPrefix(comments[0], "SCRUM-9: ") || !strings.Contains(comments[0], minted.RunID) {
+		t.Fatalf("start report for the lane run = %q, want one SCRUM-9 comment naming run %s", comments, minted.RunID)
 	}
 }
 

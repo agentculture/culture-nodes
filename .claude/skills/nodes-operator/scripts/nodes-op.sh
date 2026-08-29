@@ -386,6 +386,14 @@ assign)
       -e "s|__TIMEOUT__|$timeout|" -e "s|__MAX_ATTEMPTS__|$retries|" \
       -e "s|__OUTCOME__|$outcome|" \
       "$TEMPLATE" > "$wf"
+  # #240: the template binds mode: /run/input/mode unconditionally, but the
+  # run input omits `mode` when --mode is not given (see the payload note
+  # below), and a binding to an absent member is refused by the worker
+  # (internal/worker/bindings.go: no member "mode" at /run/input/mode) --
+  # contract_rejected in ~150ms, before any bridge is called. Strip the
+  # binding for a mode-less dispatch so the digest carries only bindings the
+  # input can satisfy.
+  [ -n "$mode" ] || sed -i '/^[[:space:]]*mode: \/run\/input\/mode[[:space:]]*$/d' "$wf"
   digest=$("$0" publish "$wf")
   [ -n "$digest" ] || { echo "nodes-op: publish returned no digest" >&2; exit 1; }
   python3 - "$instruction" "$sandbox" "$outcome" "$repo" "$handover" "$mode" <<'PYEOF' > "$wf.json"

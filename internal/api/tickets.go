@@ -93,7 +93,7 @@ func (s *Server) handlePostTicketReply(w http.ResponseWriter, r *http.Request) e
 		"replier": req.Replier, "originating_question_id": req.QuestionID,
 		"answer": map[string]any{"comment_id": "ticket-page", "body": req.Text},
 	})
-	// Order of record (colleague review of the wave-1 merge): the reply row
+	// Order of record (second-opinion review of the wave-1 merge): the reply row
 	// lands FIRST with no event, so a failure after delivery can never leave an
 	// engine fact that no page reply explains; the event id is attached to the
 	// row, with the display-only Jira mirror, once delivery succeeded.

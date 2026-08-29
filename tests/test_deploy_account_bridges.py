@@ -442,7 +442,8 @@ def test_the_five_spark_templates_carry_no_decision_token_and_no_operator_path()
     ):
         text = (ROOT / "deploy/prod" / f"{name}.json.template").read_text()
         assert "NODES_HUMAN_DECISION_TOKEN" not in text, name
-        assert "/home/spark" not in text and "upkeep-lane" not in text, name
+        assert "/home/spark" not in text, name
+        assert "upkeep-lane" not in text, name
         assert "__HOME__" in text, name
         json.loads(text.replace("__HOME__", "/h").replace("__NODES_API_URL__", "http://x"))
 
@@ -512,7 +513,8 @@ def test_spark_installs_the_five_units_under_the_accounts_and_never_touches_comp
     for unit in SPARK_UNITS:
         assert f"systemctl --user stop {unit}" in result.stdout
         assert f"systemctl --user start {unit}" in result.stdout
-    assert "culture-claude@localhost" in result.stdout and "culture-qwen@localhost" in result.stdout
+    assert "culture-claude@localhost" in result.stdout
+    assert "culture-qwen@localhost" in result.stdout
 
 
 def test_spark_renders_the_configs_into_the_accounts_without_the_decision_token(tmp_path: Path):
@@ -534,7 +536,8 @@ def test_spark_renders_the_configs_into_the_accounts_without_the_decision_token(
         # and the registered row id -- and nothing else from that file.
         assert cfg["auth_token"] == f"login-token-{role}"
         assert cfg["actor_id"] == f"actor_{role}_row"
-        assert "/home/spark" not in path.read_text() and "upkeep-lane" not in path.read_text()
+        assert "/home/spark" not in path.read_text()
+        assert "upkeep-lane" not in path.read_text()
     developer = json.loads((claude / ".config/culture-nodes-bridges/developer.json").read_text())
     assert developer["claude_env"] == {"NODES_API_URL": f"http://{THOR}:18080"}
     assert developer["custody"]["checkout"] == str(claude / "git/culture-nodes-developer")
@@ -602,9 +605,8 @@ def test_spark_refuses_when_the_accounts_are_not_bootstrapped_and_names_the_sudo
     h = DeployHarness(tmp_path)
     result = h.deploy(SPARK)
     assert result.returncode != 0
-    assert (
-        "sudo bash" in result.stderr and "lanes/unix-user.sh bootstrap claude qwen" in result.stderr
-    )
+    assert "sudo bash" in result.stderr
+    assert "lanes/unix-user.sh bootstrap claude qwen" in result.stderr
     h.never("systemctl[")
     h.never("useradd[")
     assert not h.account_home(SPARK, "claude").exists()
@@ -631,7 +633,8 @@ def test_spark_refuses_a_role_whose_login_config_has_no_auth_token(tmp_path: Pat
     planner.write_text(json.dumps(cfg))
     result = h.deploy(SPARK)
     assert result.returncode != 0
-    assert "planner" in result.stderr and "auth_token" in result.stderr
+    assert "planner" in result.stderr
+    assert "auth_token" in result.stderr
     assert not (
         h.account_home(SPARK, "claude") / ".config/culture-nodes-bridges/planner.json"
     ).exists()
@@ -692,10 +695,8 @@ def test_orin_runs_runner_and_compose_as_the_login_user_and_the_codex_unit_as_th
         "company/codex-orin-fake",
         '"os_user": "culture-codex"',
     )
-    assert (
-        "culture-codex@orin-fake" in result.stdout
-        and "systemctl --user start codex-bridge" in result.stdout
-    )
+    assert "culture-codex@orin-fake" in result.stdout
+    assert "systemctl --user start codex-bridge" in result.stdout
     # The end-of-lane doctor runs as the account, in its own checkout.
     h.first(f"nodes[{ORIN}:culture-codex] doctor")
 
@@ -706,7 +707,8 @@ def test_orin_refuses_a_missing_account_naming_the_hand_turn_before_anything_is_
     h = DeployHarness(tmp_path)
     result = h.deploy(ORIN, FAKE_SUDO_NEEDS_PASSWORD="1")
     assert result.returncode != 0
-    assert "sudo bash" in result.stderr and "bootstrap codex" in result.stderr
+    assert "sudo bash" in result.stderr
+    assert "bootstrap codex" in result.stderr
     h.never("systemctl[", "stop codex-bridge")
     h.never("useradd[")
     assert not h.account_home(ORIN, "codex").exists()
@@ -729,7 +731,8 @@ def test_orin_refuses_when_the_account_has_no_bridge_env_and_names_install_secre
     (h.account_home(ORIN, "codex") / ".culture-nodes/codex-bridge.env").unlink()
     result = h.deploy(ORIN)
     assert result.returncode != 0
-    assert "install-secrets.sh" in result.stderr and "culture-codex" in result.stderr
+    assert "install-secrets.sh" in result.stderr
+    assert "culture-codex" in result.stderr
     h.never("systemctl[", "stop codex-bridge")
 
 

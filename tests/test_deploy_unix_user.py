@@ -431,7 +431,8 @@ def test_bootstrap_takes_several_engines_and_copies_per_engine_credentials(tmp_p
     assert oct((claude / ".claude/.credentials.json").stat().st_mode & 0o777) == "0o600"
     assert not (claude / ".codex").exists()
     assert (qwen / ".ssh/authorized_keys").read_text() == PUBKEY + "\n"
-    assert not (qwen / ".codex").exists() and not (qwen / ".claude").exists()
+    assert not (qwen / ".codex").exists()
+    assert not (qwen / ".claude").exists()
     assert h.count("useradd[") == 2
     for engine in ("claude", "qwen"):
         assert oct(h.account_home(SPARK, engine).stat().st_mode & 0o777) == "0o750"
@@ -463,7 +464,8 @@ def test_bootstrap_without_passwordless_sudo_names_the_hand_turn(tmp_path: Path)
     h = Harness(tmp_path)
     result = h.run("unix_user_bootstrap orin-fake codex", host=ORIN, FAKE_SUDO_NEEDS_PASSWORD="1")
     assert result.returncode != 0
-    assert "sudo bash" in result.stderr and "bootstrap codex" in result.stderr
+    assert "sudo bash" in result.stderr
+    assert "bootstrap codex" in result.stderr
     h.never("useradd[")
     assert not h.account_home(ORIN, "codex").exists()
 
@@ -649,7 +651,8 @@ def test_provision_refuses_foreign_files_in_the_account_inventory(tmp_path: Path
     (cn / "runner.env").chmod(0o600)
     refused = h.run(f"unix_user_provision {THOR} codex")
     assert refused.returncode != 0
-    assert "prod.env" in refused.stderr and "runner.env" in refused.stderr
+    assert "prod.env" in refused.stderr
+    assert "runner.env" in refused.stderr
 
 
 def test_provision_refuses_an_env_file_that_is_not_mode_600(tmp_path: Path):
@@ -660,7 +663,8 @@ def test_provision_refuses_an_env_file_that_is_not_mode_600(tmp_path: Path):
     env.chmod(0o644)
     refused = h.run(f"unix_user_provision {THOR} codex")
     assert refused.returncode != 0
-    assert "codex-bridge.env" in refused.stderr and "600" in refused.stderr
+    assert "codex-bridge.env" in refused.stderr
+    assert "600" in refused.stderr
 
 
 def test_provision_refuses_a_home_that_is_not_mode_750(tmp_path: Path):
@@ -774,7 +778,8 @@ def test_codex_account_gets_network_in_workspace_write_via_its_own_config(tmp_pa
     _provisioned(h, THOR, "codex")
     cfg = h.account_home(THOR, "codex") / ".codex/config.toml"
     text = cfg.read_text()
-    assert "[sandbox_workspace_write]" in text and "network_access = true" in text
+    assert "[sandbox_workspace_write]" in text
+    assert "network_access = true" in text
     assert oct(cfg.stat().st_mode & 0o777) == "0o600"
     cfg.write_text(text + '\n[projects."/x"]\ntrust_level = "trusted"\n')
     result = h.run("unix_user_provision thor-fake codex")

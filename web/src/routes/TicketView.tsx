@@ -8,6 +8,9 @@ import {
 } from "../api/decision-token";
 import type { TicketFrameData, TicketProjection } from "../api/types";
 
+type TicketQuestion = NonNullable<TicketFrameData["questions"]>[number];
+type TicketDecision = NonNullable<TicketFrameData["decisions"]>[number];
+
 const STATE_ICONS: Record<string, string> = {
   confirmed: "✓",
   proposed: "?",
@@ -77,12 +80,12 @@ export function TicketView() {
   const frozen = projection?.frozen === true || frame.frozen === true;
   const pr = mergedPR({ ...frame, merged_pr: projection?.merged_pr ?? frame.merged_pr });
   const claims = frame.claims ?? [];
-  const questions = frame.questions ?? claims
+  const questions: TicketQuestion[] = frame.questions ?? claims
     .filter((claim) => claim.kind === "open_question")
-    .map((claim) => ({ id: claim.id, text: claim.text, state: claim.state, status: claim.status }));
-  const decisions = frame.decisions ?? claims
+    .map((claim): TicketQuestion => ({ id: claim.id, text: claim.text, state: claim.state, status: claim.status }));
+  const decisions: TicketDecision[] = frame.decisions ?? claims
     .filter((claim) => claim.kind === "decision")
-    .map((claim) => ({ id: claim.id, text: claim.text, state: claim.state, status: claim.status }));
+    .map((claim): TicketDecision => ({ id: claim.id, text: claim.text, state: claim.state, status: claim.status }));
   const decisionByQuestion = useMemo(() => new Map(
     decisions.filter((item) => item.question_id).map((item) => [item.question_id, item]),
   ), [decisions]);

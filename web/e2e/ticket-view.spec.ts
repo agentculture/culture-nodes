@@ -18,7 +18,9 @@ test("keyboard walk reaches the reply box and submits with the decision token", 
   await expect(page.getByRole("heading", { name: TICKET_ID })).toBeVisible();
 
   await page.keyboard.press("Tab");
-  for (let count = 0; count < 20 && await page.evaluate(() => document.activeElement?.id !== "ticket-token"); count += 1) {
+  const focused = page.locator("*:focus");
+  for (let count = 0; count < 20; count += 1) {
+    if ((await focused.count()) > 0 && (await focused.first().getAttribute("id")) === "ticket-token") break;
     await page.keyboard.press("Tab");
   }
   await expect(page.locator("#ticket-token")).toBeFocused();
@@ -43,10 +45,7 @@ test("reduced motion disables ticket-route transitions and animations", async ({
   await page.emulateMedia({ reducedMotion: "reduce" });
   await page.route("**/v1alpha1/tickets/**", (route) => route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify(TICKET_PROJECTION) }));
   await page.goto(`/tickets/${TICKET_ID}`);
-  const styles = await page.locator(".ticket-state").first().evaluate((element) => {
-    const style = getComputedStyle(element);
-    return { animation: style.animationName, transition: style.transitionDuration };
-  });
-  expect(styles.animation).toBe("none");
-  expect(styles.transition).toBe("0s");
+  const state = page.locator(".ticket-state").first();
+  await expect(state).toHaveCSS("animation-name", "none");
+  await expect(state).toHaveCSS("transition-duration", "0s");
 });

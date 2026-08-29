@@ -3,9 +3,8 @@
 from __future__ import annotations
 
 import os
-from pathlib import Path
 import subprocess
-
+from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
 DEPLOY = ROOT / "deploy/prod/deploy.sh"
@@ -25,9 +24,7 @@ def _fake_ssh(tmp_path: Path) -> Path:
     bin_dir.mkdir(exist_ok=True)
     shim = bin_dir / "ssh"
     shim.write_text(
-        "#!/usr/bin/env bash\n"
-        "shift\n"
-        'exec env HOME="$FAKE_HOST_HOME" bash -c "$*"\n'
+        "#!/usr/bin/env bash\n" "shift\n" 'exec env HOME="$FAKE_HOST_HOME" bash -c "$*"\n'
     )
     shim.chmod(0o755)
     return bin_dir
@@ -87,8 +84,8 @@ def test_missing_nodes_api_url_refuses_before_touching_runner_env(tmp_path: Path
     runner_dir.mkdir(parents=True)
     original = (
         b"KEEP=this-file-byte-exact\n"
-        b"PR_UPKEEP_REPOSITORIES='{\"cycle\":0,\"repositories\":[{\"jira_site\":\"acme.example\","
-        b"\"jira_project\":\"NODE\"}]}'\n"
+        b'PR_UPKEEP_REPOSITORIES=\'{"cycle":0,"repositories":[{"jira_site":"acme.example",'
+        b'"jira_project":"NODE"}]}\'\n'
     )
     runner_env = runner_dir / "runner.env"
     runner_env.write_bytes(original)

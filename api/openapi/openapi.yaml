@@ -425,6 +425,40 @@ paths:
               schema:
                 $ref: '#/components/schemas/Error'
 
+  /v1alpha1/tickets/{id}/replies:
+    post:
+      operationId: postTicketReply
+      tags: [runs]
+      summary: Append a human page reply and enqueue its Jira mirror.
+      security: [{decisionBearerAuth: []}]
+      parameters:
+        - {name: id, in: path, required: true, schema: {type: string}}
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: '#/components/schemas/PostTicketReplyRequest'}
+      responses:
+        '201': {description: Reply fact and mirror intent created.}
+        '401': {description: Decision bearer token is missing or invalid.}
+
+  /v1alpha1/tickets/{id}/freeze:
+    post:
+      operationId: freezeTicket
+      tags: [runs]
+      summary: Freeze a ticket page with its merged PR pointer.
+      security: [{decisionBearerAuth: []}]
+      parameters:
+        - {name: id, in: path, required: true, schema: {type: string}}
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: '#/components/schemas/FreezeTicketRequest'}
+      responses:
+        '200': {description: Ticket projection frozen.}
+        '401': {description: Decision bearer token is missing or invalid.}
+
   /v1alpha1/runs:
     post:
       operationId: createRun
@@ -5983,9 +6017,23 @@ components:
         posted_by: {type: string}
         created_at: {type: string, format: date-time}
 
+    PostTicketReplyRequest:
+      type: object
+      required: [replier, text]
+      properties:
+        replier: {type: string, minLength: 1}
+        text: {type: string, minLength: 1}
+        question_id: {type: string}
+
+    FreezeTicketRequest:
+      type: object
+      properties:
+        merged_pr: {type: object, additionalProperties: true}
+        frozen_by: {type: string}
+
     Ticket:
       type: object
-      required: [ticket_id, runs, ledger, human_tasks, ticket_reports, replies]
+      required: [ticket_id, runs, ledger, human_tasks, ticket_reports, replies, frozen]
       properties:
         ticket_id: {type: string}
         runs:
@@ -5999,3 +6047,5 @@ components:
         replies: {type: array, items: {type: object}}
         latest_frame:
           $ref: '#/components/schemas/TicketFrame'
+        frozen: {type: boolean}
+        merged_pr: {type: object, additionalProperties: true}

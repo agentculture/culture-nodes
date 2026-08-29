@@ -198,6 +198,9 @@ Numbered SQL migrations for the authoritative PostgreSQL store (prd-spec
   JSON so the posted claim-state document is returned byte-for-byte. It also
   creates the append-only `ticket_replies` source the projection reads; t10
   owns the guarded endpoint that writes those rows.
+- `0048_ticket_reply_and_freeze.sql` — widens the existing Jira report outbox
+  for run-less reply/page-link intents and adds the namespace-scoped ticket
+  freeze projection updated by `pr.merged` facts or a guarded human action.
 
 - `0022_dispatch_rate_state.sql` — expand-only: adds the mutable
   `dispatch_rate_state` table (task t10 of the economy-discord-graphs plan,

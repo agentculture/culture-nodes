@@ -7,6 +7,8 @@ import (
 	"time"
 
 	"github.com/agentculture/culture-nodes/internal/ledger"
+	"github.com/agentculture/culture-nodes/internal/store"
+	storepg "github.com/agentculture/culture-nodes/internal/store/postgres"
 )
 
 type postTicketFrameRequest struct {
@@ -53,6 +55,89 @@ type TicketOut struct {
 	Reports     []TicketReportOut    `json:"ticket_reports"`
 	Replies     []TicketReplyOut     `json:"replies"`
 	LatestFrame *TicketFrameOut      `json:"latest_frame,omitempty"`
+	Frozen      bool                 `json:"frozen"`
+	MergedPR    json.RawMessage      `json:"merged_pr,omitempty"`
+}
+
+type postTicketReplyRequest struct {
+	Replier    string `json:"replier"`
+	Text       string `json:"text"`
+	QuestionID string `json:"question_id"`
+}
+
+type freezeTicketRequest struct {
+	MergedPR json.RawMessage `json:"merged_pr"`
+	FrozenBy string          `json:"frozen_by"`
+}
+
+func (s *Server) handlePostTicketReply(w http.ResponseWriter, r *http.Request) error {
+	if err := s.requireDecisionAuth(r); err != nil {
+		return err
+	}
+	var req postTicketReplyRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		return badRequest("send {replier, text, question_id?}", "decode ticket reply: %v", err)
+	}
+	if req.Replier == "" || req.Text == "" {
+		return badRequest("replier and text are required", "empty ticket reply")
+	}
+	ticketID := r.PathValue("id")
+	payload, _ := json.Marshal(map[string]any{
+		"id": ticketID, "origin": map[string]any{"kind": "human", "replier": req.Replier},
+		"replier": req.Replier, "originating_question_id": req.QuestionID,
+		"answer": map[string]any{"comment_id": "ticket-page", "body": req.Text},
+	})
+	delivery, err := s.Store.DeliverSignalEvent(r.Context(), storepg.DeliverSignalEventInput{
+		NamespaceID: s.NamespaceID, Name: "pr-upkeep.jira.comment", Payload: payload,
+		Emitter: "ticket-page", Subject: ticketID,
+	})
+	if err != nil {
+		return internalError(err)
+	}
+	replyID := store.NewULID()
+	comment := fmt.Sprintf("%s\n\nvia %s", req.Text, req.Replier)
+	outboxPayload, _ := json.Marshal(map[string]any{"verb": "post_comment", "issue": ticketID, "comment": comment, "phase": "reply", "signal_event_id": delivery.Event.ID})
+	tx, err := s.Store.Pool().Begin(r.Context())
+	if err != nil {
+		return internalError(err)
+	}
+	defer tx.Rollback(r.Context())
+	if _, err = tx.Exec(r.Context(), `INSERT INTO ticket_replies (id,namespace_id,ticket_id,replier,text,question_id,signal_event_id) VALUES ($1,$2,$3,$4,$5,NULLIF($6,''),$7)`, replyID, s.NamespaceID, ticketID, req.Replier, req.Text, req.QuestionID, delivery.Event.ID); err != nil {
+		return internalError(err)
+	}
+	if _, err = tx.Exec(r.Context(), `INSERT INTO jira_ticket_report_outbox (id,namespace_id,phase,target_actor_key,issue_key,payload) VALUES ($1,$2,'reply',$3,$4,$5)`, store.NewULID(), s.NamespaceID, storepg.JiraTicketReporterActorKey, ticketID, outboxPayload); err != nil {
+		return internalError(err)
+	}
+	if err = tx.Commit(r.Context()); err != nil {
+		return internalError(err)
+	}
+	writeJSON(w, http.StatusCreated, TicketReplyOut{ID: replyID, Replier: req.Replier, Text: req.Text, QuestionID: req.QuestionID, SignalEventID: delivery.Event.ID, CreatedAt: delivery.Event.CreatedAt})
+	return nil
+}
+
+func (s *Server) handleFreezeTicket(w http.ResponseWriter, r *http.Request) error {
+	if err := s.requireDecisionAuth(r); err != nil {
+		return err
+	}
+	var req freezeTicketRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		return badRequest("send {merged_pr, frozen_by}", "decode freeze: %v", err)
+	}
+	if req.FrozenBy == "" {
+		req.FrozenBy = "human"
+	}
+	if len(req.MergedPR) == 0 {
+		req.MergedPR = json.RawMessage(`{}`)
+	}
+	if !json.Valid(req.MergedPR) {
+		return badRequest("merged_pr must be JSON", "invalid merged_pr")
+	}
+	_, err := s.Store.Pool().Exec(r.Context(), `INSERT INTO ticket_freezes(namespace_id,ticket_id,merged_pr,frozen_by) VALUES($1,$2,$3,$4) ON CONFLICT(namespace_id,ticket_id) DO UPDATE SET merged_pr=EXCLUDED.merged_pr,frozen_by=EXCLUDED.frozen_by`, s.NamespaceID, r.PathValue("id"), req.MergedPR, req.FrozenBy)
+	if err != nil {
+		return internalError(err)
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"ticket_id": r.PathValue("id"), "frozen": true, "merged_pr": req.MergedPR})
+	return nil
 }
 
 func (s *Server) handlePostTicketFrame(w http.ResponseWriter, r *http.Request) error {
@@ -118,7 +203,7 @@ func (s *Server) handleGetTicket(w http.ResponseWriter, r *http.Request) error {
 			out.HumanTasks = append(out.HumanTasks, task)
 		}
 	}
-	rows, err := s.Store.Pool().Query(r.Context(), `SELECT id,run_id,phase,status,payload,created_at
+	rows, err := s.Store.Pool().Query(r.Context(), `SELECT id,COALESCE(run_id,''),phase,status,payload,created_at
 		FROM jira_ticket_report_outbox WHERE namespace_id=$1 AND issue_key=$2 ORDER BY created_at,id`, s.NamespaceID, ticketID)
 	if err != nil {
 		return internalError(err)
@@ -156,6 +241,12 @@ func (s *Server) handleGetTicket(w http.ResponseWriter, r *http.Request) error {
 		Scan(&frame.TicketID, &frame.Version, &frame.Frame, &frame.PostedBy, &frame.CreatedAt)
 	if err == nil {
 		out.LatestFrame = &frame
+	} else if !isNoRowsErr(err) {
+		return internalError(err)
+	}
+	err = s.Store.Pool().QueryRow(r.Context(), `SELECT merged_pr FROM ticket_freezes WHERE namespace_id=$1 AND ticket_id=$2`, s.NamespaceID, ticketID).Scan(&out.MergedPR)
+	if err == nil {
+		out.Frozen = true
 	} else if !isNoRowsErr(err) {
 		return internalError(err)
 	}

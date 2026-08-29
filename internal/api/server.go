@@ -431,6 +431,8 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("GET /v1alpha1/runs", s.wrap(s.handleListRuns))
 	mux.HandleFunc("GET /v1alpha1/tickets/{id}", s.wrap(s.handleGetTicket))
 	mux.HandleFunc("POST /v1alpha1/tickets/{id}/frame", s.wrap(s.handlePostTicketFrame))
+	mux.HandleFunc("POST /v1alpha1/tickets/{id}/replies", s.wrap(s.handlePostTicketReply))
+	mux.HandleFunc("POST /v1alpha1/tickets/{id}/freeze", s.wrap(s.handleFreezeTicket))
 	mux.HandleFunc("GET /v1alpha1/runs/{id}", s.wrap(s.handleGetRun))
 	mux.HandleFunc("PATCH /v1alpha1/runs/{id}", s.wrap(s.handlePatchRun))
 	mux.HandleFunc("POST /v1alpha1/runs/{id}/cancel", s.wrap(s.handleCancelRun))

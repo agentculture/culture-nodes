@@ -7,6 +7,7 @@ import (
 	"testing"
 
 	apipkg "github.com/agentculture/culture-nodes/internal/api"
+	storepg "github.com/agentculture/culture-nodes/internal/store/postgres"
 )
 
 type frameOut struct {
@@ -57,6 +58,76 @@ func TestTicketFramePostRequiresDecisionToken(t *testing.T) {
 	resp, body := doJSON(t, f.client, http.MethodPost, f.url("/v1alpha1/tickets/SCRUM-9/frame"),
 		map[string]any{"frame": json.RawMessage(`{"claims":[]}`), "posted_by": "test"}, nil)
 	requireStatus(t, resp, body, http.StatusUnauthorized)
+}
+
+func TestTicketReplyAppendsHumanFactAndOneMirrorIntent(t *testing.T) {
+	f := newFixtureWithDecisionAuth(t, decisionAuthSecret)
+	var reply struct {
+		SignalEventID string `json:"signal_event_id"`
+	}
+	resp, body := doJSONBearer(t, f.client, http.MethodPost,
+		f.url("/v1alpha1/tickets/SCRUM-9/replies"), decisionAuthSecret,
+		map[string]any{"replier": "operator", "text": "Use A", "question_id": "q-9"}, &reply)
+	requireStatus(t, resp, body, http.StatusCreated)
+	var name, emitter, payload string
+	if err := f.store.Pool().QueryRow(t.Context(), `SELECT name,emitter,payload::text FROM signal_events WHERE id=$1`, reply.SignalEventID).Scan(&name, &emitter, &payload); err != nil {
+		t.Fatal(err)
+	}
+	if name != "pr-upkeep.jira.comment" || emitter != "ticket-page" ||
+		!bytes.Contains([]byte(payload), []byte(`"kind": "human"`)) ||
+		!bytes.Contains([]byte(payload), []byte(`"originating_question_id": "q-9"`)) {
+		t.Fatalf("fact name=%q emitter=%q payload=%s", name, emitter, payload)
+	}
+	var outboxCount int
+	if err := f.store.Pool().QueryRow(t.Context(), `SELECT count(*) FROM jira_ticket_report_outbox WHERE namespace_id=$1 AND issue_key='SCRUM-9' AND phase='reply'`, f.nsID).Scan(&outboxCount); err != nil {
+		t.Fatal(err)
+	}
+	if outboxCount != 1 {
+		t.Fatalf("reply outbox rows = %d, want 1", outboxCount)
+	}
+}
+
+func TestTicketFreezeActionUpdatesProjection(t *testing.T) {
+	f := newFixtureWithDecisionAuth(t, decisionAuthSecret)
+	resp, body := doJSONBearer(t, f.client, http.MethodPost,
+		f.url("/v1alpha1/tickets/SCRUM-9/freeze"), decisionAuthSecret,
+		map[string]any{"frozen_by": "operator", "merged_pr": map[string]any{"number": 230}}, nil)
+	requireStatus(t, resp, body, http.StatusOK)
+	var ticket struct {
+		Frozen   bool            `json:"frozen"`
+		MergedPR json.RawMessage `json:"merged_pr"`
+	}
+	resp, body = doJSON(t, f.client, http.MethodGet, f.url("/v1alpha1/tickets/SCRUM-9"), nil, &ticket)
+	requireStatus(t, resp, body, http.StatusOK)
+	if !ticket.Frozen || !bytes.Contains(ticket.MergedPR, []byte(`"number": 230`)) {
+		t.Fatalf("ticket freeze = %+v", ticket)
+	}
+}
+
+func TestMergedPRFactFreezesLinkedTicketProjection(t *testing.T) {
+	f := newFixture(t)
+	payload := json.RawMessage(`{"issue_key":"SCRUM-9","number":230,"url":"https://example.test/pull/230","merged_at":"2026-08-29T12:00:00Z"}`)
+	delivery, err := f.store.DeliverSignalEvent(t.Context(), storepg.DeliverSignalEventInput{
+		NamespaceID: f.nsID,
+		Name:        "pr.merged",
+		Payload:     payload,
+		Emitter:     "pr-upkeep/sweep",
+		SourceKey:   "github:agentculture/culture-nodes:pr:230:merged",
+		Watermark:   json.RawMessage(`{"merged_at":"2026-08-29T12:00:00Z"}`),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var ticket struct {
+		Frozen   bool            `json:"frozen"`
+		MergedPR json.RawMessage `json:"merged_pr"`
+	}
+	resp, body := doJSON(t, f.client, http.MethodGet, f.url("/v1alpha1/tickets/SCRUM-9"), nil, &ticket)
+	requireStatus(t, resp, body, http.StatusOK)
+	if !ticket.Frozen || !bytes.Contains(ticket.MergedPR, []byte(`"number": 230`)) ||
+		!bytes.Contains(ticket.MergedPR, []byte(`"issue_key": "SCRUM-9"`)) {
+		t.Fatalf("ticket after event %s = %+v", delivery.Event.ID, ticket)
+	}
 }
 
 func TestListRunsFiltersBySubject(t *testing.T) {

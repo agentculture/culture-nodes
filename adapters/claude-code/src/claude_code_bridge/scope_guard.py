@@ -147,26 +147,19 @@ def _untracked_under_guarded_prefixes(repo: str) -> tuple[str, ...]:
     return guarded(found)
 
 
-def _branch_scope_delta(repo: str) -> tuple[str, ...] | None:
+def _branch_scope_delta(repo: str, baseline: str) -> tuple[str, ...] | None:
     """Committed branch work plus tracked working-tree edits.
 
-    The upstream is the branch base established by the required step-0
-    checkout. Returning ``None`` when it cannot be resolved lets older or
-    detached dispatches retain the pre-#207 measurement fallback.
+    The baseline is captured by the bridge before dispatch: the SHA fetched
+    for an explicitly bound ``base_ref``, otherwise ``head_before``.
     """
-    upstream = workspace.git_stdout(
-        repo, "rev-parse", "--abbrev-ref", "--symbolic-full-name", "@{upstream}"
-    )
-    if not upstream or not upstream.strip():
-        return None
-
     committed = workspace.git_stdout(
         repo,
         "diff",
         "--no-ext-diff",
         "--no-textconv",
         "--name-only",
-        f"{upstream.strip()}..HEAD",
+        f"{baseline}..HEAD",
     )
     uncommitted = workspace.git_stdout(
         repo, "diff", "--no-ext-diff", "--no-textconv", "--name-only", "HEAD"
@@ -192,7 +185,8 @@ def violations(repo: str | None, workspace_measured: dict[str, Any] | None) -> t
     if not isinstance(workspace_measured, dict) or not workspace_measured.get("measured"):
         return ()
 
-    branch_delta = _branch_scope_delta(repo) if repo else None
+    baseline = workspace_measured.get("trusted_base") or workspace_measured.get("head_before")
+    branch_delta = _branch_scope_delta(repo, baseline) if repo and isinstance(baseline, str) else None
     if branch_delta is None:
         changed = workspace_measured.get("changed_files")
         hits = list(guarded(changed if isinstance(changed, list) else ()))

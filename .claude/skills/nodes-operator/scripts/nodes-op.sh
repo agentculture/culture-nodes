@@ -48,6 +48,7 @@ usage: nodes-op.sh <verb> [args]
   assign <actor> "<instruction>" [opts]   one-node workflow -> publish -> run -> watch
       opts: --sandbox read-only|workspace-write   (default read-only)
             --mode plan|default|auto-edit|auto    (qwen actors only; required there)
+            --base-ref REF                         (bridge-fetched trusted base)
             --timeout DUR                          (default 15m)
             --retries N                            (default 1 — no auto-retry)
             --outcome NAME                         (default completed)
@@ -324,7 +325,7 @@ print(d.get("id", ""), d.get("authority", ""), origin.get("kind", ""),
 assign)
   actor="${1:?usage: assign <codex-thor|codex-orin|developer|planner|verifier|intake|qwen-developer> \"instruction\" [opts]}"; shift
   instruction="${1:?assign needs an instruction}"; shift
-  sandbox=read-only; timeout=15m; retries=1; outcome=completed; watch=1; category=""; repo_override=""; handover=false; mode=""
+  sandbox=read-only; timeout=15m; retries=1; outcome=completed; watch=1; category=""; repo_override=""; handover=false; mode=""; base_ref=""
   while [ $# -gt 0 ]; do
     case "$1" in
       --sandbox) sandbox="$2"; shift 2;;
@@ -335,6 +336,7 @@ assign)
       # reads as "killed, crashed, or timed out" (#225). Until #225 lands,
       # forgetting this flag costs a confusing round trip, not a clear error.
       --mode) mode="$2"; shift 2;;
+      --base-ref) base_ref="$2"; shift 2;;
       --timeout) timeout="$2"; shift 2;;
       --retries) retries="$2"; shift 2;;
       --outcome) outcome="$2"; shift 2;;
@@ -394,9 +396,10 @@ assign)
   # binding for a mode-less dispatch so the digest carries only bindings the
   # input can satisfy.
   [ -n "$mode" ] || sed -i '/^[[:space:]]*mode: \/run\/input\/mode[[:space:]]*$/d' "$wf"
+  [ -n "$base_ref" ] || sed -i '/^[[:space:]]*base_ref: \/run\/input\/base_ref[[:space:]]*$/d' "$wf"
   digest=$("$0" publish "$wf")
   [ -n "$digest" ] || { echo "nodes-op: publish returned no digest" >&2; exit 1; }
-  python3 - "$instruction" "$sandbox" "$outcome" "$repo" "$handover" "$mode" <<'PYEOF' > "$wf.json"
+  python3 - "$instruction" "$sandbox" "$outcome" "$repo" "$handover" "$mode" "$base_ref" <<'PYEOF' > "$wf.json"
 import json, sys
 payload = {"instruction": sys.argv[1], "sandbox": sys.argv[2],
            "success_outcome": sys.argv[3], "repo": sys.argv[4],
@@ -406,6 +409,8 @@ payload = {"instruction": sys.argv[1], "sandbox": sys.argv[2],
 # read as "the operator chose this" in the ledger.
 if sys.argv[6]:
     payload["mode"] = sys.argv[6]
+if sys.argv[7]:
+    payload["base_ref"] = sys.argv[7]
 print(json.dumps(payload))
 PYEOF
   if [ -n "$category" ]; then

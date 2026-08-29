@@ -5,7 +5,7 @@
   "schema_version": 4,
   "status": "exported",
   "created": "2026-08-29T07:00:23Z",
-  "updated": "2026-08-29T07:38:49Z",
+  "updated": "2026-08-29T07:50:32Z",
   "targets": [
     {
       "id": "c1",
@@ -511,7 +511,7 @@
     },
     {
       "id": "t10",
-      "summary": "Reply endpoint: POST /v1alpha1/tickets/{id}/replies (decision-token guarded, required replier, required client-generated reply_id) appends a signal event in-process with origin.kind human and the replier named, and enqueues a display-only mirror comment 'via <replier>' through the jira bridge outbox \u2014 the fact and its mirror row are written in ONE store transaction and the request is idempotent on reply_id; the page-reply fact and the sweep's comment fact validate against one schema",
+      "summary": "Reply endpoint: POST /v1alpha1/tickets/{id}/replies (guarded by a replier-BOUND bearer derived from NODES_HUMAN_DECISION_TOKEN_SECRET \u2014 the token names the replier and the server verifies the binding, so the required replier field is checked against the token rather than trusted; required client-generated reply_id) appends a signal event in-process with origin.kind human and the AUTHENTICATED replier named, and enqueues a display-only mirror comment 'via <replier>' through the jira bridge outbox \u2014 the fact and its mirror row are written in ONE store transaction and the request is idempotent on reply_id; the page-reply fact and the sweep's comment fact validate against one schema",
       "origin": "llm",
       "status": "confirmed",
       "acceptance_criteria": [
@@ -519,7 +519,8 @@
         "A schema test validates a fixture page-reply fact and a fixture sweep comment fact against the same JSON Schema",
         "jira_comment_is_self_echo in examples/pr-upkeep/pr_upkeep_jira.py is unchanged (test pins its bytes)",
         "Atomic dual write: the fact and its mirror row are written by ONE store method (e.g. Store.DeliverPageReply) that calls the private tx-aware seam deliverSignalEventTx (internal/store/postgres/signal.go; FireSchedule is the precedent, t33 criterion 2) and inserts the mirror row inside the SAME transaction \u2014 the handler never calls the public DeliverSignalEvent (which begins and commits its own transaction) and then inserts the mirror as a second statement. Failure-injection PG test: with the mirror insert made to fail (a fixture that violates the mirror table's constraint), the POST returns 5xx and afterwards there are ZERO signal_events rows and ZERO mirror rows for that reply \u2014 never a fact without a mirror",
-        "Idempotent retry: the request carries a required client-generated reply_id (400 without it); the store delivers with SourceKey 'page-reply:{ticket id}:{reply_id}' and Watermark {\"reply_id\": ...} \u2014 a shape jiraHistoryIssueSourceKey does not recognise, so the pre-cutover suppression is not tripped \u2014 and the mirror row is UNIQUE on the fact id it mirrors (ON CONFLICT DO NOTHING). Retry test: the same POST twice yields exactly one signal_events row and one mirror row, both responses cite the same fact id and the second carries duplicate: true. The mirror cannot reuse jira_ticket_report_outbox unchanged (migrations/0043: run_id and trigger_event_id NOT NULL, phase CHECKed to start|finish, UNIQUE (run_id, phase)); expand it or add a sibling table \u2014 the invariant is the unique key on the fact id, not the table"
+        "Idempotent retry: the request carries a required client-generated reply_id (400 without it); the store delivers with SourceKey 'page-reply:{ticket id}:{reply_id}' and Watermark {\"reply_id\": ...} \u2014 a shape jiraHistoryIssueSourceKey does not recognise, so the pre-cutover suppression is not tripped \u2014 and the mirror row is UNIQUE on the fact id it mirrors (ON CONFLICT DO NOTHING). Retry test: the same POST twice yields exactly one signal_events row and one mirror row, both responses cite the same fact id and the second carries duplicate: true. The mirror cannot reuse jira_ticket_report_outbox unchanged (migrations/0043: run_id and trigger_event_id NOT NULL, phase CHECKed to start|finish, UNIQUE (run_id, phase)); expand it or add a sibling table \u2014 the invariant is the unique key on the fact id, not the table",
+        "Identity binding: the route does NOT reuse requireDecisionAuth as-is \u2014 the deployment-wide decision secret authorizes an operation but names no principal (internal/api/humantasks.go; decider_actor_id is passed through unverified the same way, which web/src/api/decision-token.ts documents as the phase-1 posture). The reply route requires a replier-bound bearer of the form '<replier>.<hex HMAC-SHA256(NODES_HUMAN_DECISION_TOKEN_SECRET, \"page-reply:\" + replier)>', verified by a new requireReplierAuth that recomputes the MAC for the presented replier and compares SHA-256 digests in constant time (the requireDecisionAuth pattern); the recorded replier is the token's replier, and the body's required replier must equal it (403 on mismatch). Minting is operator-side from the secret \u2014 a Go helper in internal/api that the tests call, and a documented openssl one-liner that produces the same bytes \u2014 so a person holds only their own bound token and can derive nobody else's; the browser never holds the secret. Negative tests, each asserting ZERO signal_events rows and ZERO mirror rows afterwards: a token bound to 'alice' with body replier 'bob' \u2192 403; the plain deployment-wide decision secret as bearer \u2192 401; no bearer \u2192 401. Positive test: alice's token with replier alice \u2192 the fact's payload names alice and the outbox row's comment reads 'via alice'. api/openapi/openapi.yaml documents the bound-token scheme on this route as distinct from the decision bearer"
       ],
       "deps": [
         "t9"
@@ -534,12 +535,12 @@
     },
     {
       "id": "t11",
-      "summary": "Web route /tickets/:id: renders the projection (frame claims with state, questions/decisions, reports, runs, reply thread), a link back to the Jira ticket, a reply box using the existing decision-token store, and a freeze banner; PRD \u00a78.8 rules hold on the route; no secret enters the bundle",
+      "summary": "Web route /tickets/:id: renders the projection (frame claims with state, questions/decisions, reports, runs, reply thread), a link back to the Jira ticket, a reply box holding the replier-bound reply token under a sibling sessionStorage key in the existing decision-token store (same discipline: entered by the user, sessionStorage only, visible, clearable \u2014 a decision token and a reply token are different credentials because the decision secret names no principal), and a freeze banner; PRD \u00a78.8 rules hold on the route; no secret enters the bundle",
       "origin": "llm",
       "status": "confirmed",
       "acceptance_criteria": [
         "vitest: the route renders a fixture projection with every claim's state as icon+word and the back-link href equal to the ticket URL",
-        "playwright e2e: keyboard walk reaches the reply box and submits with the decision token; reduced-motion honoured",
+        "playwright e2e: keyboard walk reaches the reply box and submits with a replier-bound reply token (t10 criterion 6); a token whose bound replier differs from the typed replier surfaces the server's 403 in the page rather than being swallowed; reduced-motion honoured",
         "A test greps web/src for every *_SECRET / bearer name and finds only the decision-token path"
       ],
       "deps": [
@@ -708,6 +709,14 @@
       "text": "upsert_comment's edit path needs the bridge's Jira account to hold 'Edit Own Comments' on the prod project and the comment to be authored by that same account \u2014 the existing post_comment path never needed either; if the deployed credential lacks the permission the bridge falls back to POST and the link comment duplicates, so t12's deploy step must probe the permission (one PUT of the bridge's own comment on the fixture ticket) before the intake workflow is republished",
       "kind": "unknown_nonblocking",
       "task_id": "t12",
+      "resolved": false,
+      "resolution": ""
+    },
+    {
+      "id": "r9",
+      "text": "The routes behind requireDecisionAuth (human-task decision, the two review routes, gate reports, suite verdicts) still take decider_actor_id from the request body unverified \u2014 the phase-1 posture web/src/api/decision-token.ts documents ('no per-user identity behind the token'). t10's replier-bound token covers the reply route only: extending the same principal-dot-MAC bearer form to requireDecisionAuth so a decision carries an authenticated decider is the per-user identity work #235 carries, not this cycle's",
+      "kind": "follow_up",
+      "task_id": "t10",
       "resolved": false,
       "resolution": ""
     }

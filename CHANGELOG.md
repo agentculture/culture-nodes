@@ -5,6 +5,13 @@ All notable changes to this project will be documented in this file.
 Format follows [Keep a Changelog](https://keepachangelog.com/). This project
 adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.43.4] - 2026-08-29
+
+### Changed
+
+- docs/triage regenerated after the jira-flow cycle's closures: #193 #194 #197 #198 (prod evidence, the delivery summary's "closure is the PR reviewer's read" condition met by #244 merging), #202 (the `ledger.propose` fix was in c0f6c4a all along -- the t7 deploy is what made it true on prod), #207 and #242 (bridge-trusted `base_ref`, mirrored to codex and colleague), #231 (dispatcher package tests), #240 (mode binding stripped for a mode-less assign). Open issues 66 -> 55; the table had also never picked up #192/#199, closed earlier
+- docs/triage/dispositions.csv: the three issues held open deliberately now state what blocks them rather than what was originally planned. #200 -- the page is delivered and signals 3/8 proven, but signal 9 milestone 2 MEASURED two link comments (10191, 10205) and WP-I's engine-owned singleton is not deployed; closes on a re-measure on a new ticket after the tip ships. #205 -- the 401 backoff is delivered and mirrored, but a Bug closes when it stops reproducing and presence `connected` does not disprove a 1/s loop underneath it; closes on honesty condition h7's one-hour journal read. #230 -- carries the prod tail and the revision correction (prod is 5d9be94, not the stale c041f28)
+
 ## [0.43.3] - 2026-08-29
 
 ### Changed

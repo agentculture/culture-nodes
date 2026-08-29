@@ -765,6 +765,25 @@ def test_codex_is_installed_as_the_full_package_with_its_code_mode_host(
     assert h.count("curl[", "codex-package-") == 2
 
 
+def test_codex_account_gets_network_in_workspace_write_via_its_own_config(tmp_path: Path):
+    """Deviation d2 (#243): the account is the fence, so the account's own
+    ~/.codex/config.toml turns network on for workspace-write; codex's
+    [projects.*] trust entries in the same file survive, and a second
+    provision does not append the section twice."""
+    h = Harness(tmp_path)
+    _provisioned(h, THOR, "codex")
+    cfg = h.account_home(THOR, "codex") / ".codex/config.toml"
+    text = cfg.read_text()
+    assert "[sandbox_workspace_write]" in text and "network_access = true" in text
+    assert oct(cfg.stat().st_mode & 0o777) == "0o600"
+    cfg.write_text(text + '\n[projects."/x"]\ntrust_level = "trusted"\n')
+    result = h.run("unix_user_provision thor-fake codex")
+    assert result.returncode == 0, result.stderr
+    again = cfg.read_text()
+    assert again.count("[sandbox_workspace_write]") == 1
+    assert 'trust_level = "trusted"' in again
+
+
 def test_session_pattern_does_not_match_its_own_ssh_shell():
     """Regression for the first thor cutover (2026-08-29): over ssh the
     pattern rides inside ``bash -c "pgrep ... '<pattern>'"``, so an

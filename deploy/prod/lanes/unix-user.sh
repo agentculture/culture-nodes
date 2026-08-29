@@ -278,6 +278,24 @@ esac
 have || { echo "refusing: $bin does not report $VERSION after install ($("$bin" --version 2>&1 | head -n 1))" >&2; exit 3; }
 echo "$ENGINE: installed $VERSION at $bin"'
 
+# The codex sandbox posture of an ACCOUNT (#243, deviation d2): the account is
+# the fence, so a workspace-write session keeps its file confinement (writes
+# stay in the workspace; .git opens only for a handover) and gets NETWORK --
+# codex's own default denies egress in workspace-write, which is exactly the
+# #230 "Could not resolve host" wall. Rendered into the account's own
+# ~/.codex/config.toml once; codex appends its [projects.*] trust entries to
+# the same file and this never rewrites those.
+UNIX_USER_CODEX_CONFIG_REMOTE='set -euo pipefail
+mkdir -p "$HOME/.codex"; chmod 700 "$HOME/.codex"
+cfg=$HOME/.codex/config.toml
+if [ -f "$cfg" ] && grep -q "^\[sandbox_workspace_write\]" "$cfg"; then
+  echo "codex config: sandbox_workspace_write section present in $cfg"
+else
+  printf "%s\n" "" "[sandbox_workspace_write]" "# #243: the account is the fence; workspace-write keeps its file confinement and gains network" "network_access = true" >> "$cfg"
+  chmod 600 "$cfg"
+  echo "codex config: sandbox_workspace_write.network_access = true written to $cfg"
+fi'
+
 # The per-role clone, mirroring lanes/preflight.sh's agent-checkout states:
 # absent -> clone; clean -> fetch + ff-only; dirty or detached or diverged ->
 # refuse and change nothing. A refusal here FAILS the provision (unlike
@@ -387,6 +405,10 @@ unix_user_provision() {
     return 1
   }
 
+  if [ "$engine" = codex ]; then
+    say "ensuring $account's codex sandbox posture: workspace-write keeps file confinement and gains network (config.toml)"
+    ssh "$target" "$UNIX_USER_CODEX_CONFIG_REMOTE" || { echo "provision failed on $host: codex config.toml for $account (reason above)" >&2; return 1; }
+  fi
   for role in $(unix_user_roles "$engine"); do
     say "checkout ~/git/culture-nodes-$role for $account (clone, or fast-forward a clean tree)"
     ssh "$target" "ROLE=$role; REPO_URL=$UNIX_USER_REPO_URL; $UNIX_USER_CHECKOUT_REMOTE" || {

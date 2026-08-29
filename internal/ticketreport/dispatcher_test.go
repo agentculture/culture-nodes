@@ -20,15 +20,25 @@ import (
 
 const reportWorkflow = `apiVersion: nodes.culture.dev/v1alpha1
 kind: Workflow
-metadata: {name: ticket-report-test, version: 1.0.0, ownerRef: test}
+metadata: {name: ticket-report-test, version: 1.0.0, ownerRef: team/platform-ai}
 spec:
-  entry: done
+  entry: work
   contract:
     input: {schema: {type: object}}
     output: {schema: {type: object}}
   limits: {maxDuration: 1h, maxTransitions: 2, maxVisitsPerNode: 1, maxParallelTokens: 1}
   nodes:
-    done: {kind: end, ownerRef: test, output: {literal: {}}}
+    work:
+      kind: agent
+      ownerRef: team/platform-ai
+      uses: actor://company/developer@sha256:aaaaaa
+      contract: {outcomes: {completed: {schema: {type: object}}}}
+    done:
+      kind: end
+      ownerRef: team/platform-ai
+      output: {from: /nodes/work/output}
+  edges:
+    - {from: work.completed, to: done}
 `
 
 type recordingTransport struct {

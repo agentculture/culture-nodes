@@ -36,7 +36,7 @@ test("keyboard walk reaches the reply box and submits with the decision token", 
   await expect(page.getByRole("status")).toHaveText("Reply sent.");
   expect(submitted).toEqual({
     authorization: "Bearer walk-token",
-    body: { replier: "operator", text: "Ship it" },
+    body: { id: expect.stringMatching(/^[A-Za-z0-9_-]{8,64}$/), replier: "operator", text: "Ship it" },
   });
   expect(await page.evaluate(() => sessionStorage.getItem("nodes.human-decision-token"))).toBe("walk-token");
 });

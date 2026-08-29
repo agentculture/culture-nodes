@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"regexp"
 	"time"
 
 	"github.com/agentculture/culture-nodes/internal/ledger"
@@ -66,10 +67,17 @@ type TicketOut struct {
 }
 
 type postTicketReplyRequest struct {
+	// ID is the client's idempotency key for this reply (Qodo 4 on #244): a
+	// retry after a 500 resumes the same row instead of minting a second
+	// reply and a second engine fact. Optional; the server mints one when
+	// absent, in which case a retry IS a new reply.
+	ID         string `json:"id"`
 	Replier    string `json:"replier"`
 	Text       string `json:"text"`
 	QuestionID string `json:"question_id"`
 }
+
+var ticketReplyIDPattern = regexp.MustCompile(`^[A-Za-z0-9_-]{8,64}$`)
 
 type freezeTicketRequest struct {
 	MergedPR json.RawMessage `json:"merged_pr"`
@@ -97,9 +105,35 @@ func (s *Server) handlePostTicketReply(w http.ResponseWriter, r *http.Request) e
 	// lands FIRST with no event, so a failure after delivery can never leave an
 	// engine fact that no page reply explains; the event id is attached to the
 	// row, with the display-only Jira mirror, once delivery succeeded.
-	replyID := store.NewULID()
-	if _, err := s.Store.Pool().Exec(r.Context(), `INSERT INTO ticket_replies (id,namespace_id,ticket_id,replier,text,question_id) VALUES ($1,$2,$3,$4,$5,NULLIF($6,''))`, replyID, s.NamespaceID, ticketID, req.Replier, req.Text, req.QuestionID); err != nil {
+	replyID := req.ID
+	if replyID == "" {
+		replyID = store.NewULID()
+	} else if !ticketReplyIDPattern.MatchString(replyID) {
+		return badRequest("id must match ^[A-Za-z0-9_-]{8,64}$", "reply id %q", replyID)
+	}
+	// A frozen ticket takes no replies (Qodo 5 on #244): the freeze row is
+	// read in the same statement that writes the reply, so a freeze landing
+	// concurrently cannot slip a reply past it. Zero rows means one of two
+	// things, told apart below: frozen, or this id already exists (a retry).
+	tag, err := s.Store.Pool().Exec(r.Context(), `INSERT INTO ticket_replies (id,namespace_id,ticket_id,replier,text,question_id)
+		SELECT $1,$2,$3,$4,$5,NULLIF($6,'')
+		WHERE NOT EXISTS (SELECT 1 FROM ticket_freezes WHERE namespace_id=$2 AND ticket_id=$3)
+		ON CONFLICT (id) DO NOTHING`, replyID, s.NamespaceID, ticketID, req.Replier, req.Text, req.QuestionID)
+	if err != nil {
 		return internalError(err)
+	}
+	if tag.RowsAffected() == 0 {
+		var existing TicketReplyOut
+		var eventID *string
+		err := s.Store.Pool().QueryRow(r.Context(), `SELECT id, replier, text, coalesce(question_id,''), signal_event_id, created_at FROM ticket_replies WHERE id=$1 AND namespace_id=$2`, replyID, s.NamespaceID).Scan(&existing.ID, &existing.Replier, &existing.Text, &existing.QuestionID, &eventID, &existing.CreatedAt)
+		if err == nil {
+			if eventID != nil {
+				existing.SignalEventID = *eventID
+			}
+			writeJSON(w, http.StatusOK, existing)
+			return nil
+		}
+		return conflict("the ticket is frozen; replies are closed (see merged_pr on the ticket projection)", "ticket %s is frozen", ticketID)
 	}
 	delivery, err := s.Store.DeliverSignalEvent(r.Context(), storepg.DeliverSignalEventInput{
 		NamespaceID: s.NamespaceID, Name: "pr-upkeep.jira.comment", Payload: payload,

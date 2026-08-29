@@ -589,6 +589,8 @@ export interface TicketProjection {
 }
 
 export interface TicketReplyRequest {
+  /** Client idempotency key: a retry after a failed submit resumes the same reply. */
+  id?: string;
   replier: string;
   text: string;
   question_id?: string;

@@ -153,7 +153,12 @@ class Harness:
     def run(
         self, lane: str, checkout: str = "clean", **fake_env: str
     ) -> subprocess.CompletedProcess:
-        _agent_checkout(self.thor_home, checkout)
+        # "absent" models a host that was never deployed (no agent checkout):
+        # the preflight refuses it unless FIRST_DEPLOY=1 is declared.
+        if checkout != "absent":
+            _agent_checkout(self.thor_home, checkout)
+            # orin is doctored by the thor lane too (Qodo 3 on #244).
+            _agent_checkout(self.orin_home, "clean")
         if lane == "thor":
             body = "\n".join(
                 [
@@ -352,3 +357,16 @@ def test_orin_lane_parity_mismatch_refuses_resume(tmp_path: Path):
     assert result.returncode == 3
     h.never("up -d scheduler")
     assert "deploy.sh thor" in result.stdout + result.stderr
+
+
+def test_missing_agent_checkout_refuses_unless_first_deploy_is_declared(tmp_path):
+    """A host that cannot be doctored is refused before anything changes; the
+    only exception is FIRST_DEPLOY=1, declared by the operator (Qodo 3, #244)."""
+    refused_dir, declared_dir = tmp_path / "refused", tmp_path / "declared"
+    refused_dir.mkdir()
+    declared_dir.mkdir()
+    refused = Harness(refused_dir).run("thor", checkout="absent")
+    assert refused.returncode != 0, refused.stdout
+    assert "FIRST_DEPLOY=1" in refused.stderr, refused.stderr
+    declared = Harness(declared_dir).run("thor", checkout="absent", FIRST_DEPLOY="1")
+    assert declared.returncode == 0, declared.stderr

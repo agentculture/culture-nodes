@@ -100,3 +100,28 @@ def test_jira_facts_carry_the_issue_key_as_subject(monkeypatch):
         subject="SCRUM-5",
     )
     assert seen == ["SCRUM-5"]
+
+
+def test_fetch_merged_pulls_follows_pages_inside_the_lookback_window(monkeypatch):
+    """One 50-item page dropped every merge past it (Qodo 6 on #244)."""
+    from datetime import datetime, timedelta, timezone
+
+    fresh = (datetime.now(timezone.utc) - timedelta(days=1)).strftime("%Y-%m-%dT%H:%M:%SZ")
+    stale = (datetime.now(timezone.utc) - timedelta(days=90)).strftime("%Y-%m-%dT%H:%M:%SZ")
+    pages = {
+        1: [{"number": n, "merged_at": fresh, "updated_at": fresh} for n in range(1, 51)],
+        2: [{"number": 51, "merged_at": fresh, "updated_at": fresh}]
+        + [{"number": n, "merged_at": None, "updated_at": stale} for n in range(52, 60)],
+        3: [{"number": 99, "merged_at": stale, "updated_at": stale}],
+    }
+    seen = []
+
+    def fake_get(url, token=None, **_kw):
+        page = int(url.rsplit("page=", 1)[1])
+        seen.append(page)
+        return pages.get(page, [])
+
+    monkeypatch.setattr(sweep, "_get_json", fake_get)
+    merged = sweep.fetch_merged_pulls(None, "agentculture/culture-nodes")
+    assert [p["number"] for p in merged] == list(range(1, 52))
+    assert seen == [1, 2], "page 2 ended before the window; page 3 must not be read"

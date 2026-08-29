@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState, type FormEvent } from "react";
+import { useEffect, useMemo, useRef, useState, type FormEvent } from "react";
 import { Link, useParams } from "react-router-dom";
 import { ApiError, getTicket, postTicketReply } from "../api/client";
 import {
@@ -7,6 +7,11 @@ import {
   setDecisionToken,
 } from "../api/decision-token";
 import type { TicketFrameData, TicketProjection } from "../api/types";
+
+function newSubmissionID(): string {
+  const raw = typeof crypto !== "undefined" && "randomUUID" in crypto ? crypto.randomUUID() : `${Date.now()}-${Math.random()}`;
+  return raw.replace(/[^A-Za-z0-9_-]/g, "").slice(0, 64);
+}
 
 type TicketQuestion = NonNullable<TicketFrameData["questions"]>[number];
 type TicketDecision = NonNullable<TicketFrameData["decisions"]>[number];
@@ -90,6 +95,8 @@ export function TicketView() {
     decisions.filter((item) => item.question_id).map((item) => [item.question_id, item]),
   ), [decisions]);
 
+  const submissionID = useRef(newSubmissionID());
+
   function holdToken(next: string) {
     setToken(next);
     if (next) setDecisionToken(next);
@@ -104,12 +111,17 @@ export function TicketView() {
     setSent(false);
     try {
       const reply = await postTicketReply(projection.ticket_id, {
+        // One id per submission; a retry of the same submission (network
+        // error, 500) reuses it, so the server resumes the row instead of
+        // minting a second reply and a second engine fact.
+        id: submissionID.current,
         replier: replier.trim(),
         text: text.trim(),
         ...(questionID ? { question_id: questionID } : {}),
       }, token);
       setProjection({ ...projection, replies: [...projection.replies, reply] });
       setText("");
+      submissionID.current = newSubmissionID();
       setQuestionID("");
       setSent(true);
     } catch (error) {

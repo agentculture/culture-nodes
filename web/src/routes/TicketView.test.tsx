@@ -63,7 +63,11 @@ describe("TicketView", () => {
     const [url, init] = fetchMock.mock.calls[0] as [string, RequestInit];
     expect(url).toBe(`/v1alpha1/tickets/${TICKET_PROJECTION.ticket_id}/replies`);
     expect((init.headers as Record<string, string>).authorization).toBe("Bearer decision-token");
-    expect(JSON.parse(init.body as string)).toEqual({ replier: "operator", text: "Proceed" });
+    expect(JSON.parse(init.body as string)).toEqual({
+      id: expect.stringMatching(/^[A-Za-z0-9_-]{8,64}$/),
+      replier: "operator",
+      text: "Proceed",
+    });
     expect(window.sessionStorage.getItem("nodes.human-decision-token")).toBe("decision-token");
     expect(await screen.findByRole("status")).toHaveTextContent("Reply sent");
   });

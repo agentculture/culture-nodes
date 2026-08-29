@@ -593,10 +593,36 @@ def fetch_open_pulls(token: str | None, repository: str) -> list[dict]:
     return open_pulls
 
 
+MERGED_PR_LOOKBACK_DAYS = 30
+MERGED_PR_MAX_PAGES = 10
+
+
 def fetch_merged_pulls(token: str | None, repository: str) -> list[dict]:
-    """Recently closed PRs; only entries carrying GitHub's merged_at survive."""
-    pulls = _get_json(f"{GITHUB_API}/repos/{repository}/pulls?state=closed&per_page=50", token)
-    return [pull for pull in pulls if pull.get("merged_at")]
+    """Closed PRs merged inside the lookback window, across pages.
+
+    One 50-item page silently dropped every merge past it (Qodo 6 on PR
+    #244). GitHub sorts closed PRs by `updated` when asked; pages are read
+    newest-first until a page ends before the window, so every merge inside
+    the window is observed and the source_key + merged_at watermark keeps
+    each one to a single fact. The window and page cap bound the read.
+    """
+    from datetime import datetime, timedelta, timezone
+
+    cutoff = datetime.now(timezone.utc) - timedelta(days=MERGED_PR_LOOKBACK_DAYS)
+    merged: list[dict] = []
+    for page in range(1, MERGED_PR_MAX_PAGES + 1):
+        pulls = _get_json(
+            f"{GITHUB_API}/repos/{repository}/pulls"
+            f"?state=closed&sort=updated&direction=desc&per_page=50&page={page}",
+            token,
+        )
+        if not pulls:
+            break
+        merged.extend(pull for pull in pulls if pull.get("merged_at"))
+        oldest = min((pull.get("updated_at") or "9999") for pull in pulls)
+        if oldest < cutoff.strftime("%Y-%m-%dT%H:%M:%SZ") or len(pulls) < 50:
+            break
+    return merged
 
 
 _ISSUE_KEY_RE = re.compile(r"(?<![A-Z0-9])([A-Z][A-Z0-9]+-\d+)(?![A-Z0-9])")

@@ -200,7 +200,6 @@ def begin(repo: str, base_ref: str | None = None) -> WorkspaceHandle:
                 f"fetched base_ref {base_ref!r} did not resolve to a commit"
             )
         trusted_base = fetched_head.strip()
-
     return WorkspaceHandle(
         repo=repo, available=True, head_before=head.strip(), trusted_base=trusted_base
     )

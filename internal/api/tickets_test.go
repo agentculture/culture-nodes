@@ -180,3 +180,25 @@ func createRunViaAPI(t *testing.T, f *fixture) apipkg.RunOut {
 	requireStatus(t, resp, body, http.StatusCreated)
 	return run
 }
+
+// Qodo 4/5 on #244: a frozen ticket takes no replies, and a client id makes a
+// retried reply resume the same row instead of minting a second reply.
+func TestFrozenTicketRefusesRepliesAndClientIDMakesRetriesIdempotent(t *testing.T) {
+	f := newFixtureWithDecisionAuth(t, decisionAuthSecret)
+	body := map[string]any{"id": "reply-retry-0001", "replier": "operator", "text": "first"}
+	resp, raw := doJSONBearer(t, f.client, http.MethodPost, f.url("/v1alpha1/tickets/SCRUM-9/replies"), decisionAuthSecret, body, nil)
+	requireStatus(t, resp, raw, http.StatusCreated)
+	resp, raw = doJSONBearer(t, f.client, http.MethodPost, f.url("/v1alpha1/tickets/SCRUM-9/replies"), decisionAuthSecret, body, nil)
+	requireStatus(t, resp, raw, http.StatusOK)
+	var n int
+	if err := f.store.Pool().QueryRow(t.Context(), `SELECT count(*) FROM ticket_replies WHERE id='reply-retry-0001'`).Scan(&n); err != nil {
+		t.Fatal(err)
+	}
+	if n != 1 {
+		t.Fatalf("replies after a retry = %d, want 1", n)
+	}
+	resp, raw = doJSONBearer(t, f.client, http.MethodPost, f.url("/v1alpha1/tickets/SCRUM-9/freeze"), decisionAuthSecret, map[string]any{"frozen_by": "operator"}, nil)
+	requireStatus(t, resp, raw, http.StatusOK)
+	resp, raw = doJSONBearer(t, f.client, http.MethodPost, f.url("/v1alpha1/tickets/SCRUM-9/replies"), decisionAuthSecret, map[string]any{"replier": "operator", "text": "late"}, nil)
+	requireStatus(t, resp, raw, http.StatusConflict)
+}

@@ -63,16 +63,29 @@ ssh "$HOST" "$AGENT_CHECKOUT_PREFLIGHT_REMOTE" || {
 # is no checkout and no ~/.local/bin/nodes yet, there is nothing for it to
 # read and the preflight says so and passes; the end-of-lane doctor still
 # gates that deploy once the codex lane has installed both.
-say "preflight: nodes doctor on $HOST"
-ssh "$HOST" 'repo=$HOME/git/culture-nodes-agent; cli=$HOME/.local/bin/nodes
+# Fail closed: a host with no agent checkout or no nodes CLI cannot be
+# doctored, and a deploy that skips the doctor is exactly the path #63's
+# userns fact was added to close. FIRST_DEPLOY=1 is the explicit, named
+# exception for a host that has never been deployed (nothing to doctor yet);
+# it is declared by the operator, never inferred from a missing file.
+preflight_doctor() {
+  local host=$1
+  say "preflight: nodes doctor on $host"
+  ssh "$host" 'repo=$HOME/git/culture-nodes-agent; cli=$HOME/.local/bin/nodes
 if [ ! -d "$repo/.git" ] || [ ! -x "$cli" ]; then
-  echo "nodes doctor: skipped before the deploy (no agent checkout or no nodes CLI on this host yet — the post-deploy doctor still gates)"
-  exit 0
+  if [ "${FIRST_DEPLOY:-}" = 1 ]; then
+    echo "nodes doctor: no agent checkout or nodes CLI on this host and FIRST_DEPLOY=1 declared — proceeding; the post-deploy doctor gates this deploy"
+    exit 0
+  fi
+  echo "preflight refused: no agent checkout or no nodes CLI on this host, so nodes doctor cannot run before the deploy; declare FIRST_DEPLOY=1 for a host that has never been deployed, otherwise restore the checkout first" >&2
+  exit 1
 fi
 cd "$repo" && "$cli" doctor' || {
-  echo "preflight failed on $HOST: nodes doctor reports the agent lane unhealthy BEFORE the deploy; fix the reported check first — nothing on $HOST was changed" >&2
-  exit 1
+    echo "preflight failed on $host: nodes doctor reports the agent lane unhealthy BEFORE the deploy; fix the reported check first — nothing was changed" >&2
+    exit 1
+  }
 }
+preflight_doctor "$HOST"
 
 # The thor lane is about to stop orin's worker across migrate/cutover
 # (TWO_HOST_LANE below), so whether orin is reachable and whether it has a
@@ -95,7 +108,11 @@ if [[ "$HOST" == thor* ]]; then
     ssh "$ORIN_HOST" "test -f $REMOTE_DIR/deploy/prod/compose.orin.yml" || orin_probe_status=$?
     case "$orin_probe_status" in
       0) ORIN_WORKER_STACK=present
-         say "preflight: $ORIN_HOST has a worker stack; it will be stopped across migrate/cutover and restarted after" ;;
+         say "preflight: $ORIN_HOST has a worker stack; it will be stopped across migrate/cutover and restarted after"
+         # orin is about to be modified by this lane too (its worker is
+         # stopped and restarted), so it gets the same pre-modification
+         # doctor as thor, before anything on either host changes.
+         preflight_doctor "$ORIN_HOST" ;;
       1) say "preflight: $ORIN_HOST has no worker stack yet (first deploy) — nothing there to quiesce; deploy.sh orin comes after this lane" ;;
       *)
         echo "preflight failed: cannot reach $ORIN_HOST (ssh exit $orin_probe_status) to ask whether it runs a worker; nothing on $HOST was changed" >&2

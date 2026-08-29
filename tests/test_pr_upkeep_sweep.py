@@ -952,7 +952,8 @@ class TestEmitterMain:
 
         assert sweep.main() == 0
         report = json.loads(capsys.readouterr().out)
-        assert report["emitted"] == 1
+        assert report["emitted"] == 2
+        assert calls["events"][0][2].endswith(":history:changelog:0")
         # task t9: the issue's current status names the event, distinct from
         # "a comment appeared" — the fixture issue's status is "To Do".
         assert calls["events"][0][0] == "pr-upkeep.jira.transitioned.to-do"
@@ -987,7 +988,11 @@ class TestEmitterMain:
 
         assert sweep.main() == 0
         names = [name for name, *_rest in calls["events"]]
-        assert names == ["pr-upkeep.jira.transitioned.to-do", sweep.JIRA_COMMENT_EVENT_NAME]
+        assert names[0] == "pr-upkeep.jira.transitioned.to-do"
+        assert names[-2:] == [
+            "pr-upkeep.jira.transitioned.to-do",
+            sweep.JIRA_COMMENT_EVENT_NAME,
+        ]
 
         # A trigger subscribed to one name structurally cannot receive an
         # event bearing the other name.

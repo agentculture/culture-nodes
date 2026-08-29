@@ -698,6 +698,28 @@ Skipping the reset does not corrupt anything — it blocks the *next*
 `deploy.sh <host>` run with a clear refusal message, checkout untouched
 (c6, h6).
 
+**first deploy of a host (`FIRST_DEPLOY=1`).** The preflight runs `nodes
+doctor` on every host the lane is about to modify *before* anything is
+shipped or stopped, and it fails closed: a host with no
+`~/git/culture-nodes-agent` checkout or no `~/.local/bin/nodes` cannot be
+doctored, so the deploy is refused. The one exception is a host that has
+never been deployed, and it is declared, never inferred from a missing file:
+
+```bash
+FIRST_DEPLOY=1 ./deploy.sh orin     # operator's shell; the lane carries it to the host
+```
+
+The lane passes the declaration inside the remote command as a normalised
+`0`/`1` — ssh forwards none of the operator's environment, and only the
+literal value `1` counts. The post-deploy doctor still gates that deploy
+once the codex lane has installed the checkout and the CLI.
+
+The declaration names one host: the one you are deploying. The thor lane
+doctors orin too (it stops and restarts orin's worker), and an orin that has
+a worker stack has been deployed — so `FIRST_DEPLOY=1 ./deploy.sh thor` does
+not exempt it. If orin's checkout or CLI is missing then, that is a
+restore-the-checkout state and the deploy is refused, as without the flag.
+
 **token rotation.**
 
 ```bash

@@ -5,6 +5,13 @@ All notable changes to this project will be documented in this file.
 Format follows [Keep a Changelog](https://keepachangelog.com/). This project
 adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.43.2] - 2026-08-29
+
+### Fixed
+
+- PR #244 Qodo finding 6 ("Doctor preflight is skippable", Medium): the fail-closed preflight doctor's one exception, `FIRST_DEPLOY=1`, never reached a real host — it was read on the target while the operator declares it locally, and ssh forwards no environment — so every first deploy would have been refused. `deploy/prod/lanes/preflight.sh` now carries the declaration inside the remote command as a normalised `0`/`1` it computed itself (only the literal `1` counts, nothing operator-typed is spliced into a host command line); the fake-ssh harness stops inheriting the operator's environment so it can no longer mask this; runbook note added
+- PR #246 Qodo finding 1 ("FIRST_DEPLOY bypasses required doctor", Low): the declaration was read process-wide, so `FIRST_DEPLOY=1 ./deploy.sh thor` also exempted an existing orin (worker stack present, checkout or CLI missing) from its pre-modification doctor. `preflight_doctor` now takes the flag per call: the target host gets the operator's declaration, the secondary host always gets `0`; harness gives orin a checkout by default (it has a stack), new test pins the refusal
+
 ## [0.43.0] - 2026-08-29
 
 ### Added

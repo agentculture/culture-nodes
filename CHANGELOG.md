@@ -5,6 +5,25 @@ All notable changes to this project will be documented in this file.
 Format follows [Keep a Changelog](https://keepachangelog.com/). This project
 adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.44.0] - 2026-08-30
+
+### Added
+
+- Agents work as dedicated OS users per host (#243): `deploy/prod/lanes/unix-user.sh` provisions one Unix account per engine (`culture-codex` on thor/orin, `culture-claude` + `culture-qwen` on spark) — root bootstrap via `deploy/prod/bootstrap-accounts.sh`, then everything as the account over `ssh culture-<engine>@<host>`; pinned engine installs (the codex standalone package with its code-mode host), per-role clones, copied credentials, inventory assertion, a session-in-flight refusal and a printed rollback pair.
+- `deploy/prod/lanes/account-bridges.sh` + `deploy.sh spark`: bridge units are installed into the engine account's `systemd --user` instance; spark's five bridges are versioned deploys (templates + `culture-nodes-qwen-developer.service`), configs rendered without `NODES_HUMAN_DECISION_TOKEN`; `install-secrets.sh` mirrors `codex-bridge.env` and relays `bridge-push.env` into the accounts.
+- `register-actor.sh --os-user` records the account as a lane tag; every advertising bridge reports `confinement: unix-user:<name>: …`.
+- docs: deviation record `docs/deviations/2026-08-29-agents-as-os-users.md` (supersedes the handover-fence premise), cutover audit `docs/audits/2026-08-29-agents-as-os-users-cutover.md`, spec + plan for frame `agents-as-os-users-243`.
+
+### Changed
+
+- codex-preflight.sh: the userns probe (check 7) is advisory; new check 8 refuses an account in `sudo`/`docker` or a checkout it does not own. Codex's `_REQUIRES_USERNS` is empty — `sandbox_modes_unavailable` no longer withholds a mode.
+- nodes-operator: the assign actor table points at the engine accounts' clones; harvest is `ssh culture-<engine>@<host>`.
+- An engine account's codex gets network under `workspace-write` through its own `~/.codex/config.toml` (deviation d2).
+
+### Fixed
+
+- The cutover session check's pgrep pattern matched its own ssh shell (bracket idiom + a real-pgrep regression test).
+
 ## [0.43.4] - 2026-08-29
 
 ### Changed

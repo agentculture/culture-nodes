@@ -21,7 +21,7 @@ delivery summary (`/summarize-delivery`) will cite it.
 | operator hand-turns logged on #230 | 17 by the end of t8 (three of them sweep re-grants) |
 | deviations recorded through `/deviate` | 2 (d1 colleague → codex; d2 #242 hardening), both approved |
 | colleague as writer | 0 of 2 delivered (runs `11b1701688e2`, `4229519b496c`, 1/5 each) |
-| colleague as reviewer | 3 of 3 found real defects (`a51591c92f56`, `7eeb2ac593c2`, `c3b74cf74a72`, 5/5 each): a scope-guard bypass (#242), a dispatcher deadlock, a refspec injection surface |
+| colleague as reviewer | 3 of 4 found real defects (the fourth, a four-package brief, step-stalled with none — keep review briefs to one package) (`a51591c92f56`, `7eeb2ac593c2`, `c3b74cf74a72`, 5/5 each): a scope-guard bypass (#242), a dispatcher deadlock, a refspec injection surface |
 | prod api downtime during t7 | ~47 min (09:22–10:09Z), across two fail-closed stops |
 | issues filed from the cycle | #240 #241 #242 #243 (+ #235 #237 from the spec) |
 

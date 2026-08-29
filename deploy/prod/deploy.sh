@@ -86,15 +86,37 @@ say "ensuring headspace CLI on $HOST (uv tool)"
 ssh "$HOST" 'bash -lc "command -v headspace >/dev/null || { command -v uv >/dev/null || curl -LsSf https://astral.sh/uv/install.sh | sh; \$HOME/.local/bin/uv tool install headspace-cli || uv tool install headspace-cli; }; command -v headspace"'
 
 say "installing runner env + systemd user unit on $HOST"
-# Single-quoted remote script: $HOME expands on the TARGET, giving the env
-# file absolute paths (EnvironmentFile values get no %h expansion).
-ssh "$HOST" 'umask 077; mkdir -p ~/.culture-nodes/bin ~/.culture-nodes/runner-state
-{ echo "NODES_RUNNER_LISTEN=:17070"
-  echo "NODES_RUNNER_SECRET_FILE=$HOME/.culture-nodes/runner.secret"
-  echo "NODES_RUNNER_STATE_DIR=$HOME/.culture-nodes/runner-state"
-  echo "NODES_RUNNER_HEADSPACE_PROFILES=sha256:57cd7c3a7a273101a6485ba99423ee568157882804b1124b4dd04266317710de=python3.12"
-  echo "NODES_RUNNER_HEADSPACE_BIN=$HOME/.local/bin/headspace"
-} > ~/.culture-nodes/runner.env'
+# RUNNER_ENV_WRITE_START -- tests/test_deploy_runner_env.py executes this real
+# block against a fake host. Keep the marker at the first statement needed by
+# the block and its mate after the atomic write.
+# Read before deciding anything and before opening runner.env for writing. A
+# deploy is allowed to override either grant from its own environment; absent
+# an override, retain the complete old line so systemd sees byte-identical
+# values across repeated deploys (including PR_UPKEEP_REPOSITORIES quoting).
+existing_runner_env=$(ssh "$HOST" 'if [ -f ~/.culture-nodes/runner.env ]; then cat ~/.culture-nodes/runner.env; fi')
+if [ -n "${NODES_API_URL:-}" ]; then
+	NODES_API_URL_LINE="NODES_API_URL=$NODES_API_URL"
+else
+	NODES_API_URL_LINE=$(printf '%s\n' "$existing_runner_env" | sed -n '/^NODES_API_URL=/p' | tail -n 1)
+fi
+if [ -z "$NODES_API_URL_LINE" ]; then
+	echo "refusing: NODES_API_URL is absent from both the shell and existing runner.env; runner.env was not touched" >&2
+	exit 1
+fi
+
+if [ -n "${PR_UPKEEP_REPOSITORIES:-}" ]; then
+	PR_UPKEEP_REPOSITORIES_LINE="PR_UPKEEP_REPOSITORIES='$PR_UPKEEP_REPOSITORIES'"
+else
+	PR_UPKEEP_REPOSITORIES_LINE=$(printf '%s\n' "$existing_runner_env" | sed -n '/^PR_UPKEEP_REPOSITORIES=/p' | tail -n 1)
+	PR_UPKEEP_REPOSITORIES=${PR_UPKEEP_REPOSITORIES_LINE#PR_UPKEEP_REPOSITORIES=}
+	case "$PR_UPKEEP_REPOSITORIES" in
+		\'*\') PR_UPKEEP_REPOSITORIES=${PR_UPKEEP_REPOSITORIES#\'}; PR_UPKEEP_REPOSITORIES=${PR_UPKEEP_REPOSITORIES%\'} ;;
+	esac
+fi
+if [ -z "$PR_UPKEEP_REPOSITORIES_LINE" ]; then
+	echo "refusing: PR_UPKEEP_REPOSITORIES is absent from both the shell and existing runner.env; runner.env was not touched" >&2
+	exit 1
+fi
 
 # examples/pr-upkeep's sweep node names its script source as a granted
 # environment value rather than baking a URL into the graph (task t16), so
@@ -113,9 +135,6 @@ PR_UPKEEP_SWEEP_SOURCE_URL=${PR_UPKEEP_SWEEP_SOURCE_URL:-"https://raw.githubuser
 PR_UPKEEP_SWEEP_SOURCE_SHA256=${PR_UPKEEP_SWEEP_SOURCE_SHA256:-$(git show "$REVISION:examples/pr-upkeep/sweep.py" | sha256sum | cut -d' ' -f1)}
 PR_UPKEEP_SWEEP_JIRA_SOURCE_URL=${PR_UPKEEP_SWEEP_JIRA_SOURCE_URL:-"https://raw.githubusercontent.com/agentculture/culture-nodes/$REVISION/examples/pr-upkeep/pr_upkeep_jira.py"}
 PR_UPKEEP_SWEEP_JIRA_SOURCE_SHA256=${PR_UPKEEP_SWEEP_JIRA_SOURCE_SHA256:-$(git show "$REVISION:examples/pr-upkeep/pr_upkeep_jira.py" | sha256sum | cut -d' ' -f1)}
-if [ -z "${PR_UPKEEP_REPOSITORIES:-}" ]; then
-	PR_UPKEEP_REPOSITORIES='{"cycle":0,"repositories":[{"github_repo":"agentculture/culture-nodes","sonar_component":"agentculture_culture-nodes"}]}'
-fi
 # systemd's EnvironmentFile parser is shell-LIKE: it processes backslash
 # escapes in an unquoted value. Measured on thor, unquoted:
 #
@@ -145,13 +164,27 @@ if [ -n "$PR_UPKEEP_SWEEP_SOURCE_URL" ] && [ -n "$PR_UPKEEP_SWEEP_SOURCE_SHA256"
 	# repositories value is single-quoted (see above) and interpolating quotes
 	# into a double-quoted remote command is how you get a value that is
 	# correct locally and reshaped remotely.
-	printf "PR_UPKEEP_SWEEP_SOURCE_URL=%s\nPR_UPKEEP_SWEEP_SOURCE_SHA256=%s\nPR_UPKEEP_SWEEP_JIRA_SOURCE_URL=%s\nPR_UPKEEP_SWEEP_JIRA_SOURCE_SHA256=%s\nPR_UPKEEP_REPOSITORIES='%s'\n" \
-		"$PR_UPKEEP_SWEEP_SOURCE_URL" "$PR_UPKEEP_SWEEP_SOURCE_SHA256" "$PR_UPKEEP_SWEEP_JIRA_SOURCE_URL" "$PR_UPKEEP_SWEEP_JIRA_SOURCE_SHA256" "$PR_UPKEEP_REPOSITORIES" \
-		| ssh "$HOST" "umask 077; cat >> ~/.culture-nodes/runner.env"
+	# One replacement means a failure cannot leave the fixed runner settings
+	# written but its grants missing. $HOME expands on the target; EnvironmentFile
+	# values do not expand systemd's %h specifier.
+	{ printf '%s\n' \
+		'NODES_RUNNER_LISTEN=:17070' \
+		'NODES_RUNNER_SECRET_FILE=$HOME/.culture-nodes/runner.secret' \
+		'NODES_RUNNER_STATE_DIR=$HOME/.culture-nodes/runner-state' \
+		'NODES_RUNNER_HEADSPACE_PROFILES=sha256:57cd7c3a7a273101a6485ba99423ee568157882804b1124b4dd04266317710de=python3.12' \
+		'NODES_RUNNER_HEADSPACE_BIN=$HOME/.local/bin/headspace' \
+		"$NODES_API_URL_LINE" \
+		"PR_UPKEEP_SWEEP_SOURCE_URL=$PR_UPKEEP_SWEEP_SOURCE_URL" \
+		"PR_UPKEEP_SWEEP_SOURCE_SHA256=$PR_UPKEEP_SWEEP_SOURCE_SHA256" \
+		"PR_UPKEEP_SWEEP_JIRA_SOURCE_URL=$PR_UPKEEP_SWEEP_JIRA_SOURCE_URL" \
+		"PR_UPKEEP_SWEEP_JIRA_SOURCE_SHA256=$PR_UPKEEP_SWEEP_JIRA_SOURCE_SHA256" \
+		"$PR_UPKEEP_REPOSITORIES_LINE"
+	} | ssh "$HOST" 'umask 077; mkdir -p ~/.culture-nodes/bin ~/.culture-nodes/runner-state; tmp=~/.culture-nodes/runner.env.new; trap '\''rm -f "$tmp"'\'' EXIT; cat > "$tmp"; mv -f "$tmp" ~/.culture-nodes/runner.env; trap - EXIT'
 	say "granted the pr-upkeep sweep source and closed repository set to the runner on $HOST"
 else
 	say "a PR_UPKEEP_SWEEP source URL/digest pair is empty: pr-upkeep's sweep is not configured on $HOST (see examples/pr-upkeep/README.md)"
 fi
+# RUNNER_ENV_WRITE_END
 ssh "$HOST" "loginctl enable-linger \$(id -un) 2>/dev/null || true"
 ssh "$HOST" "export XDG_RUNTIME_DIR=/run/user/\$(id -u); mkdir -p ~/.config/systemd/user && cp $REMOTE_DIR/deploy/prod/nodes-runner.service ~/.config/systemd/user/ && systemctl --user daemon-reload && systemctl --user restart nodes-runner && systemctl --user enable nodes-runner"
 ssh "$HOST" 'export XDG_RUNTIME_DIR=/run/user/$(id -u); for i in $(seq 1 15); do st=$(systemctl --user is-active nodes-runner || true); [ "$st" = active ] && { echo "runner: active"; exit 0; }; sleep 2; done; echo "runner failed to become active:"; systemctl --user --no-pager -n 10 status nodes-runner; exit 1'

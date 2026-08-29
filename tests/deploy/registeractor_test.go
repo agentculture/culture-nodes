@@ -650,3 +650,148 @@ func TestRegisterActorResolvesNamespaceWhenUnset(t *testing.T) {
 		t.Errorf("INSERT does not use the resolved namespace id; insert log: %q, output: %s", inserted, output)
 	}
 }
+
+// --- t4 (issue #204): --os-user is sugar for --metadata os_user=NAME -----
+//
+// Bridges will run as dedicated Unix accounts (culture-codex, culture-claude,
+// culture-qwen), and the account name needs to be readable from the registry
+// as a lane tag. `os_user` is that first-class metadata key: `--os-user NAME`
+// is sugar for `--metadata os_user=NAME`, so it goes through the exact same
+// merge-not-replace INSERT ... SELECT path every other metadata key does --
+// these tests pin that sugar, the merge semantics, and the name refusal.
+
+// TestRegisterActorOSUserFlagWritesMetadata is task t4's first case:
+// `--os-user culture-codex` on a first-time registration must produce an
+// INSERT whose metadata JSON carries `os_user`.
+func TestRegisterActorOSUserFlagWritesMetadata(t *testing.T) {
+	dir := t.TempDir()
+	psqlPath, _, insertLog := newFakePsql(t, dir,
+		"ns-1",
+		"", // no current row for this actor key
+	)
+
+	env := []string{
+		"PSQL_CMD=" + psqlPath,
+		"NODES_NAMESPACE_ID=ns-1",
+		"ACTOR_KEY=company/codex-thor",
+		"ENDPOINT_URL=http://192.168.1.5:17070",
+		"AUTH_TOKEN_ENV=CODEX_THOR_TOKEN",
+	}
+	output, exitCode := runRegisterActorArgs(t, env, "--os-user", "culture-codex")
+
+	if exitCode != 0 {
+		t.Fatalf("exit code = %d, want 0; output: %s", exitCode, output)
+	}
+
+	inserted, err := os.ReadFile(insertLog)
+	if err != nil {
+		t.Fatalf("read insert log: %v", err)
+	}
+	insertedText := string(inserted)
+	if !strings.Contains(insertedText, "INSERT INTO actors") {
+		t.Fatalf("--os-user registration wrote no INSERT; insert log: %q", insertedText)
+	}
+	if !strings.Contains(insertedText, `"os_user": "culture-codex"`) {
+		t.Errorf("INSERT metadata does not carry os_user=culture-codex; insert log: %q", insertedText)
+	}
+}
+
+// TestRegisterActorOSUserMergedWithOtherMetadata is task t4's second case:
+// registering with os_user and then re-registering with another metadata key
+// must keep merge semantics -- the second INSERT carries the new key forward
+// via `metadata || `, the same carry-forward mechanism
+// TestRegisterActorMergesMetadataInsteadOfReplacingIt pins for
+// handover_remote, so a prior os_user is never dropped by a later
+// registration that only asks for a different key.
+func TestRegisterActorOSUserMergedWithOtherMetadata(t *testing.T) {
+	dir := t.TempDir()
+
+	// First registration: no prior row, --os-user only.
+	firstPsql, _, firstInserts := newFakePsql(t, dir, "ns-1", "")
+	firstEnv := []string{
+		"PSQL_CMD=" + firstPsql,
+		"NODES_NAMESPACE_ID=ns-1",
+		"ACTOR_KEY=company/codex-thor",
+		"ENDPOINT_URL=http://192.168.1.5:17070",
+		"AUTH_TOKEN_ENV=CODEX_THOR_TOKEN",
+	}
+	output, exitCode := runRegisterActorArgs(t, firstEnv, "--os-user", "culture-codex")
+	if exitCode != 0 {
+		t.Fatalf("first registration: exit code = %d, want 0; output: %s", exitCode, output)
+	}
+	firstInserted, err := os.ReadFile(firstInserts)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(firstInserted), `"os_user": "culture-codex"`) {
+		t.Fatalf("first INSERT does not carry os_user; insert log: %q", firstInserted)
+	}
+
+	// Second registration: a revision now exists (overlay not yet present),
+	// and this call asks only for a different key -- os_user is not repeated
+	// on the command line, so it can only survive via the metadata || carry
+	// forward, exactly as handover_remote does in
+	// TestRegisterActorMergesMetadataInsteadOfReplacingIt.
+	secondPsql, _, secondInserts := newFakePsql(t, t.TempDir(), "ns-1", "1|http://192.168.1.5:17070|f")
+	secondEnv := []string{
+		"PSQL_CMD=" + secondPsql,
+		"NODES_NAMESPACE_ID=ns-1",
+		"ACTOR_KEY=company/codex-thor",
+		"ENDPOINT_URL=http://192.168.1.5:17070",
+		"AUTH_TOKEN_ENV=CODEX_THOR_TOKEN",
+	}
+	output, exitCode = runRegisterActorArgs(t, secondEnv, "--metadata", "handover_remote=ssh://thor/~/git/culture-nodes-agent")
+	if exitCode != 0 {
+		t.Fatalf("second registration: exit code = %d, want 0; output: %s", exitCode, output)
+	}
+	secondInserted, err := os.ReadFile(secondInserts)
+	if err != nil {
+		t.Fatal(err)
+	}
+	secondText := string(secondInserted)
+	if !strings.Contains(secondText, "metadata || ") {
+		t.Errorf("second INSERT must MERGE the previous revision's metadata (carrying os_user forward), but no `metadata || ` appears; insert log: %q", secondText)
+	}
+	if !strings.Contains(secondText, "handover_remote") {
+		t.Errorf("second INSERT does not carry the newly requested key; insert log: %q", secondText)
+	}
+	if strings.Contains(secondText, "os_user") {
+		t.Errorf("second registration should not re-assert os_user on the command line (it must survive only via the merge); insert log: %q", secondText)
+	}
+}
+
+// TestRegisterActorRefusesInvalidOSUser is task t4's third case: a name that
+// does not match ^[a-z_][a-z0-9_-]*$ must be refused with a hint, before any
+// Postgres access (same nonexistent-PSQL_CMD technique the other refusal
+// tests use).
+func TestRegisterActorRefusesInvalidOSUser(t *testing.T) {
+	for _, bad := range []string{
+		"Culture-Codex", // uppercase
+		"1culture",      // leading digit
+		"culture codex", // space
+		"culture.codex", // dot not allowed
+		"",               // empty
+	} {
+		t.Run(bad, func(t *testing.T) {
+			env := []string{
+				"PSQL_CMD=/nonexistent/should-not-run/psql",
+				"NODES_NAMESPACE_ID=ns-1",
+				"ACTOR_KEY=company/codex-thor",
+				"ENDPOINT_URL=http://192.168.1.5:17070",
+			}
+			output, exitCode := runRegisterActorArgs(t, env, "--os-user", bad)
+			if exitCode == 0 {
+				t.Fatalf("register-actor.sh accepted invalid os-user %q; output: %s", bad, output)
+			}
+			if !strings.Contains(output, "refusing") || !strings.Contains(output, "os-user") {
+				t.Errorf("refusal for %q did not name os-user as the cause; output: %q", bad, output)
+			}
+			if !strings.Contains(output, "hint:") {
+				t.Errorf("refusal for %q carried no hint: line; output: %q", bad, output)
+			}
+			if strings.Contains(output, "No such file") || strings.Contains(output, "not found") {
+				t.Errorf("os-user was validated only after shelling out to psql; output: %q", output)
+			}
+		})
+	}
+}

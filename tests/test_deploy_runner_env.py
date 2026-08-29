@@ -143,3 +143,19 @@ def test_redeploy_never_reintroduces_the_default_over_a_missing_jira_line(tmp_pa
     assert result.returncode != 0
     assert "PR_UPKEEP_REPOSITORIES" in result.stderr
     assert runner_env.read_bytes() == original
+
+
+def test_runner_env_paths_are_absolute_on_the_target(tmp_path):
+    """A literal $HOME in runner.env is a dead runner (t7 on thor, 2026-08-29).
+
+    The file is written by `cat` on the target and read by systemd's
+    EnvironmentFile; neither expands anything, so the target's home must be
+    resolved by the deploy and written as an absolute path.
+    """
+    result = _run_block(tmp_path, shell_api_url="http://api.test")
+    assert result.returncode == 0, result.stderr
+    written = (tmp_path / "host" / ".culture-nodes" / "runner.env").read_text()
+    assert "$HOME" not in written, written
+    assert (
+        f"NODES_RUNNER_SECRET_FILE={tmp_path / 'host'}/.culture-nodes/runner.secret" in written
+    ), written

@@ -307,14 +307,19 @@ if [ -n "$PR_UPKEEP_SWEEP_SOURCE_URL" ] && [ -n "$PR_UPKEEP_SWEEP_SOURCE_SHA256"
 	# into a double-quoted remote command is how you get a value that is
 	# correct locally and reshaped remotely.
 	# One replacement means a failure cannot leave the fixed runner settings
-	# written but its grants missing. $HOME expands on the target; EnvironmentFile
-	# values do not expand systemd's %h specifier.
+	# written but its grants missing. The file is written by `cat` on the
+	# target, which expands NOTHING, and EnvironmentFile expands neither $HOME
+	# nor systemd's %h -- so the target's home is resolved here and written as
+	# an absolute path. (t7 measured the alternative: a literal $HOME in the
+	# file left nodes-runner in activating/auto-restart on thor, exit 2.)
+	target_home=$(ssh "$HOST" 'printf %s "$HOME"')
+	[ -n "$target_home" ] || { echo "refusing: could not resolve \$HOME on $HOST; runner.env was not touched" >&2; exit 1; }
 	{ printf '%s\n' \
 		'NODES_RUNNER_LISTEN=:17070' \
-		'NODES_RUNNER_SECRET_FILE=$HOME/.culture-nodes/runner.secret' \
-		'NODES_RUNNER_STATE_DIR=$HOME/.culture-nodes/runner-state' \
+		"NODES_RUNNER_SECRET_FILE=$target_home/.culture-nodes/runner.secret" \
+		"NODES_RUNNER_STATE_DIR=$target_home/.culture-nodes/runner-state" \
 		'NODES_RUNNER_HEADSPACE_PROFILES=sha256:57cd7c3a7a273101a6485ba99423ee568157882804b1124b4dd04266317710de=python3.12' \
-		'NODES_RUNNER_HEADSPACE_BIN=$HOME/.local/bin/headspace' \
+		"NODES_RUNNER_HEADSPACE_BIN=$target_home/.local/bin/headspace" \
 		"$NODES_API_URL_LINE" \
 		"PR_UPKEEP_SWEEP_SOURCE_URL=$PR_UPKEEP_SWEEP_SOURCE_URL" \
 		"PR_UPKEEP_SWEEP_SOURCE_SHA256=$PR_UPKEEP_SWEEP_SOURCE_SHA256" \

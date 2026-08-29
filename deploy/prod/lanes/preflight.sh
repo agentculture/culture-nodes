@@ -49,11 +49,52 @@ if ! git -C "$repo" symbolic-ref -q HEAD >/dev/null 2>&1; then
 fi
 echo "agent checkout: clean on $(git -C "$repo" symbolic-ref --short HEAD) at $(git -C "$repo" rev-parse --short HEAD)"'
 
-say "preflight: agent checkout state on $HOST (read-only, before anything is shipped or stopped)"
-ssh "$HOST" "$AGENT_CHECKOUT_PREFLIGHT_REMOTE" || {
-  echo "preflight failed on $HOST: the agent checkout is not in a deployable state (reason above); nothing on $HOST was changed" >&2
-  exit 1
+# Since #243 the checkout the codex lane deploys INTO is the ACCOUNT's --
+# culture-codex@<host>:~/git/culture-nodes-agent, provisioned by
+# lanes/unix-user.sh -- so once the account exists, ITS clone is the one a
+# deploy is refused on, and the login user's ~/git/culture-nodes-agent is
+# the legacy tree: harvest-only (c30), never fast-forwarded by a deploy
+# again, its state a NOTE rather than a gate (#249 review, finding 6).
+# Before the account exists (a host not yet bootstrapped) the login tree is
+# still what the codex lane used to deploy into, and still gates.
+LEGACY_CHECKOUT_NOTE_REMOTE='repo=$HOME/git/culture-nodes-agent
+if [ ! -d "$repo/.git" ]; then
+  echo "legacy login checkout: absent at $repo — nothing to harvest, skipped"
+elif [ -n "$(git -C "$repo" status --porcelain)" ]; then
+  echo "legacy login checkout $repo: DIRTY — harvest-only since #243, a deploy no longer touches it (harvest the diff at your own pace)"
+else
+  echo "legacy login checkout $repo: clean at $(git -C "$repo" rev-parse --short HEAD) — harvest-only since #243, a deploy no longer touches it"
+fi'
+
+# preflight_agent_target <host> -- the ssh target whose agent checkout this
+# deploy gates on: the culture-codex account when the operator key opens it
+# (BatchMode, so an account that exists but refuses the key fails instead of
+# prompting), else the login user.
+preflight_agent_target() { # host
+  local host=$1 account="culture-codex@$1"
+  if ssh -o BatchMode=yes -o ConnectTimeout=15 "$account" 'id -un' >/dev/null 2>&1; then
+    printf '%s' "$account"
+  else
+    printf '%s' "$host"
+  fi
 }
+
+PREFLIGHT_AGENT_TARGET=$(preflight_agent_target "$HOST")
+if [ "$PREFLIGHT_AGENT_TARGET" != "$HOST" ]; then
+  say "preflight: agent checkout state in $PREFLIGHT_AGENT_TARGET (the account's clone; read-only, before anything is shipped or stopped)"
+  ssh "$PREFLIGHT_AGENT_TARGET" "$AGENT_CHECKOUT_PREFLIGHT_REMOTE" || {
+    echo "preflight failed on $HOST: the agent checkout in $PREFLIGHT_AGENT_TARGET is not in a deployable state (reason above); nothing on $HOST was changed" >&2
+    exit 1
+  }
+  say "preflight: legacy login checkout on $HOST (harvest-only since #243; noted, not gated)"
+  ssh "$HOST" "$LEGACY_CHECKOUT_NOTE_REMOTE" || say "WARNING: could not read the legacy login checkout on $HOST (ssh exit $?); it is not deployed into, so this is a note"
+else
+  say "preflight: culture-codex on $HOST is not bootstrapped yet — the login user's agent checkout gates this deploy (read-only, before anything is shipped or stopped)"
+  ssh "$HOST" "$AGENT_CHECKOUT_PREFLIGHT_REMOTE" || {
+    echo "preflight failed on $HOST: the agent checkout is not in a deployable state (reason above); nothing on $HOST was changed" >&2
+    exit 1
+  }
+fi
 
 # The same four checks the end-of-lane doctor runs (prompt file, skills kit,
 # API reachability, userns sysctl), but BEFORE the stack is touched, so a host
@@ -87,10 +128,24 @@ FIRST_DEPLOY_DECLARED=0
 if [ "${FIRST_DEPLOY:-}" = 1 ]; then
   FIRST_DEPLOY_DECLARED=1
 fi
+# The doctor runs where the agent lane lives: as the culture-codex account,
+# in its clone, with its own ~/.local/bin/nodes, once the account has both
+# (#249 finding 6) -- the same place the end-of-lane doctor runs. An account
+# that exists but was never provisioned (between the bootstrap and the first
+# cutover) has neither yet, and the login user's checkout still answers for
+# this deploy; the post-deploy doctor then gates the account itself.
 preflight_doctor() {
-  local host=$1 first_deploy=${2:-0}
-  say "preflight: nodes doctor on $host"
-  ssh "$host" "FIRST_DEPLOY=$first_deploy; "'repo=$HOME/git/culture-nodes-agent; cli=$HOME/.local/bin/nodes
+  local host=$1 first_deploy=${2:-0} target
+  target=$(preflight_agent_target "$host")
+  if [ "$target" != "$host" ] && ssh "$target" 'test -d "$HOME/git/culture-nodes-agent/.git" && test -x "$HOME/.local/bin/nodes"'; then
+    say "preflight: nodes doctor as $target (the account's clone and CLI)"
+    first_deploy=0
+  else
+    [ "$target" = "$host" ] || say "preflight: $target has no clone or nodes CLI yet (first cutover) — doctoring the login user's checkout on $host instead"
+    target=$host
+    say "preflight: nodes doctor on $host"
+  fi
+  ssh "$target" "FIRST_DEPLOY=$first_deploy; "'repo=$HOME/git/culture-nodes-agent; cli=$HOME/.local/bin/nodes
 if [ ! -d "$repo/.git" ] || [ ! -x "$cli" ]; then
   if [ "$FIRST_DEPLOY" = 1 ]; then
     echo "nodes doctor: no agent checkout or nodes CLI on this host and FIRST_DEPLOY=1 declared — proceeding; the post-deploy doctor gates this deploy"

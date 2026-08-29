@@ -281,11 +281,13 @@ PYEOF"
     fi
   fi
 
-  # The cutover (c31/c32): refuse while a session is in flight as the login
-  # user, then stop + disable its unit (file, config and env stay for the
-  # rollback pair), then install and start the account's copy on the same
-  # port. Linger for the account was enabled by the bootstrap.
+  # The cutover (c31/c32): refuse while a session is in flight as the
+  # ACCOUNT (a redeploy after the migration; #249 finding 3) or as the login
+  # user, then stop + disable the login unit (file, config and env stay for
+  # the rollback pair), then install and start the account's copy on the
+  # same port. Linger for the account was enabled by the bootstrap.
   login=$(ssh "$host" 'id -un' | tr -d '\r')
+  account_session_guard "$host" codex || exit 1
   account_cutover_login_unit "$host" "$login" codex-bridge || exit 1
 
   say "installing codex-bridge systemd user unit into $target"
@@ -744,6 +746,10 @@ case "$HOST" in
     # qwen-developer into culture-qwen, over ssh culture-<engine>@localhost.
     # No compose, no runner, no cutover, no two-host lane, no audit — the
     # control plane is not on this host. The lane prints its own summary.
+    # The pre-deploy doctor first, as on thor/orin (#249 finding 7): a host
+    # the agent lane cannot work on is refused while every bridge is still
+    # the old one.
+    account_spark_preflight_doctor "$HOST" || exit 1
     account_bridges_spark_lane "$HOST"
     ;;
   *)

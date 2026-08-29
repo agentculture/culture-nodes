@@ -555,12 +555,18 @@ elif [ "$rc" -ne 3 ]; then exit "$rc"; fi
 # fixed command reading its stdin. No argv on either hop carries it, and no
 # variable here ever holds it.
 #
-# Guarded like every other bridge file: an account copy that already
-# matches is left alone; one that DIFFERS is kept and reported unless
-# FORCE_CODEX=1 — the same switch that rotates the login user's copy, so a
-# rotation re-syncs the account in the same run and nothing else does. An
-# account that is not bootstrapped yet is skipped by name: deploy.sh creates
-# it, and this script is re-run after (a first cutover is two runs).
+# Guarded like every other bridge file in that nothing is overwritten
+# without FORCE_CODEX=1 — but UNLIKE the others, a copy that differs is a
+# FAILURE, not a kept file (#249 review, finding 5). The worker dispatches
+# with the login copy's token (mirrored into prod.env above) and the
+# account's bridge authenticates callers with its own file: an account copy
+# that differs is a bridge that rejects every dispatch, and a script that
+# reported success over it left that 401 for the next deploy to find. An
+# account copy that already matches is left alone; FORCE_CODEX=1 — the same
+# switch that rotates the login user's copy — re-syncs it, so a rotation
+# carries the account along in the same run. An account that is not
+# bootstrapped yet is skipped by name: deploy.sh creates it, and this script
+# is re-run after (a first cutover is two runs).
 CODEX_BRIDGE_ENV_REL=.culture-nodes/codex-bridge.env
 
 install_codex_account_env() { # host
@@ -571,8 +577,12 @@ install_codex_account_env() { # host
     return 0
   fi
   # shellcheck disable=SC2029 # the remote path is deliberately remote
-  ssh "$host" "cat ~/$CODEX_BRIDGE_ENV_REL" | ssh "$target" "FORCE=${FORCE_CODEX:-0}; "'umask 077; mkdir -p ~/.culture-nodes; new=$(cat); [ -n "$new" ] || { echo "empty codex-bridge.env relayed from the login user" >&2; exit 1; }; if [ -e ~/.culture-nodes/codex-bridge.env ] && [ "$FORCE" != "1" ] && [ "$(cat ~/.culture-nodes/codex-bridge.env)" != "$new" ]; then echo "keeping the existing account codex-bridge.env, which DIFFERS from the login user copy (set FORCE_CODEX=1 to re-sync)" >&2; exit 3; fi; printf "%s\n" "$new" > ~/.culture-nodes/codex-bridge.env; chmod 600 ~/.culture-nodes/codex-bridge.env' || rc=$?
-  if [ "$rc" -eq 3 ]; then echo "kept the existing codex-bridge.env in $target (differs from $host's login copy; FORCE_CODEX=1 re-syncs)"; return 0; fi
+  ssh "$host" "cat ~/$CODEX_BRIDGE_ENV_REL" | ssh "$target" "FORCE=${FORCE_CODEX:-0}; "'umask 077; mkdir -p ~/.culture-nodes; new=$(cat); [ -n "$new" ] || { echo "empty codex-bridge.env relayed from the login user" >&2; exit 1; }; if [ -e ~/.culture-nodes/codex-bridge.env ] && [ "$FORCE" != "1" ] && [ "$(cat ~/.culture-nodes/codex-bridge.env)" != "$new" ]; then echo "the account codex-bridge.env DIFFERS from the login user copy and was left as it is (set FORCE_CODEX=1 to re-sync)" >&2; exit 3; fi; printf "%s\n" "$new" > ~/.culture-nodes/codex-bridge.env; chmod 600 ~/.culture-nodes/codex-bridge.env' || rc=$?
+  if [ "$rc" -eq 3 ]; then
+    echo "error: the codex-bridge.env in $target DIFFERS from $host's login copy — the worker dispatches with the login copy's token, so that bridge rejects every dispatch until the two agree" >&2
+    echo "hint: re-run with FORCE_CODEX=1 to re-sync the account copy from the login user's (the same switch that rotates the login copy, so a rotation carries the account along)" >&2
+    return 3
+  fi
   [ "$rc" -eq 0 ] && echo "mirrored ~/.culture-nodes/codex-bridge.env into $target (mode 600)"
   return "$rc"
 }

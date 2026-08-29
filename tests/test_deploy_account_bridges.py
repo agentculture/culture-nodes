@@ -32,6 +32,7 @@ from pathlib import Path
 
 from tests.test_deploy_unix_user import (
     ORIN,
+    QWEN_KEY_NAME,
     ROOT,
     SPARK,
     THOR,
@@ -80,11 +81,29 @@ exec env "${strip[@]}" FAKE_HOST="$host" FAKE_USER="$user" FAKE_UID=1000 HOME="$
 
 # systemctl logs host AND user, answers is-active/show so the health waits
 # pass, and records every stop/disable/restart/enable in order.
+# One LOGIN-user unit (FAKE_LOGIN_UNIT, codex-bridge by default) can be made
+# to misbehave: FAKE_LOGIN_STOP_EXIT is what `systemctl --user stop` answers
+# for it, FAKE_LOGIN_UNIT_STATE what `is-active` reports afterwards (a real
+# systemctl says `inactive` for a unit that is not loaded, and `active` for
+# one it failed to stop). Every other unit, and every account unit, is
+# healthy.
 _SYSTEMCTL_SHIM = """#!/usr/bin/env bash
 printf 'systemctl[%s:%s] %s\\n' "$FAKE_HOST" "$FAKE_USER" "$*" >> "$FAKE_LOG"
+login=${FAKE_HOST%-fake}
+misbehaving=0
+if [ "$FAKE_USER" = "$login" ]; then
+  case " $* " in *" ${FAKE_LOGIN_UNIT:-codex-bridge} "*) misbehaving=1 ;; esac
+fi
 case "$*" in
-  *is-active*) echo active ;;
+  *is-active*)
+    if [ "$misbehaving" = 1 ]; then echo "${FAKE_LOGIN_UNIT_STATE:-active}"; else echo active; fi ;;
+  *is-enabled*) echo enabled ;;
   *NRestarts*) echo 0 ;;
+  *" stop "*)
+    if [ "$misbehaving" = 1 ] && [ "${FAKE_LOGIN_STOP_EXIT:-0}" != 0 ]; then
+      echo "Failed to stop ${*##* }.service: fake failure" >&2
+      exit "$FAKE_LOGIN_STOP_EXIT"
+    fi ;;
 esac
 exit 0
 """
@@ -446,6 +465,12 @@ def test_the_five_spark_templates_carry_no_decision_token_and_no_operator_path()
         assert "upkeep-lane" not in text, name
         assert "__HOME__" in text, name
         json.loads(text.replace("__HOME__", "/h").replace("__NODES_API_URL__", "http://x"))
+    # The qwen template carries the slot the renderer fills with the session's
+    # API-key variable (finding 1) -- and nothing pre-filled in it.
+    qwen = json.loads(
+        (ROOT / "deploy/prod/qwen-developer.json.template").read_text().replace("__HOME__", "/h")
+    )
+    assert qwen["qwen_env"] == {}
 
 
 # --- deploy.sh spark ---------------------------------------------------------------
@@ -517,6 +542,31 @@ def test_spark_installs_the_five_units_under_the_accounts_and_never_touches_comp
     assert "culture-qwen@localhost" in result.stdout
 
 
+def test_spark_runs_the_doctor_as_the_login_user_before_any_account_step(tmp_path: Path):
+    """The spark arm went straight into the account lane (#249 review,
+    finding 7): `nodes doctor` now runs first, as the login user, in the
+    operator checkout this deploy ships from -- the same pre-modification
+    doctor preflight.sh gives thor and orin."""
+    h = DeployHarness(tmp_path)
+    h.bootstrap(SPARK, "claude", "qwen")
+    result = h.deploy(SPARK)
+    assert result.returncode == 0, result.stderr + result.stdout
+    doctor = h.first(f"uv[{SPARK}:spark] run nodes doctor")
+    assert doctor < h.first("ssh[culture-claude@localhost]")
+    assert doctor < h.first("ssh[culture-qwen@localhost]")
+
+
+def test_spark_doctor_failure_refuses_before_any_account_is_touched(tmp_path: Path):
+    h = DeployHarness(tmp_path)
+    h.bootstrap(SPARK, "claude", "qwen")
+    result = h.deploy(SPARK, FAKE_DOCTOR_EXIT="1")
+    assert result.returncode != 0
+    assert "BEFORE the deploy" in result.stderr
+    h.never("ssh[culture-")
+    h.never("systemctl[")
+    h.never("uv[", "tool install")
+
+
 def test_spark_renders_the_configs_into_the_accounts_without_the_decision_token(tmp_path: Path):
     h = DeployHarness(tmp_path)
     h.bootstrap(SPARK, "claude", "qwen")
@@ -550,6 +600,14 @@ def test_spark_renders_the_configs_into_the_accounts_without_the_decision_token(
     assert qwen_cfg["default_sandbox"] == "workspace-write"
     assert qwen_cfg["qwen_bin"] == str(h.account_home(SPARK, "qwen") / ".local/bin/qwen")
     assert qwen_cfg["auth_token"] == "login-token-qwen-developer"
+    # The session's API key (#249 review, finding 1): the variable the login
+    # user's ~/.qwen/settings.json names as the provider's envKey, with the
+    # value that file's env block holds -- relayed from that file, never
+    # from the operator's environment, and only into the qwen config.
+    assert qwen_cfg["qwen_env"] == {QWEN_KEY_NAME: "fake-qwen-key"}
+    assert QWEN_KEY_NAME not in " ".join(
+        (claude / f".config/culture-nodes-bridges/{role}.json").read_text() for role in CLAUDE_ROLES
+    )
     # grep the whole account the way spec h32 does -- minus the shipped
     # source archive, whose code and tests NAME the variable (this file
     # included); what must be clean is everything the account runs from.
@@ -615,10 +673,29 @@ def test_spark_refuses_when_the_accounts_are_not_bootstrapped_and_names_the_sudo
 def test_spark_session_in_flight_refuses_before_any_stop(tmp_path: Path):
     h = DeployHarness(tmp_path)
     h.bootstrap(SPARK, "claude", "qwen")
-    result = h.deploy(SPARK, FAKE_SESSION_RUNNING="1")
+    # A session under the LOGIN user only (the account checks, which run
+    # first, find none): the login check is what refuses.
+    result = h.deploy(SPARK, FAKE_SESSION_USER="spark")
     assert result.returncode != 0
     assert "SKIP_SESSION_CHECK=1" in result.stderr
     h.first(f"pgrep[{SPARK}] -u spark -f")
+    h.never("systemctl[", "stop")
+    h.never("systemctl[", "disable")
+    h.never("systemctl[", "restart")
+
+
+def test_spark_account_session_in_flight_refuses_before_any_stop(tmp_path: Path):
+    """A qwen session running AS culture-qwen (a redeploy after the
+    migration) refuses the deploy before the login units are stopped or the
+    account units restarted (#249 review, finding 3)."""
+    h = DeployHarness(tmp_path)
+    h.bootstrap(SPARK, "claude", "qwen")
+    result = h.deploy(SPARK, FAKE_SESSION_USER="culture-qwen")
+    assert result.returncode != 0
+    assert "culture-qwen" in result.stderr
+    assert "SKIP_SESSION_CHECK=1" in result.stderr
+    h.first(f"pgrep[{SPARK}] -u culture-claude -f")
+    h.first(f"pgrep[{SPARK}] -u culture-qwen -f")
     h.never("systemctl[", "stop")
     h.never("systemctl[", "disable")
     h.never("systemctl[", "restart")
@@ -639,6 +716,51 @@ def test_spark_refuses_a_role_whose_login_config_has_no_auth_token(tmp_path: Pat
         h.account_home(SPARK, "claude") / ".config/culture-nodes-bridges/planner.json"
     ).exists()
     h.never("systemctl[", "stop")
+
+
+# --- install-secrets.sh: the account copy of codex-bridge.env ----------------------
+
+INSTALL_SECRETS = ROOT / "deploy/prod/install-secrets.sh"
+
+
+def _install_codex_account_env(
+    h: DeployHarness, host: str, **fake_env: str
+) -> subprocess.CompletedProcess:
+    """Run install-secrets.sh's install_codex_account_env against the fake
+    host, with the unix-user lane sourced for unix_user_target."""
+    script = INSTALL_SECRETS.read_text()
+    fn = re.search(r"^install_codex_account_env\(\) \{.*?^\}$", script, re.S | re.M)
+    assert fn, "install_codex_account_env moved"
+    body = (
+        "CODEX_BRIDGE_ENV_REL=.culture-nodes/codex-bridge.env\n"
+        + fn.group(0)
+        + f"\ninstall_codex_account_env {host}\n"
+    )
+    return h.run(body, host=host, **fake_env)
+
+
+def test_install_secrets_refuses_a_differing_account_token_and_names_force_codex(tmp_path: Path):
+    """The account's codex-bridge.env is what the bridge authenticates
+    callers with, and the worker dispatches with the login copy's token
+    (mirrored into prod.env): an account copy that differs makes the bridge
+    reject every dispatch, so keeping it was never a success (#249 review,
+    finding 5). Refuse, and name the re-sync."""
+    h = DeployHarness(tmp_path)
+    h.bootstrap(ORIN, "codex")
+    account_env = h.account_home(ORIN, "codex") / ".culture-nodes/codex-bridge.env"
+    account_env.write_text("CODEX_BRIDGE_AUTH_TOKEN=stale-account-token\n")
+    result = _install_codex_account_env(h, ORIN)
+    assert result.returncode != 0, result.stdout
+    assert "FORCE_CODEX=1" in result.stderr
+    assert "DIFFERS" in result.stderr
+    assert account_env.read_text() == "CODEX_BRIDGE_AUTH_TOKEN=stale-account-token\n"
+    # FORCE_CODEX=1 is the re-sync; a matching copy is a quiet success.
+    synced = _install_codex_account_env(h, ORIN, FORCE_CODEX="1")
+    assert synced.returncode == 0, synced.stderr
+    assert account_env.read_text() == "CODEX_BRIDGE_AUTH_TOKEN=login-codex-token\n"
+    assert oct(account_env.stat().st_mode & 0o777) == "0o600"
+    again = _install_codex_account_env(h, ORIN)
+    assert again.returncode == 0, again.stderr
 
 
 # --- deploy.sh orin ----------------------------------------------------------------
@@ -717,12 +839,55 @@ def test_orin_refuses_a_missing_account_naming_the_hand_turn_before_anything_is_
 def test_orin_session_in_flight_refuses_before_any_stop(tmp_path: Path):
     h = DeployHarness(tmp_path)
     h.bootstrap(ORIN, "codex")
-    result = h.deploy(ORIN, FAKE_SESSION_RUNNING="1")
+    result = h.deploy(ORIN, FAKE_SESSION_USER="orin")
     assert result.returncode != 0
     assert "SKIP_SESSION_CHECK=1" in result.stderr
+    h.first(f"pgrep[{ORIN}] -u orin -f")
     h.never("systemctl[", "stop codex-bridge")
     h.never("systemctl[", "disable codex-bridge")
     h.never("systemctl[", "culture-codex")
+
+
+def test_orin_account_session_in_flight_refuses_before_any_stop_or_restart(tmp_path: Path):
+    h = DeployHarness(tmp_path)
+    h.bootstrap(ORIN, "codex")
+    result = h.deploy(ORIN, FAKE_SESSION_USER="culture-codex")
+    assert result.returncode != 0
+    assert "culture-codex" in result.stderr
+    assert "SKIP_SESSION_CHECK=1" in result.stderr
+    h.first(f"ssh[culture-codex@{ORIN}]", "pgrep -u culture-codex -f")
+    h.never("systemctl[", "stop codex-bridge")
+    h.never("systemctl[", "disable codex-bridge")
+    h.never(f"systemctl[{ORIN}:culture-codex]")
+
+
+def test_orin_refuses_when_the_login_unit_fails_to_stop_and_stays_active(tmp_path: Path):
+    """The cutover used to turn every `systemctl --user stop` failure into
+    success; a login unit that is still active holds the port the account
+    copy is about to bind (#249 review, finding 4)."""
+    h = DeployHarness(tmp_path)
+    h.bootstrap(ORIN, "codex")
+    result = h.deploy(ORIN, FAKE_LOGIN_STOP_EXIT="1", FAKE_LOGIN_UNIT_STATE="active")
+    assert result.returncode != 0
+    assert "codex-bridge" in result.stderr
+    assert "still active" in result.stderr
+    h.first(f"systemctl[{ORIN}:orin] --user stop codex-bridge")
+    h.never(f"systemctl[{ORIN}:culture-codex] --user restart codex-bridge")
+    h.never(f"systemctl[{ORIN}:culture-codex] --user enable codex-bridge")
+
+
+def test_orin_proceeds_when_the_login_unit_was_never_loaded(tmp_path: Path):
+    """A fresh host has no login-user unit: `stop` answers 5 (not loaded)
+    and `is-active` says inactive, which is 'nothing to stop', not a
+    failure."""
+    h = DeployHarness(tmp_path)
+    h.bootstrap(ORIN, "codex")
+    result = h.deploy(ORIN, FAKE_LOGIN_STOP_EXIT="5", FAKE_LOGIN_UNIT_STATE="inactive")
+    assert result.returncode == 0, result.stderr + result.stdout
+    assert "nothing to stop" in result.stdout
+    assert h.first(f"systemctl[{ORIN}:orin] --user stop codex-bridge") < h.first(
+        f"systemctl[{ORIN}:culture-codex] --user restart codex-bridge"
+    )
 
 
 def test_orin_refuses_when_the_account_has_no_bridge_env_and_names_install_secrets(tmp_path: Path):

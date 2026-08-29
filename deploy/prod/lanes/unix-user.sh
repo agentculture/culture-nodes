@@ -141,6 +141,37 @@ for engine in "$@"; do
   for g in sudo docker wheel admin; do
     case " $groups " in *" $g "*) echo "unix-user bootstrap: $account is in group $g — an account with $g cannot carry the confinement claim; remove it (gpasswd -d $account $g) and re-run" >&2; exit 1 ;; esac
   done
+  # qwen has no login flow of its own here: its endpoint and the NAME of the
+  # env var carrying its API key sit in ~/.qwen/settings.json (the value in
+  # the env block of that same file), and a session under the account reads
+  # the copy in the account -- so the settings file IS the credential and is
+  # copied like the other two (#249 review, finding 1).
+  case "$engine" in
+    codex) cred_dir=.codex; cred_file=auth.json ;;
+    claude) cred_dir=.claude; cred_file=.credentials.json ;;
+    qwen) cred_dir=.qwen; cred_file=settings.json ;;
+  esac
+  src=$login_home/$cred_dir/$cred_file
+  dst=$home/$cred_dir/$cred_file
+  # The account owns its home and can plant anything in it between two
+  # bootstraps; root is about to mkdir/touch/cp/chmod/chown at these paths.
+  # A symlink there would make root write wherever the account pointed it
+  # (the credential of the login user included), and a directory some other
+  # user owns is a write into the hands of that user -- so every path is checked
+  # BEFORE the first write, and a refusal changes nothing (#249, finding 2).
+  for p in "$home/.ssh" "$home/.ssh/authorized_keys" "$home/$cred_dir" "$dst"; do
+    if [ -L "$p" ]; then
+      echo "unix-user bootstrap: $p is a symlink ($(readlink "$p")) — refusing to follow it as root; remove it in $account and re-run (nothing was written)" >&2
+      exit 1
+    fi
+    if [ -d "$p" ]; then
+      owner=$(stat -c %U "$p")
+      case "$owner" in "$account"|root) ;; *)
+        echo "unix-user bootstrap: $p is owned by $owner, not $account — refusing to write into it as root (nothing was written)" >&2
+        exit 1 ;;
+      esac
+    fi
+  done
   loginctl enable-linger "$account"
   mkdir -p "$home/.ssh"
   chmod 700 "$home/.ssh"
@@ -151,21 +182,14 @@ for engine in "$@"; do
   done < "$pubkey_file"
   chmod 600 "$home/.ssh/authorized_keys"
   chown -R "$account:$account" "$home/.ssh"
-  case "$engine" in
-    codex) cred_dir=.codex; cred_file=auth.json ;;
-    claude) cred_dir=.claude; cred_file=.credentials.json ;;
-    *) cred_dir=; cred_file= ;;
-  esac
   if [ -n "$cred_dir" ]; then
-    src=$login_home/$cred_dir/$cred_file
-    dst=$home/$cred_dir/$cred_file
     if [ -f "$src" ]; then
       mkdir -p "$home/$cred_dir"
       chmod 700 "$home/$cred_dir"
       if cmp -s "$src" "$dst" 2>/dev/null; then
         echo "credential $cred_dir/$cred_file: already in $account"
       else
-        cp "$src" "$dst"
+        cp --no-dereference "$src" "$dst"
         echo "credential $cred_dir/$cred_file: copied into $account"
       fi
       chmod 600 "$dst"
@@ -420,6 +444,17 @@ unix_user_provision() {
     return 1
   }
 
+  if [ "$engine" = qwen ]; then
+    # The bootstrap copies ~/.qwen/settings.json into the account; a qwen
+    # account without it has no endpoint and no API key, so its bridge would
+    # start and every session would fail to authenticate (#249, finding 1).
+    say "asserting $account's ~/.qwen/settings.json (endpoint + API-key variable; copied by the bootstrap)"
+    ssh "$target" '[ -s "$HOME/.qwen/settings.json" ]' || {
+      echo "provision refused on $host: $account has no ~/.qwen/settings.json, so a qwen session under it has no endpoint and no API key" >&2
+      echo "hint: re-run the bootstrap, which copies the login user's ~/.qwen/settings.json into the account: sudo bash ${REMOTE_DIR:-culture-nodes-prod}/deploy/prod/lanes/unix-user.sh bootstrap qwen   (on $host)" >&2
+      return 1
+    }
+  fi
   if [ "$engine" = codex ]; then
     say "ensuring $account's codex sandbox posture: workspace-write keeps file confinement and gains network (config.toml)"
     ssh "$target" "$UNIX_USER_CODEX_CONFIG_REMOTE" || { echo "provision failed on $host: codex config.toml for $account (reason above)" >&2; return 1; }
@@ -444,34 +479,63 @@ unix_user_provision() {
 
 # --- cutover guards ----------------------------------------------------------------
 
+# The session shapes the three engines run under a bridge, bracket idiom so
+# the pattern never matches the shell that carries it over ssh (the first
+# thor cutover refused every deploy on a phantom session until it did).
+UNIX_USER_SESSION_PATTERN='[c]laude -p|[c]odex exec|qwen_bridge[.]qwen_cli'
+
+# unix_user_session_verdict <who> <where> <status> <how-to-look> -- the one
+# reading of a pgrep-over-ssh exit status, shared by the login-user check
+# and the account check below. Three states, like preflight's orin probe:
+# pgrep found one (0: refuse, or warn under SKIP_SESSION_CHECK=1), found
+# none (1: proceed), or ssh never reached the host (anything else: refuse --
+# unreachable is not the same as idle).
+unix_user_session_verdict() { # who where status how-to-look
+  local who=$1 where=$2 status=$3 look=$4
+  case "$status" in
+    0)
+      if [ "${SKIP_SESSION_CHECK:-0}" = 1 ]; then
+        say "WARNING: a session is running as $who on $where and SKIP_SESSION_CHECK=1 — stopping or restarting its unit will kill that run mid-session"
+        return 0
+      fi
+      echo "refusing: a session (claude -p / codex exec / qwen) is running as $who on $where; stopping or restarting its unit now would kill the run and leave it running in the ledger" >&2
+      echo "hint: wait for it to finish ($look), or export SKIP_SESSION_CHECK=1 to accept killing it" >&2
+      return 1 ;;
+    1)
+      say "session check: none running as $who on $where"
+      return 0 ;;
+    *)
+      echo "refusing: cannot reach $where (ssh exit $status) to ask whether a session is in flight as $who; an unreachable host is not an idle one" >&2
+      return 1 ;;
+  esac
+}
+
 # unix_user_session_check <host> <login-user> -- refuse to stop a login-user
 # bridge unit while one of its sessions is in flight. A restart mid-session
 # kills the run and leaves it `running` in the ledger (#230 hand-turn 8,
-# exit 143). Three states, like preflight's orin probe: pgrep found one (0:
-# refuse, or warn under SKIP_SESSION_CHECK=1), found none (1: proceed), or
-# ssh never reached the host (anything else: refuse -- unreachable is not
-# the same as idle).
+# exit 143).
 unix_user_session_check() {
   local host=$1 login=$2 status=0
   [[ "$login" =~ ^[a-z_][a-z0-9_-]*$ ]] || { echo "unix_user_session_check: '$login' is not a login user name" >&2; return 1; }
   say "session check: any claude -p / codex exec / qwen session running as $login on $host?"
-  unix_user_login_exec "$host" "pgrep -u $login -f '[c]laude -p|[c]odex exec|qwen_bridge[.]qwen_cli' >/dev/null" || status=$?
-  case "$status" in
-    0)
-      if [ "${SKIP_SESSION_CHECK:-0}" = 1 ]; then
-        say "WARNING: a session is running as $login on $host and SKIP_SESSION_CHECK=1 — stopping its unit will kill that run mid-session"
-        return 0
-      fi
-      echo "refusing: a session (claude -p / codex exec / qwen) is running as $login on $host; stopping its unit now would kill the run and leave it running in the ledger" >&2
-      echo "hint: wait for it to finish (pgrep -u $login -af 'claude -p|codex exec|qwen'), or export SKIP_SESSION_CHECK=1 to accept killing it" >&2
-      return 1 ;;
-    1)
-      say "session check: none running as $login on $host"
-      return 0 ;;
-    *)
-      echo "refusing: cannot reach $host (ssh exit $status) to ask whether a session is in flight as $login; an unreachable host is not an idle one" >&2
-      return 1 ;;
-  esac
+  unix_user_login_exec "$host" "pgrep -u $login -f '$UNIX_USER_SESSION_PATTERN' >/dev/null" || status=$?
+  unix_user_session_verdict "$login" "$host" "$status" "pgrep -u $login -af 'claude -p|codex exec|qwen' on $host"
+}
+
+# unix_user_account_session_check <host> <engine> -- the same question asked
+# of the ACCOUNT, as itself: after the cutover the sessions run as
+# culture-<engine>, so a redeploy that only asked about the login user would
+# restart the account's unit under a live session (#249 review, finding 3).
+# Reached over the account's own ssh target, pgrep -u the account; an
+# account that does not answer is refused, not assumed idle.
+unix_user_account_session_check() {
+  local host=$1 engine=$2 status=0 target account
+  unix_user_engine_ok "$engine" || return 1
+  target=$(unix_user_target "$host" "$engine")
+  account=culture-$engine
+  say "session check: any claude -p / codex exec / qwen session running as $account on $host?"
+  ssh "$target" "pgrep -u $account -f '$UNIX_USER_SESSION_PATTERN' >/dev/null" || status=$?
+  unix_user_session_verdict "$account" "$target" "$status" "ssh $target pgrep -u $account -af 'claude -p|codex exec|qwen'"
 }
 
 # unix_user_rollback_pair <engine> <unit> [host] -- the one-command-per-host

@@ -48,6 +48,18 @@ LOCAL_HOST = SPARK
 PUBKEY = "ssh-ed25519 AAAAfakeoperatorkey operator-key"
 CODEX_AUTH = '{"tokens":{"access_token":"fake-codex"}}\n'
 CLAUDE_CREDS = '{"claudeAiOauth":{"accessToken":"fake-claude"}}\n'
+# The login user's qwen config, in the measured shape of ~/.qwen/settings.json
+# (2026-08-26): the model provider names the env var that carries its API
+# key (envKey), and the env block holds that variable's value. The account's
+# session reads its OWN copy of this file, so the bootstrap copies it the way
+# it copies codex's auth.json and claude's .credentials.json.
+QWEN_KEY_NAME = "QWEN_CUSTOM_API_KEY_OPENAI_HTTP_LOCALHOST_8001_FAKE"
+QWEN_SETTINGS = (
+    '{"env": {"%s": "fake-qwen-key"}, "modelProviders": {"openai": [{"id": "m", '
+    '"baseUrl": "http://localhost:8001/v1", "envKey": "%s"}]}, '
+    '"model": {"name": "m", "baseUrl": "http://localhost:8001/v1"}}\n'
+    % (QWEN_KEY_NAME, QWEN_KEY_NAME)
+)
 
 # The shim strips every lane variable from the remote environment, like a
 # real sshd (AcceptEnv admits LANG/LC_* only): a lane that wants the host to
@@ -119,14 +131,41 @@ case "$1" in
 esac
 """
 
+# stat is real except for ownership (-c %U), which the fake filesystem
+# cannot carry (every file is the test user's): the owner of a path under
+# /home/<name> answers as <name>, the way useradd -m + chown -R leave a real
+# account, and FAKE_FOREIGN_OWNER_PATH names one path some other user owns.
+_STAT_SHIM = """#!/usr/bin/env bash
+if [ "$1" = -c ] && [ "$2" = %U ]; then
+  path=$3
+  if [ "$path" = "${FAKE_FOREIGN_OWNER_PATH:-}" ]; then echo intruder; exit 0; fi
+  rel=${path#"$FAKE_HOSTS"/*/home/}
+  echo "${rel%%/*}"
+  exit 0
+fi
+exec /usr/bin/stat "$@"
+"""
+
+# The OPERATOR's uv (the account's own uv is what the curl shim installs
+# into ~/.local/bin): `uv run nodes doctor` answers FAKE_DOCTOR_EXIT.
+_UV_SHIM = """#!/usr/bin/env bash
+printf 'uv[%s:%s] %s\\n' "${FAKE_HOST:-}" "${FAKE_USER:-}" "$*" >> "$FAKE_LOG"
+[ "$1" = run ] && exit "${FAKE_DOCTOR_EXIT:-0}"
+exit 0
+"""
+
 _LOG_ONLY_SHIM = """#!/usr/bin/env bash
 printf '%s[%s] %s\\n' "$(basename "$0")" "$FAKE_HOST" "$*" >> "$FAKE_LOG"
 exit 0
 """
 
+# FAKE_SESSION_RUNNING=1 puts a session under every user; FAKE_SESSION_USER
+# puts one under exactly the user named, so a test can tell the login
+# user's check from the account's.
 _PGREP_SHIM = """#!/usr/bin/env bash
 printf 'pgrep[%s] %s\\n' "$FAKE_HOST" "$*" >> "$FAKE_LOG"
 if [ "${FAKE_SESSION_RUNNING:-0}" = 1 ]; then echo 4242; exit 0; fi
+if [ "$1" = -u ] && [ "$2" = "${FAKE_SESSION_USER:-}" ]; then echo 4243; exit 0; fi
 exit 1
 """
 
@@ -250,6 +289,8 @@ class Harness:
         _write_exec(self.bin / "id", _ID_SHIM)
         _write_exec(self.bin / "curl", _CURL_SHIM)
         _write_exec(self.bin / "pgrep", _PGREP_SHIM)
+        _write_exec(self.bin / "stat", _STAT_SHIM)
+        _write_exec(self.bin / "uv", _UV_SHIM)
         for tool in ("loginctl", "chown", "systemctl"):
             _write_exec(self.bin / tool, _LOG_ONLY_SHIM)
         # The origin every role clone comes from: a bare repo standing in for
@@ -278,6 +319,8 @@ class Harness:
             (home / ".claude").mkdir()
             (home / ".claude/.credentials.json").write_text(CLAUDE_CREDS)
             (home / ".claude/.credentials.json").chmod(0o600)
+            (home / ".qwen").mkdir()
+            (home / ".qwen/settings.json").write_text(QWEN_SETTINGS)
             # The login user's own agent checkout, with an unpushed commit
             # and a dirty file: the lane must never write here (c30).
             repo = _seed_repo(home / "git/culture-nodes-agent")
@@ -433,6 +476,15 @@ def test_bootstrap_takes_several_engines_and_copies_per_engine_credentials(tmp_p
     assert (qwen / ".ssh/authorized_keys").read_text() == PUBKEY + "\n"
     assert not (qwen / ".codex").exists()
     assert not (qwen / ".claude").exists()
+    # qwen's credential is its settings file (#249 review, finding 1): the
+    # endpoint and the API-key variable the session authenticates with live
+    # there, and a session under culture-qwen reads culture-qwen's copy.
+    settings = qwen / ".qwen/settings.json"
+    assert settings.read_text() == QWEN_SETTINGS
+    assert oct(settings.stat().st_mode & 0o777) == "0o600"
+    assert oct((qwen / ".qwen").stat().st_mode & 0o777) == "0o700"
+    h.first(f"chown[{SPARK}]", "culture-qwen:culture-qwen", ".qwen")
+    assert not (claude / ".qwen").exists()
     assert h.count("useradd[") == 2
     for engine in ("claude", "qwen"):
         assert oct(h.account_home(SPARK, engine).stat().st_mode & 0o777) == "0o750"
@@ -506,6 +558,13 @@ def test_bootstrap_local_form_refuses_when_not_root(tmp_path: Path):
     assert result.returncode != 0
     assert "root" in result.stderr
     h.never("useradd[")
+
+
+def _bootstrapped_codex(h: Harness) -> Path:
+    first = h.run("unix_user_bootstrap thor-fake codex")
+    assert first.returncode == 0, first.stderr
+    h.clear_log()
+    return h.account_home(THOR, "codex")
 
 
 def test_bootstrap_refuses_an_account_that_gained_sudo_or_docker(tmp_path: Path):
@@ -599,6 +658,24 @@ def test_provision_qwen_on_spark_uses_the_standalone_installer(tmp_path: Path):
     assert (home / ".local/bin/qwen").exists()
     assert h.count("curl[", "install-qwen-standalone.sh") == 1
     h.never("npm")
+
+
+def test_provision_qwen_refuses_without_its_settings_file_and_names_the_bootstrap(
+    tmp_path: Path,
+):
+    """A culture-qwen with no ~/.qwen/settings.json has no endpoint and no
+    API key: its bridge would start and every session would fail to
+    authenticate. The provision refuses and names the root step that copies
+    the file (#249 review, finding 1)."""
+    h = Harness(tmp_path)
+    _provisioned(h, SPARK, "qwen")
+    (h.account_home(SPARK, "qwen") / ".qwen/settings.json").unlink()
+    h.clear_log()
+    refused = h.run(f"unix_user_provision {SPARK} qwen", host=SPARK)
+    assert refused.returncode != 0
+    assert ".qwen/settings.json" in refused.stderr
+    assert "bootstrap qwen" in refused.stderr
+    h.never("curl[")
 
 
 def test_provision_fast_forwards_a_clean_clone_and_refuses_a_dirty_one(tmp_path: Path):
@@ -819,11 +896,14 @@ def test_session_pattern_does_not_match_its_own_ssh_shell():
     if shutil.which("pgrep") is None:  # pragma: no cover
         pytest.skip("no pgrep on this host")
     lane = LANE.read_text()
-    m = re.search(r"pgrep -u \$login -f '([^']+)'", lane)
+    m = re.search(r"UNIX_USER_SESSION_PATTERN='([^']+)'", lane)
     assert m, "the lane's session pattern moved"
     # every alternative must carry the bracket idiom, or it self-matches
     for alt in m.group(1).split("|"):
         assert "[" in alt, f"session-check alternative {alt!r} would match its own ssh shell"
+    # one pattern, both checks: the login user's and the account's (finding 3)
+    assert lane.count("pgrep -u $login -f '$UNIX_USER_SESSION_PATTERN'") == 1
+    assert lane.count("pgrep -u $account -f '$UNIX_USER_SESSION_PATTERN'") == 1
     nonce = "aou" + uuid.uuid4().hex[:12]
     me = subprocess.run(["id", "-un"], capture_output=True, text=True).stdout.strip()
     # exactly how the lane ships it: one bash -c whose cmdline carries the pattern

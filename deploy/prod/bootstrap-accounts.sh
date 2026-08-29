@@ -30,16 +30,56 @@ case "$HOST" in
   *) echo "error: unknown host $HOST" >&2; echo "hint: one of spark, orin, thor" >&2; exit 1 ;;
 esac
 
+# `nodes doctor` BEFORE the root step (#249 review, finding 8): the four
+# agent-identity checks, non-strict, so only the error-severity one (the
+# prompt file the account's bridge will load) refuses -- the other three
+# print as warnings and the bootstrap goes on. Locally it runs in the
+# checkout this script lives in; over ssh it is best effort in the host's
+# shipped archive (~/culture-nodes-prod): a host with no archive yet, or no
+# uv, is a WARNING, an unreachable host or a doctor that ran and failed is
+# a refusal, and nothing is bootstrapped after a refusal.
+doctor_local() {
+  local checkout
+  checkout=$(cd "$SCRIPT_DIR/../.." && pwd)
+  if ! command -v uv >/dev/null 2>&1; then
+    printf '==> %s\n' "WARNING: no uv on PATH — skipping nodes doctor in $checkout (best effort)"
+    return 0
+  fi
+  printf '==> %s\n' "nodes doctor in $checkout (non-strict: the error-severity check refuses, the rest warn)"
+  (cd "$checkout" && uv run nodes doctor) || {
+    echo "error: nodes doctor reports the agent identity unhealthy in $checkout (its error-severity check failed)" >&2
+    echo "hint: fix the reported check (uv run nodes doctor), then re-run; nothing was bootstrapped" >&2
+    exit 1
+  }
+}
+
+doctor_remote() { # host
+  local host=$1 rc=0
+  printf '==> %s\n' "nodes doctor on $host in ~/culture-nodes-prod (best effort, over ssh)"
+  ssh "$host" "bash -lc 'if [ -d ~/culture-nodes-prod ]; then cd ~/culture-nodes-prod && uv run nodes doctor; else echo \"no ~/culture-nodes-prod on $host (never deployed) — nothing to doctor\"; exit 42; fi'" || rc=$?
+  case "$rc" in
+    0) ;;
+    42|127) printf '==> %s\n' "WARNING: nodes doctor could not run on $host (no shipped checkout, or no uv in a login shell; exit $rc) — bootstrapping anyway; deploy.sh $host doctors the account after" ;;
+    255) echo "error: cannot reach $host (ssh exit 255)" >&2; echo "hint: fix ssh to $host, then re-run" >&2; exit 1 ;;
+    *)
+      echo "error: nodes doctor reports the agent identity unhealthy on $host (exit $rc; its error-severity check failed)" >&2
+      echo "hint: fix the reported check on $host (cd ~/culture-nodes-prod && uv run nodes doctor), then re-run; nothing was bootstrapped" >&2
+      exit 1 ;;
+  esac
+}
+
 # The operator's machine is spark, which accepts no ssh key for its own
 # user (actor-placement.sh has the same local branch): run the root script
 # in place there, over ssh with a tty everywhere else.
 case "$(hostname)" in
   "$HOST"|"$HOST"-*|"$HOST".*)
+    doctor_local
     printf '==> %s\n' "bootstrapping $ENGINES on $HOST (local sudo)"
     # shellcheck disable=SC2086
     exec sudo bash "$LANE" bootstrap $ENGINES ;;
 esac
 
+doctor_remote "$HOST"
 STAGED=".culture-nodes-unix-user.sh"
 printf '==> %s\n' "staging the lane on $HOST as ~/$STAGED"
 scp -q "$LANE" "$HOST:$STAGED"

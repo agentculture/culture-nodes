@@ -132,14 +132,59 @@ account_install_unit() { # target unit
 # rollback pair (c32) restores the previous posture without a deploy, and
 # `disable` alone is what keeps a reboot from starting both copies on one
 # port. A unit that was never installed under the login user (a fresh host)
-# is not an error here.
+# is not an error here -- but a unit that `stop` could not stop and that is
+# STILL ACTIVE is (#249 review, finding 4): it holds the port the account
+# copy is about to bind, and the old `|| true` turned that into a deploy
+# that reported success while the account unit crash-looped on EADDRINUSE.
+# The two states are told apart by asking systemd afterwards, not by
+# reading the exit code: `is-active` says inactive for a unit that is not
+# loaded, was never installed or is already down (proceed), and active for
+# one the stop failed on (refuse). Same for `disable` and `is-enabled`.
 account_cutover_login_unit() { # host login unit...
   local host=$1 login=$2; shift 2
   local unit
   unix_user_session_check "$host" "$login" || return 1
   for unit in "$@"; do
     say "stopping + disabling $unit under $login on $host (file, config and env stay in place for the rollback pair)"
-    unix_user_login_exec "$host" "$UNIX_USER_XDG; systemctl --user stop $unit 2>/dev/null || true; systemctl --user disable $unit 2>/dev/null || true"
+    unix_user_login_exec "$host" "$UNIX_USER_XDG; unit=$unit; "'
+if systemctl --user stop "$unit"; then
+  echo "login unit $unit: stopped"
+else
+  state=$(systemctl --user is-active "$unit" 2>/dev/null || true)
+  case "$state" in
+    active|activating|deactivating|reloading|refreshing)
+      echo "refusing: systemctl --user stop $unit failed and the unit is still $state — the account copy would not bind the same port; see systemctl --user status $unit, fix it, and re-run" >&2
+      exit 3 ;;
+    *) echo "login unit $unit: not running (${state:-not loaded}) — nothing to stop" ;;
+  esac
+fi
+if systemctl --user disable "$unit"; then
+  echo "login unit $unit: disabled"
+else
+  case "$(systemctl --user is-enabled "$unit" 2>/dev/null || true)" in
+    enabled|enabled-runtime)
+      echo "refusing: systemctl --user disable $unit failed and it is still enabled — it would come back at the next boot beside the account copy" >&2
+      exit 3 ;;
+    *) echo "login unit $unit: not enabled — nothing to disable" ;;
+  esac
+fi' || {
+      echo "cutover refused on $host: $unit under $login could not be stopped or disabled (reason above); the account copy was not started" >&2
+      return 1
+    }
+  done
+}
+
+# account_session_guard <host> <engine>... -- the account half of the
+# session-in-flight refusal (#249 review, finding 3): after a migration the
+# sessions run AS the engine account, so before the login units are stopped
+# and the account units restarted, every account this deploy is about to
+# restart is asked, as itself, whether a session is in flight. Runs BEFORE
+# account_cutover_login_unit so a refusal here stops nothing on either side.
+account_session_guard() { # host engine...
+  local host=$1; shift
+  local engine
+  for engine in "$@"; do
+    unix_user_account_session_check "$host" "$engine" || return 1
   done
 }
 
@@ -209,6 +254,11 @@ for key in ("actor_id", "auth_token"):
     value = carried.get(key)
     if isinstance(value, str) and value:
         config[key] = value
+engine_env = carried.get("qwen_env")
+if isinstance(engine_env, dict) and engine_env:
+    merged = dict(config.get("qwen_env") or {})
+    merged.update({str(k): str(v) for k, v in engine_env.items()})
+    config["qwen_env"] = merged
 if not config.get("auth_token"):
     sys.stderr.write("refusing: no auth_token for " + role + " (the bridge binds 0.0.0.0 and refuses to start without one); nothing rendered\n")
     raise SystemExit(3)
@@ -240,9 +290,25 @@ python3 -c "$prog" "$TEMPLATE" "$ROLE" "$NODES_API_URL"'
 # A missing actor_id there is resolved from the registry instead; a missing
 # auth_token is a refusal, because a bridge on 0.0.0.0 with no token either
 # refuses to start or answers everyone.
+#
+# The qwen role carries one more thing (#249 review, finding 1): the API-key
+# variable its session authenticates with. The login user's
+# ~/.qwen/settings.json names it (modelProviders.*[].envKey) and holds its
+# value (env.<NAME>); the pair rides the same pipe into the template's
+# qwen_env slot, so the account's session carries exactly what the login
+# user's did. It is read from THAT FILE, never from this shell's environment:
+# the bridge merges qwen_env into every session, and an operator variable
+# that happened to share a name would otherwise cross the account boundary.
+# A named key with no value is a refusal -- the session would start and
+# fail every turn on auth.
 account_render_bridge_config() { # target role template [actor_key]
   local target=$1 role=$2 template=$3 actor_key=${4:-$(account_role_actor_key "$2")}
-  local source="$HOME/.config/culture-nodes-bridges/$role.json" row_id=""
+  local source="$HOME/.config/culture-nodes-bridges/$role.json" row_id="" engine_settings=""
+  case "$role" in qwen*) engine_settings="$HOME/.qwen/settings.json" ;; esac
+  if [ -n "$engine_settings" ] && [ ! -s "$engine_settings" ]; then
+    echo "refusing: $engine_settings is missing — it names the API-key variable a qwen session authenticates with (modelProviders.*[].envKey) and holds its value; nothing rendered for $role" >&2
+    return 1
+  fi
   if [ ! -s "$source" ]; then
     echo "refusing: $source is missing — it is where $role's externally issued auth_token lives (the value the control plane holds as NODES_ACTOR_*_TOKEN), and this lane mints none; nothing rendered for $role" >&2
     return 1
@@ -260,11 +326,47 @@ account_render_bridge_config() { # target role template [actor_key]
   # and ride the argv prefix the way install-secrets.sh prefixes FORCE.
   # shellcheck disable=SC2029 # the prefix is deliberately expanded here
   python3 -c 'import json,sys
-cfg = json.load(open(sys.argv[1])); row = sys.argv[2]
+cfg = json.load(open(sys.argv[1])); row = sys.argv[2]; settings_path = sys.argv[3]
 out = {k: cfg[k] for k in ("actor_id", "auth_token") if isinstance(cfg.get(k), str) and cfg[k]}
 if row and "actor_id" not in out: out["actor_id"] = row
-print(json.dumps(out))' "$source" "$row_id" \
+if settings_path:
+    settings = json.load(open(settings_path))
+    values = settings.get("env") if isinstance(settings.get("env"), dict) else {}
+    names = sorted({p["envKey"] for ps in (settings.get("modelProviders") or {}).values() if isinstance(ps, list)
+                    for p in ps if isinstance(p, dict) and isinstance(p.get("envKey"), str) and p["envKey"]})
+    missing = [n for n in names if not isinstance(values.get(n), str) or not values[n]]
+    if missing:
+        sys.stderr.write("refusing: " + settings_path + " names " + ", ".join(missing) + " as the API-key variable but its env block holds no value for it; the session could not authenticate\n")
+        raise SystemExit(3)
+    if names: out["qwen_env"] = {n: values[n] for n in names}
+print(json.dumps(out))' "$source" "$row_id" "$engine_settings" \
     | ssh "$target" "ROLE='$role'; TEMPLATE='$REMOTE_DIR/deploy/prod/$template'; NODES_API_URL='$NODES_API_URL'; $ACCOUNT_RENDER_REMOTE"
+}
+
+# account_spark_preflight_doctor <host> -- `deploy.sh spark`'s pre-deploy
+# doctor (#249 review, finding 7): the same four checks preflight.sh runs on
+# thor and orin BEFORE anything is touched, here as the login user in the
+# operator checkout this deploy ships from (spark has no login-user agent
+# checkout -- SCRIPT_DIR/../.. IS the tree being archived into the accounts).
+# Non-strict, so only the error-severity check (prompt file) decides.
+# FIRST_DEPLOY=1 is the one exemption, as in preflight.sh: declared by the
+# operator for a machine with no uv to run the doctor with, never inferred.
+account_spark_preflight_doctor() { # host
+  local host=$1 checkout
+  checkout=$(cd "$SCRIPT_DIR/../.." && pwd)
+  if ! command -v uv >/dev/null 2>&1; then
+    if [ "${FIRST_DEPLOY:-}" = 1 ]; then
+      say "preflight: no uv on PATH and FIRST_DEPLOY=1 declared — skipping the pre-deploy doctor on $host; the bridges' own preflights gate this deploy"
+      return 0
+    fi
+    echo "preflight refused: no uv on PATH, so nodes doctor cannot run in $checkout before the deploy; install uv, or declare FIRST_DEPLOY=1 for a host that has never been deployed" >&2
+    return 1
+  fi
+  say "preflight: nodes doctor as $(id -un) in $checkout (before any account is touched)"
+  (cd "$checkout" && uv run nodes doctor) || {
+    echo "preflight failed on $host: nodes doctor reports the agent lane unhealthy BEFORE the deploy; fix the reported check first — nothing was changed" >&2
+    return 1
+  }
 }
 
 # account_bridges_spark_lane <host> -- the whole of `deploy.sh spark`.
@@ -309,10 +411,11 @@ account_bridges_spark_lane() { # host
   "$SCRIPT_DIR/issue-dialin-credential.sh" company/developer "$claude" \
     || say "WARNING: dial-in re-issue failed (reason above); re-run by hand: deploy/prod/issue-dialin-credential.sh company/developer $claude"
 
-  # The cutover: one session check for the login user, then stop + disable
-  # its five units, then start the five under their accounts. Same port per
-  # unit either side, so the login copy must be down before the account
-  # copy can bind.
+  # The cutover: one session check per account (as the account) and one for
+  # the login user, then stop + disable its five units, then start the five
+  # under their accounts. Same port per unit either side, so the login copy
+  # must be down before the account copy can bind.
+  account_session_guard "$host" claude qwen || exit 1
   account_cutover_login_unit "$host" "$login" \
     culture-nodes-claude-developer culture-nodes-claude-planner \
     culture-nodes-claude-verifier culture-nodes-claude-intake \

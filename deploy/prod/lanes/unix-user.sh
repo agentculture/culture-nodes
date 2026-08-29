@@ -398,7 +398,7 @@ unix_user_session_check() {
   local host=$1 login=$2 status=0
   [[ "$login" =~ ^[a-z_][a-z0-9_-]*$ ]] || { echo "unix_user_session_check: '$login' is not a login user name" >&2; return 1; }
   say "session check: any claude -p / codex exec / qwen session running as $login on $host?"
-  unix_user_login_exec "$host" "pgrep -u $login -f 'claude -p|codex exec|qwen_bridge.qwen_cli' >/dev/null" || status=$?
+  unix_user_login_exec "$host" "pgrep -u $login -f '[c]laude -p|[c]odex exec|qwen_bridge[.]qwen_cli' >/dev/null" || status=$?
   case "$status" in
     0)
       if [ "${SKIP_SESSION_CHECK:-0}" = 1 ]; then

@@ -28,8 +28,11 @@ from __future__ import annotations
 
 import hashlib
 import os
+import re
 import subprocess
 from pathlib import Path
+
+import pytest
 
 ROOT = Path(__file__).resolve().parents[1]
 LANE = ROOT / "deploy/prod/lanes/unix-user.sh"
@@ -702,7 +705,7 @@ def test_session_in_flight_refuses_before_any_systemctl(tmp_path: Path):
     result = h.run(body, FAKE_SESSION_RUNNING="1")
     assert result.returncode != 0
     assert "SKIP_SESSION_CHECK=1" in result.stderr
-    h.first(f"pgrep[{THOR}] -u thor -f", "claude -p|codex exec|qwen_bridge.qwen_cli")
+    h.first(f"pgrep[{THOR}] -u thor -f", "[c]laude -p|[c]odex exec|qwen_bridge[.]qwen_cli")
     h.never("systemctl[")
 
 
@@ -728,6 +731,39 @@ def test_no_session_in_flight_proceeds_quietly(tmp_path: Path):
     assert result.returncode == 0, result.stderr
     assert "WARNING" not in result.stdout
     h.first(f"systemctl[{THOR}] --user stop codex-bridge")
+
+
+def test_session_pattern_does_not_match_its_own_ssh_shell():
+    """Regression for the first thor cutover (2026-08-29): over ssh the
+    pattern rides inside ``bash -c "pgrep ... '<pattern>'"``, so an
+    unbracketed pattern matched its OWN wrapping shell and every deploy
+    refused with a phantom session. The fake pgrep shim could not see it;
+    only the real pgrep can. Proven with a nonce so nothing else running
+    on this host (an operator's ``claude -p``, a colleague review whose
+    instruction quotes the pattern) can turn the test red or green."""
+    import shutil
+    import uuid
+
+    if shutil.which("pgrep") is None:  # pragma: no cover
+        pytest.skip("no pgrep on this host")
+    lane = LANE.read_text()
+    m = re.search(r"pgrep -u \$login -f '([^']+)'", lane)
+    assert m, "the lane's session pattern moved"
+    # every alternative must carry the bracket idiom, or it self-matches
+    for alt in m.group(1).split("|"):
+        assert "[" in alt, f"session-check alternative {alt!r} would match its own ssh shell"
+    nonce = "aou" + uuid.uuid4().hex[:12]
+    me = subprocess.run(["id", "-un"], capture_output=True, text=True).stdout.strip()
+    # exactly how the lane ships it: one bash -c whose cmdline carries the pattern
+    bracketed = subprocess.run(
+        ["bash", "-c", f"pgrep -u {me} -f '[{nonce[0]}]{nonce[1:]} -p' >/dev/null"],
+        capture_output=True,
+    )
+    assert bracketed.returncode == 1, "the bracketed pattern matched its own shell"
+    naive = subprocess.run(
+        ["bash", "-c", f"pgrep -u {me} -f '{nonce} -p' >/dev/null"], capture_output=True
+    )
+    assert naive.returncode == 0, "the control should self-match; if not, this test proves nothing"
 
 
 def test_unreachable_host_is_refused_not_treated_as_no_session(tmp_path: Path):

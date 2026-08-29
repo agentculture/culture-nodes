@@ -255,3 +255,17 @@ to the sweep lives — the credential never leaves that host. It is the
 operator's own hand on the board; the system's board moves go through the
 jira bridge actor's allowlisted transition verb, never through this.
 Maintained here; not subject to the re-sync procedure above.
+
+## First-party: jira
+
+`jira` is **authored in this repo** (2026-08-29), not vendored: operator-lane
+Jira comment / create / show (`comment <ISSUE> "<text>"`,
+`create --project KEY --summary "<text>" [--type Task] [--description ...]`,
+`show <ISSUE>`) via `scripts/jira.sh`, with the same ssh-to-thor custody as
+`jira-status` — the credential pair never leaves that host. Everything it
+posts lands under the system's Jira account, which the sweep filters as
+self-echo by account id; it is the operator's own hand on the board (proof
+tickets, reading state), never a way to produce a human's fact, and never the
+system's write path (that is the jira bridge actor's allowlisted verbs).
+Issue #197 gaps 2/3 and #230's SCRUM-5 hand-turn are why it exists.
+Maintained here; not subject to the re-sync procedure above.

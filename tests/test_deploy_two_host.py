@@ -30,15 +30,25 @@ ORIN = "orin-fake"
 REVISION = "0123456789abcdef0123456789abcdef01234567"
 STALE = "fedcba9876543210fedcba9876543210fedcba98"
 
+# The login user of a host is the host's own fake root; an engine ACCOUNT
+# (`culture-codex@<host>`, #243) is a home beside it under <host>/home/, the
+# way tests/test_deploy_unix_user.py's shim lays accounts out, and one that
+# was never bootstrapped answers 255 like a real ssh to a missing account.
 _SSH_SHIM = """#!/usr/bin/env bash
+while [ "$1" = -o ]; do shift 2; done
 host=$1; shift
 printf 'ssh[%s] %s\\n' "$host" "$*" >> "$FAKE_LOG"
+case "$host" in
+  *@*) home="$FAKE_HOSTS/${host#*@}/home/${host%@*}" ;;
+  *) home="$FAKE_HOSTS/$host" ;;
+esac
 # Like a real ssh: the remote command starts in that host's HOME, and the
 # operator's shell variables do not cross to it (sshd forwards only what its
 # AcceptEnv admits — LANG/LC_* by default), so a lane that wants the host to
 # see an operator declaration has to carry it inside the command itself.
-cd "$FAKE_HOSTS/$host" || exit 255
-exec env -u FIRST_DEPLOY FAKE_HOST="$host" HOME="$FAKE_HOSTS/$host" bash -c "$*"
+[ -d "$home" ] || exit 255
+cd "$home" || exit 255
+exec env -u FIRST_DEPLOY FAKE_HOST="${host#*@}" HOME="$home" bash -c "$*"
 """
 
 _DOCKER_SHIM = """#!/usr/bin/env bash
@@ -153,17 +163,35 @@ class Harness:
         orin_compose.mkdir(parents=True)
         (orin_compose / "compose.orin.yml").write_text("services: {worker: {}}\n")
 
+    def account(self, host: str, checkout: str | None) -> Path:
+        """culture-codex on ``host`` (#243): bootstrapped, with its own
+        ~/git/culture-nodes-agent in ``checkout`` state ("absent" for an
+        account that exists but was never provisioned) and its own nodes
+        CLI once it has a clone."""
+        home = self.hosts / host / "home/culture-codex"
+        home.mkdir(parents=True)
+        if checkout != "absent":
+            _agent_checkout(home, checkout)
+            (home / ".local/bin").mkdir(parents=True)
+            _write_exec(home / ".local/bin/nodes", _NODES_SHIM)
+        return home
+
     def run(
         self,
         lane: str,
         checkout: str = "clean",
         orin_checkout: str = "clean",
+        account_checkout: str | None = None,
         **fake_env: str,
     ) -> subprocess.CompletedProcess:
         # "absent" models a host that was never deployed (no agent checkout):
         # the preflight refuses it unless FIRST_DEPLOY=1 is declared.
         if checkout != "absent":
             _agent_checkout(self.thor_home, checkout)
+        # None: thor has no engine account yet (the pre-#243 posture every
+        # test above this axis was written for).
+        if account_checkout is not None:
+            self.account(THOR, account_checkout)
         # orin is doctored by the thor lane too (Qodo 3 on #244); it has a
         # worker stack by default, so by default it has a checkout as well.
         if orin_checkout != "absent":
@@ -423,3 +451,66 @@ def test_first_deploy_declaration_does_not_reach_the_existing_orin_host(tmp_path
     assert thor_exempt < orin_gated
     h.never("docker[")
     h.never("systemd-run[")
+
+
+# --- the agent checkout is the ACCOUNT's since #243 (#249 review, finding 6) ---
+
+ACCOUNT = f"culture-codex@{THOR}"
+
+
+def test_account_checkout_gates_the_deploy_once_the_account_exists(tmp_path):
+    """The codex lane deploys INTO culture-codex's clone, so that clone's
+    state is what a deploy must be refused on; a dirty one is a session
+    that has not handed over."""
+    h = Harness(tmp_path)
+    result = h.run("thor", checkout="clean", account_checkout="dirty")
+    assert result.returncode != 0, result.stdout
+    assert "DIRTY" in result.stderr
+    assert "culture-codex" in result.stderr
+    h.first(f"ssh[{ACCOUNT}]", "repo=$HOME/git/culture-nodes-agent")
+    h.never("docker[")
+    h.never("systemd-run[")
+
+
+def test_legacy_login_checkout_is_noted_not_gated_once_the_account_exists(tmp_path):
+    """The login user's ~/git/culture-nodes-agent is harvest-only after the
+    migration (c30: never fast-forwarded by a deploy again), so its dirty
+    diff is a note, and the doctor runs as the account, in the account's
+    clone, with the account's nodes CLI."""
+    h = Harness(tmp_path)
+    result = h.run("thor", checkout="dirty", account_checkout="clean")
+    assert result.returncode == 0, result.stderr
+    assert "legacy" in result.stdout
+    assert "DIRTY" in result.stdout
+    h.first(f"ssh[{ACCOUNT}] FIRST_DEPLOY=0; repo=$HOME/git/culture-nodes-agent;")
+    h.never(f"ssh[{THOR}] FIRST_DEPLOY=")
+    h.first(*_docker(THOR, "up -d scheduler"))
+
+
+def test_absent_legacy_checkout_is_skipped_with_a_note_once_the_account_exists(tmp_path):
+    h = Harness(tmp_path)
+    result = h.run("thor", checkout="absent", account_checkout="clean")
+    assert result.returncode == 0, result.stderr
+    assert "legacy" in result.stdout
+    assert "absent" in result.stdout
+    h.first(f"ssh[{ACCOUNT}] FIRST_DEPLOY=0; repo=$HOME/git/culture-nodes-agent;")
+
+
+def test_account_without_a_clone_yet_falls_back_to_the_login_checkout_for_the_doctor(tmp_path):
+    """Between the bootstrap and the first cutover the account exists with
+    nothing in it: its absent clone passes (the codex lane clones it) and
+    the doctor still has the login user's checkout to run in."""
+    h = Harness(tmp_path)
+    result = h.run("thor", checkout="clean", account_checkout="absent")
+    assert result.returncode == 0, result.stderr
+    h.first(f"ssh[{ACCOUNT}]", "repo=$HOME/git/culture-nodes-agent")
+    h.first(f"ssh[{THOR}] FIRST_DEPLOY=0; repo=$HOME/git/culture-nodes-agent;")
+    h.first(f"nodes[{THOR}] doctor")
+
+
+def test_account_doctor_failure_refuses_before_anything_is_stopped(tmp_path):
+    h = Harness(tmp_path)
+    result = h.run("thor", account_checkout="clean", FAKE_DOCTOR_EXIT="1")
+    assert result.returncode != 0
+    assert "BEFORE the deploy" in result.stderr
+    h.never("docker[")

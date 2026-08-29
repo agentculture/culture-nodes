@@ -192,6 +192,12 @@ Numbered SQL migrations for the authoritative PostgreSQL store (prd-spec
   (PR #209 qodo finding 1).
   0044's `store_entry_bindings_ref_idx` is subsumed by the new prefix but is
   kept — dropping an index is a later contract migration, per the ADR.
+- `0046_ticket_frames.sql` — append-only, namespace-scoped ticket frame
+  snapshots. `(namespace_id, ticket_id, version)` is the immutable key; the
+  ticket projection reads the highest version and preserves `frame_json` as
+  JSON so the posted claim-state document is returned byte-for-byte. It also
+  creates the append-only `ticket_replies` source the projection reads; t10
+  owns the guarded endpoint that writes those rows.
 
 - `0022_dispatch_rate_state.sql` — expand-only: adds the mutable
   `dispatch_rate_state` table (task t10 of the economy-discord-graphs plan,

@@ -387,8 +387,15 @@ func TestFailingTicketReportBacksOffAndDoesNotBlockLaterReports(t *testing.T) {
 		t.Fatal("Run with a failing report returned nil, want the recorded per-row failure joined in")
 	}
 	mu.Lock()
-	if len(posted) != 1 || posted[0] != "SCRUM-OK" {
+	// WP-I: SCRUM-OK's first start also carries its one page link, so the
+	// drain posts two SCRUM-OK comments — and nothing for the failing head.
+	if len(posted) == 0 {
 		t.Fatalf("posted = %v, want the later SCRUM-OK report to drain past the failing head", posted)
+	}
+	for _, issue := range posted {
+		if issue != "SCRUM-OK" {
+			t.Fatalf("posted = %v, want only SCRUM-OK reports to drain past the failing head", posted)
+		}
 	}
 	mu.Unlock()
 	var attempts int

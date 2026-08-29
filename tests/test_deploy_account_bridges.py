@@ -691,6 +691,49 @@ def test_spark_refuses_a_role_whose_login_config_has_no_auth_token(tmp_path: Pat
     h.never("systemctl[", "stop")
 
 
+# --- install-secrets.sh: the account copy of codex-bridge.env ----------------------
+
+INSTALL_SECRETS = ROOT / "deploy/prod/install-secrets.sh"
+
+
+def _install_codex_account_env(h: DeployHarness, host: str, **fake_env: str) -> subprocess.CompletedProcess:
+    """Run install-secrets.sh's install_codex_account_env against the fake
+    host, with the unix-user lane sourced for unix_user_target."""
+    script = INSTALL_SECRETS.read_text()
+    fn = re.search(r"^install_codex_account_env\(\) \{.*?^\}$", script, re.S | re.M)
+    assert fn, "install_codex_account_env moved"
+    body = (
+        "CODEX_BRIDGE_ENV_REL=.culture-nodes/codex-bridge.env\n"
+        + fn.group(0)
+        + f"\ninstall_codex_account_env {host}\n"
+    )
+    return h.run(body, host=host, **fake_env)
+
+
+def test_install_secrets_refuses_a_differing_account_token_and_names_force_codex(tmp_path: Path):
+    """The account's codex-bridge.env is what the bridge authenticates
+    callers with, and the worker dispatches with the login copy's token
+    (mirrored into prod.env): an account copy that differs makes the bridge
+    reject every dispatch, so keeping it was never a success (#249 review,
+    finding 5). Refuse, and name the re-sync."""
+    h = DeployHarness(tmp_path)
+    h.bootstrap(ORIN, "codex")
+    account_env = h.account_home(ORIN, "codex") / ".culture-nodes/codex-bridge.env"
+    account_env.write_text("CODEX_BRIDGE_AUTH_TOKEN=stale-account-token\n")
+    result = _install_codex_account_env(h, ORIN)
+    assert result.returncode != 0, result.stdout
+    assert "FORCE_CODEX=1" in result.stderr
+    assert "DIFFERS" in result.stderr
+    assert account_env.read_text() == "CODEX_BRIDGE_AUTH_TOKEN=stale-account-token\n"
+    # FORCE_CODEX=1 is the re-sync; a matching copy is a quiet success.
+    synced = _install_codex_account_env(h, ORIN, FORCE_CODEX="1")
+    assert synced.returncode == 0, synced.stderr
+    assert account_env.read_text() == "CODEX_BRIDGE_AUTH_TOKEN=login-codex-token\n"
+    assert oct(account_env.stat().st_mode & 0o777) == "0o600"
+    again = _install_codex_account_env(h, ORIN)
+    assert again.returncode == 0, again.stderr
+
+
 # --- deploy.sh orin ----------------------------------------------------------------
 
 

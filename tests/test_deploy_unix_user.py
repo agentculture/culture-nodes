@@ -784,6 +784,22 @@ def test_codex_account_gets_network_in_workspace_write_via_its_own_config(tmp_pa
     assert 'trust_level = "trusted"' in again
 
 
+def test_account_gets_a_git_identity_so_handover_commits_can_be_made(tmp_path: Path):
+    """Run 01M17NJ8W7B6NQ2RKT6B89SF94 (#243): without user.name/user.email the
+    bridge's git commit-tree fails and the handover reports workspace_export
+    missing. Provision sets the account as its own identity, idempotently."""
+    h = Harness(tmp_path)
+    _provisioned(h, THOR, "codex")
+    home = h.account_home(THOR, "codex")
+    cfg = (home / ".gitconfig").read_text()
+    assert "name = culture-codex" in cfg
+    assert "email = culture-codex@" in cfg
+    result = h.run("unix_user_provision thor-fake codex")
+    assert result.returncode == 0, result.stderr
+    assert "git identity: culture-codex already set" in result.stdout
+    assert (home / ".gitconfig").read_text().count("name = culture-codex") == 1
+
+
 def test_session_pattern_does_not_match_its_own_ssh_shell():
     """Regression for the first thor cutover (2026-08-29): over ssh the
     pattern rides inside ``bash -c "pgrep ... '<pattern>'"``, so an

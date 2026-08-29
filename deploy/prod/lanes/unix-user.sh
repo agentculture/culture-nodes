@@ -296,6 +296,21 @@ else
   echo "codex config: sandbox_workspace_write.network_access = true written to $cfg"
 fi'
 
+# The account's git identity (#243 t10, run 01M17NJ8W7B6NQ2RKT6B89SF94): a
+# handover ref is a commit the BRIDGE makes as the account, and a fresh
+# account has no user.name/user.email, so git commit-tree fails with "Author
+# identity unknown" and the handover silently reports workspace_export
+# missing. The identity is the account, not a person: it names who ran the
+# session in every handover commit.
+UNIX_USER_GIT_IDENTITY_REMOTE='set -euo pipefail
+if [ "$(git config --global --get user.name || true)" = "$ACCOUNT" ] && [ -n "$(git config --global --get user.email || true)" ]; then
+  echo "git identity: $ACCOUNT already set"
+else
+  git config --global user.name "$ACCOUNT"
+  git config --global user.email "$ACCOUNT@$(hostname -s).culture-nodes.invalid"
+  echo "git identity: $ACCOUNT <$ACCOUNT@$(hostname -s).culture-nodes.invalid>"
+fi'
+
 # The per-role clone, mirroring lanes/preflight.sh's agent-checkout states:
 # absent -> clone; clean -> fetch + ff-only; dirty or detached or diverged ->
 # refuse and change nothing. A refusal here FAILS the provision (unlike
@@ -409,6 +424,8 @@ unix_user_provision() {
     say "ensuring $account's codex sandbox posture: workspace-write keeps file confinement and gains network (config.toml)"
     ssh "$target" "$UNIX_USER_CODEX_CONFIG_REMOTE" || { echo "provision failed on $host: codex config.toml for $account (reason above)" >&2; return 1; }
   fi
+  say "ensuring $account's git identity (handover commits are made as the account)"
+  ssh "$target" "ACCOUNT=$account; $UNIX_USER_GIT_IDENTITY_REMOTE" || { echo "provision failed on $host: git identity for $account (reason above)" >&2; return 1; }
   for role in $(unix_user_roles "$engine"); do
     say "checkout ~/git/culture-nodes-$role for $account (clone, or fast-forward a clean tree)"
     ssh "$target" "ROLE=$role; REPO_URL=$UNIX_USER_REPO_URL; $UNIX_USER_CHECKOUT_REMOTE" || {

@@ -185,9 +185,7 @@ def _tracked_topic(repo: Path) -> None:
     """Leave *repo* on an old base, with a newer tracked topic available."""
     _git(repo, "branch", "old-base")
     (repo / ".github" / "workflows").mkdir(parents=True)
-    (repo / ".github" / "workflows" / "base.yml").write_text(
-        "name: base\n", encoding="utf-8"
-    )
+    (repo / ".github" / "workflows" / "base.yml").write_text("name: base\n", encoding="utf-8")
     _git(repo, "add", ".github/workflows/base.yml")
     _git(repo, "commit", "-q", "-m", "new base changes workflow")
     _git(repo, "branch", "upstream-topic")

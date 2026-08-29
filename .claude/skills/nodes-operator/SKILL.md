@@ -73,10 +73,16 @@ billable session is investigated, not auto-retried), `--outcome`,
 checkout — refused for every other actor before anything is billed; see
 `docs/operations/spec-chain-lane.md`), `--no-watch`.
 
-Actors: `codex-thor`, `codex-orin` — each maps to its host's allowlisted
-checkout (`/home/<host>/git/culture-nodes-agent`). New actors: register with
-`deploy/prod/register-actor.sh`, then extend the actor table in
-`scripts/nodes-op.sh` (one case line).
+Actors map to a checkout owned by that bridge's dedicated Unix account, not
+to the operator's own checkout: `codex-thor` and `codex-orin` each run as
+`culture-codex` on their host, both checking out
+`/home/culture-codex/git/culture-nodes-agent`; `developer`, `planner`,
+`verifier`, `intake` run as `culture-claude` on spark, each in its own clone
+under `/home/culture-claude/git/culture-nodes-<role>`; `qwen-developer` runs
+as `culture-qwen` on spark, in `/home/culture-qwen/git/culture-nodes-qwen-developer`.
+New actors: register with `deploy/prod/register-actor.sh`, then extend the
+actor table in `scripts/nodes-op.sh` (one case line) with a checkout under
+that bridge's account.
 
 ## `grade` — record an opinion on a run's actor
 
@@ -106,16 +112,22 @@ only as an eidetic `/remember` note.
 
 - **Billable + guarded.** `assign`/`create` dispatch real agent sessions
   (ChatGPT quota today). They refuse without `--yes` / `NODES_OP_YES=1`.
-- **Sandbox reality (issues #18 / #63).** codex sessions on thor/orin **can
-  now exec shell commands**, including in a `read-only` sandbox. The blocker
-  was the host AppArmor userns restriction, not codex: with
-  `kernel.apparmor_restrict_unprivileged_userns=0` applied and persisted on
-  all three hosts, run `01M00AM5NME6TZ1PXDG4A454HE` executed `git log`,
-  `git status`, `pwd` and `ls` and returned real output. The **write path is
-  still unproven** — that probe was read-only, so `--sandbox workspace-write`
-  landing an `apply_patch` has not been demonstrated since the fix. Assign
-  analysis and reading freely; treat write dispatches as unverified until one
-  succeeds.
+- **Sandbox reality (issues #18 / #63) and the account model.** codex
+  sessions on thor/orin **can exec shell commands**, including in a
+  `read-only` sandbox. The blocker was the host AppArmor userns restriction,
+  not codex: with `kernel.apparmor_restrict_unprivileged_userns=0` applied
+  and persisted on all three hosts, run `01M00AM5NME6TZ1PXDG4A454HE` executed
+  `git log`, `git status`, `pwd` and `ls` and returned real output. Every
+  bridge now runs as its own dedicated, unprivileged Unix account
+  (`culture-codex` on thor/orin, `culture-claude` and `culture-qwen` on
+  spark — `deploy/prod/lanes/unix-user.sh`) rather than the operator's login
+  user, so a `--sandbox workspace-write` dispatch is confined by account
+  ownership, not by a sandbox flag: the account cannot write anything it
+  does not own, and it cannot read the operator's own checkout at all. The
+  `read-only` probe above was pre-account and never exercised a write; the
+  account model has not yet been exercised on a live write dispatch either.
+  Proven by runs: `<RUN-IDS-T10>`. Assign analysis and reading freely; treat
+  write dispatches as unverified until that placeholder is filled in.
 - **Results are claims, not evidence.** A session's report lands as a
   `proposed` ledger claim attributed to its registered actor. Confirming it
   is a human's job; treat the summary exactly as you'd treat a colleague's
@@ -127,6 +139,18 @@ only as an eidetic `/remember` note.
 - Everything is inspectable afterward: web UI at the API origin, this
   skill's `run`/`ledger` verbs, or the Python `nodes` CLI
   (`uv run nodes run list`) which speaks the same API.
+
+## Harvesting a dispatched checkout
+
+A dispatch writes into the *bridge's* account checkout, not the operator's.
+To read or copy what an actor left behind, log in as that account rather
+than sudo-ing into its home: `ssh culture-<engine>@<host>` (`culture-codex`
+on thor/orin, `culture-claude` or `culture-qwen` on spark — for spark use
+`ssh culture-<engine>@localhost` since the operator is already on that
+host). Never `sudo -u` into the account or read its files as the operator's
+login user — the account's checkout is deliberately unreadable to any other
+account, the harvest path goes through the account's own login, the same
+way a dispatch does.
 
 ## Split-plan lane guidance and session accounting (issue #48)
 

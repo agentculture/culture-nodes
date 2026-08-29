@@ -127,7 +127,7 @@ class DevagueCustodyTest(unittest.TestCase):
     guard and before any HTTP call, so the refusal costs nothing and
     reaches nobody."""
 
-    CUSTODY_CHECKOUT = "/home/spark/git/.worktrees.culture-nodes/owe-developer"
+    CUSTODY_CHECKOUT = "/home/culture-claude/git/culture-nodes-developer"
 
     def run_assign(self, actor, *opts, responses=None):
         with tempfile.TemporaryDirectory() as directory:

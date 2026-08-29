@@ -367,27 +367,36 @@ assign)
     esac
   done
   case "$actor" in
-    codex-thor) ref="actor://company/codex-thor@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"; repo=/home/thor/git/culture-nodes-agent;;
-    codex-orin) ref="actor://company/codex-orin@sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"; repo=/home/orin/git/culture-nodes-agent;;
-    # The four spark claude bridges. Each defaults to its OWN lane worktree,
-    # never the operator's checkout: `claude -p` takes no sandbox flag and runs
-    # with the bridge process's own privileges (its capability surface says so
-    # outright -- "confinement: none"), so the repo allowlist is the only
-    # boundary there is. developer used to default to /home/spark/git/culture-nodes,
-    # which is the checkout the operator is working in; a dispatch and a merge
-    # gate would have been writing to the same tree at once (the c42 concurrent
-    # -writer corruption mode).
-    developer) ref="actor://company/developer@sha256:3333333333333333333333333333333333333333333333333333333333333333"; repo=/home/spark/git/.worktrees.culture-nodes/owe-developer;;
-    planner)   ref="actor://company/planner@sha256:4444444444444444444444444444444444444444444444444444444444444444";   repo=/home/spark/git/.worktrees.culture-nodes/owe-planner;;
-    verifier)  ref="actor://company/verifier@sha256:5555555555555555555555555555555555555555555555555555555555555555";  repo=/home/spark/git/.worktrees.culture-nodes/owe-verifier;;
-    intake)    ref="actor://company/intake@sha256:6666666666666666666666666666666666666666666666666666666666666666";    repo=/home/spark/git/.worktrees.culture-nodes/owe-intake;;
+    codex-thor) ref="actor://company/codex-thor@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"; repo=/home/culture-codex/git/culture-nodes-agent;;
+    codex-orin) ref="actor://company/codex-orin@sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"; repo=/home/culture-codex/git/culture-nodes-agent;;
+    # The four spark claude bridges. Each defaults to its OWN dedicated-account
+    # checkout under culture-claude, never the operator's own checkout: every
+    # bridge process now runs as its own unpriviliged Unix account
+    # (culture-claude / culture-codex / culture-qwen — deploy/prod/lanes/
+    # unix-user.sh), so the account itself is the boundary. That account's
+    # checkout is unreadable to the operator's login user (and vice versa),
+    # and the account cannot write anything it does not own -- a `claude -p`
+    # process confined to /home/culture-claude/... cannot reach
+    # /home/spark/git/culture-nodes even if the repo allowlist were dropped.
+    # The exact-match repo allowlist below is still enforced by the bridge,
+    # but it is now a routing fact (which of this account's checkouts gets
+    # the work), not the safety line -- the account boundary is. developer
+    # used to default to /home/spark/git/culture-nodes, which is the checkout
+    # the operator is working in; a dispatch and a merge gate would have been
+    # writing to the same tree at once (the c42 concurrent-writer corruption
+    # mode) -- the account model retires that failure mode by construction,
+    # since culture-claude cannot see the operator's tree at all.
+    developer) ref="actor://company/developer@sha256:3333333333333333333333333333333333333333333333333333333333333333"; repo=/home/culture-claude/git/culture-nodes-developer;;
+    planner)   ref="actor://company/planner@sha256:4444444444444444444444444444444444444444444444444444444444444444";   repo=/home/culture-claude/git/culture-nodes-planner;;
+    verifier)  ref="actor://company/verifier@sha256:5555555555555555555555555555555555555555555555555555555555555555";  repo=/home/culture-claude/git/culture-nodes-verifier;;
+    intake)    ref="actor://company/intake@sha256:6666666666666666666666666666666666666666666666666666666666666666";    repo=/home/culture-claude/git/culture-nodes-intake;;
     # The qwen bridge on spark:8092 (adapters/qwen, registered 2026-08-27).
-    # Same reasoning as the claude bridges above, and then some: its own
-    # capability surface reports `confinement: qwen-code runs its own tools
-    # in-process as the bridge user` -- the ACP session modes are an approval
-    # policy, not a kernel boundary -- so the exact-match repo allowlist is the
-    # only thing standing between a dispatch and this operator's checkout.
-    qwen-developer) ref="actor://company/qwen-developer@sha256:7777777777777777777777777777777777777777777777777777777777777777"; repo=/home/spark/git/.worktrees.culture-nodes/qwen-dev;;
+    # Same account reasoning as the claude bridges above: culture-qwen is its
+    # own Unix account and cannot read or write anything it does not own, so
+    # the exact-match repo allowlist here is a routing fact, not the barrier
+    # between a dispatch and this operator's checkout -- the account already
+    # cannot see the operator's checkout.
+    qwen-developer) ref="actor://company/qwen-developer@sha256:7777777777777777777777777777777777777777777777777777777777777777"; repo=/home/culture-qwen/git/culture-nodes-qwen-developer;;
     *) echo "nodes-op: unknown actor '$actor' (codex-thor|codex-orin|developer|planner|verifier|intake|qwen-developer)" >&2; exit 1;;
   esac
   # --repo pins a dispatch to one isolated worktree; the bridge's own
@@ -403,7 +412,7 @@ assign)
   # routing error, and "re-run with --yes" would be the wrong hint for it.
   devague_custody_repo=""
   case "$actor" in
-    developer) devague_custody_repo=/home/spark/git/.worktrees.culture-nodes/owe-developer;;
+    developer) devague_custody_repo=/home/culture-claude/git/culture-nodes-developer;;
   esac
   if [ "$devague_write" = true ]; then
     if [ -z "$devague_custody_repo" ]; then

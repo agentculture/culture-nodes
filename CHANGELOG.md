@@ -5,6 +5,12 @@ All notable changes to this project will be documented in this file.
 Format follows [Keep a Changelog](https://keepachangelog.com/). This project
 adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.44.1] - 2026-08-30
+
+### Changed
+
+- docs(triage): regenerate after #243, #250 and #251 closed (PR #249 merged).
+
 ## [0.44.0] - 2026-08-30
 
 ### Added

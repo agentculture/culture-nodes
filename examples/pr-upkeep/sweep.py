@@ -788,6 +788,10 @@ def main() -> int:
             fact = merged_pr_fact(pull, github_repo)
             if fact is None:
                 continue
+            # Re-emitted every pass by design: the control plane keys the
+            # fact on source_key + watermark (merged_at) and answers a repeat
+            # with duplicate=true (internal/store/postgres/signal.go), so
+            # consumers see one fact per merge, not one per sweep.
             with attempting(f"emitting pr.merged for #{pull.get('number')} (control plane)"):
                 emitted.append(raise_event(
                     "pr.merged", fact,

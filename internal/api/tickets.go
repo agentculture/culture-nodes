@@ -87,14 +87,21 @@ func (s *Server) handlePostTicketReply(w http.ResponseWriter, r *http.Request) e
 		"replier": req.Replier, "originating_question_id": req.QuestionID,
 		"answer": map[string]any{"comment_id": "ticket-page", "body": req.Text},
 	})
+	// Order of record (colleague review of the wave-1 merge): the reply row
+	// lands FIRST with no event, so a failure after delivery can never leave an
+	// engine fact that no page reply explains; the event id is attached to the
+	// row, with the display-only Jira mirror, once delivery succeeded.
+	replyID := store.NewULID()
+	if _, err := s.Store.Pool().Exec(r.Context(), `INSERT INTO ticket_replies (id,namespace_id,ticket_id,replier,text,question_id) VALUES ($1,$2,$3,$4,$5,NULLIF($6,''))`, replyID, s.NamespaceID, ticketID, req.Replier, req.Text, req.QuestionID); err != nil {
+		return internalError(err)
+	}
 	delivery, err := s.Store.DeliverSignalEvent(r.Context(), storepg.DeliverSignalEventInput{
 		NamespaceID: s.NamespaceID, Name: "pr-upkeep.jira.comment", Payload: payload,
 		Emitter: "ticket-page", Subject: ticketID,
 	})
 	if err != nil {
-		return internalError(err)
+		return internalError(fmt.Errorf("reply %s recorded without an engine fact: %w", replyID, err))
 	}
-	replyID := store.NewULID()
 	comment := fmt.Sprintf("%s\n\nvia %s", req.Text, req.Replier)
 	outboxPayload, _ := json.Marshal(map[string]any{"verb": "post_comment", "issue": ticketID, "comment": comment, "phase": "reply", "signal_event_id": delivery.Event.ID})
 	tx, err := s.Store.Pool().Begin(r.Context())
@@ -102,7 +109,7 @@ func (s *Server) handlePostTicketReply(w http.ResponseWriter, r *http.Request) e
 		return internalError(err)
 	}
 	defer tx.Rollback(r.Context())
-	if _, err = tx.Exec(r.Context(), `INSERT INTO ticket_replies (id,namespace_id,ticket_id,replier,text,question_id,signal_event_id) VALUES ($1,$2,$3,$4,$5,NULLIF($6,''),$7)`, replyID, s.NamespaceID, ticketID, req.Replier, req.Text, req.QuestionID, delivery.Event.ID); err != nil {
+	if _, err = tx.Exec(r.Context(), `UPDATE ticket_replies SET signal_event_id=$1 WHERE id=$2`, delivery.Event.ID, replyID); err != nil {
 		return internalError(err)
 	}
 	if _, err = tx.Exec(r.Context(), `INSERT INTO jira_ticket_report_outbox (id,namespace_id,phase,target_actor_key,issue_key,payload) VALUES ($1,$2,'reply',$3,$4,$5)`, store.NewULID(), s.NamespaceID, storepg.JiraTicketReporterActorKey, ticketID, outboxPayload); err != nil {

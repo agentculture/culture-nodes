@@ -157,6 +157,18 @@ def begin(repo: str, base_ref: str | None = None) -> WorkspaceHandle:
     tree, or an unborn HEAD (no commits yet) all produce `available=False`
     with a `reason` — never a fabricated HEAD.
     """
+    if base_ref is not None:
+        # #242 / colleague review: base_ref is a refspec handed to `git fetch`;
+        # refuse anything that is not a plain ref name so it cannot carry a
+        # push refspec (`:`), a force marker (`+`), an option (`-x`) or
+        # whitespace into the fetch argv.
+        if (
+            not base_ref.strip()
+            or base_ref != base_ref.strip()
+            or base_ref.startswith("-")
+            or any(ch in base_ref for ch in (":", "+", " ", "\t", "\n"))
+        ):
+            raise WorkspaceProvisionError(f"base_ref {base_ref!r} is not a plain ref name")
     if shutil.which("git") is None:
         return WorkspaceHandle(
             repo=repo, available=False, reason="git is not installed on this bridge host"

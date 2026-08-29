@@ -386,3 +386,14 @@ def test_violations_see_a_guarded_file_git_status_collapsed_into_a_directory(git
     measured = workspace.measure(workspace.begin(str(repo)))
     assert measured["changed_files"] == [".github/"], "fixture assumption: git collapses it"
     assert scope_guard.violations(str(repo), measured) == (".github/workflows/go.yml",)
+
+
+@pytest.mark.parametrize("bad", ["", " main", "main:evil", "+main", "-c", "a b"])
+def test_base_ref_must_be_a_plain_ref_name(tmp_path, bad):
+    """A refspec-shaped base_ref never reaches `git fetch` (#242 review)."""
+    from claude_code_bridge import workspace
+
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    with pytest.raises(workspace.WorkspaceProvisionError):
+        workspace.begin(str(repo), base_ref=bad)

@@ -1060,3 +1060,18 @@ class TestEmitterMain:
         captured = capsys.readouterr()
         assert "sweep failed" in captured.err
         assert captured.out == ""  # no invented empty report on a broken sweep
+
+
+def test_merged_pr_fact_only_correlates_the_configured_jira_project():
+    """PR #70's body mentioned ADR-0002 and froze a phantom ticket on prod (#230)."""
+    pull = {
+        "number": 70,
+        "merged_at": "2026-08-29T10:00:00Z",
+        "head": {"ref": "adr/0002"},
+        "body": "See ADR-0002",
+    }
+    assert sweep.merged_pr_fact(pull, "agentculture/culture-nodes", "SCRUM") is None
+    pull["body"] = "See ADR-0002 and SCRUM-42"
+    assert (
+        sweep.merged_pr_fact(pull, "agentculture/culture-nodes", "SCRUM")["issue_key"] == "SCRUM-42"
+    )

@@ -602,12 +602,20 @@ def fetch_merged_pulls(token: str | None, repository: str) -> list[dict]:
 _ISSUE_KEY_RE = re.compile(r"(?<![A-Z0-9])([A-Z][A-Z0-9]+-\d+)(?![A-Z0-9])")
 
 
-def merged_pr_fact(pull: dict, repository: str) -> dict | None:
-    """Build the freeze fact, correlating by head branch first, then body."""
+def merged_pr_fact(pull: dict, repository: str, jira_project: str | None = None) -> dict | None:
+    """Build the freeze fact, correlating by head branch first, then body.
+
+    With a configured Jira project only keys of THAT project correlate: the
+    first prod pass linked PR #70 to "ADR-0002" and froze a phantom ticket
+    (colleague review of the wave-1 merge, #230).
+    """
     if not pull.get("merged_at"):
         return None
     head = (pull.get("head") or {}).get("ref") or ""
-    match = _ISSUE_KEY_RE.search(head) or _ISSUE_KEY_RE.search(pull.get("body") or "")
+    pattern = _ISSUE_KEY_RE
+    if jira_project:
+        pattern = re.compile(r"(?<![A-Z0-9])(" + re.escape(jira_project) + r"-\d+)(?![A-Z0-9])")
+    match = pattern.search(head) or pattern.search(pull.get("body") or "")
     if not match:
         return None
     return {
@@ -785,7 +793,7 @@ def main() -> int:
         with attempting(f"listing merged PRs of {github_repo} (GitHub)"):
             merged_pulls = fetch_merged_pulls(token, github_repo)
         for pull in merged_pulls:
-            fact = merged_pr_fact(pull, github_repo)
+            fact = merged_pr_fact(pull, github_repo, repository.get("jira_project"))
             if fact is None:
                 continue
             # Re-emitted every pass by design: the control plane keys the
@@ -793,11 +801,14 @@ def main() -> int:
             # with duplicate=true (internal/store/postgres/signal.go), so
             # consumers see one fact per merge, not one per sweep.
             with attempting(f"emitting pr.merged for #{pull.get('number')} (control plane)"):
-                emitted.append(raise_event(
-                    "pr.merged", fact,
-                    f"github:{github_repo}:pr:{pull.get('number')}:merged",
-                    {"merged_at": pull["merged_at"]},
-                ))
+                emitted.append(
+                    raise_event(
+                        "pr.merged",
+                        fact,
+                        f"github:{github_repo}:pr:{pull.get('number')}:merged",
+                        {"merged_at": pull["merged_at"]},
+                    )
+                )
         for pull in swept:
             if not pull["head_sha"]:
                 print(

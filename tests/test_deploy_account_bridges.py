@@ -467,7 +467,9 @@ def test_the_five_spark_templates_carry_no_decision_token_and_no_operator_path()
         json.loads(text.replace("__HOME__", "/h").replace("__NODES_API_URL__", "http://x"))
     # The qwen template carries the slot the renderer fills with the session's
     # API-key variable (finding 1) -- and nothing pre-filled in it.
-    qwen = json.loads((ROOT / "deploy/prod/qwen-developer.json.template").read_text().replace("__HOME__", "/h"))
+    qwen = json.loads(
+        (ROOT / "deploy/prod/qwen-developer.json.template").read_text().replace("__HOME__", "/h")
+    )
     assert qwen["qwen_env"] == {}
 
 
@@ -538,6 +540,31 @@ def test_spark_installs_the_five_units_under_the_accounts_and_never_touches_comp
         assert f"systemctl --user start {unit}" in result.stdout
     assert "culture-claude@localhost" in result.stdout
     assert "culture-qwen@localhost" in result.stdout
+
+
+def test_spark_runs_the_doctor_as_the_login_user_before_any_account_step(tmp_path: Path):
+    """The spark arm went straight into the account lane (#249 review,
+    finding 7): `nodes doctor` now runs first, as the login user, in the
+    operator checkout this deploy ships from -- the same pre-modification
+    doctor preflight.sh gives thor and orin."""
+    h = DeployHarness(tmp_path)
+    h.bootstrap(SPARK, "claude", "qwen")
+    result = h.deploy(SPARK)
+    assert result.returncode == 0, result.stderr + result.stdout
+    doctor = h.first(f"uv[{SPARK}:spark] run nodes doctor")
+    assert doctor < h.first("ssh[culture-claude@localhost]")
+    assert doctor < h.first("ssh[culture-qwen@localhost]")
+
+
+def test_spark_doctor_failure_refuses_before_any_account_is_touched(tmp_path: Path):
+    h = DeployHarness(tmp_path)
+    h.bootstrap(SPARK, "claude", "qwen")
+    result = h.deploy(SPARK, FAKE_DOCTOR_EXIT="1")
+    assert result.returncode != 0
+    assert "BEFORE the deploy" in result.stderr
+    h.never("ssh[culture-")
+    h.never("systemctl[")
+    h.never("uv[", "tool install")
 
 
 def test_spark_renders_the_configs_into_the_accounts_without_the_decision_token(tmp_path: Path):
@@ -696,7 +723,9 @@ def test_spark_refuses_a_role_whose_login_config_has_no_auth_token(tmp_path: Pat
 INSTALL_SECRETS = ROOT / "deploy/prod/install-secrets.sh"
 
 
-def _install_codex_account_env(h: DeployHarness, host: str, **fake_env: str) -> subprocess.CompletedProcess:
+def _install_codex_account_env(
+    h: DeployHarness, host: str, **fake_env: str
+) -> subprocess.CompletedProcess:
     """Run install-secrets.sh's install_codex_account_env against the fake
     host, with the unix-user lane sourced for unix_user_target."""
     script = INSTALL_SECRETS.read_text()

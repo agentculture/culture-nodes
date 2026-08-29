@@ -746,6 +746,10 @@ case "$HOST" in
     # qwen-developer into culture-qwen, over ssh culture-<engine>@localhost.
     # No compose, no runner, no cutover, no two-host lane, no audit — the
     # control plane is not on this host. The lane prints its own summary.
+    # The pre-deploy doctor first, as on thor/orin (#249 finding 7): a host
+    # the agent lane cannot work on is refused while every bridge is still
+    # the old one.
+    account_spark_preflight_doctor "$HOST" || exit 1
     account_bridges_spark_lane "$HOST"
     ;;
   *)

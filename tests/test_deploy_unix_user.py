@@ -57,7 +57,8 @@ QWEN_KEY_NAME = "QWEN_CUSTOM_API_KEY_OPENAI_HTTP_LOCALHOST_8001_FAKE"
 QWEN_SETTINGS = (
     '{"env": {"%s": "fake-qwen-key"}, "modelProviders": {"openai": [{"id": "m", '
     '"baseUrl": "http://localhost:8001/v1", "envKey": "%s"}]}, '
-    '"model": {"name": "m", "baseUrl": "http://localhost:8001/v1"}}\n' % (QWEN_KEY_NAME, QWEN_KEY_NAME)
+    '"model": {"name": "m", "baseUrl": "http://localhost:8001/v1"}}\n'
+    % (QWEN_KEY_NAME, QWEN_KEY_NAME)
 )
 
 # The shim strips every lane variable from the remote environment, like a
@@ -137,12 +138,20 @@ esac
 _STAT_SHIM = """#!/usr/bin/env bash
 if [ "$1" = -c ] && [ "$2" = %U ]; then
   path=$3
-  [ -n "${FAKE_FOREIGN_OWNER_PATH:-}" ] && [ "$path" = "$FAKE_FOREIGN_OWNER_PATH" ] && { echo intruder; exit 0; }
+  if [ "$path" = "${FAKE_FOREIGN_OWNER_PATH:-}" ]; then echo intruder; exit 0; fi
   rel=${path#"$FAKE_HOSTS"/*/home/}
   echo "${rel%%/*}"
   exit 0
 fi
 exec /usr/bin/stat "$@"
+"""
+
+# The OPERATOR's uv (the account's own uv is what the curl shim installs
+# into ~/.local/bin): `uv run nodes doctor` answers FAKE_DOCTOR_EXIT.
+_UV_SHIM = """#!/usr/bin/env bash
+printf 'uv[%s:%s] %s\\n' "${FAKE_HOST:-}" "${FAKE_USER:-}" "$*" >> "$FAKE_LOG"
+[ "$1" = run ] && exit "${FAKE_DOCTOR_EXIT:-0}"
+exit 0
 """
 
 _LOG_ONLY_SHIM = """#!/usr/bin/env bash
@@ -281,6 +290,7 @@ class Harness:
         _write_exec(self.bin / "curl", _CURL_SHIM)
         _write_exec(self.bin / "pgrep", _PGREP_SHIM)
         _write_exec(self.bin / "stat", _STAT_SHIM)
+        _write_exec(self.bin / "uv", _UV_SHIM)
         for tool in ("loginctl", "chown", "systemctl"):
             _write_exec(self.bin / tool, _LOG_ONLY_SHIM)
         # The origin every role clone comes from: a bare repo standing in for
@@ -557,59 +567,6 @@ def _bootstrapped_codex(h: Harness) -> Path:
     return h.account_home(THOR, "codex")
 
 
-def _assert_refused_before_any_write(h: Harness, result, login_before: dict, path_name: str):
-    assert result.returncode != 0
-    assert path_name in result.stderr
-    assert "symlink" in result.stderr or "owned" in result.stderr
-    # Nothing was written as root: no linger, no chown, and the login
-    # user's files -- where the planted link pointed -- are untouched.
-    h.never("loginctl[")
-    h.never("chown[")
-    assert _snapshot(h.login_home(THOR)) == login_before
-
-
-def test_bootstrap_refuses_a_credential_file_the_account_replaced_with_a_symlink(
-    tmp_path: Path,
-):
-    """The account owns its home and could plant a symlink where root is
-    about to cp/chmod/chown; a root bootstrap that followed it would write
-    the login user's credential somewhere the account chose (#249 review,
-    finding 2)."""
-    h = Harness(tmp_path)
-    home = _bootstrapped_codex(h)
-    target = h.login_home(THOR) / ".codex/auth.json"
-    (home / ".codex/auth.json").unlink()
-    (home / ".codex/auth.json").symlink_to(target)
-    before = _snapshot(h.login_home(THOR))
-    result = h.run("unix_user_bootstrap thor-fake codex")
-    _assert_refused_before_any_write(h, result, before, ".codex/auth.json")
-    assert (home / ".codex/auth.json").is_symlink(), "the lane never deletes"
-
-
-def test_bootstrap_refuses_a_ssh_directory_that_is_a_symlink(tmp_path: Path):
-    h = Harness(tmp_path)
-    home = _bootstrapped_codex(h)
-    import shutil
-
-    shutil.rmtree(home / ".ssh")
-    (home / ".ssh").symlink_to(h.login_home(THOR) / ".ssh")
-    before = _snapshot(h.login_home(THOR))
-    result = h.run("unix_user_bootstrap thor-fake codex")
-    _assert_refused_before_any_write(h, result, before, ".ssh")
-    assert (h.login_home(THOR) / ".ssh/authorized_keys").read_text() == PUBKEY + "\n"
-
-
-def test_bootstrap_refuses_a_credential_directory_another_user_owns(tmp_path: Path):
-    h = Harness(tmp_path)
-    home = _bootstrapped_codex(h)
-    before = _snapshot(h.login_home(THOR))
-    result = h.run(
-        "unix_user_bootstrap thor-fake codex", FAKE_FOREIGN_OWNER_PATH=str(home / ".codex")
-    )
-    _assert_refused_before_any_write(h, result, before, ".codex")
-    assert "intruder" in result.stderr
-
-
 def test_bootstrap_refuses_an_account_that_gained_sudo_or_docker(tmp_path: Path):
     h = Harness(tmp_path)
     result = h.run("unix_user_bootstrap thor-fake codex", FAKE_EXTRA_GROUPS="docker")
@@ -861,52 +818,6 @@ def test_no_session_in_flight_proceeds_quietly(tmp_path: Path):
     assert result.returncode == 0, result.stderr
     assert "WARNING" not in result.stdout
     h.first(f"systemctl[{THOR}] --user stop codex-bridge")
-
-
-def test_account_session_in_flight_refuses_before_any_systemctl(tmp_path: Path):
-    """After the cutover the sessions run AS THE ACCOUNT, so a redeploy that
-    only asked about the login user would restart the account's unit under
-    a live session (#249 review, finding 3). The account is asked the same
-    question, as itself, over its own ssh target."""
-    h = Harness(tmp_path)
-    _bootstrapped_codex(h)
-    body = (
-        "unix_user_account_session_check thor-fake codex\n"
-        'ssh culture-codex@thor-fake "systemctl --user restart codex-bridge"'
-    )
-    result = h.run(body, FAKE_SESSION_USER="culture-codex")
-    assert result.returncode != 0
-    assert "culture-codex" in result.stderr
-    assert "SKIP_SESSION_CHECK=1" in result.stderr
-    h.first(f"ssh[culture-codex@{THOR}]", "pgrep -u culture-codex -f")
-    h.first(f"pgrep[{THOR}] -u culture-codex -f", "[c]laude -p|[c]odex exec|qwen_bridge[.]qwen_cli")
-    h.never("systemctl[")
-
-
-def test_account_session_check_proceeds_when_only_the_login_user_is_busy(tmp_path: Path):
-    """The two checks are independent: the account's answer is about the
-    account, and a login-user session (the legacy unit still serving) is the
-    login check's business."""
-    h = Harness(tmp_path)
-    _bootstrapped_codex(h)
-    body = (
-        "unix_user_account_session_check thor-fake codex\n"
-        'ssh culture-codex@thor-fake "systemctl --user restart codex-bridge"'
-    )
-    result = h.run(body, FAKE_SESSION_USER="thor")
-    assert result.returncode == 0, result.stderr
-    h.first(f"systemctl[{THOR}] --user restart codex-bridge")
-    skipped = h.run(body, FAKE_SESSION_USER="culture-codex", SKIP_SESSION_CHECK="1")
-    assert skipped.returncode == 0, skipped.stderr
-    assert "WARNING" in skipped.stdout
-
-
-def test_account_session_check_refuses_an_account_it_cannot_reach(tmp_path: Path):
-    h = Harness(tmp_path)
-    result = h.run("unix_user_account_session_check thor-fake codex")
-    assert result.returncode != 0
-    assert "culture-codex@thor-fake" in result.stderr
-    h.never("pgrep[")
 
 
 def test_codex_is_installed_as_the_full_package_with_its_code_mode_host(

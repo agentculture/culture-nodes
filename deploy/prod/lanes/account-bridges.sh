@@ -343,6 +343,32 @@ print(json.dumps(out))' "$source" "$row_id" "$engine_settings" \
     | ssh "$target" "ROLE='$role'; TEMPLATE='$REMOTE_DIR/deploy/prod/$template'; NODES_API_URL='$NODES_API_URL'; $ACCOUNT_RENDER_REMOTE"
 }
 
+# account_spark_preflight_doctor <host> -- `deploy.sh spark`'s pre-deploy
+# doctor (#249 review, finding 7): the same four checks preflight.sh runs on
+# thor and orin BEFORE anything is touched, here as the login user in the
+# operator checkout this deploy ships from (spark has no login-user agent
+# checkout -- SCRIPT_DIR/../.. IS the tree being archived into the accounts).
+# Non-strict, so only the error-severity check (prompt file) decides.
+# FIRST_DEPLOY=1 is the one exemption, as in preflight.sh: declared by the
+# operator for a machine with no uv to run the doctor with, never inferred.
+account_spark_preflight_doctor() { # host
+  local host=$1 checkout
+  checkout=$(cd "$SCRIPT_DIR/../.." && pwd)
+  if ! command -v uv >/dev/null 2>&1; then
+    if [ "${FIRST_DEPLOY:-}" = 1 ]; then
+      say "preflight: no uv on PATH and FIRST_DEPLOY=1 declared — skipping the pre-deploy doctor on $host; the bridges' own preflights gate this deploy"
+      return 0
+    fi
+    echo "preflight refused: no uv on PATH, so nodes doctor cannot run in $checkout before the deploy; install uv, or declare FIRST_DEPLOY=1 for a host that has never been deployed" >&2
+    return 1
+  fi
+  say "preflight: nodes doctor as $(id -un) in $checkout (before any account is touched)"
+  (cd "$checkout" && uv run nodes doctor) || {
+    echo "preflight failed on $host: nodes doctor reports the agent lane unhealthy BEFORE the deploy; fix the reported check first — nothing was changed" >&2
+    return 1
+  }
+}
+
 # account_bridges_spark_lane <host> -- the whole of `deploy.sh spark`.
 # Order: every refusal that can happen (bootstrap, provision, missing auth
 # token) happens BEFORE the first login-user unit is stopped, so a refused

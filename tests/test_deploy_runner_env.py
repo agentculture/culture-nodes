@@ -8,15 +8,21 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
 DEPLOY = ROOT / "deploy/prod/deploy.sh"
+RUNNER_ENV_LANE = ROOT / "deploy/prod/lanes/runner-env-write.sh"
 START = "# RUNNER_ENV_WRITE_START"
 END = "# RUNNER_ENV_WRITE_END"
 
 
 def _env_write_block() -> str:
-    script = DEPLOY.read_text()
+    script = RUNNER_ENV_LANE.read_text()
     start = script.index(START)
     end = script.index(END, start) + len(END)
     return script[start:end]
+
+
+def test_deploy_sources_the_real_runner_env_lane():
+    source = 'source "$SCRIPT_DIR/lanes/runner-env-write.sh"'
+    assert source in DEPLOY.read_text()
 
 
 def _fake_ssh(tmp_path: Path) -> Path:

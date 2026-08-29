@@ -511,6 +511,89 @@ export interface HumanTaskList {
   items: HumanTask[];
 }
 
+/** The versioned, workflow-authored portion of a ticket projection. */
+export interface TicketFrameData {
+  ticket_url?: string;
+  jira_url?: string;
+  frozen?: boolean;
+  merged_pr?: string | { url?: string; title?: string; number?: number };
+  claims?: Array<{
+    id?: string;
+    ref?: string;
+    title?: string;
+    text?: string;
+    claim?: string;
+    kind?: string;
+    instruction?: string;
+    state?: string;
+    status?: string;
+  }>;
+  questions?: Array<{
+    id?: string;
+    text?: string;
+    question?: string;
+    state?: string;
+    status?: string;
+    answer?: unknown;
+  }>;
+  decisions?: Array<{
+    id?: string;
+    text?: string;
+    decision?: string;
+    outcome?: string;
+    question_id?: string;
+    state?: string;
+    status?: string;
+  }>;
+  [key: string]: unknown;
+}
+
+export interface TicketFrame {
+  ticket_id: string;
+  version: number;
+  frame: TicketFrameData;
+  posted_by: string;
+  created_at: string;
+}
+
+export interface TicketReport {
+  id: string;
+  run_id: string;
+  phase: string;
+  status: string;
+  payload: unknown;
+  created_at: string;
+}
+
+export interface TicketReply {
+  id: string;
+  replier: string;
+  text: string;
+  question_id?: string;
+  signal_event_id?: string;
+  created_at: string;
+}
+
+export interface TicketProjection {
+  ticket_id: string;
+  ticket_url?: string;
+  jira_url?: string;
+  frozen?: boolean;
+  merged_pr?: TicketFrameData["merged_pr"];
+  runs: Run[];
+  ledger: Array<{ run_id: string; records: LedgerRecord[] }>;
+  human_tasks: HumanTask[];
+  ticket_reports: TicketReport[];
+  replies: TicketReply[];
+  latest_frame?: TicketFrame;
+}
+
+export interface TicketReplyRequest {
+  replier: string;
+  text: string;
+  question_id?: string;
+}
+
 /**
  * One proposed ledger record still awaiting a human decision
  * (`GET /v1alpha1/pending-decisions`, task t30 / issue #99).

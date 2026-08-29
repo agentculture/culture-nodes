@@ -21,6 +21,7 @@ import RunView from "./routes/RunView";
 import RunsBoard from "./routes/RunsBoard";
 import RunsList from "./routes/RunsList";
 import Statistics from "./routes/Statistics";
+import TicketView from "./routes/TicketView";
 
 /** Keeps agent-state's `route` in step with the router. */
 function RouteWatcher() {
@@ -63,6 +64,7 @@ export function App() {
           <Route path="/workflows/generate" element={<GenerateWorkflow />} />
           <Route path="/runs/:id" element={<RunView />} />
           <Route path="/runs/:id/ledger" element={<LedgerView />} />
+          <Route path="/tickets/:id" element={<TicketView />} />
           <Route
             path="*"
             element={

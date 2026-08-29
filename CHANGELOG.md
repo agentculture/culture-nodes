@@ -5,6 +5,17 @@ All notable changes to this project will be documented in this file.
 Format follows [Keep a Changelog](https://keepachangelog.com/). This project
 adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.42.2] - 2026-08-29
+
+### Added
+
+- docs/deliveries/2026-08-19-jira-operating-surface-flow-store.md: the /summarize-delivery record the flow-store build cycle (#203 / PR #208) never wrote — 11/13 tasks delivered to main but undeployed (prod measured at c041f28), t10 dropped, t13 blocked; left-out work counted as #230 (r4 deploy + t13 proof), #231 (ticketreport tests), #232 (second control plane), Record #233
+- devague scope frame jira-flow-spec-read-related-bugs: 12 provenance-cited scope entries for the next Jira-flow cycle, q1 (t10 custody: minimal declaration on owe-developer) and q2 (accessibility = #200) resolved
+
+### Changed
+
+- docs/triage: disposition rows for #230-#233 and the regenerated open-issues table
+
 ## [0.42.1] - 2026-08-27
 
 ### Added

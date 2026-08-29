@@ -18,6 +18,8 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
 DEPLOY = ROOT / "deploy/prod/deploy.sh"
+PREFLIGHT_LANE = ROOT / "deploy/prod/lanes/preflight.sh"
+TWO_HOST_LANE = ROOT / "deploy/prod/lanes/two-host.sh"
 
 PREFLIGHT = ("# PREFLIGHT_START", "# PREFLIGHT_END")
 TWO_HOST = ("# TWO_HOST_LANE_START", "# TWO_HOST_LANE_END")
@@ -76,11 +78,17 @@ exit "${FAKE_DOCTOR_EXIT:-0}"
 """
 
 
-def _block(markers: tuple[str, str]) -> str:
-    script = DEPLOY.read_text()
+def _block(path: Path, markers: tuple[str, str]) -> str:
+    script = path.read_text()
     start = script.index(markers[0])
     end = script.index(markers[1], start) + len(markers[1])
     return script[start:end]
+
+
+def test_deploy_sources_the_real_two_host_lanes():
+    script = DEPLOY.read_text()
+    assert 'source "$SCRIPT_DIR/lanes/preflight.sh"' in script
+    assert 'source "$SCRIPT_DIR/lanes/two-host.sh"' in script
 
 
 def _write_exec(path: Path, body: str) -> None:
@@ -148,12 +156,22 @@ class Harness:
         _agent_checkout(self.thor_home, checkout)
         if lane == "thor":
             body = "\n".join(
-                [_block(PREFLIGHT), _block(TWO_HOST), "thor_two_host_lane", 'deploy_summary "thor"']
+                [
+                    _block(PREFLIGHT_LANE, PREFLIGHT),
+                    _block(TWO_HOST_LANE, TWO_HOST),
+                    "thor_two_host_lane",
+                    'deploy_summary "thor"',
+                ]
             )
             host = THOR
         elif lane == "orin":
             body = "\n".join(
-                [_block(TWO_HOST), "NS=ns-fake", "orin_two_host_lane", 'deploy_summary "orin"']
+                [
+                    _block(TWO_HOST_LANE, TWO_HOST),
+                    "NS=ns-fake",
+                    "orin_two_host_lane",
+                    'deploy_summary "orin"',
+                ]
             )
             host = ORIN
         else:

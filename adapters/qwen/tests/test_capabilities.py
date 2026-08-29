@@ -14,6 +14,8 @@ deviation-d1 sibling block and its key agreement.
 from __future__ import annotations
 
 import json
+import os
+import pwd
 from pathlib import Path
 
 import pytest
@@ -135,6 +137,8 @@ def test_confinement_names_the_in_process_trust_model(tmp_path):
     prose (t3's AC3: the narrative describes what THIS backend does)."""
     qwen_bin, node_bin = _layout(tmp_path)
     prose = _host(tmp_path, qwen_bin, node_bin)["confinement"]
+    account = pwd.getpwuid(os.getuid()).pw_name
+    assert prose.startswith(f"unix-user:{account}: ")
     assert "in-process" in prose
     assert "approval policy" in prose
     assert "bubblewrap" not in prose

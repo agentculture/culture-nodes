@@ -15,11 +15,26 @@ for.
 
 from __future__ import annotations
 
+import os
+import pwd
 import sys
 from typing import Any, Callable, Sequence
 
 from colleague_bridge import deployment, preflight
 from colleague_bridge.config import Config
+
+
+def _unix_user() -> str:
+    """The OS account this bridge process runs as.
+
+    Prefixed onto the confinement sentence (task t2, issue #243) so the
+    capability surface names which account a dispatch really runs as — the
+    fact that decides what a session can reach once agents run as dedicated
+    OS users rather than inside a shared sandbox. stdlib only: `pwd` keeps
+    this adapter's zero-runtime-dependency promise intact.
+    """
+    return pwd.getpwuid(os.getuid()).pw_name
+
 
 #: `colleague work` takes no sandbox flag and this bridge passes none
 #: (`colleague_cli._common_argv`), so there is exactly one mode a dispatch
@@ -33,6 +48,7 @@ SANDBOX_MODE_CANDIDATES = (preflight.MODE_UNSANDBOXED,)
 #: where changes LAND and deliberately not described as confinement of what
 #: the session can REACH — the distinction this key exists to keep straight.
 _CONFINEMENT = (
+    f"unix-user:{_unix_user()}: "
     "none: `colleague work` runs with this bridge process's own privileges and takes no "
     "sandbox flag. colleague isolates each work item in a throwaway git worktree of the "
     "dispatched repo, which bounds where changes land but not what the session can reach; "

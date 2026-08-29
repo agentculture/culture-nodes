@@ -14,11 +14,26 @@ for.
 
 from __future__ import annotations
 
+import os
+import pwd
 import sys
 from typing import Any, Callable, Sequence
 
 from codex_bridge import deployment, preflight
 from codex_bridge.config import Config
+
+
+def _unix_user() -> str:
+    """The OS account this bridge process runs as.
+
+    Prefixed onto the confinement sentence (task t2, issue #243) so the
+    capability surface names which account a dispatch really runs as — the
+    fact that decides what a session can reach once agents run as dedicated
+    OS users rather than inside a shared sandbox. stdlib only: `pwd` keeps
+    this adapter's zero-runtime-dependency promise intact.
+    """
+    return pwd.getpwuid(os.getuid()).pw_name
+
 
 #: The `codex exec --sandbox` values a dispatch may name, in increasing
 #: order of what they permit. Ordered (where `codex_cli.SANDBOX_MODES` is an
@@ -32,11 +47,17 @@ from codex_bridge.config import Config
 SANDBOX_MODE_CANDIDATES = ("read-only", "workspace-write", "danger-full-access")
 
 #: The two modes whose confinement codex implements with a bubblewrap helper
-#: — which needs unprivileged user namespaces, and therefore is the pair
-#: that silently degrades where the kernel restricts them (#18/#63).
-#: `danger-full-access` confines nothing, so it needs nothing and works
-#: everywhere.
-_REQUIRES_USERNS = ("read-only", "workspace-write")
+#: — which needs unprivileged user namespaces. Deliberately empty (task t2,
+#: issue #243): agents now run as dedicated OS users rather than inside a
+#: shared sandbox, so the account boundary is what actually confines a
+#: session and this surface no longer withholds a mode — and therefore
+#: never populates `sandbox_modes_unavailable` — because the kernel
+#: restricts unprivileged user namespaces. `#18/#63`'s silent-degrade
+#: risk (bubblewrap cannot start, codex still runs shell commands
+#: unconfined) is still named in `_confinement`'s prose whenever the
+#: sysctls read as restricting, so the fact is not lost — it moved from a
+#: withheld mode to a stated sentence.
+_REQUIRES_USERNS = ()
 
 #: What each `--sandbox` mode actually GRANTS a dispatched session (issue
 #: #96). Not a preference and not read off the config: each entry is what a
@@ -161,12 +182,15 @@ def host_facts(
 
     Every measurement input is injectable so a test can assert both kinds of
     kernel and both kinds of host, rather than whichever one is running the
-    suite: *capability_probe* is the executable bwrap/unshare probe that
-    DECIDES sandbox availability, *probes* is the sysctl set read only to
-    EXPLAIN a probe that failed, and *locate*/*version* are how a toolchain
-    is found and asked its version — thor's snap-packaged uv and orin's
-    standalone one are both test cases here, and neither host is the one
-    running pytest.
+    suite: *capability_probe* is the executable bwrap/unshare probe passed
+    through to `measure_sandbox_modes` — with `_REQUIRES_USERNS` empty (task
+    t2, issue #243) it no longer decides sandbox availability, since a
+    dedicated OS-user account is what confines a session now — *probes* is
+    the sysctl set `_confinement` reads directly to name the #18/#63
+    silent-degrade risk in the prose, and *locate*/*version* are how a
+    toolchain is found and asked its version — thor's snap-packaged uv and
+    orin's standalone one are both test cases here, and neither host is the
+    one running pytest.
 
     *git_probe* is the write attempt behind `git_metadata_writable` (issue
     #94), and its default here is `None` — the one backend of the four where
@@ -192,7 +216,7 @@ def host_facts(
         sandbox_modes=available,
         sandbox_modes_unavailable=unavailable,
         default_sandbox_mode=cfg.default_sandbox,
-        confinement=_confinement(unavailable),
+        confinement=_confinement(probes),
         dispatch_grants=grants,
         toolchains=preflight.measure_toolchains(
             TOOLCHAINS,
@@ -226,21 +250,34 @@ def host_facts(
     )
 
 
-def _confinement(unavailable: dict[str, str]) -> str:
+def _confinement(probes: Sequence[tuple[str, str]]) -> str:
     """One sentence on what actually confines a codex session here.
 
-    Stated separately from the mode list because a reader who sees only
-    `sandbox_modes: ["danger-full-access"]` can miss that the reason the
-    other two are gone is that this host confines nothing at all.
+    Stated separately from the mode list because `sandbox_modes` alone
+    cannot say it: with `_REQUIRES_USERNS` empty (task t2, issue #243) every
+    mode is always advertised, so a reader cannot tell from the mode list
+    alone whether the bubblewrap helper backing `read-only`/`workspace-write`
+    can actually start. Read directly off the sysctls `userns_restrictions`
+    probes — the same ones `measure_sandbox_modes` used to gate the mode
+    list on — so the #18/#63 silent-degrade risk (bubblewrap cannot start,
+    codex still runs shell commands unconfined) is still named here even
+    though it no longer withholds a mode.
     """
-    if unavailable:
+    blockers = preflight.userns_restrictions(probes)
+    prefix = f"unix-user:{_unix_user()}: "
+    if blockers:
         return (
-            "nothing is confined on this host: codex enforces --sandbox with a bubblewrap "
-            "helper backed by unprivileged user namespaces, which this kernel restricts, so "
-            "only the mode that asks for no confinement is honest here"
+            prefix
+            + "codex enforces --sandbox with a bubblewrap helper backed by unprivileged user "
+            "namespaces; this kernel restricts them (" + ", ".join(blockers) + "), so the "
+            "bubblewrap helper behind read-only and workspace-write cannot actually start here "
+            "— both are still advertised (the dedicated OS-user account is what confines a "
+            "session now, not the withheld mode), but #18/#63 stands: a session dispatched "
+            "under either mode on this host loses confinement instead of failing, and only "
+            "danger-full-access is honest about granting everything"
         )
     return (
-        "codex enforces --sandbox with a bubblewrap helper backed by unprivileged user "
+        prefix + "codex enforces --sandbox with a bubblewrap helper backed by unprivileged user "
         "namespaces, which this kernel permits; danger-full-access confines nothing by "
         "definition"
     )

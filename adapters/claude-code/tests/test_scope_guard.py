@@ -181,6 +181,68 @@ def test_session_that_modifies_a_guarded_path_is_refused(git_bridge, monkeypatch
     assert body["preserve"]["attempted"] is True
 
 
+def _tracked_topic(repo: Path) -> None:
+    """Leave *repo* on an old base, with a newer tracked topic available."""
+    _git(repo, "branch", "old-base")
+    (repo / ".github" / "workflows").mkdir(parents=True)
+    (repo / ".github" / "workflows" / "base.yml").write_text(
+        "name: base\n", encoding="utf-8"
+    )
+    _git(repo, "add", ".github/workflows/base.yml")
+    _git(repo, "commit", "-q", "-m", "new base changes workflow")
+    _git(repo, "branch", "upstream-topic")
+    _git(repo, "checkout", "-q", "old-base")
+
+
+def test_step_zero_base_move_with_workflow_changes_is_accepted(git_bridge, monkeypatch):
+    """Issue #207: changing bases is setup, not a session-authored workflow edit."""
+    base, cfg, repo = git_bridge
+    _tracked_topic(repo)
+
+    def fake_run_sync(cfg_, instruction, repo_, *, role, max_steps, model, continuation_ref=None):
+        _git(Path(repo_), "checkout", "-q", "-B", "work", "upstream-topic")
+        _git(Path(repo_), "branch", "--set-upstream-to", "upstream-topic", "work")
+        return _fake_session({})(
+            cfg_, instruction, repo_, role=role, max_steps=max_steps, model=model
+        )
+
+    monkeypatch.setattr(claude_cli, "run_sync", fake_run_sync)
+    status, body = _request(
+        base,
+        server.INVOCATIONS_PATH,
+        body=_invocation_body(repo, "Move to the bound base, then update docs."),
+        headers={"Authorization": f"Bearer {cfg.auth_token}", "Idempotency-Key": "att_base"},
+    )
+    assert status == 200, body
+    assert body["outcome"] == "completed"
+
+
+def test_session_workflow_edit_after_base_move_keeps_policy_denial(git_bridge, monkeypatch):
+    """The #207 fix must not weaken the established workflow boundary or its message."""
+    base, cfg, repo = git_bridge
+    _tracked_topic(repo)
+
+    def fake_run_sync(cfg_, instruction, repo_, *, role, max_steps, model, continuation_ref=None):
+        repo_path = Path(repo_)
+        _git(repo_path, "checkout", "-q", "-B", "work", "upstream-topic")
+        _git(repo_path, "branch", "--set-upstream-to", "upstream-topic", "work")
+        return _fake_session({".github/workflows/base.yml": "name: session edit\n"})(
+            cfg_, instruction, repo_, role=role, max_steps=max_steps, model=model
+        )
+
+    monkeypatch.setattr(claude_cli, "run_sync", fake_run_sync)
+    status, body = _request(
+        base,
+        server.INVOCATIONS_PATH,
+        body=_invocation_body(repo, "Move to the bound base, then do the work."),
+        headers={"Authorization": f"Bearer {cfg.auth_token}", "Idempotency-Key": "att_base_edit"},
+    )
+    assert status == 403, body
+    assert body["class"] == "auth_or_policy"
+    assert body["scope_violations"] == [".github/workflows/base.yml"]
+    assert body["error"] == scope_guard.refusal_message((".github/workflows/base.yml",))
+
+
 # ---------------------------------------------------------------------------
 # the matcher itself
 # ---------------------------------------------------------------------------

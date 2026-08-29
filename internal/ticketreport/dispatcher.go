@@ -58,7 +58,12 @@ func (d *Dispatcher) Run(ctx context.Context) error {
 		var payload []byte
 		var attempts int
 		err = tx.QueryRow(ctx, `SELECT id,namespace_id,run_id,trigger_event_id,target_actor_key,payload,attempts
-			FROM jira_ticket_report_outbox WHERE status='pending' AND available_at<=now()
+			FROM jira_ticket_report_outbox AS report
+			WHERE status='pending' AND available_at<=now()
+			AND (phase <> 'finish' OR NOT EXISTS (
+				SELECT 1 FROM jira_ticket_report_outbox AS start_report
+				WHERE start_report.run_id=report.run_id AND start_report.phase='start'
+				AND start_report.status <> 'published'))
 			ORDER BY id LIMIT 1 FOR UPDATE SKIP LOCKED`).Scan(&id, &namespaceID, &runID, &triggerID, &actorKey, &payload, &attempts)
 		if err == pgx.ErrNoRows {
 			_ = tx.Rollback(ctx)

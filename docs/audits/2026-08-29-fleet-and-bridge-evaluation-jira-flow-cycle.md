@@ -49,6 +49,9 @@ delivery summary (`/summarize-delivery`) will cite it.
 - **deploy.sh's fail-closed design (t2).** Both prod stops happened *before*
   the point of no return, with a pre-migrate dump on disk each time, and the
   restore path had been rehearsed on spark against a real dump.
+- **#194's bounded re-mint ran live on the first technical failure it met**:
+  two re-mints one minute apart, then a `trigger_remint_exhausted` human
+  task, with start/finish reports on the ticket for every attempt.
 - **The live proof paid for itself in one pass**: signal 8 (page reply →
   fact → outbox → Jira comment → projection) proven end to end, and the
   fresh-issue regression (§3.10) — invisible to every unit test — surfaced
@@ -147,6 +150,36 @@ history position zero". Found only because t8 ran on a real ticket.
 The host-side adopter read `prod.env`'s compose-internal `postgres` hostname;
 unresolvable from the host; stopped fail-closed with the api down (hand-turn
 12; fix `5d9be94`). **Fix:** a connectivity dry run in PREFLIGHT.
+
+### 3.12 No prod run had ever carried a subject
+
+`runs.subject` (migration 0038) was NULL on all 3,335 rows: the sweep's
+`raise_event` never sent `subject`, so the ticket projection's runs-by-subject
+leg listed nothing and one-active-run-per-subject never keyed. Found by the
+t8 projection read; fixed in `229844a`. **Rule:** a projection that joins on a
+column nobody writes passes every unit test — the live read is the test.
+
+### 3.13 Custody declared on one lane, identity mapped to another
+
+The developer's repo-identity map sends `agentculture/culture-nodes` to the
+pr-upkeep lane; `.devague/` custody was declared on owe-developer; a
+trigger-created run carries no repo path, so every spec-chain run resolved to
+the wrong checkout and was refused 403 — then re-minted to exhaustion (§2:
+the bounded re-mint worked exactly as specified, on a defect). Fixed in
+`244b83e`: a `devague_write` dispatch lands in the declared custody checkout.
+
+### 3.14 The prod grant has no `jira_bot_account_id`
+
+Transition self-echo (t4) is account-id exact and needs the id configured;
+without it the intake's own move to In Progress emitted a fact and minted the
+lane. Useful by accident, wrong by design — close the gap in the grant.
+
+### 3.15 The operator's Jira user is the system's credential
+
+Every comment and move the operator makes is self-echo (#197 gap 3), so
+signal 2 — a human's fact reaching the engine through Jira — cannot be
+produced on this site by anyone. A second human account, or per-user replies
+through the page (#235), is the way out.
 
 ## 4. Routing verdicts (for the next split plan)
 

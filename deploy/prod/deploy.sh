@@ -94,13 +94,24 @@ say "installing runner env + systemd user unit on $HOST"
 # an override, retain the complete old line so systemd sees byte-identical
 # values across repeated deploys (including PR_UPKEEP_REPOSITORIES quoting).
 existing_runner_env=$(ssh "$HOST" 'if [ -f ~/.culture-nodes/runner.env ]; then cat ~/.culture-nodes/runner.env; fi')
+# A FIRST deploy has no runner.env at all, and that state is different from a
+# runner.env that has lost a line (task t1's colleague review): the refusals
+# below exist to stop a re-deploy from silently DROPPING a grant the host
+# already has, and on a fresh host there is nothing to drop. Distinguished by
+# the file's existence, not by the content being empty.
+runner_env_exists=$(ssh "$HOST" 'if [ -f ~/.culture-nodes/runner.env ]; then echo yes; else echo no; fi')
 if [ -n "${NODES_API_URL:-}" ]; then
 	NODES_API_URL_LINE="NODES_API_URL=$NODES_API_URL"
 else
 	NODES_API_URL_LINE=$(printf '%s\n' "$existing_runner_env" | sed -n '/^NODES_API_URL=/p' | tail -n 1)
 fi
 if [ -z "$NODES_API_URL_LINE" ]; then
-	echo "refusing: NODES_API_URL is absent from both the shell and existing runner.env; runner.env was not touched" >&2
+	if [ "$runner_env_exists" = yes ]; then
+		echo "refusing: NODES_API_URL is absent from both the shell and existing runner.env; runner.env was not touched" >&2
+	else
+		echo "refusing: NODES_API_URL is not set in the shell and this is a first deploy (no runner.env on $HOST to retain it from); nothing was written" >&2
+		echo "hint: export NODES_API_URL=http://<thor-address>:18080 (the control-plane URL the runner on $HOST calls back to) and re-run" >&2
+	fi
 	exit 1
 fi
 
@@ -112,6 +123,16 @@ else
 	case "$PR_UPKEEP_REPOSITORIES" in
 		\'*\') PR_UPKEEP_REPOSITORIES=${PR_UPKEEP_REPOSITORIES#\'}; PR_UPKEEP_REPOSITORIES=${PR_UPKEEP_REPOSITORIES%\'} ;;
 	esac
+fi
+if [ -z "$PR_UPKEEP_REPOSITORIES_LINE" ] && [ "$runner_env_exists" = no ]; then
+	# The well-known jira-less default a first deploy always got before task
+	# t1 — the closed repository set for this repo with no Jira pair. A Jira
+	# pair is only ever ADDED by the operator (shell override) and from then
+	# on retained by the branch above; it can never be reintroduced by this
+	# default, because this default is reachable only when no file exists.
+	PR_UPKEEP_REPOSITORIES='{"cycle":0,"repositories":[{"github_repo":"agentculture/culture-nodes","sonar_component":"agentculture_culture-nodes"}]}'
+	PR_UPKEEP_REPOSITORIES_LINE="PR_UPKEEP_REPOSITORIES='$PR_UPKEEP_REPOSITORIES'"
+	say "first deploy on $HOST (no runner.env): granting the default jira-less PR_UPKEEP_REPOSITORIES; add a Jira pair by exporting PR_UPKEEP_REPOSITORIES on a later deploy"
 fi
 if [ -z "$PR_UPKEEP_REPOSITORIES_LINE" ]; then
 	echo "refusing: PR_UPKEEP_REPOSITORIES is absent from both the shell and existing runner.env; runner.env was not touched" >&2

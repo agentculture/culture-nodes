@@ -95,3 +95,51 @@ def test_missing_nodes_api_url_refuses_before_touching_runner_env(tmp_path: Path
     assert result.returncode != 0
     assert "NODES_API_URL" in result.stderr
     assert runner_env.read_bytes() == original
+
+
+# A FIRST deploy (no runner.env on the host at all) is a different state from
+# a runner.env that lost a line, and t1's refusal must not block it (t1's
+# colleague review). The well-known jira-less repository default is granted;
+# NODES_API_URL is still required from the shell, with a hint.
+
+
+def test_first_deploy_grants_the_jira_less_repositories_default(tmp_path: Path):
+    runner_env = tmp_path / "host/.culture-nodes/runner.env"
+    assert not runner_env.exists()
+
+    result = _run_block(tmp_path, shell_api_url="http://192.0.2.44:18080")
+
+    assert result.returncode == 0, result.stderr
+    lines = runner_env.read_bytes().splitlines()
+    assert b"NODES_API_URL=http://192.0.2.44:18080" in lines
+    repositories = [line for line in lines if line.startswith(b"PR_UPKEEP_REPOSITORIES=")]
+    assert len(repositories) == 1
+    assert b'"github_repo":"agentculture/culture-nodes"' in repositories[0]
+    assert b"jira_site" not in repositories[0]
+
+
+def test_first_deploy_without_shell_api_url_refuses_with_a_hint(tmp_path: Path):
+    runner_env = tmp_path / "host/.culture-nodes/runner.env"
+
+    result = _run_block(tmp_path)
+
+    assert result.returncode != 0
+    assert "first deploy" in result.stderr
+    assert "hint:" in result.stderr
+    assert not runner_env.exists()
+
+
+def test_redeploy_never_reintroduces_the_default_over_a_missing_jira_line(tmp_path: Path):
+    # An EXISTING runner.env without PR_UPKEEP_REPOSITORIES is a lost grant,
+    # not a first deploy: the default must not paper over it.
+    runner_dir = tmp_path / "host/.culture-nodes"
+    runner_dir.mkdir(parents=True)
+    original = b"NODES_API_URL=http://192.0.2.44:18080\n"
+    runner_env = runner_dir / "runner.env"
+    runner_env.write_bytes(original)
+
+    result = _run_block(tmp_path)
+
+    assert result.returncode != 0
+    assert "PR_UPKEEP_REPOSITORIES" in result.stderr
+    assert runner_env.read_bytes() == original

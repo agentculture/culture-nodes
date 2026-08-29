@@ -28,6 +28,116 @@ REVISION=$(git rev-parse "$BRANCH")
 
 say() { printf '==> %s\n' "$*"; }
 
+# --- preflight (task t2, spec c25/c28, PR #236 Qodo finding 6) -------------
+# PREFLIGHT_START -- tests/test_deploy_two_host.py drives this block and the
+# TWO_HOST_LANE block below against fake hosts; keep the marker on the first
+# statement of the block and its mate after the last.
+#
+# The two production hosts, named once. The thor lane's migrate + cutover
+# window has to quiesce orin's worker too, and the orin lane's parity check
+# reads thor's api and resumes thor's scheduler — so each lane needs the
+# OTHER host's name. SKIP_ORIN_QUIESCE=1 declares that there IS no second
+# worker (a single-host deployment); it is not a way around an unreachable
+# orin, which the probe below refuses.
+# The host this lane targets is that host by definition (`deploy.sh thor.lan`
+# must not then ssh to a bare `thor`); the other one is named by default.
+if [[ "$HOST" == thor* ]]; then
+  THOR_HOST=${THOR_HOST:-$HOST}
+elif [[ "$HOST" == orin* ]]; then
+  ORIN_HOST=${ORIN_HOST:-$HOST}
+fi
+THOR_HOST=${THOR_HOST:-thor}
+ORIN_HOST=${ORIN_HOST:-orin}
+#
+# Everything in this block is READ-ONLY on the target, and it runs before the
+# archive ship, before the image build, and (in the thor lane) before any
+# `docker compose stop`. Until task t2 the only hard check on the agent
+# checkout was `nodes doctor` at the END of the lane (after migrate, cutover
+# and stack-up), and the checkout lane's own fast-forward refusal was a
+# warning — so a detached or dirty ~/git/culture-nodes-agent surfaced only
+# after thor had already been modified. A deploy that is going to be refused
+# must be refused while there is still nothing to undo.
+#
+# Two states are refused here and both are OPERATOR states, not bugs: a dirty
+# tree (a write session's diff waiting to be harvested) and a detached HEAD
+# (the hand-modified prod checkouts spec q3 discards by hand). Deciding what
+# to do with either is a human's call — the runbook is harvest, then reset —
+# and this script's job is to stop, name the state, and change nothing.
+# An ABSENT checkout passes: the codex lane below clones it, and on a first
+# deploy there is nothing to protect yet.
+AGENT_CHECKOUT_PREFLIGHT_REMOTE='repo=$HOME/git/culture-nodes-agent
+if [ ! -d "$repo/.git" ]; then
+  echo "agent checkout: absent at $repo (first deploy: the codex lane clones it)"
+  exit 0
+fi
+if [ -n "$(git -C "$repo" status --porcelain)" ]; then
+  echo "agent checkout $repo is DIRTY (uncommitted changes) — harvest the diff, then reset it to the deployed revision, per the runbook (deploy/prod/README.md)" >&2
+  exit 3
+fi
+if ! git -C "$repo" symbolic-ref -q HEAD >/dev/null 2>&1; then
+  echo "agent checkout $repo is DETACHED at $(git -C "$repo" rev-parse --short HEAD) — check out its tracking branch (or reset it to the deployed revision, spec q3) before deploying" >&2
+  exit 3
+fi
+echo "agent checkout: clean on $(git -C "$repo" symbolic-ref --short HEAD) at $(git -C "$repo" rev-parse --short HEAD)"'
+
+say "preflight: agent checkout state on $HOST (read-only, before anything is shipped or stopped)"
+ssh "$HOST" "$AGENT_CHECKOUT_PREFLIGHT_REMOTE" || {
+  echo "preflight failed on $HOST: the agent checkout is not in a deployable state (reason above); nothing on $HOST was changed" >&2
+  exit 1
+}
+
+# The same four checks the end-of-lane doctor runs (prompt file, skills kit,
+# API reachability, userns sysctl), but BEFORE the stack is touched, so a host
+# the agent lane cannot work on is refused while the stack is still the old
+# one. Only prompt_file_present decides the exit code (CLAUDE.md, "Mesh
+# identity"), and it reads the checkout — so on a first deploy, where there
+# is no checkout and no ~/.local/bin/nodes yet, there is nothing for it to
+# read and the preflight says so and passes; the end-of-lane doctor still
+# gates that deploy once the codex lane has installed both.
+say "preflight: nodes doctor on $HOST"
+ssh "$HOST" 'repo=$HOME/git/culture-nodes-agent; cli=$HOME/.local/bin/nodes
+if [ ! -d "$repo/.git" ] || [ ! -x "$cli" ]; then
+  echo "nodes doctor: skipped before the deploy (no agent checkout or no nodes CLI on this host yet — the post-deploy doctor still gates)"
+  exit 0
+fi
+cd "$repo" && "$cli" doctor' || {
+  echo "preflight failed on $HOST: nodes doctor reports the agent lane unhealthy BEFORE the deploy; fix the reported check first — nothing on $HOST was changed" >&2
+  exit 1
+}
+
+# The thor lane is about to stop orin's worker across migrate/cutover
+# (TWO_HOST_LANE below), so whether orin is reachable and whether it has a
+# worker stack at all are facts to establish NOW, while thor is still
+# untouched. Three answers: `present` (quiesce it), `absent` (a first deploy —
+# orin has never been deployed, there is no worker to stop), or nothing (the
+# ssh itself failed — refuse; an unreachable second worker is not the same as
+# no second worker, and the difference is a worker that keeps producing history
+# through the cutover window).
+ORIN_WORKER_STACK=absent
+if [[ "$HOST" == thor* ]]; then
+  if [ "${SKIP_ORIN_QUIESCE:-0}" = "1" ]; then
+    say "preflight: SKIP_ORIN_QUIESCE=1 — treating this as a single-host deployment with no orin worker"
+  else
+    say "preflight: orin worker stack on $ORIN_HOST (read-only)"
+    # Signalled by exit status, not parsed output: the remote `test` answers
+    # 0 (present) or 1 (absent), and ssh itself answers 255 when it never
+    # reached the host — three states that must not collapse into two.
+    orin_probe_status=0
+    ssh "$ORIN_HOST" "test -f $REMOTE_DIR/deploy/prod/compose.orin.yml" || orin_probe_status=$?
+    case "$orin_probe_status" in
+      0) ORIN_WORKER_STACK=present
+         say "preflight: $ORIN_HOST has a worker stack; it will be stopped across migrate/cutover and restarted after" ;;
+      1) say "preflight: $ORIN_HOST has no worker stack yet (first deploy) — nothing there to quiesce; deploy.sh orin comes after this lane" ;;
+      *)
+        echo "preflight failed: cannot reach $ORIN_HOST (ssh exit $orin_probe_status) to ask whether it runs a worker; nothing on $HOST was changed" >&2
+        echo "hint: fix ssh to $ORIN_HOST (or set ORIN_HOST), or export SKIP_ORIN_QUIESCE=1 ONLY if this deployment has no second worker" >&2
+        exit 1
+        ;;
+    esac
+  fi
+fi
+# PREFLIGHT_END
+
 say "shipping $(git rev-parse --short "$REVISION") to $HOST:$REMOTE_DIR"
 git archive --format=tar "$REVISION" | ssh "$HOST" "rm -rf $REMOTE_DIR && mkdir -p $REMOTE_DIR && tar -x -C $REMOTE_DIR"
 
@@ -40,7 +150,18 @@ say "building control-plane image on $HOST (native aarch64)"
 # last rebuilt it. VERSION is deliberately left at its Dockerfile default: it
 # is the package's declared version, not this deploy's commit, and conflating
 # the two would make GET /v1alpha1/version report a sha twice.
-ssh "$HOST" "cd $REMOTE_DIR && docker build -q --build-arg REVISION=$REVISION -t culture-nodes:prod ."
+#
+# --label culture-nodes.revision: the same fact, readable from OUTSIDE the
+# process (task t2, spec c26). The api serves its revision on
+# GET /v1alpha1/version, but a worker has no HTTP surface at all, so the only
+# revision-bearing fact a running worker exposes is the label on the image its
+# container was created from — `docker inspect` reads it back in the parity
+# check below. The label rides the same `docker build` as the build arg, so
+# the two cannot name different commits. This is also why the compose `up`
+# calls below no longer pass --build: a compose rebuild would re-tag
+# culture-nodes:prod with an image that carries the arg but not the label,
+# and the parity check would read an empty label off a correct binary.
+ssh "$HOST" "cd $REMOTE_DIR && docker build -q --build-arg REVISION=$REVISION --label culture-nodes.revision=$REVISION -t culture-nodes:prod ."
 
 say "building nodes-runner host binary on $HOST"
 # Issue #17. Two things were wrong here, and only one of them was the shell.
@@ -94,13 +215,24 @@ say "installing runner env + systemd user unit on $HOST"
 # an override, retain the complete old line so systemd sees byte-identical
 # values across repeated deploys (including PR_UPKEEP_REPOSITORIES quoting).
 existing_runner_env=$(ssh "$HOST" 'if [ -f ~/.culture-nodes/runner.env ]; then cat ~/.culture-nodes/runner.env; fi')
+# A FIRST deploy has no runner.env at all, and that state is different from a
+# runner.env that has lost a line (task t1's colleague review): the refusals
+# below exist to stop a re-deploy from silently DROPPING a grant the host
+# already has, and on a fresh host there is nothing to drop. Distinguished by
+# the file's existence, not by the content being empty.
+runner_env_exists=$(ssh "$HOST" 'if [ -f ~/.culture-nodes/runner.env ]; then echo yes; else echo no; fi')
 if [ -n "${NODES_API_URL:-}" ]; then
 	NODES_API_URL_LINE="NODES_API_URL=$NODES_API_URL"
 else
 	NODES_API_URL_LINE=$(printf '%s\n' "$existing_runner_env" | sed -n '/^NODES_API_URL=/p' | tail -n 1)
 fi
 if [ -z "$NODES_API_URL_LINE" ]; then
-	echo "refusing: NODES_API_URL is absent from both the shell and existing runner.env; runner.env was not touched" >&2
+	if [ "$runner_env_exists" = yes ]; then
+		echo "refusing: NODES_API_URL is absent from both the shell and existing runner.env; runner.env was not touched" >&2
+	else
+		echo "refusing: NODES_API_URL is not set in the shell and this is a first deploy (no runner.env on $HOST to retain it from); nothing was written" >&2
+		echo "hint: export NODES_API_URL=http://<thor-address>:18080 (the control-plane URL the runner on $HOST calls back to) and re-run" >&2
+	fi
 	exit 1
 fi
 
@@ -112,6 +244,16 @@ else
 	case "$PR_UPKEEP_REPOSITORIES" in
 		\'*\') PR_UPKEEP_REPOSITORIES=${PR_UPKEEP_REPOSITORIES#\'}; PR_UPKEEP_REPOSITORIES=${PR_UPKEEP_REPOSITORIES%\'} ;;
 	esac
+fi
+if [ -z "$PR_UPKEEP_REPOSITORIES_LINE" ] && [ "$runner_env_exists" = no ]; then
+	# The well-known jira-less default a first deploy always got before task
+	# t1 — the closed repository set for this repo with no Jira pair. A Jira
+	# pair is only ever ADDED by the operator (shell override) and from then
+	# on retained by the branch above; it can never be reintroduced by this
+	# default, because this default is reachable only when no file exists.
+	PR_UPKEEP_REPOSITORIES='{"cycle":0,"repositories":[{"github_repo":"agentculture/culture-nodes","sonar_component":"agentculture_culture-nodes"}]}'
+	PR_UPKEEP_REPOSITORIES_LINE="PR_UPKEEP_REPOSITORIES='$PR_UPKEEP_REPOSITORIES'"
+	say "first deploy on $HOST (no runner.env): granting the default jira-less PR_UPKEEP_REPOSITORIES; add a Jira pair by exporting PR_UPKEEP_REPOSITORIES on a later deploy"
 fi
 if [ -z "$PR_UPKEEP_REPOSITORIES_LINE" ]; then
 	echo "refusing: PR_UPKEEP_REPOSITORIES is absent from both the shell and existing runner.env; runner.env was not touched" >&2
@@ -728,25 +870,209 @@ deploy_jira() { # host
   assert_unit_healthy "$host" jira-bridge
 }
 
+# --- the two-host r4 sequence (task t2, spec c25/c26/c28, #230) -----------
+# TWO_HOST_LANE_START -- tests/test_deploy_two_host.py executes these
+# functions against fake hosts and asserts their ORDER; keep the marker on
+# the first definition and its mate after the last.
+#
+# migrations/README.md's 0041 entry states the fail-closed deploy order: stop
+# the sweep, migrate, nodes-cutover, resume. Until this task the thor lane
+# implemented it on ONE host: it stopped thor's scheduler/worker/api, and
+# orin's worker — the second consumer of the same database — kept running
+# through migrate and cutover. Nothing took a dump before the migration ran,
+# and "resume" was `compose up`, which brought the scheduler back whether or
+# not the two workers were running the same code as the api. This block is
+# that order across both hosts, with the dump in it, and with the resume
+# gated on revision parity.
+#
+# "The sweep schedule" is paused and resumed as the `scheduler` compose
+# service: it is the only process that fires schedules (cmd/nodes/scheduler.go),
+# nothing in compose.thor.yml depends on it, and a service that is not running
+# cannot fire. `up -d --scale scheduler=0` brings every other service up
+# without it; `up -d scheduler` is the resume. No schedule row is touched, so a
+# deploy that stops early leaves nothing half-armed in the database.
+
+# compose_thor / compose_orin <args...> — one compose invocation on the named
+# host. NODES_BUILD_REVISION rides along so that if compose ever DOES build
+# (it should not — see the image build step — but the tag missing would make
+# it), the binary is still stamped (tests/deploy/revisionstamp_test.go).
+compose_thor() {
+  ssh "$THOR_HOST" "cd $REMOTE_DIR/deploy/prod && NODES_BUILD_REVISION=$REVISION docker compose --env-file ~/.culture-nodes/prod.env -f compose.thor.yml $*"
+}
+compose_orin() {
+  ssh "$ORIN_HOST" "cd $REMOTE_DIR/deploy/prod && NODES_BUILD_REVISION=$REVISION docker compose --env-file ~/.culture-nodes/prod.env -f compose.orin.yml $*"
+}
+
+# predeploy_pg_dump — a FORCED full dump of the authoritative database, taken
+# before anything is stopped and before migrate runs. Sets PREDEPLOY_DUMP.
+#
+# The `backup` compose profile dumps on an interval, so the newest scheduled
+# dump can be up to BACKUP_INTERVAL_SECONDS (6h) behind the moment the
+# migration runs — and RESTORE.md's rollback is dump-restore ONLY (there is
+# no contract-migration reverse). This dump is what a rollback of THIS deploy
+# restores from. It reuses the backup service's own definition (its image, its
+# NODES_DATABASE_URL, its ~/.culture-nodes/backups bind mount), so it dumps
+# the same database the loop does in both bundled and external-Postgres mode;
+# --no-deps because the database is already running and `run` must not try to
+# start (or, in external mode, find) a bundled postgres. The name is
+# predeploy-*, which the loop's `nodes-*` rotation never prunes: a pre-migrate
+# dump must not age out on a schedule, so pruning these is an operator's
+# decision, by hand.
+predeploy_pg_dump() {
+  local name
+  name="predeploy-${REVISION:0:12}-$(date -u +%Y%m%dT%H%M%SZ).dump"
+  PREDEPLOY_DUMP="~/.culture-nodes/backups/$name"
+  say "forcing a pre-migrate pg_dump on $THOR_HOST -> $PREDEPLOY_DUMP"
+  compose_thor "run --rm --no-deps -T backup 'pg_dump \"\$NODES_DATABASE_URL\" -Fc -f /backups/$name'" || {
+    echo "pre-migrate pg_dump failed on $THOR_HOST; refusing to migrate without a dump to restore from — nothing was stopped" >&2
+    exit 1
+  }
+  ssh "$THOR_HOST" "test -s ~/.culture-nodes/backups/$name" || {
+    echo "pre-migrate pg_dump reported success but $PREDEPLOY_DUMP is missing or empty on $THOR_HOST; refusing to migrate — nothing was stopped" >&2
+    exit 1
+  }
+}
+
+# quiesce_orin_worker / restart_orin_worker — the second consumer of the
+# database, stopped for the migrate + cutover window and started again after
+# thor's stack is up. ORIN_WORKER_STACK was established in preflight, so
+# "absent" here is a first deploy, never an unreachable host.
+quiesce_orin_worker() {
+  if [ "$ORIN_WORKER_STACK" = present ]; then
+    say "stopping orin's worker on $ORIN_HOST across migrate/cutover"
+    compose_orin "stop worker"
+  else
+    say "no orin worker stack to quiesce"
+  fi
+}
+restart_orin_worker() {
+  if [ "$ORIN_WORKER_STACK" = present ]; then
+    say "restarting orin's worker on $ORIN_HOST"
+    compose_orin "up -d worker"
+  fi
+}
+
+# worker_revision <host> <compose-file> — the revision a running worker was
+# built from. A worker has no HTTP surface, so the only revision-bearing fact
+# it exposes is the `culture-nodes.revision` label on the image its container
+# was created from (stamped by the explicit `docker build` above). Prints the
+# label, or nothing when there is no worker container.
+WORKER_REVISION_REMOTE='cd __REMOTE_DIR__/deploy/prod || exit 1
+cid=$(docker compose --env-file ~/.culture-nodes/prod.env -f __COMPOSE__ ps -q worker | head -n 1)
+[ -n "$cid" ] || exit 0
+docker inspect --format "{{index .Config.Labels \"culture-nodes.revision\"}}" "$cid"'
+worker_revision() { # host compose-file
+  local snippet=${WORKER_REVISION_REMOTE//__REMOTE_DIR__/$REMOTE_DIR}
+  ssh "$1" "${snippet//__COMPOSE__/$2}" | tr -d '\r'
+}
+
+# revision_parity_check — the gate on resuming the sweep (spec c26). Returns 0
+# when thor's api, thor's worker and (when present) orin's worker all report
+# exactly $REVISION; 1 otherwise, after printing every reading. Two workers on
+# one namespace race for the same dispatches, so a worker one revision behind
+# is not "mostly deployed": it is a run whose outcome depends on which host
+# polled first.
+revision_parity_check() {
+  local api thor_worker orin_worker="(skipped)" ok=yes
+  say "revision parity: api and workers against $REVISION"
+  api=$(ssh "$THOR_HOST" "curl -fsS http://localhost:18080/v1alpha1/version" | python3 -c 'import json,sys; print(json.load(sys.stdin).get("revision",""))' || true)
+  thor_worker=$(worker_revision "$THOR_HOST" compose.thor.yml || true)
+  [ "$ORIN_WORKER_STACK" != present ] || orin_worker=$(worker_revision "$ORIN_HOST" compose.orin.yml || true)
+  printf '    api (%s, GET /v1alpha1/version): %s\n' "$THOR_HOST" "${api:-(none)}"
+  printf '    worker (%s, image label):        %s\n' "$THOR_HOST" "${thor_worker:-(none)}"
+  printf '    worker (%s, image label):        %s\n' "$ORIN_HOST" "${orin_worker:-(none)}"
+  [ "$api" = "$REVISION" ] || ok=no
+  [ "$thor_worker" = "$REVISION" ] || ok=no
+  [ "$ORIN_WORKER_STACK" != present ] || [ "$orin_worker" = "$REVISION" ] || ok=no
+  [ "$ok" = yes ]
+}
+
+resume_sweep_schedule() {
+  say "resuming the sweep schedule (starting thor's scheduler)"
+  compose_thor "up -d scheduler"
+}
+
+# thor_two_host_lane — the ordered sequence itself. Sets NS, PREDEPLOY_DUMP
+# and SWEEP_RESUMED; deploy_summary reads them.
+thor_two_host_lane() {
+  say "starting thor control plane (two-host r4 sequence)"
+  predeploy_pg_dump
+  # Stop history-producing services on BOTH hosts, apply migrations alone,
+  # then adopt all pending Jira heads before any scheduler/worker can resume
+  # the sweep.
+  say "stopping thor's scheduler, worker and api"
+  compose_thor "stop scheduler worker api || true"
+  quiesce_orin_worker
+  compose_thor "up -d postgres"
+  compose_thor "run --rm migrate"
+  # systemd parses the two EnvironmentFiles without shell-evaluating secret
+  # values, and applies them only to this transient host-side process.
+  say "running the nodes-cutover adopter on $THOR_HOST"
+  ssh "$THOR_HOST" 'systemd-run --user --wait --pipe --collect --property=EnvironmentFile=$HOME/.culture-nodes/prod.env --property=EnvironmentFile=$HOME/.culture-nodes/runner-secrets.env $HOME/.culture-nodes/bin/nodes-cutover'
+  # Everything except the scheduler; no --build (see the image build step:
+  # a compose rebuild would drop the label the parity check reads).
+  compose_thor "up -d --scale scheduler=0"
+  say "waiting for readyz"
+  ssh "$THOR_HOST" 'for i in $(seq 1 60); do curl -fsS http://localhost:18080/v1alpha1/readyz >/dev/null 2>&1 && echo READY && exit 0; sleep 2; done; echo NOT_READY; exit 1'
+  say "resolving namespace id and (re)starting worker with it"
+  NS=$(ssh "$THOR_HOST" "curl -fsS http://localhost:18080/v1alpha1/namespaces | python3 -c 'import json,sys; rows=json.load(sys.stdin); print(rows[0][\"id\"] if rows else \"\")'")
+  [ -n "$NS" ] || { echo "no namespace row found" >&2; exit 1; }
+  ssh "$THOR_HOST" "grep -q '^NODES_NAMESPACE_ID=' ~/.culture-nodes/prod.env && sed -i 's/^NODES_NAMESPACE_ID=.*/NODES_NAMESPACE_ID=$NS/' ~/.culture-nodes/prod.env || echo NODES_NAMESPACE_ID=$NS >> ~/.culture-nodes/prod.env"
+  compose_thor "up -d worker"
+  restart_orin_worker
+  if revision_parity_check; then
+    resume_sweep_schedule
+    SWEEP_RESUMED=yes
+  else
+    # Not fatal HERE: on a revision change orin's worker is EXPECTED to be
+    # behind until `deploy.sh orin` rebuilds it, and that lane's own parity
+    # check is what resumes the sweep. The lane finishes its detectors, and
+    # deploy_summary exits non-zero so the paused sweep cannot be overlooked.
+    say "revision parity does not hold — the sweep schedule stays PAUSED (scheduler not started)"
+    SWEEP_RESUMED=no
+  fi
+}
+
+# orin_two_host_lane — the orin lane's half: after its worker is up on the
+# freshly built image, the same parity check decides whether thor's scheduler
+# may run. This is the resume step of an upgrade, since the thor lane above
+# necessarily left the sweep paused when orin was still on the old image.
+orin_two_host_lane() {
+  ORIN_WORKER_STACK=present
+  if revision_parity_check; then
+    resume_sweep_schedule
+    SWEEP_RESUMED=yes
+  else
+    say "revision parity does not hold — refusing to resume the sweep schedule"
+    SWEEP_RESUMED=no
+  fi
+}
+
+# deploy_summary <lane> — the last lines of either lane: the dump path (the
+# thing a rollback needs, printed where the operator will see it) and the
+# sweep state. A paused sweep is exit 3: the deploy of this host succeeded,
+# but the r4 procedure is not complete until both workers match the api and
+# the sweep is running again, and a zero exit here is how that gets forgotten.
+deploy_summary() { # lane
+  say "$1 deploy complete (namespace ${NS:-?})"
+  [ -z "${PREDEPLOY_DUMP:-}" ] || say "pre-migrate dump: $PREDEPLOY_DUMP on $THOR_HOST (rollback: deploy/prod/RESTORE.md; not rotated by the backup loop — prune by hand)"
+  if [ "${SWEEP_RESUMED:-no}" = yes ]; then
+    say "sweep schedule: resumed (api and workers all at ${REVISION:0:12})"
+  else
+    say "sweep schedule: PAUSED — thor's scheduler is not running, so no schedule fires"
+    if [[ "$1" == thor* ]]; then
+      say "next: run deploy.sh orin; its parity check resumes the sweep once orin's worker is on ${REVISION:0:12}"
+    else
+      say "next: run deploy.sh thor for the revision orin should match, or re-run deploy.sh orin after fixing the reading above"
+    fi
+    exit 3
+  fi
+}
+# TWO_HOST_LANE_END
+
 case "$HOST" in
   thor*)
-    say "starting thor control plane"
-	# Stop history-producing services, apply migrations alone, then adopt all
-	# pending Jira heads before any scheduler/worker can resume the sweep.
-	ssh "$HOST" "cd $REMOTE_DIR/deploy/prod && docker compose --env-file ~/.culture-nodes/prod.env -f compose.thor.yml stop scheduler worker api || true"
-	ssh "$HOST" "cd $REMOTE_DIR/deploy/prod && NODES_BUILD_REVISION=$REVISION docker compose --env-file ~/.culture-nodes/prod.env -f compose.thor.yml up -d postgres"
-	ssh "$HOST" "cd $REMOTE_DIR/deploy/prod && NODES_BUILD_REVISION=$REVISION docker compose --env-file ~/.culture-nodes/prod.env -f compose.thor.yml run --rm migrate"
-	# systemd parses the two EnvironmentFiles without shell-evaluating secret
-	# values, and applies them only to this transient host-side process.
-	ssh "$HOST" 'systemd-run --user --wait --pipe --collect --property=EnvironmentFile=$HOME/.culture-nodes/prod.env --property=EnvironmentFile=$HOME/.culture-nodes/runner-secrets.env $HOME/.culture-nodes/bin/nodes-cutover'
-    ssh "$HOST" "cd $REMOTE_DIR/deploy/prod && NODES_BUILD_REVISION=$REVISION docker compose --env-file ~/.culture-nodes/prod.env -f compose.thor.yml up -d --build"
-    say "waiting for readyz"
-    ssh "$HOST" 'for i in $(seq 1 60); do curl -fsS http://localhost:18080/v1alpha1/readyz >/dev/null 2>&1 && echo READY && exit 0; sleep 2; done; echo NOT_READY; exit 1'
-    say "resolving namespace id and (re)starting worker with it"
-    NS=$(ssh "$HOST" "curl -fsS http://localhost:18080/v1alpha1/namespaces | python3 -c 'import json,sys; rows=json.load(sys.stdin); print(rows[0][\"id\"] if rows else \"\")'")
-    [ -n "$NS" ] || { echo "no namespace row found" >&2; exit 1; }
-    ssh "$HOST" "grep -q '^NODES_NAMESPACE_ID=' ~/.culture-nodes/prod.env && sed -i 's/^NODES_NAMESPACE_ID=.*/NODES_NAMESPACE_ID=$NS/' ~/.culture-nodes/prod.env || echo NODES_NAMESPACE_ID=$NS >> ~/.culture-nodes/prod.env"
-    ssh "$HOST" "cd $REMOTE_DIR/deploy/prod && docker compose --env-file ~/.culture-nodes/prod.env -f compose.thor.yml up -d worker"
+    thor_two_host_lane
     # The human-inbox bridge and tracker come up AFTER the control plane:
     # the tracker submits into the bridge, the bridge calls back into the API,
     # and the lane itself resolves the actor registry to learn which host it
@@ -772,7 +1098,7 @@ case "$HOST" in
     # the end, not a gate that leaves the stack half-shipped.
     say "running nodes doctor on $HOST"
     ssh "$HOST" "cd \$HOME/git/culture-nodes-agent && \$HOME/.local/bin/nodes doctor" || { echo "nodes doctor reports unhealthy on $HOST" >&2; exit 1; }
-    say "thor deploy complete (namespace $NS)"
+    deploy_summary thor
     ;;
   orin*)
     say "resolving thor's address from $HOST and starting the orin worker"
@@ -782,14 +1108,19 @@ case "$HOST" in
     [ -n "$NS" ] || { echo "thor has no namespace yet — deploy thor first" >&2; exit 1; }
     ssh "$HOST" "grep -q '^THOR_IP=' ~/.culture-nodes/prod.env && sed -i 's/^THOR_IP=.*/THOR_IP=$THOR_IP/' ~/.culture-nodes/prod.env || echo THOR_IP=$THOR_IP >> ~/.culture-nodes/prod.env"
     ssh "$HOST" "grep -q '^NODES_NAMESPACE_ID=' ~/.culture-nodes/prod.env && sed -i 's/^NODES_NAMESPACE_ID=.*/NODES_NAMESPACE_ID=$NS/' ~/.culture-nodes/prod.env || echo NODES_NAMESPACE_ID=$NS >> ~/.culture-nodes/prod.env"
-    ssh "$HOST" "cd $REMOTE_DIR/deploy/prod && NODES_BUILD_REVISION=$REVISION docker compose --env-file ~/.culture-nodes/prod.env -f compose.orin.yml up -d --build"
+    # No --build: the image was built and labelled above (see the image build
+    # step); a compose rebuild would drop the label the parity check reads.
+    compose_orin "up -d"
+    # The orin half of the r4 sequence: parity across thor's api and both
+    # workers, and the sweep resumed only when it holds (TWO_HOST_LANE).
+    orin_two_host_lane
     # Same detector, same reason, against compose.orin.yml's own declared set
     # (see the thor lane's comment).
     "$SCRIPT_DIR/audit-credentials.sh" "$HOST"
     # Same doctor detector as the thor lane (PR #208 review finding 2).
     say "running nodes doctor on $HOST"
     ssh "$HOST" "cd \$HOME/git/culture-nodes-agent && \$HOME/.local/bin/nodes doctor" || { echo "nodes doctor reports unhealthy on $HOST" >&2; exit 1; }
-    say "orin deploy complete (worker joined namespace $NS)"
+    deploy_summary orin
     ;;
   *)
     echo "unknown host role: $HOST (expected thor or orin)" >&2; exit 1;;

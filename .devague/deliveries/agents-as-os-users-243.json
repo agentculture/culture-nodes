@@ -1,0 +1,35 @@
+{
+  "plan_slug": "agents-as-os-users-243",
+  "schema_version": 1,
+  "created": "2026-08-29T17:33:37Z",
+  "updated": "2026-08-29T21:06:42Z",
+  "deviations": [
+    {
+      "id": "d1",
+      "what": "t10 proof dispatches run codex with --sandbox danger-full-access instead of the plan's workspace-write: codex's own workspace-write sandbox denies network regardless of the account (the exact #230 failure), and --handover only mints a local ref on a fresh workspace-write session and never pushes (preserve.py:569-660), so the proof's fetch + push can only happen when nothing but the account confines the session. Under #243 that is the design: the account IS the fence. The bridge argv is unchanged (c15); only the dispatch option differs. README's old rejection of danger-full-access was under the shared-login-user model and is superseded by the deviation record (t6).",
+      "task_ref": "t10",
+      "reason": "workspace-write blocks network inside the account too; handover_ref does not push",
+      "affects": [
+        "c9",
+        "h9"
+      ],
+      "origin": "llm",
+      "status": "approved",
+      "classification": "acceptable"
+    },
+    {
+      "id": "d2",
+      "what": "t10 proof: the spec's 'commit and push its handover ref' (c9/h9/c23) is replaced by the repo's own actor rule (AGENTS.md: never git push from a session, never commit onto a branch; the write path is a handover ref under refs/culture-nodes/<run-id>). The proof therefore runs --sandbox workspace-write --handover with network enabled in the ACCOUNT's codex config ([sandbox_workspace_write] network_access = true, rendered by lanes/unix-user.sh), and the operator fetches the ref as the account: git fetch culture-codex@<host>:git/culture-nodes-agent refs/culture-nodes/<run-id>. d1's danger-full-access dispatches proved network, formatters, loopback and denials (runs 01M17E36Z7G8A60WP6TA9QB0AP, 01M17E3ZC1MBQ6DZRKY93T8PWE) and are kept as evidence; the write-path leg runs under this posture instead.",
+      "task_ref": "t10",
+      "reason": "AGENTS.md forbids session pushes; the account posture must keep file confinement and add network, not drop confinement",
+      "affects": [
+        "c9",
+        "h9",
+        "c23"
+      ],
+      "origin": "llm",
+      "status": "approved",
+      "classification": "acceptable"
+    }
+  ]
+}

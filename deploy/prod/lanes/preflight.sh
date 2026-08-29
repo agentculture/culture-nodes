@@ -68,12 +68,24 @@ ssh "$HOST" "$AGENT_CHECKOUT_PREFLIGHT_REMOTE" || {
 # userns fact was added to close. FIRST_DEPLOY=1 is the explicit, named
 # exception for a host that has never been deployed (nothing to doctor yet);
 # it is declared by the operator, never inferred from a missing file.
+# The declaration is made in the OPERATOR's shell and the check runs on the
+# HOST: ssh carries none of the operator's environment across (sshd forwards
+# only what its AcceptEnv admits — LANG/LC_* by default), so the remote
+# script would read its own, unset, FIRST_DEPLOY and refuse every first
+# deploy while the fake-ssh harness, which inherits the environment, said
+# the exception worked (#244 review). The lane therefore carries it inside
+# the remote command — as a normalised 0/1 it computed itself, never the raw
+# variable, so nothing the operator typed is spliced into a command line on
+# a production host.
 preflight_doctor() {
-  local host=$1
-  say "preflight: nodes doctor on $host"
-  ssh "$host" 'repo=$HOME/git/culture-nodes-agent; cli=$HOME/.local/bin/nodes
-if [ ! -d "$repo/.git" ] || [ ! -x "$cli" ]; then
+  local host=$1 first_deploy=0
   if [ "${FIRST_DEPLOY:-}" = 1 ]; then
+    first_deploy=1
+  fi
+  say "preflight: nodes doctor on $host"
+  ssh "$host" "FIRST_DEPLOY=$first_deploy; "'repo=$HOME/git/culture-nodes-agent; cli=$HOME/.local/bin/nodes
+if [ ! -d "$repo/.git" ] || [ ! -x "$cli" ]; then
+  if [ "$FIRST_DEPLOY" = 1 ]; then
     echo "nodes doctor: no agent checkout or nodes CLI on this host and FIRST_DEPLOY=1 declared — proceeding; the post-deploy doctor gates this deploy"
     exit 0
   fi

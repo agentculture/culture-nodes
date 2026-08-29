@@ -33,9 +33,12 @@ STALE = "fedcba9876543210fedcba9876543210fedcba98"
 _SSH_SHIM = """#!/usr/bin/env bash
 host=$1; shift
 printf 'ssh[%s] %s\\n' "$host" "$*" >> "$FAKE_LOG"
-# Like a real ssh: the remote command starts in that host's HOME.
+# Like a real ssh: the remote command starts in that host's HOME, and the
+# operator's shell variables do not cross to it (sshd forwards only what its
+# AcceptEnv admits — LANG/LC_* by default), so a lane that wants the host to
+# see an operator declaration has to carry it inside the command itself.
 cd "$FAKE_HOSTS/$host" || exit 255
-exec env FAKE_HOST="$host" HOME="$FAKE_HOSTS/$host" bash -c "$*"
+exec env -u FIRST_DEPLOY FAKE_HOST="$host" HOME="$FAKE_HOSTS/$host" bash -c "$*"
 """
 
 _DOCKER_SHIM = """#!/usr/bin/env bash
@@ -371,3 +374,28 @@ def test_missing_agent_checkout_refuses_unless_first_deploy_is_declared(tmp_path
     assert "FIRST_DEPLOY=1" in refused.stderr, refused.stderr
     declared = Harness(declared_dir).run("thor", checkout="absent", FIRST_DEPLOY="1")
     assert declared.returncode == 0, declared.stderr
+
+
+def test_first_deploy_declaration_crosses_ssh_inside_the_command(tmp_path):
+    """The operator declares FIRST_DEPLOY=1 in their own shell and the check
+    runs on the host; ssh forwards no environment, so the lane must carry the
+    declaration inside the remote command (#244 review, Qodo 6)."""
+    h = Harness(tmp_path)
+    result = h.run("thor", checkout="absent", FIRST_DEPLOY="1")
+    assert result.returncode == 0, result.stderr
+    # The shim logs the remote command verbatim; its first line is where the
+    # lane prepends the declaration it computed.
+    h.first(f"ssh[{THOR}] FIRST_DEPLOY=1; repo=$HOME/git/culture-nodes-agent;")
+
+
+def test_first_deploy_declaration_is_normalised_not_spliced(tmp_path):
+    """Only the literal value 1 declares a first deploy; anything else is
+    carried to the host as 0, so no operator-typed text reaches a command
+    line on a production host."""
+    h = Harness(tmp_path)
+    result = h.run("thor", checkout="absent", FIRST_DEPLOY="1; touch pwned")
+    assert result.returncode != 0, result.stdout
+    assert "FIRST_DEPLOY=1" in result.stderr, result.stderr
+    h.first(f"ssh[{THOR}] FIRST_DEPLOY=0; repo=$HOME/git/culture-nodes-agent;")
+    h.never("pwned")
+    assert not (h.thor_home / "pwned").exists()

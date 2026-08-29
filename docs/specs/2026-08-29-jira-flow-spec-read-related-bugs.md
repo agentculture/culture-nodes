@@ -154,3 +154,4 @@
 - [out_of_scope] The store-pull second control plane (spec h17/c19 of the flow-store frame) — tracked as #232; not built here
 - [follow_up] internal/ticketreport dispatcher tests (#231) — needed before t13 leans on start/finish reports; small, may ride the r4 deploy PR
 - [follow_up] Dedicated per-user identity for page replies (today: the system's Jira account) — its own culture-nodes issue
+- [follow_up] deploy.sh runs nodes doctor only at the END of the thor lane (deploy.sh:740-741, after migrate/cutover/stack) — add a preflight doctor (and the c28 checkout-state check) BEFORE the stack is stopped, so a broken agent checkout aborts before thor is modified; lands as a plan task under c25 (Qodo finding 6 on PR #236)

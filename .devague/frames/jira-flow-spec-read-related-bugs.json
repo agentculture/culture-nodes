@@ -4,7 +4,7 @@
   "schema_version": 5,
   "status": "exported",
   "created": "2026-08-29T04:48:35Z",
-  "updated": "2026-08-29T06:33:52Z",
+  "updated": "2026-08-29T06:35:35Z",
   "claims": [
     {
       "id": "c1",
@@ -709,6 +709,15 @@
       "id": "v7",
       "text": "A run created before r4 that finishes after it gets no ticket report at all (runs.trigger_event_id is NULL pre-0043) \u2014 accepted for the deploy window, worth one line in #230",
       "kind": "unknown_nonblocking",
+      "claim_id": null,
+      "resolved": false,
+      "resolution": "",
+      "resolution_claim_id": null
+    },
+    {
+      "id": "v8",
+      "text": "deploy.sh runs nodes doctor only at the END of the thor lane (deploy.sh:740-741, after migrate/cutover/stack) \u2014 add a preflight doctor (and the c28 checkout-state check) BEFORE the stack is stopped, so a broken agent checkout aborts before thor is modified; lands as a plan task under c25 (Qodo finding 6 on PR #236)",
+      "kind": "follow_up",
       "claim_id": null,
       "resolved": false,
       "resolution": "",

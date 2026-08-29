@@ -23,6 +23,10 @@ type ticketOut struct {
 	Replies  []struct {
 		Text string `json:"text"`
 	} `json:"replies"`
+	PageLink *struct {
+		CommentID string `json:"comment_id"`
+		Status    string `json:"status"`
+	} `json:"page_link"`
 }
 
 func TestTicketFrameVersionsAndLatestClaimsAreByteEqual(t *testing.T) {
@@ -58,6 +62,22 @@ func TestTicketFramePostRequiresDecisionToken(t *testing.T) {
 	resp, body := doJSON(t, f.client, http.MethodPost, f.url("/v1alpha1/tickets/SCRUM-9/frame"),
 		map[string]any{"frame": json.RawMessage(`{"claims":[]}`), "posted_by": "test"}, nil)
 	requireStatus(t, resp, body, http.StatusUnauthorized)
+}
+
+func TestTicketProjectionExposesPageLinkStatus(t *testing.T) {
+	f := newFixture(t)
+	if _, err := f.store.Pool().Exec(t.Context(), `INSERT INTO jira_ticket_report_outbox
+		(id,namespace_id,phase,target_actor_key,issue_key,payload,status)
+		VALUES ('page-link-projection',$1,'page-link',$2,'SCRUM-9',$3,'published')`, f.nsID,
+		storepg.JiraTicketReporterActorKey, json.RawMessage(`{"verb":"post_comment","issue":"SCRUM-9","comment":"culture-nodes page: /tickets/SCRUM-9 [culture-nodes:ticket-page-link]","phase":"page-link","comment_id":"10191"}`)); err != nil {
+		t.Fatal(err)
+	}
+	var ticket ticketOut
+	resp, body := doJSON(t, f.client, http.MethodGet, f.url("/v1alpha1/tickets/SCRUM-9"), nil, &ticket)
+	requireStatus(t, resp, body, http.StatusOK)
+	if ticket.PageLink == nil || ticket.PageLink.Status != "published" || ticket.PageLink.CommentID != "10191" {
+		t.Fatalf("page_link = %+v", ticket.PageLink)
+	}
 }
 
 func TestTicketReplyAppendsHumanFactAndOneMirrorIntent(t *testing.T) {

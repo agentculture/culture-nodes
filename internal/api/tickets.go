@@ -47,6 +47,11 @@ type TicketReplyOut struct {
 	CreatedAt     time.Time `json:"created_at"`
 }
 
+type TicketPageLinkOut struct {
+	CommentID string `json:"comment_id,omitempty"`
+	Status    string `json:"status"`
+}
+
 type TicketOut struct {
 	TicketID    string               `json:"ticket_id"`
 	Runs        []RunOut             `json:"runs"`
@@ -55,6 +60,7 @@ type TicketOut struct {
 	Reports     []TicketReportOut    `json:"ticket_reports"`
 	Replies     []TicketReplyOut     `json:"replies"`
 	LatestFrame *TicketFrameOut      `json:"latest_frame,omitempty"`
+	PageLink    *TicketPageLinkOut   `json:"page_link,omitempty"`
 	Frozen      bool                 `json:"frozen"`
 	MergedPR    json.RawMessage      `json:"merged_pr,omitempty"`
 }
@@ -222,6 +228,13 @@ func (s *Server) handleGetTicket(w http.ResponseWriter, r *http.Request) error {
 			return internalError(err)
 		}
 		out.Reports = append(out.Reports, report)
+		if report.Phase == "page-link" {
+			var payload struct {
+				CommentID string `json:"comment_id"`
+			}
+			_ = json.Unmarshal(report.Payload, &payload)
+			out.PageLink = &TicketPageLinkOut{CommentID: payload.CommentID, Status: report.Status}
+		}
 	}
 	if err := rows.Err(); err != nil {
 		return internalError(err)

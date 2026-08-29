@@ -9,10 +9,15 @@ to what it finds, which is the other module's subject.
 
 import importlib.util
 import json
+import sys
 import urllib.error
 from pathlib import Path
 
 EXAMPLE_DIR = Path(__file__).resolve().parents[1] / "examples" / "pr-upkeep"
+# sweep.py imports its sibling pr_upkeep_jira (deviation d1 split); loading it by
+# path needs the example dir importable, independent of which test ran first.
+if str(EXAMPLE_DIR) not in sys.path:
+    sys.path.insert(0, str(EXAMPLE_DIR))
 
 REPOSITORY_GRANT = json.dumps(
     {
@@ -93,6 +98,9 @@ def test_a_failure_outside_every_attempting_block_says_it_is_unattributed(monkey
         sweep, "fetch_open_pulls", lambda *a, **k: [{"number": 1, "head_sha": "abc"}]
     )
     monkeypatch.setattr(sweep, "fetch_pr_comments", lambda *a, **k: [])
+    # t12 added a merged-PR pass ahead of the open-PR pass; stub it like the
+    # other fetches so the injected failure below is the first one main meets.
+    monkeypatch.setattr(sweep, "fetch_merged_pulls", lambda *a, **k: [])
     # A pure transform between two fetches — inside main's try, inside no
     # `attempting` block.
     monkeypatch.setattr(

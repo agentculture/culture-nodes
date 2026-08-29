@@ -104,6 +104,7 @@ func (s *Server) handleListRuns(w http.ResponseWriter, r *http.Request) error {
 
 	runs, err := s.listRuns(r.Context(), listRunsParams{
 		State:        state,
+		Subject:      r.URL.Query().Get("subject"),
 		Limit:        parseLimit(r, 50, 500),
 		UpdatedSince: updatedSince,
 		UpdatedUntil: updatedUntil,

@@ -446,7 +446,16 @@ func TestDeployRunsTheCredentialAuditAtTheEndOfBothLanes(t *testing.T) {
 			t.Errorf("the %s lane of deploy.sh never runs audit-credentials.sh", host)
 			continue
 		}
-		up := strings.LastIndex(lane[:call], "docker compose")
+		// Since task t2 the lanes bring the stack up through the TWO_HOST_LANE
+		// helpers (thor_two_host_lane / compose_orin "up") rather than an
+		// inlined `docker compose`; either form counts, an absent one does not.
+		before := lane[:call]
+		up := strings.LastIndex(before, "docker compose")
+		for _, helper := range []string{"thor_two_host_lane", `compose_orin "up`, `compose_thor "up`} {
+			if idx := strings.LastIndex(before, helper); idx > up {
+				up = idx
+			}
+		}
 		if up < 0 {
 			t.Errorf("the %s lane runs audit-credentials.sh before it brings the stack up; the audit reports on what was shipped, so it goes last", host)
 		}

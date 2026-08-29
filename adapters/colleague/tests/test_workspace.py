@@ -231,6 +231,7 @@ def test_unmeasured_shape_matches_a_degraded_measure(tmp_path):
         "reason",
         "branch",
         "head_before",
+        "trusted_base",
         "head_after",
         "status_porcelain",
         "changed_files",

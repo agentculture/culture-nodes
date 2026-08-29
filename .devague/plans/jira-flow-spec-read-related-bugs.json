@@ -1,0 +1,696 @@
+{
+  "slug": "jira-flow-spec-read-related-bugs",
+  "title": "jira-flow-spec-read-related-bugs",
+  "frame_slug": "jira-flow-spec-read-related-bugs",
+  "schema_version": 4,
+  "status": "exported",
+  "created": "2026-08-29T07:00:23Z",
+  "updated": "2026-08-29T07:25:34Z",
+  "targets": [
+    {
+      "id": "c1",
+      "kind": "announcement",
+      "text": "Jira flow closes its loop: the merged flow-store cycle is deployed and proven on prod records, the spec a ticket is deciding on is readable from the ticket itself as a rendered page, the /think leg can be driven from the board, and the bugs that bit the last cycle (deploy.sh un-granting the sweep, the bridge scope-boundary false denial, the dial-in 401 loop) no longer reproduce",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "h10",
+      "kind": "honesty",
+      "text": "Every leg in the announcement is proven from prod records with no session context, and the cycle ends with a /summarize-delivery record before its PR merges \u2014 not ten days after",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "c2",
+      "kind": "requirement",
+      "text": "The flow-store build cycle (#203 / PR #208, 11 of 13 plan tasks) is closed properly before new Jira-flow work opens: a /summarize-delivery record is written (today .devague/deliveries/jira-operating-surface-flow-store.json holds only deviation d1 and docs/deliveries has no entry for the cycle), and #192/#193/#194/#197/#198 close only on t13's live prod proof, not on the merge",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "h1",
+      "kind": "honesty",
+      "text": "The delivery summary docs/deliveries/2026-08-19-jira-operating-surface-flow-store.md is on main, and #192 #193 #194 #197 #198 are closed only by #230's prod-record evidence \u2014 never on the merge",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "c3",
+      "kind": "requirement",
+      "text": "The r4 deploy unit (migrations 0041\u21920045, sweep.py + pr_upkeep_jira.py, adoption-aware control plane, one deploy to thor per migrations/README.md) ships to prod before any Jira-flow leg is proven: GET /v1alpha1/version on prod (192.168.1.146:18080) returns revision c041f28, a pre-squash commit reachable only from origin/scrum2/hands-free-pickup, 12+ commits behind main \u2014 none of the history-faithful sweep, re-mint, ticket reports, or comment consumer is running",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "h2",
+      "kind": "honesty",
+      "text": "After the deploy, prod's GET /v1alpha1/version names a revision that contains c0f6c4a, migrations 0041(cutover)\u20130045 are applied, and the prod registry lists pr-upkeep-sweep-cycle v2 (two-pair bootstrap) and jira-comment-consumer \u2014 read back from prod, not from the deploy log",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "c5",
+      "kind": "requirement",
+      "text": "#191 is fixed as part of this cycle: deploy/prod/deploy.sh lines 88-97 rewrite ~/.culture-nodes/runner.env from a fixed block that never writes NODES_API_URL, and line 116-118 defaults PR_UPKEEP_REPOSITORIES to a jira-less document whenever the operator's shell does not re-supply it \u2014 the sweep-cycle workflow (examples/pr-upkeep/sweep-cycle.workflow.yaml:99-104) names both as environment_refs, so every deploy either fail-closes the sweep or amputates its Jira source silently; the fix re-grants both (or refuses to deploy without them) and is what makes the r4 deploy safe",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "h3",
+      "kind": "honesty",
+      "text": "Two consecutive deploy.sh runs against a host whose runner.env already carries NODES_API_URL and a jira-bearing PR_UPKEEP_REPOSITORIES leave both intact (or the deploy refuses loudly before touching the file), and a named test drives the env-writing section against a fake host to prove it",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "c7",
+      "kind": "requirement",
+      "text": "The /think leg runs Jira-driven (#199, plan task t10): examples/spec-chain/workflow.yaml (22 nodes, compiles, unpublished, unwired) is published and reachable from a ticket fact, frame decisions land as marked questions on the ticket, and the human's reply transacts exactly the stated decision \u2014 confirmations stay user-only",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "h5",
+      "kind": "honesty",
+      "text": "On prod records: a spec-chain run whose trigger_event_id is a ticket-derived fact; a frame decision posted as a marked question, answered on the board, transacts exactly the stated devague move and nothing else; the run mutates .devague/ only through the declared owe-developer custody",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "c8",
+      "kind": "requirement",
+      "text": "#207 is fixed: the claude bridge's workflow-scope boundary measures the committed diff against the branch base, not the whole workspace delta, so a step-0 base move no longer produces a false policy_denied (run 01M0DYPYFTWRWF3AXH24PD9FXF) \u2014 every developer dispatch in this cycle that syncs its checkout otherwise needs the operator to pre-sync the worktree by hand (hand-turn 5 on #203)",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "h6",
+      "kind": "honesty",
+      "text": "Named tests pin both sides: a session whose step-0 base move drags .github changes ends completed, and a session that itself edits .github/ still ends policy_denied; one live developer dispatch with a base move completes without operator pre-sync",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "c9",
+      "kind": "requirement",
+      "text": "#205 is fixed: the culture-nodes-claude-developer bridge on spark stops its once-per-second 401 dial-in reconnect loop (backoff plus a correct dial-in credential), so dial-in coverage on the developer lane is real rather than silently dead",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "h7",
+      "kind": "honesty",
+      "text": "One hour of the developer bridge's journal after the fix shows dial-in reconnects backing off and no sustained 401 loop, and /v1alpha1/dial-in-presence lists the developer bridge; the fix is one dialin.py propagated byte-identically to all five adapters",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "c10",
+      "kind": "boundary",
+      "text": "#202 needs no new work: pr-upkeep v11 declares ledger.propose [claim] and three v11 runs completed honestly on prod (#203 comment 2026-08-19T23:22Z) \u2014 it closes on that evidence, and the same trap is checked across the other published workflows rather than re-fixed",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "h11",
+      "kind": "honesty",
+      "text": "#202 is closed citing the three v11 completed runs on prod (#203 comment 2026-08-19T23:22Z) and a one-line audit that every published workflow's actor nodes declare a ledger.propose block \u2014 no code change",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "c13",
+      "kind": "boundary",
+      "text": "Session economics hold (#48, CLAUDE.md split-plan lane): build packages route to codex/developer actors through /nodes-operator assign, the operator's Claude window is reserved for merge gates, deploy, and the t13 proof, and every hand-turn gets an issue comment",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "h12",
+      "kind": "honesty",
+      "text": "The split plan declares model-session counts per wave before any dispatch, every build package is dispatched through nodes-operator assign, and every operator hand-turn is a comment on #230 or the issue it touches",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "c14",
+      "kind": "audience",
+      "text": "The operator working from the Jira board (files, answers, decides, and reads the spec on the ticket with no repo access); the culture-nodes actor fleet on the developer and codex lanes that builds the legs; and the operator lane that ships the r4 deploy and runs the t13 proof",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "h8",
+      "kind": "honesty",
+      "text": "Each audience can run its leg alone: the operator from the board with no repo access, the fleet from dispatched briefs, the operator lane from deploy.sh plus prod reads",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "c15",
+      "kind": "before_state",
+      "text": "Today prod runs c041f28 (pre-#208): the history-faithful sweep, bounded re-mint, ticket reports and comment consumer exist only on main; the spec a ticket decides on lives only in the checkout (SCRUM-3 comments 10111/10113 summarized 13 claims in prose); the /think leg is the operator session polling the board; every deploy silently un-grants the sweep's NODES_API_URL and Jira config (#191); developer dispatches that sync their base get a false policy_denied (#207) and the developer bridge loops 401 once a second (#205)",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "h13",
+      "kind": "honesty",
+      "text": "Each before-state fact is re-measurable today: prod /v1alpha1/version = c041f28, the prod registry has no jira-comment-consumer, deploy.sh:88-97 has no NODES_API_URL line, #207 and #205 reproduce as their issues describe",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "c16",
+      "kind": "why_it_matters",
+      "text": "A merged-but-undeployed cycle is indistinguishable from a delivered one until someone measures prod \u2014 the flow-store cycle went ten days without a delivery record and its five feature issues read as done. Closing the loop on prod, and making the ticket carry the spec, is what lets the board be a peer operating surface instead of a place the operator session polls",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "h14",
+      "kind": "honesty",
+      "text": "The next cycle's delivery summary exists before its PR merges, and the flow-store issues #192\u2013#198 stay open until #230 cites prod records",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "c17",
+      "kind": "after_state",
+      "text": "Prod's /v1alpha1/version names a revision containing c0f6c4a and the prod registry lists pr-upkeep-sweep-cycle v2 and jira-comment-consumer; a real ticket carries one in-place-updated HTML spec page from intake to PR merge; a ticket fact mints the spec chain and a marked question answered on the board transacts exactly that frame move; deploy.sh preserves the sweep's grants; #207 and #205 no longer reproduce; #192 #193 #194 #197 #198 are closed on prod evidence via #230",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "h9",
+      "kind": "honesty",
+      "text": "Every item in the after-state maps to a numbered success signal in c18 that a reader can re-measure from prod without this session",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "c18",
+      "kind": "success_signal",
+      "text": "Measured from prod records with no session context: (1) GET /v1alpha1/version revision contains c0f6c4a; (2) a two-comment reply on a real ticket emits two facts in order; (3) the ticket shows one spec page whose content changed across at least two lane milestones without a second attachment appearing; (4) a spec-chain run id whose trigger_event_id is a ticket fact; (5) two consecutive deploy.sh runs leave NODES_API_URL and the jira half of PR_UPKEEP_REPOSITORIES intact in runner.env; (6) a developer dispatch with a base move ends completed; (7) one hour of developer-bridge journal with no 401 loop",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "h15",
+      "kind": "honesty",
+      "text": "Every one of the seven signals is recorded in the cycle's delivery summary with the prod read (URL or command plus output) that measured it; a signal that cannot be measured is recorded as unverified, never asserted",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "c24",
+      "kind": "requirement",
+      "text": "The ticket page (#200, redefined): the web UI gains a /tickets/<ticket-id> route rendering the ticket's whole conversation from control-plane state \u2014 spec claims with confirmation state, questions/decisions, start/finish reports, run status, and the reply thread \u2014 with a link back to the Jira ticket; the page's URL is posted on the ticket at intake through the jira bridge and replaced in place, never duplicated; a reply submitted on the page is posted as a Jira comment via the bridge under the system's account and appended as a human engine fact, and the page freezes with a pointer to the merged PR; the render is deterministic from state, no LLM in the path",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "h16",
+      "kind": "honesty",
+      "text": "On a real ticket: the ticket carries one link to /tickets/<id> posted at intake; the page opened with no repo access shows every claim with its state and the reply thread; one reply typed on the page appears as a Jira comment on the ticket AND as an engine fact that resumes a waiting flow, measured from prod records; the same state renders byte-identically twice; the UI's PRD \u00a78.8 accessibility rules (keyboard order, icon+word status, reduced motion) hold on the new route",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "c25",
+      "kind": "requirement",
+      "text": "The r4 deploy unit is TWO deploys, not one: deploy.sh thor (migrate \u2192 nodes-cutover \u2192 stack) then deploy.sh orin, with orin's worker stopped before thor's migrate/cutover window and restarted after, and revision parity verified (prod GET /v1alpha1/version vs each worker image's REVISION) before the sweep schedule resumes \u2014 deploy.sh:703 stops thor's services only and no api\u2194worker revision check exists (migrations_test.go:24-27 records the one-host premise as false)",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "h17",
+      "kind": "honesty",
+      "text": "Prod records after r4 show thor's api and both workers at one revision containing c0f6c4a, and no 'Jira history cutover is pending' delivery errors (internal/store/postgres/signal.go:705) in the deploy window",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "c26",
+      "kind": "requirement",
+      "text": "Rollback for r4 is restore-from-dump, not schema rollback (no down migrations; docs/adr/0002 N-1 promise does not cover a 12-commit jump): deploy.sh takes a fresh pg dump immediately before migrate and the summary names it, so a bad 0041\u21920045 apply is recoverable per deploy/prod/RESTORE.md",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "h18",
+      "kind": "honesty",
+      "text": "~/.culture-nodes/backups/ on thor holds a dump timestamped after the sweep stop and before migrate, and the restore procedure was rehearsed once against it (dry run) before the real deploy",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "c27",
+      "kind": "requirement",
+      "text": "The re-mint scheduler's producer actor id engine_remint_scheduler (internal/engine/remint.go:21-28, RemintProducerActorID unwired in cmd/nodes/worker.go) is registered in prod's actors table before r4, or every due re-mint fails its ledger append (actors(id) FK) on the first technical failure after deploy",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "h19",
+      "kind": "honesty",
+      "text": "GET /v1alpha1/actors on prod lists engine_remint_scheduler before the first post-deploy sweep, and the first re-mint's derived record appends without an FK error",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "c29",
+      "kind": "requirement",
+      "text": "A page reply enters the engine through a NEW server-side endpoint (POST /v1alpha1/tickets/{id}/replies) guarded the way human-task decisions are (NODES_HUMAN_DECISION_TOKEN_SECRET, browser token in sessionStorage per web/src/api/decision-token.ts) with a required replier field like decider_actor_id: the endpoint appends the fact in-process with origin.kind human and the replier named, then mirrors it to Jira via the bridge's post_comment as 'via <replier>' \u2014 the browser never holds NODES_EVENT_TOKEN_SECRET (namespace-wide emit standing, signalevents.go:226-252)",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "h20",
+      "kind": "honesty",
+      "text": "One reply typed on the page yields exactly one engine fact (origin.kind human, replier set) and one Jira comment; the sweep's next pass emits nothing for that comment (self-echo by account id, pr_upkeep_jira.py:100-113); a GET /v1alpha1/events stream shows no second fact",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "c30",
+      "kind": "boundary",
+      "text": "The mirrored Jira comment is display-only: the sweep swallows it by design (account-id self-echo is authoritative, hardened after incident s14) and the self-echo contract is NOT carved out for page replies; a human who types directly in Jira still reaches the engine via the sweep, and both paths produce the same fact name and payload shape so consumers never fork on origin",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "h21",
+      "kind": "honesty",
+      "text": "A named test asserts the page-reply fact and the sweep-emitted comment fact validate against one schema, and jira_comment_is_self_echo is unchanged",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "c31",
+      "kind": "boundary",
+      "text": "The SPA never carries a namespace-wide secret (NODES_EVENT_TOKEN_SECRET, actor tokens, the jira bridge bearer); the only browser-held standing stays the typed, sessionStorage-only decision token; the ticket page is not offered beyond the LAN until an auth story exists (park v4)",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "h22",
+      "kind": "honesty",
+      "text": "grep of web/src for every *_SECRET / bearer name returns only the decision-token path",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "c33",
+      "kind": "requirement",
+      "text": "The ticket page has a server-side source: GET /v1alpha1/tickets/{id} composes runs by subject (a new subject filter on listRuns \u2014 runs.subject exists per migration 0038 but is not a query filter), their ledger and human tasks, ticket-report outbox rows, page replies, AND a frame snapshot \u2014 no .devague/ state is in the control plane today (internal/devague only parses delivery fixtures; MapFrameClaims has zero callers), so the /think leg publishes its frame (claims with state, questions, decisions) into the control plane after each move as a new versioned record keyed by ticket id",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "h23",
+      "kind": "honesty",
+      "text": "GET /v1alpha1/tickets/SCRUM-N on prod returns the frame snapshot whose claim states match devague show --json in the lane worktree at the same move, plus the runs whose subject is SCRUM-N",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "c38",
+      "kind": "success_signal",
+      "text": "(8) On prod records: a reply submitted through /tickets/<ticket-id> with the decision token appears as one Jira comment on the ticket authored by the system account 'via <replier>', one engine fact with origin.kind human and the replier named, and a previously waiting run whose resume cites that fact's id \u2014 and the next sweep pass emits no fact for the mirrored comment",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "h24",
+      "kind": "honesty",
+      "text": "Signal 8 is recorded in the cycle's delivery summary with the ticket key, the comment id, the fact id, and the resumed run id read from prod \u2014 or marked unverified",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "c39",
+      "kind": "success_signal",
+      "text": "(9) Across at least two lane milestones on a real ticket, exactly one comment carrying the page-link marker exists on the ticket (edited or re-posted in place), its URL path contains the ticket id, and the page it points at links back to the ticket \u2014 counted from the ticket's comment list, not from attachments",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "h25",
+      "kind": "honesty",
+      "text": "Signal 9 is recorded with the ticket's comment list at two milestones (ids and marker), showing one link comment \u2014 or marked unverified",
+      "deferred": false,
+      "deferred_reason": ""
+    }
+  ],
+  "tasks": [
+    {
+      "id": "t1",
+      "summary": "Fix #191: deploy.sh's runner.env write carries NODES_API_URL and a jira-bearing PR_UPKEEP_REPOSITORIES forward from the existing file, or refuses loudly before touching it",
+      "origin": "llm",
+      "status": "confirmed",
+      "acceptance_criteria": [
+        "A fake-host harness runs the env-writing section of deploy/prod/deploy.sh twice against a runner.env that already holds NODES_API_URL and a jira-bearing PR_UPKEEP_REPOSITORIES; both survive byte-exact",
+        "With NODES_API_URL absent from both the shell and the existing file, the section exits non-zero with a hint naming the key, before any write",
+        "tests/test_deploy_runner_env.py names both cases; deploy.sh is the only production file touched"
+      ],
+      "deps": [],
+      "covers": [
+        "c5",
+        "h3"
+      ],
+      "instruction": ""
+    },
+    {
+      "id": "t2",
+      "summary": "deploy.sh becomes the two-host r4 procedure: preflight nodes doctor + checkout-state check BEFORE the thor stack is stopped, a forced pg dump before migrate, orin's worker stopped across migrate/cutover and restarted after, and an api\u2194worker revision-parity check before the sweep schedule resumes",
+      "origin": "llm",
+      "status": "confirmed",
+      "acceptance_criteria": [
+        "Fake-host harness: with a dirty or detached ~/git/culture-nodes-agent the thor lane exits non-zero before any docker compose stop",
+        "The harness records the order: doctor \u2192 dump \u2192 stop thor services \u2192 stop orin worker \u2192 migrate \u2192 nodes-cutover \u2192 up \u2192 start orin worker \u2192 parity check \u2192 resume; a parity mismatch refuses to resume the sweep",
+        "migrations/README.md's 0041 entry documents the two-host sequence and the dump path; the dump path is printed in the deploy summary"
+      ],
+      "deps": [
+        "t1"
+      ],
+      "covers": [
+        "c25",
+        "h17",
+        "c26",
+        "h18"
+      ],
+      "instruction": ""
+    },
+    {
+      "id": "t3",
+      "summary": "Register the re-mint producer: wire Options.RemintProducerActorID to NODES_REMINT_PRODUCER_ACTOR_ID in cmd/nodes/worker.go (default engine_remint_scheduler) and make deploy/prod/register-actor.sh able to register it as a kind=engine actor",
+      "origin": "llm",
+      "status": "confirmed",
+      "acceptance_criteria": [
+        "internal/worker test: a technical failure of a trigger-created run schedules a re-mint whose derived record's origin.actor_id equals the configured id, against a PG-backed store where that id is registered",
+        "register-actor.sh --engine engine_remint_scheduler is idempotent (second run is a no-op) and is named in #230's step list"
+      ],
+      "deps": [],
+      "covers": [
+        "c27",
+        "h19"
+      ],
+      "instruction": ""
+    },
+    {
+      "id": "t4",
+      "summary": "Fix #207: the claude bridge's workflow-scope boundary measures git diff --name-only <branch-base>..HEAD plus uncommitted changes, never the workspace delta from the pre-base-move tree",
+      "origin": "llm",
+      "status": "confirmed",
+      "acceptance_criteria": [
+        "adapters/claude-code test: a session whose step-0 base move drags .github/workflows changes between bases ends completed",
+        "adapters/claude-code test: a session that itself edits .github/ still ends policy_denied with the same message",
+        "The boundary implementation is in one module with no change to the byte-identical shared bridge modules"
+      ],
+      "deps": [],
+      "covers": [
+        "c8",
+        "h6"
+      ],
+      "instruction": ""
+    },
+    {
+      "id": "t5",
+      "summary": "Fix #205: dialin.py backs off exponentially (ceiling) on HTTP 401 and surfaces the credential mismatch once; propagated byte-identically to all five adapters; the developer unit's dial token is reissued",
+      "origin": "llm",
+      "status": "confirmed",
+      "acceptance_criteria": [
+        "A dialin unit test drives five consecutive 401s and asserts the sleep sequence grows to the ceiling and the warning is logged once, not per attempt",
+        "tests/lint's byte-identical guard passes for dialin.py across all five adapters after the change",
+        "Operator step (hand-turn on #230): reissue the developer dial token with deploy/prod/issue-dialin-credential.sh; /v1alpha1/dial-in-presence lists company/developer as connected within one hour"
+      ],
+      "deps": [],
+      "covers": [
+        "c9",
+        "h7"
+      ],
+      "instruction": ""
+    },
+    {
+      "id": "t6",
+      "summary": "internal/ticketreport gains package tests (#231): start and finish for one run, delivery through the jira bridge only, retry/backoff to terminal failure, and the sub-interval case where finish arrives before start delivered",
+      "origin": "llm",
+      "status": "confirmed",
+      "acceptance_criteria": [
+        "go test ./internal/ticketreport/ runs at least four named tests covering the four cases and they pass",
+        "No production code change except what the tests reveal as a defect, each such fix cited in the PR"
+      ],
+      "deps": [],
+      "covers": [
+        "c3"
+      ],
+      "instruction": ""
+    },
+    {
+      "id": "t7",
+      "summary": "Operator lane: measure the before-state, reconcile the prod checkouts per q3 (discard; no qwen config), then run the r4 deploy \u2014 deploy.sh thor, deploy.sh orin \u2014 publish pr-upkeep-sweep-cycle v2 and jira-comment-consumer, register engine_remint_scheduler; every hand-turn a comment on #230",
+      "origin": "llm",
+      "status": "confirmed",
+      "acceptance_criteria": [
+        "Before touching anything: prod /v1alpha1/version, the workflow key list, and both hosts' git status are pasted into #230 (the before-state)",
+        "After: /v1alpha1/version contains c0f6c4a, GET /v1alpha1/workflows lists pr-upkeep-sweep-cycle v2 and jira-comment-consumer, GET /v1alpha1/actors lists engine_remint_scheduler, and both workers report the same revision",
+        "No 'Jira history cutover is pending' delivery error appears in the deploy window; the dump path is in #230"
+      ],
+      "deps": [
+        "t2",
+        "t3",
+        "t6"
+      ],
+      "covers": [
+        "c3",
+        "h2",
+        "c15",
+        "h13"
+      ],
+      "instruction": ""
+    },
+    {
+      "id": "t8",
+      "summary": "t13 live proof of the deployed flow-store legs on a real ticket, from prod records only (signals 1, 2, 5; a bounded re-mint; a start/finish report; a bare comment reaching its consumer); close #192 #193 #194 #197 #198 on that evidence and #202 with the ledger.propose audit",
+      "origin": "llm",
+      "status": "confirmed",
+      "acceptance_criteria": [
+        "Two comments posted inside one sweep interval on a real ticket emit two facts in order (fact ids cited)",
+        "A deliberately killed trigger-created run re-mints once (derived record id cited) and, on a second kill, parks on a human task",
+        "The ticket shows a start and a finish comment for one run id; #192\u2013#198 each close citing a prod record; #202 closes citing the v11 runs and a one-line audit that every published workflow's actor nodes declare ledger.propose"
+      ],
+      "deps": [
+        "t7"
+      ],
+      "covers": [
+        "c2",
+        "h1",
+        "c10",
+        "h11"
+      ],
+      "instruction": ""
+    },
+    {
+      "id": "t9",
+      "summary": "Ticket projection in the control plane: migration ticket_frames (append-only, keyed by ticket id + version), POST /v1alpha1/tickets/{id}/frame (decision-token guarded), GET /v1alpha1/tickets/{id} composing runs by subject, ledger, human tasks, ticket reports, replies, and the latest frame; a subject filter on listRuns; openapi updated",
+      "origin": "llm",
+      "status": "confirmed",
+      "acceptance_criteria": [
+        "PG-backed test: two frame posts for one ticket yield versions 1 and 2 and GET returns version 2 with claim states byte-equal to the posted JSON",
+        "GET /v1alpha1/runs?subject=SCRUM-9 returns only runs whose subject matches (test with a decoy subject)",
+        "POST /frame without the decision token is 401; api/openapi/openapi.yaml documents the two routes and the filter"
+      ],
+      "deps": [],
+      "covers": [
+        "c33",
+        "h23"
+      ],
+      "instruction": ""
+    },
+    {
+      "id": "t10",
+      "summary": "Reply endpoint: POST /v1alpha1/tickets/{id}/replies (decision-token guarded, required replier) appends a signal event in-process with origin.kind human and the replier named, and enqueues a display-only mirror comment 'via <replier>' through the jira bridge outbox; the page-reply fact and the sweep's comment fact validate against one schema",
+      "origin": "llm",
+      "status": "confirmed",
+      "acceptance_criteria": [
+        "PG-backed test with a DECOY run: two runs parked on the same until.signal name, one whose subject is the fixture ticket and one whose subject is a different ticket; one POST yields exactly one signal_events row (origin.kind human, replier in payload, and the ticket id + originating_question_id in the same payload fields the sweep's comment fact carries) and one outbox row. A signal park matches (namespace, event_name) only, with no subject or payload filter (internal/store/postgres/signal.go selectLockedSubscriptionsSQL; examples/jira-question-round-trip/question_correlation.py states this contract), so BOTH subscriptions fire: the test asserts the ticket's run resumes and its resume cites the fact id, AND that the decoy run's consumer gets answer_for(payload, its_question_id) == None and re-parks without acting \u2014 the cross-ticket wake is observed and neutralised, not assumed away",
+        "A schema test validates a fixture page-reply fact and a fixture sweep comment fact against the same JSON Schema",
+        "jira_comment_is_self_echo in examples/pr-upkeep/pr_upkeep_jira.py is unchanged (test pins its bytes)"
+      ],
+      "deps": [
+        "t9"
+      ],
+      "covers": [
+        "c29",
+        "h20",
+        "c30",
+        "h21"
+      ],
+      "instruction": ""
+    },
+    {
+      "id": "t11",
+      "summary": "Web route /tickets/:id: renders the projection (frame claims with state, questions/decisions, reports, runs, reply thread), a link back to the Jira ticket, a reply box using the existing decision-token store, and a freeze banner; PRD \u00a78.8 rules hold on the route; no secret enters the bundle",
+      "origin": "llm",
+      "status": "confirmed",
+      "acceptance_criteria": [
+        "vitest: the route renders a fixture projection with every claim's state as icon+word and the back-link href equal to the ticket URL",
+        "playwright e2e: keyboard walk reaches the reply box and submits with the decision token; reduced-motion honoured",
+        "A test greps web/src for every *_SECRET / bearer name and finds only the decision-token path"
+      ],
+      "deps": [
+        "t9"
+      ],
+      "covers": [
+        "c24",
+        "h16",
+        "c31",
+        "h22",
+        "c14",
+        "h8"
+      ],
+      "instruction": ""
+    },
+    {
+      "id": "t12",
+      "summary": "Link at intake and freeze: jira-intake's intake node posts ONE page-link comment carrying a link marker (re-posted/edited in place, never duplicated); the sweep emits pr.merged for closed PRs with merged_at (watermarked) and links the PR to its ticket by branch name or body carrying the ticket id; a pr.merged fact freezes the ticket's page (frozen flag + merged PR pointer on the projection)",
+      "origin": "llm",
+      "status": "confirmed",
+      "acceptance_criteria": [
+        "Sweep test: a merged PR yields exactly one pr.merged fact across two passes (watermark), with issue_key parsed from the branch or body; an open PR yields none",
+        "Intake workflow test: two intake milestones leave one link-marker comment on the fixture ticket",
+        "PG-backed test: a pr.merged fact for the linked PR sets frozen=true and merged_pr on GET /v1alpha1/tickets/{id}; a decision-token freeze action does the same"
+      ],
+      "deps": [
+        "t9"
+      ],
+      "covers": [
+        "c24"
+      ],
+      "instruction": ""
+    },
+    {
+      "id": "t13",
+      "summary": "Board-driven /think leg (q4 = B): declare .devague/ custody for the owe-developer lane; a lane workflow minted from a ticket fact runs the devague moves in the lane worktree, commits .devague/, posts the frame snapshot to POST /tickets/{id}/frame after each move, and surfaces frame decisions as marked questions the human answers on the ticket or the page",
+      "origin": "llm",
+      "status": "confirmed",
+      "acceptance_criteria": [
+        "The lane config declares the custody (checkout path, branch prefix, .devague/ write allowed) and a test asserts the assign verb refuses a .devague/ write for any other lane",
+        "Workflow test: a fixture ticket fact mints the lane workflow; a marked question's answer (via the sweep fact or the page reply fact) transacts exactly the stated devague move and no other",
+        "Live: one run on prod whose trigger_event_id is a ticket fact and whose frame snapshot appears on GET /v1alpha1/tickets/{id}"
+      ],
+      "deps": [
+        "t9",
+        "t10"
+      ],
+      "covers": [
+        "c7",
+        "h5"
+      ],
+      "instruction": ""
+    },
+    {
+      "id": "t14",
+      "summary": "Live proof of the ticket-page legs on a real ticket (signals 3, 4, 8, 9) from prod records only; close #199 and #200 on that evidence",
+      "origin": "llm",
+      "status": "confirmed",
+      "acceptance_criteria": [
+        "Signal 8: a reply typed on /tickets/<id> appears as one Jira comment 'via <replier>', one human-origin fact, and one resumed run \u2014 ids cited from prod",
+        "Signal 9: the ticket's comment list at two milestones shows exactly one link-marker comment whose path carries the ticket id",
+        "Signal 4: a spec-chain lane run id whose trigger_event_id is a ticket fact; every one of signals 1\u20139 is recorded with its prod read or marked unverified"
+      ],
+      "deps": [
+        "t8",
+        "t10",
+        "t11",
+        "t12",
+        "t13"
+      ],
+      "covers": [
+        "c1",
+        "h10",
+        "c17",
+        "h9",
+        "c18",
+        "h15",
+        "c38",
+        "h24",
+        "c39",
+        "h25"
+      ],
+      "instruction": ""
+    },
+    {
+      "id": "t15",
+      "summary": "Session accounting and closure: the split plan declares model-session counts per wave before any dispatch (colleague for review/explore, codex + claude-developer for build; qwen parked); /summarize-delivery is written BEFORE the cycle's final PR merges; every hand-turn is a comment on #230 or the issue it touches",
+      "origin": "llm",
+      "status": "confirmed",
+      "acceptance_criteria": [
+        "The split plan artifact lists sessions per wave and is linked from #230 before wave 1 dispatches",
+        "docs/deliveries/<date>-jira-flow-spec-read-related-bugs.md is in the final PR, and #192\u2013#200 are closed only by citations in it or in #230"
+      ],
+      "deps": [
+        "t14"
+      ],
+      "covers": [
+        "c13",
+        "h12",
+        "c16",
+        "h14"
+      ],
+      "instruction": ""
+    }
+  ],
+  "risks": [
+    {
+      "id": "r1",
+      "text": "The store-pull second control plane (#232) is not built in this cycle; the h17/c19 claims of the flow-store spec stay unverified",
+      "kind": "out_of_scope",
+      "task_id": null,
+      "resolved": false,
+      "resolution": ""
+    },
+    {
+      "id": "r2",
+      "text": "The ticket page is LAN-only (control plane on thor:18080, authless SPA): outside users cannot reach it until an auth/exposure story exists \u2014 t11 ships for the operator on the LAN; #235 carries per-user identity",
+      "kind": "unknown_nonblocking",
+      "task_id": null,
+      "resolved": false,
+      "resolution": ""
+    },
+    {
+      "id": "r3",
+      "text": "t12 changes examples/pr-upkeep/sweep.py, which redeploys by digest \u2014 whether #221's SonarCloud-boundary fold rides the same digest change or waits for #218 is undecided",
+      "kind": "unknown_nonblocking",
+      "task_id": "t12",
+      "resolved": false,
+      "resolution": ""
+    },
+    {
+      "id": "r4",
+      "text": "The headspace code-node form of the spec chain (#237) is deferred; t13's lane sessions are agent-reported moves, not engine-verified ones",
+      "kind": "follow_up",
+      "task_id": "t13",
+      "resolved": false,
+      "resolution": ""
+    },
+    {
+      "id": "r5",
+      "text": "t7 is operator-lane and irreversible in part (discarding prod checkouts, applying migrations): the dump from t2 is the only rollback; rehearse RESTORE.md on spark before t7",
+      "kind": "unknown_nonblocking",
+      "task_id": "t7",
+      "resolved": false,
+      "resolution": ""
+    },
+    {
+      "id": "r6",
+      "text": "Signal subscriptions match (namespace, event_name) only \u2014 no subject filter (signal.go selectLockedSubscriptionsSQL) \u2014 so a page reply or sweep comment for one ticket wakes every run parked on that event name; t10 neutralises it consumer-side (question_correlation.answer_for + re-park, pinned by a decoy-run test) and subject-scoped subscriptions are an engine feature deferred to #239",
+      "kind": "follow_up",
+      "task_id": "t10",
+      "resolved": false,
+      "resolution": ""
+    }
+  ]
+}

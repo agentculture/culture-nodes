@@ -5,6 +5,23 @@ All notable changes to this project will be documented in this file.
 Format follows [Keep a Changelog](https://keepachangelog.com/). This project
 adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.43.0] - 2026-08-29
+
+### Added
+
+- The jira-flow cycle, built by the fleet and proven on prod (#230): two-host r4 deploy procedure with preflight, forced dump, orin quiesce and parity-gated sweep resume (t2); re-mint producer actor wiring (t3); ticket projection API with versioned frames and a subject filter (t9); decision-token-guarded ticket replies and freeze, human-origin facts with a display-only Jira mirror, one shared comment-fact schema (t10); /tickets/:id web route with reply form and freeze banner (t11); pr.merged sweep facts scoped to the Jira project and link-at-intake (t12); .devague/ custody on the developer lane, the spec-chain lane workflow minted from a ticket fact, operator docs (t13); issue creation as history position zero; the engine-owned singleton ticket-page link; every Jira fact names its issue key as the run subject; the /jira operator skill; docs/audits fleet-and-bridge evaluation; the delivery summary written before this PR merges
+
+### Fixed
+
+- #191 deploy.sh keeps the sweep grants (and writes the target home absolute); #207 scope guard measures a bridge-trusted base_ref, mirrored to codex and colleague, refspec-guarded (#242); #205 dial-in backs off on 401 and the developer unit reads its issued credential; #240 mode binding stripped for a mode-less assign; the ticket-report dispatcher no longer deadlocks behind a failed start and runs with the actor tokens on the scheduler; nodes-cutover reaches postgres from the host; a devague_write dispatch lands in the custody checkout
+
+## [0.42.4] - 2026-08-29
+
+### Added
+
+- docs/plans/2026-08-29-jira-flow-spec-read-related-bugs.md: the converged plan — 15 tasks in 6 waves covering all 48 spec targets (#191 fix, two-host r4 deploy with preflight doctor, re-mint actor, #207, #205, ticketreport tests, ticket projection API, reply endpoint, /tickets/:id route, link-at-intake + pr.merged freeze, board-driven /think as lane sessions, the two live proofs, session accounting); five risks (#232 out of scope, LAN-only page, #221 placement, #237 deferred, t7 irreversibility)
+- Plan task t10 (PR #238, Qodo finding 1 "Replies wake unrelated tickets"): its first acceptance criterion presumed a subject-scoped signal park that the engine does not have — subscriptions match `(namespace, event_name)` only. Replaced with a decoy-run criterion that observes the cross-ticket wake and asserts the decoy re-parks via `question_correlation.answer_for`; risk r6 (`follow_up`, #239) records subject-scoped subscriptions as an engine feature outside this cycle
+
 ## [0.42.3] - 2026-08-29
 
 ### Added

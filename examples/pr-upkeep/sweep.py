@@ -593,6 +593,67 @@ def fetch_open_pulls(token: str | None, repository: str) -> list[dict]:
     return open_pulls
 
 
+MERGED_PR_LOOKBACK_DAYS = 30
+MERGED_PR_MAX_PAGES = 10
+
+
+def fetch_merged_pulls(token: str | None, repository: str) -> list[dict]:
+    """Closed PRs merged inside the lookback window, across pages.
+
+    One 50-item page silently dropped every merge past it (Qodo 6 on PR
+    #244). GitHub sorts closed PRs by `updated` when asked; pages are read
+    newest-first until a page ends before the window, so every merge inside
+    the window is observed and the source_key + merged_at watermark keeps
+    each one to a single fact. The window and page cap bound the read.
+    """
+    from datetime import datetime, timedelta, timezone
+
+    cutoff = datetime.now(timezone.utc) - timedelta(days=MERGED_PR_LOOKBACK_DAYS)
+    merged: list[dict] = []
+    for page in range(1, MERGED_PR_MAX_PAGES + 1):
+        pulls = _get_json(
+            f"{GITHUB_API}/repos/{repository}/pulls"
+            f"?state=closed&sort=updated&direction=desc&per_page=50&page={page}",
+            token,
+        )
+        if not pulls:
+            break
+        merged.extend(pull for pull in pulls if pull.get("merged_at"))
+        oldest = min((pull.get("updated_at") or "9999") for pull in pulls)
+        if oldest < cutoff.strftime("%Y-%m-%dT%H:%M:%SZ") or len(pulls) < 50:
+            break
+    return merged
+
+
+_ISSUE_KEY_RE = re.compile(r"(?<![A-Z0-9])([A-Z][A-Z0-9]+-\d+)(?![A-Z0-9])")
+
+
+def merged_pr_fact(pull: dict, repository: str, jira_project: str | None = None) -> dict | None:
+    """Build the freeze fact, correlating by head branch first, then body.
+
+    With a configured Jira project only keys of THAT project correlate: the
+    first prod pass linked PR #70 to "ADR-0002" and froze a phantom ticket
+    (colleague review of the wave-1 merge, #230).
+    """
+    if not pull.get("merged_at"):
+        return None
+    head = (pull.get("head") or {}).get("ref") or ""
+    pattern = _ISSUE_KEY_RE
+    if jira_project:
+        pattern = re.compile(r"(?<![A-Z0-9])(" + re.escape(jira_project) + r"-\d+)(?![A-Z0-9])")
+    match = pattern.search(head) or pattern.search(pull.get("body") or "")
+    if not match:
+        return None
+    return {
+        "source": "github_pr",
+        "repository": repository,
+        "number": pull.get("number"),
+        "url": pull.get("html_url") or "",
+        "merged_at": pull["merged_at"],
+        "issue_key": match.group(1),
+    }
+
+
 def fetch_check_runs(token: str | None, repository: str, head_sha: str) -> dict:
     """Check runs for one PR's head commit (issue #61's third source)."""
     return _get_json(
@@ -646,7 +707,9 @@ def newest_comment_timestamp(comments: list[dict]) -> str:
     return max((_comment_timestamp(c) for c in comments), default="")
 
 
-def raise_event(name: str, payload: dict, source_key: str, watermark: dict) -> dict:
+def raise_event(
+    name: str, payload: dict, source_key: str, watermark: dict, subject: str = ""
+) -> dict:
     """Raise one cursor-guarded fact through the control plane's event path."""
     base = os.environ.get("NODES_API_URL")
     token = os.environ.get("NODES_EVENT_TOKEN")
@@ -659,6 +722,11 @@ def raise_event(name: str, payload: dict, source_key: str, watermark: dict) -> d
             "emitter": "pr-upkeep/sweep",
             "source_key": source_key,
             "watermark": watermark,
+            # The correlation key the control plane stamps on a minted run
+            # (runs.subject, migration 0038): the ticket projection lists a
+            # ticket's runs by it and one-active-run-per-subject keys on it.
+            # Measured on t8: no prod run had ever carried one (#230).
+            **({"subject": subject} if subject else {}),
         }
     ).encode()
     request = urllib.request.Request(
@@ -753,6 +821,28 @@ def main() -> int:
             )
 
         emitted = []
+        # Closed PRs are a separate bounded read. The immutable merged_at
+        # value is the watermark, so two passes append exactly one fact.
+        with attempting(f"listing merged PRs of {github_repo} (GitHub)"):
+            merged_pulls = fetch_merged_pulls(token, github_repo)
+        for pull in merged_pulls:
+            fact = merged_pr_fact(pull, github_repo, repository.get("jira_project"))
+            if fact is None:
+                continue
+            # Re-emitted every pass by design: the control plane keys the
+            # fact on source_key + watermark (merged_at) and answers a repeat
+            # with duplicate=true (internal/store/postgres/signal.go), so
+            # consumers see one fact per merge, not one per sweep.
+            with attempting(f"emitting pr.merged for #{pull.get('number')} (control plane)"):
+                emitted.append(
+                    raise_event(
+                        "pr.merged",
+                        fact,
+                        f"github:{github_repo}:pr:{pull.get('number')}:merged",
+                        {"merged_at": pull["merged_at"]},
+                        subject=fact["issue_key"],
+                    )
+                )
         for pull in swept:
             if not pull["head_sha"]:
                 print(
@@ -824,6 +914,7 @@ def main() -> int:
                                     f"{position_kind}:{position_id}"
                                 ),
                                 watermark,
+                                subject=item["id"],
                             )
                         )
     except SweepFailure as failure:

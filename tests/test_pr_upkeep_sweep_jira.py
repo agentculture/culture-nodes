@@ -35,6 +35,57 @@ def jira_scrum_3_self_echo():
 
 
 class TestJiraHistoryReplay:
+    @staticmethod
+    def _fresh_issue():
+        return {
+            "key": "SCRUM-5",
+            "fields": {
+                "created": "2026-08-29T09:45:00.000+0000",
+                "status": {"name": "To Do"},
+                "comment": {"comments": []},
+            },
+            "changelog": {"histories": []},
+        }
+
+    def test_brand_new_issue_emits_creation_transition_once_across_sweep_passes(self):
+        issue = self._fresh_issue()
+        cursors = {}
+        appended = []
+
+        for _pass in range(2):
+            for fact in jira.jira_history_facts(issue, "bot-1"):
+                name, payload, watermark, position_kind, position_id = fact
+                source_key = f"jira:team.example.com:SCRUM-5:history:{position_kind}:{position_id}"
+                encoded = json.dumps(watermark, sort_keys=True)
+                if cursors.get(source_key) == encoded:
+                    continue
+                cursors[source_key] = encoded
+                appended.append(fact)
+
+            assert len(appended) == 1
+
+        [(name, payload, watermark, position_kind, position_id)] = appended
+        assert name == "pr-upkeep.jira.transitioned.to-do"
+        assert payload["status"] == "To Do"
+        assert payload["changelog_id"] == "0"
+        assert watermark == {"changelog_id": "0", "comment_id": ""}
+        assert (position_kind, position_id) == ("changelog", "0")
+
+    def test_adopted_cutover_watermark_suppresses_creation_position(self):
+        adopted = {"changelog_id": "10180", "comment_id": "10118"}
+        facts = jira.jira_history_facts(self._fresh_issue(), "bot-1")
+
+        emitted = [
+            fact
+            for fact in facts
+            if not (
+                int(fact[2]["changelog_id"] or 0) <= int(adopted["changelog_id"])
+                and int(fact[2]["comment_id"] or 0) <= int(adopted["comment_id"])
+            )
+        ]
+
+        assert emitted == []
+
     def test_scrum_3_entry_10180_bridge_transition_does_not_refire_but_human_transition_emits(
         self, jira_scrum_3_self_echo
     ):
@@ -44,7 +95,7 @@ class TestJiraHistoryReplay:
 
         transition_ids = [fact[1]["changelog_id"] for fact in facts]
         assert "10180" not in transition_ids
-        assert transition_ids == ["10179", "10181"]
+        assert transition_ids == ["0", "10179", "10181"]
 
     def test_transition_self_echo_uses_exact_author_id_not_marker_substrings(
         self, jira_scrum_3_self_echo
@@ -61,8 +112,8 @@ class TestJiraHistoryReplay:
         before = jira.jira_history_facts(jira_round_trip["issues"][0], "bot-1")
         after = jira.jira_history_facts(jira_round_trip_complete["issues"][0], "bot-1")
 
-        assert [fact[0] for fact in before] == ["pr-upkeep.jira.transitioned.to-do"]
-        assert [fact[0] for fact in after] == [
+        assert [fact[0] for fact in before][-1:] == ["pr-upkeep.jira.transitioned.to-do"]
+        assert [fact[0] for fact in after][-5:] == [
             "pr-upkeep.jira.transitioned.to-do",
             "pr-upkeep.jira.transitioned.in-progress",
             jira.JIRA_COMMENT_EVENT_NAME,
@@ -70,7 +121,11 @@ class TestJiraHistoryReplay:
             "pr-upkeep.jira.transitioned.done",
         ]
         transitions = [fact for fact in after if fact[0].startswith("pr-upkeep.jira.transitioned.")]
-        assert [fact[1]["status"] for fact in transitions] == ["To Do", "In Progress", "Done"]
+        assert [fact[1]["status"] for fact in transitions][-3:] == [
+            "To Do",
+            "In Progress",
+            "Done",
+        ]
 
     def test_two_comment_reply_replays_two_facts_with_cumulative_history_watermarks(
         self, jira_round_trip_complete
@@ -92,6 +147,7 @@ class TestJiraHistoryReplay:
         facts = jira.jira_history_facts(issue, "bot-1")
         transitions = [fact for fact in facts if fact[0].startswith("pr-upkeep.jira.transitioned.")]
         assert [fact[1].get("changelog_id") for fact in transitions] == [
+            "0",
             "20000",
             "20001",
             "20002",
@@ -225,7 +281,7 @@ class TestJiraWorkItems:
         cursors = {}
         appended = []
 
-        def equality_dedup(name, payload, source_key, watermark):
+        def equality_dedup(name, payload, source_key, watermark, **_kw):
             encoded = json.dumps(watermark, sort_keys=True)
             if cursors.get(source_key) == encoded:
                 return {"duplicate": True}
@@ -424,7 +480,8 @@ class TestJiraSelfEcho:
 
         facts = jira.jira_history_facts(issue, "bridge-bot")
 
-        assert [(fact[0], fact[1]["answer"]["comment_id"]) for fact in facts] == [
+        comment_facts = [fact for fact in facts if fact[0] == jira.JIRA_COMMENT_EVENT_NAME]
+        assert [(fact[0], fact[1]["answer"]["comment_id"]) for fact in comment_facts] == [
             (jira.JIRA_COMMENT_EVENT_NAME, "10117")
         ]
 

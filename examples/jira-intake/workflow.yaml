@@ -75,7 +75,7 @@ kind: Workflow
 
 metadata:
   name: jira-intake
-  version: 1.2.0
+  version: 1.6.0
   ownerRef: team/platform-ai
 
 spec:
@@ -147,8 +147,8 @@ spec:
               kind, details_url), draft a short intake comment for the Jira
               issue: acknowledge pickup, restate the request in one or two
               sentences, and name the single most important clarifying
-              question if one exists. End with the line
-              '- culture-nodes (Claude)'. Your FINAL message must be ONLY
+              question if one exists. End with the line '- culture-nodes
+              (Claude)'. Your FINAL message must be ONLY
               the comment text itself - no headers, no JSON, no code fences,
               no commentary about the task - because it is posted to the
               issue verbatim. Do not start any other work.

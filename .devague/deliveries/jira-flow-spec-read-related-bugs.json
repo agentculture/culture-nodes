@@ -1,0 +1,36 @@
+{
+  "plan_slug": "jira-flow-spec-read-related-bugs",
+  "schema_version": 1,
+  "created": "2026-08-29T07:56:24Z",
+  "updated": "2026-08-29T08:41:22Z",
+  "deviations": [
+    {
+      "id": "d1",
+      "what": "Re-route t1 (#191) from colleague to codex-orin; t5 (#205) follows the same route if its colleague run ends incomplete",
+      "task_ref": "t1",
+      "reason": "colleague run 11b1701688e2 ended incomplete with zero code: model turns averaged 374s against a 300s request timeout, the stream guard tripped at 900s and the drive stalled after 6 turns \u2014 three concurrent colleague runs (t1, t5, review) on one local vLLM, GPU at 96%; capacity, not comprehension. codex-orin just delivered t4 cleanly and the sandbox/network pattern is now known",
+      "affects": [
+        "t5",
+        "c5",
+        "c9"
+      ],
+      "origin": "llm",
+      "status": "approved",
+      "classification": "acceptable"
+    },
+    {
+      "id": "d2",
+      "what": "Add package WP-B2 (t4 hardening, #242): the scope guard's baseline becomes bridge-trusted \u2014 assign gains an optional base_ref run input, the bridge fetches it on the host before the session and measures trusted_base..HEAD plus working tree, falling back to head_before; mirrored to the codex and colleague scope guards; tests for the committed-edit positive case and the upstream-repoint bypass. Routed to codex-thor as one warm session",
+      "task_ref": "t4",
+      "reason": "colleague's review of the t4 merge found the fix measures against @{upstream}, which the guarded session sets: a committed .github edit plus an upstream re-point reads as completed (a regression from the head_before baseline); the codex/colleague mirrors were not updated, breaking the all-backends rule. A bridge-trusted base also retires the operator pre-fetch hand-turn every codex dispatch has needed (no network in the sandbox)",
+      "affects": [
+        "c8",
+        "h6",
+        "t2"
+      ],
+      "origin": "llm",
+      "status": "approved",
+      "classification": "needs-follow-up"
+    }
+  ]
+}

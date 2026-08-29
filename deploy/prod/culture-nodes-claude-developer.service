@@ -5,6 +5,10 @@ After=network-online.target
 [Service]
 Environment=CLAUDE_CODE_BRIDGE_CONFIG=%h/.config/culture-nodes-bridges/developer.json
 EnvironmentFile=-%h/.culture-nodes/bridge-push.env
+# The dial-in credential issued by deploy/prod/issue-dialin-credential.sh
+# (one plaintext custody point, #147); absent on a bridge that has not been
+# issued one, hence the leading dash.
+EnvironmentFile=-%h/.culture-nodes/dialin/developer.env
 ExecStart=%h/.local/bin/claude-code-bridge
 Restart=always
 RestartSec=5

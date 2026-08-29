@@ -48,10 +48,13 @@ usage: nodes-op.sh <verb> [args]
   assign <actor> "<instruction>" [opts]   one-node workflow -> publish -> run -> watch
       opts: --sandbox read-only|workspace-write   (default read-only)
             --mode plan|default|auto-edit|auto    (qwen actors only; required there)
+            --base-ref REF                         (bridge-fetched trusted base)
             --timeout DUR                          (default 15m)
             --retries N                            (default 1 — no auto-retry)
             --outcome NAME                         (default completed)
             --category C                           (optional run category tag)
+            --devague-write                        (this package writes .devague/ —
+                                                    developer lane only, see below)
             --no-watch                             (create and return the run id)
             --yes                                  (required: this bills a session)
   actors                       registered actor rows, over the API (no ssh)
@@ -75,6 +78,13 @@ Actors known to `assign`:
 Each actor defaults to its own worktree; `--repo <path>` pins a dispatch
 elsewhere. The bridge's own repo_allowlist is the real gate (exact-match), and
 for the claude bridges it is the ONLY one — `claude -p` takes no sandbox flag.
+
+.devague/ custody (t13, #199): exactly ONE lane may write devague frames —
+developer, in its own worktree — declared in that bridge's config (`custody`
+block, adapters/claude-code config.py) and mirrored in this script's custody
+table. `--devague-write` on any other actor, or on developer with a --repo
+that is not the custody checkout, is refused here before anything is billed;
+the bridge refuses the same request again on its own declaration.
 EOF
   exit 1
 }
@@ -324,7 +334,7 @@ print(d.get("id", ""), d.get("authority", ""), origin.get("kind", ""),
 assign)
   actor="${1:?usage: assign <codex-thor|codex-orin|developer|planner|verifier|intake|qwen-developer> \"instruction\" [opts]}"; shift
   instruction="${1:?assign needs an instruction}"; shift
-  sandbox=read-only; timeout=15m; retries=1; outcome=completed; watch=1; category=""; repo_override=""; handover=false; mode=""
+  sandbox=read-only; timeout=15m; retries=1; outcome=completed; watch=1; category=""; repo_override=""; handover=false; mode=""; base_ref=""; devague_write=false
   while [ $# -gt 0 ]; do
     case "$1" in
       --sandbox) sandbox="$2"; shift 2;;
@@ -335,6 +345,7 @@ assign)
       # reads as "killed, crashed, or timed out" (#225). Until #225 lands,
       # forgetting this flag costs a confusing round trip, not a clear error.
       --mode) mode="$2"; shift 2;;
+      --base-ref) base_ref="$2"; shift 2;;
       --timeout) timeout="$2"; shift 2;;
       --retries) retries="$2"; shift 2;;
       --outcome) outcome="$2"; shift 2;;
@@ -346,6 +357,10 @@ assign)
       # collect over ssh. Opt-in: a verification package hands nothing over
       # and must stay unable to write .git.
       --handover) handover=true; shift;;
+      # t13 / #199: this package will write .devague/ (run devague moves and
+      # commit the frame). Only the lane holding custody may; see the
+      # custody check below the actor table.
+      --devague-write) devague_write=true; shift;;
       --no-watch) watch=0; shift;;
       --yes) ASSUME_YES=1; shift;;
       *) echo "nodes-op: unknown assign option $1" >&2; exit 1;;
@@ -379,6 +394,27 @@ assign)
   # repo_allowlist is the real gate (exact-match), so an unlisted path is
   # refused by the actor rather than trusted here.
   [ -n "$repo_override" ] && repo="$repo_override"
+  # .devague/ CUSTODY TABLE (t13, #199 / #230; frame decision q1). One lane,
+  # one checkout. This mirrors the `custody` block in that lane's bridge
+  # config (adapters/claude-code config.py, ~/.config/culture-nodes-bridges/
+  # developer.json on spark); the bridge re-checks its own declaration at
+  # dispatch, so this table cannot widen custody — it only refuses earlier,
+  # before a session is billed. Checked BEFORE need_yes: a refusal here is a
+  # routing error, and "re-run with --yes" would be the wrong hint for it.
+  devague_custody_repo=""
+  case "$actor" in
+    developer) devague_custody_repo=/home/spark/git/.worktrees.culture-nodes/owe-developer;;
+  esac
+  if [ "$devague_write" = true ]; then
+    if [ -z "$devague_custody_repo" ]; then
+      echo "nodes-op: refusing: .devague/ custody is declared on the developer lane only; '$actor' may not write .devague/ — route the package to developer or drop --devague-write (docs/operations/spec-chain-lane.md)" >&2
+      exit 1
+    fi
+    if [ "$repo" != "$devague_custody_repo" ]; then
+      echo "nodes-op: refusing: .devague/ custody on the developer lane is bound to $devague_custody_repo; a --devague-write dispatch into '$repo' is not that checkout" >&2
+      exit 1
+    fi
+  fi
   need_yes
   wf=$(mktemp); trap 'rm -f "$wf" "$wf.json"' EXIT
   [[ "$outcome" =~ ^[a-z][a-z0-9_]*$ ]] || { echo "nodes-op: --outcome must match the workflow schema outcomeName pattern ^[a-z][a-z0-9_]*$ (got '$outcome')" >&2; exit 1; }
@@ -386,18 +422,34 @@ assign)
       -e "s|__TIMEOUT__|$timeout|" -e "s|__MAX_ATTEMPTS__|$retries|" \
       -e "s|__OUTCOME__|$outcome|" \
       "$TEMPLATE" > "$wf"
+  # #240: the template binds mode: /run/input/mode unconditionally, but the
+  # run input omits `mode` when --mode is not given (see the payload note
+  # below), and a binding to an absent member is refused by the worker
+  # (internal/worker/bindings.go: no member "mode" at /run/input/mode) --
+  # contract_rejected in ~150ms, before any bridge is called. Strip the
+  # binding for a mode-less dispatch so the digest carries only bindings the
+  # input can satisfy.
+  [ -n "$mode" ] || sed -i '/^[[:space:]]*mode: \/run\/input\/mode[[:space:]]*$/d' "$wf"
+  [ -n "$base_ref" ] || sed -i '/^[[:space:]]*base_ref: \/run\/input\/base_ref[[:space:]]*$/d' "$wf"
+  [ "$devague_write" = true ] || sed -i '/^[[:space:]]*devague_write: \/run\/input\/devague_write[[:space:]]*$/d' "$wf"
   digest=$("$0" publish "$wf")
   [ -n "$digest" ] || { echo "nodes-op: publish returned no digest" >&2; exit 1; }
-  python3 - "$instruction" "$sandbox" "$outcome" "$repo" "$handover" "$mode" <<'PYEOF' > "$wf.json"
+  python3 - "$instruction" "$sandbox" "$outcome" "$repo" "$handover" "$mode" "$base_ref" "$devague_write" <<'PYEOF' > "$wf.json"
 import json, sys
 payload = {"instruction": sys.argv[1], "sandbox": sys.argv[2],
            "success_outcome": sys.argv[3], "repo": sys.argv[4],
            "handover": sys.argv[5] == "true"}
+# t13: present only when asked, for the same reason `mode` is — an explicit
+# false in the run input would read as a custody decision nobody made.
+if sys.argv[8] == "true":
+    payload["devague_write"] = True
 # omitted rather than sent empty: the qwen gate rejects a blank mode with the
 # same refusal as a missing one, and an empty string in the run input would
 # read as "the operator chose this" in the ledger.
 if sys.argv[6]:
     payload["mode"] = sys.argv[6]
+if sys.argv[7]:
+    payload["base_ref"] = sys.argv[7]
 print(json.dumps(payload))
 PYEOF
   if [ -n "$category" ]; then
@@ -406,8 +458,11 @@ PYEOF
     out=$(NODES_OP_YES=1 "$0" create "$digest" "$wf.json")
   fi
   run_id=$(echo "$out" | awk '{print $1}')
-  echo "assigned: run=$run_id actor=$actor sandbox=$sandbox${mode:+ mode=$mode} timeout=$timeout${category:+ category=$category}${handover:+ handover=$handover}"
-  [ "$watch" = "1" ] && "$0" watch "$run_id"
+  echo "assigned: run=$run_id actor=$actor sandbox=$sandbox${mode:+ mode=$mode} timeout=$timeout${category:+ category=$category}${handover:+ handover=$handover}$([ "$devague_write" = true ] && echo " devague_write=true")"
+  # An `if`, not `[ ... ] && ...`: as the arm's last command, a false test
+  # in an && list leaves the script's exit status at 1, so every --no-watch
+  # dispatch reported failure after succeeding (found by t13's tests).
+  if [ "$watch" = "1" ]; then "$0" watch "$run_id"; fi
   ;;
 actors)
   # Reads the registry over the public API. This used to shell out to thor's

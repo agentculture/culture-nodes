@@ -3,7 +3,20 @@ package main
 import (
 	"strings"
 	"testing"
+
+	"github.com/agentculture/culture-nodes/internal/store/postgres"
 )
+
+func TestRemintProducerActorIDFromEnvDefaultsAndOverrides(t *testing.T) {
+	t.Setenv(envRemintProducerActorID, "")
+	if got := remintProducerActorIDFromEnv(); got != postgres.RemintSchedulerActorID {
+		t.Fatalf("unset producer id = %q, want default %q", got, postgres.RemintSchedulerActorID)
+	}
+	t.Setenv(envRemintProducerActorID, "engine_remint_custom")
+	if got := remintProducerActorIDFromEnv(); got != "engine_remint_custom" {
+		t.Fatalf("configured producer id = %q", got)
+	}
+}
 
 // A code-runner tuple that is absent ENTIRELY says this deployment runs no
 // code nodes — the Helm chart's configuration, and every deployment that only

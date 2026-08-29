@@ -145,10 +145,11 @@ class WorkspaceHandle:
     repo: str
     available: bool
     head_before: str | None = None
+    trusted_base: str | None = None
     reason: str | None = None
 
 
-def begin(repo: str) -> WorkspaceHandle:
+def begin(repo: str, base_ref: str | None = None) -> WorkspaceHandle:
     """Capture the workspace's starting point, as close as possible to the
     moment the actor subprocess is spawned.
 
@@ -156,6 +157,18 @@ def begin(repo: str) -> WorkspaceHandle:
     tree, or an unborn HEAD (no commits yet) all produce `available=False`
     with a `reason` — never a fabricated HEAD.
     """
+    if base_ref is not None:
+        # #242 / colleague review: base_ref is a refspec handed to `git fetch`;
+        # refuse anything that is not a plain ref name so it cannot carry a
+        # push refspec (`:`), a force marker (`+`), an option (`-x`) or
+        # whitespace into the fetch argv.
+        if (
+            not base_ref.strip()
+            or base_ref != base_ref.strip()
+            or base_ref.startswith("-")
+            or any(ch in base_ref for ch in (":", "+", " ", "\t", "\n"))
+        ):
+            raise WorkspaceProvisionError(f"base_ref {base_ref!r} is not a plain ref name")
     if shutil.which("git") is None:
         return WorkspaceHandle(
             repo=repo, available=False, reason="git is not installed on this bridge host"
@@ -175,7 +188,21 @@ def begin(repo: str) -> WorkspaceHandle:
             reason="git HEAD could not be resolved (e.g. an unborn branch with no commits yet)",
         )
 
-    return WorkspaceHandle(repo=repo, available=True, head_before=head.strip())
+    trusted_base = None
+    if base_ref is not None:
+        fetched = _run_git(repo, "fetch", "origin", base_ref)
+        if fetched is None or fetched.returncode != 0:
+            detail = "git fetch could not run" if fetched is None else fetched.stderr.strip()
+            raise WorkspaceProvisionError(detail or f"git fetch origin {base_ref!r} failed")
+        fetched_head = _git_stdout(repo, "rev-parse", "FETCH_HEAD")
+        if fetched_head is None or not fetched_head.strip():
+            raise WorkspaceProvisionError(
+                f"fetched base_ref {base_ref!r} did not resolve to a commit"
+            )
+        trusted_base = fetched_head.strip()
+    return WorkspaceHandle(
+        repo=repo, available=True, head_before=head.strip(), trusted_base=trusted_base
+    )
 
 
 def unmeasured(repo: str | None, reason: str) -> dict[str, Any]:
@@ -190,6 +217,7 @@ def unmeasured(repo: str | None, reason: str) -> dict[str, Any]:
         "reason": reason,
         "branch": None,
         "head_before": None,
+        "trusted_base": None,
         "head_after": None,
         "status_porcelain": None,
         "changed_files": [],
@@ -258,6 +286,7 @@ def measure(handle: WorkspaceHandle) -> dict[str, Any]:
         "reason": "; ".join(partial) if partial else None,
         "branch": branch.strip() if branch is not None else None,
         "head_before": handle.head_before,
+        "trusted_base": handle.trusted_base,
         "head_after": head_after.strip(),
         "status_porcelain": status if status is not None else None,
         "changed_files": changed,

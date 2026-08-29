@@ -131,7 +131,7 @@ def fetch_jira_issues(site: str, project: str, email: str, token: str) -> dict:
             f'project = "{project}" AND (resolution IS EMPTY OR resolved >= '
             f"-{JIRA_RESOLVED_LOOKBACK_DAYS}d) ORDER BY priority ASC"
         ),
-        "fields": "summary,priority,status,issuetype,updated,comment",
+        "fields": "summary,priority,status,issuetype,created,updated,comment",
         "expand": "changelog",
         "maxResults": "100",
     }
@@ -236,7 +236,20 @@ def jira_history_facts(
         (fields.get("comment") or {}).get("comments") or [],
         key=lambda comment: _history_id_key(comment.get("id")),
     )
+    creation = {
+        "id": "0",
+        "created": str(fields.get("created") or ""),
+        "items": [
+            {
+                "field": "status",
+                "fromString": "",
+                "toString": str((fields.get("status") or {}).get("name") or ""),
+            }
+        ],
+    }
     timeline = [
+        (creation["created"], -1, _history_id_key(creation["id"]), "changelog", creation)
+    ] + [
         (str(h.get("created") or ""), 0, _history_id_key(h.get("id")), "changelog", h)
         for h in histories
     ] + [

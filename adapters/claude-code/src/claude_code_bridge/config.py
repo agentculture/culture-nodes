@@ -77,9 +77,46 @@ ENV_REPO_ALLOWLIST_PREFIXES = "CLAUDE_CODE_BRIDGE_REPO_ALLOWLIST_PREFIXES"
 #: separator the allowlist uses, so the two read alike in a unit file.
 ENV_REPO_IDENTITIES = "CLAUDE_CODE_BRIDGE_REPO_IDENTITIES"
 
+#: `CLAUDE_CODE_BRIDGE_CUSTODY` is one JSON object with the same three keys
+#: the config file's `custody` block takes (task t13, issue #199 / #230).
+ENV_CUSTODY = "CLAUDE_CODE_BRIDGE_CUSTODY"
+
 
 class ConfigError(Exception):
     """Raised for a config file/env value the bridge cannot use."""
+
+
+@dataclass(frozen=True)
+class Custody:
+    """What THIS lane holds in custody (task t13, issue #199 / #230; frame
+    decision q1 of jira-flow-spec-read-related-bugs).
+
+    A devague frame lives in a checkout's `.devague/` and is committed on a
+    branch; the operator's own checkout is one lane, and a bridge lane that
+    silently wrote frames beside it would be the c42 concurrent-writer mode
+    over the spec itself. So a lane that may write `.devague/` DECLARES it
+    here — which checkout, under which branch prefix — and a lane that
+    declares nothing holds nothing. The declaration is read by the dispatch
+    path (`server.py` refuses a `devague_write` dispatch this lane cannot
+    honour) and by the operator's `assign` verb, which refuses to route a
+    `.devague/` write to any other lane at all.
+
+    `checkout` is resolved like an allowlist entry and MUST be allowlisted:
+    custody over a checkout the bridge may not touch is a contradiction the
+    load refuses rather than carries. `branch_prefix` ends in `/` so it names
+    a namespace (`jira-flow/`) and not a substring match.
+    """
+
+    checkout: str
+    branch_prefix: str
+    devague_write: bool = False
+
+    def to_dict(self) -> dict[str, object]:
+        return {
+            "checkout": self.checkout,
+            "branch_prefix": self.branch_prefix,
+            "devague_write": self.devague_write,
+        }
 
 
 @dataclass
@@ -101,6 +138,9 @@ class Config:
     #: case — an identity whose repository segment matches an allowlisted
     #: checkout's directory name resolves with no declaration at all.
     repo_identities: dict[str, str] = field(default_factory=dict)
+    #: The `.devague/` custody THIS lane declares, or None for a lane that
+    #: holds none (the default, and the safe one). See `Custody`.
+    custody: Custody | None = None
 
     # --- claude dispatch -------------------------------------------
     claude_bin: str = "claude"
@@ -241,6 +281,20 @@ class Config:
             for root in self.repo_allowlist_prefixes
         )
 
+    def devague_write_allowed(self, repo: str) -> bool:
+        """True only for a dispatch into the declared custody checkout, on a
+        lane whose declaration grants `devague_write`. Everything else —
+        no declaration, a declaration without the grant, another allowlisted
+        repo on the same bridge — is False, and a False here is what turns a
+        `devague_write` dispatch into a 403 in `server.py`."""
+        if self.custody is None or not self.custody.devague_write:
+            return False
+        try:
+            resolved = str(Path(repo).expanduser().resolve())
+        except OSError:
+            return False
+        return resolved == self.custody.checkout
+
     def only_allowed_repo(self) -> str | None:
         """The one repo this bridge can work in, when there is exactly one.
 
@@ -288,6 +342,7 @@ class Config:
         cfg = cls(**_coerce_file_fields(data))
         _apply_env_overrides(cfg, env)
         _normalize_allowlist(cfg)
+        _normalize_custody(cfg)
         return cfg
 
 
@@ -312,6 +367,7 @@ _FILE_FIELDS = {
     "repo_allowlist": lambda v: tuple(str(x) for x in v),
     "repo_allowlist_prefixes": lambda v: tuple(str(x) for x in v),
     "repo_identities": lambda v: {str(k): str(x) for k, x in dict(v).items()},
+    "custody": lambda v: _parse_custody("custody", v),
     "claude_bin": str,
     "claude_env": lambda v: {str(k): str(x) for k, x in dict(v).items()},
     "permission_mode": str,
@@ -377,6 +433,70 @@ def _apply_env_overrides(cfg: Config, env: dict[str, str]) -> None:
         cfg.repo_allowlist_prefixes = tuple(p for p in raw.split(os.pathsep) if p.strip())
     if ENV_REPO_IDENTITIES in env:
         cfg.repo_identities = _parse_identities(env[ENV_REPO_IDENTITIES])
+    if ENV_CUSTODY in env:
+        try:
+            raw = json.loads(env[ENV_CUSTODY])
+        except ValueError as exc:
+            raise ConfigError(f"{ENV_CUSTODY} is not valid JSON: {exc}") from exc
+        cfg.custody = _parse_custody(ENV_CUSTODY, raw)
+
+
+def _parse_custody(where: str, raw: object) -> Custody:
+    """One custody declaration, every key required and typed.
+
+    A half-declared custody (a checkout with no branch prefix, a prefix that
+    is a bare word) is refused here for the same reason `_parse_identities`
+    refuses a pair with no `=`: a lane that came up holding half a
+    declaration would refuse or grant `.devague/` writes for a reason nobody
+    could read back out of its config.
+    """
+    if not isinstance(raw, dict):
+        raise ConfigError(
+            f"{where} must be a JSON object with checkout, branch_prefix, devague_write"
+        )
+    missing = [k for k in ("checkout", "branch_prefix", "devague_write") if k not in raw]
+    if missing:
+        raise ConfigError(f"{where} is missing {', '.join(missing)}")
+    checkout = raw["checkout"]
+    prefix = raw["branch_prefix"]
+    devague_write = raw["devague_write"]
+    if not isinstance(checkout, str) or not checkout.strip():
+        raise ConfigError(f"{where}.checkout must be a non-empty path")
+    if (
+        not isinstance(prefix, str)
+        or not prefix.endswith("/")
+        or len(prefix) < 2
+        or any(c.isspace() for c in prefix)
+    ):
+        raise ConfigError(
+            f"{where}.branch_prefix must be a non-empty branch namespace ending in '/' "
+            f"(got {prefix!r})"
+        )
+    if not isinstance(devague_write, bool):
+        raise ConfigError(f"{where}.devague_write must be a JSON boolean")
+    return Custody(checkout=checkout, branch_prefix=prefix, devague_write=devague_write)
+
+
+def _normalize_custody(cfg: Config) -> None:
+    """Resolve the custody checkout and pin it inside the allowlist."""
+    if cfg.custody is None:
+        return
+    try:
+        resolved = str(Path(cfg.custody.checkout).expanduser().resolve())
+    except OSError as exc:
+        raise ConfigError(
+            f"custody.checkout {cfg.custody.checkout!r} could not be resolved: {exc}"
+        ) from exc
+    if not cfg.repo_allowed(resolved):
+        raise ConfigError(
+            f"custody.checkout {resolved!r} is not in this bridge's repo allowlist; "
+            "custody over a checkout the bridge may not touch is refused, not carried"
+        )
+    cfg.custody = Custody(
+        checkout=resolved,
+        branch_prefix=cfg.custody.branch_prefix,
+        devague_write=cfg.custody.devague_write,
+    )
 
 
 def _parse_identities(raw: str) -> dict[str, str]:

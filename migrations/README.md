@@ -176,6 +176,41 @@ Numbered SQL migrations for the authoritative PostgreSQL store (prd-spec
   then resume the sweep schedule. A history fact whose marker remains pending
   is refused as a delivery error: this makes a deploy-order violation loud
   and prevents pre-cutover ticket history from becoming billable intake runs.
+
+  **The order spans both production hosts** (task t2 of the
+  2026-08-29 jira-flow plan, #230): orin's worker consumes the same database
+  as thor's, so "stop the sweep" that stops only thor's services leaves a
+  second history producer running through the cutover window.
+  `deploy/prod/deploy.sh thor` now executes, in this order, with the
+  preflight and the dump *before* anything is stopped:
+
+  1. preflight — the agent checkout on the target is clean and on a branch
+     (a dirty or detached `~/git/culture-nodes-agent` refuses here, not at the
+     end), `nodes doctor` passes, and orin is reachable enough to say whether
+     it runs a worker;
+  2. a forced `pg_dump -Fc` of the authoritative database to
+     `~/.culture-nodes/backups/predeploy-<revision>-<utc-timestamp>.dump` on
+     thor — the rollback point for this deploy (`deploy/prod/RESTORE.md`).
+     The interval backup loop rotates only `nodes-*.dump`, so pre-deploy dumps
+     are never pruned automatically; the path is printed in the deploy summary;
+  3. stop thor's `scheduler`, `worker` and `api`;
+  4. stop orin's `worker`;
+  5. `migrate` (0041 included);
+  6. `nodes-cutover` (the adopter);
+  7. thor's stack up **without the scheduler**
+     (`compose up -d --scale scheduler=0`) — the sweep schedule is paused by
+     that service not running, no schedule row is touched;
+  8. orin's worker started again;
+  9. revision parity — `GET /v1alpha1/version` on thor and the
+     `culture-nodes.revision` image label on each worker container must all
+     name the deployed revision;
+  10. resume: `compose up -d scheduler`, only when parity holds.
+
+  On a revision change orin's worker is still on its previous image after
+  step 8 — `deploy.sh orin` rebuilds it — so the thor lane leaves the sweep
+  paused, says so, and exits 3; the orin lane runs the same parity check after
+  its own `up` and is what resumes the sweep. A parity mismatch in either lane
+  refuses to resume, and the summary names the next step.
 - `0043_jira_ticket_report_outbox.sql` — expand-only trigger provenance on
   signal events/runs and the engine lifecycle → Jira bridge transactional
   outbox. `(run_id, phase)` makes start and finish independently durable and
@@ -192,6 +227,15 @@ Numbered SQL migrations for the authoritative PostgreSQL store (prd-spec
   (PR #209 qodo finding 1).
   0044's `store_entry_bindings_ref_idx` is subsumed by the new prefix but is
   kept — dropping an index is a later contract migration, per the ADR.
+- `0046_ticket_frames.sql` — append-only, namespace-scoped ticket frame
+  snapshots. `(namespace_id, ticket_id, version)` is the immutable key; the
+  ticket projection reads the highest version and preserves `frame_json` as
+  JSON so the posted claim-state document is returned byte-for-byte. It also
+  creates the append-only `ticket_replies` source the projection reads; t10
+  owns the guarded endpoint that writes those rows.
+- `0048_ticket_reply_and_freeze.sql` — widens the existing Jira report outbox
+  for run-less reply/page-link intents and adds the namespace-scoped ticket
+  freeze projection updated by `pr.merged` facts or a guarded human action.
 
 - `0022_dispatch_rate_state.sql` — expand-only: adds the mutable
   `dispatch_rate_state` table (task t10 of the economy-discord-graphs plan,
@@ -325,3 +369,8 @@ compatibility promise, and the k8s Job migrate-before-rollout pattern.
    shape — see the ADR.
 3. Run `nodes migrate` against a scratch database and add/extend a Go test
    in `internal/store/postgres` covering the new shape.
+
+## `0047_runs_subject_idx.sql`
+
+Full `(namespace_id, subject)` index on `runs` for the ticket projection's
+subject listing (0046). Additive; the 0038 partial index is unchanged.

@@ -158,6 +158,18 @@ services:
       NODES_SCHEDULER_ID: thor-scheduler-1
       # See the api service's note: unset means telemetry off.
       OTEL_EXPORTER_OTLP_ENDPOINT: ${OTEL_EXPORTER_OTLP_ENDPOINT:-}
+      # The ticket-report dispatcher (t11, #198) runs on the ACTIVE scheduler
+      # and invokes the jira bridge through the actor registry, whose rows name
+      # the token by environment variable -- so the scheduler needs the same
+      # actor-token set the worker has. Measured on t7 (#230): without it every
+      # page-reply mirror failed at "resolve bridge" and backed off silently.
+      # Same shape as #224: two services, two token sets, one namespace.
+      NODES_ACTOR_CLAUDE_TOKEN: ${NODES_ACTOR_CLAUDE_TOKEN:-}
+      NODES_ACTOR_CODEX_THOR_TOKEN: ${NODES_ACTOR_CODEX_THOR_TOKEN:-}
+      NODES_ACTOR_CODEX_ORIN_TOKEN: ${NODES_ACTOR_CODEX_ORIN_TOKEN:-}
+      NODES_ACTOR_NOTIFY_TOKEN: ${NODES_ACTOR_NOTIFY_TOKEN:-}
+      NODES_ACTOR_JIRA_TOKEN: ${NODES_ACTOR_JIRA_TOKEN:-}
+      NODES_ACTOR_QWEN_TOKEN: ${NODES_ACTOR_QWEN_TOKEN:-}
     depends_on:
       migrate:
         condition: service_completed_successfully

@@ -2412,3 +2412,71 @@ button.timeline__node {
   gap: 0.4rem;
   font-size: 0.9rem;
 }
+
+/* --- Ticket conversation ------------------------------------------------ */
+.ticket-view {
+  max-width: 76rem;
+}
+
+.ticket-view__head,
+.ticket-cards > li > div,
+.ticket-rows > li {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 1rem;
+}
+
+.ticket-view h2 { margin-top: 2rem; }
+
+.ticket-freeze {
+  border: 1px solid var(--nodes-warn);
+  border-radius: var(--nodes-card-radius);
+  padding: 0.85rem 1rem;
+  background: color-mix(in srgb, var(--nodes-warn) 12%, var(--surface));
+}
+
+.ticket-cards,
+.ticket-replies,
+.ticket-rows {
+  list-style: none;
+  padding: 0;
+  display: grid;
+  gap: 0.75rem;
+}
+
+.ticket-cards > li,
+.ticket-replies > li,
+.ticket-rows > li,
+.ticket-reply-form {
+  border: 1px solid var(--line-soft);
+  border-radius: var(--nodes-card-radius);
+  padding: 0.8rem 1rem;
+  background: color-mix(in srgb, var(--surface) 55%, transparent);
+}
+
+.ticket-cards p,
+.ticket-replies p { margin-bottom: 0.25rem; }
+
+.ticket-state {
+  display: inline-flex;
+  gap: 0.35rem;
+  align-items: center;
+  color: var(--ink-soft);
+  font-size: var(--ac-type-meta);
+  text-transform: lowercase;
+}
+
+.ticket-reply-form {
+  display: grid;
+  gap: 0.45rem;
+  margin-top: 2rem;
+}
+
+.ticket-reply-form h2,
+.ticket-reply-form p { margin: 0 0 0.35rem; }
+.ticket-reply-form input,
+.ticket-reply-form select,
+.ticket-reply-form textarea { max-width: 42rem; }
+.ticket-reply-form button { justify-self: start; }
+.ticket-reply-form__success { color: var(--nodes-ok); }

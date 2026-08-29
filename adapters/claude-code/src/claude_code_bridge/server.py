@@ -79,6 +79,41 @@ class Bridge:
         self.session_registry = SessionRegistry(max_inflight=cfg.max_inflight_per_session_key)
 
 
+def devague_custody_refusal(cfg: Config, repo: str) -> str:
+    """The operator-facing sentence for a refused `.devague/` custody request.
+    Names which of the three reasons applied, so the fix is readable from the
+    run rather than from this bridge's config file."""
+    if cfg.custody is None:
+        return (
+            "devague custody: this lane declares no .devague/ custody "
+            "(no `custody` block in its bridge config), so it may not write .devague/; "
+            "route the package to the lane that declares it"
+        )
+    if not cfg.custody.devague_write:
+        return (
+            f"devague custody: this lane's declaration ({cfg.custody.checkout}) does not grant "
+            "devague_write, so it may not write .devague/"
+        )
+    return (
+        f"devague custody: this lane holds .devague/ custody over {cfg.custody.checkout} only; "
+        f"a devague_write dispatch into {repo} is refused"
+    )
+
+
+def devague_custody_block(cfg: Config) -> str:
+    """The declaration, verbatim, for a session the grant holds for."""
+    custody = cfg.custody
+    assert custody is not None  # guarded by devague_write_allowed
+    return (
+        "## Lane custody (bridge-declared, not negotiable)\n"
+        f"- checkout: {custody.checkout}\n"
+        f"- branch_prefix: {custody.branch_prefix}\n"
+        "- devague_write: true\n"
+        "This lane holds .devague/ custody: frames are committed on a branch under the "
+        "prefix above, in this checkout, and nowhere else."
+    )
+
+
 def decide_async(cfg: Config, *, force_async: bool | None, max_steps: int | None) -> bool:
     """Sync-vs-async dispatch policy — identical logic to
     `colleague_bridge.server.decide_async`: an always-async config flag wins
@@ -357,6 +392,9 @@ class Handler(BaseHTTPRequestHandler):
             # which is prose the model would be right to treat as an
             # instruction about a repository.
             repositories.INPUT_KEY,
+            # t13/#199: a custody REQUEST, answered below by this bridge's own
+            # declaration — never prose the model gets to read as a grant.
+            "devague_write",
         }
         _extras = {k: v for k, v in raw_input.items() if k not in _transport_keys}
         if _extras:
@@ -378,13 +416,24 @@ class Handler(BaseHTTPRequestHandler):
             # first match. An explicitly bound `input.repo` still wins: the
             # identity answers "which repository is this actor's lane",
             # which is only a question when nobody has answered it.
-            _identity = repositories.resolve_for_input(cfg, raw_input)
-            if _identity.refusal is not None:
-                self._write_json(_identity.refusal.status, _identity.refusal.body)
-                return
-            # No identity registered: the pre-t2 cardinality inference, which
-            # still resolves every single-repo deployment shipped today.
-            repo = _identity.repo or cfg.only_allowed_repo()
+            # t13 / t14 (#230): a dispatch that asks to write `.devague/`
+            # lands in the lane's DECLARED custody checkout, ahead of the
+            # repository-identity map. Measured on prod: the identity map sent
+            # agentculture/culture-nodes to the pr-upkeep lane while custody was
+            # declared on owe-developer, so every trigger-created spec-chain
+            # run was refused 403 and re-minted to exhaustion. An explicitly
+            # bound `input.repo` still wins (and must still match custody).
+            if raw_input.get("devague_write") is True and cfg.custody is not None:
+                repo = cfg.custody.checkout
+            else:
+                _identity = repositories.resolve_for_input(cfg, raw_input)
+                if _identity.refusal is not None:
+                    self._write_json(_identity.refusal.status, _identity.refusal.body)
+                    return
+                # No identity registered: the pre-t2 cardinality inference,
+                # which still resolves every single-repo deployment shipped
+                # today.
+                repo = _identity.repo or cfg.only_allowed_repo()
         if not isinstance(repo, str) or not repo.strip():
             self._write_json(
                 400,
@@ -408,6 +457,47 @@ class Handler(BaseHTTPRequestHandler):
             )
             return
         resolved_repo = str(Path(repo).expanduser().resolve())
+
+        # t13 (#199 / #230, frame decision q1): a dispatch that will write
+        # `.devague/` says so (`input.devague_write: true`), and THIS lane's
+        # own custody declaration (config.py `Custody`) is what answers it.
+        # No declaration, no grant, or a different allowlisted checkout is a
+        # 403 in the same `auth_or_policy` class as the allowlist refusal
+        # above — it is the same kind of answer. When the grant holds, the
+        # declaration is appended to the brief verbatim, so the session works
+        # the declared branch namespace instead of guessing one.
+        devague_write = raw_input.get("devague_write", False)
+        if not isinstance(devague_write, bool):
+            self._write_json(
+                400,
+                {
+                    "error": "input.devague_write must be a boolean",
+                    "class": mapping.CLASS_ACTOR_REJECTED_INPUT,
+                },
+            )
+            return
+        if devague_write:
+            if not cfg.devague_write_allowed(resolved_repo):
+                self._write_json(
+                    403,
+                    {
+                        "error": devague_custody_refusal(cfg, resolved_repo),
+                        "class": "auth_or_policy",
+                    },
+                )
+                return
+            instruction = instruction + "\n\n" + devague_custody_block(cfg)
+
+        base_ref = raw_input.get("base_ref")
+        if base_ref is not None and (not isinstance(base_ref, str) or not base_ref):
+            self._write_json(
+                400,
+                {
+                    "error": "input.base_ref must be a non-empty string",
+                    "class": mapping.CLASS_ACTOR_REJECTED_INPUT,
+                },
+            )
+            return
 
         role = raw_input.get("role") or None
         if role is not None and not claude_cli.role_is_known(resolved_repo, role):
@@ -517,6 +607,7 @@ class Handler(BaseHTTPRequestHandler):
                 role,
                 max_steps,
                 model,
+                base_ref=base_ref,
                 handover=handover,
                 session_key=session_key,
                 held=held,
@@ -532,6 +623,7 @@ class Handler(BaseHTTPRequestHandler):
             role,
             max_steps,
             model,
+            base_ref=base_ref,
             handover=handover,
             session_key=session_key,
             held=held,
@@ -548,6 +640,7 @@ class Handler(BaseHTTPRequestHandler):
         max_steps: int | None,
         model: str | None,
         *,
+        base_ref: str | None = None,
         handover: bool = False,
         session_key: str | None = None,
         held: bool = False,
@@ -557,7 +650,13 @@ class Handler(BaseHTTPRequestHandler):
         # t10: capture the workspace's starting point as close as possible
         # to the moment claude is actually spawned, so head_before/status
         # bracket the session rather than the whole request-handling ladder.
-        handle = workspace.begin(repo)
+        try:
+            handle = workspace.begin(repo, base_ref=base_ref)
+        except workspace.WorkspaceProvisionError as exc:
+            if held:
+                self.bridge.session_registry.release(session_key, idem_key)
+            self._write_json(503, {"error": str(exc), "class": "actor_unavailable"})
+            return
         try:
             result = claude_cli.run_sync(
                 cfg,
@@ -691,6 +790,7 @@ class Handler(BaseHTTPRequestHandler):
         max_steps: int | None,
         model: str | None,
         *,
+        base_ref: str | None = None,
         handover: bool = False,
         session_key: str | None = None,
         held: bool = False,
@@ -717,7 +817,13 @@ class Handler(BaseHTTPRequestHandler):
 
         # t10: same bracketing as the sync path, captured right before the
         # detached claude subprocess is spawned.
-        handle = workspace.begin(repo)
+        try:
+            handle = workspace.begin(repo, base_ref=base_ref)
+        except workspace.WorkspaceProvisionError as exc:
+            if held:
+                self.bridge.session_registry.release(session_key, idem_key)
+            self._write_json(503, {"error": str(exc), "class": "actor_unavailable"})
+            return
         try:
             start = claude_cli.spawn_background(
                 cfg,

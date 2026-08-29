@@ -28,6 +28,10 @@ REVISION=$(git rev-parse "$BRANCH")
 
 say() { printf '==> %s\n' "$*"; }
 
+# --- preflight (task t2, spec c25/c28, PR #236 Qodo finding 6) -------------
+# shellcheck source=deploy/prod/lanes/preflight.sh
+source "$SCRIPT_DIR/lanes/preflight.sh"
+
 say "shipping $(git rev-parse --short "$REVISION") to $HOST:$REMOTE_DIR"
 git archive --format=tar "$REVISION" | ssh "$HOST" "rm -rf $REMOTE_DIR && mkdir -p $REMOTE_DIR && tar -x -C $REMOTE_DIR"
 
@@ -40,7 +44,18 @@ say "building control-plane image on $HOST (native aarch64)"
 # last rebuilt it. VERSION is deliberately left at its Dockerfile default: it
 # is the package's declared version, not this deploy's commit, and conflating
 # the two would make GET /v1alpha1/version report a sha twice.
-ssh "$HOST" "cd $REMOTE_DIR && docker build -q --build-arg REVISION=$REVISION -t culture-nodes:prod ."
+#
+# --label culture-nodes.revision: the same fact, readable from OUTSIDE the
+# process (task t2, spec c26). The api serves its revision on
+# GET /v1alpha1/version, but a worker has no HTTP surface at all, so the only
+# revision-bearing fact a running worker exposes is the label on the image its
+# container was created from — `docker inspect` reads it back in the parity
+# check below. The label rides the same `docker build` as the build arg, so
+# the two cannot name different commits. This is also why the compose `up`
+# calls below no longer pass --build: a compose rebuild would re-tag
+# culture-nodes:prod with an image that carries the arg but not the label,
+# and the parity check would read an empty label off a correct binary.
+ssh "$HOST" "cd $REMOTE_DIR && docker build -q --build-arg REVISION=$REVISION --label culture-nodes.revision=$REVISION -t culture-nodes:prod ."
 
 say "building nodes-runner host binary on $HOST"
 # Issue #17. Two things were wrong here, and only one of them was the shell.
@@ -86,72 +101,8 @@ say "ensuring headspace CLI on $HOST (uv tool)"
 ssh "$HOST" 'bash -lc "command -v headspace >/dev/null || { command -v uv >/dev/null || curl -LsSf https://astral.sh/uv/install.sh | sh; \$HOME/.local/bin/uv tool install headspace-cli || uv tool install headspace-cli; }; command -v headspace"'
 
 say "installing runner env + systemd user unit on $HOST"
-# Single-quoted remote script: $HOME expands on the TARGET, giving the env
-# file absolute paths (EnvironmentFile values get no %h expansion).
-ssh "$HOST" 'umask 077; mkdir -p ~/.culture-nodes/bin ~/.culture-nodes/runner-state
-{ echo "NODES_RUNNER_LISTEN=:17070"
-  echo "NODES_RUNNER_SECRET_FILE=$HOME/.culture-nodes/runner.secret"
-  echo "NODES_RUNNER_STATE_DIR=$HOME/.culture-nodes/runner-state"
-  echo "NODES_RUNNER_HEADSPACE_PROFILES=sha256:57cd7c3a7a273101a6485ba99423ee568157882804b1124b4dd04266317710de=python3.12"
-  echo "NODES_RUNNER_HEADSPACE_BIN=$HOME/.local/bin/headspace"
-} > ~/.culture-nodes/runner.env'
-
-# examples/pr-upkeep's sweep node names its script source as a granted
-# environment value rather than baking a URL into the graph (task t16), so
-# WHOSE code that node runs is a property of this deployment. The runner
-# boundary resolves environment_refs from its OWN process environment
-# (internal/runners/headspace/bridge.go), which for a systemd unit means
-# runner.env -- and the block above REWRITES that file on every deploy, so
-# these two have to be re-granted here rather than hand-added once.
-#
-# Defaults name the exact immutable revision whose archive was shipped above.
-# `git show` reads sweep.py from that same object, so this remains correct when
-# the revision is a squash merge and its pre-merge commits are unreachable.
-# Either value remains explicitly overridable: running somebody else's granted
-# copy is intentional, and its URL and digest can be supplied by the operator.
-PR_UPKEEP_SWEEP_SOURCE_URL=${PR_UPKEEP_SWEEP_SOURCE_URL:-"https://raw.githubusercontent.com/agentculture/culture-nodes/$REVISION/examples/pr-upkeep/sweep.py"}
-PR_UPKEEP_SWEEP_SOURCE_SHA256=${PR_UPKEEP_SWEEP_SOURCE_SHA256:-$(git show "$REVISION:examples/pr-upkeep/sweep.py" | sha256sum | cut -d' ' -f1)}
-PR_UPKEEP_SWEEP_JIRA_SOURCE_URL=${PR_UPKEEP_SWEEP_JIRA_SOURCE_URL:-"https://raw.githubusercontent.com/agentculture/culture-nodes/$REVISION/examples/pr-upkeep/pr_upkeep_jira.py"}
-PR_UPKEEP_SWEEP_JIRA_SOURCE_SHA256=${PR_UPKEEP_SWEEP_JIRA_SOURCE_SHA256:-$(git show "$REVISION:examples/pr-upkeep/pr_upkeep_jira.py" | sha256sum | cut -d' ' -f1)}
-if [ -z "${PR_UPKEEP_REPOSITORIES:-}" ]; then
-	PR_UPKEEP_REPOSITORIES='{"cycle":0,"repositories":[{"github_repo":"agentculture/culture-nodes","sonar_component":"agentculture_culture-nodes"}]}'
-fi
-# systemd's EnvironmentFile parser is shell-LIKE: it processes backslash
-# escapes in an unquoted value. Measured on thor, unquoted:
-#
-#   {"x":"a\"b","path":"c\\d"}  ->  {"x":"a"b","path":"c\d"}   (invalid JSON)
-#   {"t":"line\nbreak"}          ->  {"t":"linebreak"}           (escape eaten)
-#
-# PR_UPKEEP_REPOSITORIES is JSON, and JSON string escapes are backslashes, so
-# any repo name, sonar component or jira_site containing a quote or backslash
-# silently reshapes the config the sweep reads. Today's default value happens
-# to contain neither, which is why this worked at all.
-#
-# Single-quoting suppresses escape processing entirely (measured: the same
-# JSON round-trips byte-exact), so the value is single-quoted here, with any
-# literal single quote escaped the POSIX way. Found by pr-upkeep itself, on
-# the PR that introduced it.
-case "$PR_UPKEEP_REPOSITORIES" in
-	*"'"*)
-		echo "refusing: PR_UPKEEP_REPOSITORIES contains a literal single quote." >&2
-		echo "systemd EnvironmentFile is shell-LIKE, not shell: it cannot represent one inside a" >&2
-		echo "single-quoted value and does not honour the POSIX escape idiom (measured on thor)." >&2
-		echo "Writing it unquoted would let the runner read the config back reshaped." >&2
-		exit 1
-		;;
-esac
-if [ -n "$PR_UPKEEP_SWEEP_SOURCE_URL" ] && [ -n "$PR_UPKEEP_SWEEP_SOURCE_SHA256" ] && [ -n "$PR_UPKEEP_SWEEP_JIRA_SOURCE_URL" ] && [ -n "$PR_UPKEEP_SWEEP_JIRA_SOURCE_SHA256" ]; then
-	# Piped over stdin rather than built into the ssh command string: the
-	# repositories value is single-quoted (see above) and interpolating quotes
-	# into a double-quoted remote command is how you get a value that is
-	# correct locally and reshaped remotely.
-	printf "PR_UPKEEP_SWEEP_SOURCE_URL=%s\nPR_UPKEEP_SWEEP_SOURCE_SHA256=%s\nPR_UPKEEP_SWEEP_JIRA_SOURCE_URL=%s\nPR_UPKEEP_SWEEP_JIRA_SOURCE_SHA256=%s\nPR_UPKEEP_REPOSITORIES='%s'\n" \
-		"$PR_UPKEEP_SWEEP_SOURCE_URL" "$PR_UPKEEP_SWEEP_SOURCE_SHA256" "$PR_UPKEEP_SWEEP_JIRA_SOURCE_URL" "$PR_UPKEEP_SWEEP_JIRA_SOURCE_SHA256" "$PR_UPKEEP_REPOSITORIES" \
-		| ssh "$HOST" "umask 077; cat >> ~/.culture-nodes/runner.env"
-	say "granted the pr-upkeep sweep source and closed repository set to the runner on $HOST"
-else
-	say "a PR_UPKEEP_SWEEP source URL/digest pair is empty: pr-upkeep's sweep is not configured on $HOST (see examples/pr-upkeep/README.md)"
-fi
+# shellcheck source=deploy/prod/lanes/runner-env-write.sh
+source "$SCRIPT_DIR/lanes/runner-env-write.sh"
 ssh "$HOST" "loginctl enable-linger \$(id -un) 2>/dev/null || true"
 ssh "$HOST" "export XDG_RUNTIME_DIR=/run/user/\$(id -u); mkdir -p ~/.config/systemd/user && cp $REMOTE_DIR/deploy/prod/nodes-runner.service ~/.config/systemd/user/ && systemctl --user daemon-reload && systemctl --user restart nodes-runner && systemctl --user enable nodes-runner"
 ssh "$HOST" 'export XDG_RUNTIME_DIR=/run/user/$(id -u); for i in $(seq 1 15); do st=$(systemctl --user is-active nodes-runner || true); [ "$st" = active ] && { echo "runner: active"; exit 0; }; sleep 2; done; echo "runner failed to become active:"; systemctl --user --no-pager -n 10 status nodes-runner; exit 1'
@@ -695,25 +646,13 @@ deploy_jira() { # host
   assert_unit_healthy "$host" jira-bridge
 }
 
+# --- the two-host r4 sequence (task t2, spec c25/c26/c28, #230) -----------
+# shellcheck source=deploy/prod/lanes/two-host.sh
+source "$SCRIPT_DIR/lanes/two-host.sh"
+
 case "$HOST" in
   thor*)
-    say "starting thor control plane"
-	# Stop history-producing services, apply migrations alone, then adopt all
-	# pending Jira heads before any scheduler/worker can resume the sweep.
-	ssh "$HOST" "cd $REMOTE_DIR/deploy/prod && docker compose --env-file ~/.culture-nodes/prod.env -f compose.thor.yml stop scheduler worker api || true"
-	ssh "$HOST" "cd $REMOTE_DIR/deploy/prod && NODES_BUILD_REVISION=$REVISION docker compose --env-file ~/.culture-nodes/prod.env -f compose.thor.yml up -d postgres"
-	ssh "$HOST" "cd $REMOTE_DIR/deploy/prod && NODES_BUILD_REVISION=$REVISION docker compose --env-file ~/.culture-nodes/prod.env -f compose.thor.yml run --rm migrate"
-	# systemd parses the two EnvironmentFiles without shell-evaluating secret
-	# values, and applies them only to this transient host-side process.
-	ssh "$HOST" 'systemd-run --user --wait --pipe --collect --property=EnvironmentFile=$HOME/.culture-nodes/prod.env --property=EnvironmentFile=$HOME/.culture-nodes/runner-secrets.env $HOME/.culture-nodes/bin/nodes-cutover'
-    ssh "$HOST" "cd $REMOTE_DIR/deploy/prod && NODES_BUILD_REVISION=$REVISION docker compose --env-file ~/.culture-nodes/prod.env -f compose.thor.yml up -d --build"
-    say "waiting for readyz"
-    ssh "$HOST" 'for i in $(seq 1 60); do curl -fsS http://localhost:18080/v1alpha1/readyz >/dev/null 2>&1 && echo READY && exit 0; sleep 2; done; echo NOT_READY; exit 1'
-    say "resolving namespace id and (re)starting worker with it"
-    NS=$(ssh "$HOST" "curl -fsS http://localhost:18080/v1alpha1/namespaces | python3 -c 'import json,sys; rows=json.load(sys.stdin); print(rows[0][\"id\"] if rows else \"\")'")
-    [ -n "$NS" ] || { echo "no namespace row found" >&2; exit 1; }
-    ssh "$HOST" "grep -q '^NODES_NAMESPACE_ID=' ~/.culture-nodes/prod.env && sed -i 's/^NODES_NAMESPACE_ID=.*/NODES_NAMESPACE_ID=$NS/' ~/.culture-nodes/prod.env || echo NODES_NAMESPACE_ID=$NS >> ~/.culture-nodes/prod.env"
-    ssh "$HOST" "cd $REMOTE_DIR/deploy/prod && docker compose --env-file ~/.culture-nodes/prod.env -f compose.thor.yml up -d worker"
+    thor_two_host_lane
     # The human-inbox bridge and tracker come up AFTER the control plane:
     # the tracker submits into the bridge, the bridge calls back into the API,
     # and the lane itself resolves the actor registry to learn which host it
@@ -739,7 +678,7 @@ case "$HOST" in
     # the end, not a gate that leaves the stack half-shipped.
     say "running nodes doctor on $HOST"
     ssh "$HOST" "cd \$HOME/git/culture-nodes-agent && \$HOME/.local/bin/nodes doctor" || { echo "nodes doctor reports unhealthy on $HOST" >&2; exit 1; }
-    say "thor deploy complete (namespace $NS)"
+    deploy_summary thor
     ;;
   orin*)
     say "resolving thor's address from $HOST and starting the orin worker"
@@ -749,14 +688,19 @@ case "$HOST" in
     [ -n "$NS" ] || { echo "thor has no namespace yet — deploy thor first" >&2; exit 1; }
     ssh "$HOST" "grep -q '^THOR_IP=' ~/.culture-nodes/prod.env && sed -i 's/^THOR_IP=.*/THOR_IP=$THOR_IP/' ~/.culture-nodes/prod.env || echo THOR_IP=$THOR_IP >> ~/.culture-nodes/prod.env"
     ssh "$HOST" "grep -q '^NODES_NAMESPACE_ID=' ~/.culture-nodes/prod.env && sed -i 's/^NODES_NAMESPACE_ID=.*/NODES_NAMESPACE_ID=$NS/' ~/.culture-nodes/prod.env || echo NODES_NAMESPACE_ID=$NS >> ~/.culture-nodes/prod.env"
-    ssh "$HOST" "cd $REMOTE_DIR/deploy/prod && NODES_BUILD_REVISION=$REVISION docker compose --env-file ~/.culture-nodes/prod.env -f compose.orin.yml up -d --build"
+    # No --build: the image was built and labelled above (see the image build
+    # step); a compose rebuild would drop the label the parity check reads.
+    compose_orin "up -d"
+    # The orin half of the r4 sequence: parity across thor's api and both
+    # workers, and the sweep resumed only when it holds (TWO_HOST_LANE).
+    orin_two_host_lane
     # Same detector, same reason, against compose.orin.yml's own declared set
     # (see the thor lane's comment).
     "$SCRIPT_DIR/audit-credentials.sh" "$HOST"
     # Same doctor detector as the thor lane (PR #208 review finding 2).
     say "running nodes doctor on $HOST"
     ssh "$HOST" "cd \$HOME/git/culture-nodes-agent && \$HOME/.local/bin/nodes doctor" || { echo "nodes doctor reports unhealthy on $HOST" >&2; exit 1; }
-    say "orin deploy complete (worker joined namespace $NS)"
+    deploy_summary orin
     ;;
   *)
     echo "unknown host role: $HOST (expected thor or orin)" >&2; exit 1;;

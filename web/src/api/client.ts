@@ -16,6 +16,9 @@ import type {
   RunList,
   RunState,
   RunView,
+  TicketProjection,
+  TicketReply,
+  TicketReplyRequest,
   WorkflowSource,
   WorkflowValidation,
   WorkflowVersion,
@@ -26,12 +29,10 @@ import type {
  * Same-origin API root. In dev, vite.config.ts proxies it to the Go control
  * plane; in production the Go binary serves this bundle and `/v1alpha1`
  * from one origin. Phase 1 is authless by design (PRD §26) with exactly one
- * class of exceptions: the three calls that write a human-authority record
- * into a run's ledger — `POST /human-tasks/{id}/decision` and the two
- * review calls (`createReview`, `commitReview`, task t30) — each require a
- * bearer token the user presents per call (retention policy in
- * ./decision-token.ts). No other request attaches a credential, and none
- * should without the wider auth story landing first.
+ * class of exceptions: calls that write human-authority records — human-task
+ * decisions, the two review calls, and ticket replies — require the decision
+ * token the user presents per call (retention policy in
+ * ./decision-token.ts). No other request attaches a credential.
  */
 export const API_ROOT = "/v1alpha1";
 
@@ -123,6 +124,22 @@ export const listRuns = (signal?: AbortSignal, params?: ListRunsParams) =>
 
 export const getRun = (id: string, signal?: AbortSignal) =>
   getJson<RunView>(`/runs/${encodeURIComponent(id)}`, signal);
+
+export const getTicket = (id: string, signal?: AbortSignal) =>
+  getJson<TicketProjection>(`/tickets/${encodeURIComponent(id)}`, signal);
+
+export const postTicketReply = (
+  id: string,
+  request: TicketReplyRequest,
+  token: string,
+  signal?: AbortSignal,
+) =>
+  postJson<TicketReply>(
+    `/tickets/${encodeURIComponent(id)}/replies`,
+    request,
+    signal,
+    { authorization: `Bearer ${token}` },
+  );
 
 /**
  * GET /v1alpha1/node-runs query parameters (task t11): the cross-run "jobs

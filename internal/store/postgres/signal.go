@@ -573,6 +573,25 @@ func (s *Store) deliverSignalEventTx(ctx context.Context, tx pgx.Tx, in DeliverS
 		return SignalDelivery{}, fmt.Errorf("postgres: DeliverSignalEvent: append event: %w", err)
 	}
 	ev.CreatedAt = tsValue(createdAt)
+	// A merged-PR fact is also the durable freeze transition for the ticket
+	// projection. It is applied in the fact transaction, so consumers never
+	// observe the merge without the corresponding frozen page.
+	if in.Name == "pr.merged" {
+		var merged struct {
+			IssueKey string `json:"issue_key"`
+		}
+		if err := json.Unmarshal(ev.Payload, &merged); err != nil {
+			return SignalDelivery{}, fmt.Errorf("postgres: DeliverSignalEvent: decode pr.merged: %w", err)
+		}
+		if merged.IssueKey == "" {
+			return SignalDelivery{}, errors.New("postgres: DeliverSignalEvent: pr.merged issue_key is required")
+		}
+		if _, err := tx.Exec(ctx, `INSERT INTO ticket_freezes(namespace_id,ticket_id,merged_pr,frozen_by,signal_event_id)
+			VALUES($1,$2,$3,'pr.merged',$4) ON CONFLICT(namespace_id,ticket_id) DO UPDATE SET
+			merged_pr=EXCLUDED.merged_pr,frozen_by=EXCLUDED.frozen_by,signal_event_id=EXCLUDED.signal_event_id`, in.NamespaceID, merged.IssueKey, ev.Payload, ev.ID); err != nil {
+			return SignalDelivery{}, fmt.Errorf("postgres: DeliverSignalEvent: freeze ticket: %w", err)
+		}
+	}
 	if in.SourceKey != "" {
 		if len(in.Watermark) == 0 {
 			return SignalDelivery{}, errors.New("postgres: DeliverSignalEvent: watermark is required with sourceKey")

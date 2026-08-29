@@ -46,7 +46,22 @@ func deployScriptText(t *testing.T) string {
 	if len(raw) == 0 {
 		t.Fatalf("%s is empty; this test is not proving anything", path)
 	}
-	return string(raw)
+	// WP-J (#230): deploy.sh sources its lanes from deploy/prod/lanes/*.sh to
+	// stay under the 1000-line guard. The text guards in this package read
+	// the deploy as ONE program, so every sourced lane is appended here.
+	lanes, err := filepath.Glob(filepath.Join(codexBridgeDir(t), "lanes", "*.sh"))
+	if err != nil {
+		t.Fatalf("glob lanes: %v", err)
+	}
+	text := string(raw)
+	for _, lane := range lanes {
+		body, err := os.ReadFile(lane)
+		if err != nil {
+			t.Fatalf("read %s: %v", lane, err)
+		}
+		text += "\n" + string(body)
+	}
+	return text
 }
 
 // codexLaneMarkers are strings that only the codex-bridge lane introduces.

@@ -58,6 +58,7 @@ func publishFixtureWorkflow(t *testing.T, f *fixture) {
 // actor. Both lifecycle transitions commit before one dispatcher pass, the
 // timing that sweep-based reporting would lose.
 func TestTicketDerivedSubIntervalRunPostsStartThenFinishThroughBridge(t *testing.T) {
+	t.Setenv("NODES_UI_BASE_URL", "https://nodes.example/")
 	f := newFixture(t, "trigger-subject.workflow.yaml")
 	publishFixtureWorkflow(t, f)
 
@@ -107,14 +108,62 @@ func TestTicketDerivedSubIntervalRunPostsStartThenFinishThroughBridge(t *testing
 	}
 	mu.Lock()
 	defer mu.Unlock()
-	if len(comments) != 2 {
-		t.Fatalf("bridge comments = %d, want start and finish", len(comments))
+	if len(comments) != 3 {
+		t.Fatalf("bridge comments = %d, want start, page link, and finish", len(comments))
 	}
 	if !strings.Contains(comments[0], "started run") || !strings.Contains(comments[0], runID) || !strings.Contains(comments[0], delivery.Event.ID) {
 		t.Errorf("start comment = %q", comments[0])
 	}
-	if !strings.Contains(comments[1], "finished run") || !strings.Contains(comments[1], "completed") {
-		t.Errorf("finish comment = %q", comments[1])
+	if comments[1] != "culture-nodes page: https://nodes.example/tickets/SCRUM-203 [culture-nodes:ticket-page-link]" {
+		t.Errorf("page-link comment = %q", comments[1])
+	}
+	if !strings.Contains(comments[2], "finished run") || !strings.Contains(comments[2], "completed") {
+		t.Errorf("finish comment = %q", comments[2])
+	}
+}
+
+func TestTwoTicketStartReportsEnqueueOnePageLink(t *testing.T) {
+	t.Setenv("NODES_UI_BASE_URL", "")
+	f := newFixture(t, "trigger-subject.workflow.yaml")
+	publishFixtureWorkflow(t, f)
+
+	first := deliverSubjectEvent(t, f, "SCRUM-203", "jira:team.example.com:SCRUM-203:status:1")
+	firstRunID := first.Triggered[0].RunID
+	if err := f.engine.Store().InTx(f.ctx, func(ctx context.Context, tx engine.Tx) error {
+		if err := tx.UpdateRunState(ctx, firstRunID, engine.RunCompleted, nil); err != nil {
+			return err
+		}
+		_, err := tx.AppendEvent(ctx, firstRunID, engine.EventInput{Type: engine.TypeRunCompleted, Data: json.RawMessage(`{}`)})
+		return err
+	}); err != nil {
+		t.Fatal(err)
+	}
+	deliverSubjectEvent(t, f, "SCRUM-203", "jira:team.example.com:SCRUM-203:status:2")
+
+	var starts, links int
+	var runIDIsNull bool
+	var payload []byte
+	if err := f.store.Pool().QueryRow(f.ctx, `SELECT
+		count(*) FILTER (WHERE phase='start'), count(*) FILTER (WHERE phase='page-link')
+		FROM jira_ticket_report_outbox WHERE namespace_id=$1 AND issue_key='SCRUM-203'`, f.ns.ID).Scan(&starts, &links); err != nil {
+		t.Fatal(err)
+	}
+	if starts != 2 || links != 1 {
+		t.Fatalf("outbox start/page-link rows = %d/%d, want 2/1", starts, links)
+	}
+	if err := f.store.Pool().QueryRow(f.ctx, `SELECT run_id IS NULL,payload FROM jira_ticket_report_outbox
+		WHERE namespace_id=$1 AND issue_key='SCRUM-203' AND phase='page-link'`, f.ns.ID).Scan(&runIDIsNull, &payload); err != nil {
+		t.Fatal(err)
+	}
+	var intent struct {
+		Verb, Issue, Comment, Phase string
+	}
+	if err := json.Unmarshal(payload, &intent); err != nil {
+		t.Fatal(err)
+	}
+	if !runIDIsNull || intent.Verb != "post_comment" || intent.Issue != "SCRUM-203" || intent.Phase != "page-link" ||
+		intent.Comment != "culture-nodes page: /tickets/SCRUM-203 [culture-nodes:ticket-page-link]" {
+		t.Fatalf("page-link run_id_null/payload = %v/%+v", runIDIsNull, intent)
 	}
 }
 
@@ -330,7 +379,7 @@ func TestFailingTicketReportBacksOffAndDoesNotBlockLaterReports(t *testing.T) {
 	// Pin the poison row to the head of the ORDER BY id drain so the test
 	// exercises exactly the blocked-queue shape, whatever the ULIDs drew.
 	if _, err := f.store.Pool().Exec(f.ctx, `UPDATE jira_ticket_report_outbox
-		SET id='00000000000000000000000000' WHERE issue_key='SCRUM-BAD'`); err != nil {
+		SET id='00000000000000000000000000' WHERE issue_key='SCRUM-BAD' AND phase='start'`); err != nil {
 		t.Fatalf("pin poison row: %v", err)
 	}
 
@@ -338,8 +387,15 @@ func TestFailingTicketReportBacksOffAndDoesNotBlockLaterReports(t *testing.T) {
 		t.Fatal("Run with a failing report returned nil, want the recorded per-row failure joined in")
 	}
 	mu.Lock()
-	if len(posted) != 1 || posted[0] != "SCRUM-OK" {
+	// WP-I: SCRUM-OK's first start also carries its one page link, so the
+	// drain posts two SCRUM-OK comments — and nothing for the failing head.
+	if len(posted) == 0 {
 		t.Fatalf("posted = %v, want the later SCRUM-OK report to drain past the failing head", posted)
+	}
+	for _, issue := range posted {
+		if issue != "SCRUM-OK" {
+			t.Fatalf("posted = %v, want only SCRUM-OK reports to drain past the failing head", posted)
+		}
 	}
 	mu.Unlock()
 	var attempts int

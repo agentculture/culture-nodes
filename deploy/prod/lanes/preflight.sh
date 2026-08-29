@@ -77,11 +77,18 @@ ssh "$HOST" "$AGENT_CHECKOUT_PREFLIGHT_REMOTE" || {
 # the remote command — as a normalised 0/1 it computed itself, never the raw
 # variable, so nothing the operator typed is spliced into a command line on
 # a production host.
+# The declaration names ONE host: the one `deploy.sh <host>` targets. It is
+# passed to preflight_doctor per call rather than read from the environment,
+# because the thor lane doctors orin too, and orin with a worker stack has by
+# definition been deployed — a missing checkout or CLI there is a
+# restore-the-checkout state, not a first deploy, and `FIRST_DEPLOY=1
+# ./deploy.sh thor` must not wave it through (#246 review).
+FIRST_DEPLOY_DECLARED=0
+if [ "${FIRST_DEPLOY:-}" = 1 ]; then
+  FIRST_DEPLOY_DECLARED=1
+fi
 preflight_doctor() {
-  local host=$1 first_deploy=0
-  if [ "${FIRST_DEPLOY:-}" = 1 ]; then
-    first_deploy=1
-  fi
+  local host=$1 first_deploy=${2:-0}
   say "preflight: nodes doctor on $host"
   ssh "$host" "FIRST_DEPLOY=$first_deploy; "'repo=$HOME/git/culture-nodes-agent; cli=$HOME/.local/bin/nodes
 if [ ! -d "$repo/.git" ] || [ ! -x "$cli" ]; then
@@ -97,7 +104,7 @@ cd "$repo" && "$cli" doctor' || {
     exit 1
   }
 }
-preflight_doctor "$HOST"
+preflight_doctor "$HOST" "$FIRST_DEPLOY_DECLARED"
 
 # The thor lane is about to stop orin's worker across migrate/cutover
 # (TWO_HOST_LANE below), so whether orin is reachable and whether it has a
@@ -123,8 +130,10 @@ if [[ "$HOST" == thor* ]]; then
          say "preflight: $ORIN_HOST has a worker stack; it will be stopped across migrate/cutover and restarted after"
          # orin is about to be modified by this lane too (its worker is
          # stopped and restarted), so it gets the same pre-modification
-         # doctor as thor, before anything on either host changes.
-         preflight_doctor "$ORIN_HOST" ;;
+         # doctor as thor, before anything on either host changes. Never as
+         # a first deploy: a host with a worker stack has been deployed, so
+         # thor's FIRST_DEPLOY=1 does not reach it.
+         preflight_doctor "$ORIN_HOST" 0 ;;
       1) say "preflight: $ORIN_HOST has no worker stack yet (first deploy) — nothing there to quiesce; deploy.sh orin comes after this lane" ;;
       *)
         echo "preflight failed: cannot reach $ORIN_HOST (ssh exit $orin_probe_status) to ask whether it runs a worker; nothing on $HOST was changed" >&2

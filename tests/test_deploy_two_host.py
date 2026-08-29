@@ -154,14 +154,20 @@ class Harness:
         (orin_compose / "compose.orin.yml").write_text("services: {worker: {}}\n")
 
     def run(
-        self, lane: str, checkout: str = "clean", **fake_env: str
+        self,
+        lane: str,
+        checkout: str = "clean",
+        orin_checkout: str = "clean",
+        **fake_env: str,
     ) -> subprocess.CompletedProcess:
         # "absent" models a host that was never deployed (no agent checkout):
         # the preflight refuses it unless FIRST_DEPLOY=1 is declared.
         if checkout != "absent":
             _agent_checkout(self.thor_home, checkout)
-            # orin is doctored by the thor lane too (Qodo 3 on #244).
-            _agent_checkout(self.orin_home, "clean")
+        # orin is doctored by the thor lane too (Qodo 3 on #244); it has a
+        # worker stack by default, so by default it has a checkout as well.
+        if orin_checkout != "absent":
+            _agent_checkout(self.orin_home, orin_checkout)
         if lane == "thor":
             body = "\n".join(
                 [
@@ -399,3 +405,21 @@ def test_first_deploy_declaration_is_normalised_not_spliced(tmp_path):
     h.first(f"ssh[{THOR}] FIRST_DEPLOY=0; repo=$HOME/git/culture-nodes-agent;")
     h.never("pwned")
     assert not (h.thor_home / "pwned").exists()
+
+
+def test_first_deploy_declaration_does_not_reach_the_existing_orin_host(tmp_path):
+    """FIRST_DEPLOY=1 names the host `deploy.sh thor` targets. Orin, which
+    the thor lane doctors too because it will stop and restart orin's
+    worker, has a worker stack — it has been deployed — so a missing checkout
+    or CLI there is a restore-the-checkout state and stays refused; the
+    declaration must not be reused for it (Qodo 1 on #246)."""
+    h = Harness(tmp_path)
+    result = h.run("thor", checkout="absent", orin_checkout="absent", FIRST_DEPLOY="1")
+    assert result.returncode != 0, result.stdout
+    assert "FIRST_DEPLOY=1" in result.stderr, result.stderr
+    # thor got the declaration; orin was doctored as an existing host.
+    thor_exempt = h.first(f"ssh[{THOR}] FIRST_DEPLOY=1; repo=$HOME/git/culture-nodes-agent;")
+    orin_gated = h.first(f"ssh[{ORIN}] FIRST_DEPLOY=0; repo=$HOME/git/culture-nodes-agent;")
+    assert thor_exempt < orin_gated
+    h.never("docker[")
+    h.never("systemd-run[")

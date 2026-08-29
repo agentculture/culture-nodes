@@ -714,6 +714,12 @@ The lane passes the declaration inside the remote command as a normalised
 literal value `1` counts. The post-deploy doctor still gates that deploy
 once the codex lane has installed the checkout and the CLI.
 
+The declaration names one host: the one you are deploying. The thor lane
+doctors orin too (it stops and restarts orin's worker), and an orin that has
+a worker stack has been deployed — so `FIRST_DEPLOY=1 ./deploy.sh thor` does
+not exempt it. If orin's checkout or CLI is missing then, that is a
+restore-the-checkout state and the deploy is refused, as without the flag.
+
 **token rotation.**
 
 ```bash

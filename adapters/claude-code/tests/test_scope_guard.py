@@ -228,9 +228,10 @@ def test_committed_workflow_edit_on_trusted_base_is_refused(git_bridge, monkeypa
     )
     assert status == 403, body
     assert body["scope_violations"] == [".github/workflows/committed.yml"]
-    assert body["workspace_measured"]["trusted_base"] == _git(
-        repo, "rev-parse", "legitimate-base"
-    ).stdout.strip()
+    assert (
+        body["workspace_measured"]["trusted_base"]
+        == _git(repo, "rev-parse", "legitimate-base").stdout.strip()
+    )
 
 
 def test_upstream_repoint_cannot_hide_committed_workflow_edit(git_bridge, monkeypatch):
@@ -271,17 +272,19 @@ def test_scope_guard_baseline_rule_is_shared_across_all_three_bridges():
         ("codex", "codex_bridge"),
         ("colleague", "colleague_bridge"),
     ):
-        source = (root / adapter / "src" / package / "scope_guard.py").read_text(
-            encoding="utf-8"
-        )
+        source = (root / adapter / "src" / package / "scope_guard.py").read_text(encoding="utf-8")
         tree = ast.parse(source)
         functions = []
         for name in ("_branch_scope_delta", "violations"):
             function = next(
-                node for node in tree.body if isinstance(node, ast.FunctionDef) and node.name == name
+                node
+                for node in tree.body
+                if isinstance(node, ast.FunctionDef) and node.name == name
             )
-            if function.body and isinstance(function.body[0], ast.Expr) and isinstance(
-                function.body[0].value, ast.Constant
+            if (
+                function.body
+                and isinstance(function.body[0], ast.Expr)
+                and isinstance(function.body[0].value, ast.Constant)
             ):
                 function.body = function.body[1:]
             functions.append(ast.dump(function, include_attributes=False))

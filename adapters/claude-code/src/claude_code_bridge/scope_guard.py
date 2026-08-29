@@ -186,7 +186,9 @@ def violations(repo: str | None, workspace_measured: dict[str, Any] | None) -> t
         return ()
 
     baseline = workspace_measured.get("trusted_base") or workspace_measured.get("head_before")
-    branch_delta = _branch_scope_delta(repo, baseline) if repo and isinstance(baseline, str) else None
+    branch_delta = None
+    if repo and isinstance(baseline, str):
+        branch_delta = _branch_scope_delta(repo, baseline)
     if branch_delta is None:
         changed = workspace_measured.get("changed_files")
         hits = list(guarded(changed if isinstance(changed, list) else ()))

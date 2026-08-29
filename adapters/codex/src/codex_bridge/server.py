@@ -481,7 +481,13 @@ class Handler(BaseHTTPRequestHandler):
 
         base_ref = raw_input.get("base_ref")
         if base_ref is not None and (not isinstance(base_ref, str) or not base_ref):
-            self._write_json(400, {"error": "input.base_ref must be a non-empty string", "class": mapping.CLASS_ACTOR_REJECTED_INPUT})
+            self._write_json(
+                400,
+                {
+                    "error": "input.base_ref must be a non-empty string",
+                    "class": mapping.CLASS_ACTOR_REJECTED_INPUT,
+                },
+            )
             return
 
         model = raw_input.get("model") or None

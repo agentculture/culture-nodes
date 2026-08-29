@@ -1,0 +1,22 @@
+# systemd user unit for the qwen actor bridge (adapters/qwen, company/qwen-developer).
+#
+# Versioned here since #243: the unit spark ran before was hand-installed and
+# exec'd `uv run qwen-bridge` out of the operator's editable checkout. Under
+# the culture-qwen account it execs the console script `uv tool install`
+# copied into that account's own ~/.local/bin — archive-independent, and
+# independent of any checkout's branch (the human-inbox lesson). %h resolves
+# to /home/culture-qwen because deploy.sh spark installs this file into that
+# account's `systemd --user` instance over `ssh culture-qwen@localhost`.
+[Unit]
+Description=Culture Nodes qwen bridge (qwen-developer)
+After=network-online.target
+
+[Service]
+Environment=QWEN_BRIDGE_CONFIG=%h/.config/culture-nodes-bridges/qwen-developer.json
+EnvironmentFile=-%h/.culture-nodes/bridge-push.env
+ExecStart=%h/.local/bin/qwen-bridge
+Restart=on-failure
+RestartSec=5
+
+[Install]
+WantedBy=default.target

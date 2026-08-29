@@ -1,0 +1,21 @@
+{
+  "claude_bin": "__HOME__/.local/bin/claude",
+  "host": "0.0.0.0",
+  "port": 8088,
+  "always_async": true,
+  "state_dir": "__HOME__/.local/state/culture-nodes-bridges/developer",
+  "repo_allowlist": [
+    "__HOME__/git/culture-nodes-developer"
+  ],
+  "repo_identities": {
+    "agentculture/culture-nodes": "__HOME__/git/culture-nodes-developer"
+  },
+  "custody": {
+    "checkout": "__HOME__/git/culture-nodes-developer",
+    "branch_prefix": "jira-flow/",
+    "devague_write": true
+  },
+  "claude_env": {
+    "NODES_API_URL": "__NODES_API_URL__"
+  }
+}

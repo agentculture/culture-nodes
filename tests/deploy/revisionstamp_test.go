@@ -29,6 +29,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"testing"
 	"time"
@@ -40,7 +41,7 @@ import (
 const stampFile = "_revision.json"
 
 // bridgeAdapters are the adapters whose wheels a deploy installs as copies.
-var bridgeAdapters = []string{"codex", "claude-code", "colleague", "notify"}
+var bridgeAdapters = []string{"codex", "claude-code", "colleague", "notify", "qwen"}
 
 func repoRootDir(t *testing.T) string {
 	t.Helper()
@@ -210,14 +211,21 @@ func TestTheDeployStampsTheRevisionItShips(t *testing.T) {
 	// this test searched for "stamp_revision " and matched the usage line in
 	// the helper's own doc comment, which sits above every install in the
 	// file — so it passed with the call moved after the install, i.e. it
-	// guarded nothing. Matching `stamp_revision "$host" <adapter>` cannot hit
-	// a comment.
+	// guarded nothing. Matching `stamp_revision "$<var>" <adapter>` cannot hit
+	// a comment. The variable is `$host` for the login-user lanes and
+	// `$target` for the lanes that install into an engine account (#243) —
+	// the ssh target that IS the account — and both are the first argument.
 	for _, lane := range []struct{ adapter, installNeedle string }{
 		{"codex", `uv tool install --force ./$REMOTE_DIR/adapters/codex`},
 		{"notify", `uv tool install --force ./$REMOTE_DIR/adapters/notify`},
+		{"claude-code", `uv tool install --force ./$REMOTE_DIR/adapters/claude-code`},
+		{"qwen", `uv tool install --force ./$REMOTE_DIR/adapters/qwen`},
 	} {
-		call := `stamp_revision "$host" ` + lane.adapter
-		stampAt := strings.Index(script, call)
+		call := regexp.MustCompile(`stamp_revision "\$(host|target)" ` + regexp.QuoteMeta(lane.adapter) + ` `)
+		stampAt := -1
+		if loc := call.FindStringIndex(script); loc != nil {
+			stampAt = loc[0]
+		}
 		installAt := strings.Index(script, lane.installNeedle)
 		if stampAt < 0 {
 			t.Errorf("the %s lane never calls %s, so that bridge is installed with no record of what "+

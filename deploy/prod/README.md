@@ -650,6 +650,15 @@ appends a new revision row on a changed one — no code path ever `UPDATE`s
 or `DELETE`s an actor row (c8, h7). It refuses a hostname endpoint
 outright; only a numeric LAN IP is accepted (c20).
 
+`--os-user NAME` is sugar for `--metadata os_user=NAME` — a first-class
+metadata key (issue #204) that records the dedicated Unix account a bridge
+runs as (`culture-codex`, `culture-claude`, `culture-qwen`), so the registry
+can be read as a lane tag. `NAME` must match `^[a-z_][a-z0-9_-]*$`; an
+invalid name is refused with a `hint:` before any Postgres access. Like
+every other `--metadata` key, `os_user` is merged into the previous
+revision's metadata, never replaced — a later registration that only asks
+for a different key still carries `os_user` forward.
+
 ### Unbounded concurrency — placement is the containment
 
 The bridge's async runner spawns one thread + one `codex exec` subprocess

@@ -5,6 +5,12 @@ All notable changes to this project will be documented in this file.
 Format follows [Keep a Changelog](https://keepachangelog.com/). This project
 adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.43.1] - 2026-08-29
+
+### Changed
+
+- PR #244 SonarCloud finding python:S9073 (MAJOR) in `tests/test_jira_skill.py`: the composite `assert "#197" in text and "#230" in text` is now two assertions, so a failure names which issue reference the skill description lost instead of reporting the conjunction as false
+
 ## [0.43.0] - 2026-08-29
 
 ### Added

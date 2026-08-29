@@ -2403,6 +2403,22 @@
         ],
         "type": "object"
       },
+      "PostTicketFrameRequest": {
+        "properties": {
+          "frame": {
+            "additionalProperties": true,
+            "type": "object"
+          },
+          "posted_by": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "frame",
+          "posted_by"
+        ],
+        "type": "object"
+      },
       "Preflight": {
         "description": "One clarify-then-commit briefing (task t14, issue #67; migration 0026's `dispatch_preflights`). `expired` is computed against the server clock at read time, because the window — not the row's existence — is the predicate everywhere in this feature.",
         "properties": {
@@ -3225,6 +3241,85 @@
         },
         "required": [
           "verdict"
+        ],
+        "type": "object"
+      },
+      "Ticket": {
+        "properties": {
+          "human_tasks": {
+            "items": {
+              "$ref": "#/components/schemas/HumanTask"
+            },
+            "type": "array"
+          },
+          "latest_frame": {
+            "$ref": "#/components/schemas/TicketFrame"
+          },
+          "ledger": {
+            "items": {
+              "type": "object"
+            },
+            "type": "array"
+          },
+          "replies": {
+            "items": {
+              "type": "object"
+            },
+            "type": "array"
+          },
+          "runs": {
+            "items": {
+              "$ref": "#/components/schemas/Run"
+            },
+            "type": "array"
+          },
+          "ticket_id": {
+            "type": "string"
+          },
+          "ticket_reports": {
+            "items": {
+              "type": "object"
+            },
+            "type": "array"
+          }
+        },
+        "required": [
+          "ticket_id",
+          "runs",
+          "ledger",
+          "human_tasks",
+          "ticket_reports",
+          "replies"
+        ],
+        "type": "object"
+      },
+      "TicketFrame": {
+        "properties": {
+          "created_at": {
+            "format": "date-time",
+            "type": "string"
+          },
+          "frame": {
+            "additionalProperties": true,
+            "type": "object"
+          },
+          "posted_by": {
+            "type": "string"
+          },
+          "ticket_id": {
+            "type": "string"
+          },
+          "version": {
+            "minimum": 1,
+            "type": "integer"
+          }
+        },
+        "required": [
+          "ticket_id",
+          "version",
+          "frame",
+          "posted_by",
+          "created_at"
         ],
         "type": "object"
       },
@@ -5107,6 +5202,14 @@
             }
           },
           {
+            "description": "Filter to runs whose persisted correlation subject matches exactly.",
+            "in": "query",
+            "name": "subject",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
             "description": "Only runs updated at or after this instant (RFC3339). When set and `sort` is omitted, `sort` defaults to `updated_at` rather than the endpoint's own default of `created_at`.",
             "in": "query",
             "name": "updated_since",
@@ -6385,6 +6488,93 @@
         "summary": "Publish an entry's embedded workflow source, verbatim, once every requirement is bound.",
         "tags": [
           "store"
+        ]
+      }
+    },
+    "/v1alpha1/tickets/{id}": {
+      "get": {
+        "operationId": "getTicket",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Ticket"
+                }
+              }
+            },
+            "description": "Runs with this subject, their ledger and human tasks, ticket reports, replies, and the latest frame."
+          }
+        },
+        "summary": "Compose the control-plane projection for one ticket.",
+        "tags": [
+          "runs"
+        ]
+      }
+    },
+    "/v1alpha1/tickets/{id}/frame": {
+      "post": {
+        "operationId": "postTicketFrame",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/PostTicketFrameRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TicketFrame"
+                }
+              }
+            },
+            "description": "The append-only frame version was created."
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "description": "The decision bearer token is missing or invalid."
+          }
+        },
+        "security": [
+          {
+            "decisionBearerAuth": []
+          }
+        ],
+        "summary": "Append the next version of a ticket's frame snapshot.",
+        "tags": [
+          "runs"
         ]
       }
     },

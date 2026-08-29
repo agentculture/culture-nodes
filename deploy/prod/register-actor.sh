@@ -10,6 +10,7 @@
 #
 #   register-actor.sh <actor_key> <endpoint_url> [auth_token_env] \
 #                     [--metadata KEY=VALUE]...
+#   register-actor.sh --engine <actor_id>
 #
 # Each input can also arrive as an env var (ACTOR_KEY, ENDPOINT_URL,
 # AUTH_TOKEN_ENV) so the script composes into other automation without
@@ -50,6 +51,7 @@ usage() {
   cat >&2 <<'EOF'
 usage: register-actor.sh <actor_key> <endpoint_url> [auth_token_env] \
                         [--metadata KEY=VALUE]...
+       register-actor.sh --engine <actor_id>
 
   actor_key       e.g. company/codex-thor              (env: ACTOR_KEY)
   endpoint_url    must have a numeric IPv4 host, e.g.
@@ -59,6 +61,8 @@ usage: register-actor.sh <actor_key> <endpoint_url> [auth_token_env] \
   --metadata      KEY=VALUE, repeatable. Merged over the previous revision's
                   metadata; keys not named here are carried forward unchanged.
                   e.g. --metadata handover_remote=ssh://thor/~/git/culture-nodes-agent
+  --engine        register an in-process engine producer with no endpoint;
+                  the actor id and actor key are both <actor_id>.
 
 Env overrides:
   PSQL_CMD           full command used to reach Postgres (default: the
@@ -74,6 +78,7 @@ EOF
 METADATA_KEYS=()
 METADATA_VALUES=()
 POSITIONAL=()
+ENGINE_ACTOR=""
 while [ $# -gt 0 ]; do
   case "$1" in
     --metadata)
@@ -97,6 +102,11 @@ while [ $# -gt 0 ]; do
       METADATA_VALUES+=("${pair#*=}")
       shift
       ;;
+    --engine)
+      [ $# -ge 2 ] || { echo "register-actor: --engine needs an actor id" >&2; exit 1; }
+      ENGINE_ACTOR=$2
+      shift 2
+      ;;
     -h|--help) usage; exit 0 ;;
     --) shift; while [ $# -gt 0 ]; do POSITIONAL+=("$1"); shift; done ;;
     -*) echo "register-actor: unknown flag '$1'" >&2; usage; exit 1 ;;
@@ -108,7 +118,14 @@ ACTOR_KEY=${POSITIONAL[0]:-${ACTOR_KEY:-}}
 ENDPOINT_URL=${POSITIONAL[1]:-${ENDPOINT_URL:-}}
 AUTH_TOKEN_ENV=${POSITIONAL[2]:-${AUTH_TOKEN_ENV:-}}
 
-if [ -z "$ACTOR_KEY" ] || [ -z "$ENDPOINT_URL" ]; then
+if [ -n "$ENGINE_ACTOR" ]; then
+  [ ${#POSITIONAL[@]} -eq 0 ] || { echo "register-actor: --engine does not accept endpoint arguments" >&2; exit 1; }
+  ACTOR_KEY=$ENGINE_ACTOR
+  ENDPOINT_URL=""
+  AUTH_TOKEN_ENV=""
+fi
+
+if [ -z "$ACTOR_KEY" ] || { [ -z "$ENGINE_ACTOR" ] && [ -z "$ENDPOINT_URL" ]; }; then
   usage
   exit 1
 fi
@@ -152,7 +169,7 @@ for i in "${!METADATA_KEYS[@]}"; do
     exit 1
   fi
 done
-if [[ ! "$ENDPOINT_URL" =~ ^https?://[A-Za-z0-9:/._-]+$ ]]; then
+if [ -z "$ENGINE_ACTOR" ] && [[ ! "$ENDPOINT_URL" =~ ^https?://[A-Za-z0-9:/._-]+$ ]]; then
   echo "register-actor: refusing endpoint '$ENDPOINT_URL': must be an explicit http:// or https:// URL (a scheme-less endpoint would be persisted and then fail when the worker builds requests from it)" >&2
   exit 1
 fi
@@ -171,7 +188,7 @@ host=${host_port%%:*}
 octet='(25[0-5]|2[0-4][0-9]|1[0-9]{2}|[1-9]?[0-9])'
 ipv4_regex="^${octet}\\.${octet}\\.${octet}\\.${octet}\$"
 
-if [[ ! "$host" =~ $ipv4_regex ]]; then
+if [ -z "$ENGINE_ACTOR" ] && [[ ! "$host" =~ $ipv4_regex ]]; then
   echo "register-actor: refusing endpoint '$ENDPOINT_URL': host '$host' is not a numeric IPv4 address -- worker containers cannot resolve LAN hostnames, so an actor endpoint must be a plain IPv4 address" >&2
   exit 1
 fi
@@ -256,7 +273,12 @@ else
   # First revision: there is nothing to carry forward, so the kind/protocol
   # defaults apply. An actor that is not an http agent is registered by
   # amending its first revision, not by guessing here.
-  run_psql "INSERT INTO actors (id, namespace_id, actor_key, revision, kind, protocol, endpoint_ref, metadata) VALUES ('$actor_id', '$NAMESPACE_ID', '$ACTOR_KEY', $next_revision, 'agent', 'http', '$ENDPOINT_URL', '$overlay_json'::jsonb)" >/dev/null
+  if [ -n "$ENGINE_ACTOR" ]; then
+    actor_id=$ENGINE_ACTOR
+    run_psql "INSERT INTO actors (id, namespace_id, actor_key, revision, kind, protocol, endpoint_ref, metadata) VALUES ('$actor_id', '$NAMESPACE_ID', '$ACTOR_KEY', $next_revision, 'engine', 'internal', NULL, '$overlay_json'::jsonb)" >/dev/null
+  else
+    run_psql "INSERT INTO actors (id, namespace_id, actor_key, revision, kind, protocol, endpoint_ref, metadata) VALUES ('$actor_id', '$NAMESPACE_ID', '$ACTOR_KEY', $next_revision, 'agent', 'http', '$ENDPOINT_URL', '$overlay_json'::jsonb)" >/dev/null
+  fi
 fi
 
 echo "register-actor: registered $ACTOR_KEY at revision $next_revision ($ENDPOINT_URL)"

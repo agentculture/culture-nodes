@@ -125,6 +125,7 @@ type runRow struct {
 	Name           string
 	Description    string
 	Category       string
+	Subject        string
 }
 
 // out renders r as a RunOut. Usage stays unset here (see RunOut's doc
@@ -144,6 +145,7 @@ func (r runRow) out() RunOut {
 		Name:           r.Name,
 		Description:    r.Description,
 		Category:       r.Category,
+		Subject:        r.Subject,
 	}
 	if r.Name == "" {
 		out.DisplayHint = deriveDisplayHint(r.Input)
@@ -172,6 +174,7 @@ const (
 // self-documenting at handleListRuns' single call site.
 type listRunsParams struct {
 	State        string
+	Subject      string
 	Limit        int
 	UpdatedSince *time.Time
 	UpdatedUntil *time.Time
@@ -198,27 +201,29 @@ func (s *Server) listRuns(ctx context.Context, p listRunsParams) ([]RunOut, erro
 	if p.Sort == sortUpdatedAt {
 		rows, err = s.Store.Pool().Query(ctx, `
 			SELECT r.id, wv.content_digest, r.status, r.input, r.output, r.created_at, r.updated_at, r.completed_at,
-			       r.name, r.description, r.category
+			       r.name, r.description, r.category, COALESCE(r.subject,'')
 			FROM runs r JOIN workflow_versions wv ON wv.id = r.workflow_version_id
 			WHERE r.namespace_id = $1
 			  AND ($2 = '' OR r.status = $2)
 			  AND ($3::timestamptz IS NULL OR r.updated_at >= $3)
 			  AND ($4::timestamptz IS NULL OR r.updated_at <= $4)
+			  AND ($5 = '' OR r.subject = $5)
 			ORDER BY r.updated_at DESC, r.id DESC
-			LIMIT $5`,
-			s.NamespaceID, p.State, p.UpdatedSince, p.UpdatedUntil, p.Limit)
+			LIMIT $6`,
+			s.NamespaceID, p.State, p.UpdatedSince, p.UpdatedUntil, p.Subject, p.Limit)
 	} else {
 		rows, err = s.Store.Pool().Query(ctx, `
 			SELECT r.id, wv.content_digest, r.status, r.input, r.output, r.created_at, r.updated_at, r.completed_at,
-			       r.name, r.description, r.category
+			       r.name, r.description, r.category, COALESCE(r.subject,'')
 			FROM runs r JOIN workflow_versions wv ON wv.id = r.workflow_version_id
 			WHERE r.namespace_id = $1
 			  AND ($2 = '' OR r.status = $2)
 			  AND ($3::timestamptz IS NULL OR r.updated_at >= $3)
 			  AND ($4::timestamptz IS NULL OR r.updated_at <= $4)
+			  AND ($5 = '' OR r.subject = $5)
 			ORDER BY r.created_at DESC, r.id DESC
-			LIMIT $5`,
-			s.NamespaceID, p.State, p.UpdatedSince, p.UpdatedUntil, p.Limit)
+			LIMIT $6`,
+			s.NamespaceID, p.State, p.UpdatedSince, p.UpdatedUntil, p.Subject, p.Limit)
 	}
 	if err != nil {
 		return nil, fmt.Errorf("api: list runs: %w", err)
@@ -238,7 +243,7 @@ func (s *Server) listRuns(ctx context.Context, p listRunsParams) ([]RunOut, erro
 		)
 		if err := rows.Scan(
 			&r.ID, &r.WorkflowDigest, &r.Status, &input, &output, &createdAt, &updatedAt, &completedAt,
-			&name, &description, &category,
+			&name, &description, &category, &r.Subject,
 		); err != nil {
 			return nil, fmt.Errorf("api: list runs: scan: %w", err)
 		}

@@ -119,6 +119,37 @@ func TestRegisterActorScriptIsBashWithStrictMode(t *testing.T) {
 	}
 }
 
+func TestRegisterEngineActorIsIdempotent(t *testing.T) {
+	dir := t.TempDir()
+	fake, _, inserts := newFakePsql(t, dir, "namespace_1", "")
+	env := []string{"PSQL_CMD=" + fake, "NODES_NAMESPACE_ID=namespace_1"}
+
+	output, code := runRegisterActorArgs(t, env, "--engine", "engine_remint_scheduler")
+	if code != 0 {
+		t.Fatalf("first --engine registration exit=%d output=%q", code, output)
+	}
+	inserted, err := os.ReadFile(inserts)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(inserted), "'engine', 'internal', NULL") {
+		t.Fatalf("engine registration did not insert an engine/internal actor without endpoint: %s", inserted)
+	}
+
+	fake2, _, inserts2 := newFakePsql(t, t.TempDir(), "namespace_1", "1||t")
+	output, code = runRegisterActorArgs(t, []string{"PSQL_CMD=" + fake2, "NODES_NAMESPACE_ID=namespace_1"}, "--engine", "engine_remint_scheduler")
+	if code != 0 || !strings.Contains(output, "unchanged (revision 1)") {
+		t.Fatalf("second --engine registration = exit %d output %q, want no-op", code, output)
+	}
+	inserted, err = os.ReadFile(inserts2)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(inserted) != 0 {
+		t.Fatalf("second --engine registration inserted a row: %s", inserted)
+	}
+}
+
 // --- behavioral tests: fake psql --------------------------------------
 
 // newFakePsql writes a tiny bash script to dir that stands in for psql.

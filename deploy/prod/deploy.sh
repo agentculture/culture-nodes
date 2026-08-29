@@ -1013,7 +1013,14 @@ thor_two_host_lane() {
   # systemd parses the two EnvironmentFiles without shell-evaluating secret
   # values, and applies them only to this transient host-side process.
   say "running the nodes-cutover adopter on $THOR_HOST"
-  ssh "$THOR_HOST" 'systemd-run --user --wait --pipe --collect --property=EnvironmentFile=$HOME/.culture-nodes/prod.env --property=EnvironmentFile=$HOME/.culture-nodes/runner-secrets.env $HOME/.culture-nodes/bin/nodes-cutover'
+  # nodes-cutover is a HOST process (custody: the Jira read pair never enters
+  # a long-lived container), but prod.env's NODES_DATABASE_URL names the
+  # compose service `postgres`, which only resolves inside the compose
+  # network -- t7 measured "lookup postgres ... server misbehaving" with the
+  # api already stopped. compose.thor.yml publishes postgres on the host's
+  # 5432, so the adopter reads a third env file that rewrites only the host
+  # part; it is written 0600 on the target and later files override earlier.
+  ssh "$THOR_HOST" 'umask 077; grep "^NODES_DATABASE_URL=" $HOME/.culture-nodes/prod.env | sed "s#@postgres:#@127.0.0.1:#" > $HOME/.culture-nodes/cutover.env; systemd-run --user --wait --pipe --collect --property=EnvironmentFile=$HOME/.culture-nodes/prod.env --property=EnvironmentFile=$HOME/.culture-nodes/runner-secrets.env --property=EnvironmentFile=$HOME/.culture-nodes/cutover.env $HOME/.culture-nodes/bin/nodes-cutover; rc=$?; rm -f $HOME/.culture-nodes/cutover.env; exit $rc'
   # Everything except the scheduler; no --build (see the image build step:
   # a compose rebuild would drop the label the parity check reads).
   compose_thor "up -d --scale scheduler=0"

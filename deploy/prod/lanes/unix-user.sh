@@ -151,10 +151,15 @@ for engine in "$@"; do
   done < "$pubkey_file"
   chmod 600 "$home/.ssh/authorized_keys"
   chown -R "$account:$account" "$home/.ssh"
+  # qwen has no login flow of its own here: its endpoint and the NAME of the
+  # env var carrying its API key sit in ~/.qwen/settings.json (the value in
+  # the env block of that same file), and a session under the account reads
+  # the copy in the account -- so the settings file IS the credential and is
+  # copied like the other two (#249 review, finding 1).
   case "$engine" in
     codex) cred_dir=.codex; cred_file=auth.json ;;
     claude) cred_dir=.claude; cred_file=.credentials.json ;;
-    *) cred_dir=; cred_file= ;;
+    qwen) cred_dir=.qwen; cred_file=settings.json ;;
   esac
   if [ -n "$cred_dir" ]; then
     src=$login_home/$cred_dir/$cred_file
@@ -420,6 +425,17 @@ unix_user_provision() {
     return 1
   }
 
+  if [ "$engine" = qwen ]; then
+    # The bootstrap copies ~/.qwen/settings.json into the account; a qwen
+    # account without it has no endpoint and no API key, so its bridge would
+    # start and every session would fail to authenticate (#249, finding 1).
+    say "asserting $account's ~/.qwen/settings.json (endpoint + API-key variable; copied by the bootstrap)"
+    ssh "$target" '[ -s "$HOME/.qwen/settings.json" ]' || {
+      echo "provision refused on $host: $account has no ~/.qwen/settings.json, so a qwen session under it has no endpoint and no API key" >&2
+      echo "hint: re-run the bootstrap, which copies the login user's ~/.qwen/settings.json into the account: sudo bash ${REMOTE_DIR:-culture-nodes-prod}/deploy/prod/lanes/unix-user.sh bootstrap qwen   (on $host)" >&2
+      return 1
+    }
+  fi
   if [ "$engine" = codex ]; then
     say "ensuring $account's codex sandbox posture: workspace-write keeps file confinement and gains network (config.toml)"
     ssh "$target" "$UNIX_USER_CODEX_CONFIG_REMOTE" || { echo "provision failed on $host: codex config.toml for $account (reason above)" >&2; return 1; }

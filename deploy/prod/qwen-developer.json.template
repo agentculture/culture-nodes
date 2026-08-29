@@ -4,6 +4,7 @@
   "port": 8092,
   "always_async": true,
   "default_sandbox": "workspace-write",
+  "qwen_env": {},
   "state_dir": "__HOME__/.local/state/culture-nodes-bridges/qwen-developer",
   "repo_allowlist": [
     "__HOME__/git/culture-nodes-qwen-developer"

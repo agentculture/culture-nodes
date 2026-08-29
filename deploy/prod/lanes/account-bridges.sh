@@ -209,6 +209,11 @@ for key in ("actor_id", "auth_token"):
     value = carried.get(key)
     if isinstance(value, str) and value:
         config[key] = value
+engine_env = carried.get("qwen_env")
+if isinstance(engine_env, dict) and engine_env:
+    merged = dict(config.get("qwen_env") or {})
+    merged.update({str(k): str(v) for k, v in engine_env.items()})
+    config["qwen_env"] = merged
 if not config.get("auth_token"):
     sys.stderr.write("refusing: no auth_token for " + role + " (the bridge binds 0.0.0.0 and refuses to start without one); nothing rendered\n")
     raise SystemExit(3)
@@ -240,9 +245,25 @@ python3 -c "$prog" "$TEMPLATE" "$ROLE" "$NODES_API_URL"'
 # A missing actor_id there is resolved from the registry instead; a missing
 # auth_token is a refusal, because a bridge on 0.0.0.0 with no token either
 # refuses to start or answers everyone.
+#
+# The qwen role carries one more thing (#249 review, finding 1): the API-key
+# variable its session authenticates with. The login user's
+# ~/.qwen/settings.json names it (modelProviders.*[].envKey) and holds its
+# value (env.<NAME>); the pair rides the same pipe into the template's
+# qwen_env slot, so the account's session carries exactly what the login
+# user's did. It is read from THAT FILE, never from this shell's environment:
+# the bridge merges qwen_env into every session, and an operator variable
+# that happened to share a name would otherwise cross the account boundary.
+# A named key with no value is a refusal -- the session would start and
+# fail every turn on auth.
 account_render_bridge_config() { # target role template [actor_key]
   local target=$1 role=$2 template=$3 actor_key=${4:-$(account_role_actor_key "$2")}
-  local source="$HOME/.config/culture-nodes-bridges/$role.json" row_id=""
+  local source="$HOME/.config/culture-nodes-bridges/$role.json" row_id="" engine_settings=""
+  case "$role" in qwen*) engine_settings="$HOME/.qwen/settings.json" ;; esac
+  if [ -n "$engine_settings" ] && [ ! -s "$engine_settings" ]; then
+    echo "refusing: $engine_settings is missing — it names the API-key variable a qwen session authenticates with (modelProviders.*[].envKey) and holds its value; nothing rendered for $role" >&2
+    return 1
+  fi
   if [ ! -s "$source" ]; then
     echo "refusing: $source is missing — it is where $role's externally issued auth_token lives (the value the control plane holds as NODES_ACTOR_*_TOKEN), and this lane mints none; nothing rendered for $role" >&2
     return 1
@@ -260,10 +281,20 @@ account_render_bridge_config() { # target role template [actor_key]
   # and ride the argv prefix the way install-secrets.sh prefixes FORCE.
   # shellcheck disable=SC2029 # the prefix is deliberately expanded here
   python3 -c 'import json,sys
-cfg = json.load(open(sys.argv[1])); row = sys.argv[2]
+cfg = json.load(open(sys.argv[1])); row = sys.argv[2]; settings_path = sys.argv[3]
 out = {k: cfg[k] for k in ("actor_id", "auth_token") if isinstance(cfg.get(k), str) and cfg[k]}
 if row and "actor_id" not in out: out["actor_id"] = row
-print(json.dumps(out))' "$source" "$row_id" \
+if settings_path:
+    settings = json.load(open(settings_path))
+    values = settings.get("env") if isinstance(settings.get("env"), dict) else {}
+    names = sorted({p["envKey"] for ps in (settings.get("modelProviders") or {}).values() if isinstance(ps, list)
+                    for p in ps if isinstance(p, dict) and isinstance(p.get("envKey"), str) and p["envKey"]})
+    missing = [n for n in names if not isinstance(values.get(n), str) or not values[n]]
+    if missing:
+        sys.stderr.write("refusing: " + settings_path + " names " + ", ".join(missing) + " as the API-key variable but its env block holds no value for it; the session could not authenticate\n")
+        raise SystemExit(3)
+    if names: out["qwen_env"] = {n: values[n] for n in names}
+print(json.dumps(out))' "$source" "$row_id" "$engine_settings" \
     | ssh "$target" "ROLE='$role'; TEMPLATE='$REMOTE_DIR/deploy/prod/$template'; NODES_API_URL='$NODES_API_URL'; $ACCOUNT_RENDER_REMOTE"
 }
 

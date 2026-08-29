@@ -48,6 +48,17 @@ LOCAL_HOST = SPARK
 PUBKEY = "ssh-ed25519 AAAAfakeoperatorkey operator-key"
 CODEX_AUTH = '{"tokens":{"access_token":"fake-codex"}}\n'
 CLAUDE_CREDS = '{"claudeAiOauth":{"accessToken":"fake-claude"}}\n'
+# The login user's qwen config, in the measured shape of ~/.qwen/settings.json
+# (2026-08-26): the model provider names the env var that carries its API
+# key (envKey), and the env block holds that variable's value. The account's
+# session reads its OWN copy of this file, so the bootstrap copies it the way
+# it copies codex's auth.json and claude's .credentials.json.
+QWEN_KEY_NAME = "QWEN_CUSTOM_API_KEY_OPENAI_HTTP_LOCALHOST_8001_FAKE"
+QWEN_SETTINGS = (
+    '{"env": {"%s": "fake-qwen-key"}, "modelProviders": {"openai": [{"id": "m", '
+    '"baseUrl": "http://localhost:8001/v1", "envKey": "%s"}]}, '
+    '"model": {"name": "m", "baseUrl": "http://localhost:8001/v1"}}\n' % (QWEN_KEY_NAME, QWEN_KEY_NAME)
+)
 
 # The shim strips every lane variable from the remote environment, like a
 # real sshd (AcceptEnv admits LANG/LC_* only): a lane that wants the host to
@@ -278,6 +289,8 @@ class Harness:
             (home / ".claude").mkdir()
             (home / ".claude/.credentials.json").write_text(CLAUDE_CREDS)
             (home / ".claude/.credentials.json").chmod(0o600)
+            (home / ".qwen").mkdir()
+            (home / ".qwen/settings.json").write_text(QWEN_SETTINGS)
             # The login user's own agent checkout, with an unpushed commit
             # and a dirty file: the lane must never write here (c30).
             repo = _seed_repo(home / "git/culture-nodes-agent")
@@ -433,6 +446,15 @@ def test_bootstrap_takes_several_engines_and_copies_per_engine_credentials(tmp_p
     assert (qwen / ".ssh/authorized_keys").read_text() == PUBKEY + "\n"
     assert not (qwen / ".codex").exists()
     assert not (qwen / ".claude").exists()
+    # qwen's credential is its settings file (#249 review, finding 1): the
+    # endpoint and the API-key variable the session authenticates with live
+    # there, and a session under culture-qwen reads culture-qwen's copy.
+    settings = qwen / ".qwen/settings.json"
+    assert settings.read_text() == QWEN_SETTINGS
+    assert oct(settings.stat().st_mode & 0o777) == "0o600"
+    assert oct((qwen / ".qwen").stat().st_mode & 0o777) == "0o700"
+    h.first(f"chown[{SPARK}]", "culture-qwen:culture-qwen", ".qwen")
+    assert not (claude / ".qwen").exists()
     assert h.count("useradd[") == 2
     for engine in ("claude", "qwen"):
         assert oct(h.account_home(SPARK, engine).stat().st_mode & 0o777) == "0o750"
@@ -599,6 +621,24 @@ def test_provision_qwen_on_spark_uses_the_standalone_installer(tmp_path: Path):
     assert (home / ".local/bin/qwen").exists()
     assert h.count("curl[", "install-qwen-standalone.sh") == 1
     h.never("npm")
+
+
+def test_provision_qwen_refuses_without_its_settings_file_and_names_the_bootstrap(
+    tmp_path: Path,
+):
+    """A culture-qwen with no ~/.qwen/settings.json has no endpoint and no
+    API key: its bridge would start and every session would fail to
+    authenticate. The provision refuses and names the root step that copies
+    the file (#249 review, finding 1)."""
+    h = Harness(tmp_path)
+    _provisioned(h, SPARK, "qwen")
+    (h.account_home(SPARK, "qwen") / ".qwen/settings.json").unlink()
+    h.clear_log()
+    refused = h.run(f"unix_user_provision {SPARK} qwen", host=SPARK)
+    assert refused.returncode != 0
+    assert ".qwen/settings.json" in refused.stderr
+    assert "bootstrap qwen" in refused.stderr
+    h.never("curl[")
 
 
 def test_provision_fast_forwards_a_clean_clone_and_refuses_a_dirty_one(tmp_path: Path):

@@ -32,6 +32,7 @@ from pathlib import Path
 
 from tests.test_deploy_unix_user import (
     ORIN,
+    QWEN_KEY_NAME,
     ROOT,
     SPARK,
     THOR,
@@ -446,6 +447,10 @@ def test_the_five_spark_templates_carry_no_decision_token_and_no_operator_path()
         assert "upkeep-lane" not in text, name
         assert "__HOME__" in text, name
         json.loads(text.replace("__HOME__", "/h").replace("__NODES_API_URL__", "http://x"))
+    # The qwen template carries the slot the renderer fills with the session's
+    # API-key variable (finding 1) -- and nothing pre-filled in it.
+    qwen = json.loads((ROOT / "deploy/prod/qwen-developer.json.template").read_text().replace("__HOME__", "/h"))
+    assert qwen["qwen_env"] == {}
 
 
 # --- deploy.sh spark ---------------------------------------------------------------
@@ -550,6 +555,14 @@ def test_spark_renders_the_configs_into_the_accounts_without_the_decision_token(
     assert qwen_cfg["default_sandbox"] == "workspace-write"
     assert qwen_cfg["qwen_bin"] == str(h.account_home(SPARK, "qwen") / ".local/bin/qwen")
     assert qwen_cfg["auth_token"] == "login-token-qwen-developer"
+    # The session's API key (#249 review, finding 1): the variable the login
+    # user's ~/.qwen/settings.json names as the provider's envKey, with the
+    # value that file's env block holds -- relayed from that file, never
+    # from the operator's environment, and only into the qwen config.
+    assert qwen_cfg["qwen_env"] == {QWEN_KEY_NAME: "fake-qwen-key"}
+    assert QWEN_KEY_NAME not in " ".join(
+        (claude / f".config/culture-nodes-bridges/{role}.json").read_text() for role in CLAUDE_ROLES
+    )
     # grep the whole account the way spec h32 does -- minus the shipped
     # source archive, whose code and tests NAME the variable (this file
     # included); what must be clean is everything the account runs from.

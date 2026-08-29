@@ -281,7 +281,7 @@ class TestJiraWorkItems:
         cursors = {}
         appended = []
 
-        def equality_dedup(name, payload, source_key, watermark):
+        def equality_dedup(name, payload, source_key, watermark, **_kw):
             encoded = json.dumps(watermark, sort_keys=True)
             if cursors.get(source_key) == encoded:
                 return {"duplicate": True}

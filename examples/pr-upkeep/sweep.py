@@ -681,7 +681,9 @@ def newest_comment_timestamp(comments: list[dict]) -> str:
     return max((_comment_timestamp(c) for c in comments), default="")
 
 
-def raise_event(name: str, payload: dict, source_key: str, watermark: dict) -> dict:
+def raise_event(
+    name: str, payload: dict, source_key: str, watermark: dict, subject: str = ""
+) -> dict:
     """Raise one cursor-guarded fact through the control plane's event path."""
     base = os.environ.get("NODES_API_URL")
     token = os.environ.get("NODES_EVENT_TOKEN")
@@ -694,6 +696,11 @@ def raise_event(name: str, payload: dict, source_key: str, watermark: dict) -> d
             "emitter": "pr-upkeep/sweep",
             "source_key": source_key,
             "watermark": watermark,
+            # The correlation key the control plane stamps on a minted run
+            # (runs.subject, migration 0038): the ticket projection lists a
+            # ticket's runs by it and one-active-run-per-subject keys on it.
+            # Measured on t8: no prod run had ever carried one (#230).
+            **({"subject": subject} if subject else {}),
         }
     ).encode()
     request = urllib.request.Request(
@@ -807,6 +814,7 @@ def main() -> int:
                         fact,
                         f"github:{github_repo}:pr:{pull.get('number')}:merged",
                         {"merged_at": pull["merged_at"]},
+                        subject=fact["issue_key"],
                     )
                 )
         for pull in swept:
@@ -880,6 +888,7 @@ def main() -> int:
                                     f"{position_kind}:{position_id}"
                                 ),
                                 watermark,
+                                subject=item["id"],
                             )
                         )
     except SweepFailure as failure:

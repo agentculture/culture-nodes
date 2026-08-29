@@ -164,7 +164,7 @@ def _stub_sweep(
     monkeypatch.setattr(sweep, "fetch_pr_comments", lambda token, repository, number: [])
     monkeypatch.setattr(sweep, "fetch_check_runs", fake_checks)
 
-    def fake_raise(name, payload, source_key, watermark):
+    def fake_raise(name, payload, source_key, watermark, **_kw):
         calls["events"].append((name, payload, source_key, watermark))
         return {"event": {"id": f"event-{len(calls['events'])}"}}
 
@@ -216,7 +216,7 @@ def test_merged_pr_is_emitted_once_across_two_watermarked_passes(monkeypatch):
     cursors = set()
     appended = []
 
-    def dedup(name, payload, source_key, watermark):
+    def dedup(name, payload, source_key, watermark, **_kw):
         key = (source_key, json.dumps(watermark, sort_keys=True))
         if key not in cursors:
             cursors.add(key)
@@ -1080,3 +1080,24 @@ def test_merged_pr_fact_only_correlates_the_configured_jira_project():
     assert (
         sweep.merged_pr_fact(pull, "agentculture/culture-nodes", "SCRUM")["issue_key"] == "SCRUM-42"
     )
+
+
+def test_jira_facts_carry_the_issue_key_as_subject(monkeypatch):
+    """runs.subject was NULL on every prod run until t8 (#230): raise_event
+    never sent a subject, so the ticket projection listed no runs."""
+    seen = []
+    monkeypatch.setattr(sweep, "raise_event", lambda *a, **kw: seen.append(kw.get("subject")) or {})
+    fact = {
+        "number": 9,
+        "merged_at": "2026-08-29T10:00:00Z",
+        "head": {"ref": "SCRUM-5/x"},
+        "body": "",
+    }
+    sweep.raise_event(
+        "pr.merged",
+        sweep.merged_pr_fact(fact, "r", "SCRUM"),
+        "k",
+        {"merged_at": "x"},
+        subject="SCRUM-5",
+    )
+    assert seen == ["SCRUM-5"]

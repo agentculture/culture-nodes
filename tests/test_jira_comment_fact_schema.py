@@ -7,7 +7,6 @@ from pathlib import Path
 
 import jsonschema
 
-
 ROOT = Path(__file__).parents[1]
 
 
@@ -40,7 +39,9 @@ def test_jira_comment_self_echo_function_bytes_are_pinned():
         for item in tree.body
         if isinstance(item, ast.FunctionDef) and item.name == "jira_comment_is_self_echo"
     )
-    function_bytes = "".join(source.splitlines(keepends=True)[node.lineno - 1 : node.end_lineno]).encode()
+    function_bytes = "".join(
+        source.splitlines(keepends=True)[node.lineno - 1 : node.end_lineno]
+    ).encode()
     assert hashlib.sha256(function_bytes).hexdigest() == (
         "d8640d8b9d07123e98c62e02ff466077b58ca4f764c03adbce7f46d82ff0eebe"
     )

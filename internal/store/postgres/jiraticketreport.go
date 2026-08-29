@@ -54,7 +54,7 @@ func (eq engineQueries) appendJiraTicketReport(ctx context.Context, runID, event
 	})
 	if _, err := eq.q.Exec(ctx, `INSERT INTO jira_ticket_report_outbox
 		(id,namespace_id,run_id,trigger_event_id,phase,target_actor_key,issue_key,payload)
-		VALUES ($1,$2,$3,$4,$5,$6,$7,$8) ON CONFLICT (run_id,phase) DO NOTHING`,
+		VALUES ($1,$2,$3,$4,$5,$6,$7,$8) ON CONFLICT (run_id,phase) WHERE run_id IS NOT NULL DO NOTHING`,
 		store.NewULID(), eq.namespaceID, runID, triggerEventID, phase, JiraTicketReporterActorKey, issue, reportPayload); err != nil {
 		return fmt.Errorf("postgres: engine: jira ticket report outbox: %w", err)
 	}

@@ -174,11 +174,21 @@ def _stub_sweep(
 
 def test_merged_pr_fact_uses_branch_then_body_ticket_key():
     branch = sweep.merged_pr_fact(
-        {"number": 7, "merged_at": "2026-08-29T10:00:00Z", "head": {"ref": "SCRUM-230/fix"}, "body": "SCRUM-999"},
+        {
+            "number": 7,
+            "merged_at": "2026-08-29T10:00:00Z",
+            "head": {"ref": "SCRUM-230/fix"},
+            "body": "SCRUM-999",
+        },
         "agentculture/culture-nodes",
     )
     body = sweep.merged_pr_fact(
-        {"number": 8, "merged_at": "2026-08-29T11:00:00Z", "head": {"ref": "fix"}, "body": "Closes SCRUM-231"},
+        {
+            "number": 8,
+            "merged_at": "2026-08-29T11:00:00Z",
+            "head": {"ref": "fix"},
+            "body": "Closes SCRUM-231",
+        },
         "agentculture/culture-nodes",
     )
     assert branch["issue_key"] == "SCRUM-230"
@@ -186,9 +196,22 @@ def test_merged_pr_fact_uses_branch_then_body_ticket_key():
 
 
 def test_merged_pr_is_emitted_once_across_two_watermarked_passes(monkeypatch):
-    monkeypatch.setenv("PR_UPKEEP_REPOSITORIES", json.dumps({"cycle": 0, "repositories": [{"github_repo": "owner/repo", "sonar_component": "owner_repo"}]}))
+    monkeypatch.setenv(
+        "PR_UPKEEP_REPOSITORIES",
+        json.dumps(
+            {
+                "cycle": 0,
+                "repositories": [{"github_repo": "owner/repo", "sonar_component": "owner_repo"}],
+            }
+        ),
+    )
     calls = _stub_sweep(monkeypatch, pulls=[], sonar_main={"issues": []})
-    merged = {"number": 9, "merged_at": "2026-08-29T12:00:00Z", "head": {"ref": "SCRUM-232/done"}, "body": ""}
+    merged = {
+        "number": 9,
+        "merged_at": "2026-08-29T12:00:00Z",
+        "head": {"ref": "SCRUM-232/done"},
+        "body": "",
+    }
     monkeypatch.setattr(sweep, "fetch_merged_pulls", lambda *_: [merged])
     cursors = set()
     appended = []
@@ -203,12 +226,19 @@ def test_merged_pr_is_emitted_once_across_two_watermarked_passes(monkeypatch):
     monkeypatch.setattr(sweep, "raise_event", dedup)
     assert sweep.main() == 0
     assert sweep.main() == 0
-    assert [(name, payload["issue_key"]) for name, payload in appended] == [("pr.merged", "SCRUM-232")]
+    assert [(name, payload["issue_key"]) for name, payload in appended] == [
+        ("pr.merged", "SCRUM-232")
+    ]
     assert calls["events"] == []
 
 
 def test_open_pr_never_becomes_a_merged_fact():
-    assert sweep.merged_pr_fact({"number": 10, "merged_at": None, "head": {"ref": "SCRUM-233/open"}}, "owner/repo") is None
+    assert (
+        sweep.merged_pr_fact(
+            {"number": 10, "merged_at": None, "head": {"ref": "SCRUM-233/open"}}, "owner/repo"
+        )
+        is None
+    )
 
 
 class TestSonarWorkItems:

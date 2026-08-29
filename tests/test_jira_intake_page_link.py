@@ -2,7 +2,6 @@ from pathlib import Path
 
 import yaml
 
-
 WORKFLOW = Path(__file__).parents[1] / "examples/jira-intake/workflow.yaml"
 MARKER = "culture-nodes:ticket-page-link"
 

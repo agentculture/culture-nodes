@@ -1367,6 +1367,18 @@
         ],
         "type": "object"
       },
+      "FreezeTicketRequest": {
+        "properties": {
+          "frozen_by": {
+            "type": "string"
+          },
+          "merged_pr": {
+            "additionalProperties": true,
+            "type": "object"
+          }
+        },
+        "type": "object"
+      },
       "GateMeasurement": {
         "description": "The number an applicable gate produced and the threshold it was measured against. The threshold travels with the result because it is pinned in the published workflow — a reader must be able to see it was not chosen after the number was known.",
         "properties": {
@@ -2419,6 +2431,26 @@
         ],
         "type": "object"
       },
+      "PostTicketReplyRequest": {
+        "properties": {
+          "question_id": {
+            "type": "string"
+          },
+          "replier": {
+            "minLength": 1,
+            "type": "string"
+          },
+          "text": {
+            "minLength": 1,
+            "type": "string"
+          }
+        },
+        "required": [
+          "replier",
+          "text"
+        ],
+        "type": "object"
+      },
       "Preflight": {
         "description": "One clarify-then-commit briefing (task t14, issue #67; migration 0026's `dispatch_preflights`). `expired` is computed against the server clock at read time, because the window — not the row's existence — is the predicate everywhere in this feature.",
         "properties": {
@@ -3246,6 +3278,9 @@
       },
       "Ticket": {
         "properties": {
+          "frozen": {
+            "type": "boolean"
+          },
           "human_tasks": {
             "items": {
               "$ref": "#/components/schemas/HumanTask"
@@ -3260,6 +3295,10 @@
               "type": "object"
             },
             "type": "array"
+          },
+          "merged_pr": {
+            "additionalProperties": true,
+            "type": "object"
           },
           "replies": {
             "items": {
@@ -3289,7 +3328,8 @@
           "ledger",
           "human_tasks",
           "ticket_reports",
-          "replies"
+          "replies",
+          "frozen"
         ],
         "type": "object"
       },
@@ -6573,6 +6613,90 @@
           }
         ],
         "summary": "Append the next version of a ticket's frame snapshot.",
+        "tags": [
+          "runs"
+        ]
+      }
+    },
+    "/v1alpha1/tickets/{id}/freeze": {
+      "post": {
+        "operationId": "freezeTicket",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/FreezeTicketRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Ticket projection frozen."
+          },
+          "401": {
+            "description": "Decision bearer token is missing or invalid."
+          }
+        },
+        "security": [
+          {
+            "decisionBearerAuth": []
+          }
+        ],
+        "summary": "Freeze a ticket page with its merged PR pointer.",
+        "tags": [
+          "runs"
+        ]
+      }
+    },
+    "/v1alpha1/tickets/{id}/replies": {
+      "post": {
+        "operationId": "postTicketReply",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/PostTicketReplyRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "description": "Reply fact and mirror intent created."
+          },
+          "401": {
+            "description": "Decision bearer token is missing or invalid."
+          }
+        },
+        "security": [
+          {
+            "decisionBearerAuth": []
+          }
+        ],
+        "summary": "Append a human page reply and enqueue its Jira mirror.",
         "tags": [
           "runs"
         ]

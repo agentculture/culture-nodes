@@ -99,8 +99,9 @@ func TestTicketFreezeActionUpdatesProjection(t *testing.T) {
 	}
 	resp, body = doJSON(t, f.client, http.MethodGet, f.url("/v1alpha1/tickets/SCRUM-9"), nil, &ticket)
 	requireStatus(t, resp, body, http.StatusOK)
-	if !ticket.Frozen || !bytes.Contains(ticket.MergedPR, []byte(`"number": 230`)) {
-		t.Fatalf("ticket freeze = %+v", ticket)
+	var merged map[string]any
+	if err := json.Unmarshal(ticket.MergedPR, &merged); err != nil || !ticket.Frozen || merged["number"] != float64(230) {
+		t.Fatalf("ticket freeze = %+v (merged_pr %s)", ticket, ticket.MergedPR)
 	}
 }
 
@@ -124,9 +125,10 @@ func TestMergedPRFactFreezesLinkedTicketProjection(t *testing.T) {
 	}
 	resp, body := doJSON(t, f.client, http.MethodGet, f.url("/v1alpha1/tickets/SCRUM-9"), nil, &ticket)
 	requireStatus(t, resp, body, http.StatusOK)
-	if !ticket.Frozen || !bytes.Contains(ticket.MergedPR, []byte(`"number": 230`)) ||
-		!bytes.Contains(ticket.MergedPR, []byte(`"issue_key": "SCRUM-9"`)) {
-		t.Fatalf("ticket after event %s = %+v", delivery.Event.ID, ticket)
+	var merged map[string]any
+	if err := json.Unmarshal(ticket.MergedPR, &merged); err != nil || !ticket.Frozen ||
+		merged["number"] != float64(230) || merged["issue_key"] != "SCRUM-9" {
+		t.Fatalf("ticket after event %s = %+v (merged_pr %s)", delivery.Event.ID, ticket, ticket.MergedPR)
 	}
 }
 

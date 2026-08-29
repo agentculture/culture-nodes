@@ -9,10 +9,15 @@ to what it finds, which is the other module's subject.
 
 import importlib.util
 import json
+import sys
 import urllib.error
 from pathlib import Path
 
 EXAMPLE_DIR = Path(__file__).resolve().parents[1] / "examples" / "pr-upkeep"
+# sweep.py imports its sibling pr_upkeep_jira (deviation d1 split); loading it by
+# path needs the example dir importable, independent of which test ran first.
+if str(EXAMPLE_DIR) not in sys.path:
+    sys.path.insert(0, str(EXAMPLE_DIR))
 
 REPOSITORY_GRANT = json.dumps(
     {

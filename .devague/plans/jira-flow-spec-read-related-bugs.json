@@ -5,7 +5,7 @@
   "schema_version": 4,
   "status": "exported",
   "created": "2026-08-29T07:00:23Z",
-  "updated": "2026-08-29T07:25:34Z",
+  "updated": "2026-08-29T07:52:40Z",
   "targets": [
     {
       "id": "c1",
@@ -511,13 +511,16 @@
     },
     {
       "id": "t10",
-      "summary": "Reply endpoint: POST /v1alpha1/tickets/{id}/replies (decision-token guarded, required replier) appends a signal event in-process with origin.kind human and the replier named, and enqueues a display-only mirror comment 'via <replier>' through the jira bridge outbox; the page-reply fact and the sweep's comment fact validate against one schema",
+      "summary": "Reply endpoint: POST /v1alpha1/tickets/{id}/replies (guarded by a replier-BOUND bearer derived from NODES_HUMAN_DECISION_TOKEN_SECRET \u2014 the token names the replier and the server verifies the binding, so the required replier field is checked against the token rather than trusted; required client-generated reply_id) appends a signal event in-process with origin.kind human and the AUTHENTICATED replier named, and enqueues a display-only mirror comment 'via <replier>' through the jira bridge outbox \u2014 the fact and its mirror row are written in ONE store transaction and the request is idempotent on reply_id; the page-reply fact and the sweep's comment fact validate against one schema",
       "origin": "llm",
       "status": "confirmed",
       "acceptance_criteria": [
         "PG-backed test with a DECOY run: two runs parked on the same until.signal name, one whose subject is the fixture ticket and one whose subject is a different ticket; one POST yields exactly one signal_events row (origin.kind human, replier in payload, and the ticket id + originating_question_id in the same payload fields the sweep's comment fact carries) and one outbox row. A signal park matches (namespace, event_name) only, with no subject or payload filter (internal/store/postgres/signal.go selectLockedSubscriptionsSQL; examples/jira-question-round-trip/question_correlation.py states this contract), so BOTH subscriptions fire: the test asserts the ticket's run resumes and its resume cites the fact id, AND that the decoy run's consumer gets answer_for(payload, its_question_id) == None and re-parks without acting \u2014 the cross-ticket wake is observed and neutralised, not assumed away",
         "A schema test validates a fixture page-reply fact and a fixture sweep comment fact against the same JSON Schema",
-        "jira_comment_is_self_echo in examples/pr-upkeep/pr_upkeep_jira.py is unchanged (test pins its bytes)"
+        "jira_comment_is_self_echo in examples/pr-upkeep/pr_upkeep_jira.py is unchanged (test pins its bytes)",
+        "Atomic dual write: the fact and its mirror row are written by ONE store method (e.g. Store.DeliverPageReply) that calls the private tx-aware seam deliverSignalEventTx (internal/store/postgres/signal.go; FireSchedule is the precedent, t33 criterion 2) and inserts the mirror row inside the SAME transaction \u2014 the handler never calls the public DeliverSignalEvent (which begins and commits its own transaction) and then inserts the mirror as a second statement. Failure-injection PG test: with the mirror insert made to fail (a fixture that violates the mirror table's constraint), the POST returns 5xx and afterwards there are ZERO signal_events rows and ZERO mirror rows for that reply \u2014 never a fact without a mirror",
+        "Idempotent retry: the request carries a required client-generated reply_id (400 without it); the store delivers with SourceKey 'page-reply:{ticket id}:{reply_id}' and Watermark {\"reply_id\": ...} \u2014 a shape jiraHistoryIssueSourceKey does not recognise, so the pre-cutover suppression is not tripped \u2014 and the mirror row is UNIQUE on the fact id it mirrors (ON CONFLICT DO NOTHING). Retry test: the same POST twice yields exactly one signal_events row and one mirror row, both responses cite the same fact id and the second carries duplicate: true. The mirror cannot reuse jira_ticket_report_outbox unchanged (migrations/0043: run_id and trigger_event_id NOT NULL, phase CHECKed to start|finish, UNIQUE (run_id, phase)); expand it or add a sibling table \u2014 the invariant is the unique key on the fact id, not the table",
+        "Identity binding: the route does NOT reuse requireDecisionAuth as-is \u2014 the deployment-wide decision secret authorizes an operation but names no principal (internal/api/humantasks.go; decider_actor_id is passed through unverified the same way, which web/src/api/decision-token.ts documents as the phase-1 posture). The reply route requires a replier-bound bearer of the form '<replier>.<hex HMAC-SHA256(NODES_HUMAN_DECISION_TOKEN_SECRET, \"page-reply:\" + replier)>', verified by a new requireReplierAuth that recomputes the MAC for the presented replier and compares SHA-256 digests in constant time (the requireDecisionAuth pattern); the recorded replier is the token's replier, and the body's required replier must equal it (403 on mismatch). Minting is operator-side from the secret \u2014 a Go helper in internal/api that the tests call, and a documented openssl one-liner that produces the same bytes \u2014 so a person holds only their own bound token and can derive nobody else's; the browser never holds the secret. Negative tests, each asserting ZERO signal_events rows and ZERO mirror rows afterwards: a token bound to 'alice' with body replier 'bob' \u2192 403; the plain deployment-wide decision secret as bearer \u2192 401; no bearer \u2192 401. Positive test: alice's token with replier alice \u2192 the fact's payload names alice and the outbox row's comment reads 'via alice'. api/openapi/openapi.yaml documents the bound-token scheme on this route as distinct from the decision bearer"
       ],
       "deps": [
         "t9"
@@ -532,12 +535,12 @@
     },
     {
       "id": "t11",
-      "summary": "Web route /tickets/:id: renders the projection (frame claims with state, questions/decisions, reports, runs, reply thread), a link back to the Jira ticket, a reply box using the existing decision-token store, and a freeze banner; PRD \u00a78.8 rules hold on the route; no secret enters the bundle",
+      "summary": "Web route /tickets/:id: renders the projection (frame claims with state, questions/decisions, reports, runs, reply thread), a link back to the Jira ticket, a reply box holding the replier-bound reply token under a sibling sessionStorage key in the existing decision-token store (same discipline: entered by the user, sessionStorage only, visible, clearable \u2014 a decision token and a reply token are different credentials because the decision secret names no principal), and a freeze banner; PRD \u00a78.8 rules hold on the route; no secret enters the bundle",
       "origin": "llm",
       "status": "confirmed",
       "acceptance_criteria": [
         "vitest: the route renders a fixture projection with every claim's state as icon+word and the back-link href equal to the ticket URL",
-        "playwright e2e: keyboard walk reaches the reply box and submits with the decision token; reduced-motion honoured",
+        "playwright e2e: keyboard walk reaches the reply box and submits with a replier-bound reply token (t10 criterion 6); a token whose bound replier differs from the typed replier surfaces the server's 403 in the page rather than being swallowed; reduced-motion honoured",
         "A test greps web/src for every *_SECRET / bearer name and finds only the decision-token path"
       ],
       "deps": [
@@ -555,13 +558,14 @@
     },
     {
       "id": "t12",
-      "summary": "Link at intake and freeze: jira-intake's intake node posts ONE page-link comment carrying a link marker (re-posted/edited in place, never duplicated); the sweep emits pr.merged for closed PRs with merged_at (watermarked) and links the PR to its ticket by branch name or body carrying the ticket id; a pr.merged fact freezes the ticket's page (frozen flag + merged PR pointer on the projection)",
+      "summary": "Link at intake and freeze: jira-intake's intake node posts ONE page-link comment and keeps it single across milestones through a NEW narrow bridge verb upsert_comment (adapters/jira: mapping/client know only post_comment today \u2014 no lookup, edit, or comment id; verbs are dispatched by isinstance in server.py, transition_issue is the precedent for a second verb): input is exactly {verb, issue, comment, link_key}; the bridge GETs the issue's comments, finds the one authored by its own account carrying the marker [culture-nodes:jira-actor link=<link_key>], PUTs /rest/api/3/issue/{key}/comment/{id} if found and POSTs otherwise, and returns {issue, comment_id, action: created|updated} \u2014 the comment id is recovered from Jira by marker lookup on every run, never persisted in the control plane, so a re-run needs no state to stay single; examples/jira-intake's post-comment node switches to upsert_comment with link_key = the ticket id; the sweep emits pr.merged for closed PRs with merged_at (watermarked) and links the PR to its ticket by branch name or body carrying the ticket id; a pr.merged fact freezes the ticket's page (frozen flag + merged PR pointer on the projection)",
       "origin": "llm",
       "status": "confirmed",
       "acceptance_criteria": [
         "Sweep test: a merged PR yields exactly one pr.merged fact across two passes (watermark), with issue_key parsed from the branch or body; an open PR yields none",
-        "Intake workflow test: two intake milestones leave one link-marker comment on the fixture ticket",
-        "PG-backed test: a pr.merged fact for the linked PR sets frozen=true and merged_pr on GET /v1alpha1/tickets/{id}; a decision-token freeze action does the same"
+        "Bridge integration test across TWO real workflow invocations against a recording fake Jira (HTTP method + path + body captured): the first invocation POSTs and yields comment_id X with action=created; the second GETs the comment list, PUTs comment X (no second POST), and yields the same comment_id X with action=updated; the fake ends holding exactly one comment, and its body carries the link marker and the current page URL. mapping.parse still refuses link_key on post_comment; /v1/capabilities advertises upsert_comment; a PUT that returns 404 (comment deleted on the board between lookup and edit) falls back to one POST rather than failing the node",
+        "PG-backed test: a pr.merged fact for the linked PR sets frozen=true and merged_pr on GET /v1alpha1/tickets/{id}; a decision-token freeze action does the same",
+        "Sweep test: editing the link comment in place leaves its Jira id and created timestamp unchanged, so a sweep pass after the edit emits zero new facts for it (pr_upkeep_jira watermarks on comment id ordered by created, and the bot-authored comment is a self-echo); a test fixture with the comment's updated field advanced proves both filters hold"
       ],
       "deps": [
         "t9"
@@ -629,7 +633,7 @@
       "status": "confirmed",
       "acceptance_criteria": [
         "The split plan artifact lists sessions per wave and is linked from #230 before wave 1 dispatches",
-        "docs/deliveries/<date>-jira-flow-spec-read-related-bugs.md is in the final PR, and #192\u2013#200 are closed only by citations in it or in #230"
+        "The delivery summary `docs/deliveries/YYYY-MM-DD-jira-flow-spec-read-related-bugs.md` (the date is the day it is written) is in the final PR, and #192\u2013#200 are closed only by citations in it or in #230"
       ],
       "deps": [
         "t14"
@@ -687,6 +691,30 @@
     {
       "id": "r6",
       "text": "Signal subscriptions match (namespace, event_name) only \u2014 no subject filter (signal.go selectLockedSubscriptionsSQL) \u2014 so a page reply or sweep comment for one ticket wakes every run parked on that event name; t10 neutralises it consumer-side (question_correlation.answer_for + re-park, pinned by a decoy-run test) and subject-scoped subscriptions are an engine feature deferred to #239",
+      "kind": "follow_up",
+      "task_id": "t10",
+      "resolved": false,
+      "resolution": ""
+    },
+    {
+      "id": "r7",
+      "text": "The Jira side of the reply mirror stays at-least-once: internal/ticketreport/dispatcher.go posts the comment and then marks the row published, so a dispatcher crash between the two re-posts it \u2014 the same exposure the #198 start/finish reports already carry, and jira_comment_is_self_echo keeps such duplicates out of the sweep. t10's atomicity and idempotency guarantees end at the outbox row; exactly-once on the Jira side needs a Jira-side idempotency key the API does not offer",
+      "kind": "unknown_nonblocking",
+      "task_id": "t10",
+      "resolved": false,
+      "resolution": ""
+    },
+    {
+      "id": "r8",
+      "text": "upsert_comment's edit path needs the bridge's Jira account to hold 'Edit Own Comments' on the prod project and the comment to be authored by that same account \u2014 the existing post_comment path never needed either; if the deployed credential lacks the permission the bridge falls back to POST and the link comment duplicates, so t12's deploy step must probe the permission (one PUT of the bridge's own comment on the fixture ticket) before the intake workflow is republished",
+      "kind": "unknown_nonblocking",
+      "task_id": "t12",
+      "resolved": false,
+      "resolution": ""
+    },
+    {
+      "id": "r9",
+      "text": "The routes behind requireDecisionAuth (human-task decision, the two review routes, gate reports, suite verdicts) still take decider_actor_id from the request body unverified \u2014 the phase-1 posture web/src/api/decision-token.ts documents ('no per-user identity behind the token'). t10's replier-bound token covers the reply route only: extending the same principal-dot-MAC bearer form to requireDecisionAuth so a decision carries an authenticated decider is the per-user identity work #235 carries, not this cycle's",
       "kind": "follow_up",
       "task_id": "t10",
       "resolved": false,

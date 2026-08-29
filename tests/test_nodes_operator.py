@@ -120,5 +120,136 @@ class NodesOperatorTest(unittest.TestCase):
             self.assertIn(expected, result.stdout)
 
 
+class DevagueCustodyTest(unittest.TestCase):
+    """t13 (#199 / #230, frame q1): `.devague/` custody is declared on the
+    developer lane and nowhere else, and the assign verb is where a
+    `.devague/` write is refused for every other lane — BEFORE the billable
+    guard and before any HTTP call, so the refusal costs nothing and
+    reaches nobody."""
+
+    CUSTODY_CHECKOUT = "/home/spark/git/.worktrees.culture-nodes/owe-developer"
+
+    def run_assign(self, actor, *opts, responses=None):
+        with tempfile.TemporaryDirectory() as directory:
+            fake_bin = Path(directory)
+            calls = fake_bin / "calls.jsonl"
+            curl = fake_bin / "curl"
+            curl.write_text(
+                "#!/usr/bin/env python3\n"
+                "import json, os, sys\n"
+                "argv = sys.argv[1:]\n"
+                "body = argv[argv.index('-d') + 1] if '-d' in argv else None\n"
+                "with open(os.environ['FAKE_CALLS'], 'a') as f:\n"
+                "    f.write(json.dumps({'url': argv[-1], 'body': body}) + '\\n')\n"
+                "responses = json.loads(os.environ['FAKE_RESPONSES'])\n"
+                "for suffix, response in responses.items():\n"
+                "    if argv[-1].endswith(suffix):\n"
+                "        print(json.dumps(response))\n"
+                "        raise SystemExit(0)\n"
+                "print('unexpected URL: ' + argv[-1], file=sys.stderr)\n"
+                "raise SystemExit(22)\n"
+            )
+            curl.chmod(0o755)
+            env = os.environ.copy()
+            env["PATH"] = str(fake_bin) + os.pathsep + env["PATH"]
+            env["NODES_API_URL"] = "http://example.test"
+            env["FAKE_CALLS"] = str(calls)
+            env["FAKE_RESPONSES"] = json.dumps(responses or {})
+            env.pop("NODES_OP_YES", None)
+            result = subprocess.run(
+                [
+                    "bash",
+                    str(SCRIPT),
+                    "assign",
+                    actor,
+                    "run the /think leg for SCRUM-9",
+                    *opts,
+                ],
+                cwd=ROOT,
+                env=env,
+                text=True,
+                capture_output=True,
+                check=False,
+            )
+            recorded = []
+            if calls.exists():
+                recorded = [json.loads(line) for line in calls.read_text().splitlines()]
+            return result, recorded
+
+    def test_every_other_lane_is_refused_a_devague_write_before_any_call(self):
+        for actor in (
+            "codex-thor",
+            "codex-orin",
+            "planner",
+            "verifier",
+            "intake",
+            "qwen-developer",
+        ):
+            with self.subTest(actor=actor):
+                result, calls = self.run_assign(actor, "--devague-write", "--yes")
+                self.assertEqual(result.returncode, 1, result.stderr)
+                self.assertIn("refusing", result.stderr)
+                self.assertIn(".devague/", result.stderr)
+                self.assertIn("developer", result.stderr)
+                self.assertEqual(calls, [], "a refused custody request must never reach the API")
+
+    def test_refusal_does_not_wait_for_the_billable_guard(self):
+        # Without --yes the script would also refuse — the custody refusal
+        # must come first and say so, not hide behind "re-run with --yes".
+        result, calls = self.run_assign("codex-thor", "--devague-write")
+        self.assertEqual(result.returncode, 1)
+        self.assertIn(".devague/", result.stderr)
+        self.assertNotIn("--yes", result.stderr)
+        self.assertEqual(calls, [])
+
+    def test_custody_is_checkout_bound_even_on_the_developer_lane(self):
+        result, calls = self.run_assign(
+            "developer", "--devague-write", "--repo", "/tmp/somewhere-else", "--yes"
+        )
+        self.assertEqual(result.returncode, 1, result.stderr)
+        self.assertIn(self.CUSTODY_CHECKOUT, result.stderr)
+        self.assertEqual(calls, [])
+
+    def test_developer_lane_dispatch_declares_the_write_in_the_run_input(self):
+        result, calls = self.run_assign(
+            "developer",
+            "--devague-write",
+            "--no-watch",
+            "--yes",
+            responses={
+                "/v1alpha1/workflows": {"digest": "sha256:feed"},
+                "/v1alpha1/runs": {"id": "run-9", "state": "created"},
+            },
+        )
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn("run=run-9", result.stdout)
+        self.assertIn("devague_write=true", result.stdout)
+        publish = next(c for c in calls if c["url"].endswith("/v1alpha1/workflows"))
+        rendered = json.loads(publish["body"])["source"]
+        self.assertIn("devague_write: /run/input/devague_write", rendered)
+        create = next(c for c in calls if c["url"].endswith("/v1alpha1/runs"))
+        payload = json.loads(create["body"])["input"]
+        self.assertIs(payload["devague_write"], True)
+        self.assertEqual(payload["repo"], self.CUSTODY_CHECKOUT)
+
+    def test_a_dispatch_that_does_not_ask_carries_no_binding_and_no_flag(self):
+        result, calls = self.run_assign(
+            "developer",
+            "--no-watch",
+            "--yes",
+            responses={
+                "/v1alpha1/workflows": {"digest": "sha256:feed"},
+                "/v1alpha1/runs": {"id": "run-10", "state": "created"},
+            },
+        )
+        self.assertEqual(result.returncode, 0, result.stderr)
+        publish = next(c for c in calls if c["url"].endswith("/v1alpha1/workflows"))
+        self.assertNotIn(
+            "devague_write: /run/input/devague_write", json.loads(publish["body"])["source"]
+        )
+        create = next(c for c in calls if c["url"].endswith("/v1alpha1/runs"))
+        self.assertNotIn("devague_write", json.loads(create["body"])["input"])
+
+
 if __name__ == "__main__":
     unittest.main()

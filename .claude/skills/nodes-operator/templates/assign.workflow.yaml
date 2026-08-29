@@ -47,6 +47,11 @@ spec:
           # making it required would invalidate every already-published digest.
           mode:
             type: string
+          # t13 / #199: does this package write .devague/? Optional for the
+          # same digest-stability reason as the two above; the developer
+          # bridge answers it from its own custody declaration.
+          devague_write:
+            type: boolean
     output:
       schema:
         type: object
@@ -75,6 +80,7 @@ spec:
           success_outcome: /run/input/success_outcome
           handover: /run/input/handover
           mode: /run/input/mode
+          devague_write: /run/input/devague_write
       contract:
         input:
           schema:

@@ -1,0 +1,669 @@
+# SPEC-CHAIN LANE — the board-driven /think leg as SESSIONS on the developer
+# lane (plan jira-flow-spec-read-related-bugs, task t13; issue #199, dispatch
+# log #230; spec claim c7 / honesty h5; frame decisions q1 and q4 = B).
+#
+# examples/spec-chain expresses the whole devague chain as a graph of code
+# nodes running the moves through the runner boundary. That graph compiles
+# and is unwired; its runner-boundary form is deferred to #237. What the
+# cycle needs NOW is the leg a ticket can drive: a frame that exists because
+# a ticket moved, whose decisions reach the person on the ticket, and whose
+# state the ticket page shows. So this document takes the other branch of
+# q4: the devague moves run inside claude sessions on the developer lane, in
+# that lane's own worktree, `.devague/` is committed after every move, and
+# the frame snapshot is posted to the control plane after every move.
+#
+# The honest cost of that choice, stated once here and again at the node:
+# every devague move a session reports is an AGENT-REPORTED move (a
+# `proposed` completion claim, PRD 10.4), not an engine-verified one. The
+# committed .devague/ and the posted snapshot are what a reader checks it
+# against; the plan's follow-up names the code-node form as where this
+# becomes engine-verified (#237).
+#
+# ---------------------------------------------------------------------------
+# WHAT IS DETERMINISTIC, AND WHERE
+# ---------------------------------------------------------------------------
+# devague itself makes no LLM call (devague#20); the session is the
+# judgement. Three things are deliberately NOT judgement, and live beside
+# this file so tests/test_spec_chain_lane.py can pin them:
+#
+#  1. THE STATED MOVE. A human's answer to a marked question transacts
+#     exactly `devague question --resolve <qid> --decision <reply>
+#     --frame <slug>` and nothing else — frame_moves.py `stated_move`,
+#     `transact`. Confirmations stay a user act off the board (spec c7).
+#  2. THE CORRELATION. Which wake is this run's answer is decided by the
+#     `correlate*` DECISION nodes below, from the wait node's folded event,
+#     with the same three clauses question_correlation.correlates evaluates
+#     (same question id, an answer present, not self-originated). A signal
+#     park matches (namespace, event_name) only — no subject filter
+#     (internal/store/postgres/signal.go selectLockedSubscriptionsSQL; #239)
+#     — so every ticket's reply wakes this run; an uncorrelated wake goes
+#     back to the park at ENGINE cost, never at session cost.
+#  3. THE MARKER. The question id is `<frame-slug>.<devague qid>`
+#     (frame_moves.py `question_id`; frame slug = ticket id lowercased), and
+#     the jira-comment actor appends the marker line itself when
+#     `question_id` is bound. This document never writes a marker.
+#
+# ---------------------------------------------------------------------------
+# THE BOUND: THREE BOARD DECISIONS PER RUN, THEN A PERSON
+# ---------------------------------------------------------------------------
+# Bindings are static pointers, so a round's question comes from a NAMED
+# node: round 1 from `think`, round 2 from `transact`, round 3 from
+# `transact-2`. Three rounds is the same shape jira-question-round-trip
+# gives its bounded ask/re-ask loop (two structurally distinct triples, then
+# a human), one round longer because a /think frame ordinarily carries more
+# than one decision. A fourth decision — or a frame blocked on
+# confirmations, which only a user may make — parks on `needs-human`; the
+# frame is committed and posted at that point, and a person continues it in
+# the checkout or on the ticket page. Moving the ticket back through To Do
+# to In Progress mints a fresh run that CONTINUES the committed frame (the
+# `think` brief says so).
+#
+# ---------------------------------------------------------------------------
+# Deployment configuration — WHAT THIS GRAPH NEEDS FROM OUTSIDE THE FILE
+# ---------------------------------------------------------------------------
+#   actor://company/developer     the claude developer bridge (adapters/
+#                                 claude-code) registered with a repository
+#                                 identity that resolves to ITS OWN worktree
+#                                 (t2/#125). Its config must declare
+#                                 `custody` with devague_write: true for that
+#                                 checkout — every mover below binds
+#                                 `devague_write: true`, and the bridge
+#                                 answers that request from its declaration
+#                                 (403 otherwise). Its `claude_env` must
+#                                 GRANT NODES_API_URL and
+#                                 NODES_HUMAN_DECISION_TOKEN: post_frame.py
+#                                 reads the token from the environment only.
+#                                 See docs/operations/spec-chain-lane.md.
+#   actor://company/jira-comment  the narrow Jira bridge (post_comment with
+#                                 question_id; it stamps the marker).
+#   the sweep                     examples/pr-upkeep/sweep.py emitting
+#                                 `pr-upkeep.jira.transitioned.<slug>` and
+#                                 `pr-upkeep.jira.comment` facts; the ticket
+#                                 page's reply endpoint (t10) emits the same
+#                                 comment fact for a page reply.
+#
+# A technical failure at any node fails the run visibly (no silent stall) —
+# including a mover whose final message is not the JSON envelope the
+# contract requires, which is contract_rejected at the engine, not guessed.
+apiVersion: nodes.culture.dev/v1alpha1
+kind: Workflow
+
+metadata:
+  name: spec-chain-lane
+  version: 1.0.0
+  ownerRef: team/platform-ai
+
+spec:
+  entry: think
+
+  triggers:
+    # The ticket fact: a transition INTO In Progress — the status jira-intake
+    # itself moves a picked-up ticket to, so a pickup chains into this leg
+    # one sweep later, and a human moving a ticket straight to In Progress
+    # starts it directly. Watermarked by the sweep's `:status` source key,
+    # so an already-In-Progress ticket does not fire on publish.
+    - onEvent: pr-upkeep.jira.transitioned.in-progress
+      when: >-
+        event.payload.source == "jira"
+
+  contract:
+    input:
+      schema:
+        type: object
+        required: [source, id, title, status]
+        properties:
+          source: {type: string, const: jira}
+          id: {type: string, minLength: 1}
+          project: {type: string}
+          severity: {type: string}
+          kind: {type: string}
+          title: {type: string}
+          status: {type: string}
+          details_url: {type: string}
+    output:
+      schema: {type: object}
+
+  # Longest path: think -> (post-question -> await -> correlate -> transact)
+  # x3 -> needs-human -> end = 15 hops, plus one park/wake cycle per
+  # uncorrelated wake (2 hops each). maxVisitsPerNode bounds those wakes:
+  # every mover and asker is reachable once by construction (no edge leads
+  # back to one), so the visit ceiling only ever bites on await/correlate.
+  # 40 uncorrelated wakes per round is the #239 headroom, declared.
+  limits:
+    maxDuration: 336h
+    maxTransitions: 120
+    maxVisitsPerNode: 40
+    maxParallelTokens: 1
+    maxConcurrentSubjectRuns: 1
+
+  ledger:
+    schemaVersion: nodes.culture.dev/ledger/v1alpha1
+    maxRecordsPerNode: 40
+
+  nodes:
+    # -----------------------------------------------------------------------
+    # ROUND 1. The opening moves and the first decision.
+    # -----------------------------------------------------------------------
+    think:
+      kind: agent
+      ownerRef: team/platform-ai
+      uses: actor://company/developer@sha256:3333333333333333333333333333333333333333333333333333333333333333
+      ledger:
+        propose: [claim]
+      input:
+        bindings:
+          devague_write:
+            literal: true
+          success_outcome:
+            literal: question_raised
+          instruction:
+            literal: >-
+              You are the /think leg of the spec-chain-lane workflow, running
+              on the developer lane in its own worktree. Your brief ends with
+              a 'Lane custody' block from the bridge naming this checkout and
+              a branch_prefix: that is the ONLY reason you may write .devague/
+              here. Work only in this checkout. Steps, in order.
+              (1) Let SLUG be the ticket id lowercased (python3
+              examples/spec-chain-lane/frame_moves.py slug --ticket <id>).
+              Create or continue the branch <branch_prefix><SLUG> from HEAD.
+              (2) If .devague/frames/<SLUG>.json exists, continue that frame;
+              otherwise run devague new --title <ID> "<announcement>" with an
+              announcement drafted from the ticket title. Then run the /think
+              moves as devague commands: devague scope for each surface you
+              actually read, devague capture for each claim, devague
+              interrogate for honesty conditions. Record every decision only
+              a person can make as devague question "<text>". NEVER run
+              devague confirm, devague reject or devague export: confirmations
+              are a user act made off the board. (3) After EVERY frame-changing
+              devague command: git add .devague && git commit, then post the
+              snapshot with python3 examples/spec-chain-lane/post_frame.py
+              --ticket <id> (it reads NODES_API_URL and
+              NODES_HUMAN_DECISION_TOKEN from your environment; never print
+              either) and note the version it returns. (4) Finish by writing
+              devague question --list --json and devague converge --json to
+              files and running python3 examples/spec-chain-lane/frame_moves.py
+              next --ticket <id> --questions-file ... --converge-file ...
+              --frame-version <last version>. Your FINAL message must be
+              EXACTLY that command's stdout — one JSON object with outcome and
+              output — with no other text, because the engine routes on it.
+          issue: /run/input/id
+          title: /run/input/title
+          status: /run/input/status
+          details_url: /run/input/details_url
+      contract:
+        outcomes:
+          question_raised:
+            schema:
+              type: object
+              required: [question_id, question, frame_slug, frame_version]
+              properties:
+                question_id: {type: string, minLength: 1}
+                question: {type: string, minLength: 1}
+                frame_slug: {type: string, minLength: 1}
+                frame_version: {type: integer, minimum: 1}
+          converged:
+            schema:
+              type: object
+              required: [frame_slug, frame_version]
+          needs_confirmation:
+            schema:
+              type: object
+              required: [frame_slug, frame_version, blockers]
+      policy:
+        timeout: 45m
+        retry:
+          maxAttempts: 1
+
+    post-question:
+      kind: agent
+      ownerRef: team/platform-ai
+      uses: actor://company/jira-comment@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
+      ledger:
+        propose: [claim]
+      input:
+        bindings:
+          verb:
+            literal: post_comment
+          issue: /run/input/id
+          comment: /nodes/think/output/question
+          question_id: /nodes/think/output/question_id
+      contract:
+        outcomes:
+          comment_posted:
+            schema:
+              type: object
+              required: [issue, comment_id]
+      policy:
+        timeout: 10m
+        retry:
+          maxAttempts: 1
+
+    await-answer:
+      kind: wait
+      ownerRef: team/platform-ai
+      until:
+        signal: pr-upkeep.jira.comment
+
+    # The engine's correlation. `output` in a decision predicate is the
+    # node's own resolved input (internal/worker/decision.go), so the two
+    # bindings below are what the clauses read.
+    correlate:
+      kind: decision
+      ownerRef: team/platform-ai
+      input:
+        bindings:
+          event: /nodes/await-answer/output/event/payload
+          question_id: /nodes/think/output/question_id
+      select:
+        - outcome: answered
+          when: >-
+            has(output.event.originating_question_id) &&
+            output.event.originating_question_id == output.question_id &&
+            has(output.event.answer) &&
+            !(has(output.event.self_originated) && output.event.self_originated == true)
+        - outcome: not_my_answer
+          when: "true"
+
+    transact:
+      kind: agent
+      ownerRef: team/platform-ai
+      uses: actor://company/developer@sha256:3333333333333333333333333333333333333333333333333333333333333333
+      ledger:
+        propose: [claim]
+      input:
+        bindings:
+          devague_write:
+            literal: true
+          success_outcome:
+            literal: question_raised
+          instruction:
+            literal: >-
+              You are the transact leg of the spec-chain-lane workflow, on
+              the developer lane in its own worktree; your brief ends with the
+              bridge's 'Lane custody' block, the only reason you may write
+              .devague/ here. A human answered a marked question. Steps.
+              (1) Check out the branch <branch_prefix><frame slug> that holds
+              this ticket's frame. (2) Write the bound resume_event payload to
+              a file and run python3 examples/spec-chain-lane/frame_moves.py
+              transact --question-id <question_id> --event-file <file>. Run
+              EXACTLY the argv it prints and no other devague command: that
+              is the stated move. If it exits 3 the wake was not this
+              question's answer — do nothing to the frame and end with the
+              JSON {"outcome":"question_raised","output":{...}} that re-states
+              the SAME question_id, question, frame_slug and frame_version you
+              were given, so the run re-asks nothing new. (3) After the move:
+              git add .devague && git commit, then python3
+              examples/spec-chain-lane/post_frame.py --ticket <id> (it reads
+              NODES_API_URL and NODES_HUMAN_DECISION_TOKEN from your
+              environment; never print either). NEVER run devague confirm,
+              devague reject or devague export. (4) Write devague question --list
+              --json and devague converge --json to files and run
+              frame_moves.py next --ticket <id> --questions-file ...
+              --converge-file ... --frame-version <version>. Your FINAL
+              message must be EXACTLY that command's stdout and nothing else.
+          issue: /run/input/id
+          question_id: /nodes/think/output/question_id
+          question: /nodes/think/output/question
+          frame_slug: /nodes/think/output/frame_slug
+          frame_version: /nodes/think/output/frame_version
+          resume_event: /nodes/await-answer/output/event
+      contract:
+        outcomes:
+          question_raised:
+            schema:
+              type: object
+              required: [question_id, question, frame_slug, frame_version]
+              properties:
+                question_id: {type: string, minLength: 1}
+                question: {type: string, minLength: 1}
+                frame_slug: {type: string, minLength: 1}
+                frame_version: {type: integer, minimum: 1}
+          converged:
+            schema:
+              type: object
+              required: [frame_slug, frame_version]
+          needs_confirmation:
+            schema:
+              type: object
+              required: [frame_slug, frame_version, blockers]
+      policy:
+        timeout: 30m
+        retry:
+          maxAttempts: 1
+
+    # -----------------------------------------------------------------------
+    # ROUND 2. Structurally round 1 again, the question now from `transact`.
+    # -----------------------------------------------------------------------
+    post-question-2:
+      kind: agent
+      ownerRef: team/platform-ai
+      uses: actor://company/jira-comment@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
+      ledger:
+        propose: [claim]
+      input:
+        bindings:
+          verb:
+            literal: post_comment
+          issue: /run/input/id
+          comment: /nodes/transact/output/question
+          question_id: /nodes/transact/output/question_id
+      contract:
+        outcomes:
+          comment_posted:
+            schema:
+              type: object
+              required: [issue, comment_id]
+      policy:
+        timeout: 10m
+        retry:
+          maxAttempts: 1
+
+    await-answer-2:
+      kind: wait
+      ownerRef: team/platform-ai
+      until:
+        signal: pr-upkeep.jira.comment
+
+    correlate-2:
+      kind: decision
+      ownerRef: team/platform-ai
+      input:
+        bindings:
+          event: /nodes/await-answer-2/output/event/payload
+          question_id: /nodes/transact/output/question_id
+      select:
+        - outcome: answered
+          when: >-
+            has(output.event.originating_question_id) &&
+            output.event.originating_question_id == output.question_id &&
+            has(output.event.answer) &&
+            !(has(output.event.self_originated) && output.event.self_originated == true)
+        - outcome: not_my_answer
+          when: "true"
+
+    transact-2:
+      kind: agent
+      ownerRef: team/platform-ai
+      uses: actor://company/developer@sha256:3333333333333333333333333333333333333333333333333333333333333333
+      ledger:
+        propose: [claim]
+      input:
+        bindings:
+          devague_write:
+            literal: true
+          success_outcome:
+            literal: question_raised
+          instruction:
+            literal: >-
+              You are the transact leg of the spec-chain-lane workflow (round
+              2), on the developer lane in its own worktree; your brief ends
+              with the bridge's 'Lane custody' block, the only reason you may
+              write .devague/ here. A human answered a marked question. Steps.
+              (1) Check out the branch <branch_prefix><frame slug> that holds
+              this ticket's frame. (2) Write the bound resume_event payload to
+              a file and run python3 examples/spec-chain-lane/frame_moves.py
+              transact --question-id <question_id> --event-file <file>. Run
+              EXACTLY the argv it prints and no other devague command. If it
+              exits 3, do nothing to the frame and end with the JSON
+              {"outcome":"question_raised","output":{...}} re-stating the SAME
+              question_id, question, frame_slug and frame_version you were
+              given. (3) After the move: git add .devague && git commit, then
+              python3 examples/spec-chain-lane/post_frame.py --ticket <id>
+              (it reads NODES_API_URL and NODES_HUMAN_DECISION_TOKEN from your
+              environment; never print either). NEVER run devague confirm,
+              devague reject or devague export. (4) Run frame_moves.py
+              next --ticket <id> --questions-file ... --converge-file ...
+              --frame-version <version> over devague question --list --json
+              and devague converge --json. Your FINAL message must be EXACTLY
+              that command's stdout and nothing else.
+          issue: /run/input/id
+          question_id: /nodes/transact/output/question_id
+          question: /nodes/transact/output/question
+          frame_slug: /nodes/transact/output/frame_slug
+          frame_version: /nodes/transact/output/frame_version
+          resume_event: /nodes/await-answer-2/output/event
+      contract:
+        outcomes:
+          question_raised:
+            schema:
+              type: object
+              required: [question_id, question, frame_slug, frame_version]
+              properties:
+                question_id: {type: string, minLength: 1}
+                question: {type: string, minLength: 1}
+                frame_slug: {type: string, minLength: 1}
+                frame_version: {type: integer, minimum: 1}
+          converged:
+            schema:
+              type: object
+              required: [frame_slug, frame_version]
+          needs_confirmation:
+            schema:
+              type: object
+              required: [frame_slug, frame_version, blockers]
+      policy:
+        timeout: 30m
+        retry:
+          maxAttempts: 1
+
+    # -----------------------------------------------------------------------
+    # ROUND 3 (the last one). The question now from `transact-2`.
+    # -----------------------------------------------------------------------
+    post-question-3:
+      kind: agent
+      ownerRef: team/platform-ai
+      uses: actor://company/jira-comment@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
+      ledger:
+        propose: [claim]
+      input:
+        bindings:
+          verb:
+            literal: post_comment
+          issue: /run/input/id
+          comment: /nodes/transact-2/output/question
+          question_id: /nodes/transact-2/output/question_id
+      contract:
+        outcomes:
+          comment_posted:
+            schema:
+              type: object
+              required: [issue, comment_id]
+      policy:
+        timeout: 10m
+        retry:
+          maxAttempts: 1
+
+    await-answer-3:
+      kind: wait
+      ownerRef: team/platform-ai
+      until:
+        signal: pr-upkeep.jira.comment
+
+    correlate-3:
+      kind: decision
+      ownerRef: team/platform-ai
+      input:
+        bindings:
+          event: /nodes/await-answer-3/output/event/payload
+          question_id: /nodes/transact-2/output/question_id
+      select:
+        - outcome: answered
+          when: >-
+            has(output.event.originating_question_id) &&
+            output.event.originating_question_id == output.question_id &&
+            has(output.event.answer) &&
+            !(has(output.event.self_originated) && output.event.self_originated == true)
+        - outcome: not_my_answer
+          when: "true"
+
+    transact-3:
+      kind: agent
+      ownerRef: team/platform-ai
+      uses: actor://company/developer@sha256:3333333333333333333333333333333333333333333333333333333333333333
+      ledger:
+        propose: [claim]
+      input:
+        bindings:
+          devague_write:
+            literal: true
+          success_outcome:
+            literal: question_raised
+          instruction:
+            literal: >-
+              You are the transact leg of the spec-chain-lane workflow (round
+              3, the last board round), on the developer lane in its own
+              worktree; your brief ends with the bridge's 'Lane custody'
+              block, the only reason you may write .devague/ here. A human
+              answered a marked question. Steps. (1) Check out the branch
+              <branch_prefix><frame slug> that holds this ticket's frame.
+              (2) Write the bound resume_event payload to a file and run
+              python3 examples/spec-chain-lane/frame_moves.py transact
+              --question-id <question_id> --event-file <file>. Run EXACTLY the
+              argv it prints and no other devague command. If it exits 3, do
+              nothing to the frame and end with the JSON
+              {"outcome":"question_raised","output":{...}} re-stating the SAME
+              question_id, question, frame_slug and frame_version you were
+              given. (3) After the move: git add .devague && git commit, then
+              python3 examples/spec-chain-lane/post_frame.py --ticket <id>
+              (it reads NODES_API_URL and NODES_HUMAN_DECISION_TOKEN from your
+              environment; never print either). NEVER run devague confirm,
+              devague reject or devague export. (4) Run frame_moves.py
+              next --ticket <id> --questions-file ... --converge-file ...
+              --frame-version <version> over devague question --list --json
+              and devague converge --json. Your FINAL message must be EXACTLY
+              that command's stdout and nothing else; a further
+              question_raised here reaches a person, not the board.
+          issue: /run/input/id
+          question_id: /nodes/transact-2/output/question_id
+          question: /nodes/transact-2/output/question
+          frame_slug: /nodes/transact-2/output/frame_slug
+          frame_version: /nodes/transact-2/output/frame_version
+          resume_event: /nodes/await-answer-3/output/event
+      contract:
+        outcomes:
+          question_raised:
+            schema:
+              type: object
+              required: [question_id, question, frame_slug, frame_version]
+              properties:
+                question_id: {type: string, minLength: 1}
+                question: {type: string, minLength: 1}
+                frame_slug: {type: string, minLength: 1}
+                frame_version: {type: integer, minimum: 1}
+          converged:
+            schema:
+              type: object
+              required: [frame_slug, frame_version]
+          needs_confirmation:
+            schema:
+              type: object
+              required: [frame_slug, frame_version, blockers]
+      policy:
+        timeout: 30m
+        retry:
+          maxAttempts: 1
+
+    # -----------------------------------------------------------------------
+    # THE PERSON. A fourth decision, or a frame blocked on confirmations
+    # (which only a user may make), parks here. The frame is committed and
+    # posted; the human task's input is the mover's own envelope, so the
+    # person sees which question or which blockers stopped the board loop.
+    # -----------------------------------------------------------------------
+    needs-human:
+      kind: approval
+      ownerRef: team/platform-ai
+      approverRef: group/platform-ai-approvers
+      deadline: 168h
+      input:
+        from: /run/input
+
+    # -----------------------------------------------------------------------
+    # NAMED ENDINGS.
+    # -----------------------------------------------------------------------
+
+    # The frame converged (every claim confirmed by a user, no open
+    # vagueness): the spec can be exported by a person from the checkout.
+    frame-converged:
+      kind: end
+      ownerRef: team/platform-ai
+      output:
+        from: /run/input
+
+    # A person took the frame over — approved or rejected the hand-back;
+    # what they decided is the human task's own ledger record.
+    handed-to-person:
+      kind: end
+      ownerRef: team/platform-ai
+      output:
+        from: /run/input
+
+    # Nobody answered the hand-back within its deadline. The frame stays
+    # committed and posted; the run stops rather than guessing on silence.
+    abandoned:
+      kind: end
+      ownerRef: team/platform-ai
+      output:
+        from: /run/input
+
+  edges:
+    # --- round 1 -------------------------------------------------------------
+    - from: think.question_raised
+      to: post-question
+    - from: think.converged
+      to: frame-converged
+    - from: think.needs_confirmation
+      to: needs-human
+    - from: post-question.comment_posted
+      to: await-answer
+    - from: await-answer.completed
+      to: correlate
+    - from: correlate.answered
+      to: transact
+    - from: correlate.not_my_answer
+      to: await-answer
+    - from: transact.converged
+      to: frame-converged
+    - from: transact.needs_confirmation
+      to: needs-human
+
+    # --- round 2 -------------------------------------------------------------
+    - from: transact.question_raised
+      to: post-question-2
+    - from: post-question-2.comment_posted
+      to: await-answer-2
+    - from: await-answer-2.completed
+      to: correlate-2
+    - from: correlate-2.answered
+      to: transact-2
+    - from: correlate-2.not_my_answer
+      to: await-answer-2
+    - from: transact-2.converged
+      to: frame-converged
+    - from: transact-2.needs_confirmation
+      to: needs-human
+
+    # --- round 3 (the last one) ---------------------------------------------
+    - from: transact-2.question_raised
+      to: post-question-3
+    - from: post-question-3.comment_posted
+      to: await-answer-3
+    - from: await-answer-3.completed
+      to: correlate-3
+    - from: correlate-3.answered
+      to: transact-3
+    - from: correlate-3.not_my_answer
+      to: await-answer-3
+    - from: transact-3.converged
+      to: frame-converged
+    - from: transact-3.needs_confirmation
+      to: needs-human
+    - from: transact-3.question_raised
+      to: needs-human
+
+    # --- the person ------------------------------------------------------------
+    - from: needs-human.approved
+      to: handed-to-person
+    - from: needs-human.rejected
+      to: handed-to-person
+    - from: needs-human.expired
+      to: abandoned

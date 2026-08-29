@@ -186,3 +186,134 @@ def test_only_allowed_repo_infers_one_and_refuses_ambiguity():
         ).only_allowed_repo()
         is None
     )
+
+
+# ---------------------------------------------------------------------------
+# .devague/ custody (t13, #199 / #230; frame q1): the lane config DECLARES
+# which checkout and branch prefix a lane's devague frames live on, and
+# whether that lane may write .devague/ at all. Undeclared means "no custody"
+# — the safe failure mode, exactly like the empty repo allowlist.
+# ---------------------------------------------------------------------------
+
+
+def _custody_file(tmp_path, checkout, **overrides):
+    payload = {
+        "repo_allowlist": [str(checkout)],
+        "custody": {
+            "checkout": str(checkout),
+            "branch_prefix": "jira-flow/",
+            "devague_write": True,
+        },
+    }
+    payload["custody"].update(overrides)
+    path = tmp_path / "developer.json"
+    path.write_text(json.dumps(payload), encoding="utf-8")
+    return path
+
+
+def test_custody_is_undeclared_by_default_and_refuses_devague_writes(tmp_path):
+    cfg = Config.load(env={"CLAUDE_CODE_BRIDGE_REPO_ALLOWLIST": str(tmp_path)})
+    assert cfg.custody is None
+    assert cfg.devague_write_allowed(str(tmp_path)) is False
+
+
+def test_custody_declaration_names_checkout_prefix_and_devague_write(tmp_path):
+    checkout = tmp_path / "owe-developer"
+    checkout.mkdir()
+    cfg = Config.load(config_path=str(_custody_file(tmp_path, checkout)), env={})
+    assert cfg.custody is not None
+    assert cfg.custody.checkout == str(checkout.resolve())
+    assert cfg.custody.branch_prefix == "jira-flow/"
+    assert cfg.custody.devague_write is True
+    assert cfg.devague_write_allowed(str(checkout)) is True
+    # The declaration is checkout-bound: a second allowlisted repo on the
+    # same bridge holds no custody, and a path outside the allowlist never
+    # does.
+    other = tmp_path / "other-lane"
+    other.mkdir()
+    assert cfg.devague_write_allowed(str(other)) is False
+    assert cfg.custody.to_dict() == {
+        "checkout": str(checkout.resolve()),
+        "branch_prefix": "jira-flow/",
+        "devague_write": True,
+    }
+
+
+def test_custody_with_devague_write_false_declares_the_lane_but_grants_nothing(tmp_path):
+    checkout = tmp_path / "owe-developer"
+    checkout.mkdir()
+    cfg = Config.load(
+        config_path=str(_custody_file(tmp_path, checkout, devague_write=False)), env={}
+    )
+    assert cfg.custody is not None and cfg.custody.devague_write is False
+    assert cfg.devague_write_allowed(str(checkout)) is False
+
+
+def test_custody_checkout_outside_the_allowlist_is_refused_at_load(tmp_path):
+    checkout = tmp_path / "owe-developer"
+    checkout.mkdir()
+    elsewhere = tmp_path / "elsewhere"
+    elsewhere.mkdir()
+    path = tmp_path / "developer.json"
+    path.write_text(
+        json.dumps(
+            {
+                "repo_allowlist": [str(checkout)],
+                "custody": {
+                    "checkout": str(elsewhere),
+                    "branch_prefix": "jira-flow/",
+                    "devague_write": True,
+                },
+            }
+        ),
+        encoding="utf-8",
+    )
+    with pytest.raises(ConfigError, match="custody"):
+        Config.load(config_path=str(path), env={})
+
+
+@pytest.mark.parametrize(
+    "bad",
+    [
+        {"branch_prefix": ""},
+        {"branch_prefix": "jira-flow"},
+        {"branch_prefix": "jira flow/"},
+        {"devague_write": "yes"},
+    ],
+)
+def test_custody_rejects_a_malformed_declaration(tmp_path, bad):
+    checkout = tmp_path / "owe-developer"
+    checkout.mkdir()
+    with pytest.raises(ConfigError, match="custody"):
+        Config.load(config_path=str(_custody_file(tmp_path, checkout, **bad)), env={})
+
+
+def test_custody_missing_keys_are_a_config_error(tmp_path):
+    path = tmp_path / "developer.json"
+    path.write_text(
+        json.dumps({"repo_allowlist": [str(tmp_path)], "custody": {"checkout": str(tmp_path)}}),
+        encoding="utf-8",
+    )
+    with pytest.raises(ConfigError, match="custody"):
+        Config.load(config_path=str(path), env={})
+
+
+def test_custody_env_override_wins_over_the_file(tmp_path):
+    checkout = tmp_path / "owe-developer"
+    checkout.mkdir()
+    env_custody = {
+        "checkout": str(checkout),
+        "branch_prefix": "spec/",
+        "devague_write": False,
+    }
+    cfg = Config.load(
+        config_path=str(_custody_file(tmp_path, checkout)),
+        env={"CLAUDE_CODE_BRIDGE_CUSTODY": json.dumps(env_custody)},
+    )
+    assert cfg.custody.branch_prefix == "spec/"
+    assert cfg.custody.devague_write is False
+
+
+def test_custody_env_must_be_a_json_object(tmp_path):
+    with pytest.raises(ConfigError, match="CLAUDE_CODE_BRIDGE_CUSTODY"):
+        Config.load(env={"CLAUDE_CODE_BRIDGE_CUSTODY": "[1,2]"})

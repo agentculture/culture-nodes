@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"os"
 	"strings"
 
 	"github.com/agentculture/culture-nodes/internal/engine"
@@ -57,6 +58,20 @@ func (eq engineQueries) appendJiraTicketReport(ctx context.Context, runID, event
 		VALUES ($1,$2,$3,$4,$5,$6,$7,$8) ON CONFLICT (run_id,phase) WHERE run_id IS NOT NULL DO NOTHING`,
 		store.NewULID(), eq.namespaceID, runID, triggerEventID, phase, JiraTicketReporterActorKey, issue, reportPayload); err != nil {
 		return fmt.Errorf("postgres: engine: jira ticket report outbox: %w", err)
+	}
+	if phase == "start" {
+		base := strings.TrimRight(strings.TrimSpace(os.Getenv("NODES_UI_BASE_URL")), "/")
+		pageComment := fmt.Sprintf("culture-nodes page: %s/tickets/%s [culture-nodes:ticket-page-link]", base, issue)
+		pagePayload, _ := json.Marshal(map[string]any{
+			"verb": "post_comment", "issue": issue, "comment": pageComment, "phase": "page-link",
+		})
+		if _, err := eq.q.Exec(ctx, `INSERT INTO jira_ticket_report_outbox
+			(id,namespace_id,phase,target_actor_key,issue_key,payload)
+			VALUES ($1,$2,'page-link',$3,$4,$5)
+			ON CONFLICT (namespace_id,issue_key,phase) WHERE phase='page-link' DO NOTHING`,
+			store.NewULID(), eq.namespaceID, JiraTicketReporterActorKey, issue, pagePayload); err != nil {
+			return fmt.Errorf("postgres: engine: jira ticket page-link outbox: %w", err)
+		}
 	}
 	_ = eventPayload // lifecycle event remains the authoritative ordering source.
 	return nil

@@ -143,6 +143,24 @@ func TestReportsDeliverThroughJiraBridgeOnly(t *testing.T) {
 	}
 }
 
+func TestPageLinkDeliversThroughJiraBridgeWithoutRun(t *testing.T) {
+	f := newReportFixture(t, http.StatusOK)
+	payload := json.RawMessage(`{"verb":"post_comment","issue":"SCRUM-9","comment":"culture-nodes page: /tickets/SCRUM-9 [culture-nodes:ticket-page-link]","phase":"page-link"}`)
+	if _, err := f.store.Pool().Exec(f.ctx, `INSERT INTO jira_ticket_report_outbox
+		(id,namespace_id,phase,target_actor_key,issue_key,payload,available_at)
+		VALUES ('page-link-1',$1,'page-link',$2,'SCRUM-9',$3,now()-interval '1 second')`,
+		f.namespace, storepg.JiraTicketReporterActorKey, payload); err != nil {
+		t.Fatal(err)
+	}
+	if err := f.dispatch.Run(f.ctx); err != nil {
+		t.Fatal(err)
+	}
+	if len(f.transport.bodies) != 1 || !bytes.Contains(f.transport.bodies[0], []byte(`"verb":"post_comment"`)) ||
+		!bytes.Contains(f.transport.bodies[0], []byte("culture-nodes:ticket-page-link")) {
+		t.Fatalf("page-link bridge calls = %q", f.transport.bodies)
+	}
+}
+
 func TestRetryBackoffEndsInTerminalFailure(t *testing.T) {
 	f := newReportFixture(t, http.StatusInternalServerError)
 	f.insert("report-poison", "start", time.Now().Add(-time.Second))

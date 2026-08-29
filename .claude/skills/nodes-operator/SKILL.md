@@ -124,10 +124,19 @@ only as an eidetic `/remember` note.
   user, so a `--sandbox workspace-write` dispatch is confined by account
   ownership, not by a sandbox flag: the account cannot write anything it
   does not own, and it cannot read the operator's own checkout at all. The
-  `read-only` probe above was pre-account and never exercised a write; the
-  account model has not yet been exercised on a live write dispatch either.
-  Proven by runs: `<RUN-IDS-T10>`. Assign analysis and reading freely; treat
-  write dispatches as unverified until that placeholder is filled in.
+  `read-only` probe above was pre-account. The account model was proven
+  live on 2026-08-29/30 (#243 t10): as `culture-codex`, runs
+  `01M17E36Z7G8A60WP6TA9QB0AP` (orin) and `01M17E3ZC1MBQ6DZRKY93T8PWE`
+  (thor) fetched from github, ran black/isort/flake8 through `uvx`, passed
+  29 loopback tests and were denied on the login user's home, `sudo` and
+  the docker socket; runs `01M17NJ8W7B6NQ2RKT6B89SF94` / `01M17NK19NY09G55J7AJWYW7XT`
+  did the same under `workspace-write` with network from the account's own
+  codex config. As `culture-claude`, run `01M17P15BJ28XN57N7P7Q77Y48` did
+  all of that AND handed its change over as
+  `refs/culture-nodes/01M17P15BJ28XN57N7P7Q77Y48/...` authored by the
+  account, fetched by the operator as `culture-claude@localhost`. Assign
+  reads, analysis and writes freely; a `--handover` dispatch is how a write
+  reaches you (see "Harvesting a dispatched checkout").
 - **Results are claims, not evidence.** A session's report lands as a
   `proposed` ledger claim attributed to its registered actor. Confirming it
   is a human's job; treat the summary exactly as you'd treat a colleague's

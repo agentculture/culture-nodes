@@ -1,0 +1,113 @@
+# jira-flow-spec-read-related-bugs
+
+> Jira flow closes its loop: the merged flow-store cycle is deployed and proven on prod records, the spec a ticket is deciding on is readable from the ticket itself as a rendered page, the /think leg can be driven from the board, and the bugs that bit the last cycle (deploy.sh un-granting the sweep, the bridge scope-boundary false denial, the dial-in 401 loop) no longer reproduce
+> instruction: Order of work: fix #191 → reconcile prod checkouts (q3) → ship the r4 deploy unit and publish sweep-cycle v2 + jira-comment-consumer → run t13 and close #192–#198 via #230 → fix #207/#205 → add the jira-bridge page verb and the deterministic spec render (#200) → declare owe-developer custody, publish examples/spec-chain, wire it to a ticket fact (#199/t10). Verify each leg against the numbered signals in c18.
+
+## Audience
+
+- The operator working from the Jira board (files, answers, decides, and reads the spec on the ticket with no repo access); the culture-nodes actor fleet on the developer and codex lanes that builds the legs; and the operator lane that ships the r4 deploy and runs the t13 proof
+
+## Before → After
+
+- Before: Today prod runs c041f28 (pre-#208): the history-faithful sweep, bounded re-mint, ticket reports and comment consumer exist only on main; the spec a ticket decides on lives only in the checkout (SCRUM-3 comments 10111/10113 summarized 13 claims in prose); the /think leg is the operator session polling the board; every deploy silently un-grants the sweep's `NODES_API_URL` and Jira config (#191); developer dispatches that sync their base get a false `policy_denied` (#207) and the developer bridge loops 401 once a second (#205)
+- After: Prod's /v1alpha1/version names a revision containing c0f6c4a and the prod registry lists pr-upkeep-sweep-cycle v2 and jira-comment-consumer; a real ticket carries one in-place-updated HTML spec page from intake to PR merge; a ticket fact mints the spec chain and a marked question answered on the board transacts exactly that frame move; deploy.sh preserves the sweep's grants; #207 and #205 no longer reproduce; #192 #193 #194 #197 #198 are closed on prod evidence via #230
+
+## Why it matters
+
+- A merged-but-undeployed cycle is indistinguishable from a delivered one until someone measures prod — the flow-store cycle went ten days without a delivery record and its five feature issues read as done. Closing the loop on prod, and making the ticket carry the spec, is what lets the board be a peer operating surface instead of a place the operator session polls
+
+## Requirements
+
+- The flow-store build cycle (#203 / PR #208, 11 of 13 plan tasks) is closed properly before new Jira-flow work opens: a /summarize-delivery record is written (today .devague/deliveries/jira-operating-surface-flow-store.json holds only deviation d1 and docs/deliveries has no entry for the cycle), and #192/#193/#194/#197/#198 close only on t13's live prod proof, not on the merge
+  - instruction: Close #233 (done 2026-08-29), leave #192–#198 open until #230 cites prod records; the next cycle's /summarize-delivery runs before its PR merges.
+  - honesty: The delivery summary docs/deliveries/2026-08-19-jira-operating-surface-flow-store.md is on main, and #192 #193 #194 #197 #198 are closed only by #230's prod-record evidence — never on the merge
+- The r4 deploy unit (migrations 0041→0045, sweep.py + `pr_upkeep_jira.py`, adoption-aware control plane, one deploy to thor per migrations/README.md) ships to prod before any Jira-flow leg is proven: GET /v1alpha1/version on prod (192.168.1.146:18080) returns revision c041f28, a pre-squash commit reachable only from origin/scrum2/hands-free-pickup, 12+ commits behind main — none of the history-faithful sweep, re-mint, ticket reports, or comment consumer is running
+  - instruction: After #191 is fixed and q3's reconcile: deploy/prod/deploy.sh thor from a main revision containing c0f6c4a; publish pr-upkeep-sweep-cycle v2 and jira-comment-consumer; verify with curl $`NODES_API_URL`/v1alpha1/version and /v1alpha1/workflows; comment every hand-turn on #230.
+  - honesty: After the deploy, prod's GET /v1alpha1/version names a revision that contains c0f6c4a, migrations 0041(cutover)–0045 are applied, and the prod registry lists pr-upkeep-sweep-cycle v2 (two-pair bootstrap) and jira-comment-consumer — read back from prod, not from the deploy log
+- \#191 is fixed as part of this cycle: deploy/prod/deploy.sh lines 88-97 rewrite ~/.culture-nodes/runner.env from a fixed block that never writes `NODES_API_URL`, and line 116-118 defaults `PR_UPKEEP_REPOSITORIES` to a jira-less document whenever the operator's shell does not re-supply it — the sweep-cycle workflow (examples/pr-upkeep/sweep-cycle.workflow.yaml:99-104) names both as `environment_refs`, so every deploy either fail-closes the sweep or amputates its Jira source silently; the fix re-grants both (or refuses to deploy without them) and is what makes the r4 deploy safe
+  - instruction: Make the runner.env write in deploy.sh:88-150 read the existing file first and carry `NODES_API_URL` and a jira-bearing `PR_UPKEEP_REPOSITORIES` forward (or refuse loudly when absent); add a test driving that section against a fake host twice.
+  - honesty: Two consecutive deploy.sh runs against a host whose runner.env already carries `NODES_API_URL` and a jira-bearing `PR_UPKEEP_REPOSITORIES` leave both intact (or the deploy refuses loudly before touching the file), and a named test drives the env-writing section against a fake host to prove it
+- The /think leg runs Jira-driven (#199, plan task t10): examples/spec-chain/workflow.yaml (22 nodes, compiles, unpublished, unwired) is published and reachable from a ticket fact, frame decisions land as marked questions on the ticket, and the human's reply transacts exactly the stated decision — confirmations stay user-only
+  - instruction: Declare owe-developer custody for .devague/ in the lane config; publish examples/spec-chain; add a trigger binding on a ticket fact; marked questions use the shared `question_correlation` helper; prove with one run on prod whose `trigger_event_id` is a ticket fact.
+  - honesty: On prod records: a spec-chain run whose `trigger_event_id` is a ticket-derived fact; a frame decision posted as a marked question, answered on the board, transacts exactly the stated devague move and nothing else; the run mutates .devague/ only through the declared owe-developer custody
+- \#207 is fixed: the claude bridge's workflow-scope boundary measures the committed diff against the branch base, not the whole workspace delta, so a step-0 base move no longer produces a false `policy_denied` (run 01M0DYPYFTWRWF3AXH24PD9FXF) — every developer dispatch in this cycle that syncs its checkout otherwise needs the operator to pre-sync the worktree by hand (hand-turn 5 on #203)
+  - instruction: In adapters/claude-code mapping: compute the scope delta as git diff --name-only <branch-base>..HEAD plus uncommitted changes, never the workspace delta from the pre-base-move tree; tests for both sides; one live developer dispatch with a base move.
+  - honesty: Named tests pin both sides: a session whose step-0 base move drags .github changes ends completed, and a session that itself edits .github/ still ends `policy_denied`; one live developer dispatch with a base move completes without operator pre-sync
+- \#205 is fixed: the culture-nodes-claude-developer bridge on spark stops its once-per-second 401 dial-in reconnect loop (backoff plus a correct dial-in credential), so dial-in coverage on the developer lane is real rather than silently dead
+  - instruction: In dialin.py (one copy, propagated to all five adapters): exponential backoff with a ceiling on 401, and surface the credential mismatch once; fix the developer unit's dial token; verify with journalctl --user -u culture-nodes-claude-developer over one hour.
+  - honesty: One hour of the developer bridge's journal after the fix shows dial-in reconnects backing off and no sustained 401 loop, and /v1alpha1/dial-in-presence lists the developer bridge; the fix is one dialin.py propagated byte-identically to all five adapters
+- The ticket page (#200, redefined): the web UI gains a /tickets/<ticket-id> route rendering the ticket's whole conversation from control-plane state — spec claims with confirmation state, questions/decisions, start/finish reports, run status, and the reply thread — with a link back to the Jira ticket; the page's URL is posted on the ticket at intake through the jira bridge and replaced in place, never duplicated; a reply submitted on the page is posted as a Jira comment via the bridge under the system's account and appended as a human engine fact, and the page freezes with a pointer to the merged PR; the render is deterministic from state, no LLM in the path
+  - instruction: Add a /tickets/:id route to web/ reading a new GET /v1alpha1/tickets/<id> projection (spec state, questions, reports, runs, replies); a jira-bridge remote-link verb posts the page URL at intake; POST reply → jira bridge comment + human engine fact; freeze on PR merge; e2e keyboard walk on the route.
+  - honesty: On a real ticket: the ticket carries one link to /tickets/<id> posted at intake; the page opened with no repo access shows every claim with its state and the reply thread; one reply typed on the page appears as a Jira comment on the ticket AND as an engine fact that resumes a waiting flow, measured from prod records; the same state renders byte-identically twice; the UI's PRD §8.8 accessibility rules (keyboard order, icon+word status, reduced motion) hold on the new route
+
+## Honesty conditions
+
+- Every leg in the announcement is proven from prod records with no session context, and the cycle ends with a /summarize-delivery record before its PR merges — not ten days after
+- \#202 is closed citing the three v11 completed runs on prod (#203 comment 2026-08-19T23:22Z) and a one-line audit that every published workflow's actor nodes declare a ledger.propose block — no code change
+- The split plan declares model-session counts per wave before any dispatch, every build package is dispatched through nodes-operator assign, and every operator hand-turn is a comment on #230 or the issue it touches
+- Each audience can run its leg alone: the operator from the board with no repo access, the fleet from dispatched briefs, the operator lane from deploy.sh plus prod reads
+- Each before-state fact is re-measurable today: prod /v1alpha1/version = c041f28, the prod registry has no jira-comment-consumer, deploy.sh:88-97 has no `NODES_API_URL` line, #207 and #205 reproduce as their issues describe
+- The next cycle's delivery summary exists before its PR merges, and the flow-store issues #192–#198 stay open until #230 cites prod records
+- Every item in the after-state maps to a numbered success signal in c18 that a reader can re-measure from prod without this session
+- Every one of the seven signals is recorded in the cycle's delivery summary with the prod read (URL or command plus output) that measured it; a signal that cannot be measured is recorded as unverified, never asserted
+
+## Success signals
+
+- Measured from prod records with no session context: (1) GET /v1alpha1/version revision contains c0f6c4a; (2) a two-comment reply on a real ticket emits two facts in order; (3) the ticket shows one spec page whose content changed across at least two lane milestones without a second attachment appearing; (4) a spec-chain run id whose `trigger_event_id` is a ticket fact; (5) two consecutive deploy.sh runs leave `NODES_API_URL` and the jira half of `PR_UPKEEP_REPOSITORIES` intact in runner.env; (6) a developer dispatch with a base move ends completed; (7) one hour of developer-bridge journal with no 401 loop
+
+## Scope / boundaries
+
+- \#202 needs no new work: pr-upkeep v11 declares ledger.propose \[claim\] and three v11 runs completed honestly on prod (#203 comment 2026-08-19T23:22Z) — it closes on that evidence, and the same trap is checked across the other published workflows rather than re-fixed
+- Session economics hold (#48, CLAUDE.md split-plan lane): build packages route to codex/developer actors through /nodes-operator assign, the operator's Claude window is reserved for merge gates, deploy, and the t13 proof, and every hand-turn gets an issue comment
+
+## Non-goals
+
+- \#226 mesh awareness, #218 skill-logic fold into the nodes CLI, #204 lane registry as a whole, and #192's store-pull second control plane are not built in this cycle: #226 is dispositioned as a large bet whose first slice (#224) is already closed, #218 is structural, #204 is consumed only as far as the t10 custody question needs, and the second control plane for the store-pull proof is unscoped setup (plan risk r2 second bullet)
+
+## Assumptions
+
+- Deploying to prod first requires reconciling the two prod checkouts, which docs/deliveries/2026-08-27-qwen-bridge-first-dispatch.md records as detached with hand-modified tracked files — deploy.sh runs from a clean revision, so the hand-modified state must be committed or discarded (an operator decision, counted as a hand-turn on an issue)
+- \#221 (sweep.py builds SonarCloud URLs itself) rides this cycle only because touching examples/pr-upkeep/sweep.py changes the digest deploy.sh grants — the fix collapses sweep.py's Sonar reads onto one boundary but cannot touch the vendored sonar.sh or pr-status.sh (docs/skill-sources.md: never edit vendored script bodies)
+
+## Scope exploration
+
+- `s1` — `docs/plans/2026-08-19-jira-operating-surface-flow-store.md + PR #208 body + .devague/deliveries/jira-operating-surface-flow-store.json`: 11/13 tasks merged in #208; t10 (board-driven planning) and t13 (live prod proof) explicitly 'not in this PR'; no delivery summary exists — the delivery json carries only deviation d1 and docs/deliveries/ has no 2026-08-19 record; the five feature issues stay open pending t13
+  - seeds: `c2`
+- `s2` — `prod control plane GET /v1alpha1/version + git branch --contains c041f28 + migrations/ on main`: prod runs c041f28 (scrum2/hands-free-pickup, pre-#208); main has migrations 0044/0045 the prod db has never seen; the flow-store cycle is merged-but-undeployed, so every 'proven live' claim in this cycle is blocked on this deploy
+  - seeds: `c3`
+- `s3` — `docs/deliveries/2026-08-27-qwen-bridge-first-dispatch.md (lines 179-194)`: both prod checkouts sit detached with hand-modified tracked files after the qwen token merge; a deploy must not silently overwrite or preserve that state
+  - seeds: `c4`
+- `s4` — `deploy/prod/deploy.sh:88-150 + examples/pr-upkeep/sweep-cycle.workflow.yaml:35-104`: still reproduces on main: the runner.env rewrite block has no `NODES_API_URL` line and the jira half of `PR_UPKEEP_REPOSITORIES` depends on the deploying shell; #191's three-times-in-one-evening evidence stands
+  - seeds: `c5`
+- `s5` — `issue #200 + docs/specs/2026-08-19-jira-operating-surface-flow-store.md + adapters/jira/src/jira_bridge/{create_issue,transition_issue,server}.py`: the SCRUM-3 confirm rounds (comments 10111/10113) had to summarize 13 claims in prose because the spec lived only in the checkout; the jira bridge today has comment, transition, and `create_issue` verbs — no attachment or remote-link verb, so the page needs one new allowlisted verb
+  - seeds: `c6` (rejected)
+- `s6` — `examples/spec-chain/README.md + workflow.yaml + docs/plans/2026-08-19 task t10 and risk r2`: the spec chain exists as a graph but nothing mints it from a ticket; t10 was left out of #208 gated on the frame-custody lane decision (r2) and no decision record exists in docs/decisions or docs/adr
+  - seeds: `c7`
+- `s7` — `issue #207 + #203 dispatch log (WP-T9, WP-F pre-sync hand-turn)`: the false denial bit the last cycle twice; t10/#200 work routed to the developer lane hits it again unless fixed or the lane is pre-synced by hand
+  - seeds: `c8`
+- `s8` — `issue #205 + adapters/claude-code/src/claude_code_bridge/dialin.py (byte-identical across all five adapters per tests/lint)`: dial-in retries without backoff; fixing dialin.py means fixing one copy and propagating to all five adapters (CLAUDE.md byte-identical rule), never formatting per adapter
+  - seeds: `c9`
+- `s9` — `issue #202 comments + examples/pr-upkeep/workflow.yaml fix node`: verified healed on prod as pr-upkeep v11; remaining value is a sweep of every published workflow for a node that declares no propose types
+  - seeds: `c10`
+- `s10` — `issue #221 + examples/pr-upkeep/sweep.py SONAR_*_URL constants + docs/skill-sources.md`: sweep.py is first-party and deploys by (URL, SHA-256) pair; the other two callers are vendored and go upstream or nowhere
+  - seeds: `c11`
+- `s11` — `issues #226 (comment 2026-08-27), #218, #204, #192 + plan risks`: each is real and none is a Jira-flow leg; pulling them in turns one cycle into four
+  - seeds: `c12`
+- `s12` — `CLAUDE.md conventions (split-plan lane, hand-turn rule) + #203's hand-turn ledger`: the last cycle logged five counted hand-turns; this cycle's proof leg is explicitly zero-operator-shell-commands per the exported frame's honesty condition
+  - seeds: `c13`
+
+## Decisions
+
+- q1 (2026-08-29): t10's frame custody is a minimal custody declaration on the existing owe-developer lane; it does not wait on #204's lane registry
+- q2 (2026-08-29): 'accessibility' in this cycle means issue #200 — the spec rides the ticket as an HTML page rendered at intake and updated in place until the PR is done — not the web UI's PRD §8.8 accessibility
+- d1 of the flow-store cycle (sweep split into sweep.py + `pr_upkeep_jira.py`, two-pair bootstrap) stands as approved; the r4 deploy ships both pairs
+- Operator direction 2026-08-29: the qwen bridge lane is parked and is not a dispatch target for this cycle; colleague (the ask-colleague skill — same models and resources, works better) is the second-mind lane for review/explore, and build packages route to the codex and claude-developer actors
+- Operator direction 2026-08-29 on #200: the spec page is a ticket page on the culture-nodes web UI (the embedded SPA), path carries the ticket id, with a link back to the Jira ticket and the link posted on the ticket; it carries the whole conversation (spec with claim states, questions and decisions, start/finish reports, run status, reply thread), frozen with the merged PR at the end; a reply on the page lands as a Jira comment through the jira bridge AND as an engine fact so flows resume without the sweep; replies are posted under the same Jira account the system uses today, with dedicated per-user identity as a follow-up issue. This is the standard for speaking to users in an organized way, not a development-only artifact
+
+## Open parks
+
+- [unknown_nonblocking] Whether #221 (sweep.py's own SonarCloud URLs) is folded into the sweep digest change this cycle ships or waits for #218's nodes-CLI boundary
+- [unknown_nonblocking] Reachability of the ticket page beyond the LAN (the UI is served by the control plane on thor:18080 with no auth): outside users cannot reply until the UI is exposed with an auth story — decide before the page is offered to anyone but the operator
+- [out_of_scope] The store-pull second control plane (spec h17/c19 of the flow-store frame) — tracked as #232; not built here
+- [follow_up] internal/ticketreport dispatcher tests (#231) — needed before t13 leans on start/finish reports; small, may ride the r4 deploy PR
+- [follow_up] Dedicated per-user identity for page replies (today: the system's Jira account) — its own culture-nodes issue

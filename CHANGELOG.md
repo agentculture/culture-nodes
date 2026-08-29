@@ -5,6 +5,16 @@ All notable changes to this project will be documented in this file.
 Format follows [Keep a Changelog](https://keepachangelog.com/). This project
 adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.42.3] - 2026-08-29
+
+### Added
+
+- docs/specs/2026-08-29-jira-flow-spec-read-related-bugs.md: the converged spec for the next Jira-flow cycle — ship and prove the flow-store cycle on prod (#230), the ticket page on the web UI (#200 redefined: /tickets/<id>, whole conversation, replies land as Jira comment + engine fact), the board-driven /think leg (#199), and fixes for #191 #207 #205; 12 provenance-cited scope entries, q1–q3 resolved, qwen lane parked in favour of colleague
+
+### Changed
+
+- docs/triage: disposition row for #235 (per-user identity for ticket-page replies); open-issues regenerated
+
 ## [0.42.2] - 2026-08-29
 
 ### Added

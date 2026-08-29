@@ -23,8 +23,12 @@ config:
   # (adapters/*/preserve.py), and <path> appears inside quoted git output
   # ("fatal: <path> contains modified or untracked files"). All three are
   # placeholders in cited identifiers, not markup.
+  #
+  # ticket-id joined for the jira-flow-spec-read-related-bugs spec: the
+  # ticket page's route is /tickets/<ticket-id> (#200 as redefined), and
+  # <branch-base> is the diff base in c8's scope-boundary instruction.
   MD033:
-    allowed_elements: ["id", "node", "name", "namespace", "branch", "path"]
+    allowed_elements: ["id", "node", "name", "namespace", "branch", "path", "ticket-id", "branch-base"]
 
 ignores:
   # Both forms are needed. The bare glob is root-anchored, so it misses

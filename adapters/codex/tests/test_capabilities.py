@@ -10,6 +10,8 @@ actually enforce, and where a dispatched session's changes end up.
 from __future__ import annotations
 
 import json
+import os
+import pwd
 import urllib.error
 import urllib.request
 
@@ -78,56 +80,72 @@ def test_a_permissive_kernel_advertises_every_sandbox_mode(tmp_path):
     assert "sandbox_modes_unavailable" not in host
 
 
-def test_a_restricting_kernel_advertises_only_what_it_can_enforce(tmp_path):
-    """Issue #18/#63 on this bridge: `workspace-write` was requested on hosts
-    whose kernel restricted unprivileged user namespaces, and every file
-    write was silently lost. The surface reports what the host can do."""
+def test_a_restricting_kernel_no_longer_withholds_a_mode(tmp_path):
+    """task t2 (issue #243): `_REQUIRES_USERNS` is now empty, because a
+    dedicated OS-user account — not a withheld `--sandbox` mode — is what
+    confines a session. A restricted kernel (and even a probe that reports
+    the helper failed) must no longer shrink `sandbox_modes` or populate
+    `sandbox_modes_unavailable`; issue #18/#63's silent-degrade risk is
+    still named, but in `confinement`'s prose, not by hiding a mode."""
     cfg = Config(repo_allowlist=(str(tmp_path),))
     host = capabilities.host_facts(cfg, probes=_restricted(tmp_path), capability_probe=_probe_fails)
 
-    assert host["sandbox_modes"] == ["danger-full-access"]
-    assert set(host["sandbox_modes_unavailable"]) == {"read-only", "workspace-write"}
-    assert "bwrap capability probe failed" in host["sandbox_modes_unavailable"]["workspace-write"]
+    assert host["sandbox_modes"] == list(capabilities.SANDBOX_MODE_CANDIDATES)
+    assert "sandbox_modes_unavailable" not in host
     assert host["artifact_publish"] == "unsupported-by-host"
 
 
-def test_an_unprobeable_host_says_so_rather_than_guessing_either_way(tmp_path):
-    """The third state t3 introduced, and the reason the probe is worth
-    having: with neither bwrap nor unshare installed there is no measurement
-    to report. Reporting `available` would invent a fact; reporting the
-    restricted wording would blame a kernel nobody asked. The mode is
-    withheld, and the reason says the probe never ran."""
+def test_the_capability_probe_no_longer_gates_sandbox_availability(tmp_path):
+    """Before task t2, an unprobeable host (neither bwrap nor unshare
+    installed) withheld a mode with a `not probed` reason. `_REQUIRES_USERNS`
+    being empty means `measure_sandbox_modes` never calls the probe at all —
+    every candidate mode is available regardless of what it would have
+    reported."""
     cfg = Config(repo_allowlist=(str(tmp_path),))
     host = capabilities.host_facts(
         cfg, probes=_permissive(tmp_path), capability_probe=_probe_absent
     )
 
-    assert host["sandbox_modes"] == ["danger-full-access"]
-    reason = host["sandbox_modes_unavailable"]["workspace-write"]
-    assert "not probed" in reason
-    assert "neither bwrap nor unshare is installed" in reason
+    assert host["sandbox_modes"] == list(capabilities.SANDBOX_MODE_CANDIDATES)
+    assert "sandbox_modes_unavailable" not in host
 
 
-def test_the_default_mode_is_reported_even_when_this_host_cannot_deliver_it(tmp_path):
-    """The fact a dispatch that names no sandbox depends on. Reported next to
-    the unavailability rather than quietly rewritten to something that works
-    — the bridge advertises, the operator decides."""
+def test_the_default_mode_is_reported_regardless_of_kernel_restriction(tmp_path):
+    """The fact a dispatch that names no sandbox depends on, still reported
+    — trivially now, since every mode this bridge names is always
+    advertised as available."""
     cfg = Config(repo_allowlist=(str(tmp_path),), default_sandbox="workspace-write")
     host = capabilities.host_facts(cfg, probes=_restricted(tmp_path), capability_probe=_probe_fails)
     assert host["default_sandbox_mode"] == "workspace-write"
-    assert "workspace-write" in host["sandbox_modes_unavailable"]
+    assert "sandbox_modes_unavailable" not in host
 
 
 def test_confinement_names_what_actually_confines_a_session(tmp_path):
     cfg = Config(repo_allowlist=(str(tmp_path),))
+    account = pwd.getpwuid(os.getuid()).pw_name
     permissive = capabilities.host_facts(
         cfg, probes=_permissive(tmp_path), capability_probe=_probe_works
     )
     restricted = capabilities.host_facts(
         cfg, probes=_restricted(tmp_path), capability_probe=_probe_fails
     )
+    assert permissive["confinement"].startswith(f"unix-user:{account}: ")
+    assert restricted["confinement"].startswith(f"unix-user:{account}: ")
     assert "user namespace" in permissive["confinement"]
-    assert "nothing is confined" in restricted["confinement"]
+    assert "user namespace" in restricted["confinement"]
+
+
+def test_confinement_names_the_restriction_without_withholding_a_mode(tmp_path):
+    """task t2 (issue #243) acceptance: on a host with the userns sysctl
+    restricted, the prose still says so — read directly off the sysctls,
+    not off `sandbox_modes_unavailable`, which stays empty/absent."""
+    cfg = Config(repo_allowlist=(str(tmp_path),))
+    host = capabilities.host_facts(cfg, probes=_restricted(tmp_path), capability_probe=_probe_fails)
+
+    assert "sandbox_modes_unavailable" not in host
+    assert host["sandbox_modes"] == list(capabilities.SANDBOX_MODE_CANDIDATES)
+    assert "restrict" in host["confinement"]
+    assert "apparmor_restrict_unprivileged_userns=1" in host["confinement"]
 
 
 def test_writable_paths_are_the_repo_allowlist(tmp_path):
@@ -297,10 +315,12 @@ def test_the_confined_modes_grant_no_egress_and_nothing_under_home(tmp_path):
     assert set(grants["danger-full-access"]) == set(preflight.GRANTS)
 
 
-def test_a_mode_this_kernel_cannot_deliver_is_not_a_place_a_toolchain_works(tmp_path):
-    """Where unprivileged user namespaces are restricted, codex can only
-    deliver danger-full-access -- so the grants map, and every toolchain
-    verdict read against it, must mention nothing else."""
+def test_toolchain_availability_no_longer_depends_on_the_userns_probe(tmp_path):
+    """Before task t2, a restricted kernel shrank `dispatch_grants` to
+    `danger-full-access` alone. `_REQUIRES_USERNS` is now empty, so the
+    grants map — and every toolchain verdict read against it — is the same
+    whether the kernel probe reports restricted or not; the account
+    boundary is what actually confines a session now."""
     host = capabilities.host_facts(
         Config(repo_allowlist=(str(tmp_path),)),
         probes=_restricted(tmp_path),
@@ -308,9 +328,9 @@ def test_a_mode_this_kernel_cannot_deliver_is_not_a_place_a_toolchain_works(tmp_
         locate=lambda name: THOR.get(name, (None, False)),
         version=lambda _path: "test-version",
     )
-    assert list(host["dispatch_grants"]) == ["danger-full-access"]
+    assert list(host["dispatch_grants"]) == list(capabilities.SANDBOX_MODE_CANDIDATES)
     assert _tool(host, "uv")["usable_in"] == ["danger-full-access"]
-    assert "unusable_in" not in _tool(host, "uv")
+    assert "unusable_in" in _tool(host, "uv")
 
 
 def test_the_codex_cli_version_is_reported_so_a_bump_is_visible(tmp_path):
@@ -372,10 +392,11 @@ def test_a_caller_with_a_dispatched_sessions_authority_measures_it(tmp_path):
 
 
 def test_the_git_answer_is_not_read_off_the_sandbox_mode_name(tmp_path):
-    """A kernel that kills `workspace-write` outright changes `sandbox_modes`
-    and must not change this key by itself: the two are measured by different
-    probes and a surface that let one decide the other would be deriving the
-    fact issue #94 asks to be measured."""
+    """`git_metadata_writable` is measured by its own probe, never derived
+    from `sandbox_modes` — true before task t2 (when a restricted kernel
+    changed `sandbox_modes`) and still true now that it does not: the same
+    `git_probe` answer must come back the same way regardless of what the
+    userns sysctls say."""
     repo = tmp_path / "checkout"
     (repo / ".git").mkdir(parents=True)
     cfg = Config(repo_allowlist=(str(repo),))
@@ -387,7 +408,7 @@ def test_the_git_answer_is_not_read_off_the_sandbox_mode_name(tmp_path):
     restricted = capabilities.host_facts(
         cfg, probes=_restricted(tmp_path), capability_probe=_probe_fails, git_probe=probe
     )
-    assert permissive["sandbox_modes"] != restricted["sandbox_modes"]
+    assert permissive["sandbox_modes"] == restricted["sandbox_modes"]
     assert (
         permissive["git_metadata_writable"]
         == restricted["git_metadata_writable"]

@@ -11,6 +11,8 @@ changes land rather than what a session can reach, and that `open_pr` makes
 from __future__ import annotations
 
 import json
+import os
+import pwd
 import urllib.error
 import urllib.request
 
@@ -61,7 +63,8 @@ def test_the_kernel_probe_changes_nothing_on_this_backend(tmp_path):
 
 def test_confinement_distinguishes_where_changes_land_from_what_is_reachable(tmp_path):
     host = capabilities.host_facts(Config(), probes=_permissive(tmp_path))
-    assert host["confinement"].startswith("none:")
+    account = pwd.getpwuid(os.getuid()).pw_name
+    assert host["confinement"].startswith(f"unix-user:{account}: none:")
     assert "throwaway git worktree" in host["confinement"]
 
 

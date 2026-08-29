@@ -10,6 +10,8 @@ dispatch cannot deliver, and the fact that nothing confines the session.
 from __future__ import annotations
 
 import json
+import os
+import pwd
 import urllib.error
 import urllib.request
 
@@ -64,7 +66,8 @@ def test_confinement_says_nothing_confines_a_session_here(tmp_path):
     reaching. Without this sentence a reader sees `bypassPermissions` in a
     list called `sandbox_modes` and concludes the host sandboxes."""
     host = capabilities.host_facts(Config(), probes=_permissive(tmp_path))
-    assert host["confinement"].startswith("none:")
+    account = pwd.getpwuid(os.getuid()).pw_name
+    assert host["confinement"].startswith(f"unix-user:{account}: none:")
     assert "no sandbox flag" in host["confinement"]
 
 

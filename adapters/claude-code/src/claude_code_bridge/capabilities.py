@@ -15,11 +15,26 @@ for.
 
 from __future__ import annotations
 
+import os
+import pwd
 import sys
 from typing import Any, Callable, Sequence
 
 from claude_code_bridge import deployment, preflight
 from claude_code_bridge.config import Config
+
+
+def _unix_user() -> str:
+    """The OS account this bridge process runs as.
+
+    Prefixed onto the confinement sentence (task t2, issue #243) so the
+    capability surface names which account a dispatch really runs as — the
+    fact that decides what a session can reach once agents run as dedicated
+    OS users rather than inside a shared sandbox. stdlib only: `pwd` keeps
+    this adapter's zero-runtime-dependency promise intact.
+    """
+    return pwd.getpwuid(os.getuid()).pw_name
+
 
 #: The `claude -p --permission-mode` values a dispatch may name (the server
 #: forwards `input.permission_mode` verbatim), least to most permissive.
@@ -45,6 +60,7 @@ _UNSUPPORTED = {"plan": _NO_TTY, "default": _NO_TTY}
 #: who sees `sandbox_modes: [..., "bypassPermissions"]` and stops there can
 #: mistake a prompting policy for a confinement boundary.
 _CONFINEMENT = (
+    f"unix-user:{_unix_user()}: "
     "none: `claude -p` runs with this bridge process's own privileges and takes no sandbox "
     "flag — --permission-mode decides whether the session asks before acting, never what it "
     "is able to reach. The only boundary here is the repo allowlist below, enforced by this "

@@ -379,7 +379,7 @@ func TestFailingTicketReportBacksOffAndDoesNotBlockLaterReports(t *testing.T) {
 	// Pin the poison row to the head of the ORDER BY id drain so the test
 	// exercises exactly the blocked-queue shape, whatever the ULIDs drew.
 	if _, err := f.store.Pool().Exec(f.ctx, `UPDATE jira_ticket_report_outbox
-		SET id='00000000000000000000000000' WHERE issue_key='SCRUM-BAD'`); err != nil {
+		SET id='00000000000000000000000000' WHERE issue_key='SCRUM-BAD' AND phase='start'`); err != nil {
 		t.Fatalf("pin poison row: %v", err)
 	}
 

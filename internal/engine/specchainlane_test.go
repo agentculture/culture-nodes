@@ -187,9 +187,21 @@ func TestTicketFactMintsSpecChainLaneRunInOneDelivery(t *testing.T) {
 	// Ticket-derived: the engine enqueued a start report for the run in the
 	// same transaction, and one dispatcher pass posts it to the ticket — the
 	// "started run <id>" comment t8's signal reads on a real ticket.
+	// WP-I: the first start report for a ticket also enqueues the ticket's
+	// ONE page-link comment, so a drain yields the start report plus at most
+	// one link — never a second link on later starts.
 	comments := c.drainReports(t)
-	if len(comments) != 1 || !strings.HasPrefix(comments[0], "SCRUM-9: ") || !strings.Contains(comments[0], minted.RunID) {
-		t.Fatalf("start report for the lane run = %q, want one SCRUM-9 comment naming run %s", comments, minted.RunID)
+	var starts, links int
+	for _, comment := range comments {
+		switch {
+		case strings.Contains(comment, "[culture-nodes:ticket-page-link]"):
+			links++
+		case strings.HasPrefix(comment, "SCRUM-9: ") && strings.Contains(comment, minted.RunID):
+			starts++
+		}
+	}
+	if starts != 1 || links > 1 || len(comments) != starts+links {
+		t.Fatalf("reports for the lane run = %q, want one SCRUM-9 start naming run %s and at most one page link", comments, minted.RunID)
 	}
 }
 

@@ -286,7 +286,8 @@ def test_thor_lane_records_the_r4_order_and_resumes_on_parity(tmp_path: Path):
     h.never("--build")
 
     dumps = list((h.thor_home / ".culture-nodes/backups").glob("predeploy-*.dump"))
-    assert len(dumps) == 1 and dumps[0].stat().st_size > 0
+    assert len(dumps) == 1
+    assert dumps[0].stat().st_size > 0
     assert dumps[0].name in result.stdout, result.stdout
     assert "sweep schedule: resumed" in result.stdout
 

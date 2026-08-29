@@ -70,7 +70,8 @@ def test_skill_description_names_the_self_echo_and_the_bridge_lane():
     text = SKILL_MD.read_text()
     assert "jira_comment_is_self_echo" in text
     assert "jira-status" in text
-    assert "#197" in text and "#230" in text
+    assert "#197" in text
+    assert "#230" in text
 
 
 def test_script_parses():

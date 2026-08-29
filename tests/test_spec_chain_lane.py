@@ -107,7 +107,8 @@ def test_every_devague_move_runs_on_the_developer_lane_with_the_custody_request(
         required = set(raised["required"])
         assert required >= {"question_id", "question", "frame_slug", "frame_version"}
         instruction = bindings["instruction"]["literal"]
-        assert "frame_moves.py" in instruction and "post_frame.py" in instruction
+        assert "frame_moves.py" in instruction
+        assert "post_frame.py" in instruction
         assert "devague confirm" in instruction  # named as the move a session never makes
         assert "NODES_HUMAN_DECISION_TOKEN" in instruction
 
@@ -118,7 +119,8 @@ def test_no_agent_node_holds_a_stronger_authority_than_proposed(document):
             continue
         ledger = node.get("ledger") or {}
         assert ledger.get("propose") == ["claim"], node_id
-        assert "observe" not in ledger and "derive" not in ledger, node_id
+        assert "observe" not in ledger, node_id
+        assert "derive" not in ledger, node_id
 
 
 def test_every_marked_question_is_posted_through_the_jira_actor_with_its_id(document):
@@ -276,7 +278,9 @@ def test_a_decoy_transacts_nothing(decoy):
 def test_the_stated_move_is_a_resolve_and_never_another_verb():
     move = frame_moves.stated_move("scrum-9.q3", "  option B  ")
     assert move[:3] == ["devague", "question", "--resolve"]
-    assert "confirm" not in move and "capture" not in move and "export" not in move
+    assert "confirm" not in move
+    assert "capture" not in move
+    assert "export" not in move
     assert move == [
         "devague",
         "question",
@@ -383,7 +387,7 @@ class _FrameServer(http.server.BaseHTTPRequestHandler):
         return
 
 
-@pytest.fixture()
+@pytest.fixture
 def frame_server():
     _FrameServer.seen = []
     _FrameServer.status = 201
@@ -422,7 +426,8 @@ def test_post_frame_sends_devagues_frame_file_byte_equal_with_the_granted_token(
     assert sent["posted_by"] == "actor://company/developer"
     out = capsys.readouterr()
     assert json.loads(out.out) == {"ticket_id": "SCRUM-9", "version": 7}
-    assert "tok-123" not in out.out and "tok-123" not in out.err
+    assert "tok-123" not in out.out
+    assert "tok-123" not in out.err
 
 
 def test_post_frame_refuses_without_the_granted_token_and_never_calls(

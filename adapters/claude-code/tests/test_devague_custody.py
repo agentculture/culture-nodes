@@ -217,3 +217,41 @@ def test_non_boolean_devague_write_is_a_400(tmp_path, lanes, monkeypatch):
     assert status == 400, body
     assert "devague_write must be a boolean" in body["error"]
     assert seen == {}
+
+
+def test_trigger_created_devague_write_lands_in_the_custody_checkout(tmp_path, lanes, monkeypatch):
+    """A trigger-created run carries no repo path; its repository identity may
+    map to ANOTHER allowlisted lane (prod: agentculture/culture-nodes ->
+    upkeep-lane while custody was declared on owe-developer, #230). When the
+    dispatch asks to write .devague/, the declared custody checkout answers."""
+    developer, other = lanes
+    custody = Custody(
+        checkout=str(developer.resolve()), branch_prefix="jira-flow/", devague_write=True
+    )
+    seen: dict = {}
+    monkeypatch.setattr(claude_cli, "run_sync", _capturing_session(seen))
+    cfg = Config(
+        repo_allowlist=(str(developer), str(other)),
+        custody=custody,
+        repo_identities={"agentculture/culture-nodes": str(other)},
+        state_dir=str(tmp_path / "state"),
+        host="127.0.0.1",
+        port=0,
+        auth_token="s3cr3t",
+        sync_max_steps=6,
+        default_max_steps=6,
+        preserve_push=False,
+    )
+    srv, _thread = server.start_background(cfg)
+    host, port = srv.server_address
+    body = _body(developer, devague_write=True)
+    del body["input"]["repo"]
+    body["input"]["repository_identity"] = "agentculture/culture-nodes"
+    try:
+        status, resp = _request(
+            f"http://{host}:{port}", "/v1/invocations", body=body, headers=HEADERS
+        )
+    finally:
+        srv.shutdown()
+    assert status == 200, resp
+    assert seen["repo"] == str(developer.resolve())

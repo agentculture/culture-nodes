@@ -416,13 +416,24 @@ class Handler(BaseHTTPRequestHandler):
             # first match. An explicitly bound `input.repo` still wins: the
             # identity answers "which repository is this actor's lane",
             # which is only a question when nobody has answered it.
-            _identity = repositories.resolve_for_input(cfg, raw_input)
-            if _identity.refusal is not None:
-                self._write_json(_identity.refusal.status, _identity.refusal.body)
-                return
-            # No identity registered: the pre-t2 cardinality inference, which
-            # still resolves every single-repo deployment shipped today.
-            repo = _identity.repo or cfg.only_allowed_repo()
+            # t13 / t14 (#230): a dispatch that asks to write `.devague/`
+            # lands in the lane's DECLARED custody checkout, ahead of the
+            # repository-identity map. Measured on prod: the identity map sent
+            # agentculture/culture-nodes to the pr-upkeep lane while custody was
+            # declared on owe-developer, so every trigger-created spec-chain
+            # run was refused 403 and re-minted to exhaustion. An explicitly
+            # bound `input.repo` still wins (and must still match custody).
+            if raw_input.get("devague_write") is True and cfg.custody is not None:
+                repo = cfg.custody.checkout
+            else:
+                _identity = repositories.resolve_for_input(cfg, raw_input)
+                if _identity.refusal is not None:
+                    self._write_json(_identity.refusal.status, _identity.refusal.body)
+                    return
+                # No identity registered: the pre-t2 cardinality inference,
+                # which still resolves every single-repo deployment shipped
+                # today.
+                repo = _identity.repo or cfg.only_allowed_repo()
         if not isinstance(repo, str) or not repo.strip():
             self._write_json(
                 400,

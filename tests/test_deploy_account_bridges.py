@@ -81,11 +81,29 @@ exec env "${strip[@]}" FAKE_HOST="$host" FAKE_USER="$user" FAKE_UID=1000 HOME="$
 
 # systemctl logs host AND user, answers is-active/show so the health waits
 # pass, and records every stop/disable/restart/enable in order.
+# One LOGIN-user unit (FAKE_LOGIN_UNIT, codex-bridge by default) can be made
+# to misbehave: FAKE_LOGIN_STOP_EXIT is what `systemctl --user stop` answers
+# for it, FAKE_LOGIN_UNIT_STATE what `is-active` reports afterwards (a real
+# systemctl says `inactive` for a unit that is not loaded, and `active` for
+# one it failed to stop). Every other unit, and every account unit, is
+# healthy.
 _SYSTEMCTL_SHIM = """#!/usr/bin/env bash
 printf 'systemctl[%s:%s] %s\\n' "$FAKE_HOST" "$FAKE_USER" "$*" >> "$FAKE_LOG"
+login=${FAKE_HOST%-fake}
+misbehaving=0
+if [ "$FAKE_USER" = "$login" ]; then
+  case " $* " in *" ${FAKE_LOGIN_UNIT:-codex-bridge} "*) misbehaving=1 ;; esac
+fi
 case "$*" in
-  *is-active*) echo active ;;
+  *is-active*)
+    if [ "$misbehaving" = 1 ]; then echo "${FAKE_LOGIN_UNIT_STATE:-active}"; else echo active; fi ;;
+  *is-enabled*) echo enabled ;;
   *NRestarts*) echo 0 ;;
+  *" stop "*)
+    if [ "$misbehaving" = 1 ] && [ "${FAKE_LOGIN_STOP_EXIT:-0}" != 0 ]; then
+      echo "Failed to stop ${*##* }.service: fake failure" >&2
+      exit "$FAKE_LOGIN_STOP_EXIT"
+    fi ;;
 esac
 exit 0
 """
@@ -769,6 +787,35 @@ def test_orin_account_session_in_flight_refuses_before_any_stop_or_restart(tmp_p
     h.never("systemctl[", "stop codex-bridge")
     h.never("systemctl[", "disable codex-bridge")
     h.never(f"systemctl[{ORIN}:culture-codex]")
+
+
+def test_orin_refuses_when_the_login_unit_fails_to_stop_and_stays_active(tmp_path: Path):
+    """The cutover used to turn every `systemctl --user stop` failure into
+    success; a login unit that is still active holds the port the account
+    copy is about to bind (#249 review, finding 4)."""
+    h = DeployHarness(tmp_path)
+    h.bootstrap(ORIN, "codex")
+    result = h.deploy(ORIN, FAKE_LOGIN_STOP_EXIT="1", FAKE_LOGIN_UNIT_STATE="active")
+    assert result.returncode != 0
+    assert "codex-bridge" in result.stderr
+    assert "still active" in result.stderr
+    h.first(f"systemctl[{ORIN}:orin] --user stop codex-bridge")
+    h.never(f"systemctl[{ORIN}:culture-codex] --user restart codex-bridge")
+    h.never(f"systemctl[{ORIN}:culture-codex] --user enable codex-bridge")
+
+
+def test_orin_proceeds_when_the_login_unit_was_never_loaded(tmp_path: Path):
+    """A fresh host has no login-user unit: `stop` answers 5 (not loaded)
+    and `is-active` says inactive, which is 'nothing to stop', not a
+    failure."""
+    h = DeployHarness(tmp_path)
+    h.bootstrap(ORIN, "codex")
+    result = h.deploy(ORIN, FAKE_LOGIN_STOP_EXIT="5", FAKE_LOGIN_UNIT_STATE="inactive")
+    assert result.returncode == 0, result.stderr + result.stdout
+    assert "nothing to stop" in result.stdout
+    assert h.first(f"systemctl[{ORIN}:orin] --user stop codex-bridge") < h.first(
+        f"systemctl[{ORIN}:culture-codex] --user restart codex-bridge"
+    )
 
 
 def test_orin_refuses_when_the_account_has_no_bridge_env_and_names_install_secrets(tmp_path: Path):

@@ -132,14 +132,45 @@ account_install_unit() { # target unit
 # rollback pair (c32) restores the previous posture without a deploy, and
 # `disable` alone is what keeps a reboot from starting both copies on one
 # port. A unit that was never installed under the login user (a fresh host)
-# is not an error here.
+# is not an error here -- but a unit that `stop` could not stop and that is
+# STILL ACTIVE is (#249 review, finding 4): it holds the port the account
+# copy is about to bind, and the old `|| true` turned that into a deploy
+# that reported success while the account unit crash-looped on EADDRINUSE.
+# The two states are told apart by asking systemd afterwards, not by
+# reading the exit code: `is-active` says inactive for a unit that is not
+# loaded, was never installed or is already down (proceed), and active for
+# one the stop failed on (refuse). Same for `disable` and `is-enabled`.
 account_cutover_login_unit() { # host login unit...
   local host=$1 login=$2; shift 2
   local unit
   unix_user_session_check "$host" "$login" || return 1
   for unit in "$@"; do
     say "stopping + disabling $unit under $login on $host (file, config and env stay in place for the rollback pair)"
-    unix_user_login_exec "$host" "$UNIX_USER_XDG; systemctl --user stop $unit 2>/dev/null || true; systemctl --user disable $unit 2>/dev/null || true"
+    unix_user_login_exec "$host" "$UNIX_USER_XDG; unit=$unit; "'
+if systemctl --user stop "$unit"; then
+  echo "login unit $unit: stopped"
+else
+  state=$(systemctl --user is-active "$unit" 2>/dev/null || true)
+  case "$state" in
+    active|activating|deactivating|reloading|refreshing)
+      echo "refusing: systemctl --user stop $unit failed and the unit is still $state — the account copy would not bind the same port; see systemctl --user status $unit, fix it, and re-run" >&2
+      exit 3 ;;
+    *) echo "login unit $unit: not running (${state:-not loaded}) — nothing to stop" ;;
+  esac
+fi
+if systemctl --user disable "$unit"; then
+  echo "login unit $unit: disabled"
+else
+  case "$(systemctl --user is-enabled "$unit" 2>/dev/null || true)" in
+    enabled|enabled-runtime)
+      echo "refusing: systemctl --user disable $unit failed and it is still enabled — it would come back at the next boot beside the account copy" >&2
+      exit 3 ;;
+    *) echo "login unit $unit: not enabled — nothing to disable" ;;
+  esac
+fi' || {
+      echo "cutover refused on $host: $unit under $login could not be stopped or disabled (reason above); the account copy was not started" >&2
+      return 1
+    }
   done
 }
 

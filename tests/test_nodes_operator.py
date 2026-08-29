@@ -7,9 +7,19 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
 SCRIPT = ROOT / ".claude/skills/nodes-operator/scripts/nodes-op.sh"
+TEMPLATE = ROOT / ".claude/skills/nodes-operator/templates/assign.workflow.yaml"
 
 
 class NodesOperatorTest(unittest.TestCase):
+    def test_assign_threads_optional_base_ref_without_dangling_binding(self):
+        script = SCRIPT.read_text(encoding="utf-8")
+        template = TEMPLATE.read_text(encoding="utf-8")
+        self.assertIn("base_ref:\n            type: string", template)
+        self.assertIn("base_ref: /run/input/base_ref", template)
+        self.assertIn('--base-ref) base_ref="$2"; shift 2;;', script)
+        self.assertIn('[ -n "$base_ref" ] || sed -i', script)
+        self.assertIn('payload["base_ref"]', script)
+
     def run_operator(self, verb, responses):
         with tempfile.TemporaryDirectory() as directory:
             fake_bin = Path(directory)

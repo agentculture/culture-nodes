@@ -146,6 +146,24 @@ def _untracked_under_guarded_prefixes(repo: str) -> tuple[str, ...]:
     return guarded(found)
 
 
+def _branch_scope_delta(repo: str, baseline: str) -> tuple[str, ...] | None:
+    """Committed work since the bridge-trusted baseline plus tracked edits."""
+    committed = workspace.git_stdout(
+        repo, "diff", "--no-ext-diff", "--no-textconv", "--name-only", f"{baseline}..HEAD"
+    )
+    uncommitted = workspace.git_stdout(
+        repo, "diff", "--no-ext-diff", "--no-textconv", "--name-only", "HEAD"
+    )
+    if committed is None or uncommitted is None:
+        return None
+    return tuple(
+        line.strip()
+        for output in (committed, uncommitted)
+        for line in output.splitlines()
+        if line.strip()
+    )
+
+
 def violations(repo: str | None, workspace_measured: dict[str, Any] | None) -> tuple[str, ...]:
     """The guarded paths this session actually changed.
 
@@ -157,8 +175,13 @@ def violations(repo: str | None, workspace_measured: dict[str, Any] | None) -> t
     if not isinstance(workspace_measured, dict) or not workspace_measured.get("measured"):
         return ()
 
-    changed = workspace_measured.get("changed_files")
-    hits = list(guarded(changed if isinstance(changed, list) else ()))
+    baseline = workspace_measured.get("trusted_base") or workspace_measured.get("head_before")
+    branch_delta = _branch_scope_delta(repo, baseline) if repo and isinstance(baseline, str) else None
+    if branch_delta is None:
+        changed = workspace_measured.get("changed_files")
+        hits = list(guarded(changed if isinstance(changed, list) else ()))
+    else:
+        hits = list(guarded(branch_delta))
     if repo:
         for entry in _untracked_under_guarded_prefixes(repo):
             if entry not in hits:

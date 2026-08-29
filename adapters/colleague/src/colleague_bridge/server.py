@@ -422,6 +422,11 @@ class Handler(BaseHTTPRequestHandler):
             return
         resolved_repo = str(Path(repo).expanduser().resolve())
 
+        base_ref = raw_input.get("base_ref")
+        if base_ref is not None and (not isinstance(base_ref, str) or not base_ref):
+            self._write_json(400, {"error": "input.base_ref must be a non-empty string", "class": mapping.CLASS_ACTOR_REJECTED_INPUT})
+            return
+
         role = raw_input.get("role") or None
         if role is not None and not colleague_cli.role_is_known(resolved_repo, role):
             self._write_json(
@@ -529,6 +534,7 @@ class Handler(BaseHTTPRequestHandler):
                 role,
                 max_steps,
                 mode,
+                base_ref=base_ref,
                 handover=handover,
                 session_key=session_key,
                 held=held,
@@ -545,6 +551,7 @@ class Handler(BaseHTTPRequestHandler):
             role,
             max_steps,
             mode,
+            base_ref=base_ref,
             handover=handover,
             session_key=session_key,
             held=held,
@@ -562,6 +569,7 @@ class Handler(BaseHTTPRequestHandler):
         max_steps: int | None,
         mode: str | None,
         *,
+        base_ref: str | None = None,
         handover: bool = False,
         session_key: str | None = None,
         held: bool = False,
@@ -572,7 +580,13 @@ class Handler(BaseHTTPRequestHandler):
         # t10: capture the workspace's starting point as close as possible
         # to the moment colleague is actually spawned, so head_before/status
         # bracket the session rather than the whole request-handling ladder.
-        handle = workspace.begin(repo)
+        try:
+            handle = workspace.begin(repo, base_ref=base_ref)
+        except workspace.WorkspaceProvisionError as exc:
+            if held:
+                self.bridge.session_registry.release(session_key, idem_key)
+            self._write_json(503, {"error": str(exc), "class": "actor_unavailable"})
+            return
         try:
             result = colleague_cli.run_sync(
                 cfg,
@@ -696,6 +710,7 @@ class Handler(BaseHTTPRequestHandler):
         max_steps: int | None,
         mode: str | None,
         *,
+        base_ref: str | None = None,
         handover: bool = False,
         session_key: str | None = None,
         held: bool = False,
@@ -723,7 +738,13 @@ class Handler(BaseHTTPRequestHandler):
 
         # t10: same bracketing as the sync path, captured right before the
         # detached colleague subprocess is spawned.
-        handle = workspace.begin(repo)
+        try:
+            handle = workspace.begin(repo, base_ref=base_ref)
+        except workspace.WorkspaceProvisionError as exc:
+            if held:
+                self.bridge.session_registry.release(session_key, idem_key)
+            self._write_json(503, {"error": str(exc), "class": "actor_unavailable"})
+            return
         try:
             start = colleague_cli.spawn_background(
                 cfg,

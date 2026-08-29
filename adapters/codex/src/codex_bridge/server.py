@@ -479,6 +479,11 @@ class Handler(BaseHTTPRequestHandler):
             return
         resolved_repo = str(Path(repo).expanduser().resolve())
 
+        base_ref = raw_input.get("base_ref")
+        if base_ref is not None and (not isinstance(base_ref, str) or not base_ref):
+            self._write_json(400, {"error": "input.base_ref must be a non-empty string", "class": mapping.CLASS_ACTOR_REJECTED_INPUT})
+            return
+
         model = raw_input.get("model") or None
         if model is not None and not isinstance(model, str):
             self._write_json(
@@ -602,6 +607,7 @@ class Handler(BaseHTTPRequestHandler):
                 resolved_repo,
                 model,
                 sandbox,
+                base_ref=base_ref,
                 handover=handover,
                 session_key=session_key,
                 held=held,
@@ -617,6 +623,7 @@ class Handler(BaseHTTPRequestHandler):
             model,
             sandbox,
             raw_input=raw_input,
+            base_ref=base_ref,
             handover=handover,
             session_key=session_key,
             held=held,
@@ -633,6 +640,7 @@ class Handler(BaseHTTPRequestHandler):
         sandbox: str | None,
         *,
         raw_input: dict[str, Any] | None = None,
+        base_ref: str | None = None,
         handover: bool = False,
         session_key: str | None = None,
         held: bool = False,
@@ -642,7 +650,13 @@ class Handler(BaseHTTPRequestHandler):
         # t10: capture the workspace's starting point as close as possible
         # to the moment codex is actually spawned, so head_before/status
         # bracket the session rather than the whole request-handling ladder.
-        handle = workspace.begin(repo)
+        try:
+            handle = workspace.begin(repo, base_ref=base_ref)
+        except workspace.WorkspaceProvisionError as exc:
+            if held:
+                self.bridge.session_registry.release(session_key, idem_key)
+            self._write_json(503, {"error": str(exc), "class": "actor_unavailable"})
+            return
         try:
             result = codex_cli.run_sync(
                 cfg,
@@ -781,6 +795,7 @@ class Handler(BaseHTTPRequestHandler):
         model: str | None,
         sandbox: str | None,
         *,
+        base_ref: str | None = None,
         handover: bool = False,
         session_key: str | None = None,
         held: bool = False,
@@ -815,6 +830,7 @@ class Handler(BaseHTTPRequestHandler):
                 callback_url=callback_url,
                 callback_token=callback_token,
                 heartbeat_after_seconds=cfg.heartbeat_after_seconds,
+                base_ref=base_ref,
                 # t6 (c44/h37): the runner releases this session_key's
                 # slot once codex's turn actually finishes — None here
                 # whenever `held` is False (no slot to release, forked or
@@ -823,7 +839,7 @@ class Handler(BaseHTTPRequestHandler):
                 session_key=session_key if held else None,
                 session_holder=idem_key,
             )
-        except codex_cli.SpawnError as exc:
+        except (codex_cli.SpawnError, workspace.WorkspaceProvisionError) as exc:
             if held:
                 self.bridge.session_registry.release(session_key, idem_key)
             self._write_json(503, {"error": str(exc), "class": "actor_unavailable"})

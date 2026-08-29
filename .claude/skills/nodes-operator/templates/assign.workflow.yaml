@@ -34,6 +34,8 @@ spec:
             type: string
           repo:
             type: string
+          base_ref:
+            type: string
           # t9 / #90: does this package hand its changes over as a git ref?
           # Optional, and absent means false — a verification package hands
           # nothing over and must not be given `.git` write. Adding it as a
@@ -68,6 +70,7 @@ spec:
         bindings:
           instruction: /run/input/instruction
           repo: /run/input/repo
+          base_ref: /run/input/base_ref
           sandbox: /run/input/sandbox
           success_outcome: /run/input/success_outcome
           handover: /run/input/handover

@@ -39,6 +39,7 @@ and `colleague_bridge`:
       "reason": str | None,       # unmeasured reason, or partial-probe note while measured
       "branch": str | None,
       "head_before": str | None,  # git rev-parse HEAD, captured before dispatch
+      "trusted_base": str | None, # bridge-fetched base_ref SHA when supplied
       "head_after": str | None,   # git rev-parse HEAD, captured after
       "status_porcelain": str | None,  # git status --porcelain, captured after
       "changed_files": list[str],      # bridge-measured, never model-claimed
@@ -240,6 +241,7 @@ def _default_workspace_measured() -> dict[str, Any]:
         "reason": "no workspace measurement was supplied to the mapping layer",
         "branch": None,
         "head_before": None,
+        "trusted_base": None,
         "head_after": None,
         "status_porcelain": None,
         "changed_files": [],

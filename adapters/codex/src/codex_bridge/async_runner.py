@@ -139,6 +139,7 @@ class AsyncRunner:
         callback_token: str,
         heartbeat_after_seconds: int,
         continuation_ref: str | None = None,
+        base_ref: str | None = None,
         # t9 / #90: threaded through to `codex_cli.spawn` so an async
         # handover dispatch gets the same `.git` widening a sync one does.
         # Async is the path production actually uses (`always_async: true`),
@@ -175,7 +176,7 @@ class AsyncRunner:
         `codex_cli.spawn` — the async path is the one long, therefore
         resume-worth-it, sessions actually take.
         """
-        handle = workspace.begin(repo)
+        handle = workspace.begin(repo, base_ref=base_ref)
         proc = codex_cli.spawn(
             self._cfg,
             instruction,

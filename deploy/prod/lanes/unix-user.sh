@@ -141,16 +141,6 @@ for engine in "$@"; do
   for g in sudo docker wheel admin; do
     case " $groups " in *" $g "*) echo "unix-user bootstrap: $account is in group $g — an account with $g cannot carry the confinement claim; remove it (gpasswd -d $account $g) and re-run" >&2; exit 1 ;; esac
   done
-  loginctl enable-linger "$account"
-  mkdir -p "$home/.ssh"
-  chmod 700 "$home/.ssh"
-  touch "$home/.ssh/authorized_keys"
-  while IFS= read -r key || [ -n "$key" ]; do
-    [ -n "$key" ] || continue
-    grep -qxF -- "$key" "$home/.ssh/authorized_keys" || printf "%s\n" "$key" >> "$home/.ssh/authorized_keys"
-  done < "$pubkey_file"
-  chmod 600 "$home/.ssh/authorized_keys"
-  chown -R "$account:$account" "$home/.ssh"
   # qwen has no login flow of its own here: its endpoint and the NAME of the
   # env var carrying its API key sit in ~/.qwen/settings.json (the value in
   # the env block of that same file), and a session under the account reads
@@ -161,16 +151,45 @@ for engine in "$@"; do
     claude) cred_dir=.claude; cred_file=.credentials.json ;;
     qwen) cred_dir=.qwen; cred_file=settings.json ;;
   esac
+  src=$login_home/$cred_dir/$cred_file
+  dst=$home/$cred_dir/$cred_file
+  # The account owns its home and can plant anything in it between two
+  # bootstraps; root is about to mkdir/touch/cp/chmod/chown at these paths.
+  # A symlink there would make root write wherever the account pointed it
+  # (the credential of the login user included), and a directory some other
+  # user owns is a write into the hands of that user -- so every path is checked
+  # BEFORE the first write, and a refusal changes nothing (#249, finding 2).
+  for p in "$home/.ssh" "$home/.ssh/authorized_keys" "$home/$cred_dir" "$dst"; do
+    if [ -L "$p" ]; then
+      echo "unix-user bootstrap: $p is a symlink ($(readlink "$p")) — refusing to follow it as root; remove it in $account and re-run (nothing was written)" >&2
+      exit 1
+    fi
+    if [ -d "$p" ]; then
+      owner=$(stat -c %U "$p")
+      case "$owner" in "$account"|root) ;; *)
+        echo "unix-user bootstrap: $p is owned by $owner, not $account — refusing to write into it as root (nothing was written)" >&2
+        exit 1 ;;
+      esac
+    fi
+  done
+  loginctl enable-linger "$account"
+  mkdir -p "$home/.ssh"
+  chmod 700 "$home/.ssh"
+  touch "$home/.ssh/authorized_keys"
+  while IFS= read -r key || [ -n "$key" ]; do
+    [ -n "$key" ] || continue
+    grep -qxF -- "$key" "$home/.ssh/authorized_keys" || printf "%s\n" "$key" >> "$home/.ssh/authorized_keys"
+  done < "$pubkey_file"
+  chmod 600 "$home/.ssh/authorized_keys"
+  chown -R "$account:$account" "$home/.ssh"
   if [ -n "$cred_dir" ]; then
-    src=$login_home/$cred_dir/$cred_file
-    dst=$home/$cred_dir/$cred_file
     if [ -f "$src" ]; then
       mkdir -p "$home/$cred_dir"
       chmod 700 "$home/$cred_dir"
       if cmp -s "$src" "$dst" 2>/dev/null; then
         echo "credential $cred_dir/$cred_file: already in $account"
       else
-        cp "$src" "$dst"
+        cp --no-dereference "$src" "$dst"
         echo "credential $cred_dir/$cred_file: copied into $account"
       fi
       chmod 600 "$dst"

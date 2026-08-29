@@ -130,6 +130,21 @@ case "$1" in
 esac
 """
 
+# stat is real except for ownership (-c %U), which the fake filesystem
+# cannot carry (every file is the test user's): the owner of a path under
+# /home/<name> answers as <name>, the way useradd -m + chown -R leave a real
+# account, and FAKE_FOREIGN_OWNER_PATH names one path some other user owns.
+_STAT_SHIM = """#!/usr/bin/env bash
+if [ "$1" = -c ] && [ "$2" = %U ]; then
+  path=$3
+  [ -n "${FAKE_FOREIGN_OWNER_PATH:-}" ] && [ "$path" = "$FAKE_FOREIGN_OWNER_PATH" ] && { echo intruder; exit 0; }
+  rel=${path#"$FAKE_HOSTS"/*/home/}
+  echo "${rel%%/*}"
+  exit 0
+fi
+exec /usr/bin/stat "$@"
+"""
+
 _LOG_ONLY_SHIM = """#!/usr/bin/env bash
 printf '%s[%s] %s\\n' "$(basename "$0")" "$FAKE_HOST" "$*" >> "$FAKE_LOG"
 exit 0
@@ -261,6 +276,7 @@ class Harness:
         _write_exec(self.bin / "id", _ID_SHIM)
         _write_exec(self.bin / "curl", _CURL_SHIM)
         _write_exec(self.bin / "pgrep", _PGREP_SHIM)
+        _write_exec(self.bin / "stat", _STAT_SHIM)
         for tool in ("loginctl", "chown", "systemctl"):
             _write_exec(self.bin / tool, _LOG_ONLY_SHIM)
         # The origin every role clone comes from: a bare repo standing in for
@@ -528,6 +544,66 @@ def test_bootstrap_local_form_refuses_when_not_root(tmp_path: Path):
     assert result.returncode != 0
     assert "root" in result.stderr
     h.never("useradd[")
+
+
+def _bootstrapped_codex(h: Harness) -> Path:
+    first = h.run("unix_user_bootstrap thor-fake codex")
+    assert first.returncode == 0, first.stderr
+    h.clear_log()
+    return h.account_home(THOR, "codex")
+
+
+def _assert_refused_before_any_write(h: Harness, result, login_before: dict, path_name: str):
+    assert result.returncode != 0
+    assert path_name in result.stderr
+    assert "symlink" in result.stderr or "owned" in result.stderr
+    # Nothing was written as root: no linger, no chown, and the login
+    # user's files -- where the planted link pointed -- are untouched.
+    h.never("loginctl[")
+    h.never("chown[")
+    assert _snapshot(h.login_home(THOR)) == login_before
+
+
+def test_bootstrap_refuses_a_credential_file_the_account_replaced_with_a_symlink(
+    tmp_path: Path,
+):
+    """The account owns its home and could plant a symlink where root is
+    about to cp/chmod/chown; a root bootstrap that followed it would write
+    the login user's credential somewhere the account chose (#249 review,
+    finding 2)."""
+    h = Harness(tmp_path)
+    home = _bootstrapped_codex(h)
+    target = h.login_home(THOR) / ".codex/auth.json"
+    (home / ".codex/auth.json").unlink()
+    (home / ".codex/auth.json").symlink_to(target)
+    before = _snapshot(h.login_home(THOR))
+    result = h.run("unix_user_bootstrap thor-fake codex")
+    _assert_refused_before_any_write(h, result, before, ".codex/auth.json")
+    assert (home / ".codex/auth.json").is_symlink(), "the lane never deletes"
+
+
+def test_bootstrap_refuses_a_ssh_directory_that_is_a_symlink(tmp_path: Path):
+    h = Harness(tmp_path)
+    home = _bootstrapped_codex(h)
+    import shutil
+
+    shutil.rmtree(home / ".ssh")
+    (home / ".ssh").symlink_to(h.login_home(THOR) / ".ssh")
+    before = _snapshot(h.login_home(THOR))
+    result = h.run("unix_user_bootstrap thor-fake codex")
+    _assert_refused_before_any_write(h, result, before, ".ssh")
+    assert (h.login_home(THOR) / ".ssh/authorized_keys").read_text() == PUBKEY + "\n"
+
+
+def test_bootstrap_refuses_a_credential_directory_another_user_owns(tmp_path: Path):
+    h = Harness(tmp_path)
+    home = _bootstrapped_codex(h)
+    before = _snapshot(h.login_home(THOR))
+    result = h.run(
+        "unix_user_bootstrap thor-fake codex", FAKE_FOREIGN_OWNER_PATH=str(home / ".codex")
+    )
+    _assert_refused_before_any_write(h, result, before, ".codex")
+    assert "intruder" in result.stderr
 
 
 def test_bootstrap_refuses_an_account_that_gained_sudo_or_docker(tmp_path: Path):

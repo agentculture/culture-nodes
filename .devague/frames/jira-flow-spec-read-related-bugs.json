@@ -4,7 +4,7 @@
   "schema_version": 5,
   "status": "exported",
   "created": "2026-08-29T04:48:35Z",
-  "updated": "2026-08-29T05:56:09Z",
+  "updated": "2026-08-29T06:33:52Z",
   "claims": [
     {
       "id": "c1",
@@ -405,6 +405,249 @@
       "links": [],
       "instruction": "Add a /tickets/:id route to web/ reading a new GET /v1alpha1/tickets/<id> projection (spec state, questions, reports, runs, replies); a jira-bridge remote-link verb posts the page URL at intake; POST reply \u2192 jira bridge comment + human engine fact; freeze on PR merge; e2e keyboard walk on the route.",
       "revisions": []
+    },
+    {
+      "id": "c25",
+      "kind": "requirement",
+      "text": "The r4 deploy unit is TWO deploys, not one: deploy.sh thor (migrate \u2192 nodes-cutover \u2192 stack) then deploy.sh orin, with orin's worker stopped before thor's migrate/cutover window and restarted after, and revision parity verified (prod GET /v1alpha1/version vs each worker image's REVISION) before the sweep schedule resumes \u2014 deploy.sh:703 stops thor's services only and no api\u2194worker revision check exists (migrations_test.go:24-27 records the one-host premise as false)",
+      "origin": "llm",
+      "status": "confirmed",
+      "honesty_conditions": [
+        {
+          "id": "h17",
+          "text": "Prod records after r4 show thor's api and both workers at one revision containing c0f6c4a, and no 'Jira history cutover is pending' delivery errors (internal/store/postgres/signal.go:705) in the deploy window",
+          "status": "confirmed",
+          "instruction": ""
+        }
+      ],
+      "hard_questions": [],
+      "links": [],
+      "instruction": "In deploy.sh: the thor lane stops orin's worker over ssh (docker compose -f compose.orin.yml stop worker) before migrate, runs deploy.sh orin's build after the stack is up, then compares /v1alpha1/version to each worker image's REVISION label and refuses to resume the sweep on mismatch; document the two-host sequence in migrations/README.md.",
+      "revisions": []
+    },
+    {
+      "id": "c26",
+      "kind": "requirement",
+      "text": "Rollback for r4 is restore-from-dump, not schema rollback (no down migrations; docs/adr/0002 N-1 promise does not cover a 12-commit jump): deploy.sh takes a fresh pg dump immediately before migrate and the summary names it, so a bad 0041\u21920045 apply is recoverable per deploy/prod/RESTORE.md",
+      "origin": "llm",
+      "status": "confirmed",
+      "honesty_conditions": [
+        {
+          "id": "h18",
+          "text": "~/.culture-nodes/backups/ on thor holds a dump timestamped after the sweep stop and before migrate, and the restore procedure was rehearsed once against it (dry run) before the real deploy",
+          "status": "confirmed",
+          "instruction": ""
+        }
+      ],
+      "hard_questions": [],
+      "links": [],
+      "instruction": "deploy.sh thor lane: run the backup service once (docker compose run --rm backup) after stopping the sweep and before migrate; print the dump path; rehearse RESTORE.md against it once on spark's dev plane before the prod deploy.",
+      "revisions": []
+    },
+    {
+      "id": "c27",
+      "kind": "requirement",
+      "text": "The re-mint scheduler's producer actor id engine_remint_scheduler (internal/engine/remint.go:21-28, RemintProducerActorID unwired in cmd/nodes/worker.go) is registered in prod's actors table before r4, or every due re-mint fails its ledger append (actors(id) FK) on the first technical failure after deploy",
+      "origin": "llm",
+      "status": "confirmed",
+      "honesty_conditions": [
+        {
+          "id": "h19",
+          "text": "GET /v1alpha1/actors on prod lists engine_remint_scheduler before the first post-deploy sweep, and the first re-mint's derived record appends without an FK error",
+          "status": "confirmed",
+          "instruction": ""
+        }
+      ],
+      "hard_questions": [],
+      "links": [],
+      "instruction": "Either wire Options.RemintProducerActorID to an env in cmd/nodes/worker.go and register it via deploy/prod/register-actor.sh, or add engine_remint_scheduler to the invariants allowlist and seed it in a migration \u2014 pick the register-actor path; verify on GET /v1alpha1/actors.",
+      "revisions": []
+    },
+    {
+      "id": "c28",
+      "kind": "assumption",
+      "text": "q3's discard covers BOTH prod trees: culture-nodes-prod is wiped by git archive every deploy anyway, but ~/git/culture-nodes-agent is clean-gated (deploy.sh:167-181) \u2014 a detached HEAD there makes the fast-forward refuse, the deploy continue on a stale agent checkout, and nodes doctor (deploy.sh:736) hard-fail",
+      "origin": "llm",
+      "status": "confirmed",
+      "honesty_conditions": [],
+      "hard_questions": [],
+      "links": [],
+      "instruction": "",
+      "revisions": []
+    },
+    {
+      "id": "c29",
+      "kind": "requirement",
+      "text": "A page reply enters the engine through a NEW server-side endpoint (POST /v1alpha1/tickets/{id}/replies) guarded the way human-task decisions are (NODES_HUMAN_DECISION_TOKEN_SECRET, browser token in sessionStorage per web/src/api/decision-token.ts) with a required replier field like decider_actor_id: the endpoint appends the fact in-process with origin.kind human and the replier named, then mirrors it to Jira via the bridge's post_comment as 'via <replier>' \u2014 the browser never holds NODES_EVENT_TOKEN_SECRET (namespace-wide emit standing, signalevents.go:226-252)",
+      "origin": "llm",
+      "status": "confirmed",
+      "honesty_conditions": [
+        {
+          "id": "h20",
+          "text": "One reply typed on the page yields exactly one engine fact (origin.kind human, replier set) and one Jira comment; the sweep's next pass emits nothing for that comment (self-echo by account id, pr_upkeep_jira.py:100-113); a GET /v1alpha1/events stream shows no second fact",
+          "status": "confirmed",
+          "instruction": ""
+        }
+      ],
+      "hard_questions": [],
+      "links": [],
+      "instruction": "internal/api/ticketreplies.go: POST /v1alpha1/tickets/{id}/replies guarded by requireDecisionAuth, body {replier, text, question_id?}; append a signal event in-process (same DeliverSignalEvent path as /events, emitter 'ticket-page', origin.kind human, replier in payload); enqueue a jira-bridge post_comment 'via <replier>' through the ticket-report outbox; web: reply box on /tickets/:id using the decision-token store.",
+      "revisions": []
+    },
+    {
+      "id": "c30",
+      "kind": "boundary",
+      "text": "The mirrored Jira comment is display-only: the sweep swallows it by design (account-id self-echo is authoritative, hardened after incident s14) and the self-echo contract is NOT carved out for page replies; a human who types directly in Jira still reaches the engine via the sweep, and both paths produce the same fact name and payload shape so consumers never fork on origin",
+      "origin": "llm",
+      "status": "confirmed",
+      "honesty_conditions": [
+        {
+          "id": "h21",
+          "text": "A named test asserts the page-reply fact and the sweep-emitted comment fact validate against one schema, and jira_comment_is_self_echo is unchanged",
+          "status": "confirmed",
+          "instruction": ""
+        }
+      ],
+      "hard_questions": [],
+      "links": [],
+      "instruction": "",
+      "revisions": []
+    },
+    {
+      "id": "c31",
+      "kind": "boundary",
+      "text": "The SPA never carries a namespace-wide secret (NODES_EVENT_TOKEN_SECRET, actor tokens, the jira bridge bearer); the only browser-held standing stays the typed, sessionStorage-only decision token; the ticket page is not offered beyond the LAN until an auth story exists (park v4)",
+      "origin": "llm",
+      "status": "confirmed",
+      "honesty_conditions": [
+        {
+          "id": "h22",
+          "text": "grep of web/src for every *_SECRET / bearer name returns only the decision-token path",
+          "status": "confirmed",
+          "instruction": ""
+        }
+      ],
+      "hard_questions": [],
+      "links": [],
+      "instruction": "",
+      "revisions": []
+    },
+    {
+      "id": "c32",
+      "kind": "assumption",
+      "text": "Posting the page URL on the ticket at intake is a post_comment through the existing bridge verb (no remote-link/attachment verb exists \u2014 client.py builds only the comment URL); 'replaced in place' therefore means one link comment identified by a marker, edited or re-posted, not a Jira remote link",
+      "origin": "llm",
+      "status": "confirmed",
+      "honesty_conditions": [],
+      "hard_questions": [],
+      "links": [],
+      "instruction": "",
+      "revisions": []
+    },
+    {
+      "id": "c33",
+      "kind": "requirement",
+      "text": "The ticket page has a server-side source: GET /v1alpha1/tickets/{id} composes runs by subject (a new subject filter on listRuns \u2014 runs.subject exists per migration 0038 but is not a query filter), their ledger and human tasks, ticket-report outbox rows, page replies, AND a frame snapshot \u2014 no .devague/ state is in the control plane today (internal/devague only parses delivery fixtures; MapFrameClaims has zero callers), so the /think leg publishes its frame (claims with state, questions, decisions) into the control plane after each move as a new versioned record keyed by ticket id",
+      "origin": "llm",
+      "status": "confirmed",
+      "honesty_conditions": [
+        {
+          "id": "h23",
+          "text": "GET /v1alpha1/tickets/SCRUM-N on prod returns the frame snapshot whose claim states match devague show --json in the lane worktree at the same move, plus the runs whose subject is SCRUM-N",
+          "status": "confirmed",
+          "instruction": ""
+        }
+      ],
+      "hard_questions": [],
+      "links": [],
+      "instruction": "Migration: ticket_frames(ticket_id, version, frame_json, posted_by, created_at) append-only; POST /v1alpha1/tickets/{id}/frame (decision-token guarded) written by the /think lane after each move; GET /v1alpha1/tickets/{id} composes runs?subject=, ledger, human tasks, ticket reports, replies, latest frame; add subject filter to listRuns; web route /tickets/:id.",
+      "revisions": []
+    },
+    {
+      "id": "c34",
+      "kind": "decision",
+      "text": "q3 (2026-08-29): the hand-modified tracked files on the thor and orin checkouts are DISCARDED \u2014 both the git-archive target culture-nodes-prod and the clean-gated ~/git/culture-nodes-agent are reset to the deployed revision; the qwen bridge is parked so no qwen config is re-applied; a clean revision is verified by git status --porcelain being empty and git rev-parse HEAD equalling the deploy's REVISION on each host; recorded as a hand-turn on #230",
+      "origin": "user",
+      "status": "confirmed",
+      "honesty_conditions": [],
+      "hard_questions": [],
+      "links": [],
+      "instruction": "",
+      "revisions": []
+    },
+    {
+      "id": "c35",
+      "kind": "decision",
+      "text": "q4 (2026-08-29): the board-driven /think leg runs as sessions on the owe-developer claude lane in its worktree, .devague/ committed, frame snapshot posted to the control plane after each move; the headspace code-node graph in examples/spec-chain is deferred to #237",
+      "origin": "user",
+      "status": "confirmed",
+      "honesty_conditions": [],
+      "hard_questions": [],
+      "links": [],
+      "instruction": "",
+      "revisions": []
+    },
+    {
+      "id": "c36",
+      "kind": "decision",
+      "text": "q5 (2026-08-29): the ticket page freezes on a pr.merged fact the sweep emits (closed PRs with merged_at, watermarked), with the PR linked to its ticket by branch name or body carrying the ticket id; a human freeze action on the page is the override",
+      "origin": "user",
+      "status": "confirmed",
+      "honesty_conditions": [],
+      "hard_questions": [],
+      "links": [],
+      "instruction": "",
+      "revisions": []
+    },
+    {
+      "id": "c37",
+      "kind": "decision",
+      "text": "q2 and h16 are not in tension: q2 defines what 'accessibility' in the operator's ask MEANS (the ticket page, #200), while PRD \u00a78.8 is the conformance rule every web UI route already meets \u2014 the new /tickets/<ticket-id> route inherits it as a build rule, not as this cycle's scope item",
+      "origin": "llm",
+      "status": "confirmed",
+      "honesty_conditions": [],
+      "hard_questions": [],
+      "links": [],
+      "instruction": "",
+      "revisions": []
+    },
+    {
+      "id": "c38",
+      "kind": "success_signal",
+      "text": "(8) On prod records: a reply submitted through /tickets/<ticket-id> with the decision token appears as one Jira comment on the ticket authored by the system account 'via <replier>', one engine fact with origin.kind human and the replier named, and a previously waiting run whose resume cites that fact's id \u2014 and the next sweep pass emits no fact for the mirrored comment",
+      "origin": "llm",
+      "status": "confirmed",
+      "honesty_conditions": [
+        {
+          "id": "h24",
+          "text": "Signal 8 is recorded in the cycle's delivery summary with the ticket key, the comment id, the fact id, and the resumed run id read from prod \u2014 or marked unverified",
+          "status": "confirmed",
+          "instruction": ""
+        }
+      ],
+      "hard_questions": [],
+      "links": [],
+      "instruction": "",
+      "revisions": []
+    },
+    {
+      "id": "c39",
+      "kind": "success_signal",
+      "text": "(9) Across at least two lane milestones on a real ticket, exactly one comment carrying the page-link marker exists on the ticket (edited or re-posted in place), its URL path contains the ticket id, and the page it points at links back to the ticket \u2014 counted from the ticket's comment list, not from attachments",
+      "origin": "llm",
+      "status": "confirmed",
+      "honesty_conditions": [
+        {
+          "id": "h25",
+          "text": "Signal 9 is recorded with the ticket's comment list at two milestones (ids and marker), showing one link comment \u2014 or marked unverified",
+          "status": "confirmed",
+          "instruction": ""
+        }
+      ],
+      "hard_questions": [],
+      "links": [],
+      "instruction": "",
+      "revisions": []
     }
   ],
   "open_vagueness": [
@@ -448,6 +691,24 @@
       "id": "v5",
       "text": "Dedicated per-user identity for page replies (today: the system's Jira account) \u2014 its own culture-nodes issue",
       "kind": "follow_up",
+      "claim_id": null,
+      "resolved": false,
+      "resolution": "",
+      "resolution_claim_id": null
+    },
+    {
+      "id": "v6",
+      "text": "jira bridge post_comment has no issue allowlist (mapping.py:29-46) while transition and create do \u2014 a page reply endpoint widens who can reach it; decide whether post_comment gains a project allowlist in this cycle",
+      "kind": "unknown_nonblocking",
+      "claim_id": null,
+      "resolved": false,
+      "resolution": "",
+      "resolution_claim_id": null
+    },
+    {
+      "id": "v7",
+      "text": "A run created before r4 that finishes after it gets no ticket report at all (runs.trigger_event_id is NULL pre-0043) \u2014 accepted for the deploy window, worth one line in #230",
+      "kind": "unknown_nonblocking",
       "claim_id": null,
       "resolved": false,
       "resolution": "",
@@ -549,6 +810,60 @@
       "finding": "the last cycle logged five counted hand-turns; this cycle's proof leg is explicitly zero-operator-shell-commands per the exported frame's honesty condition",
       "seeds": [
         "c13"
+      ]
+    },
+    {
+      "id": "s13",
+      "surface": "challenge pass / migration lens: migrations/migrations.go, internal/store/postgres/store.go:124-166, migrations/README.md:168-180, cmd/nodes-cutover",
+      "finding": "duplicate 0041_* is safe (applied state keyed by full filename; lexical order artifact_fk before jira_cutover); nodes-cutover runs in the thor lane between migrate and stack-up and exits 2 fail-closed; checksum recorded but never verified \u2014 clean except the two-host quiesce gap",
+      "seeds": [
+        "c25"
+      ]
+    },
+    {
+      "id": "s14",
+      "surface": "challenge pass / deploy-topology + reversibility lens: deploy/prod/deploy.sh:26-32,167-181,698-761, compose.thor.yml, compose.orin.yml, docs/adr/0002, deploy/prod/RESTORE.md",
+      "finding": "thor deploys api+worker, orin only a worker, never stopped during cutover; no revision parity check; rollback is dump restore only",
+      "seeds": [
+        "c25",
+        "c26",
+        "c28"
+      ]
+    },
+    {
+      "id": "s15",
+      "surface": "challenge pass / operations lens: internal/engine/remint.go, internal/store/postgres/remint.go, internal/worker/worker.go:356-363,578-583, cmd/nodes/scheduler.go:85, internal/ticketreport/dispatcher.go",
+      "finding": "re-mint has no backfill (rows only from live failures), no flag, actor id unregistered; ticket-report outbox has no backfill, drains globally, pre-deploy runs finishing after deploy get no report \u2014 clean except the actor FK",
+      "seeds": [
+        "c27"
+      ]
+    },
+    {
+      "id": "s16",
+      "surface": "challenge pass / security + adjacent-systems lens: internal/api/server.go:422-560, signalevents.go:141-252, humantasks.go:40-110, web/src/api/client.ts, decision-token.ts, adapters/human-inbox server.py:238-249,503-556, mapping.py:106-160, adapters/jira mapping.py, transition_issue.py, create_issue.py, client.py",
+      "finding": "SPA is authless by design (PRD \u00a726) except the decision token; POST /events needs the emit secret; human-inbox attributes to a fixed actor_id; jira bridge = comment/transition/create, all origin.kind agent under the system account, no remote-link verb",
+      "seeds": [
+        "c29",
+        "c30",
+        "c31",
+        "c32"
+      ]
+    },
+    {
+      "id": "s17",
+      "surface": "challenge pass / data-flow lens: examples/pr-upkeep/pr_upkeep_jira.py:87-113,268-286, examples/jira-question-round-trip/question_correlation.py:33-38,100-113",
+      "finding": "a system-account comment is swallowed at the emitter and jira_question_id_for_answer returns '' on a marker-bearing newest comment \u2014 the confirmed 'reply \u2192 Jira comment, engine picks it up' reading is not viable; the engine fact must come from the endpoint",
+      "seeds": [
+        "c29",
+        "c30"
+      ]
+    },
+    {
+      "id": "s18",
+      "surface": "challenge pass / hidden-dependency + lifecycle lens: internal/devague/*, api/openapi/openapi.yaml paths, migrations/0038,0043, web/src/routes/PlanView.tsx, examples/spec-chain/workflow.yaml:81-138,189-230,401-465, examples/pr-upkeep/sweep.py:8,160-166,585,649",
+      "finding": "no frame state in the control plane; spec-chain carries nothing durable between moves; no merge signal and no issue\u2194PR link \u2014 three hidden dependencies under c24 and c7",
+      "seeds": [
+        "c33"
       ]
     }
   ],

@@ -24,11 +24,15 @@ subprocesses, bracketing the session. Never `task_result`'s own
 model-reported file list — that is a completion claim, and a guard that
 trusts the guarded party is not a guard.
 
-It reads two measurements, because neither alone is complete:
+It reads the branch delta plus the working tree, because neither alone is
+complete:
 
-1. `workspace.measure()`'s `changed_files`, which covers everything tracked
-   at `head_before` and everything the session COMMITTED during its turn;
-2. one targeted `git status --porcelain --untracked-files=all -- <guarded
+1. `git diff --name-only <upstream>..HEAD`, which covers commits authored on
+   the session's branch without treating a step-0 move from an older checkout
+   base as session work;
+2. `git diff --name-only HEAD`, which covers staged and unstaged tracked
+   edits;
+3. one targeted `git status --porcelain --untracked-files=all -- <guarded
    prefixes>`, because `measure()` reports `git status`'s default collapsed
    form — a session that creates `.github/workflows/go.yml` in a repo with
    no `.github/` yet shows up there as the single entry `.github/`, which
@@ -143,6 +147,40 @@ def _untracked_under_guarded_prefixes(repo: str) -> tuple[str, ...]:
     return guarded(found)
 
 
+def _branch_scope_delta(repo: str) -> tuple[str, ...] | None:
+    """Committed branch work plus tracked working-tree edits.
+
+    The upstream is the branch base established by the required step-0
+    checkout. Returning ``None`` when it cannot be resolved lets older or
+    detached dispatches retain the pre-#207 measurement fallback.
+    """
+    upstream = workspace.git_stdout(
+        repo, "rev-parse", "--abbrev-ref", "--symbolic-full-name", "@{upstream}"
+    )
+    if not upstream or not upstream.strip():
+        return None
+
+    committed = workspace.git_stdout(
+        repo,
+        "diff",
+        "--no-ext-diff",
+        "--no-textconv",
+        "--name-only",
+        f"{upstream.strip()}..HEAD",
+    )
+    uncommitted = workspace.git_stdout(
+        repo, "diff", "--no-ext-diff", "--no-textconv", "--name-only", "HEAD"
+    )
+    if committed is None or uncommitted is None:
+        return None
+    return tuple(
+        line.strip()
+        for output in (committed, uncommitted)
+        for line in output.splitlines()
+        if line.strip()
+    )
+
+
 def violations(repo: str | None, workspace_measured: dict[str, Any] | None) -> tuple[str, ...]:
     """The guarded paths this session actually changed.
 
@@ -154,8 +192,12 @@ def violations(repo: str | None, workspace_measured: dict[str, Any] | None) -> t
     if not isinstance(workspace_measured, dict) or not workspace_measured.get("measured"):
         return ()
 
-    changed = workspace_measured.get("changed_files")
-    hits = list(guarded(changed if isinstance(changed, list) else ()))
+    branch_delta = _branch_scope_delta(repo) if repo else None
+    if branch_delta is None:
+        changed = workspace_measured.get("changed_files")
+        hits = list(guarded(changed if isinstance(changed, list) else ()))
+    else:
+        hits = list(guarded(branch_delta))
     if repo:
         for entry in _untracked_under_guarded_prefixes(repo):
             if entry not in hits:

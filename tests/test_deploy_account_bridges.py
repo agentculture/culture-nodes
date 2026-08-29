@@ -389,6 +389,19 @@ class DeployHarness(Harness):
 # --- shape --------------------------------------------------------------------
 
 
+def test_codex_account_config_points_uv_at_tmp_so_workspace_write_can_run_tools():
+    """Runs 01M17NJ8W7B6NQ2RKT6B89SF94 / 01M17NK19NY09G55J7AJWYW7XT (#243 d2):
+    under workspace-write the codex sandbox makes the account's ~/.cache/uv
+    read-only (only the workspace and /tmp are writable), so uvx/uv could not
+    even take their cache lock. /tmp is writable in that mode, so the bridge
+    env points uv there; the cost is a re-download after a reboot."""
+    cfg = json.loads((ROOT / "deploy/prod/codex-bridge.json.template").read_text())
+    env = cfg["codex_env"]
+    for key in ("UV_CACHE_DIR", "UV_TOOL_DIR", "UV_PYTHON_INSTALL_DIR"):
+        assert env[key].startswith("/tmp/culture-codex/"), key
+    assert env["CODEX_HOME"] == "__HOME__/.codex"
+
+
 def test_lane_parses_and_deploy_sources_it():
     subprocess.run(["bash", "-n", str(LANE)], check=True)  # nosec B603 B607
     subprocess.run(["bash", "-n", str(DEPLOY)], check=True)  # nosec B603 B607

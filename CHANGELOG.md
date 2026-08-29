@@ -5,6 +5,12 @@ All notable changes to this project will be documented in this file.
 Format follows [Keep a Changelog](https://keepachangelog.com/). This project
 adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.43.1] - 2026-08-29
+
+### Fixed
+
+- PR #244 Qodo finding 1 "Reply writes are non-atomic": `POST /v1alpha1/tickets/{id}/replies` committed the reply row, the signal fact and the Jira mirror across three transactions, so a failure after the first left a reply without a fact (or a fact without a mirror) and a client retry minted a second reply under a new ULID. The three writes are now one `Store.DeliverPageReply` transaction through the tx-aware delivery seam, idempotent on a required client `reply_id` (SourceKey `page-reply:<ticket>:<reply_id>`): a retry returns the reply already made with `duplicate: true`, any failure rolls back all three writes, and migration 0049 makes one-fact/one-row/one-mirror a unique key. The ticket page mints one `reply_id` per composed reply and resends it on retry
+
 ## [0.43.0] - 2026-08-29
 
 ### Added

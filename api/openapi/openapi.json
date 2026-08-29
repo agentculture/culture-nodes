@@ -2440,12 +2440,19 @@
             "minLength": 1,
             "type": "string"
           },
+          "reply_id": {
+            "description": "Client-generated idempotency key for this one reply. The fact, the reply row and the Jira mirror intent are written in one transaction keyed on it; a retry that carries the same reply_id returns the reply already made (200, duplicate: true) instead of appending a second one.",
+            "maxLength": 128,
+            "minLength": 1,
+            "type": "string"
+          },
           "text": {
             "minLength": 1,
             "type": "string"
           }
         },
         "required": [
+          "reply_id",
           "replier",
           "text"
         ],
@@ -6684,8 +6691,17 @@
           "required": true
         },
         "responses": {
+          "200": {
+            "description": "A retry — the reply this reply_id already made",
+            "with duplicate true.": null
+          },
           "201": {
-            "description": "Reply fact and mirror intent created."
+            "description": "Reply fact",
+            "reply row and mirror intent created atomically.": null
+          },
+          "400": {
+            "description": "reply_id",
+            "replier or text missing.": null
           },
           "401": {
             "description": "Decision bearer token is missing or invalid."

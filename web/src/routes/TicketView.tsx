@@ -48,6 +48,18 @@ function mergedPR(frame: TicketFrameData): { href?: string; label: string } | nu
   return { href: frame.merged_pr.url, label };
 }
 
+/**
+ * One idempotency key per composed reply. It is minted when the form is
+ * ready and again only after a reply lands, so a "Send reply" that fails
+ * (network, 5xx) and is clicked again resends the SAME key — the server then
+ * returns the reply it already made rather than appending a second one.
+ */
+function newReplyID(): string {
+  return typeof crypto !== "undefined" && typeof crypto.randomUUID === "function"
+    ? crypto.randomUUID()
+    : `${Date.now().toString(36)}-${Math.random().toString(36).slice(2)}`;
+}
+
 export function TicketView() {
   const { id = "" } = useParams();
   const [projection, setProjection] = useState<TicketProjection | null>(null);
@@ -59,6 +71,7 @@ export function TicketView() {
   const [submitting, setSubmitting] = useState(false);
   const [submitError, setSubmitError] = useState<ApiError | null>(null);
   const [sent, setSent] = useState(false);
+  const [replyID, setReplyID] = useState(newReplyID);
 
   useEffect(() => {
     const controller = new AbortController();
@@ -104,6 +117,7 @@ export function TicketView() {
     setSent(false);
     try {
       const reply = await postTicketReply(projection.ticket_id, {
+        reply_id: replyID,
         replier: replier.trim(),
         text: text.trim(),
         ...(questionID ? { question_id: questionID } : {}),
@@ -111,6 +125,7 @@ export function TicketView() {
       setProjection({ ...projection, replies: [...projection.replies, reply] });
       setText("");
       setQuestionID("");
+      setReplyID(newReplyID());
       setSent(true);
     } catch (error) {
       setSubmitError(error as ApiError);

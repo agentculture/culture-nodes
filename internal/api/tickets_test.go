@@ -80,30 +80,135 @@ func TestTicketProjectionExposesPageLinkStatus(t *testing.T) {
 	}
 }
 
+type replyOut struct {
+	ID            string `json:"id"`
+	SignalEventID string `json:"signal_event_id"`
+	Duplicate     bool   `json:"duplicate"`
+}
+
+// postReply is one guarded reply POST for SCRUM-<ticket> under a client key.
+func postReply(t *testing.T, f *fixture, ticket, replyID string, out *replyOut) (*http.Response, []byte) {
+	t.Helper()
+	var decoded any // a typed nil pointer is not a nil interface to the decoder
+	if out != nil {
+		decoded = out
+	}
+	return doJSONBearer(t, f.client, http.MethodPost,
+		f.url("/v1alpha1/tickets/"+ticket+"/replies"), decisionAuthSecret,
+		map[string]any{"reply_id": replyID, "replier": "operator", "text": "Use A", "question_id": "q-9"}, decoded)
+}
+
+// replyRowCounts is the three-way invariant every reply write must keep:
+// facts, reply rows, and mirror rows for one ticket, plus the durable
+// idempotency cursors written for it.
+type replyRowCounts struct{ facts, replies, mirrors, cursors int }
+
+func countReplyRows(t *testing.T, f *fixture, ticket string) replyRowCounts {
+	t.Helper()
+	var c replyRowCounts
+	err := f.store.Pool().QueryRow(t.Context(), `SELECT
+		(SELECT count(*) FROM signal_events WHERE namespace_id=$1 AND name='pr-upkeep.jira.comment' AND payload->>'id'=$2),
+		(SELECT count(*) FROM ticket_replies WHERE namespace_id=$1 AND ticket_id=$2),
+		(SELECT count(*) FROM jira_ticket_report_outbox WHERE namespace_id=$1 AND issue_key=$2 AND phase='reply'),
+		(SELECT count(*) FROM signal_event_watermarks WHERE namespace_id=$1 AND source_key LIKE 'page-reply:'||$2||':%')`,
+		f.nsID, ticket).Scan(&c.facts, &c.replies, &c.mirrors, &c.cursors)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return c
+}
+
 func TestTicketReplyAppendsHumanFactAndOneMirrorIntent(t *testing.T) {
 	f := newFixtureWithDecisionAuth(t, decisionAuthSecret)
-	var reply struct {
-		SignalEventID string `json:"signal_event_id"`
-	}
-	resp, body := doJSONBearer(t, f.client, http.MethodPost,
-		f.url("/v1alpha1/tickets/SCRUM-9/replies"), decisionAuthSecret,
-		map[string]any{"replier": "operator", "text": "Use A", "question_id": "q-9"}, &reply)
+	var reply replyOut
+	resp, body := postReply(t, f, "SCRUM-9", "reply-key-1", &reply)
 	requireStatus(t, resp, body, http.StatusCreated)
-	var name, emitter, payload string
-	if err := f.store.Pool().QueryRow(t.Context(), `SELECT name,emitter,payload::text FROM signal_events WHERE id=$1`, reply.SignalEventID).Scan(&name, &emitter, &payload); err != nil {
+	var name, emitter, payload, sourceKey string
+	if err := f.store.Pool().QueryRow(t.Context(), `SELECT name,emitter,payload::text,source_key FROM signal_events WHERE id=$1`, reply.SignalEventID).Scan(&name, &emitter, &payload, &sourceKey); err != nil {
 		t.Fatal(err)
 	}
-	if name != "pr-upkeep.jira.comment" || emitter != "ticket-page" ||
+	if name != "pr-upkeep.jira.comment" || emitter != "ticket-page" || sourceKey != "page-reply:SCRUM-9:reply-key-1" ||
 		!bytes.Contains([]byte(payload), []byte(`"kind": "human"`)) ||
 		!bytes.Contains([]byte(payload), []byte(`"originating_question_id": "q-9"`)) {
-		t.Fatalf("fact name=%q emitter=%q payload=%s", name, emitter, payload)
+		t.Fatalf("fact name=%q emitter=%q source_key=%q payload=%s", name, emitter, sourceKey, payload)
 	}
-	var outboxCount int
-	if err := f.store.Pool().QueryRow(t.Context(), `SELECT count(*) FROM jira_ticket_report_outbox WHERE namespace_id=$1 AND issue_key='SCRUM-9' AND phase='reply'`, f.nsID).Scan(&outboxCount); err != nil {
+	var rowEvent string
+	if err := f.store.Pool().QueryRow(t.Context(), `SELECT signal_event_id FROM ticket_replies WHERE id=$1`, reply.ID).Scan(&rowEvent); err != nil {
 		t.Fatal(err)
 	}
-	if outboxCount != 1 {
-		t.Fatalf("reply outbox rows = %d, want 1", outboxCount)
+	if rowEvent != reply.SignalEventID {
+		t.Fatalf("reply row cites fact %q, response cites %q", rowEvent, reply.SignalEventID)
+	}
+	if c := countReplyRows(t, f, "SCRUM-9"); c != (replyRowCounts{1, 1, 1, 1}) {
+		t.Fatalf("rows after one reply = %+v, want one of each", c)
+	}
+}
+
+func TestTicketReplyRetryWithSameReplyIDIsOneReply(t *testing.T) {
+	f := newFixtureWithDecisionAuth(t, decisionAuthSecret)
+	var first, second replyOut
+	resp, body := postReply(t, f, "SCRUM-9", "reply-key-retry", &first)
+	requireStatus(t, resp, body, http.StatusCreated)
+	resp, body = postReply(t, f, "SCRUM-9", "reply-key-retry", &second)
+	requireStatus(t, resp, body, http.StatusOK)
+	if first.Duplicate || !second.Duplicate || second.ID != first.ID || second.SignalEventID != first.SignalEventID {
+		t.Fatalf("retry = %+v, first = %+v: want the same reply and fact, flagged duplicate", second, first)
+	}
+	if c := countReplyRows(t, f, "SCRUM-9"); c != (replyRowCounts{1, 1, 1, 1}) {
+		t.Fatalf("rows after a retry = %+v, want one of each", c)
+	}
+	// A different key on the same ticket is a different reply.
+	var third replyOut
+	resp, body = postReply(t, f, "SCRUM-9", "reply-key-other", &third)
+	requireStatus(t, resp, body, http.StatusCreated)
+	if c := countReplyRows(t, f, "SCRUM-9"); c != (replyRowCounts{2, 2, 2, 2}) {
+		t.Fatalf("rows after a second reply = %+v, want two of each", c)
+	}
+}
+
+func TestTicketReplyRequiresReplyID(t *testing.T) {
+	f := newFixtureWithDecisionAuth(t, decisionAuthSecret)
+	resp, body := doJSONBearer(t, f.client, http.MethodPost,
+		f.url("/v1alpha1/tickets/SCRUM-9/replies"), decisionAuthSecret,
+		map[string]any{"replier": "operator", "text": "Use A"}, nil)
+	requireStatus(t, resp, body, http.StatusBadRequest)
+	if c := countReplyRows(t, f, "SCRUM-9"); c != (replyRowCounts{}) {
+		t.Fatalf("rows after a rejected reply = %+v, want none", c)
+	}
+}
+
+// TestTicketReplyMirrorFailureLeavesNoFactOrReplyRow is the failure-injection
+// half of the atomicity claim: when the LAST write of the transaction (the
+// Jira mirror row) fails, neither the fact, the reply row, nor the
+// idempotency cursor survives — and the retry then makes the reply for real.
+func TestTicketReplyMirrorFailureLeavesNoFactOrReplyRow(t *testing.T) {
+	f := newFixtureWithDecisionAuth(t, decisionAuthSecret)
+	const constraint = "test_reply_mirror_poison_scrum_poison"
+	ctx := t.Context()
+	if _, err := f.store.Pool().Exec(ctx, `ALTER TABLE jira_ticket_report_outbox ADD CONSTRAINT `+constraint+
+		` CHECK (NOT (phase='reply' AND issue_key='SCRUM-POISON'))`); err != nil {
+		t.Fatal(err)
+	}
+	dropPoison := func() {
+		_, _ = f.store.Pool().Exec(ctx, `ALTER TABLE jira_ticket_report_outbox DROP CONSTRAINT IF EXISTS `+constraint)
+	}
+	t.Cleanup(dropPoison)
+
+	resp, body := postReply(t, f, "SCRUM-POISON", "reply-key-poison", nil)
+	requireStatus(t, resp, body, http.StatusInternalServerError)
+	if c := countReplyRows(t, f, "SCRUM-POISON"); c != (replyRowCounts{}) {
+		t.Fatalf("rows after a failed mirror write = %+v, want none: the fact and the reply row must roll back with it", c)
+	}
+
+	dropPoison()
+	var reply replyOut
+	resp, body = postReply(t, f, "SCRUM-POISON", "reply-key-poison", &reply)
+	requireStatus(t, resp, body, http.StatusCreated)
+	if reply.Duplicate {
+		t.Fatalf("retry after a rolled-back reply reported duplicate: %+v", reply)
+	}
+	if c := countReplyRows(t, f, "SCRUM-POISON"); c != (replyRowCounts{1, 1, 1, 1}) {
+		t.Fatalf("rows after the retry = %+v, want one of each", c)
 	}
 }
 

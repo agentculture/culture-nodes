@@ -572,6 +572,8 @@ export interface TicketReply {
   question_id?: string;
   signal_event_id?: string;
   created_at: string;
+  /** Set when a retried POST resolved to the reply an earlier request already made. */
+  duplicate?: boolean;
 }
 
 export interface TicketProjection {
@@ -589,6 +591,8 @@ export interface TicketProjection {
 }
 
 export interface TicketReplyRequest {
+  /** Client-generated idempotency key: reuse it verbatim when retrying the same reply. */
+  reply_id: string;
   replier: string;
   text: string;
   question_id?: string;

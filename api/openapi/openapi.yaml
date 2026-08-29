@@ -439,7 +439,9 @@ paths:
           application/json:
             schema: {$ref: '#/components/schemas/PostTicketReplyRequest'}
       responses:
-        '201': {description: Reply fact and mirror intent created.}
+        '201': {description: Reply fact, reply row and mirror intent created atomically.}
+        '200': {description: A retry — the reply this reply_id already made, with duplicate true.}
+        '400': {description: reply_id, replier or text missing.}
         '401': {description: Decision bearer token is missing or invalid.}
 
   /v1alpha1/tickets/{id}/freeze:
@@ -6019,8 +6021,18 @@ components:
 
     PostTicketReplyRequest:
       type: object
-      required: [replier, text]
+      required: [reply_id, replier, text]
       properties:
+        reply_id:
+          type: string
+          minLength: 1
+          maxLength: 128
+          description: >-
+            Client-generated idempotency key for this one reply. The fact,
+            the reply row and the Jira mirror intent are written in one
+            transaction keyed on it; a retry that carries the same reply_id
+            returns the reply already made (200, duplicate: true) instead of
+            appending a second one.
         replier: {type: string, minLength: 1}
         text: {type: string, minLength: 1}
         question_id: {type: string}

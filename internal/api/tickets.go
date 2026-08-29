@@ -7,7 +7,6 @@ import (
 	"time"
 
 	"github.com/agentculture/culture-nodes/internal/ledger"
-	"github.com/agentculture/culture-nodes/internal/store"
 	storepg "github.com/agentculture/culture-nodes/internal/store/postgres"
 )
 
@@ -45,6 +44,9 @@ type TicketReplyOut struct {
 	QuestionID    string    `json:"question_id,omitempty"`
 	SignalEventID string    `json:"signal_event_id,omitempty"`
 	CreatedAt     time.Time `json:"created_at"`
+	// Duplicate is set on the response to a retried POST: the reply above is
+	// the one an earlier request with the same reply_id already made.
+	Duplicate bool `json:"duplicate,omitempty"`
 }
 
 type TicketPageLinkOut struct {
@@ -66,10 +68,16 @@ type TicketOut struct {
 }
 
 type postTicketReplyRequest struct {
+	// ReplyID is the client's idempotency key for this one reply: a retry
+	// that carries the same id resolves to the reply already made.
+	ReplyID    string `json:"reply_id"`
 	Replier    string `json:"replier"`
 	Text       string `json:"text"`
 	QuestionID string `json:"question_id"`
 }
+
+// maxReplyIDLength bounds the client key that becomes part of a source key.
+const maxReplyIDLength = 128
 
 type freezeTicketRequest struct {
 	MergedPR json.RawMessage `json:"merged_pr"`
@@ -82,49 +90,31 @@ func (s *Server) handlePostTicketReply(w http.ResponseWriter, r *http.Request) e
 	}
 	var req postTicketReplyRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		return badRequest("send {replier, text, question_id?}", "decode ticket reply: %v", err)
+		return badRequest("send {reply_id, replier, text, question_id?}", "decode ticket reply: %v", err)
 	}
 	if req.Replier == "" || req.Text == "" {
 		return badRequest("replier and text are required", "empty ticket reply")
 	}
-	ticketID := r.PathValue("id")
-	payload, _ := json.Marshal(map[string]any{
-		"id": ticketID, "origin": map[string]any{"kind": "human", "replier": req.Replier},
-		"replier": req.Replier, "originating_question_id": req.QuestionID,
-		"answer": map[string]any{"comment_id": "ticket-page", "body": req.Text},
-	})
-	// Order of record (second-opinion review of the wave-1 merge): the reply row
-	// lands FIRST with no event, so a failure after delivery can never leave an
-	// engine fact that no page reply explains; the event id is attached to the
-	// row, with the display-only Jira mirror, once delivery succeeded.
-	replyID := store.NewULID()
-	if _, err := s.Store.Pool().Exec(r.Context(), `INSERT INTO ticket_replies (id,namespace_id,ticket_id,replier,text,question_id) VALUES ($1,$2,$3,$4,$5,NULLIF($6,''))`, replyID, s.NamespaceID, ticketID, req.Replier, req.Text, req.QuestionID); err != nil {
-		return internalError(err)
+	if req.ReplyID == "" || len(req.ReplyID) > maxReplyIDLength {
+		return badRequest(fmt.Sprintf("reply_id is required: a client-generated key of at most %d characters, reused verbatim when the same reply is retried", maxReplyIDLength), "missing or oversized reply_id")
 	}
-	delivery, err := s.Store.DeliverSignalEvent(r.Context(), storepg.DeliverSignalEventInput{
-		NamespaceID: s.NamespaceID, Name: "pr-upkeep.jira.comment", Payload: payload,
-		Emitter: "ticket-page", Subject: ticketID,
+	// The fact, the reply row that explains it, and the Jira mirror intent
+	// are one store transaction, idempotent on reply_id — never three commit
+	// boundaries a failure can land between (PR #244, Qodo finding 1).
+	delivery, err := s.Store.DeliverPageReply(r.Context(), storepg.DeliverPageReplyInput{
+		NamespaceID: s.NamespaceID, TicketID: r.PathValue("id"), ReplyID: req.ReplyID,
+		Replier: req.Replier, Text: req.Text, QuestionID: req.QuestionID,
 	})
 	if err != nil {
-		return internalError(fmt.Errorf("reply %s recorded without an engine fact: %w", replyID, err))
-	}
-	comment := fmt.Sprintf("%s\n\nvia %s", req.Text, req.Replier)
-	outboxPayload, _ := json.Marshal(map[string]any{"verb": "post_comment", "issue": ticketID, "comment": comment, "phase": "reply", "signal_event_id": delivery.Event.ID})
-	tx, err := s.Store.Pool().Begin(r.Context())
-	if err != nil {
 		return internalError(err)
 	}
-	defer tx.Rollback(r.Context())
-	if _, err = tx.Exec(r.Context(), `UPDATE ticket_replies SET signal_event_id=$1 WHERE id=$2`, delivery.Event.ID, replyID); err != nil {
-		return internalError(err)
+	status := http.StatusCreated
+	if delivery.Duplicate {
+		status = http.StatusOK
 	}
-	if _, err = tx.Exec(r.Context(), `INSERT INTO jira_ticket_report_outbox (id,namespace_id,phase,target_actor_key,issue_key,payload) VALUES ($1,$2,'reply',$3,$4,$5)`, store.NewULID(), s.NamespaceID, storepg.JiraTicketReporterActorKey, ticketID, outboxPayload); err != nil {
-		return internalError(err)
-	}
-	if err = tx.Commit(r.Context()); err != nil {
-		return internalError(err)
-	}
-	writeJSON(w, http.StatusCreated, TicketReplyOut{ID: replyID, Replier: req.Replier, Text: req.Text, QuestionID: req.QuestionID, SignalEventID: delivery.Event.ID, CreatedAt: delivery.Event.CreatedAt})
+	reply := delivery.Reply
+	writeJSON(w, status, TicketReplyOut{ID: reply.ID, Replier: reply.Replier, Text: reply.Text, QuestionID: reply.QuestionID,
+		SignalEventID: reply.SignalEventID, CreatedAt: reply.CreatedAt, Duplicate: delivery.Duplicate})
 	return nil
 }
 

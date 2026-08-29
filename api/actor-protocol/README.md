@@ -179,7 +179,7 @@ absence, a null or an empty string reads as a fact about the host.
 | `sandbox_modes` | The confinement modes a dispatch can **actually** get here, in the backend's own vocabulary. Omitted by a bridge that runs no session. |
 | `sandbox_modes_unavailable` | Mode → why this host cannot deliver it. Omitted when empty. |
 | `default_sandbox_mode` | What a dispatch that names no mode gets. |
-| `confinement` | One sentence on what actually confines a session here — including "nothing", when that is the truth. |
+| `confinement` | One sentence on what actually confines a session here — including "nothing", when that is the truth. Prefixed `unix-user:<name>:` followed by a space (task t2, issue #243), `<name>` being `pwd.getpwuid(os.getuid()).pw_name` for the OS account the bridge process itself runs as — the fact that now decides what a dispatched session can reach, once agents run as dedicated OS users rather than inside a shared sandbox. Every advertising bridge carries the prefix, including one (notify) that starts no session at all: the ledger still wants to know which account the process is. |
 | `commit_policy` | Whether the session commits, and where a dispatch's changes end up. Always present. |
 | `writable_paths` | The paths a dispatch may write in. `[]` means nowhere, which is a fact rather than an absence. |
 | `git_metadata_writable` | Three-valued: `supported`, `unsupported-by-sandbox`, or `not-probed`. Whether a session can write under `.git` in a checkout it may write in — the qualifier `writable_paths` cannot carry. **Measured by attempting the write**, never derived from a sandbox mode name. |

@@ -540,6 +540,22 @@ records, `s` cites its scope-exploration entries). Reference config surface:
   containerized control-plane/worker stack — never inside a container —
   the same host-service lane `nodes-runner.service` already proves:
   `~/.culture-nodes`, an `ExecStartPre` preflight, `Restart=always` (c3).
+  Since #243 the unit is installed into the **`culture-codex` account's**
+  `systemd --user` instance, not the login user's: `deploy.sh` reaches it
+  over `ssh culture-codex@<host>`, `%h` resolves to
+  `/home/culture-codex`, and the bridge process — and every `codex exec`
+  it spawns — runs as that account. The unit file is unchanged; what
+  changed is whose instance it lands in. `nodes-runner`, compose, the
+  backups and `prod.env` stay under the login user, which is the only
+  account on the host in `docker`. The same shape holds on spark, where
+  the four claude bridges run under `culture-claude` and `qwen-developer`
+  under `culture-qwen`, installed by `deploy.sh spark` (bridge lanes only,
+  through `ssh culture-<engine>@localhost`). Spark's bridges are thereby
+  stamped `uv tool install` **copies**, no longer editable installs from
+  the operator checkout — so a bridge fix on spark takes effect only after
+  `deploy.sh spark`, and a stale copy is indistinguishable from a refusal
+  until it is redeployed (issue #120). What the account does and does not
+  fence is recorded in `docs/deviations/2026-08-29-agents-as-os-users.md`.
 - Two actors, `company/codex-thor` and `company/codex-orin`, registered
   **append-only** in thor's actors table (c4, c8). Each actor row's
   `metadata.auth_token_env` names only its **own** token env var — the
@@ -556,10 +572,25 @@ records, `s` cites its scope-exploration entries). Reference config surface:
   endpoint would fail resolution from inside the container the way
   `THOR_IP` resolution already exists to avoid above (c20, h18).
 
-### Unprivileged user namespaces (issue #63)
+### Unprivileged user namespaces (issue #63) — optional since #243
 
-**A fresh Ubuntu 24.04 host cannot run a codex actor until this is
-changed.** Codex sandboxes every shell command it runs inside a user
+**Since #243 this section is advisory.** The codex session runs as the
+`culture-codex` account, and POSIX ownership — no `sudo`, no `docker`
+group, a 0750 home, an unreadable operator checkout — is the boundary.
+The bubblewrap sandbox codex still wraps around its commands is a second,
+optional layer: `codex-preflight.sh` check 7 (the `bwrap` probe below)
+now **warns** instead of refusing the deploy, the bridge no longer blocks
+dispatch when `sandbox_modes_unavailable` is set, and what refuses instead
+is an account gate — the account exists, is in neither `sudo` nor
+`docker`, and owns the allowlisted checkout. The probe, `nodes doctor`'s
+`unprivileged_userns` check and the capability surface's confinement prose
+all stay, so a host that *can* still nest a sandbox says so. The sysctl
+below is therefore something a host may keep or drop; a fresh host no
+longer needs it to run a codex actor. The paragraphs that follow describe
+the posture before #243 and remain accurate for a host that keeps it.
+
+Before #243, **a fresh Ubuntu 24.04 host could not run a codex actor until
+this was changed.** Codex sandboxes every shell command it runs inside a user
 namespace, built with bubblewrap. Ubuntu 24.04 ships
 `kernel.apparmor_restrict_unprivileged_userns=1`, which blocks unprivileged
 user-namespace creation outright — so the actor registers, dispatches,
@@ -593,8 +624,9 @@ bwrap --unshare-user --unshare-net --ro-bind / / /bin/true && echo "bwrap userns
 ```
 
 `codex-preflight.sh` runs exactly this probe as its check 7, and the
-bridge unit runs the preflight as `ExecStartPre` — so a host in this state
-fails to start its bridge instead of accepting work it cannot do.
+bridge unit runs the preflight as `ExecStartPre` — before #243 a host in
+this state failed to start its bridge instead of accepting work it could
+not do; since #243 the same probe reports, and the account gate decides.
 
 ### Install, deploy, verify
 
@@ -650,6 +682,15 @@ appends a new revision row on a changed one — no code path ever `UPDATE`s
 or `DELETE`s an actor row (c8, h7). It refuses a hostname endpoint
 outright; only a numeric LAN IP is accepted (c20).
 
+`--os-user NAME` is sugar for `--metadata os_user=NAME` — a first-class
+metadata key (issue #204) that records the dedicated Unix account a bridge
+runs as (`culture-codex`, `culture-claude`, `culture-qwen`), so the registry
+can be read as a lane tag. `NAME` must match `^[a-z_][a-z0-9_-]*$`; an
+invalid name is refused with a `hint:` before any Postgres access. Like
+every other `--metadata` key, `os_user` is merged into the previous
+revision's metadata, never replaced — a later registration that only asks
+for a different key still carries `os_user` forward.
+
 ### Unbounded concurrency — placement is the containment
 
 The bridge's async runner spawns one thread + one `codex exec` subprocess
@@ -673,30 +714,67 @@ a unit crash. Symptom: bridge invocations fail where `codex login status`
 would report unauthenticated. Fix:
 
 ```bash
-ssh <host>                  # thor or orin
+ssh culture-codex@<host>    # thor or orin — the account the bridge runs as
 ~/.local/bin/codex login
 systemctl --user restart codex-bridge
 ```
 
 **checkout harvest / reset (after a write task).** Production codex
 nodes default to `sandbox: read-only`; only an explicit write task dirties
-`~/git/culture-nodes-agent`. Because `deploy.sh` refuses to fast-forward
-(or deploy over) a dirty/diverged checkout (c6, h6), an operator closes
-the loop before the next deploy rather than leaving it blocked:
+the agent checkout. Since #243 that checkout belongs to the engine
+account, so the harvest is an ssh *into the account*, not into the host:
+`ssh culture-codex@<host>` on thor and orin (`@localhost` on spark), and
+the tree is `/home/culture-codex/git/culture-nodes-agent` on thor/orin,
+`/home/culture-claude/git/culture-nodes-<role>` (one clone per claude role:
+developer, planner, verifier, intake) or
+`/home/culture-qwen/git/culture-nodes-qwen-developer` on spark. Because
+`deploy.sh` refuses to fast-forward (or deploy over) a dirty/diverged
+checkout (c6, h6), an operator closes the loop before the next deploy
+rather than leaving it blocked:
 
 ```bash
-ssh <host>
-cd ~/git/culture-nodes-agent
+ssh culture-codex@<host>    # thor or orin; culture-claude@localhost on spark
+cd ~/git/culture-nodes-agent    # or ~/git/culture-nodes-<role> on spark
 git status                  # review what a write task changed
 git diff                    # inspect it
 # commit what's approved through the normal PR lane (push a branch, open
-# a PR — never push directly from the host), then:
+# a PR — never push directly to main from the host; the Protect main
+# ruleset refuses it anyway), then:
 git reset --hard && git clean -fd
 ```
+
+A networked account can push its own handover ref with the Contents-only
+`GITHUB_TOKEN_WORKER` in its `bridge-push.env`, so a package that pushed
+needs no harvest at all — fetch the ref from origin. The runbook above is
+for the packages that did not.
+
+The **old trees** under `/home/<login>/git/culture-nodes-agent` on thor and
+orin stay in place: the unix-user lane never touches `/home/<login>/git`,
+their unpushed commits and unmerged branches are exactly where they were,
+and they remain harvestable exactly as before — `ssh <host>`, `cd
+~/git/culture-nodes-agent`, the same `git status` / `git diff` / fetch
+over `<host>:git/culture-nodes-agent <branch>` — until they are emptied.
+Nothing migrates them; the account clones fresh from origin.
 
 Skipping the reset does not corrupt anything — it blocks the *next*
 `deploy.sh <host>` run with a clear refusal message, checkout untouched
 (c6, h6).
+
+**rollback to the login-user posture (no deploy).** The cutover disables
+the old login-user bridge units but leaves their files, configs and env
+in place, so restoring the prior posture is one command pair per host,
+run as the two users in that order:
+
+```bash
+ssh culture-codex@<host> 'systemctl --user stop codex-bridge'   # as the account
+ssh <host> 'systemctl --user start codex-bridge'                # as the login user
+```
+
+The unix-user lane prints this pair in its deploy summary. On spark the
+same pair applies per unit (`culture-nodes-claude-<role>` under
+`culture-claude@localhost`, `culture-nodes-qwen-developer` under
+`culture-qwen@localhost`, then the login user). Re-running `deploy.sh
+<host>` moves the bridge back into the account.
 
 **first deploy of a host (`FIRST_DEPLOY=1`).** The preflight runs `nodes
 doctor` on every host the lane is about to modify *before* anything is

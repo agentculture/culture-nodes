@@ -1,7 +1,10 @@
 {
   "codex_bin": "__HOME__/.local/bin/codex",
   "codex_env": {
-    "CODEX_HOME": "__HOME__/.codex"
+    "CODEX_HOME": "__HOME__/.codex",
+    "UV_CACHE_DIR": "/tmp/culture-codex/uv-cache",
+    "UV_TOOL_DIR": "/tmp/culture-codex/uv-tools",
+    "UV_PYTHON_INSTALL_DIR": "/tmp/culture-codex/uv-python"
   },
   "host": "0.0.0.0",
   "port": 8086,

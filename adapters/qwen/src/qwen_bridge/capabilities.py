@@ -37,6 +37,8 @@ lint compares only the protocol constants), and the operator sees both
 
 from __future__ import annotations
 
+import os
+import pwd
 import subprocess
 import sys
 from pathlib import Path
@@ -44,6 +46,19 @@ from typing import Any, Callable, Mapping, Sequence
 
 from qwen_bridge import deployment, preflight, qwen_probe
 from qwen_bridge.config import Config
+
+
+def _unix_user() -> str:
+    """The OS account this bridge process runs as.
+
+    Prefixed onto the confinement sentence (task t2, issue #243) so the
+    capability surface names which account a dispatch really runs as — the
+    fact that decides what a session can reach once agents run as dedicated
+    OS users rather than inside a shared sandbox. stdlib only: `pwd` keeps
+    this adapter's zero-runtime-dependency promise intact.
+    """
+    return pwd.getpwuid(os.getuid()).pw_name
+
 
 #: The ACP session modes a dispatch may name, in the agent's measured
 #: order (tests/fixtures/acp/session_new_measured.json's availableModes).
@@ -61,9 +76,7 @@ SUPPORTED_ACP_MODES = ("plan", "default", "auto-edit", "auto")
 #: does not admit, and why — the h15 stance in the shared document's own
 #: words (the qwen section carries the same refusal reason from
 #: qwen_probe, so a reader sees one story in both blocks).
-_MODE_UNAVAILABLE = {
-    "yolo": qwen_probe.MODE_REFUSAL_REASON
-}
+_MODE_UNAVAILABLE = {"yolo": qwen_probe.MODE_REFUSAL_REASON}
 
 #: The toolchains this bridge reports on: the CLI it drives and the
 #: BUNDLED node runtime it launches with — nothing else. A qwen dispatch
@@ -216,6 +229,7 @@ def _confinement() -> str:
     that does exist is the one the image (plan t6) and the operator's
     sandboxing draw around the bridge process itself."""
     return (
+        f"unix-user:{_unix_user()}: "
         "qwen-code runs its own tools in-process as the bridge user (measured 2026-08-23: "
         "no fs/terminal client requests, no sandbox helper) — the ACP session modes are an "
         "approval policy, not a kernel confinement: every supported mode can do everything "
@@ -248,8 +262,10 @@ def qwen_section(
     own: an unagreed fact is a SurfaceError, and a None measurement is
     omitted (absence is the honest statement of "not measured here").
     """
-    measured = dict(facts) if facts is not None else qwen_probe.qwen_facts(
-        cfg, run=run, home=home, settings=settings, session=session
+    measured = (
+        dict(facts)
+        if facts is not None
+        else qwen_probe.qwen_facts(cfg, run=run, home=home, settings=settings, session=session)
     )
     unknown = sorted(set(measured) - set(QWEN_SECTION_KEYS))
     if unknown:
@@ -265,8 +281,10 @@ def qwen_section(
             continue
         if key in ("supported_modes", "modes_refused") and not value:
             continue
-        section[key] = dict(value) if key == "modes_refused" else (
-            list(value) if key == "supported_modes" else value
+        section[key] = (
+            dict(value)
+            if key == "modes_refused"
+            else (list(value) if key == "supported_modes" else value)
         )
     return section
 

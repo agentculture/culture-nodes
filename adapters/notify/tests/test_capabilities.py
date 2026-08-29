@@ -11,6 +11,8 @@ empty, and the same protocol still carries what is left.
 from __future__ import annotations
 
 import json
+import os
+import pwd
 import urllib.error
 import urllib.request
 
@@ -64,8 +66,9 @@ def test_a_bridge_with_no_session_omits_the_sandbox_keys(tmp_path):
 
 def test_what_remains_still_states_the_facts_a_dispatch_depends_on(tmp_path):
     host = capabilities.host_facts(Config(), probes=_permissive(tmp_path))
+    account = pwd.getpwuid(os.getuid()).pw_name
     assert host["hostname"] == preflight.hostname()
-    assert host["confinement"].startswith("no session:")
+    assert host["confinement"].startswith(f"unix-user:{account}: no session:")
     assert host["commit_policy"].startswith("no workspace:")
     assert host["writable_paths"] == []
 

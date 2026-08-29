@@ -3,6 +3,7 @@
 #
 #   deploy.sh thor          # full control plane + worker + runner host unit
 #   deploy.sh orin          # second worker + runner host unit
+#   deploy.sh spark         # bridge lanes only: the claude + qwen bridges (#243)
 #
 # Ships the working tree's HEAD as a git archive over ssh (no push, no
 # registry), builds the image on the target (both machines are aarch64 —
@@ -12,6 +13,12 @@
 # ride in argv (install-secrets.sh puts them in ~/.culture-nodes/prod.env
 # and ~/.culture-nodes/codex-bridge.env first — run it once before the
 # first deploy).
+#
+# Since #243 every BRIDGE unit is installed into an engine account's own
+# `systemd --user` instance (culture-codex on thor/orin; culture-claude and
+# culture-qwen on spark), reached as `ssh culture-<engine>@<host>`; the
+# control plane, the runner and prod.env stay with the login user. The
+# account lanes live in lanes/unix-user.sh and lanes/account-bridges.sh.
 set -euo pipefail
 
 SCRIPT_DIR=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
@@ -20,116 +27,119 @@ SCRIPT_DIR=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
 # install-secrets.sh so the two can never disagree (issue #72).
 # shellcheck source=deploy/prod/actor-placement.sh
 . "$SCRIPT_DIR/actor-placement.sh"
+# The engine-account lanes (#243): the account itself, and what a deploy
+# does with one. Sourced before any host step so the spark arm and the
+# codex lane share exactly one set of helpers.
+# shellcheck source=deploy/prod/lanes/unix-user.sh
+source "$SCRIPT_DIR/lanes/unix-user.sh"
+# shellcheck source=deploy/prod/lanes/account-bridges.sh
+source "$SCRIPT_DIR/lanes/account-bridges.sh"
 
-HOST=${1:?usage: deploy.sh <thor|orin>}
+HOST=${1:?usage: deploy.sh <thor|orin|spark>}
 REMOTE_DIR="culture-nodes-prod"
 BRANCH=${BRANCH:-HEAD}
 REVISION=$(git rev-parse "$BRANCH")
 
 say() { printf '==> %s\n' "$*"; }
 
-# --- preflight (task t2, spec c25/c28, PR #236 Qodo finding 6) -------------
-# shellcheck source=deploy/prod/lanes/preflight.sh
-source "$SCRIPT_DIR/lanes/preflight.sh"
+# --- thor / orin only: the control plane, its image, the runner host unit --
+# spark runs bridge lanes only (its arm in the case at the bottom is the
+# whole deploy), so nothing below this line runs there: no preflight against
+# a login-user agent checkout it does not have, no archive to its login user,
+# no image, no runner binary or unit, no runner.env.
+if [[ "$HOST" != spark* ]]; then
+  # --- preflight (task t2, spec c25/c28, PR #236 Qodo finding 6) -------------
+  # shellcheck source=deploy/prod/lanes/preflight.sh
+  source "$SCRIPT_DIR/lanes/preflight.sh"
 
-say "shipping $(git rev-parse --short "$REVISION") to $HOST:$REMOTE_DIR"
-git archive --format=tar "$REVISION" | ssh "$HOST" "rm -rf $REMOTE_DIR && mkdir -p $REMOTE_DIR && tar -x -C $REMOTE_DIR"
+  say "shipping $(git rev-parse --short "$REVISION") to $HOST:$REMOTE_DIR"
+  git archive --format=tar "$REVISION" | ssh "$HOST" "rm -rf $REMOTE_DIR && mkdir -p $REMOTE_DIR && tar -x -C $REMOTE_DIR"
 
-say "building control-plane image on $HOST (native aarch64)"
-# --build-arg REVISION: the image is built from the shipped tar, which carries
-# no .git, so the binary has no way to discover what it is (task t32, issue
-# #104). Passed here and again through compose's own build args below, because
-# the two build the same Dockerfile by different routes and a revision stamped
-# into only one of them is a control plane whose answer depends on which lane
-# last rebuilt it. VERSION is deliberately left at its Dockerfile default: it
-# is the package's declared version, not this deploy's commit, and conflating
-# the two would make GET /v1alpha1/version report a sha twice.
-#
-# --label culture-nodes.revision: the same fact, readable from OUTSIDE the
-# process (task t2, spec c26). The api serves its revision on
-# GET /v1alpha1/version, but a worker has no HTTP surface at all, so the only
-# revision-bearing fact a running worker exposes is the label on the image its
-# container was created from — `docker inspect` reads it back in the parity
-# check below. The label rides the same `docker build` as the build arg, so
-# the two cannot name different commits. This is also why the compose `up`
-# calls below no longer pass --build: a compose rebuild would re-tag
-# culture-nodes:prod with an image that carries the arg but not the label,
-# and the parity check would read an empty label off a correct binary.
-ssh "$HOST" "cd $REMOTE_DIR && docker build -q --build-arg REVISION=$REVISION --label culture-nodes.revision=$REVISION -t culture-nodes:prod ."
+  say "building control-plane image on $HOST (native aarch64)"
+  # --build-arg REVISION: the image is built from the shipped tar, which carries
+  # no .git, so the binary has no way to discover what it is (task t32, issue
+  # #104). Passed here and again through compose's own build args below, because
+  # the two build the same Dockerfile by different routes and a revision stamped
+  # into only one of them is a control plane whose answer depends on which lane
+  # last rebuilt it. VERSION is deliberately left at its Dockerfile default: it
+  # is the package's declared version, not this deploy's commit, and conflating
+  # the two would make GET /v1alpha1/version report a sha twice.
+  #
+  # --label culture-nodes.revision: the same fact, readable from OUTSIDE the
+  # process (task t2, spec c26). The api serves its revision on
+  # GET /v1alpha1/version, but a worker has no HTTP surface at all, so the only
+  # revision-bearing fact a running worker exposes is the label on the image its
+  # container was created from — `docker inspect` reads it back in the parity
+  # check below. The label rides the same `docker build` as the build arg, so
+  # the two cannot name different commits. This is also why the compose `up`
+  # calls below no longer pass --build: a compose rebuild would re-tag
+  # culture-nodes:prod with an image that carries the arg but not the label,
+  # and the parity check would read an empty label off a correct binary.
+  ssh "$HOST" "cd $REMOTE_DIR && docker build -q --build-arg REVISION=$REVISION --label culture-nodes.revision=$REVISION -t culture-nodes:prod ."
 
-say "building nodes-runner host binary on $HOST"
-# Issue #17. Two things were wrong here, and only one of them was the shell.
-#
-# 1. The destination is the binary of the RUNNING nodes-runner unit, so
-#    writing it in place fails with ETXTBSY ("scp: dest open ... Failure",
-#    observed on the 2026-08-11 thor deploy). Both paths below therefore
-#    write `nodes-runner.new` and RENAME over the target: a rename is fine
-#    while the old inode is still executing, and needs no unit stop.
-# 2. The failure was swallowed. The fallback used to be a `{ ... }` group on
-#    the right of `||` containing an `&&` chain; every command in an `&&`
-#    list except the last runs with -e ignored, and bash does not exit when
-#    a compound command returns non-zero because a command failed while -e
-#    was being ignored. So the deploy carried on and restarted the unit on
-#    the previous build. `if ! <cond>; then <body>; fi` exempts only the
-#    CONDITION, so every command in the body below is back under `set -e`
-#    and a failed ship aborts the deploy where it happens.
-if ! ssh "$HOST" "bash -lc 'cd $REMOTE_DIR && go build -o ~/.culture-nodes/bin/nodes-runner.new ./cmd/nodes-runner'"; then
-  echo "remote Go missing — building here and copying (same arch)"
-  go build -o /tmp/nodes-runner ./cmd/nodes-runner
-  ssh "$HOST" 'mkdir -p ~/.culture-nodes/bin'
-  scp -q /tmp/nodes-runner "$HOST":.culture-nodes/bin/nodes-runner.new
-  rm -f /tmp/nodes-runner
+  say "building nodes-runner host binary on $HOST"
+  # Issue #17. Two things were wrong here, and only one of them was the shell.
+  #
+  # 1. The destination is the binary of the RUNNING nodes-runner unit, so
+  #    writing it in place fails with ETXTBSY ("scp: dest open ... Failure",
+  #    observed on the 2026-08-11 thor deploy). Both paths below therefore
+  #    write `nodes-runner.new` and RENAME over the target: a rename is fine
+  #    while the old inode is still executing, and needs no unit stop.
+  # 2. The failure was swallowed. The fallback used to be a `{ ... }` group on
+  #    the right of `||` containing an `&&` chain; every command in an `&&`
+  #    list except the last runs with -e ignored, and bash does not exit when
+  #    a compound command returns non-zero because a command failed while -e
+  #    was being ignored. So the deploy carried on and restarted the unit on
+  #    the previous build. `if ! <cond>; then <body>; fi` exempts only the
+  #    CONDITION, so every command in the body below is back under `set -e`
+  #    and a failed ship aborts the deploy where it happens.
+  if ! ssh "$HOST" "bash -lc 'cd $REMOTE_DIR && go build -o ~/.culture-nodes/bin/nodes-runner.new ./cmd/nodes-runner'"; then
+    echo "remote Go missing — building here and copying (same arch)"
+    go build -o /tmp/nodes-runner ./cmd/nodes-runner
+    ssh "$HOST" 'mkdir -p ~/.culture-nodes/bin'
+    scp -q /tmp/nodes-runner "$HOST":.culture-nodes/bin/nodes-runner.new
+    rm -f /tmp/nodes-runner
+  fi
+  ssh "$HOST" 'mv -f ~/.culture-nodes/bin/nodes-runner.new ~/.culture-nodes/bin/nodes-runner'
+
+  # The cutover adopter is deliberately a host one-shot: it briefly reads the
+  # runner's Jira Basic-auth pair, which must never enter any long-lived
+  # control-plane container. It ships as its own binary (nodes-cutover) beside
+  # nodes-runner — NOT as ./cmd/nodes, which deviation d1 removed from this
+  # lane (tests/deploy/codexdeploylane_test.go): the host query CLI stays the
+  # Python nodes package.
+  say "building nodes-cutover one-shot host binary on $HOST"
+  if ! ssh "$HOST" "bash -lc 'cd $REMOTE_DIR && go build -o ~/.culture-nodes/bin/nodes-cutover.new ./cmd/nodes-cutover'"; then
+    echo "remote Go missing — building nodes-cutover here and copying (same arch)"
+    go build -o /tmp/nodes-cutover ./cmd/nodes-cutover
+    scp -q /tmp/nodes-cutover "$HOST":.culture-nodes/bin/nodes-cutover.new
+    rm -f /tmp/nodes-cutover
+  fi
+  ssh "$HOST" 'mv -f ~/.culture-nodes/bin/nodes-cutover.new ~/.culture-nodes/bin/nodes-cutover'
+
+  say "ensuring headspace CLI on $HOST (uv tool)"
+  ssh "$HOST" 'bash -lc "command -v headspace >/dev/null || { command -v uv >/dev/null || curl -LsSf https://astral.sh/uv/install.sh | sh; \$HOME/.local/bin/uv tool install headspace-cli || uv tool install headspace-cli; }; command -v headspace"'
+
+  say "installing runner env + systemd user unit on $HOST"
+  # shellcheck source=deploy/prod/lanes/runner-env-write.sh
+  source "$SCRIPT_DIR/lanes/runner-env-write.sh"
+  ssh "$HOST" "loginctl enable-linger \$(id -un) 2>/dev/null || true"
+  ssh "$HOST" "export XDG_RUNTIME_DIR=/run/user/\$(id -u); mkdir -p ~/.config/systemd/user && cp $REMOTE_DIR/deploy/prod/nodes-runner.service ~/.config/systemd/user/ && systemctl --user daemon-reload && systemctl --user restart nodes-runner && systemctl --user enable nodes-runner"
+  ssh "$HOST" 'export XDG_RUNTIME_DIR=/run/user/$(id -u); for i in $(seq 1 15); do st=$(systemctl --user is-active nodes-runner || true); [ "$st" = active ] && { echo "runner: active"; exit 0; }; sleep 2; done; echo "runner failed to become active:"; systemctl --user --no-pager -n 10 status nodes-runner; exit 1'
 fi
-ssh "$HOST" 'mv -f ~/.culture-nodes/bin/nodes-runner.new ~/.culture-nodes/bin/nodes-runner'
 
-# The cutover adopter is deliberately a host one-shot: it briefly reads the
-# runner's Jira Basic-auth pair, which must never enter any long-lived
-# control-plane container. It ships as its own binary (nodes-cutover) beside
-# nodes-runner — NOT as ./cmd/nodes, which deviation d1 removed from this
-# lane (tests/deploy/codexdeploylane_test.go): the host query CLI stays the
-# Python nodes package.
-say "building nodes-cutover one-shot host binary on $HOST"
-if ! ssh "$HOST" "bash -lc 'cd $REMOTE_DIR && go build -o ~/.culture-nodes/bin/nodes-cutover.new ./cmd/nodes-cutover'"; then
-  echo "remote Go missing — building nodes-cutover here and copying (same arch)"
-  go build -o /tmp/nodes-cutover ./cmd/nodes-cutover
-  scp -q /tmp/nodes-cutover "$HOST":.culture-nodes/bin/nodes-cutover.new
-  rm -f /tmp/nodes-cutover
-fi
-ssh "$HOST" 'mv -f ~/.culture-nodes/bin/nodes-cutover.new ~/.culture-nodes/bin/nodes-cutover'
-
-say "ensuring headspace CLI on $HOST (uv tool)"
-ssh "$HOST" 'bash -lc "command -v headspace >/dev/null || { command -v uv >/dev/null || curl -LsSf https://astral.sh/uv/install.sh | sh; \$HOME/.local/bin/uv tool install headspace-cli || uv tool install headspace-cli; }; command -v headspace"'
-
-say "installing runner env + systemd user unit on $HOST"
-# shellcheck source=deploy/prod/lanes/runner-env-write.sh
-source "$SCRIPT_DIR/lanes/runner-env-write.sh"
-ssh "$HOST" "loginctl enable-linger \$(id -un) 2>/dev/null || true"
-ssh "$HOST" "export XDG_RUNTIME_DIR=/run/user/\$(id -u); mkdir -p ~/.config/systemd/user && cp $REMOTE_DIR/deploy/prod/nodes-runner.service ~/.config/systemd/user/ && systemctl --user daemon-reload && systemctl --user restart nodes-runner && systemctl --user enable nodes-runner"
-ssh "$HOST" 'export XDG_RUNTIME_DIR=/run/user/$(id -u); for i in $(seq 1 15); do st=$(systemctl --user is-active nodes-runner || true); [ "$st" = active ] && { echo "runner: active"; exit 0; }; sleep 2; done; echo "runner failed to become active:"; systemctl --user --no-pager -n 10 status nodes-runner; exit 1'
-
-# --- codex actor bridge lane (plan t3) ------------------------------------
+# --- codex actor bridge lane (plan t3; as the culture-codex account since #243)
 # Both thor and orin run their own managed codex actor (company/codex-thor,
 # company/codex-orin), so this lane is host-agnostic and runs once per
 # deploy for whichever host was named — it deliberately lives outside the
 # case below rather than being duplicated into each branch.
 #
-# The checkout-provisioning step below WARNS rather than fails: see the
-# comment on that step.
-CODEX_AGENT_CHECKOUT_REMOTE='repo=$HOME/git/culture-nodes-agent
-if [ ! -d "$repo/.git" ]; then
-  mkdir -p "$HOME/git" || exit 3
-  git clone https://github.com/agentculture/culture-nodes "$repo" || exit 3
-  echo "agent checkout: cloned $repo"
-  exit 0
-fi
-if [ -n "$(git -C "$repo" status --porcelain)" ]; then
-  echo "agent checkout $repo has uncommitted changes — refusing to touch it (harvest the diff, then reset, per the runbook)" >&2
-  exit 3
-fi
-upstream=$(git -C "$repo" rev-parse --abbrev-ref --symbolic-full-name @{u} 2>/dev/null || echo origin/main)
-git -C "$repo" fetch "${upstream%%/*}" || { echo "agent checkout $repo: git fetch ${upstream%%/*} failed — leaving it untouched" >&2; exit 3; }
-git -C "$repo" merge --ff-only "$upstream" || { echo "agent checkout $repo has diverged from $upstream — refusing to touch it (no rebase, no reset)" >&2; exit 3; }
-echo "agent checkout: fast-forwarded $repo to $upstream"'
+# The agent checkout (~/git/culture-nodes-agent) is the ACCOUNT's own since
+# #243 and is provisioned by lanes/unix-user.sh (clone when absent, fast-
+# forward when clean, REFUSE when dirty or diverged — the account's clone is
+# nobody's harvest workspace, so a diff in it is a session that has not
+# handed over, and the deploy stops rather than warns). The login user's old
+# checkout is never touched: it stays harvestable exactly as before.
 
 # stamp_revision <host> <adapter-dir-name> <package-dir-name> — record WHICH
 # REVISION this deploy is about to install into a bridge (task t32, issue #120
@@ -179,48 +189,53 @@ EOF
   say "stamped $adapter with revision $(git rev-parse --short "$REVISION") on $host"
 }
 
-deploy_codex_bridge() { # host — runs identically on thor and orin
+deploy_codex_bridge() { # host — runs identically on thor and orin, AS culture-codex
   local host=$1
-  local remote_home
+  local target remote_home login
+  # Every account-side step below addresses the ACCOUNT, never the login
+  # user: `~` and $HOME on the far side are /home/culture-codex, so the
+  # same relative paths the login-user lane used now land in the account.
+  target=$(unix_user_target "$host" codex)
+
+  # The account itself (bootstrapped, or the refusal naming the hand-turn),
+  # its pinned codex + uv + clone + inventory, and its own archive copy.
+  account_prepare "$host" codex || exit 1
 
   # install-secrets.sh owns the bridge bearer token exactly as it owns
-  # prod.env; deploy.sh only consumes it. Fail early with the same kind of
-  # "run the other script first" message prod.env's absence produces.
-  ssh "$host" 'test -f ~/.culture-nodes/codex-bridge.env' \
-    || { echo "~/.culture-nodes/codex-bridge.env missing on $host — run deploy/prod/install-secrets.sh first" >&2; exit 1; }
+  # prod.env; deploy.sh only consumes it. Its account step mirrors the login
+  # user's copy into the account once the account exists — so a FIRST
+  # cutover is two runs by design: this one creates and provisions the
+  # account, install-secrets.sh fills it, the re-run installs the unit.
+  ssh "$target" 'test -f ~/.culture-nodes/codex-bridge.env' \
+    || { echo "~/.culture-nodes/codex-bridge.env missing in $target — run deploy/prod/install-secrets.sh (its culture-codex step mirrors the bridge token into the account), then re-run this deploy; nothing on $host was stopped" >&2; exit 1; }
 
   # Before the install, never after: `uv tool install` copies (see below).
-  stamp_revision "$host" codex codex_bridge
+  stamp_revision "$target" codex codex_bridge
 
-  say "installing the codex-bridge uv tool on $host (archive-independent)"
+  say "installing the codex-bridge uv tool in $target (archive-independent)"
   # `uv tool install` — NOT --editable, and not `uv run --project` — builds
   # the package and COPIES it into its own tool venv under ~/.local/share/uv,
   # so ~/.local/bin/codex-bridge keeps serving after the next deploy's
   # `rm -rf $REMOTE_DIR` deletes the tree it was installed from (c21/h19).
   # An editable install would keep pointing at the archive and break there.
-  ssh "$host" "bash -lc 'command -v uv >/dev/null || curl -LsSf https://astral.sh/uv/install.sh | sh; \$HOME/.local/bin/uv tool install --force ./$REMOTE_DIR/adapters/codex || uv tool install --force ./$REMOTE_DIR/adapters/codex'"
+  # The account's uv is the one unix_user_provision put in its ~/.local/bin.
+  ssh "$target" "\$HOME/.local/bin/uv tool install --force ./$REMOTE_DIR/adapters/codex"
 
-  say "installing the nodes query CLI on $host (PyPI culture-nodes)"
+  say "installing the nodes query CLI in $target (PyPI culture-nodes)"
   # Deviation d1: the host-side query CLI is the PYTHON `nodes` CLI from
   # PyPI, not the Go cmd/nodes binary — cmd/nodes has no query verbs, so
   # there is nothing to build or scp here.
-  ssh "$host" "bash -lc 'command -v uv >/dev/null || curl -LsSf https://astral.sh/uv/install.sh | sh; \$HOME/.local/bin/uv tool install --force culture-nodes || uv tool install --force culture-nodes'"
+  ssh "$target" "\$HOME/.local/bin/uv tool install --force culture-nodes"
 
-  say "provisioning the codex agent checkout on $host (~/git/culture-nodes-agent)"
-  # Warn, don't fail: a dirty checkout is an EXPECTED operator state — write
-  # sessions leave diffs the operator harvests and then resets (harvest/reset
-  # runbook). Refusing to touch such a checkout must not block the bridge
-  # deploy itself, so a refusal here is reported and the lane continues.
-  ssh "$host" "$CODEX_AGENT_CHECKOUT_REMOTE" \
-    || say "WARNING: agent checkout on $host left untouched (reason above) — continuing deploy"
-
-  say "installing codex preflight + bridge config on $host"
-  ssh "$host" "umask 077; mkdir -p ~/.culture-nodes/bin ~/.culture-nodes/codex-bridge-state && cp $REMOTE_DIR/deploy/prod/codex-preflight.sh ~/.culture-nodes/bin/codex-preflight.sh && chmod +x ~/.culture-nodes/bin/codex-preflight.sh"
+  say "installing codex preflight + bridge config in $target"
+  ssh "$target" "umask 077; mkdir -p ~/.culture-nodes/bin ~/.culture-nodes/codex-bridge-state && cp $REMOTE_DIR/deploy/prod/codex-preflight.sh ~/.culture-nodes/bin/codex-preflight.sh && chmod +x ~/.culture-nodes/bin/codex-preflight.sh"
   # Same generate-absolute-paths-at-install-time technique runner.env uses:
-  # the substitution runs on the TARGET, so __HOME__ becomes that host's own
-  # $HOME. (The bridge config is JSON, not a systemd unit — %h would mean
+  # the substitution runs on the TARGET, so __HOME__ becomes the ACCOUNT's
+  # own $HOME — /home/culture-codex — which is what makes codex_bin,
+  # CODEX_HOME, the state dir and the repo_allowlist all point inside the
+  # account. (The bridge config is JSON, not a systemd unit — %h would mean
   # nothing inside it.)
-  ssh "$host" "sed \"s|__HOME__|\$HOME|g\" $REMOTE_DIR/deploy/prod/codex-bridge.json.template > ~/.culture-nodes/codex-bridge.json"
+  ssh "$target" "umask 077; sed \"s|__HOME__|\$HOME|g\" $REMOTE_DIR/deploy/prod/codex-bridge.json.template > ~/.culture-nodes/codex-bridge.json"
 
   # The bridge stamps its actor_id as origin_actor_id on every proposed
   # ledger claim, and ledger_records.origin_actor_id is a FOREIGN KEY into
@@ -229,50 +244,68 @@ deploy_codex_bridge() { # host — runs identically on thor and orin
   # Resolve the registered row id from thor's DB the same way the namespace
   # id is resolved; before first registration there is no row yet, so warn
   # and leave the default — register-actor.sh + a re-deploy completes it.
-  ACTOR_ID=$(ssh thor "cd $REMOTE_DIR/deploy/prod 2>/dev/null && docker compose --env-file ~/.culture-nodes/prod.env -f compose.thor.yml exec -T postgres psql -U nodes -d nodes -Atc \"SELECT id FROM actors WHERE actor_key = 'company/codex-${host}' ORDER BY revision DESC LIMIT 1\"" 2>/dev/null || true)
+  # Inlined rather than resolve_actor_row_id: that helper is defined further
+  # down, after this lane has already run (bash binds function names at
+  # call time), and the lookup reads thor's database as the LOGIN user there
+  # — the account holds no database credential and never will.
+  ACTOR_ID=$(ssh "${THOR_HOST:-thor}" "cd $REMOTE_DIR/deploy/prod 2>/dev/null && docker compose --env-file ~/.culture-nodes/prod.env -f compose.thor.yml exec -T postgres psql -U nodes -d nodes -Atc \"SELECT id FROM actors WHERE actor_key = 'company/codex-${host}' ORDER BY revision DESC LIMIT 1\"" 2>/dev/null | tr -d '\r' || true)
   if [ -n "$ACTOR_ID" ]; then
-    ssh "$host" "python3 - <<PYEOF
+    ssh "$target" "python3 - <<PYEOF
 import json
 p = __import__('os').path.expanduser('~/.culture-nodes/codex-bridge.json')
 cfg = json.load(open(p))
 cfg['actor_id'] = '$ACTOR_ID'
 json.dump(cfg, open(p, 'w'), indent=2)
 PYEOF"
-    say "bridge actor_id on $host set to registered row $ACTOR_ID"
+    say "bridge actor_id in $target set to registered row $ACTOR_ID"
   else
     say "WARNING: no registered actor row for company/codex-$host yet — bridge keeps its default actor_id; ledger commits will fail until you run register-actor.sh and re-deploy"
   fi
 
-  say "running the non-billable codex preflight on $host"
+  say "running the non-billable codex preflight as $target"
   # The unit runs this as ExecStartPre anyway; running it once here fails
   # fast at deploy time instead of only at unit start. SKIP_CODEX_PREFLIGHT=1
   # downgrades it to a warning for bootstrap ordering (e.g. codex not logged
-  # in yet on a brand-new host).
+  # in yet in a brand-new account).
   # Source the bridge env first — the unit's EnvironmentFile delivers
   # CODEX_BRIDGE_AUTH_TOKEN to ExecStartPre, so the deploy-time run must see
   # the same variable or its non-loopback auth check would falsely fail.
-  if ! ssh "$host" 'set -a; . ~/.culture-nodes/codex-bridge.env; set +a; ~/.culture-nodes/bin/codex-preflight.sh ~/.culture-nodes/codex-bridge.json'; then
+  # Check 8 (no sudo/docker group, checkout owned by the running uid) is
+  # measured HERE, as the account, which is the only place it means anything.
+  if ! ssh "$target" 'set -a; . ~/.culture-nodes/codex-bridge.env; set +a; ~/.culture-nodes/bin/codex-preflight.sh ~/.culture-nodes/codex-bridge.json'; then
     if [ "${SKIP_CODEX_PREFLIGHT:-0}" = "1" ]; then
-      say "WARNING: codex preflight failed on $host but SKIP_CODEX_PREFLIGHT=1 — installing the unit anyway"
+      say "WARNING: codex preflight failed in $target but SKIP_CODEX_PREFLIGHT=1 — installing the unit anyway"
     else
-      echo "codex preflight failed on $host — fix the reported condition, or re-run with SKIP_CODEX_PREFLIGHT=1 to install anyway" >&2
+      echo "codex preflight failed in $target — fix the reported condition, or re-run with SKIP_CODEX_PREFLIGHT=1 to install anyway" >&2
       exit 1
     fi
   fi
 
-  say "installing codex-bridge systemd user unit on $host"
-  ssh "$host" "loginctl enable-linger \$(id -un) 2>/dev/null || true"
-  ssh "$host" "export XDG_RUNTIME_DIR=/run/user/\$(id -u); mkdir -p ~/.config/systemd/user && cp $REMOTE_DIR/deploy/prod/codex-bridge.service ~/.config/systemd/user/ && systemctl --user daemon-reload && systemctl --user restart codex-bridge && systemctl --user enable codex-bridge"
-  ssh "$host" 'export XDG_RUNTIME_DIR=/run/user/$(id -u); for i in $(seq 1 15); do st=$(systemctl --user is-active codex-bridge || true); [ "$st" = active ] && { echo "codex-bridge: active"; exit 0; }; sleep 2; done; echo "codex-bridge failed to become active:"; systemctl --user --no-pager -n 10 status codex-bridge; exit 1'
+  # The cutover (c31/c32): refuse while a session is in flight as the
+  # ACCOUNT (a redeploy after the migration; #249 finding 3) or as the login
+  # user, then stop + disable the login unit (file, config and env stay for
+  # the rollback pair), then install and start the account's copy on the
+  # same port. Linger for the account was enabled by the bootstrap.
+  login=$(ssh "$host" 'id -un' | tr -d '\r')
+  account_session_guard "$host" codex || exit 1
+  account_cutover_login_unit "$host" "$login" codex-bridge || exit 1
 
-  remote_home=$(ssh "$host" 'printf %s "$HOME"' || true)
+  say "installing codex-bridge systemd user unit into $target"
+  ssh "$target" "export XDG_RUNTIME_DIR=/run/user/\$(id -u); mkdir -p ~/.config/systemd/user && cp $REMOTE_DIR/deploy/prod/codex-bridge.service ~/.config/systemd/user/ && systemctl --user daemon-reload && systemctl --user restart codex-bridge && systemctl --user enable codex-bridge"
+  ssh "$target" 'export XDG_RUNTIME_DIR=/run/user/$(id -u); for i in $(seq 1 15); do st=$(systemctl --user is-active codex-bridge || true); [ "$st" = active ] && { echo "codex-bridge: active"; exit 0; }; sleep 2; done; echo "codex-bridge failed to become active:"; systemctl --user --no-pager -n 10 status codex-bridge; exit 1'
+
+  # The registry row learns which account serves it (#204's lane tag).
+  account_register_os_user "company/codex-${host}" culture-codex
+
+  remote_home=$(ssh "$target" 'printf %s "$HOME"' || true)
   # h17: ~/.local/bin is only on PATH in a *login* shell on orin, so the
   # success line prints the absolute path an operator (or a codex session
   # running under a non-login shell) can invoke unconditionally.
-  say "codex-bridge active on $host — query CLI at ${remote_home:-\$HOME}/.local/bin/nodes (use the absolute path; ~/.local/bin is on PATH in login shells only)"
+  say "codex-bridge active as $target — query CLI at ${remote_home:-\$HOME}/.local/bin/nodes (use the absolute path; ~/.local/bin is on PATH in login shells only)"
 }
 
-deploy_codex_bridge "$HOST"
+# Bridge lanes run for the codex hosts only; spark has no codex actor.
+if [[ "$HOST" != spark* ]]; then deploy_codex_bridge "$HOST"; fi
 
 # --- human-inbox actor bridge lane (task t34: deploy wiring for the t16
 # kind=human bridge + its GitHub merge tracker; task t10: host derivation) --
@@ -676,16 +709,21 @@ case "$HOST" in
     # dispatch silently loses writes without (#63). Same posture as the
     # credential audit above: a detector that fails the deploy LOUDLY at
     # the end, not a gate that leaves the stack half-shipped.
-    say "running nodes doctor on $HOST"
-    ssh "$HOST" "cd \$HOME/git/culture-nodes-agent && \$HOME/.local/bin/nodes doctor" || { echo "nodes doctor reports unhealthy on $HOST" >&2; exit 1; }
+    # As the ACCOUNT since #243: the agent lane is culture-codex's checkout
+    # and culture-codex's nodes CLI, so that is where the four checks mean
+    # something. The login user's copies are the rollback posture, not the
+    # lane this deploy shipped.
+    say "running nodes doctor as culture-codex on $HOST"
+    ssh "$(unix_user_target "$HOST" codex)" "cd \$HOME/git/culture-nodes-agent && \$HOME/.local/bin/nodes doctor" || { echo "nodes doctor reports unhealthy in culture-codex on $HOST" >&2; exit 1; }
+    account_bridges_summary "$HOST"
     deploy_summary thor
     ;;
   orin*)
     say "resolving thor's address from $HOST and starting the orin worker"
     THOR_IP=$(ssh "$HOST" "getent hosts thor | awk '{print \$1; exit}'")
     [ -n "$THOR_IP" ] || { echo "orin cannot resolve thor" >&2; exit 1; }
-    NS=$(ssh thor "curl -fsS http://localhost:18080/v1alpha1/namespaces | python3 -c 'import json,sys; rows=json.load(sys.stdin); print(rows[0][\"id\"] if rows else \"\")'")
-    [ -n "$NS" ] || { echo "thor has no namespace yet — deploy thor first" >&2; exit 1; }
+    NS=$(ssh "$THOR_HOST" "curl -fsS http://localhost:18080/v1alpha1/namespaces | python3 -c 'import json,sys; rows=json.load(sys.stdin); print(rows[0][\"id\"] if rows else \"\")'")
+    [ -n "$NS" ] || { echo "$THOR_HOST has no namespace yet — deploy thor first" >&2; exit 1; }
     ssh "$HOST" "grep -q '^THOR_IP=' ~/.culture-nodes/prod.env && sed -i 's/^THOR_IP=.*/THOR_IP=$THOR_IP/' ~/.culture-nodes/prod.env || echo THOR_IP=$THOR_IP >> ~/.culture-nodes/prod.env"
     ssh "$HOST" "grep -q '^NODES_NAMESPACE_ID=' ~/.culture-nodes/prod.env && sed -i 's/^NODES_NAMESPACE_ID=.*/NODES_NAMESPACE_ID=$NS/' ~/.culture-nodes/prod.env || echo NODES_NAMESPACE_ID=$NS >> ~/.culture-nodes/prod.env"
     # No --build: the image was built and labelled above (see the image build
@@ -698,10 +736,22 @@ case "$HOST" in
     # (see the thor lane's comment).
     "$SCRIPT_DIR/audit-credentials.sh" "$HOST"
     # Same doctor detector as the thor lane (PR #208 review finding 2).
-    say "running nodes doctor on $HOST"
-    ssh "$HOST" "cd \$HOME/git/culture-nodes-agent && \$HOME/.local/bin/nodes doctor" || { echo "nodes doctor reports unhealthy on $HOST" >&2; exit 1; }
+    say "running nodes doctor as culture-codex on $HOST"
+    ssh "$(unix_user_target "$HOST" codex)" "cd \$HOME/git/culture-nodes-agent && \$HOME/.local/bin/nodes doctor" || { echo "nodes doctor reports unhealthy in culture-codex on $HOST" >&2; exit 1; }
+    account_bridges_summary "$HOST"
     deploy_summary orin
     ;;
+  spark*)
+    # Bridge lanes only (#243): the four claude bridges into culture-claude,
+    # qwen-developer into culture-qwen, over ssh culture-<engine>@localhost.
+    # No compose, no runner, no cutover, no two-host lane, no audit — the
+    # control plane is not on this host. The lane prints its own summary.
+    # The pre-deploy doctor first, as on thor/orin (#249 finding 7): a host
+    # the agent lane cannot work on is refused while every bridge is still
+    # the old one.
+    account_spark_preflight_doctor "$HOST" || exit 1
+    account_bridges_spark_lane "$HOST"
+    ;;
   *)
-    echo "unknown host role: $HOST (expected thor or orin)" >&2; exit 1;;
+    echo "unknown host role: $HOST (expected thor, orin or spark)" >&2; exit 1;;
 esac

@@ -30,6 +30,7 @@ import (
 	"path/filepath"
 	"regexp"
 	"runtime"
+	"strconv"
 	"strings"
 	"testing"
 )
@@ -139,6 +140,32 @@ func writeFakeBwrap(t *testing.T, dir string) string {
 	return path
 }
 
+// fakeIdScript is a controllable stand-in for the coreutils `id` binary,
+// the vehicle for check 8 (issue #243: the dedicated-account safety line
+// replacing the bwrap sandbox). runPreflight always sets FAKE_ID_UID to the
+// real os.Getuid() of the test process by default -- so the ownership half
+// of check 8 (stat -c %u vs id -u) matches by default on every fixture the
+// git checkouts under t.TempDir() actually own -- and FAKE_ID_GROUPS to a
+// benign list containing neither "sudo" nor "docker". Individual tests
+// override one or the other via extraEnv to drive a specific refusal.
+const fakeIdScript = `#!/usr/bin/env bash
+case "$1" in
+  -nG) printf '%s\n' "${FAKE_ID_GROUPS:-users adm}" ;;
+  -u) printf '%s\n' "${FAKE_ID_UID:-0}" ;;
+  *) echo "fake-id: unexpected invocation: $*" >&2; exit 1 ;;
+esac
+`
+
+// writeFakeId writes fakeIdScript to dir/id and marks it executable.
+func writeFakeId(t *testing.T, dir string) string {
+	t.Helper()
+	path := filepath.Join(dir, "id")
+	if err := os.WriteFile(path, []byte(fakeIdScript), 0o755); err != nil {
+		t.Fatalf("write fake id: %v", err)
+	}
+	return path
+}
+
 // gitCheckout creates a real git repo at dir/name and returns its path --
 // the positive fixture for the repo_allowlist check.
 func gitCheckout(t *testing.T, dir, name string) string {
@@ -189,12 +216,41 @@ func writeConfig(t *testing.T, dir string, cfg preflightConfig) string {
 // there (writeFakeBwrap) shadows the real one for check 7. Prepending, not
 // replacing: the script still needs git, python3, sed and friends from the
 // ambient PATH, and every other check depends on them.
+// runPreflight builds the child environment as a KEY->value map (rather
+// than a plain appended slice) specifically so a FAKE_ID_* override in
+// extraEnv replaces rather than duplicates the default this function sets
+// -- duplicate keys in an execve envp are not reliably "last wins" across
+// shells/libcs, so de-duplication has to happen before exec, not after.
 func runPreflight(t *testing.T, configPath string, extraEnv ...string) (stdout, stderr string, err error) {
 	t.Helper()
 	script := preflightScriptPath(t)
 	cmd := exec.Command(script, configPath)
-	env := append(os.Environ(), "PATH="+filepath.Dir(configPath)+string(os.PathListSeparator)+os.Getenv("PATH"))
-	cmd.Env = append(env, extraEnv...)
+
+	envMap := map[string]string{}
+	for _, kv := range os.Environ() {
+		if idx := strings.IndexByte(kv, '='); idx >= 0 {
+			envMap[kv[:idx]] = kv[idx+1:]
+		}
+	}
+	envMap["PATH"] = filepath.Dir(configPath) + string(os.PathListSeparator) + os.Getenv("PATH")
+	// check-8 defaults: match the real test-process uid (so the
+	// repo_allowlist ownership half of check 8 passes on the git
+	// checkouts baseConfig actually created) and a group list that
+	// contains neither "sudo" nor "docker".
+	envMap["FAKE_ID_UID"] = strconv.Itoa(os.Getuid())
+	envMap["FAKE_ID_GROUPS"] = "users adm"
+	for _, kv := range extraEnv {
+		if idx := strings.IndexByte(kv, '='); idx >= 0 {
+			envMap[kv[:idx]] = kv[idx+1:]
+		}
+	}
+
+	env := make([]string, 0, len(envMap))
+	for k, v := range envMap {
+		env = append(env, k+"="+v)
+	}
+	cmd.Env = env
+
 	var outBuf, errBuf bytes.Buffer
 	cmd.Stdout = &outBuf
 	cmd.Stderr = &errBuf
@@ -215,6 +271,7 @@ func baseConfig(t *testing.T, dir string) preflightConfig {
 	t.Helper()
 	fakeCodex := writeFakeCodex(t, dir)
 	writeFakeBwrap(t, dir)
+	writeFakeId(t, dir)
 	repo := gitCheckout(t, dir, "repo")
 	return preflightConfig{
 		CodexBin:      fakeCodex,
@@ -259,7 +316,9 @@ func TestPreflightReadsConfigPathFromEnv(t *testing.T) {
 	// its own command instead of calling runPreflight must repeat this.
 	cmd.Env = append(os.Environ(),
 		"PATH="+dir+string(os.PathListSeparator)+os.Getenv("PATH"),
-		"CODEX_BRIDGE_CONFIG="+configPath)
+		"CODEX_BRIDGE_CONFIG="+configPath,
+		"FAKE_ID_UID="+strconv.Itoa(os.Getuid()),
+		"FAKE_ID_GROUPS=users adm")
 	var outBuf, errBuf bytes.Buffer
 	cmd.Stdout = &outBuf
 	cmd.Stderr = &errBuf
@@ -469,39 +528,117 @@ func requireFailure(t *testing.T, err error, stderr, wantSubstr string) {
 // Check 7: the host can create an unprivileged user namespace (issue #63)
 // ---------------------------------------------------------------------------
 
-// TestPreflightRefusesWhenUserNamespacesAreBlocked is the check that would
-// have caught issue #63 before a single billable session was dispatched.
-//
-// The failure it guards against is not a bridge bug and does not look like
-// one: on Ubuntu 24.04, kernel.apparmor_restrict_unprivileged_userns=1
-// blocks unprivileged user-namespace creation, so bubblewrap cannot build
-// the sandbox codex runs every shell command inside. The actor registers,
-// accepts dispatched work, and then fails each command it tries to run --
-// after the turn is spent. Preflight is the last free place to find out.
-func TestPreflightRefusesWhenUserNamespacesAreBlocked(t *testing.T) {
+// TestPreflightWarnsButSucceedsWhenUserNamespacesAreBlocked covers issue
+// #243's downgrade of check 7: the bridges now run under a dedicated Unix
+// account (check 8) instead of relying on codex's own bwrap sandbox, so a
+// restricted userns sysctl is no longer a deploy blocker -- it prints the
+// same "preflight: ..." text it always did, but with exit 0.
+func TestPreflightWarnsButSucceedsWhenUserNamespacesAreBlocked(t *testing.T) {
 	dir := t.TempDir()
 	cfg := baseConfig(t, dir)
 	configPath := writeConfig(t, dir, cfg)
 
 	_, stderr, err := runPreflight(t, configPath, "FAKE_BWRAP_BEHAVIOR=blocked")
-	requireFailure(t, err, stderr, "cannot create a user namespace")
+	if err != nil {
+		t.Fatalf("expected success (check 7 is now a warning, not a refusal), got error %v\nstderr=%s", err, stderr)
+	}
+	if !strings.Contains(stderr, "cannot create a user namespace") {
+		t.Errorf("stderr = %q, want the original check-7 warning text preserved", stderr)
+	}
 }
 
-// TestPreflightUsernsRefusalNamesTheRemedy asserts the refusal carries the
-// sysctl by name. A message that only says "bwrap failed" sends an operator
-// to the bridge, the runner, or codex itself -- the three places the fault
-// is NOT -- which is exactly the wrong-layer hunt #63 records.
-func TestPreflightUsernsRefusalNamesTheRemedy(t *testing.T) {
+// TestPreflightUsernsWarningNamesTheRemedy asserts the (now non-fatal)
+// message still carries the sysctl by name. A message that only says
+// "bwrap failed" sends an operator to the bridge, the runner, or codex
+// itself -- the three places the fault is NOT -- which is exactly the
+// wrong-layer hunt #63 records; downgrading to a warning must not lose
+// that content.
+func TestPreflightUsernsWarningNamesTheRemedy(t *testing.T) {
 	dir := t.TempDir()
 	cfg := baseConfig(t, dir)
 	configPath := writeConfig(t, dir, cfg)
 
 	_, stderr, err := runPreflight(t, configPath, "FAKE_BWRAP_BEHAVIOR=blocked")
-	if err == nil {
-		t.Fatalf("expected non-zero exit, got success; stderr=%s", stderr)
+	if err != nil {
+		t.Fatalf("expected success, got error %v\nstderr=%s", err, stderr)
 	}
 	if !strings.Contains(stderr, "kernel.apparmor_restrict_unprivileged_userns") {
-		t.Errorf("stderr = %q, want it to name the sysctl an operator has to change", stderr)
+		t.Errorf("stderr = %q, want it to name the sysctl an operator would have had to change", stderr)
+	}
+}
+
+// ---------------------------------------------------------------------------
+// Check 8: the process runs as a dedicated, unprivileged account (#243) --
+// the safety line the bwrap sandbox used to provide, now provided by the
+// account itself: refuse if the running user carries sudo/docker group
+// membership (either grants root-equivalent access), or if any
+// repo_allowlist checkout is not owned by the running uid.
+// ---------------------------------------------------------------------------
+
+// TestPreflightRefusesDockerGroupMembership covers the "id -nG contains
+// docker" half of check 8 -- docker-group membership is root-equivalent
+// (a container can bind-mount the host root), so it defeats the same
+// isolation goal a dedicated account exists for.
+func TestPreflightRefusesDockerGroupMembership(t *testing.T) {
+	dir := t.TempDir()
+	cfg := baseConfig(t, dir)
+	configPath := writeConfig(t, dir, cfg)
+
+	_, stderr, err := runPreflight(t, configPath, "FAKE_ID_GROUPS=users docker adm")
+	requireFailure(t, err, stderr, "docker")
+}
+
+// TestPreflightRefusesSudoGroupMembership covers the "id -nG contains sudo"
+// half of check 8.
+func TestPreflightRefusesSudoGroupMembership(t *testing.T) {
+	dir := t.TempDir()
+	cfg := baseConfig(t, dir)
+	configPath := writeConfig(t, dir, cfg)
+
+	_, stderr, err := runPreflight(t, configPath, "FAKE_ID_GROUPS=sudo users")
+	requireFailure(t, err, stderr, "sudo")
+}
+
+// TestPreflightAllowsGroupNameThatOnlyContainsSudoAsSubstring proves the
+// group check matches whole group names from id -nG's space-separated
+// list, not a substring -- a host with a "sudoers-readonly"-named group (or
+// similar) must not be refused for a name that merely contains "sudo".
+func TestPreflightAllowsGroupNameThatOnlyContainsSudoAsSubstring(t *testing.T) {
+	dir := t.TempDir()
+	cfg := baseConfig(t, dir)
+	configPath := writeConfig(t, dir, cfg)
+
+	_, stderr, err := runPreflight(t, configPath, "FAKE_ID_GROUPS=users sudoers-readonly dockerish")
+	if err != nil {
+		t.Fatalf("expected success (neither group is an exact 'sudo'/'docker' match), got error %v\nstderr=%s", err, stderr)
+	}
+}
+
+// TestPreflightRefusesRepoOwnedByAnotherUid covers the "repo_allowlist
+// entry not owned by the running uid" half of check 8. It uses a fake
+// id -u reporting a uid different from the one that actually owns the git
+// checkout baseConfig created, the same "fake id -u" technique the task
+// brief calls out as an alternative to a fake stat.
+func TestPreflightRefusesRepoOwnedByAnotherUid(t *testing.T) {
+	dir := t.TempDir()
+	cfg := baseConfig(t, dir)
+	configPath := writeConfig(t, dir, cfg)
+
+	_, stderr, err := runPreflight(t, configPath, "FAKE_ID_UID=1")
+	requireFailure(t, err, stderr, "not owned by the running user")
+}
+
+// TestPreflightAllowsRepoOwnedByRunningUid is the positive half: the
+// default baseConfig fixture (FAKE_ID_UID set to the real test-process
+// uid, which owns the git checkout it created) must pass check 8.
+func TestPreflightAllowsRepoOwnedByRunningUid(t *testing.T) {
+	dir := t.TempDir()
+	cfg := baseConfig(t, dir)
+	configPath := writeConfig(t, dir, cfg)
+
+	_, stderr, err := runPreflight(t, configPath)
+	if err != nil {
+		t.Fatalf("expected success, got error %v\nstderr=%s", err, stderr)
 	}
 }
 
@@ -565,7 +702,8 @@ func TestPreflightRefusalMessagesAreAllDistinct(t *testing.T) {
 			cfg.Host = "0.0.0.0"
 			cfg.AuthToken = ""
 		}},
-		{name: "user namespaces blocked", env: []string{"FAKE_BWRAP_BEHAVIOR=blocked"}},
+		{name: "docker group membership", env: []string{"FAKE_ID_GROUPS=users docker"}},
+		{name: "repo not owned by running uid", env: []string{"FAKE_ID_UID=1"}},
 	}
 
 	seen := map[string]string{}

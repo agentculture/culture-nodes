@@ -1,0 +1,711 @@
+{
+  "slug": "agents-as-os-users-243",
+  "title": "agents-as-os-users-243",
+  "frame_slug": "agents-as-os-users-243",
+  "schema_version": 4,
+  "status": "exported",
+  "created": "2026-08-29T16:09:40Z",
+  "updated": "2026-08-29T16:13:28Z",
+  "targets": [
+    {
+      "id": "c1",
+      "kind": "announcement",
+      "text": "Agents work freely as dedicated OS users per host: every worker actor on spark and orin runs as its own Unix account \u2014 its own home, checkout, caches and engine credentials \u2014 instead of inside a bwrap or docker sandbox; a codex-orin workspace-write dispatch fetches its base, runs the formatters and loopback tests, commits and pushes its handover ref with no operator pre-fetch or harvest; and every capability surface reports confinement: unix-user:<name> so the ledger says which account ran what",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "h1",
+      "kind": "honesty",
+      "text": "the proof runs are real prod run ids with ledgers, not a claim; and every account provisioned is verified to have no sudo and no docker group membership before a bridge is started under it",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "c2",
+      "kind": "requirement",
+      "text": "deploy: a fourth lane file deploy/prod/lanes/unix-user.sh provisions one Unix account per worker actor on the target (useradd, no sudo/docker group, loginctl enable-linger, the operator ssh key in its authorized_keys, its own git/culture-nodes-agent clone, uv tool install of the bridge, env files under its own ~/.culture-nodes) \u2014 deploy.sh has zero useradd/sudo today and every loginctl/XDG_RUNTIME_DIR idiom resolves to the ssh login user (deploy.sh:106,264,337-353); new logic lands in lanes/ because of the 1000-line guard",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "h2",
+      "kind": "honesty",
+      "text": "the lane is idempotent (re-running on a provisioned host changes nothing) and the bootstrap step is the ONLY step that needs root; every provisioning step after it runs over ssh <engine>@<host> as the account itself",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "c3",
+      "kind": "requirement",
+      "text": "units: the nine deploy/prod/*.service files stay systemd --user units with %h paths, unchanged; what changes is whose systemd instance they are installed into \u2014 bridge units go into the actor account (systemctl --user as that user via ssh <actor>@<host>), tests/deploy/codexbridgeunit_test.go and humaninboxunit_test.go pin the %h strings so system units with User= would fail them",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "h3",
+      "kind": "honesty",
+      "text": "after deploy, systemctl --user is-active under each engine account reports the bridge active and the same unit is no longer active under the login user",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "c4",
+      "kind": "requirement",
+      "text": "nodes-op.sh: the assign actor table (scripts/nodes-op.sh:369-392) repoints each actor to its own account home (/home/<actor-user>/git/culture-nodes-agent) and the c42 concurrent-writer rationale (lines 372-390) is rewritten as an ownership fact; SKILL.md:76-79 and :109-118 (write path unproven) are rewritten",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "h4",
+      "kind": "honesty",
+      "text": "nodes-op.sh assign to codex-orin ships repo=/home/culture-codex/git/culture-nodes-agent and the bridge's repo_allowlist accepts it",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "c5",
+      "kind": "requirement",
+      "text": "confinement reporting: the five per-backend capabilities.py constants become \"unix-user:<name>: ...\" prose (name read from the running uid via pwd/os.getuid, stdlib only) with their five substring tests updated; no HOST_KEYS or protocol change, so preflight.py stays byte-identical and internal/repair/lane.go is untouched",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "h5",
+      "kind": "honesty",
+      "text": "every advertising adapter's /v1/capabilities confinement string starts with unix-user:<account>, where <account> is read from the running uid, and preflight.py is still byte-identical across the five adapters",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "c6",
+      "kind": "requirement",
+      "text": "codex userns chain becomes advisory: _REQUIRES_USERNS (adapters/codex/src/codex_bridge/capabilities.py:39) no longer makes sandbox_modes_unavailable block dispatch, and codex-preflight.sh check 7 stops refusing the deploy \u2014 the probes, doctor check and GRANT_NESTED_CONFINEMENT stay, replaced as the deploy gate by a Unix-account gate (account exists, not in sudo/docker, owns the checkout)",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "h6",
+      "kind": "honesty",
+      "text": "a codex dispatch on a host whose userns sysctl is restricted is no longer refused by the bridge, and the fact is still reported in the surface",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "c7",
+      "kind": "requirement",
+      "text": "registry: register-actor.sh --metadata gains os_user=<name> (merge semantics already pinned by registeractor_test.go) so #204 lane registry can read the account as a lane tag",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "h7",
+      "kind": "honesty",
+      "text": "the registry row for each migrated actor carries os_user=culture-<engine> and re-running register-actor.sh keeps every prior metadata key",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "c8",
+      "kind": "requirement",
+      "text": "deviation record under docs/deviations/ superseding the premise of 2026-08-15-handover-fence.md (the sandbox was the egress fence) and naming the departure from PRD lines 31/222 (disposable Docker headspaces) in the PRD:1860 style of making reduced isolation explicit; PRD \u00a716.4 is not touched because bridges are actors, not the generic worker",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "h8",
+      "kind": "honesty",
+      "text": "the record names the handover-fence deviation it supersedes and the PRD lines it departs from, and is linked from #243 as a Record",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "c9",
+      "kind": "requirement",
+      "text": "live proof, through nodes: after deploy, one codex-orin workspace-write dispatch as the actor user must git fetch origin, run black/isort/flake8 under uv, run a loopback HTTP test, commit and push its handover ref, and the run + ledger are read and the claim decided through the approval surface; the same checks on spark against the developer or qwen-developer account",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "h9",
+      "kind": "honesty",
+      "text": "the run ids are dispatched through nodes-op.sh assign, not by hand; the ledger statements are read from prod and their claims decided through the approval surface; a failed leg is reported as failed",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "c10",
+      "kind": "requirement",
+      "text": "each hand-turn that creating the accounts costs (a password sudo on spark and orin) is recorded on #243 per the every-hand-turn rule; thor has NOPASSWD sudo (sudoers.d/thor-nopasswd), spark and orin do not (sudo -n: a password is required on both, measured 2026-08-29)",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "h10",
+      "kind": "honesty",
+      "text": "#243 carries one comment per sudo bootstrap naming the host and the command typed",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "c11",
+      "kind": "boundary",
+      "text": "nodes-runner, compose (prod-worker-1, api, scheduler), backups and prod.env stay under the operator account on every host: the runner needs the docker group and the DB, and an actor account in docker or sudo would void the confinement claim (deploy.sh:232,324 psql via docker compose exec; adr/0005 no docker socket)",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "h12",
+      "kind": "honesty",
+      "text": "id -nG culture-codex / culture-claude / culture-qwen contains neither docker nor sudo on any host, and nodes-runner + compose still run under the login user",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "c12",
+      "kind": "boundary",
+      "text": "the four spark claude bridges and qwen-developer currently share the spark account and five worktrees under /home/spark/git/.worktrees.culture-nodes; the operator checkout /home/spark/git/culture-nodes becomes unreadable to actor accounts (mode 750 already: drwxr-x--- on /home/spark)",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "h13",
+      "kind": "honesty",
+      "text": "ssh culture-claude@localhost ls /home/spark/git/culture-nodes is denied on spark",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "c18",
+      "kind": "requirement",
+      "text": "thor is in scope this cycle: culture-codex is provisioned on thor as well as orin, so all three hosts run their bridges as engine accounts (q2)",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "h11",
+      "kind": "honesty",
+      "text": "culture-codex exists on thor with linger, no sudo/docker group, and codex-bridge is active under it",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "c19",
+      "kind": "audience",
+      "text": "the operator lane that runs deploy.sh and types the two sudo bootstraps; the codex/claude/qwen bridges that become engine-account processes on thor, orin and spark; and the fleet reviewer reading the ledger to see which account ran a package",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "h16",
+      "kind": "honesty",
+      "text": "each audience can run its leg alone: the operator from deploy.sh plus two typed sudo bootstraps, the bridges from their units with no operator process in their session, the reviewer from the ledger's confinement prose with no session context",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "c20",
+      "kind": "after_state",
+      "text": "on every host each engine's bridges run as culture-codex / culture-claude / culture-qwen with their own home, checkout, caches and copied engine credentials; a codex-orin workspace-write dispatch fetches origin, formats, runs a loopback test, commits and pushes its handover ref without an operator pre-fetch or harvest; every advertising surface says confinement: unix-user:<name>; the bwrap userns chain is advisory",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "h17",
+      "kind": "honesty",
+      "text": "every sentence of the after-state maps to a measured h-condition (h3, h5, h9, h12, h13, h14, h15) or to a prod run id, and none is asserted from a deploy log alone",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "c21",
+      "kind": "before_state",
+      "text": "all bridges on a host run as the single login user (spark/orin/thor) that also owns the control plane, docker group, backups and every secret; codex sessions sit in a bwrap sandbox with no network, no PG, no loopback, no uv cache, so every #230 package needed a pre-fetch, a harvest and a formatter fixup at the gate (#230 hand-turns 3-6); claude/qwen sessions have no kernel boundary at all and the exact-match repo allowlist is the only thing keeping them out of the operator checkout",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "h18",
+      "kind": "honesty",
+      "text": "every before-state fact is cited to a run id, issue comment or file:line already on the frame's scope entries (s1-s12), not recalled from memory",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "c22",
+      "kind": "why_it_matters",
+      "text": "the sandbox was blocking the work, not the risk: every wave-0/1 lane defect of the jira-flow cycle was a sandbox limitation, and the safety it bought (no egress = the handover fence) is replaceable by POSIX ownership \u2014 an account with no sudo, no docker group and no read access to the operator home",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "h19",
+      "kind": "honesty",
+      "text": "the deviation record (c8) states plainly what the account does NOT fence \u2014 network egress \u2014 and names the controls that replace the fence, so the safety trade is explicit rather than implied",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "c23",
+      "kind": "success_signal",
+      "text": "one codex-orin run id and one spark (culture-claude developer) run id whose ledgers show: git fetch succeeded, black/isort/flake8 ran, an HTTP loopback test ran, a commit landed and the handover ref was pushed \u2014 read back from prod with no session context; plus id -u of the bridge process equals the engine account on all three hosts and ssh <engine>@<host> cat /home/<login>/.culture-nodes/prod.env is denied",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "h20",
+      "kind": "honesty",
+      "text": "the two run ids are quoted in the delivery summary with their ledger statements, and the three id -u and one permission-denied checks are pasted as command output from each host",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "c24",
+      "kind": "requirement",
+      "text": "spark checkouts become real clones: every spark bridge repo_allowlist entry today is a git worktree whose gitdir is /home/spark/git/culture-nodes/.git/worktrees/<name> (owe-developer/-planner/-verifier/-intake, qwen-dev, upkeep-lane) \u2014 unreadable from another account with /home/spark at 0750 \u2014 so culture-claude and culture-qwen get their own clones (/home/culture-claude/git/culture-nodes-<role>) and the .devague custody, upkeep-lane and dial-in point at them",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "h21",
+      "kind": "honesty",
+      "text": "git -C /home/culture-claude/git/culture-nodes-developer rev-parse --git-dir resolves inside that account's home, and every spark bridge repo_allowlist entry is a path the account owns",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "c25",
+      "kind": "requirement",
+      "text": "deploy.sh gains a spark target: the four claude units and qwen-developer on spark were installed by hand (deploy.sh takes only thor|orin; no script references culture-nodes-claude-*.service or the qwen unit), run uv run from the operator's editable checkout (WorkingDirectory=/home/spark/git/culture-nodes/adapters/*), and read configs from /home/spark/.config/culture-nodes-bridges/*.json \u2014 under culture-claude they must become stamped uv tool install copies with configs in the account home, which brings #120's stale-copy hazard to spark and the revision stamp with it",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "h22",
+      "kind": "honesty",
+      "text": "deploy.sh spark installs the five spark units into culture-claude / culture-qwen from the shipped archive with a revision stamp, and their /v1/capabilities deployment block reports install_mode=copy with that revision",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "c26",
+      "kind": "requirement",
+      "text": "engine binaries per account: codex on thor/orin is the standalone static binary at ~/.codex/packages/standalone/current/bin/codex, claude is a native binary under ~/.local/share/claude/versions, qwen is a 72-byte wrapper in /home/spark/.local/bin, and spark's codex is an npm package under ~/.nvm \u2014 all inside 0750 operator homes, so each engine account installs its own engine with the standalone installers (no node/npm needed, which orin lacks) at a version pinned by the lane",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "h23",
+      "kind": "honesty",
+      "text": "codex --version, claude --version and qwen --version succeed as each engine account with the pinned versions, and no engine path under the account points into /home/<login>",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "c27",
+      "kind": "requirement",
+      "text": "dial-in and push credentials move with the account: the developer dial-in credential (~/.culture-nodes/dialin/developer.env, issued by issue-dialin-credential.sh to a bridge ssh host) is re-issued to culture-claude@localhost; a Contents-only GITHUB_TOKEN_WORKER lands in each codex account's bridge-push.env (absent on both hosts today, which is why no handover ref was ever pushed) so the handover push in c9 has a credential",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "h24",
+      "kind": "honesty",
+      "text": "issue-dialin-credential.sh developer culture-claude@localhost delivers a fresh credential whose digest the control plane accepts, and a codex account's bridge-push.env holds a token that can push a branch but is refused on main by the ruleset",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "c30",
+      "kind": "requirement",
+      "text": "the old agent checkouts are never removed or reset by the lane: ~/git/culture-nodes-agent on orin (jira-flow/wp-j, one unpushed commit 05b216e, 31 unmerged branches) and thor (jira-flow/wp-i, unpushed 2f2778f, 29 branches) stay under the login user untouched; the account clones fresh, and the operator harvests the old trees over ssh <host> exactly as today until they are emptied",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "h25",
+      "kind": "honesty",
+      "text": "after the cutover git -C /home/<login>/git/culture-nodes-agent log shows the same HEAD as before it on thor and orin",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "c31",
+      "kind": "requirement",
+      "text": "cutover refuses while a session is in flight: before stopping a login-user bridge unit the lane checks pgrep -u <login> for claude -p / codex exec / qwen driver processes and refuses (SKIP_SESSION_CHECK=1 downgrades to a warning), because a restart mid-session kills the run and leaves it running in the ledger (#230 hand-turn 8, exit 143)",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "h26",
+      "kind": "honesty",
+      "text": "with a fake session process running as the login user the lane exits non-zero before any systemctl stop, and with SKIP_SESSION_CHECK=1 it warns and proceeds",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "c32",
+      "kind": "requirement",
+      "text": "rollback is one command per host: the login-user units are stopped and disabled but their files, configs and env stay in place, so systemctl --user stop under the account plus systemctl --user start under the login user restores the previous posture without a deploy; the lane prints that pair in its summary",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "h27",
+      "kind": "honesty",
+      "text": "running the printed rollback pair on a host restores the login-user unit to active and the account unit to inactive without a deploy",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "c33",
+      "kind": "boundary",
+      "text": "an engine account's home holds only what its bridge needs \u2014 its bridge auth token, its actor token, its dial-in credential, the worker GitHub token, the copied engine credentials \u2014 never prod.env, runner secrets, the operator's gh or Jira credentials, or the operator's ssh private key; the lane's provisioning step is the only writer and README's harvest runbook lists the inventory",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "h29",
+      "kind": "honesty",
+      "text": "ls -la of each engine account's ~/.culture-nodes lists only the enumerated files, and grep -l for the prod.env keys finds nothing under /home/culture-*",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "c34",
+      "kind": "requirement",
+      "text": "new accounts get HOME_MODE 0750 (login.defs default on all three hosts, verified) and umask 077 for the env files, so engine accounts cannot read each other or the login user; the lane asserts the mode after useradd rather than assuming the default",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "h28",
+      "kind": "honesty",
+      "text": "stat -c %a /home/culture-* prints 750 on all three hosts and every *.env under the account is 600",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "c35",
+      "kind": "requirement",
+      "text": "the culture-claude developer.json claude_env carries no NODES_HUMAN_DECISION_TOKEN; a developer session that tries the approval surface as a human is refused (q5)",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "h32",
+      "kind": "honesty",
+      "text": "grep -rl NODES_HUMAN_DECISION_TOKEN /home/culture-claude finds nothing on spark, and the developer bridge's rendered config has no such key",
+      "deferred": false,
+      "deferred_reason": ""
+    }
+  ],
+  "tasks": [
+    {
+      "id": "t1",
+      "summary": "lanes/unix-user.sh: bootstrap (root: useradd -m, chmod 750, linger, operator pubkey, copy engine creds), provision (as the account over ssh: pinned standalone codex/claude/qwen installs, per-role clones, env files under umask 077, inventory assertion), session-in-flight refusal, rollback pair in the summary; never touches /home/<login>/git; fake-host pytest harness tests/test_deploy_unix_user.py",
+      "origin": "llm",
+      "status": "confirmed",
+      "acceptance_criteria": [
+        "bash -n passes and the lane is sourced by deploy.sh inside marker comments so codexdeploylane_test.go sees it",
+        "fake-host test: running provision twice yields byte-identical account state (idempotent) and only the bootstrap function calls useradd/loginctl",
+        "fake-host test: with a fake 'codex exec' process for the login user the lane exits non-zero before any systemctl stop; SKIP_SESSION_CHECK=1 warns and proceeds",
+        "fake-host test: /home/<login>/git/culture-nodes-agent is never written; HOME mode 750 and *.env mode 600 are asserted by the lane and the test",
+        "the lane prints the stop/start rollback pair for each migrated unit and the per-account inventory (bridge token, actor token, dial-in, worker token, engine creds) and refuses if anything else is present"
+      ],
+      "deps": [],
+      "covers": [
+        "c2",
+        "h2",
+        "c26",
+        "h23",
+        "c30",
+        "h25",
+        "c31",
+        "h26",
+        "c32",
+        "h27",
+        "c33",
+        "h29",
+        "c34",
+        "h28",
+        "c24",
+        "h21"
+      ],
+      "instruction": ""
+    },
+    {
+      "id": "t2",
+      "summary": "confinement prose: the five adapters' capabilities.py prepend 'unix-user:<name>: ' from pwd.getpwuid(os.getuid()).pw_name; codex's _REQUIRES_USERNS becomes () so sandbox_modes_unavailable no longer blocks; five test_capabilities.py updated; preflight.py untouched",
+      "origin": "llm",
+      "status": "confirmed",
+      "acceptance_criteria": [
+        "each advertising adapter's --print-capabilities confinement value starts with unix-user:<current user>:",
+        "tests/lint byte-identity guards (preflightsurface_test.go, workspacereaper_test.go, dialintransport_test.go) still pass; preflight.py has zero diff",
+        "codex capabilities on a host with the userns sysctl restricted report the restriction in the prose but list no sandbox_modes_unavailable"
+      ],
+      "deps": [],
+      "covers": [
+        "c5",
+        "h5",
+        "c6",
+        "h6"
+      ],
+      "instruction": ""
+    },
+    {
+      "id": "t3",
+      "summary": "deploy/prod/codex-preflight.sh: check 7 (userns) downgrades to a warning; new check 8 refuses when id -nG contains sudo or docker or when an allowlisted checkout is not owned by the running uid; shell tests updated",
+      "origin": "llm",
+      "status": "confirmed",
+      "acceptance_criteria": [
+        "preflight passes on a host with the userns sysctl restricted (warning printed, exit 0)",
+        "preflight exits non-zero when run as a user in the docker group or when the checkout owner differs from the running uid"
+      ],
+      "deps": [],
+      "covers": [
+        "c6",
+        "h6"
+      ],
+      "instruction": ""
+    },
+    {
+      "id": "t4",
+      "summary": "register-actor.sh: --metadata os_user=<name> written by the deploy lane; registeractor_test.go pins that a re-register keeps prior keys and adds os_user",
+      "origin": "llm",
+      "status": "confirmed",
+      "acceptance_criteria": [
+        "registeractor_test.go: registering with os_user then re-registering with another key yields a row carrying both"
+      ],
+      "deps": [],
+      "covers": [
+        "c7",
+        "h7"
+      ],
+      "instruction": ""
+    },
+    {
+      "id": "t5",
+      "summary": "nodes-op.sh + nodes-operator SKILL.md: actor table repointed to /home/culture-<engine>/git/culture-nodes-<role|agent>; c42 comment rewritten as an ownership fact; .devague custody paths follow; SKILL.md lines 76-79 and 109-118 rewritten (write path is proven by c9's run ids, filled in after t11)",
+      "origin": "llm",
+      "status": "confirmed",
+      "acceptance_criteria": [
+        "nodes-op.sh assign codex-orin --dry-run (or the payload print) ships repo=/home/culture-codex/git/culture-nodes-agent",
+        "grep 'only boundary there is' nodes-op.sh returns nothing; SKILL.md names the engine accounts and the harvest path ssh <engine>@<host>"
+      ],
+      "deps": [],
+      "covers": [
+        "c4",
+        "h4",
+        "c12"
+      ],
+      "instruction": ""
+    },
+    {
+      "id": "t6",
+      "summary": "docs/deviations/2026-08-29-agents-as-os-users.md: what the sandbox fenced, what the account fences, what it does NOT fence (network egress \u2014 controls: Protect main ruleset, Contents-only worker token, bridge-trusted base_ref, the ledger), PRD 31/222 departure in PRD:1860 style, supersedes 2026-08-15-handover-fence.md; README deploy section + harvest runbook updated (ssh <engine>@<host>, old trees stay harvestable); linked from #243 as a Record",
+      "origin": "llm",
+      "status": "confirmed",
+      "acceptance_criteria": [
+        "the record names docs/deviations/2026-08-15-handover-fence.md as superseded and quotes PRD lines 31 and 222",
+        "the record has a section titled what the account does not fence naming network egress and the four controls",
+        "markdownlint-cli2 passes on the new and edited docs"
+      ],
+      "deps": [],
+      "covers": [
+        "c8",
+        "h8",
+        "h19",
+        "c22"
+      ],
+      "instruction": ""
+    },
+    {
+      "id": "t7",
+      "summary": "deploy.sh: spark host arm (bridge lanes only, local exec through ssh culture-<engine>@localhost), codex/claude/qwen bridge lanes routed through ssh culture-<engine>@<host> with XDG_RUNTIME_DIR from that account's id -u, old login-user units stopped+disabled, register-actor os_user call, install-secrets.sh writes bridge-push.env and re-issues the developer dial-in into the account, spark bridge configs rendered without NODES_HUMAN_DECISION_TOKEN; Go/pytest deploy guards updated",
+      "origin": "llm",
+      "status": "confirmed",
+      "acceptance_criteria": [
+        "tests/deploy Go suite and tests/test_deploy_two_host.py + test_deploy_runner_env.py pass; deploy.sh stays under the 1000-line guard",
+        "fake-host run of 'deploy.sh spark' installs the five spark units under the fake culture-claude/culture-qwen homes and never invokes compose or the runner lane",
+        "the rendered developer.json under the fake account has no NODES_HUMAN_DECISION_TOKEN key",
+        "nodes-runner and compose steps still execute as the login user on thor/orin in the fake-host run"
+      ],
+      "deps": [
+        "t1",
+        "t3",
+        "t4"
+      ],
+      "covers": [
+        "c3",
+        "h3",
+        "c25",
+        "h22",
+        "c27",
+        "h24",
+        "c35",
+        "h32",
+        "c11",
+        "c18"
+      ],
+      "instruction": ""
+    },
+    {
+      "id": "t8",
+      "summary": "operator hand-turns: run the root bootstrap once per host (spark: '! sudo bash deploy/prod/lanes/unix-user.sh bootstrap claude qwen'; orin: over ssh with sudo; thor: NOPASSWD inside the lane) and post one #243 comment per typed sudo naming host and command",
+      "origin": "llm",
+      "status": "confirmed",
+      "acceptance_criteria": [
+        "id culture-codex on thor and orin, id culture-claude and culture-qwen on spark succeed; id -nG for each lists neither sudo nor docker",
+        "#243 carries one comment per host naming the command typed"
+      ],
+      "deps": [
+        "t1"
+      ],
+      "covers": [
+        "c10",
+        "h10",
+        "h12",
+        "c1",
+        "h1"
+      ],
+      "instruction": ""
+    },
+    {
+      "id": "t9",
+      "summary": "deploy thor, orin, spark with the new lanes and verify every host-level honesty condition by pasted command output: is-active under the account and inactive under the login user (h3), culture-codex active on thor (h11), ssh culture-claude@localhost ls /home/spark/git/culture-nodes denied (h13), codex login status / claude auth as each account (h14, h23), passwordless ssh to each account (h15), old checkout HEADs unchanged (h25), rollback pair exercised once on orin (h27), home/env modes (h28), inventory (h29), no decision token (h32), capabilities confinement prefix live (h5), registry os_user (h7)",
+      "origin": "llm",
+      "status": "confirmed",
+      "acceptance_criteria": [
+        "a scratch log (docs/audits/2026-08-29-agents-as-os-users-cutover.md) pastes the command and output for every listed h-condition per host",
+        "curl /v1/capabilities on each bridge (with its scoped token) shows confinement starting with unix-user:culture-<engine>",
+        "the three login-user bridge units are inactive and disabled; nodes-runner and compose are unchanged"
+      ],
+      "deps": [
+        "t7",
+        "t8",
+        "t2",
+        "t5"
+      ],
+      "covers": [
+        "c18",
+        "h11",
+        "c12",
+        "h13",
+        "c3",
+        "h3",
+        "h5",
+        "h7",
+        "h23",
+        "h24",
+        "h25",
+        "h27",
+        "h28",
+        "h29",
+        "h32",
+        "c19",
+        "h16",
+        "c20",
+        "h17"
+      ],
+      "instruction": ""
+    },
+    {
+      "id": "t10",
+      "summary": "live proof through nodes: nodes-op.sh assign codex-orin, codex-thor (workspace-write) and developer with a brief that fetches origin, runs black/isort/flake8 via uv, runs one adapter HTTP loopback test, commits and pushes the handover ref; read run + ledger for each, decide the claims through the approval surface, /remember an actor-quality note per actor",
+      "origin": "llm",
+      "status": "confirmed",
+      "acceptance_criteria": [
+        "three run ids whose ledger statements show fetch, formatters, loopback test, commit and handover ref push; a failed leg is recorded as failed, not smoothed",
+        "each proposed claim is confirmed or rejected through the approval surface by the operator, not by the actor",
+        "git ls-remote origin shows each pushed handover ref"
+      ],
+      "deps": [
+        "t9"
+      ],
+      "covers": [
+        "c9",
+        "h9",
+        "c23",
+        "h20",
+        "h4"
+      ],
+      "instruction": ""
+    },
+    {
+      "id": "t11",
+      "summary": "close the loop: fill the run ids into SKILL.md (t5 leaves a placeholder), /summarize-delivery record under docs/deliveries with the before/after facts cited to scope entries and the pasted host outputs, version bump, PR via the cicd skill, close #243 as Record pointing at the deviation and delivery records, update docs/triage",
+      "origin": "llm",
+      "status": "confirmed",
+      "acceptance_criteria": [
+        "docs/deliveries/2026-08-29-agents-as-os-users.md quotes the run ids with ledger statements and the id -u / permission-denied outputs; every before-state fact cites an s-entry or issue comment",
+        "PR merged green on all lint/test/version-check jobs; #243 closed via scripts/close-issue.sh --artifact"
+      ],
+      "deps": [
+        "t10",
+        "t6"
+      ],
+      "covers": [
+        "c21",
+        "h18",
+        "c22",
+        "h19",
+        "h17",
+        "h20",
+        "c1",
+        "h1"
+      ],
+      "instruction": ""
+    }
+  ],
+  "risks": [
+    {
+      "id": "r1",
+      "text": "the operator's subscription window is shared by the interactive session, local subagents and every bridge session (#48): wave 0 fans out 6 local subagents, waves 2-3 add three bridge dispatches \u2014 declare the per-wave session count in the split plan and stagger t10's three dispatches",
+      "kind": "unknown_nonblocking",
+      "task_id": null,
+      "resolved": false,
+      "resolution": ""
+    },
+    {
+      "id": "r2",
+      "text": "per-role clones under culture-claude may contend on one uv cache during parallel installs; the lane serialises installs unless measured otherwise (frame v4)",
+      "kind": "unknown_nonblocking",
+      "task_id": "t1",
+      "resolved": false,
+      "resolution": ""
+    },
+    {
+      "id": "r3",
+      "text": "an engine account with network can reach LAN services (vLLM, nodes API, published Postgres port if any); nothing in this cycle firewalls it \u2014 recorded in the deviation record, not fixed (frame v5)",
+      "kind": "unknown_nonblocking",
+      "task_id": "t6",
+      "resolved": false,
+      "resolution": ""
+    },
+    {
+      "id": "r4",
+      "text": "the fake-host harness models one HOME per host; t1 adds a per-account axis in its own test file rather than reshaping test_deploy_two_host.py (frame v2)",
+      "kind": "unknown_nonblocking",
+      "task_id": "t1",
+      "resolved": false,
+      "resolution": ""
+    },
+    {
+      "id": "r5",
+      "text": "bootstrap on spark and orin needs the operator's password: t8 blocks the whole deploy wave until typed; thor does not",
+      "kind": "unknown_blocking",
+      "task_id": "t8",
+      "resolved": true,
+      "resolution": "decided in the frame (q4): the operator types the sudo bootstrap once per host and it is recorded as a hand-turn; t8 is that step and gates wave 2 by dependency, not by an open risk"
+    },
+    {
+      "id": "r6",
+      "text": "spark bridges flip from editable installs to stamped copies (#120): a fix to a bridge on spark no longer takes effect until deploy.sh spark re-runs \u2014 the runbook must say so",
+      "kind": "unknown_nonblocking",
+      "task_id": "t7",
+      "resolved": false,
+      "resolution": ""
+    }
+  ]
+}

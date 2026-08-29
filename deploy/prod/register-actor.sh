@@ -9,7 +9,7 @@
 # It never touches an existing row.
 #
 #   register-actor.sh <actor_key> <endpoint_url> [auth_token_env] \
-#                     [--metadata KEY=VALUE]...
+#                     [--metadata KEY=VALUE]... [--os-user NAME]
 #   register-actor.sh --engine <actor_id>
 #
 # Each input can also arrive as an env var (ACTOR_KEY, ENDPOINT_URL,
@@ -24,6 +24,14 @@
 # reads to learn where an actor's git remote is, and the repository identity a
 # dispatch resolves its checkout from. Both are facts about the deployment, not
 # about the graph or the agent -- which is why they live here.
+#
+# `--os-user NAME` is sugar for `--metadata os_user=NAME`: it is a first-class
+# metadata key (issue #204) that records the dedicated Unix account a bridge
+# actually runs as (e.g. `culture-codex`, `culture-claude`, `culture-qwen`),
+# so the registry can be read as a lane tag -- which actor ran under which
+# account -- without inferring it from the endpoint or actor key. The name is
+# validated against `^[a-z_][a-z0-9_-]*$`, the same shape `useradd` accepts
+# for a login name, and refused otherwise before any Postgres access.
 #
 # METADATA IS MERGED, NEVER REPLACED, and that is load-bearing. Every
 # registration writes a NEW ROW, so a revision built from a hardcoded metadata
@@ -50,7 +58,7 @@ SCRIPT_DIR=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
 usage() {
   cat >&2 <<'EOF'
 usage: register-actor.sh <actor_key> <endpoint_url> [auth_token_env] \
-                        [--metadata KEY=VALUE]...
+                        [--metadata KEY=VALUE]... [--os-user NAME]
        register-actor.sh --engine <actor_id>
 
   actor_key       e.g. company/codex-thor              (env: ACTOR_KEY)
@@ -61,6 +69,10 @@ usage: register-actor.sh <actor_key> <endpoint_url> [auth_token_env] \
   --metadata      KEY=VALUE, repeatable. Merged over the previous revision's
                   metadata; keys not named here are carried forward unchanged.
                   e.g. --metadata handover_remote=ssh://thor/~/git/culture-nodes-agent
+  --os-user       NAME, sugar for --metadata os_user=NAME. Records the
+                  dedicated Unix account a bridge runs as (culture-codex,
+                  culture-claude, culture-qwen), so the registry can be read
+                  as a lane tag (#204). NAME must match ^[a-z_][a-z0-9_-]*$.
   --engine        register an in-process engine producer with no endpoint;
                   the actor id and actor key are both <actor_id>.
 
@@ -100,6 +112,29 @@ while [ $# -gt 0 ]; do
       esac
       METADATA_KEYS+=("${pair%%=*}")
       METADATA_VALUES+=("${pair#*=}")
+      shift
+      ;;
+    --os-user)
+      [ $# -ge 2 ] || { echo "register-actor: --os-user needs a NAME argument" >&2; exit 1; }
+      os_user=$2
+      if [[ ! "$os_user" =~ ^[a-z_][a-z0-9_-]*$ ]]; then
+        echo "register-actor: refusing os-user '$os_user': must match ^[a-z_][a-z0-9_-]*\$" >&2
+        echo "hint: pass the dedicated Unix account name, e.g. culture-codex, culture-claude, or culture-qwen" >&2
+        exit 1
+      fi
+      METADATA_KEYS+=("os_user")
+      METADATA_VALUES+=("$os_user")
+      shift 2
+      ;;
+    --os-user=*)
+      os_user=${1#--os-user=}
+      if [[ ! "$os_user" =~ ^[a-z_][a-z0-9_-]*$ ]]; then
+        echo "register-actor: refusing os-user '$os_user': must match ^[a-z_][a-z0-9_-]*\$" >&2
+        echo "hint: pass the dedicated Unix account name, e.g. culture-codex, culture-claude, or culture-qwen" >&2
+        exit 1
+      fi
+      METADATA_KEYS+=("os_user")
+      METADATA_VALUES+=("$os_user")
       shift
       ;;
     --engine)

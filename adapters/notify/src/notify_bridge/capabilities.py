@@ -31,15 +31,31 @@ module, like every other module outside `webhook.py`, never reads it. See
 
 from __future__ import annotations
 
+import os
+import pwd
 import sys
 from typing import Any, Sequence
 
 from notify_bridge import deployment, preflight
 from notify_bridge.config import Config
 
+
+def _unix_user() -> str:
+    """The OS account this bridge process runs as.
+
+    Prefixed onto the confinement sentence (task t2, issue #243) even though
+    this bridge starts no session: the ledger still wants to know which
+    account the process itself is, once agents run as dedicated OS users
+    rather than inside a shared sandbox. stdlib only: `pwd` keeps this
+    adapter's zero-runtime-dependency promise intact.
+    """
+    return pwd.getpwuid(os.getuid()).pw_name
+
+
 #: No agent session runs here, so there is nothing to confine — stated
 #: rather than left to be inferred from the two absent sandbox keys.
 _CONFINEMENT = (
+    f"unix-user:{_unix_user()}: "
     "no session: this bridge performs one outbound HTTPS POST in this process and starts no "
     "agent, subprocess or shell, so there is nothing to sandbox"
 )

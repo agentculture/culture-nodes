@@ -16,6 +16,7 @@ func TestBridgeUnitsReadWorkerPushCredentialFile(t *testing.T) {
 		"culture-nodes-claude-developer.service",
 		"culture-nodes-claude-verifier.service",
 		"codex-bridge.service",
+		"culture-nodes-qwen-developer.service",
 	}
 	for _, unit := range units {
 		raw, err := os.ReadFile(filepath.Join(dir, unit))

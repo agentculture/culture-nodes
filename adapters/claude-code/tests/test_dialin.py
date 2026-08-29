@@ -1,3 +1,6 @@
+import logging
+import urllib.error
+
 from claude_code_bridge import dialin
 
 
@@ -63,3 +66,31 @@ def test_an_idle_poll_returning_204_is_not_treated_as_a_fault(monkeypatch):
     # reconnect backoff, which is what a fault would have produced.
     assert calls["polls"] == 4, calls
     assert naps == [0.25, 0.25, 0.25], naps
+
+
+def test_repeated_401s_back_off_to_ceiling_and_warn_once(monkeypatch, caplog):
+    prefix = "TEST_BRIDGE"
+    monkeypatch.setenv(prefix + "_CONTROL_PLANE_URL", "http://control")
+    monkeypatch.setenv(prefix + "_ACTOR_KEY", "company/x")
+    monkeypatch.setenv(prefix + "_DIAL_TOKEN", "stale")
+
+    attempts = 0
+
+    def opener(request, timeout=None):
+        nonlocal attempts
+        attempts += 1
+        if attempts > 5:
+            raise SystemExit
+        raise urllib.error.HTTPError(request.full_url, 401, "Unauthorized", {}, None)
+
+    naps = []
+    with caplog.at_level(logging.WARNING, logger=dialin.__name__):
+        try:
+            dialin.run(prefix, 1, opener=opener, pause=naps.append)
+        except SystemExit:
+            pass
+
+    assert naps == [1, 2, 4, 8, 8]
+    assert [
+        record for record in caplog.records if "credential mismatch" in record.getMessage()
+    ] == [caplog.records[0]]

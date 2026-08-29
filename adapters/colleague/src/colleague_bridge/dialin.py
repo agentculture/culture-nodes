@@ -12,6 +12,8 @@ import urllib.request
 
 LOG = logging.getLogger(__name__)
 
+_AUTH_BACKOFF_CEILING_SECONDS = 8
+
 
 def configured(prefix):
     values = (
@@ -31,6 +33,8 @@ def configured(prefix):
 def run(prefix, port, opener=urllib.request.urlopen, pause=time.sleep):
     base, actor, token = configured(prefix)
     headers = {"Authorization": "Bearer " + token, "X-Culture-Nodes-Actor-Key": actor}
+    auth_backoff = 1
+    auth_warning_logged = False
     while True:
         try:
             req = urllib.request.Request(
@@ -77,6 +81,17 @@ def run(prefix, port, opener=urllib.request.urlopen, pause=time.sleep):
                 method="POST",
             )
             opener(done, timeout=15).close()
+            auth_backoff = 1
+        except urllib.error.HTTPError as exc:
+            if exc.code != 401:
+                LOG.warning("dial-in reconnecting: %s", exc)
+                pause(1)
+                continue
+            if not auth_warning_logged:
+                LOG.warning("dial-in credential mismatch; reconnecting with backoff")
+                auth_warning_logged = True
+            pause(auth_backoff)
+            auth_backoff = min(auth_backoff * 2, _AUTH_BACKOFF_CEILING_SECONDS)
         except Exception as exc:
             LOG.warning("dial-in reconnecting: %s", exc)
             pause(1)

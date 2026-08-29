@@ -331,3 +331,8 @@ compatibility promise, and the k8s Job migrate-before-rollout pattern.
    shape — see the ADR.
 3. Run `nodes migrate` against a scratch database and add/extend a Go test
    in `internal/store/postgres` covering the new shape.
+
+## `0047_runs_subject_idx.sql`
+
+Full `(namespace_id, subject)` index on `runs` for the ticket projection's
+subject listing (0046). Additive; the 0038 partial index is unchanged.

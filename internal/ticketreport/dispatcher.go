@@ -63,7 +63,8 @@ func (d *Dispatcher) Run(ctx context.Context) error {
 			AND (phase <> 'finish' OR NOT EXISTS (
 				SELECT 1 FROM jira_ticket_report_outbox AS start_report
 				WHERE start_report.run_id=report.run_id AND start_report.phase='start'
-				AND start_report.status <> 'published'))
+				AND start_report.namespace_id=report.namespace_id
+				AND start_report.status NOT IN ('published','failed')))
 			ORDER BY id LIMIT 1 FOR UPDATE SKIP LOCKED`).Scan(&id, &namespaceID, &runID, &triggerID, &actorKey, &payload, &attempts)
 		if err == pgx.ErrNoRows {
 			_ = tx.Rollback(ctx)

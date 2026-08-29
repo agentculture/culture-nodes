@@ -192,3 +192,22 @@ func TestFinishWaitsWhenStartHasNotBeenDelivered(t *testing.T) {
 		t.Fatalf("delivery after start became due = %q", f.transport.bodies)
 	}
 }
+
+// A start report that failed terminally must not block the run's finish
+// report forever (colleague review of the wave-0 merge, #230): the finish
+// gate waits for a start that is still *pending*, not for one that can never
+// be published.
+func TestFinishDeliversAfterStartFailedTerminally(t *testing.T) {
+	f := newReportFixture(t, http.StatusOK)
+	f.insert("report-03-start", "start", time.Now().Add(-time.Second))
+	if _, err := f.store.Pool().Exec(f.ctx, `UPDATE jira_ticket_report_outbox SET status='failed' WHERE id='report-03-start'`); err != nil {
+		t.Fatal(err)
+	}
+	f.insert("report-04-finish", "finish", time.Now().Add(-time.Second))
+	if err := f.dispatch.Run(f.ctx); err != nil {
+		t.Fatal(err)
+	}
+	if len(f.transport.bodies) != 1 || !bytes.Contains(f.transport.bodies[0], []byte("finish report")) {
+		t.Fatalf("finish must deliver after a terminally failed start; got %d bodies", len(f.transport.bodies))
+	}
+}

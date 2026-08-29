@@ -2,13 +2,7 @@
 it under the 1000-line hard limit (tests/lint filelength guard)."""
 
 import ast
-import importlib.util
 import json
-import sys
-import urllib.error
-from pathlib import Path
-
-import pytest
 
 from tests.test_pr_upkeep_sweep import EXAMPLE_DIR, FIXTURES, _stub_sweep, sweep  # noqa: F401
 

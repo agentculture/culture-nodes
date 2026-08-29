@@ -5,7 +5,7 @@
   "schema_version": 4,
   "status": "exported",
   "created": "2026-08-29T07:00:23Z",
-  "updated": "2026-08-29T07:34:42Z",
+  "updated": "2026-08-29T07:38:49Z",
   "targets": [
     {
       "id": "c1",
@@ -557,13 +557,14 @@
     },
     {
       "id": "t12",
-      "summary": "Link at intake and freeze: jira-intake's intake node posts ONE page-link comment carrying a link marker (re-posted/edited in place, never duplicated); the sweep emits pr.merged for closed PRs with merged_at (watermarked) and links the PR to its ticket by branch name or body carrying the ticket id; a pr.merged fact freezes the ticket's page (frozen flag + merged PR pointer on the projection)",
+      "summary": "Link at intake and freeze: jira-intake's intake node posts ONE page-link comment and keeps it single across milestones through a NEW narrow bridge verb upsert_comment (adapters/jira: mapping/client know only post_comment today \u2014 no lookup, edit, or comment id; verbs are dispatched by isinstance in server.py, transition_issue is the precedent for a second verb): input is exactly {verb, issue, comment, link_key}; the bridge GETs the issue's comments, finds the one authored by its own account carrying the marker [culture-nodes:jira-actor link=<link_key>], PUTs /rest/api/3/issue/{key}/comment/{id} if found and POSTs otherwise, and returns {issue, comment_id, action: created|updated} \u2014 the comment id is recovered from Jira by marker lookup on every run, never persisted in the control plane, so a re-run needs no state to stay single; examples/jira-intake's post-comment node switches to upsert_comment with link_key = the ticket id; the sweep emits pr.merged for closed PRs with merged_at (watermarked) and links the PR to its ticket by branch name or body carrying the ticket id; a pr.merged fact freezes the ticket's page (frozen flag + merged PR pointer on the projection)",
       "origin": "llm",
       "status": "confirmed",
       "acceptance_criteria": [
         "Sweep test: a merged PR yields exactly one pr.merged fact across two passes (watermark), with issue_key parsed from the branch or body; an open PR yields none",
-        "Intake workflow test: two intake milestones leave one link-marker comment on the fixture ticket",
-        "PG-backed test: a pr.merged fact for the linked PR sets frozen=true and merged_pr on GET /v1alpha1/tickets/{id}; a decision-token freeze action does the same"
+        "Bridge integration test across TWO real workflow invocations against a recording fake Jira (HTTP method + path + body captured): the first invocation POSTs and yields comment_id X with action=created; the second GETs the comment list, PUTs comment X (no second POST), and yields the same comment_id X with action=updated; the fake ends holding exactly one comment, and its body carries the link marker and the current page URL. mapping.parse still refuses link_key on post_comment; /v1/capabilities advertises upsert_comment; a PUT that returns 404 (comment deleted on the board between lookup and edit) falls back to one POST rather than failing the node",
+        "PG-backed test: a pr.merged fact for the linked PR sets frozen=true and merged_pr on GET /v1alpha1/tickets/{id}; a decision-token freeze action does the same",
+        "Sweep test: editing the link comment in place leaves its Jira id and created timestamp unchanged, so a sweep pass after the edit emits zero new facts for it (pr_upkeep_jira watermarks on comment id ordered by created, and the bot-authored comment is a self-echo); a test fixture with the comment's updated field advanced proves both filters hold"
       ],
       "deps": [
         "t9"
@@ -699,6 +700,14 @@
       "text": "The Jira side of the reply mirror stays at-least-once: internal/ticketreport/dispatcher.go posts the comment and then marks the row published, so a dispatcher crash between the two re-posts it \u2014 the same exposure the #198 start/finish reports already carry, and jira_comment_is_self_echo keeps such duplicates out of the sweep. t10's atomicity and idempotency guarantees end at the outbox row; exactly-once on the Jira side needs a Jira-side idempotency key the API does not offer",
       "kind": "unknown_nonblocking",
       "task_id": "t10",
+      "resolved": false,
+      "resolution": ""
+    },
+    {
+      "id": "r8",
+      "text": "upsert_comment's edit path needs the bridge's Jira account to hold 'Edit Own Comments' on the prod project and the comment to be authored by that same account \u2014 the existing post_comment path never needed either; if the deployed credential lacks the permission the bridge falls back to POST and the link comment duplicates, so t12's deploy step must probe the permission (one PUT of the bridge's own comment on the fixture ticket) before the intake workflow is republished",
+      "kind": "unknown_nonblocking",
+      "task_id": "t12",
       "resolved": false,
       "resolution": ""
     }

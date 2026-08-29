@@ -134,7 +134,7 @@ slug: `jira-flow-spec-read-related-bugs` · status: `exported` · from frame: `j
 - covers: c13, h12, c16, h14
 - acceptance:
   - The split plan artifact lists sessions per wave and is linked from #230 before wave 1 dispatches
-  - docs/deliveries/<date>-jira-flow-spec-read-related-bugs.md is in the final PR, and #192–#200 are closed only by citations in it or in #230
+  - The delivery summary `docs/deliveries/YYYY-MM-DD-jira-flow-spec-read-related-bugs.md` (the date is the day it is written) is in the final PR, and #192–#200 are closed only by citations in it or in #230
 
 ## Risks
 

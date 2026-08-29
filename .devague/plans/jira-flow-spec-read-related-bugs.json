@@ -5,7 +5,7 @@
   "schema_version": 4,
   "status": "exported",
   "created": "2026-08-29T07:00:23Z",
-  "updated": "2026-08-29T07:50:32Z",
+  "updated": "2026-08-29T07:52:40Z",
   "targets": [
     {
       "id": "c1",
@@ -633,7 +633,7 @@
       "status": "confirmed",
       "acceptance_criteria": [
         "The split plan artifact lists sessions per wave and is linked from #230 before wave 1 dispatches",
-        "docs/deliveries/<date>-jira-flow-spec-read-related-bugs.md is in the final PR, and #192\u2013#200 are closed only by citations in it or in #230"
+        "The delivery summary `docs/deliveries/YYYY-MM-DD-jira-flow-spec-read-related-bugs.md` (the date is the day it is written) is in the final PR, and #192\u2013#200 are closed only by citations in it or in #230"
       ],
       "deps": [
         "t14"

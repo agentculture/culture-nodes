@@ -17,6 +17,7 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Changed
 
+- `.markdownlint-cli2.yaml` (PR #238, Qodo finding 5 "Date placeholder renders as HTML"): `date` is out of `MD033.allowed_elements`. Allowlisting it made the lint pass while the exported plan still carried a bare `<date>` in t15's delivery-summary path — a token Markdown renderers treat as an element and drop, so the rendered path read `docs/deliveries/-jira-flow-…md`. The criterion now spells the path in a code span (`docs/deliveries/YYYY-MM-DD-jira-flow-spec-read-related-bugs.md`), amended through `devague plan amend t15` and re-exported, so the placeholder renders literally and needs no suppression
 - docs/triage: disposition rows for #240 (mode-binding Bug, fixed at 3a47b4a on the feat branch as a counted hand-turn on #230) and #241 (surface the contract_rejected reason); open-issues regenerated. Both issues were opened during wave 0 after PR #238's table was cut, which is what turned its `lint` job red on the `triage` step
 
 ## [0.42.3] - 2026-08-29

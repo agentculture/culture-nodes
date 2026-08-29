@@ -45,6 +45,11 @@ SCRIPT_DIR=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
 # (issue #72).
 # shellcheck source=deploy/prod/actor-placement.sh
 . "$SCRIPT_DIR/actor-placement.sh"
+# The engine-account targets (#243): unix_user_target names the ssh target
+# that IS an account (culture-<engine>@<host>, @localhost on spark). Sourced
+# for that one resolver; the lane's bootstrap/provision verbs are deploy.sh's.
+# shellcheck source=deploy/prod/lanes/unix-user.sh
+. "$SCRIPT_DIR/lanes/unix-user.sh"
 
 THOR=${1:-thor}
 ORIN=${2:-orin}
@@ -536,6 +541,44 @@ if [ "$rc" -eq 0 ]; then
   update_actor_token_line NODES_ACTOR_CODEX_ORIN_TOKEN "$CODEX_BRIDGE_TOKEN_ORIN"
 elif [ "$rc" -ne 3 ]; then exit "$rc"; fi
 
+# --- codex-bridge token, the ACCOUNT's copy (#243) -------------------------
+# Since #243 the codex bridge runs as culture-codex, and its unit reads
+# ~/.culture-nodes/codex-bridge.env in THAT home — a 0750 home the login user
+# cannot write and the account cannot read the login user's from. The login
+# user's file above stays the custody point the FORCE_CODEX guard protects
+# (it is also the rollback posture); this step MIRRORS whatever token that
+# file ended up with — kept or fresh — into the account, so the bridge and
+# the control plane's NODES_ACTOR_CODEX_*_TOKEN copy always agree.
+#
+# The token crosses two ssh sessions through this script's own pipe: read on
+# the login-user side by a fixed command, written on the account side by a
+# fixed command reading its stdin. No argv on either hop carries it, and no
+# variable here ever holds it.
+#
+# Guarded like every other bridge file: an account copy that already
+# matches is left alone; one that DIFFERS is kept and reported unless
+# FORCE_CODEX=1 — the same switch that rotates the login user's copy, so a
+# rotation re-syncs the account in the same run and nothing else does. An
+# account that is not bootstrapped yet is skipped by name: deploy.sh creates
+# it, and this script is re-run after (a first cutover is two runs).
+CODEX_BRIDGE_ENV_REL=.culture-nodes/codex-bridge.env
+
+install_codex_account_env() { # host
+  local host=$1 target rc=0
+  target=$(unix_user_target "$host" codex)
+  if ! ssh -o BatchMode=yes -o ConnectTimeout=15 "$target" 'id -un' >/dev/null 2>&1; then
+    echo "culture-codex on $host is not bootstrapped or not reachable as $target — skipping the account copy of codex-bridge.env (run deploy.sh $host, or the bootstrap by hand, then re-run this script)" >&2
+    return 0
+  fi
+  # shellcheck disable=SC2029 # the remote path is deliberately remote
+  ssh "$host" "cat ~/$CODEX_BRIDGE_ENV_REL" | ssh "$target" "FORCE=${FORCE_CODEX:-0}; "'umask 077; mkdir -p ~/.culture-nodes; new=$(cat); [ -n "$new" ] || { echo "empty codex-bridge.env relayed from the login user" >&2; exit 1; }; if [ -e ~/.culture-nodes/codex-bridge.env ] && [ "$FORCE" != "1" ] && [ "$(cat ~/.culture-nodes/codex-bridge.env)" != "$new" ]; then echo "keeping the existing account codex-bridge.env, which DIFFERS from the login user copy (set FORCE_CODEX=1 to re-sync)" >&2; exit 3; fi; printf "%s\n" "$new" > ~/.culture-nodes/codex-bridge.env; chmod 600 ~/.culture-nodes/codex-bridge.env' || rc=$?
+  if [ "$rc" -eq 3 ]; then echo "kept the existing codex-bridge.env in $target (differs from $host's login copy; FORCE_CODEX=1 re-syncs)"; return 0; fi
+  [ "$rc" -eq 0 ] && echo "mirrored ~/.culture-nodes/codex-bridge.env into $target (mode 600)"
+  return "$rc"
+}
+install_codex_account_env "$THOR"
+install_codex_account_env "$ORIN"
+
 # --- nodes-notifier webhook (thor only — deploy/prod/compose.thor.yml's
 # `notifier` service is the only consumer; task t34) ----------------------
 # A Discord (or generic) webhook URL is EXTERNALLY ISSUED (created in
@@ -640,11 +683,41 @@ install_bridge_push_env() { # host
 }
 
 CLAUDE_PUSH_REGISTRATION=$(actor_registration "$CLAUDE_PUSH_ACTOR_KEY") || CLAUDE_PUSH_REGISTRATION=""
+CLAUDE_PUSH_TARGET=""
 if [ -n "$CLAUDE_PUSH_REGISTRATION" ]; then
   CLAUDE_PUSH_TARGET=$(endpoint_address "$(printf '%s' "$CLAUDE_PUSH_REGISTRATION" | cut -d'|' -f3)")
   install_bridge_push_env "$CLAUDE_PUSH_TARGET"
 else
   echo "$CLAUDE_PUSH_ACTOR_KEY does not resolve in the actor registry at $NODES_API_URL — skipping GITHUB_TOKEN_WORKER rather than installing it on a guessed host" >&2
+fi
+
+# The ENGINE ACCOUNTS' copies (#243, c27): the bridges that push handover
+# refs now run as culture-codex (thor, orin) and culture-claude (the
+# registered developer host), each with its own ~/.culture-nodes that the
+# login user's bridge-push.env above does not reach. Same relay, same
+# stdin-only discipline, same mode 600; an account that does not open with
+# the operator key is skipped by name, never guessed at.
+install_account_push_env() { # target
+  local target=$1
+  [ -n "${GITHUB_TOKEN_WORKER:-}" ] || return 0
+  if ! ssh -o BatchMode=yes -o ConnectTimeout=15 "$target" 'id -un' >/dev/null 2>&1; then
+    echo "$target is not bootstrapped or not reachable — skipping its bridge-push.env (bootstrap the account, then re-run this script)" >&2
+    return 0
+  fi
+  printf 'GITHUB_TOKEN_WORKER=%s\n' "$GITHUB_TOKEN_WORKER" \
+    | ssh "$target" 'umask 077; mkdir -p ~/.culture-nodes; cat > ~/.culture-nodes/bridge-push.env; chmod 600 ~/.culture-nodes/bridge-push.env'
+  echo "installed mode-600 ~/.culture-nodes/bridge-push.env in $target"
+}
+install_account_push_env "$(unix_user_target "$THOR" codex)"
+install_account_push_env "$(unix_user_target "$ORIN" codex)"
+if [ -n "$CLAUDE_PUSH_TARGET" ]; then
+  # The developer bridge's account: culture-claude on whichever host serves
+  # company/developer — @localhost when that host is this machine (spark).
+  if address_is_local "$CLAUDE_PUSH_TARGET"; then
+    install_account_push_env culture-claude@localhost
+  else
+    install_account_push_env "culture-claude@$CLAUDE_PUSH_TARGET"
+  fi
 fi
 
 # --- Jira Cloud read credential, relayed not minted ----------------------

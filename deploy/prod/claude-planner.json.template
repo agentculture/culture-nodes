@@ -1,0 +1,10 @@
+{
+  "claude_bin": "__HOME__/.local/bin/claude",
+  "host": "0.0.0.0",
+  "port": 8087,
+  "always_async": true,
+  "state_dir": "__HOME__/.local/state/culture-nodes-bridges/planner",
+  "repo_allowlist": [
+    "__HOME__/git/culture-nodes-planner"
+  ]
+}

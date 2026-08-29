@@ -81,6 +81,19 @@ unix_user_target() {
 # ssh needs, evaluated on the far side for whichever user answers.
 UNIX_USER_XDG='export XDG_RUNTIME_DIR=/run/user/$(id -u)'
 
+# unix_user_login_exec <host> <command> -- the LOGIN user's side of a host.
+# Plain ssh everywhere except spark, which accepts no key for its own user:
+# there the command runs here, from $HOME, exactly as actor-placement.sh's
+# local branch does (every relative path in these remote strings is written
+# against the login user's home). The account side never takes this path --
+# an account is always an ssh target, localhost included.
+unix_user_login_exec() { # host command
+  case "$1" in
+    spark*) (cd "$HOME" && bash -c "$2") ;;
+    *) ssh "$1" "$2" ;;
+  esac
+}
+
 # --- bootstrap (root) ---------------------------------------------------------
 #
 # The one root script. Positional arguments are engines. It runs under sudo
@@ -385,7 +398,7 @@ unix_user_session_check() {
   local host=$1 login=$2 status=0
   [[ "$login" =~ ^[a-z_][a-z0-9_-]*$ ]] || { echo "unix_user_session_check: '$login' is not a login user name" >&2; return 1; }
   say "session check: any claude -p / codex exec / qwen session running as $login on $host?"
-  ssh "$host" "pgrep -u $login -f 'claude -p|codex exec|qwen_bridge.qwen_cli' >/dev/null" || status=$?
+  unix_user_login_exec "$host" "pgrep -u $login -f 'claude -p|codex exec|qwen_bridge.qwen_cli' >/dev/null" || status=$?
   case "$status" in
     0)
       if [ "${SKIP_SESSION_CHECK:-0}" = 1 ]; then
@@ -408,12 +421,17 @@ unix_user_session_check() {
 # rollback (c32) for the summary: the login-user unit was stopped and
 # disabled but its file, config and env stay in place, so stopping the
 # account's unit and starting the login user's restores the previous
-# posture without a deploy. Prints; runs nothing.
+# posture without a deploy. Prints; runs nothing. On spark the login half
+# is typed on spark itself (no ssh to itself), so it is printed bare.
 unix_user_rollback_pair() {
   local engine=$1 unit=$2 host=${3:-$HOST}
-  local target
+  local target login_half
   target=$(unix_user_target "$host" "$engine")
-  say "rollback $unit on $host: ssh $target '$UNIX_USER_XDG; systemctl --user stop $unit' && ssh $host '$UNIX_USER_XDG; systemctl --user start $unit'"
+  case "$host" in
+    spark*) login_half="$UNIX_USER_XDG; systemctl --user start $unit   (typed on $host as the login user)" ;;
+    *) login_half="ssh $host '$UNIX_USER_XDG; systemctl --user start $unit'" ;;
+  esac
+  say "rollback $unit on $host: ssh $target '$UNIX_USER_XDG; systemctl --user stop $unit' && $login_half"
 }
 
 # Executed (not sourced): `sudo bash lanes/unix-user.sh bootstrap <engine>...`

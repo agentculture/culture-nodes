@@ -1,0 +1,15 @@
+{
+  "qwen_bin": "__HOME__/.local/bin/qwen",
+  "host": "0.0.0.0",
+  "port": 8092,
+  "always_async": true,
+  "default_sandbox": "workspace-write",
+  "state_dir": "__HOME__/.local/state/culture-nodes-bridges/qwen-developer",
+  "repo_allowlist": [
+    "__HOME__/git/culture-nodes-qwen-developer"
+  ],
+  "repo_identities": {
+    "agentculture/culture-nodes": "__HOME__/git/culture-nodes-qwen-developer"
+  },
+  "config_repo": "agentculture/culture-nodes"
+}

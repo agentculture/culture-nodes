@@ -201,14 +201,22 @@ func TestCodexDeployLaneInstallsPythonNodesCLI(t *testing.T) {
 // TestCodexDeployLaneProvisionsAgentCheckout asserts the ~/git/culture-nodes-agent
 // provisioning contract: clone when absent, fast-forward ONLY when clean,
 // and refuse (leaving the checkout untouched) when dirty or diverged.
+//
+// Since #243 the checkout belongs to the culture-codex ACCOUNT and is
+// provisioned by lanes/unix-user.sh's UNIX_USER_CHECKOUT_REMOTE (one clone
+// step for every engine account, codex included) rather than by a codex-only
+// block in deploy.sh -- the needles below therefore name that lane's shape.
+// The origin is a variable so the fake-host harness can clone from a local
+// bare repo; its default is the real repository.
 func TestCodexDeployLaneProvisionsAgentCheckout(t *testing.T) {
 	script := deployScriptText(t)
 
 	for _, want := range []struct{ needle, why string }{
 		{"git/culture-nodes-agent", "the agent checkout path the bridge config's repo_allowlist names"},
-		{"git clone https://github.com/agentculture/culture-nodes", "the clone-when-absent branch"},
+		{`git clone -q "$REPO_URL"`, "the clone-when-absent branch"},
+		{"UNIX_USER_REPO_URL:-https://github.com/agentculture/culture-nodes", "the default origin the account clones from"},
 		{"status --porcelain", "the dirty-checkout detection"},
-		{"merge --ff-only", "the fast-forward-only update (never a rebase or reset)"},
+		{"--ff-only", "the fast-forward-only update (never a rebase or reset)"},
 		{"fetch", "the fetch that precedes the fast-forward"},
 	} {
 		if !strings.Contains(script, want.needle) {
@@ -219,48 +227,151 @@ func TestCodexDeployLaneProvisionsAgentCheckout(t *testing.T) {
 	if !strings.Contains(script, "refusing to touch it") {
 		t.Error("the checkout lane has no explicit refusal message; a dirty/diverged checkout must be refused with a clear message")
 	}
+	if strings.Contains(script, "CODEX_AGENT_CHECKOUT_REMOTE") {
+		t.Error("deploy.sh still carries its own codex-only checkout block; since #243 the account lane (UNIX_USER_CHECKOUT_REMOTE) provisions every engine checkout, and two writers of one clone is how the human-inbox units ended up on the wrong branch")
+	}
 }
 
-// TestCodexDeployLaneWarnsButDoesNotFailOnDirtyCheckout asserts the
-// warn-don't-fail choice: a dirty checkout is an expected operator state
-// (write sessions leave diffs to harvest, then reset), so a refusal must
-// not abort a deploy whose real job is getting the bridge itself running.
-// Mechanically: the ssh invocation carrying the checkout script is followed
-// by a `||` fallback that warns, and is not followed by an exit.
-func TestCodexDeployLaneWarnsButDoesNotFailOnDirtyCheckout(t *testing.T) {
+// TestAccountCheckoutRefusalFailsTheProvision pins the opposite of the
+// pre-#243 warn-don't-fail choice, on purpose. The login user's checkout was
+// an operator-harvested workspace, so a dirty tree was an expected state the
+// deploy warned about and moved past. The account's clone is the account's
+// own: no operator harvests it by hand, and a diff sitting in it is a session
+// that has not handed over yet. Deploying over it would install a bridge
+// beside work nothing has recorded, so the provision REFUSES and the deploy
+// stops -- mechanically, the ssh invocation running the checkout script is
+// followed by a `|| {` block that returns non-zero, and never by a WARNING.
+func TestAccountCheckoutRefusalFailsTheProvision(t *testing.T) {
 	script := deployScriptText(t)
 
-	idx := strings.Index(script, "CODEX_AGENT_CHECKOUT_REMOTE")
+	idx := strings.Index(script, `$UNIX_USER_CHECKOUT_REMOTE"`)
 	if idx == -1 {
-		t.Skip("checkout lane is not factored into a CODEX_AGENT_CHECKOUT_REMOTE variable; the shape assertion below does not apply")
+		t.Fatal("no ssh invocation running UNIX_USER_CHECKOUT_REMOTE found; the account checkout is not provisioned")
 	}
+	rest := script[idx:]
+	end := strings.Index(rest, "\n  done")
+	if end == -1 {
+		t.Fatal("the checkout invocation is not inside the per-role loop this test reasons about")
+	}
+	block := rest[:end]
+	if !strings.Contains(block, "|| {") {
+		t.Errorf("the checkout ssh invocation has no `|| {` refusal block: %q", block)
+	}
+	if !strings.Contains(block, "return 1") {
+		t.Errorf("the checkout refusal does not fail the provision (no `return 1`): %q", block)
+	}
+	if strings.Contains(strings.ToUpper(block), "WARNING") {
+		t.Errorf("the checkout refusal only warns; an account clone with a session's diff in it must stop the deploy: %q", block)
+	}
+}
 
-	// Find the ssh invocation that runs the checkout script and inspect the
-	// logical command (the ssh line plus a possible continuation).
-	var invocation string
-	lines := strings.Split(script, "\n")
-	for i, line := range lines {
-		if !strings.Contains(line, "ssh") || !strings.Contains(line, "CODEX_AGENT_CHECKOUT_REMOTE") {
-			continue
+// TestCodexBridgeRunsAsTheEngineAccount pins #243's cutover shape for the
+// codex lane: the bridge is installed, configured and started over ssh to the
+// ACCOUNT (unix_user_target), the login user's unit is stopped and disabled
+// (never removed) only after the session-in-flight check, and the rollback
+// pair is printed. The unit file itself stays byte-for-byte (%h paths;
+// codexbridgeunit_test.go pins it) -- what changes is whose systemd instance
+// it lands in.
+func TestCodexBridgeRunsAsTheEngineAccount(t *testing.T) {
+	script := deployScriptText(t)
+
+	start := strings.Index(script, "deploy_codex_bridge() {")
+	if start == -1 {
+		t.Fatal("no deploy_codex_bridge definition")
+	}
+	body := script[start:]
+	if end := strings.Index(body, "\n}\n"); end > 0 {
+		body = body[:end]
+	}
+	for _, want := range []struct{ needle, why string }{
+		{`unix_user_target "$host" codex`, "the ssh target that IS the culture-codex account"},
+		{`ssh "$target" 'test -f ~/.culture-nodes/codex-bridge.env'`, "the bridge token is looked for in the ACCOUNT's home"},
+		{`stamp_revision "$target" codex codex_bridge`, "the revision stamp lands in the account's own archive copy"},
+		{`ssh "$target" "export XDG_RUNTIME_DIR=/run/user/\$(id -u); mkdir -p ~/.config/systemd/user && cp $REMOTE_DIR/deploy/prod/codex-bridge.service ~/.config/systemd/user/`, "the unit is installed into the account's systemd --user instance, with XDG_RUNTIME_DIR from the account's own uid"},
+		{"account_cutover_login_unit", "the login user's unit is stopped + disabled behind the session check"},
+		{"account_register_os_user", "the registry row gains os_user=culture-codex"},
+	} {
+		if !strings.Contains(body, want.needle) {
+			t.Errorf("deploy_codex_bridge has no %q — %s", want.needle, want.why)
 		}
-		invocation = line
-		for strings.HasSuffix(strings.TrimSpace(invocation), `\`) && i+1 < len(lines) {
-			i++
-			invocation += "\n" + lines[i]
+	}
+	for _, bad := range []string{
+		`ssh "$host" "export XDG_RUNTIME_DIR`,
+		`ssh "$host" "umask 077; mkdir -p ~/.culture-nodes/bin`,
+		`ssh "$host" "sed \"s|__HOME__|`,
+	} {
+		if strings.Contains(body, bad) {
+			t.Errorf("deploy_codex_bridge still runs an account-side step as the LOGIN user: %q", bad)
 		}
-		break
 	}
-	if invocation == "" {
-		t.Fatal("no ssh invocation running the checkout script found")
+	// stop-then-start order and the never-rm rule, in the cutover helper.
+	cut := strings.Index(script, "account_cutover_login_unit() {")
+	if cut == -1 {
+		t.Fatal("no account_cutover_login_unit helper")
 	}
-	if !strings.Contains(invocation, "||") {
-		t.Errorf("the checkout ssh invocation has no `||` fallback, so a refusal aborts the whole deploy under set -e: %q", invocation)
+	helper := script[cut:]
+	if end := strings.Index(helper, "\n}\n"); end > 0 {
+		helper = helper[:end]
 	}
-	if regexp.MustCompile(`\|\|[^|]*exit\b`).MatchString(invocation) {
-		t.Errorf("the checkout ssh invocation exits on failure; a dirty checkout must warn and continue: %q", invocation)
+	if !strings.Contains(helper, "unix_user_session_check") {
+		t.Error("the cutover helper does not run the session-in-flight check before stopping the login user's unit")
 	}
-	if !strings.Contains(strings.ToUpper(invocation), "WARNING") {
-		t.Errorf("the checkout fallback does not warn; the refusal must be visible to the operator: %q", invocation)
+	if strings.Index(helper, "unix_user_session_check") > strings.Index(helper, "systemctl --user stop") {
+		t.Error("the session check runs AFTER the stop; it must refuse before anything is stopped")
+	}
+	if !strings.Contains(helper, "systemctl --user disable") {
+		t.Error("the login user's unit is stopped but not disabled; it would come back at the next boot beside the account's copy")
+	}
+	if regexp.MustCompile(`rm -f [^\n]*\.service`).MatchString(helper) {
+		t.Error("the cutover helper removes a unit file; the login user's unit stays in place for the one-command rollback (c32)")
+	}
+}
+
+// TestDeploySparkRunsBridgeLanesOnly pins the spark arm (#243): a host case
+// that installs the four claude units and the qwen unit into culture-claude /
+// culture-qwen, and NOTHING of the control-plane lanes -- no image build, no
+// compose, no runner binary or unit, no cutover, no two-host sequence. The
+// top-level thor/orin steps are gated on the host, so `deploy.sh spark`
+// reaches the case without having shipped or built anything.
+func TestDeploySparkRunsBridgeLanesOnly(t *testing.T) {
+	script := deployScriptText(t)
+	if !strings.Contains(script, "spark*)") {
+		t.Fatal("deploy.sh has no spark*) host arm")
+	}
+	if !strings.Contains(script, `if [[ "$HOST" != spark* ]]; then`) {
+		t.Error("the thor/orin-only top-level steps (ship, image build, runner, runner env) are not gated on the host, so `deploy.sh spark` would build a control plane on spark")
+	}
+	caseIdx := strings.LastIndex(script, `case "$HOST" in`)
+	sparkArm := script[strings.Index(script[caseIdx:], "spark*)")+caseIdx:]
+	if end := strings.Index(sparkArm, ";;"); end > 0 {
+		sparkArm = sparkArm[:end]
+	}
+	for _, bad := range []string{"compose_", "thor_two_host_lane", "orin_two_host_lane", "nodes-runner", "audit-credentials", "deploy_human_inbox", "deploy_notify", "deploy_jira"} {
+		if strings.Contains(sparkArm, bad) {
+			t.Errorf("the spark arm runs %q; spark is bridge lanes only", bad)
+		}
+	}
+	if !strings.Contains(sparkArm, "account_bridges_spark_lane") {
+		t.Error("the spark arm does not call account_bridges_spark_lane")
+	}
+	for _, unit := range []string{
+		"culture-nodes-claude-developer", "culture-nodes-claude-planner",
+		"culture-nodes-claude-verifier", "culture-nodes-claude-intake",
+		"culture-nodes-qwen-developer",
+	} {
+		if !strings.Contains(script, unit) {
+			t.Errorf("deploy.sh never names %s; the spark lane must install all five units", unit)
+		}
+	}
+	for _, want := range []string{
+		"uv tool install --force ./$REMOTE_DIR/adapters/claude-code",
+		"uv tool install --force ./$REMOTE_DIR/adapters/qwen",
+		"issue-dialin-credential.sh",
+		"NODES_HUMAN_DECISION_TOKEN",
+	} {
+		if !strings.Contains(script, want) {
+			t.Errorf("deploy.sh has no %q in the spark lane", want)
+		}
 	}
 }
 

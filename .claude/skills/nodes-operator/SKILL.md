@@ -68,7 +68,10 @@ read-only), `--timeout` (default 15m — always explicit: a node timeout is
 the recovery story for a bridge restart), `--retries` (default 1 — a
 billable session is investigated, not auto-retried), `--outcome`,
 `--category` (optional flat tag on the created run, e.g. `review`, `audit`
-— retaggable later via `nodes run retag <id> --category C`), `--no-watch`.
+— retaggable later via `nodes run retag <id> --category C`), `--devague-write`
+(the package writes `.devague/`: developer lane only, in its custody
+checkout — refused for every other actor before anything is billed; see
+`docs/operations/spec-chain-lane.md`), `--no-watch`.
 
 Actors: `codex-thor`, `codex-orin` — each maps to its host's allowlisted
 checkout (`/home/<host>/git/culture-nodes-agent`). New actors: register with

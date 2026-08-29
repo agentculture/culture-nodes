@@ -57,7 +57,7 @@ func (d *Dispatcher) Run(ctx context.Context) error {
 		var id, namespaceID, runID, triggerID, actorKey string
 		var payload []byte
 		var attempts int
-		err = tx.QueryRow(ctx, `SELECT id,namespace_id,run_id,trigger_event_id,target_actor_key,payload,attempts
+		err = tx.QueryRow(ctx, `SELECT id,namespace_id,COALESCE(run_id,''),COALESCE(trigger_event_id,''),target_actor_key,payload,attempts
 			FROM jira_ticket_report_outbox AS report
 			WHERE status='pending' AND available_at<=now()
 			AND (phase <> 'finish' OR NOT EXISTS (
@@ -105,6 +105,15 @@ func (d *Dispatcher) dispatch(ctx context.Context, id, namespaceID, runID, trigg
 		return fmt.Errorf("decode payload: %w", err)
 	}
 	input, _ := json.Marshal(map[string]string{"verb": "post_comment", "issue": full.Issue, "comment": full.Comment})
+	// Ticket-scoped intents have no engine run. The actor protocol still
+	// requires stable correlation strings, so derive them from the durable
+	// outbox identity; they confer no authority and are idempotent on retry.
+	if runID == "" {
+		runID = "ticket-" + full.Issue
+	}
+	if triggerID == "" {
+		triggerID = id
+	}
 	registry, err := worker.NewDBRegistry(d.store, namespaceID)
 	if err != nil {
 		return err

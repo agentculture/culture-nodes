@@ -593,6 +593,33 @@ def fetch_open_pulls(token: str | None, repository: str) -> list[dict]:
     return open_pulls
 
 
+def fetch_merged_pulls(token: str | None, repository: str) -> list[dict]:
+    """Recently closed PRs; only entries carrying GitHub's merged_at survive."""
+    pulls = _get_json(f"{GITHUB_API}/repos/{repository}/pulls?state=closed&per_page=50", token)
+    return [pull for pull in pulls if pull.get("merged_at")]
+
+
+_ISSUE_KEY_RE = re.compile(r"(?<![A-Z0-9])([A-Z][A-Z0-9]+-\d+)(?![A-Z0-9])")
+
+
+def merged_pr_fact(pull: dict, repository: str) -> dict | None:
+    """Build the freeze fact, correlating by head branch first, then body."""
+    if not pull.get("merged_at"):
+        return None
+    head = (pull.get("head") or {}).get("ref") or ""
+    match = _ISSUE_KEY_RE.search(head) or _ISSUE_KEY_RE.search(pull.get("body") or "")
+    if not match:
+        return None
+    return {
+        "source": "github_pr",
+        "repository": repository,
+        "number": pull.get("number"),
+        "url": pull.get("html_url") or "",
+        "merged_at": pull["merged_at"],
+        "issue_key": match.group(1),
+    }
+
+
 def fetch_check_runs(token: str | None, repository: str, head_sha: str) -> dict:
     """Check runs for one PR's head commit (issue #61's third source)."""
     return _get_json(
@@ -753,6 +780,20 @@ def main() -> int:
             )
 
         emitted = []
+        # Closed PRs are a separate bounded read. The immutable merged_at
+        # value is the watermark, so two passes append exactly one fact.
+        with attempting(f"listing merged PRs of {github_repo} (GitHub)"):
+            merged_pulls = fetch_merged_pulls(token, github_repo)
+        for pull in merged_pulls:
+            fact = merged_pr_fact(pull, github_repo)
+            if fact is None:
+                continue
+            with attempting(f"emitting pr.merged for #{pull.get('number')} (control plane)"):
+                emitted.append(raise_event(
+                    "pr.merged", fact,
+                    f"github:{github_repo}:pr:{pull.get('number')}:merged",
+                    {"merged_at": pull["merged_at"]},
+                ))
         for pull in swept:
             if not pull["head_sha"]:
                 print(

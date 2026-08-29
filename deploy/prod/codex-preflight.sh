@@ -19,8 +19,9 @@
 # since preflight is meant to validate the file an operator is about to
 # ship, not the merged runtime config a running bridge process would use.
 #
-# Checks, in order, each its own failure class with a distinct one-line
-# "preflight: ..." message on stderr and a non-zero exit:
+# Checks, in order. Checks 1-6 and 8 each have their own failure class with
+# a distinct one-line "preflight: ..." message on stderr and a non-zero
+# exit. Check 7 is the one exception — see its own section below:
 #   1. codex_bin is set and is an executable file (never a PATH lookup —
 #      an operator who left codex_bin as the bare, PATH-resolvable name
 #      "codex" is exactly the mistake this check exists to catch)
@@ -31,9 +32,16 @@
 #   4. every repo_allowlist entry is a real git checkout
 #   5. state_dir exists (created if absent) and is writable
 #   6. a non-loopback host requires auth_token to be set
-#   7. the host can create an unprivileged user namespace — codex sandboxes
-#      every shell command inside one, and a host that cannot build one
-#      accepts work and then fails it (issue #63)
+#   7. WARNING ONLY, does not fail the deploy: can the host create an
+#      unprivileged user namespace? This used to be the safety line (issue
+#      #63) back when codex sandboxed every shell command inside bwrap. As
+#      of issue #243 the safety line is the account this process runs as
+#      (check 8), not the sandbox, so a restricted userns is no longer a
+#      deploy blocker — it is printed for visibility only.
+#   8. the account this process runs as is a dedicated, unprivileged one —
+#      refuses if `id -nG` names the "sudo" or "docker" group (either is
+#      root-equivalent) or if any repo_allowlist checkout is not owned by
+#      the running uid (issue #243)
 #
 # On success, prints exactly one line to stdout: the measured codex
 # version, e.g. "preflight: ok codex-cli 0.147.0".
@@ -209,17 +217,23 @@ case "$HOST" in
     ;;
 esac
 
-# --- 7. the host can create an unprivileged user namespace (issue #63) -----
-# The only check here about the MACHINE rather than the config file, and the
-# one that catches the failure that does not look like its own cause: codex
-# sandboxes every shell command it runs inside a user namespace, so a host
-# that cannot create one gets an actor that registers, accepts dispatched
-# work, and then fails each command it tries — after the turn is spent. The
-# error surfaces as a bridge or runner problem and is neither.
+# --- 7. the host can create an unprivileged user namespace — WARNING ONLY,
+# does not fail the deploy (issue #63, downgraded by issue #243) ----------
+# The only check here about the MACHINE rather than the config file. It
+# used to be the safety line: codex sandboxed every shell command it ran
+# inside a user namespace, so a host that could not create one got an actor
+# that registered, accepted dispatched work, and then failed each command
+# it tried — after the turn was spent, surfacing as a bridge or runner
+# problem that was neither. As of issue #243 the bridges run as a dedicated
+# Unix account instead of relying on that sandbox — check 8 below is the
+# safety line now — so a restricted userns is no longer a reason to refuse
+# the deploy; it stays worth printing because it still means codex's own
+# sandboxing (if the operator relies on it for anything else) will not
+# work.
 #
 # Ubuntu 24.04 ships kernel.apparmor_restrict_unprivileged_userns=1, which
-# is exactly that state, so every fresh host in this fleet starts broken
-# until it is provisioned otherwise. See deploy/prod/README.md,
+# is exactly that state, so every fresh host in this fleet starts in this
+# condition until it is provisioned otherwise. See deploy/prod/README.md,
 # "Unprivileged user namespaces".
 #
 # Probed by capability, never by reading the sysctl back: the sysctl is one
@@ -239,14 +253,12 @@ case "$USERNS_PROBE" in
     if ! bwrap --unshare-user --unshare-net --ro-bind / / /bin/true >/dev/null 2>&1; then
       echo "preflight: bwrap cannot create a user namespace — codex would register, accept work, then fail every shell command it runs (issue #63)" >&2
       echo "preflight: on Ubuntu 24.04 this is kernel.apparmor_restrict_unprivileged_userns=1; see deploy/prod/README.md 'Unprivileged user namespaces'" >&2
-      exit 1
     fi
     ;;
   unshare)
     if ! unshare --user --map-root-user true >/dev/null 2>&1; then
       echo "preflight: this host cannot create a user namespace — codex would register, accept work, then fail every shell command it runs (issue #63)" >&2
       echo "preflight: on Ubuntu 24.04 this is kernel.apparmor_restrict_unprivileged_userns=1; see deploy/prod/README.md 'Unprivileged user namespaces'" >&2
-      exit 1
     fi
     ;;
   *)
@@ -257,5 +269,47 @@ case "$USERNS_PROBE" in
     echo "preflight: note — neither bwrap nor unshare is installed, so user-namespace creation was NOT probed (issue #63)" >&2
     ;;
 esac
+
+# --- 8. the process runs as a dedicated, unprivileged account (issue #243) -
+# This is the safety line now, replacing the bwrap sandbox check 7 used to
+# be: the bridges run as a dedicated Unix account (`culture-codex` on
+# thor/orin) rather than depending on codex's own sandboxing, so this check
+# refuses a deploy under an account that would defeat the isolation that
+# account is supposed to provide.
+#
+# Two conditions, both about the running account rather than the config
+# file, each its own message:
+#   - group membership: "sudo" or "docker" in `id -nG` is root-equivalent
+#     (sudo directly; docker via bind-mounting the host root into a
+#     container), so either grant defeats the whole point of a dedicated
+#     account.
+#   - checkout ownership: every repo_allowlist entry must be owned
+#     (`stat -c %u`) by the running uid (`id -u`) — a checkout owned by a
+#     different account is either unreadable/unwritable in practice, or
+#     (worse) shared with a principal this process should not be able to
+#     act as.
+RUNNING_GROUPS=$(id -nG)
+for restricted_group in sudo docker; do
+  for have_group in $RUNNING_GROUPS; do
+    if [[ "$have_group" == "$restricted_group" ]]; then
+      echo "preflight: running user is a member of group '$restricted_group' — a codex bridge account must be dedicated and unprivileged, not one with $restricted_group access (issue #243)" >&2
+      exit 1
+    fi
+  done
+done
+
+RUNNING_UID=$(id -u)
+if [[ ${#REPOS[@]} -gt 0 ]]; then
+  for repo in "${REPOS[@]}"; do
+    if ! REPO_UID=$(stat -c %u "$repo" 2>/dev/null); then
+      echo "preflight: cannot stat repo_allowlist entry to check ownership: $repo" >&2
+      exit 1
+    fi
+    if [[ "$REPO_UID" != "$RUNNING_UID" ]]; then
+      echo "preflight: repo_allowlist entry is not owned by the running user (uid $RUNNING_UID): $repo (owned by uid $REPO_UID) (issue #243)" >&2
+      exit 1
+    fi
+  done
+fi
 
 printf 'preflight: ok %s\n' "$VERSION_LINE"

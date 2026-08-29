@@ -15,15 +15,15 @@ delivery summary (`/summarize-delivery`) will cite it.
 
 | Measure | Value |
 |---|---|
-| packages delivered by the fleet | 8 (WP-A…WP-H minus the colleague pair) — every one merged |
+| packages delivered by the fleet | 11 (WP-A…WP-J, WP-B2; minus the colleague pair) — every one merged |
 | billable runs wasted on lane defects, not work | 4 (#240 ×2, no-network step 0 ×2) |
 | gate fixup commits the workers could not produce themselves | 11 (formatters ×5, PG-only test defects ×3, TypeScript ×1, stale openapi.json ×1, import-path flake ×1) |
-| operator hand-turns logged on #230 | 14 by the end of t7 |
+| operator hand-turns logged on #230 | 17 by the end of t8 (three of them sweep re-grants) |
 | deviations recorded through `/deviate` | 2 (d1 colleague → codex; d2 #242 hardening), both approved |
 | colleague as writer | 0 of 2 delivered (runs `11b1701688e2`, `4229519b496c`, 1/5 each) |
 | colleague as reviewer | 3 of 3 found real defects (`a51591c92f56`, `7eeb2ac593c2`, `c3b74cf74a72`, 5/5 each): a scope-guard bypass (#242), a dispatcher deadlock, a refspec injection surface |
 | prod api downtime during t7 | ~47 min (09:22–10:09Z), across two fail-closed stops |
-| issues filed from the cycle | #240 #241 #242 #243 |
+| issues filed from the cycle | #240 #241 #242 #243 (+ #235 #237 from the spec) |
 
 ## 2. What worked
 
@@ -180,6 +180,22 @@ Every comment and move the operator makes is self-echo (#197 gap 3), so
 signal 2 — a human's fact reaching the engine through Jira — cannot be
 produced on this site by anyone. A second human account, or per-user replies
 through the page (#235), is the way out.
+
+### 3.16 The page link was prose, not a record
+
+t12 built the singleton index for the ticket-page link but intake v5 still
+asked the agent to write the line into every acknowledge comment; the second
+intake on SCRUM-5 produced a second link. WP-I moves the link into one
+engine-owned outbox row per ticket. **Rule:** anything with a uniqueness
+contract is a record the engine writes, never a line an agent is asked to
+include.
+
+### 3.17 Three sweep re-grants in one afternoon
+
+Every sweep fix (`bf821c3`, `80c9822`, `229844a`) needed the runner.env
+(URL, SHA-256) pair re-granted on both hosts by running deploy.sh's
+marker-delimited block by hand — the same code the harness executes, so it is
+safe, but it is a verb waiting to exist (`deploy/prod/grant-sweep.sh <rev>`).
 
 ## 4. Routing verdicts (for the next split plan)
 

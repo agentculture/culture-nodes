@@ -232,7 +232,16 @@ echo "account $ACCOUNT: home mode 750, groups: $groups"'
 UNIX_USER_ENGINE_INSTALL_REMOTE='set -euo pipefail
 bin=$HOME/.local/bin/$ENGINE
 mkdir -p "$HOME/.local/bin"
-have() { [ -x "$bin" ] && case "$("$bin" --version 2>/dev/null || true)" in *"$VERSION"*) return 0 ;; esac; return 1; }
+have() {
+  [ -x "$bin" ] || return 1
+  case "$("$bin" --version 2>/dev/null || true)" in *"$VERSION"*) ;; *) return 1 ;; esac
+  # codex 0.147 spawns codex-code-mode-host from beside its own binary; a bare
+  # binary answers --version and then blocks every session ("failed to spawn
+  # code-mode host", run 01M17DN04BTX9JAS3W3H9NJ7ZP) -- so the pin is the
+  # package, not the binary.
+  if [ "$ENGINE" = codex ]; then [ -x "$(dirname "$(readlink -f "$bin")")/codex-code-mode-host" ] || return 1; fi
+  return 0
+}
 if have; then
   echo "$ENGINE: $VERSION already installed at $bin"
   exit 0
@@ -244,15 +253,24 @@ case "$ENGINE" in
       x86_64) triple=x86_64-unknown-linux-musl ;;
       *) echo "refusing: no codex release for $(uname -m)" >&2; exit 3 ;;
     esac
-    asset=codex-$triple.tar.gz
+    # The standalone PACKAGE (bin/codex + bin/codex-code-mode-host +
+    # codex-path/rg + codex-resources), laid out exactly as the OpenAI
+    # standalone installer lays it out under ~/.codex/packages/standalone, so
+    # the account codex is byte-for-byte what the login users run.
+    asset=codex-package-$triple.tar.gz
+    rel=$HOME/.codex/packages/standalone/releases/$VERSION-$triple
     tmp=$(mktemp -d "$HOME/.local/codex-install.XXXXXX")
     trap "rm -rf \"$tmp\"" EXIT
     curl -fsSL "$CODEX_RELEASE_BASE/rust-v$VERSION/$asset" -o "$tmp/$asset"
-    tar -xzf "$tmp/$asset" -C "$tmp"
-    found=$(find "$tmp" -maxdepth 2 -type f -name "codex*" ! -name "*.tar.gz" | head -n 1)
-    [ -n "$found" ] || { echo "refusing: $asset held no codex binary" >&2; exit 3; }
-    chmod 755 "$found"
-    mv -f "$found" "$bin"
+    mkdir -p "$tmp/pkg"
+    tar -xzf "$tmp/$asset" -C "$tmp/pkg"
+    root=$(dirname "$(find "$tmp/pkg" -type f -path "*/bin/codex" | head -n 1)")
+    [ -n "$root" ] && [ -x "$root/codex" ] && [ -x "$root/codex-code-mode-host" ] || { echo "refusing: $asset held no bin/codex + bin/codex-code-mode-host pair" >&2; exit 3; }
+    root=$(dirname "$root")
+    rm -rf "$rel"; mkdir -p "$(dirname "$rel")"
+    mv "$root" "$rel"
+    ln -sfn "$rel" "$HOME/.codex/packages/standalone/current"
+    ln -sfn "$HOME/.codex/packages/standalone/current/bin/codex" "$bin"
     ;;
   claude) curl -fsSL "$CLAUDE_INSTALLER" | bash -s "$VERSION" ;;
   qwen) curl -fsSL "$QWEN_INSTALLER" | bash -s -- --version "$VERSION" ;;

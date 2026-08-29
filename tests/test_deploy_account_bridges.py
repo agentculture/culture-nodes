@@ -162,9 +162,15 @@ case "$url" in
   *github.com/openai/codex/releases/download/rust-v*)
     v=$(printf '%s' "$url" | sed -n 's#.*/rust-v\\([0-9.]*\\)/.*#\\1#p')
     asset=${url##*/}; name=${asset%.tar.gz}
+    case "$asset" in codex-package-*) ;;
+      *) echo "curl fake: expected the codex PACKAGE, got $asset" >&2; exit 22 ;; esac
     tmp=$(mktemp -d)
-    printf '#!/usr/bin/env bash\\necho "codex-cli %s"\\n' "$v" > "$tmp/$name"
-    chmod +x "$tmp/$name"
+    mkdir -p "$tmp/$name/bin" "$tmp/$name/codex-path" "$tmp/$name/codex-resources"
+    printf '#!/usr/bin/env bash\\necho "codex-cli %s"\\n' "$v" > "$tmp/$name/bin/codex"
+    printf '#!/usr/bin/env bash\\necho code-mode-host\\n' > "$tmp/$name/bin/codex-code-mode-host"
+    printf '#!/usr/bin/env bash\\necho rg\\n' > "$tmp/$name/codex-path/rg"
+    chmod +x "$tmp/$name/bin/codex" "$tmp/$name/bin/codex-code-mode-host" "$tmp/$name/codex-path/rg"
+    printf '{"layoutVersion": 1, "version": "%s"}\\n' "$v" > "$tmp/$name/codex-package.json"
     tar -C "$tmp" -czf "$out" "$name"
     rm -rf "$tmp" ;;
   */v1alpha1/version*) printf '{"version":"fake","revision":"%s"}' "$FAKE_REVISION" ;;

@@ -159,9 +159,15 @@ case "$url" in
   *github.com/openai/codex/releases/download/rust-v*)
     v=$(printf '%s' "$url" | sed -n 's#.*/rust-v\\([0-9.]*\\)/.*#\\1#p')
     asset=${url##*/}; name=${asset%.tar.gz}
+    case "$asset" in codex-package-*) ;;
+      *) echo "curl fake: expected the codex PACKAGE, got $asset" >&2; exit 22 ;; esac
     tmp=$(mktemp -d)
-    printf '#!/usr/bin/env bash\\necho "codex-cli %s"\\n' "$v" > "$tmp/$name"
-    chmod +x "$tmp/$name"
+    mkdir -p "$tmp/$name/bin" "$tmp/$name/codex-path" "$tmp/$name/codex-resources"
+    printf '#!/usr/bin/env bash\\necho "codex-cli %s"\\n' "$v" > "$tmp/$name/bin/codex"
+    printf '#!/usr/bin/env bash\\necho code-mode-host\\n' > "$tmp/$name/bin/codex-code-mode-host"
+    printf '#!/usr/bin/env bash\\necho rg\\n' > "$tmp/$name/codex-path/rg"
+    chmod +x "$tmp/$name/bin/codex" "$tmp/$name/bin/codex-code-mode-host" "$tmp/$name/codex-path/rg"
+    printf '{"layoutVersion": 1, "version": "%s"}\\n' "$v" > "$tmp/$name/codex-package.json"
     tar -C "$tmp" -czf "$out" "$name"
     rm -rf "$tmp" ;;
   *) echo "curl fake: no such URL $url" >&2; exit 22 ;;
@@ -731,6 +737,32 @@ def test_no_session_in_flight_proceeds_quietly(tmp_path: Path):
     assert result.returncode == 0, result.stderr
     assert "WARNING" not in result.stdout
     h.first(f"systemctl[{THOR}] --user stop codex-bridge")
+
+
+def test_codex_is_installed_as_the_full_package_with_its_code_mode_host(
+    tmp_path: Path,
+):
+    """Run 01M17DN04BTX9JAS3W3H9NJ7ZP (2026-08-29): a bare codex binary
+    answers --version and then blocks every session, because codex 0.147
+    spawns codex-code-mode-host from beside itself. The lane installs the
+    standalone PACKAGE, and a bare binary left by an earlier install is
+    re-installed rather than trusted for its --version alone."""
+    h = Harness(tmp_path)
+    _provisioned(h, THOR, "codex")
+    home = h.account_home(THOR, "codex")
+    codex = home / ".local/bin/codex"
+    assert codex.is_symlink()
+    assert (codex.resolve().parent / "codex-code-mode-host").exists()
+    assert (home / ".codex/packages/standalone/current/bin/codex").exists()
+    assert h.count("curl[", "codex-package-") == 1
+    # degrade to the first cutover's bare binary and provision again
+    codex.unlink()
+    codex.write_text('#!/usr/bin/env bash\necho "codex-cli 0.147.0"\n')
+    codex.chmod(0o755)
+    result = h.run("unix_user_provision thor-fake codex")
+    assert result.returncode == 0, result.stderr
+    assert (codex.resolve().parent / "codex-code-mode-host").exists()
+    assert h.count("curl[", "codex-package-") == 2
 
 
 def test_session_pattern_does_not_match_its_own_ssh_shell():

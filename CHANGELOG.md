@@ -5,6 +5,12 @@ All notable changes to this project will be documented in this file.
 Format follows [Keep a Changelog](https://keepachangelog.com/). This project
 adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.42.4] - 2026-08-29
+
+### Added
+
+- docs/plans/2026-08-29-jira-flow-spec-read-related-bugs.md: the converged plan — 15 tasks in 6 waves covering all 48 spec targets (#191 fix, two-host r4 deploy with preflight doctor, re-mint actor, #207, #205, ticketreport tests, ticket projection API, reply endpoint, /tickets/:id route, link-at-intake + pr.merged freeze, board-driven /think as lane sessions, the two live proofs, session accounting); five risks (#232 out of scope, LAN-only page, #221 placement, #237 deferred, t7 irreversibility)
+
 ## [0.42.3] - 2026-08-29
 
 ### Added

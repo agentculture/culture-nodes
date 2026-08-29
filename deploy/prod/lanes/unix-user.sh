@@ -479,34 +479,63 @@ unix_user_provision() {
 
 # --- cutover guards ----------------------------------------------------------------
 
+# The session shapes the three engines run under a bridge, bracket idiom so
+# the pattern never matches the shell that carries it over ssh (the first
+# thor cutover refused every deploy on a phantom session until it did).
+UNIX_USER_SESSION_PATTERN='[c]laude -p|[c]odex exec|qwen_bridge[.]qwen_cli'
+
+# unix_user_session_verdict <who> <where> <status> <how-to-look> -- the one
+# reading of a pgrep-over-ssh exit status, shared by the login-user check
+# and the account check below. Three states, like preflight's orin probe:
+# pgrep found one (0: refuse, or warn under SKIP_SESSION_CHECK=1), found
+# none (1: proceed), or ssh never reached the host (anything else: refuse --
+# unreachable is not the same as idle).
+unix_user_session_verdict() { # who where status how-to-look
+  local who=$1 where=$2 status=$3 look=$4
+  case "$status" in
+    0)
+      if [ "${SKIP_SESSION_CHECK:-0}" = 1 ]; then
+        say "WARNING: a session is running as $who on $where and SKIP_SESSION_CHECK=1 — stopping or restarting its unit will kill that run mid-session"
+        return 0
+      fi
+      echo "refusing: a session (claude -p / codex exec / qwen) is running as $who on $where; stopping or restarting its unit now would kill the run and leave it running in the ledger" >&2
+      echo "hint: wait for it to finish ($look), or export SKIP_SESSION_CHECK=1 to accept killing it" >&2
+      return 1 ;;
+    1)
+      say "session check: none running as $who on $where"
+      return 0 ;;
+    *)
+      echo "refusing: cannot reach $where (ssh exit $status) to ask whether a session is in flight as $who; an unreachable host is not an idle one" >&2
+      return 1 ;;
+  esac
+}
+
 # unix_user_session_check <host> <login-user> -- refuse to stop a login-user
 # bridge unit while one of its sessions is in flight. A restart mid-session
 # kills the run and leaves it `running` in the ledger (#230 hand-turn 8,
-# exit 143). Three states, like preflight's orin probe: pgrep found one (0:
-# refuse, or warn under SKIP_SESSION_CHECK=1), found none (1: proceed), or
-# ssh never reached the host (anything else: refuse -- unreachable is not
-# the same as idle).
+# exit 143).
 unix_user_session_check() {
   local host=$1 login=$2 status=0
   [[ "$login" =~ ^[a-z_][a-z0-9_-]*$ ]] || { echo "unix_user_session_check: '$login' is not a login user name" >&2; return 1; }
   say "session check: any claude -p / codex exec / qwen session running as $login on $host?"
-  unix_user_login_exec "$host" "pgrep -u $login -f '[c]laude -p|[c]odex exec|qwen_bridge[.]qwen_cli' >/dev/null" || status=$?
-  case "$status" in
-    0)
-      if [ "${SKIP_SESSION_CHECK:-0}" = 1 ]; then
-        say "WARNING: a session is running as $login on $host and SKIP_SESSION_CHECK=1 — stopping its unit will kill that run mid-session"
-        return 0
-      fi
-      echo "refusing: a session (claude -p / codex exec / qwen) is running as $login on $host; stopping its unit now would kill the run and leave it running in the ledger" >&2
-      echo "hint: wait for it to finish (pgrep -u $login -af 'claude -p|codex exec|qwen'), or export SKIP_SESSION_CHECK=1 to accept killing it" >&2
-      return 1 ;;
-    1)
-      say "session check: none running as $login on $host"
-      return 0 ;;
-    *)
-      echo "refusing: cannot reach $host (ssh exit $status) to ask whether a session is in flight as $login; an unreachable host is not an idle one" >&2
-      return 1 ;;
-  esac
+  unix_user_login_exec "$host" "pgrep -u $login -f '$UNIX_USER_SESSION_PATTERN' >/dev/null" || status=$?
+  unix_user_session_verdict "$login" "$host" "$status" "pgrep -u $login -af 'claude -p|codex exec|qwen' on $host"
+}
+
+# unix_user_account_session_check <host> <engine> -- the same question asked
+# of the ACCOUNT, as itself: after the cutover the sessions run as
+# culture-<engine>, so a redeploy that only asked about the login user would
+# restart the account's unit under a live session (#249 review, finding 3).
+# Reached over the account's own ssh target, pgrep -u the account; an
+# account that does not answer is refused, not assumed idle.
+unix_user_account_session_check() {
+  local host=$1 engine=$2 status=0 target account
+  unix_user_engine_ok "$engine" || return 1
+  target=$(unix_user_target "$host" "$engine")
+  account=culture-$engine
+  say "session check: any claude -p / codex exec / qwen session running as $account on $host?"
+  ssh "$target" "pgrep -u $account -f '$UNIX_USER_SESSION_PATTERN' >/dev/null" || status=$?
+  unix_user_session_verdict "$account" "$target" "$status" "ssh $target pgrep -u $account -af 'claude -p|codex exec|qwen'"
 }
 
 # unix_user_rollback_pair <engine> <unit> [host] -- the one-command-per-host

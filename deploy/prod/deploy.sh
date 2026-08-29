@@ -281,11 +281,13 @@ PYEOF"
     fi
   fi
 
-  # The cutover (c31/c32): refuse while a session is in flight as the login
-  # user, then stop + disable its unit (file, config and env stay for the
-  # rollback pair), then install and start the account's copy on the same
-  # port. Linger for the account was enabled by the bootstrap.
+  # The cutover (c31/c32): refuse while a session is in flight as the
+  # ACCOUNT (a redeploy after the migration; #249 finding 3) or as the login
+  # user, then stop + disable the login unit (file, config and env stay for
+  # the rollback pair), then install and start the account's copy on the
+  # same port. Linger for the account was enabled by the bootstrap.
   login=$(ssh "$host" 'id -un' | tr -d '\r')
+  account_session_guard "$host" codex || exit 1
   account_cutover_login_unit "$host" "$login" codex-bridge || exit 1
 
   say "installing codex-bridge systemd user unit into $target"

@@ -143,6 +143,20 @@ account_cutover_login_unit() { # host login unit...
   done
 }
 
+# account_session_guard <host> <engine>... -- the account half of the
+# session-in-flight refusal (#249 review, finding 3): after a migration the
+# sessions run AS the engine account, so before the login units are stopped
+# and the account units restarted, every account this deploy is about to
+# restart is asked, as itself, whether a session is in flight. Runs BEFORE
+# account_cutover_login_unit so a refusal here stops nothing on either side.
+account_session_guard() { # host engine...
+  local host=$1; shift
+  local engine
+  for engine in "$@"; do
+    unix_user_account_session_check "$host" "$engine" || return 1
+  done
+}
+
 # account_psql_thor -- register-actor.sh's PSQL_CMD, pointed at thor's
 # database the way resolve_actor_row_id reaches it: the same compose exec on
 # the login user's shipped archive, over ssh from wherever deploy.sh runs.
@@ -340,10 +354,11 @@ account_bridges_spark_lane() { # host
   "$SCRIPT_DIR/issue-dialin-credential.sh" company/developer "$claude" \
     || say "WARNING: dial-in re-issue failed (reason above); re-run by hand: deploy/prod/issue-dialin-credential.sh company/developer $claude"
 
-  # The cutover: one session check for the login user, then stop + disable
-  # its five units, then start the five under their accounts. Same port per
-  # unit either side, so the login copy must be down before the account
-  # copy can bind.
+  # The cutover: one session check per account (as the account) and one for
+  # the login user, then stop + disable its five units, then start the five
+  # under their accounts. Same port per unit either side, so the login copy
+  # must be down before the account copy can bind.
+  account_session_guard "$host" claude qwen || exit 1
   account_cutover_login_unit "$host" "$login" \
     culture-nodes-claude-developer culture-nodes-claude-planner \
     culture-nodes-claude-verifier culture-nodes-claude-intake \

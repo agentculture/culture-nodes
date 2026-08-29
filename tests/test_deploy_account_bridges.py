@@ -628,10 +628,29 @@ def test_spark_refuses_when_the_accounts_are_not_bootstrapped_and_names_the_sudo
 def test_spark_session_in_flight_refuses_before_any_stop(tmp_path: Path):
     h = DeployHarness(tmp_path)
     h.bootstrap(SPARK, "claude", "qwen")
-    result = h.deploy(SPARK, FAKE_SESSION_RUNNING="1")
+    # A session under the LOGIN user only (the account checks, which run
+    # first, find none): the login check is what refuses.
+    result = h.deploy(SPARK, FAKE_SESSION_USER="spark")
     assert result.returncode != 0
     assert "SKIP_SESSION_CHECK=1" in result.stderr
     h.first(f"pgrep[{SPARK}] -u spark -f")
+    h.never("systemctl[", "stop")
+    h.never("systemctl[", "disable")
+    h.never("systemctl[", "restart")
+
+
+def test_spark_account_session_in_flight_refuses_before_any_stop(tmp_path: Path):
+    """A qwen session running AS culture-qwen (a redeploy after the
+    migration) refuses the deploy before the login units are stopped or the
+    account units restarted (#249 review, finding 3)."""
+    h = DeployHarness(tmp_path)
+    h.bootstrap(SPARK, "claude", "qwen")
+    result = h.deploy(SPARK, FAKE_SESSION_USER="culture-qwen")
+    assert result.returncode != 0
+    assert "culture-qwen" in result.stderr
+    assert "SKIP_SESSION_CHECK=1" in result.stderr
+    h.first(f"pgrep[{SPARK}] -u culture-claude -f")
+    h.first(f"pgrep[{SPARK}] -u culture-qwen -f")
     h.never("systemctl[", "stop")
     h.never("systemctl[", "disable")
     h.never("systemctl[", "restart")
@@ -730,12 +749,26 @@ def test_orin_refuses_a_missing_account_naming_the_hand_turn_before_anything_is_
 def test_orin_session_in_flight_refuses_before_any_stop(tmp_path: Path):
     h = DeployHarness(tmp_path)
     h.bootstrap(ORIN, "codex")
-    result = h.deploy(ORIN, FAKE_SESSION_RUNNING="1")
+    result = h.deploy(ORIN, FAKE_SESSION_USER="orin")
     assert result.returncode != 0
     assert "SKIP_SESSION_CHECK=1" in result.stderr
+    h.first(f"pgrep[{ORIN}] -u orin -f")
     h.never("systemctl[", "stop codex-bridge")
     h.never("systemctl[", "disable codex-bridge")
     h.never("systemctl[", "culture-codex")
+
+
+def test_orin_account_session_in_flight_refuses_before_any_stop_or_restart(tmp_path: Path):
+    h = DeployHarness(tmp_path)
+    h.bootstrap(ORIN, "codex")
+    result = h.deploy(ORIN, FAKE_SESSION_USER="culture-codex")
+    assert result.returncode != 0
+    assert "culture-codex" in result.stderr
+    assert "SKIP_SESSION_CHECK=1" in result.stderr
+    h.first(f"ssh[culture-codex@{ORIN}]", "pgrep -u culture-codex -f")
+    h.never("systemctl[", "stop codex-bridge")
+    h.never("systemctl[", "disable codex-bridge")
+    h.never(f"systemctl[{ORIN}:culture-codex]")
 
 
 def test_orin_refuses_when_the_account_has_no_bridge_env_and_names_install_secrets(tmp_path: Path):

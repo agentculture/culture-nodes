@@ -150,9 +150,13 @@ printf '%s[%s] %s\\n' "$(basename "$0")" "$FAKE_HOST" "$*" >> "$FAKE_LOG"
 exit 0
 """
 
+# FAKE_SESSION_RUNNING=1 puts a session under every user; FAKE_SESSION_USER
+# puts one under exactly the user named, so a test can tell the login
+# user's check from the account's.
 _PGREP_SHIM = """#!/usr/bin/env bash
 printf 'pgrep[%s] %s\\n' "$FAKE_HOST" "$*" >> "$FAKE_LOG"
 if [ "${FAKE_SESSION_RUNNING:-0}" = 1 ]; then echo 4242; exit 0; fi
+if [ "$1" = -u ] && [ "$2" = "${FAKE_SESSION_USER:-}" ]; then echo 4243; exit 0; fi
 exit 1
 """
 
@@ -859,6 +863,52 @@ def test_no_session_in_flight_proceeds_quietly(tmp_path: Path):
     h.first(f"systemctl[{THOR}] --user stop codex-bridge")
 
 
+def test_account_session_in_flight_refuses_before_any_systemctl(tmp_path: Path):
+    """After the cutover the sessions run AS THE ACCOUNT, so a redeploy that
+    only asked about the login user would restart the account's unit under
+    a live session (#249 review, finding 3). The account is asked the same
+    question, as itself, over its own ssh target."""
+    h = Harness(tmp_path)
+    _bootstrapped_codex(h)
+    body = (
+        "unix_user_account_session_check thor-fake codex\n"
+        'ssh culture-codex@thor-fake "systemctl --user restart codex-bridge"'
+    )
+    result = h.run(body, FAKE_SESSION_USER="culture-codex")
+    assert result.returncode != 0
+    assert "culture-codex" in result.stderr
+    assert "SKIP_SESSION_CHECK=1" in result.stderr
+    h.first(f"ssh[culture-codex@{THOR}]", "pgrep -u culture-codex -f")
+    h.first(f"pgrep[{THOR}] -u culture-codex -f", "[c]laude -p|[c]odex exec|qwen_bridge[.]qwen_cli")
+    h.never("systemctl[")
+
+
+def test_account_session_check_proceeds_when_only_the_login_user_is_busy(tmp_path: Path):
+    """The two checks are independent: the account's answer is about the
+    account, and a login-user session (the legacy unit still serving) is the
+    login check's business."""
+    h = Harness(tmp_path)
+    _bootstrapped_codex(h)
+    body = (
+        "unix_user_account_session_check thor-fake codex\n"
+        'ssh culture-codex@thor-fake "systemctl --user restart codex-bridge"'
+    )
+    result = h.run(body, FAKE_SESSION_USER="thor")
+    assert result.returncode == 0, result.stderr
+    h.first(f"systemctl[{THOR}] --user restart codex-bridge")
+    skipped = h.run(body, FAKE_SESSION_USER="culture-codex", SKIP_SESSION_CHECK="1")
+    assert skipped.returncode == 0, skipped.stderr
+    assert "WARNING" in skipped.stdout
+
+
+def test_account_session_check_refuses_an_account_it_cannot_reach(tmp_path: Path):
+    h = Harness(tmp_path)
+    result = h.run("unix_user_account_session_check thor-fake codex")
+    assert result.returncode != 0
+    assert "culture-codex@thor-fake" in result.stderr
+    h.never("pgrep[")
+
+
 def test_codex_is_installed_as_the_full_package_with_its_code_mode_host(
     tmp_path: Path,
 ):
@@ -935,11 +985,14 @@ def test_session_pattern_does_not_match_its_own_ssh_shell():
     if shutil.which("pgrep") is None:  # pragma: no cover
         pytest.skip("no pgrep on this host")
     lane = LANE.read_text()
-    m = re.search(r"pgrep -u \$login -f '([^']+)'", lane)
+    m = re.search(r"UNIX_USER_SESSION_PATTERN='([^']+)'", lane)
     assert m, "the lane's session pattern moved"
     # every alternative must carry the bracket idiom, or it self-matches
     for alt in m.group(1).split("|"):
         assert "[" in alt, f"session-check alternative {alt!r} would match its own ssh shell"
+    # one pattern, both checks: the login user's and the account's (finding 3)
+    assert lane.count("pgrep -u $login -f '$UNIX_USER_SESSION_PATTERN'") == 1
+    assert lane.count("pgrep -u $account -f '$UNIX_USER_SESSION_PATTERN'") == 1
     nonce = "aou" + uuid.uuid4().hex[:12]
     me = subprocess.run(["id", "-un"], capture_output=True, text=True).stdout.strip()
     # exactly how the lane ships it: one bash -c whose cmdline carries the pattern

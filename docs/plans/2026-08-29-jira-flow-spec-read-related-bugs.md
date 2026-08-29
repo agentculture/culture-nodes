@@ -84,7 +84,7 @@ slug: `jira-flow-spec-read-related-bugs` · status: `exported` · from frame: `j
 - depends on: t9
 - covers: c29, h20, c30, h21
 - acceptance:
-  - PG-backed test: one POST yields exactly one `signal_events` row (origin.kind human, replier in payload) and one outbox row; a run parked on a subscription for that subject resumes and its resume cites the fact id
+  - PG-backed test with a DECOY run: two runs parked on the same until.signal name, one whose subject is the fixture ticket and one whose subject is a different ticket; one POST yields exactly one `signal_events` row (origin.kind human, replier in payload, and the ticket id + `originating_question_id` in the same payload fields the sweep's comment fact carries) and one outbox row. A signal park matches (namespace, `event_name`) only, with no subject or payload filter (internal/store/postgres/signal.go selectLockedSubscriptionsSQL; examples/jira-question-round-trip/`question_correlation.py` states this contract), so BOTH subscriptions fire: the test asserts the ticket's run resumes and its resume cites the fact id, AND that the decoy run's consumer gets `answer_for`(payload, `its_question_id`) == None and re-parks without acting — the cross-ticket wake is observed and neutralised, not assumed away
   - A schema test validates a fixture page-reply fact and a fixture sweep comment fact against the same JSON Schema
   - `jira_comment_is_self_echo` in examples/pr-upkeep/`pr_upkeep_jira.py` is unchanged (test pins its bytes)
 
@@ -139,3 +139,4 @@ slug: `jira-flow-spec-read-related-bugs` · status: `exported` · from frame: `j
 - [unknown_nonblocking] t12 changes examples/pr-upkeep/sweep.py, which redeploys by digest — whether #221's SonarCloud-boundary fold rides the same digest change or waits for #218 is undecided (task t12)
 - [follow_up] The headspace code-node form of the spec chain (#237) is deferred; t13's lane sessions are agent-reported moves, not engine-verified ones (task t13)
 - [unknown_nonblocking] t7 is operator-lane and irreversible in part (discarding prod checkouts, applying migrations): the dump from t2 is the only rollback; rehearse RESTORE.md on spark before t7 (task t7)
+- [follow_up] Signal subscriptions match (namespace, `event_name`) only — no subject filter (signal.go selectLockedSubscriptionsSQL) — so a page reply or sweep comment for one ticket wakes every run parked on that event name; t10 neutralises it consumer-side (`question_correlation`.`answer_for` + re-park, pinned by a decoy-run test) and subject-scoped subscriptions are an engine feature deferred to #239 (task t10)

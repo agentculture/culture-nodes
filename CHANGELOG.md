@@ -10,6 +10,7 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 ### Added
 
 - docs/plans/2026-08-29-jira-flow-spec-read-related-bugs.md: the converged plan — 15 tasks in 6 waves covering all 48 spec targets (#191 fix, two-host r4 deploy with preflight doctor, re-mint actor, #207, #205, ticketreport tests, ticket projection API, reply endpoint, /tickets/:id route, link-at-intake + pr.merged freeze, board-driven /think as lane sessions, the two live proofs, session accounting); five risks (#232 out of scope, LAN-only page, #221 placement, #237 deferred, t7 irreversibility)
+- Plan task t10 (PR #238, Qodo finding 1 "Replies wake unrelated tickets"): its first acceptance criterion presumed a subject-scoped signal park that the engine does not have — subscriptions match `(namespace, event_name)` only. Replaced with a decoy-run criterion that observes the cross-ticket wake and asserts the decoy re-parks via `question_correlation.answer_for`; risk r6 (`follow_up`, #239) records subject-scoped subscriptions as an engine feature outside this cycle
 
 ## [0.42.3] - 2026-08-29
 

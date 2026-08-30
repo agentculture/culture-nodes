@@ -5,6 +5,14 @@ All notable changes to this project will be documented in this file.
 Format follows [Keep a Changelog](https://keepachangelog.com/). This project
 adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.45.2] - 2026-08-30
+
+### Added
+
+- `docs/deliveries/2026-08-30-presentable-floor-before-oauth.md` — the cycle's delivery summary (t31): 31 tasks accounted for, deviations d1 (approved) and d2 (proposed), every announcement clause ticked against a run id, commit or artifact; signal 1 pending until 2026-09-06.
+- `docs/audits/2026-08-30-measurement-sitting.md` — the t30 sitting on SCRUM-7 after the 0.45.1 deploy: eleven rows proven (intake on a bot-created ticket, one page link over two milestones, description quoted, fan-out to Jira comment + `Pending` + Discord, decision round trip), plus what it found — the merge-freeze fires on a mention, fan-out lists `expired` (#265), eight stale approvals staged for the operator.
+- `.devague/deliveries/presentable-floor-before-oauth.json` — the cycle's deviation store (d1, d2).
+
 ## [0.45.1] - 2026-08-30
 
 ### Fixed

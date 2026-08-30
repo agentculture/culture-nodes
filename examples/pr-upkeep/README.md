@@ -235,6 +235,48 @@ gap in the sweep):
   answer comment. The watermark position is unfiltered, so it already sits
   past the actor's own comment once a real reply lands.
 
+## Dedupe by finding id (spec c7/h6)
+
+The watermark answers *did this PR move* — head SHA plus newest comment
+timestamp. It does not answer *is this finding already being worked*, and
+those are different questions. A push moves the watermark, so every
+still-open finding was re-emitted, and each emission minted a fresh
+pr-upkeep run and a fresh `human-merges-pr` approval. On prod,
+`pr236-qodo-1` sat in four running runs at once
+(`01M1636D…`, `01M163RN…`, `01M1641W…`, `01M164B1…`) — four approvals for
+one piece of work.
+
+The second key is the finding id. Before emitting, the sweep reads
+`GET /v1alpha1/runs?workflow_key=pr-upkeep&state=running`
+(`fetch_running_finding_ids`) and drops every finding id one of those runs
+already carries in its `input.findings` — a triggered run's input *is* the
+event payload, so that field is exactly what was emitted for it. The
+surviving findings are emitted normally; the skipped ids are named in the
+sweep's stdout summary under `skipped_findings`.
+
+Three decisions worth stating:
+
+- **The watermark logic is unchanged.** This is a second key layered on top,
+  not a replacement: an unmoved watermark is still a no-op at the control
+  plane, and a moved one still reaches this filter.
+- **A PR whose findings are *all* in flight emits nothing at all**, rather
+  than an event with an empty findings list. An empty list would consume
+  that watermark for a fact the trigger declines
+  (`size(event.payload.findings) > 0`), which would strand those findings at
+  that head SHA even after the runs holding them end. Skipping leaves the
+  position unconsumed for a later cycle. A PR that genuinely has no findings
+  is untouched by this — nothing was deduped away, so it emits as before.
+- **An unreadable runs list fails the sweep**, with its own `attempting`
+  stage, rather than degrading to "emit everything": that fallback is the
+  duplicate-approval bug, and restoring it silently is worse than a named
+  failure. The read hits the same host the emission POSTs to, so a control
+  plane that cannot answer it could not have accepted the events either.
+
+One honest limit: findings suppressed at a given head SHA are re-offered
+only once the watermark moves again. If a run in flight ends while the PR
+sits still, its finding waits for the next push or comment. Closing that
+would mean changing the watermark, which this task deliberately did not.
+
 ## The cross-machine handoff (issue #74)
 
 `fix` and `review` are deliberately different actors — that is the whole

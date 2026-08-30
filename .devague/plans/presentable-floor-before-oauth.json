@@ -5,7 +5,7 @@
   "schema_version": 4,
   "status": "exported",
   "created": "2026-08-30T09:43:41Z",
-  "updated": "2026-08-30T09:55:02Z",
+  "updated": "2026-08-30T11:00:20Z",
   "targets": [
     {
       "id": "c1",
@@ -1125,6 +1125,14 @@
       "text": "Using the existing 'Pending' Jira status as waiting-for-decision (q4) may collide with a human's own use of Pending on the board; the sweep treats a bot-made transition as self-echo, a human-made one as a fact \u2014 t29 watches for a false wake",
       "kind": "unknown_nonblocking",
       "task_id": "t11",
+      "resolved": false,
+      "resolution": ""
+    },
+    {
+      "id": "r7",
+      "text": "r5 materialised at 10:54Z on 2026-08-30: both codex actors returned capacity_exhausted after 13 sessions in ~50 minutes (t8 and the t21 follow-up lost); the ChatGPT window resets at 15:03Z. Colleague's writer stalled 27 min with no output; the developer lane is auth-dead (#254) until an operator re-login. Wave 2 resumes on the first lane back.",
+      "kind": "unknown_nonblocking",
+      "task_id": null,
       "resolved": false,
       "resolution": ""
     }

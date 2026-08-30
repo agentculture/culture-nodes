@@ -236,6 +236,10 @@ Numbered SQL migrations for the authoritative PostgreSQL store (prd-spec
 - `0048_ticket_reply_and_freeze.sql` — widens the existing Jira report outbox
   for run-less reply/page-link intents and adds the namespace-scoped ticket
   freeze projection updated by `pr.merged` facts or a guarded human action.
+- `0049_attempts_started_at_nullable.sql` — expand-only: `attempts.started_at`
+  becomes nullable so an attempt with no invocation row records an unknown
+  start as NULL instead of `now()` (#116; the fix that stopped
+  `duration_percentiles` reporting zeros).
 
 - `0022_dispatch_rate_state.sql` — expand-only: adds the mutable
   `dispatch_rate_state` table (task t10 of the economy-discord-graphs plan,

@@ -59,6 +59,36 @@ SCRIPT_DIR=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
 THOR=${1:-thor}
 ORIN=${2:-orin}
 
+# --- the ticket page origin (task t16, spec c10) ---------------------------
+#
+# NODES_UI_BASE_URL decides whether the page-link comment culture-nodes posts
+# on a Jira ticket is clickable. Set nowhere, it rendered `/tickets/SCRUM-N`:
+# a path with no origin, which Jira shows as text.
+#
+# Resolved HERE, once, and installed on BOTH hosts. It is thor's origin on
+# both, deliberately: orin runs a worker and serves no API, but the engine
+# renders this comment inside whichever process minted the run — so a value
+# present on thor only would make the link's correctness depend on which
+# worker claimed the node, the same divergence #224 records for the actor
+# tokens.
+#
+# It is a non-secret address, which is why it may ride the argv to the remote
+# shell alongside HOST/DB_HOST/PROFILES.
+UI_BASE_URL=${NODES_UI_BASE_URL:-}
+if [ -n "$UI_BASE_URL" ]; then
+  UI_BASE_URL_SOURCE="exported for this run"
+else
+  # The API origin this deploy already knows: the control-plane host it was
+  # invoked with (`install-secrets.sh [thor-host] [orin-host]`), not the
+  # literal name `thor`, so an operator who addresses the machine by IP or
+  # tailscale name gets links that resolve the way their ssh does.
+  UI_BASE_URL="http://$THOR:18080"
+  UI_BASE_URL_SOURCE="defaulted to the control-plane API origin"
+fi
+# A trailing slash is what an operator types; the renderer trims it too, but a
+# normalised value is what the next reader of prod.env sees.
+UI_BASE_URL=${UI_BASE_URL%/}
+
 # --- destructive-action confirmation protocol ------------------------------
 # Rotating a live secret is irreversible: the old value is gone, and every
 # component still holding it keeps working until it restarts and then fails
@@ -263,15 +293,16 @@ NODES_RUNNER_SECRET=${NODES_RUNNER_SECRET_ORIN}"
 # pins the loop to a single definition.
 install_deployment_settings() { # host, database-host, compose-profiles ("" = none)
   local host=$1 db_host=$2 profiles=$3
-  # HOST/DB_HOST/PROFILES are prefixed into the remote command exactly the way
-  # FORCE is in install_env — ssh forwards no environment, so a bare $HOST
-  # inside the single-quoted body would be empty on the target. All three are
-  # non-secret by construction (an ssh target, a database hostname, a profile
-  # list), which is why they may ride the argv at all. POSTGRES_PASSWORD may
-  # not, and never does: it is read on the far side and never comes back.
+  # HOST/DB_HOST/PROFILES/UI_BASE_URL are prefixed into the remote command
+  # exactly the way FORCE is in install_env — ssh forwards no environment, so a
+  # bare $HOST inside the single-quoted body would be empty on the target. All
+  # four are non-secret by construction (an ssh target, a database hostname, a
+  # profile list, a page origin), which is why they may ride the argv at all.
+  # POSTGRES_PASSWORD may not, and never does: it is read on the far side and
+  # never comes back.
   # shellcheck disable=SC2029,SC2016 # both are deliberately remote: the prefix
   # is expanded here on purpose, the body is expanded on the target on purpose
-  ssh "$host" "HOST='$host'; DB_HOST='$db_host'; PROFILES='$profiles'; "'
+  ssh "$host" "HOST='$host'; DB_HOST='$db_host'; PROFILES='$profiles'; UI_BASE_URL='$UI_BASE_URL'; "'
 set -eu
 umask 077
 mkdir -p ~/.culture-nodes
@@ -315,7 +346,8 @@ settings="POSTGRES_USER=nodes
 POSTGRES_DB=nodes
 DATABASE_SSLMODE=$sslmode
 MINIO_ROOT_USER=nodesroot
-NODES_CALLBACK_BASE_URL=http://thor:18080"
+NODES_CALLBACK_BASE_URL=http://thor:18080
+NODES_UI_BASE_URL=$UI_BASE_URL"
 # COMPOSE_PROFILES is thor-only: it starts the bundled database and the backup
 # loop, both of which live in compose.thor.yml. orin is only a worker against
 # the database on thor and has no profile of its own to select.
@@ -394,6 +426,14 @@ else
 fi
 '
 }
+
+# Announced before the lane runs, because the two branches at the top of this
+# file (exported versus defaulted) produce
+# identically-shaped prod.env lines and only one of them is reachable from
+# outside the LAN: an operator reading the deploy log has no other way to tell
+# a defaulted LAN address from an origin they chose. See deploy/prod/README.md,
+# "Ticket page links are LAN addresses".
+echo "ticket page links: NODES_UI_BASE_URL=$UI_BASE_URL ($UI_BASE_URL_SOURCE) — every Jira page-link comment will read $UI_BASE_URL/tickets/<KEY>"
 
 # thor's database is the bundled compose service `postgres`; orin reaches the
 # same database as `thor`, the name compose.orin.yml resolves through its

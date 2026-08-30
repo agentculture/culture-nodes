@@ -26,6 +26,17 @@ services:
       NODES_DATABASE_URL: ${NODES_DATABASE_URL:?set the external PostgreSQL URL in prod.env}
       NODES_NAMESPACE_ID: ${NODES_NAMESPACE_ID:?deploy.sh writes this after thor's first boot}
       NODES_WORKER_ID: orin-worker-1
+      # The origin the ticket page is served from (task t16, spec c10).
+      # orin's worker claims nodes in the SAME namespace as thor's, and the
+      # page-link comment is rendered by whichever worker mints the run — so
+      # a value present on thor only would make the link's correctness a
+      # race, the same divergence #224 records for the actor tokens below.
+      #
+      # It is thor's origin, not orin's: orin serves no API, so a link to
+      # this machine 404s for every reader. Until the OAuth cycle it is a
+      # LAN/tailscale address a reader off the network cannot open
+      # (deploy/prod/README.md, "Ticket page links are LAN addresses").
+      NODES_UI_BASE_URL: ${NODES_UI_BASE_URL:-http://thor:18080}
       NODES_CALLBACK_BASE_URL: ${NODES_CALLBACK_BASE_URL:-http://thor:18080}
       NODES_CALLBACK_TOKEN_SECRET: ${NODES_CALLBACK_TOKEN_SECRET:?install secrets first}
       NODES_ARTIFACT_S3_ENDPOINT: ${THOR_HOST:-thor}:9000

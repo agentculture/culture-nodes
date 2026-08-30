@@ -176,6 +176,7 @@ var nonCredentialKnobs = map[string]string{
 	"HUMAN_INBOX_ACTOR_KEY":     "actor key whose registered host receives the human-inbox secret",
 	"HUMAN_INBOX_HOST":          "bootstrap override for the human-inbox host, before an actor row exists",
 	"NODES_API_URL":             "control-plane base URL the actor registry is read from",
+	"NODES_UI_BASE_URL":         "origin the ticket page is served from; it is written INTO prod.env and is a published address by construction — every Jira reader of a page-link comment sees it",
 	"NODES_API_TIMEOUT_SECONDS": "how long an actor-registry read may take",
 	"NODES_CONTROL_HOST":        "ssh target of the control-plane host",
 	"DIALIN_CONTROL_PLANE_URL":  "control-plane base URL the dial-in lane mints against",

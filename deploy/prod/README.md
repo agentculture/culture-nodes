@@ -536,6 +536,44 @@ parked as issue #6; the runner protocol's `AllowInsecureTransport` opt-in
 is what permits plaintext HTTP off-loopback). Do not port-forward any of
 these beyond the LAN.
 
+### Ticket page links are LAN addresses (task t16)
+
+`NODES_UI_BASE_URL` is the origin culture-nodes puts in front of every ticket
+page link it posts on a Jira issue. Without it the page-link comment read
+`/tickets/SCRUM-N` — a path with no origin, which Jira renders as plain text.
+`install-secrets.sh` now writes the key into both hosts' `prod.env`, and both
+compose files declare it for every service that can mint a run (api, scheduler
+and worker on thor; the worker on orin — the comment is rendered by whichever
+process claimed the work, and the two machines share one namespace).
+
+**The link it produces is reachable from the LAN or tailscale only, and that is
+the accepted state until the OAuth cycle.** The default is thor's API origin —
+the control-plane host you invoked the script with, so
+`./install-secrets.sh 192.168.1.146 orin` produces
+`http://192.168.1.146:18080/tickets/SCRUM-N`. A reader looking at that comment
+in Jira or Discord from off the network sees a link they cannot open. Nothing
+about the ticket is hidden from them — the Jira issue itself is where the
+decision is recorded — but the *page* is not public, and no part of this
+deployment pretends otherwise (see "Network trust" above: none of these ports
+should be forwarded beyond the LAN to make the link work).
+
+Both hosts get **thor's** origin, not their own: orin serves no API, so a link
+to orin would 404 for every reader.
+
+To point the links at any other origin — a reverse proxy, a tailscale name, or
+whatever the OAuth cycle lands on — export it and re-run:
+
+```bash
+NODES_UI_BASE_URL=https://nodes.example.net ./install-secrets.sh
+```
+
+The install log says which of the two it used (`exported for this run` versus
+`defaulted to the control-plane API origin`), because the two produce
+identically-shaped `prod.env` lines and only one of them is reachable from
+outside. And because this lane is add-if-absent (above), changing an origin a
+host already carries is `remove-secret.sh NODES_UI_BASE_URL --yes <host>`
+followed by a re-run, not a re-run alone.
+
 ## Telemetry (telemetry profile, issue #5)
 
 Off by default, twice over: the `otel-collector` service sits behind the

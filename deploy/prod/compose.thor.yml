@@ -84,6 +84,23 @@ services:
     environment:
       NODES_DATABASE_URL: ${NODES_DATABASE_URL:?set the bundled or external PostgreSQL URL in prod.env}
       NODES_LISTEN: ":8080"
+      # The origin the ticket page is served from (task t16, spec c10). The
+      # page-link comment culture-nodes posts on a Jira ticket is rendered
+      # inside the engine's run-creation transaction, so EVERY process that
+      # can mint a run needs this value — api (signal delivery), scheduler
+      # (a schedule firing) and worker (a claimed node) alike. Set nowhere,
+      # the comment read `/tickets/SCRUM-N`: a path with no origin, which
+      # Jira renders as text rather than a link.
+      #
+      # The default is thor's API origin because thor is the only machine
+      # serving the page; it is a LAN/tailscale address until the OAuth
+      # cycle, so a reader off the network sees a link they cannot open
+      # (deploy/prod/README.md, "Ticket page links are LAN addresses").
+      # install-secrets.sh writes the concrete origin into prod.env, which
+      # overrides this. The default is non-empty on purpose: a host that has
+      # not re-run install-secrets.sh must not silently fall back to the
+      # bare path.
+      NODES_UI_BASE_URL: ${NODES_UI_BASE_URL:-http://thor:18080}
       NODES_HUMAN_DECISION_TOKEN_SECRET: ${NODES_HUMAN_DECISION_TOKEN_SECRET:?install secrets first}
       NODES_CALLBACK_TOKEN_SECRET: ${NODES_CALLBACK_TOKEN_SECRET:?install secrets first}
       NODES_ARTIFACT_S3_ENDPOINT: minio:9000
@@ -156,6 +173,9 @@ services:
     environment:
       NODES_DATABASE_URL: ${NODES_DATABASE_URL:?set the bundled or external PostgreSQL URL in prod.env}
       NODES_SCHEDULER_ID: thor-scheduler-1
+      # See the api service's note: whichever process mints the run renders
+      # the ticket page link, so this value belongs on all three.
+      NODES_UI_BASE_URL: ${NODES_UI_BASE_URL:-http://thor:18080}
       # See the api service's note: unset means telemetry off.
       OTEL_EXPORTER_OTLP_ENDPOINT: ${OTEL_EXPORTER_OTLP_ENDPOINT:-}
       # The ticket-report dispatcher (t11, #198) runs on the ACTIVE scheduler
@@ -186,6 +206,9 @@ services:
       # Set by deploy.sh after the API's first boot mints the namespace id.
       NODES_NAMESPACE_ID: ${NODES_NAMESPACE_ID:-default}
       NODES_WORKER_ID: thor-worker-1
+      # See the api service's note: whichever process mints the run renders
+      # the ticket page link, so this value belongs on all three.
+      NODES_UI_BASE_URL: ${NODES_UI_BASE_URL:-http://thor:18080}
       NODES_CALLBACK_BASE_URL: ${NODES_CALLBACK_BASE_URL:-http://thor:18080}
       NODES_CALLBACK_TOKEN_SECRET: ${NODES_CALLBACK_TOKEN_SECRET:?install secrets first}
       NODES_ARTIFACT_S3_ENDPOINT: minio:9000

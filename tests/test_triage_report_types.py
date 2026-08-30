@@ -155,6 +155,30 @@ def test_a_failing_type_read_exits_2_not_1(tmp_path, capsys):
     assert "could not" in capsys.readouterr().err.lower()
 
 
+def test_a_malformed_disposition_table_exits_1_not_2(tmp_path, capsys):
+    issues_json, table = fixtures(tmp_path, [5])
+    table.write_text("issue,bucket,disposition\n5,finish work,planned\n", encoding="utf-8")
+
+    code = MODULE.main(
+        [
+            "--issues-json",
+            str(issues_json),
+            "--table",
+            str(table),
+            "--output",
+            str(tmp_path / "open-issues.md"),
+            "--closed-since",
+            SINCE,
+            "--backoff-seconds",
+            "0",
+        ],
+        invoke=FakeGh(),
+    )
+
+    assert code == 1
+    assert "expected columns" in capsys.readouterr().err.lower()
+
+
 def test_the_type_read_reuses_the_shared_retry(tmp_path):
     gh = FakeGh(fail=True)
     run_main(tmp_path, [5], gh)

@@ -244,6 +244,10 @@ class UnknownIssueType(ValueError):
     """An issue carries a type the org does not define. A finding, exit 1."""
 
 
+class DispositionTableError(ValueError):
+    """The disposition table is malformed. A finding, exit 1."""
+
+
 def count_by_type(records: list[dict], known: list[str]) -> list[tuple[str, int]]:
     """Count records per type, refusing a name the org does not define."""
     counts: dict[str, int] = {name: 0 for name in known}
@@ -299,7 +303,7 @@ def dispositions(path: Path) -> dict[int, dict[str, str]]:
         rows = list(csv.DictReader(handle))
     required = {"issue", "bucket", "disposition", "evidence_pointer"}
     if not rows or set(rows[0]) != required:
-        raise ValueError(f"{path}: expected columns {sorted(required)}")
+        raise DispositionTableError(f"{path}: expected columns {sorted(required)}")
     result: dict[int, dict[str, str]] = {}
     for line, row in enumerate(rows, 2):
         # A row with the wrong field count is a REFUSAL, not a warning. Only the
@@ -310,17 +314,19 @@ def dispositions(path: Path) -> dict[int, dict[str, str]]:
         # row that --check then approved. A malformed row must not be able to
         # produce an accurate-looking disposition (#215).
         if None in row or any(value is None for value in row.values()):
-            raise ValueError(
+            raise DispositionTableError(
                 f"{path}:{line}: expected exactly {len(required)} fields; a value "
                 "containing a comma must be quoted"
             )
         issue = int(row["issue"])
         if issue in result:
-            raise ValueError(f"{path}:{line}: duplicate issue #{issue}")
+            raise DispositionTableError(f"{path}:{line}: duplicate issue #{issue}")
         if row["bucket"] not in BUCKETS:
-            raise ValueError(f"{path}:{line}: unknown bucket {row['bucket']!r}")
+            raise DispositionTableError(f"{path}:{line}: unknown bucket {row['bucket']!r}")
         if not row["disposition"].strip() or not row["evidence_pointer"].strip():
-            raise ValueError(f"{path}:{line}: disposition and evidence pointer are required")
+            raise DispositionTableError(
+                f"{path}:{line}: disposition and evidence pointer are required"
+            )
         result[issue] = row
     return result
 
@@ -437,6 +443,9 @@ def main(argv=None, invoke=None) -> int:
                 issue_types(args.repo, "closed", invoke=invoke, since=since, backoff=backoff),
                 since,
             )
+    except DispositionTableError as exc:
+        print(f"triage-report: {exc}", file=sys.stderr)
+        return 1
     except (
         GitHubUnreachable,
         KeyError,

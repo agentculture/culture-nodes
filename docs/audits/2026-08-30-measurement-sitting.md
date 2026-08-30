@@ -98,7 +98,11 @@ reaches the fan-out path.
 - Built and copied an arm64 `nodes` binary to thor for the backfill.
 - Stashed the developer checkout under a live session (#93).
 - Two deploys from main (`deploy.sh thor`, `deploy.sh orin`) at 0.45.1.
-- Staged, not run: the eight stale approvals above.
+- Decided the eight stale approvals above `approved` at 21:14 IDT
+  (`decide-stale-approvals.sh`; the decision secret lives on thor, so the
+  operator ran it there). The first attempt was refused with
+  `ledger_version_moved` (409) and re-run against each run's live
+  `ledger_version`; pending count 28 → 1.
 
 ## How this closes
 

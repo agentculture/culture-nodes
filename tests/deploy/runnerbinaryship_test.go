@@ -60,6 +60,15 @@ case "$cmd" in
     echo "bash: line 1: go: command not found" >&2
     exit 127
     ;;
+  *"if [ -f ~/.culture-nodes/runner.env ]"*)
+    # The grant check now REFUSES a probe it cannot read, and "exit 0 with no
+    # output" is exactly that: it can no longer be told apart from an ssh that
+    # failed. This stub host has no filesystem, so the honest answer is the
+    # one a first deploy gives -- and the check skips, which is what this test
+    # needs it to do to reach issue #17's ship step at all.
+    echo no
+    exit 0
+    ;;
   *"command -v headspace"*)
     # THE TRIPWIRE. This is the very next step after the runner binary is
     # shipped. Reaching it means the deploy continued past a failed ship.

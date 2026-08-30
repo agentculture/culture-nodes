@@ -428,10 +428,19 @@ not a JSON object, an `items` that is not a list, a current version whose
 is indistinguishable in the report from a control plane that has published
 nothing, and printed the line claiming the grants were checked. Those cases
 now refuse the deploy as `unreadable:` lines beside the `missing:` ones,
-because an unreadable declaration is not an absent one. The distinction that
-survives is between not understanding an answer (refuse) and not getting one
-at all — no `runner.env` yet, no `python3` on the operator's machine, an
-unreachable control plane (announce `UNVERIFIED` and proceed).
+because an unreadable declaration is not an absent one.
+
+**Exactly two paths do not refuse, and neither of them is an error.** A host
+with no `runner.env` yet is a first deploy — there are no grants to diff, so
+the check reports the skip and moves on. An unreachable control plane prints
+`WARNING … UNVERIFIED` and proceeds, because that is a state a deploy is often
+the fix for; it is the one deliberate hole in this gate. *Everything* else
+refuses and names the step it failed at: an ssh call to the host that failed,
+a `runner.env` naming no control plane, a temporary directory that could not
+be created, and no `python3` on the machine running the deploy. The last of
+those used to announce `UNVERIFIED` and proceed. It does not any more — with
+no `python3` nothing compares the grants at all, which is precisely the deploy
+this gate exists to stop, and a `WARNING` in a deploy log is read by nobody.
 
 **Rollback.** Every lane that rewrites either file copies the previous bytes
 aside first, as `<file>.bak-<UTC timestamp>` in the same directory, mode 600,
@@ -446,7 +455,12 @@ Restore, then `ssh thor 'systemctl --user restart nodes-runner'` — the unit
 reads both files at start, so an unrestarted runner keeps serving the grants
 it booted with. The ten most recent backups of each file are kept and older
 ones removed: each one is a second copy of live credentials, so the trail is
-bounded on purpose.
+bounded on purpose. "Most recent" is read off the **UTC stamp in the name**,
+not off mtime — backups are made with `cp -p`, so a backup's mtime is the
+mtime of the file it copied rather than the moment it was taken, and on a host
+whose grant file was itself restored from an older copy that put the newest
+backup last and had the retention step delete the very bytes the line above
+had just advertised.
 
 ## The runner registry (NODES_RUNNER_SERVICES_FILE)
 
@@ -623,6 +637,15 @@ whatever the OAuth cycle lands on — export it and re-run:
 ```bash
 NODES_UI_BASE_URL=https://nodes.example.net ./install-secrets.sh
 ```
+
+Whatever you export lands in `prod.env` **byte for byte**. It crosses to the
+host on stdin and is read there with `read -r`, so no character in it is shell
+syntax on the far side — the lane used to build the remote command out of
+single-quoted assignments, and one quote in the value ended the assignment and
+handed the rest to the target as commands. The single byte the transport
+cannot carry is a newline, and a value containing one is refused by name
+rather than truncated: `prod.env` is one `KEY=value` per line, so such a value
+has no representation on the host either.
 
 The install log says which of the two it used (`exported for this run` versus
 `defaulted to the control-plane API origin`), because the two produce

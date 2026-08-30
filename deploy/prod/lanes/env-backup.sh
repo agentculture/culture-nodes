@@ -42,8 +42,23 @@ umask 077
 b="$f.bak-$(date -u +%Y%m%dT%H%M%SZ)"
 cp -p "$f" "$b"
 chmod 600 "$b"
-printf %s "$b"
-ls -1t "$f".bak-* 2>/dev/null | tail -n +11 | while IFS= read -r old; do rm -f "$old"; done')
+# Retention ranks backups by their own UTC stamp -- their NAME -- and not by
+# mtime. `cp -p` above gives a backup the mtime of the file it copied, so mtime
+# is when the GRANT FILE was last written, which is not the order the backups
+# were taken in: on a host whose grant file was restored from an older copy
+# (a cp -p, an rsync -a, a snapshot), the backup just taken has the oldest
+# mtime of all and `ls -t` sorts it last, so the retention step deletes the
+# very bytes this call was made to preserve. The stamp is generated in
+# sortable UTC precisely so a lexical sort IS chronological order.
+#
+# Its stdout goes to stderr. Whatever this step has to say is a LOG line,
+# while the caller captures the stdout of this remote command as the backup
+# path -- one stray byte on the wrong stream and the deploy log advertises a
+# restore command for a path that does not exist.
+ls -1 "$f".bak-* 2>/dev/null | sort -r | tail -n +11 | while IFS= read -r old; do rm -f "$old"; done >&2
+# LAST, and newline-terminated: the path is the return value of this remote
+# command, printed only once nothing else is going to write to this stream.
+printf "%s\n" "$b"')
   if [ -z "$backup" ]; then
     printf '==> no ~/.culture-nodes/%s on %s yet — nothing to back up\n' "$file" "$target"
     return 0

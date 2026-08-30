@@ -34,19 +34,50 @@
 # normalised a missing trailing newline), and tests/deploy/prodenvmerge_test.go
 # pins the loop to a single definition.
 install_deployment_settings() { # host, database-host, compose-profiles ("" = none)
-  local host=$1 db_host=$2 profiles=$3
-  # HOST/DB_HOST/PROFILES/UI_BASE_URL/CALLBACK_BASE_URL are prefixed into the
-  # remote command exactly the way FORCE is in install_env — ssh forwards no
-  # environment, so a bare $HOST inside the single-quoted body would be empty on
-  # the target. All five are non-secret by construction (an ssh target, a
-  # database hostname, a profile list, a page origin, a callback origin), which
-  # is why they may ride the argv at all.
-  # POSTGRES_PASSWORD may not, and never does: it is read on the far side and
-  # never comes back.
-  # shellcheck disable=SC2029,SC2016 # both are deliberately remote: the prefix
-  # is expanded here on purpose, the body is expanded on the target on purpose
-  ssh "$host" "HOST='$host'; DB_HOST='$db_host'; PROFILES='$profiles'; UI_BASE_URL='$UI_BASE_URL'; CALLBACK_BASE_URL='$CALLBACK_BASE_URL'; "'
+  local host=$1 db_host=$2 profiles=$3 value
+  # The five parameters cross to the target as DATA, on stdin, one per line.
+  # They used to be prefixed into the remote command as a run of literal
+  # single-quoted assignments, one per parameter — ssh forwards no environment,
+  # so they do have to travel somehow — but three of the five are
+  # OPERATOR INPUT: NODES_UI_BASE_URL, NODES_CALLBACK_BASE_URL and
+  # NODES_COMPOSE_PROFILES all arrive from the environment install-secrets.sh
+  # was invoked with, and nothing ever looked at what was in them. One single
+  # quote ends its own assignment and everything after it is shell syntax the
+  # TARGET evaluates. A URL is an odd place to hide a command; the benign half
+  # of the same defect is the ordinary one — a valid-but-unusual value breaks
+  # the deploy on the far side with a syntax error naming nothing.
+  #
+  # `read -r` never re-scans what it reads, so on stdin the quoting question
+  # does not arise at all. This is the discipline lanes/runner-env-write.sh
+  # already uses for runner.env, and for the same reason: a value that is
+  # correct locally and reshaped remotely is the shape no amount of extra
+  # quoting fixes. POSTGRES_PASSWORD still crosses nothing — it is read on the
+  # far side and never comes back.
+  #
+  # A NEWLINE is the one byte this transport cannot carry, and it is refused by
+  # name rather than silently truncated: prod.env is one KEY=value per line, so
+  # a value containing a newline has no representation at the destination
+  # either. Refusing here is refusing a value that could not have worked.
+  for value in "$host" "$db_host" "$profiles" "$UI_BASE_URL" "$CALLBACK_BASE_URL"; do
+    case $value in
+      *"
+"*)
+        echo "REFUSED on $host: a deployment setting contains a newline, and prod.env is one KEY=value per line — the value has no representation on the host. Correct NODES_UI_BASE_URL / NODES_CALLBACK_BASE_URL / NODES_COMPOSE_PROFILES (or the host arguments) and re-run." >&2
+        return 1
+        ;;
+    esac
+  done
+  # shellcheck disable=SC2016 # the body is expanded on the target on purpose
+  printf '%s\n' "$host" "$db_host" "$profiles" "$UI_BASE_URL" "$CALLBACK_BASE_URL" | ssh "$host" '
 set -eu
+# The five parameters, in the order the pipe above writes them, read before
+# anything else in this script touches stdin. Nothing below re-scans them: they
+# are values from here on, not syntax.
+IFS= read -r HOST
+IFS= read -r DB_HOST
+IFS= read -r PROFILES
+IFS= read -r UI_BASE_URL
+IFS= read -r CALLBACK_BASE_URL
 umask 077
 mkdir -p ~/.culture-nodes
 touch ~/.culture-nodes/prod.env

@@ -5,6 +5,24 @@
       "key": "EX-17",
       "fields": {
         "summary": "Make the recorded backlog item actionable",
+        "description": {
+          "type": "doc",
+          "version": 1,
+          "content": [
+            {
+              "type": "paragraph",
+              "content": [
+                {"type": "text", "text": "Agents must receive the ticket ask."}
+              ]
+            },
+            {
+              "type": "paragraph",
+              "content": [
+                {"type": "text", "text": "Preserve paragraph boundaries."}
+              ]
+            }
+          ]
+        },
         "priority": {"name": "High"},
         "status": {"name": "To Do"},
         "issuetype": {"name": "Task"}

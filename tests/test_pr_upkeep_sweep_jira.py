@@ -165,6 +165,23 @@ class TestJiraWorkItems:
         assert items[0]["severity"] == "High"
         assert sweep.prioritise(items)[0]["title"] == ("Make the recorded backlog item actionable")
 
+    def test_recorded_adf_description_enters_the_work_item_as_plain_text(self, jira_payload):
+        (item,) = jira.jira_work_items(jira_payload, site="team.example.com", project="EX")
+
+        assert item["description"] == (
+            "Agents must receive the ticket ask.\nPreserve paragraph boundaries."
+        )
+        assert item["description_truncated"] is False
+
+    def test_description_is_capped_and_reports_truncation(self, jira_payload):
+        payload = json.loads(json.dumps(jira_payload))
+        payload["issues"][0]["fields"]["description"] = "x" * 4001
+
+        (item,) = jira.jira_work_items(payload, site="team.example.com", project="EX")
+
+        assert item["description"] == "x" * jira.JIRA_DESCRIPTION_MAX_CHARS
+        assert item["description_truncated"] is True
+
     def test_jira_provenance_uses_only_reserved_example_configuration(self, jira_payload):
         (item,) = jira.jira_work_items(jira_payload, site="team.example.com", project="EX")
         assert item["project"] == "EX"

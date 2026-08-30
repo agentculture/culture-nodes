@@ -19,10 +19,37 @@ JIRA_RESOLVED_LOOKBACK_DAYS = 7
 JIRA_COMMENT_EVENT_NAME = "pr-upkeep.jira.comment"
 JIRA_CHANGELOG_EVENT_NAME = "pr-upkeep.jira.changed"
 JIRA_ACTOR_MARKER = "culture-nodes:jira-actor"
+JIRA_DESCRIPTION_MAX_CHARS = 4000
 _JIRA_QUESTION_MARKER_RE = re.compile(
     r"\[culture-nodes:jira-actor question_id=([A-Za-z0-9][A-Za-z0-9._:-]{0,127})\]"
 )
 _JIRA_STATUS_SLUG_RE = re.compile(r"[^a-z0-9]+")
+
+
+def jira_description_text(description: object) -> str:
+    """Flatten a plain-text or Atlassian Document Format description."""
+    if isinstance(description, str):
+        return description
+    parts: list[str] = []
+    block_types = {"blockquote", "heading", "listItem", "paragraph"}
+
+    def visit(value: object) -> None:
+        if isinstance(value, dict):
+            node_type = value.get("type")
+            if node_type == "hardBreak":
+                parts.append("\n")
+            elif isinstance(value.get("text"), str):
+                parts.append(value["text"])
+            for child in value.get("content") or []:
+                visit(child)
+            if node_type in block_types and parts and not parts[-1].endswith("\n"):
+                parts.append("\n")
+        elif isinstance(value, list):
+            for child in value:
+                visit(child)
+
+    visit(description)
+    return "".join(parts).strip()
 
 
 def jira_work_items(payload: dict, *, site: str, project: str) -> list[dict]:
@@ -33,6 +60,7 @@ def jira_work_items(payload: dict, *, site: str, project: str) -> list[dict]:
         priority = (fields.get("priority") or {}).get("name") or "Medium"
         status = (fields.get("status") or {}).get("name") or ""
         key = issue.get("key") or ""
+        full_description = jira_description_text(fields.get("description"))
         items.append(
             {
                 "source": "jira",
@@ -43,6 +71,10 @@ def jira_work_items(payload: dict, *, site: str, project: str) -> list[dict]:
                 "file": "",
                 "line": None,
                 "title": fields.get("summary") or "",
+                "description": full_description[:JIRA_DESCRIPTION_MAX_CHARS],
+                "description_truncated": (
+                    len(full_description) > JIRA_DESCRIPTION_MAX_CHARS
+                ),
                 "status": status,
                 "details_url": f"https://{site}/browse/{urllib.parse.quote(key)}",
             }
@@ -131,7 +163,7 @@ def fetch_jira_issues(site: str, project: str, email: str, token: str) -> dict:
             f'project = "{project}" AND (resolution IS EMPTY OR resolved >= '
             f"-{JIRA_RESOLVED_LOOKBACK_DAYS}d) ORDER BY priority ASC"
         ),
-        "fields": "summary,priority,status,issuetype,created,updated,comment",
+        "fields": "summary,description,priority,status,issuetype,created,updated,comment",
         "expand": "changelog",
         "maxResults": "100",
     }

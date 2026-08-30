@@ -961,27 +961,6 @@ func completionFor(inv PendingInvocation, ev CallbackEvent) (engine.CompletionRe
 	return req, fmt.Sprintf("event kind %q is not terminal", ev.Kind)
 }
 
-// originActorMismatch enforces callback custody before the completion can
-// reach a ledger write. The durable pending invocation is the dispatched
-// identity; the delta is only the actor's claim. Task t24 deliberately
-// refuses disagreement instead of stamping the trusted identity over it —
-// server-side custody remains #111's question.
-func originActorMismatch(records []ledger.Record, dispatchedActorID string) string {
-	for _, record := range records {
-		if record.Origin.ActorID != dispatchedActorID {
-			return fmt.Sprintf("origin_actor_id %s is not the dispatched actor %s", record.Origin.ActorID, dispatchedActorID)
-		}
-	}
-	return ""
-}
-
-func identityDiagnostic(detail string) json.RawMessage {
-	body, _ := json.Marshal(map[string]any{
-		"error": map[string]string{"class": "identity", "detail": detail},
-	})
-	return body
-}
-
 // failureOutput is the diagnostic body recorded on a failed attempt.
 //
 // CompletionRequest has no diagnostic field, and the engine stores Output on

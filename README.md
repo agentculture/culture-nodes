@@ -8,6 +8,13 @@ append-only work ledger where an agent's "done" is a claim, not a fact.
 
 > **Every node has a contract. Every result has evidence.**
 
+**Drive it from Jira** — the loop with no shell in it: move a ticket and
+culture-nodes picks it up, works it, asks its questions on the ticket, and
+comes back for the decisions only a person can make.
+[`docs/drive-from-jira.md`](docs/drive-from-jira.md) is the whole thing
+written for a reader who never opens a terminal — which trigger starts which
+flow, what each system comment means, and how to answer one.
+
 ## See it running
 
 ![The Run view: the delivery-loop workflow as a live graph, its first node ready](docs/assets/run-view-light.png)

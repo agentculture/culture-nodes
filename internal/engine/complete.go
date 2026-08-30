@@ -358,6 +358,7 @@ func (c *completion) emitAttemptEvents(ctx context.Context) error {
 		"fencing_token":  c.req.FencingToken,
 		"tech_status":    string(c.status),
 		"outcome":        c.outcome,
+		"result":         c.req.Output,
 	}); err != nil {
 		return err
 	}

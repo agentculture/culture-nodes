@@ -164,6 +164,33 @@ func TestBuildCompletionMapsStates(t *testing.T) {
 	}
 }
 
+func TestRejectedResultCarriesRunnerMessageAsDiagnostic(t *testing.T) {
+	res := lambdaShapedResult(nil)
+	res.State = runners.StateRejected
+	res.Exit = nil
+	res.Error = &runners.ResultError{
+		Kind:    runners.ErrorRejectedInput,
+		Message: "runner rejected X",
+	}
+
+	completion, err := runners.BuildCompletion(res, testContract())
+	if err != nil {
+		t.Fatalf("BuildCompletion: %v", err)
+	}
+	var output struct {
+		Error struct {
+			Class  string `json:"class"`
+			Detail string `json:"detail"`
+		} `json:"error"`
+	}
+	if err := json.Unmarshal(completion.Output, &output); err != nil {
+		t.Fatalf("decode output: %v", err)
+	}
+	if output.Error.Class != "runner" || output.Error.Detail != "runner rejected X" {
+		t.Fatalf("output error = %+v, want runner / runner rejected X", output.Error)
+	}
+}
+
 // TestLedgerDeltaPassesAuthorityWithItsManifest is the property the seam
 // exists to guarantee: what BuildCompletion writes is exactly what the
 // manifest it returns declares, so the ledger's §10.4 producer matrix admits

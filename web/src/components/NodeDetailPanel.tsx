@@ -55,6 +55,14 @@ function duration(startedAt?: string, completedAt?: string): string {
   return `${(ms / 1000).toFixed(1)} s`;
 }
 
+function attemptErrorDetail(result: unknown): string | undefined {
+  if (!result || typeof result !== "object") return undefined;
+  const error = (result as { error?: unknown }).error;
+  if (!error || typeof error !== "object") return undefined;
+  const detail = (error as { detail?: unknown }).detail;
+  return typeof detail === "string" && detail.length > 0 ? detail : undefined;
+}
+
 /**
  * The node-detail side panel (PRD §8.7: "node detail showing actor or
  * runner, contract, owner, attempt, and ledger delta").
@@ -202,6 +210,7 @@ export function NodeDetailPanel({
                 <th scope="col">model / effort</th>
                 <th scope="col">usage</th>
                 <th scope="col">preserve</th>
+                <th scope="col">detail</th>
               </tr>
             </thead>
             <tbody>
@@ -298,6 +307,7 @@ export function NodeDetailPanel({
                         "—"
                       )}
                     </td>
+                    <td>{attemptErrorDetail(attempt.result) ?? "—"}</td>
                   </tr>
                 );
               })}

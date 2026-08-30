@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"time"
 
+	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/jackc/pgx/v5/pgxpool"
 
@@ -659,7 +660,7 @@ func (eq engineQueries) InsertAttempt(ctx context.Context, attempt engine.Attemp
 	_, err := eq.q.Exec(ctx, insertAttemptSQL,
 		attempt.ID, eq.namespaceID, attempt.NodeRunID, int32(attempt.Number),
 		textOrNull(attempt.ActorID), string(attempt.Status), attempt.FencingToken,
-		result, tsOrNow(attempt.StartedAt), tsOrNow(attempt.CompletedAt),
+		result, tsOrNull(attempt.StartedAt), tsOrNow(attempt.CompletedAt),
 		inputTokens, outputTokens, cost, currency,
 		cachedInputTokens, reasoningTokens, usageModel, usageThreadID,
 		textPtrFromNullable(attempt.TerminationReason),
@@ -671,6 +672,30 @@ func (eq engineQueries) InsertAttempt(ctx context.Context, attempt engine.Attemp
 		return fmt.Errorf("postgres: engine: InsertAttempt: %w", err)
 	}
 	return nil
+}
+
+// AttemptStartedAt resolves the dispatch start recorded before an asynchronous
+// completion. Agent and code-node waits live in separate tables but share the
+// work id that CompleteAttempt is fenced against. No row is the ordinary
+// synchronous path, and remains unknown rather than being replaced with now.
+func (eq engineQueries) AttemptStartedAt(ctx context.Context, workID string) (time.Time, bool, error) {
+	var startedAt pgtype.Timestamptz
+	err := eq.q.QueryRow(ctx, `
+		SELECT created_at
+		FROM (
+			SELECT created_at FROM actor_invocations WHERE namespace_id = $1 AND work_id = $2
+			UNION ALL
+			SELECT created_at FROM runner_invocations WHERE namespace_id = $1 AND work_id = $2
+		) invocations
+		ORDER BY created_at
+		LIMIT 1`, eq.namespaceID, workID).Scan(&startedAt)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return time.Time{}, false, nil
+	}
+	if err != nil {
+		return time.Time{}, false, fmt.Errorf("postgres: engine: AttemptStartedAt: %w", err)
+	}
+	return startedAt.Time.UTC(), true, nil
 }
 
 // NextAttemptNumber is one past the highest attempt already recorded.

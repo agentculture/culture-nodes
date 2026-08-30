@@ -353,8 +353,10 @@ type Attempt struct {
 	Status       TechStatus
 	FencingToken int64
 	Result       json.RawMessage
-	StartedAt    time.Time
-	CompletedAt  time.Time
+	// StartedAt is the durable invocation creation time. Its zero value means
+	// no invocation row recorded a start and is persisted as SQL NULL.
+	StartedAt   time.Time
+	CompletedAt time.Time
 	// Usage is the §13.2 telemetry block this attempt reported, nil when it
 	// reported none. See CompletionRequest.Usage for why it is never
 	// fabricated.

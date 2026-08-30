@@ -287,6 +287,10 @@ func (c *completion) recordAttempt(ctx context.Context) error {
 		return err
 	}
 	c.attemptNumber = number
+	startedAt, _, err := c.tx.AttemptStartedAt(ctx, c.req.WorkID)
+	if err != nil {
+		return err
+	}
 
 	if err := c.tx.InsertAttempt(ctx, Attempt{
 		ID:           c.attemptID,
@@ -297,7 +301,7 @@ func (c *completion) recordAttempt(ctx context.Context) error {
 		Status:       c.status,
 		FencingToken: c.req.FencingToken,
 		Result:       jsonOrNull(c.req.Output),
-		StartedAt:    c.now,
+		StartedAt:    startedAt,
 		CompletedAt:  c.now,
 		Usage:        c.req.Usage,
 		// Carried beside Usage, not inside it: an attempt can report a

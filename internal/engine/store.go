@@ -215,6 +215,10 @@ type Tx interface {
 	MarkHumanTaskDecided(ctx context.Context, id string, response json.RawMessage, resolvedAt time.Time) (bool, error)
 
 	InsertAttempt(ctx context.Context, attempt Attempt) error
+	// AttemptStartedAt returns the durable invocation's creation time for a
+	// work item. A synchronous completion has no invocation row and returns
+	// (zero, false, nil), preserving "unknown" rather than inventing a start.
+	AttemptStartedAt(ctx context.Context, workID string) (time.Time, bool, error)
 	// NextAttemptNumber is one past the highest attempt number recorded for a
 	// node run. Attempt numbering is derived rather than carried by the
 	// worker, so two workers cannot disagree about which attempt this is.

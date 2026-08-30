@@ -639,6 +639,30 @@ paths:
                 $ref: '#/components/schemas/Error'
 
   /v1alpha1/attempts/{attemptID}/artifacts:
+    get:
+      operationId: listAttemptArtifacts
+      tags: [artifacts]
+      summary: List artifacts associated with one attempt.
+      description: >-
+        Includes artifacts indexed directly by attempt_id. For code-node
+        stdout, the attempt result's artifacts.stdout_ref is also resolved
+        against the artifact store, so runner-captured stdout remains listed
+        when its artifact metadata row lacks the attempt association.
+      parameters:
+        - $ref: '#/components/parameters/AttemptID'
+      responses:
+        '200':
+          description: Artifact metadata associated with the attempt.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AttemptArtifactList'
+        '503':
+          description: Artifact reads are not configured.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
     post:
       operationId: putAttemptArtifact
       tags: [artifacts]
@@ -650,8 +674,8 @@ paths:
         opaque content and cannot supply authority-bearing fields. Returns
         an artifact:// ref and metadata measured by the artifact store.
 
-        No GET or DELETE operation is mounted. Possession of an artifact://
-        ref is not authorization, and filesystem paths are never resolved.
+        Possession of an artifact:// ref is not authorization, and filesystem
+        paths are never resolved.
       security:
         - attemptCallbackBearerAuth: []
       parameters:
@@ -699,6 +723,50 @@ paths:
             The body exceeds the publication limit (api.MaxArtifactBytes,
             64 MiB). Authentication is not a size limit: publish large output
             to object storage and record a reference, or split it.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+
+  /v1alpha1/attempts/{attemptID}/artifacts/{name}:
+    get:
+      operationId: getAttemptArtifact
+      tags: [artifacts]
+      summary: Read one named attempt artifact.
+      description: >-
+        Streams the newest artifact with the requested descriptive name. For
+        name stdout, the attempt result's artifacts.stdout_ref is resolved
+        against the artifact store when no attempt-indexed row exists. The
+        response is forced to download with MIME sniffing disabled and a
+        sandbox content-security policy.
+      parameters:
+        - $ref: '#/components/parameters/AttemptID'
+        - name: name
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: The artifact's opaque bytes.
+          headers:
+            Artifact-Ref:
+              description: The resolved artifact:// reference.
+              schema:
+                type: string
+          content:
+            '*/*':
+              schema:
+                type: string
+                format: binary
+        '404':
+          description: The attempt has no artifact with this name, or its content was reaped.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '503':
+          description: Artifact reads are not configured.
           content:
             application/json:
               schema:
@@ -3187,6 +3255,17 @@ components:
         created_at:
           type: string
           format: date-time
+
+    AttemptArtifactList:
+      type: object
+      required: [attempt_id, artifacts]
+      properties:
+        attempt_id:
+          type: string
+        artifacts:
+          type: array
+          items:
+            $ref: '#/components/schemas/ArtifactWriteResult'
 
     Error:
       type: object

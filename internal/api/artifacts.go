@@ -4,10 +4,13 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"net/http"
 	"strconv"
 	"strings"
+
+	"github.com/jackc/pgx/v5"
 
 	"github.com/agentculture/culture-nodes/internal/actors"
 	"github.com/agentculture/culture-nodes/internal/artifacts"
@@ -179,6 +182,10 @@ func (s *Server) handleListAttemptArtifacts(w http.ResponseWriter, r *http.Reque
 	if err != nil {
 		return internalError(err)
 	}
+	listed, err = s.withCodeNodeStdout(r.Context(), attemptID, listed)
+	if err != nil {
+		return internalError(err)
+	}
 	out := make([]artifactListEntry, 0, len(listed))
 	for _, l := range listed {
 		out = append(out, artifactListEntry{
@@ -212,6 +219,12 @@ func (s *Server) handleGetAttemptArtifact(w http.ResponseWriter, r *http.Request
 	listed, err := s.artifactRouter.ListByAttempt(r.Context(), attemptID)
 	if err != nil {
 		return internalError(err)
+	}
+	if name == stdoutArtifactResultName {
+		listed, err = s.withCodeNodeStdout(r.Context(), attemptID, listed)
+		if err != nil {
+			return internalError(err)
+		}
 	}
 	var match *artifacts.Listed
 	for i := range listed {
@@ -251,6 +264,66 @@ func (s *Server) handleGetAttemptArtifact(w http.ResponseWriter, r *http.Request
 		return nil
 	}
 	return nil
+}
+
+const stdoutArtifactResultName = "stdout"
+
+// withCodeNodeStdout joins the two durable halves of a code-node stdout
+// result. The artifact store owns the bytes and metadata by ref, while the
+// completed attempt owns the stdout_ref association in result.artifacts.
+// Older runner uploads can therefore have no artifacts.attempt_id even
+// though both halves are present. Treat the completed result as the missing
+// index so the attempt-scoped API remains readable without rewriting history.
+func (s *Server) withCodeNodeStdout(ctx context.Context, attemptID string, listed []artifacts.Listed) ([]artifacts.Listed, error) {
+	if s.Store == nil {
+		return listed, nil
+	}
+	var raw []byte
+	err := s.Store.Pool().QueryRow(ctx,
+		`SELECT result FROM attempts WHERE id = $1 AND namespace_id = $2`,
+		attemptID, s.NamespaceID).Scan(&raw)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return listed, nil
+	}
+	if err != nil {
+		return nil, fmt.Errorf("resolve code-node stdout result: %w", err)
+	}
+	if len(raw) == 0 {
+		return listed, nil
+	}
+	var result struct {
+		Artifacts map[string]string `json:"artifacts"`
+	}
+	if json.Unmarshal(raw, &result) != nil {
+		return listed, nil
+	}
+	ref := artifacts.Ref(result.Artifacts["stdout_ref"])
+	if ref == "" {
+		return listed, nil
+	}
+	for i := range listed {
+		if listed[i].Ref == ref {
+			// The ref is the authoritative identity. Repair only the
+			// descriptive name in this response when the historical row did
+			// not carry one, avoiding a duplicate listing entry.
+			if listed[i].Meta.Name == "" {
+				listed[i].Meta.Name = stdoutArtifactResultName
+			}
+			return listed, nil
+		}
+		if listed[i].Meta.Name == stdoutArtifactResultName {
+			return listed, nil
+		}
+	}
+	meta, err := s.artifactRouter.Stat(ctx, ref)
+	if errors.Is(err, artifacts.ErrNotFound) {
+		return listed, nil
+	}
+	if err != nil {
+		return nil, fmt.Errorf("resolve code-node stdout ref %s: %w", ref, err)
+	}
+	meta.Name = stdoutArtifactResultName
+	return append(listed, artifacts.Listed{Ref: ref, Meta: meta}), nil
 }
 
 // runnerAttemptAssociations resolves a RUNNER attempt's durable associations

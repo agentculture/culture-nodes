@@ -552,6 +552,24 @@
         ],
         "type": "object"
       },
+      "AttemptArtifactList": {
+        "properties": {
+          "artifacts": {
+            "items": {
+              "$ref": "#/components/schemas/ArtifactWriteResult"
+            },
+            "type": "array"
+          },
+          "attempt_id": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "attempt_id",
+          "artifacts"
+        ],
+        "type": "object"
+      },
       "AttemptUsage": {
         "properties": {
           "cached_input_tokens": {
@@ -3999,8 +4017,43 @@
       }
     },
     "/v1alpha1/attempts/{attemptID}/artifacts": {
+      "get": {
+        "description": "Includes artifacts indexed directly by attempt_id. For code-node stdout, the attempt result's artifacts.stdout_ref is also resolved against the artifact store, so runner-captured stdout remains listed when its artifact metadata row lacks the attempt association.",
+        "operationId": "listAttemptArtifacts",
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/AttemptID"
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AttemptArtifactList"
+                }
+              }
+            },
+            "description": "Artifact metadata associated with the attempt."
+          },
+          "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "description": "Artifact reads are not configured."
+          }
+        },
+        "summary": "List artifacts associated with one attempt.",
+        "tags": [
+          "artifacts"
+        ]
+      },
       "post": {
-        "description": "Requires the callback bearer token issued for exactly the attempt named in the path. Namespace, run, and attempt associations are derived from that attempt's durable PendingInvocation; the body is opaque content and cannot supply authority-bearing fields. Returns an artifact:// ref and metadata measured by the artifact store.\nNo GET or DELETE operation is mounted. Possession of an artifact:// ref is not authorization, and filesystem paths are never resolved.",
+        "description": "Requires the callback bearer token issued for exactly the attempt named in the path. Namespace, run, and attempt associations are derived from that attempt's durable PendingInvocation; the body is opaque content and cannot supply authority-bearing fields. Returns an artifact:// ref and metadata measured by the artifact store.\nPossession of an artifact:// ref is not authorization, and filesystem paths are never resolved.",
         "operationId": "putAttemptArtifact",
         "parameters": [
           {
@@ -4085,6 +4138,70 @@
           }
         ],
         "summary": "Publish opaque artifact bytes for one pending attempt.",
+        "tags": [
+          "artifacts"
+        ]
+      }
+    },
+    "/v1alpha1/attempts/{attemptID}/artifacts/{name}": {
+      "get": {
+        "description": "Streams the newest artifact with the requested descriptive name. For name stdout, the attempt result's artifacts.stdout_ref is resolved against the artifact store when no attempt-indexed row exists. The response is forced to download with MIME sniffing disabled and a sandbox content-security policy.",
+        "operationId": "getAttemptArtifact",
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/AttemptID"
+          },
+          {
+            "in": "path",
+            "name": "name",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "*/*": {
+                "schema": {
+                  "format": "binary",
+                  "type": "string"
+                }
+              }
+            },
+            "description": "The artifact's opaque bytes.",
+            "headers": {
+              "Artifact-Ref": {
+                "description": "The resolved artifact:// reference.",
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "description": "The attempt has no artifact with this name, or its content was reaped."
+          },
+          "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "description": "Artifact reads are not configured."
+          }
+        },
+        "summary": "Read one named attempt artifact.",
         "tags": [
           "artifacts"
         ]

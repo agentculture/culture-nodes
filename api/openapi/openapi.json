@@ -733,6 +733,24 @@
         ],
         "type": "object"
       },
+      "CreateNamespace": {
+        "additionalProperties": false,
+        "properties": {
+          "name": {
+            "minLength": 1,
+            "type": "string"
+          },
+          "slug": {
+            "minLength": 1,
+            "type": "string"
+          }
+        },
+        "required": [
+          "name",
+          "slug"
+        ],
+        "type": "object"
+      },
       "CreateReviewRequest": {
         "properties": {
           "ledger_version": {
@@ -4813,6 +4831,52 @@
           }
         },
         "summary": "List namespaces available to workers in this installation."
+      },
+      "post": {
+        "operationId": "createNamespace",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CreateNamespace"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Namespace"
+                }
+              }
+            },
+            "description": "The namespace was created."
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "description": "The name or slug is missing or the request is malformed."
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "description": "A namespace with that slug already exists."
+          }
+        },
+        "summary": "Create a namespace in this installation."
       }
     },
     "/v1alpha1/node-runs": {

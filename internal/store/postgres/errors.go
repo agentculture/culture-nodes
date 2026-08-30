@@ -21,6 +21,9 @@ const pgUniqueViolation = "23505"
 // existing row should follow up with GetWorkflowVersion.
 var ErrDuplicateDigest = errors.New("postgres: workflow version with this content digest already exists")
 
+// ErrDuplicateNamespace is returned when a namespace slug already exists.
+var ErrDuplicateNamespace = errors.New("postgres: namespace with this slug already exists")
+
 // ErrStoreBindingConflict marks a cross-entry binding disagreement — the
 // namespace-wide dispatch lookup has no honest single answer when two
 // entries' CURRENT bindings map one required ref to different actors

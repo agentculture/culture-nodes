@@ -137,6 +137,34 @@ tags:
 
 paths:
   /v1alpha1/namespaces:
+    post:
+      operationId: createNamespace
+      summary: Create a namespace in this installation.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CreateNamespace'
+      responses:
+        '201':
+          description: The namespace was created.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Namespace'
+        '400':
+          description: The name or slug is missing or the request is malformed.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '409':
+          description: A namespace with that slug already exists.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
     get:
       operationId: listNamespaces
       summary: List namespaces available to workers in this installation.
@@ -3201,6 +3229,13 @@ components:
         created_at:
           type: string
           format: date-time
+    CreateNamespace:
+      type: object
+      required: [name, slug]
+      additionalProperties: false
+      properties:
+        name: {type: string, minLength: 1}
+        slug: {type: string, minLength: 1}
     CreateWorkflowGeneration:
       type: object
       required: [description, actor_ref]

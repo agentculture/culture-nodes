@@ -1,8 +1,13 @@
 package api
 
 import (
+	"encoding/json"
+	"errors"
 	"net/http"
+	"strings"
 	"time"
+
+	"github.com/agentculture/culture-nodes/internal/store/postgres"
 )
 
 type NamespaceOut struct {
@@ -10,6 +15,36 @@ type NamespaceOut struct {
 	Slug        string    `json:"slug"`
 	DisplayName string    `json:"display_name"`
 	CreatedAt   time.Time `json:"created_at"`
+}
+
+type createNamespaceRequest struct {
+	Name string `json:"name"`
+	Slug string `json:"slug"`
+}
+
+func namespaceOut(ns postgres.Namespace) NamespaceOut {
+	return NamespaceOut{ID: ns.ID, Slug: ns.Slug, DisplayName: ns.DisplayName, CreatedAt: ns.CreatedAt}
+}
+
+func (s *Server) handleCreateNamespace(w http.ResponseWriter, r *http.Request) error {
+	var req createNamespaceRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		return badRequest("send a JSON object with non-empty name and slug fields", "decode namespace: %v", err)
+	}
+	req.Name = strings.TrimSpace(req.Name)
+	req.Slug = strings.TrimSpace(req.Slug)
+	if req.Name == "" || req.Slug == "" {
+		return badRequest("send non-empty name and slug fields", "namespace name and slug are required")
+	}
+	ns, err := s.Store.CreateNamespace(r.Context(), req.Slug, req.Name)
+	if errors.Is(err, postgres.ErrDuplicateNamespace) {
+		return conflict("choose a different slug or list namespaces to use the existing row", "namespace slug %q already exists", req.Slug)
+	}
+	if err != nil {
+		return err
+	}
+	writeJSON(w, http.StatusCreated, namespaceOut(ns))
+	return nil
 }
 
 // handleListNamespaces lists the installation's namespace rows. Unlike most

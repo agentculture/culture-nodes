@@ -476,6 +476,7 @@ func (s *Server) Handler() http.Handler {
 
 	mux.HandleFunc("GET /v1alpha1/dispatch-rates", s.wrap(s.handleListDispatchRates))
 	mux.HandleFunc("GET /v1alpha1/namespaces", s.wrap(s.handleListNamespaces))
+	mux.HandleFunc("POST /v1alpha1/namespaces", s.wrap(s.handleCreateNamespace))
 
 	mux.HandleFunc("GET /v1alpha1/preflights", s.wrap(s.handleListPreflights))
 	mux.HandleFunc("GET /v1alpha1/preflights/{id}", s.wrap(s.handleGetPreflight))

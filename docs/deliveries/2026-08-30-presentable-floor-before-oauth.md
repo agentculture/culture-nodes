@@ -138,7 +138,7 @@ Each announcement clause of the spec, ticked against evidence:
 | the options are on the ticket page | medium | audit row 9: `GET /v1alpha1/tickets/SCRUM-7` lists the task; SPA not driven |
 | stale approvals expire when their PR merges | medium | `pr.merged` consumer (t11); 19 expired by `nodes expire-approvals`; the merged-before-deploy 8 are staged (`d1`) |
 | repeat sweep runs no longer bury real work | medium | t7 run `01M191YR0NKKC6WAF5D50JM6BP` (grouped failed runs + counter); t9 backoff — not re-observed on prod because the sweep has not failed since deploy |
-| every ticket has a reachable page link | high | audit row 2: absolute `http://thor:18080/tickets/SCRUM-7` |
+| every ticket has a page link that resolves from the LAN or Tailscale | high | audit row 2: absolute `http://thor:18080/tickets/SCRUM-7`. Not reachable from outside that network — `docs/drive-from-jira.md` states the limit; lifting it is the login-from-anywhere cycle (Qodo finding 2 on #266) |
 | agents receive the ticket description | high | audit row 4: `heliotrope-ledger-4471` quoted |
 | freeze ends the ticket's runs — the ones live at freeze time | medium | c28 as scoped: `freezeTicketRuns` cancels (Done) or parks (any other status) the runs live when the freeze row is written. SCRUM-5's run cancelled (earlier sitting); SCRUM-7's #264 freeze affected 0 runs. It does **not** stop later runs — audit finding 2: rows 4–8 post-date the freeze — it closes the ticket's reply form. |
 | the four site defects and the polish bundle are shipped | medium | t8/t27 runs; screenshots in PR #263; not re-verified on prod after deploy |
@@ -151,7 +151,7 @@ Each announcement clause of the spec, ticked against evidence:
 ## Remaining Work / Follow-up
 
 - `t11` / `d1` — GitHub PR-comment leg of the fan-out: needs a bridge verb that writes to a PR thread (#256/#258 or a small Feature); until then PR-sourced tasks fan out to Discord only.
-- `t30` — run `decide-stale-approvals.sh` (operator hand-turn: 8 approvals for merged #223/#209); give `trigger_remint_exhausted` alerts an acknowledge outcome so `01M16FX0BWK9X6TKE9BHAAW88Y` can close; walk `docs/drive-from-jira.md` as each reader role; re-measure the intake → spec-lane chain on an unfrozen ticket moved by a second account.
+- `t30` — the 8 stale approvals for merged #223/#209 were decided `approved` by the operator on 2026-08-30 21:14 IDT (`decide-stale-approvals.sh`; pending count 28 → 1); one resumed run, `01M0E6EBXC8C7T0NFH5KVDT44P` (2026-08-19 graph), ended `failed` on resume — reason not read, recorded here rather than claimed; give `trigger_remint_exhausted` alerts an acknowledge outcome so `01M16FX0BWK9X6TKE9BHAAW88Y` can close; walk `docs/drive-from-jira.md` as each reader role; re-measure the intake → spec-lane chain on an unfrozen ticket moved by a second account.
 - `d2` — confirm or reject the deviation record in devague (user decision); the code is merged and deployed either way.
 - #265 — fan-out lists `expired` as an option and names the node by kind.
 - #93 — per-run checkouts; the shared checkout collided twice on 2026-08-30.

@@ -30,8 +30,6 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 - Cache hit rate above 100% on `/stats` (t8); runner completion notifications no longer return 405 (t14, #14); in-attempt gate reports no longer violate the attempts FK (t23, #178); mismatched `origin_actor_id` is refused at accept time without burning the dispatch budget (t24, #183); `triage-report.py` exits 1 on a malformed dispositions table (t20, #162); `NODES_DATABASE_URL` and `POSTGRES_PASSWORD` can no longer diverge silently and the settings lane stops writing contradictory facts (t25, #133, #135).
 
-### Fixed
-
 ## [0.44.1] - 2026-08-30
 
 ### Changed

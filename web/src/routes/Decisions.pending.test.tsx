@@ -49,6 +49,8 @@ async function renderPending() {
 beforeEach(() => {
   window.localStorage.clear();
   window.sessionStorage.clear();
+  mockListHumanTasks.mockReset();
+  mockListPendingDecisions.mockReset();
   mockListPendingDecisions.mockResolvedValue({ items: [], record_count: 0 });
   mockGetLedger.mockResolvedValue({ items: [], ledger_version: 12 });
   mockGetRun.mockResolvedValue({ run: { id: "run", workflow_digest: "sha256:x", state: "waiting", created_at: "", updated_at: "" }, tokens: [], node_runs: [] });
@@ -102,6 +104,30 @@ describe("Decisions pending tab", () => {
     });
     expect(screen.queryByText("task-000")).not.toBeInTheDocument();
     expect(window.localStorage.getItem("nodes.human-decision-actor-id")).toBe("actor-human-ori");
+  });
+
+  it("clamps the page after deciding the only item on the last page", async () => {
+    mockListHumanTasks.mockResolvedValue({
+      items: Array.from({ length: 26 }, (_, index) => task(index)),
+    });
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue(
+      new Response(JSON.stringify({ human_task_id: "task-025", outcome: "approved" }), {
+        status: 200,
+        headers: { "content-type": "application/json" },
+      }),
+    ));
+    const user = userEvent.setup();
+    await renderPending();
+    await screen.findByText("Page 1 of 2");
+    await user.click(screen.getByRole("button", { name: "Next page" }));
+    await user.type(screen.getByLabelText("Decision token"), "held-secret");
+    await user.click(screen.getByRole("button", { name: "Hold token" }));
+    await user.type(screen.getByLabelText("Decider actor id"), "actor-human-ori");
+    await user.click(screen.getByRole("button", { name: "approved" }));
+
+    expect(await screen.findByText("Page 1 of 1")).toBeInTheDocument();
+    expect(screen.queryByText("Page 2 of 1")).not.toBeInTheDocument();
+    expect(screen.getByText("task-000")).toBeInTheDocument();
   });
 
   it.each([

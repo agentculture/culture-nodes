@@ -180,11 +180,15 @@ function PendingDecisionsView() {
   );
   const total = (tasks?.length ?? 0) + claimItems.length;
   const pageCount = Math.max(1, Math.ceil(total / PAGE_SIZE));
+  const visiblePage = Math.min(page, pageCount - 1);
+  useEffect(() => {
+    if (page !== visiblePage) setPage(visiblePage);
+  }, [page, visiblePage]);
   const combined = [
     ...(tasks ?? []).map((task) => ({ type: "task" as const, task })),
     ...claimItems.map((claim) => ({ type: "claim" as const, ...claim })),
   ];
-  const visible = combined.slice(page * PAGE_SIZE, (page + 1) * PAGE_SIZE);
+  const visible = combined.slice(visiblePage * PAGE_SIZE, (visiblePage + 1) * PAGE_SIZE);
   const grouped = new Map<string, typeof visible>();
   for (const item of visible) {
     const runID = item.type === "task" ? item.task.run_id : item.group.run_id;
@@ -221,7 +225,7 @@ function PendingDecisionsView() {
       {error ? <ErrorNotice error={error} /> : null}
       {tasks === null ? <p className="muted">Loading pending decisions…</p> : total === 0 ? <p className="muted">Nothing is awaiting a decision.</p> : (
         <>
-          <p className="muted">Page {page + 1} of {pageCount}</p>
+          <p className="muted">Page {visiblePage + 1} of {pageCount}</p>
           {Array.from(grouped, ([runID, items]) => (
             <section key={runID} data-run-id={runID}>
               <h2>{tickets[runID] ? <>Ticket {tickets[runID]} · </> : null}Run <Link to={`/runs/${runID}`}>{runID}</Link></h2>
@@ -255,8 +259,8 @@ function PendingDecisionsView() {
             </section>
           ))}
           <div>
-            <button type="button" disabled={page === 0} onClick={() => setPage((value) => value - 1)}>Previous page</button>{" "}
-            <button type="button" disabled={page + 1 >= pageCount} onClick={() => setPage((value) => value + 1)}>Next page</button>
+            <button type="button" disabled={visiblePage === 0} onClick={() => setPage((value) => value - 1)}>Previous page</button>{" "}
+            <button type="button" disabled={visiblePage + 1 >= pageCount} onClick={() => setPage((value) => value + 1)}>Next page</button>
           </div>
         </>
       )}

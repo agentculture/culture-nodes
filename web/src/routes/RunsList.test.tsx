@@ -152,6 +152,26 @@ describe("RunsList data + table", () => {
     });
   });
 
+  it("drops a pending load-more response after the state filter changes", async () => {
+    let resolveLoadMore: ((page: { items: typeof BOARD_RUNS }) => void) | undefined;
+    mockListRuns
+      .mockResolvedValueOnce({ items: [BOARD_RUNS[0]], next_cursor: "runs-page-2" })
+      .mockImplementationOnce(() => new Promise((resolve) => { resolveLoadMore = resolve; }))
+      .mockResolvedValueOnce({ items: [BOARD_RUNS[1]] });
+    const user = userEvent.setup();
+    renderList();
+    await screen.findByRole("link", { name: BOARD_RUNS[0].id });
+
+    await user.click(screen.getByRole("button", { name: "Load more" }));
+    await user.selectOptions(screen.getByRole("combobox", { name: "State" }), "failed");
+    expect(await screen.findByRole("link", { name: BOARD_RUNS[1].id })).toBeInTheDocument();
+
+    await act(async () => resolveLoadMore?.({ items: [BOARD_RUNS[2]] }));
+
+    expect(screen.getByRole("link", { name: BOARD_RUNS[1].id })).toBeInTheDocument();
+    expect(screen.queryByRole("link", { name: BOARD_RUNS[2].id })).not.toBeInTheDocument();
+  });
+
   it("refetches through the API when the state filter changes", async () => {
     mockListRuns.mockResolvedValue({ items: BOARD_RUNS });
     renderList();

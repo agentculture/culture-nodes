@@ -67,6 +67,9 @@ export function RunsList() {
   const [expandedGroups, setExpandedGroups] = useState<Set<string>>(new Set());
   const reloadTimer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
   const lastReload = useRef(0);
+  const filterKey = JSON.stringify([since, until, stateFilter]);
+  const currentFilterKey = useRef(filterKey);
+  currentFilterKey.current = filterKey;
 
   const scheduleReload = useCallback(() => {
     if (reloadTimer.current) return;
@@ -92,6 +95,7 @@ export function RunsList() {
     const controller = new AbortController();
     setAgentState({ status: "loading", run: null });
     setError(null);
+    setLoadingMore(false);
     // A range change must not keep rendering the previous range's rows
     // while the new request is in flight — the loading state is gated on
     // runs === null, so reset it (review finding on #27).
@@ -157,6 +161,7 @@ export function RunsList() {
 
   const loadMore = useCallback(() => {
     if (!nextCursor) return;
+    const requestFilterKey = filterKey;
     setLoadingMore(true);
     listRuns(undefined, {
       sort: "updated_at",
@@ -166,12 +171,18 @@ export function RunsList() {
       cursor: nextCursor,
     })
       .then((page) => {
+        if (currentFilterKey.current !== requestFilterKey) return;
         setRuns((current) => [...(current ?? []), ...page.items]);
         setNextCursor(page.next_cursor);
       })
-      .catch((cause: unknown) => setError(cause instanceof ApiError ? cause : new ApiError(0, String(cause), "check the browser console")))
-      .finally(() => setLoadingMore(false));
-  }, [nextCursor, since, until, stateFilter]);
+      .catch((cause: unknown) => {
+        if (currentFilterKey.current !== requestFilterKey) return;
+        setError(cause instanceof ApiError ? cause : new ApiError(0, String(cause), "check the browser console"));
+      })
+      .finally(() => {
+        if (currentFilterKey.current === requestFilterKey) setLoadingMore(false);
+      });
+  }, [nextCursor, since, until, stateFilter, filterKey]);
 
   const groupedRuns = runs === null ? null : runs.reduce<Array<{ key: string; runs: Run[] }>>((groups, run) => {
     const previous = groups[groups.length - 1];

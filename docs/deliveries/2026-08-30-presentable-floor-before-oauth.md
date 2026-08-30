@@ -140,7 +140,7 @@ Each announcement clause of the spec, ticked against evidence:
 | repeat sweep runs no longer bury real work | medium | t7 run `01M191YR0NKKC6WAF5D50JM6BP` (grouped failed runs + counter); t9 backoff — not re-observed on prod because the sweep has not failed since deploy |
 | every ticket has a reachable page link | high | audit row 2: absolute `http://thor:18080/tickets/SCRUM-7` |
 | agents receive the ticket description | high | audit row 4: `heliotrope-ledger-4471` quoted |
-| freeze ends the ticket's runs | high | SCRUM-5 run cancelled (earlier sitting); SCRUM-7 frozen by #264 |
+| freeze ends the ticket's runs — the ones live at freeze time | medium | c28 as scoped: `freezeTicketRuns` cancels (Done) or parks (any other status) the runs live when the freeze row is written. SCRUM-5's run cancelled (earlier sitting); SCRUM-7's #264 freeze affected 0 runs. It does **not** stop later runs — audit finding 2: rows 4–8 post-date the freeze — it closes the ticket's reply form. |
 | the four site defects and the polish bundle are shipped | medium | t8/t27 runs; screenshots in PR #263; not re-verified on prod after deploy |
 | the backlog is honest — closures on evidence, big features as typed issues | high | issue list above; `docs/triage/open-issues.md` regenerated, zero untyped |
 | every fix package in this cycle is assigned through culture-nodes itself | high | 26 run ids in PR #263's body; in-session exceptions declared (t1 t2 t3 t26 t29 t30 t31 and the #264 hotfix) |
@@ -157,6 +157,7 @@ Each announcement clause of the spec, ticked against evidence:
 - #93 — per-run checkouts; the shared checkout collided twice on 2026-08-30.
 - `t29` — make `deploy.sh` reinstall the Jira comment actor without `JIRA_SITE` in the deploying shell (read it from the host's `jira-bridge.env`), or fail loudly; today it skips silently.
 - Merge-freeze on mention — decide whether freeze requires a closes-style reference (product decision; SCRUM-7 froze on an evidence citation).
+- Freeze does not gate new runs — a frozen ticket refuses page replies, but intake and the sweep still mint runs on it (audit finding 2). Whether a freeze should also refuse new runs is undecided; today it is a product question, not a delivered behaviour.
 - Sweep fix node works one finding per tick — a PR with N findings takes N ticks; fold into the next sweep cycle.
 - 26 stale worktrees under `../.worktrees.culture-nodes/` from this and earlier fan-outs — tear down with `git worktree remove`.
 - Signal 1 — read on 2026-09-06: seven consecutive days of green sweep-cycle runs.

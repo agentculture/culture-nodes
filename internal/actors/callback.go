@@ -9,7 +9,6 @@ import (
 
 	"github.com/agentculture/culture-nodes/internal/engine"
 	"github.com/agentculture/culture-nodes/internal/handover"
-	"github.com/agentculture/culture-nodes/internal/ledger"
 	"github.com/agentculture/culture-nodes/internal/telemetry"
 )
 
@@ -156,6 +155,12 @@ type CallbackStore interface {
 	// Invocation loads the durable record for a protocol attempt id,
 	// returning an error matching ErrUnknownAttempt when there is none.
 	Invocation(ctx context.Context, attemptID string) (PendingInvocation, error)
+	// ActorKey resolves an actor row id to its actor_key (task t24 hotfix): the
+	// custody check compares identities by key because a bridge's identity row
+	// and the dispatched registration row are different rows of one actor.
+	// An id with no row must return an error matching ErrUnknownActor; every
+	// other error means the answer is unknown, not that the actor is foreign.
+	ActorKey(ctx context.Context, actorID string) (string, error)
 
 	// ClaimCallbackEvent records (attemptID, eventID) as seen, reporting
 	// false when it was already recorded. It is the idempotency boundary for
@@ -264,6 +269,12 @@ type Completer interface {
 // ErrUnknownAttempt reports a callback for an attempt with no durable
 // invocation: either it never existed, or it was cleaned up.
 var ErrUnknownAttempt = errors.New("actors: no in-flight invocation for this attempt")
+
+// ErrUnknownActor reports an actor row id that resolves to no row. It is the
+// answer custody can act on — an unknown identity is a refusal — and it is
+// what separates that from a store that merely could not answer, which is an
+// infrastructure failure and must be retried instead.
+var ErrUnknownActor = errors.New("actors: no such actor")
 
 // CallbackDeps is everything HandleCallback needs.
 type CallbackDeps struct {
@@ -724,7 +735,15 @@ func commitTerminal(ctx context.Context, deps CallbackDeps, inv PendingInvocatio
 		return CallbackResult{}, errors.New("actors: HandleCallback requires an engine to commit a terminal event")
 	}
 
-	req, diagnostic := completionFor(inv, ev)
+	req, diagnostic, err := completionFor(ctx, deps.Store, inv, ev)
+	if err != nil {
+		// The custody check could not reach the store. Nothing has been
+		// resumed and nothing committed, so this is a compensated delivery
+		// failure: the claim and the mark go back, and §13.4's redelivery
+		// decides the completion once the store answers again.
+		deps.commitFailed(ctx, inv, ev, StageCustody, err)
+		return CallbackResult{}, err
+	}
 	if diagnostic != "" {
 		deps.record(ctx, inv, TypeCallbackRejected, ev, diagnostic)
 		return CallbackResult{AttemptID: inv.AttemptID, Disposition: DispositionRejected, Diagnostic: diagnostic}, nil
@@ -791,6 +810,11 @@ func commitTerminal(ctx context.Context, deps CallbackDeps, inv PendingInvocatio
 // the engine was reached at all, which decides whether the run's own state
 // could have moved.
 const (
+	// StageCustody is a failure to resolve the identities the origin-custody
+	// check compares. It is the earliest stage: nothing was resumed and the
+	// engine was never reached, so the delivery is failed rather than
+	// refused — an unanswerable check is not a foreign actor.
+	StageCustody = "verify_origin_custody"
 	// StageResume is a failure to re-lease the parked work item.
 	StageResume = "resume_waiting_work"
 	// StageComplete is a failure inside the engine's §12.5 transaction, which
@@ -863,102 +887,6 @@ func (d CallbackDeps) recordDetail(
 		data[k] = v
 	}
 	_ = d.Store.AppendRunEvent(ctx, inv.NamespaceID, inv.RunID, eventType, data)
-}
-
-// completionFor turns a terminal §13.4 event into the engine completion it
-// claims. The second return value is non-empty when the payload cannot be
-// acted on at all, in which case no completion is attempted.
-//
-// Note what is *not* checked here: whether the outcome is one the node
-// declares, and whether the output satisfies its schema. Both are the
-// engine's job (§12.5 step 2), and duplicating them would create a second
-// place for the answer to differ from the authoritative one.
-func completionFor(inv PendingInvocation, ev CallbackEvent) (engine.CompletionRequest, string) {
-	req := engine.CompletionRequest{
-		WorkID:       inv.WorkID,
-		WorkerID:     inv.WorkerID,
-		FencingToken: inv.FencingToken,
-		Attempt:      inv.Attempt,
-		ActorID:      inv.ActorID,
-	}
-
-	switch ev.Kind {
-	case EventCompleted, EventBlocked:
-		var payload CompletedPayload
-		if len(ev.Payload) > 0 {
-			if err := json.Unmarshal(ev.Payload, &payload); err != nil {
-				return req, fmt.Sprintf("%s event %s carries a payload that is not a §13.2 result body: %v", ev.Kind, ev.EventID, err)
-			}
-		}
-		outcome := payload.Outcome
-		if outcome == "" && ev.Kind == EventBlocked {
-			// §13.4 names `blocked` as an event kind; the domain outcome it
-			// routes as is `blocked` unless the actor said otherwise. Whether
-			// the node declares that outcome is the engine's call.
-			outcome = "blocked"
-		}
-		if outcome == "" {
-			return req, fmt.Sprintf("completed event %s declares no domain outcome", ev.EventID)
-		}
-		req.TechStatus = engine.StatusSucceeded
-		req.Outcome = outcome
-		req.Output = MergeWorkspaceMeasured(payload.Output, payload.WorkspaceMeasured)
-		if payload.LedgerDelta != nil {
-			req.LedgerDelta = append([]ledger.Record(nil), payload.LedgerDelta.Records...)
-		}
-		req.Usage = payload.Usage.ToEngine()
-		req.TerminationReason = payload.TerminationReason
-		req.ContinuationRef = payload.ContinuationRef
-		if detail := originActorMismatch(req.LedgerDelta, inv.ActorID); detail != "" {
-			req.TechStatus = engine.StatusContractRejected
-			req.Outcome = ""
-			req.Output = identityDiagnostic(detail)
-			req.LedgerDelta = nil
-			req.RetryRefusal = detail
-			return req, ""
-		}
-		// The handle for continuing this conversation, reported by an actor
-		// that finished late. Persisting it here is what makes continuation
-		// reachable on the path long sessions actually take (ADR 0010 §2);
-		// absent stays absent, and nothing invents one.
-		return req, ""
-
-	case EventFailed:
-		var payload FailedPayload
-		if len(ev.Payload) > 0 {
-			_ = json.Unmarshal(ev.Payload, &payload)
-		}
-		class := payload.Class
-		if !class.Valid() {
-			class = ClassExecution
-		}
-		req.TechStatus = TechStatusFor(class)
-		if req.TechStatus == engine.StatusTimedOut {
-			// A §13.4 terminal event is the actor reporting that ITS
-			// invocation is over — the one timeout origin that leaves no
-			// session to fence a retry against (task t10). Every other
-			// producer of timed_out either is the control plane's own
-			// wall-clock verdict or cannot say, and neither is retried.
-			req.TimeoutOrigin = engine.TimeoutOriginActor
-		}
-		// The failure diagnostic and the workspace measurement are different
-		// facts about the same attempt: the session failed, AND the bridge
-		// measured (or honestly could not measure) what it left behind.
-		req.Output = MergeWorkspaceMeasured(
-			failureOutput(class, payload.Message, payload.Detail), payload.WorkspaceMeasured)
-		req.Usage = payload.Usage.ToEngine()
-		// The provider's own reason for ending the turn, which is not the
-		// §13.5 class the control plane assigned it and can arrive with no
-		// usage block at all (ADR 0009).
-		req.TerminationReason = payload.TerminationReason
-		// The bridge's own report of what preserve-on-failure did (task
-		// t25/t26), nil unless it actually committed a branch — see
-		// Preserve.ToEngine's gating.
-		req.Preserve = payload.Preserve.ToEngine()
-		return req, ""
-	}
-
-	return req, fmt.Sprintf("event kind %q is not terminal", ev.Kind)
 }
 
 // failureOutput is the diagnostic body recorded on a failed attempt.

@@ -319,3 +319,7 @@ func TestLogCallbackFailuresLogsNothingAtErrorLevelOn2xx(t *testing.T) {
 		t.Fatalf("expected no Error-level log line for a committed terminal event, got: %s", logs.String())
 	}
 }
+
+func (f *fakeCallbackStore) ActorKey(_ context.Context, actorID string) (string, error) {
+	return actorID, nil
+}

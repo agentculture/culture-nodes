@@ -452,3 +452,7 @@ func TestRefusedTerminalCommitStillReparksTheWorkItem(t *testing.T) {
 			store.mark, store.claims["ev-late"])
 	}
 }
+
+func (s *compensationStore) ActorKey(_ context.Context, actorID string) (string, error) {
+	return actorID, nil
+}

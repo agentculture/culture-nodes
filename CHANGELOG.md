@@ -5,6 +5,13 @@ All notable changes to this project will be documented in this file.
 Format follows [Keep a Changelog](https://keepachangelog.com/). This project
 adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.45.1] - 2026-08-30
+
+### Fixed
+
+- The callback custody check (t24, #183) compares the completing actor to the dispatched actor by `actor_key`, not row id: a claude bridge reports the identity row it was issued (`actor_claude_<role>_*`) while dispatch names the registration row (`actor_register_*`), so every spark bridge completion was refused as `contract_rejected` after the 0.45.0 deploy (SCRUM-7 intake run `01M19PG0QGN6QA77Q6TNMSQQKJ`). A different key, or an unknown origin, is still refused.
+- Qodo on #264: a custody lookup the store *cannot answer* (connection reset, cancelled context, scan failure) is now a compensated delivery failure that redelivery retries, not a permanent `contract_rejected` + `RetryRefusal` — only an unknown row (`actors.ErrUnknownActor`) or a different key refuses. Each distinct origin row is resolved once per delta instead of once per record. `completionFor` moved to `internal/actors/callback_completion.go` (1000-line guard). The transient-error split was authored by the pr-upkeep sweep's developer lane (run `01M19QXR5WW2DQRCHBFW3VCZNV`); the cache, tests and file split were added at the operator gate.
+
 ## [0.45.0] - 2026-08-30
 
 ### Added

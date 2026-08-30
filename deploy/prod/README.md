@@ -1115,3 +1115,53 @@ the old host refuses to start rather than double-serving the actor.
 All three follow the same discipline as every other secret in this file:
 stdin over ssh, never argv; that lane's own `FORCE_*` switch required to
 overwrite an existing value; nothing committed to this repo.
+
+## Human-task fan-out and merged-PR expiry (task t11, spec c6)
+
+A pending human decision used to be visible on exactly two pages a person has
+to go and look at, `/inbox` and `/decisions`, and nobody is paged to either. On
+2026-08-30 that left 26 pending `human-merges-pr` approvals on prod whose pull
+requests had all already merged.
+
+The control plane now queues a fan-out in the same transaction that creates the
+task (`human_task_fanout_outbox`, migration 0051) and the scheduler drains it
+(`internal/humanfanout`). Nothing is delivered from the run transaction, and
+`UNIQUE (human_task_id, channel)` means one task can never announce itself
+twice.
+
+### What each host must have for it to work
+
+| What | Where | Why |
+| --- | --- | --- |
+| `NODES_UI_BASE_URL` | `~/.culture-nodes/prod.env` on every host that mints runs | the comment and the Discord post carry the decision page link; unset renders a bare path, which Jira shows as text |
+| `JIRA_TRANSITION_TARGET` includes `Pending` | the jira bridge's own environment | the bridge's allowlist is the enforcement point for `transition_issue`. Since t11 it is a **comma-separated list** and a single value still works unchanged: `JIRA_TRANSITION_TARGET=Done,Pending` |
+| `company/notify-discord` registered | `actors` table | the Discord half of every fan-out is dispatched through the same bridge `examples/notify-message` uses; an unregistered key fails that one row and leaves the queue alone |
+| `human_task_expiry` registered | `actors` table | `deploy/prod/register-actor.sh --engine human_task_expiry`. An expiry appends one `derived` ledger record and `ledger_records.origin_actor_id` is a foreign key to `actors(id)`, so without it every expiry refuses. Override the id with `NODES_HUMAN_TASK_EXPIRY_ACTOR_ID` |
+
+### Clearing the stale ones
+
+The periodic consumer only expires tasks the control plane holds a delivered
+`pr.merged` fact for, and the sweep only emits that fact for a pull request
+whose branch or body carries a correlatable Jira key. The approvals that
+accumulated carry none, so they need the backfill, which is a **dry run until
+`--apply`**:
+
+```bash
+nodes expire-approvals --namespace "$NS"                       # what would happen
+nodes expire-approvals --namespace "$NS" \
+  --pr agentculture/culture-nodes#236 \
+  --pr agentculture/culture-nodes#238 --apply
+```
+
+`--pr` makes the OPERATOR the source of the merge fact, and the recorded expiry
+detail says so — that is a weaker provenance than a delivered fact and it reads
+as such in the ledger afterwards, deliberately.
+
+### What a PR-sourced run does NOT get
+
+A GitHub PR comment. No actor registered here advertises a verb that writes to
+a pull-request thread: the bridge that reads a PR thread writes only to its own
+submit surface, and the agent bridges expose no GitHub write capability at all.
+A PR-sourced task therefore fans out to Discord only. Widening it is a new
+migration (0051's `channel` CHECK) plus a branch in
+`engine.PlanHumanTaskFanOut`, once a bridge advertises the capability.

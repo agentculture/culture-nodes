@@ -180,7 +180,7 @@ def test_server_dispatches_create_and_advertises_the_verb_surface(monkeypatch):
     cfg = Config(
         jira_site="team.example.com",
         transition_project_prefix="SCRUM-",
-        transition_target="Done",
+        transition_targets=("Done", "Pending"),
         create_projects=("SCRUM",),
         port=0,
     )
@@ -193,6 +193,10 @@ def test_server_dispatches_create_and_advertises_the_verb_surface(monkeypatch):
             advertised = json.loads(response.read())
         assert advertised["verbs"] == ["post_comment", "transition_issue", "create_issue"]
         assert advertised["custody"]["create_projects"] == ["SCRUM"]
+        # Task t11: the whole allowlist is advertised, and the pre-t11
+        # single-value key still reads back the first entry.
+        assert advertised["custody"]["transition_targets"] == ["Done", "Pending"]
+        assert advertised["custody"]["transition_target"] == "Done"
 
         refused = urllib.request.Request(
             f"{base}/v1/invocations",

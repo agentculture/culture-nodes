@@ -115,6 +115,10 @@ type Options struct {
 	// TicketReports drains lifecycle report intents after engine work. Nil
 	// disables the optional Jira operating surface.
 	TicketReports interface{ Run(context.Context) error }
+	// HumanTasks is the human-task lane (internal/humanfanout): it delivers
+	// a pending decision's Jira/Discord fan-out and expires approvals whose
+	// subject PR already merged. Nil disables both (task t11).
+	HumanTasks interface{ Run(context.Context) error }
 	// ScheduleProbeInterval is the floor between mints for a schedule whose
 	// last two runs failed identically (NODES_SCHEDULE_PROBE_INTERVAL, task
 	// t9). Zero selects postgres.DefaultScheduleProbeInterval.
@@ -416,6 +420,11 @@ func (sch *Scheduler) Tick(ctx context.Context) error {
 	if sch.opts.TicketReports != nil {
 		if err := sch.opts.TicketReports.Run(ctx); err != nil {
 			return fmt.Errorf("scheduler: tick: ticket reports: %w", err)
+		}
+	}
+	if sch.opts.HumanTasks != nil {
+		if err := sch.opts.HumanTasks.Run(ctx); err != nil {
+			return fmt.Errorf("scheduler: tick: human tasks: %w", err)
 		}
 	}
 	return nil

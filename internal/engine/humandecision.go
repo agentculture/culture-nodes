@@ -131,6 +131,12 @@ type humanTaskDecision struct {
 	nodeRun NodeRun
 	task    HumanTask
 
+	// expiry is nil for a human decision and set for an engine expiry (see
+	// humantaskexpiry.go). It is the one field that changes what do() writes
+	// and what the resolution is called; everything else in this struct is
+	// shared by both paths on purpose.
+	expiry *humanTaskExpiryReason
+
 	// outcome is the decision's domain outcome, recorded on the node run
 	// exactly like completion's own c.outcome field records a succeeded
 	// attempt's outcome — never a technical status, always a real domain
@@ -151,6 +157,32 @@ func (d *humanTaskDecision) do(ctx context.Context) error {
 		return err
 	}
 	d.outcome = d.req.Outcome
+
+	// The expiry path (humantaskexpiry.go) reuses everything below this
+	// point — the guard, the outcome check, and all of transition/advance —
+	// and differs only in how the resolution is recorded and what it is
+	// called. Those two differences are the branch; the routing is not
+	// duplicated, so an edge cannot be selected one way for a decision and
+	// another way for an expiry.
+	if d.expiry != nil {
+		if err := d.recordExpiry(ctx); err != nil {
+			return err
+		}
+		if err := d.markExpired(ctx); err != nil {
+			return err
+		}
+		if err := d.emit(ctx, TypeHumanTaskExpired, map[string]any{
+			"run_id":        d.run.ID,
+			"node_run_id":   d.nodeRun.ID,
+			"node_id":       d.nodeRun.NodeID,
+			"human_task_id": d.task.ID,
+			"reason":        d.expiry.Reason,
+			"outcome":       d.outcome,
+		}); err != nil {
+			return err
+		}
+		return d.transition(ctx, d.outcome, NodeRunCompleted)
+	}
 
 	if err := d.recordDecision(ctx); err != nil {
 		return err

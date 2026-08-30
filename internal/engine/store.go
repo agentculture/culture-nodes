@@ -213,6 +213,30 @@ type Tx interface {
 	// decision already applied, and DecideHumanTask refuses rather than
 	// resuming the run a second time.
 	MarkHumanTaskDecided(ctx context.Context, id string, response json.RawMessage, resolvedAt time.Time) (bool, error)
+	// MarkHumanTaskExpired is MarkHumanTaskDecided's counterpart for the one
+	// resolution no human makes: a task the world has already answered. It
+	// flips pending -> expired under the same status-guarded WHERE clause, so
+	// a decision racing an expiry cannot both win, and records WHY on the row
+	// (human_tasks.expiry_reason, migration 0051) as well as inside the
+	// response, because the count an operator wants is "how many did
+	// pr_merged expire", not "how many expired".
+	MarkHumanTaskExpired(ctx context.Context, id, reason string, response json.RawMessage, resolvedAt time.Time) (bool, error)
+	// PendingHumanTasksWithMergedPR lists pending human tasks whose run's
+	// input names a github_pr subject for which a pr.merged fact has already
+	// been delivered — the tasks that are asking for a decision the world
+	// made without them. It is a query rather than a durable consumer cursor
+	// on purpose: expiring a task is idempotent (a task is pending exactly
+	// once), so a missed tick costs a delay and never a double-expiry.
+	PendingHumanTasksWithMergedPR(ctx context.Context, limit int) ([]string, error)
+	// EnqueueHumanTaskFanOut queues the messages a human task owes the person
+	// who can answer it (task t11): a Jira comment and a board transition when
+	// the run names a ticket, and always a notify post. It reports how many
+	// rows it actually inserted — zero when the task has already fanned out,
+	// which is what UNIQUE (human_task_id, channel) makes true rather than
+	// promised. InsertHumanTask calls it, so no creation path has to remember
+	// to; it is on this interface so a caller (and a test) can re-run it for
+	// the same task and watch nothing more happen.
+	EnqueueHumanTaskFanOut(ctx context.Context, taskID string) (queued int, err error)
 
 	InsertAttempt(ctx context.Context, attempt Attempt) error
 	// AttemptStartedAt returns the durable invocation's creation time for a

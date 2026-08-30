@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/agentculture/culture-nodes/internal/clifmt"
+	"github.com/agentculture/culture-nodes/internal/humanfanout"
 	"github.com/agentculture/culture-nodes/internal/scheduler"
 	"github.com/agentculture/culture-nodes/internal/store/postgres"
 	"github.com/agentculture/culture-nodes/internal/telemetry"
@@ -95,6 +96,7 @@ func cmdScheduler(args []string, jsonMode bool) (int, error) {
 		BatchSize:                 *batchSize,
 		Telemetry:                 telemetryProvider,
 		TicketReports:             ticketreport.New(db, nil),
+		HumanTasks:                humanfanout.New(db, nil),
 		ScheduleProbeInterval:     probeInterval,
 		ScheduleFailureAlertAfter: alertAfter,
 	})

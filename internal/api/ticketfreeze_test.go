@@ -7,6 +7,8 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/agentculture/culture-nodes/internal/events"
+
 	apipkg "github.com/agentculture/culture-nodes/internal/api"
 )
 
@@ -270,12 +272,12 @@ func TestFreezingANonDoneTicketTwiceParksEachRunOnce(t *testing.T) {
 		var eventCount, outboxCount int
 		if err := f.store.Pool().QueryRow(t.Context(), `
 			SELECT count(*) FROM events
-			WHERE aggregate_id = $1 AND event_type = 'run.waiting'`, run.ID).Scan(&eventCount); err != nil {
+			WHERE aggregate_id = $1 AND event_type = $2`, run.ID, events.TypeRunWaiting).Scan(&eventCount); err != nil {
 			t.Fatalf("count waiting events for run %s: %v", run.ID, err)
 		}
 		if err := f.store.Pool().QueryRow(t.Context(), `
 			SELECT count(*) FROM outbox
-			WHERE topic = 'run.waiting' AND payload->>'run_id' = $1`, run.ID).Scan(&outboxCount); err != nil {
+			WHERE topic = $2 AND payload->>'run_id' = $1`, run.ID, events.TypeRunWaiting).Scan(&outboxCount); err != nil {
 			t.Fatalf("count waiting outbox rows for run %s: %v", run.ID, err)
 		}
 		if eventCount != 1 || outboxCount != 1 {

@@ -245,6 +245,45 @@ func TestFreezingANonDoneTicketParksItsSubjectRuns(t *testing.T) {
 	}
 }
 
+func TestFreezingANonDoneTicketTwiceParksEachRunOnce(t *testing.T) {
+	f := newFixtureWithDecisionAuth(t, decisionAuthSecret)
+	bySubject, byInput, _ := freezeTicketRuns(t, f, "SCRUM-9", "SCRUM-10")
+
+	for attempt := 1; attempt <= 2; attempt++ {
+		var freeze struct {
+			Parked []string `json:"parked_runs"`
+		}
+		resp, body := doJSONBearer(t, f.client, http.MethodPost,
+			f.url("/v1alpha1/tickets/SCRUM-9/freeze"), decisionAuthSecret,
+			map[string]any{"frozen_by": "operator", "ticket_status": "In Progress"}, &freeze)
+		requireStatus(t, resp, body, http.StatusOK)
+		want := 2
+		if attempt == 2 {
+			want = 0
+		}
+		if len(freeze.Parked) != want {
+			t.Fatalf("freeze attempt %d parked %v, want %d runs", attempt, freeze.Parked, want)
+		}
+	}
+
+	for _, run := range []apipkg.RunOut{bySubject, byInput} {
+		var eventCount, outboxCount int
+		if err := f.store.Pool().QueryRow(t.Context(), `
+			SELECT count(*) FROM events
+			WHERE aggregate_id = $1 AND event_type = 'run.waiting'`, run.ID).Scan(&eventCount); err != nil {
+			t.Fatalf("count waiting events for run %s: %v", run.ID, err)
+		}
+		if err := f.store.Pool().QueryRow(t.Context(), `
+			SELECT count(*) FROM outbox
+			WHERE topic = 'run.waiting' AND payload->>'run_id' = $1`, run.ID).Scan(&outboxCount); err != nil {
+			t.Fatalf("count waiting outbox rows for run %s: %v", run.ID, err)
+		}
+		if eventCount != 1 || outboxCount != 1 {
+			t.Errorf("run %s has %d waiting events and %d waiting outbox rows, want one of each", run.ID, eventCount, outboxCount)
+		}
+	}
+}
+
 // TestFreezingATicketWithNoStatusParksRatherThanCancels pins the
 // conservative default. A caller that does not say what the board status is
 // leaves this control plane unable to find out — the Jira bridge has no read

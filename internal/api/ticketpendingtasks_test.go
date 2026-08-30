@@ -164,3 +164,28 @@ func TestTicketPendingTasksAreScopedToTheTicketsOwnRuns(t *testing.T) {
 		}
 	}
 }
+
+func TestTicketProjectionFindsPendingTaskBeyondFirstRunPage(t *testing.T) {
+	f := newFixtureWithDecisionAuth(t, decisionAuthSecret)
+	const ticketID = "SCRUM-22"
+	older := advanceTicketToReview(t, f, `{"subject":"older decision","source":"jira","id":"`+ticketID+`"}`)
+
+	// Put 500 newer runs for this ticket ahead of the run that owns the
+	// pending task. These rows need no execution graph: the ticket projection
+	// derives tasks and ledger records by run id, and empty ledger histories
+	// are a valid result.
+	if _, err := f.store.Pool().Exec(t.Context(), `
+		INSERT INTO runs (id, namespace_id, workflow_version_id, status, input, subject, created_at, updated_at)
+		SELECT 'ticket-page-filler-' || lpad(n::text, 3, '0'), namespace_id,
+		       workflow_version_id, 'completed', '{}'::jsonb, $2,
+		       now() + n * interval '1 millisecond', now() + n * interval '1 millisecond'
+		FROM runs CROSS JOIN generate_series(1, 500) AS n
+		WHERE id = $1`, older.ID, ticketID); err != nil {
+		t.Fatalf("stage newer ticket runs: %v", err)
+	}
+
+	ticket := getTicketProjection(t, f, ticketID)
+	if len(ticket.PendingTasks) != 1 || ticket.PendingTasks[0].RunID != older.ID {
+		t.Fatalf("pending_tasks = %+v, want the task on older run %s beyond the first 500 runs", ticket.PendingTasks, older.ID)
+	}
+}

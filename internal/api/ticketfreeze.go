@@ -74,6 +74,7 @@ SELECT id, status
 FROM runs
 WHERE namespace_id = $1
   AND status <> ALL ($3::text[])
+  AND reason IS DISTINCT FROM $4
   AND (subject = $2 OR (subject IS NULL AND input->>'id' = $2))
 ORDER BY created_at, id
 `
@@ -94,7 +95,7 @@ ORDER BY created_at, id
 // end one of its runs must still refuse new replies.
 func (s *Server) freezeTicketRuns(ctx context.Context, ticketID, ticketStatus string) (ticketFreezeEffect, error) {
 	var effect ticketFreezeEffect
-	rows, err := s.Store.Pool().Query(ctx, subjectRunsSQL, s.NamespaceID, ticketID, postgres.TerminalRunStatuses())
+	rows, err := s.Store.Pool().Query(ctx, subjectRunsSQL, s.NamespaceID, ticketID, postgres.TerminalRunStatuses(), TicketFrozenReason)
 	if err != nil {
 		return effect, fmt.Errorf("api: freeze ticket %s: list subject runs: %w", ticketID, err)
 	}
@@ -194,13 +195,17 @@ func (s *Server) parkRunForFrozenTicket(ctx context.Context, runID, ticketID, ti
 	}
 
 	var status string
-	if err := tx.QueryRow(ctx, `SELECT status FROM runs WHERE id = $1 AND namespace_id = $2`, runID, s.NamespaceID).Scan(&status); err != nil {
+	var reason *string
+	if err := tx.QueryRow(ctx, `SELECT status, reason FROM runs WHERE id = $1 AND namespace_id = $2`, runID, s.NamespaceID).Scan(&status, &reason); err != nil {
 		if isNoRowsErr(err) {
 			return false, nil
 		}
 		return false, internalError(fmt.Errorf("park run %s: %w", runID, err))
 	}
 	if engine.RunState(status).Terminal() {
+		return false, nil
+	}
+	if status == string(engine.RunWaiting) && reason != nil && *reason == TicketFrozenReason {
 		return false, nil
 	}
 

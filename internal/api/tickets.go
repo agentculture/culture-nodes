@@ -298,11 +298,32 @@ func (s *Server) handleGetTicket(w http.ResponseWriter, r *http.Request) error {
 	// SubjectFromInput: the ticket page shows what happened on the ticket,
 	// including runs that predate the runs.subject column and carry the
 	// issue key only in their input (task t17) — see listRunsParams.
-	runs, _, err := s.listRuns(r.Context(), listRunsParams{Subject: ticketID, SubjectFromInput: true, Limit: 500, Sort: sortCreatedAt})
-	if err != nil {
-		return internalError(err)
+	const (
+		ticketRunPageSize = 500
+		ticketRunMaxPages = 20
+	)
+	runs := make([]RunOut, 0, ticketRunPageSize)
+	var cursor *nodeRunCursor
+	for page := 0; page < ticketRunMaxPages; page++ {
+		pageRuns, next, err := s.listRuns(r.Context(), listRunsParams{
+			Subject: ticketID, SubjectFromInput: true, Cursor: cursor,
+			Limit: ticketRunPageSize, Sort: sortCreatedAt,
+		})
+		if err != nil {
+			return internalError(err)
+		}
+		runs = append(runs, pageRuns...)
+		if next == "" {
+			break
+		}
+		decoded, err := decodeNodeRunCursor(next)
+		if err != nil {
+			return internalError(fmt.Errorf("api: decode ticket run cursor: %w", err))
+		}
+		cursor = &decoded
 	}
 	out := TicketOut{TicketID: ticketID, Runs: runs, Ledger: []TicketRunLedgerOut{}, HumanTasks: []HumanTaskOut{}, PendingTasks: []TicketPendingTaskOut{}, Reports: []TicketReportOut{}, Replies: []TicketReplyOut{}}
+	var err error
 	// The board link is composed from the runs, which are the only rows in
 	// this projection that carry the Jira work-item fact (task t18).
 	out.TicketURL = ticketBackLink(ticketID, runs)

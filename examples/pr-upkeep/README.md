@@ -51,9 +51,11 @@ environment — see [`deploy/prod/README.md`](../../deploy/prod/README.md)'s
 "Granted environment values" for where they live on this deployment and how
 `deploy.sh` re-grants them.
 
-A digest mismatch, or either value unset, exits nonzero — which `triage`
-reads as `sweep_broken` and routes to the backoff wait, like any other
-broken sweep. The `0` / `10` / other exit-code contract is untouched.
+A digest mismatch, or either value unset, exits nonzero, which is the
+sweep node's technical-failure path: `sweep.failed` routes to the
+`sweep-failed` end node and the run says so. The `0` / `10` / other
+exit-code contract is untouched — `0` (events emitted) and `10` (nothing to
+emit) are both successful emitter passes, and anything else fails.
 
 ## The graph
 
@@ -143,51 +145,6 @@ declared; the manual path is the override for dropped work and merges without
 a PR. A PR closed without merging does NOT auto-complete `human-merges-pr` —
 only the merged state is unambiguous enough to trigger automatic submission
 there.
-
-## The decision observable (issue #71)
-
-`human-answers-review` parks on a SECOND observation kind the same tracker
-now understands, `github_pr_reply` — read
-[adapters/human-inbox's README](../../adapters/human-inbox/README.md) for
-the full contract. Three points worth restating here, in this flow's own
-terms:
-
-- **Which reply counts.** The rule is deliberately structural, not
-  content-based: a comment counts when it is posted strictly AFTER
-  `ask-pr-question`'s own comment (GitHub's own `since` filter on the
-  comments API, scoped to the task's own park time) by an author who is
-  not one of the flow's own automated identities (the Qodo review bot by
-  default; extend via `HUMAN_INBOX_TRACKER_REPLY_IGNORED_LOGINS`). No
-  magic marker is required — the question was JUST posted on this PR, so
-  the next human comment on the thread IS the answer in context. This is
-  what keeps the flow from resuming on an unrelated "thanks": an unrelated
-  aside would have to be posted by a real person, strictly after the
-  question, on this specific PR — in practice only the person answering
-  does that.
-- **The PR's terminal states are observables too.** A question posted to a
-  PR that then gets merged or closed does not wait forever:
-  `human-answers-review` checks the PR's own state on every cycle before
-  checking for a reply, so `merged: true` completes the task as `merged`
-  (loops to `sweep`, the strongest possible answer) and `state: closed`
-  (unmerged) completes it as `dropped` (ends the run) — neither needs a
-  human to notice and manually intervene.
-- **The rate budget.** `github_pr_reply` shares the SAME per-cycle GitHub
-  request budget as `github_pr_merged` — it does not raise
-  `github_request_budget` or shorten `poll_seconds`. In the anonymous
-  lane's worst case (no `GITHUB_TOKEN`, default 50% utilization) the
-  tracker plans one GitHub request per 120-second cycle, 30 requests/hour
-  against the 60/hour ceiling, REGARDLESS of how many PRs are being
-  watched — adding reply-kind groups only adds more entrants to the same
-  round-robin queue. A reply-kind group's full check costs up to TWO of
-  those per-cycle requests when the PR is still open (one for terminal
-  state, one for new comments) versus one for a merge-kind group, so at
-  budget=1 an open reply-kind group needs at least two cycles (up to
-  ~240s) to complete one full check — slower detection than a merge check,
-  an explicit and accepted trade-off for staying inside the same ceiling,
-  never a silent overrun. Reply-kind groups are checked BEFORE merge-kind
-  groups each cycle (a human is actively blocked on a reply-kind group;
-  a merge-kind group's human can act at their own pace), which reprioritises
-  the same fixed budget without growing it.
 
 ## The closed repository-set boundary (claim c26)
 
@@ -285,11 +242,10 @@ independent-review pattern — and different actor increasingly means
 `company/codex-thor` is the codex bridge on thor. A filesystem path does not
 survive that boundary, and this graph used to hand one across it anyway.
 
-What it looked like, in run `01KZZSGSWH11J7R7P4V2HPTZZQ`:
+What it looked like, in run `01KZZSGSWH11J7R7P4V2HPTZZQ` — a v1 run, back
+when discovery still ran inside this graph:
 
 ```text
-sweep   completed  passed
-triage  completed  items
 fix     completed  completed     <- real session on spark, committed b01608c
 review  failed     auth_or_policy (HTTP 403): actor answered Forbidden
 ```
@@ -466,39 +422,6 @@ manual overrides happen in the web `/inbox` or via
 `POST /v1alpha1/human-tasks/{id}/decision`. When a run ends, re-invoke the
 driver for the next cycle — issue #71 means that is rarer now, since an
 empty sweep re-sweeps on its own instead of ending the run.
-
-### How the observable is declared (issue #73, closed)
-
-Both `human-merges-pr` and `human-answers-review` declare what they are
-waiting for **in the graph text**, as a typed literal binding:
-
-```yaml
-input:
-  bindings:
-    instruction: /run/input/merge_instruction
-    pr: /nodes/fix/output/pr_number
-    observe:
-      literal:
-        kind: github_pr_merged
-```
-
-The split is the point. A binding value is either a JSON Pointer (a read
-from run, node, or ledger data) or a `literal:` (a constant the author
-wrote), and the two are never confused because a bare string is always a
-pointer. The observation **kind** is a declaration and never changes, so it
-is a literal; **which PR** is per-cycle data produced by the `fix` node, so
-it is a pointer. A pointer cannot be smuggled inside a literal — that would
-be the template language PRD §11.2 forbids — so the tracker reads `pr` from
-the `observe` block when it is there and from the task's own input
-otherwise, the same fallback it has always applied to `repo`.
-
-This is the shape the convention was always documented as having. Until
-issue #73 landed the compiler refused it, and the workflow shipped the
-observable as a whole object riding run input instead — which compiled, but
-meant an author read the graph and could not see what the node watched. Two
-guards keep the documented shape and the compilable shape the same from now
-on: `scripts/validate-examples.sh` and `tests/lint/examplescompile_test.go`
-(see [docs/invariants.md](../../docs/invariants.md), invariant 3).
 
 ## Operational notes
 

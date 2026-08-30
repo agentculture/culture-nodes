@@ -111,7 +111,7 @@ are drift, listed below.
 | `t24` (`d2`, proposed) | the refusal shipped by t24 compared row ids and broke every claude-bridge completion in prod; corrected by hotfix #264 in the operator lane because the sweep's fix lane was the lane it broke | risky |
 | `t8`, `t18`, `t27`, `t28`, `t21` follow-up | planned for codex-thor/orin, delivered by the developer lane after the codex window hit `capacity_exhausted` (r7); same acceptance criteria, different actor in the comparative record | acceptable |
 | `t9` | migration number 0050 instead of the planned 0049 (taken by the t19 gate fix) | acceptable |
-| `t30` | PR-comment leg unmeasurable (`d1`); remint alert task has no decidable option; the 8 remaining stale approvals are staged, not decided (the assistant may not read the decision secret in bulk); reader-role walk of drive-from-jira.md not performed | needs-follow-up |
+| `t30` | PR-comment leg unmeasurable (`d1`); remint alert task has no decidable option; the 8 stale approvals were decided by the operator as a hand-turn at 21:14 IDT (the assistant may not read the decision secret in bulk); reader-role walk of drive-from-jira.md not performed | needs-follow-up |
 | `t29` | the Jira comment actor is skipped by `deploy.sh` when `JIRA_SITE` is unset in the deploying shell; reinstalled by hand once | needs-follow-up |
 
 ## Evidence
@@ -136,7 +136,7 @@ Each announcement clause of the spec, ticked against evidence:
 | pending human decisions are collected in one view with the options the engine accepts | medium | t10 run `01M192KMZR9X9ZFBB2P7Y74PYM`, `web/src/routes/Inbox.tsx` `/v1alpha1/human-tasks?status=pending`; not driven in a browser on prod |
 | a decision is echoed onto the Jira ticket, moves it to Pending, and reaches Discord | high | audit rows 5–7: SCRUM-7 comment 20:48:50, status `Pending`, notify record 204 |
 | the options are on the ticket page | medium | audit row 9: `GET /v1alpha1/tickets/SCRUM-7` lists the task; SPA not driven |
-| stale approvals expire when their PR merges | medium | `pr.merged` consumer (t11); 19 expired by `nodes expire-approvals`; the merged-before-deploy 8 are staged (`d1`) |
+| stale approvals expire when their PR merges | medium | `pr.merged` consumer (t11); 19 expired by `nodes expire-approvals`; the 8 merged before the deploy were decided `approved` by the operator on 2026-08-30 21:14 IDT (`d1`: the operator is the merge-fact source for PRs with no Jira key) |
 | repeat sweep runs no longer bury real work | medium | t7 run `01M191YR0NKKC6WAF5D50JM6BP` (grouped failed runs + counter); t9 backoff — not re-observed on prod because the sweep has not failed since deploy |
 | every ticket has a page link that resolves from the LAN or Tailscale | high | audit row 2: absolute `http://thor:18080/tickets/SCRUM-7`. Not reachable from outside that network — `docs/drive-from-jira.md` states the limit; lifting it is the login-from-anywhere cycle (Qodo finding 2 on #266) |
 | agents receive the ticket description | high | audit row 4: `heliotrope-ledger-4471` quoted |

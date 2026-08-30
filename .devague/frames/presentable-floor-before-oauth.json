@@ -1,0 +1,1154 @@
+{
+  "slug": "presentable-floor-before-oauth",
+  "title": "presentable-floor-before-oauth",
+  "schema_version": 5,
+  "status": "exported",
+  "created": "2026-08-30T08:33:15Z",
+  "updated": "2026-08-30T09:41:14Z",
+  "claims": [
+    {
+      "id": "c1",
+      "kind": "announcement",
+      "text": "Culture Nodes is presentable and operable from Jira and its own site: the 5-minute sweep runs green again and a failed sweep names its reason where an operator looks; pending human decisions are collected in one view with up to 3-4 options each, echoed onto the Jira ticket, and stale ones expire when their PR merges; repeat sweep runs no longer bury real work in the runs list; the site's four visible defects are fixed and every ticket has a reachable page link; the backlog is honest \u2014 every issue that no longer reproduces is closed on evidence and every big feature is a named issue \u2014 and every fix package in this cycle is assigned through culture-nodes itself. This is the clean floor before the OAuth / login-from-anywhere cycle.",
+      "origin": "user",
+      "status": "confirmed",
+      "honesty_conditions": [
+        {
+          "id": "h20",
+          "text": "the delivery summary can tick every clause of the announcement against a run id, a commit or a docs/ artifact, and any clause it cannot tick is listed as not delivered",
+          "status": "confirmed",
+          "instruction": ""
+        }
+      ],
+      "hard_questions": [],
+      "links": [],
+      "instruction": "",
+      "revisions": []
+    },
+    {
+      "id": "c2",
+      "kind": "requirement",
+      "text": "The pr-upkeep sweep runs green again on prod: the three sweep grants (GITHUB_TOKEN, SONAR_TOKEN, NODES_EVENT_TOKEN) are re-granted on thor as a recorded hand-turn with an issue, install-secrets.sh's Jira lane merges into runner-secrets.env instead of truncating it (deploy/prod/install-secrets.sh:740-758), and a deploy-time check diffs every published workflow's environmentRefs against the runner grant so a missing ref fails the deploy, not the next 180 runs",
+      "origin": "llm",
+      "status": "confirmed",
+      "honesty_conditions": [
+        {
+          "id": "h1",
+          "text": "install-secrets.sh has a test that starts from a runner-secrets.env holding five keys, runs the Jira lane with the pair unset, and asserts the other three keys survive; and the deploy on thor and orin fails closed, naming the ref, when a published workflow's environmentRefs names a key the runner grant lacks",
+          "status": "confirmed",
+          "instruction": ""
+        }
+      ],
+      "hard_questions": [],
+      "links": [],
+      "instruction": "Package (developer lane \u2014 touches deploy/prod + Go tests in tests/deploy): make install_jira_runner_env read the existing runner-secrets.env, replace only the Jira keys, refuse on a non-first deploy when the pair is unset; add lanes/grant-check.sh that lists environmentRefs of every published workflow (GET /v1alpha1/workflows normalized_ir) and diffs against the keys in runner.env+runner-secrets.env on each host, failing deploy by name; document the five grants in deploy/prod/README.md. Verify: the truncation test + a deliberately missing ref on a fake host.",
+      "revisions": []
+    },
+    {
+      "id": "c3",
+      "kind": "requirement",
+      "text": "A contract_rejected attempt carries its reason where an operator looks: the runner's error.message is copied onto the attempt result, the attempt.completed event, the nodes-op run view and the web run page \u2014 the sweep wall stayed invisible for 19 hours because internal/runners/dispatch.go:206 maps StateRejected to StatusContractRejected and drops the message (issue #241, now with a measured cost)",
+      "origin": "llm",
+      "status": "confirmed",
+      "honesty_conditions": [
+        {
+          "id": "h2",
+          "text": "a StateRejected result produced by a fake runner with error.message X shows X on GET /v1alpha1/runs/{id} (attempt result), in the attempt.completed event payload, in nodes-op run output and on the web run page \u2014 one test per surface",
+          "status": "confirmed",
+          "instruction": ""
+        }
+      ],
+      "hard_questions": [],
+      "links": [],
+      "instruction": "Package (codex \u2014 Go, no DB): in internal/runners/dispatch.go carry res.Error.Message into the attempt result (result.error.{class,detail}) on the StateRejected path; render result.error.detail in the run projection, attempt.completed payload, scripts/nodes-op.sh run and web RunView node panel. Verify with a fake runner in internal/worker tests and a vitest on RunView.",
+      "revisions": []
+    },
+    {
+      "id": "c4",
+      "kind": "requirement",
+      "text": "Repeat sweep runs stop burying real work: the runs list and board show the workflow key and a state filter, consecutive failed sweeps with an identical rejection reason are collapsed or filtered by default, and N consecutive sweep failures raise a human task or notify instead of accumulating silently",
+      "origin": "llm",
+      "status": "confirmed",
+      "honesty_conditions": [
+        {
+          "id": "h3",
+          "text": "with 50 consecutive failed sweep runs sharing one rejection reason seeded in a test store, /runs renders one collapsed row with count 50 and a workflow key, and the 51st sweep with the same reason does not mint a run; the Nth consecutive failure creates a human task or a notify event (N is a deployment setting)",
+          "status": "confirmed",
+          "instruction": ""
+        }
+      ],
+      "hard_questions": [],
+      "links": [],
+      "instruction": "Package (developer lane \u2014 engine + web): scheduler skips minting when the previous run of the same schedule ended contract_rejected with an identical error.detail (record a 'suppressed' counter on the schedule); GET /v1alpha1/runs gains workflow_key/state filters; RunsList groups consecutive failed runs of one workflow with a count badge and a state filter; N-consecutive-failure creates a human task (NODES_SWEEP_FAILURE_ALERT_AFTER). Verify per h3.",
+      "revisions": []
+    },
+    {
+      "id": "c5",
+      "kind": "requirement",
+      "text": "Pending human decisions are visible in one collected view: a Decisions/Inbox tab lists every pending human task and proposed claim grouped by ticket/run, each with up to 3-4 concrete options (approve / reject / defer / expire) decided in place under the held token; today /decisions renders 158 forms into a 113k-px page and /inbox has no pagination",
+      "origin": "llm",
+      "status": "confirmed",
+      "honesty_conditions": [
+        {
+          "id": "h4",
+          "text": "GET /v1alpha1/human-tasks?status=pending grouped by run/ticket feeds a Decisions tab that renders 200 pending items paginated (\u226425 per page) with 3-4 option buttons per item, and clicking an option POSTs the matching decision under the held token and removes the item",
+          "status": "confirmed",
+          "instruction": ""
+        }
+      ],
+      "hard_questions": [],
+      "links": [],
+      "instruction": "Package (codex \u2014 web + one API filter): add /decisions?view=pending (or a Pending tab) backed by GET /v1alpha1/human-tasks?status=pending and pending proposed claims, grouped by run/ticket, paginated 25, option buttons mapped to allowed_outcomes (approve/reject/defer/expire), token remembered from the held decision token. Verify per h4 with a 200-item fixture.",
+      "revisions": []
+    },
+    {
+      "id": "c6",
+      "kind": "requirement",
+      "text": "Every pending human task is echoed onto its Jira ticket as a comment listing the options and the page link, and a task whose subject PR is already merged expires automatically; today 26 pending pr-upkeep 'human-merges-pr' approvals on prod are for PRs #236/#238/#244/#246 which are all merged, and nothing in internal/notifier or examples/pr-upkeep posts a human task to Jira",
+      "origin": "llm",
+      "status": "confirmed",
+      "honesty_conditions": [
+        {
+          "id": "h5",
+          "text": "a human task created on a run whose input names a Jira issue produces exactly one Jira comment (options + absolute page link), one transition to 'Waiting for decision', the options on /tickets/<id> and one notify post; a task whose subject PR is merged transitions to expired with reason pr_merged inside one sweep interval \u2014 proven on a new SCRUM ticket by comment ids and task ids",
+          "status": "confirmed",
+          "instruction": ""
+        }
+      ],
+      "hard_questions": [],
+      "links": [],
+      "instruction": "Package (developer lane \u2014 engine + Jira + notify): on human-task creation for a run whose input carries a Jira key, emit one Jira comment (options + NODES_UI_BASE_URL page link), transition to 'Waiting for decision' (second allowlisted target, c30), publish options on /tickets/<id> and one notify post; a sweep consumer of pr.merged expires human tasks whose subject PR merged (reason pr_merged). Verify per h5 on a new SCRUM ticket; cite comment ids.",
+      "revisions": []
+    },
+    {
+      "id": "c7",
+      "kind": "requirement",
+      "text": "One in-flight pr-upkeep run per finding id: the sweep re-emits an unresolved Qodo finding on every PR head change, and each emission mints a new run and a new approval \u2014 pr236-qodo-1 has four running runs (01M1636D, 01M163RN, 01M1641W, 01M164B1) across two head SHAs",
+      "origin": "llm",
+      "status": "confirmed",
+      "honesty_conditions": [
+        {
+          "id": "h6",
+          "text": "the sweep, given the same open finding id across two head SHAs, emits one pr-upkeep.pr event while a run for that finding id is running (test with a seeded running run), so the four-runs-for-pr236-qodo-1 shape cannot recur",
+          "status": "confirmed",
+          "instruction": ""
+        }
+      ],
+      "hard_questions": [],
+      "links": [],
+      "instruction": "Package (codex \u2014 Python sweep): key emission by finding id and consult GET /v1alpha1/runs?state=running for an existing run with that finding id before emitting; test with a seeded running run. Verify per h6.",
+      "revisions": []
+    },
+    {
+      "id": "c8",
+      "kind": "requirement",
+      "text": "The site's four measured defects are fixed: /stats reports a cache hit rate above 100% (588%) because cached_input_tokens is divided by input_tokens instead of input+cached (internal/api/types.go:205, web/src/domain/usage.ts:40); Node Graphs says 'No runs yet' for every workflow because recent runs come from the global last-50 list which is all sweeps (web/src/routes/NodeGraphs.tsx:139-169, GET /v1alpha1/runs has no workflow filter); the board clips the cancelled column at 1440px with no scrollbar; the runs list is capped at 50 with no Load more while Jobs already has the cursor pattern",
+      "origin": "llm",
+      "status": "confirmed",
+      "honesty_conditions": [
+        {
+          "id": "h7",
+          "text": "unit tests pin: cache ratio = cached/(input+cached) \u2264 100%; Node Graphs recent runs come from GET /v1alpha1/runs?workflow_key=... (new filter, tested) and a workflow with runs never renders 'No runs yet'; the board container has overflow-x auto with a visible scrollbar at 1440px; /runs has Load more using the Jobs cursor",
+          "status": "confirmed",
+          "instruction": ""
+        }
+      ],
+      "hard_questions": [],
+      "links": [],
+      "instruction": "Package (codex \u2014 Go+web): fix the ratio in internal/api/types.go:205 and web/src/domain/usage.ts:40; add workflow_key filter to GET /v1alpha1/runs and use it in NodeGraphs.tsx; overflow-x auto + visible scrollbar on .runs-board__columns; Load more on RunsList using the Jobs cursor. Verify per h7.",
+      "revisions": []
+    },
+    {
+      "id": "c9",
+      "kind": "requirement",
+      "text": "Sub-hour site polish lands as one package: route-specific document.title, header link to docs and a /v1alpha1/version readout, run id printed once on the run header, shared control styling and labels-above-inputs on /plan and /workflows/generate, state chips and humanised timestamps on the runs list, a label on the Decisions per-record checkbox, claim statements rendered as text not escaped JSON, a scroll affordance on board columns and mobile tables, a 'load a sample' on /workflows/new, a Tickets entry in the header nav",
+      "origin": "llm",
+      "status": "confirmed",
+      "honesty_conditions": [
+        {
+          "id": "h8",
+          "text": "each polish item is a checked box in the PR body with a screenshot pair (before/after) from the Playwright route shots, and the vitest suites for Header, RunView, PlanView, GenerateWorkflow, RunsList and Decisions pass",
+          "status": "confirmed",
+          "instruction": ""
+        }
+      ],
+      "hard_questions": [],
+      "links": [],
+      "instruction": "Package (codex \u2014 web only): the eleven polish items as one PR with before/after screenshots from scratchpad/shots; each item a checkbox in the PR body. Verify per h8.",
+      "revisions": []
+    },
+    {
+      "id": "c10",
+      "kind": "requirement",
+      "text": "Every ticket gets a reachable page link: NODES_UI_BASE_URL is wired into compose.thor.yml (api, worker, scheduler) and prod.env via install-secrets, so jiraticketreport.go renders an absolute URL instead of the bare path '/tickets/SCRUM-N'; GET /v1alpha1/tickets/{id} gains ticket_url composed from the fact's details_url so 'Open in Jira' always renders; and #200 signal 9 is re-measured on a new ticket after the fix",
+      "origin": "llm",
+      "status": "confirmed",
+      "honesty_conditions": [
+        {
+          "id": "h9",
+          "text": "with NODES_UI_BASE_URL set on thor, a new ticket's page-link comment is an absolute URL (SCRUM-N comment id cited), GET /v1alpha1/tickets/<id> returns ticket_url, and #200 signal 9 shows one link comment across two intake milestones",
+          "status": "confirmed",
+          "instruction": ""
+        }
+      ],
+      "hard_questions": [],
+      "links": [],
+      "instruction": "Package (developer lane \u2014 deploy + Go): NODES_UI_BASE_URL in compose.thor.yml (api, worker, scheduler) and prod.env via install-secrets; ticket_url on TicketOut from the fact's details_url; then the #200 signal-9 measurement on a new ticket (c24). Verify per h9.",
+      "revisions": []
+    },
+    {
+      "id": "c11",
+      "kind": "requirement",
+      "text": "Freezing a ticket (PR merged) cancels or parks the runs whose subject is that ticket with a recorded reason, instead of leaving them running forever; and a signal-parked question gets a declared silence timeout edge (#173) \u2014 the spec-chain run on SCRUM-5 is still 'running' on a Done ticket, parked on q2 (comment 10209)",
+      "origin": "llm",
+      "status": "rejected",
+      "honesty_conditions": [],
+      "hard_questions": [],
+      "links": [],
+      "instruction": "",
+      "revisions": []
+    },
+    {
+      "id": "c12",
+      "kind": "requirement",
+      "text": "A human-facing 'drive Culture Nodes from Jira' page exists in docs/ and is linked from README and the site header: what a ticket must contain, which status or comment triggers which flow (To Do -> intake, In Progress -> /think, bare comment -> consumer, marked-question reply, PR merged -> freeze), what each system comment means, how to open the page and reply and where the token comes from, what Done means and who moves it; and deploy/prod/README.md names every runner grant (GITHUB_TOKEN, SONAR_TOKEN, NODES_EVENT_TOKEN, Jira pair) and where it lives",
+      "origin": "llm",
+      "status": "confirmed",
+      "honesty_conditions": [
+        {
+          "id": "h10",
+          "text": "docs/<name>.md exists, is linked from README.md and the site header, and a person following only that page creates a ticket, answers a question and decides an approval on SCRUM without an operator step other than being handed the token; deploy/prod/README.md lists the five runner grants and their file",
+          "status": "confirmed",
+          "instruction": ""
+        }
+      ],
+      "hard_questions": [],
+      "links": [],
+      "instruction": "Package (codex \u2014 docs): write docs/drive-from-jira.md per c12's contents, link from README.md and web Header; add examples/jira-intake/README.md; list the five runner grants in deploy/prod/README.md. Verify per h10 by walking the page on a new ticket.",
+      "revisions": []
+    },
+    {
+      "id": "c13",
+      "kind": "requirement",
+      "text": "The sweep's Jira fact carries the ticket description so intake and think agents see the ask (examples/pr-upkeep/pr_upkeep_jira.py jira_work_items) \u2014 today the intake instruction is 'Using ONLY the issue fields in your input' and the input is id, title, status, severity, kind, details_url",
+      "origin": "llm",
+      "status": "confirmed",
+      "honesty_conditions": [
+        {
+          "id": "h11",
+          "text": "the jira work-item fact carries description, and the intake run's claims on a new ticket quote a phrase that exists only in the ticket body",
+          "status": "confirmed",
+          "instruction": ""
+        }
+      ],
+      "hard_questions": [],
+      "links": [],
+      "instruction": "Package (codex \u2014 Python): add description to jira_work_items facts and to the jira-intake / spec-chain-lane input contracts; republish the workflows. Verify per h11.",
+      "revisions": []
+    },
+    {
+      "id": "c14",
+      "kind": "requirement",
+      "text": "The runner's completion notification to the API stops returning 405: every 5 minutes thor's nodes-runner logs 'completion notification for att_... was refused with 405 (polling still learns the outcome)' \u2014 runner posts to CallbackPathFormat /v1/runner-operations/{id}/events and the API at 66a3b26 does not accept that method there",
+      "origin": "llm",
+      "status": "confirmed",
+      "honesty_conditions": [
+        {
+          "id": "h12",
+          "text": "one hour of thor's nodes-runner journal after the fix contains zero 'refused with 405' lines and the API test suite covers the runner's completion POST path",
+          "status": "confirmed",
+          "instruction": ""
+        }
+      ],
+      "hard_questions": [],
+      "links": [],
+      "instruction": "Package (codex \u2014 Go): align the runner's completion POST path/method with the API route (internal/runners/protocolclient.go:48 vs internal/api callback route) and add an API test for the runner completion path. Verify per h12 on thor's journal.",
+      "revisions": []
+    },
+    {
+      "id": "c15",
+      "kind": "requirement",
+      "text": "Every fix package in this cycle is assigned through culture-nodes (nodes-operator assign to codex-thor / codex-orin, or the developer lane), with the run id and ledger cited in the PR; in-session work is limited to the operator lane: merge gates, hand-turn grants on hosts, and issue closure",
+      "origin": "llm",
+      "status": "confirmed",
+      "honesty_conditions": [
+        {
+          "id": "h13",
+          "text": "every PR in the cycle names its run ids in the body; a PR whose package was typed in-session says so explicitly with the reason",
+          "status": "confirmed",
+          "instruction": ""
+        }
+      ],
+      "hard_questions": [],
+      "links": [],
+      "instruction": "Operator lane rule for the split plan: every package above names its actor (codex-thor / codex-orin / developer) and the PR body lists run ids; in-session exceptions are declared in the PR. Verify per h13.",
+      "revisions": []
+    },
+    {
+      "id": "c16",
+      "kind": "boundary",
+      "text": "No OAuth, login, TLS, per-user identity or replacement of the shared NODES_HUMAN_DECISION_TOKEN_SECRET in this cycle: #235, #111 and #6 stay open as the next cycle's scope; this cycle only RECORDS every LAN-reachability and personal-credential dependency it finds as that cycle's input (thor:18080 HTTP-only on 192.168.1.146, runner :17070, NODES_API_URL as a LAN IP in runner.env, actor endpoints at DHCP addresses #248, one Basic-auth Jira pair that is the operator's personal Atlassian account used by sweep, bridge and both skills)",
+      "origin": "llm",
+      "status": "confirmed",
+      "honesty_conditions": [
+        {
+          "id": "h21",
+          "text": "the dependency audit record lists each item with file:line or a prod GET, and nothing in the cycle's PRs changes auth, TLS, the shared decision secret or the Jira credential",
+          "status": "confirmed",
+          "instruction": ""
+        }
+      ],
+      "hard_questions": [],
+      "links": [],
+      "instruction": "Record: docs/audits/<date>-lan-and-credential-dependencies.md listing every item in c16 with file:line, handed to #111/#6 by comment. No code change.",
+      "revisions": []
+    },
+    {
+      "id": "c17",
+      "kind": "non_goal",
+      "text": "No product rename (#140), no headspace code-node spec chain (#237), no placement redesign (#175), no subject-scoped signal subscriptions (#239), no containerised bridges or repository-configured agents (#113/#114), no websocket transport (#141): these stay as named large bets and this cycle does not touch them",
+      "origin": "llm",
+      "status": "confirmed",
+      "honesty_conditions": [],
+      "hard_questions": [],
+      "links": [],
+      "instruction": "No action; the exported spec's non-goal list is the record.",
+      "revisions": []
+    },
+    {
+      "id": "c18",
+      "kind": "non_goal",
+      "text": "No new sweep sources, flows or Jira verbs beyond what the findings above need; a Jira read verb for actors and 'the system moves the board to Done' are filed as issues, not built",
+      "origin": "llm",
+      "status": "rejected",
+      "honesty_conditions": [],
+      "hard_questions": [],
+      "links": [],
+      "instruction": "",
+      "revisions": []
+    },
+    {
+      "id": "c19",
+      "kind": "assumption",
+      "text": "Prod at 66a3b26 is a valid measurement base for this cycle: it is an ancestor of main missing only #249 (#243 agents-as-OS-users) and the triage regen, so the #230 'deploy the integration tip' tail has happened and the held-open measurements (#200 signal 9, #205 journal read) are runnable now rather than blocked",
+      "origin": "llm",
+      "status": "confirmed",
+      "honesty_conditions": [],
+      "hard_questions": [],
+      "links": [],
+      "instruction": "Verify once: curl /v1alpha1/version on thor at cycle start; if it moves, note it in the delivery summary.",
+      "revisions": []
+    },
+    {
+      "id": "c20",
+      "kind": "assumption",
+      "text": "Vendored skill script bodies (.claude/skills/*) are never edited in this cycle; anything a skill needs goes into the nodes CLI or a first-party script (#218 direction)",
+      "origin": "llm",
+      "status": "confirmed",
+      "honesty_conditions": [],
+      "hard_questions": [],
+      "links": [],
+      "instruction": "Verify at merge gate: git diff --stat main..branch touches nothing under .claude/skills/ except nodes-operator.",
+      "revisions": []
+    },
+    {
+      "id": "c21",
+      "kind": "requirement",
+      "text": "Issues closed now on evidence already in hand, each with a closing comment citing it: #205 (0 dial-in 401s in 1h/24h on bridge d2f8ad2 vs plane 66a3b26, presence connected, failure_count 0), #203 (delivery record docs/deliveries/2026-08-19-jira-operating-surface-flow-store.md), #125 (fix node completed on prod runs 01M16KGAEH9867BWJPKMADG426 / 01M16JXY2ZP24KM7ANNQR9F2Q3 / 01M16JMT12KQ94PEYHA5BC50J2, developer.json repo_identities), #117 (audit run 01M08681PJK1MD6CRRX50Z7TD3, security half routed to #6/#111), #248 (retyped Record, closed via close-issue.sh --artifact docs/audits/2026-08-29-agents-as-os-users-cutover.md), #136 (duplicate of #121's done-when)",
+      "origin": "llm",
+      "status": "confirmed",
+      "honesty_conditions": [
+        {
+          "id": "h14",
+          "text": "each of the six closing comments cites the evidence named in c21; #248 is closed by scripts/close-issue.sh --artifact and carries type Record",
+          "status": "confirmed",
+          "instruction": ""
+        }
+      ],
+      "hard_questions": [],
+      "links": [],
+      "instruction": "Operator lane, wave 1: post the six closing comments with the cited evidence; retype #248 to Record and close via scripts/close-issue.sh --artifact docs/audits/2026-08-29-agents-as-os-users-cutover.md; regenerate docs/triage.",
+      "revisions": []
+    },
+    {
+      "id": "c22",
+      "kind": "requirement",
+      "text": "Small-fix issues (each \u2264 ~1h, dispatched as work packages through nodes-operator) closed by their fix landing: #116 (internal/engine/complete.go:300 stamps StartedAt=CompletedAt=now; take StartedAt from the invocation row), #162 (DispositionTableError in scripts/triage-report.py, exit 1 not 2), #172 (rewrite examples/pr-upkeep/README.md \u00a7The graph against sweep-cycle + v2), #241 (render attempts.result.error.detail on run view / attempt.completed / nodes-op, and persist the runner rejection message on the StateRejected path too), #186 (POST /v1alpha1/namespaces over the existing sqlc insert; register-actor.sh uses it), #133 and #135 (install-secrets.sh audit compares URL password to POSTGRES_PASSWORD; env_has last-wins; no DATABASE_SSLMODE beside a URL; no hostname literal), #178 (fix 2: ledger AttemptID only when the row exists), #183 legibility half (reject an origin_actor_id mismatch at accept time), #10 items 1-2 closed by comment and item 3 split out, #147 interim (EnvironmentFile line on the intake/planner/verifier units), #128 (delete the pre-deploy dump; decide the runner event token)",
+      "origin": "llm",
+      "status": "confirmed",
+      "honesty_conditions": [
+        {
+          "id": "h15",
+          "text": "each fix lands with a test that fails on main and passes on the branch, and the issue is closed by the merging PR referencing it",
+          "status": "confirmed",
+          "instruction": ""
+        }
+      ],
+      "hard_questions": [],
+      "links": [],
+      "instruction": "Twelve codex packages (one issue each, codex-thor/orin alternating; #133/#135 and #147 go to the developer lane since they touch deploy/ and units); each PR closes its issue. #116 and #178 are Go with DB-shaped tests \u2014 gate at merge on spark.",
+      "revisions": []
+    },
+    {
+      "id": "c23",
+      "kind": "requirement",
+      "text": "Decision-record closures: #129 (accept or bound the polled-forever orphan, docs/decisions/), #221 (write the SonarCloud boundary split down; a nodes sonar verb is #218 territory), #171 (record the unauthenticated artifact-read posture and add one publish->consume example) \u2014 each closes as a Record pointing at its docs/decisions/ artifact",
+      "origin": "llm",
+      "status": "confirmed",
+      "honesty_conditions": [
+        {
+          "id": "h16",
+          "text": "each docs/decisions/ record exists on main and its issue is closed by close-issue.sh --artifact pointing at it",
+          "status": "confirmed",
+          "instruction": ""
+        }
+      ],
+      "hard_questions": [],
+      "links": [],
+      "instruction": "Three docs/decisions/ records written in-session or by codex, each closed with close-issue.sh --artifact.",
+      "revisions": []
+    },
+    {
+      "id": "c24",
+      "kind": "requirement",
+      "text": "Measurements that close or re-scope issues, run in one sitting on a new Jira ticket after the sweep is green: #200 signal 9 (one page-link comment across two intake milestones; GET /v1alpha1/tickets/<id> shows one page_link), #230's remaining items (decide human task 01M16FX0BWK9X6TKE9BHAAW88Y, jira_bot_account_id per the open question), and the 27 stale approvals expired or decided",
+      "origin": "llm",
+      "status": "confirmed",
+      "honesty_conditions": [
+        {
+          "id": "h17",
+          "text": "one docs/audits/ note records the sitting: ticket key, run ids, the human-task decision, and the before/after pending-task counts",
+          "status": "confirmed",
+          "instruction": ""
+        }
+      ],
+      "hard_questions": [],
+      "links": [],
+      "instruction": "Operator lane, after c2/c6/c10 deploy: create one SCRUM ticket, drive two intake milestones, decide human task 01M16FX0BWK9X6TKE9BHAAW88Y, expire the stale approvals via the new pr_merged path (or by hand, counted), write docs/audits/<date>-measurement-sitting.md.",
+      "revisions": []
+    },
+    {
+      "id": "c25",
+      "kind": "boundary",
+      "text": "Stays open as named work, untouched here: #121 (0036 cutover, absorbs #136/#248 residue), #120 items 1-3 (refuse-on-unadvertised handover; only human-inbox deployment.py is a small piece), #181 (advisory lock ceiling), #182 (async lost-resume mirror, all-backends), #173 (wait timeout edge \u2014 engine feature, though this cycle's freeze finding depends on it), #145, #88, #12's remaining canvas editor, and the big-feature issues this cycle files: decisions-on-the-ticket-page, board moved by the system, actor-side Jira read, fleet-health sweep, silence timeout, Runs list server-side filters, Inbox/Decisions pagination",
+      "origin": "llm",
+      "status": "confirmed",
+      "honesty_conditions": [
+        {
+          "id": "h22",
+          "text": "every named item exists as an open typed issue at cycle end (Feature/Task/Bug) and none of them is touched by a cycle PR except by comment",
+          "status": "confirmed",
+          "instruction": ""
+        }
+      ],
+      "hard_questions": [],
+      "links": [],
+      "instruction": "File the named big features as typed Feature issues with scripts/open-issue.sh (decisions-on-ticket-page beyond c6, system moves board to Done, actor-side Jira read, fleet-health sweep, silence timeout #173, Runs server-side filters beyond c4, Inbox pagination beyond c5); no code.",
+      "revisions": []
+    },
+    {
+      "id": "c26",
+      "kind": "assumption",
+      "text": "#111 and #6 are the OAuth cycle's own scope and are not touched; this cycle hands them the recorded dependency list (c16) plus the three custody threads already stated in #117/#183/#6 that #111 should own once",
+      "origin": "llm",
+      "status": "confirmed",
+      "honesty_conditions": [],
+      "hard_questions": [],
+      "links": [],
+      "instruction": "Comment on #111 and #6 pointing at the c16 audit record once it exists.",
+      "revisions": []
+    },
+    {
+      "id": "c27",
+      "kind": "requirement",
+      "text": "A code node's stdout is readable again from the API: the sweep result's stdout_ref (artifact://<ns>/01M18ZKNP9AH5B7V169SGC0DPJ) is served by no route \u2014 GET /v1alpha1/attempts/{id}/artifacts lists [] and /artifacts/{id} is 404 \u2014 while on 2026-08-19 the same route returned the sweep's stdout (memory jira-peer-surface-scrum3-probe); fold into #171's read side or restore the attempt-scoped read",
+      "origin": "llm",
+      "status": "confirmed",
+      "honesty_conditions": [
+        {
+          "id": "h18",
+          "text": "GET /v1alpha1/attempts/{id}/artifacts/stdout returns the sweep's stdout for a green sweep run on prod (run id cited) and a test covers the code-node stdout path",
+          "status": "confirmed",
+          "instruction": ""
+        }
+      ],
+      "hard_questions": [],
+      "links": [],
+      "instruction": "Package (codex \u2014 Go): make GET /v1alpha1/attempts/{id}/artifacts/stdout resolve a code-node stdout_ref (artifact store id) or add GET /v1alpha1/artifacts/{id}; test the code-node path; verify on a green sweep run per h18.",
+      "revisions": []
+    },
+    {
+      "id": "c28",
+      "kind": "requirement",
+      "text": "Freezing a ticket (PR merged) cancels or parks every run whose subject is that ticket, with a recorded reason on each run and on the ticket page \u2014 the spec-chain run 01M16GMQMWYCA0EW0V7MHHQFWN is still 'running' on Done ticket SCRUM-5, parked on q2 (comment 10209); replaces the freeze half of rejected c11",
+      "origin": "llm",
+      "status": "confirmed",
+      "honesty_conditions": [
+        {
+          "id": "h19",
+          "text": "freezing a ticket in a test store with two running subject runs leaves both cancelled (or parked) with reason ticket_frozen, and on prod the SCRUM-5 spec-chain run 01M16GMQMWYCA0EW0V7MHHQFWN is no longer 'running' after the fix is deployed",
+          "status": "confirmed",
+          "instruction": ""
+        }
+      ],
+      "hard_questions": [],
+      "links": [],
+      "instruction": "Package (developer lane \u2014 engine): handleFreezeTicket cancels/parks runs whose input.ticket or subject equals the ticket, reason ticket_frozen; deploy and verify per h19 on SCRUM-5's run 01M16GMQMWYCA0EW0V7MHHQFWN.",
+      "revisions": []
+    },
+    {
+      "id": "c29",
+      "kind": "boundary",
+      "text": "The silence-timeout edge on a signal-parked question (#173: until.signal plus duration, timer row written at park time) is an engine feature and stays a named issue outside this cycle; a frozen ticket's parked runs are handled by c28's cancel/park, not by a timeout \u2014 replaces the timeout half of rejected c11",
+      "origin": "llm",
+      "status": "confirmed",
+      "honesty_conditions": [
+        {
+          "id": "h23",
+          "text": "#173 carries a comment naming c28 as this cycle's freeze handling and stays open; no PR in the cycle adds a duration to until.signal",
+          "status": "confirmed",
+          "instruction": ""
+        }
+      ],
+      "hard_questions": [],
+      "links": [],
+      "instruction": "No action beyond the #173 issue comment noting this cycle's freeze handling.",
+      "revisions": []
+    },
+    {
+      "id": "c30",
+      "kind": "non_goal",
+      "text": "No new sweep sources, flows or Jira verbs beyond what the confirmed findings need \u2014 the one Jira-side addition is a second allowlisted transition target ('Waiting for decision') for the existing transition_issue verb so c6's board status can be set; a Jira read verb for actors and 'the system moves the board to Done' are filed as issues, not built \u2014 replaces c18",
+      "origin": "llm",
+      "status": "confirmed",
+      "honesty_conditions": [],
+      "hard_questions": [],
+      "links": [],
+      "instruction": "One allowlist entry ('Waiting for decision') added to the jira bridge's transition targets on thor/orin (deploy lane, counted hand-turn if by hand).",
+      "revisions": []
+    },
+    {
+      "id": "c31",
+      "kind": "audience",
+      "text": "Three readers: a human on the Jira board and the ticket page who has never opened a shell (files a ticket, answers a question, decides an approval from the options offered); an agent actor (codex-thor/orin, developer) that picks up an assigned package and reports back through the ledger; and the operator who reads the runs list, the collected decisions view and the backlog and must see real work first, not fifty red sweeps",
+      "origin": "llm",
+      "status": "confirmed",
+      "honesty_conditions": [
+        {
+          "id": "h24",
+          "text": "the docs page (c12) is walked by each reader role on a new ticket: a human with only the page link and token, an actor via an assigned package run id, and the operator via the runs list and decisions view \u2014 each walk is logged in the measurement sitting record",
+          "status": "confirmed",
+          "instruction": ""
+        }
+      ],
+      "hard_questions": [],
+      "links": [],
+      "instruction": "",
+      "revisions": []
+    },
+    {
+      "id": "c32",
+      "kind": "before_state",
+      "text": "Today: the sweep was dead for 16 hours with no visible reason and 184 red runs on the first screen; 27 pending decisions sit in a 113k-px page nobody is paged to, 26 of them for PRs already merged, four of them duplicates of one finding; the ticket page link is a bare path; a Done ticket still has a running spec-chain; agents cannot see the ticket description; the stats tile says 588%; the backlog has six issues whose closing evidence already exists and twelve one-hour fixes waiting behind them; README and the guide never mention Jira",
+      "origin": "llm",
+      "status": "confirmed",
+      "honesty_conditions": [
+        {
+          "id": "h25",
+          "text": "each before-state number is reproducible from a GET recorded in the frame's scope entries (s2, s3, s4, s5, s6, s8, s10, s11, s12) as of 2026-08-30",
+          "status": "confirmed",
+          "instruction": ""
+        }
+      ],
+      "hard_questions": [],
+      "links": [],
+      "instruction": "",
+      "revisions": []
+    },
+    {
+      "id": "c33",
+      "kind": "after_state",
+      "text": "After: the runs list opens on real work with sweeps collapsed under a counter; a failed node names its reason on the run page; the Decisions view lists every pending decision with 3-4 options and the same options are on the Jira ticket, the ticket page and Discord; stale approvals expire on merge; every ticket carries an absolute page link and its page shows 'Open in Jira'; freeze ends the ticket's runs; agents receive the ticket description; the four site defects and the polish bundle are shipped; six issues are closed on cited evidence, twelve on landed fixes, three on decision records, and every remaining big feature is a typed issue; a docs page tells a human how to drive the loop from Jira; and every fix package cites the culture-nodes run that produced it",
+      "origin": "llm",
+      "status": "confirmed",
+      "honesty_conditions": [
+        {
+          "id": "h26",
+          "text": "each after-state clause maps to at least one confirmed requirement (c2-c10, c12-c15, c21-c24, c27, c28) and is verified by that requirement's honesty condition",
+          "status": "confirmed",
+          "instruction": ""
+        }
+      ],
+      "hard_questions": [],
+      "links": [],
+      "instruction": "",
+      "revisions": []
+    },
+    {
+      "id": "c34",
+      "kind": "why_it_matters",
+      "text": "The OAuth / login-from-anywhere cycle puts the site and the ticket page in front of people outside the LAN; it should open onto a floor that is green, legible and honest, and the credential-dependency list this cycle records is that cycle's input \u2014 otherwise the first thing a new login sees is a wall of failed sweeps and a decisions page it cannot scroll",
+      "origin": "llm",
+      "status": "confirmed",
+      "honesty_conditions": [
+        {
+          "id": "h27",
+          "text": "the audit record from c16 is linked from #111 and #6 before the OAuth cycle's /scope starts",
+          "status": "confirmed",
+          "instruction": ""
+        }
+      ],
+      "hard_questions": [],
+      "links": [],
+      "instruction": "",
+      "revisions": []
+    },
+    {
+      "id": "c35",
+      "kind": "success_signal",
+      "text": "Signal 1 \u2014 sweep health: seven consecutive days of pr-upkeep-sweep-cycle runs on prod with zero contract_rejected attempts, or a human task raised within 15 minutes of the first rejection, cited by run ids",
+      "origin": "llm",
+      "status": "confirmed",
+      "honesty_conditions": [
+        {
+          "id": "h28",
+          "text": "measured from GET /v1alpha1/runs filtered by the sweep workflow key over 7 days after deploy, or by the human task id raised on the first rejection",
+          "status": "confirmed",
+          "instruction": ""
+        }
+      ],
+      "hard_questions": [],
+      "links": [],
+      "instruction": "",
+      "revisions": []
+    },
+    {
+      "id": "c36",
+      "kind": "success_signal",
+      "text": "Signal 2 \u2014 decisions reach the human: a fresh SCRUM ticket that mints a human task gets, within one sweep interval, a Jira comment with the options and the absolute page link, a 'Waiting for decision' status, the same options on /tickets/<id> and a Discord post; deciding on the page resolves the task and the count of pending tasks on prod drops to the genuinely open ones (no task whose PR is merged)",
+      "origin": "llm",
+      "status": "confirmed",
+      "honesty_conditions": [
+        {
+          "id": "h29",
+          "text": "measured on one new SCRUM ticket with comment ids, the transition id, a /tickets/<id> GET and the notify post id, plus GET /v1alpha1/human-tasks?status=pending before and after",
+          "status": "confirmed",
+          "instruction": ""
+        }
+      ],
+      "hard_questions": [],
+      "links": [],
+      "instruction": "",
+      "revisions": []
+    },
+    {
+      "id": "c37",
+      "kind": "success_signal",
+      "text": "Signal 3 \u2014 backlog honesty: GitHub open-issue count on agentculture/culture-nodes falls from 53 by at least the 21 closures named in c21/c22/c23, every closure comment cites a run id, a commit or a docs/ artifact, and scripts/triage-report.py regenerates with zero untyped issues",
+      "origin": "llm",
+      "status": "confirmed",
+      "honesty_conditions": [
+        {
+          "id": "h30",
+          "text": "measured by gh issue list --state open count and a triage regen with zero untyped rows, both cited in the delivery summary",
+          "status": "confirmed",
+          "instruction": ""
+        }
+      ],
+      "hard_questions": [],
+      "links": [],
+      "instruction": "",
+      "revisions": []
+    },
+    {
+      "id": "c38",
+      "kind": "success_signal",
+      "text": "Signal 4 \u2014 dogfooding: every PR in this cycle lists the culture-nodes run id(s) that produced its packages, and at least the twelve small fixes in c22 plus c7/c8/c13/c14/c27 were produced by codex-thor, codex-orin or the developer lane, not typed in the operator session",
+      "origin": "llm",
+      "status": "confirmed",
+      "honesty_conditions": [
+        {
+          "id": "h31",
+          "text": "measured by grepping every cycle PR body for run ids and cross-checking each id against GET /v1alpha1/runs",
+          "status": "confirmed",
+          "instruction": ""
+        }
+      ],
+      "hard_questions": [],
+      "links": [],
+      "instruction": "",
+      "revisions": []
+    },
+    {
+      "id": "c39",
+      "kind": "assumption",
+      "text": "challenge / unstated assumptions: a human task's options are derived from its request.allowed_outcomes (approved/expired/rejected for pr-upkeep approvals) and its decision_schema_ref (schema://pr-upkeep/merge-decision/v1), so each option button must post a payload valid for that schema; 'defer' is not an outcome but a deadline extension; trigger_remint_exhausted carries no allowed_outcomes in its request (GET /v1alpha1/human-tasks/01M16FX0BWK9X6TKE9BHAAW88Y) and needs its outcome set defined before c5 can render it",
+      "origin": "llm",
+      "status": "confirmed",
+      "honesty_conditions": [
+        {
+          "id": "h32",
+          "text": "a table test over every human-task kind on prod (approval, trigger_remint_exhausted) renders only outcomes the engine's DecideHumanTask accepts, and the schema-validated payload of each button is asserted",
+          "status": "confirmed",
+          "instruction": ""
+        }
+      ],
+      "hard_questions": [],
+      "links": [],
+      "instruction": "",
+      "revisions": []
+    },
+    {
+      "id": "c40",
+      "kind": "requirement",
+      "text": "challenge / failure-modes: c4's suppression of repeat sweep runs is a backoff, not a stop \u2014 after a suppressed tick the schedule still probes at a bounded interval (at most every 30 minutes, the disabled pr-upkeep-sweep cadence) so a repaired grant is discovered without an operator resume; and the N-consecutive-failure alert is one open human task per schedule, re-raised only after it is decided",
+      "origin": "llm",
+      "status": "confirmed",
+      "honesty_conditions": [
+        {
+          "id": "h33",
+          "text": "with a fixed failing runner, a 5-minute schedule mints at most one run per 30 minutes and exactly one pending alert task exists at any time; when the runner is fixed the next probe run completes with no operator action (test in internal/engine remint/schedule tests)",
+          "status": "confirmed",
+          "instruction": ""
+        }
+      ],
+      "hard_questions": [],
+      "links": [],
+      "instruction": "",
+      "revisions": []
+    },
+    {
+      "id": "c41",
+      "kind": "requirement",
+      "text": "challenge / adjacent-systems: the deploy-time grant check (c2) diffs only workflows reachable today \u2014 the latest version per workflow_key with an enabled schedule or trigger \u2014 not all 104 published versions on prod (GET /v1alpha1/workflows), and it prints key names only, never values, on every path including failure",
+      "origin": "llm",
+      "status": "confirmed",
+      "honesty_conditions": [
+        {
+          "id": "h34",
+          "text": "a test with two versions of one key where only the older declares an extra ref passes; a test with a missing ref fails naming the key; grepping the check's output for any value from a fixture secrets file finds nothing",
+          "status": "confirmed",
+          "instruction": ""
+        }
+      ],
+      "hard_questions": [],
+      "links": [],
+      "instruction": "",
+      "revisions": []
+    },
+    {
+      "id": "c42",
+      "kind": "requirement",
+      "text": "challenge / rollback: every deploy lane that rewrites runner.env or runner-secrets.env (install-secrets.sh Jira lane, runner-env-write.sh, the new grant lane) writes a timestamped backup beside the file first and prints the restore command; deploy/prod/README.md documents the rollback",
+      "origin": "llm",
+      "status": "confirmed",
+      "honesty_conditions": [
+        {
+          "id": "h35",
+          "text": "after a deploy run on a fake host, runner.env.bak-<ts> and runner-secrets.env.bak-<ts> exist with the prior bytes (tests/deploy), and the README names the restore command",
+          "status": "confirmed",
+          "instruction": ""
+        }
+      ],
+      "hard_questions": [],
+      "links": [],
+      "instruction": "",
+      "revisions": []
+    },
+    {
+      "id": "c43",
+      "kind": "assumption",
+      "text": "challenge / overlooked actors: NODES_UI_BASE_URL (c10) must be set on thor AND orin (compose.orin.yml, both prod.env) because the engine posts ticket comments from whichever worker claims the node; and the absolute link it renders is a LAN or tailscale address until the OAuth cycle, so a Jira or Discord reader off the network sees a link they cannot open \u2014 accepted under c16, and the docs page (c12) says so",
+      "origin": "llm",
+      "status": "confirmed",
+      "honesty_conditions": [
+        {
+          "id": "h36",
+          "text": "both compose files and both prod.env carry the variable after deploy (grep on both hosts), and docs/drive-from-jira.md states the reachability limit in its first section",
+          "status": "confirmed",
+          "instruction": ""
+        }
+      ],
+      "hard_questions": [],
+      "links": [],
+      "instruction": "",
+      "revisions": []
+    },
+    {
+      "id": "c44",
+      "kind": "boundary",
+      "text": "challenge / migration: new migrations in this cycle number from 0049 upward; migrations/pending/0036_retire_stored_participant_addresses.sql stays unapplied and is neither renumbered nor merged into the applied sequence (#121: merging it dropped endpoint_ref and failed 14 tests)",
+      "origin": "llm",
+      "status": "confirmed",
+      "honesty_conditions": [
+        {
+          "id": "h37",
+          "text": "migrations_test.go still passes with 0036 in pending/, and no cycle PR touches migrations/pending/",
+          "status": "confirmed",
+          "instruction": ""
+        }
+      ],
+      "hard_questions": [],
+      "links": [],
+      "instruction": "",
+      "revisions": []
+    },
+    {
+      "id": "c45",
+      "kind": "assumption",
+      "text": "challenge / security: posting the ticket HTML page to Discord (q1) goes to the same channel examples/notify-message already targets (actor://company/notify-discord), which is treated as an internal channel; ticket content therefore has the same audience as today's notify posts, and the decision token is never embedded in the posted page",
+      "origin": "llm",
+      "status": "confirmed",
+      "honesty_conditions": [
+        {
+          "id": "h38",
+          "text": "the notify payload is asserted in a test to contain no NODES_HUMAN_DECISION_TOKEN_SECRET-derived value, and the channel id used is the existing notify-discord actor's configured channel",
+          "status": "confirmed",
+          "instruction": ""
+        }
+      ],
+      "hard_questions": [],
+      "links": [],
+      "instruction": "",
+      "revisions": []
+    }
+  ],
+  "open_vagueness": [
+    {
+      "id": "v1",
+      "text": "How the three sweep tokens were originally granted on thor is unrecorded (no doc, no script, no issue); the restore is a hand-turn whose provenance starts with this cycle's issue",
+      "kind": "unknown_nonblocking",
+      "claim_id": null,
+      "resolved": false,
+      "resolution": "",
+      "resolution_claim_id": null
+    },
+    {
+      "id": "v2",
+      "text": "challenge / lifecycle: with jira_bot_account_id now set to the operator's own account, ticket CREATION by the operator is believed to still trigger intake (self-echo gates comments and transitions only: sweep.py:905, jira_comment_is_self_echo) but is unverified; the c24 measurement ticket is the probe \u2014 if intake does not fire, the fallback is a second Jira account, which is #235's territory",
+      "kind": "unknown_nonblocking",
+      "claim_id": null,
+      "resolved": false,
+      "resolution": "",
+      "resolution_claim_id": null
+    },
+    {
+      "id": "v3",
+      "text": "challenge / residual: an unexamined surface remains \u2014 the human-inbox adapter (adapters/human-inbox) as a second decision channel for GitHub-sourced tasks was not read in this pass; q5 decides whether it is in play",
+      "kind": "unknown_nonblocking",
+      "claim_id": null,
+      "resolved": false,
+      "resolution": "",
+      "resolution_claim_id": null
+    }
+  ],
+  "scope_entries": [
+    {
+      "id": "s1",
+      "surface": "internal/runners/dispatch.go:195-215 + GET /v1alpha1/runs/01M18W5EXDWY4DZA0528TV5JA4",
+      "finding": "the attempt result on the run is {state: rejected, exit_code: null, duration_ms: 1} and the ledger evidence record has no reason; the reason only exists in the runner's 1-hour-retention status store behind its bearer secret",
+      "seeds": [
+        "c3"
+      ]
+    },
+    {
+      "id": "s2",
+      "surface": "GET /v1alpha1/runs?limit=500 on thor + web/src/routes/RunsList.tsx",
+      "finding": "the last 500 runs are 275 sweep-cycle runs at a 5-minute cadence (schedule pr-upkeep-sweep-5m, 01M0B29RF8ZTBHF9NQWB0MZNP1); RunsList renders bare ULIDs with no workflow name (runs have input {}), plain-text 'failed', and a hard cap of 50 rows with no Load more, so the first screen a human sees is fifty red sweeps",
+      "seeds": [
+        "c4"
+      ]
+    },
+    {
+      "id": "s3",
+      "surface": "web/src/routes/Decisions.tsx + Inbox.tsx (Playwright full-page shots, scratchpad/shots/desktop-decisions.png)",
+      "finding": "198 records -> 158 inline forms, 160 buttons, 113k px tall desktop / 136k mobile; the decider actor id is free text retyped per card; the per-record checkbox has no label",
+      "seeds": [
+        "c5"
+      ]
+    },
+    {
+      "id": "s4",
+      "surface": "GET /v1alpha1/human-tasks on thor + internal/notifier + examples/pr-upkeep/pr_upkeep_jira.py",
+      "finding": "27 pending tasks (26 approval kind, approver_ref group/platform-maintainers, deadline +7d; 1 trigger_remint_exhausted from 08-29 10:09Z); grep of notifier/notify/pr_upkeep_jira.py finds no human-task -> Jira path; the deadline field exists but nothing reads the PR's merged state",
+      "seeds": [
+        "c6"
+      ]
+    },
+    {
+      "id": "s5",
+      "surface": "GET /v1alpha1/runs/{id} for the four pr236-qodo-1 runs + examples/pr-upkeep/sweep.py:21-42",
+      "finding": "watermark is head SHA + newest comment timestamp per PR, so any push re-emits every still-open finding; dedup is watermark equality only, not finding-id-with-open-run",
+      "seeds": [
+        "c7"
+      ]
+    },
+    {
+      "id": "s6",
+      "surface": "thor nodes-runner state: GET :17070/v1/operations/att_01M18WEM4AVM7ARWE67Q1PAAGP",
+      "finding": "rejected_input: 'environment_refs names GITHUB_TOKEN, SONAR_TOKEN, NODES_EVENT_TOKEN, not set in this worker process's own environment'. 183 of 275 sweep-cycle@2 runs failed since 2026-08-29T17:11Z; the same digest sha256:5764a3c2 completed 92 times before 17:01Z, so it is environment not code",
+      "seeds": [
+        "c2"
+      ]
+    },
+    {
+      "id": "s7",
+      "surface": "thor ~/.culture-nodes/runner-secrets.env + deploy/prod/install-secrets.sh:740-758",
+      "finding": "36 bytes (JIRA_ACCOUNT_EMAIL= and JIRA_API_TOKEN= empty), mtime 20:05:28 IDT = 17:05 UTC, written by install_jira_runner_env which does 'cat >' with empty values when the deploying shell lacks the pair; the #243 cutover deploy (sudo bootstrap 20:03 IDT) ran it and the runner restarted 20:06:55; nothing in deploy/ or docs/ writes or names the three sweep tokens \u2014 an undocumented hand-turn",
+      "seeds": [
+        "c2"
+      ]
+    },
+    {
+      "id": "s8",
+      "surface": "http://thor:18080 every route at 1440x900 and 390x844 via Playwright (scratchpad/shots/*.png, report.json)",
+      "finding": "all 16 routes load with zero console errors, zero failed requests, no horizontal overflow, dark mode and mobile menu work, favicon served; the four defects above are the only broken things; #12 bullets 1/2/5/6 are done, 3 and 4 delivered with one follow-up each",
+      "seeds": [
+        "c8"
+      ]
+    },
+    {
+      "id": "s9",
+      "surface": "web/src/components/Header.tsx, RunView.tsx ~297, PlanView.tsx, GenerateWorkflow.tsx, RunsList.tsx, Decisions.tsx",
+      "finding": "no href to docs anywhere in web/src; nothing shows the API version; run id rendered twice; /plan and /workflows/generate use unstyled native inputs with labels inline; Header has no Tickets entry so the ticket page is reachable only by URL",
+      "seeds": [
+        "c9"
+      ]
+    },
+    {
+      "id": "s10",
+      "surface": "internal/store/postgres/jiraticketreport.go:63-64 + deploy/prod/compose.thor.yml + thor prod.env + SCRUM-5 comments",
+      "finding": "NODES_UI_BASE_URL is set nowhere, so the page-link comment is a bare path; SCRUM-5 page_link is null; TicketOut has no ticket_url and TicketView.tsx ~85 shows Open in Jira only when the posted frame carries one",
+      "seeds": [
+        "c10"
+      ]
+    },
+    {
+      "id": "s11",
+      "surface": "internal/api/tickets.go handleFreezeTicket + GET /v1alpha1/runs on thor (01M16GMQMWYCA0EW0V7MHHQFWN)",
+      "finding": "freeze writes the ticket state and the page banner but does not touch subject runs; run 01M16GMQ is running on a frozen/Done ticket; until.signal plus duration is refused by the runtime (#173)",
+      "seeds": [
+        "c11"
+      ]
+    },
+    {
+      "id": "s12",
+      "surface": "README.md, docs/guide.md, docs/operations/spec-chain-lane.md, examples/jira-*/README.md, deploy/prod/README.md",
+      "finding": "README.md and docs/guide.md contain zero mentions of 'jira'; everything Jira-facing is operator-only (spec-chain-lane.md, example READMEs, SKILL.md); examples/jira-intake has no README; deploy/prod/README.md never names the three sweep grants \u2014 which is how they were wiped unnoticed",
+      "seeds": [
+        "c12"
+      ]
+    },
+    {
+      "id": "s13",
+      "surface": "examples/jira-intake/workflow.yaml instruction + examples/pr-upkeep/pr_upkeep_jira.py jira_work_items",
+      "finding": "agents are blind to the ticket body and comments; the jira bridge has post_comment/transition_issue/create_issue and no read verb",
+      "seeds": [
+        "c13"
+      ]
+    },
+    {
+      "id": "s14",
+      "surface": "thor journalctl --user -u nodes-runner + internal/runners/protocolclient.go:48 + internal/api/server.go callback route",
+      "finding": "405 on every completion since before the onset (16:52 IDT 08-29 and continuing); harmless today because polling learns the outcome, but it is protocol drift between runner and API",
+      "seeds": [
+        "c14"
+      ]
+    },
+    {
+      "id": "s15",
+      "surface": "CLAUDE.md 'Nodes dogfooding reflex' + user instruction 'Use culture-nodes as much as possible' + memory actor-quality notes",
+      "finding": "codex write dispatches are proven (#18, wave 0 of hands-free-scrum-2-pickup); the codex sandbox denies socket(2) so database-backed Go tests cannot run there (#119) \u2014 route Go/DB packages to the developer lane or gate them at merge",
+      "seeds": [
+        "c15"
+      ]
+    },
+    {
+      "id": "s16",
+      "surface": "docs/audits/2026-08-29-fleet-and-bridge-evaluation-jira-flow-cycle.md \u00a73 + thor prod.env/runner.env + GET /v1alpha1/actors",
+      "finding": "the complete LAN/credential dependency list from the Jira-surface survey; none of it changes here",
+      "seeds": [
+        "c16"
+      ]
+    },
+    {
+      "id": "s17",
+      "surface": "docs/triage/open-issues.md 'large bets' bucket",
+      "finding": "seven issues already classified as large bets by the triage report; a quality cycle leaves them untouched",
+      "seeds": [
+        "c17"
+      ]
+    },
+    {
+      "id": "s18",
+      "surface": "adapters/jira verbs + #118 step 7 / #155",
+      "finding": "post_comment, transition_issue (single target), create_issue exist; read does not; board moves beyond In Progress are operator hand-turns today",
+      "seeds": [
+        "c18"
+      ]
+    },
+    {
+      "id": "s19",
+      "surface": "GET http://thor:18080/v1alpha1/version + git log 66a3b26..HEAD",
+      "finding": "revision 66a3b26, revision_source build_flag; two commits behind main",
+      "seeds": [
+        "c19"
+      ]
+    },
+    {
+      "id": "s20",
+      "surface": "docs/skill-sources.md + CLAUDE.md 'cite, don't import'",
+      "finding": "provenance rule already in force",
+      "seeds": [
+        "c20"
+      ]
+    },
+    {
+      "id": "s21",
+      "surface": "gh issue view --comments for #205 #203 #125 #117 #248 #136 + ssh culture-claude@spark journalctl + GET /v1alpha1/runs + /actors",
+      "finding": "each closure condition in docs/triage/open-issues.md is met by evidence gathered read-only this session; #248 needs the Record type first (record-issues-close-behind-a-devague-gate memory: confirm d-ids before close-issue.sh)",
+      "seeds": [
+        "c21"
+      ]
+    },
+    {
+      "id": "s22",
+      "surface": "docs/triage/open-issues.md small-fix rows + the file:line each agent verified (complete.go:300, triage-report.py:440-452, README.md:58-170, worker.go diagnosticOutput, gatereports.go:217, install-secrets.sh:280-319, namespaces.go, dialin.py:20-22)",
+      "finding": "all verified against HEAD a051ea6 and, where relevant, prod; #241 is only a rendering gap for failAttempt paths (diagnosticOutput already persists error.detail) but the runner-rejected path drops the message entirely (this cycle's sweep wall)",
+      "seeds": [
+        "c22"
+      ]
+    },
+    {
+      "id": "s23",
+      "surface": "internal/worker/runnerasync.go:408, examples/pr-upkeep/sweep.py:90-98, internal/artifacts + artifacts_test.go:232-245",
+      "finding": "each is a decision the owner has effectively already taken in code comments; writing it down is the whole work",
+      "seeds": [
+        "c23"
+      ]
+    },
+    {
+      "id": "s24",
+      "surface": "GET /v1alpha1/tickets/SCRUM-5 (runs 3, replies 3, latest_frame 28, page_link null) + migrations/0048 jira_ticket_page_link_idx on prod",
+      "finding": "the singleton is deployed; SCRUM-5 predates it so it cannot be the measurement ticket",
+      "seeds": [
+        "c24"
+      ]
+    },
+    {
+      "id": "s25",
+      "surface": "docs/triage/open-issues.md + the three survey reports' big-feature lists",
+      "finding": "each is more than a day or needs a design decision; filing them typed (Feature) is the deliverable, not building them",
+      "seeds": [
+        "c25"
+      ]
+    },
+    {
+      "id": "s26",
+      "surface": "internal/auth/doc.go (only file), internal/api/inbound_transport.go:29 party kind hardcoded 'actor', grades.go unauthenticated",
+      "finding": "auth is a package-shaped placeholder today; the human identity half is exactly login-from-anywhere",
+      "seeds": [
+        "c26"
+      ]
+    },
+    {
+      "id": "s27",
+      "surface": "issue #253 (filed this session) + scratchpad/regrant-sweep.sh",
+      "finding": "the sweep outage, its cause (install-secrets.sh:740-758 truncation) and the operator re-grant hand-turn are recorded as Bug #253; the re-grant itself is an operator action on thor/orin (credential placement, blocked for the assistant by policy) \u2014 script staged for the operator, sweep stays red until it runs",
+      "seeds": [
+        "c2"
+      ]
+    },
+    {
+      "id": "s28",
+      "surface": "GET /v1alpha1/runs/01M18ZKAHVVA9P1G33M9GW7CX2 after the operator re-grant",
+      "finding": "first tick after the 09:19Z runner restart completed (exit 0, 6.3s); the outage is bounded 2026-08-29T17:11Z -> 2026-08-30T09:16:51Z, 184 failed runs; verification posted on #253",
+      "seeds": [
+        "c2"
+      ]
+    },
+    {
+      "id": "s29",
+      "surface": "GET /v1alpha1/attempts/01M18ZKT5M96PPGHJH0AGH6FKQ/artifacts{,/stdout} + /runs/01M18ZKAHVVA9P1G33M9GW7CX2/ledger + internal/api/artifacts.go:204-212",
+      "finding": "artifact list is empty and the ledger holds only the runner evidence record, so the stdout the runner says it captured is unreachable through the public API; the operator cannot read what a green sweep did without ssh",
+      "seeds": [
+        "c27"
+      ]
+    },
+    {
+      "id": "s30",
+      "surface": "challenge pass / unstated-assumptions lens: internal/api/humantasks.go + GET /v1alpha1/human-tasks/{id} request shape",
+      "finding": "options are not free-form; allowed_outcomes + decision_schema_ref define them; remint task has none",
+      "seeds": [
+        "c39"
+      ]
+    },
+    {
+      "id": "s31",
+      "surface": "challenge pass / failure-modes lens: migrations/0033_schedules.sql + internal/engine/remint.go (bounded re-mint already exists)",
+      "finding": "a stop-on-identical-failure would hide recovery; the existing bounded re-mint is the pattern to extend",
+      "seeds": [
+        "c40"
+      ]
+    },
+    {
+      "id": "s32",
+      "surface": "challenge pass / adjacent-systems lens: GET /v1alpha1/workflows (104 items, many superseded versions) + runner.env/runner-secrets.env",
+      "finding": "diffing every published version would flag stale workflows nobody schedules; output must be safe to paste into an issue",
+      "seeds": [
+        "c41"
+      ]
+    },
+    {
+      "id": "s33",
+      "surface": "challenge pass / rollback lens: deploy/prod/lanes/runner-env-write.sh:120 (tmp+mv, no backup) + the operator's regrant-sweep.sh (backups by hand)",
+      "finding": "the manual script kept backups; the lanes do not",
+      "seeds": [
+        "c42"
+      ]
+    },
+    {
+      "id": "s34",
+      "surface": "challenge pass / overlooked-actors lens: deploy/prod/compose.orin.yml + orin prod-worker-1 env (no CODE_RUNNER but a full worker)",
+      "finding": "orin's worker can claim engine nodes; a thor-only variable leaves half the comments bare",
+      "seeds": [
+        "c43"
+      ]
+    },
+    {
+      "id": "s35",
+      "surface": "challenge pass / migration lens: migrations/ (0048 last applied) + migrations/pending/0036",
+      "finding": "collision and accidental application are the two hazards",
+      "seeds": [
+        "c44"
+      ]
+    },
+    {
+      "id": "s36",
+      "surface": "challenge pass / security lens: examples/notify-message/workflow.yaml:94 + adapters/notify config",
+      "finding": "one existing channel; token stays out of the page",
+      "seeds": [
+        "c45"
+      ]
+    },
+    {
+      "id": "s37",
+      "surface": "challenge pass / concurrency lens: examples/pr-upkeep/sweep.py emission vs 5-minute schedule",
+      "finding": "c7's check-then-emit between ticks is a 6-second sweep on a 300-second cadence; no interleaving in practice; clean pass, residual risk only if the cadence drops below sweep duration",
+      "seeds": []
+    },
+    {
+      "id": "s38",
+      "surface": "challenge pass / lifecycle lens: examples/pr-upkeep/workflow.yaml:160-164 edges",
+      "finding": "human-merges-pr.approved/.rejected/.expired all route to finish, so expiring the 26 stale approvals completes their runs; the already-merged PRs will never emit pr.merged, so the first expiry is a one-time backfill (c24) not the consumer path",
+      "seeds": []
+    },
+    {
+      "id": "s39",
+      "surface": "challenge pass / observability lens: thor nodes-runner status store (1h retention) vs c3",
+      "finding": "once c3 persists error.detail on the attempt, the runner's retention no longer matters for diagnosis; clean pass",
+      "seeds": []
+    }
+  ],
+  "lapses": []
+}

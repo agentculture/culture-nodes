@@ -163,6 +163,10 @@ r = d.get("run", d)
 print("state:", r.get("state"))
 for nr in d.get("node_runs", []):
     atts = [(a.get("status"), a.get("actor_id")) for a in nr.get("attempts", [])]
+    for a in nr.get("attempts", []):
+        err = (a.get("result") or {}).get("error") or {}
+        if err.get("detail") or err.get("message"):
+            print("    attempt %s %s: %s" % (a.get("id", "")[-8:], err.get("class", ""), (err.get("detail") or err.get("message"))[:300]))
     print("  %s: %s outcome=%s attempts=%s" % (
         nr.get("node_id"), nr.get("state"), nr.get("outcome"), atts))
 PYEOF

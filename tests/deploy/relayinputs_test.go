@@ -185,6 +185,12 @@ var nonCredentialKnobs = map[string]string{
 	"DIALIN_DESTINATION":        "which bridge host the issued dial-in credential is delivered to",
 	"DIALIN_HOST":               "ssh target the dial-in lane delivers to",
 	"DIALIN_PREFIX":             "name prefix of the per-bridge dial-in env file",
+
+	// Where a scratch directory is made. The grant check writes the control
+	// plane's two published answers here to read them from a file rather than
+	// an exec argument; both are public workflow definitions it then prints
+	// key NAMES out of, and it removes the directory on every path.
+	"TMPDIR": "base directory for the grant check's scratch copy of the published workflow list",
 }
 
 // TestEveryEnvironmentDerivedInputIsCanariedOrDeclaredHarmless is the guard

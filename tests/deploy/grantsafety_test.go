@@ -29,6 +29,8 @@ package deploytest
 
 import (
 	"encoding/json"
+	"fmt"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -349,6 +351,10 @@ type workflowVersion struct {
 	Version      int             `json:"version"`
 	NormalizedIR json.RawMessage `json:"normalized_ir"`
 	Digest       string          `json:"digest"`
+	// Source is not read by the check at all. It is here because it is most
+	// of what the endpoint actually returns, and the size of the answer is
+	// itself a property under test -- see the large-payload case below.
+	Source string `json:"source,omitempty"`
 }
 
 // ir builds a normalized_ir with one code node declaring refs, and either a
@@ -572,6 +578,184 @@ func TestGrantCheckSaysSoWhenItCannotReadTheControlPlane(t *testing.T) {
 	}
 	if !strings.Contains(stdout+stderr, "WARNING") {
 		t.Errorf("an unverified deploy was not announced; output was:\n%s\n%s", stdout, stderr)
+	}
+}
+
+// --- criterion 2, the fail-closed half ------------------------------------
+
+// rawControlPlane serves two verbatim bodies. The typed fake next door can
+// only produce answers this check understands, and the whole point of the
+// tests below is the answers it does not.
+func rawControlPlane(t *testing.T, workflows, schedules string) string {
+	t.Helper()
+	body := func(payload string) http.HandlerFunc {
+		return func(w http.ResponseWriter, _ *http.Request) {
+			w.Header().Set("Content-Type", "application/json")
+			if _, err := io.WriteString(w, payload); err != nil {
+				t.Errorf("write fixture body: %v", err)
+			}
+		}
+	}
+	mux := http.NewServeMux()
+	mux.HandleFunc("/v1alpha1/workflows", body(workflows))
+	mux.HandleFunc("/v1alpha1/schedules", body(schedules))
+	server := httptest.NewServer(mux)
+	t.Cleanup(server.Close)
+	return server.URL
+}
+
+// grantCheckGreenLine is the one sentence in this lane that asserts the diff
+// actually happened. No path that skipped a declaration may print it.
+const grantCheckGreenLine = "every environment ref a startable workflow declares is granted"
+
+// TestGrantCheckRefusesACurrentVersionItCannotRead -- the fail-open the gate
+// was built to close, one level up. A normalized_ir that will not parse used
+// to be coerced to {}, which put the workflow out of scope, which printed the
+// green line: the check would announce that a fully granted host was fine
+// while never having read the declaration that says otherwise.
+func TestGrantCheckRefusesACurrentVersionItCannotRead(t *testing.T) {
+	c := newFakeCluster(t)
+	grantedHost(t, c, thorFake, fiveKeyRunnerSecrets())
+	url := fakeControlPlane(t,
+		[]workflowVersion{{WorkflowKey: "pr-upkeep-sweep-cycle", Version: 2,
+			NormalizedIR: json.RawMessage(`"{ this is not the IR"`)}},
+		[]map[string]any{{"id": "sch_1", "name": "sweep", "event_name": "pr-upkeep.sweep.due", "enabled": true}})
+
+	stdout, stderr, code := runGrantCheck(t, c, thorFake, url)
+	if code == 0 {
+		t.Fatalf("grant check passed a control plane whose current workflow version it could "+
+			"not read\nstdout:\n%s\nstderr:\n%s", stdout, stderr)
+	}
+	if !strings.Contains(stderr, "pr-upkeep-sweep-cycle") {
+		t.Errorf("the refusal does not name the version it could not read; stderr was:\n%s", stderr)
+	}
+	if strings.Contains(stdout+stderr, grantCheckGreenLine) {
+		t.Errorf("the check claimed the grants were diffed after skipping a declaration; "+
+			"output was:\n%s\n%s", stdout, stderr)
+	}
+}
+
+// TestGrantCheckRefusesAnAnswerItCannotRead -- same defect at the document
+// level. Every one of these bodies used to reduce to "zero workflows in
+// scope", which is indistinguishable in the report from a control plane that
+// has published nothing.
+func TestGrantCheckRefusesAnAnswerItCannotRead(t *testing.T) {
+	const goodSchedules = `{"items":[{"id":"sch_1","event_name":"pr-upkeep.sweep.due","enabled":true}]}`
+	for _, tc := range []struct {
+		name      string
+		workflows string
+		schedules string
+	}{
+		{"an empty body", "", goodSchedules},
+		{"a body that is not JSON", "<html>502 Bad Gateway</html>", goodSchedules},
+		{"a body that is not an object", `[{"workflow_key":"pr-upkeep-sweep-cycle"}]`, goodSchedules},
+		{"an items that is not a list", `{"items":{"pr-upkeep-sweep-cycle":{}}}`, goodSchedules},
+		{"unreadable schedules", `{"items":[]}`, `{"items":"pr-upkeep.sweep.due"}`},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			c := newFakeCluster(t)
+			grantedHost(t, c, thorFake, fiveKeyRunnerSecrets())
+			url := rawControlPlane(t, tc.workflows, tc.schedules)
+
+			stdout, stderr, code := runGrantCheck(t, c, thorFake, url)
+			if code == 0 {
+				t.Fatalf("grant check passed on %s\nstdout:\n%s\nstderr:\n%s", tc.name, stdout, stderr)
+			}
+			if strings.Contains(stdout+stderr, grantCheckGreenLine) {
+				t.Errorf("the check claimed the grants were diffed after failing to read the "+
+					"answer; output was:\n%s\n%s", stdout, stderr)
+			}
+		})
+	}
+}
+
+// TestGrantCheckPassesAControlPlaneWithNothingPublished -- the other side of
+// failing closed, and the reason it is not simply "refuse anything unusual".
+// Go marshals an empty slice as null, so `{"items":null}` is the ordinary way
+// a control plane says it has published nothing. That is an answer this check
+// read and understood, not one it failed on.
+func TestGrantCheckPassesAControlPlaneWithNothingPublished(t *testing.T) {
+	c := newFakeCluster(t)
+	grantedHost(t, c, thorFake, fiveKeyRunnerSecrets())
+	url := rawControlPlane(t, `{"items":null}`, `{"items":null}`)
+
+	stdout, stderr, code := runGrantCheck(t, c, thorFake, url)
+	if code != 0 {
+		t.Fatalf("grant check refused a control plane that has published nothing (exit %d)\n"+
+			"stdout:\n%s\nstderr:\n%s", code, stdout, stderr)
+	}
+	if !strings.Contains(stdout, "scope: 0 workflow version(s)") {
+		t.Errorf("an empty scope was not reported as such; stdout was:\n%s", stdout)
+	}
+}
+
+// TestGrantCheckIgnoresASupersededVersionItCannotRead -- failing closed must
+// not widen the scope. prod carries ~104 published versions and most are
+// superseded; refusing a deploy over the IR of a version nothing can start is
+// the cried wolf the scoping rule exists to prevent.
+func TestGrantCheckIgnoresASupersededVersionItCannotRead(t *testing.T) {
+	c := newFakeCluster(t)
+	grantedHost(t, c, thorFake, fiveKeyRunnerSecrets())
+	url := fakeControlPlane(t,
+		[]workflowVersion{
+			{WorkflowKey: "pr-upkeep-sweep-cycle", Version: 1,
+				NormalizedIR: json.RawMessage(`"{ this is not the IR"`)},
+			{WorkflowKey: "pr-upkeep-sweep-cycle", Version: 2,
+				NormalizedIR: ir(t, "pr-upkeep.sweep.due", sweepRefs...)},
+		},
+		[]map[string]any{{"id": "sch_1", "name": "sweep", "event_name": "pr-upkeep.sweep.due", "enabled": true}})
+
+	stdout, stderr, code := runGrantCheck(t, c, thorFake, url)
+	if code != 0 {
+		t.Fatalf("grant check refused a deploy over a superseded version's unreadable IR "+
+			"(exit %d)\nstdout:\n%s\nstderr:\n%s", code, stdout, stderr)
+	}
+	if !strings.Contains(stdout, grantCheckGreenLine) {
+		t.Errorf("the current version was readable and fully granted, so the check owed a "+
+			"verdict; stdout was:\n%s", stdout)
+	}
+}
+
+// TestGrantCheckDiffsAnAnswerTooLargeToPassAsAnEnvironmentValue -- the fail
+// open that mattered most, because it was the only one production ever hit.
+// prod publishes ~104 workflow versions and each carries its whole source, so
+// GET /v1alpha1/workflows?limit=500 answers with megabytes. Handing that to
+// python3 as an environment value exceeds the exec argument limit; the shell
+// says `Argument list too long`, the reader never starts, and the lane used to
+// call that "UNVERIFIED, proceeding" -- so on the one control plane this gate
+// exists to guard, it had never diffed a single grant. The host below is
+// missing exactly the key the incident lost, and the check has to say so.
+func TestGrantCheckDiffsAnAnswerTooLargeToPassAsAnEnvironmentValue(t *testing.T) {
+	c := newFakeCluster(t)
+	withoutSonar := strings.ReplaceAll(fiveKeyRunnerSecrets(), "SONAR_TOKEN="+fixtureSonarToken+"\n", "")
+	grantedHost(t, c, thorFake, withoutSonar)
+
+	// ~4 MB, comfortably past a Linux ARG_MAX of 2 MB and every smaller one.
+	filler := strings.Repeat("# a published workflow source line\n", 1000)
+	versions := []workflowVersion{{WorkflowKey: "pr-upkeep-sweep-cycle", Version: 2,
+		NormalizedIR: ir(t, "pr-upkeep.sweep.due", sweepRefs...), Source: filler}}
+	for i := 0; i < 120; i++ {
+		versions = append(versions, workflowVersion{
+			WorkflowKey:  fmt.Sprintf("superseded-%d", i),
+			Version:      1,
+			NormalizedIR: ir(t, "", "IRRELEVANT_TOKEN"),
+			Source:       filler,
+		})
+	}
+	url := fakeControlPlane(t, versions,
+		[]map[string]any{{"id": "sch_1", "name": "sweep", "event_name": "pr-upkeep.sweep.due", "enabled": true}})
+
+	stdout, stderr, code := runGrantCheck(t, c, thorFake, url)
+	if strings.Contains(stdout+stderr, "Argument list too long") {
+		t.Fatalf("the reader was handed the answer as an exec argument; it must be read from a "+
+			"file\nstdout:\n%s\nstderr:\n%s", stdout, stderr)
+	}
+	if code == 0 {
+		t.Fatalf("grant check passed a host missing SONAR_TOKEN when the answer was large\n"+
+			"stdout:\n%s\nstderr:\n%s", stdout, stderr)
+	}
+	if !strings.Contains(stderr, "SONAR_TOKEN") {
+		t.Errorf("the refusal does not name the missing key; stderr was:\n%s", stderr)
 	}
 }
 

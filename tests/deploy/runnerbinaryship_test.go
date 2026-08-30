@@ -112,6 +112,14 @@ func TestFailedRunnerBinaryShipAbortsTheDeploy(t *testing.T) {
 	cmd.Env = append(os.Environ(),
 		"PATH="+binDir+string(os.PathListSeparator)+os.Getenv("PATH"),
 		"MARKER_FILE="+marker,
+		// Pin the preflight grant check at a control plane that cannot
+		// answer, which is its documented decline: WARNING, UNVERIFIED,
+		// proceed. Without this the check reads whichever NODES_API_URL the
+		// operator running `go test` happens to hold, diffs the real
+		// published workflows against a stub ssh that reports no grants at
+		// all, and refuses the deploy -- so this test would pass or fail on
+		// the ambient environment rather than on issue #17's ship step.
+		"NODES_API_URL=http://127.0.0.1:1",
 	)
 	out, err := cmd.CombinedOutput()
 

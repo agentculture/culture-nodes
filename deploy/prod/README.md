@@ -421,6 +421,18 @@ value, on any path — so the refusal can be pasted into an issue as-is. When
 the control plane cannot be reached it prints a `WARNING` and proceeds: an
 unreachable control plane is a state a deploy is often the fix for.
 
+It also **fails closed on an answer it cannot read**. A control plane that
+answers with something other than the shape this check parses — a body that is
+not a JSON object, an `items` that is not a list, a current version whose
+`normalized_ir` will not parse — used to reduce to "nothing in scope", which
+is indistinguishable in the report from a control plane that has published
+nothing, and printed the line claiming the grants were checked. Those cases
+now refuse the deploy as `unreadable:` lines beside the `missing:` ones,
+because an unreadable declaration is not an absent one. The distinction that
+survives is between not understanding an answer (refuse) and not getting one
+at all — no `runner.env` yet, no `python3` on the operator's machine, an
+unreachable control plane (announce `UNVERIFIED` and proceed).
+
 **Rollback.** Every lane that rewrites either file copies the previous bytes
 aside first, as `<file>.bak-<UTC timestamp>` in the same directory, mode 600,
 and prints the restore command in the deploy log — for example:

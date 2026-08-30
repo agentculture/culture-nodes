@@ -28,6 +28,7 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Fixed
 
+- The deploy grant check now fails closed. An answer it cannot read — a body that is not the JSON object it expects, an `items` that is not a list, a current version whose `normalized_ir` will not parse — refuses the deploy as an `unreadable:` line instead of reducing to an empty scope and printing the sentence that claims the grants were diffed. It also reads the two published answers from files rather than exec arguments: prod's workflow list is megabytes, so passing it in the environment aborted the reader with `Argument list too long`, which the lane swallowed as one more "UNVERIFIED, proceeding" — on the one control plane the gate exists to guard (PR #263, Qodo finding 1).
 - Cache hit rate above 100% on `/stats` (t8); runner completion notifications no longer return 405 (t14, #14); in-attempt gate reports no longer violate the attempts FK (t23, #178); mismatched `origin_actor_id` is refused at accept time without burning the dispatch budget (t24, #183); `triage-report.py` exits 1 on a malformed dispositions table (t20, #162); `NODES_DATABASE_URL` and `POSTGRES_PASSWORD` can no longer diverge silently and the settings lane stops writing contradictory facts (t25, #133, #135).
 
 ## [0.44.1] - 2026-08-30

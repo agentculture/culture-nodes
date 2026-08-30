@@ -224,7 +224,7 @@ func (s *Server) handlePostTicketFrame(w http.ResponseWriter, r *http.Request) e
 
 func (s *Server) handleGetTicket(w http.ResponseWriter, r *http.Request) error {
 	ticketID := r.PathValue("id")
-	runs, err := s.listRuns(r.Context(), listRunsParams{Subject: ticketID, Limit: 500, Sort: sortCreatedAt})
+	runs, _, err := s.listRuns(r.Context(), listRunsParams{Subject: ticketID, Limit: 500, Sort: sortCreatedAt})
 	if err != nil {
 		return internalError(err)
 	}

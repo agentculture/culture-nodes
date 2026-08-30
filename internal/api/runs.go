@@ -102,9 +102,19 @@ func (s *Server) handleListRuns(w http.ResponseWriter, r *http.Request) error {
 		return err
 	}
 
-	runs, err := s.listRuns(r.Context(), listRunsParams{
+	var cursor *nodeRunCursor
+	if raw := r.URL.Query().Get("cursor"); raw != "" {
+		decoded, decodeErr := decodeNodeRunCursor(raw)
+		if decodeErr != nil {
+			return badRequest("pass back a previous next_cursor unchanged", "invalid cursor: %v", decodeErr)
+		}
+		cursor = &decoded
+	}
+	runs, nextCursor, err := s.listRuns(r.Context(), listRunsParams{
 		State:        state,
 		Subject:      r.URL.Query().Get("subject"),
+		WorkflowKey:  r.URL.Query().Get("workflow_key"),
+		Cursor:       cursor,
 		Limit:        parseLimit(r, 50, 500),
 		UpdatedSince: updatedSince,
 		UpdatedUntil: updatedUntil,
@@ -113,7 +123,7 @@ func (s *Server) handleListRuns(w http.ResponseWriter, r *http.Request) error {
 	if err != nil {
 		return internalError(err)
 	}
-	writeJSON(w, http.StatusOK, RunListOut{Items: runs})
+	writeJSON(w, http.StatusOK, RunListOut{Items: runs, NextCursor: nextCursor})
 	return nil
 }
 

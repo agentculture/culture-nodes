@@ -56,6 +56,7 @@ export interface CurrencyCost {
 export interface Run {
   id: string;
   workflow_digest: string;
+  workflow_key?: string;
   state: RunState;
   input?: unknown;
   output?: unknown;
@@ -89,6 +90,7 @@ export interface Run {
 
 export interface RunList {
   items: Run[];
+  next_cursor?: string;
 }
 
 export interface Token {

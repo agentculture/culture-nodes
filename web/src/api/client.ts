@@ -94,6 +94,8 @@ async function getJson<T>(path: string, signal?: AbortSignal): Promise<T> {
 /** GET /v1alpha1/runs query parameters (task t11). */
 export interface ListRunsParams {
   state?: RunState;
+  workflow_key?: string;
+  cursor?: string;
   /** RFC3339. Only runs updated at or after this instant. */
   updated_since?: string;
   /** RFC3339. Only runs updated at or before this instant. */

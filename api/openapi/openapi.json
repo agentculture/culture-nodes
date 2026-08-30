@@ -2800,6 +2800,10 @@
           },
           "workflow_digest": {
             "type": "string"
+          },
+          "workflow_key": {
+            "description": "The stable key of the workflow version pinned by this run. Present in run listings.",
+            "type": "string"
           }
         },
         "required": [
@@ -2818,6 +2822,10 @@
               "$ref": "#/components/schemas/Run"
             },
             "type": "array"
+          },
+          "next_cursor": {
+            "description": "Opaque keyset cursor for the next page; absent on the last page.",
+            "type": "string"
           }
         },
         "required": [
@@ -5242,6 +5250,14 @@
             }
           },
           {
+            "description": "Filter to runs pinned to a workflow with this exact key.",
+            "in": "query",
+            "name": "workflow_key",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
             "description": "Filter to runs whose persisted correlation subject matches exactly.",
             "in": "query",
             "name": "subject",
@@ -5288,6 +5304,14 @@
               "minimum": 1,
               "type": "integer"
             }
+          },
+          {
+            "description": "Opaque keyset cursor from a previous response's next_cursor.",
+            "in": "query",
+            "name": "cursor",
+            "schema": {
+              "type": "string"
+            }
           }
         ],
         "responses": {
@@ -5309,10 +5333,10 @@
                 }
               }
             },
-            "description": "state, updated_since, updated_until, or sort is malformed."
+            "description": "state, updated_since, updated_until, sort, or cursor is malformed."
           }
         },
-        "summary": "List runs, optionally filtered by state and/or an updated_at window.",
+        "summary": "List runs, optionally filtered by workflow key, state, and/or an updated_at window.",
         "tags": [
           "runs"
         ]

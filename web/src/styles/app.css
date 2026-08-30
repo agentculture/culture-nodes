@@ -1089,7 +1089,13 @@ button.timeline__node {
   gap: var(--nodes-gap);
   overflow-x: auto;
   padding-bottom: 0.5rem;
+  scrollbar-width: auto;
+  scrollbar-color: var(--ink-soft) var(--surface);
 }
+
+.runs-board__columns::-webkit-scrollbar { height: 0.75rem; }
+.runs-board__columns::-webkit-scrollbar-track { background: var(--surface); }
+.runs-board__columns::-webkit-scrollbar-thumb { background: var(--ink-soft); border-radius: 999px; }
 
 .runs-board__column {
   flex: 1 1 15rem;
@@ -1134,7 +1140,7 @@ button.timeline__node {
 @media (max-width: 48rem) {
   .runs-board__columns {
     flex-direction: column;
-    overflow-x: visible;
+    overflow-x: auto;
   }
 
   .runs-board__column {

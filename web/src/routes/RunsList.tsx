@@ -2,6 +2,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { Link } from "react-router-dom";
 import { ApiError, listRuns } from "../api/client";
 import type { Run } from "../api/types";
+import type { RunState } from "../api/types";
 import { setAgentState } from "../agent-state/store";
 import CategoryChip from "../components/CategoryChip";
 import ErrorNotice from "../components/ErrorNotice";
@@ -52,6 +53,10 @@ export function RunsList() {
   const [runs, setRuns] = useState<Run[] | null>(null);
   const [error, setError] = useState<ApiError | null>(null);
   const [reloadKey, setReloadKey] = useState(0);
+  const [stateFilter, setStateFilter] = useState<RunState | "">("");
+  const [nextCursor, setNextCursor] = useState<string | undefined>();
+  const [loadingMore, setLoadingMore] = useState(false);
+  const [expandedGroups, setExpandedGroups] = useState<Set<string>>(new Set());
   const reloadTimer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
   const lastReload = useRef(0);
 
@@ -87,10 +92,12 @@ export function RunsList() {
       sort: "updated_at",
       updated_since: since,
       updated_until: until,
+      ...(stateFilter ? { state: stateFilter } : {}),
     })
       .then((list) => {
         if (controller.signal.aborted) return;
         setRuns(list.items);
+        setNextCursor(list.next_cursor);
         setAgentState({ status: "ready", run: null });
       })
       .catch((cause: unknown) => {
@@ -107,7 +114,7 @@ export function RunsList() {
         setAgentState({ status: "ready", run: null });
       });
     return () => controller.abort();
-  }, [since, until]);
+  }, [since, until, stateFilter]);
 
   // The SSE-triggered background refresh (issue #46): fires only after the
   // initial load (reloadKey === 0 is that first render, already handled
@@ -120,10 +127,12 @@ export function RunsList() {
       sort: "updated_at",
       updated_since: since,
       updated_until: until,
+      ...(stateFilter ? { state: stateFilter } : {}),
     })
       .then((list) => {
         if (controller.signal.aborted) return;
         setRuns(list.items);
+        setNextCursor(list.next_cursor);
         setError(null);
       })
       .catch((cause: unknown) => {
@@ -138,12 +147,48 @@ export function RunsList() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [reloadKey]);
 
+  const loadMore = useCallback(() => {
+    if (!nextCursor) return;
+    setLoadingMore(true);
+    listRuns(undefined, {
+      sort: "updated_at",
+      updated_since: since,
+      updated_until: until,
+      ...(stateFilter ? { state: stateFilter } : {}),
+      cursor: nextCursor,
+    })
+      .then((page) => {
+        setRuns((current) => [...(current ?? []), ...page.items]);
+        setNextCursor(page.next_cursor);
+      })
+      .catch((cause: unknown) => setError(cause instanceof ApiError ? cause : new ApiError(0, String(cause), "check the browser console")))
+      .finally(() => setLoadingMore(false));
+  }, [nextCursor, since, until, stateFilter]);
+
+  const groupedRuns = runs === null ? null : runs.reduce<Array<{ key: string; runs: Run[] }>>((groups, run) => {
+    const previous = groups[groups.length - 1];
+    const workflow = run.workflow_key ?? run.workflow_digest;
+    if (run.state === "failed" && previous?.runs[0].state === "failed" && (previous.runs[0].workflow_key ?? previous.runs[0].workflow_digest) === workflow) {
+      previous.runs.push(run);
+    } else {
+      groups.push({ key: `${run.id}:${workflow}`, runs: [run] });
+    }
+    return groups;
+  }, []);
+
   return (
     <section className="view-rail runs-list">
       <h1>Runs</h1>
       <p className="muted">Every run, newest first by last update.</p>
 
       <TimeRangeFilter since={since} until={until} onApply={applyRange} />
+      <label className="runs-list__state-filter">
+        State
+        <select value={stateFilter} onChange={(event) => setStateFilter(event.target.value as RunState | "")}>
+          <option value="">All states</option>
+          {(["created", "running", "waiting", "completed", "failed", "cancelled"] as RunState[]).map((state) => <option key={state} value={state}>{state}</option>)}
+        </select>
+      </label>
 
       {error ? <ErrorNotice error={error} /> : null}
       {runs === null ? (
@@ -156,20 +201,25 @@ export function RunsList() {
           , or widen the range.
         </p>
       ) : (
-        <div className="table-scroll">
+        <>
+          <div className="table-scroll">
           <table className="ledger-table" id="runs-table">
             <thead>
               <tr>
                 <th scope="col">run</th>
                 <th scope="col">category</th>
                 <th scope="col">state</th>
+                <th scope="col">workflow key</th>
                 <th scope="col">workflow digest</th>
                 <th scope="col">created</th>
                 <th scope="col">updated</th>
               </tr>
             </thead>
             <tbody>
-              {runs.map((run) => {
+              {groupedRuns?.flatMap((group) => {
+                const collapsed = group.runs.length > 1 && !expandedGroups.has(group.key);
+                const visibleRuns = collapsed ? group.runs.slice(0, 1) : group.runs;
+                return visibleRuns.map((run, index) => {
                 const display = runDisplayName(run);
                 return (
                   <tr key={run.id} data-run-id={run.id}>
@@ -195,7 +245,17 @@ export function RunsList() {
                         <span className="muted">—</span>
                       )}
                     </td>
-                    <td data-run-state={run.state}>{run.state}</td>
+                    <td data-run-state={run.state}>
+                      {run.state}
+                      {index === 0 && group.runs.length > 1 ? (
+                        <button type="button" className="runs-list__count-badge" aria-label={`${collapsed ? "Expand" : "Collapse"} ${group.runs.length} failed runs`} onClick={() => setExpandedGroups((current) => {
+                          const next = new Set(current);
+                          if (next.has(group.key)) next.delete(group.key); else next.add(group.key);
+                          return next;
+                        })}>{group.runs.length}</button>
+                      ) : null}
+                    </td>
+                    <td>{run.workflow_key ? <code>{run.workflow_key}</code> : <span className="muted">unknown</span>}</td>
                     <td>
                       <code title={run.workflow_digest}>
                         {run.workflow_digest.slice(0, 20)}…
@@ -209,10 +269,12 @@ export function RunsList() {
                     </td>
                   </tr>
                 );
-              })}
+              })})}
             </tbody>
           </table>
-        </div>
+          </div>
+          {nextCursor ? <button type="button" className="jobs-timeline__load-more" onClick={loadMore} disabled={loadingMore}>{loadingMore ? "Loading…" : "Load more"}</button> : null}
+        </>
       )}
     </section>
   );

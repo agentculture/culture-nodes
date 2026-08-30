@@ -116,6 +116,7 @@ func (s *Server) listWorkflowVersions(ctx context.Context, workflowKey string, l
 type runRow struct {
 	ID             string
 	WorkflowDigest string
+	WorkflowKey    string
 	Status         string
 	Input          json.RawMessage
 	Output         json.RawMessage
@@ -137,6 +138,7 @@ func (r runRow) out() RunOut {
 	out := RunOut{
 		ID:             r.ID,
 		WorkflowDigest: r.WorkflowDigest,
+		WorkflowKey:    r.WorkflowKey,
 		State:          r.Status,
 		Input:          nonNullJSON(r.Input),
 		Output:         nonNullJSON(r.Output),
@@ -175,6 +177,8 @@ const (
 type listRunsParams struct {
 	State        string
 	Subject      string
+	WorkflowKey  string
+	Cursor       *nodeRunCursor
 	Limit        int
 	UpdatedSince *time.Time
 	UpdatedUntil *time.Time
@@ -193,14 +197,14 @@ type listRunsParams struct {
 // query plan uses runs_namespace_updated_at_idx (migrations/0010) stays
 // proof about the literal query this function actually runs, not a
 // simplified stand-in.
-func (s *Server) listRuns(ctx context.Context, p listRunsParams) ([]RunOut, error) {
+func (s *Server) listRuns(ctx context.Context, p listRunsParams) ([]RunOut, string, error) {
 	var (
 		rows pgx.Rows
 		err  error
 	)
 	if p.Sort == sortUpdatedAt {
 		rows, err = s.Store.Pool().Query(ctx, `
-			SELECT r.id, wv.content_digest, r.status, r.input, r.output, r.created_at, r.updated_at, r.completed_at,
+			SELECT r.id, wv.content_digest, wv.workflow_key, r.status, r.input, r.output, r.created_at, r.updated_at, r.completed_at,
 			       r.name, r.description, r.category, COALESCE(r.subject,'')
 			FROM runs r JOIN workflow_versions wv ON wv.id = r.workflow_version_id
 			WHERE r.namespace_id = $1
@@ -208,12 +212,14 @@ func (s *Server) listRuns(ctx context.Context, p listRunsParams) ([]RunOut, erro
 			  AND ($3::timestamptz IS NULL OR r.updated_at >= $3)
 			  AND ($4::timestamptz IS NULL OR r.updated_at <= $4)
 			  AND ($5 = '' OR r.subject = $5)
+			  AND ($6 = '' OR wv.workflow_key = $6)
+			  AND ($7::timestamptz IS NULL OR (r.updated_at, r.id) < ($7, $8))
 			ORDER BY r.updated_at DESC, r.id DESC
-			LIMIT $6`,
-			s.NamespaceID, p.State, p.UpdatedSince, p.UpdatedUntil, p.Subject, p.Limit)
+			LIMIT $9`,
+			s.NamespaceID, p.State, p.UpdatedSince, p.UpdatedUntil, p.Subject, p.WorkflowKey, cursorTime(p.Cursor), cursorID(p.Cursor), p.Limit+1)
 	} else {
 		rows, err = s.Store.Pool().Query(ctx, `
-			SELECT r.id, wv.content_digest, r.status, r.input, r.output, r.created_at, r.updated_at, r.completed_at,
+			SELECT r.id, wv.content_digest, wv.workflow_key, r.status, r.input, r.output, r.created_at, r.updated_at, r.completed_at,
 			       r.name, r.description, r.category, COALESCE(r.subject,'')
 			FROM runs r JOIN workflow_versions wv ON wv.id = r.workflow_version_id
 			WHERE r.namespace_id = $1
@@ -221,12 +227,14 @@ func (s *Server) listRuns(ctx context.Context, p listRunsParams) ([]RunOut, erro
 			  AND ($3::timestamptz IS NULL OR r.updated_at >= $3)
 			  AND ($4::timestamptz IS NULL OR r.updated_at <= $4)
 			  AND ($5 = '' OR r.subject = $5)
+			  AND ($6 = '' OR wv.workflow_key = $6)
+			  AND ($7::timestamptz IS NULL OR (r.created_at, r.id) < ($7, $8))
 			ORDER BY r.created_at DESC, r.id DESC
-			LIMIT $6`,
-			s.NamespaceID, p.State, p.UpdatedSince, p.UpdatedUntil, p.Subject, p.Limit)
+			LIMIT $9`,
+			s.NamespaceID, p.State, p.UpdatedSince, p.UpdatedUntil, p.Subject, p.WorkflowKey, cursorTime(p.Cursor), cursorID(p.Cursor), p.Limit+1)
 	}
 	if err != nil {
-		return nil, fmt.Errorf("api: list runs: %w", err)
+		return nil, "", fmt.Errorf("api: list runs: %w", err)
 	}
 	defer rows.Close()
 
@@ -242,10 +250,10 @@ func (s *Server) listRuns(ctx context.Context, p listRunsParams) ([]RunOut, erro
 			name, description, category pgtype.Text
 		)
 		if err := rows.Scan(
-			&r.ID, &r.WorkflowDigest, &r.Status, &input, &output, &createdAt, &updatedAt, &completedAt,
+			&r.ID, &r.WorkflowDigest, &r.WorkflowKey, &r.Status, &input, &output, &createdAt, &updatedAt, &completedAt,
 			&name, &description, &category, &r.Subject,
 		); err != nil {
-			return nil, fmt.Errorf("api: list runs: scan: %w", err)
+			return nil, "", fmt.Errorf("api: list runs: scan: %w", err)
 		}
 		r.Input = json.RawMessage(input)
 		r.Output = json.RawMessage(output)
@@ -257,7 +265,33 @@ func (s *Server) listRuns(ctx context.Context, p listRunsParams) ([]RunOut, erro
 		r.Category = textOrEmpty(category)
 		out = append(out, r.out())
 	}
-	return out, rows.Err()
+	if err := rows.Err(); err != nil {
+		return nil, "", err
+	}
+	next := ""
+	if len(out) > p.Limit {
+		out = out[:p.Limit]
+		last := out[len(out)-1]
+		at := last.CreatedAt
+		if p.Sort == sortUpdatedAt {
+			at = last.UpdatedAt
+		}
+		next = encodeNodeRunCursor(nodeRunCursor{UpdatedAt: at, ID: last.ID})
+	}
+	return out, next, nil
+}
+
+func cursorTime(c *nodeRunCursor) *time.Time {
+	if c == nil {
+		return nil
+	}
+	return &c.UpdatedAt
+}
+func cursorID(c *nodeRunCursor) string {
+	if c == nil {
+		return ""
+	}
+	return c.ID
 }
 
 // runTokens returns every token of a run, oldest first.

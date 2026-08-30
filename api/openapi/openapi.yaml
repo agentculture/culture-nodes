@@ -497,7 +497,7 @@ paths:
     get:
       operationId: listRuns
       tags: [runs]
-      summary: List runs, optionally filtered by state and/or an updated_at window.
+      summary: List runs, optionally filtered by workflow key, state, and/or an updated_at window.
       description: >-
         Newest first by `sort` (task t11). `updated_since`/`updated_until`
         filter on `updated_at`, using `runs_namespace_updated_at_idx`
@@ -508,6 +508,11 @@ paths:
           description: Filter to runs currently in this state.
           schema:
             $ref: '#/components/schemas/RunState'
+        - name: workflow_key
+          in: query
+          description: Filter to runs pinned to a workflow with this exact key.
+          schema:
+            type: string
         - name: subject
           in: query
           description: Filter to runs whose persisted correlation subject matches exactly.
@@ -549,6 +554,11 @@ paths:
             minimum: 1
             maximum: 500
             default: 50
+        - name: cursor
+          in: query
+          description: Opaque keyset cursor from a previous response's next_cursor.
+          schema:
+            type: string
       responses:
         '200':
           description: A page of runs, newest first.
@@ -557,7 +567,7 @@ paths:
               schema:
                 $ref: '#/components/schemas/RunList'
         '400':
-          description: state, updated_since, updated_until, or sort is malformed.
+          description: state, updated_since, updated_until, sort, or cursor is malformed.
           content:
             application/json:
               schema:
@@ -3367,6 +3377,9 @@ components:
           type: string
         workflow_digest:
           type: string
+        workflow_key:
+          type: string
+          description: The stable key of the workflow version pinned by this run. Present in run listings.
         state:
           $ref: '#/components/schemas/RunState'
         input:
@@ -3706,6 +3719,9 @@ components:
           type: array
           items:
             $ref: '#/components/schemas/Run'
+        next_cursor:
+          type: string
+          description: Opaque keyset cursor for the next page; absent on the last page.
 
     Token:
       type: object

@@ -113,6 +113,56 @@ describe("RunsList loading/empty/error", () => {
 });
 
 describe("RunsList data + table", () => {
+
+  it("collapses 50 consecutive failed runs of one workflow and shows its workflow key", async () => {
+    const failedSweeps = Array.from({ length: 50 }, (_, index) => ({
+      ...BOARD_RUNS[0],
+      id: `sweep-${index + 1}`,
+      state: "failed" as const,
+      workflow_key: "pr-upkeep-sweep-cycle",
+    }));
+    mockListRuns.mockResolvedValue({ items: failedSweeps });
+    renderList();
+
+    const table = await screen.findByRole("table");
+    expect(within(table).getAllByRole("row")).toHaveLength(2);
+    expect(screen.getByText("pr-upkeep-sweep-cycle")).toBeInTheDocument();
+    expect(screen.getByText("50")).toBeInTheDocument();
+    expect(screen.queryByRole("link", { name: "sweep-2" })).not.toBeInTheDocument();
+
+    await userEvent.click(screen.getByRole("button", { name: /expand 50 failed runs/i }));
+    expect(screen.getByRole("link", { name: "sweep-2" })).toBeInTheDocument();
+  });
+
+  it("loads and appends the next page using next_cursor", async () => {
+    mockListRuns
+      .mockResolvedValueOnce({ items: [BOARD_RUNS[0]], next_cursor: "runs-page-2" })
+      .mockResolvedValueOnce({ items: [BOARD_RUNS[1]] });
+    renderList();
+    await screen.findByRole("link", { name: BOARD_RUNS[0].id });
+
+    await userEvent.click(screen.getByRole("button", { name: "Load more" }));
+
+    expect(await screen.findByRole("link", { name: BOARD_RUNS[1].id })).toBeInTheDocument();
+    expect(mockListRuns).toHaveBeenLastCalledWith(undefined, {
+      sort: "updated_at",
+      updated_since: undefined,
+      updated_until: undefined,
+      cursor: "runs-page-2",
+    });
+  });
+
+  it("refetches through the API when the state filter changes", async () => {
+    mockListRuns.mockResolvedValue({ items: BOARD_RUNS });
+    renderList();
+    await screen.findByRole("table");
+
+    await userEvent.selectOptions(screen.getByRole("combobox", { name: "State" }), "failed");
+
+    await waitFor(() => expect(mockListRuns).toHaveBeenCalledTimes(2));
+    expect(mockListRuns.mock.calls[1][1]).toMatchObject({ state: "failed" });
+  });
+
   it("sorts by updated_at, states the ordering contract, and links every run into /runs/:id", async () => {
     mockListRuns.mockResolvedValue({ items: BOARD_RUNS });
     renderList();

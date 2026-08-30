@@ -61,6 +61,7 @@ type WorkflowVersionListOut struct {
 type RunOut struct {
 	ID             string          `json:"id"`
 	WorkflowDigest string          `json:"workflow_digest"`
+	WorkflowKey    string          `json:"workflow_key,omitempty"`
 	State          string          `json:"state"`
 	Input          json.RawMessage `json:"input,omitempty"`
 	Output         json.RawMessage `json:"output,omitempty"`
@@ -225,7 +226,8 @@ func usageOut(r postgres.UsageRollup) *UsageOut {
 
 // RunListOut is components.schemas.RunList.
 type RunListOut struct {
-	Items []RunOut `json:"items"`
+	Items      []RunOut `json:"items"`
+	NextCursor string   `json:"next_cursor,omitempty"`
 }
 
 // TokenOut is one control token, as documented in components.schemas.Token.

@@ -476,6 +476,19 @@ const HumanTaskStatusPending = "pending"
 // pending -> decided, so a task cannot be decided twice.
 const HumanTaskStatusDecided = "decided"
 
+// HumanTaskStatusExpired is the status ExpireHumanTask moves a task to when
+// the world answered the question before the human did — today, a merge
+// approval whose pull request has already merged (task t11, reason
+// pr_merged). It is terminal in the same one-way sense as decided:
+// MarkHumanTaskExpired only ever flips pending -> expired.
+//
+// It is a separate status rather than `decided` with an unusual response
+// because the two are not the same fact and must not be counted together. A
+// decided task is a human exercising authority; an expired one is the engine
+// recording that nobody needs to. Collapsing them would make "how many
+// decisions did people actually make" unanswerable.
+const HumanTaskStatusExpired = "expired"
+
 // HumanTask is one human_tasks row (PRD §9.9,
 // migrations/0002_runtime_execution.sql): the durable record an approval
 // node's dispatch writes instead of an attempt. Request carries everything

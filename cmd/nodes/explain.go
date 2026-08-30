@@ -24,16 +24,17 @@ var explainCatalog = map[string]string{
 	"cli":          explainCLI,
 	"cli overview": explainCLI,
 
-	"serve":         explainServe,
-	"scheduler":     explainScheduler,
-	"worker":        explainWorker,
-	"all":           explainAll,
-	"validate":      explainValidate,
-	"run":           explainRun,
-	"plan-import":   explainPlanImport,
-	"chain-verify":  explainChainVerify,
-	"cutover-adopt": explainCutoverAdopt,
-	"inspect":       explainStubMode("inspect", "inspect ledger records for a run"),
+	"serve":            explainServe,
+	"scheduler":        explainScheduler,
+	"worker":           explainWorker,
+	"all":              explainAll,
+	"validate":         explainValidate,
+	"run":              explainRun,
+	"plan-import":      explainPlanImport,
+	"chain-verify":     explainChainVerify,
+	"cutover-adopt":    explainCutoverAdopt,
+	"expire-approvals": explainExpireApprovals,
+	"inspect":          explainStubMode("inspect", "inspect ledger records for a run"),
 }
 
 const explainRoot = `# nodes
@@ -273,3 +274,52 @@ func cmdExplain(args []string, jsonMode bool) (int, error) {
 	clifmt.EmitResult(markdown)
 	return clifmt.ExitSuccess, nil
 }
+
+const explainExpireApprovals = `# nodes expire-approvals
+
+One-shot backfill: expire pending human tasks whose subject pull request has
+already been merged, with reason ` + "`pr_merged`" + `, routing each run down its
+node's ` + "`expired`" + ` edge.
+
+The periodic consumer inside the scheduler
+(internal/humanfanout) already does this for every pull request the control
+plane holds a delivered ` + "`pr.merged`" + ` fact for. This verb exists for the ones
+it holds no fact for: the sweep only emits ` + "`pr.merged`" + ` when a merged pull
+request's branch or body carries a correlatable Jira key, so an approval for a
+PR without one waits forever with nothing able to notice.
+
+## Usage
+
+    nodes expire-approvals --namespace <id>
+    nodes expire-approvals --namespace <id> --pr agentculture/culture-nodes#236 --apply
+
+## Flags
+
+- ` + "`--database-url`" + ` — PostgreSQL connection URL (defaults to NODES_DATABASE_URL).
+- ` + "`--namespace`" + ` — the namespace to sweep, by id (defaults to NODES_NAMESPACE_ID).
+- ` + "`--pr owner/repo#number`" + ` — repeatable. Selects pending approvals whose run
+  subject is that pull request, WITHOUT requiring a delivered fact. The
+  recorded expiry detail says an operator named it, because that is the
+  provenance: a person's assertion, not a measured fact.
+- ` + "`--apply`" + ` — actually write. Without it this is a dry run that prints
+  exactly the task ids the same invocation would expire.
+- ` + "`--limit`" + ` — maximum number of tasks to select (default 200).
+- ` + "`--producer-actor-id`" + ` — the registered identity the derived expiry record
+  is written under (defaults to NODES_HUMAN_TASK_EXPIRY_ACTOR_ID, then
+  ` + "`human_task_expiry`" + `).
+
+## Registration obligation
+
+An expiry appends one ` + "`derived`" + ` ledger record, and
+ledger_records.origin_actor_id is a foreign key to actors(id). Register the
+producer BEFORE running this with --apply, or every expiry refuses:
+
+    deploy/prod/register-actor.sh --engine human_task_expiry
+
+## Exit codes
+
+0 when every selected task expired (or when the dry run completed), 1 when a
+task refused — an already-decided task, a terminal run, or a node whose
+contract declares no ` + "`expired`" + ` outcome. A refusal is a domain outcome: it is
+printed as a result on stdout, never as an error.
+`

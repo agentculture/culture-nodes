@@ -10,7 +10,7 @@ kind: Workflow
 
 metadata:
   name: pr-upkeep
-  version: 2.0.0
+  version: 2.1.0
   ownerRef: team/platform-ai
 
 spec:
@@ -161,4 +161,21 @@ spec:
     - from: human-merges-pr.approved
       to: finish
     - from: human-merges-pr.rejected
+      to: finish
+    # `expired` is the third outcome the compiler implies for every approval
+    # node, and until task t11 this graph declared no edge for it -- so an
+    # expiring approval would have failed the run with "no edge matched"
+    # instead of ending it. It has an edge now because the engine can reach
+    # that outcome on its own: when the sweep's pr.merged fact says the pull
+    # request this approval is FOR has already been merged, there is nothing
+    # left to approve, and the control plane expires the task with reason
+    # `pr_merged` (internal/engine/humantaskexpiry.go). 26 approvals on prod
+    # sat pending for exactly this reason with nothing able to close them.
+    #
+    # It routes to `finish`, the same end node an approval and a rejection
+    # reach: the run is over either way, and the DIFFERENCE is recorded on the
+    # human task (status `expired`, expiry_reason `pr_merged`) and in the
+    # run's ledger as a derived record -- not by inventing a second end node
+    # whose only job is to say which of three ways the run stopped.
+    - from: human-merges-pr.expired
       to: finish

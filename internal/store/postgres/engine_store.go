@@ -516,6 +516,11 @@ func (eq engineQueries) InsertHumanTask(ctx context.Context, task engine.HumanTa
 	if err != nil {
 		return "", fmt.Errorf("postgres: engine: InsertHumanTask: %w", err)
 	}
+	// Fan-out is hooked here rather than at each caller so no creation path
+	// can forget it (task t11); see humantaskfanout.go.
+	if _, err := eq.EnqueueHumanTaskFanOut(ctx, id); err != nil {
+		return "", err
+	}
 	return id, nil
 }
 

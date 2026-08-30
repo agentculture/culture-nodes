@@ -288,6 +288,14 @@ var authorityAllowlists = []struct {
 				"suggestion, and the record carries no field a caller could use to argue with the bound",
 			"internal/devague/deliverables.go": "engine-origin writer: pre-batch devague import derives delivery summaries",
 			"internal/preflight/records.go":    "engine-origin writer: the clarify-then-commit gate's briefing is a deterministic composition of advertised host state and the pinned task declaration (issue #67, task t14)",
+			"internal/engine/humantaskexpiry.go": "engine-origin writer (task t11, spec c6): expiring a human task " +
+				"whose subject pull request has already merged is a pure function of already-recorded facts -- the " +
+				"run's own input subject and the delivered pr.merged fact -- so the same inputs yield the same record " +
+				"every time (§10.4). It is emphatically NOT confirmed: DecideHumanTask's review transaction sits in " +
+				"the same package and stays the only path to a human's authority, and an engine that could confirm " +
+				"its own inference would be answering the question it was asked to ask. Nor proposed: nobody " +
+				"suggested this, a rule applied. The record names a REGISTERED producer identity " +
+				"(HumanTaskExpiryActorID), so an expiry with no accountable producer cannot be written at all",
 			"internal/store/postgres/remint.go": "engine-origin writer (plan t5, issues #194/#203): the decision record a minted " +
 				"trigger re-mint carries is a pure composition of already-recorded facts — the original delivered " +
 				"event id, the failed source run, and the attempt counter the bounded schedule itself maintains. Same " +

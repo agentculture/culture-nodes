@@ -58,6 +58,13 @@ const (
 	// task: who decided, what outcome, and which review recorded it as
 	// human authority in the ledger (PRD §9.9, §10.8).
 	TypeHumanTaskDecided = "dev.culture.nodes.human-task.decided"
+	// TypeHumanTaskExpired records ExpireHumanTask resolving a paused human
+	// task WITHOUT a human: the question stopped being open before anyone
+	// answered it (task t11 — the merge approval whose pull request had
+	// already merged). It is a distinct type from human-task.decided because
+	// a consumer counting decisions must not count these: no authority was
+	// exercised here, and the payload names the reason instead of a decider.
+	TypeHumanTaskExpired = "dev.culture.nodes.human-task.expired"
 
 	// TypeTokenSplit records one parallel-node fan-out (issue #43): the
 	// token group, its discovered cardinality, and the eligible edge list.

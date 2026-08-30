@@ -5,6 +5,33 @@ All notable changes to this project will be documented in this file.
 Format follows [Keep a Changelog](https://keepachangelog.com/). This project
 adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.45.0] - 2026-08-30
+
+### Added
+
+- Human-task fan-out: every pending human task is echoed as a Jira comment with its options and the absolute ticket page link, a transition to `Pending`, and a Discord post; stale approvals expire when their PR merges (`nodes expire-approvals` backfill) — migration 0051 (t11, SCRUM-6).
+- The ticket page shows and decides its pending human tasks and always links back to Jira (`pending_tasks`, `ticket_url` on `GET /v1alpha1/tickets/{id}`) (t18).
+- A Pending tab on `/decisions`: paginated, outcome buttons derived from `allowed_outcomes`, remembered decider id (t10).
+- Schedule backoff: identical consecutive failures suppress minting with a 30-minute probe and raise one `schedule_failing` human task — migration 0050 (t9, #253).
+- Deploy grant safety: `lanes/grant-check.sh` diffs published `environmentRefs` against runner grants before shipping; every grant rewrite is backed up; the Jira lane merges instead of truncating `runner-secrets.env` (t5, #253).
+- `NODES_UI_BASE_URL` on both hosts so page links are absolute (t16); freezing a ticket cancels (Done) or parks its runs with a recorded reason — migration 0052 (t17).
+- Runs API `workflow_key`/`state` filters; grouped consecutive failures with a count and Load more on the runs list; per-workflow recent runs on Node Graphs (t7, t8).
+- `POST /v1alpha1/namespaces` (t22, #186); code-node stdout readable via the attempt artifacts route (t15); the ticket description reaches intake and spec-chain actors (t13).
+- `docs/drive-from-jira.md`, `examples/jira-intake/README.md`, `examples/artifact-publish-consume`, three decision records (#129, #221, #171), the LAN/credential dependency audit for the OAuth cycle (t2, t4, t28).
+
+### Changed
+
+- A rejected runner result carries its reason onto the attempt, the event, `nodes-op run` and the run page (t6, #241); an attempt with an unknown start records NULL instead of `now()` — migration 0049 (t19, #116).
+- Sweep emission is keyed by finding id, so a push no longer mints a run per open finding (t12); `examples/pr-upkeep/README.md` describes the v2 graph (t21, #172).
+- `JIRA_TRANSITION_TARGET` accepts a comma-separated list (single value unchanged).
+- Site polish: route titles, header docs link and version readout, state chips, humanised timestamps, labelled controls, scroll affordances, a Tickets nav entry, a sample workflow on `/workflows/new` (t27).
+
+### Fixed
+
+- Cache hit rate above 100% on `/stats` (t8); runner completion notifications no longer return 405 (t14, #14); in-attempt gate reports no longer violate the attempts FK (t23, #178); mismatched `origin_actor_id` is refused at accept time without burning the dispatch budget (t24, #183); `triage-report.py` exits 1 on a malformed dispositions table (t20, #162); `NODES_DATABASE_URL` and `POSTGRES_PASSWORD` can no longer diverge silently and the settings lane stops writing contradictory facts (t25, #133, #135).
+
+### Fixed
+
 ## [0.44.1] - 2026-08-30
 
 ### Changed

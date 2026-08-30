@@ -2435,6 +2435,24 @@ button.timeline__node {
 
 .ticket-view h2 { margin-top: 2rem; }
 
+/* The ticket page's Decisions section (task t18). Its own list rather than
+   .ticket-rows: those rows are one-line label/state pairs laid out with
+   space-between, and a decision item is a stacked block — identity, then the
+   buttons under it — so the outcomes never end up flush right of a long run
+   id. */
+.ticket-decisions__list {
+  list-style: none;
+  padding: 0;
+  display: grid;
+  gap: 0.75rem;
+}
+
+.ticket-decisions__list > li {
+  display: grid;
+  gap: 0.6rem;
+  justify-items: start;
+}
+
 .ticket-freeze {
   border: 1px solid var(--nodes-warn);
   border-radius: var(--nodes-card-radius);

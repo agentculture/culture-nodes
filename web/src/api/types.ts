@@ -606,8 +606,30 @@ export interface TicketFreeze {
   banner: string;
 }
 
+/**
+ * One pending human task on a ticket (`components.schemas.TicketPendingTask`,
+ * task t18), shaped by the API for the surface that decides it.
+ *
+ * `ledger_version` is served WITH the task rather than fetched separately:
+ * `POST /human-tasks/{id}/decision` refuses unless it matches the run's
+ * current version, so the version submitted has to be the one the page the
+ * decider read was rendered from.
+ */
+export interface TicketPendingTask {
+  id: string;
+  run_id: string;
+  kind: string;
+  /** Exactly the outcomes the engine will accept. Empty = this task offers no choice. */
+  allowed_outcomes: string[];
+  decision_schema_ref?: string;
+  deadline?: string;
+  created_at: string;
+  ledger_version: number;
+}
+
 export interface TicketProjection {
   ticket_id: string;
+  /** Composed server-side from the Jira fact the ticket's runs carry (task t18). */
   ticket_url?: string;
   jira_url?: string;
   frozen?: boolean;
@@ -616,6 +638,8 @@ export interface TicketProjection {
   runs: Run[];
   ledger: Array<{ run_id: string; records: LedgerRecord[] }>;
   human_tasks: HumanTask[];
+  /** The decidable subset of human_tasks. Absent from a control plane older than t18. */
+  pending_tasks?: TicketPendingTask[];
   ticket_reports: TicketReport[];
   replies: TicketReply[];
   latest_frame?: TicketFrame;

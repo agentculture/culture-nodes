@@ -796,7 +796,13 @@ func (s *Server) listHumanTasks(ctx context.Context, status string, limit int) (
 		return nil, fmt.Errorf("api: list human tasks: %w", err)
 	}
 	defer rows.Close()
+	return scanHumanTasks(rows)
+}
 
+// scanHumanTasks drains rows selecting human_tasks' columns in the order
+// both readers above spell them. It is shared so the two queries cannot
+// disagree about the shape of the row they produce.
+func scanHumanTasks(rows pgx.Rows) ([]HumanTaskOut, error) {
 	out := make([]HumanTaskOut, 0)
 	for rows.Next() {
 		var (
@@ -826,6 +832,33 @@ func (s *Server) listHumanTasks(ctx context.Context, status string, limit int) (
 		out = append(out, t)
 	}
 	return out, rows.Err()
+}
+
+// listHumanTasksForRuns returns every human task belonging to one of runIDs,
+// newest first — the ticket projection's own reader (task t18).
+//
+// It exists rather than reusing listHumanTasks because that one answers
+// "the newest N tasks in the namespace", which the ticket page then filtered
+// down to its own runs. That is fine for a listing and wrong for a decision
+// surface: once the namespace holds more than the limit, a ticket's pending
+// task falls off the end of a query that never mentioned the ticket, and the
+// page a Jira comment sent the decider to shows nothing to decide. Scoping
+// the query to the ticket's runs makes the ceiling irrelevant.
+func (s *Server) listHumanTasksForRuns(ctx context.Context, runIDs []string) ([]HumanTaskOut, error) {
+	if len(runIDs) == 0 {
+		return []HumanTaskOut{}, nil
+	}
+	rows, err := s.Store.Pool().Query(ctx, `
+		SELECT id, run_id, node_run_id, kind, assigned_owner_id, status, request, response, created_at, resolved_at
+		FROM human_tasks
+		WHERE namespace_id = $1 AND run_id = ANY($2)
+		ORDER BY created_at DESC, id DESC`,
+		s.NamespaceID, runIDs)
+	if err != nil {
+		return nil, fmt.Errorf("api: list human tasks for runs: %w", err)
+	}
+	defer rows.Close()
+	return scanHumanTasks(rows)
 }
 
 // isNoRowsErr reports whether err is pgx's "no rows in result set"

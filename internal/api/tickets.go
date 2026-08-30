@@ -82,17 +82,32 @@ type TicketFreezeOut struct {
 }
 
 type TicketOut struct {
-	TicketID    string               `json:"ticket_id"`
-	Runs        []RunOut             `json:"runs"`
-	Ledger      []TicketRunLedgerOut `json:"ledger"`
-	HumanTasks  []HumanTaskOut       `json:"human_tasks"`
-	Reports     []TicketReportOut    `json:"ticket_reports"`
-	Replies     []TicketReplyOut     `json:"replies"`
-	LatestFrame *TicketFrameOut      `json:"latest_frame,omitempty"`
-	PageLink    *TicketPageLinkOut   `json:"page_link,omitempty"`
-	Frozen      bool                 `json:"frozen"`
-	MergedPR    json.RawMessage      `json:"merged_pr,omitempty"`
-	Freeze      *TicketFreezeOut     `json:"freeze,omitempty"`
+	TicketID string `json:"ticket_id"`
+	// TicketURL is where this ticket lives on the board, composed from the
+	// Jira work-item fact the ticket's own runs carry (task t18, spec
+	// c10). It is served rather than assembled in the browser so that the
+	// one place that knows the fact's shape is the one place that reads
+	// it — and so an operator on the page can always get back to Jira
+	// without knowing the site by heart. Empty when nothing this
+	// projection can see says where the ticket lives; the page then shows
+	// no link rather than a guessed one.
+	TicketURL string               `json:"ticket_url,omitempty"`
+	Runs      []RunOut             `json:"runs"`
+	Ledger    []TicketRunLedgerOut `json:"ledger"`
+	// HumanTasks is every human task on the ticket's runs, in whatever
+	// status. PendingTasks is the decidable subset, shaped for a decider —
+	// see TicketPendingTaskOut. Both are present because they answer
+	// different questions: the history of what was asked, and what is
+	// still being asked.
+	HumanTasks   []HumanTaskOut         `json:"human_tasks"`
+	PendingTasks []TicketPendingTaskOut `json:"pending_tasks"`
+	Reports      []TicketReportOut      `json:"ticket_reports"`
+	Replies      []TicketReplyOut       `json:"replies"`
+	LatestFrame  *TicketFrameOut        `json:"latest_frame,omitempty"`
+	PageLink     *TicketPageLinkOut     `json:"page_link,omitempty"`
+	Frozen       bool                   `json:"frozen"`
+	MergedPR     json.RawMessage        `json:"merged_pr,omitempty"`
+	Freeze       *TicketFreezeOut       `json:"freeze,omitempty"`
 }
 
 type postTicketReplyRequest struct {
@@ -287,10 +302,13 @@ func (s *Server) handleGetTicket(w http.ResponseWriter, r *http.Request) error {
 	if err != nil {
 		return internalError(err)
 	}
-	out := TicketOut{TicketID: ticketID, Runs: runs, Ledger: []TicketRunLedgerOut{}, HumanTasks: []HumanTaskOut{}, Reports: []TicketReportOut{}, Replies: []TicketReplyOut{}}
-	runSet := make(map[string]bool, len(runs))
+	out := TicketOut{TicketID: ticketID, Runs: runs, Ledger: []TicketRunLedgerOut{}, HumanTasks: []HumanTaskOut{}, PendingTasks: []TicketPendingTaskOut{}, Reports: []TicketReportOut{}, Replies: []TicketReplyOut{}}
+	// The board link is composed from the runs, which are the only rows in
+	// this projection that carry the Jira work-item fact (task t18).
+	out.TicketURL = ticketBackLink(ticketID, runs)
+	runIDs := make([]string, 0, len(runs))
 	for _, run := range runs {
-		runSet[run.ID] = true
+		runIDs = append(runIDs, run.ID)
 		records, err := s.Ledger.Records(r.Context(), run.ID)
 		if err != nil {
 			return internalError(err)
@@ -300,14 +318,23 @@ func (s *Server) handleGetTicket(w http.ResponseWriter, r *http.Request) error {
 		}
 		out.Ledger = append(out.Ledger, TicketRunLedgerOut{RunID: run.ID, Records: records})
 	}
-	tasks, err := s.listHumanTasks(r.Context(), "", 500)
+	// Scoped to this ticket's runs, not "the newest N in the namespace then
+	// filtered" (task t18): a decision surface may not lose a task to a
+	// limit set by unrelated traffic.
+	out.HumanTasks, err = s.listHumanTasksForRuns(r.Context(), runIDs)
 	if err != nil {
 		return internalError(err)
 	}
-	for _, task := range tasks {
-		if runSet[task.RunID] {
-			out.HumanTasks = append(out.HumanTasks, task)
-		}
+	// The ledger version each pending task carries is READ HERE, in the
+	// same request that renders the task — that is what makes the stale
+	// guard on POST /human-tasks/{id}/decision mean anything. A client
+	// that fetched the version separately would be attesting to a frame it
+	// never showed anyone.
+	out.PendingTasks, err = pendingTicketTasks(out.HumanTasks, func(runID string) (int64, error) {
+		return s.Ledger.LedgerVersion(r.Context(), runID)
+	})
+	if err != nil {
+		return internalError(err)
 	}
 	rows, err := s.Store.Pool().Query(r.Context(), `SELECT id,COALESCE(run_id,''),phase,status,payload,created_at
 		FROM jira_ticket_report_outbox WHERE namespace_id=$1 AND issue_key=$2 ORDER BY created_at,id`, s.NamespaceID, ticketID)
@@ -356,6 +383,13 @@ func (s *Server) handleGetTicket(w http.ResponseWriter, r *http.Request) error {
 		out.LatestFrame = &frame
 	} else if !isNoRowsErr(err) {
 		return internalError(err)
+	}
+	if out.TicketURL == "" {
+		// Second, never first: a posted frame is authored content and the
+		// work-item fact above is measured. It is consulted at all because
+		// a ticket whose runs predate the fact still has a page, and a
+		// page with no way back to the board is the defect c10 names.
+		out.TicketURL = ticketFrameBackLink(out.LatestFrame)
 	}
 	var frozenStatus pgtype.Text
 	err = s.Store.Pool().QueryRow(r.Context(), `SELECT merged_pr, ticket_status FROM ticket_freezes WHERE namespace_id=$1 AND ticket_id=$2`, s.NamespaceID, ticketID).Scan(&out.MergedPR, &frozenStatus)

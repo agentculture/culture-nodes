@@ -51,3 +51,21 @@ export function clearDecisionToken(): void {
     /* already effectively cleared */
   }
 }
+
+const ACTOR_KEY = "nodes.human-decision-actor-id";
+
+export function getDecisionActorID(): string {
+  try {
+    return window.localStorage.getItem(ACTOR_KEY) ?? "";
+  } catch {
+    return "";
+  }
+}
+
+export function setDecisionActorID(actorID: string): void {
+  try {
+    window.localStorage.setItem(ACTOR_KEY, actorID);
+  } catch {
+    /* persistence is best-effort; the controlled input still works */
+  }
+}

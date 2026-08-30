@@ -68,6 +68,7 @@ async function findRunCard(runId = CLAIM_RUN_ID) {
 
 beforeEach(() => {
   mockListPendingDecisions.mockReset();
+  window.localStorage.clear();
   window.sessionStorage.clear();
   resetAgentState();
 });
@@ -252,7 +253,7 @@ describe("Decisions submission", () => {
     // different frame, so it is a different review.
     await user.click(
       within(card).getByRole("checkbox", {
-        name: `Include ${PENDING_RUN.records[1].id}`,
+        name: `include this record in the verdict (${PENDING_RUN.records[1].id})`,
       }),
     );
     await user.type(

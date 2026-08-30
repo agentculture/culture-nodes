@@ -5,14 +5,20 @@ import {
   ApiError,
   commitReview,
   createReview,
+  decideHumanTask,
+  getLedger,
+  getRun,
+  listHumanTasks,
   listPendingDecisions,
 } from "../api/client";
 import {
   clearDecisionToken,
+  getDecisionActorID,
   getDecisionToken,
+  setDecisionActorID,
   setDecisionToken,
 } from "../api/decision-token";
-import type { PendingDecisionRun, ReviewCommitResult } from "../api/types";
+import type { HumanTask, PendingDecisionRun, ReviewCommitResult } from "../api/types";
 import AuthorityChip from "../components/AuthorityChip";
 import ErrorNotice from "../components/ErrorNotice";
 import { useSharedEvents, type SharedEventType } from "../hooks/useSharedEvents";
@@ -60,6 +66,163 @@ const REFRESH_DEBOUNCE_MS = 4000;
  * The list shrinks because the join changed, not because a record did.
  */
 export function Decisions() {
+  const [view, setView] = useState<"claims" | "pending">("claims");
+  return (
+    <>
+      <nav aria-label="Decision views" className="decisions-tabs">
+        <button type="button" onClick={() => setView("pending")} aria-pressed={view === "pending"}>
+          Pending
+        </button>
+        <button type="button" onClick={() => setView("claims")} aria-pressed={view === "claims"}>
+          Proposed claims
+        </button>
+      </nav>
+      {view === "pending" ? <PendingDecisionsView /> : <ProposedClaimsView />}
+    </>
+  );
+}
+
+const PAGE_SIZE = 25;
+
+function PendingDecisionsView() {
+  const [tasks, setTasks] = useState<HumanTask[] | null>(null);
+  const [claims, setClaims] = useState<PendingDecisionRun[]>([]);
+  const [versions, setVersions] = useState<Record<string, number>>({});
+  const [tickets, setTickets] = useState<Record<string, string>>({});
+  const [page, setPage] = useState(0);
+  const [actorID, setActorID] = useState(getDecisionActorID);
+  const [tokenHeld, setTokenHeld] = useState(getDecisionToken() !== null);
+  const [submitting, setSubmitting] = useState<string | null>(null);
+  const [error, setError] = useState<ApiError | null>(null);
+
+  useEffect(() => {
+    const controller = new AbortController();
+    Promise.all([
+      listHumanTasks(controller.signal, { status: "pending", limit: 500 }),
+      listPendingDecisions(controller.signal, { limit: 500 }),
+    ]).then(([taskList, claimList]) => {
+      if (controller.signal.aborted) return;
+      setTasks(taskList.items);
+      setClaims(claimList.items);
+      for (const group of claimList.items) {
+        setVersions((current) => ({ ...current, [group.run_id]: group.ledger_version }));
+      }
+      for (const runID of new Set(taskList.items.map((task) => task.run_id))) {
+        getLedger(runID, controller.signal).then((ledger) => {
+          if (!controller.signal.aborted)
+            setVersions((current) => ({ ...current, [runID]: ledger.ledger_version }));
+        }).catch(() => undefined);
+        getRun(runID, controller.signal).then((run) => {
+          const ticket = findTicketKey(run.run.input);
+          if (!controller.signal.aborted && ticket)
+            setTickets((current) => ({ ...current, [runID]: ticket }));
+        }).catch(() => undefined);
+      }
+    }).catch((cause: unknown) => {
+      if (!controller.signal.aborted) {
+        setTasks([]);
+        setError(cause instanceof ApiError ? cause : new ApiError(0, String(cause), "check the browser console"));
+      }
+    });
+    return () => controller.abort();
+  }, []);
+
+  const claimItems = claims.flatMap((group) =>
+    group.records.map((record) => ({ group, record })),
+  );
+  const total = (tasks?.length ?? 0) + claimItems.length;
+  const pageCount = Math.max(1, Math.ceil(total / PAGE_SIZE));
+  const combined = [
+    ...(tasks ?? []).map((task) => ({ type: "task" as const, task })),
+    ...claimItems.map((claim) => ({ type: "claim" as const, ...claim })),
+  ];
+  const visible = combined.slice(page * PAGE_SIZE, (page + 1) * PAGE_SIZE);
+  const grouped = new Map<string, typeof visible>();
+  for (const item of visible) {
+    const runID = item.type === "task" ? item.task.run_id : item.group.run_id;
+    grouped.set(runID, [...(grouped.get(runID) ?? []), item]);
+  }
+  const token = tokenHeld ? getDecisionToken() : null;
+
+  async function choose(task: HumanTask, outcome: string) {
+    const ledgerVersion = versions[task.run_id];
+    if (!token || !actorID.trim() || ledgerVersion === undefined) return;
+    setDecisionActorID(actorID.trim());
+    setSubmitting(task.id);
+    setError(null);
+    try {
+      await decideHumanTask(task.id, {
+        outcome,
+        decider_actor_id: actorID.trim(),
+        response: task.request.decision_schema_ref ? { outcome } : undefined,
+        expected_ledger_version: ledgerVersion,
+      }, token);
+      setTasks((current) => current?.filter((item) => item.id !== task.id) ?? []);
+    } catch (cause) {
+      setError(cause instanceof ApiError ? cause : new ApiError(0, String(cause), "check the browser console"));
+    } finally {
+      setSubmitting(null);
+    }
+  }
+
+  return (
+    <section className="view-rail decisions-view">
+      <h1>Pending decisions</h1>
+      <TokenPanel held={tokenHeld} onHold={(value) => { setDecisionToken(value); setTokenHeld(true); }} onClear={() => { clearDecisionToken(); setTokenHeld(false); }} />
+      <div className="inbox-card__field">
+        <label htmlFor="pending-decider-actor">Decider actor id</label>
+        <input id="pending-decider-actor" value={actorID} onChange={(event) => { setActorID(event.target.value); setDecisionActorID(event.target.value); }} />
+      </div>
+      {error ? <ErrorNotice error={error} /> : null}
+      {tasks === null ? <p className="muted">Loading pending decisions…</p> : total === 0 ? <p className="muted">Nothing is awaiting a decision.</p> : (
+        <>
+          <p className="muted">Page {page + 1} of {pageCount}</p>
+          {Array.from(grouped, ([runID, items]) => (
+            <section key={runID} data-run-id={runID}>
+              <h2>{tickets[runID] ? <>Ticket {tickets[runID]} · </> : null}Run <Link to={`/runs/${runID}`}>{runID}</Link></h2>
+              <ul className="decisions-list">
+                {items.map((item) => item.type === "task" ? (
+                  <li className="inbox-card" key={item.task.id} data-human-task-id={item.task.id} data-testid={`pending-task-${item.task.id}`}>
+                    <code>{item.task.id}</code> · {item.task.kind}
+                    {(item.task.request.allowed_outcomes ?? []).length === 0 ? <p className="muted">needs an outcome set</p> : (
+                      <div className="inbox-card__outcomes" aria-label={`Outcomes for ${item.task.id}`}>
+                        {(item.task.request.allowed_outcomes ?? []).map((outcome) => (
+                          <button key={outcome} type="button" className="author-workflow__button" disabled={!token || !actorID.trim() || versions[item.task.run_id] === undefined || submitting === item.task.id} onClick={() => void choose(item.task, outcome)}>{outcome}</button>
+                        ))}
+                      </div>
+                    )}
+                  </li>
+                ) : (
+                  <li className="inbox-card" key={item.record.id}>
+                    <label><input type="checkbox" defaultChecked /> include this record in the verdict</label>{" "}
+                    <code>{item.record.id}</code> · {item.record.record_type}
+                    <pre>{JSON.stringify(item.record.data, null, 2)}</pre>
+                  </li>
+                ))}
+              </ul>
+            </section>
+          ))}
+          <div>
+            <button type="button" disabled={page === 0} onClick={() => setPage((value) => value - 1)}>Previous page</button>{" "}
+            <button type="button" disabled={page + 1 >= pageCount} onClick={() => setPage((value) => value + 1)}>Next page</button>
+          </div>
+        </>
+      )}
+    </section>
+  );
+}
+
+function findTicketKey(input: unknown): string | null {
+  if (!input || typeof input !== "object") return null;
+  for (const [key, value] of Object.entries(input)) {
+    if (["ticket_key", "issue_key", "jira_key"].includes(key) && typeof value === "string") return value;
+    const nested = findTicketKey(value);
+    if (nested) return nested;
+  }
+  return null;
+}
+
+function ProposedClaimsView() {
   const [groups, setGroups] = useState<PendingDecisionRun[] | null>(null);
   const [recordCount, setRecordCount] = useState(0);
   // Decisions recorded in this sitting, kept at page level rather than on the
@@ -379,9 +542,9 @@ function RunDecisionCard({
                       : current.filter((id) => id !== record.id),
                   )
                 }
-                aria-label={`Include ${record.id}`}
+                aria-label={`include this record in the verdict (${record.id})`}
               />
-              <code>{record.id}</code> · {record.record_type} · from{" "}
+              include this record in the verdict · <code>{record.id}</code> · {record.record_type} · from{" "}
               {record.origin_actor_id ?? "an unnamed actor"} (
               {record.origin_kind})
             </label>

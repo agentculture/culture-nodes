@@ -183,7 +183,7 @@ func runOut(r engine.Run, usage postgres.UsageRollup, meta runMetadata) RunOut {
 //     ratio when nothing in scope reported any prompt tokens at all;
 //     omitted (nil) in that case. The denominator includes the cached
 //     tokens because every backend that reports cache telemetry at all
-//     reports cache reads ALONGSIDE input_tokens, not inside them (a codex
+//     reports cache reads ALONGSIDE input_tokens, not inside them (an adapter
 //     attempt's cached_input_tokens is a sibling of input_tokens, not a
 //     subset of it). Dividing by InputTokens alone therefore had no bound
 //     at 1.0 and rendered "588% cached" on real data (task t8, claim c8);

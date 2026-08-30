@@ -5,7 +5,7 @@
   "schema_version": 4,
   "status": "exported",
   "created": "2026-08-30T09:43:41Z",
-  "updated": "2026-08-30T11:00:20Z",
+  "updated": "2026-08-30T15:33:12Z",
   "targets": [
     {
       "id": "c1",
@@ -1131,6 +1131,14 @@
     {
       "id": "r7",
       "text": "r5 materialised at 10:54Z on 2026-08-30: both codex actors returned capacity_exhausted after 13 sessions in ~50 minutes (t8 and the t21 follow-up lost); the ChatGPT window resets at 15:03Z. Colleague's writer stalled 27 min with no output; the developer lane is auth-dead (#254) until an operator re-login. Wave 2 resumes on the first lane back.",
+      "kind": "unknown_nonblocking",
+      "task_id": null,
+      "resolved": false,
+      "resolution": ""
+    },
+    {
+      "id": "r8",
+      "text": "Discovered at the review-fix wave: the pr-upkeep sweep's fix node and an assigned developer package can run in the SAME engine-account checkout at the same time (same git identity; the developer session saw HEAD move under it and a file written then reverted by 'another session'). The sweep's Qodo-1 fix (18ee552) and the assigned finding-1 fix overlapped; the assigned package isolated itself in a worktree. Until checkouts are per-run (or the sweep's fix lane is paused while packages are assigned), operator-assigned work and sweep auto-fixes on the same PR can collide.",
       "kind": "unknown_nonblocking",
       "task_id": null,
       "resolved": false,

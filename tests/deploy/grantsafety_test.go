@@ -450,7 +450,7 @@ func TestGrantCheckPassesWhenEveryReachableRefIsGranted(t *testing.T) {
 		t.Fatalf("grant check refused a fully granted host (exit %d)\nstdout:\n%s\nstderr:\n%s",
 			code, stdout, stderr)
 	}
-	if after := readFileString(t, runnerSecretsPath(t, c, thorFake)); after != before {
+	if readFileString(t, runnerSecretsPath(t, c, thorFake)) != before {
 		t.Errorf("the grant check modified runner-secrets.env; it must be read-only")
 	}
 	if backups := backupsOf(t, runnerSecretsPath(t, c, thorFake)); len(backups) != 0 {

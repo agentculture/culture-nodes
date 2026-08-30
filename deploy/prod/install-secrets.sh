@@ -55,6 +55,12 @@ SCRIPT_DIR=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
 # runner-secrets.env and runner.env leave the same recoverable trail.
 # shellcheck source=deploy/prod/lanes/env-backup.sh
 . "$SCRIPT_DIR/lanes/env-backup.sh"
+# The add-if-absent deployment-settings lane (issue #124), in its own file since
+# task t25 pushed this script past the 1000-line source limit. Sourced here,
+# CALLED further down where the flow needs it — its body reads $PROD_ENV_MERGE,
+# $UI_BASE_URL and $CALLBACK_BASE_URL from this script at call time.
+# shellcheck source=deploy/prod/lanes/deployment-settings.sh
+. "$SCRIPT_DIR/lanes/deployment-settings.sh"
 
 THOR=${1:-thor}
 ORIN=${2:-orin}
@@ -88,6 +94,28 @@ fi
 # A trailing slash is what an operator types; the renderer trims it too, but a
 # normalised value is what the next reader of prod.env sees.
 UI_BASE_URL=${UI_BASE_URL%/}
+
+# --- the deployment's own addresses (task t25, issue #135) -----------------
+#
+# Two values the settings lane writes are facts about THIS deployment rather
+# than about this script, and both were literals inside the lane until now.
+#
+# NODES_CALLBACK_BASE_URL is the origin a bridge posts an attempt result back
+# to. Its `thor` is a CONTAINER-resolved name, not this script's ssh target --
+# compose.orin.yml resolves it through the extra_hosts entry it builds from
+# THOR_IP -- which is why it does NOT follow $THOR the way UI_BASE_URL above
+# does, and why an override is the only way to serve the api under another
+# name.
+#
+# NODES_COMPOSE_PROFILES is thor's profile list. deploy/prod/README's
+# external-database path tells an operator to remove `bundled-postgres` from it
+# by hand-editing prod.env on the host afterwards; that is an operator hand-turn
+# of exactly issue #124's shape, and a parameter removes the need for it.
+#
+# Both default to what this deployment uses today, so an operator who sets
+# neither gets a byte-identical prod.env.
+CALLBACK_BASE_URL=${NODES_CALLBACK_BASE_URL:-http://thor:18080}
+THOR_COMPOSE_PROFILES=${NODES_COMPOSE_PROFILES:-bundled-postgres,backup}
 
 # --- destructive-action confirmation protocol ------------------------------
 # Rotating a live secret is irreversible: the old value is gone, and every
@@ -208,6 +236,42 @@ gen() { openssl rand -hex 32; }
 # shellcheck disable=SC2016 # the expansions are deliberately remote
 PROD_ENV_MERGE='touch ~/.culture-nodes/prod.env; chmod 600 ~/.culture-nodes/prod.env; if [ -s ~/.culture-nodes/prod.env ] && [ -n "$(tail -c1 ~/.culture-nodes/prod.env)" ]; then echo >> ~/.culture-nodes/prod.env; fi; while IFS= read -r line; do k=${line%%=*}; [ -z "$k" ] && continue; tmp=~/.culture-nodes/prod.env.merge.$$; : > "$tmp"; chmod 600 "$tmp"; found=0; while IFS= read -r cur || [ -n "$cur" ]; do case "$cur" in "$k"=*) printf "%s\n" "$line" >> "$tmp"; found=1;; *) printf "%s\n" "$cur" >> "$tmp";; esac; done < ~/.culture-nodes/prod.env; [ "$found" = 1 ] || printf "%s\n" "$line" >> "$tmp"; mv "$tmp" ~/.culture-nodes/prod.env; done'
 
+# PROD_ENV_URL_CAPTURE / PROD_ENV_URL_REFRESH -- the rotation's other half
+# (task t25, issue #133).
+#
+# NODES_DATABASE_URL carries POSTGRES_PASSWORD inline. The settings lane below
+# composes it ON THE HOST, once, add-if-absent, and never revisits it -- so a
+# FORCE_PROD rotation used to replace POSTGRES_PASSWORD and leave the URL
+# holding the value the database no longer accepts. Both keys present, both
+# non-empty, deploy log clean: the api/worker/scheduler containers then fail
+# authentication on their NEXT restart, which is the same latency that made the
+# NODES_ACTOR_CLAUDE_TOKEN loss an 18-hour outage rather than a deploy failure.
+#
+# CAPTURE runs before the merge and remembers the pre-rotation password and the
+# URL beside it; REFRESH runs after it and rewrites the URL's password -- and
+# ONLY its password -- through the same shared merge. Both halves stay on the
+# host: neither value crosses the ssh channel, enters an argv, or is echoed.
+# Only key names are ever printed.
+#
+# The refresh is CONDITIONAL, and the condition is proof of authorship: the
+# URL's own password must be the value this rotation is replacing. On an
+# external-database host (deploy/prod/README's documented path) the URL carries
+# a password the provider issued while POSTGRES_PASSWORD is a bundled-database
+# credential nothing reads, so rewriting it would point the whole stack at a
+# credential no database has ever accepted -- turning the rotation of an unused
+# key into an outage. That case is REFUSED BY NAME on stderr instead, which is
+# also what an already-divergent pair gets; audit-credentials.sh then reports
+# the same pair at the end of the deploy.
+#
+# shellcheck disable=SC2016 # every expansion here is for the remote shell
+PROD_ENV_URL_CAPTURE='oldpw=; url=; if [ -e ~/.culture-nodes/prod.env ]; then while IFS= read -r cur || [ -n "$cur" ]; do case "$cur" in POSTGRES_PASSWORD=*) oldpw=${cur#*=} ;; NODES_DATABASE_URL=*) url=${cur#*=} ;; esac; done < ~/.culture-nodes/prod.env; fi'
+
+# The merge is SPLICED IN here at definition time rather than referenced as
+# $PROD_ENV_MERGE, which would expand on the remote side where it does not
+# exist. The loop therefore still has exactly one definition in this file.
+# shellcheck disable=SC2016 # every expansion here is for the remote shell
+PROD_ENV_URL_REFRESH='newpw=; while IFS= read -r cur || [ -n "$cur" ]; do case "$cur" in POSTGRES_PASSWORD=*) newpw=${cur#*=} ;; esac; done < ~/.culture-nodes/prod.env; urlpw=; prefix=; rest=; case "$url" in *@*) creds=${url%%@*}; rest=${url#*@}; case "$creds" in *://*:*) urlpw=${creds##*:}; prefix=${creds%:*} ;; esac ;; esac; if [ -z "$url" ] || [ "$newpw" = "$oldpw" ]; then :; elif [ -n "$oldpw" ] && [ "$urlpw" = "$oldpw" ]; then printf "NODES_DATABASE_URL=%s\n" "$prefix:$newpw@$rest" | { '"$PROD_ENV_MERGE"'; }; echo "refreshed NODES_DATABASE_URL on $HOST so it carries the rotated POSTGRES_PASSWORD"; else echo "REFUSED on $HOST: NODES_DATABASE_URL was left as it is, so it does NOT carry the rotated POSTGRES_PASSWORD. The password embedded in that URL is not the value this rotation replaced, so the URL names a database this script did not provision (the documented external-database path) or the two copies had already diverged. Rewriting it would point the stack at a credential no database accepts, which turns a rotation into an outage. deploy/prod/audit-credentials.sh reports the pair by name; correct the URL by hand, or remove it with deploy/prod/remove-secret.sh NODES_DATABASE_URL and re-run this script to have it composed again." >&2; fi'
+
 POSTGRES_PASSWORD=$(gen)
 MINIO_ROOT_PASSWORD=$(gen)
 NODES_HUMAN_DECISION_TOKEN_SECRET=$(gen)
@@ -232,11 +296,13 @@ of prod.env is merged around, not overwritten.
   invalidated; a bridge holding one mid-flight cannot complete its attempt." \
       || return 1
   fi
-  # FORCE is evaluated locally and prefixed into the remote command —
+  # FORCE and HOST are evaluated locally and prefixed into the remote command —
   # ssh does not forward env vars, so a bare ${FORCE:-0} inside the
-  # single-quoted remote script would always read 0 on the target.
+  # single-quoted remote script would always read 0 on the target, and the
+  # URL-refresh messages below would name no host. Both are non-secret (a 0/1
+  # gate and an ssh target), which is why they may ride the argv.
   # shellcheck disable=SC2029 # the remote path is deliberately remote
-  printf '%s\n' "$content" | ssh "$host" "FORCE=${FORCE_PROD:-0}; "'umask 077; mkdir -p ~/.culture-nodes; if [ -e ~/.culture-nodes/prod.env ] && [ "$FORCE" != "1" ]; then echo "keeping existing prod.env (set FORCE_PROD=1 to rotate)" >&2; exit 3; fi; '"$PROD_ENV_MERGE" || rc=$?
+  printf '%s\n' "$content" | ssh "$host" "FORCE=${FORCE_PROD:-0}; HOST='$host'; "'umask 077; mkdir -p ~/.culture-nodes; if [ -e ~/.culture-nodes/prod.env ] && [ "$FORCE" != "1" ]; then echo "keeping existing prod.env (set FORCE_PROD=1 to rotate)" >&2; exit 3; fi; '"$PROD_ENV_URL_CAPTURE; $PROD_ENV_MERGE; $PROD_ENV_URL_REFRESH" || rc=$?
   # exit 3 is the keep-existing refusal — a re-run on a provisioned host
   # must continue to the later lanes (codex tokens), not abort here.
   if [ "$rc" -eq 3 ]; then echo "kept existing prod.env on $host"; return 0; fi
@@ -268,165 +334,6 @@ NODES_RUNNER_SECRET=${NODES_RUNNER_SECRET_THOR}"
 install_env "$ORIN" "$common
 NODES_RUNNER_SECRET=${NODES_RUNNER_SECRET_ORIN}"
 
-# --- deployment settings, add-if-absent (issue #124) -----------------------
-#
-# The non-secret half of prod.env. This lane runs UNGUARDED and mints nothing:
-# every value below is a deployment setting, so delivering one to an
-# already-provisioned host must not require FORCE_PROD=1 and must not rotate a
-# live credential to do it. `./install-secrets.sh` with nothing set is the
-# whole answer to "compose says a variable is missing on a host I already
-# installed".
-#
-# ADD-IF-ABSENT, deliberately asymmetric: a key prod.env does not have is
-# written, a key it has is left alone however wrong it is. deploy/prod/README's
-# "Bundled or external PostgreSQL" section tells an operator to point the stack
-# at an external database by hand-editing NODES_DATABASE_URL and
-# COMPOSE_PROFILES on the host; a lane that re-asserted its own values every
-# run would silently revert that documented choice on the next deploy and bring
-# the stack back up against the bundled database having reported nothing.
-# The cost is stated in the README too: correcting a wrong value is
-# remove-secret.sh followed by a re-run, not a re-run.
-#
-# The surviving keys go through the ONE shared $PROD_ENV_MERGE — no second
-# copy of the merge loop. The copies had already drifted once (only one of them
-# normalised a missing trailing newline), and tests/deploy/prodenvmerge_test.go
-# pins the loop to a single definition.
-install_deployment_settings() { # host, database-host, compose-profiles ("" = none)
-  local host=$1 db_host=$2 profiles=$3
-  # HOST/DB_HOST/PROFILES/UI_BASE_URL are prefixed into the remote command
-  # exactly the way FORCE is in install_env — ssh forwards no environment, so a
-  # bare $HOST inside the single-quoted body would be empty on the target. All
-  # four are non-secret by construction (an ssh target, a database hostname, a
-  # profile list, a page origin), which is why they may ride the argv at all.
-  # POSTGRES_PASSWORD may not, and never does: it is read on the far side and
-  # never comes back.
-  # shellcheck disable=SC2029,SC2016 # both are deliberately remote: the prefix
-  # is expanded here on purpose, the body is expanded on the target on purpose
-  ssh "$host" "HOST='$host'; DB_HOST='$db_host'; PROFILES='$profiles'; UI_BASE_URL='$UI_BASE_URL'; "'
-set -eu
-umask 077
-mkdir -p ~/.culture-nodes
-touch ~/.culture-nodes/prod.env
-chmod 600 ~/.culture-nodes/prod.env
-
-# Both readers match with a QUOTED case pattern and no delimiter anywhere, for
-# the same reason PROD_ENV_MERGE stopped using sed: a value carrying the s///
-# delimiter ends the expression early and the key is skipped in silence. A
-# quoted case pattern is literal, so no key and no value can collide with it.
-env_has() {
-  while IFS= read -r cur || [ -n "$cur" ]; do
-    case "$cur" in "$1"=*) return 0 ;; esac
-  done < ~/.culture-nodes/prod.env
-  return 1
-}
-env_get() {
-  v=
-  while IFS= read -r cur || [ -n "$cur" ]; do
-    case "$cur" in "$1"=*) v=${cur#*=} ;; esac
-  done < ~/.culture-nodes/prod.env
-  printf %s "$v"
-}
-
-# sslmode is resolved HERE and written into the URL as a LITERAL value, never
-# as a ${DATABASE_SSLMODE} placeholder. Found by probe: docker compose
-# interpolates env-file values recursively, but only backwards — a placeholder
-# resolves only while the key it names happens to sit EARLIER in the file. In
-# the other order compose resolves sslmode= to the empty string and reports no
-# error at all; libpq then falls back to its own default, the stack connects,
-# and nobody learns the TLS mode was never applied. An add-if-absent lane
-# appends in whatever order the host is missing keys, so it can produce exactly
-# that file. Resolving on the host removes the ordering dependency instead of
-# documenting it.
-sslmode=$(env_get DATABASE_SSLMODE)
-# A present-but-empty DATABASE_SSLMODE takes the same default as an absent one:
-# sslmode= in a URL is the exact string this lane exists never to write.
-[ -n "$sslmode" ] || sslmode=disable
-
-settings="POSTGRES_USER=nodes
-POSTGRES_DB=nodes
-DATABASE_SSLMODE=$sslmode
-MINIO_ROOT_USER=nodesroot
-NODES_CALLBACK_BASE_URL=http://thor:18080
-NODES_UI_BASE_URL=$UI_BASE_URL"
-# COMPOSE_PROFILES is thor-only: it starts the bundled database and the backup
-# loop, both of which live in compose.thor.yml. orin is only a worker against
-# the database on thor and has no profile of its own to select.
-if [ -n "$PROFILES" ]; then
-  settings="$settings
-COMPOSE_PROFILES=$PROFILES"
-fi
-
-# NODES_DATABASE_URL is composed ON THE HOST, from the POSTGRES_PASSWORD line
-# already in this file, and only when the key is missing.
-#
-# It cannot be composed locally: the password this script generated is NOT the
-# live one on a provisioned host — the guarded lane above kept the existing
-# file — so a locally composed URL would carry a password the database does not
-# accept, and the stack would fail auth on the next restart with a prod.env
-# that looks correct. Reading it here also keeps it under the same discipline
-# as every other secret in this file: it crosses no wire, enters no argv, and
-# is never echoed. Only the KEY NAME is ever printed.
-if ! env_has NODES_DATABASE_URL; then
-  pw=$(env_get POSTGRES_PASSWORD)
-  if [ -n "$pw" ]; then
-    settings="$settings
-NODES_DATABASE_URL=postgres://nodes:$pw@$DB_HOST:5432/nodes?sslmode=$sslmode"
-  else
-    # Refused BY NAME. A URL with an empty password authenticates as nobody
-    # while reading, to anything that greps for the key, as configured — the
-    # same class of quiet wrongness as the empty sslmode above.
-    echo "REFUSED on $HOST: prod.env carries no POSTGRES_PASSWORD, so NODES_DATABASE_URL cannot be composed from it. Refusing rather than writing a URL with an empty password. Install the generated population first (a host with no prod.env gets it from the guarded lane of this script; FORCE_PROD=1 rotates an existing one), then re-run." >&2
-  fi
-fi
-
-# NODES_CODE_RUNNER_NAME is delivered ONLY to a host that already carries
-# NODES_CODE_RUNNER_REVISION and NODES_CODE_RUNNER_ACTOR_ID.
-#
-# cmd/nodes/worker.go refuses a PARTIAL tuple — one set, another empty — because
-# that combination attributes a code operation to a runner nobody can identify.
-# Setting NONE of the three is legitimate and means "this deployment runs no
-# code nodes". Both compose files used to hardcode the name, which made that
-# legitimate state unreachable: the worker always saw exactly one of the three
-# set. thor survived only because someone had hand-installed the other two;
-# orin had none, so the first deploy that brought it to a revision carrying the
-# check left it crash-looping after 46 hours of running fine without them.
-#
-# The condition cannot live in compose — it has no conditionals — so it lives
-# here, where prod.env is already being read. This lane does not INVENT the
-# other two: a revision and a registered actor row are facts about a
-# deployment, not defaults, and guessing either would attribute evidence to a
-# runner that never produced it.
-if env_has NODES_CODE_RUNNER_REVISION && env_has NODES_CODE_RUNNER_ACTOR_ID; then
-  settings="$settings
-NODES_CODE_RUNNER_NAME=headspace"
-fi
-
-# Filter to the keys this host does NOT already have. What survives is what
-# gets merged, and what gets merged is what is reported — a lane that printed
-# the same success line either way would be a second place claiming success
-# without evidence.
-pending=
-added=
-while IFS= read -r kv; do
-  [ -n "$kv" ] || continue
-  key=${kv%%=*}
-  if env_has "$key"; then continue; fi
-  if [ -z "$pending" ]; then pending=$kv; else pending="$pending
-$kv"; fi
-  added="$added $key"
-done <<SETTINGS
-$settings
-SETTINGS
-
-if [ -n "$pending" ]; then
-  printf "%s\n" "$pending" | { '"$PROD_ENV_MERGE"'; }
-  echo "added deployment settings to prod.env on $HOST:$added"
-else
-  echo "no deployment settings to add on $HOST — prod.env already carries all of them (this lane never replaces a value: correct a wrong one with remove-secret.sh, then re-run)"
-fi
-'
-}
-
 # Announced before the lane runs, because the two branches at the top of this
 # file (exported versus defaulted) produce
 # identically-shaped prod.env lines and only one of them is reachable from
@@ -440,7 +347,7 @@ echo "ticket page links: NODES_UI_BASE_URL=$UI_BASE_URL ($UI_BASE_URL_SOURCE) �
 # extra_hosts entry from THOR_IP (containers do not inherit /etc/hosts). These
 # are container-resolved database hostnames, NOT this script's ssh targets —
 # which is why they are literals here and not "$THOR"/"$ORIN".
-install_deployment_settings "$THOR" postgres bundled-postgres,backup
+install_deployment_settings "$THOR" postgres "$THOR_COMPOSE_PROFILES"
 install_deployment_settings "$ORIN" thor ""
 
 # --- dial-in credential issuance bearer (issue #111's dial-in half) --------

@@ -8,6 +8,7 @@
 package deploytest
 
 import (
+	"path/filepath"
 	"strings"
 	"testing"
 )
@@ -375,4 +376,191 @@ func TestCodeRunnerNameFollowsTheRestOfItsTuple(t *testing.T) {
 		}
 	}
 	orin.assertNoDuplicateKeys(t, c.prodEnvPath(t, "orin"))
+}
+
+// --- issue #135: the lane's readers, and its two remaining literals --------
+
+// TestEnvHasAgreesWithEnvGetOnTheWinningAssignment pins the first half of
+// #135: the lane's two prod.env readers disagreed about the same file.
+//
+// env_get is LAST-WINS -- it scans to the end and keeps the final assignment,
+// which is what docker compose's own env_file reader does. env_has returned on
+// the FIRST line whose key matched and called the key present regardless of
+// what it held, so it could answer from a line no reader uses. Two shapes make
+// that observable, and prod.env is hand-edited in practice (that is how half
+// its keys got there), so both are reachable:
+//
+//   - a key whose only assignment is empty: `KEY=`;
+//   - a key assigned twice, where the winning (last) line is empty.
+//
+// The consequence is not cosmetic. The code-runner tuple is the case that
+// already cost an outage: cmd/nodes/worker.go refuses a PARTIAL tuple -- one
+// key set while another is empty -- so a lane that reads an empty
+// NODES_CODE_RUNNER_ACTOR_ID as "present" writes NODES_CODE_RUNNER_NAME beside
+// it and builds exactly the combination the worker crash-loops on.
+func TestEnvHasAgreesWithEnvGetOnTheWinningAssignment(t *testing.T) {
+	const revision = "68024ac9a00cf3613a93c89ea251bde5b3cdfe32"
+
+	c := newFakeCluster(t)
+	// thor: the tuple's actor id is present-but-empty.
+	c.seedProdEnv(t, "thor", accretedProdEnv+
+		"NODES_CODE_RUNNER_REVISION="+revision+"\n"+
+		"NODES_CODE_RUNNER_ACTOR_ID=\n")
+	// orin: assigned twice, and the assignment that wins is the empty one --
+	// the shape a hand edit leaves when a line is blanked instead of deleted.
+	c.seedProdEnv(t, "orin", accretedProdEnv+
+		"NODES_CODE_RUNNER_REVISION="+revision+"\n"+
+		"NODES_CODE_RUNNER_ACTOR_ID=actor_code_runner_ROW123\n"+
+		"NODES_CODE_RUNNER_ACTOR_ID=\n")
+
+	out, code := c.run(t, installSecretsPath(t), []string{"thor", "orin"})
+	if code != 0 {
+		t.Fatalf("run exited %d; output:\n%s", code, out)
+	}
+
+	for _, host := range []string{"thor", "orin"} {
+		env := readEnvFile(t, c.prodEnvPath(t, host))
+		if got, present := env.values["NODES_CODE_RUNNER_NAME"]; present {
+			t.Errorf("%s: NODES_CODE_RUNNER_NAME = %q was written beside an ACTOR_ID whose winning assignment is empty; that is the PARTIAL tuple cmd/nodes/worker.go refuses at startup. env_has answered from a line no last-wins reader uses", host, got)
+		}
+	}
+}
+
+// TestNoDatabaseSslmodeIsWrittenBesideAURLThatAlreadyCarriesOne pins the
+// second half of #135.
+//
+// DATABASE_SSLMODE has exactly one reader: this lane, when it FIRST composes
+// NODES_DATABASE_URL. deploy/prod/README says so in as many words -- no compose
+// service and no Go code reads it, and on a host that already has a URL,
+// editing it "changes nothing and reports nothing".
+//
+// So writing it onto a host whose URL already names an sslmode adds a second
+// copy of a TLS decision that nothing consults and that can contradict the one
+// that is actually in force. The external-database host makes the contradiction
+// concrete: its URL says `sslmode=verify-full` and the lane's default would
+// write `DATABASE_SSLMODE=disable` next to it, so prod.env states two different
+// TLS modes and the reader has no way to know which one the stack uses. That is
+// the same two-copies-diverge shape as #133, arriving from the settings side.
+func TestNoDatabaseSslmodeIsWrittenBesideAURLThatAlreadyCarriesOne(t *testing.T) {
+	const externalURL = "postgres://nodes:provider-issued-password@db.example.net:5432/nodes?sslmode=verify-full"
+
+	c := newFakeCluster(t)
+	for _, host := range []string{"thor", "orin"} {
+		seed := accretedProdEnv + "NODES_DATABASE_URL=" + externalURL + "\n"
+		if strings.Contains(seed, "DATABASE_SSLMODE") {
+			t.Fatal("the seed already carries DATABASE_SSLMODE; there is nothing for the lane to add and this test proves nothing")
+		}
+		c.seedProdEnv(t, host, seed)
+	}
+
+	out, code := c.run(t, installSecretsPath(t), []string{"thor", "orin"})
+	if code != 0 {
+		t.Fatalf("run exited %d; output:\n%s", code, out)
+	}
+
+	for _, host := range []string{"thor", "orin"} {
+		env := readEnvFile(t, c.prodEnvPath(t, host))
+		if got, present := env.values["DATABASE_SSLMODE"]; present {
+			t.Errorf("%s: DATABASE_SSLMODE = %q was written beside a URL that already names sslmode=verify-full; nothing reads it, and prod.env now states two different TLS modes with no way to tell which is in force", host, got)
+		}
+		if got := env.values["NODES_DATABASE_URL"]; got != externalURL {
+			t.Errorf("%s: NODES_DATABASE_URL = %q, want the operator's own %q", host, got, externalURL)
+		}
+	}
+}
+
+// TestTheCallbackOriginAndComposeProfilesAreParameters pins the third half of
+// #135: the lane's two remaining literals become inputs with today's values as
+// their defaults.
+//
+// `http://thor:18080` and `bundled-postgres,backup` are facts about THIS
+// deployment, not about the script: a second control-plane host, or one whose
+// containers reach the api under another name, needs a different callback
+// origin, and a deployment on an external database needs a profile list without
+// `bundled-postgres`. Both were reachable only by editing the script or by
+// hand-editing prod.env on the host afterwards -- and the second is precisely
+// the operator hand-turn issue #124 was about.
+//
+// The defaults are load-bearing in the other direction: an operator who sets
+// nothing must get byte-identical output, which is what the sibling tests in
+// this file already assert. This one asserts the override reaches the file.
+func TestTheCallbackOriginAndComposeProfilesAreParameters(t *testing.T) {
+	const callbackOrigin = "https://nodes.example.net"
+	const profiles = "backup"
+
+	c := newFakeCluster(t)
+	for _, host := range []string{"thor", "orin"} {
+		c.seedProdEnv(t, host, accretedProdEnv)
+	}
+
+	out, code := c.run(t, installSecretsPath(t), []string{"thor", "orin"},
+		"NODES_CALLBACK_BASE_URL="+callbackOrigin,
+		"NODES_COMPOSE_PROFILES="+profiles)
+	if code != 0 {
+		t.Fatalf("run exited %d; output:\n%s", code, out)
+	}
+
+	// accretedProdEnv already carries NODES_CALLBACK_BASE_URL, and this lane
+	// never replaces a value it finds -- so the override is asserted on a host
+	// state that does NOT have the key, which is the state it is written in.
+	fresh := newFakeCluster(t)
+	fresh.hostHome(t, "thor")
+	fresh.hostHome(t, "orin")
+	out, code = fresh.run(t, installSecretsPath(t), []string{"thor", "orin"},
+		"NODES_CALLBACK_BASE_URL="+callbackOrigin,
+		"NODES_COMPOSE_PROFILES="+profiles)
+	if code != 0 {
+		t.Fatalf("fresh install exited %d; output:\n%s", code, out)
+	}
+	for _, host := range []string{"thor", "orin"} {
+		env := readEnvFile(t, fresh.prodEnvPath(t, host))
+		if got := env.values["NODES_CALLBACK_BASE_URL"]; got != callbackOrigin {
+			t.Errorf("%s: NODES_CALLBACK_BASE_URL = %q, want the operator's %q; the origin is a fact about the deployment, not about the script", host, got, callbackOrigin)
+		}
+	}
+	if got := readEnvFile(t, fresh.prodEnvPath(t, "thor")).values["COMPOSE_PROFILES"]; got != profiles {
+		t.Errorf("thor: COMPOSE_PROFILES = %q, want the operator's %q; a deployment on an external database must be able to drop bundled-postgres without editing this script", got, profiles)
+	}
+	// orin still selects no profile of its own: it runs a worker and has no
+	// bundled service to start. The parameter is thor's, not both hosts'.
+	if got, present := readEnvFile(t, fresh.prodEnvPath(t, "orin")).values["COMPOSE_PROFILES"]; present {
+		t.Errorf("orin: COMPOSE_PROFILES = %q was written; orin is a worker against the database on thor and has no profile of its own", got)
+	}
+}
+
+// TestTheDeploymentSettingsDefaultsAreParametersWithOneCopyEach is the
+// source-text half of the same criterion. The behavioural test above passes as
+// long as an override wins; this one is what stops either literal surviving as
+// a second, unreachable copy of the same value somewhere else in the script.
+func TestTheDeploymentSettingsDefaultsAreParametersWithOneCopyEach(t *testing.T) {
+	script := readInstallSecrets(t)
+	for _, d := range []struct{ literal, parameter string }{
+		{"http://thor:18080", "NODES_CALLBACK_BASE_URL"},
+		{"bundled-postgres,backup", "NODES_COMPOSE_PROFILES"},
+	} {
+		if want := "${" + d.parameter + ":-" + d.literal + "}"; !strings.Contains(script, want) {
+			t.Errorf("install-secrets.sh does not read %s with %q as its default (want %s); the value is a fact about this deployment and belongs in a parameter", d.parameter, d.literal, want)
+		}
+		// Exactly once, so an operator reading the script finds one answer to
+		// "what does this deployment use" — and so a later edit cannot move the
+		// parameter while a stale literal keeps working somewhere else.
+		if count := strings.Count(script, d.literal); count != 1 {
+			t.Errorf("install-secrets.sh mentions %q %d time(s), want exactly 1 (the parameter's default); copies drift", d.literal, count)
+		}
+	}
+	// The lane itself moved to its own file when this script crossed the
+	// 1000-line source limit; the literals must not have followed it there.
+	lane := readDeploymentSettingsLane(t)
+	for _, literal := range []string{"http://thor:18080", "bundled-postgres,backup"} {
+		if strings.Contains(lane, literal) {
+			t.Errorf("deploy/prod/lanes/deployment-settings.sh still contains the literal %q; it reaches the lane as a parameter", literal)
+		}
+	}
+}
+
+// readDeploymentSettingsLane reads the sourced lane file beside
+// install-secrets.sh.
+func readDeploymentSettingsLane(t *testing.T) string {
+	t.Helper()
+	return readFileString(t, filepath.Join(filepath.Dir(installSecretsPath(t)), "lanes", "deployment-settings.sh"))
 }

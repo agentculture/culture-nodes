@@ -43,9 +43,25 @@ host, change the URL itself: `remove-secret.sh NODES_DATABASE_URL --yes <host>`
 with the new `DATABASE_SSLMODE` in place, then re-run `install-secrets.sh` — or
 edit the URL by hand, which the external-database path already expects.
 
+`DATABASE_SSLMODE` is delivered **only where it can still be used** — to a
+host whose `NODES_DATABASE_URL` does not already name an `sslmode` (task t25,
+issue #135). Writing it beside a URL that does would add a second copy of a TLS
+decision nothing consults and that can contradict the one in force.
+
+Two values the settings lane writes are facts about *this* deployment rather
+than about the script, and both are parameters with today's values as their
+defaults, so setting neither produces a byte-identical `prod.env`:
+
+| variable | default | what it decides |
+|---|---|---|
+| `NODES_CALLBACK_BASE_URL` | `http://thor:18080` | the origin a bridge posts an attempt result back to. Its `thor` is a **container-resolved** name (compose.orin.yml maps it through `extra_hosts` from `THOR_IP`), not an ssh target — which is why it does not follow the host arguments the way `NODES_UI_BASE_URL` does |
+| `NODES_COMPOSE_PROFILES` | `bundled-postgres,backup` | thor's profile list. Setting it is the supported way to deploy against an external database without hand-editing `prod.env` on the host afterwards |
+
 To use an external database, edit `prod.env` on each host: set the same
 provider URL in `NODES_DATABASE_URL` (using the provider-required sslmode),
-remove `bundled-postgres` from `COMPOSE_PROFILES`, and keep `backup` only if
+remove `bundled-postgres` from `COMPOSE_PROFILES` (or deploy with
+`NODES_COMPOSE_PROFILES=backup` set, which writes the shorter list on a host
+that has none yet), and keep `backup` only if
 that external database should be dumped to thor's configured backup
 directory. The backup service runs `pg_dump "$NODES_DATABASE_URL"`, so it
 cannot silently continue dumping an unused local database. Removing
@@ -200,6 +216,35 @@ so the audit reports key **names** only and no credential reaches an argv or
 a log line. `tests/deploy/credentialaudit_test.go` runs the real script
 against a stub `ssh` under a per-host `HOME` and pins all of it, including
 the fixture that is missing one required key.
+
+It also makes **one comparison** (task t25, issue #133): `NODES_DATABASE_URL`
+carries `POSTGRES_PASSWORD` inline, so those two keys are two copies of one
+fact, and every other check here passes on a `prod.env` where they disagree —
+both are present, both are non-empty, and the containers keep working on the
+credentials they already hold until they restart. The audit reports the pair
+**by name** and fails, on a line that says on every run whether the comparison
+ran:
+
+```text
+    database url: the password in NODES_DATABASE_URL does NOT match POSTGRES_PASSWORD
+```
+
+Both values are compared **on the host** and only the verdict word crosses the
+ssh channel, so neither password is printed or argv'd here either. The
+comparison is skipped, and says so, when the URL embeds no password, and when
+`COMPOSE_PROFILES` is set and does **not** list `bundled-postgres` — the
+external-database switch below, where `POSTGRES_PASSWORD` is a bundled-database
+credential nothing reads and a difference is the documented state. A host
+running an external database with no `COMPOSE_PROFILES` line at all (orin's
+default) has no way to say so; give it one (`COMPOSE_PROFILES=backup`, or the
+empty list) if you move it off the bundled database.
+
+The other half of #133 is in `install-secrets.sh`: a confirmed `FORCE_PROD=1`
+rotation now **refreshes** `NODES_DATABASE_URL` with the rotated password —
+only its password, and only when the URL's own password is the value being
+rotated away, which is the proof this script composed it. Any other URL is left
+untouched and **refused by name** on stderr, because rewriting a provider's URL
+would point the stack at a credential no database has ever accepted.
 
 Known gap this surfaced on its first run: **`NODES_ACTOR_CLAUDE_TOKEN` is
 not installed on orin.** `install-secrets.sh`'s relay lane targets `$THOR`

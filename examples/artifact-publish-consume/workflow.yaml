@@ -1,0 +1,148 @@
+# Publish -> consume proof for the artifact read posture recorded in
+# docs/decisions/2026-08-30-artifact-read-posture.md (#171).
+#
+# The publish container does not receive an artifact credential. It prints a
+# JSON document, and nodes-runner persists the captured stdout through the
+# authenticated artifact POST using the attempt callback token held at the
+# runner boundary. The code-node output carries operation_id (the attempt id),
+# which the consume node uses for the deliberately unauthenticated GET.
+#
+# Deployment configuration:
+#
+#   RUNNER REGISTRY
+#     runner://headspace/docker  a runner service configured with callbacks;
+#                                callbacks let its artifact client derive the
+#                                control-plane publication URL and token.
+#
+#   RUNNER ENVIRONMENT GRANT
+#     NODES_API_URL              the reachable control-plane origin, without a
+#                                trailing slash. Only consume needs this value.
+apiVersion: nodes.culture.dev/v1alpha1
+kind: Workflow
+
+metadata:
+  name: artifact-publish-consume
+  version: 1.0.0
+  ownerRef: team/platform-ai
+
+spec:
+  entry: publish
+
+  contract:
+    input:
+      schema:
+        type: object
+        required: [payload]
+        properties:
+          payload:
+            type: string
+            minLength: 1
+    output:
+      schema:
+        type: object
+
+  limits:
+    maxDuration: 10m
+    maxTransitions: 4
+    maxVisitsPerNode: 1
+    maxParallelTokens: 1
+
+  ledger:
+    schemaVersion: nodes.culture.dev/ledger/v1alpha1
+    maxRecordsPerNode: 10
+
+  nodes:
+    publish:
+      kind: code
+      ownerRef: team/platform-ai
+      uses: runner://headspace/docker@sha256:57cd7c3a7a273101a6485ba99423ee568157882804b1124b4dd04266317710de
+      operation:
+        image: python:3.12-slim@sha256:57cd7c3a7a273101a6485ba99423ee568157882804b1124b4dd04266317710de
+        argv:
+          - python3
+          - -c
+          - |
+            import json, os
+            print(json.dumps(json.loads(os.environ["NODES_INPUT_JSON"]), sort_keys=True))
+        network: none
+        allowedOutputPaths: []
+      input:
+        bindings:
+          payload: /run/input/payload
+      contract:
+        outcomes:
+          passed:
+            schema:
+              type: object
+              required: [operation_id, state, artifacts]
+          failed:
+            schema:
+              type: object
+      ledger:
+        observe: [evidence]
+      policy:
+        timeout: 2m
+        retry:
+          maxAttempts: 1
+
+    consume:
+      kind: code
+      ownerRef: team/platform-ai
+      uses: runner://headspace/docker@sha256:57cd7c3a7a273101a6485ba99423ee568157882804b1124b4dd04266317710de
+      operation:
+        image: python:3.12-slim@sha256:57cd7c3a7a273101a6485ba99423ee568157882804b1124b4dd04266317710de
+        environmentRefs: [NODES_API_URL]
+        argv:
+          - python3
+          - -c
+          - |
+            import json, os, urllib.parse, urllib.request
+            inputs = json.loads(os.environ["NODES_INPUT_JSON"])
+            attempt = urllib.parse.quote(inputs["attempt_id"], safe="")
+            url = os.environ["NODES_API_URL"].rstrip("/") + "/v1alpha1/attempts/" + attempt + "/artifacts/stdout"
+            with urllib.request.urlopen(url, timeout=30) as response:
+                published = json.load(response)
+            if published != {"payload": inputs["payload"]}:
+                raise SystemExit("artifact bytes did not match the published payload")
+        network: full
+        allowedOutputPaths: []
+      input:
+        bindings:
+          attempt_id: /nodes/publish/output/operation_id
+          payload: /run/input/payload
+      contract:
+        outcomes:
+          passed:
+            schema:
+              type: object
+          failed:
+            schema:
+              type: object
+      ledger:
+        observe: [evidence]
+      policy:
+        timeout: 2m
+        retry:
+          maxAttempts: 1
+
+    finish:
+      kind: end
+      ownerRef: team/platform-ai
+      output:
+        from: /nodes/consume/output
+
+    giveup:
+      kind: end
+      ownerRef: team/platform-ai
+      output:
+        from: /nodes/consume/output
+
+  edges:
+    - from: publish.passed
+      to: consume
+    - from: publish.failed
+      to: giveup
+    - from: consume.passed
+      to: finish
+    - from: consume.failed
+      to: giveup

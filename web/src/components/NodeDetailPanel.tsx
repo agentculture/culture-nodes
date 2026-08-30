@@ -55,6 +55,14 @@ function duration(startedAt?: string, completedAt?: string): string {
   return `${(ms / 1000).toFixed(1)} s`;
 }
 
+function attemptErrorDetail(result: unknown): string | undefined {
+  if (!result || typeof result !== "object") return undefined;
+  const error = (result as { error?: unknown }).error;
+  if (!error || typeof error !== "object") return undefined;
+  const detail = (error as { detail?: unknown }).detail;
+  return typeof detail === "string" && detail.length > 0 ? detail : undefined;
+}
+
 /**
  * The node-detail side panel (PRD §8.7: "node detail showing actor or
  * runner, contract, owner, attempt, and ledger delta").
@@ -202,6 +210,7 @@ export function NodeDetailPanel({
                 <th scope="col">model / effort</th>
                 <th scope="col">usage</th>
                 <th scope="col">preserve</th>
+                <th scope="col">detail</th>
               </tr>
             </thead>
             <tbody>
@@ -244,7 +253,9 @@ export function NodeDetailPanel({
                         </span>
                       ) : null}
                     </th>
-                    <td data-attempt-status={attempt.status}>{attempt.status}</td>
+                    <td data-attempt-status={attempt.status}>
+                      {attempt.status}
+                    </td>
                     <td>
                       <code>{attempt.actor_id ?? "—"}</code>
                     </td>
@@ -252,11 +263,20 @@ export function NodeDetailPanel({
                       {/* Clock time in the cell, the full instant in the title
                           and in dateTime — the panel is narrow, the record is
                           not truncated. */}
-                      <time dateTime={attempt.started_at} title={attempt.started_at}>
-                        {clockTime(attempt.started_at)}
-                      </time>
+                      {attempt.started_at ? (
+                        <time
+                          dateTime={attempt.started_at}
+                          title={attempt.started_at}
+                        >
+                          {clockTime(attempt.started_at)}
+                        </time>
+                      ) : (
+                        "—"
+                      )}
                     </td>
-                    <td>{duration(attempt.started_at, attempt.completed_at)}</td>
+                    <td>
+                      {duration(attempt.started_at, attempt.completed_at)}
+                    </td>
                     <td>
                       <code>{attempt.usage?.usage_model ?? "—"}</code>
                       {attempt.usage?.reasoning_tokens !== undefined ? (
@@ -298,6 +318,7 @@ export function NodeDetailPanel({
                         "—"
                       )}
                     </td>
+                    <td>{attemptErrorDetail(attempt.result) ?? "—"}</td>
                   </tr>
                 );
               })}
@@ -410,7 +431,10 @@ export function NodeDetailPanel({
                       >
                         {workspace.artifactRefs.map((ref) => (
                           <li key={ref}>
-                            <a href={ref} className="detail-panel__artifact-ref">
+                            <a
+                              href={ref}
+                              className="detail-panel__artifact-ref"
+                            >
                               <code>{ref}</code>
                             </a>
                           </li>

@@ -68,7 +68,13 @@ class Handler(BaseHTTPRequestHandler):
                     "verbs": [mapping.VERB, transition_issue.VERB, create_issue.VERB],
                     "custody": {
                         "transition_project_prefix": self.cfg.transition_project_prefix,
+                        # Both names: `transition_target` is what this
+                        # advertisement has published since the verb shipped
+                        # and a reader may still be keyed on it;
+                        # `transition_targets` is the whole allowlist, which
+                        # is the fact since task t11 made it a list.
                         "transition_target": self.cfg.transition_target,
+                        "transition_targets": list(self.cfg.transition_targets),
                         "create_projects": list(self.cfg.create_projects),
                     },
                 },
@@ -118,7 +124,7 @@ class Handler(BaseHTTPRequestHandler):
             parsed, refusal = transition_issue.parse(
                 input_,
                 project_prefix=self.cfg.transition_project_prefix,
-                allowed_target=self.cfg.transition_target,
+                allowed_targets=self.cfg.transition_targets,
             )
         elif isinstance(input_, dict) and input_.get("verb") == create_issue.VERB:
             parsed, refusal = create_issue.parse(

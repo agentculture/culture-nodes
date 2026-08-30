@@ -49,8 +49,9 @@
 # deploy.sh uses on thor. Set PSQL_CMD to override the whole command (a
 # test points it at a fake psql executable instead).
 #
-# Namespace scoping: resolves the namespace id the same way deploy.sh does
-# (the oldest namespaces row) unless NODES_NAMESPACE_ID is already set.
+# Namespace scoping: resolves the oldest namespace through the control-plane
+# API, creating the default namespace when the installation has none, unless
+# NODES_NAMESPACE_ID is already set.
 set -euo pipefail
 
 SCRIPT_DIR=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
@@ -79,6 +80,7 @@ usage: register-actor.sh <actor_key> <endpoint_url> [auth_token_env] \
 Env overrides:
   PSQL_CMD           full command used to reach Postgres (default: the
                       thor compose-exec psql invocation from deploy.sh)
+  NODES_API_URL      control-plane base URL (default: http://thor:18080)
   NODES_NAMESPACE_ID skip namespace lookup and use this namespace id
 EOF
 }
@@ -245,7 +247,21 @@ run_psql() {
 # --- Namespace scoping ---------------------------------------------------
 NAMESPACE_ID=${NODES_NAMESPACE_ID:-}
 if [ -z "$NAMESPACE_ID" ]; then
-  NAMESPACE_ID=$(run_psql "SELECT id FROM namespaces ORDER BY created_at LIMIT 1")
+  NODES_API_URL=${NODES_API_URL:-http://thor:18080}
+  namespaces_url="${NODES_API_URL%/}/v1alpha1/namespaces"
+  namespace_rows=$(curl -fsS "$namespaces_url") || {
+    echo "register-actor: no namespace row found (seed a namespace first, or set NODES_NAMESPACE_ID)" >&2
+    exit 1
+  }
+  NAMESPACE_ID=$(python3 -c 'import json,sys; rows=json.load(sys.stdin); print(rows[0]["id"] if rows else "")' <<<"$namespace_rows")
+  if [ -z "$NAMESPACE_ID" ]; then
+    namespace_row=$(curl -fsS -X POST -H 'Content-Type: application/json' \
+      --data '{"name":"Default","slug":"default"}' "$namespaces_url") || {
+      echo "register-actor: no namespace row found (seed a namespace first, or set NODES_NAMESPACE_ID)" >&2
+      exit 1
+    }
+    NAMESPACE_ID=$(python3 -c 'import json,sys; print(json.load(sys.stdin).get("id", ""))' <<<"$namespace_row")
+  fi
 fi
 if [ -z "$NAMESPACE_ID" ]; then
   echo "register-actor: no namespace row found (seed a namespace first, or set NODES_NAMESPACE_ID)" >&2

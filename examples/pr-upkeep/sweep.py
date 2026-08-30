@@ -738,6 +738,50 @@ def raise_event(
         return json.load(response)
 
 
+#: The workflow whose running runs the emission dedupe consults, and the page
+#: size it reads. Past that bound the sweep can only re-emit (the pre-t12
+#: behaviour), never wrongly suppress.
+PR_UPKEEP_WORKFLOW_KEY = "pr-upkeep"
+RUNNING_RUNS_LIMIT = 500
+
+
+def fetch_running_finding_ids() -> set:
+    """Finding ids a still-running pr-upkeep run already carries.
+
+    The watermark says the PR moved, not that a finding is already in flight
+    (README, "Dedupe by finding id"). A triggered run's input IS the event
+    payload, so `input.findings` is exactly what was emitted for it. The read
+    is unauthenticated today; the token rides along so read auth arriving
+    later is a 401 this sweep reports, not a silent behaviour change.
+    """
+    base = os.environ.get("NODES_API_URL")
+    token = os.environ.get("NODES_EVENT_TOKEN")
+    if not base or not token:
+        raise ValueError("NODES_API_URL and NODES_EVENT_TOKEN are required")
+    params = {"workflow_key": PR_UPKEEP_WORKFLOW_KEY, "state": "running"}
+    query = f"{urllib.parse.urlencode(params)}&limit={RUNNING_RUNS_LIMIT}"
+    listed = _get_json(f"{base.rstrip('/')}/v1alpha1/runs?{query}", token)
+    ids = set()
+    for run in (listed or {}).get("items") or []:
+        run_input = run.get("input")
+        findings = run_input.get("findings") if isinstance(run_input, dict) else None
+        for finding in findings if isinstance(findings, list) else []:
+            if isinstance(finding, dict) and finding.get("id"):
+                ids.add(finding["id"])
+    return ids
+
+
+def undispatched_findings(findings: list[dict], running_ids: set) -> tuple:
+    """Split findings into (emit these, ids skipped as already in flight)."""
+    kept, skipped = [], []
+    for finding in findings:
+        if finding.get("id") in running_ids:
+            skipped.append(finding["id"])
+        else:
+            kept.append(finding)
+    return kept, skipped
+
+
 def _max_prs_per_sweep() -> int:
     raw = os.environ.get("PR_UPKEEP_MAX_PRS_PER_SWEEP")
     if raw is None:
@@ -820,7 +864,10 @@ def main() -> int:
                 file=sys.stderr,
             )
 
+        with attempting("reading running pr-upkeep runs (control plane)"):
+            running_finding_ids = fetch_running_finding_ids()
         emitted = []
+        skipped_findings = []
         # Closed PRs are a separate bounded read. The immutable merged_at
         # value is the watermark, so two passes append exactly one fact.
         with attempting(f"listing merged PRs of {github_repo} (GitHub)"):
@@ -864,12 +911,21 @@ def main() -> int:
                 pr_sonar = sonar_work_items(
                     fetch_sonar_issues(component, pr=pull["number"]), pr=pull["number"]
                 )
+            findings, skipped = undispatched_findings(
+                prioritise(pr_sonar + qodo_items + check_items), running_finding_ids
+            )
+            skipped_findings.extend(skipped)
+            # Emitting the now-empty list would consume this watermark for a
+            # fact the trigger declines, stranding these findings at this head
+            # sha. Skipping leaves the position free for a later cycle.
+            if skipped and not findings:
+                continue
             payload = {
                 "source": "github_pr",
                 "repository": github_repo,
                 "number": pull["number"],
                 "head_sha": pull["head_sha"],
-                "findings": prioritise(pr_sonar + qodo_items + check_items),
+                "findings": findings,
             }
             with attempting(f"emitting pr-upkeep.pr for #{pull['number']} (control plane)"):
                 emitted.append(
@@ -929,7 +985,11 @@ def main() -> int:
         # given a stage of its own.
         print(f"sweep failed at an unattributed step: {type(exc).__name__}: {exc}", file=sys.stderr)
         return 1
-    json.dump({"sweep": "pr-upkeep", "emitted": len(emitted)}, sys.stdout, indent=2)
+    json.dump(
+        {"sweep": "pr-upkeep", "emitted": len(emitted), "skipped_findings": skipped_findings},
+        sys.stdout,
+        indent=2,
+    )
     sys.stdout.write("\n")
     return 0
 

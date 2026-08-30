@@ -91,6 +91,18 @@ type Run struct {
 	// this subject before creating a new one -- see
 	// internal/engine/trigger.go and Tx.ActiveRunBySubject.
 	Subject string
+
+	// Reason is why this run is in the state it is in, when the state was
+	// a CONTROL-PLANE decision rather than something an actor reported
+	// (migrations/0052, task t17). Empty means nothing recorded one, which
+	// is every run that reached its state the ordinary way -- through an
+	// attempt's own outcome, whose account lives on the attempt.
+	//
+	// The engine never branches on it and never writes it: it is a
+	// read-through field so a projection can render "why is this run
+	// cancelled" beside the state itself. Today's one writer is the ticket
+	// freeze (internal/api/ticketfreeze.go, reason "ticket_frozen").
+	Reason string
 }
 
 // RunOption adjusts the Run a CreateRun call is about to persist, inside
@@ -353,8 +365,10 @@ type Attempt struct {
 	Status       TechStatus
 	FencingToken int64
 	Result       json.RawMessage
-	StartedAt    time.Time
-	CompletedAt  time.Time
+	// StartedAt is the durable invocation creation time. Its zero value means
+	// no invocation row recorded a start and is persisted as SQL NULL.
+	StartedAt   time.Time
+	CompletedAt time.Time
 	// Usage is the §13.2 telemetry block this attempt reported, nil when it
 	// reported none. See CompletionRequest.Usage for why it is never
 	// fabricated.
@@ -474,6 +488,19 @@ const HumanTaskStatusPending = "pending"
 // pending -> decided, so a task cannot be decided twice.
 const HumanTaskStatusDecided = "decided"
 
+// HumanTaskStatusExpired is the status ExpireHumanTask moves a task to when
+// the world answered the question before the human did — today, a merge
+// approval whose pull request has already merged (task t11, reason
+// pr_merged). It is terminal in the same one-way sense as decided:
+// MarkHumanTaskExpired only ever flips pending -> expired.
+//
+// It is a separate status rather than `decided` with an unusual response
+// because the two are not the same fact and must not be counted together. A
+// decided task is a human exercising authority; an expired one is the engine
+// recording that nobody needs to. Collapsing them would make "how many
+// decisions did people actually make" unanswerable.
+const HumanTaskStatusExpired = "expired"
+
 // HumanTask is one human_tasks row (PRD §9.9,
 // migrations/0002_runtime_execution.sql): the durable record an approval
 // node's dispatch writes instead of an attempt. Request carries everything
@@ -551,6 +578,13 @@ type CompletionRequest struct {
 	// the workflow declares an edge from it; otherwise the run fails with a
 	// diagnostic naming it, exactly as an unrouted technical status does.
 	RefusalOutcome string
+
+	// RetryRefusal is the control plane's reason this completed attempt must
+	// not spend any remaining retry budget. Empty preserves the node's normal
+	// retry policy. It is for accept-boundary refusals where redispatching the
+	// same malformed completion cannot help, while the attempt's technical
+	// status must still truthfully describe what was refused.
+	RetryRefusal string
 
 	// Output is the payload for that outcome. It is validated against the
 	// outcome's schema; a violation is recorded as the *technical* status

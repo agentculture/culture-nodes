@@ -260,3 +260,72 @@ describe("AuthorWorkflow: agent-state", () => {
     expect(getAgentState().authoring?.diagnostics_count).toBe(1);
   });
 });
+
+
+describe("AuthorWorkflow: load a sample (task t27)", () => {
+  it("drops a workflow into the empty editor and enables Validate", async () => {
+    renderView();
+    const validate = screen.getByRole("button", { name: "Validate" });
+    expect(validate).toBeDisabled();
+
+    fireEvent.click(screen.getByRole("button", { name: "Load a sample" }));
+
+    const textarea = screen.getByLabelText("Workflow source") as HTMLTextAreaElement;
+    expect(textarea.value).toMatch(/^apiVersion: nodes\.culture\.dev\/v1alpha1/);
+    expect(textarea.value).toMatch(/kind: Workflow/);
+    expect(validate).toBeEnabled();
+  });
+
+  it("sets the format to YAML, so the sample is submitted as what it is", () => {
+    renderView();
+    fireEvent.change(screen.getByLabelText("Format"), { target: { value: "json" } });
+
+    fireEvent.click(screen.getByRole("button", { name: "Load a sample" }));
+
+    expect(screen.getByLabelText("Format")).toHaveValue("yaml");
+  });
+
+  it("submits the sample's exact bytes to the compiler, unmodified", async () => {
+    mockValidateWorkflow.mockResolvedValue(VALID_VALIDATION);
+    renderView();
+    fireEvent.click(screen.getByRole("button", { name: "Load a sample" }));
+    const source = (screen.getByLabelText("Workflow source") as HTMLTextAreaElement)
+      .value;
+
+    fireEvent.click(screen.getByRole("button", { name: "Validate" }));
+
+    await waitFor(() =>
+      expect(mockValidateWorkflow).toHaveBeenCalledWith({
+        format: "yaml",
+        source,
+      }),
+    );
+  });
+
+  it("names an entry node, an end node, and the edge between them — the minimal shape", () => {
+    renderView();
+    fireEvent.click(screen.getByRole("button", { name: "Load a sample" }));
+    const source = (screen.getByLabelText("Workflow source") as HTMLTextAreaElement)
+      .value;
+
+    expect(source).toMatch(/entry: work/);
+    expect(source).toMatch(/kind: end/);
+    expect(source).toMatch(/from: work\.completed/);
+    expect(source).toMatch(/to: finish/);
+  });
+
+  it("clears a previous publish result, like every other source change does", async () => {
+    mockValidateWorkflow.mockResolvedValue(VALID_VALIDATION);
+    mockPublishWorkflow.mockResolvedValue(PUBLISHED_VERSION);
+    renderView();
+    paste(VALID_YAML_SOURCE);
+    fireEvent.click(screen.getByRole("button", { name: "Validate" }));
+    await screen.findByText("No diagnostics. The document compiles cleanly.");
+    fireEvent.click(screen.getByRole("button", { name: "Publish" }));
+    await screen.findByText(AUTHORING_DIGEST);
+
+    fireEvent.click(screen.getByRole("button", { name: "Load a sample" }));
+
+    expect(screen.queryByText(AUTHORING_DIGEST)).not.toBeInTheDocument();
+  });
+});

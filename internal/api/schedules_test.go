@@ -1,6 +1,7 @@
 package api_test
 
 import (
+	"context"
 	"encoding/json"
 	"net/http"
 	"testing"
@@ -139,5 +140,62 @@ func TestPatchingAScheduleRefusesEverythingButEnabled(t *testing.T) {
 		map[string]any{"interval_seconds": 60}, nil)
 	if resp.StatusCode != http.StatusBadRequest {
 		t.Fatalf("PATCH with only interval_seconds = %d, want 400", resp.StatusCode)
+	}
+}
+
+// TestScheduleReadSurfaceCarriesSuppressionState is task t9's fourth clause
+// (spec c40/c4/c44, issue #253). The read surface is where the whole
+// suppression design either works or does not: a schedule that quietly stops
+// minting is worse than one that floods, and the only thing standing between
+// those two is that "held back, N times, for THIS reason" is answerable from
+// the API alone.
+//
+// The raw-JSON assertions are deliberate. `suppressed_count` is REQUIRED in
+// api/openapi/openapi.yaml, so it must appear even at zero — a client reading
+// its absence as "this build has no suppression" would be reading a fact that
+// is not there. `last_failure_detail` is the opposite: omitempty, so its
+// presence means the schedule is currently carrying a reason.
+func TestScheduleReadSurfaceCarriesSuppressionState(t *testing.T) {
+	f := newFixture(t)
+
+	resp, created := createSchedule(t, f, map[string]any{
+		"name":             "pr-upkeep-sweep-5m",
+		"event_name":       "pr-upkeep.pr",
+		"interval_seconds": 300,
+	})
+	if resp.StatusCode != http.StatusCreated {
+		t.Fatalf("POST /schedules = %d, want 201", resp.StatusCode)
+	}
+	if created.SuppressedCount != 0 || created.LastFailureDetail != "" {
+		t.Fatalf("a fresh schedule reports suppressed_count=%d last_failure_detail=%q",
+			created.SuppressedCount, created.LastFailureDetail)
+	}
+
+	const detail = `node "work" reported outcome "changes_required", which the pinned definition does not declare`
+	if _, err := f.store.Pool().Exec(context.Background(),
+		`UPDATE schedules SET suppressed_count = 29, consecutive_failures = 5, last_failure_detail = $2
+		 WHERE id = $1`, created.ID, detail); err != nil {
+		t.Fatalf("record suppression state: %v", err)
+	}
+
+	var raw map[string]any
+	resp, body := doJSON(t, f.client, http.MethodGet, f.url("/v1alpha1/schedules/"+created.ID), nil, &raw)
+	requireStatus(t, resp, body, http.StatusOK)
+	if got, ok := raw["suppressed_count"]; !ok || got != float64(29) {
+		t.Errorf("GET /schedules/{id} suppressed_count = %v (present=%t), want 29", got, ok)
+	}
+	if got := raw["last_failure_detail"]; got != detail {
+		t.Errorf("GET /schedules/{id} last_failure_detail = %v, want the repeated reason", got)
+	}
+
+	var list apipkg.ScheduleListOut
+	resp, body = doJSON(t, f.client, http.MethodGet, f.url("/v1alpha1/schedules"), nil, &list)
+	requireStatus(t, resp, body, http.StatusOK)
+	if len(list.Items) != 1 {
+		t.Fatalf("GET /schedules returned %d items, want 1", len(list.Items))
+	}
+	if list.Items[0].SuppressedCount != 29 || list.Items[0].LastFailureDetail != detail {
+		t.Errorf("GET /schedules item = suppressed_count %d / last_failure_detail %q, want 29 / the repeated reason",
+			list.Items[0].SuppressedCount, list.Items[0].LastFailureDetail)
 	}
 }

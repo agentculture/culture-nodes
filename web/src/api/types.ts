@@ -29,9 +29,13 @@ export type RunState =
  * `cached_input_tokens`/`reasoning_tokens` (task t2, ADR 0009) sum the same
  * way `input_tokens`/`output_tokens` do: an attempt that reported tokens
  * but no cache telemetry at all contributes nothing, never a fabricated
- * zero. `cache_ratio` (`cached_input_tokens / input_tokens`) is present
- * only when `input_tokens > 0` — omitted, not a fabricated 0, when nothing
- * in scope reported any input tokens.
+ * zero. `cache_ratio` is `cached_input_tokens / (input_tokens +
+ * cached_input_tokens)` — the share of the whole prompt served from cache,
+ * so it is bounded by 1.0 (task t8: cache reads are reported alongside
+ * `input_tokens`, never inside them, and dividing by `input_tokens` alone
+ * read as high as 5.88 on real data). Present only when `input_tokens +
+ * cached_input_tokens > 0` — omitted, not a fabricated 0, when nothing in
+ * scope reported any prompt tokens.
  */
 export interface Usage {
   input_tokens: number;
@@ -56,6 +60,7 @@ export interface CurrencyCost {
 export interface Run {
   id: string;
   workflow_digest: string;
+  workflow_key?: string;
   state: RunState;
   input?: unknown;
   output?: unknown;
@@ -78,6 +83,16 @@ export interface Run {
   /** The run's flat category tag (task t3), retaggable via PATCH. */
   category?: string;
   /**
+   * Why the run is in this state, when the state was a CONTROL-PLANE
+   * decision rather than something an actor reported (task t17). Today's
+   * one writer is the ticket freeze: a run whose subject is a frozen ticket
+   * reads `ticket_frozen` beside a `cancelled` or `waiting` state. Absent
+   * for a run that reached its state the ordinary way — there the account
+   * is the last attempt's own `result.error.detail` (task t6), which this
+   * never overwrites.
+   */
+  reason?: string;
+  /**
    * A truncated, best-effort guess at what this run is about, derived AT
    * READ TIME from the run's own input — never persisted, and present only
    * when `name` is absent. This is a guess, not something an operator
@@ -89,6 +104,7 @@ export interface Run {
 
 export interface RunList {
   items: Run[];
+  next_cursor?: string;
 }
 
 export interface Token {
@@ -128,7 +144,7 @@ export interface Attempt {
   status: AttemptStatus;
   fencing_token?: number;
   result?: unknown;
-  started_at: string;
+  started_at?: string;
   completed_at?: string;
   usage?: AttemptUsage;
   termination_reason?: string;
@@ -509,6 +525,7 @@ export interface HumanTask {
 /** `GET /v1alpha1/human-tasks` (components.schemas.HumanTaskList). */
 export interface HumanTaskList {
   items: HumanTask[];
+  next_cursor?: string;
 }
 
 /** The versioned, workflow-authored portion of a ticket projection. */
@@ -574,15 +591,56 @@ export interface TicketReply {
   created_at: string;
 }
 
+/**
+ * What a ticket's freeze did to its runs (task t17, spec c28): every run
+ * whose subject is the ticket is cancelled when the ticket is Done and
+ * parked otherwise, each carrying `reason`. The counts are derived
+ * server-side from those same runs, and `banner` is the sentence the page
+ * shows — composed by the API so the count a human reads is the one the
+ * API test asserts.
+ */
+export interface TicketFreeze {
+  reason: string;
+  ticket_status?: string;
+  cancelled_runs: number;
+  parked_runs: number;
+  banner: string;
+}
+
+/**
+ * One pending human task on a ticket (`components.schemas.TicketPendingTask`,
+ * task t18), shaped by the API for the surface that decides it.
+ *
+ * `ledger_version` is served WITH the task rather than fetched separately:
+ * `POST /human-tasks/{id}/decision` refuses unless it matches the run's
+ * current version, so the version submitted has to be the one the page the
+ * decider read was rendered from.
+ */
+export interface TicketPendingTask {
+  id: string;
+  run_id: string;
+  kind: string;
+  /** Exactly the outcomes the engine will accept. Empty = this task offers no choice. */
+  allowed_outcomes: string[];
+  decision_schema_ref?: string;
+  deadline?: string;
+  created_at: string;
+  ledger_version: number;
+}
+
 export interface TicketProjection {
   ticket_id: string;
+  /** Composed server-side from the Jira fact the ticket's runs carry (task t18). */
   ticket_url?: string;
   jira_url?: string;
   frozen?: boolean;
+  freeze?: TicketFreeze;
   merged_pr?: TicketFrameData["merged_pr"];
   runs: Run[];
   ledger: Array<{ run_id: string; records: LedgerRecord[] }>;
   human_tasks: HumanTask[];
+  /** The decidable subset of human_tasks. Absent from a control plane older than t18. */
+  pending_tasks?: TicketPendingTask[];
   ticket_reports: TicketReport[];
   replies: TicketReply[];
   latest_frame?: TicketFrame;
@@ -628,6 +686,7 @@ export interface PendingDecisionList {
   items: PendingDecisionRun[];
   /** Undecided records across every listed run. */
   record_count: number;
+  next_cursor?: string;
 }
 
 /** `POST /v1alpha1/runs/{id}/reviews` request body. */
@@ -777,4 +836,23 @@ export interface PlanImportSummary {
 
 export interface PlanImportSummaryList {
   items: PlanImportSummary[];
+}
+
+/**
+ * `GET /v1alpha1/version` (components.schemas.Version, internal/api/version.go):
+ * which revision of the control plane is answering.
+ *
+ * `revision` is absent on an unstamped build — the API refuses to report a
+ * partial answer rather than emit an empty string a reader has to interpret —
+ * and `staleness` is always the one sentence saying what this answer does and
+ * does not establish. The header renders that sentence verbatim as the
+ * readout's tooltip: it is the API's claim about its own provenance, not a
+ * paraphrase composed in the browser.
+ */
+export interface Version {
+  version: string;
+  revision?: string;
+  revision_source?: string;
+  revision_is_dirty?: boolean;
+  staleness: string;
 }

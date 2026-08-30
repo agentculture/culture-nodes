@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -568,13 +569,24 @@ func TestCancellingAnUnknownOperationIs404(t *testing.T) {
 
 func TestTheCompletionCallbackCarriesNoResult(t *testing.T) {
 	type received struct {
-		auth string
-		body []byte
+		method          string
+		path            string
+		auth            string
+		protocolVersion string
+		contentType     string
+		body            []byte
 	}
 	notifications := make(chan received, 4)
 	receiver := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		payload, _ := io.ReadAll(r.Body)
-		notifications <- received{auth: r.Header.Get(runners.AuthorizationHeader), body: payload}
+		notifications <- received{
+			method:          r.Method,
+			path:            r.URL.Path,
+			auth:            r.Header.Get(runners.AuthorizationHeader),
+			protocolVersion: r.Header.Get(runners.ProtocolVersionHeader),
+			contentType:     r.Header.Get("Content-Type"),
+			body:            payload,
+		}
 		w.WriteHeader(http.StatusNoContent)
 	}))
 	defer receiver.Close()
@@ -587,7 +599,7 @@ func TestTheCompletionCallbackCarriesNoResult(t *testing.T) {
 	}
 	code, resp := h.request(t, http.MethodPost, runners.OperationsPath, testSecret, body, map[string]string{
 		runners.IdempotencyKeyHeader: op.OperationID,
-		runners.CallbackURLHeader:    receiver.URL + "/events",
+		runners.CallbackURLHeader:    receiver.URL + fmt.Sprintf(runners.CallbackPathFormat, op.OperationID),
 		runners.CallbackTokenHeader:  "callback-token-abc",
 	})
 	if code != http.StatusAccepted {
@@ -596,8 +608,20 @@ func TestTheCompletionCallbackCarriesNoResult(t *testing.T) {
 
 	select {
 	case got := <-notifications:
+		if got.method != http.MethodPost {
+			t.Errorf("callback method = %q, want POST", got.method)
+		}
+		if got.path != "/v1/runner-operations/"+op.OperationID+"/events" {
+			t.Errorf("callback path = %q, want CallbackPathFormat for %s", got.path, op.OperationID)
+		}
 		if got.auth != "Bearer callback-token-abc" {
 			t.Errorf("callback Authorization = %q, want the token the dispatch issued", got.auth)
+		}
+		if got.protocolVersion != runners.ProtocolVersion {
+			t.Errorf("callback protocol version = %q, want %q", got.protocolVersion, runners.ProtocolVersion)
+		}
+		if got.contentType != "application/json" {
+			t.Errorf("callback Content-Type = %q, want application/json", got.contentType)
 		}
 		var notification map[string]any
 		if err := json.Unmarshal(got.body, &notification); err != nil {

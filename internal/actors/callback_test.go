@@ -18,7 +18,6 @@ import (
 	"github.com/agentculture/culture-nodes/internal/compiler"
 	"github.com/agentculture/culture-nodes/internal/engine"
 	storepg "github.com/agentculture/culture-nodes/internal/store/postgres"
-	"github.com/agentculture/culture-nodes/internal/store/postgres/pgtest"
 )
 
 // Callback-ingest tests against a real PostgreSQL.
@@ -73,54 +72,7 @@ func newAsyncFixtureForActor(t *testing.T) *asyncFixture {
 }
 
 func newAsyncFixtureWith(t *testing.T, withActor bool) *asyncFixture {
-	t.Helper()
-	s := pgtest.RequireStore(t, testStore)
-	ctx := context.Background()
-
-	ns := pgtest.MustNamespace(t, s, "actors")
-	eng, err := storepg.NewEngine(s, ns.ID, engine.WithRetryDelays(0, 0))
-	if err != nil {
-		t.Fatalf("NewEngine: %v", err)
-	}
-	callbacks, err := storepg.NewCallbackStore(s, ns.ID)
-	if err != nil {
-		t.Fatalf("NewCallbackStore: %v", err)
-	}
-	signer, err := actors.NewTokenSigner([]byte(testSecret))
-	if err != nil {
-		t.Fatalf("NewTokenSigner: %v", err)
-	}
-
-	f := &asyncFixture{
-		t:         t,
-		ctx:       ctx,
-		store:     s,
-		ns:        ns,
-		engine:    eng,
-		callbacks: callbacks,
-		signer:    signer,
-		deps: actors.CallbackDeps{
-			Store:  callbacks,
-			Engine: eng,
-			Signer: signer,
-		},
-		cw:       compileFixture(t, "async.workflow.yaml"),
-		workerID: "worker-" + t.Name(),
-	}
-	if withActor {
-		f.actorID = mustRegisterActor(t, s, ns.ID)
-	}
-
-	run, err := eng.CreateRun(ctx, f.cw, json.RawMessage(`{"subject":"async"}`))
-	if err != nil {
-		t.Fatalf("CreateRun: %v", err)
-	}
-	f.run = run
-	f.nodeRunID = f.readyNodeRun(run.ID)
-	f.claimed = f.claim(f.workerID, f.nodeRunID)
-	f.attemptID = "att_" + f.claimed.ID
-	f.park()
-	return f
+	return newAsyncFixtureWithWorkflow(t, withActor, "async.workflow.yaml")
 }
 
 func compileFixture(t *testing.T, name string) *compiler.CompiledWorkflow {

@@ -27,6 +27,8 @@
 package deploytest
 
 import (
+	"net/http"
+	"net/http/httptest"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -618,12 +620,38 @@ func TestRegisterActorAbsentRowInsertsRevisionOne(t *testing.T) {
 func TestRegisterActorResolvesNamespaceWhenUnset(t *testing.T) {
 	dir := t.TempDir()
 	psqlPath, callsLog, insertLog := newFakePsql(t, dir,
-		"ns-resolved",
+		"",
 		"",
 	)
+	created := false
+	namespaceAPI := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/v1alpha1/namespaces" {
+			t.Errorf("namespace API path = %s, want /v1alpha1/namespaces", r.URL.Path)
+			http.Error(w, "unexpected request", http.StatusNotFound)
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		switch r.Method {
+		case http.MethodGet:
+			if !created {
+				_, _ = w.Write([]byte(`[]`))
+				return
+			}
+			_, _ = w.Write([]byte(`[{"id":"ns-resolved","slug":"default","display_name":"Default","created_at":"2026-08-30T00:00:00Z"}]`))
+		case http.MethodPost:
+			created = true
+			w.WriteHeader(http.StatusCreated)
+			_, _ = w.Write([]byte(`{"id":"ns-resolved","slug":"default","display_name":"Default","created_at":"2026-08-30T00:00:00Z"}`))
+		default:
+			t.Errorf("namespace API method = %s, want GET or POST", r.Method)
+			http.Error(w, "unexpected request", http.StatusMethodNotAllowed)
+		}
+	}))
+	t.Cleanup(namespaceAPI.Close)
 
 	env := []string{
 		"PSQL_CMD=" + psqlPath,
+		"NODES_API_URL=" + namespaceAPI.URL,
 		"ACTOR_KEY=company/codex-thor",
 		"ENDPOINT_URL=http://192.168.1.5:17070",
 		"AUTH_TOKEN_ENV=CODEX_THOR_TOKEN",
@@ -633,13 +661,16 @@ func TestRegisterActorResolvesNamespaceWhenUnset(t *testing.T) {
 	if exitCode != 0 {
 		t.Fatalf("exit code = %d, want 0; output: %s", exitCode, output)
 	}
+	if !created {
+		t.Fatal("register-actor.sh did not create a namespace through the API after GET returned an empty list")
+	}
 
 	calls, err := os.ReadFile(callsLog)
 	if err != nil {
 		t.Fatalf("read calls log: %v", err)
 	}
-	if !strings.Contains(string(calls), "FROM namespaces") {
-		t.Errorf("register-actor.sh did not query namespaces when NODES_NAMESPACE_ID was unset; calls: %q", calls)
+	if strings.Contains(string(calls), "FROM namespaces") {
+		t.Errorf("register-actor.sh queried namespaces through psql; calls: %q", calls)
 	}
 
 	inserted, err := os.ReadFile(insertLog)
@@ -770,7 +801,7 @@ func TestRegisterActorRefusesInvalidOSUser(t *testing.T) {
 		"1culture",      // leading digit
 		"culture codex", // space
 		"culture.codex", // dot not allowed
-		"",               // empty
+		"",              // empty
 	} {
 		t.Run(bad, func(t *testing.T) {
 			env := []string{

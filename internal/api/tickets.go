@@ -7,6 +7,8 @@ import (
 	"regexp"
 	"time"
 
+	"github.com/jackc/pgx/v5/pgtype"
+
 	"github.com/agentculture/culture-nodes/internal/ledger"
 	"github.com/agentculture/culture-nodes/internal/store"
 	storepg "github.com/agentculture/culture-nodes/internal/store/postgres"
@@ -53,17 +55,59 @@ type TicketPageLinkOut struct {
 	Status    string `json:"status"`
 }
 
+// TicketFreezeOut is what the freeze did to the ticket's runs (task t17,
+// spec c28/h19), present only on a frozen ticket.
+//
+// The counts are DERIVED at read time from the ticket's own runs — a run
+// carrying Reason == TicketFrozenReason, counted by its state — not stored
+// as a tally the freeze wrote down. A stored counter and the runs it counts
+// can disagree; these cannot, because they are the same rows the projection
+// already returns in `runs`.
+type TicketFreezeOut struct {
+	// Reason is the run-level reason stamped on every affected run, so a
+	// reader of the banner and a reader of a single run see the same word.
+	Reason string `json:"reason"`
+	// TicketStatus is the board status the freeze was decided against, as
+	// the caller reported it. Empty means the caller did not say — which
+	// is why the runs were parked rather than cancelled.
+	TicketStatus string `json:"ticket_status,omitempty"`
+	Cancelled    int    `json:"cancelled_runs"`
+	Parked       int    `json:"parked_runs"`
+	// Banner is the sentence the ticket page shows under the frozen
+	// heading. It is composed here rather than in the web client so the
+	// count a human reads is asserted by the same API test that asserts the
+	// runs it counts (spec h19), instead of living only in a component
+	// test that mocks the projection it is supposed to be reporting.
+	Banner string `json:"banner"`
+}
+
 type TicketOut struct {
-	TicketID    string               `json:"ticket_id"`
-	Runs        []RunOut             `json:"runs"`
-	Ledger      []TicketRunLedgerOut `json:"ledger"`
-	HumanTasks  []HumanTaskOut       `json:"human_tasks"`
-	Reports     []TicketReportOut    `json:"ticket_reports"`
-	Replies     []TicketReplyOut     `json:"replies"`
-	LatestFrame *TicketFrameOut      `json:"latest_frame,omitempty"`
-	PageLink    *TicketPageLinkOut   `json:"page_link,omitempty"`
-	Frozen      bool                 `json:"frozen"`
-	MergedPR    json.RawMessage      `json:"merged_pr,omitempty"`
+	TicketID string `json:"ticket_id"`
+	// TicketURL is where this ticket lives on the board, composed from the
+	// Jira work-item fact the ticket's own runs carry (task t18, spec
+	// c10). It is served rather than assembled in the browser so that the
+	// one place that knows the fact's shape is the one place that reads
+	// it — and so an operator on the page can always get back to Jira
+	// without knowing the site by heart. Empty when nothing this
+	// projection can see says where the ticket lives; the page then shows
+	// no link rather than a guessed one.
+	TicketURL string               `json:"ticket_url,omitempty"`
+	Runs      []RunOut             `json:"runs"`
+	Ledger    []TicketRunLedgerOut `json:"ledger"`
+	// HumanTasks is every human task on the ticket's runs, in whatever
+	// status. PendingTasks is the decidable subset, shaped for a decider —
+	// see TicketPendingTaskOut. Both are present because they answer
+	// different questions: the history of what was asked, and what is
+	// still being asked.
+	HumanTasks   []HumanTaskOut         `json:"human_tasks"`
+	PendingTasks []TicketPendingTaskOut `json:"pending_tasks"`
+	Reports      []TicketReportOut      `json:"ticket_reports"`
+	Replies      []TicketReplyOut       `json:"replies"`
+	LatestFrame  *TicketFrameOut        `json:"latest_frame,omitempty"`
+	PageLink     *TicketPageLinkOut     `json:"page_link,omitempty"`
+	Frozen       bool                   `json:"frozen"`
+	MergedPR     json.RawMessage        `json:"merged_pr,omitempty"`
+	Freeze       *TicketFreezeOut       `json:"freeze,omitempty"`
 }
 
 type postTicketReplyRequest struct {
@@ -82,6 +126,15 @@ var ticketReplyIDPattern = regexp.MustCompile(`^[A-Za-z0-9_-]{8,64}$`)
 type freezeTicketRequest struct {
 	MergedPR json.RawMessage `json:"merged_pr"`
 	FrozenBy string          `json:"frozen_by"`
+	// TicketStatus is the board status the caller observed on the ticket,
+	// e.g. "Done" or "In Progress" (task t17, spec c28). It decides
+	// whether the ticket's runs are cancelled or parked, and it has to be
+	// supplied rather than looked up: the Jira bridge advertises
+	// post_comment / transition_issue / create_issue and no read verb
+	// (spec s13/s18), so this control plane has no way to ask. Absent
+	// means the caller did not say, and an unsaid status parks — see
+	// freezeEndsRunsAsCancelled.
+	TicketStatus string `json:"ticket_status"`
 }
 
 func (s *Server) handlePostTicketReply(w http.ResponseWriter, r *http.Request) error {
@@ -179,11 +232,29 @@ func (s *Server) handleFreezeTicket(w http.ResponseWriter, r *http.Request) erro
 	if !json.Valid(req.MergedPR) {
 		return badRequest("merged_pr must be JSON", "invalid merged_pr")
 	}
-	_, err := s.Store.Pool().Exec(r.Context(), `INSERT INTO ticket_freezes(namespace_id,ticket_id,merged_pr,frozen_by) VALUES($1,$2,$3,$4) ON CONFLICT(namespace_id,ticket_id) DO UPDATE SET merged_pr=EXCLUDED.merged_pr,frozen_by=EXCLUDED.frozen_by`, s.NamespaceID, r.PathValue("id"), req.MergedPR, req.FrozenBy)
+	ticketID := r.PathValue("id")
+	_, err := s.Store.Pool().Exec(r.Context(), `INSERT INTO ticket_freezes(namespace_id,ticket_id,merged_pr,frozen_by,ticket_status) VALUES($1,$2,$3,$4,NULLIF($5,'')) ON CONFLICT(namespace_id,ticket_id) DO UPDATE SET merged_pr=EXCLUDED.merged_pr,frozen_by=EXCLUDED.frozen_by,ticket_status=EXCLUDED.ticket_status`, s.NamespaceID, ticketID, req.MergedPR, req.FrozenBy, req.TicketStatus)
 	if err != nil {
 		return internalError(err)
 	}
-	writeJSON(w, http.StatusOK, map[string]any{"ticket_id": r.PathValue("id"), "frozen": true, "merged_pr": req.MergedPR})
+	// The freeze row lands first and separately (task t17, spec c28): the
+	// ticket IS frozen the moment the merge is recorded, and it must refuse
+	// replies from that instant even if ending its runs then fails. The run
+	// walk is the second half, and its failure is reported rather than
+	// swallowed — a freeze that left a run running is the exact defect this
+	// task exists to close, so it must not be able to look like a success.
+	effect, err := s.freezeTicketRuns(r.Context(), ticketID, req.TicketStatus)
+	if err != nil {
+		return err
+	}
+	writeJSON(w, http.StatusOK, map[string]any{
+		"ticket_id":      ticketID,
+		"frozen":         true,
+		"merged_pr":      req.MergedPR,
+		"ticket_status":  req.TicketStatus,
+		"cancelled_runs": effect.Cancelled,
+		"parked_runs":    effect.Parked,
+	})
 	return nil
 }
 
@@ -224,14 +295,41 @@ func (s *Server) handlePostTicketFrame(w http.ResponseWriter, r *http.Request) e
 
 func (s *Server) handleGetTicket(w http.ResponseWriter, r *http.Request) error {
 	ticketID := r.PathValue("id")
-	runs, err := s.listRuns(r.Context(), listRunsParams{Subject: ticketID, Limit: 500, Sort: sortCreatedAt})
-	if err != nil {
-		return internalError(err)
+	// SubjectFromInput: the ticket page shows what happened on the ticket,
+	// including runs that predate the runs.subject column and carry the
+	// issue key only in their input (task t17) — see listRunsParams.
+	const (
+		ticketRunPageSize = 500
+		ticketRunMaxPages = 20
+	)
+	runs := make([]RunOut, 0, ticketRunPageSize)
+	var cursor *nodeRunCursor
+	for page := 0; page < ticketRunMaxPages; page++ {
+		pageRuns, next, err := s.listRuns(r.Context(), listRunsParams{
+			Subject: ticketID, SubjectFromInput: true, Cursor: cursor,
+			Limit: ticketRunPageSize, Sort: sortCreatedAt,
+		})
+		if err != nil {
+			return internalError(err)
+		}
+		runs = append(runs, pageRuns...)
+		if next == "" {
+			break
+		}
+		decoded, err := decodeNodeRunCursor(next)
+		if err != nil {
+			return internalError(fmt.Errorf("api: decode ticket run cursor: %w", err))
+		}
+		cursor = &decoded
 	}
-	out := TicketOut{TicketID: ticketID, Runs: runs, Ledger: []TicketRunLedgerOut{}, HumanTasks: []HumanTaskOut{}, Reports: []TicketReportOut{}, Replies: []TicketReplyOut{}}
-	runSet := make(map[string]bool, len(runs))
+	out := TicketOut{TicketID: ticketID, Runs: runs, Ledger: []TicketRunLedgerOut{}, HumanTasks: []HumanTaskOut{}, PendingTasks: []TicketPendingTaskOut{}, Reports: []TicketReportOut{}, Replies: []TicketReplyOut{}}
+	var err error
+	// The board link is composed from the runs, which are the only rows in
+	// this projection that carry the Jira work-item fact (task t18).
+	out.TicketURL = ticketBackLink(ticketID, runs)
+	runIDs := make([]string, 0, len(runs))
 	for _, run := range runs {
-		runSet[run.ID] = true
+		runIDs = append(runIDs, run.ID)
 		records, err := s.Ledger.Records(r.Context(), run.ID)
 		if err != nil {
 			return internalError(err)
@@ -241,14 +339,23 @@ func (s *Server) handleGetTicket(w http.ResponseWriter, r *http.Request) error {
 		}
 		out.Ledger = append(out.Ledger, TicketRunLedgerOut{RunID: run.ID, Records: records})
 	}
-	tasks, err := s.listHumanTasks(r.Context(), "", 500)
+	// Scoped to this ticket's runs, not "the newest N in the namespace then
+	// filtered" (task t18): a decision surface may not lose a task to a
+	// limit set by unrelated traffic.
+	out.HumanTasks, err = s.listHumanTasksForRuns(r.Context(), runIDs)
 	if err != nil {
 		return internalError(err)
 	}
-	for _, task := range tasks {
-		if runSet[task.RunID] {
-			out.HumanTasks = append(out.HumanTasks, task)
-		}
+	// The ledger version each pending task carries is READ HERE, in the
+	// same request that renders the task — that is what makes the stale
+	// guard on POST /human-tasks/{id}/decision mean anything. A client
+	// that fetched the version separately would be attesting to a frame it
+	// never showed anyone.
+	out.PendingTasks, err = pendingTicketTasks(out.HumanTasks, func(runID string) (int64, error) {
+		return s.Ledger.LedgerVersion(r.Context(), runID)
+	})
+	if err != nil {
+		return internalError(err)
 	}
 	rows, err := s.Store.Pool().Query(r.Context(), `SELECT id,COALESCE(run_id,''),phase,status,payload,created_at
 		FROM jira_ticket_report_outbox WHERE namespace_id=$1 AND issue_key=$2 ORDER BY created_at,id`, s.NamespaceID, ticketID)
@@ -298,9 +405,18 @@ func (s *Server) handleGetTicket(w http.ResponseWriter, r *http.Request) error {
 	} else if !isNoRowsErr(err) {
 		return internalError(err)
 	}
-	err = s.Store.Pool().QueryRow(r.Context(), `SELECT merged_pr FROM ticket_freezes WHERE namespace_id=$1 AND ticket_id=$2`, s.NamespaceID, ticketID).Scan(&out.MergedPR)
+	if out.TicketURL == "" {
+		// Second, never first: a posted frame is authored content and the
+		// work-item fact above is measured. It is consulted at all because
+		// a ticket whose runs predate the fact still has a page, and a
+		// page with no way back to the board is the defect c10 names.
+		out.TicketURL = ticketFrameBackLink(out.LatestFrame)
+	}
+	var frozenStatus pgtype.Text
+	err = s.Store.Pool().QueryRow(r.Context(), `SELECT merged_pr, ticket_status FROM ticket_freezes WHERE namespace_id=$1 AND ticket_id=$2`, s.NamespaceID, ticketID).Scan(&out.MergedPR, &frozenStatus)
 	if err == nil {
 		out.Frozen = true
+		out.Freeze = ticketFreezeOut(textOrEmpty(frozenStatus), out.Runs)
 	} else if !isNoRowsErr(err) {
 		return internalError(err)
 	}

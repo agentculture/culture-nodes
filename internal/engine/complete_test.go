@@ -4,10 +4,107 @@ import (
 	"encoding/json"
 	"errors"
 	"testing"
+	"time"
 
 	"github.com/agentculture/culture-nodes/internal/engine"
 	"github.com/agentculture/culture-nodes/internal/ledger"
+	storepg "github.com/agentculture/culture-nodes/internal/store/postgres"
 )
+
+func TestCompleteAttemptUsesActorInvocationAgeForDurationPercentiles(t *testing.T) {
+	f := newFixture(t, "loop.workflow.yaml")
+
+	for i := 0; i < 2; i++ {
+		run := f.createRun(`{"subject":"duration"}`)
+		nodeRun := f.readyNodeRun(run.ID)
+		claimed := f.claim("worker-duration", nodeRun.ID)
+		attemptID := "protocol-" + claimed.ID
+		if _, err := f.store.Pool().Exec(f.ctx, `
+			INSERT INTO actor_invocations (
+				attempt_id, namespace_id, run_id, node_run_id, work_id, worker_id,
+				fencing_token, attempt, node_key, actor_id, created_at
+			) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, 'intake', $9, clock_timestamp() - interval '3 seconds')`,
+			attemptID, f.ns.ID, run.ID, nodeRun.ID, claimed.ID, "worker-duration",
+			claimed.FencingToken, claimed.Attempt, f.actor,
+		); err != nil {
+			t.Fatalf("seed actor invocation: %v", err)
+		}
+
+		if _, err := f.engine.CompleteAttempt(f.ctx, completion(claimed, "worker-duration", engine.CompletionRequest{
+			ActorID: f.actor, TechStatus: engine.StatusSucceeded, Outcome: "completed",
+			Output: json.RawMessage(`{"scope":"duration"}`),
+		})); err != nil {
+			t.Fatalf("CompleteAttempt: %v", err)
+		}
+	}
+
+	statsStore, err := storepg.NewEngineStore(f.store, f.ns.ID)
+	if err != nil {
+		t.Fatalf("NewEngineStore: %v", err)
+	}
+	stats, err := statsStore.ActorStats(f.ctx, f.actor)
+	if err != nil {
+		t.Fatalf("ActorStats: %v", err)
+	}
+	got := stats.Total.DurationPercentiles
+	if got == nil || got.Count != 2 {
+		t.Fatalf("duration percentiles = %+v, want two known durations", got)
+	}
+	if got.P50Seconds < 2.5 || got.P90Seconds < 2.5 || got.P99Seconds < 2.5 {
+		t.Fatalf("duration percentiles = %+v, want non-zero values near the seeded 3-second invocation age", got)
+	}
+}
+
+func TestCompleteAttemptLeavesUnknownStartNull(t *testing.T) {
+	f := newFixture(t, "loop.workflow.yaml")
+	run := f.createRun(`{"subject":"sync"}`)
+	nodeRun := f.readyNodeRun(run.ID)
+	f.step("worker-sync", nodeRun.ID, engine.CompletionRequest{
+		ActorID: f.actor, TechStatus: engine.StatusSucceeded, Outcome: "completed",
+		Output: json.RawMessage(`{"scope":"sync"}`),
+	})
+
+	var startedAt *time.Time
+	if err := f.store.Pool().QueryRow(f.ctx,
+		`SELECT started_at FROM attempts WHERE node_run_id = $1`, nodeRun.ID,
+	).Scan(&startedAt); err != nil {
+		t.Fatalf("read attempt start: %v", err)
+	}
+	if startedAt != nil {
+		t.Fatalf("started_at = %s, want NULL when no invocation row records the start", startedAt.UTC())
+	}
+}
+
+func TestCompleteAttemptUsesRunnerInvocationStart(t *testing.T) {
+	f := newFixture(t, "loop.workflow.yaml")
+	run := f.createRun(`{"subject":"runner"}`)
+	nodeRun := f.readyNodeRun(run.ID)
+	claimed := f.claim("worker-runner", nodeRun.ID)
+	if _, err := f.store.Pool().Exec(f.ctx, `
+		INSERT INTO runner_invocations (
+			attempt_id, namespace_id, run_id, node_run_id, work_id, worker_id,
+			fencing_token, attempt, node_key, runner_ref, endpoint, operation_id, created_at
+		) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, 'intake', 'runner', 'https://runner.invalid', $1,
+			clock_timestamp() - interval '3 seconds')`,
+		"protocol-"+claimed.ID, f.ns.ID, run.ID, nodeRun.ID, claimed.ID, "worker-runner",
+		claimed.FencingToken, claimed.Attempt,
+	); err != nil {
+		t.Fatalf("seed runner invocation: %v", err)
+	}
+	if _, err := f.engine.CompleteAttempt(f.ctx, completion(claimed, "worker-runner", succeeded("completed", `{"scope":"runner"}`))); err != nil {
+		t.Fatalf("CompleteAttempt: %v", err)
+	}
+
+	var duration float64
+	if err := f.store.Pool().QueryRow(f.ctx, `
+		SELECT EXTRACT(EPOCH FROM (completed_at - started_at))
+		FROM attempts WHERE node_run_id = $1`, nodeRun.ID).Scan(&duration); err != nil {
+		t.Fatalf("read attempt duration: %v", err)
+	}
+	if duration < 2.5 {
+		t.Fatalf("attempt duration = %v, want non-zero value near seeded 3-second runner invocation age", duration)
+	}
+}
 
 // advanceToWork drives a fresh run to the point where the `work` node run is
 // ready, and returns its id. Several tests below are about what happens at

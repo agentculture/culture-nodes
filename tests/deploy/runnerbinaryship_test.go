@@ -60,6 +60,15 @@ case "$cmd" in
     echo "bash: line 1: go: command not found" >&2
     exit 127
     ;;
+  *"if [ -f ~/.culture-nodes/runner.env ]"*)
+    # The grant check now REFUSES a probe it cannot read, and "exit 0 with no
+    # output" is exactly that: it can no longer be told apart from an ssh that
+    # failed. This stub host has no filesystem, so the honest answer is the
+    # one a first deploy gives -- and the check skips, which is what this test
+    # needs it to do to reach issue #17's ship step at all.
+    echo no
+    exit 0
+    ;;
   *"command -v headspace"*)
     # THE TRIPWIRE. This is the very next step after the runner binary is
     # shipped. Reaching it means the deploy continued past a failed ship.
@@ -112,6 +121,14 @@ func TestFailedRunnerBinaryShipAbortsTheDeploy(t *testing.T) {
 	cmd.Env = append(os.Environ(),
 		"PATH="+binDir+string(os.PathListSeparator)+os.Getenv("PATH"),
 		"MARKER_FILE="+marker,
+		// Pin the preflight grant check at a control plane that cannot
+		// answer, which is its documented decline: WARNING, UNVERIFIED,
+		// proceed. Without this the check reads whichever NODES_API_URL the
+		// operator running `go test` happens to hold, diffs the real
+		// published workflows against a stub ssh that reports no grants at
+		// all, and refuses the deploy -- so this test would pass or fail on
+		// the ambient environment rather than on issue #17's ship step.
+		"NODES_API_URL=http://127.0.0.1:1",
 	)
 	out, err := cmd.CombinedOutput()
 

@@ -60,10 +60,8 @@ func (eq engineQueries) appendJiraTicketReport(ctx context.Context, runID, event
 		return fmt.Errorf("postgres: engine: jira ticket report outbox: %w", err)
 	}
 	if phase == "start" {
-		base := strings.TrimRight(strings.TrimSpace(os.Getenv("NODES_UI_BASE_URL")), "/")
-		pageComment := fmt.Sprintf("culture-nodes page: %s/tickets/%s [culture-nodes:ticket-page-link]", base, issue)
 		pagePayload, _ := json.Marshal(map[string]any{
-			"verb": "post_comment", "issue": issue, "comment": pageComment, "phase": "page-link",
+			"verb": "post_comment", "issue": issue, "comment": jiraTicketPageComment(issue), "phase": "page-link",
 		})
 		if _, err := eq.q.Exec(ctx, `INSERT INTO jira_ticket_report_outbox
 			(id,namespace_id,phase,target_actor_key,issue_key,payload)
@@ -75,4 +73,31 @@ func (eq engineQueries) appendJiraTicketReport(ctx context.Context, runID, event
 	}
 	_ = eventPayload // lifecycle event remains the authoritative ordering source.
 	return nil
+}
+
+// UIBaseURLEnv names the origin the ticket page is served from -- the value
+// that decides whether the link this file posts to a Jira ticket is clickable.
+// It is exported so the deployment manifests can be pinned against it from
+// tests/deploy (the same cross-boundary pin telemetry.EndpointEnvVar carries):
+// the variable is useless unless every compose service that can mint a run
+// declares it, and a rename in either half must fail the build rather than
+// quietly restore the bare path.
+const UIBaseURLEnv = "NODES_UI_BASE_URL"
+
+// jiraTicketPageComment renders the one page-link comment a ticket gets, from
+// the deployment's own origin.
+//
+// Trimming is not cosmetic: this value is read from ~/.culture-nodes/prod.env,
+// where a trailing slash is what an operator types and surrounding whitespace
+// is what a hand-edited line leaves behind -- either one concatenated naively
+// gives a URL that is wrong in a way nothing downstream reports.
+//
+// An unset (or empty) variable renders the BARE PATH, deliberately. A default
+// invented here would be a second, unmanaged opinion about where this
+// deployment is served from, sitting in a code path no deploy can correct; the
+// compose files carry the fallback origin instead, where an operator can see
+// and override it. Task t16 / spec c10.
+func jiraTicketPageComment(issue string) string {
+	base := strings.TrimRight(strings.TrimSpace(os.Getenv(UIBaseURLEnv)), "/")
+	return fmt.Sprintf("culture-nodes page: %s/tickets/%s [culture-nodes:ticket-page-link]", base, issue)
 }

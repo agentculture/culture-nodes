@@ -137,6 +137,34 @@ tags:
 
 paths:
   /v1alpha1/namespaces:
+    post:
+      operationId: createNamespace
+      summary: Create a namespace in this installation.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CreateNamespace'
+      responses:
+        '201':
+          description: The namespace was created.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Namespace'
+        '400':
+          description: The name or slug is missing or the request is malformed.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '409':
+          description: A namespace with that slug already exists.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
     get:
       operationId: listNamespaces
       summary: List namespaces available to workers in this installation.
@@ -446,7 +474,19 @@ paths:
     post:
       operationId: freezeTicket
       tags: [runs]
-      summary: Freeze a ticket page with its merged PR pointer.
+      summary: Freeze a ticket page with its merged PR pointer, and end its runs.
+      description: >-
+        Records the merged-PR pointer that closes the ticket page to replies,
+        and ENDS every run whose subject is this ticket (task t17, spec c28):
+        cancelled when `ticket_status` is "Done", parked otherwise. Every run
+        it touches carries `reason: ticket_frozen`, and the ticket projection's
+        `freeze` block counts them for the page banner.
+
+
+        A park is reversible and a cancel is not, so an absent or unrecognised
+        `ticket_status` parks. This control plane cannot look the status up:
+        the Jira bridge advertises post_comment, transition_issue and
+        create_issue and no read verb.
       security: [{decisionBearerAuth: []}]
       parameters:
         - {name: id, in: path, required: true, schema: {type: string}}
@@ -456,7 +496,11 @@ paths:
           application/json:
             schema: {$ref: '#/components/schemas/FreezeTicketRequest'}
       responses:
-        '200': {description: Ticket projection frozen.}
+        '200':
+          description: Ticket projection frozen and its runs ended.
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/FreezeTicketResult'}
         '401': {description: Decision bearer token is missing or invalid.}
 
   /v1alpha1/runs:
@@ -497,7 +541,7 @@ paths:
     get:
       operationId: listRuns
       tags: [runs]
-      summary: List runs, optionally filtered by state and/or an updated_at window.
+      summary: List runs, optionally filtered by workflow key, state, and/or an updated_at window.
       description: >-
         Newest first by `sort` (task t11). `updated_since`/`updated_until`
         filter on `updated_at`, using `runs_namespace_updated_at_idx`
@@ -508,6 +552,11 @@ paths:
           description: Filter to runs currently in this state.
           schema:
             $ref: '#/components/schemas/RunState'
+        - name: workflow_key
+          in: query
+          description: Filter to runs pinned to a workflow with this exact key.
+          schema:
+            type: string
         - name: subject
           in: query
           description: Filter to runs whose persisted correlation subject matches exactly.
@@ -549,6 +598,11 @@ paths:
             minimum: 1
             maximum: 500
             default: 50
+        - name: cursor
+          in: query
+          description: Opaque keyset cursor from a previous response's next_cursor.
+          schema:
+            type: string
       responses:
         '200':
           description: A page of runs, newest first.
@@ -557,7 +611,7 @@ paths:
               schema:
                 $ref: '#/components/schemas/RunList'
         '400':
-          description: state, updated_since, updated_until, or sort is malformed.
+          description: state, updated_since, updated_until, sort, or cursor is malformed.
           content:
             application/json:
               schema:
@@ -629,6 +683,30 @@ paths:
                 $ref: '#/components/schemas/Error'
 
   /v1alpha1/attempts/{attemptID}/artifacts:
+    get:
+      operationId: listAttemptArtifacts
+      tags: [artifacts]
+      summary: List artifacts associated with one attempt.
+      description: >-
+        Includes artifacts indexed directly by attempt_id. For code-node
+        stdout, the attempt result's artifacts.stdout_ref is also resolved
+        against the artifact store, so runner-captured stdout remains listed
+        when its artifact metadata row lacks the attempt association.
+      parameters:
+        - $ref: '#/components/parameters/AttemptID'
+      responses:
+        '200':
+          description: Artifact metadata associated with the attempt.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AttemptArtifactList'
+        '503':
+          description: Artifact reads are not configured.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
     post:
       operationId: putAttemptArtifact
       tags: [artifacts]
@@ -640,8 +718,8 @@ paths:
         opaque content and cannot supply authority-bearing fields. Returns
         an artifact:// ref and metadata measured by the artifact store.
 
-        No GET or DELETE operation is mounted. Possession of an artifact://
-        ref is not authorization, and filesystem paths are never resolved.
+        Possession of an artifact:// ref is not authorization, and filesystem
+        paths are never resolved.
       security:
         - attemptCallbackBearerAuth: []
       parameters:
@@ -689,6 +767,50 @@ paths:
             The body exceeds the publication limit (api.MaxArtifactBytes,
             64 MiB). Authentication is not a size limit: publish large output
             to object storage and record a reference, or split it.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+
+  /v1alpha1/attempts/{attemptID}/artifacts/{name}:
+    get:
+      operationId: getAttemptArtifact
+      tags: [artifacts]
+      summary: Read one named attempt artifact.
+      description: >-
+        Streams the newest artifact with the requested descriptive name. For
+        name stdout, the attempt result's artifacts.stdout_ref is resolved
+        against the artifact store when no attempt-indexed row exists. The
+        response is forced to download with MIME sniffing disabled and a
+        sandbox content-security policy.
+      parameters:
+        - $ref: '#/components/parameters/AttemptID'
+        - name: name
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: The artifact's opaque bytes.
+          headers:
+            Artifact-Ref:
+              description: The resolved artifact:// reference.
+              schema:
+                type: string
+          content:
+            '*/*':
+              schema:
+                type: string
+                format: binary
+        '404':
+          description: The attempt has no artifact with this name, or its content was reaped.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '503':
+          description: Artifact reads are not configured.
           content:
             application/json:
               schema:
@@ -2513,6 +2635,10 @@ paths:
         `ledger_version`, which is exactly what POST
         /v1alpha1/runs/{id}/reviews needs to open a review over them.
 
+        Results are keyset-paginated by `created_at` and `id`. Pass a
+        response's `next_cursor` back as `cursor`; its absence means the
+        final page.
+
         An unrecognised query parameter is refused with 400 rather than
         ignored: a filter silently dropped answers a different question than
         the one asked while still looking authoritative.
@@ -2543,6 +2669,12 @@ paths:
             type: integer
             minimum: 1
             maximum: 1000
+        - name: cursor
+          in: query
+          required: false
+          description: Opaque keyset cursor from a previous response's `next_cursor`.
+          schema:
+            type: string
       responses:
         '200':
           description: The pending records, grouped by run.
@@ -2551,7 +2683,7 @@ paths:
               schema:
                 $ref: '#/components/schemas/PendingDecisionList'
         '400':
-          description: An unrecognised query parameter was supplied.
+          description: An unrecognised query parameter or invalid cursor was supplied.
           content:
             application/json:
               schema:
@@ -2806,6 +2938,9 @@ paths:
       operationId: listHumanTasks
       tags: [human-tasks]
       summary: List human tasks, newest first.
+      description: >-
+        Keyset-paginated by `created_at` and `id`. Pass a response's
+        `next_cursor` back as `cursor`; its absence means the final page.
       parameters:
         - name: status
           in: query
@@ -2818,6 +2953,13 @@ paths:
           schema:
             type: integer
             default: 50
+            minimum: 1
+            maximum: 500
+        - name: cursor
+          in: query
+          description: Opaque keyset cursor from a previous response's `next_cursor`.
+          schema:
+            type: string
       responses:
         '200':
           description: The matching human tasks.
@@ -2825,6 +2967,12 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/HumanTaskList'
+        '400':
+          description: The cursor is invalid.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
 
   /v1alpha1/human-tasks/{id}:
     get:
@@ -3123,6 +3271,13 @@ components:
         created_at:
           type: string
           format: date-time
+    CreateNamespace:
+      type: object
+      required: [name, slug]
+      additionalProperties: false
+      properties:
+        name: {type: string, minLength: 1}
+        slug: {type: string, minLength: 1}
     CreateWorkflowGeneration:
       type: object
       required: [description, actor_ref]
@@ -3177,6 +3332,17 @@ components:
         created_at:
           type: string
           format: date-time
+
+    AttemptArtifactList:
+      type: object
+      required: [attempt_id, artifacts]
+      properties:
+        attempt_id:
+          type: string
+        artifacts:
+          type: array
+          items:
+            $ref: '#/components/schemas/ArtifactWriteResult'
 
     Error:
       type: object
@@ -3367,6 +3533,9 @@ components:
           type: string
         workflow_digest:
           type: string
+        workflow_key:
+          type: string
+          description: The stable key of the workflow version pinned by this run. Present in run listings.
         state:
           $ref: '#/components/schemas/RunState'
         input:
@@ -3449,6 +3618,22 @@ components:
               rule:
                 type: string
                 description: The declared affinity rule that chose it, if it was named.
+        reason:
+          type: string
+          description: >-
+            Why the run is in this state, when the state was a CONTROL-PLANE
+            decision rather than something an actor reported (task t17,
+            migrations/0052). Today's one writer is the ticket freeze: a run
+            whose subject is a frozen ticket reads `"reason":
+            "ticket_frozen"` beside a `cancelled` or `waiting` state.
+
+
+            Absent for every run that reached its state the ordinary way,
+            where the account of what happened is the last attempt's own
+            `result.error.detail` (task t6). The two are deliberately
+            separate fields: an attempt's result is the ACTOR's evidence and
+            is immutable, so a control-plane decision is never written over
+            it.
         subject:
           type: string
           description: >-
@@ -3465,7 +3650,8 @@ components:
       type: object
       required:
         [id, name, event_name, emitter, payload, interval_seconds, catch_up,
-         enabled, next_fire_at, fire_count, skip_count, created_at, updated_at]
+         enabled, next_fire_at, fire_count, skip_count, suppressed_count,
+         created_at, updated_at]
       properties:
         id:
           type: string
@@ -3540,6 +3726,37 @@ components:
           type: integer
           format: int64
           description: Occurrences declined under a `skip` catch-up policy.
+        suppressed_count:
+          type: integer
+          format: int64
+          description: >-
+            Due occurrences this schedule held back because its last two
+            minted runs failed with the SAME reason (task t9, issue #253).
+
+
+            Suppression is a rate, not a stop: a suppressed schedule still
+            mints a probe run at most every
+            `NODES_SCHEDULE_PROBE_INTERVAL` (default 30m), so a repaired
+            environment is discovered without an operator resuming anything,
+            and one completed run puts the schedule straight back on its
+            declared cadence. `enabled` therefore keeps its own meaning — an
+            operator said stop — while this counter records the environment
+            saying stop.
+
+
+            Counted rather than inferred, and separate from `skip_count`,
+            because "the operator declared a catch-up policy" and "the work
+            keeps failing identically" are different answers to "why has
+            nothing run".
+        last_failure_detail:
+          type: string
+          description: >-
+            The repeated reason, verbatim: the last minted run's last
+            attempt's `result.error.detail` (falling back to that attempt's
+            technical status, then the run's, when the attempt reported no
+            error envelope). Absent when the schedule is not currently
+            failing, so its presence is the answer to "is this schedule
+            holding back, and why".
         created_at:
           type: string
           format: date-time
@@ -3648,10 +3865,15 @@ components:
         cache_ratio:
           type: number
           description: >-
-            cached_input_tokens / input_tokens, present only when
-            input_tokens > 0. Never computed as a fabricated 0 when no
-            attempt in scope reported any input tokens (0/0 is undefined,
-            not zero) — absent in that case.
+            cached_input_tokens / (input_tokens + cached_input_tokens) —
+            the share of the whole prompt that was served from cache, so
+            it is bounded by 1.0. Cache reads are reported ALONGSIDE
+            input_tokens, never inside them, so dividing by input_tokens
+            alone is unbounded and read as high as 5.88 on real data
+            (task t8). Present only when input_tokens + cached_input_tokens
+            > 0: never computed as a fabricated 0 when no attempt in scope
+            reported any prompt tokens (0/0 is undefined, not zero) —
+            absent in that case.
         cost:
           type: number
           description: >-
@@ -3706,6 +3928,9 @@ components:
           type: array
           items:
             $ref: '#/components/schemas/Run'
+        next_cursor:
+          type: string
+          description: Opaque keyset cursor for the next page; absent on the last page.
 
     Token:
       type: object
@@ -4150,6 +4375,9 @@ components:
           description: >-
             Undecided records across every listed run — the number a stage
             exit gate compares against zero.
+        next_cursor:
+          type: string
+          description: Opaque keyset cursor for the next page; absent on the last page.
 
     ReviewCommitResult:
       type: object
@@ -4641,6 +4869,9 @@ components:
           type: array
           items:
             $ref: '#/components/schemas/HumanTask'
+        next_cursor:
+          type: string
+          description: Opaque keyset cursor for the next page; absent on the last page.
 
     DeliverEventRequest:
       type: object
@@ -6030,12 +6261,116 @@ components:
       properties:
         merged_pr: {type: object, additionalProperties: true}
         frozen_by: {type: string}
+        ticket_status:
+          type: string
+          description: >-
+            The board status the caller observed on the ticket, e.g. "Done"
+            or "In Progress" (task t17). "Done" (case-insensitive) cancels
+            the ticket's runs; anything else, including an absent value,
+            parks them. Supplied rather than looked up: the Jira bridge has
+            no read verb.
+
+    FreezeTicketResult:
+      type: object
+      required: [ticket_id, frozen, cancelled_runs, parked_runs]
+      properties:
+        ticket_id: {type: string}
+        frozen: {type: boolean}
+        merged_pr: {type: object, additionalProperties: true}
+        freeze:
+          allOf:
+            - $ref: '#/components/schemas/TicketFreeze'
+          description: What the freeze did to this ticket's runs. Present only on a frozen ticket.
+        ticket_status: {type: string}
+        cancelled_runs:
+          type: array
+          items: {type: string}
+          description: Ids of the runs this freeze cancelled, in creation order.
+        parked_runs:
+          type: array
+          items: {type: string}
+          description: Ids of the runs this freeze parked, in creation order.
+
+    TicketFreeze:
+      type: object
+      required: [reason, cancelled_runs, parked_runs, banner]
+      properties:
+        reason:
+          type: string
+          description: The run-level reason stamped on every run this freeze ended (`ticket_frozen`).
+        ticket_status:
+          type: string
+          description: >-
+            The board status the freeze was decided against, as the caller
+            reported it. Absent means the caller did not say — which is why
+            the runs were parked rather than cancelled.
+        cancelled_runs:
+          type: integer
+          description: >-
+            How many of the ticket's runs are cancelled carrying that reason.
+            Derived at read time from the runs in this same projection, never
+            a stored tally that could disagree with them.
+        parked_runs:
+          type: integer
+          description: How many of the ticket's runs are parked (`waiting`) carrying that reason.
+        banner:
+          type: string
+          description: >-
+            The sentence the ticket page renders under its frozen heading,
+            naming both counts and the reason. Composed server-side so the
+            count a human reads is the count the API test asserts.
+
+    TicketPendingTask:
+      type: object
+      required: [id, run_id, kind, allowed_outcomes, created_at, ledger_version]
+      description: >-
+        One pending human task on a ticket, shaped for the surface that
+        decides it (task t18). Every field is read back out of the task's own
+        recorded request — what the human was actually shown (PRD §9.9) —
+        never re-derived from the workflow.
+      properties:
+        id: {type: string}
+        run_id: {type: string}
+        kind: {type: string}
+        allowed_outcomes:
+          type: array
+          items: {type: string}
+          description: >-
+            Exactly the outcomes POST /human-tasks/{id}/decision will accept.
+            Always present; an EMPTY array means this task declares none (an
+            alert rather than a choice, e.g. `schedule_failing`) and must be
+            distinguishable from an omitted field.
+        decision_schema_ref:
+          type: string
+          description: The node's authored decisionSchemaRef, unresolved.
+        deadline:
+          type: string
+          format: date-time
+          description: When this task becomes overdue. Absent when the node declared none.
+        created_at: {type: string, format: date-time}
+        ledger_version:
+          type: integer
+          format: int64
+          description: >-
+            The run's ledger version READ IN THIS REQUEST, which is what a
+            decision must submit as `expected_ledger_version`. Served with
+            the task so the version a decider attests to is the one the page
+            they read was rendered from.
 
     Ticket:
       type: object
-      required: [ticket_id, runs, ledger, human_tasks, ticket_reports, replies, frozen]
+      required: [ticket_id, runs, ledger, human_tasks, pending_tasks, ticket_reports, replies, frozen]
       properties:
         ticket_id: {type: string}
+        ticket_url:
+          type: string
+          description: >-
+            Where this ticket lives on the board, composed from the Jira
+            work-item fact the ticket's runs carry (`details_url`, else
+            `jira_site` plus the key), falling back to a posted frame's own
+            `ticket_url`/`jira_url` (task t18, spec c10). Always an absolute
+            http(s) URL; absent when nothing this projection can see says
+            where the ticket lives.
         runs:
           type: array
           items: {$ref: '#/components/schemas/Run'}
@@ -6043,6 +6378,14 @@ components:
         human_tasks:
           type: array
           items: {$ref: '#/components/schemas/HumanTask'}
+          description: Every human task on the ticket's runs, in any status.
+        pending_tasks:
+          type: array
+          items: {$ref: '#/components/schemas/TicketPendingTask'}
+          description: >-
+            The decidable subset of human_tasks. Both are served because they
+            answer different questions — what was asked, and what is still
+            being asked.
         ticket_reports: {type: array, items: {type: object}}
         replies: {type: array, items: {type: object}}
         latest_frame:

@@ -108,6 +108,12 @@ func relayingScripts(t *testing.T) []string {
 		filepath.Join(dir, "install-secrets.sh"),
 		filepath.Join(dir, "actor-placement.sh"),
 		filepath.Join(dir, "issue-dialin-credential.sh"),
+		// The grant check (task t5, issue #253) reads a control-plane URL out
+		// of the invoking environment and is executed by
+		// grantsafety_test.go, so it is in the completeness guard's scope --
+		// even though it relays nothing to a host, which is a property that
+		// has to keep being true rather than one to assume.
+		filepath.Join(dir, "lanes", "grant-check.sh"),
 	}
 }
 
@@ -170,12 +176,21 @@ var nonCredentialKnobs = map[string]string{
 	"HUMAN_INBOX_ACTOR_KEY":     "actor key whose registered host receives the human-inbox secret",
 	"HUMAN_INBOX_HOST":          "bootstrap override for the human-inbox host, before an actor row exists",
 	"NODES_API_URL":             "control-plane base URL the actor registry is read from",
+	"NODES_UI_BASE_URL":         "origin the ticket page is served from; it is written INTO prod.env and is a published address by construction — every Jira reader of a page-link comment sees it",
 	"NODES_API_TIMEOUT_SECONDS": "how long an actor-registry read may take",
+	"NODES_CALLBACK_BASE_URL":   "origin a bridge posts an attempt result back to; it is written INTO prod.env as a container-resolved address and every bridge that completes an attempt already holds it",
+	"NODES_COMPOSE_PROFILES":    "which compose profiles the control-plane host starts; a profile list is a deployment topology choice and names no credential",
 	"NODES_CONTROL_HOST":        "ssh target of the control-plane host",
 	"DIALIN_CONTROL_PLANE_URL":  "control-plane base URL the dial-in lane mints against",
 	"DIALIN_DESTINATION":        "which bridge host the issued dial-in credential is delivered to",
 	"DIALIN_HOST":               "ssh target the dial-in lane delivers to",
 	"DIALIN_PREFIX":             "name prefix of the per-bridge dial-in env file",
+
+	// Where a scratch directory is made. The grant check writes the control
+	// plane's two published answers here to read them from a file rather than
+	// an exec argument; both are public workflow definitions it then prints
+	// key NAMES out of, and it removes the directory on every path.
+	"TMPDIR": "base directory for the grant check's scratch copy of the published workflow list",
 }
 
 // TestEveryEnvironmentDerivedInputIsCanariedOrDeclaredHarmless is the guard
@@ -262,7 +277,7 @@ func inspectRelayRisk(t *testing.T, path string) relayRisk {
 	ast.Inspect(parsed, func(node ast.Node) bool {
 		switch n := node.(type) {
 		case *ast.Ident:
-			if n.Name == "installSecretsPath" || n.Name == "issueDialInPath" {
+			if n.Name == "installSecretsPath" || n.Name == "issueDialInPath" || n.Name == "grantCheckPath" {
 				risk.namesARelayingScript = true
 			}
 		case *ast.SelectorExpr:

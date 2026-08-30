@@ -51,123 +51,69 @@ environment — see [`deploy/prod/README.md`](../../deploy/prod/README.md)'s
 "Granted environment values" for where they live on this deployment and how
 `deploy.sh` re-grants them.
 
-A digest mismatch, or either value unset, exits nonzero — which `triage`
-reads as `sweep_broken` and routes to the backoff wait, like any other
-broken sweep. The `0` / `10` / other exit-code contract is untouched.
+A digest mismatch, or either value unset, exits nonzero, which is the
+sweep node's technical-failure path: `sweep.failed` routes to the
+`sweep-failed` end node and the run says so. The `0` / `10` / other
+exit-code contract is untouched — `0` (events emitted) and `10` (nothing to
+emit) are both successful emitter passes, and anything else fails.
 
 ## The graph
 
-Issue #71 removed the between-items human park: idle is no longer a human
-task, and a genuine judgement (a review that came back `changes_required`)
-gets a real decision instead of a second inbox. See "Idle vs blocked"
-below for why.
+PR upkeep v2 separates discovery from work on a finding. The two workflows
+communicate through durable events; neither loops back to discover another
+item.
 
 ```text
-                    ┌────────────────────────────────────────────┐
-                    │         merged (human merged the PR)         │
-                    ▼                                              │
-  sweep ──passed/failed──▶ triage ──items──▶ fix ──▶ review ──approve──▶ human-merges-pr
-    ▲                        │                ▲                              │dropped
-    │                        │empty           │answered                      ▼
-    │                        ▼                │                           finish
-    │                     backoff       human-answers-review ◀─sent─ notify-decision-pending
-    │                        │           │merged      │dropped              ▲
-    │                        │           ▼            ▼                    │posted
-    └────────────────────────┘        sweep         finish        ask-pr-question
-    ▲                                                                       ▲
-    └── backoff (wait 30m) ◀──sweep_broken── triage         review.changes_required ──┘
+  schedule
+      │ pr-upkeep.sweep.due
+      ▼
+  sweep-cycle.workflow.yaml
+      │ runs sweep.py and emits pr-upkeep.pr events
+      ▼
+  workflow.yaml v2 (one run per matching event)
 
-  fix ──handoff_unavailable──▶ handoff-blocked   (issue #74: the fix host has
-                                                  no portable handle to hand
-                                                  the review host; the run
-                                                  ends naming the capability)
+  fix.completed ──▶ human-merges-pr ──approved/rejected/expired──▶ finish
+      │
+      └──no_change───────────────────────────────────────────────▶ finish
 ```
 
-- **sweep** (code node, declared intent: `network: egress-allowlist` per
-  issue #50) runs [`sweep.py`](sweep.py) through the runner boundary:
-  SonarCloud's issues API (unresolved issues for this repo's component key),
-  the Qodo `Code Review` comments on this repo's open PRs, and the **failed
-  CI check runs** on those PRs' head commits (issue #61), parsed into one
-  prioritised work-item list. Its one routable domain fact is the **exit
-  code** — a code node's persisted output is runner metadata, not stdout —
-  so `0` means work found, `10` (`EXIT_EMPTY`) means a clean empty sweep,
-  and anything else means the sweep itself broke.
-- **triage** (decision node) reads `/nodes/sweep/output` and splits on
-  `exit_code`: items → fix, clean-empty → `backoff` (issue #71: idle just
-  re-sweeps, no human involved), broken → the SAME `backoff` wait, then
-  re-sweep.
-- **fix** (agent node, `company/developer` — the spark claude-code bridge)
-  takes the top item, fixes it on a branch, and opens/updates a PR. Its
-  bindings carry the sweep report and the sweep node's own observed
-  evidence (`/nodes/sweep/evidence`), plus the ledger's decision history so
-  a `changes_required` verdict reaches the next pass. It must also publish
-  its work as a **portable handle** — see [the cross-machine
-  handoff](#the-cross-machine-handoff-issue-74) — and has a named way to
-  say it cannot: the `handoff_unavailable` outcome.
-- **review** (agent node, `company/codex-thor` — a different model family
-  and bridge than fix, on the independent-review pattern) is **read-only**
-  (issue #18: codex sessions are analysis-only; the run-input contract pins
-  `review_sandbox` to the literal `read-only`, so a writable review run is
-  unpublishable). It reads the work under review through the fix lane's
-  `handoff` handle, never through a path; its own `review_repo` is only the
-  working directory thor's bridge allowlists. It also binds the fix node's
-  self-reported output, the fix node's own evidence records
-  (`/nodes/fix/evidence` — the node-run-scoped surface task t7 made
-  resolvable) and the run-wide evidence projection
-  (`/ledger/projections/evidence`, task t6). Both verdicts reach a human:
-  `approve` becomes an active merge assignment, `changes_required` becomes
-  a genuine decision — no agent alone re-triggers the billable fix actor.
-- **ask-pr-question** (agent node, reusing the FIX actor
-  `company/developer` — the only actor in this flow with an established
-  GitHub write credential) posts the review's findings as a comment on the
-  PR fix opened, when review comes back `changes_required`. The question
-  goes where the review conversation already lives.
-- **notify-decision-pending** (agent node, `company/notify-discord` —
-  [adapters/notify](../../adapters/notify/), issue #68) announces to
-  Discord that a decision is pending. The message is deliberately static:
-  the notification says a decision is waiting, the PR holds the substance.
-- **human-answers-review** (agent node on the `kind=human` actor
-  `company/human-ops`, via the [human-inbox bridge](../../adapters/human-inbox/))
-  parks on `observe: {kind: github_pr_reply}` — the tracker's decision
-  observable (issue #71), read alongside `github_pr_merged` below. Three
-  outcomes, two of them auto-observed: `answered` (a qualifying reply
-  landed — back to `fix` for another pass), `merged` (the human merged the
-  PR instead of replying — the strongest possible answer, back to `sweep`
-  like `human-merges-pr.merged`), and `dropped` (the PR closed unmerged
-  while the question sat unread, auto-observed so a question on a dead PR
-  never waits forever, or a manual override — ends the run).
-- **human-merges-pr** (agent node, `company/human-ops`) is the active merge
-  assignment for a clean `approve` verdict: `merged` (auto-observed via
-  `github_pr_merged`) loops back to `sweep`; `dropped` (manual only) ends
-  the run.
-
-Acceptance blocks on sweep (`process_exit == 0`) and fix
-(`workspace_diff complete`) use `enforce: observe` for this pass of issue
-37: every verdict lands as a derived record; routing is untouched.
+- [`sweep-cycle.workflow.yaml`](sweep-cycle.workflow.yaml) is triggered by
+  the scheduled `pr-upkeep.sweep.due` event. Its single code node runs
+  [`sweep.py`](sweep.py) through the
+  `runner://headspace/pr-upkeep-sweep` runner. The script reads the configured
+  repositories and emits `pr-upkeep.pr` events for GitHub PR findings. Exit
+  codes `0` (events emitted) and `10` (nothing to emit) both complete the
+  emitter successfully; other exit codes take its technical-failure path.
+- [`workflow.yaml`](workflow.yaml) is v2 of the upkeep workflow. It starts a
+  run for each `pr-upkeep.pr` event whose payload is from a GitHub PR and has
+  at least one finding. The event payload is the run input, so the repository,
+  PR identity, head SHA, and prioritised findings are durable before an actor
+  starts.
+- **fix** is the agent node. Actor affinity selects the security developer
+  when the event contains a security finding and the general developer
+  otherwise. The actor takes only the highest-priority finding and either
+  reports `completed` after opening or updating a PR, or `no_change` when a
+  fix would be inappropriate.
+- **human-merges-pr** is the approval node reached by `fix.completed`. A
+  platform maintainer decides the merge outcome; `approved`, `rejected`, and
+  `expired` are all terminal for this run.
+- **finish** is the end node. It receives `fix.no_change` directly and every
+  terminal outcome from `human-merges-pr`, then returns the original event
+  payload.
 
 ## Idle vs blocked (issue #71)
 
-`human-prepares-next-item` used to serve two different states through one
-generic "resume/done" park: **idle** ("nothing to do right now") and
-**blocked** ("I need a person to judge something"). Conflating them meant
-an idle loop and a blocked loop looked identical, and neither could be
-woken by a newly arrived PR — issue #72 (the tracker deployed on a
-different host than the actor it watches) was the prerequisite that made
-this observable in production. The fix removes the node outright and
-treats the two states as genuinely different:
+The v2 split makes these different states explicit:
 
-- **Idle** stops being a human task. `sweep` is now both the loop's entry
-  AND its resting place: an empty sweep returns to `backoff` (the SAME
-  30-minute durable wait a broken sweep already used) and re-sweeps.
-  Nobody is "assigned" an idle repository.
-- **Blocked** gets a real decision, built from three ordinary steps rather
-  than a generic park: `ask-pr-question` posts the question to the PR,
-  `notify-decision-pending` tells Discord a decision is pending, and
-  `human-answers-review` waits for the PR reply as an observable — exactly
-  the shape `human-merges-pr` already used for the merge. Every human
-  interaction in this graph is now a real-world artifact the tracker
-  observes (a merge, a reply, or a PR closing), not a task parked in a
-  second inbox.
+- **Idle means there is no upkeep run.** The schedule starts the discovery
+  workflow. When its script has no new event to emit, it exits successfully
+  and the run ends. The next schedule event starts a fresh discovery pass;
+  no human task or parked upkeep run represents an idle repository.
+- **Blocked means one event-created run is waiting at `human-merges-pr`.**
+  The actor has already produced a proposed fix, and the approval node holds
+  that run until a maintainer approves or rejects it, or its deadline expires.
+  Each outcome routes to `finish`; it never restarts discovery or reuses the
+  run for another finding.
 
 ## The human-merges rule
 
@@ -199,51 +145,6 @@ declared; the manual path is the override for dropped work and merges without
 a PR. A PR closed without merging does NOT auto-complete `human-merges-pr` —
 only the merged state is unambiguous enough to trigger automatic submission
 there.
-
-## The decision observable (issue #71)
-
-`human-answers-review` parks on a SECOND observation kind the same tracker
-now understands, `github_pr_reply` — read
-[adapters/human-inbox's README](../../adapters/human-inbox/README.md) for
-the full contract. Three points worth restating here, in this flow's own
-terms:
-
-- **Which reply counts.** The rule is deliberately structural, not
-  content-based: a comment counts when it is posted strictly AFTER
-  `ask-pr-question`'s own comment (GitHub's own `since` filter on the
-  comments API, scoped to the task's own park time) by an author who is
-  not one of the flow's own automated identities (the Qodo review bot by
-  default; extend via `HUMAN_INBOX_TRACKER_REPLY_IGNORED_LOGINS`). No
-  magic marker is required — the question was JUST posted on this PR, so
-  the next human comment on the thread IS the answer in context. This is
-  what keeps the flow from resuming on an unrelated "thanks": an unrelated
-  aside would have to be posted by a real person, strictly after the
-  question, on this specific PR — in practice only the person answering
-  does that.
-- **The PR's terminal states are observables too.** A question posted to a
-  PR that then gets merged or closed does not wait forever:
-  `human-answers-review` checks the PR's own state on every cycle before
-  checking for a reply, so `merged: true` completes the task as `merged`
-  (loops to `sweep`, the strongest possible answer) and `state: closed`
-  (unmerged) completes it as `dropped` (ends the run) — neither needs a
-  human to notice and manually intervene.
-- **The rate budget.** `github_pr_reply` shares the SAME per-cycle GitHub
-  request budget as `github_pr_merged` — it does not raise
-  `github_request_budget` or shorten `poll_seconds`. In the anonymous
-  lane's worst case (no `GITHUB_TOKEN`, default 50% utilization) the
-  tracker plans one GitHub request per 120-second cycle, 30 requests/hour
-  against the 60/hour ceiling, REGARDLESS of how many PRs are being
-  watched — adding reply-kind groups only adds more entrants to the same
-  round-robin queue. A reply-kind group's full check costs up to TWO of
-  those per-cycle requests when the PR is still open (one for terminal
-  state, one for new comments) versus one for a merge-kind group, so at
-  budget=1 an open reply-kind group needs at least two cycles (up to
-  ~240s) to complete one full check — slower detection than a merge check,
-  an explicit and accepted trade-off for staying inside the same ceiling,
-  never a silent overrun. Reply-kind groups are checked BEFORE merge-kind
-  groups each cycle (a human is actively blocked on a reply-kind group;
-  a merge-kind group's human can act at their own pace), which reprioritises
-  the same fixed budget without growing it.
 
 ## The closed repository-set boundary (claim c26)
 
@@ -291,6 +192,48 @@ gap in the sweep):
   answer comment. The watermark position is unfiltered, so it already sits
   past the actor's own comment once a real reply lands.
 
+## Dedupe by finding id (spec c7/h6)
+
+The watermark answers *did this PR move* — head SHA plus newest comment
+timestamp. It does not answer *is this finding already being worked*, and
+those are different questions. A push moves the watermark, so every
+still-open finding was re-emitted, and each emission minted a fresh
+pr-upkeep run and a fresh `human-merges-pr` approval. On prod,
+`pr236-qodo-1` sat in four running runs at once
+(`01M1636D…`, `01M163RN…`, `01M1641W…`, `01M164B1…`) — four approvals for
+one piece of work.
+
+The second key is the finding id. Before emitting, the sweep reads
+`GET /v1alpha1/runs?workflow_key=pr-upkeep&state=running`
+(`fetch_running_finding_ids`) and drops every finding id one of those runs
+already carries in its `input.findings` — a triggered run's input *is* the
+event payload, so that field is exactly what was emitted for it. The
+surviving findings are emitted normally; the skipped ids are named in the
+sweep's stdout summary under `skipped_findings`.
+
+Three decisions worth stating:
+
+- **The watermark logic is unchanged.** This is a second key layered on top,
+  not a replacement: an unmoved watermark is still a no-op at the control
+  plane, and a moved one still reaches this filter.
+- **A PR whose findings are *all* in flight emits nothing at all**, rather
+  than an event with an empty findings list. An empty list would consume
+  that watermark for a fact the trigger declines
+  (`size(event.payload.findings) > 0`), which would strand those findings at
+  that head SHA even after the runs holding them end. Skipping leaves the
+  position unconsumed for a later cycle. A PR that genuinely has no findings
+  is untouched by this — nothing was deduped away, so it emits as before.
+- **An unreadable runs list fails the sweep**, with its own `attempting`
+  stage, rather than degrading to "emit everything": that fallback is the
+  duplicate-approval bug, and restoring it silently is worse than a named
+  failure. The read hits the same host the emission POSTs to, so a control
+  plane that cannot answer it could not have accepted the events either.
+
+One honest limit: findings suppressed at a given head SHA are re-offered
+only once the watermark moves again. If a run in flight ends while the PR
+sits still, its finding waits for the next push or comment. Closing that
+would mean changing the watermark, which this task deliberately did not.
+
 ## The cross-machine handoff (issue #74)
 
 `fix` and `review` are deliberately different actors — that is the whole
@@ -299,11 +242,10 @@ independent-review pattern — and different actor increasingly means
 `company/codex-thor` is the codex bridge on thor. A filesystem path does not
 survive that boundary, and this graph used to hand one across it anyway.
 
-What it looked like, in run `01KZZSGSWH11J7R7P4V2HPTZZQ`:
+What it looked like, in run `01KZZSGSWH11J7R7P4V2HPTZZQ` — a v1 run, back
+when discovery still ran inside this graph:
 
 ```text
-sweep   completed  passed
-triage  completed  items
 fix     completed  completed     <- real session on spark, committed b01608c
 review  failed     auth_or_policy (HTTP 403): actor answered Forbidden
 ```
@@ -480,39 +422,6 @@ manual overrides happen in the web `/inbox` or via
 `POST /v1alpha1/human-tasks/{id}/decision`. When a run ends, re-invoke the
 driver for the next cycle — issue #71 means that is rarer now, since an
 empty sweep re-sweeps on its own instead of ending the run.
-
-### How the observable is declared (issue #73, closed)
-
-Both `human-merges-pr` and `human-answers-review` declare what they are
-waiting for **in the graph text**, as a typed literal binding:
-
-```yaml
-input:
-  bindings:
-    instruction: /run/input/merge_instruction
-    pr: /nodes/fix/output/pr_number
-    observe:
-      literal:
-        kind: github_pr_merged
-```
-
-The split is the point. A binding value is either a JSON Pointer (a read
-from run, node, or ledger data) or a `literal:` (a constant the author
-wrote), and the two are never confused because a bare string is always a
-pointer. The observation **kind** is a declaration and never changes, so it
-is a literal; **which PR** is per-cycle data produced by the `fix` node, so
-it is a pointer. A pointer cannot be smuggled inside a literal — that would
-be the template language PRD §11.2 forbids — so the tracker reads `pr` from
-the `observe` block when it is there and from the task's own input
-otherwise, the same fallback it has always applied to `repo`.
-
-This is the shape the convention was always documented as having. Until
-issue #73 landed the compiler refused it, and the workflow shipped the
-observable as a whole object riding run input instead — which compiled, but
-meant an author read the graph and could not see what the node watched. Two
-guards keep the documented shape and the compilable shape the same from now
-on: `scripts/validate-examples.sh` and `tests/lint/examplescompile_test.go`
-(see [docs/invariants.md](../../docs/invariants.md), invariant 3).
 
 ## Operational notes
 

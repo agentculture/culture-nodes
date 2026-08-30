@@ -10,6 +10,7 @@ import (
 
 	"github.com/agentculture/culture-nodes/internal/handover"
 	"github.com/agentculture/culture-nodes/internal/ledger"
+	"github.com/agentculture/culture-nodes/internal/store"
 )
 
 // createSuiteVerdictReq mirrors components.schemas.CreateSuiteVerdictRequest
@@ -114,6 +115,44 @@ func TestSuiteVerdictLandsDerivedFromAValidator(t *testing.T) {
 	}
 	if data["verdict"] != "confirm" {
 		t.Errorf("verdict = %v, want confirm", data["verdict"])
+	}
+}
+
+func TestSuiteVerdictKeepsAttemptRefWithoutInventingAnAttemptForeignKey(t *testing.T) {
+	for _, tc := range []struct {
+		name     string
+		complete bool
+	}{
+		{name: "in flight"},
+		{name: "completed", complete: true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			f := newFixtureWithDecisionAuth(t, decisionAuthSecret)
+			run, nodeRunID := createMinimalRun(t, f)
+			validator := f.insertActorKind("merge-gate", "validator")
+			attemptRef := "att_" + store.NewULID()
+			if tc.complete {
+				attemptRef = insertCompletedAttempt(t, f, nodeRunID)
+			}
+			req := passingGateReq(validator)
+			req.NodeRunRef, req.AttemptRef = nodeRunID, attemptRef
+
+			var out suiteVerdictOut
+			resp, body := doJSONBearer(t, f.client, http.MethodPost,
+				f.url("/v1alpha1/runs/"+run.ID+"/suite-verdicts"), decisionAuthSecret, req, &out)
+			requireStatus(t, resp, body, http.StatusCreated)
+
+			if got := verdictPayload(t, out.Verdict)["attempt_ref"]; got != attemptRef {
+				t.Errorf("data.attempt_ref = %v, want %s", got, attemptRef)
+			}
+			wantAttemptID := ""
+			if tc.complete {
+				wantAttemptID = attemptRef
+			}
+			if out.Verdict.AttemptID.String() != wantAttemptID {
+				t.Errorf("attempt_id = %q, want %q", out.Verdict.AttemptID, wantAttemptID)
+			}
+		})
 	}
 }
 

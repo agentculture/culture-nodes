@@ -100,6 +100,43 @@ func codeRunResult(op runners.Operation, exitCode int) runners.Result {
 	}
 }
 
+func TestRejectedRunnerDetailReachesAttemptAndCompletionEvent(t *testing.T) {
+	const detail = "runner rejected X"
+	h := newCodeHarness(t, func(op runners.Operation, _ int) (runners.Result, error) {
+		return runners.Result{
+			OperationID: op.OperationID,
+			State:       runners.StateRejected,
+			Error: &runners.ResultError{
+				Kind:    runners.ErrorRejectedInput,
+				Message: detail,
+			},
+		}, nil
+	})
+
+	run := h.createRun("code.workflow.yaml", `{"subject":"widget"}`)
+	h.runUntil(20*time.Second, func() bool { return h.run(run.ID).State.Terminal() })
+
+	attempts := h.attemptRows(run.ID, "test")
+	if len(attempts) != 1 {
+		t.Fatalf("attempt count = %d, want 1", len(attempts))
+	}
+	if !strings.Contains(string(attempts[0].Result), detail) {
+		t.Errorf("attempt result = %s, want rejection detail %q", attempts[0].Result, detail)
+	}
+
+	var eventData []byte
+	if err := h.store.Pool().QueryRow(h.ctx, `
+		SELECT data FROM events
+		WHERE aggregate_id = $1 AND event_type = $2
+		ORDER BY sequence DESC LIMIT 1
+	`, run.ID, engine.TypeAttemptCompleted).Scan(&eventData); err != nil {
+		t.Fatalf("read attempt.completed event: %v", err)
+	}
+	if !strings.Contains(string(eventData), detail) {
+		t.Errorf("attempt.completed payload = %s, want rejection detail %q", eventData, detail)
+	}
+}
+
 // codeHarness is worker_test.go's harness with a CodeRunner wired in. A code
 // node needs no actor registry, no signer, and no callback endpoint, so the
 // worker it drives is deliberately built with none of them.

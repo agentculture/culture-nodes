@@ -213,9 +213,13 @@ func TestRunDetailUsageCacheRatioComputedHonestly(t *testing.T) {
 		t.Fatalf("ReasoningTokens = %d, want 500", usage.ReasoningTokens)
 	}
 	if usage.CacheRatio == nil {
-		t.Fatal("CacheRatio is nil, want computed (input_tokens > 0)")
+		t.Fatal("CacheRatio is nil, want computed (input+cached > 0)")
 	}
-	wantRatio := 9984.0 / 13980.0
+	// Issue #47's real codex numbers: 9984 cache reads beside 13880 uncached
+	// input tokens. The whole prompt is 23964 tokens, so 41.7% of it was
+	// served from cache -- 9984/13980 would claim 71.4% of a prompt that
+	// never existed.
+	wantRatio := 9984.0 / 23964.0
 	if *usage.CacheRatio < wantRatio-0.0001 || *usage.CacheRatio > wantRatio+0.0001 {
 		t.Fatalf("CacheRatio = %v, want ~%v", *usage.CacheRatio, wantRatio)
 	}
@@ -223,8 +227,8 @@ func TestRunDetailUsageCacheRatioComputedHonestly(t *testing.T) {
 
 // TestRunDetailUsageCacheRatioOmittedWhenNoInputTokensReported proves
 // cache_ratio never renders as a fabricated 0 when no attempt in scope
-// reported any input tokens at all -- the boundary case a naive
-// cached/input division would get wrong (0/0).
+// reported any prompt tokens at all -- the boundary case a naive
+// division would get wrong (0/0).
 func TestRunDetailUsageCacheRatioOmittedWhenNoInputTokensReported(t *testing.T) {
 	f := newFixture(t)
 	run, _ := createMinimalRun(t, f)
@@ -235,7 +239,7 @@ func TestRunDetailUsageCacheRatioOmittedWhenNoInputTokensReported(t *testing.T) 
 		t.Fatal("run detail Usage is nil")
 	}
 	if usage.CacheRatio != nil {
-		t.Fatalf("CacheRatio = %v, want nil (no attempt reported any input tokens)", *usage.CacheRatio)
+		t.Fatalf("CacheRatio = %v, want nil (no attempt reported any prompt tokens)", *usage.CacheRatio)
 	}
 	if usage.CachedInputTokens != 0 || usage.ReasoningTokens != 0 {
 		t.Fatalf("cached/reasoning tokens = %d/%d, want 0/0 (sum of nothing)", usage.CachedInputTokens, usage.ReasoningTokens)

@@ -90,7 +90,7 @@ kind: Workflow
 
 metadata:
   name: spec-chain-lane
-  version: 1.0.0
+  version: 1.1.0
   ownerRef: team/platform-ai
 
 spec:
@@ -118,6 +118,8 @@ spec:
           severity: {type: string}
           kind: {type: string}
           title: {type: string}
+          description: {type: string, maxLength: 4000}
+          description_truncated: {type: boolean}
           status: {type: string}
           details_url: {type: string}
     output:
@@ -168,7 +170,8 @@ spec:
               Create or continue the branch <branch_prefix><SLUG> from HEAD.
               (2) If .devague/frames/<SLUG>.json exists, continue that frame;
               otherwise run devague new --title <ID> "<announcement>" with an
-              announcement drafted from the ticket title. Then run the /think
+              announcement drafted from the ticket title and description
+              (noting when description_truncated is true). Then run the /think
               moves as devague commands: devague scope for each surface you
               actually read, devague capture for each claim, devague
               interrogate for honesty conditions. Record every decision only
@@ -188,6 +191,8 @@ spec:
               output — with no other text, because the engine routes on it.
           issue: /run/input/id
           title: /run/input/title
+          description: /run/input/description
+          description_truncated: /run/input/description_truncated
           status: /run/input/status
           details_url: /run/input/details_url
       contract:

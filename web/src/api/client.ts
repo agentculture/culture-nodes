@@ -19,6 +19,7 @@ import type {
   TicketProjection,
   TicketReply,
   TicketReplyRequest,
+  Version,
   WorkflowSource,
   WorkflowValidation,
   WorkflowVersion,
@@ -94,6 +95,8 @@ async function getJson<T>(path: string, signal?: AbortSignal): Promise<T> {
 /** GET /v1alpha1/runs query parameters (task t11). */
 export interface ListRunsParams {
   state?: RunState;
+  workflow_key?: string;
+  cursor?: string;
   /** RFC3339. Only runs updated at or after this instant. */
   updated_since?: string;
   /** RFC3339. Only runs updated at or before this instant. */
@@ -304,6 +307,8 @@ export interface ListPendingDecisionsParams {
   /** Only records this actor produced. */
   actor_id?: string;
   limit?: number;
+  /** An opaque `next_cursor` from a previous page. */
+  cursor?: string;
 }
 
 /**
@@ -367,6 +372,8 @@ export interface ListHumanTasksParams {
   /** Filter to one status; omitted returns every task, newest first. */
   status?: "pending" | "decided";
   limit?: number;
+  /** An opaque `next_cursor` from a previous page. */
+  cursor?: string;
 }
 
 export const listHumanTasks = (
@@ -471,3 +478,16 @@ export const PROJECTION_NAMES = [
   "decision_history",
   "delivery_summary",
 ] as const;
+
+/**
+ * `GET /v1alpha1/version` (task t27): the revision the control plane serving
+ * this bundle was built from. Unauthenticated, like healthz and readyz, for
+ * the reason internal/api/version.go states — a reader who has to hold a
+ * secret just to learn what they are looking at does not look.
+ *
+ * The header reads it once per page load and renders it verbatim. Nothing
+ * here interprets the answer: an unstamped build reports no revision and
+ * says why in `staleness`, and that sentence is what the tooltip shows.
+ */
+export const getVersion = (signal?: AbortSignal) =>
+  getJson<Version>("/version", signal);

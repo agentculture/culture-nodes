@@ -5,16 +5,23 @@ import {
   ApiError,
   commitReview,
   createReview,
+  decideHumanTask,
+  getLedger,
+  getRun,
+  listHumanTasks,
   listPendingDecisions,
 } from "../api/client";
 import {
   clearDecisionToken,
   getDecisionToken,
+  setDecisionActorID,
   setDecisionToken,
 } from "../api/decision-token";
-import type { PendingDecisionRun, ReviewCommitResult } from "../api/types";
+import type { HumanTask, PendingDecisionRun, ReviewCommitResult } from "../api/types";
 import AuthorityChip from "../components/AuthorityChip";
+import DeciderActorField, { useDeciderActorID } from "../components/DeciderActorField";
 import ErrorNotice from "../components/ErrorNotice";
+import OutcomeButtons from "../components/OutcomeButtons";
 import { useSharedEvents, type SharedEventType } from "../hooks/useSharedEvents";
 
 /**
@@ -60,6 +67,237 @@ const REFRESH_DEBOUNCE_MS = 4000;
  * The list shrinks because the join changed, not because a record did.
  */
 export function Decisions() {
+  const [view, setView] = useState<"claims" | "pending">("claims");
+  return (
+    <>
+      <nav aria-label="Decision views" className="decisions-tabs">
+        <button type="button" onClick={() => setView("pending")} aria-pressed={view === "pending"}>
+          Pending
+        </button>
+        <button type="button" onClick={() => setView("claims")} aria-pressed={view === "claims"}>
+          Proposed claims
+        </button>
+      </nav>
+      {view === "pending" ? <PendingDecisionsView /> : <ProposedClaimsView />}
+    </>
+  );
+}
+
+const PAGE_SIZE = 25;
+
+/**
+ * A ledger record's payload, with its prose readable as prose (task t27).
+ *
+ * A `claim` record's `statement` is a paragraph a human wrote or an agent
+ * composed — often several, with newlines. `JSON.stringify` renders those as
+ * literal `\n` inside a quoted string, so the one field a decider must
+ * actually READ was the one field they could not: PRD §10.4's whole premise is
+ * that a confirmation on an unread claim is worse than no confirmation. The
+ * statement is lifted out and rendered as text with its newlines intact; every
+ * other field still renders as the exact JSON payload, unmodified and
+ * untruncated, below it.
+ */
+function RecordPayload({ data }: { data: unknown }) {
+  const statement = statementOf(data);
+  const rest = statement === null ? data : withoutStatement(data);
+  const restIsEmpty =
+    rest !== null &&
+    typeof rest === "object" &&
+    !Array.isArray(rest) &&
+    Object.keys(rest as Record<string, unknown>).length === 0;
+
+  return (
+    <>
+      {statement !== null ? (
+        <p className="decisions-record__statement">{statement}</p>
+      ) : null}
+      {restIsEmpty ? null : (
+        <pre className="decisions-record__data">
+          {JSON.stringify(rest, null, 2)}
+        </pre>
+      )}
+    </>
+  );
+}
+
+/** The record's `statement`, when it has one that is prose. */
+function statementOf(data: unknown): string | null {
+  if (!data || typeof data !== "object" || Array.isArray(data)) return null;
+  const value = (data as Record<string, unknown>).statement;
+  return typeof value === "string" && value.trim() !== "" ? value : null;
+}
+
+function withoutStatement(data: unknown): unknown {
+  const { statement: _statement, ...rest } = data as Record<string, unknown>;
+  return rest;
+}
+
+function PendingDecisionsView() {
+  const [tasks, setTasks] = useState<HumanTask[] | null>(null);
+  const [claims, setClaims] = useState<PendingDecisionRun[]>([]);
+  const [versions, setVersions] = useState<Record<string, number>>({});
+  const [tickets, setTickets] = useState<Record<string, string>>({});
+  const [page, setPage] = useState(0);
+  const [actorID, setActorID] = useDeciderActorID();
+  const [tokenHeld, setTokenHeld] = useState(getDecisionToken() !== null);
+  const [submitting, setSubmitting] = useState<string | null>(null);
+  const [error, setError] = useState<ApiError | null>(null);
+
+  useEffect(() => {
+    const controller = new AbortController();
+    const allTasks = async () => {
+      const items: HumanTask[] = [];
+      let cursor: string | undefined;
+      for (let page = 0; page < 40; page++) {
+        const result = await listHumanTasks(controller.signal, { status: "pending", limit: 500, cursor });
+        items.push(...result.items);
+        if (!result.next_cursor) break;
+        cursor = result.next_cursor;
+      }
+      return items;
+    };
+    const allClaims = async () => {
+      const items: PendingDecisionRun[] = [];
+      let cursor: string | undefined;
+      for (let page = 0; page < 40; page++) {
+        const result = await listPendingDecisions(controller.signal, { limit: 500, cursor });
+        items.push(...result.items);
+        if (!result.next_cursor) break;
+        cursor = result.next_cursor;
+      }
+      return items;
+    };
+    Promise.all([allTasks(), allClaims()]).then(([taskItems, claimItems]) => {
+      if (controller.signal.aborted) return;
+      setTasks(taskItems);
+      setClaims(claimItems);
+      for (const group of claimItems) {
+        setVersions((current) => ({ ...current, [group.run_id]: group.ledger_version }));
+      }
+      for (const runID of new Set(taskItems.map((task) => task.run_id))) {
+        getLedger(runID, controller.signal).then((ledger) => {
+          if (!controller.signal.aborted)
+            setVersions((current) => ({ ...current, [runID]: ledger.ledger_version }));
+        }).catch(() => undefined);
+        getRun(runID, controller.signal).then((run) => {
+          const ticket = findTicketKey(run.run.input);
+          if (!controller.signal.aborted && ticket)
+            setTickets((current) => ({ ...current, [runID]: ticket }));
+        }).catch(() => undefined);
+      }
+    }).catch((cause: unknown) => {
+      if (!controller.signal.aborted) {
+        setTasks([]);
+        setError(cause instanceof ApiError ? cause : new ApiError(0, String(cause), "check the browser console"));
+      }
+    });
+    return () => controller.abort();
+  }, []);
+
+  const claimItems = claims.flatMap((group) =>
+    group.records.map((record) => ({ group, record })),
+  );
+  const total = (tasks?.length ?? 0) + claimItems.length;
+  const pageCount = Math.max(1, Math.ceil(total / PAGE_SIZE));
+  const visiblePage = Math.min(page, pageCount - 1);
+  useEffect(() => {
+    if (page !== visiblePage) setPage(visiblePage);
+  }, [page, visiblePage]);
+  const combined = [
+    ...(tasks ?? []).map((task) => ({ type: "task" as const, task })),
+    ...claimItems.map((claim) => ({ type: "claim" as const, ...claim })),
+  ];
+  const visible = combined.slice(visiblePage * PAGE_SIZE, (visiblePage + 1) * PAGE_SIZE);
+  const grouped = new Map<string, typeof visible>();
+  for (const item of visible) {
+    const runID = item.type === "task" ? item.task.run_id : item.group.run_id;
+    grouped.set(runID, [...(grouped.get(runID) ?? []), item]);
+  }
+  const token = tokenHeld ? getDecisionToken() : null;
+
+  async function choose(task: HumanTask, outcome: string) {
+    const ledgerVersion = versions[task.run_id];
+    if (!token || !actorID.trim() || ledgerVersion === undefined) return;
+    setDecisionActorID(actorID.trim());
+    setSubmitting(task.id);
+    setError(null);
+    try {
+      await decideHumanTask(task.id, {
+        outcome,
+        decider_actor_id: actorID.trim(),
+        response: task.request.decision_schema_ref ? { outcome } : undefined,
+        expected_ledger_version: ledgerVersion,
+      }, token);
+      setTasks((current) => current?.filter((item) => item.id !== task.id) ?? []);
+    } catch (cause) {
+      setError(cause instanceof ApiError ? cause : new ApiError(0, String(cause), "check the browser console"));
+    } finally {
+      setSubmitting(null);
+    }
+  }
+
+  return (
+    <section className="view-rail decisions-view">
+      <h1>Pending decisions</h1>
+      <TokenPanel held={tokenHeld} onHold={(value) => { setDecisionToken(value); setTokenHeld(true); }} onClear={() => { clearDecisionToken(); setTokenHeld(false); }} />
+      <DeciderActorField id="pending-decider-actor" value={actorID} onChange={setActorID} />
+      {error ? <ErrorNotice error={error} /> : null}
+      {tasks === null ? <p className="muted">Loading pending decisions…</p> : total === 0 ? <p className="muted">Nothing is awaiting a decision.</p> : (
+        <>
+          <p className="muted">Page {visiblePage + 1} of {pageCount}</p>
+          {Array.from(grouped, ([runID, items]) => (
+            <section key={runID} data-run-id={runID}>
+              <h2>{tickets[runID] ? <>Ticket {tickets[runID]} · </> : null}Run <Link to={`/runs/${runID}`}>{runID}</Link></h2>
+              <ul className="decisions-list">
+                {items.map((item) => item.type === "task" ? (
+                  <li className="inbox-card" key={item.task.id} data-human-task-id={item.task.id} data-testid={`pending-task-${item.task.id}`}>
+                    <code>{item.task.id}</code> · {item.task.kind}
+                    <OutcomeButtons
+                      taskId={item.task.id}
+                      outcomes={item.task.request.allowed_outcomes ?? []}
+                      disabled={!token || !actorID.trim() || versions[item.task.run_id] === undefined}
+                      busy={submitting === item.task.id}
+                      onChoose={(outcome) => void choose(item.task, outcome)}
+                    />
+                  </li>
+                ) : (
+                  <li className="inbox-card" key={item.record.id}>
+                    <label className="decisions-record__select">
+                      <input
+                        type="checkbox"
+                        defaultChecked
+                        aria-label={`include this record in the verdict (${item.record.id})`}
+                      />{" "}
+                      include this record in the verdict
+                    </label>{" "}
+                    <code>{item.record.id}</code> · {item.record.record_type}
+                    <RecordPayload data={item.record.data} />
+                  </li>
+                ))}
+              </ul>
+            </section>
+          ))}
+          <div>
+            <button type="button" disabled={visiblePage === 0} onClick={() => setPage((value) => value - 1)}>Previous page</button>{" "}
+            <button type="button" disabled={visiblePage + 1 >= pageCount} onClick={() => setPage((value) => value + 1)}>Next page</button>
+          </div>
+        </>
+      )}
+    </section>
+  );
+}
+
+function findTicketKey(input: unknown): string | null {
+  if (!input || typeof input !== "object") return null;
+  for (const [key, value] of Object.entries(input)) {
+    if (["ticket_key", "issue_key", "jira_key"].includes(key) && typeof value === "string") return value;
+    const nested = findTicketKey(value);
+    if (nested) return nested;
+  }
+  return null;
+}
+
+function ProposedClaimsView() {
   const [groups, setGroups] = useState<PendingDecisionRun[] | null>(null);
   const [recordCount, setRecordCount] = useState(0);
   // Decisions recorded in this sitting, kept at page level rather than on the
@@ -379,17 +617,17 @@ function RunDecisionCard({
                       : current.filter((id) => id !== record.id),
                   )
                 }
-                aria-label={`Include ${record.id}`}
+                aria-label={`include this record in the verdict (${record.id})`}
               />
-              <code>{record.id}</code> · {record.record_type} · from{" "}
+              include this record in the verdict · <code>{record.id}</code> · {record.record_type} · from{" "}
               {record.origin_actor_id ?? "an unnamed actor"} (
               {record.origin_kind})
             </label>
             {/* The payload in full: a decision on a claim nobody read is the
-                failure this whole surface exists to prevent. */}
-            <pre className="decisions-record__data">
-              {JSON.stringify(record.data, null, 2)}
-            </pre>
+                failure this whole surface exists to prevent. The statement
+                renders as prose so it can actually be read (task t27); the
+                rest is still the exact JSON, untruncated. */}
+            <RecordPayload data={record.data} />
           </li>
         ))}
       </ul>

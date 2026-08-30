@@ -132,11 +132,16 @@ def _stub_sweep(
     qodo=None,
     check_runs=None,
     check_runs_error=None,
+    comments=None,
+    running_findings=None,
 ):
     """Stub every network call main() makes; return the per-source call log.
 
     `check_runs` maps head sha -> recorded check-runs payload; a sha with no
     entry answers an empty payload, which is what a green PR looks like.
+    `comments` maps PR number -> its GitHub issue comments (default none).
+    `running_findings` seeds the finding ids a still-running pr-upkeep run
+    already carries, which is what the emission dedupe reads (task t12).
     """
     monkeypatch.setenv("GITHUB_TOKEN", "")
     monkeypatch.setattr(
@@ -161,7 +166,12 @@ def _stub_sweep(
 
     monkeypatch.setattr(sweep, "fetch_sonar_issues", fake_sonar)
     monkeypatch.setattr(sweep, "fetch_open_pr_comments", fake_qodo)
-    monkeypatch.setattr(sweep, "fetch_pr_comments", lambda token, repository, number: [])
+    monkeypatch.setattr(
+        sweep,
+        "fetch_pr_comments",
+        lambda token, repository, number: list((comments or {}).get(number, [])),
+    )
+    monkeypatch.setattr(sweep, "fetch_running_finding_ids", lambda: set(running_findings or ()))
     monkeypatch.setattr(sweep, "fetch_check_runs", fake_checks)
 
     def fake_raise(name, payload, source_key, watermark, **_kw):

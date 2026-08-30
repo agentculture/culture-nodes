@@ -119,7 +119,9 @@ export function nodeRunStateToExecState(state: NodeRunState): NodeExecState {
  * Fold a RunView into per-node execution records. The RunView is a snapshot
  * (`GET /v1alpha1/runs/{id}`); the event stream then advances it.
  */
-export function executionFromRunView(view: RunView): Record<string, NodeExecution> {
+export function executionFromRunView(
+  view: RunView,
+): Record<string, NodeExecution> {
   const byNode = new Map<string, NodeRun[]>();
   for (const nodeRun of [...view.node_runs].sort(byCreatedAt)) {
     const list = byNode.get(nodeRun.node_id);
@@ -132,7 +134,11 @@ export function executionFromRunView(view: RunView): Record<string, NodeExecutio
     const attempts = nodeRuns
       .flatMap((nodeRun) => nodeRun.attempts ?? [])
       .sort((a, b) =>
-        a.started_at < b.started_at ? -1 : a.started_at > b.started_at ? 1 : 0,
+        (a.started_at ?? "") < (b.started_at ?? "")
+          ? -1
+          : (a.started_at ?? "") > (b.started_at ?? "")
+            ? 1
+            : 0,
       );
     const current = nodeRuns[nodeRuns.length - 1];
     const lastAttempt = attempts[attempts.length - 1];

@@ -116,6 +116,7 @@ func (s *Server) listWorkflowVersions(ctx context.Context, workflowKey string, l
 type runRow struct {
 	ID             string
 	WorkflowDigest string
+	WorkflowKey    string
 	Status         string
 	Input          json.RawMessage
 	Output         json.RawMessage
@@ -126,6 +127,7 @@ type runRow struct {
 	Description    string
 	Category       string
 	Subject        string
+	Reason         string
 }
 
 // out renders r as a RunOut. Usage stays unset here (see RunOut's doc
@@ -137,6 +139,7 @@ func (r runRow) out() RunOut {
 	out := RunOut{
 		ID:             r.ID,
 		WorkflowDigest: r.WorkflowDigest,
+		WorkflowKey:    r.WorkflowKey,
 		State:          r.Status,
 		Input:          nonNullJSON(r.Input),
 		Output:         nonNullJSON(r.Output),
@@ -146,6 +149,7 @@ func (r runRow) out() RunOut {
 		Description:    r.Description,
 		Category:       r.Category,
 		Subject:        r.Subject,
+		Reason:         r.Reason,
 	}
 	if r.Name == "" {
 		out.DisplayHint = deriveDisplayHint(r.Input)
@@ -175,6 +179,8 @@ const (
 type listRunsParams struct {
 	State        string
 	Subject      string
+	WorkflowKey  string
+	Cursor       *nodeRunCursor
 	Limit        int
 	UpdatedSince *time.Time
 	UpdatedUntil *time.Time
@@ -182,6 +188,24 @@ type listRunsParams struct {
 	// parseRunSort in runs.go for how the default is chosen and validated
 	// before this is called.
 	Sort string
+	// SubjectFromInput widens a Subject filter to also match runs that
+	// carry the subject only inside their own input, as the jira work-item
+	// contract's `id` field (task t17). Those are runs created before
+	// migrations/0038 added runs.subject at all — the SCRUM-5 spec-chain
+	// run this task exists for is one — and without this they are
+	// unreachable by subject even though they belong to the ticket as
+	// plainly as any other.
+	//
+	// It is opt-in, and only the ticket projection opts in: GET
+	// /v1alpha1/runs?subject= answers "which runs DECLARE this subject",
+	// which is the question the one-active-run-per-subject invariant
+	// (spec c31) is defined over, and quietly widening it would change
+	// what that invariant means. The ticket PAGE asks a different
+	// question — "what has happened on this ticket" — and wants both.
+	//
+	// The fallback applies only where subject IS NULL: a run that declares
+	// a subject is authoritative about which ticket it belongs to.
+	SubjectFromInput bool
 }
 
 // listRuns returns runs newest first by p.Sort, optionally filtered to one
@@ -193,40 +217,44 @@ type listRunsParams struct {
 // query plan uses runs_namespace_updated_at_idx (migrations/0010) stays
 // proof about the literal query this function actually runs, not a
 // simplified stand-in.
-func (s *Server) listRuns(ctx context.Context, p listRunsParams) ([]RunOut, error) {
+func (s *Server) listRuns(ctx context.Context, p listRunsParams) ([]RunOut, string, error) {
 	var (
 		rows pgx.Rows
 		err  error
 	)
 	if p.Sort == sortUpdatedAt {
 		rows, err = s.Store.Pool().Query(ctx, `
-			SELECT r.id, wv.content_digest, r.status, r.input, r.output, r.created_at, r.updated_at, r.completed_at,
-			       r.name, r.description, r.category, COALESCE(r.subject,'')
+			SELECT r.id, wv.content_digest, wv.workflow_key, r.status, r.input, r.output, r.created_at, r.updated_at, r.completed_at,
+			       r.name, r.description, r.category, COALESCE(r.subject,''), COALESCE(r.reason,'')
 			FROM runs r JOIN workflow_versions wv ON wv.id = r.workflow_version_id
 			WHERE r.namespace_id = $1
 			  AND ($2 = '' OR r.status = $2)
 			  AND ($3::timestamptz IS NULL OR r.updated_at >= $3)
 			  AND ($4::timestamptz IS NULL OR r.updated_at <= $4)
-			  AND ($5 = '' OR r.subject = $5)
+			  AND ($5 = '' OR r.subject = $5 OR ($10 AND r.subject IS NULL AND r.input->>'id' = $5))
+			  AND ($6 = '' OR wv.workflow_key = $6)
+			  AND ($7::timestamptz IS NULL OR (r.updated_at, r.id) < ($7, $8))
 			ORDER BY r.updated_at DESC, r.id DESC
-			LIMIT $6`,
-			s.NamespaceID, p.State, p.UpdatedSince, p.UpdatedUntil, p.Subject, p.Limit)
+			LIMIT $9`,
+			s.NamespaceID, p.State, p.UpdatedSince, p.UpdatedUntil, p.Subject, p.WorkflowKey, cursorTime(p.Cursor), cursorID(p.Cursor), p.Limit+1, p.SubjectFromInput)
 	} else {
 		rows, err = s.Store.Pool().Query(ctx, `
-			SELECT r.id, wv.content_digest, r.status, r.input, r.output, r.created_at, r.updated_at, r.completed_at,
-			       r.name, r.description, r.category, COALESCE(r.subject,'')
+			SELECT r.id, wv.content_digest, wv.workflow_key, r.status, r.input, r.output, r.created_at, r.updated_at, r.completed_at,
+			       r.name, r.description, r.category, COALESCE(r.subject,''), COALESCE(r.reason,'')
 			FROM runs r JOIN workflow_versions wv ON wv.id = r.workflow_version_id
 			WHERE r.namespace_id = $1
 			  AND ($2 = '' OR r.status = $2)
 			  AND ($3::timestamptz IS NULL OR r.updated_at >= $3)
 			  AND ($4::timestamptz IS NULL OR r.updated_at <= $4)
-			  AND ($5 = '' OR r.subject = $5)
+			  AND ($5 = '' OR r.subject = $5 OR ($10 AND r.subject IS NULL AND r.input->>'id' = $5))
+			  AND ($6 = '' OR wv.workflow_key = $6)
+			  AND ($7::timestamptz IS NULL OR (r.created_at, r.id) < ($7, $8))
 			ORDER BY r.created_at DESC, r.id DESC
-			LIMIT $6`,
-			s.NamespaceID, p.State, p.UpdatedSince, p.UpdatedUntil, p.Subject, p.Limit)
+			LIMIT $9`,
+			s.NamespaceID, p.State, p.UpdatedSince, p.UpdatedUntil, p.Subject, p.WorkflowKey, cursorTime(p.Cursor), cursorID(p.Cursor), p.Limit+1, p.SubjectFromInput)
 	}
 	if err != nil {
-		return nil, fmt.Errorf("api: list runs: %w", err)
+		return nil, "", fmt.Errorf("api: list runs: %w", err)
 	}
 	defer rows.Close()
 
@@ -242,10 +270,10 @@ func (s *Server) listRuns(ctx context.Context, p listRunsParams) ([]RunOut, erro
 			name, description, category pgtype.Text
 		)
 		if err := rows.Scan(
-			&r.ID, &r.WorkflowDigest, &r.Status, &input, &output, &createdAt, &updatedAt, &completedAt,
-			&name, &description, &category, &r.Subject,
+			&r.ID, &r.WorkflowDigest, &r.WorkflowKey, &r.Status, &input, &output, &createdAt, &updatedAt, &completedAt,
+			&name, &description, &category, &r.Subject, &r.Reason,
 		); err != nil {
-			return nil, fmt.Errorf("api: list runs: scan: %w", err)
+			return nil, "", fmt.Errorf("api: list runs: scan: %w", err)
 		}
 		r.Input = json.RawMessage(input)
 		r.Output = json.RawMessage(output)
@@ -257,7 +285,33 @@ func (s *Server) listRuns(ctx context.Context, p listRunsParams) ([]RunOut, erro
 		r.Category = textOrEmpty(category)
 		out = append(out, r.out())
 	}
-	return out, rows.Err()
+	if err := rows.Err(); err != nil {
+		return nil, "", err
+	}
+	next := ""
+	if len(out) > p.Limit {
+		out = out[:p.Limit]
+		last := out[len(out)-1]
+		at := last.CreatedAt
+		if p.Sort == sortUpdatedAt {
+			at = last.UpdatedAt
+		}
+		next = encodeNodeRunCursor(nodeRunCursor{UpdatedAt: at, ID: last.ID})
+	}
+	return out, next, nil
+}
+
+func cursorTime(c *nodeRunCursor) *time.Time {
+	if c == nil {
+		return nil
+	}
+	return &c.UpdatedAt
+}
+func cursorID(c *nodeRunCursor) string {
+	if c == nil {
+		return ""
+	}
+	return c.ID
 }
 
 // runTokens returns every token of a run, oldest first.
@@ -381,7 +435,12 @@ func (s *Server) runNodeRuns(ctx context.Context, runID string) ([]NodeRunOut, e
 		// are listed -- the aggregates are where superseded history drops
 		// out, not the run's own account of what happened.
 		a.Supersedes = textOrEmpty(supersedes)
-		a.StartedAt = tsOrZero(startedAt)
+		// NULL since migration 0049: an attempt with no invocation row has an
+		// unknown start, which is omitted rather than rendered as year 1.
+		if startedAt.Valid {
+			started := startedAt.Time
+			a.StartedAt = &started
+		}
 		if completedAt.Valid {
 			completed := completedAt.Time
 			a.CompletedAt = &completed
@@ -725,19 +784,42 @@ func (s *Server) latestAttemptActorIDs(ctx context.Context, nodeRunIDs []string)
 // listHumanTasks returns human tasks newest first, optionally filtered to
 // one status ("pending" or "decided"), scoped to this server's namespace —
 // the same shape listRuns and listWorkflowVersions use above.
-func (s *Server) listHumanTasks(ctx context.Context, status string, limit int) ([]HumanTaskOut, error) {
+func (s *Server) listHumanTasks(ctx context.Context, status string, cursor *nodeRunCursor, limit int) ([]HumanTaskOut, string, error) {
+	var cursorCreatedAt *time.Time
+	var cursorID string
+	if cursor != nil {
+		cursorCreatedAt = &cursor.UpdatedAt
+		cursorID = cursor.ID
+	}
 	rows, err := s.Store.Pool().Query(ctx, `
 		SELECT id, run_id, node_run_id, kind, assigned_owner_id, status, request, response, created_at, resolved_at
 		FROM human_tasks
 		WHERE namespace_id = $1 AND ($2 = '' OR status = $2)
+		  AND ($3::timestamptz IS NULL OR (created_at, id) < ($3, $4))
 		ORDER BY created_at DESC, id DESC
-		LIMIT $3`,
-		s.NamespaceID, status, limit)
+		LIMIT $5`,
+		s.NamespaceID, status, cursorCreatedAt, cursorID, limit+1)
 	if err != nil {
-		return nil, fmt.Errorf("api: list human tasks: %w", err)
+		return nil, "", fmt.Errorf("api: list human tasks: %w", err)
 	}
 	defer rows.Close()
+	tasks, err := scanHumanTasks(rows)
+	if err != nil {
+		return nil, "", err
+	}
+	next := ""
+	if len(tasks) > limit {
+		tasks = tasks[:limit]
+		last := tasks[len(tasks)-1]
+		next = encodeNodeRunCursor(nodeRunCursor{UpdatedAt: last.CreatedAt, ID: last.ID})
+	}
+	return tasks, next, nil
+}
 
+// scanHumanTasks drains rows selecting human_tasks' columns in the order
+// both readers above spell them. It is shared so the two queries cannot
+// disagree about the shape of the row they produce.
+func scanHumanTasks(rows pgx.Rows) ([]HumanTaskOut, error) {
 	out := make([]HumanTaskOut, 0)
 	for rows.Next() {
 		var (
@@ -767,6 +849,33 @@ func (s *Server) listHumanTasks(ctx context.Context, status string, limit int) (
 		out = append(out, t)
 	}
 	return out, rows.Err()
+}
+
+// listHumanTasksForRuns returns every human task belonging to one of runIDs,
+// newest first — the ticket projection's own reader (task t18).
+//
+// It exists rather than reusing listHumanTasks because that one answers
+// "the newest N tasks in the namespace", which the ticket page then filtered
+// down to its own runs. That is fine for a listing and wrong for a decision
+// surface: once the namespace holds more than the limit, a ticket's pending
+// task falls off the end of a query that never mentioned the ticket, and the
+// page a Jira comment sent the decider to shows nothing to decide. Scoping
+// the query to the ticket's runs makes the ceiling irrelevant.
+func (s *Server) listHumanTasksForRuns(ctx context.Context, runIDs []string) ([]HumanTaskOut, error) {
+	if len(runIDs) == 0 {
+		return []HumanTaskOut{}, nil
+	}
+	rows, err := s.Store.Pool().Query(ctx, `
+		SELECT id, run_id, node_run_id, kind, assigned_owner_id, status, request, response, created_at, resolved_at
+		FROM human_tasks
+		WHERE namespace_id = $1 AND run_id = ANY($2)
+		ORDER BY created_at DESC, id DESC`,
+		s.NamespaceID, runIDs)
+	if err != nil {
+		return nil, fmt.Errorf("api: list human tasks for runs: %w", err)
+	}
+	defer rows.Close()
+	return scanHumanTasks(rows)
 }
 
 // isNoRowsErr reports whether err is pgx's "no rows in result set"

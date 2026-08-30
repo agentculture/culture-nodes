@@ -113,6 +113,76 @@ describe("RunsList loading/empty/error", () => {
 });
 
 describe("RunsList data + table", () => {
+
+  it("collapses 50 consecutive failed runs of one workflow and shows its workflow key", async () => {
+    const failedSweeps = Array.from({ length: 50 }, (_, index) => ({
+      ...BOARD_RUNS[0],
+      id: `sweep-${index + 1}`,
+      state: "failed" as const,
+      workflow_key: "pr-upkeep-sweep-cycle",
+    }));
+    mockListRuns.mockResolvedValue({ items: failedSweeps });
+    renderList();
+
+    const table = await screen.findByRole("table");
+    expect(within(table).getAllByRole("row")).toHaveLength(2);
+    expect(screen.getByText("pr-upkeep-sweep-cycle")).toBeInTheDocument();
+    expect(screen.getByText("50")).toBeInTheDocument();
+    expect(screen.queryByRole("link", { name: "sweep-2" })).not.toBeInTheDocument();
+
+    await userEvent.click(screen.getByRole("button", { name: /expand 50 failed runs/i }));
+    expect(screen.getByRole("link", { name: "sweep-2" })).toBeInTheDocument();
+  });
+
+  it("loads and appends the next page using next_cursor", async () => {
+    mockListRuns
+      .mockResolvedValueOnce({ items: [BOARD_RUNS[0]], next_cursor: "runs-page-2" })
+      .mockResolvedValueOnce({ items: [BOARD_RUNS[1]] });
+    renderList();
+    await screen.findByRole("link", { name: BOARD_RUNS[0].id });
+
+    await userEvent.click(screen.getByRole("button", { name: "Load more" }));
+
+    expect(await screen.findByRole("link", { name: BOARD_RUNS[1].id })).toBeInTheDocument();
+    expect(mockListRuns).toHaveBeenLastCalledWith(undefined, {
+      sort: "updated_at",
+      updated_since: undefined,
+      updated_until: undefined,
+      cursor: "runs-page-2",
+    });
+  });
+
+  it("drops a pending load-more response after the state filter changes", async () => {
+    let resolveLoadMore: ((page: { items: typeof BOARD_RUNS }) => void) | undefined;
+    mockListRuns
+      .mockResolvedValueOnce({ items: [BOARD_RUNS[0]], next_cursor: "runs-page-2" })
+      .mockImplementationOnce(() => new Promise((resolve) => { resolveLoadMore = resolve; }))
+      .mockResolvedValueOnce({ items: [BOARD_RUNS[1]] });
+    const user = userEvent.setup();
+    renderList();
+    await screen.findByRole("link", { name: BOARD_RUNS[0].id });
+
+    await user.click(screen.getByRole("button", { name: "Load more" }));
+    await user.selectOptions(screen.getByRole("combobox", { name: "State" }), "failed");
+    expect(await screen.findByRole("link", { name: BOARD_RUNS[1].id })).toBeInTheDocument();
+
+    await act(async () => resolveLoadMore?.({ items: [BOARD_RUNS[2]] }));
+
+    expect(screen.getByRole("link", { name: BOARD_RUNS[1].id })).toBeInTheDocument();
+    expect(screen.queryByRole("link", { name: BOARD_RUNS[2].id })).not.toBeInTheDocument();
+  });
+
+  it("refetches through the API when the state filter changes", async () => {
+    mockListRuns.mockResolvedValue({ items: BOARD_RUNS });
+    renderList();
+    await screen.findByRole("table");
+
+    await userEvent.selectOptions(screen.getByRole("combobox", { name: "State" }), "failed");
+
+    await waitFor(() => expect(mockListRuns).toHaveBeenCalledTimes(2));
+    expect(mockListRuns.mock.calls[1][1]).toMatchObject({ state: "failed" });
+  });
+
   it("sorts by updated_at, states the ordering contract, and links every run into /runs/:id", async () => {
     mockListRuns.mockResolvedValue({ items: BOARD_RUNS });
     renderList();
@@ -387,5 +457,73 @@ describe("RunsList auto-refresh (issue #46, task t30)", () => {
     await new Promise((resolve) => setTimeout(resolve, 20));
 
     expect(mockListRuns).not.toHaveBeenCalled();
+  });
+});
+
+
+describe("RunsList state chip and humanised time (task t27)", () => {
+  // Relative time is read off the real clock, so the one test that asserts a
+  // rendered phrase pins the clock and puts it back — a leaked system time
+  // would make every later test in this file time-dependent.
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  it("renders state as the same chip the Board and Jobs use, not a bare word", async () => {
+    mockListRuns.mockResolvedValue({ items: [BOARD_RUNS[1]] });
+    renderList();
+    await screen.findByRole("table");
+
+    const row = document.querySelector(`[data-run-id="${BOARD_RUNS[1].id}"]`)!;
+    const chip = row.querySelector(".status-chip")!;
+    expect(chip).toHaveAttribute("data-run-state", "running");
+    // Icon AND word, never colour alone (PRD §8.8) — the same contract
+    // RunStateChip.test.tsx pins for the component itself.
+    expect(chip.querySelector(".status-chip__label")).toHaveTextContent("running");
+    expect(chip.querySelector(".status-chip__icon")).not.toBeNull();
+  });
+
+  it("renders timestamps relative, keeping the exact instant on title and dateTime", async () => {
+    const run = {
+      ...BOARD_RUNS[1],
+      created_at: "2026-08-30T10:00:00Z",
+      updated_at: "2026-08-30T11:00:00Z",
+    };
+    mockListRuns.mockResolvedValue({ items: [run] });
+    vi.useFakeTimers({
+      now: new Date("2026-08-30T12:00:00Z"),
+      shouldAdvanceTime: true,
+    });
+    renderList();
+    await screen.findByRole("table");
+
+    const times = document.querySelectorAll(
+      `[data-run-id="${run.id}"] time`,
+    ) as NodeListOf<HTMLTimeElement>;
+    expect(times).toHaveLength(2);
+    expect(times[0]).toHaveTextContent("2 hours ago");
+    expect(times[0]).toHaveAttribute("title", run.created_at);
+    expect(times[0]).toHaveAttribute("dateTime", run.created_at);
+    expect(times[1]).toHaveTextContent("1 hour ago");
+    expect(times[1]).toHaveAttribute("title", run.updated_at);
+  });
+
+  it("still shows the collapse badge next to the chip on a grouped failure run", async () => {
+    const failures = Array.from({ length: 3 }, (_, index) => ({
+      ...BOARD_RUNS[0],
+      id: `sweep-${index + 1}`,
+      state: "failed" as const,
+      workflow_key: "pr-upkeep-sweep-cycle",
+    }));
+    mockListRuns.mockResolvedValue({ items: failures });
+    renderList();
+    await screen.findByRole("table");
+
+    expect(
+      screen.getByRole("button", { name: /expand 3 failed runs/i }),
+    ).toBeInTheDocument();
+    expect(
+      document.querySelector('[data-run-id="sweep-1"] .status-chip'),
+    ).toHaveAttribute("data-run-state", "failed");
   });
 });

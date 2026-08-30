@@ -236,6 +236,25 @@ Numbered SQL migrations for the authoritative PostgreSQL store (prd-spec
 - `0048_ticket_reply_and_freeze.sql` — widens the existing Jira report outbox
   for run-less reply/page-link intents and adds the namespace-scoped ticket
   freeze projection updated by `pr.merged` facts or a guarded human action.
+- `0049_attempts_started_at_nullable.sql` — expand-only: `attempts.started_at`
+  becomes nullable so an attempt with no invocation row records an unknown
+  start as NULL instead of `now()` (#116; the fix that stopped
+  `duration_percentiles` reporting zeros).
+- `0050_schedule_failure_backoff.sql` — expand-only: five columns on
+  `schedules` that let a cadence notice it is repeating itself (task t9, issue
+  #253, where `pr-upkeep-sweep-5m` minted 184 consecutive `contract_rejected`
+  runs carrying one identical `result.error.detail`).
+  `consecutive_failures`/`last_failure_detail` are the streak and its reason,
+  `last_assessed_run_id` makes one minted run contribute to that streak exactly
+  once (without it a suppressed 5-minute schedule would count the same failed
+  run twelve times an hour), `suppressed_count` counts the ticks that did not
+  mint, and `failure_task_id` is a real FK to the one pending
+  `schedule_failing` human task — a handle rather than a flag, because whether
+  to ask again depends on that task's CURRENT status. Suppression is a rate and
+  not a stop: `enabled` keeps meaning "an operator said stop" while a suppressed
+  schedule still probes every `NODES_SCHEDULE_PROBE_INTERVAL`, so nothing has to
+  be resumed by hand when the environment is repaired. See
+  `internal/store/postgres/schedulebackoff.go`.
 
 - `0022_dispatch_rate_state.sql` — expand-only: adds the mutable
   `dispatch_rate_state` table (task t10 of the economy-discord-graphs plan,

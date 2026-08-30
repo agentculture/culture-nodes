@@ -1,6 +1,7 @@
 package api_test
 
 import (
+	"encoding/json"
 	"net/http"
 	"net/http/httptest"
 	"testing"
@@ -11,6 +12,41 @@ import (
 	apipkg "github.com/agentculture/culture-nodes/internal/api"
 	"github.com/agentculture/culture-nodes/internal/store/postgres/pgtest"
 )
+
+type createNamespaceRequest struct {
+	Name string `json:"name"`
+	Slug string `json:"slug"`
+}
+
+func TestCreateNamespaceListsItAndRejectsDuplicate(t *testing.T) {
+	f := newFixture(t)
+	slug := "api-created-" + time.Now().UTC().Format("20060102150405.000000000")
+	req := createNamespaceRequest{Name: "API Created Namespace", Slug: slug}
+
+	var created api.NamespaceOut
+	resp, body := doJSON(t, f.client, http.MethodPost, f.url("/v1alpha1/namespaces"), req, &created)
+	requireStatus(t, resp, body, http.StatusCreated)
+	if created.ID == "" || created.Slug != slug || created.DisplayName != req.Name {
+		t.Fatalf("POST namespace = %#v, want generated id, slug %q and display_name %q", created, slug, req.Name)
+	}
+
+	var listed []api.NamespaceOut
+	resp, body = doJSON(t, f.client, http.MethodGet, f.url("/v1alpha1/namespaces"), nil, &listed)
+	requireStatus(t, resp, body, http.StatusOK)
+	found := false
+	for _, ns := range listed {
+		if ns.ID == created.ID {
+			found = true
+		}
+	}
+	if !found {
+		encoded, _ := json.Marshal(listed)
+		t.Fatalf("created namespace %q absent from GET response %s", created.ID, encoded)
+	}
+
+	resp, body = doJSON(t, f.client, http.MethodPost, f.url("/v1alpha1/namespaces"), req, nil)
+	requireStatus(t, resp, body, http.StatusConflict)
+}
 
 func TestListNamespacesAndUnknownAPIRoute(t *testing.T) {
 	f := newFixture(t)

@@ -68,6 +68,7 @@ async function findRunCard(runId = CLAIM_RUN_ID) {
 
 beforeEach(() => {
   mockListPendingDecisions.mockReset();
+  window.localStorage.clear();
   window.sessionStorage.clear();
   resetAgentState();
 });
@@ -252,7 +253,7 @@ describe("Decisions submission", () => {
     // different frame, so it is a different review.
     await user.click(
       within(card).getByRole("checkbox", {
-        name: `Include ${PENDING_RUN.records[1].id}`,
+        name: `include this record in the verdict (${PENDING_RUN.records[1].id})`,
       }),
     );
     await user.type(
@@ -322,5 +323,74 @@ describe("Decisions submission", () => {
       await within(card).findByText(/reviewer_must_be_human/),
     ).toBeInTheDocument();
     expect(within(card).queryByText(/decision recorded/)).toBeNull();
+  });
+});
+
+
+describe("Decisions record payload rendering (task t27)", () => {
+  it("renders a claim's statement as readable text, not escaped JSON", async () => {
+    mockListPendingDecisions.mockResolvedValue(PENDING_DECISIONS);
+    renderDecisions();
+    const card = await findRunCard();
+
+    const claim = PENDING_RUN.records[0];
+    const statement = (claim.data as { statement: string }).statement;
+    const rendered = within(card).getByText(statement);
+    expect(rendered).toHaveClass("decisions-record__statement");
+
+    // The old rendering put the statement inside JSON.stringify's output,
+    // where a multi-line paragraph shows as a quoted string with literal \n
+    // — the one field a decider must read was the one field they could not.
+    const payload = card.querySelector(".decisions-record__data")!;
+    expect(payload.textContent).not.toContain(statement);
+  });
+
+  it("keeps every non-statement field as the exact JSON payload", async () => {
+    mockListPendingDecisions.mockResolvedValue(PENDING_DECISIONS);
+    renderDecisions();
+    const card = await findRunCard();
+
+    expect(card.textContent).toContain("completion");
+    // The evidence record has no statement at all, so its payload renders
+    // whole, unchanged.
+    expect(card.textContent).toContain("process_reported");
+    expect(card.textContent).toContain("go test ./...");
+  });
+
+  it("preserves newlines in a multi-line statement", async () => {
+    const multiline = "Line one.\n\nLine two, after a blank line.";
+    mockListPendingDecisions.mockResolvedValue({
+      ...PENDING_DECISIONS,
+      items: [
+        {
+          ...PENDING_RUN,
+          records: [
+            {
+              ...PENDING_RUN.records[0],
+              data: { kind: "completion", statement: multiline },
+            },
+          ],
+        },
+      ],
+    });
+    renderDecisions();
+    const card = await findRunCard();
+
+    const rendered = card.querySelector(".decisions-record__statement")!;
+    expect(rendered.textContent).toBe(multiline);
+  });
+
+  it("names the record in each checkbox's accessible label", async () => {
+    mockListPendingDecisions.mockResolvedValue(PENDING_DECISIONS);
+    renderDecisions();
+    const card = await findRunCard();
+
+    for (const record of PENDING_RUN.records) {
+      expect(
+        within(card).getByRole("checkbox", {
+          name: `include this record in the verdict (${record.id})`,
+        }),
+      ).toBeInTheDocument();
+    }
   });
 });

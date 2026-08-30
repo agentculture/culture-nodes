@@ -74,6 +74,9 @@ Decompose pipeline:
 Runner services:
   runner-services    list or register file-backed runner services
 
+Human tasks:
+  expire-approvals   expire pending approvals whose subject PR already merged
+
 Process modes:
   serve  scheduler  worker  all
 
@@ -125,6 +128,7 @@ func commands() map[string]handlerFunc {
 	m["plan-import"] = cmdPlanImport
 	m["chain-verify"] = cmdChainVerify
 	m["runner-services"] = cmdRunnerServices
+	m["expire-approvals"] = cmdExpireApprovals
 	return m
 }
 

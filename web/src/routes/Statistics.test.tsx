@@ -209,9 +209,13 @@ describe("Statistics cache-ratio tile (task t2, ADR 0009)", () => {
     await screen.findByRole("table");
 
     // Fixture total: cached 1000 (200 from nr-stat-a1 + 800 from
-    // nr-stat-b1) / input 7500 = 13.3%.
+    // nr-stat-b1) over the whole 8500-token prompt those runs consumed
+    // (input 7500 + the 1000 cache reads reported beside it) = 11.8%
+    // (task t8: cache reads are NOT inside input_tokens, so 1000/7500
+    // would overstate the hit rate — and on production data the same
+    // division read 588%).
     const cacheTile = document.getElementById("stat-tile-cache-ratio")!;
-    expect(within(cacheTile).getByText(/13\.3% cached/)).toBeInTheDocument();
+    expect(within(cacheTile).getByText(/11\.8% cached/)).toBeInTheDocument();
   });
 
   it("renders an honest not-computable state, never a fabricated 0%, when no node runs are in the window", async () => {

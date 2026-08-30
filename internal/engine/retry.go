@@ -105,6 +105,9 @@ func (c *completion) failOrRetry(ctx context.Context) error {
 // or an actor that has finished with the invocation and is reporting on it.
 // Neither is ever minted by the control plane against a live session.
 func (c *completion) retryRefusal() string {
+	if c.req.RetryRefusal != "" {
+		return c.req.RetryRefusal
+	}
 	if c.status != StatusTimedOut {
 		return ""
 	}

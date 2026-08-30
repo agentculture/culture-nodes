@@ -12,7 +12,12 @@ import {
 } from "../domain/active-presence";
 import { accentFor } from "../domain/graph";
 import { deriveNodeDefinitions } from "../domain/node-catalog";
-import { groupWorkflowVersions, withRecentRuns } from "../domain/workflows";
+import {
+  groupWorkflowVersions,
+  RECENT_RUNS_LIMIT,
+  withRunsByWorkflowKey,
+  type WorkflowGroup,
+} from "../domain/workflows";
 import { useReducedMotion } from "../hooks/useReducedMotion";
 import {
   useSharedEvents,
@@ -75,12 +80,49 @@ function parseTab(value: string | null): SubTab {
 }
 
 /**
+ * One workflow-cards load: the published versions, grouped by
+ * `workflow_key`, each group's recent runs fetched with that key's own
+ * `GET /v1alpha1/runs?workflow_key=…` request (task t8 — see the panel's
+ * doc comment for why a single unfiltered listing was wrong).
+ *
+ * The per-key requests go out together (`Promise.all`), so the load costs
+ * one round trip for the workflows plus one more for all of the keys. Any
+ * one of them rejecting rejects the whole load: a card rendered as "no
+ * runs" because its request failed would be the exact lie this task
+ * removed, so a failed fetch surfaces as the panel's error notice instead.
+ */
+async function loadGroups(signal: AbortSignal): Promise<WorkflowGroup[]> {
+  const workflowList = await listWorkflows(signal);
+  const groups = groupWorkflowVersions(workflowList.items);
+  const runLists = await Promise.all(
+    groups.map((group) =>
+      listRuns(signal, {
+        workflow_key: group.workflowKey,
+        sort: "updated_at",
+        limit: RECENT_RUNS_LIMIT,
+      }),
+    ),
+  );
+  return withRunsByWorkflowKey(
+    groups,
+    new Map(groups.map((group, i) => [group.workflowKey, runLists[i].items])),
+  );
+}
+
+/**
  * The Node Graphs sub-tab: every published workflow, one card per
  * `workflow_key`, listing its versions/digests/owner and its most recent
- * runs. This is routes/Workflows.tsx's entire data-fetch and render body
- * (task t8), moved verbatim under the new sub-tab — the underlying API
- * surface (`GET /v1alpha1/workflows`, `GET /v1alpha1/runs`) did not change,
- * only where in the nav it lives.
+ * runs. This is routes/Workflows.tsx's data-fetch and render body (task
+ * t8), re-homed under the new sub-tab by task t28.
+ *
+ * The runs fetch is ONE REQUEST PER PUBLISHED WORKFLOW_KEY —
+ * `GET /v1alpha1/runs?workflow_key=<key>&sort=updated_at&limit=5`, the
+ * filter task t7 added — never one unfiltered listing sliced client-side.
+ * The unfiltered listing answers at most one page, and the pr-upkeep sweep
+ * mints a run every few minutes, so in production that page held nothing
+ * but sweep runs and EVERY card rendered "No runs yet" for a workflow with
+ * hundreds of runs (task t8, claim c8). Asking per key costs one request
+ * per published workflow and makes an empty card mean what it says.
  *
  * Mounted only while `tab === "graphs"` (a plain conditional render, not a
  * route), so switching away and back re-fetches on mount just like any
@@ -95,8 +137,7 @@ function parseTab(value: string | null): SubTab {
  * rendered cards, never regresses agent-state back to "loading".
  */
 function NodeGraphsPanel() {
-  const [versions, setVersions] = useState<WorkflowVersion[] | null>(null);
-  const [runs, setRuns] = useState<Run[] | null>(null);
+  const [groups, setGroups] = useState<WorkflowGroup[] | null>(null);
   const [error, setError] = useState<ApiError | null>(null);
   const [reloadKey, setReloadKey] = useState(0);
   const reloadTimer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
@@ -126,28 +167,17 @@ function NodeGraphsPanel() {
     const controller = new AbortController();
     setAgentState({ status: "loading", run: null });
     setError(null);
-    setVersions(null);
-    setRuns(null);
+    setGroups(null);
 
-    const toApiError = (cause: unknown): ApiError =>
-      cause instanceof ApiError
-        ? cause
-        : new ApiError(0, String(cause), "check the browser console");
-
-    Promise.all([
-      listWorkflows(controller.signal),
-      listRuns(controller.signal, { sort: "updated_at" }),
-    ])
-      .then(([workflowList, runList]) => {
+    loadGroups(controller.signal)
+      .then((loaded) => {
         if (controller.signal.aborted) return;
-        setVersions(workflowList.items);
-        setRuns(runList.items);
+        setGroups(loaded);
         setAgentState({ status: "ready", run: null });
       })
       .catch((cause: unknown) => {
         if (controller.signal.aborted) return;
-        setVersions([]);
-        setRuns([]);
+        setGroups([]);
         setError(toApiError(cause));
         // "ready" means the initial load finished, including finishing it
         // badly — the error renders alongside, not instead (same convention
@@ -164,32 +194,19 @@ function NodeGraphsPanel() {
   useEffect(() => {
     if (reloadKey === 0) return;
     const controller = new AbortController();
-    Promise.all([
-      listWorkflows(controller.signal),
-      listRuns(controller.signal, { sort: "updated_at" }),
-    ])
-      .then(([workflowList, runList]) => {
+    loadGroups(controller.signal)
+      .then((loaded) => {
         if (controller.signal.aborted) return;
-        setVersions(workflowList.items);
-        setRuns(runList.items);
+        setGroups(loaded);
         setError(null);
       })
       .catch((cause: unknown) => {
         if (controller.signal.aborted) return;
-        setError(
-          cause instanceof ApiError
-            ? cause
-            : new ApiError(0, String(cause), "check the browser console"),
-        );
+        setError(toApiError(cause));
       });
     return () => controller.abort();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [reloadKey]);
-
-  const groups =
-    versions !== null && runs !== null
-      ? withRecentRuns(groupWorkflowVersions(versions), runs)
-      : null;
 
   return (
     <div id="node-graphs-graphs-panel">

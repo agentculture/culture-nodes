@@ -33,7 +33,12 @@ class Config:
     state_dir: str = ".jira-bridge-state"
     jira_site: str = ""
     transition_project_prefix: str = ""
-    transition_target: str = ""
+    # Exact-match status names the transition_issue verb may move an issue to.
+    # A LIST, not a single value, since task t11: the ticket now moves to
+    # 'Pending' when culture-nodes raises a human decision and to 'Done' when
+    # the work finishes, and one bridge serves both. Empty means the verb is
+    # refused everywhere -- the allowlist is configured, never defaulted.
+    transition_targets: tuple[str, ...] = ()
     # Exact-match project keys the create_issue verb may target. Empty means
     # creation is refused everywhere -- the allowlist is configured, never
     # defaulted (task t9).
@@ -42,6 +47,17 @@ class Config:
     # type the verb has always defaulted to; anything else is refused by name
     # (PR #208 review finding 1) -- widen deliberately per deployment.
     create_issue_types: tuple[str, ...] = ("Task",)
+
+    @property
+    def transition_target(self) -> str:
+        """The single-target view this config had before task t11.
+
+        Kept because a deployment that configured exactly one target should
+        keep reading back exactly that string, and because the capabilities
+        advertisement has published this name since the verb shipped. It is a
+        property rather than a field, so it cannot drift from the list.
+        """
+        return self.transition_targets[0] if self.transition_targets else ""
 
     @classmethod
     def load(cls, config_path: str | None = None, env: dict[str, str] | None = None) -> "Config":
@@ -66,10 +82,17 @@ class Config:
             "JIRA_BRIDGE_STATE_DIR": "state_dir",
             "JIRA_SITE": "jira_site",
             "JIRA_TRANSITION_PROJECT_PREFIX": "transition_project_prefix",
-            "JIRA_TRANSITION_TARGET": "transition_target",
         }.items():
             if name in env:
                 values[field] = env[name]
+        # Single-string compat: JIRA_TRANSITION_TARGET has always held one
+        # status name, and a deployment that still sets one keeps working
+        # unchanged. A comma separates several -- the same spelling
+        # JIRA_CREATE_PROJECTS already uses, so an operator does not have to
+        # learn a second list syntax for the same bridge.
+        for name in ("JIRA_TRANSITION_TARGET", "JIRA_TRANSITION_TARGETS"):
+            if name in env:
+                values["transition_targets"] = env[name].split(",")
         if "JIRA_CREATE_PROJECTS" in env:
             values["create_projects"] = env["JIRA_CREATE_PROJECTS"].split(",")
         if "JIRA_CREATE_ISSUE_TYPES" in env:
@@ -86,6 +109,14 @@ class Config:
             raise ConfigError("create_projects must be a list of project keys")
         values["create_projects"] = tuple(
             item.strip() for item in raw_projects if item.strip()
+        )
+        raw_targets = values.get("transition_targets", ())
+        if not isinstance(raw_targets, (list, tuple)) or not all(
+            isinstance(item, str) for item in raw_targets
+        ):
+            raise ConfigError("transition_targets must be a list of status names")
+        values["transition_targets"] = tuple(
+            item.strip() for item in raw_targets if item.strip()
         )
         raw_types = values.get("create_issue_types", ("Task",))
         if not isinstance(raw_types, (list, tuple)) or not all(

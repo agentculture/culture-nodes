@@ -83,6 +83,29 @@ type Schedule struct {
 	SkipCount   int64
 	CreatedAt   time.Time
 	UpdatedAt   time.Time
+
+	// The failure-backoff state added by migration 0050 (task t9, issue
+	// #253). See schedulebackoff.go for what maintains it and why.
+
+	// SuppressedCount is how many ticks this schedule declined to mint on
+	// because its last two runs failed identically. Cumulative, like
+	// SkipCount: it is history, and a repair does not un-hold those ticks.
+	SuppressedCount int64
+	// ConsecutiveFailures is the current streak of minted runs that failed
+	// carrying LastFailureDetail. Zero whenever the last assessed run
+	// completed.
+	ConsecutiveFailures int64
+	// LastFailureDetail is the repeated reason, verbatim: the last minted
+	// run's last attempt's result.error.detail. Empty when the streak is
+	// zero.
+	LastFailureDetail string
+	// LastAssessedRunID is the minted run whose outcome the two fields above
+	// already reflect, so one run contributes to the streak exactly once.
+	LastAssessedRunID string
+	// FailureTaskID names the schedule_failing human task this schedule last
+	// raised, pending or decided. Whether it is still PENDING is what decides
+	// re-raising, so this is a handle rather than a flag.
+	FailureTaskID string
 }
 
 // CreateScheduleInput declares a cadence. Everything in it is data an
@@ -112,25 +135,35 @@ type CreateScheduleInput struct {
 
 const scheduleColumns = `id, namespace_id, name, event_name, emitter, payload,
 	interval_seconds, catch_up, enabled, next_fire_at, last_fired_at,
-	last_event_id, fire_count, skip_count, created_at, updated_at`
+	last_event_id, fire_count, skip_count, created_at, updated_at,
+	suppressed_count, consecutive_failures, last_failure_detail,
+	last_assessed_run_id, failure_task_id`
 
 func scanSchedule(row pgx.Row) (Schedule, error) {
 	var (
-		sc          Schedule
-		payload     []byte
-		seconds     int64
-		catchUp     string
-		nextFire    pgtype.Timestamptz
-		lastFired   pgtype.Timestamptz
-		lastEventID pgtype.Text
-		createdAt   pgtype.Timestamptz
-		updatedAt   pgtype.Timestamptz
+		sc            Schedule
+		payload       []byte
+		seconds       int64
+		catchUp       string
+		nextFire      pgtype.Timestamptz
+		lastFired     pgtype.Timestamptz
+		lastEventID   pgtype.Text
+		createdAt     pgtype.Timestamptz
+		updatedAt     pgtype.Timestamptz
+		failureDetail pgtype.Text
+		assessedRun   pgtype.Text
+		failureTask   pgtype.Text
 	)
 	if err := row.Scan(&sc.ID, &sc.NamespaceID, &sc.Name, &sc.EventName, &sc.Emitter, &payload,
 		&seconds, &catchUp, &sc.Enabled, &nextFire, &lastFired, &lastEventID,
-		&sc.FireCount, &sc.SkipCount, &createdAt, &updatedAt); err != nil {
+		&sc.FireCount, &sc.SkipCount, &createdAt, &updatedAt,
+		&sc.SuppressedCount, &sc.ConsecutiveFailures, &failureDetail,
+		&assessedRun, &failureTask); err != nil {
 		return Schedule{}, err
 	}
+	sc.LastFailureDetail = textOrEmpty(failureDetail)
+	sc.LastAssessedRunID = textOrEmpty(assessedRun)
+	sc.FailureTaskID = textOrEmpty(failureTask)
 	sc.Payload = jsonOrEmptyObject(payload)
 	sc.Interval = time.Duration(seconds) * time.Second
 	sc.CatchUp = ScheduleCatchUp(catchUp)
@@ -323,6 +356,15 @@ type FireScheduleInput struct {
 	// whose only consumers are parked signal waits).
 	Pickup  engine.EventPickupRunner
 	Trigger engine.EventTriggerRunner
+	// ProbeInterval is the floor between mints while this schedule is
+	// suppressed (NODES_SCHEDULE_PROBE_INTERVAL). Zero selects
+	// DefaultScheduleProbeInterval. See schedulebackoff.go.
+	ProbeInterval time.Duration
+	// AlertAfter is the consecutive-identical-failure count at which one
+	// pending schedule_failing human task is raised
+	// (NODES_SWEEP_FAILURE_ALERT_AFTER). Zero selects
+	// DefaultSweepFailureAlertAfter; negative disables the alert.
+	AlertAfter int
 	// BeforeCommit is a test seam: it runs inside the still-open transaction,
 	// after the event was appended and the cursor advanced, before commit.
 	// Returning an error rolls the whole thing back -- which is exactly the
@@ -343,12 +385,22 @@ type ScheduleFireResult struct {
 	// false means the schedule was not due, not enabled, or was being fired
 	// by someone else at that moment.
 	Skipped bool
+	// Suppressed is true when a DUE occurrence was declined because this
+	// schedule's last two minted runs failed with the same reason and the
+	// probe interval has not elapsed (task t9, issue #253). It is mutually
+	// exclusive with Fired and Skipped, and it advances the cursor exactly as
+	// a fire does -- a suppressed occurrence is spent, not deferred.
+	Suppressed bool
 	// Missed is how many whole intervals had elapsed past the due instant --
 	// 0 for an on-time or merely late fire.
 	Missed int64
 	// Delivery is the appended fact and everything it started. Zero when
 	// nothing fired.
 	Delivery SignalDelivery
+	// AlertTaskID names the schedule_failing human task this attempt raised,
+	// empty when it raised none (the usual case: one is already pending, the
+	// streak is short, or nothing failed).
+	AlertTaskID string
 }
 
 // FireSchedule fires one occurrence, if one is due, in ONE transaction.
@@ -406,6 +458,32 @@ func (s *Store) FireSchedule(ctx context.Context, in FireScheduleInput) (Schedul
 	missed := int64(now.Sub(sc.NextFireAt) / sc.Interval)
 	next := advanceCadence(sc.NextFireAt, sc.Interval, now)
 
+	// Task t9 (issue #253). Read what the LAST occurrence produced before
+	// deciding whether to produce another one, and record the answer, so the
+	// same terminal run is never counted twice. Both of the decisions below
+	// -- hold this tick back, ask a human -- read only the state this call
+	// writes, still inside the same transaction and the same row lock the
+	// cadence advance uses.
+	alertTaskID, err := s.assessScheduleOutcomeTx(ctx, tx, &sc, in.AlertAfter, now)
+	if err != nil {
+		return ScheduleFireResult{}, err
+	}
+
+	if scheduleIsSuppressed(sc, in.ProbeInterval, now) {
+		suppressed, err := scanSchedule(tx.QueryRow(ctx, `
+			UPDATE schedules
+			SET next_fire_at = $2, suppressed_count = suppressed_count + 1, updated_at = now()
+			WHERE id = $1
+			RETURNING `+scheduleColumns, sc.ID, next))
+		if err != nil {
+			return ScheduleFireResult{}, fmt.Errorf("postgres: FireSchedule: suppress schedule %s: %w", sc.ID, err)
+		}
+		if err := tx.Commit(ctx); err != nil {
+			return ScheduleFireResult{}, fmt.Errorf("postgres: FireSchedule: commit suppression: %w", err)
+		}
+		return ScheduleFireResult{Schedule: suppressed, Suppressed: true, Missed: missed, AlertTaskID: alertTaskID}, nil
+	}
+
 	if sc.CatchUp == CatchUpSkip && missed > 0 {
 		if err := s.skipOccurrenceTx(ctx, tx, sc, next, missed); err != nil {
 			return ScheduleFireResult{}, err
@@ -414,7 +492,7 @@ func (s *Store) FireSchedule(ctx context.Context, in FireScheduleInput) (Schedul
 		if err := tx.Commit(ctx); err != nil {
 			return ScheduleFireResult{}, fmt.Errorf("postgres: FireSchedule: commit skip: %w", err)
 		}
-		return ScheduleFireResult{Schedule: sc, Skipped: true, Missed: missed}, nil
+		return ScheduleFireResult{Schedule: sc, Skipped: true, Missed: missed, AlertTaskID: alertTaskID}, nil
 	}
 
 	delivery, err := s.deliverSignalEventTx(ctx, tx, DeliverSignalEventInput{
@@ -448,7 +526,7 @@ func (s *Store) FireSchedule(ctx context.Context, in FireScheduleInput) (Schedul
 	if err := tx.Commit(ctx); err != nil {
 		return ScheduleFireResult{}, fmt.Errorf("postgres: FireSchedule: commit: %w", err)
 	}
-	return ScheduleFireResult{Schedule: fired, Fired: true, Missed: missed, Delivery: delivery}, nil
+	return ScheduleFireResult{Schedule: fired, Fired: true, Missed: missed, Delivery: delivery, AlertTaskID: alertTaskID}, nil
 }
 
 // skipOccurrenceTx realigns a CatchUpSkip schedule past a missed occurrence

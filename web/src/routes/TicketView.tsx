@@ -1,12 +1,16 @@
 import { useEffect, useMemo, useRef, useState, type FormEvent } from "react";
 import { Link, useParams } from "react-router-dom";
-import { ApiError, getTicket, postTicketReply } from "../api/client";
+import { ApiError, decideHumanTask, getTicket, postTicketReply } from "../api/client";
 import {
   clearDecisionToken,
   getDecisionToken,
+  setDecisionActorID,
   setDecisionToken,
 } from "../api/decision-token";
-import type { TicketFrameData, TicketProjection } from "../api/types";
+import type { TicketFrameData, TicketPendingTask, TicketProjection } from "../api/types";
+import DeciderActorField, { useDeciderActorID } from "../components/DeciderActorField";
+import ErrorNotice from "../components/ErrorNotice";
+import OutcomeButtons from "../components/OutcomeButtons";
 
 function newSubmissionID(): string {
   const raw = typeof crypto !== "undefined" && "randomUUID" in crypto ? crypto.randomUUID() : `${Date.now()}-${Math.random()}`;
@@ -64,6 +68,12 @@ export function TicketView() {
   const [submitting, setSubmitting] = useState(false);
   const [submitError, setSubmitError] = useState<ApiError | null>(null);
   const [sent, setSent] = useState(false);
+  // The Decisions section's own state (task t18). The decider id is
+  // remembered across sittings, the token is not — see api/decision-token.ts
+  // for why those two are stored differently.
+  const [decider, setDecider] = useDeciderActorID();
+  const [deciding, setDeciding] = useState<string | null>(null);
+  const [decideError, setDecideError] = useState<ApiError | null>(null);
 
   useEffect(() => {
     const controller = new AbortController();
@@ -83,6 +93,11 @@ export function TicketView() {
     ?? (typeof frame.ticket_url === "string" ? frame.ticket_url : undefined)
     ?? (typeof frame.jira_url === "string" ? frame.jira_url : undefined);
   const frozen = projection?.frozen === true || frame.frozen === true;
+  // The freeze banner sentence is composed by the API (TicketFreeze.banner)
+  // rather than assembled here, so the run counts a human reads on this page
+  // are the counts the API test asserts against the runs themselves (spec
+  // h19). Absent on a ticket frozen before this shipped.
+  const freeze = projection?.freeze;
   const pr = mergedPR({ ...frame, merged_pr: projection?.merged_pr ?? frame.merged_pr });
   const claims = frame.claims ?? [];
   const questions: TicketQuestion[] = frame.questions ?? claims
@@ -95,7 +110,42 @@ export function TicketView() {
     decisions.filter((item) => item.question_id).map((item) => [item.question_id, item]),
   ), [decisions]);
 
+  const pendingTasks: TicketPendingTask[] = projection?.pending_tasks ?? [];
+
   const submissionID = useRef(newSubmissionID());
+
+  /**
+   * Record one decision (task t18, spec c6). The ledger version submitted is
+   * the one the API SERVED with this task — never a fresh read — so if the
+   * run moved since this page loaded, the control plane refuses the decision
+   * with a 409 and writes nothing. That is the correct outcome: the frame
+   * this operator read is no longer the frame they would be deciding.
+   */
+  async function decide(task: TicketPendingTask, outcome: string) {
+    if (!projection || !token || !decider.trim()) return;
+    // Remember the TRIMMED id: what is stored is what was submitted.
+    setDecisionActorID(decider.trim());
+    setDeciding(task.id);
+    setDecideError(null);
+    try {
+      await decideHumanTask(task.id, {
+        outcome,
+        decider_actor_id: decider.trim(),
+        // A task with a decision schema gets a schema-valid payload; one
+        // without gets none, rather than an invented empty object.
+        response: task.decision_schema_ref ? { outcome } : undefined,
+        expected_ledger_version: task.ledger_version,
+      }, token);
+      setProjection((current) => current && ({
+        ...current,
+        pending_tasks: (current.pending_tasks ?? []).filter((item) => item.id !== task.id),
+      }));
+    } catch (error) {
+      setDecideError(error as ApiError);
+    } finally {
+      setDeciding(null);
+    }
+  }
 
   function holdToken(next: string) {
     setToken(next);
@@ -149,8 +199,44 @@ export function TicketView() {
       {frozen ? (
         <div className="ticket-freeze" role="status">
           <strong>Frozen — this ticket was merged.</strong>{" "}
+          {freeze ? <span className="ticket-freeze__runs">{freeze.banner}</span> : null}{" "}
           {pr?.href ? <a href={pr.href}>{pr.label}</a> : pr ? pr.label : "Replies are closed."}
         </div>
+      ) : null}
+
+      {/* Decisions first, because they are the only thing on this page that
+          is waiting on the reader. A Jira comment that names this ticket's
+          options links here (task t11); before t18 it linked to a page that
+          listed the task and offered nothing to click. A frozen ticket has
+          none: t17 ended its runs. */}
+      {pendingTasks.length ? (
+        <section aria-labelledby="decisions-title" className="ticket-decisions">
+          <h2 id="decisions-title">Decisions</h2>
+          <p className="muted">
+            Each option below is one the engine will accept for that task. Hold
+            the decision token in the reply form and name yourself here to
+            enable them — the token authenticates the deployment, so who
+            decided is a separate, explicit claim.
+          </p>
+          <DeciderActorField id="ticket-decider-actor" value={decider} onChange={setDecider} />
+          {decideError ? <ErrorNotice error={decideError} /> : null}
+          <ul className="ticket-decisions__list">
+            {pendingTasks.map((task) => (
+              <li className="inbox-card" key={task.id} data-human-task-id={task.id}>
+                <code>{task.id}</code> · {task.kind} · run{" "}
+                <Link to={`/runs/${encodeURIComponent(task.run_id)}`}>{task.run_id}</Link>
+                {task.deadline ? <> · due <time dateTime={task.deadline}>{task.deadline}</time></> : null}
+                <OutcomeButtons
+                  taskId={task.id}
+                  outcomes={task.allowed_outcomes}
+                  disabled={!token || !decider.trim()}
+                  busy={deciding === task.id}
+                  onChoose={(outcome) => void decide(task, outcome)}
+                />
+              </li>
+            ))}
+          </ul>
+        </section>
       ) : null}
 
       <section aria-labelledby="claims-title">

@@ -48,9 +48,21 @@ type ScheduleOut struct {
 	// SkipCount is how many occurrences were declined under catch_up=skip. It
 	// is reported separately from FireCount because "declined 6 nightly runs
 	// while we were down" and "never came due" must not look the same.
-	SkipCount int64     `json:"skip_count"`
-	CreatedAt time.Time `json:"created_at"`
-	UpdatedAt time.Time `json:"updated_at"`
+	SkipCount int64 `json:"skip_count"`
+	// SuppressedCount is how many DUE occurrences were held back because this
+	// schedule's last two runs failed with the same reason (task t9, issue
+	// #253). It is separate from SkipCount for the same reason SkipCount is
+	// separate from FireCount: "the operator declared a catch-up policy" and
+	// "the environment is broken" are different facts about why nothing ran,
+	// and an operator asking why has to be able to tell them apart.
+	SuppressedCount int64 `json:"suppressed_count"`
+	// LastFailureDetail is the repeated reason, verbatim — the last minted
+	// run's last attempt's result.error.detail. Absent when the schedule is
+	// not currently failing, which makes its PRESENCE the answer to "is this
+	// schedule holding back, and why".
+	LastFailureDetail string    `json:"last_failure_detail,omitempty"`
+	CreatedAt         time.Time `json:"created_at"`
+	UpdatedAt         time.Time `json:"updated_at"`
 }
 
 // ScheduleListOut is components.schemas.ScheduleList.
@@ -61,16 +73,18 @@ type ScheduleListOut struct {
 func scheduleOut(sc postgres.Schedule) ScheduleOut {
 	out := ScheduleOut{
 		ID: sc.ID, Name: sc.Name, EventName: sc.EventName, Emitter: sc.Emitter,
-		Payload:         nonNullJSON(sc.Payload),
-		IntervalSeconds: int64(sc.Interval / time.Second),
-		CatchUp:         string(sc.CatchUp),
-		Enabled:         sc.Enabled,
-		NextFireAt:      sc.NextFireAt,
-		LastEventID:     sc.LastEventID,
-		FireCount:       sc.FireCount,
-		SkipCount:       sc.SkipCount,
-		CreatedAt:       sc.CreatedAt,
-		UpdatedAt:       sc.UpdatedAt,
+		Payload:           nonNullJSON(sc.Payload),
+		IntervalSeconds:   int64(sc.Interval / time.Second),
+		CatchUp:           string(sc.CatchUp),
+		Enabled:           sc.Enabled,
+		NextFireAt:        sc.NextFireAt,
+		LastEventID:       sc.LastEventID,
+		FireCount:         sc.FireCount,
+		SkipCount:         sc.SkipCount,
+		SuppressedCount:   sc.SuppressedCount,
+		LastFailureDetail: sc.LastFailureDetail,
+		CreatedAt:         sc.CreatedAt,
+		UpdatedAt:         sc.UpdatedAt,
 	}
 	if !sc.LastFiredAt.IsZero() {
 		at := sc.LastFiredAt

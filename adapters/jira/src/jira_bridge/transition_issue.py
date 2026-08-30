@@ -27,7 +27,17 @@ class TransitionResult:
     error: str = ""
 
 
-def parse(raw: Any, *, project_prefix: str, allowed_target: str) -> tuple[Transition | None, str | None]:
+def parse(
+    raw: Any, *, project_prefix: str, allowed_targets: tuple[str, ...]
+) -> tuple[Transition | None, str | None]:
+    """Validate a transition request against the bridge's own allowlist.
+
+    ``allowed_targets`` became a tuple in task t11: culture-nodes now moves a
+    ticket to 'Pending' when it raises a human decision and to 'Done' when the
+    work finishes, and one bridge serves both. Membership, not equality, is
+    the check -- but it is still EXACT membership, so widening the allowlist
+    stays a deployment decision and never a request-supplied one.
+    """
     if not isinstance(raw, dict):
         return None, "input must be a JSON object"
     if set(raw) != {"verb", "issue", "target"}:
@@ -41,8 +51,9 @@ def parse(raw: Any, *, project_prefix: str, allowed_target: str) -> tuple[Transi
         return None, f"policy: issue must match configured project prefix {project_prefix!r}"
     if not isinstance(target, str) or not target:
         return None, "target must be a non-empty string"
-    if not allowed_target or target != allowed_target:
-        return None, f"policy: target must equal configured transition {allowed_target!r}"
+    if not allowed_targets or target not in allowed_targets:
+        allowed = ", ".join(repr(item) for item in allowed_targets) or "(none configured)"
+        return None, f"policy: target must be one of the configured transitions: {allowed}"
     return Transition(issue=issue, target=target), None
 
 

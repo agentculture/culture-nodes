@@ -194,7 +194,7 @@ func (s *Store) CreateNamespace(ctx context.Context, slug, displayName string) (
 	})
 	if err != nil {
 		if isUniqueViolation(err) {
-			return Namespace{}, fmt.Errorf("postgres: CreateNamespace: slug %q already exists: %w", slug, err)
+			return Namespace{}, fmt.Errorf("postgres: CreateNamespace: slug %q already exists: %w", slug, ErrDuplicateNamespace)
 		}
 		return Namespace{}, fmt.Errorf("postgres: CreateNamespace: %w", err)
 	}

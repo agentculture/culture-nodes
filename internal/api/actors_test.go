@@ -440,8 +440,10 @@ func TestActorStatsUsageNeverSumsAcrossCurrencies(t *testing.T) {
 // TestActorStatsCachedTokensAndCacheRatio proves the actor-level usage
 // rollup (task t2, ADR 0009) surfaces cached_input_tokens/reasoning_tokens
 // summed the same way input/output tokens are, and that cache_ratio is
-// computed honestly: only when input_tokens > 0, and never contaminated by
-// an attempt that reported tokens but no cache telemetry at all.
+// computed honestly: cached/(input+cached) (task t8 -- cache reads are
+// reported alongside input_tokens, not inside them), only when that
+// denominator is > 0, and never contaminated by an attempt that reported
+// tokens but no cache telemetry at all.
 func TestActorStatsCachedTokensAndCacheRatio(t *testing.T) {
 	f := newFixture(t)
 	actorID := f.insertActor("worker")
@@ -472,9 +474,13 @@ func TestActorStatsCachedTokensAndCacheRatio(t *testing.T) {
 		t.Fatalf("ReasoningTokens = %d, want 10", usage.ReasoningTokens)
 	}
 	if usage.CacheRatio == nil {
-		t.Fatal("CacheRatio is nil, want 60/150 = 0.4 (input_tokens > 0)")
+		t.Fatal("CacheRatio is nil, want 60/(150+60) (input+cached > 0)")
 	}
-	if *usage.CacheRatio < 0.399 || *usage.CacheRatio > 0.401 {
-		t.Fatalf("CacheRatio = %v, want ~0.4", *usage.CacheRatio)
+	// 60 cache reads over a 210-token prompt (150 uncached input + 60
+	// cached) -- NOT 60/150, which would read as 40% of a prompt the
+	// attempts never had.
+	want := 60.0 / 210.0
+	if *usage.CacheRatio < want-0.001 || *usage.CacheRatio > want+0.001 {
+		t.Fatalf("CacheRatio = %v, want ~%v", *usage.CacheRatio, want)
 	}
 }

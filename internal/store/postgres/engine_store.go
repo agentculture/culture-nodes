@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"time"
 
+	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/jackc/pgx/v5/pgxpool"
 
@@ -317,7 +318,8 @@ func (eq engineQueries) UpdateRunState(ctx context.Context, runID string, state 
 
 const selectRunSQL = `
 SELECT r.id, r.namespace_id, r.workflow_version_id, wv.content_digest, r.status,
-       r.input, r.output, r.created_at, r.updated_at, r.completed_at, r.actor_affinity, r.subject, r.trigger_event_id
+       r.input, r.output, r.created_at, r.updated_at, r.completed_at, r.actor_affinity, r.subject, r.trigger_event_id,
+       r.reason
 FROM runs AS r
 JOIN workflow_versions AS wv ON wv.id = r.workflow_version_id
 WHERE r.id = $1 AND r.namespace_id = $2
@@ -337,10 +339,12 @@ func (eq engineQueries) Run(ctx context.Context, runID string) (engine.Run, erro
 		completedAt             pgtype.Timestamptz
 		affinity                []byte
 		subject, triggerEventID pgtype.Text
+		reason                  pgtype.Text
 	)
 	err := eq.q.QueryRow(ctx, selectRunSQL, runID, eq.namespaceID).Scan(
 		&run.ID, &run.NamespaceID, &run.WorkflowVersionID, &run.WorkflowDigest, &status,
 		&input, &output, &createdAt, &updatedAt, &completedAt, &affinity, &subject, &triggerEventID,
+		&reason,
 	)
 	if err != nil {
 		if isNoRows(err) {
@@ -360,6 +364,7 @@ func (eq engineQueries) Run(ctx context.Context, runID string) (engine.Run, erro
 	run.ActorAffinity = jsonOrNil(affinity)
 	run.Subject = textOrEmpty(subject)
 	run.TriggerEventID = textOrEmpty(triggerEventID)
+	run.Reason = textOrEmpty(reason)
 	return run, nil
 }
 
@@ -515,6 +520,11 @@ func (eq engineQueries) InsertHumanTask(ctx context.Context, task engine.HumanTa
 	if err != nil {
 		return "", fmt.Errorf("postgres: engine: InsertHumanTask: %w", err)
 	}
+	// Fan-out is hooked here rather than at each caller so no creation path
+	// can forget it (task t11); see humantaskfanout.go.
+	if _, err := eq.EnqueueHumanTaskFanOut(ctx, id); err != nil {
+		return "", err
+	}
 	return id, nil
 }
 
@@ -659,7 +669,7 @@ func (eq engineQueries) InsertAttempt(ctx context.Context, attempt engine.Attemp
 	_, err := eq.q.Exec(ctx, insertAttemptSQL,
 		attempt.ID, eq.namespaceID, attempt.NodeRunID, int32(attempt.Number),
 		textOrNull(attempt.ActorID), string(attempt.Status), attempt.FencingToken,
-		result, tsOrNow(attempt.StartedAt), tsOrNow(attempt.CompletedAt),
+		result, tsOrNull(attempt.StartedAt), tsOrNow(attempt.CompletedAt),
 		inputTokens, outputTokens, cost, currency,
 		cachedInputTokens, reasoningTokens, usageModel, usageThreadID,
 		textPtrFromNullable(attempt.TerminationReason),
@@ -671,6 +681,30 @@ func (eq engineQueries) InsertAttempt(ctx context.Context, attempt engine.Attemp
 		return fmt.Errorf("postgres: engine: InsertAttempt: %w", err)
 	}
 	return nil
+}
+
+// AttemptStartedAt resolves the dispatch start recorded before an asynchronous
+// completion. Agent and code-node waits live in separate tables but share the
+// work id that CompleteAttempt is fenced against. No row is the ordinary
+// synchronous path, and remains unknown rather than being replaced with now.
+func (eq engineQueries) AttemptStartedAt(ctx context.Context, workID string) (time.Time, bool, error) {
+	var startedAt pgtype.Timestamptz
+	err := eq.q.QueryRow(ctx, `
+		SELECT created_at
+		FROM (
+			SELECT created_at FROM actor_invocations WHERE namespace_id = $1 AND work_id = $2
+			UNION ALL
+			SELECT created_at FROM runner_invocations WHERE namespace_id = $1 AND work_id = $2
+		) invocations
+		ORDER BY created_at
+		LIMIT 1`, eq.namespaceID, workID).Scan(&startedAt)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return time.Time{}, false, nil
+	}
+	if err != nil {
+		return time.Time{}, false, fmt.Errorf("postgres: engine: AttemptStartedAt: %w", err)
+	}
+	return startedAt.Time.UTC(), true, nil
 }
 
 // NextAttemptNumber is one past the highest attempt already recorded.

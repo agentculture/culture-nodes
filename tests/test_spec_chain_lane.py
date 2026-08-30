@@ -90,6 +90,23 @@ def test_lane_mints_from_the_sweeps_ticket_fact_only(document):
     ]
 
 
+def test_lane_contract_and_opening_actor_receive_the_ticket_description(document):
+    schema = document["spec"]["contract"]["input"]["schema"]
+    fact = {
+        "source": "jira",
+        "id": "SCRUM-6",
+        "title": "Ticket description reaches agents",
+        "status": "In Progress",
+        "description": "Use the full ticket ask while framing the work.",
+        "description_truncated": False,
+    }
+
+    jsonschema.Draft202012Validator(schema).validate(fact)
+    bindings = _bindings(_nodes(document)["think"])
+    assert bindings["description"] == "/run/input/description"
+    assert "description" in bindings["instruction"]["literal"]
+
+
 def test_every_devague_move_runs_on_the_developer_lane_with_the_custody_request(document):
     movers = {
         node_id: node

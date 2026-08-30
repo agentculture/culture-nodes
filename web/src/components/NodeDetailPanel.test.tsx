@@ -54,6 +54,36 @@ describe("NodeDetailPanel", () => {
     expect(screen.getByText("dispatched")).toBeInTheDocument();
   });
 
+  it("shows a rejected attempt's diagnostic detail", () => {
+    const attempt: Attempt = {
+      id: "att-rejected",
+      node_run_id: "nr-rejected",
+      attempt_number: 1,
+      status: "contract_rejected",
+      result: {
+        error: { class: "runner", detail: "runner rejected X" },
+      },
+      started_at: "2026-08-15T10:00:00Z",
+      completed_at: "2026-08-15T10:00:01Z",
+    };
+    render(
+      <NodeDetailPanel
+        node={graph.nodes.find((n) => n.id === "test")!}
+        execution={{
+          nodeId: "test",
+          state: "failed",
+          nodeRuns: [],
+          attempts: [attempt],
+          visits: 1,
+        }}
+        ledger={[]}
+        onClose={vi.fn()}
+      />,
+    );
+
+    expect(screen.getByText("runner rejected X")).toBeInTheDocument();
+  });
+
   it("renders per-attempt model and token attribution without hiding explicit unknowns", () => {
     const attempt: Attempt = {
       id: "att-attributed",

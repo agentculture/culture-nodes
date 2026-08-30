@@ -311,9 +311,37 @@ class_of() { # <key> <compose-kind> -> required|optional|unclassified
 
 # Key names and set/empty only. The values stay on the host: they are never
 # printed, never returned over the ssh channel, and never in an argv.
+#
+# ONE comparison is made here rather than reported: NODES_DATABASE_URL carries
+# POSTGRES_PASSWORD inline, so those two keys are two copies of one fact, and a
+# FORCE_PROD rotation could replace one and leave the other stale (issue #133).
+# Both keys stay `required (present)` under every other check in this script,
+# both are non-empty, and the containers keep working on the credentials they
+# already hold until they restart -- the same latency that made the
+# NODES_ACTOR_CLAUDE_TOKEN loss an 18-hour outage rather than a deploy failure.
+#
+# Comparing needs both values, and neither may leave the host, so the compare
+# happens HERE and a single verdict word crosses the channel:
+#
+#   matches         the URL carries POSTGRES_PASSWORD
+#   diverges        it carries something else -- the finding
+#   external        COMPOSE_PROFILES is set and does not select bundled-postgres,
+#                   which is deploy/prod/README's own external-database switch.
+#                   There POSTGRES_PASSWORD is a bundled-database credential
+#                   nothing reads, so a difference is the documented state and
+#                   failing it every run would teach an operator to ignore the
+#                   whole audit -- the same reasoning as the `optional` class.
+#   no_url_password the URL embeds no userinfo password, so there is nothing to
+#                   compare (an unset key is already the required-key check's
+#                   business, not this one's)
+#
+# The verdict rides a line whose first field starts with `#`, which no env key
+# can be: the loop above skips `#` lines, so the name cannot collide with a real
+# key on the way back either.
 # shellcheck disable=SC2016 # every expansion here is for the remote shell
 REMOTE_PROD_ENV_KEYS='f="$HOME/.culture-nodes/prod.env"
 [ -r "$f" ] || exit 4
+pw=; url=; profiles=; have_profiles=0
 while IFS= read -r line || [ -n "$line" ]; do
   case "$line" in ""|"#"*) continue ;; esac
   k=${line%%=*}
@@ -321,7 +349,27 @@ while IFS= read -r line || [ -n "$line" ]; do
   case "$k" in ""|*[!A-Za-z0-9_]*) continue ;; esac
   v=${line#*=}
   if [ -n "$v" ]; then printf "%s\tset\n" "$k"; else printf "%s\tempty\n" "$k"; fi
-done < "$f"'
+  case "$k" in
+    POSTGRES_PASSWORD) pw=$v ;;
+    NODES_DATABASE_URL) url=$v ;;
+    COMPOSE_PROFILES) profiles=$v; have_profiles=1 ;;
+  esac
+done < "$f"
+urlpw=
+case "$url" in *@*) creds=${url%%@*}; case "$creds" in *://*:*) urlpw=${creds##*:} ;; esac ;; esac
+bundled=1
+if [ "$have_profiles" = 1 ]; then
+  bundled=0
+  case ",$profiles," in *",bundled-postgres,"*) bundled=1 ;; esac
+fi
+verdict=no_url_password
+if [ -n "$urlpw" ] && [ -n "$pw" ]; then
+  if [ "$bundled" = 0 ]; then verdict=external
+  elif [ "$urlpw" = "$pw" ]; then verdict=matches
+  else verdict=diverges
+  fi
+fi
+printf "#url-password\t%s\n" "$verdict"'
 
 # shellcheck disable=SC2029 # the client-side expansion is the point: it puts a FIXED script on the remote argv, with no value in it
 prod_keys=$(ssh "$HOST" "$REMOTE_PROD_ENV_KEYS") || {
@@ -331,7 +379,9 @@ prod_keys=$(ssh "$HOST" "$REMOTE_PROD_ENV_KEYS") || {
 }
 
 declare -A present=()
+url_password=no_url_password
 while IFS=$'\t' read -r key state; do
+  if [ "$key" = "#url-password" ]; then url_password=$state; continue; fi
   [ -n "$key" ] && present["$key"]=$state
 done <<< "$prod_keys"
 
@@ -412,6 +462,14 @@ printf '    required: %d present, %d missing, %d empty\n' \
 printf '    optional: %d present, %d absent (closed by default)\n' \
   "${#present_optional[@]}" "${#absent_optional[@]}"
 printf '    unknown:  %d present in prod.env, declared by no compose file\n' "${#unknown_keys[@]}"
+# Said on every run, not only on the finding: a check that is silent when it
+# does not run is indistinguishable from one that ran and passed.
+case "$url_password" in
+  matches)         printf '    database url: the password in NODES_DATABASE_URL matches POSTGRES_PASSWORD\n' ;;
+  diverges)        printf '    database url: the password in NODES_DATABASE_URL does NOT match POSTGRES_PASSWORD\n' ;;
+  external)        printf '    database url: NODES_DATABASE_URL not compared with POSTGRES_PASSWORD (COMPOSE_PROFILES does not select bundled-postgres, so this host runs an external database)\n' ;;
+  *)               printf '    database url: NODES_DATABASE_URL not compared with POSTGRES_PASSWORD (it embeds no password)\n' ;;
+esac
 if [ "${#present_required[@]}" -gt 0 ]; then
   printf '    required (present): %s\n' "$(keys ${present_required[@]+"${present_required[@]}"})"
 fi
@@ -435,6 +493,13 @@ if [ "${#unclassified_keys[@]}" -gt 0 ]; then
 fi
 
 rc=0
+if [ "$url_password" = "diverges" ]; then
+  # By name, and by name only: the two values were compared on the host and
+  # neither one came back, so there is nothing here that could print one.
+  echo "error: NODES_DATABASE_URL and POSTGRES_PASSWORD hold two different database passwords" >&2
+  echo "hint: NODES_DATABASE_URL carries POSTGRES_PASSWORD inline, and the settings lane composes it once, add-if-absent, so nothing revisits it — a rotation that replaced one copy left the other stale (issue #133). Everything still running holds its credentials in memory, so this failure is LATENT: the api/worker/scheduler containers fail authentication on their NEXT restart. Re-run deploy/prod/install-secrets.sh with FORCE_PROD=1 to rotate and refresh both together, or remove the stale URL with deploy/prod/remove-secret.sh NODES_DATABASE_URL and re-run to have it composed from this host's own POSTGRES_PASSWORD. If this host runs an EXTERNAL database, the divergence is expected and COMPOSE_PROFILES should say so by not listing bundled-postgres." >&2
+  rc=1
+fi
 if [ "${#forbidden_keys[@]}" -gt 0 ]; then
   echo "error: dial-in credential in prod.env: $(keys ${forbidden_keys[@]+"${forbidden_keys[@]}"})" >&2
   echo "hint: a dial-in credential has exactly ONE custody point — the bridge's own per-bridge file, written by deploy/prod/issue-dialin-credential.sh, which is the only thing that may write one. prod.env is a second copy (and notify-bridge.service reads it), which is the two-copies-diverge shape of issue #133. Remove it with deploy/prod/remove-secret.sh <key> and re-issue that bridge's credential." >&2

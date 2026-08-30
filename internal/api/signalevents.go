@@ -183,6 +183,35 @@ func (s *Server) handleDeliverEvent(w http.ResponseWriter, r *http.Request) erro
 	}
 
 	ev := delivery.Event
+	// A pr.merged fact IS a ticket freeze — Store.DeliverSignalEvent writes
+	// the ticket_freezes row inside the fact's own transaction
+	// (internal/store/postgres/signal.go). Ending that ticket's runs is the
+	// other half of the freeze (task t17, spec c28), applied here rather
+	// than in the store transaction: cancelling a run takes that run's
+	// advisory lock, and the delivery transaction is already holding run
+	// locks of its own for subscription matching, so taking more inside it
+	// would be a lock-ordering hazard on the hot event path.
+	//
+	// It carries NO ticket status, because the sweep's merged-PR fact has
+	// none to carry (examples/pr-upkeep/sweep.py's merged_pr_fact emits
+	// source/repository/number/url/merged_at/issue_key). An unknown status
+	// parks — reversible — so the automatic path never cancels a run on a
+	// ticket nobody said was finished; cancelling is the operator's call,
+	// made by naming the status on POST /v1alpha1/tickets/{id}/freeze.
+	//
+	// A failure here is LOGGED, not returned, for the same reason
+	// propagateCancelToActors' is (cancelpropagate.go): the fact and the
+	// freeze row are already committed, so answering 5xx would invite the
+	// emitter to redeliver a fact that already landed — and without a
+	// source key that redelivery is a second fact, not a dedup. The run
+	// walk is idempotent, so the operator's explicit freeze or the next
+	// delivery re-applies it.
+	if !delivery.Duplicate {
+		if err := s.freezeRunsForMergedPRFact(r.Context(), ev.Name, ev.Payload); err != nil {
+			s.log.Error("api: pr.merged freeze did not end the ticket's runs",
+				"event_id", ev.ID, "name", ev.Name, "detail", err.Error())
+		}
+	}
 	out := EventDeliveryOut{
 		Event: SignalEventOut{
 			ID:        ev.ID,

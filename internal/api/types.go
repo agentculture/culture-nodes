@@ -61,6 +61,7 @@ type WorkflowVersionListOut struct {
 type RunOut struct {
 	ID             string          `json:"id"`
 	WorkflowDigest string          `json:"workflow_digest"`
+	WorkflowKey    string          `json:"workflow_key,omitempty"`
 	State          string          `json:"state"`
 	Input          json.RawMessage `json:"input,omitempty"`
 	Output         json.RawMessage `json:"output,omitempty"`
@@ -99,6 +100,17 @@ type RunOut struct {
 	// question this listing can actually answer, rather than one that needs
 	// a database query — see honesty condition h16.
 	Subject string `json:"subject,omitempty"`
+	// Reason is why the run is in this state, when the state was a
+	// control-plane decision rather than something an actor reported
+	// (task t17, migrations/0052). Today's one writer is the ticket
+	// freeze: a run whose subject is a frozen ticket reads
+	// `"reason": "ticket_frozen"` beside a `cancelled` or `waiting`
+	// state. Absent for every run that reached its state the ordinary
+	// way — where the account of what happened is the last attempt's
+	// own `result.error.detail` (task t6), which this field deliberately
+	// does not overwrite: an attempt's result is the ACTOR's evidence,
+	// and a control-plane decision is not the actor's to claim.
+	Reason string `json:"reason,omitempty"`
 }
 
 // runOut renders r with usage (the run-level §13.2 rollup task t2 adds,
@@ -124,6 +136,7 @@ func runOut(r engine.Run, usage postgres.UsageRollup, meta runMetadata) RunOut {
 		Category:       meta.Category,
 		ActorAffinity:  r.ActorAffinity,
 		Subject:        r.Subject,
+		Reason:         r.Reason,
 	}
 	if meta.Name == "" {
 		out.DisplayHint = deriveDisplayHint(r.Input)
@@ -165,9 +178,17 @@ func runOut(r engine.Run, usage postgres.UsageRollup, meta runMetadata) RunOut {
 //     are NOT independently gated by their own reported/not-reported count;
 //     AttemptsReported/AttemptsNotReported remains the one coverage signal,
 //     per the ADR's explicit instruction not to invent a second sentinel.
-//   - CacheRatio is CachedInputTokens/InputTokens, computed only when
-//     InputTokens > 0 — never a fabricated 0/0 ratio when nothing in scope
-//     reported any input tokens at all. Omitted (nil) in that case.
+//   - CacheRatio is CachedInputTokens/(InputTokens+CachedInputTokens),
+//     computed only when that denominator is > 0 — never a fabricated 0/0
+//     ratio when nothing in scope reported any prompt tokens at all;
+//     omitted (nil) in that case. The denominator includes the cached
+//     tokens because every backend that reports cache telemetry at all
+//     reports cache reads ALONGSIDE input_tokens, not inside them (an adapter
+//     attempt's cached_input_tokens is a sibling of input_tokens, not a
+//     subset of it). Dividing by InputTokens alone therefore had no bound
+//     at 1.0 and rendered "588% cached" on real data (task t8, claim c8);
+//     input+cached is the whole prompt the attempt consumed, so the ratio
+//     is a share of it and can never exceed 100%.
 type UsageOut struct {
 	InputTokens         int64             `json:"input_tokens"`
 	OutputTokens        int64             `json:"output_tokens"`
@@ -202,8 +223,8 @@ func usageOut(r postgres.UsageRollup) *UsageOut {
 		AttemptsReported:    r.AttemptsReported,
 		AttemptsNotReported: r.AttemptsNotReported,
 	}
-	if r.InputTokens > 0 {
-		ratio := float64(r.CachedInputTokens) / float64(r.InputTokens)
+	if prompt := r.InputTokens + r.CachedInputTokens; prompt > 0 {
+		ratio := float64(r.CachedInputTokens) / float64(prompt)
 		out.CacheRatio = &ratio
 	}
 	switch len(r.Cost) {
@@ -225,7 +246,8 @@ func usageOut(r postgres.UsageRollup) *UsageOut {
 
 // RunListOut is components.schemas.RunList.
 type RunListOut struct {
-	Items []RunOut `json:"items"`
+	Items      []RunOut `json:"items"`
+	NextCursor string   `json:"next_cursor,omitempty"`
 }
 
 // TokenOut is one control token, as documented in components.schemas.Token.
@@ -272,7 +294,7 @@ type AttemptOut struct {
 	Status            string           `json:"status"`
 	FencingToken      int64            `json:"fencing_token,omitempty"`
 	Result            json.RawMessage  `json:"result,omitempty"`
-	StartedAt         time.Time        `json:"started_at"`
+	StartedAt         *time.Time       `json:"started_at,omitempty"`
 	CompletedAt       *time.Time       `json:"completed_at,omitempty"`
 	Usage             *AttemptUsageOut `json:"usage,omitempty"`
 	TerminationReason string           `json:"termination_reason,omitempty"`
@@ -451,7 +473,8 @@ func humanTaskOut(t engine.HumanTask) HumanTaskOut {
 
 // HumanTaskListOut is components.schemas.HumanTaskList.
 type HumanTaskListOut struct {
-	Items []HumanTaskOut `json:"items"`
+	Items      []HumanTaskOut `json:"items"`
+	NextCursor string         `json:"next_cursor,omitempty"`
 }
 
 // HumanTaskDecisionResultOut is components.schemas.HumanTaskDecisionResult:

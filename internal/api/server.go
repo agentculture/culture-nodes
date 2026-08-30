@@ -13,6 +13,7 @@ import (
 	"github.com/agentculture/culture-nodes/internal/engine"
 	"github.com/agentculture/culture-nodes/internal/handover"
 	"github.com/agentculture/culture-nodes/internal/ledger"
+	"github.com/agentculture/culture-nodes/internal/runners"
 	"github.com/agentculture/culture-nodes/internal/store/postgres"
 	"github.com/agentculture/culture-nodes/internal/telemetry"
 )
@@ -55,6 +56,10 @@ type Server struct {
 	// NODES_CALLBACK_TOKEN_SECRET for a token minted by a worker to verify
 	// here.
 	callbackSigner *actors.TokenSigner
+	// runnerCallbackStore backs the runner-protocol completion hint route.
+	// The callback can only bring the next authenticated status sample
+	// forward; it cannot commit the advisory state in the notification.
+	runnerCallbackStore runnerCallbackStore
 	// handoverObserver measures a handed-over git ref reported on a
 	// `completed` callback event (task t10). Nil in every deployment that
 	// has configured no remote to fetch from — see WithHandoverObserver.
@@ -372,6 +377,7 @@ func NewServer(store *postgres.Store, namespaceID string, opts ...Option) (*Serv
 		NamespaceID:             namespaceID,
 		engineStore:             engineStore,
 		callbackStore:           callbackStore,
+		runnerCallbackStore:     store,
 		artifactInvocationStore: callbackStore,
 		artifactRunnerOps:       store,
 		pollInterval:            defaultEventPollInterval,
@@ -470,6 +476,7 @@ func (s *Server) Handler() http.Handler {
 
 	mux.HandleFunc("GET /v1alpha1/dispatch-rates", s.wrap(s.handleListDispatchRates))
 	mux.HandleFunc("GET /v1alpha1/namespaces", s.wrap(s.handleListNamespaces))
+	mux.HandleFunc("POST /v1alpha1/namespaces", s.wrap(s.handleCreateNamespace))
 
 	mux.HandleFunc("GET /v1alpha1/preflights", s.wrap(s.handleListPreflights))
 	mux.HandleFunc("GET /v1alpha1/preflights/{id}", s.wrap(s.handleGetPreflight))
@@ -533,6 +540,7 @@ func (s *Server) Handler() http.Handler {
 			// nothing is fetched and nothing is recorded.
 			Handover: s.handoverObserver,
 		})))
+		mux.HandleFunc("POST "+runnerCallbackRoutePattern, s.handleRunnerOperationEvent)
 	}
 	// Unlike the unversioned actor callback protocol above, this documented
 	// API route is always present. Missing signer/router configuration fails
@@ -588,3 +596,7 @@ func spaHandler(assets fs.FS) http.Handler {
 // apart. Go's {id} wildcard matches one path segment, exactly what "%s"
 // stands for in that format string.
 var callbackRoutePattern = fmt.Sprintf(actors.CallbackEventsPathFormat, "{id}")
+
+// runnerCallbackRoutePattern is derived from the runner client's URL format
+// so the offered callback URL and the API mux cannot drift apart.
+var runnerCallbackRoutePattern = fmt.Sprintf(runners.CallbackPathFormat, "{id}")

@@ -1,0 +1,74 @@
+# An approval node as the ENTRY node, over a run input that can carry either
+# subject shape the fan-out addresses (task t11): a Jira work item
+# (source: jira, id: SCRUM-N) or a pull request (source: github_pr,
+# repository, number).
+#
+# The approval is the entry node deliberately: this workflow exists to test
+# what happens the moment a human task is CREATED and what happens when one
+# expires, and routing a token through a preceding agent node first would add
+# a worker completion to every test without changing a thing about either.
+#
+# Unlike approval.workflow.yaml this graph declares an edge for `expired`, the
+# third outcome the compiler implies for every approval node. That edge is the
+# difference between an expiring approval ending its run and failing it.
+apiVersion: nodes.culture.dev/v1alpha1
+kind: Workflow
+
+metadata:
+  name: engine-approval-subject
+  version: 1.0.0
+  ownerRef: team/platform-ai
+
+spec:
+  entry: review
+
+  contract:
+    input:
+      schema:
+        type: object
+        required: [source]
+        properties:
+          source:
+            type: string
+          id:
+            type: string
+          repository:
+            type: string
+          number:
+            type: integer
+    output:
+      schema:
+        type: object
+
+  limits:
+    maxDuration: 1h
+    maxTransitions: 8
+    maxVisitsPerNode: 2
+    maxParallelTokens: 1
+
+  ledger:
+    schemaVersion: nodes.culture.dev/ledger/v1alpha1
+    maxRecordsPerNode: 10
+
+  nodes:
+    review:
+      kind: approval
+      ownerRef: team/platform-ai
+      approverRef: group/platform-maintainers
+      deadline: 168h
+      input:
+        from: /run/input
+
+    finish:
+      kind: end
+      ownerRef: team/platform-ai
+      output:
+        from: /run/input
+
+  edges:
+    - from: review.approved
+      to: finish
+    - from: review.rejected
+      to: finish
+    - from: review.expired
+      to: finish

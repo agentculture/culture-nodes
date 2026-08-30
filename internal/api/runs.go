@@ -102,9 +102,19 @@ func (s *Server) handleListRuns(w http.ResponseWriter, r *http.Request) error {
 		return err
 	}
 
-	runs, err := s.listRuns(r.Context(), listRunsParams{
+	var cursor *nodeRunCursor
+	if raw := r.URL.Query().Get("cursor"); raw != "" {
+		decoded, decodeErr := decodeNodeRunCursor(raw)
+		if decodeErr != nil {
+			return badRequest("pass back a previous next_cursor unchanged", "invalid cursor: %v", decodeErr)
+		}
+		cursor = &decoded
+	}
+	runs, nextCursor, err := s.listRuns(r.Context(), listRunsParams{
 		State:        state,
 		Subject:      r.URL.Query().Get("subject"),
+		WorkflowKey:  r.URL.Query().Get("workflow_key"),
+		Cursor:       cursor,
 		Limit:        parseLimit(r, 50, 500),
 		UpdatedSince: updatedSince,
 		UpdatedUntil: updatedUntil,
@@ -113,7 +123,7 @@ func (s *Server) handleListRuns(w http.ResponseWriter, r *http.Request) error {
 	if err != nil {
 		return internalError(err)
 	}
-	writeJSON(w, http.StatusOK, RunListOut{Items: runs})
+	writeJSON(w, http.StatusOK, RunListOut{Items: runs, NextCursor: nextCursor})
 	return nil
 }
 
@@ -403,6 +413,18 @@ func truncateHint(s string) string {
 // handling already treats as a documented, tested no-op rather than an
 // error it needs new handling for.
 func (s *Server) cancelRun(ctx context.Context, runID string) (engine.Run, error) {
+	return s.cancelRunWithReason(ctx, runID, "", "cancelled via POST /v1alpha1/runs/{id}/cancel")
+}
+
+// cancelRunWithReason is cancelRun with the two things a caller other than
+// the cancel endpoint needs to say: a durable run-level `reason`
+// (migrations/0052, rendered as RunOut.Reason) and the `detail` string the
+// run.cancelled audit event and its outbox row carry. An empty reason
+// leaves runs.reason untouched -- the operator's own POST
+// /v1alpha1/runs/{id}/cancel records no machine-readable reason because
+// there is none to record; the human who pressed it is the reason, and the
+// event's detail says so.
+func (s *Server) cancelRunWithReason(ctx context.Context, runID, reason, detail string) (engine.Run, error) {
 	tx, err := s.Store.Pool().Begin(ctx)
 	if err != nil {
 		return engine.Run{}, internalError(fmt.Errorf("cancel run: begin: %w", err))
@@ -426,7 +448,8 @@ func (s *Server) cancelRun(ctx context.Context, runID string) (engine.Run, error
 	}
 
 	if _, err := tx.Exec(ctx,
-		`UPDATE runs SET status = 'cancelled', updated_at = now(), completed_at = now() WHERE id = $1`, runID,
+		`UPDATE runs SET status = 'cancelled', updated_at = now(), completed_at = now(),
+		        reason = COALESCE(NULLIF($2, ''), reason) WHERE id = $1`, runID, reason,
 	); err != nil {
 		return engine.Run{}, internalError(fmt.Errorf("cancel run: update run: %w", err))
 	}
@@ -498,11 +521,18 @@ func (s *Server) cancelRun(ctx context.Context, runID string) (engine.Run, error
 	).Scan(&sequence); err != nil {
 		return engine.Run{}, internalError(fmt.Errorf("cancel run: next event sequence: %w", err))
 	}
-	payload, _ := json.Marshal(map[string]any{
+	event := map[string]any{
 		"run_id": runID,
 		"state":  string(engine.RunCancelled),
-		"detail": "cancelled via POST /v1alpha1/runs/{id}/cancel",
-	})
+		"detail": detail,
+	}
+	// Omitted rather than emitted empty: a consumer must be able to tell
+	// "no machine-readable reason was recorded" from "the reason is the
+	// empty string", and the operator cancel path genuinely records none.
+	if reason != "" {
+		event["reason"] = reason
+	}
+	payload, _ := json.Marshal(event)
 	if _, err := tx.Exec(ctx, `
 		INSERT INTO events (id, namespace_id, aggregate_type, aggregate_id, sequence, event_type, source, data, occurred_at)
 		VALUES ($1, $2, 'run', $3, $4, $5, 'nodes', $6, now())`,

@@ -43,9 +43,25 @@ host, change the URL itself: `remove-secret.sh NODES_DATABASE_URL --yes <host>`
 with the new `DATABASE_SSLMODE` in place, then re-run `install-secrets.sh` — or
 edit the URL by hand, which the external-database path already expects.
 
+`DATABASE_SSLMODE` is delivered **only where it can still be used** — to a
+host whose `NODES_DATABASE_URL` does not already name an `sslmode` (task t25,
+issue #135). Writing it beside a URL that does would add a second copy of a TLS
+decision nothing consults and that can contradict the one in force.
+
+Two values the settings lane writes are facts about *this* deployment rather
+than about the script, and both are parameters with today's values as their
+defaults, so setting neither produces a byte-identical `prod.env`:
+
+| variable | default | what it decides |
+|---|---|---|
+| `NODES_CALLBACK_BASE_URL` | `http://thor:18080` | the origin a bridge posts an attempt result back to. Its `thor` is a **container-resolved** name (compose.orin.yml maps it through `extra_hosts` from `THOR_IP`), not an ssh target — which is why it does not follow the host arguments the way `NODES_UI_BASE_URL` does |
+| `NODES_COMPOSE_PROFILES` | `bundled-postgres,backup` | thor's profile list. Setting it is the supported way to deploy against an external database without hand-editing `prod.env` on the host afterwards |
+
 To use an external database, edit `prod.env` on each host: set the same
 provider URL in `NODES_DATABASE_URL` (using the provider-required sslmode),
-remove `bundled-postgres` from `COMPOSE_PROFILES`, and keep `backup` only if
+remove `bundled-postgres` from `COMPOSE_PROFILES` (or deploy with
+`NODES_COMPOSE_PROFILES=backup` set, which writes the shorter list on a host
+that has none yet), and keep `backup` only if
 that external database should be dumped to thor's configured backup
 directory. The backup service runs `pg_dump "$NODES_DATABASE_URL"`, so it
 cannot silently continue dumping an unused local database. Removing
@@ -201,6 +217,35 @@ a log line. `tests/deploy/credentialaudit_test.go` runs the real script
 against a stub `ssh` under a per-host `HOME` and pins all of it, including
 the fixture that is missing one required key.
 
+It also makes **one comparison** (task t25, issue #133): `NODES_DATABASE_URL`
+carries `POSTGRES_PASSWORD` inline, so those two keys are two copies of one
+fact, and every other check here passes on a `prod.env` where they disagree —
+both are present, both are non-empty, and the containers keep working on the
+credentials they already hold until they restart. The audit reports the pair
+**by name** and fails, on a line that says on every run whether the comparison
+ran:
+
+```text
+    database url: the password in NODES_DATABASE_URL does NOT match POSTGRES_PASSWORD
+```
+
+Both values are compared **on the host** and only the verdict word crosses the
+ssh channel, so neither password is printed or argv'd here either. The
+comparison is skipped, and says so, when the URL embeds no password, and when
+`COMPOSE_PROFILES` is set and does **not** list `bundled-postgres` — the
+external-database switch below, where `POSTGRES_PASSWORD` is a bundled-database
+credential nothing reads and a difference is the documented state. A host
+running an external database with no `COMPOSE_PROFILES` line at all (orin's
+default) has no way to say so; give it one (`COMPOSE_PROFILES=backup`, or the
+empty list) if you move it off the bundled database.
+
+The other half of #133 is in `install-secrets.sh`: a confirmed `FORCE_PROD=1`
+rotation now **refreshes** `NODES_DATABASE_URL` with the rotated password —
+only its password, and only when the URL's own password is the value being
+rotated away, which is the proof this script composed it. Any other URL is left
+untouched and **refused by name** on stderr, because rewriting a provider's URL
+would point the stack at a credential no database has ever accepted.
+
 Known gap this surfaced on its first run: **`NODES_ACTOR_CLAUDE_TOKEN` is
 not installed on orin.** `install-secrets.sh`'s relay lane targets `$THOR`
 only, while `compose.orin.yml` declares the variable — so orin's worker
@@ -332,6 +377,90 @@ sources plus their expected digests (task t16): the workflow names *that it need
 deployment decides *whose*. Leave them unset on a host that does not run the
 pr-upkeep loop — the sweep is then refused there by name, which is the
 correct answer and not a silent fallback to someone else's code.
+
+### Runner grants: what lives where, and how to put it back
+
+Five grants keep the pr-upkeep loop running, and they live in **two files**
+on each runner host, for one reason: `deploy.sh` rewrites `runner.env` on
+every deploy, so anything that must survive a deploy without being retyped
+belongs in the other file.
+
+| Grant | File | Who writes it |
+| --- | --- | --- |
+| `PR_UPKEEP_SWEEP_SOURCE_URL` / `_SHA256`, `PR_UPKEEP_SWEEP_JIRA_SOURCE_URL` / `_SHA256`, `PR_UPKEEP_REPOSITORIES` | `~/.culture-nodes/runner.env` | `deploy.sh` (`lanes/runner-env-write.sh`), every deploy, from the deploying shell or by retaining the existing line |
+| `JIRA_ACCOUNT_EMAIL` + `JIRA_API_TOKEN` | `~/.culture-nodes/runner-secrets.env` | `install-secrets.sh`'s Jira lane, **merged** — it replaces these two keys and no other |
+| `GITHUB_TOKEN` | `~/.culture-nodes/runner-secrets.env` | **by hand.** No lane in this repo writes it |
+| `SONAR_TOKEN` | `~/.culture-nodes/runner-secrets.env` | **by hand.** No lane in this repo writes it |
+| `NODES_EVENT_TOKEN` | `~/.culture-nodes/runner-secrets.env` | **by hand.** No lane in this repo writes it |
+
+The three hand-granted ones are why the Jira lane merges. It used to `cat >`
+the whole file, so the 2026-08-29 cutover deploy — run by a shell holding no
+Jira pair — reduced `runner-secrets.env` to 36 bytes of empty grants and took
+the other three with it. 183 of the next 275 sweep runs were refused with
+`rejected_input: environment_refs names GITHUB_TOKEN, SONAR_TOKEN,
+NODES_EVENT_TOKEN, not set in this worker process's own environment`, over
+sixteen hours (issue #253). Today the lane refuses to rewrite an existing
+`runner-secrets.env` when the pair is unset, and says so by name; leaving the
+pair unset is not a way to clear it.
+
+Add a hand-granted value the same way, without going through a lane:
+
+```bash
+ssh thor 'umask 077; printf "SONAR_TOKEN=%s\n" "$TOKEN" >> ~/.culture-nodes/runner-secrets.env'
+ssh thor 'systemctl --user restart nodes-runner'   # the unit reads it at start
+```
+
+**The deploy checks this before it ships anything.** `lanes/grant-check.sh`
+runs in preflight: it reads the latest version of every `workflow_key` the
+control plane can start today (one with a trigger, or one an enabled schedule
+fires) and diffs the `environmentRefs` those versions declare against the key
+*names* present in `runner.env` + `runner-secrets.env` on the host. A missing
+grant fails the deploy, naming the key and the workflow that declares it,
+while nothing on the host has been touched. It prints key names only — never a
+value, on any path — so the refusal can be pasted into an issue as-is. When
+the control plane cannot be reached it prints a `WARNING` and proceeds: an
+unreachable control plane is a state a deploy is often the fix for.
+
+It also **fails closed on an answer it cannot read**. A control plane that
+answers with something other than the shape this check parses — a body that is
+not a JSON object, an `items` that is not a list, a current version whose
+`normalized_ir` will not parse — used to reduce to "nothing in scope", which
+is indistinguishable in the report from a control plane that has published
+nothing, and printed the line claiming the grants were checked. Those cases
+now refuse the deploy as `unreadable:` lines beside the `missing:` ones,
+because an unreadable declaration is not an absent one.
+
+**Exactly two paths do not refuse, and neither of them is an error.** A host
+with no `runner.env` yet is a first deploy — there are no grants to diff, so
+the check reports the skip and moves on. An unreachable control plane prints
+`WARNING … UNVERIFIED` and proceeds, because that is a state a deploy is often
+the fix for; it is the one deliberate hole in this gate. *Everything* else
+refuses and names the step it failed at: an ssh call to the host that failed,
+a `runner.env` naming no control plane, a temporary directory that could not
+be created, and no `python3` on the machine running the deploy. The last of
+those used to announce `UNVERIFIED` and proceed. It does not any more — with
+no `python3` nothing compares the grants at all, which is precisely the deploy
+this gate exists to stop, and a `WARNING` in a deploy log is read by nobody.
+
+**Rollback.** Every lane that rewrites either file copies the previous bytes
+aside first, as `<file>.bak-<UTC timestamp>` in the same directory, mode 600,
+and prints the restore command in the deploy log — for example:
+
+```text
+==> backed up runner-secrets.env on thor to /home/ori/.culture-nodes/runner-secrets.env.bak-20260830T172214Z
+==> restore it with: ssh thor 'cp /home/ori/.culture-nodes/runner-secrets.env.bak-20260830T172214Z ~/.culture-nodes/runner-secrets.env'
+```
+
+Restore, then `ssh thor 'systemctl --user restart nodes-runner'` — the unit
+reads both files at start, so an unrestarted runner keeps serving the grants
+it booted with. The ten most recent backups of each file are kept and older
+ones removed: each one is a second copy of live credentials, so the trail is
+bounded on purpose. "Most recent" is read off the **UTC stamp in the name**,
+not off mtime — backups are made with `cp -p`, so a backup's mtime is the
+mtime of the file it copied rather than the moment it was taken, and on a host
+whose grant file was itself restored from an older copy that put the newest
+backup last and had the retention step delete the very bytes the line above
+had just advertised.
 
 ## The runner registry (NODES_RUNNER_SERVICES_FILE)
 
@@ -477,6 +606,53 @@ trust boundary, per the cycle's boundary decision (OIDC/workload auth is
 parked as issue #6; the runner protocol's `AllowInsecureTransport` opt-in
 is what permits plaintext HTTP off-loopback). Do not port-forward any of
 these beyond the LAN.
+
+### Ticket page links are LAN addresses (task t16)
+
+`NODES_UI_BASE_URL` is the origin culture-nodes puts in front of every ticket
+page link it posts on a Jira issue. Without it the page-link comment read
+`/tickets/SCRUM-N` — a path with no origin, which Jira renders as plain text.
+`install-secrets.sh` now writes the key into both hosts' `prod.env`, and both
+compose files declare it for every service that can mint a run (api, scheduler
+and worker on thor; the worker on orin — the comment is rendered by whichever
+process claimed the work, and the two machines share one namespace).
+
+**The link it produces is reachable from the LAN or tailscale only, and that is
+the accepted state until the OAuth cycle.** The default is thor's API origin —
+the control-plane host you invoked the script with, so
+`./install-secrets.sh 192.168.1.146 orin` produces
+`http://192.168.1.146:18080/tickets/SCRUM-N`. A reader looking at that comment
+in Jira or Discord from off the network sees a link they cannot open. Nothing
+about the ticket is hidden from them — the Jira issue itself is where the
+decision is recorded — but the *page* is not public, and no part of this
+deployment pretends otherwise (see "Network trust" above: none of these ports
+should be forwarded beyond the LAN to make the link work).
+
+Both hosts get **thor's** origin, not their own: orin serves no API, so a link
+to orin would 404 for every reader.
+
+To point the links at any other origin — a reverse proxy, a tailscale name, or
+whatever the OAuth cycle lands on — export it and re-run:
+
+```bash
+NODES_UI_BASE_URL=https://nodes.example.net ./install-secrets.sh
+```
+
+Whatever you export lands in `prod.env` **byte for byte**. It crosses to the
+host on stdin and is read there with `read -r`, so no character in it is shell
+syntax on the far side — the lane used to build the remote command out of
+single-quoted assignments, and one quote in the value ended the assignment and
+handed the rest to the target as commands. The single byte the transport
+cannot carry is a newline, and a value containing one is refused by name
+rather than truncated: `prod.env` is one `KEY=value` per line, so such a value
+has no representation on the host either.
+
+The install log says which of the two it used (`exported for this run` versus
+`defaulted to the control-plane API origin`), because the two produce
+identically-shaped `prod.env` lines and only one of them is reachable from
+outside. And because this lane is add-if-absent (above), changing an origin a
+host already carries is `remove-secret.sh NODES_UI_BASE_URL --yes <host>`
+followed by a re-run, not a re-run alone.
 
 ## Telemetry (telemetry profile, issue #5)
 
@@ -1057,3 +1233,72 @@ the old host refuses to start rather than double-serving the actor.
 All three follow the same discipline as every other secret in this file:
 stdin over ssh, never argv; that lane's own `FORCE_*` switch required to
 overwrite an existing value; nothing committed to this repo.
+
+## Human-task fan-out and merged-PR expiry (task t11, spec c6)
+
+A pending human decision used to be visible on exactly two pages a person has
+to go and look at, `/inbox` and `/decisions`, and nobody is paged to either. On
+2026-08-30 that left 26 pending `human-merges-pr` approvals on prod whose pull
+requests had all already merged.
+
+The control plane now queues a fan-out in the same transaction that creates the
+task (`human_task_fanout_outbox`, migration 0051) and the scheduler drains it
+(`internal/humanfanout`). Nothing is delivered from the run transaction, and
+`UNIQUE (human_task_id, channel)` means one task can never announce itself
+twice.
+
+### What each host must have for it to work
+
+| What | Where | Why |
+| --- | --- | --- |
+| `NODES_UI_BASE_URL` | `~/.culture-nodes/prod.env` on every host that mints runs | the comment and the Discord post carry the decision page link; unset renders a bare path, which Jira shows as text |
+| `JIRA_TRANSITION_TARGET` includes `Pending` | the jira bridge's own environment | the bridge's allowlist is the enforcement point for `transition_issue`. Since t11 it is a **comma-separated list** and a single value still works unchanged: `JIRA_TRANSITION_TARGET=Done,Pending` |
+| `company/notify-discord` registered | `actors` table | the Discord half of every fan-out is dispatched through the same bridge `examples/notify-message` uses; an unregistered key fails that one row and leaves the queue alone |
+| `human_task_expiry` registered | `actors` table | `deploy/prod/register-actor.sh --engine human_task_expiry`. An expiry appends one `derived` ledger record and `ledger_records.origin_actor_id` is a foreign key to `actors(id)`, so without it every expiry refuses. Override the id with `NODES_HUMAN_TASK_EXPIRY_ACTOR_ID` |
+
+### The decision token is handed out by a person (task t28)
+
+The fan-out above deliberately carries **nothing** derived from
+`NODES_HUMAN_DECISION_TOKEN_SECRET` — a Jira comment and a Discord post are
+readable by everyone who can read the board or the channel, and
+`humantaskfanout_test.go` asserts the absence over every payload the planner
+can produce. The decider brings their own token to the page instead, and there
+is no self-service route to one: it is a single deployment-shared secret,
+generated by `install-secrets.sh` into thor's `~/.culture-nodes/prod.env` and
+declared by `compose.thor.yml` alone. **The operator reads it there and gives
+it to whoever is deciding** — per-user identity is the OAuth cycle's work
+(#111, #6), not this one.
+
+That hand-off, and everything else a non-shell reader needs — which board move
+starts which flow, what each system comment means, why a marked question is
+answered on the page rather than on the board, and what `Done` means — is
+written for them in [`docs/drive-from-jira.md`](../../docs/drive-from-jira.md).
+Send that page along with the token.
+
+### Clearing the stale ones
+
+The periodic consumer only expires tasks the control plane holds a delivered
+`pr.merged` fact for, and the sweep only emits that fact for a pull request
+whose branch or body carries a correlatable Jira key. The approvals that
+accumulated carry none, so they need the backfill, which is a **dry run until
+`--apply`**:
+
+```bash
+nodes expire-approvals --namespace "$NS"                       # what would happen
+nodes expire-approvals --namespace "$NS" \
+  --pr agentculture/culture-nodes#236 \
+  --pr agentculture/culture-nodes#238 --apply
+```
+
+`--pr` makes the OPERATOR the source of the merge fact, and the recorded expiry
+detail says so — that is a weaker provenance than a delivered fact and it reads
+as such in the ledger afterwards, deliberately.
+
+### What a PR-sourced run does NOT get
+
+A GitHub PR comment. No actor registered here advertises a verb that writes to
+a pull-request thread: the bridge that reads a PR thread writes only to its own
+submit surface, and the agent bridges expose no GitHub write capability at all.
+A PR-sourced task therefore fans out to Discord only. Widening it is a new
+migration (0051's `channel` CHECK) plus a branch in
+`engine.PlanHumanTaskFanOut`, once a bridge advertises the capability.

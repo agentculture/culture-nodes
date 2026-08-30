@@ -62,7 +62,8 @@ type PendingDecisionListOut struct {
 	Items []PendingDecisionRunOut `json:"items"`
 	// RecordCount is the number of undecided records across every listed
 	// run — the number a stage gate compares against zero.
-	RecordCount int `json:"record_count"`
+	RecordCount int    `json:"record_count"`
+	NextCursor  string `json:"next_cursor,omitempty"`
 }
 
 // pendingDecisionFilters are the only query parameters this endpoint
@@ -73,6 +74,7 @@ var pendingDecisionFilters = map[string]bool{
 	"record_type": true,
 	"actor_id":    true,
 	"limit":       true,
+	"cursor":      true,
 }
 
 // handleListPendingDecisions is GET /v1alpha1/pending-decisions.
@@ -91,16 +93,25 @@ func (s *Server) handleListPendingDecisions(w http.ResponseWriter, r *http.Reque
 		}
 	}
 
-	groups, count, err := s.listPendingDecisions(r.Context(), pendingDecisionParams{
+	var cursor *nodeRunCursor
+	if raw := query.Get("cursor"); raw != "" {
+		decoded, err := decodeNodeRunCursor(raw)
+		if err != nil {
+			return badRequest("pass back a previous next_cursor unchanged", "invalid cursor: %v", err)
+		}
+		cursor = &decoded
+	}
+	groups, count, nextCursor, err := s.listPendingDecisions(r.Context(), pendingDecisionParams{
 		RunID:      query.Get("run_id"),
 		RecordType: query.Get("record_type"),
 		ActorID:    query.Get("actor_id"),
 		Limit:      parseLimit(r, 200, 1000),
+		Cursor:     cursor,
 	})
 	if err != nil {
 		return internalError(err)
 	}
-	writeJSON(w, http.StatusOK, PendingDecisionListOut{Items: groups, RecordCount: count})
+	writeJSON(w, http.StatusOK, PendingDecisionListOut{Items: groups, RecordCount: count, NextCursor: nextCursor})
 	return nil
 }
 
@@ -109,6 +120,7 @@ type pendingDecisionParams struct {
 	RecordType string
 	ActorID    string
 	Limit      int
+	Cursor     *nodeRunCursor
 }
 
 // listPendingDecisions returns every proposed record no review record points
@@ -118,7 +130,7 @@ type pendingDecisionParams struct {
 // rejection answers the question as completely as a confirmation does. A
 // superseded record is excluded too: a correction that replaced it is what
 // should be decided now, not the record it replaced.
-func (s *Server) listPendingDecisions(ctx context.Context, p pendingDecisionParams) ([]PendingDecisionRunOut, int, error) {
+func (s *Server) listPendingDecisions(ctx context.Context, p pendingDecisionParams) ([]PendingDecisionRunOut, int, string, error) {
 	const query = `
 		SELECT r.id, r.run_id, r.record_type, r.origin_kind, r.origin_actor_id,
 		       r.node_run_id, r.data, r.created_at
@@ -138,20 +150,29 @@ func (s *Server) listPendingDecisions(ctx context.Context, p pendingDecisionPara
 			  SELECT 1 FROM ledger_records s
 			  WHERE s.namespace_id = r.namespace_id AND s.supersedes = r.id
 		  )
-		ORDER BY r.id DESC
-		LIMIT $7`
+		  AND ($7::timestamptz IS NULL OR (r.created_at, r.id) < ($7, $8))
+		ORDER BY r.created_at DESC, r.id DESC
+		LIMIT $9`
+	var cursorCreatedAt *time.Time
+	var cursorID string
+	if p.Cursor != nil {
+		cursorCreatedAt = &p.Cursor.UpdatedAt
+		cursorID = p.Cursor.ID
+	}
 
 	rows, err := s.Store.Pool().Query(ctx, query,
 		s.NamespaceID, string(ledger.AuthorityProposed),
-		p.RunID, p.RecordType, p.ActorID, string(ledger.RecordReview), p.Limit)
+		p.RunID, p.RecordType, p.ActorID, string(ledger.RecordReview), cursorCreatedAt, cursorID, p.Limit+1)
 	if err != nil {
-		return nil, 0, fmt.Errorf("list pending decisions: %w", err)
+		return nil, 0, "", fmt.Errorf("list pending decisions: %w", err)
 	}
 	defer rows.Close()
 
 	byRun := map[string][]PendingDecisionRecordOut{}
 	order := []string{}
 	total := 0
+	hasMore := false
+	var last PendingDecisionRecordOut
 	for rows.Next() {
 		var (
 			rec       PendingDecisionRecordOut
@@ -163,20 +184,25 @@ func (s *Server) listPendingDecisions(ctx context.Context, p pendingDecisionPara
 		)
 		if err := rows.Scan(&rec.ID, &runID, &rec.RecordType, &rec.OriginKind,
 			&actorID, &nodeRunID, &data, &createdAt); err != nil {
-			return nil, 0, fmt.Errorf("scan pending decision: %w", err)
+			return nil, 0, "", fmt.Errorf("scan pending decision: %w", err)
 		}
 		rec.OriginActorID = textOrEmpty(actorID)
 		rec.NodeRunID = textOrEmpty(nodeRunID)
 		rec.CreatedAt = tsOrZero(createdAt).UTC()
 		rec.Data = data
+		if total == p.Limit {
+			hasMore = true
+			break
+		}
 		if _, seen := byRun[runID]; !seen {
 			order = append(order, runID)
 		}
 		byRun[runID] = append(byRun[runID], rec)
+		last = rec
 		total++
 	}
 	if err := rows.Err(); err != nil {
-		return nil, 0, fmt.Errorf("read pending decisions: %w", err)
+		return nil, 0, "", fmt.Errorf("read pending decisions: %w", err)
 	}
 
 	items := make([]PendingDecisionRunOut, 0, len(order))
@@ -187,7 +213,7 @@ func (s *Server) listPendingDecisions(ctx context.Context, p pendingDecisionPara
 		// authority — not just the undecided ones listed here.
 		version, err := s.Ledger.LedgerVersion(ctx, runID)
 		if err != nil {
-			return nil, 0, fmt.Errorf("ledger version of run %s: %w", runID, err)
+			return nil, 0, "", fmt.Errorf("ledger version of run %s: %w", runID, err)
 		}
 		items = append(items, PendingDecisionRunOut{
 			RunID:         runID,
@@ -195,5 +221,9 @@ func (s *Server) listPendingDecisions(ctx context.Context, p pendingDecisionPara
 			Records:       byRun[runID],
 		})
 	}
-	return items, total, nil
+	nextCursor := ""
+	if hasMore {
+		nextCursor = encodeNodeRunCursor(nodeRunCursor{UpdatedAt: last.CreatedAt, ID: last.ID})
+	}
+	return items, total, nextCursor, nil
 }

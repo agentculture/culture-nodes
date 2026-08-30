@@ -101,6 +101,51 @@
   color: var(--accent);
 }
 
+/* The utility row (task t27): the docs link and the control-plane version
+   readout, pushed to the far end of the header so they sit apart from the
+   nav's view words — they are about the deployment, not about where you are
+   in it. */
+.app-header__utility {
+  display: inline-flex;
+  align-items: baseline;
+  gap: 0.9rem;
+  margin: 0 0 0 auto;
+  font-size: var(--ac-type-meta);
+}
+
+.app-header__docs {
+  color: var(--ink-soft);
+  text-decoration: none;
+}
+
+.app-header__docs:hover {
+  color: var(--accent);
+  text-decoration: underline;
+  text-underline-offset: 0.2em;
+}
+
+.app-header__version {
+  font-family: var(--font-mono);
+  color: var(--ink-soft);
+  cursor: help;
+  border-bottom: 1px dotted var(--line);
+}
+
+/* The ticket opener in the nav: there is no ticket list to link to, so the
+   nav entry IS a key field (task t27). */
+.app-header__ticket {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.4rem;
+  font-size: var(--ac-type-ui);
+  color: var(--ink-soft);
+}
+
+.app-header__ticket-input {
+  width: 8rem;
+  padding-block: 0.15rem;
+}
+
 /* Collapse the nav behind the Menu button on a narrow/vertical viewport —
    same 48rem breakpoint the timeline grid already folds at. */
 @media (max-width: 48rem) {
@@ -120,8 +165,21 @@
     display: flex;
   }
 
+  .app-header__ticket {
+    align-items: stretch;
+    flex-direction: column;
+  }
+
+  .app-header__ticket-input {
+    width: 100%;
+  }
+
   .app-header__tagline {
     display: none;
+  }
+
+  .app-header__utility {
+    margin-left: 0;
   }
 }
 
@@ -147,9 +205,123 @@
 
 /* A wide table scrolls sideways in its own box on a narrow viewport; the
    page body never gains horizontal scroll — the same rule
-   .detail-panel__scroll and .runs-board__columns already follow. */
+   .detail-panel__scroll and .runs-board__columns already follow.
+
+   Task t27 adds the affordance the box was missing: an always-visible
+   scrollbar, plus a right-edge shade that paints only while there is more
+   table off-screen. Two background layers and no JS — the SHADE is attached
+   `scroll`, so it stays pinned to the box's right edge, and the COVER is
+   attached `local`, so it rides with the content and slides over the shade
+   exactly when the last column arrives. Without it, a phone-width Runs or
+   Jobs table looked like it simply had fewer columns. */
 .table-scroll {
   overflow-x: auto;
+  scrollbar-width: auto;
+  scrollbar-color: var(--ink-soft) var(--surface);
+  background-image:
+    /* The cover is SOLID, not a fade: a fading cover leaves the shade's
+       mid-tones showing through as a permanent band even when there is
+       nothing to scroll to. */
+    linear-gradient(to right, var(--bg), var(--bg)),
+    linear-gradient(
+      to left,
+      color-mix(in srgb, var(--ink) 20%, transparent),
+      transparent
+    );
+  background-position: right center, right center;
+  background-size: 2.5rem 100%, 2.5rem 100%;
+  background-repeat: no-repeat, no-repeat;
+  background-attachment: local, scroll;
+}
+
+.table-scroll::-webkit-scrollbar {
+  height: 0.75rem;
+}
+
+.table-scroll::-webkit-scrollbar-track {
+  background: var(--surface);
+}
+
+.table-scroll::-webkit-scrollbar-thumb {
+  background: var(--ink-soft);
+  border-radius: 999px;
+}
+
+/* ---------- shared form controls (task t27) ----------
+   One `field` is one labelled control, label ABOVE it. Before this, PlanView
+   and GenerateWorkflow rendered native unstyled inputs with their labels
+   floating inline beside them, which read as a different product from the
+   authoring page next door. Every value below still resolves to a
+   culture-design token — this is a consistency rule, not a new aesthetic. */
+.field {
+  display: grid;
+  gap: 0.3rem;
+}
+
+/* Stacked fields need air between them or the next label reads as a caption
+   under the previous control rather than the heading of its own. */
+.field + .field {
+  margin-top: 0.9rem;
+}
+
+.field-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-end;
+  gap: 0.6rem;
+  margin-block: 1.1rem 1.5rem;
+}
+
+.field__label {
+  font-size: var(--ac-type-meta);
+  color: var(--ink-soft);
+  letter-spacing: var(--ac-tracking-flat);
+}
+
+.control {
+  font: inherit;
+  font-size: var(--ac-type-ui);
+  color: var(--ink);
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  padding: 0.4rem 0.7rem;
+}
+
+.control:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 1px;
+}
+
+.control--input,
+.control--select {
+  min-width: 12rem;
+}
+
+.control--textarea {
+  min-height: 8rem;
+  font-family: var(--font-mono);
+  resize: vertical;
+}
+
+.control--button {
+  cursor: pointer;
+  color: var(--ink-soft);
+}
+
+.control--button:hover:not(:disabled) {
+  border-color: var(--accent-strong);
+  color: var(--accent);
+}
+
+.control--button:disabled {
+  opacity: 0.55;
+  cursor: not-allowed;
+}
+
+.control--button-primary {
+  border-color: var(--accent-strong);
+  color: var(--accent);
 }
 
 .link-button {
@@ -1089,7 +1261,29 @@ button.timeline__node {
   gap: var(--nodes-gap);
   overflow-x: auto;
   padding-bottom: 0.5rem;
+  scrollbar-width: auto;
+  scrollbar-color: var(--ink-soft) var(--surface);
+  /* The same two-layer shade .table-scroll uses (task t27): a scroll-attached
+     shade at the right edge, covered by a content-attached solid block that
+     slides over it when the last column arrives. Six state columns rarely fit,
+     and on an overlay-scrollbar platform the cut-off column read as a
+     rendering glitch rather than as "there is more this way". */
+  background-image:
+    linear-gradient(to right, var(--bg), var(--bg)),
+    linear-gradient(
+      to left,
+      color-mix(in srgb, var(--ink) 20%, transparent),
+      transparent
+    );
+  background-position: right center, right center;
+  background-size: 2.5rem 100%, 2.5rem 100%;
+  background-repeat: no-repeat, no-repeat;
+  background-attachment: local, scroll;
 }
+
+.runs-board__columns::-webkit-scrollbar { height: 0.75rem; }
+.runs-board__columns::-webkit-scrollbar-track { background: var(--surface); }
+.runs-board__columns::-webkit-scrollbar-thumb { background: var(--ink-soft); border-radius: 999px; }
 
 .runs-board__column {
   flex: 1 1 15rem;
@@ -1114,6 +1308,10 @@ button.timeline__node {
   color: var(--ink-soft);
 }
 
+/* A busy column can hold dozens of cards. Cap it and let it scroll in its own
+   box with a visible scrollbar (task t27), the same discipline the columns'
+   own sideways overflow already follows — an uncapped column made the page
+   itself kilometres long and buried the other five states below the fold. */
 .runs-board__cards {
   list-style: none;
   margin: 0;
@@ -1121,6 +1319,17 @@ button.timeline__node {
   display: flex;
   flex-direction: column;
   gap: 0.6rem;
+  max-height: min(60vh, 40rem);
+  overflow-y: auto;
+  scrollbar-width: thin;
+  scrollbar-color: var(--ink-soft) var(--surface);
+}
+
+.runs-board__cards::-webkit-scrollbar { width: 0.6rem; }
+.runs-board__cards::-webkit-scrollbar-track { background: var(--surface); }
+.runs-board__cards::-webkit-scrollbar-thumb {
+  background: var(--ink-soft);
+  border-radius: 999px;
 }
 
 .runs-board__column-empty {
@@ -1134,7 +1343,7 @@ button.timeline__node {
 @media (max-width: 48rem) {
   .runs-board__columns {
     flex-direction: column;
-    overflow-x: visible;
+    overflow-x: auto;
   }
 
   .runs-board__column {
@@ -2414,7 +2623,18 @@ button.timeline__node {
 }
 
 /* --- Ticket conversation ------------------------------------------------ */
-.ticket-view {
+
+/* No `max-width` override on the rail itself (task t27). `.view-rail` is the
+   app's full-width rail — every other view earns the whole viewport and takes
+   its gutter from --ac-page-gutter — and capping this one page at 76rem left
+   it visibly inset from the header above it, as though it belonged to a
+   different app. The measure that actually mattered was the prose measure,
+   so it moves onto the prose: the card/row/reply lists cap themselves, the
+   page frame does not. */
+.ticket-view > section,
+.ticket-view > header,
+.ticket-view > form,
+.ticket-view > .ticket-freeze {
   max-width: 76rem;
 }
 
@@ -2428,6 +2648,24 @@ button.timeline__node {
 }
 
 .ticket-view h2 { margin-top: 2rem; }
+
+/* The ticket page's Decisions section (task t18). Its own list rather than
+   .ticket-rows: those rows are one-line label/state pairs laid out with
+   space-between, and a decision item is a stacked block — identity, then the
+   buttons under it — so the outcomes never end up flush right of a long run
+   id. */
+.ticket-decisions__list {
+  list-style: none;
+  padding: 0;
+  display: grid;
+  gap: 0.75rem;
+}
+
+.ticket-decisions__list > li {
+  display: grid;
+  gap: 0.6rem;
+  justify-items: start;
+}
 
 .ticket-freeze {
   border: 1px solid var(--nodes-warn);
@@ -2480,3 +2718,13 @@ button.timeline__node {
 .ticket-reply-form textarea { max-width: 42rem; }
 .ticket-reply-form button { justify-self: start; }
 .ticket-reply-form__success { color: var(--nodes-ok); }
+
+/* A claim's `statement` rendered as prose, newlines intact (task t27) — the
+   field a decider must actually read, previously only reachable as escaped
+   `\n` inside the JSON payload dump next to it. */
+.decisions-record__statement {
+  white-space: pre-wrap;
+  margin: 0.4rem 0;
+  padding-left: 0.75rem;
+  border-left: 2px solid var(--line);
+}

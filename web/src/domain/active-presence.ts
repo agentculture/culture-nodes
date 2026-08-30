@@ -63,7 +63,7 @@ export interface ActiveGraphPresence {
  * Derive every alive graph: one entry per published digest with >= 1
  * non-terminal run. A run whose digest matches no published version renders
  * nowhere (the same orphan-run honesty rule domain/workflows.ts's
- * `withRecentRuns` established). Entries are ordered by workflowKey
+ * `withRunsByWorkflowKey` established). Entries are ordered by workflowKey
  * alphabetically, then newest version first — stable regardless of input
  * order.
  */

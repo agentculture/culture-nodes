@@ -15,6 +15,7 @@ import (
 	apipkg "github.com/agentculture/culture-nodes/internal/api"
 	"github.com/agentculture/culture-nodes/internal/engine"
 	"github.com/agentculture/culture-nodes/internal/ledger"
+	"github.com/agentculture/culture-nodes/internal/store"
 	"github.com/agentculture/culture-nodes/internal/store/postgres/pgtest"
 )
 
@@ -48,6 +49,38 @@ func newFixtureWithDecisionAuth(t *testing.T, secret string, extra ...apipkg.Opt
 	t.Cleanup(ts.Close)
 
 	return &fixture{t: t, server: ts, api: srv, store: s, nsID: nsID, client: ts.Client()}
+}
+
+func TestHumanTasksCursorReachesPastBackendMaximum(t *testing.T) {
+	f := newFixture(t)
+	run, _ := createMinimalRun(t, f)
+	created := time.Date(2026, 8, 30, 12, 0, 0, 0, time.UTC)
+	for i := 0; i < 501; i++ {
+		_, err := f.store.Pool().Exec(t.Context(), `
+			INSERT INTO human_tasks (id, namespace_id, run_id, kind, status, request, created_at)
+			VALUES ($1, $2, $3, 'approval', 'pending', '{}', $4)`,
+			store.NewULID(), f.nsID, run.ID, created)
+		if err != nil {
+			t.Fatalf("insert pending task %d: %v", i, err)
+		}
+	}
+
+	var first apipkg.HumanTaskListOut
+	resp, body := doJSON(t, f.client, http.MethodGet, f.url("/v1alpha1/human-tasks?status=pending&limit=500"), nil, &first)
+	requireStatus(t, resp, body, http.StatusOK)
+	if len(first.Items) != 500 || first.NextCursor == "" {
+		t.Fatalf("first page = %d items, next_cursor=%q; want 500 and a cursor", len(first.Items), first.NextCursor)
+	}
+
+	var second apipkg.HumanTaskListOut
+	resp, body = doJSON(t, f.client, http.MethodGet, f.url("/v1alpha1/human-tasks?status=pending&limit=500&cursor="+first.NextCursor), nil, &second)
+	requireStatus(t, resp, body, http.StatusOK)
+	if len(second.Items) != 1 || second.NextCursor != "" {
+		t.Fatalf("second page = %d items, next_cursor=%q; want 1 and no cursor", len(second.Items), second.NextCursor)
+	}
+
+	resp, body = doJSON(t, f.client, http.MethodGet, f.url("/v1alpha1/human-tasks?cursor=not-a-real-cursor"), nil, nil)
+	requireStatus(t, resp, body, http.StatusBadRequest)
 }
 
 // readApprovalWorkflow reads internal/engine/testdata/approval.workflow.yaml

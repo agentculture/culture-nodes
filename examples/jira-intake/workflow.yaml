@@ -11,7 +11,7 @@
 # finding). This is a separate document with a new workflow key, consuming
 # the bare transition contract sweep.py's `jira_work_items` emits:
 #   {source: "jira", id, project, severity, kind, file, line, title,
-#    status, details_url}
+#    description, description_truncated, status, details_url}
 # on source key `jira:<site>:<id>:status` with a status watermark — so an
 # unchanged status is deduped by the control plane, and trigger matching is
 # EXACT (internal/engine/trigger.go): one onEvent entry per status slug,
@@ -75,7 +75,7 @@ kind: Workflow
 
 metadata:
   name: jira-intake
-  version: 1.6.0
+  version: 1.7.0
   ownerRef: team/platform-ai
 
 spec:
@@ -100,6 +100,8 @@ spec:
           severity: {type: string}
           kind: {type: string}
           title: {type: string}
+          description: {type: string, maxLength: 4000}
+          description_truncated: {type: boolean}
           status: {type: string}
           details_url: {type: string}
     output:
@@ -143,8 +145,9 @@ spec:
           instruction:
             literal: >-
               You are the intake leg of the jira-intake workflow. Using ONLY
-              the issue fields in your input (id, title, status, severity,
-              kind, details_url), draft a short intake comment for the Jira
+              the issue fields in your input (id, title, description,
+              description_truncated, status, severity, kind, details_url),
+              draft a short intake comment for the Jira
               issue: acknowledge pickup, restate the request in one or two
               sentences, and name the single most important clarifying
               question if one exists. End with the line '- culture-nodes
@@ -154,6 +157,8 @@ spec:
               issue verbatim. Do not start any other work.
           issue: /run/input/id
           title: /run/input/title
+          description: /run/input/description
+          description_truncated: /run/input/description_truncated
           status: /run/input/status
           severity: /run/input/severity
           kind: /run/input/kind

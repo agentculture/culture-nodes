@@ -43,11 +43,31 @@ describe("formatUsageTokens", () => {
 });
 
 describe("cacheRatio / formatCacheRatio", () => {
-  it("computes cached/input only when input_tokens > 0", () => {
-    expect(cacheRatio({ input_tokens: 200, cached_input_tokens: 50 })).toBe(0.25);
+  it("divides cached by the WHOLE prompt (input + cached), not by input alone", () => {
+    // 50 cache reads beside 200 uncached input tokens is a 250-token
+    // prompt, 20% of it served from cache -- not 50/200 = 25% of a prompt
+    // the attempt never had.
+    expect(cacheRatio({ input_tokens: 200, cached_input_tokens: 50 })).toBe(0.2);
   });
 
-  it("never fabricates a 0/0 ratio when input_tokens is 0", () => {
+  // Task t8, claim c8: /stats rendered "588% cached" in production because
+  // cache reads are reported ALONGSIDE input_tokens, never inside them, so
+  // cached/input has no upper bound. A hit rate above 100% is not a fact.
+  it("never exceeds 100% when cache reads dwarf the uncached input beside them", () => {
+    const ratio = cacheRatio({ input_tokens: 1000, cached_input_tokens: 5880 })!;
+    expect(ratio).toBeLessThanOrEqual(1);
+    expect(ratio).toBeCloseTo(5880 / 6880);
+    expect(formatCacheRatio(ratio)).toBe("85.5% cached");
+  });
+
+  it("reads an entirely cached prompt as 100%, not as unmeasurable", () => {
+    // A fully resumed turn can report every prompt token as a cache read
+    // and no uncached input at all; gating on input_tokens > 0 called that
+    // unmeasurable when it is measurably 100% cached.
+    expect(cacheRatio({ input_tokens: 0, cached_input_tokens: 4096 })).toBe(1);
+  });
+
+  it("never fabricates a 0/0 ratio when nothing reported any prompt tokens", () => {
     expect(cacheRatio({ input_tokens: 0, cached_input_tokens: 0 })).toBeUndefined();
   });
 
@@ -133,8 +153,9 @@ describe("mergeUsage", () => {
       attempts_reported: 0,
       attempts_not_reported: 0,
     });
-    // input_tokens is 0, so cache_ratio must never be a fabricated 0/0 —
-    // it must be entirely absent from the merged object.
+    // Nothing reported any prompt tokens at all, so cache_ratio must never
+    // be a fabricated 0/0 — it must be entirely absent from the merged
+    // object.
     expect(merged.cache_ratio).toBeUndefined();
     expect("cache_ratio" in merged).toBe(false);
   });
@@ -165,14 +186,15 @@ describe("mergeUsage", () => {
 
   it("recomputes cache_ratio from the merged sums rather than averaging the inputs' own ratios", () => {
     const merged = mergeUsage([
-      // ratio 0.5 on its own
+      // ratio 1/3 on its own (50 cached of a 150-token prompt)
       { input_tokens: 100, output_tokens: 0, cached_input_tokens: 50, reasoning_tokens: 0, attempts_reported: 1, attempts_not_reported: 0 },
       // ratio 0 on its own
       { input_tokens: 900, output_tokens: 0, cached_input_tokens: 0, reasoning_tokens: 0, attempts_reported: 1, attempts_not_reported: 0 },
     ]);
-    // A naive average of 0.5 and 0 would be 0.25; the honest weighted
-    // figure over the merged sums is 50/1000 = 0.05.
-    expect(merged.cache_ratio).toBeCloseTo(0.05);
+    // A naive average of the entries' own ratios would be 0.25; the honest
+    // weighted figure over the merged sums is 50 cache reads over a
+    // (1000 + 50)-token prompt.
+    expect(merged.cache_ratio).toBeCloseTo(50 / 1050);
   });
 });
 

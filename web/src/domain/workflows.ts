@@ -18,7 +18,7 @@ export interface WorkflowGroup {
   owner?: string;
   /** Every published version of this workflow_key, newest version first. */
   versions: WorkflowVersion[];
-  /** Populated by withRecentRuns; empty until then. */
+  /** Populated by withRunsByWorkflowKey; empty until then. */
   recentRuns: Run[];
 }
 
@@ -61,27 +61,36 @@ export function groupWorkflowVersions(
 export const RECENT_RUNS_LIMIT = 5;
 
 /**
- * Attaches each group's recent runs: the API's run list carries no
- * workflow_key, only `workflow_digest` (components.schemas.Run), so a run
- * belongs to a workflow group when its digest matches *any* of that group's
- * published versions — recent-runs-per-workflow, not recent-runs-per-version.
- * `runs` is expected already sorted newest-first (the caller requests
- * `sort=updated_at`, as every other list view here does); this only filters
- * and truncates, it never re-sorts, so it stays a straight readout of
- * committed API state.
+ * Attaches each group's recent runs from a per-`workflow_key` answer —
+ * `GET /v1alpha1/runs?workflow_key=<key>` per group (the filter task t7
+ * added), keyed by the group's own `workflowKey`.
+ *
+ * Task t8 replaced a single unfiltered listing filtered client-side by
+ * digest. That was wrong for the reason every "filter the global list"
+ * shortcut is wrong: `GET /v1alpha1/runs` answers at most one page (50 by
+ * default), so as soon as one high-frequency workflow — the pr-upkeep sweep
+ * — fills that page, every OTHER workflow's runs fall off it and each card
+ * rendered "No runs yet" for a workflow with hundreds of runs. Asking the
+ * server per key means a card's list can only be empty when that workflow
+ * genuinely has no runs.
+ *
+ * A group whose key the map has no entry for stays empty rather than
+ * falling back to anything: a request that never answered is not evidence
+ * of no runs, and the caller is responsible for not rendering a card whose
+ * runs it failed to fetch as authoritative.
+ *
+ * Each list is expected already sorted newest-first (the caller requests
+ * `sort=updated_at`, as every other list view here does); this only
+ * truncates, it never re-sorts, so it stays a straight readout of committed
+ * API state.
  */
-export function withRecentRuns(
+export function withRunsByWorkflowKey(
   groups: WorkflowGroup[],
-  runs: Run[],
+  runsByKey: ReadonlyMap<string, Run[]>,
   limit: number = RECENT_RUNS_LIMIT,
 ): WorkflowGroup[] {
-  return groups.map((group) => {
-    const digests = new Set(group.versions.map((v) => v.digest));
-    return {
-      ...group,
-      recentRuns: runs
-        .filter((run) => digests.has(run.workflow_digest))
-        .slice(0, limit),
-    };
-  });
+  return groups.map((group) => ({
+    ...group,
+    recentRuns: (runsByKey.get(group.workflowKey) ?? []).slice(0, limit),
+  }));
 }

@@ -134,13 +134,13 @@ type ActorRetryBurn struct {
 	CompletedNodeRuns int
 }
 
-// ActorDurationPercentiles is computed only over attempts that actually
-// completed (completed_at IS NOT NULL) -- an in-flight attempt has no
-// duration to report. A nil *ActorDurationPercentiles (see
-// ActorCategoryStats.DurationPercentiles) means no attempt in that scope
-// has completed yet, distinct from Count == 0 inside a present-but-empty
-// struct, which never happens: this type is only ever constructed from a
-// query row that already required COUNT(*) > 0 to exist at all.
+// ActorDurationPercentiles is computed only over completed attempts whose
+// invocation start is known. An in-flight attempt has no duration to report,
+// and a synchronous attempt with no invocation row has an unknown duration.
+// A nil *ActorDurationPercentiles (see ActorCategoryStats.DurationPercentiles)
+// means no attempt in that scope has a known duration, distinct from Count ==
+// 0 inside a present-but-empty struct, which never happens: this type is only
+// constructed from a query row that already required COUNT(*) > 0.
 type ActorDurationPercentiles struct {
 	P50Seconds float64
 	P90Seconds float64
@@ -445,8 +445,9 @@ func (eq engineQueries) loadActorRetryBurnCompletions(ctx context.Context, actor
 // loadActorDurationPercentiles computes p50/p90/p99 (PERCENTILE_CONT, linear
 // interpolation) over this actor's attempt durations
 // (completed_at - started_at, in seconds), counting only attempts that have
-// actually completed -- an in-flight attempt contributes no duration. A
-// category with zero completed attempts in scope simply produces no row,
+// actually completed and whose invocation start is known -- an in-flight or
+// synchronous attempt contributes no duration. A
+// category with zero known durations in scope simply produces no row,
 // leaving ActorCategoryStats.DurationPercentiles nil for it (see that
 // field's doc comment).
 func (eq engineQueries) loadActorDurationPercentiles(ctx context.Context, actorID string, stats *ActorStats) error {
@@ -460,7 +461,8 @@ func (eq engineQueries) loadActorDurationPercentiles(ctx context.Context, actorI
 		FROM attempts a
 		JOIN node_runs nr ON nr.id = a.node_run_id
 		JOIN runs r ON r.id = nr.run_id
-		WHERE a.namespace_id = $1 AND a.actor_id = $2 AND a.completed_at IS NOT NULL
+		WHERE a.namespace_id = $1 AND a.actor_id = $2
+		  AND a.completed_at IS NOT NULL AND a.started_at IS NOT NULL
 		`+attemptCurrentSQL+actorStatsCategoryGroupingSQL,
 		eq.namespaceID, actorID)
 	if err != nil {
@@ -477,12 +479,12 @@ func (eq engineQueries) loadActorDurationPercentiles(ctx context.Context, actorI
 			return fmt.Errorf("postgres: engine: ActorStats: duration percentiles: scan: %w", err)
 		}
 		// The Total ("()") grouping set always returns one row even when
-		// this actor has zero completed attempts anywhere -- COUNT(*)
+		// this actor has zero known attempt durations anywhere -- COUNT(*)
 		// still evaluates to 0 over an empty input the way any bare
 		// aggregate does, but PERCENTILE_CONT has nothing to interpolate
 		// and reports SQL NULL. count == 0 is exactly
-		// ActorDurationPercentiles' documented "no attempt in scope has
-		// completed yet" case, so this row is skipped entirely rather
+		// ActorDurationPercentiles' documented "no attempt in scope has a
+		// known duration" case, so this row is skipped entirely rather
 		// than stored as a zero-second percentile — leaving
 		// DurationPercentiles nil, per that field's doc comment, instead
 		// of a fabricated 0.

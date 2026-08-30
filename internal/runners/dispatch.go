@@ -215,6 +215,22 @@ func mapStatus(res Result, contract NodeContract) (engine.TechStatus, string) {
 
 // buildOutput renders the code-node output surface.
 func buildOutput(res Result) (json.RawMessage, error) {
+	if res.State == StateRejected && res.Error != nil {
+		out := struct {
+			Error struct {
+				Class  string `json:"class"`
+				Detail string `json:"detail"`
+			} `json:"error"`
+		}{}
+		out.Error.Class = "runner"
+		out.Error.Detail = res.Error.Message
+		data, err := json.Marshal(out)
+		if err != nil {
+			return nil, fmt.Errorf("runners: encode rejected result diagnostic: %w", err)
+		}
+		return data, nil
+	}
+
 	out := CodeNodeOutput{
 		OperationID:       res.OperationID,
 		State:             res.State,

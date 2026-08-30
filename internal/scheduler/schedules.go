@@ -52,11 +52,17 @@ func (sch *Scheduler) fireDueSchedules(ctx context.Context) error {
 			continue
 		}
 		_, _ = sch.db.FireSchedule(ctx, postgres.FireScheduleInput{
-			ScheduleID:   d.ID,
-			Now:          sch.now(),
-			Pickup:       eng,
-			Trigger:      eng,
-			BeforeCommit: sch.opts.Hooks.BeforeScheduleCommit,
+			ScheduleID: d.ID,
+			Now:        sch.now(),
+			Pickup:     eng,
+			Trigger:    eng,
+			// Task t9 (issue #253): the fire itself decides whether this
+			// occurrence is worth minting, because that decision needs the
+			// schedule row under the same lock the cadence advance takes. The
+			// loop's only job is to carry the deployment's policy in.
+			ProbeInterval: sch.opts.ScheduleProbeInterval,
+			AlertAfter:    sch.opts.ScheduleFailureAlertAfter,
+			BeforeCommit:  sch.opts.Hooks.BeforeScheduleCommit,
 		})
 	}
 	return nil

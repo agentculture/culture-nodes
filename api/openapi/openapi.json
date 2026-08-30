@@ -552,6 +552,24 @@
         ],
         "type": "object"
       },
+      "AttemptArtifactList": {
+        "properties": {
+          "artifacts": {
+            "items": {
+              "$ref": "#/components/schemas/ArtifactWriteResult"
+            },
+            "type": "array"
+          },
+          "attempt_id": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "attempt_id",
+          "artifacts"
+        ],
+        "type": "object"
+      },
       "AttemptUsage": {
         "properties": {
           "cached_input_tokens": {
@@ -712,6 +730,24 @@
           "rationale",
           "evaluated_actor_id",
           "grading_actor_id"
+        ],
+        "type": "object"
+      },
+      "CreateNamespace": {
+        "additionalProperties": false,
+        "properties": {
+          "name": {
+            "minLength": 1,
+            "type": "string"
+          },
+          "slug": {
+            "minLength": 1,
+            "type": "string"
+          }
+        },
+        "required": [
+          "name",
+          "slug"
         ],
         "type": "object"
       },
@@ -1375,8 +1411,58 @@
           "merged_pr": {
             "additionalProperties": true,
             "type": "object"
+          },
+          "ticket_status": {
+            "description": "The board status the caller observed on the ticket, e.g. \"Done\" or \"In Progress\" (task t17). \"Done\" (case-insensitive) cancels the ticket's runs; anything else, including an absent value, parks them. Supplied rather than looked up: the Jira bridge has no read verb.",
+            "type": "string"
           }
         },
+        "type": "object"
+      },
+      "FreezeTicketResult": {
+        "properties": {
+          "cancelled_runs": {
+            "description": "Ids of the runs this freeze cancelled, in creation order.",
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          },
+          "freeze": {
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/TicketFreeze"
+              }
+            ],
+            "description": "What the freeze did to this ticket's runs. Present only on a frozen ticket."
+          },
+          "frozen": {
+            "type": "boolean"
+          },
+          "merged_pr": {
+            "additionalProperties": true,
+            "type": "object"
+          },
+          "parked_runs": {
+            "description": "Ids of the runs this freeze parked, in creation order.",
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          },
+          "ticket_id": {
+            "type": "string"
+          },
+          "ticket_status": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "ticket_id",
+          "frozen",
+          "cancelled_runs",
+          "parked_runs"
+        ],
         "type": "object"
       },
       "GateMeasurement": {
@@ -1695,6 +1781,10 @@
               "$ref": "#/components/schemas/HumanTask"
             },
             "type": "array"
+          },
+          "next_cursor": {
+            "description": "Opaque keyset cursor for the next page; absent on the last page.",
+            "type": "string"
           }
         },
         "required": [
@@ -2109,6 +2199,10 @@
               "$ref": "#/components/schemas/PendingDecisionRun"
             },
             "type": "array"
+          },
+          "next_cursor": {
+            "description": "Opaque keyset cursor for the next page; absent on the last page.",
+            "type": "string"
           },
           "record_count": {
             "description": "Undecided records across every listed run — the number a stage exit gate compares against zero.",
@@ -2779,6 +2873,10 @@
           "output": {
             "description": "The run's result. Present only once the run has completed."
           },
+          "reason": {
+            "description": "Why the run is in this state, when the state was a CONTROL-PLANE decision rather than something an actor reported (task t17, migrations/0052). Today's one writer is the ticket freeze: a run whose subject is a frozen ticket reads `\"reason\": \"ticket_frozen\"` beside a `cancelled` or `waiting` state.\n\nAbsent for every run that reached its state the ordinary way, where the account of what happened is the last attempt's own `result.error.detail` (task t6). The two are deliberately separate fields: an attempt's result is the ACTOR's evidence and is immutable, so a control-plane decision is never written over it.",
+            "type": "string"
+          },
           "state": {
             "$ref": "#/components/schemas/RunState"
           },
@@ -2800,6 +2898,10 @@
           },
           "workflow_digest": {
             "type": "string"
+          },
+          "workflow_key": {
+            "description": "The stable key of the workflow version pinned by this run. Present in run listings.",
+            "type": "string"
           }
         },
         "required": [
@@ -2818,6 +2920,10 @@
               "$ref": "#/components/schemas/Run"
             },
             "type": "array"
+          },
+          "next_cursor": {
+            "description": "Opaque keyset cursor for the next page; absent on the last page.",
+            "type": "string"
           }
         },
         "required": [
@@ -2903,6 +3009,10 @@
             "description": "The `signal_events` fact the last fire appended — the audit trail in one field, since the runs it triggered are reachable from it.",
             "type": "string"
           },
+          "last_failure_detail": {
+            "description": "The repeated reason, verbatim: the last minted run's last attempt's `result.error.detail` (falling back to that attempt's technical status, then the run's, when the attempt reported no error envelope). Absent when the schedule is not currently failing, so its presence is the answer to \"is this schedule holding back, and why\".",
+            "type": "string"
+          },
           "last_fired_at": {
             "description": "Absent until the first fire.",
             "format": "date-time",
@@ -2925,6 +3035,11 @@
             "format": "int64",
             "type": "integer"
           },
+          "suppressed_count": {
+            "description": "Due occurrences this schedule held back because its last two minted runs failed with the SAME reason (task t9, issue #253).\n\nSuppression is a rate, not a stop: a suppressed schedule still mints a probe run at most every `NODES_SCHEDULE_PROBE_INTERVAL` (default 30m), so a repaired environment is discovered without an operator resuming anything, and one completed run puts the schedule straight back on its declared cadence. `enabled` therefore keeps its own meaning — an operator said stop — while this counter records the environment saying stop.\n\nCounted rather than inferred, and separate from `skip_count`, because \"the operator declared a catch-up policy\" and \"the work keeps failing identically\" are different answers to \"why has nothing run\".",
+            "format": "int64",
+            "type": "integer"
+          },
           "updated_at": {
             "format": "date-time",
             "type": "string"
@@ -2942,6 +3057,7 @@
           "next_fire_at",
           "fire_count",
           "skip_count",
+          "suppressed_count",
           "created_at",
           "updated_at"
         ],
@@ -3282,6 +3398,7 @@
             "type": "boolean"
           },
           "human_tasks": {
+            "description": "Every human task on the ticket's runs, in any status.",
             "items": {
               "$ref": "#/components/schemas/HumanTask"
             },
@@ -3299,6 +3416,13 @@
           "merged_pr": {
             "additionalProperties": true,
             "type": "object"
+          },
+          "pending_tasks": {
+            "description": "The decidable subset of human_tasks. Both are served because they answer different questions — what was asked, and what is still being asked.",
+            "items": {
+              "$ref": "#/components/schemas/TicketPendingTask"
+            },
+            "type": "array"
           },
           "replies": {
             "items": {
@@ -3320,6 +3444,10 @@
               "type": "object"
             },
             "type": "array"
+          },
+          "ticket_url": {
+            "description": "Where this ticket lives on the board, composed from the Jira work-item fact the ticket's runs carry (`details_url`, else `jira_site` plus the key), falling back to a posted frame's own `ticket_url`/`jira_url` (task t18, spec c10). Always an absolute http(s) URL; absent when nothing this projection can see says where the ticket lives.",
+            "type": "string"
           }
         },
         "required": [
@@ -3327,6 +3455,7 @@
           "runs",
           "ledger",
           "human_tasks",
+          "pending_tasks",
           "ticket_reports",
           "replies",
           "frozen"
@@ -3360,6 +3489,85 @@
           "frame",
           "posted_by",
           "created_at"
+        ],
+        "type": "object"
+      },
+      "TicketFreeze": {
+        "properties": {
+          "banner": {
+            "description": "The sentence the ticket page renders under its frozen heading, naming both counts and the reason. Composed server-side so the count a human reads is the count the API test asserts.",
+            "type": "string"
+          },
+          "cancelled_runs": {
+            "description": "How many of the ticket's runs are cancelled carrying that reason. Derived at read time from the runs in this same projection, never a stored tally that could disagree with them.",
+            "type": "integer"
+          },
+          "parked_runs": {
+            "description": "How many of the ticket's runs are parked (`waiting`) carrying that reason.",
+            "type": "integer"
+          },
+          "reason": {
+            "description": "The run-level reason stamped on every run this freeze ended (`ticket_frozen`).",
+            "type": "string"
+          },
+          "ticket_status": {
+            "description": "The board status the freeze was decided against, as the caller reported it. Absent means the caller did not say — which is why the runs were parked rather than cancelled.",
+            "type": "string"
+          }
+        },
+        "required": [
+          "reason",
+          "cancelled_runs",
+          "parked_runs",
+          "banner"
+        ],
+        "type": "object"
+      },
+      "TicketPendingTask": {
+        "description": "One pending human task on a ticket, shaped for the surface that decides it (task t18). Every field is read back out of the task's own recorded request — what the human was actually shown (PRD §9.9) — never re-derived from the workflow.",
+        "properties": {
+          "allowed_outcomes": {
+            "description": "Exactly the outcomes POST /human-tasks/{id}/decision will accept. Always present; an EMPTY array means this task declares none (an alert rather than a choice, e.g. `schedule_failing`) and must be distinguishable from an omitted field.",
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          },
+          "created_at": {
+            "format": "date-time",
+            "type": "string"
+          },
+          "deadline": {
+            "description": "When this task becomes overdue. Absent when the node declared none.",
+            "format": "date-time",
+            "type": "string"
+          },
+          "decision_schema_ref": {
+            "description": "The node's authored decisionSchemaRef, unresolved.",
+            "type": "string"
+          },
+          "id": {
+            "type": "string"
+          },
+          "kind": {
+            "type": "string"
+          },
+          "ledger_version": {
+            "description": "The run's ledger version READ IN THIS REQUEST, which is what a decision must submit as `expected_ledger_version`. Served with the task so the version a decider attests to is the one the page they read was rendered from.",
+            "format": "int64",
+            "type": "integer"
+          },
+          "run_id": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "run_id",
+          "kind",
+          "allowed_outcomes",
+          "created_at",
+          "ledger_version"
         ],
         "type": "object"
       },
@@ -3414,7 +3622,7 @@
             "type": "integer"
           },
           "cache_ratio": {
-            "description": "cached_input_tokens / input_tokens, present only when input_tokens \u003e 0. Never computed as a fabricated 0 when no attempt in scope reported any input tokens (0/0 is undefined, not zero) — absent in that case.",
+            "description": "cached_input_tokens / (input_tokens + cached_input_tokens) — the share of the whole prompt that was served from cache, so it is bounded by 1.0. Cache reads are reported ALONGSIDE input_tokens, never inside them, so dividing by input_tokens alone is unbounded and read as high as 5.88 on real data (task t8). Present only when input_tokens + cached_input_tokens \u003e 0: never computed as a fabricated 0 when no attempt in scope reported any prompt tokens (0/0 is undefined, not zero) — absent in that case.",
             "type": "number"
           },
           "cached_input_tokens": {
@@ -3991,8 +4199,43 @@
       }
     },
     "/v1alpha1/attempts/{attemptID}/artifacts": {
+      "get": {
+        "description": "Includes artifacts indexed directly by attempt_id. For code-node stdout, the attempt result's artifacts.stdout_ref is also resolved against the artifact store, so runner-captured stdout remains listed when its artifact metadata row lacks the attempt association.",
+        "operationId": "listAttemptArtifacts",
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/AttemptID"
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AttemptArtifactList"
+                }
+              }
+            },
+            "description": "Artifact metadata associated with the attempt."
+          },
+          "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "description": "Artifact reads are not configured."
+          }
+        },
+        "summary": "List artifacts associated with one attempt.",
+        "tags": [
+          "artifacts"
+        ]
+      },
       "post": {
-        "description": "Requires the callback bearer token issued for exactly the attempt named in the path. Namespace, run, and attempt associations are derived from that attempt's durable PendingInvocation; the body is opaque content and cannot supply authority-bearing fields. Returns an artifact:// ref and metadata measured by the artifact store.\nNo GET or DELETE operation is mounted. Possession of an artifact:// ref is not authorization, and filesystem paths are never resolved.",
+        "description": "Requires the callback bearer token issued for exactly the attempt named in the path. Namespace, run, and attempt associations are derived from that attempt's durable PendingInvocation; the body is opaque content and cannot supply authority-bearing fields. Returns an artifact:// ref and metadata measured by the artifact store.\nPossession of an artifact:// ref is not authorization, and filesystem paths are never resolved.",
         "operationId": "putAttemptArtifact",
         "parameters": [
           {
@@ -4077,6 +4320,70 @@
           }
         ],
         "summary": "Publish opaque artifact bytes for one pending attempt.",
+        "tags": [
+          "artifacts"
+        ]
+      }
+    },
+    "/v1alpha1/attempts/{attemptID}/artifacts/{name}": {
+      "get": {
+        "description": "Streams the newest artifact with the requested descriptive name. For name stdout, the attempt result's artifacts.stdout_ref is resolved against the artifact store when no attempt-indexed row exists. The response is forced to download with MIME sniffing disabled and a sandbox content-security policy.",
+        "operationId": "getAttemptArtifact",
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/AttemptID"
+          },
+          {
+            "in": "path",
+            "name": "name",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "*/*": {
+                "schema": {
+                  "format": "binary",
+                  "type": "string"
+                }
+              }
+            },
+            "description": "The artifact's opaque bytes.",
+            "headers": {
+              "Artifact-Ref": {
+                "description": "The resolved artifact:// reference.",
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "description": "The attempt has no artifact with this name, or its content was reaped."
+          },
+          "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "description": "Artifact reads are not configured."
+          }
+        },
+        "summary": "Read one named attempt artifact.",
         "tags": [
           "artifacts"
         ]
@@ -4263,6 +4570,7 @@
     },
     "/v1alpha1/human-tasks": {
       "get": {
+        "description": "Keyset-paginated by `created_at` and `id`. Pass a response's `next_cursor` back as `cursor`; its absence means the final page.",
         "operationId": "listHumanTasks",
         "parameters": [
           {
@@ -4282,7 +4590,17 @@
             "name": "limit",
             "schema": {
               "default": 50,
+              "maximum": 500,
+              "minimum": 1,
               "type": "integer"
+            }
+          },
+          {
+            "description": "Opaque keyset cursor from a previous response's `next_cursor`.",
+            "in": "query",
+            "name": "cursor",
+            "schema": {
+              "type": "string"
             }
           }
         ],
@@ -4296,6 +4614,16 @@
               }
             },
             "description": "The matching human tasks."
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "description": "The cursor is invalid."
           }
         },
         "summary": "List human tasks, newest first.",
@@ -4688,6 +5016,52 @@
           }
         },
         "summary": "List namespaces available to workers in this installation."
+      },
+      "post": {
+        "operationId": "createNamespace",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CreateNamespace"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Namespace"
+                }
+              }
+            },
+            "description": "The namespace was created."
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "description": "The name or slug is missing or the request is malformed."
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "description": "A namespace with that slug already exists."
+          }
+        },
+        "summary": "Create a namespace in this installation."
       }
     },
     "/v1alpha1/node-runs": {
@@ -4762,7 +5136,7 @@
     },
     "/v1alpha1/pending-decisions": {
       "get": {
-        "description": "Answers \"what is awaiting my decision\", per run and across runs, without a hand-maintained manifest of run ids.\nA record is pending when it carries `proposed` authority and no `review` record names it as its subject — whatever the verdict would have been, since a rejection answers the question as completely as a confirmation does. It is NOT simply `authority = proposed`: records are immutable, so committing a confirmation appends a review record rather than changing the claim, and a decided claim reads `proposed` forever. A record a later record supersedes is excluded too — the correction that replaced it is what should be decided now.\nResults are grouped by run and each group carries that run's current `ledger_version`, which is exactly what POST /v1alpha1/runs/{id}/reviews needs to open a review over them.\nAn unrecognised query parameter is refused with 400 rather than ignored: a filter silently dropped answers a different question than the one asked while still looking authoritative.",
+        "description": "Answers \"what is awaiting my decision\", per run and across runs, without a hand-maintained manifest of run ids.\nA record is pending when it carries `proposed` authority and no `review` record names it as its subject — whatever the verdict would have been, since a rejection answers the question as completely as a confirmation does. It is NOT simply `authority = proposed`: records are immutable, so committing a confirmation appends a review record rather than changing the claim, and a decided claim reads `proposed` forever. A record a later record supersedes is excluded too — the correction that replaced it is what should be decided now.\nResults are grouped by run and each group carries that run's current `ledger_version`, which is exactly what POST /v1alpha1/runs/{id}/reviews needs to open a review over them.\nResults are keyset-paginated by `created_at` and `id`. Pass a response's `next_cursor` back as `cursor`; its absence means the final page.\nAn unrecognised query parameter is refused with 400 rather than ignored: a filter silently dropped answers a different question than the one asked while still looking authoritative.",
         "operationId": "listPendingDecisions",
         "parameters": [
           {
@@ -4802,6 +5176,15 @@
               "minimum": 1,
               "type": "integer"
             }
+          },
+          {
+            "description": "Opaque keyset cursor from a previous response's `next_cursor`.",
+            "in": "query",
+            "name": "cursor",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
           }
         ],
         "responses": {
@@ -4823,7 +5206,7 @@
                 }
               }
             },
-            "description": "An unrecognised query parameter was supplied."
+            "description": "An unrecognised query parameter or invalid cursor was supplied."
           }
         },
         "summary": "Every proposed ledger record still awaiting a human decision.",
@@ -5242,6 +5625,14 @@
             }
           },
           {
+            "description": "Filter to runs pinned to a workflow with this exact key.",
+            "in": "query",
+            "name": "workflow_key",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
             "description": "Filter to runs whose persisted correlation subject matches exactly.",
             "in": "query",
             "name": "subject",
@@ -5288,6 +5679,14 @@
               "minimum": 1,
               "type": "integer"
             }
+          },
+          {
+            "description": "Opaque keyset cursor from a previous response's next_cursor.",
+            "in": "query",
+            "name": "cursor",
+            "schema": {
+              "type": "string"
+            }
           }
         ],
         "responses": {
@@ -5309,10 +5708,10 @@
                 }
               }
             },
-            "description": "state, updated_since, updated_until, or sort is malformed."
+            "description": "state, updated_since, updated_until, sort, or cursor is malformed."
           }
         },
-        "summary": "List runs, optionally filtered by state and/or an updated_at window.",
+        "summary": "List runs, optionally filtered by workflow key, state, and/or an updated_at window.",
         "tags": [
           "runs"
         ]
@@ -6620,6 +7019,7 @@
     },
     "/v1alpha1/tickets/{id}/freeze": {
       "post": {
+        "description": "Records the merged-PR pointer that closes the ticket page to replies, and ENDS every run whose subject is this ticket (task t17, spec c28): cancelled when `ticket_status` is \"Done\", parked otherwise. Every run it touches carries `reason: ticket_frozen`, and the ticket projection's `freeze` block counts them for the page banner.\n\nA park is reversible and a cancel is not, so an absent or unrecognised `ticket_status` parks. This control plane cannot look the status up: the Jira bridge advertises post_comment, transition_issue and create_issue and no read verb.",
         "operationId": "freezeTicket",
         "parameters": [
           {
@@ -6643,7 +7043,14 @@
         },
         "responses": {
           "200": {
-            "description": "Ticket projection frozen."
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/FreezeTicketResult"
+                }
+              }
+            },
+            "description": "Ticket projection frozen and its runs ended."
           },
           "401": {
             "description": "Decision bearer token is missing or invalid."
@@ -6654,7 +7061,7 @@
             "decisionBearerAuth": []
           }
         ],
-        "summary": "Freeze a ticket page with its merged PR pointer.",
+        "summary": "Freeze a ticket page with its merged PR pointer, and end its runs.",
         "tags": [
           "runs"
         ]

@@ -20,6 +20,7 @@ import {
 import {
   WORKFLOW_VERSIONS,
   WORKFLOWS_RUNS,
+  workflowsRunsFor,
 } from "../../src/fixtures/workflows-fixture";
 import {
   ACTIVE_EVENTS,
@@ -369,12 +370,13 @@ export async function mockStatisticsApi(page: Page): Promise<void> {
 /**
  * Serve the Node Graphs tab's "Node Graphs" sub-tab (task t8, re-homed under
  * task t28's tab shell): `GET /v1alpha1/workflows` returns WORKFLOW_VERSIONS
- * (two workflow_keys, three versions total) and `GET
- * /v1alpha1/runs?sort=updated_at` returns WORKFLOWS_RUNS — no server-side
- * filter by workflow, exactly the two documented operations this task is
- * scoped to. Every fixture run's own `run_id` resolves through
- * `/v1alpha1/runs/{id}` (a minimal RunView) too, so following a card's
- * recent-run link doesn't 404.
+ * (two workflow_keys, three versions total) and `GET /v1alpha1/runs`
+ * answers WORKFLOWS_RUNS, honoring the `workflow_key` filter exactly as the
+ * server does (join to the run's workflow version, internal/api/
+ * queries.go) — the workflow-cards panel asks once per published key
+ * (task t8), the Active Graphs sub-tab asks unfiltered. Every fixture run's
+ * own `run_id` resolves through `/v1alpha1/runs/{id}` (a minimal RunView)
+ * too, so following a card's recent-run link doesn't 404.
  *
  * The Nodes sub-tab (task t29's catalog, rendered by t31) derives from the
  * same workflows listing. The Active Graphs sub-tab (task t31) additionally
@@ -399,7 +401,14 @@ export async function mockNodeGraphsApi(page: Page): Promise<void> {
       return;
     }
     if (path === "/v1alpha1/runs") {
-      await route.fulfill(json({ items: WORKFLOWS_RUNS }));
+      const workflowKey = url.searchParams.get("workflow_key");
+      await route.fulfill(
+        json({
+          items: workflowKey
+            ? workflowsRunsFor(workflowKey)
+            : WORKFLOWS_RUNS,
+        }),
+      );
       return;
     }
     if (path === "/v1alpha1/node-runs") {

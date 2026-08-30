@@ -202,19 +202,23 @@ func (s *Server) handleCreateGateReport(w http.ResponseWriter, r *http.Request) 
 
 	revision := strconv.FormatInt(int64(validator.Revision), 10)
 	evaluatedAt := time.Now().UTC()
+	attemptID, err := s.recordedAttemptID(ctx, req.NodeRunRef, req.AttemptRef)
+	if err != nil {
+		return internalError(err)
+	}
 
 	// Compose EVERY record before appending any of them. A half-written gate
 	// report is worse than a refused one: the records are immutable, so a
 	// caller could not withdraw the rows that did land, and a reader would
 	// count a report that never finished.
-	composed, results, cerr := composeGateRecords(id, req, revision, evaluatedAt, measured.RecordID)
+	composed, results, cerr := composeGateRecords(id, req, attemptID, revision, evaluatedAt, measured.RecordID)
 	if cerr != nil {
 		return cerr
 	}
 	aggregate := handover.GateAggregate{
 		RunID:             id,
 		NodeRunID:         req.NodeRunRef,
-		AttemptID:         req.AttemptRef,
+		AttemptID:         attemptID,
 		Results:           results,
 		BaseSHA:           req.BaseSHA,
 		CommitSHA:         req.CommitSHA,
@@ -244,6 +248,10 @@ func (s *Server) handleCreateGateReport(w http.ResponseWriter, r *http.Request) 
 	if err != nil {
 		return classify(err)
 	}
+	aggregateRecord, err = withAttemptRef(aggregateRecord, req.AttemptRef)
+	if err != nil {
+		return internalError(err)
+	}
 	appendedAggregate, err := s.Ledger.Append(ctx, aggregateRecord)
 	if err != nil {
 		return classify(err)
@@ -262,7 +270,7 @@ func (s *Server) handleCreateGateReport(w http.ResponseWriter, r *http.Request) 
 // composeGateRecords turns each declared gate into its ledger record and its
 // status, refusing the whole report on the first thing it cannot compose.
 func composeGateRecords(
-	runID string, req createGateReportRequest, revision string, evaluatedAt time.Time, evidenceID string,
+	runID string, req createGateReportRequest, attemptID, revision string, evaluatedAt time.Time, evidenceID string,
 ) ([]ledger.Record, handover.GateResults, error) {
 	composed := make([]ledger.Record, 0, len(req.Gates))
 	results := make(handover.GateResults, 0, len(req.Gates))
@@ -295,7 +303,7 @@ func composeGateRecords(
 			record, err = handover.SuiteVerdict{
 				RunID:             runID,
 				NodeRunID:         req.NodeRunRef,
-				AttemptID:         req.AttemptRef,
+				AttemptID:         attemptID,
 				Suite:             gateSuiteName(gate),
 				Command:           gate.Command,
 				ExitCode:          *gate.ExitCode,
@@ -319,7 +327,7 @@ func composeGateRecords(
 			record, err = handover.GateNotApplicable{
 				RunID:                  runID,
 				NodeRunID:              req.NodeRunRef,
-				AttemptID:              req.AttemptRef,
+				AttemptID:              attemptID,
 				Gate:                   gate.Gate,
 				Suite:                  gate.Suite,
 				Command:                gate.Command,
@@ -338,6 +346,10 @@ func composeGateRecords(
 		}
 		if err != nil {
 			return nil, nil, classify(err)
+		}
+		record, err = withAttemptRef(record, req.AttemptRef)
+		if err != nil {
+			return nil, nil, internalError(err)
 		}
 
 		composed = append(composed, record)

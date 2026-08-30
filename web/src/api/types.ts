@@ -835,3 +835,22 @@ export interface PlanImportSummary {
 export interface PlanImportSummaryList {
   items: PlanImportSummary[];
 }
+
+/**
+ * `GET /v1alpha1/version` (components.schemas.Version, internal/api/version.go):
+ * which revision of the control plane is answering.
+ *
+ * `revision` is absent on an unstamped build — the API refuses to report a
+ * partial answer rather than emit an empty string a reader has to interpret —
+ * and `staleness` is always the one sentence saying what this answer does and
+ * does not establish. The header renders that sentence verbatim as the
+ * readout's tooltip: it is the API's claim about its own provenance, not a
+ * paraphrase composed in the browser.
+ */
+export interface Version {
+  version: string;
+  revision?: string;
+  revision_source?: string;
+  revision_is_dirty?: boolean;
+  staleness: string;
+}

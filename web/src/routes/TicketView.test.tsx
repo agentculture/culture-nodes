@@ -167,3 +167,27 @@ describe("TicketView", () => {
     expect(screen.getByRole("heading", { name: "Decisions" })).toBeInTheDocument();
   });
 });
+
+
+describe("TicketView layout (task t27)", () => {
+  beforeEach(() => {
+    window.sessionStorage.clear();
+    window.localStorage.clear();
+    mockGetTicket.mockResolvedValue(structuredClone(TICKET_PROJECTION));
+  });
+
+  it("sits on the app's full-width rail, like every other view", async () => {
+    renderRoute();
+    await screen.findByRole("heading", { name: TICKET_PROJECTION.ticket_id });
+
+    const rail = document.querySelector(".ticket-view")!;
+    expect(rail).toHaveClass("view-rail");
+  });
+
+  it("renders the loading and error states on the same rail", async () => {
+    mockGetTicket.mockReturnValue(new Promise(() => {}));
+    renderRoute();
+    expect(await screen.findByText("Loading ticket projection…")).toBeInTheDocument();
+    expect(document.querySelector("section.view-rail")).not.toBeNull();
+  });
+});

@@ -126,3 +126,45 @@ describe("GenerateWorkflow", () => {
     expect(await screen.findByText(/still working/i)).toBeInTheDocument();
   });
 });
+
+
+describe("GenerateWorkflow field styling and structure (task t27)", () => {
+  it("gives every control the shared classes with its label above it", () => {
+    renderView();
+
+    const controls = [
+      screen.getByLabelText(/description/i),
+      screen.getByLabelText(/actor ref/i),
+      screen.getByLabelText(/base digest/i),
+    ];
+
+    for (const control of controls) {
+      expect(control.className).toMatch(/\bcontrol\b/);
+      const field = control.closest(".field")!;
+      expect(field).not.toBeNull();
+      const label = field.querySelector("label")!;
+      expect(label).toHaveClass("field__label");
+      expect(
+        label.compareDocumentPosition(control) &
+          Node.DOCUMENT_POSITION_FOLLOWING,
+      ).toBeTruthy();
+    }
+  });
+
+  it("styles the actions as shared buttons rather than native ones", () => {
+    renderView();
+    expect(
+      screen.getByRole("button", { name: /generate proposal/i }),
+    ).toHaveClass("control", "control--button");
+  });
+
+  it("labels the proposed source textarea it renders after a generation", async () => {
+    mockCreate.mockResolvedValue(proposal());
+    renderView();
+    await generate();
+
+    const source = await screen.findByLabelText("Proposed source");
+    expect(source).toHaveAttribute("readonly");
+    expect(source.className).toMatch(/\bcontrol--textarea\b/);
+  });
+});

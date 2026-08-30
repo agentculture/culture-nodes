@@ -1,5 +1,6 @@
 import { Link } from "react-router-dom";
 import type { NodeRunListItem, Run } from "../api/types";
+import { formatRelativeTime } from "../domain/run-board";
 import { nodeRunStateToExecState } from "../domain/run-state";
 import { runDisplayName } from "../domain/usage";
 import CategoryChip from "./CategoryChip";
@@ -31,6 +32,11 @@ export interface JobsTableProps {
  * mapped from the raw `NodeRunState` the API sends
  * (`nodeRunStateToExecState`, domain/run-state.ts) — never a new chip
  * vocabulary invented for this one table.
+ *
+ * Timestamps render relative with the exact instant on `title`/`dateTime`
+ * (task t27), the same way the Board's cards and the Runs list do. A column of
+ * full RFC3339 strings is unscannable, and dropping the instant would lose the
+ * only value that is comparable against a log line.
  */
 export function JobsTable({ items, id, caption, runsById }: JobsTableProps) {
   if (items.length === 0) {
@@ -112,10 +118,14 @@ export function JobsTable({ items, id, caption, runsById }: JobsTableProps) {
                 <UsageSummary usage={item.usage} compact />
               </td>
               <td>
-                <time dateTime={item.created_at}>{item.created_at}</time>
+                <time dateTime={item.created_at} title={item.created_at}>
+                  {formatRelativeTime(item.created_at)}
+                </time>
               </td>
               <td>
-                <time dateTime={item.updated_at}>{item.updated_at}</time>
+                <time dateTime={item.updated_at} title={item.updated_at}>
+                  {formatRelativeTime(item.updated_at)}
+                </time>
               </td>
             </tr>
           );

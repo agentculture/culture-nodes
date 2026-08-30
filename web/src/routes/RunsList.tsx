@@ -6,7 +6,9 @@ import type { RunState } from "../api/types";
 import { setAgentState } from "../agent-state/store";
 import CategoryChip from "../components/CategoryChip";
 import ErrorNotice from "../components/ErrorNotice";
+import RunStateChip from "../components/RunStateChip";
 import TimeRangeFilter from "../components/TimeRangeFilter";
+import { formatRelativeTime } from "../domain/run-board";
 import { runDisplayName } from "../domain/usage";
 import { useSharedEvents, type SharedEventType } from "../hooks/useSharedEvents";
 import { useTimeRange } from "../hooks/useTimeRange";
@@ -47,6 +49,12 @@ const REFRESH_DEBOUNCE_MS = 4000;
  * below, review finding on #27), but an SSE-triggered refresh must never
  * regress `runs` to null or agent-state back to "loading" — stale-while-
  * revalidate holds the rendered table until the fresh rows arrive.
+ *
+ * State and time render exactly as the Board does (task t27): `RunStateChip`
+ * rather than a bare word, and `formatRelativeTime` with the raw RFC3339
+ * instant kept on `title`/`dateTime`. The same run in two views was reading as
+ * two different things; relative time is what a reader scans by, and the exact
+ * instant is one hover away rather than gone.
  */
 export function RunsList() {
   const { since, until, applyRange } = useTimeRange();
@@ -246,7 +254,7 @@ export function RunsList() {
                       )}
                     </td>
                     <td data-run-state={run.state}>
-                      {run.state}
+                      <RunStateChip state={run.state} />
                       {index === 0 && group.runs.length > 1 ? (
                         <button type="button" className="runs-list__count-badge" aria-label={`${collapsed ? "Expand" : "Collapse"} ${group.runs.length} failed runs`} onClick={() => setExpandedGroups((current) => {
                           const next = new Set(current);
@@ -262,10 +270,14 @@ export function RunsList() {
                       </code>
                     </td>
                     <td>
-                      <time dateTime={run.created_at}>{run.created_at}</time>
+                      <time dateTime={run.created_at} title={run.created_at}>
+                        {formatRelativeTime(run.created_at)}
+                      </time>
                     </td>
                     <td>
-                      <time dateTime={run.updated_at}>{run.updated_at}</time>
+                      <time dateTime={run.updated_at} title={run.updated_at}>
+                        {formatRelativeTime(run.updated_at)}
+                      </time>
                     </td>
                   </tr>
                 );

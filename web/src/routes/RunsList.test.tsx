@@ -439,3 +439,71 @@ describe("RunsList auto-refresh (issue #46, task t30)", () => {
     expect(mockListRuns).not.toHaveBeenCalled();
   });
 });
+
+
+describe("RunsList state chip and humanised time (task t27)", () => {
+  // Relative time is read off the real clock, so the one test that asserts a
+  // rendered phrase pins the clock and puts it back — a leaked system time
+  // would make every later test in this file time-dependent.
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  it("renders state as the same chip the Board and Jobs use, not a bare word", async () => {
+    mockListRuns.mockResolvedValue({ items: [BOARD_RUNS[1]] });
+    renderList();
+    await screen.findByRole("table");
+
+    const row = document.querySelector(`[data-run-id="${BOARD_RUNS[1].id}"]`)!;
+    const chip = row.querySelector(".status-chip")!;
+    expect(chip).toHaveAttribute("data-run-state", "running");
+    // Icon AND word, never colour alone (PRD §8.8) — the same contract
+    // RunStateChip.test.tsx pins for the component itself.
+    expect(chip.querySelector(".status-chip__label")).toHaveTextContent("running");
+    expect(chip.querySelector(".status-chip__icon")).not.toBeNull();
+  });
+
+  it("renders timestamps relative, keeping the exact instant on title and dateTime", async () => {
+    const run = {
+      ...BOARD_RUNS[1],
+      created_at: "2026-08-30T10:00:00Z",
+      updated_at: "2026-08-30T11:00:00Z",
+    };
+    mockListRuns.mockResolvedValue({ items: [run] });
+    vi.useFakeTimers({
+      now: new Date("2026-08-30T12:00:00Z"),
+      shouldAdvanceTime: true,
+    });
+    renderList();
+    await screen.findByRole("table");
+
+    const times = document.querySelectorAll(
+      `[data-run-id="${run.id}"] time`,
+    ) as NodeListOf<HTMLTimeElement>;
+    expect(times).toHaveLength(2);
+    expect(times[0]).toHaveTextContent("2 hours ago");
+    expect(times[0]).toHaveAttribute("title", run.created_at);
+    expect(times[0]).toHaveAttribute("dateTime", run.created_at);
+    expect(times[1]).toHaveTextContent("1 hour ago");
+    expect(times[1]).toHaveAttribute("title", run.updated_at);
+  });
+
+  it("still shows the collapse badge next to the chip on a grouped failure run", async () => {
+    const failures = Array.from({ length: 3 }, (_, index) => ({
+      ...BOARD_RUNS[0],
+      id: `sweep-${index + 1}`,
+      state: "failed" as const,
+      workflow_key: "pr-upkeep-sweep-cycle",
+    }));
+    mockListRuns.mockResolvedValue({ items: failures });
+    renderList();
+    await screen.findByRole("table");
+
+    expect(
+      screen.getByRole("button", { name: /expand 3 failed runs/i }),
+    ).toBeInTheDocument();
+    expect(
+      document.querySelector('[data-run-id="sweep-1"] .status-chip'),
+    ).toHaveAttribute("data-run-state", "failed");
+  });
+});

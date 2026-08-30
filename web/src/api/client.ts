@@ -19,6 +19,7 @@ import type {
   TicketProjection,
   TicketReply,
   TicketReplyRequest,
+  Version,
   WorkflowSource,
   WorkflowValidation,
   WorkflowVersion,
@@ -473,3 +474,16 @@ export const PROJECTION_NAMES = [
   "decision_history",
   "delivery_summary",
 ] as const;
+
+/**
+ * `GET /v1alpha1/version` (task t27): the revision the control plane serving
+ * this bundle was built from. Unauthenticated, like healthz and readyz, for
+ * the reason internal/api/version.go states — a reader who has to hold a
+ * secret just to learn what they are looking at does not look.
+ *
+ * The header reads it once per page load and renders it verbatim. Nothing
+ * here interprets the answer: an unstamped build reports no revision and
+ * says why in `staleness`, and that sentence is what the tooltip shows.
+ */
+export const getVersion = (signal?: AbortSignal) =>
+  getJson<Version>("/version", signal);

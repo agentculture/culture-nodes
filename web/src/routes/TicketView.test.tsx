@@ -77,8 +77,21 @@ describe("TicketView", () => {
       ...structuredClone(TICKET_PROJECTION),
       frozen: true,
       merged_pr: { url: "https://github.example.test/pulls/42", number: 42 },
+      freeze: {
+        reason: "ticket_frozen",
+        ticket_status: "Done",
+        cancelled_runs: 2,
+        parked_runs: 0,
+        banner: "Ticket status Done: 2 runs cancelled and 0 parked with reason ticket_frozen.",
+      },
     });
     renderRoute();
+    // The banner names what the freeze did to the ticket's runs (task t17,
+    // spec c28/h19) — the count comes from the API's own summary, so this
+    // asserts the page RENDERS it rather than recomputing it here.
+    expect(await screen.findByRole("status")).toHaveTextContent(
+      "Ticket status Done: 2 runs cancelled and 0 parked with reason ticket_frozen.",
+    );
     expect(await screen.findByRole("status")).toHaveTextContent("Frozen");
     expect(screen.getByRole("link", { name: "PR #42" })).toHaveAttribute("href", "https://github.example.test/pulls/42");
     expect(screen.getByLabelText("Decision token")).toBeDisabled();

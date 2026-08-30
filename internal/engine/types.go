@@ -91,6 +91,18 @@ type Run struct {
 	// this subject before creating a new one -- see
 	// internal/engine/trigger.go and Tx.ActiveRunBySubject.
 	Subject string
+
+	// Reason is why this run is in the state it is in, when the state was
+	// a CONTROL-PLANE decision rather than something an actor reported
+	// (migrations/0052, task t17). Empty means nothing recorded one, which
+	// is every run that reached its state the ordinary way -- through an
+	// attempt's own outcome, whose account lives on the attempt.
+	//
+	// The engine never branches on it and never writes it: it is a
+	// read-through field so a projection can render "why is this run
+	// cancelled" beside the state itself. Today's one writer is the ticket
+	// freeze (internal/api/ticketfreeze.go, reason "ticket_frozen").
+	Reason string
 }
 
 // RunOption adjusts the Run a CreateRun call is about to persist, inside

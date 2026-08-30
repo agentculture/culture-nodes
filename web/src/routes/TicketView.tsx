@@ -83,6 +83,11 @@ export function TicketView() {
     ?? (typeof frame.ticket_url === "string" ? frame.ticket_url : undefined)
     ?? (typeof frame.jira_url === "string" ? frame.jira_url : undefined);
   const frozen = projection?.frozen === true || frame.frozen === true;
+  // The freeze banner sentence is composed by the API (TicketFreeze.banner)
+  // rather than assembled here, so the run counts a human reads on this page
+  // are the counts the API test asserts against the runs themselves (spec
+  // h19). Absent on a ticket frozen before this shipped.
+  const freeze = projection?.freeze;
   const pr = mergedPR({ ...frame, merged_pr: projection?.merged_pr ?? frame.merged_pr });
   const claims = frame.claims ?? [];
   const questions: TicketQuestion[] = frame.questions ?? claims
@@ -149,6 +154,7 @@ export function TicketView() {
       {frozen ? (
         <div className="ticket-freeze" role="status">
           <strong>Frozen — this ticket was merged.</strong>{" "}
+          {freeze ? <span className="ticket-freeze__runs">{freeze.banner}</span> : null}{" "}
           {pr?.href ? <a href={pr.href}>{pr.label}</a> : pr ? pr.label : "Replies are closed."}
         </div>
       ) : null}

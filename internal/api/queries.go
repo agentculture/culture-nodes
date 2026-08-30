@@ -127,6 +127,7 @@ type runRow struct {
 	Description    string
 	Category       string
 	Subject        string
+	Reason         string
 }
 
 // out renders r as a RunOut. Usage stays unset here (see RunOut's doc
@@ -148,6 +149,7 @@ func (r runRow) out() RunOut {
 		Description:    r.Description,
 		Category:       r.Category,
 		Subject:        r.Subject,
+		Reason:         r.Reason,
 	}
 	if r.Name == "" {
 		out.DisplayHint = deriveDisplayHint(r.Input)
@@ -186,6 +188,24 @@ type listRunsParams struct {
 	// parseRunSort in runs.go for how the default is chosen and validated
 	// before this is called.
 	Sort string
+	// SubjectFromInput widens a Subject filter to also match runs that
+	// carry the subject only inside their own input, as the jira work-item
+	// contract's `id` field (task t17). Those are runs created before
+	// migrations/0038 added runs.subject at all — the SCRUM-5 spec-chain
+	// run this task exists for is one — and without this they are
+	// unreachable by subject even though they belong to the ticket as
+	// plainly as any other.
+	//
+	// It is opt-in, and only the ticket projection opts in: GET
+	// /v1alpha1/runs?subject= answers "which runs DECLARE this subject",
+	// which is the question the one-active-run-per-subject invariant
+	// (spec c31) is defined over, and quietly widening it would change
+	// what that invariant means. The ticket PAGE asks a different
+	// question — "what has happened on this ticket" — and wants both.
+	//
+	// The fallback applies only where subject IS NULL: a run that declares
+	// a subject is authoritative about which ticket it belongs to.
+	SubjectFromInput bool
 }
 
 // listRuns returns runs newest first by p.Sort, optionally filtered to one
@@ -205,33 +225,33 @@ func (s *Server) listRuns(ctx context.Context, p listRunsParams) ([]RunOut, stri
 	if p.Sort == sortUpdatedAt {
 		rows, err = s.Store.Pool().Query(ctx, `
 			SELECT r.id, wv.content_digest, wv.workflow_key, r.status, r.input, r.output, r.created_at, r.updated_at, r.completed_at,
-			       r.name, r.description, r.category, COALESCE(r.subject,'')
+			       r.name, r.description, r.category, COALESCE(r.subject,''), COALESCE(r.reason,'')
 			FROM runs r JOIN workflow_versions wv ON wv.id = r.workflow_version_id
 			WHERE r.namespace_id = $1
 			  AND ($2 = '' OR r.status = $2)
 			  AND ($3::timestamptz IS NULL OR r.updated_at >= $3)
 			  AND ($4::timestamptz IS NULL OR r.updated_at <= $4)
-			  AND ($5 = '' OR r.subject = $5)
+			  AND ($5 = '' OR r.subject = $5 OR ($10 AND r.subject IS NULL AND r.input->>'id' = $5))
 			  AND ($6 = '' OR wv.workflow_key = $6)
 			  AND ($7::timestamptz IS NULL OR (r.updated_at, r.id) < ($7, $8))
 			ORDER BY r.updated_at DESC, r.id DESC
 			LIMIT $9`,
-			s.NamespaceID, p.State, p.UpdatedSince, p.UpdatedUntil, p.Subject, p.WorkflowKey, cursorTime(p.Cursor), cursorID(p.Cursor), p.Limit+1)
+			s.NamespaceID, p.State, p.UpdatedSince, p.UpdatedUntil, p.Subject, p.WorkflowKey, cursorTime(p.Cursor), cursorID(p.Cursor), p.Limit+1, p.SubjectFromInput)
 	} else {
 		rows, err = s.Store.Pool().Query(ctx, `
 			SELECT r.id, wv.content_digest, wv.workflow_key, r.status, r.input, r.output, r.created_at, r.updated_at, r.completed_at,
-			       r.name, r.description, r.category, COALESCE(r.subject,'')
+			       r.name, r.description, r.category, COALESCE(r.subject,''), COALESCE(r.reason,'')
 			FROM runs r JOIN workflow_versions wv ON wv.id = r.workflow_version_id
 			WHERE r.namespace_id = $1
 			  AND ($2 = '' OR r.status = $2)
 			  AND ($3::timestamptz IS NULL OR r.updated_at >= $3)
 			  AND ($4::timestamptz IS NULL OR r.updated_at <= $4)
-			  AND ($5 = '' OR r.subject = $5)
+			  AND ($5 = '' OR r.subject = $5 OR ($10 AND r.subject IS NULL AND r.input->>'id' = $5))
 			  AND ($6 = '' OR wv.workflow_key = $6)
 			  AND ($7::timestamptz IS NULL OR (r.created_at, r.id) < ($7, $8))
 			ORDER BY r.created_at DESC, r.id DESC
 			LIMIT $9`,
-			s.NamespaceID, p.State, p.UpdatedSince, p.UpdatedUntil, p.Subject, p.WorkflowKey, cursorTime(p.Cursor), cursorID(p.Cursor), p.Limit+1)
+			s.NamespaceID, p.State, p.UpdatedSince, p.UpdatedUntil, p.Subject, p.WorkflowKey, cursorTime(p.Cursor), cursorID(p.Cursor), p.Limit+1, p.SubjectFromInput)
 	}
 	if err != nil {
 		return nil, "", fmt.Errorf("api: list runs: %w", err)
@@ -251,7 +271,7 @@ func (s *Server) listRuns(ctx context.Context, p listRunsParams) ([]RunOut, stri
 		)
 		if err := rows.Scan(
 			&r.ID, &r.WorkflowDigest, &r.WorkflowKey, &r.Status, &input, &output, &createdAt, &updatedAt, &completedAt,
-			&name, &description, &category, &r.Subject,
+			&name, &description, &category, &r.Subject, &r.Reason,
 		); err != nil {
 			return nil, "", fmt.Errorf("api: list runs: scan: %w", err)
 		}

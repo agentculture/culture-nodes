@@ -79,6 +79,16 @@ export interface Run {
   /** The run's flat category tag (task t3), retaggable via PATCH. */
   category?: string;
   /**
+   * Why the run is in this state, when the state was a CONTROL-PLANE
+   * decision rather than something an actor reported (task t17). Today's
+   * one writer is the ticket freeze: a run whose subject is a frozen ticket
+   * reads `ticket_frozen` beside a `cancelled` or `waiting` state. Absent
+   * for a run that reached its state the ordinary way — there the account
+   * is the last attempt's own `result.error.detail` (task t6), which this
+   * never overwrites.
+   */
+  reason?: string;
+  /**
    * A truncated, best-effort guess at what this run is about, derived AT
    * READ TIME from the run's own input — never persisted, and present only
    * when `name` is absent. This is a guess, not something an operator
@@ -576,11 +586,28 @@ export interface TicketReply {
   created_at: string;
 }
 
+/**
+ * What a ticket's freeze did to its runs (task t17, spec c28): every run
+ * whose subject is the ticket is cancelled when the ticket is Done and
+ * parked otherwise, each carrying `reason`. The counts are derived
+ * server-side from those same runs, and `banner` is the sentence the page
+ * shows — composed by the API so the count a human reads is the one the
+ * API test asserts.
+ */
+export interface TicketFreeze {
+  reason: string;
+  ticket_status?: string;
+  cancelled_runs: number;
+  parked_runs: number;
+  banner: string;
+}
+
 export interface TicketProjection {
   ticket_id: string;
   ticket_url?: string;
   jira_url?: string;
   frozen?: boolean;
+  freeze?: TicketFreeze;
   merged_pr?: TicketFrameData["merged_pr"];
   runs: Run[];
   ledger: Array<{ run_id: string; records: LedgerRecord[] }>;

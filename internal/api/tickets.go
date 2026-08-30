@@ -7,6 +7,8 @@ import (
 	"regexp"
 	"time"
 
+	"github.com/jackc/pgx/v5/pgtype"
+
 	"github.com/agentculture/culture-nodes/internal/ledger"
 	"github.com/agentculture/culture-nodes/internal/store"
 	storepg "github.com/agentculture/culture-nodes/internal/store/postgres"
@@ -53,6 +55,32 @@ type TicketPageLinkOut struct {
 	Status    string `json:"status"`
 }
 
+// TicketFreezeOut is what the freeze did to the ticket's runs (task t17,
+// spec c28/h19), present only on a frozen ticket.
+//
+// The counts are DERIVED at read time from the ticket's own runs — a run
+// carrying Reason == TicketFrozenReason, counted by its state — not stored
+// as a tally the freeze wrote down. A stored counter and the runs it counts
+// can disagree; these cannot, because they are the same rows the projection
+// already returns in `runs`.
+type TicketFreezeOut struct {
+	// Reason is the run-level reason stamped on every affected run, so a
+	// reader of the banner and a reader of a single run see the same word.
+	Reason string `json:"reason"`
+	// TicketStatus is the board status the freeze was decided against, as
+	// the caller reported it. Empty means the caller did not say — which
+	// is why the runs were parked rather than cancelled.
+	TicketStatus string `json:"ticket_status,omitempty"`
+	Cancelled    int    `json:"cancelled_runs"`
+	Parked       int    `json:"parked_runs"`
+	// Banner is the sentence the ticket page shows under the frozen
+	// heading. It is composed here rather than in the web client so the
+	// count a human reads is asserted by the same API test that asserts the
+	// runs it counts (spec h19), instead of living only in a component
+	// test that mocks the projection it is supposed to be reporting.
+	Banner string `json:"banner"`
+}
+
 type TicketOut struct {
 	TicketID    string               `json:"ticket_id"`
 	Runs        []RunOut             `json:"runs"`
@@ -64,6 +92,7 @@ type TicketOut struct {
 	PageLink    *TicketPageLinkOut   `json:"page_link,omitempty"`
 	Frozen      bool                 `json:"frozen"`
 	MergedPR    json.RawMessage      `json:"merged_pr,omitempty"`
+	Freeze      *TicketFreezeOut     `json:"freeze,omitempty"`
 }
 
 type postTicketReplyRequest struct {
@@ -82,6 +111,15 @@ var ticketReplyIDPattern = regexp.MustCompile(`^[A-Za-z0-9_-]{8,64}$`)
 type freezeTicketRequest struct {
 	MergedPR json.RawMessage `json:"merged_pr"`
 	FrozenBy string          `json:"frozen_by"`
+	// TicketStatus is the board status the caller observed on the ticket,
+	// e.g. "Done" or "In Progress" (task t17, spec c28). It decides
+	// whether the ticket's runs are cancelled or parked, and it has to be
+	// supplied rather than looked up: the Jira bridge advertises
+	// post_comment / transition_issue / create_issue and no read verb
+	// (spec s13/s18), so this control plane has no way to ask. Absent
+	// means the caller did not say, and an unsaid status parks — see
+	// freezeEndsRunsAsCancelled.
+	TicketStatus string `json:"ticket_status"`
 }
 
 func (s *Server) handlePostTicketReply(w http.ResponseWriter, r *http.Request) error {
@@ -179,11 +217,29 @@ func (s *Server) handleFreezeTicket(w http.ResponseWriter, r *http.Request) erro
 	if !json.Valid(req.MergedPR) {
 		return badRequest("merged_pr must be JSON", "invalid merged_pr")
 	}
-	_, err := s.Store.Pool().Exec(r.Context(), `INSERT INTO ticket_freezes(namespace_id,ticket_id,merged_pr,frozen_by) VALUES($1,$2,$3,$4) ON CONFLICT(namespace_id,ticket_id) DO UPDATE SET merged_pr=EXCLUDED.merged_pr,frozen_by=EXCLUDED.frozen_by`, s.NamespaceID, r.PathValue("id"), req.MergedPR, req.FrozenBy)
+	ticketID := r.PathValue("id")
+	_, err := s.Store.Pool().Exec(r.Context(), `INSERT INTO ticket_freezes(namespace_id,ticket_id,merged_pr,frozen_by,ticket_status) VALUES($1,$2,$3,$4,NULLIF($5,'')) ON CONFLICT(namespace_id,ticket_id) DO UPDATE SET merged_pr=EXCLUDED.merged_pr,frozen_by=EXCLUDED.frozen_by,ticket_status=EXCLUDED.ticket_status`, s.NamespaceID, ticketID, req.MergedPR, req.FrozenBy, req.TicketStatus)
 	if err != nil {
 		return internalError(err)
 	}
-	writeJSON(w, http.StatusOK, map[string]any{"ticket_id": r.PathValue("id"), "frozen": true, "merged_pr": req.MergedPR})
+	// The freeze row lands first and separately (task t17, spec c28): the
+	// ticket IS frozen the moment the merge is recorded, and it must refuse
+	// replies from that instant even if ending its runs then fails. The run
+	// walk is the second half, and its failure is reported rather than
+	// swallowed — a freeze that left a run running is the exact defect this
+	// task exists to close, so it must not be able to look like a success.
+	effect, err := s.freezeTicketRuns(r.Context(), ticketID, req.TicketStatus)
+	if err != nil {
+		return err
+	}
+	writeJSON(w, http.StatusOK, map[string]any{
+		"ticket_id":      ticketID,
+		"frozen":         true,
+		"merged_pr":      req.MergedPR,
+		"ticket_status":  req.TicketStatus,
+		"cancelled_runs": effect.Cancelled,
+		"parked_runs":    effect.Parked,
+	})
 	return nil
 }
 
@@ -224,7 +280,10 @@ func (s *Server) handlePostTicketFrame(w http.ResponseWriter, r *http.Request) e
 
 func (s *Server) handleGetTicket(w http.ResponseWriter, r *http.Request) error {
 	ticketID := r.PathValue("id")
-	runs, _, err := s.listRuns(r.Context(), listRunsParams{Subject: ticketID, Limit: 500, Sort: sortCreatedAt})
+	// SubjectFromInput: the ticket page shows what happened on the ticket,
+	// including runs that predate the runs.subject column and carry the
+	// issue key only in their input (task t17) — see listRunsParams.
+	runs, _, err := s.listRuns(r.Context(), listRunsParams{Subject: ticketID, SubjectFromInput: true, Limit: 500, Sort: sortCreatedAt})
 	if err != nil {
 		return internalError(err)
 	}
@@ -298,9 +357,11 @@ func (s *Server) handleGetTicket(w http.ResponseWriter, r *http.Request) error {
 	} else if !isNoRowsErr(err) {
 		return internalError(err)
 	}
-	err = s.Store.Pool().QueryRow(r.Context(), `SELECT merged_pr FROM ticket_freezes WHERE namespace_id=$1 AND ticket_id=$2`, s.NamespaceID, ticketID).Scan(&out.MergedPR)
+	var frozenStatus pgtype.Text
+	err = s.Store.Pool().QueryRow(r.Context(), `SELECT merged_pr, ticket_status FROM ticket_freezes WHERE namespace_id=$1 AND ticket_id=$2`, s.NamespaceID, ticketID).Scan(&out.MergedPR, &frozenStatus)
 	if err == nil {
 		out.Frozen = true
+		out.Freeze = ticketFreezeOut(textOrEmpty(frozenStatus), out.Runs)
 	} else if !isNoRowsErr(err) {
 		return internalError(err)
 	}

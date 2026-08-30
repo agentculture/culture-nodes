@@ -100,6 +100,17 @@ type RunOut struct {
 	// question this listing can actually answer, rather than one that needs
 	// a database query — see honesty condition h16.
 	Subject string `json:"subject,omitempty"`
+	// Reason is why the run is in this state, when the state was a
+	// control-plane decision rather than something an actor reported
+	// (task t17, migrations/0052). Today's one writer is the ticket
+	// freeze: a run whose subject is a frozen ticket reads
+	// `"reason": "ticket_frozen"` beside a `cancelled` or `waiting`
+	// state. Absent for every run that reached its state the ordinary
+	// way — where the account of what happened is the last attempt's
+	// own `result.error.detail` (task t6), which this field deliberately
+	// does not overwrite: an attempt's result is the ACTOR's evidence,
+	// and a control-plane decision is not the actor's to claim.
+	Reason string `json:"reason,omitempty"`
 }
 
 // runOut renders r with usage (the run-level §13.2 rollup task t2 adds,
@@ -125,6 +136,7 @@ func runOut(r engine.Run, usage postgres.UsageRollup, meta runMetadata) RunOut {
 		Category:       meta.Category,
 		ActorAffinity:  r.ActorAffinity,
 		Subject:        r.Subject,
+		Reason:         r.Reason,
 	}
 	if meta.Name == "" {
 		out.DisplayHint = deriveDisplayHint(r.Input)

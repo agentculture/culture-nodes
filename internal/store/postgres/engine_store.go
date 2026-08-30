@@ -318,7 +318,8 @@ func (eq engineQueries) UpdateRunState(ctx context.Context, runID string, state 
 
 const selectRunSQL = `
 SELECT r.id, r.namespace_id, r.workflow_version_id, wv.content_digest, r.status,
-       r.input, r.output, r.created_at, r.updated_at, r.completed_at, r.actor_affinity, r.subject, r.trigger_event_id
+       r.input, r.output, r.created_at, r.updated_at, r.completed_at, r.actor_affinity, r.subject, r.trigger_event_id,
+       r.reason
 FROM runs AS r
 JOIN workflow_versions AS wv ON wv.id = r.workflow_version_id
 WHERE r.id = $1 AND r.namespace_id = $2
@@ -338,10 +339,12 @@ func (eq engineQueries) Run(ctx context.Context, runID string) (engine.Run, erro
 		completedAt             pgtype.Timestamptz
 		affinity                []byte
 		subject, triggerEventID pgtype.Text
+		reason                  pgtype.Text
 	)
 	err := eq.q.QueryRow(ctx, selectRunSQL, runID, eq.namespaceID).Scan(
 		&run.ID, &run.NamespaceID, &run.WorkflowVersionID, &run.WorkflowDigest, &status,
 		&input, &output, &createdAt, &updatedAt, &completedAt, &affinity, &subject, &triggerEventID,
+		&reason,
 	)
 	if err != nil {
 		if isNoRows(err) {
@@ -361,6 +364,7 @@ func (eq engineQueries) Run(ctx context.Context, runID string) (engine.Run, erro
 	run.ActorAffinity = jsonOrNil(affinity)
 	run.Subject = textOrEmpty(subject)
 	run.TriggerEventID = textOrEmpty(triggerEventID)
+	run.Reason = textOrEmpty(reason)
 	return run, nil
 }
 

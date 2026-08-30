@@ -1411,8 +1411,58 @@
           "merged_pr": {
             "additionalProperties": true,
             "type": "object"
+          },
+          "ticket_status": {
+            "description": "The board status the caller observed on the ticket, e.g. \"Done\" or \"In Progress\" (task t17). \"Done\" (case-insensitive) cancels the ticket's runs; anything else, including an absent value, parks them. Supplied rather than looked up: the Jira bridge has no read verb.",
+            "type": "string"
           }
         },
+        "type": "object"
+      },
+      "FreezeTicketResult": {
+        "properties": {
+          "cancelled_runs": {
+            "description": "Ids of the runs this freeze cancelled, in creation order.",
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          },
+          "freeze": {
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/TicketFreeze"
+              }
+            ],
+            "description": "What the freeze did to this ticket's runs. Present only on a frozen ticket."
+          },
+          "frozen": {
+            "type": "boolean"
+          },
+          "merged_pr": {
+            "additionalProperties": true,
+            "type": "object"
+          },
+          "parked_runs": {
+            "description": "Ids of the runs this freeze parked, in creation order.",
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          },
+          "ticket_id": {
+            "type": "string"
+          },
+          "ticket_status": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "ticket_id",
+          "frozen",
+          "cancelled_runs",
+          "parked_runs"
+        ],
         "type": "object"
       },
       "GateMeasurement": {
@@ -2815,6 +2865,10 @@
           "output": {
             "description": "The run's result. Present only once the run has completed."
           },
+          "reason": {
+            "description": "Why the run is in this state, when the state was a CONTROL-PLANE decision rather than something an actor reported (task t17, migrations/0052). Today's one writer is the ticket freeze: a run whose subject is a frozen ticket reads `\"reason\": \"ticket_frozen\"` beside a `cancelled` or `waiting` state.\n\nAbsent for every run that reached its state the ordinary way, where the account of what happened is the last attempt's own `result.error.detail` (task t6). The two are deliberately separate fields: an attempt's result is the ACTOR's evidence and is immutable, so a control-plane decision is never written over it.",
+            "type": "string"
+          },
           "state": {
             "$ref": "#/components/schemas/RunState"
           },
@@ -3414,6 +3468,37 @@
           "frame",
           "posted_by",
           "created_at"
+        ],
+        "type": "object"
+      },
+      "TicketFreeze": {
+        "properties": {
+          "banner": {
+            "description": "The sentence the ticket page renders under its frozen heading, naming both counts and the reason. Composed server-side so the count a human reads is the count the API test asserts.",
+            "type": "string"
+          },
+          "cancelled_runs": {
+            "description": "How many of the ticket's runs are cancelled carrying that reason. Derived at read time from the runs in this same projection, never a stored tally that could disagree with them.",
+            "type": "integer"
+          },
+          "parked_runs": {
+            "description": "How many of the ticket's runs are parked (`waiting`) carrying that reason.",
+            "type": "integer"
+          },
+          "reason": {
+            "description": "The run-level reason stamped on every run this freeze ended (`ticket_frozen`).",
+            "type": "string"
+          },
+          "ticket_status": {
+            "description": "The board status the freeze was decided against, as the caller reported it. Absent means the caller did not say — which is why the runs were parked rather than cancelled.",
+            "type": "string"
+          }
+        },
+        "required": [
+          "reason",
+          "cancelled_runs",
+          "parked_runs",
+          "banner"
         ],
         "type": "object"
       },
@@ -6835,6 +6920,7 @@
     },
     "/v1alpha1/tickets/{id}/freeze": {
       "post": {
+        "description": "Records the merged-PR pointer that closes the ticket page to replies, and ENDS every run whose subject is this ticket (task t17, spec c28): cancelled when `ticket_status` is \"Done\", parked otherwise. Every run it touches carries `reason: ticket_frozen`, and the ticket projection's `freeze` block counts them for the page banner.\n\nA park is reversible and a cancel is not, so an absent or unrecognised `ticket_status` parks. This control plane cannot look the status up: the Jira bridge advertises post_comment, transition_issue and create_issue and no read verb.",
         "operationId": "freezeTicket",
         "parameters": [
           {
@@ -6858,7 +6944,14 @@
         },
         "responses": {
           "200": {
-            "description": "Ticket projection frozen."
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/FreezeTicketResult"
+                }
+              }
+            },
+            "description": "Ticket projection frozen and its runs ended."
           },
           "401": {
             "description": "Decision bearer token is missing or invalid."
@@ -6869,7 +6962,7 @@
             "decisionBearerAuth": []
           }
         ],
-        "summary": "Freeze a ticket page with its merged PR pointer.",
+        "summary": "Freeze a ticket page with its merged PR pointer, and end its runs.",
         "tags": [
           "runs"
         ]

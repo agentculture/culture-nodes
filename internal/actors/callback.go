@@ -156,6 +156,10 @@ type CallbackStore interface {
 	// Invocation loads the durable record for a protocol attempt id,
 	// returning an error matching ErrUnknownAttempt when there is none.
 	Invocation(ctx context.Context, attemptID string) (PendingInvocation, error)
+	// ActorKey resolves an actor row id to its actor_key (task t24 hotfix): the
+	// custody check compares identities by key because a bridge's identity row
+	// and the dispatched registration row are different rows of one actor.
+	ActorKey(ctx context.Context, actorID string) (string, error)
 
 	// ClaimCallbackEvent records (attemptID, eventID) as seen, reporting
 	// false when it was already recorded. It is the idempotency boundary for
@@ -724,7 +728,7 @@ func commitTerminal(ctx context.Context, deps CallbackDeps, inv PendingInvocatio
 		return CallbackResult{}, errors.New("actors: HandleCallback requires an engine to commit a terminal event")
 	}
 
-	req, diagnostic := completionFor(inv, ev)
+	req, diagnostic := completionFor(ctx, deps.Store, inv, ev)
 	if diagnostic != "" {
 		deps.record(ctx, inv, TypeCallbackRejected, ev, diagnostic)
 		return CallbackResult{AttemptID: inv.AttemptID, Disposition: DispositionRejected, Diagnostic: diagnostic}, nil
@@ -873,7 +877,7 @@ func (d CallbackDeps) recordDetail(
 // declares, and whether the output satisfies its schema. Both are the
 // engine's job (§12.5 step 2), and duplicating them would create a second
 // place for the answer to differ from the authoritative one.
-func completionFor(inv PendingInvocation, ev CallbackEvent) (engine.CompletionRequest, string) {
+func completionFor(ctx context.Context, store CallbackStore, inv PendingInvocation, ev CallbackEvent) (engine.CompletionRequest, string) {
 	req := engine.CompletionRequest{
 		WorkID:       inv.WorkID,
 		WorkerID:     inv.WorkerID,
@@ -909,7 +913,7 @@ func completionFor(inv PendingInvocation, ev CallbackEvent) (engine.CompletionRe
 		req.Usage = payload.Usage.ToEngine()
 		req.TerminationReason = payload.TerminationReason
 		req.ContinuationRef = payload.ContinuationRef
-		if detail := originActorMismatch(req.LedgerDelta, inv.ActorID); detail != "" {
+		if detail := originActorMismatch(ctx, store, req.LedgerDelta, inv.ActorID); detail != "" {
 			req.TechStatus = engine.StatusContractRejected
 			req.Outcome = ""
 			req.Output = identityDiagnostic(detail)

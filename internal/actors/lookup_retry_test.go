@@ -234,3 +234,7 @@ func TestHandleCallbackDefaultInvocationLookupRetriesAreUsedWhenUnset(t *testing
 			got, actors.DefaultInvocationLookupRetries)
 	}
 }
+
+func (f *fakeCallbackStore) ActorKey(_ context.Context, actorID string) (string, error) {
+	return actorID, nil
+}

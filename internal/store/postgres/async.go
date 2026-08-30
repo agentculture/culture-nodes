@@ -314,6 +314,20 @@ func scanPendingInvocation(row invocationRowScanner) (actors.PendingInvocation, 
 }
 
 // Invocation loads one in-flight invocation.
+// ActorKey resolves an actors-table row id to its actor_key, so a callback
+// can tell "another revision of the same actor" from "another actor". A
+// bridge reports the identity row it holds (an actor_claude_<role>_* id
+// minted at issuance) while dispatch names the registration row the worker
+// chose (an actor_register_* id); both carry one actor_key. Unknown ids
+// return ErrActorNotFound.
+func (cs *CallbackStore) ActorKey(ctx context.Context, actorID string) (string, error) {
+	a, err := engineQueries{q: cs.store.pool, namespaceID: cs.namespaceID}.GetActor(ctx, actorID)
+	if err != nil {
+		return "", err
+	}
+	return a.ActorKey, nil
+}
+
 func (cs *CallbackStore) Invocation(ctx context.Context, attemptID string) (actors.PendingInvocation, error) {
 	inv, err := scanPendingInvocation(cs.store.pool.QueryRow(ctx, selectInvocationSQL, attemptID, cs.namespaceID))
 	if err != nil {

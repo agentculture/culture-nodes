@@ -138,3 +138,42 @@ func TestCallbackAcceptsDeltaFromDispatchedActor(t *testing.T) {
 		t.Fatalf("attempts = %+v, want one succeeded attempt", attempts)
 	}
 }
+
+// A bridge reports the identity row it was issued; dispatch names the
+// registration row. Two rows, one actor_key: the delta is the dispatched
+// actor's own and must be accepted (prod regression on SCRUM-7's intake run
+// 01M19PG0QGN6QA77Q6TNMSQQKJ, 2026-08-30).
+func TestCallbackAcceptsDeltaFromAnotherRevisionOfTheDispatchedActor(t *testing.T) {
+	f := newAsyncFixtureForActor(t)
+	var key string
+	if err := f.store.Pool().QueryRow(f.ctx, `SELECT actor_key FROM actors WHERE id = $1`, f.actorID).Scan(&key); err != nil {
+		t.Fatalf("actor_key of dispatched actor: %v", err)
+	}
+	sameActorOtherRow := "actor-identity-" + f.attemptID
+	if _, err := f.store.Pool().Exec(f.ctx, `
+		INSERT INTO actors (id, namespace_id, actor_key, revision, kind, protocol)
+		VALUES ($1, $2, $3, 2, 'agent', 'internal')
+	`, sameActorOtherRow, f.ns.ID, key); err != nil {
+		t.Fatalf("register second row: %v", err)
+	}
+	payload, _ := json.Marshal(actors.CompletedPayload{
+		Outcome: "completed",
+		Output:  json.RawMessage(`{"summary":"done"}`),
+		LedgerDelta: &actors.LedgerDelta{Records: []ledger.Record{{
+			RecordType: ledger.RecordClaim,
+			Origin:     ledger.Origin{Kind: ledger.OriginAgent, ActorID: sameActorOtherRow},
+			Data:       json.RawMessage(`{"statement":"same actor, other row"}`),
+		}}},
+	})
+	result := f.handle(actors.CallbackEvent{EventID: "ev-identity-same-key", Sequence: 1, Kind: actors.EventCompleted, Payload: payload})
+	if result.Disposition != actors.DispositionCommitted {
+		t.Fatalf("disposition = %s (%s), want committed", result.Disposition, result.Diagnostic)
+	}
+	attempts, err := f.engine.Store().Attempts(f.ctx, f.nodeRunID)
+	if err != nil {
+		t.Fatalf("read attempts: %v", err)
+	}
+	if len(attempts) != 1 || attempts[0].Status != engine.StatusSucceeded {
+		t.Fatalf("attempts = %+v, want one succeeded attempt", attempts)
+	}
+}

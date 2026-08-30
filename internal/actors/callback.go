@@ -908,11 +908,19 @@ func completionFor(inv PendingInvocation, ev CallbackEvent) (engine.CompletionRe
 		}
 		req.Usage = payload.Usage.ToEngine()
 		req.TerminationReason = payload.TerminationReason
+		req.ContinuationRef = payload.ContinuationRef
+		if detail := originActorMismatch(req.LedgerDelta, inv.ActorID); detail != "" {
+			req.TechStatus = engine.StatusContractRejected
+			req.Outcome = ""
+			req.Output = identityDiagnostic(detail)
+			req.LedgerDelta = nil
+			req.RetryRefusal = detail
+			return req, ""
+		}
 		// The handle for continuing this conversation, reported by an actor
 		// that finished late. Persisting it here is what makes continuation
 		// reachable on the path long sessions actually take (ADR 0010 §2);
 		// absent stays absent, and nothing invents one.
-		req.ContinuationRef = payload.ContinuationRef
 		return req, ""
 
 	case EventFailed:
@@ -951,6 +959,27 @@ func completionFor(inv PendingInvocation, ev CallbackEvent) (engine.CompletionRe
 	}
 
 	return req, fmt.Sprintf("event kind %q is not terminal", ev.Kind)
+}
+
+// originActorMismatch enforces callback custody before the completion can
+// reach a ledger write. The durable pending invocation is the dispatched
+// identity; the delta is only the actor's claim. Task t24 deliberately
+// refuses disagreement instead of stamping the trusted identity over it —
+// server-side custody remains #111's question.
+func originActorMismatch(records []ledger.Record, dispatchedActorID string) string {
+	for _, record := range records {
+		if record.Origin.ActorID != dispatchedActorID {
+			return fmt.Sprintf("origin_actor_id %s is not the dispatched actor %s", record.Origin.ActorID, dispatchedActorID)
+		}
+	}
+	return ""
+}
+
+func identityDiagnostic(detail string) json.RawMessage {
+	body, _ := json.Marshal(map[string]any{
+		"error": map[string]string{"class": "identity", "detail": detail},
+	})
+	return body
 }
 
 // failureOutput is the diagnostic body recorded on a failed attempt.

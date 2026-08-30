@@ -554,6 +554,13 @@ type CompletionRequest struct {
 	// diagnostic naming it, exactly as an unrouted technical status does.
 	RefusalOutcome string
 
+	// RetryRefusal is the control plane's reason this completed attempt must
+	// not spend any remaining retry budget. Empty preserves the node's normal
+	// retry policy. It is for accept-boundary refusals where redispatching the
+	// same malformed completion cannot help, while the attempt's technical
+	// status must still truthfully describe what was refused.
+	RetryRefusal string
+
 	// Output is the payload for that outcome. It is validated against the
 	// outcome's schema; a violation is recorded as the *technical* status
 	// contract_rejected, never as a domain outcome.

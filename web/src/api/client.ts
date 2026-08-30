@@ -307,6 +307,8 @@ export interface ListPendingDecisionsParams {
   /** Only records this actor produced. */
   actor_id?: string;
   limit?: number;
+  /** An opaque `next_cursor` from a previous page. */
+  cursor?: string;
 }
 
 /**
@@ -370,6 +372,8 @@ export interface ListHumanTasksParams {
   /** Filter to one status; omitted returns every task, newest first. */
   status?: "pending" | "decided";
   limit?: number;
+  /** An opaque `next_cursor` from a previous page. */
+  cursor?: string;
 }
 
 export const listHumanTasks = (

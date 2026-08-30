@@ -473,7 +473,8 @@ func humanTaskOut(t engine.HumanTask) HumanTaskOut {
 
 // HumanTaskListOut is components.schemas.HumanTaskList.
 type HumanTaskListOut struct {
-	Items []HumanTaskOut `json:"items"`
+	Items      []HumanTaskOut `json:"items"`
+	NextCursor string         `json:"next_cursor,omitempty"`
 }
 
 // HumanTaskDecisionResultOut is components.schemas.HumanTaskDecisionResult:

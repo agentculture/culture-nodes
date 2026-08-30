@@ -145,17 +145,36 @@ function PendingDecisionsView() {
 
   useEffect(() => {
     const controller = new AbortController();
-    Promise.all([
-      listHumanTasks(controller.signal, { status: "pending", limit: 500 }),
-      listPendingDecisions(controller.signal, { limit: 500 }),
-    ]).then(([taskList, claimList]) => {
+    const allTasks = async () => {
+      const items: HumanTask[] = [];
+      let cursor: string | undefined;
+      for (let page = 0; page < 40; page++) {
+        const result = await listHumanTasks(controller.signal, { status: "pending", limit: 500, cursor });
+        items.push(...result.items);
+        if (!result.next_cursor) break;
+        cursor = result.next_cursor;
+      }
+      return items;
+    };
+    const allClaims = async () => {
+      const items: PendingDecisionRun[] = [];
+      let cursor: string | undefined;
+      for (let page = 0; page < 40; page++) {
+        const result = await listPendingDecisions(controller.signal, { limit: 500, cursor });
+        items.push(...result.items);
+        if (!result.next_cursor) break;
+        cursor = result.next_cursor;
+      }
+      return items;
+    };
+    Promise.all([allTasks(), allClaims()]).then(([taskItems, claimItems]) => {
       if (controller.signal.aborted) return;
-      setTasks(taskList.items);
-      setClaims(claimList.items);
-      for (const group of claimList.items) {
+      setTasks(taskItems);
+      setClaims(claimItems);
+      for (const group of claimItems) {
         setVersions((current) => ({ ...current, [group.run_id]: group.ledger_version }));
       }
-      for (const runID of new Set(taskList.items.map((task) => task.run_id))) {
+      for (const runID of new Set(taskItems.map((task) => task.run_id))) {
         getLedger(runID, controller.signal).then((ledger) => {
           if (!controller.signal.aborted)
             setVersions((current) => ({ ...current, [runID]: ledger.ledger_version }));

@@ -16,11 +16,19 @@ import (
 // filters by ?state.
 func (s *Server) handleListHumanTasks(w http.ResponseWriter, r *http.Request) error {
 	limit := parseLimit(r, 50, 500)
-	tasks, err := s.listHumanTasks(r.Context(), r.URL.Query().Get("status"), limit)
+	var cursor *nodeRunCursor
+	if raw := r.URL.Query().Get("cursor"); raw != "" {
+		decoded, err := decodeNodeRunCursor(raw)
+		if err != nil {
+			return badRequest("pass back a previous next_cursor unchanged", "invalid cursor: %v", err)
+		}
+		cursor = &decoded
+	}
+	tasks, nextCursor, err := s.listHumanTasks(r.Context(), r.URL.Query().Get("status"), cursor, limit)
 	if err != nil {
 		return internalError(err)
 	}
-	writeJSON(w, http.StatusOK, HumanTaskListOut{Items: tasks})
+	writeJSON(w, http.StatusOK, HumanTaskListOut{Items: tasks, NextCursor: nextCursor})
 	return nil
 }
 

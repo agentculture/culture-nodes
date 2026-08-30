@@ -2635,6 +2635,10 @@ paths:
         `ledger_version`, which is exactly what POST
         /v1alpha1/runs/{id}/reviews needs to open a review over them.
 
+        Results are keyset-paginated by `created_at` and `id`. Pass a
+        response's `next_cursor` back as `cursor`; its absence means the
+        final page.
+
         An unrecognised query parameter is refused with 400 rather than
         ignored: a filter silently dropped answers a different question than
         the one asked while still looking authoritative.
@@ -2665,6 +2669,12 @@ paths:
             type: integer
             minimum: 1
             maximum: 1000
+        - name: cursor
+          in: query
+          required: false
+          description: Opaque keyset cursor from a previous response's `next_cursor`.
+          schema:
+            type: string
       responses:
         '200':
           description: The pending records, grouped by run.
@@ -2673,7 +2683,7 @@ paths:
               schema:
                 $ref: '#/components/schemas/PendingDecisionList'
         '400':
-          description: An unrecognised query parameter was supplied.
+          description: An unrecognised query parameter or invalid cursor was supplied.
           content:
             application/json:
               schema:
@@ -2928,6 +2938,9 @@ paths:
       operationId: listHumanTasks
       tags: [human-tasks]
       summary: List human tasks, newest first.
+      description: >-
+        Keyset-paginated by `created_at` and `id`. Pass a response's
+        `next_cursor` back as `cursor`; its absence means the final page.
       parameters:
         - name: status
           in: query
@@ -2940,6 +2953,13 @@ paths:
           schema:
             type: integer
             default: 50
+            minimum: 1
+            maximum: 500
+        - name: cursor
+          in: query
+          description: Opaque keyset cursor from a previous response's `next_cursor`.
+          schema:
+            type: string
       responses:
         '200':
           description: The matching human tasks.
@@ -2947,6 +2967,12 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/HumanTaskList'
+        '400':
+          description: The cursor is invalid.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
 
   /v1alpha1/human-tasks/{id}:
     get:
@@ -4349,6 +4375,9 @@ components:
           description: >-
             Undecided records across every listed run — the number a stage
             exit gate compares against zero.
+        next_cursor:
+          type: string
+          description: Opaque keyset cursor for the next page; absent on the last page.
 
     ReviewCommitResult:
       type: object
@@ -4840,6 +4869,9 @@ components:
           type: array
           items:
             $ref: '#/components/schemas/HumanTask'
+        next_cursor:
+          type: string
+          description: Opaque keyset cursor for the next page; absent on the last page.
 
     DeliverEventRequest:
       type: object

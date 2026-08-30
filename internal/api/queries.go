@@ -784,19 +784,36 @@ func (s *Server) latestAttemptActorIDs(ctx context.Context, nodeRunIDs []string)
 // listHumanTasks returns human tasks newest first, optionally filtered to
 // one status ("pending" or "decided"), scoped to this server's namespace —
 // the same shape listRuns and listWorkflowVersions use above.
-func (s *Server) listHumanTasks(ctx context.Context, status string, limit int) ([]HumanTaskOut, error) {
+func (s *Server) listHumanTasks(ctx context.Context, status string, cursor *nodeRunCursor, limit int) ([]HumanTaskOut, string, error) {
+	var cursorCreatedAt *time.Time
+	var cursorID string
+	if cursor != nil {
+		cursorCreatedAt = &cursor.UpdatedAt
+		cursorID = cursor.ID
+	}
 	rows, err := s.Store.Pool().Query(ctx, `
 		SELECT id, run_id, node_run_id, kind, assigned_owner_id, status, request, response, created_at, resolved_at
 		FROM human_tasks
 		WHERE namespace_id = $1 AND ($2 = '' OR status = $2)
+		  AND ($3::timestamptz IS NULL OR (created_at, id) < ($3, $4))
 		ORDER BY created_at DESC, id DESC
-		LIMIT $3`,
-		s.NamespaceID, status, limit)
+		LIMIT $5`,
+		s.NamespaceID, status, cursorCreatedAt, cursorID, limit+1)
 	if err != nil {
-		return nil, fmt.Errorf("api: list human tasks: %w", err)
+		return nil, "", fmt.Errorf("api: list human tasks: %w", err)
 	}
 	defer rows.Close()
-	return scanHumanTasks(rows)
+	tasks, err := scanHumanTasks(rows)
+	if err != nil {
+		return nil, "", err
+	}
+	next := ""
+	if len(tasks) > limit {
+		tasks = tasks[:limit]
+		last := tasks[len(tasks)-1]
+		next = encodeNodeRunCursor(nodeRunCursor{UpdatedAt: last.CreatedAt, ID: last.ID})
+	}
+	return tasks, next, nil
 }
 
 // scanHumanTasks drains rows selecting human_tasks' columns in the order

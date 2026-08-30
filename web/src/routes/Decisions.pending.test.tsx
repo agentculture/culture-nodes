@@ -59,6 +59,23 @@ beforeEach(() => {
 afterEach(() => vi.unstubAllGlobals());
 
 describe("Decisions pending tab", () => {
+  it("follows backend cursors so tasks beyond the first backend page are reachable", async () => {
+    const first = Array.from({ length: 500 }, (_, index) => task(index));
+    mockListHumanTasks
+      .mockResolvedValueOnce({ items: first, next_cursor: "page-2" })
+      .mockResolvedValueOnce({ items: [task(500)] });
+    await renderPending();
+
+    await waitFor(() => expect(mockListHumanTasks).toHaveBeenCalledTimes(2));
+    expect(mockListHumanTasks).toHaveBeenNthCalledWith(2, expect.any(AbortSignal), {
+      status: "pending", limit: 500, cursor: "page-2",
+    });
+    for (let page = 0; page < 20; page++) {
+      await userEvent.click(screen.getByRole("button", { name: "Next page" }));
+    }
+    expect(screen.getByText("task-500")).toBeInTheDocument();
+  });
+
   it("paginates a 200-item queue into eight pages of 25", async () => {
     mockListHumanTasks.mockResolvedValue({
       items: Array.from({ length: 200 }, (_, index) => task(index)),

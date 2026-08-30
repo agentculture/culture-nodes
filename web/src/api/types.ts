@@ -525,6 +525,7 @@ export interface HumanTask {
 /** `GET /v1alpha1/human-tasks` (components.schemas.HumanTaskList). */
 export interface HumanTaskList {
   items: HumanTask[];
+  next_cursor?: string;
 }
 
 /** The versioned, workflow-authored portion of a ticket projection. */
@@ -685,6 +686,7 @@ export interface PendingDecisionList {
   items: PendingDecisionRun[];
   /** Undecided records across every listed run. */
   record_count: number;
+  next_cursor?: string;
 }
 
 /** `POST /v1alpha1/runs/{id}/reviews` request body. */

@@ -1781,6 +1781,10 @@
               "$ref": "#/components/schemas/HumanTask"
             },
             "type": "array"
+          },
+          "next_cursor": {
+            "description": "Opaque keyset cursor for the next page; absent on the last page.",
+            "type": "string"
           }
         },
         "required": [
@@ -2195,6 +2199,10 @@
               "$ref": "#/components/schemas/PendingDecisionRun"
             },
             "type": "array"
+          },
+          "next_cursor": {
+            "description": "Opaque keyset cursor for the next page; absent on the last page.",
+            "type": "string"
           },
           "record_count": {
             "description": "Undecided records across every listed run — the number a stage exit gate compares against zero.",
@@ -4562,6 +4570,7 @@
     },
     "/v1alpha1/human-tasks": {
       "get": {
+        "description": "Keyset-paginated by `created_at` and `id`. Pass a response's `next_cursor` back as `cursor`; its absence means the final page.",
         "operationId": "listHumanTasks",
         "parameters": [
           {
@@ -4581,7 +4590,17 @@
             "name": "limit",
             "schema": {
               "default": 50,
+              "maximum": 500,
+              "minimum": 1,
               "type": "integer"
+            }
+          },
+          {
+            "description": "Opaque keyset cursor from a previous response's `next_cursor`.",
+            "in": "query",
+            "name": "cursor",
+            "schema": {
+              "type": "string"
             }
           }
         ],
@@ -4595,6 +4614,16 @@
               }
             },
             "description": "The matching human tasks."
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "description": "The cursor is invalid."
           }
         },
         "summary": "List human tasks, newest first.",
@@ -5107,7 +5136,7 @@
     },
     "/v1alpha1/pending-decisions": {
       "get": {
-        "description": "Answers \"what is awaiting my decision\", per run and across runs, without a hand-maintained manifest of run ids.\nA record is pending when it carries `proposed` authority and no `review` record names it as its subject — whatever the verdict would have been, since a rejection answers the question as completely as a confirmation does. It is NOT simply `authority = proposed`: records are immutable, so committing a confirmation appends a review record rather than changing the claim, and a decided claim reads `proposed` forever. A record a later record supersedes is excluded too — the correction that replaced it is what should be decided now.\nResults are grouped by run and each group carries that run's current `ledger_version`, which is exactly what POST /v1alpha1/runs/{id}/reviews needs to open a review over them.\nAn unrecognised query parameter is refused with 400 rather than ignored: a filter silently dropped answers a different question than the one asked while still looking authoritative.",
+        "description": "Answers \"what is awaiting my decision\", per run and across runs, without a hand-maintained manifest of run ids.\nA record is pending when it carries `proposed` authority and no `review` record names it as its subject — whatever the verdict would have been, since a rejection answers the question as completely as a confirmation does. It is NOT simply `authority = proposed`: records are immutable, so committing a confirmation appends a review record rather than changing the claim, and a decided claim reads `proposed` forever. A record a later record supersedes is excluded too — the correction that replaced it is what should be decided now.\nResults are grouped by run and each group carries that run's current `ledger_version`, which is exactly what POST /v1alpha1/runs/{id}/reviews needs to open a review over them.\nResults are keyset-paginated by `created_at` and `id`. Pass a response's `next_cursor` back as `cursor`; its absence means the final page.\nAn unrecognised query parameter is refused with 400 rather than ignored: a filter silently dropped answers a different question than the one asked while still looking authoritative.",
         "operationId": "listPendingDecisions",
         "parameters": [
           {
@@ -5147,6 +5176,15 @@
               "minimum": 1,
               "type": "integer"
             }
+          },
+          {
+            "description": "Opaque keyset cursor from a previous response's `next_cursor`.",
+            "in": "query",
+            "name": "cursor",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
           }
         ],
         "responses": {
@@ -5168,7 +5206,7 @@
                 }
               }
             },
-            "description": "An unrecognised query parameter was supplied."
+            "description": "An unrecognised query parameter or invalid cursor was supplied."
           }
         },
         "summary": "Every proposed ledger record still awaiting a human decision.",

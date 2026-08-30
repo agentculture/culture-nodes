@@ -110,6 +110,36 @@ func TestPendingDecisionsRejectsAnUnknownFilter(t *testing.T) {
 	decodeAPIError(t, body)
 }
 
+func TestPendingDecisionsRejectsInvalidCursor(t *testing.T) {
+	f := newFixture(t)
+	resp, body := doJSON(t, f.client, http.MethodGet, f.url("/v1alpha1/pending-decisions?cursor=not-a-real-cursor"), nil, nil)
+	requireStatus(t, resp, body, http.StatusBadRequest)
+	decodeAPIError(t, body)
+}
+
+func TestPendingDecisionsCursorReachesEveryClaim(t *testing.T) {
+	f := newFixture(t)
+	run, _ := createMinimalRun(t, f)
+	agent := f.insertActor("paged-claimer")
+	for i := 0; i < 3; i++ {
+		appendAgentClaim(t, f, run.ID, agent, "paged claim "+string(rune('a'+i)))
+	}
+
+	var first apipkg.PendingDecisionListOut
+	resp, body := doJSON(t, f.client, http.MethodGet, f.url("/v1alpha1/pending-decisions?run_id="+run.ID+"&limit=2"), nil, &first)
+	requireStatus(t, resp, body, http.StatusOK)
+	if first.RecordCount != 2 || first.NextCursor == "" {
+		t.Fatalf("first page count=%d next_cursor=%q, want 2 and a cursor", first.RecordCount, first.NextCursor)
+	}
+
+	var second apipkg.PendingDecisionListOut
+	resp, body = doJSON(t, f.client, http.MethodGet, f.url("/v1alpha1/pending-decisions?run_id="+run.ID+"&limit=2&cursor="+first.NextCursor), nil, &second)
+	requireStatus(t, resp, body, http.StatusOK)
+	if second.RecordCount != 1 || second.NextCursor != "" {
+		t.Fatalf("second page count=%d next_cursor=%q, want 1 and no cursor", second.RecordCount, second.NextCursor)
+	}
+}
+
 // TestDecideAProposedClaimRecordsWhoDecidedAndWhy is acceptance criterion 1:
 // a proposed claim is confirmed through the product, and the decision is
 // itself an immutable ledger record naming the decider and the stated reason.

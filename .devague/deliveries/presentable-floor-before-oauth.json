@@ -1,0 +1,34 @@
+{
+  "plan_slug": "presentable-floor-before-oauth",
+  "schema_version": 1,
+  "created": "2026-08-30T12:54:00Z",
+  "updated": "2026-08-30T16:16:54Z",
+  "deviations": [
+    {
+      "id": "d1",
+      "what": "q5 said PR-sourced human tasks echo as a GitHub PR comment plus Discord; t11 shipped Discord-only for PR-sourced tasks because no registered actor can post a GitHub PR comment (the human-inbox tracker writes only to its own submit surface; the agent bridges advertise no GitHub write verb) \u2014 recorded in internal/humanfanout's package doc and migration 0051's header. Also: the pr.merged consumer only expires tasks for PRs whose branch or body carries a Jira key, so the 26 stale approvals for #236/#238/#244/#246 need the operator-run 'nodes expire-approvals --pr \u2026' backfill at t30 (the operator is the merge-fact source).",
+      "task_ref": "t11",
+      "reason": "no GitHub-writing actor exists in the registry; adding one is a new bridge verb outside this quality cycle (c30). The PR-comment leg becomes a follow-up on #256/#258's fleet issues or a small Feature once a GitHub write verb exists.",
+      "affects": [
+        "t30",
+        "t18"
+      ],
+      "origin": "llm",
+      "status": "approved",
+      "classification": "needs-follow-up"
+    },
+    {
+      "id": "d2",
+      "what": "Operator-lane hotfix outside the plan: t24's identity refusal (merged in PR #263) rejected every spark claude-bridge completion on prod because the bridge's issued identity row and the dispatched registration row are different rows of one actor_key. Fixed in-session (PR #264, 0.45.1: compare by actor_key via CallbackStore.ActorKey) rather than through the sweep's fix lane, because that lane runs on the developer actor the bug breaks.",
+      "task_ref": "t30",
+      "reason": "prod outage of all spark claude lanes discovered by the t30 measurement; the system's own repair lane was the casualty",
+      "affects": [
+        "t29",
+        "t31"
+      ],
+      "origin": "llm",
+      "status": "proposed",
+      "classification": "risky"
+    }
+  ]
+}

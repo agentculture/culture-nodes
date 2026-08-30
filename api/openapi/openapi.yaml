@@ -6283,11 +6283,57 @@ components:
             naming both counts and the reason. Composed server-side so the
             count a human reads is the count the API test asserts.
 
+    TicketPendingTask:
+      type: object
+      required: [id, run_id, kind, allowed_outcomes, created_at, ledger_version]
+      description: >-
+        One pending human task on a ticket, shaped for the surface that
+        decides it (task t18). Every field is read back out of the task's own
+        recorded request — what the human was actually shown (PRD §9.9) —
+        never re-derived from the workflow.
+      properties:
+        id: {type: string}
+        run_id: {type: string}
+        kind: {type: string}
+        allowed_outcomes:
+          type: array
+          items: {type: string}
+          description: >-
+            Exactly the outcomes POST /human-tasks/{id}/decision will accept.
+            Always present; an EMPTY array means this task declares none (an
+            alert rather than a choice, e.g. `schedule_failing`) and must be
+            distinguishable from an omitted field.
+        decision_schema_ref:
+          type: string
+          description: The node's authored decisionSchemaRef, unresolved.
+        deadline:
+          type: string
+          format: date-time
+          description: When this task becomes overdue. Absent when the node declared none.
+        created_at: {type: string, format: date-time}
+        ledger_version:
+          type: integer
+          format: int64
+          description: >-
+            The run's ledger version READ IN THIS REQUEST, which is what a
+            decision must submit as `expected_ledger_version`. Served with
+            the task so the version a decider attests to is the one the page
+            they read was rendered from.
+
     Ticket:
       type: object
-      required: [ticket_id, runs, ledger, human_tasks, ticket_reports, replies, frozen]
+      required: [ticket_id, runs, ledger, human_tasks, pending_tasks, ticket_reports, replies, frozen]
       properties:
         ticket_id: {type: string}
+        ticket_url:
+          type: string
+          description: >-
+            Where this ticket lives on the board, composed from the Jira
+            work-item fact the ticket's runs carry (`details_url`, else
+            `jira_site` plus the key), falling back to a posted frame's own
+            `ticket_url`/`jira_url` (task t18, spec c10). Always an absolute
+            http(s) URL; absent when nothing this projection can see says
+            where the ticket lives.
         runs:
           type: array
           items: {$ref: '#/components/schemas/Run'}
@@ -6295,6 +6341,14 @@ components:
         human_tasks:
           type: array
           items: {$ref: '#/components/schemas/HumanTask'}
+          description: Every human task on the ticket's runs, in any status.
+        pending_tasks:
+          type: array
+          items: {$ref: '#/components/schemas/TicketPendingTask'}
+          description: >-
+            The decidable subset of human_tasks. Both are served because they
+            answer different questions — what was asked, and what is still
+            being asked.
         ticket_reports: {type: array, items: {type: object}}
         replies: {type: array, items: {type: object}}
         latest_frame:

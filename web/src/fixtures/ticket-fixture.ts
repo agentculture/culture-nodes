@@ -2,16 +2,33 @@ import type { TicketProjection } from "../api/types";
 
 export const TICKET_ID = "SCRUM-42";
 export const TICKET_URL = "https://jira.example.test/browse/SCRUM-42";
+/** What a frame authored BEFORE the API composed the link says. The
+ *  projection's own `ticket_url` must win over it (task t18). */
+export const STALE_FRAME_TICKET_URL = "https://stale.example.test/browse/SCRUM-42";
+export const PENDING_TASK_ID = "01HTASKPENDING000000000001";
 
 export const TICKET_PROJECTION: TicketProjection = {
   ticket_id: TICKET_ID,
+  ticket_url: TICKET_URL,
+  pending_tasks: [
+    {
+      id: PENDING_TASK_ID,
+      run_id: "run-ticket-1",
+      kind: "approval",
+      allowed_outcomes: ["approved", "rejected"],
+      decision_schema_ref: "./contracts/review-decision.schema.json",
+      deadline: "2026-08-30T09:00:00Z",
+      created_at: "2026-08-29T09:00:00Z",
+      ledger_version: 7,
+    },
+  ],
   latest_frame: {
     ticket_id: TICKET_ID,
     version: 3,
     posted_by: "spec-chain",
     created_at: "2026-08-29T09:00:00Z",
     frame: {
-      ticket_url: TICKET_URL,
+      ticket_url: STALE_FRAME_TICKET_URL,
       claims: [
         { id: "c1", text: "The projection is readable", state: "confirmed" },
         { id: "c2", text: "The reply resumes the flow", state: "proposed" },

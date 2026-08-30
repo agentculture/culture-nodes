@@ -13,14 +13,15 @@ import {
 } from "../api/client";
 import {
   clearDecisionToken,
-  getDecisionActorID,
   getDecisionToken,
   setDecisionActorID,
   setDecisionToken,
 } from "../api/decision-token";
 import type { HumanTask, PendingDecisionRun, ReviewCommitResult } from "../api/types";
 import AuthorityChip from "../components/AuthorityChip";
+import DeciderActorField, { useDeciderActorID } from "../components/DeciderActorField";
 import ErrorNotice from "../components/ErrorNotice";
+import OutcomeButtons from "../components/OutcomeButtons";
 import { useSharedEvents, type SharedEventType } from "../hooks/useSharedEvents";
 
 /**
@@ -90,7 +91,7 @@ function PendingDecisionsView() {
   const [versions, setVersions] = useState<Record<string, number>>({});
   const [tickets, setTickets] = useState<Record<string, string>>({});
   const [page, setPage] = useState(0);
-  const [actorID, setActorID] = useState(getDecisionActorID);
+  const [actorID, setActorID] = useDeciderActorID();
   const [tokenHeld, setTokenHeld] = useState(getDecisionToken() !== null);
   const [submitting, setSubmitting] = useState<string | null>(null);
   const [error, setError] = useState<ApiError | null>(null);
@@ -169,10 +170,7 @@ function PendingDecisionsView() {
     <section className="view-rail decisions-view">
       <h1>Pending decisions</h1>
       <TokenPanel held={tokenHeld} onHold={(value) => { setDecisionToken(value); setTokenHeld(true); }} onClear={() => { clearDecisionToken(); setTokenHeld(false); }} />
-      <div className="inbox-card__field">
-        <label htmlFor="pending-decider-actor">Decider actor id</label>
-        <input id="pending-decider-actor" value={actorID} onChange={(event) => { setActorID(event.target.value); setDecisionActorID(event.target.value); }} />
-      </div>
+      <DeciderActorField id="pending-decider-actor" value={actorID} onChange={setActorID} />
       {error ? <ErrorNotice error={error} /> : null}
       {tasks === null ? <p className="muted">Loading pending decisions…</p> : total === 0 ? <p className="muted">Nothing is awaiting a decision.</p> : (
         <>
@@ -184,13 +182,13 @@ function PendingDecisionsView() {
                 {items.map((item) => item.type === "task" ? (
                   <li className="inbox-card" key={item.task.id} data-human-task-id={item.task.id} data-testid={`pending-task-${item.task.id}`}>
                     <code>{item.task.id}</code> · {item.task.kind}
-                    {(item.task.request.allowed_outcomes ?? []).length === 0 ? <p className="muted">needs an outcome set</p> : (
-                      <div className="inbox-card__outcomes" aria-label={`Outcomes for ${item.task.id}`}>
-                        {(item.task.request.allowed_outcomes ?? []).map((outcome) => (
-                          <button key={outcome} type="button" className="author-workflow__button" disabled={!token || !actorID.trim() || versions[item.task.run_id] === undefined || submitting === item.task.id} onClick={() => void choose(item.task, outcome)}>{outcome}</button>
-                        ))}
-                      </div>
-                    )}
+                    <OutcomeButtons
+                      taskId={item.task.id}
+                      outcomes={item.task.request.allowed_outcomes ?? []}
+                      disabled={!token || !actorID.trim() || versions[item.task.run_id] === undefined}
+                      busy={submitting === item.task.id}
+                      onChoose={(outcome) => void choose(item.task, outcome)}
+                    />
                   </li>
                 ) : (
                   <li className="inbox-card" key={item.record.id}>

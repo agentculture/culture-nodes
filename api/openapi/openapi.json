@@ -3390,6 +3390,7 @@
             "type": "boolean"
           },
           "human_tasks": {
+            "description": "Every human task on the ticket's runs, in any status.",
             "items": {
               "$ref": "#/components/schemas/HumanTask"
             },
@@ -3407,6 +3408,13 @@
           "merged_pr": {
             "additionalProperties": true,
             "type": "object"
+          },
+          "pending_tasks": {
+            "description": "The decidable subset of human_tasks. Both are served because they answer different questions — what was asked, and what is still being asked.",
+            "items": {
+              "$ref": "#/components/schemas/TicketPendingTask"
+            },
+            "type": "array"
           },
           "replies": {
             "items": {
@@ -3428,6 +3436,10 @@
               "type": "object"
             },
             "type": "array"
+          },
+          "ticket_url": {
+            "description": "Where this ticket lives on the board, composed from the Jira work-item fact the ticket's runs carry (`details_url`, else `jira_site` plus the key), falling back to a posted frame's own `ticket_url`/`jira_url` (task t18, spec c10). Always an absolute http(s) URL; absent when nothing this projection can see says where the ticket lives.",
+            "type": "string"
           }
         },
         "required": [
@@ -3435,6 +3447,7 @@
           "runs",
           "ledger",
           "human_tasks",
+          "pending_tasks",
           "ticket_reports",
           "replies",
           "frozen"
@@ -3499,6 +3512,54 @@
           "cancelled_runs",
           "parked_runs",
           "banner"
+        ],
+        "type": "object"
+      },
+      "TicketPendingTask": {
+        "description": "One pending human task on a ticket, shaped for the surface that decides it (task t18). Every field is read back out of the task's own recorded request — what the human was actually shown (PRD §9.9) — never re-derived from the workflow.",
+        "properties": {
+          "allowed_outcomes": {
+            "description": "Exactly the outcomes POST /human-tasks/{id}/decision will accept. Always present; an EMPTY array means this task declares none (an alert rather than a choice, e.g. `schedule_failing`) and must be distinguishable from an omitted field.",
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          },
+          "created_at": {
+            "format": "date-time",
+            "type": "string"
+          },
+          "deadline": {
+            "description": "When this task becomes overdue. Absent when the node declared none.",
+            "format": "date-time",
+            "type": "string"
+          },
+          "decision_schema_ref": {
+            "description": "The node's authored decisionSchemaRef, unresolved.",
+            "type": "string"
+          },
+          "id": {
+            "type": "string"
+          },
+          "kind": {
+            "type": "string"
+          },
+          "ledger_version": {
+            "description": "The run's ledger version READ IN THIS REQUEST, which is what a decision must submit as `expected_ledger_version`. Served with the task so the version a decider attests to is the one the page they read was rendered from.",
+            "format": "int64",
+            "type": "integer"
+          },
+          "run_id": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "run_id",
+          "kind",
+          "allowed_outcomes",
+          "created_at",
+          "ledger_version"
         ],
         "type": "object"
       },

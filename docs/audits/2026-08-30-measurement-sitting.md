@@ -71,10 +71,11 @@ reaches the fan-out path.
 4. **Nine pending human tasks predate the cycle.** Eight are pr-upkeep
    `human-merges-pr` approvals for PRs the operator merged on GitHub before
    deciding them (#223 ×6, #209 ×2) — the `pr_merged` expiry only covers
-   ticket-keyed PRs. Deciding them `approved` (the merge happened) is staged
-   for the operator (`decide-stale-approvals.sh`, run as a hand-turn: the
-   decision secret lives on thor and the assistant is not permitted to
-   read it in bulk). The ninth, `01M16FX0BWK9X6TKE9BHAAW88Y`, is a
+   ticket-keyed PRs. They were decided `approved` (the merge happened) by the operator at
+   21:14 IDT via `decide-stale-approvals.sh` — a hand-turn, because the
+   decision secret lives on thor and the assistant may not read it in bulk;
+   the first attempt hit `ledger_version_moved` (409) until the script read
+   each run's live `ledger_version`. Pending count 28 → 1. The ninth, `01M16FX0BWK9X6TKE9BHAAW88Y`, is a
    `trigger_remint_exhausted` alert on SCRUM-5 with no options; it is
    informational and stays until the alert kind gains an acknowledge path.
 5. **The spec lane did not chain from intake on SCRUM-7.** `docs/drive-from-jira.md`
@@ -97,7 +98,11 @@ reaches the fan-out path.
 - Built and copied an arm64 `nodes` binary to thor for the backfill.
 - Stashed the developer checkout under a live session (#93).
 - Two deploys from main (`deploy.sh thor`, `deploy.sh orin`) at 0.45.1.
-- Staged, not run: the eight stale approvals above.
+- Decided the eight stale approvals above `approved` at 21:14 IDT
+  (`decide-stale-approvals.sh`; the decision secret lives on thor, so the
+  operator ran it there). The first attempt was refused with
+  `ledger_version_moved` (409) and re-run against each run's live
+  `ledger_version`; pending count 28 → 1.
 
 ## How this closes
 

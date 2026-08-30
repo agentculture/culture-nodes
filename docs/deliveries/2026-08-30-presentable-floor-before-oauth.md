@@ -91,7 +91,7 @@ are drift, listed below.
 | `t27` | delivered | developer `01M19GEJG8Z6VR32JVX2TZCC4W` (grade 5) — planned for codex-orin: the polish bundle with before/after screenshots in PR #263 |
 | `t28` | delivered | developer `01M19HTAA9KDK8DCM01XQ2ESDH` (grade 4) — planned for codex-thor: `docs/drive-from-jira.md`, `examples/jira-intake/README.md`, deploy README grants list |
 | `t29` | delivered | in-session: `deploy.sh thor` + `orin` at `d6a253e` (migrations 0049–0052, first live `grant-check.sh` pass, `JIRA_TRANSITION_TARGET=In Progress,Pending`, `human_task_expiry` registered, sweep source re-pinned) and again at `15fefde`; `/v1alpha1/version` verified both times. Hand-turn: the Jira bridge was reinstalled by hand (`JIRA_SITE` unset in the deploying shell) |
-| `t30` | partial | in-session: `docs/audits/2026-08-30-measurement-sitting.md` — 11 rows proven on SCRUM-7 (intake with the bot id, one page link over two milestones, description quoted, fan-out to Jira comment + Pending + Discord, decision round trip, SCRUM-5 freeze). **Missing**: the PR-comment leg (`d1`, no actor); the remint alert `01M16FX0BWK9X6TKE9BHAAW88Y` has no option to decide; 8 stale approvals staged for the operator (secret access), 19 expired via `nodes expire-approvals`; the reader-role walk of drive-from-jira.md was not performed |
+| `t30` | partial | in-session: `docs/audits/2026-08-30-measurement-sitting.md` — 11 rows proven on SCRUM-7 (intake with the bot id, one page link over two milestones, description quoted, fan-out to Jira comment + Pending + Discord, decision round trip, SCRUM-5 freeze). **Missing**: the PR-comment leg (`d1`, no actor); the remint alert `01M16FX0BWK9X6TKE9BHAAW88Y` has no option to decide; 19 stale approvals expired via `nodes expire-approvals` and the other 8 decided `approved` by the operator at 21:14 IDT (secret access is a hand-turn); the reader-role walk of drive-from-jira.md was not performed |
 | `t31` | delivered | this document; PR #263's body lists every run id with in-session exceptions declared; open issues 49 with zero untyped rows in `docs/triage/open-issues.md`; signal 1 pending until 2026-09-06 |
 
 ## Mid-work Decisions
@@ -111,7 +111,7 @@ are drift, listed below.
 | `t24` (`d2`, proposed) | the refusal shipped by t24 compared row ids and broke every claude-bridge completion in prod; corrected by hotfix #264 in the operator lane because the sweep's fix lane was the lane it broke | risky |
 | `t8`, `t18`, `t27`, `t28`, `t21` follow-up | planned for codex-thor/orin, delivered by the developer lane after the codex window hit `capacity_exhausted` (r7); same acceptance criteria, different actor in the comparative record | acceptable |
 | `t9` | migration number 0050 instead of the planned 0049 (taken by the t19 gate fix) | acceptable |
-| `t30` | PR-comment leg unmeasurable (`d1`); remint alert task has no decidable option; the 8 remaining stale approvals are staged, not decided (the assistant may not read the decision secret in bulk); reader-role walk of drive-from-jira.md not performed | needs-follow-up |
+| `t30` | PR-comment leg unmeasurable (`d1`); remint alert task has no decidable option; the 8 stale approvals were decided by the operator as a hand-turn at 21:14 IDT (the assistant may not read the decision secret in bulk); reader-role walk of drive-from-jira.md not performed | needs-follow-up |
 | `t29` | the Jira comment actor is skipped by `deploy.sh` when `JIRA_SITE` is unset in the deploying shell; reinstalled by hand once | needs-follow-up |
 
 ## Evidence
@@ -136,9 +136,9 @@ Each announcement clause of the spec, ticked against evidence:
 | pending human decisions are collected in one view with the options the engine accepts | medium | t10 run `01M192KMZR9X9ZFBB2P7Y74PYM`, `web/src/routes/Inbox.tsx` `/v1alpha1/human-tasks?status=pending`; not driven in a browser on prod |
 | a decision is echoed onto the Jira ticket, moves it to Pending, and reaches Discord | high | audit rows 5–7: SCRUM-7 comment 20:48:50, status `Pending`, notify record 204 |
 | the options are on the ticket page | medium | audit row 9: `GET /v1alpha1/tickets/SCRUM-7` lists the task; SPA not driven |
-| stale approvals expire when their PR merges | medium | `pr.merged` consumer (t11); 19 expired by `nodes expire-approvals`; the merged-before-deploy 8 are staged (`d1`) |
+| stale approvals expire when their PR merges | medium | `pr.merged` consumer (t11); 19 expired by `nodes expire-approvals`; the 8 merged before the deploy were decided `approved` by the operator on 2026-08-30 21:14 IDT (`d1`: the operator is the merge-fact source for PRs with no Jira key) |
 | repeat sweep runs no longer bury real work | medium | t7 run `01M191YR0NKKC6WAF5D50JM6BP` (grouped failed runs + counter); t9 backoff — not re-observed on prod because the sweep has not failed since deploy |
-| every ticket has a reachable page link | high | audit row 2: absolute `http://thor:18080/tickets/SCRUM-7` |
+| every ticket has a page link that resolves from the LAN or Tailscale | high | audit row 2: absolute `http://thor:18080/tickets/SCRUM-7`. Not reachable from outside that network — `docs/drive-from-jira.md` states the limit; lifting it is the login-from-anywhere cycle (Qodo finding 2 on #266) |
 | agents receive the ticket description | high | audit row 4: `heliotrope-ledger-4471` quoted |
 | freeze ends the ticket's runs — the ones live at freeze time | medium | c28 as scoped: `freezeTicketRuns` cancels (Done) or parks (any other status) the runs live when the freeze row is written. SCRUM-5's run cancelled (earlier sitting); SCRUM-7's #264 freeze affected 0 runs. It does **not** stop later runs — audit finding 2: rows 4–8 post-date the freeze — it closes the ticket's reply form. |
 | the four site defects and the polish bundle are shipped | medium | t8/t27 runs; screenshots in PR #263; not re-verified on prod after deploy |
@@ -151,7 +151,7 @@ Each announcement clause of the spec, ticked against evidence:
 ## Remaining Work / Follow-up
 
 - `t11` / `d1` — GitHub PR-comment leg of the fan-out: needs a bridge verb that writes to a PR thread (#256/#258 or a small Feature); until then PR-sourced tasks fan out to Discord only.
-- `t30` — run `decide-stale-approvals.sh` (operator hand-turn: 8 approvals for merged #223/#209); give `trigger_remint_exhausted` alerts an acknowledge outcome so `01M16FX0BWK9X6TKE9BHAAW88Y` can close; walk `docs/drive-from-jira.md` as each reader role; re-measure the intake → spec-lane chain on an unfrozen ticket moved by a second account.
+- `t30` — the 8 stale approvals for merged #223/#209 were decided `approved` by the operator on 2026-08-30 21:14 IDT (`decide-stale-approvals.sh`; pending count 28 → 1); one resumed run, `01M0E6EBXC8C7T0NFH5KVDT44P` (2026-08-19 graph), ended `failed` on resume — reason not read, recorded here rather than claimed; give `trigger_remint_exhausted` alerts an acknowledge outcome so `01M16FX0BWK9X6TKE9BHAAW88Y` can close; walk `docs/drive-from-jira.md` as each reader role; re-measure the intake → spec-lane chain on an unfrozen ticket moved by a second account.
 - `d2` — confirm or reject the deviation record in devague (user decision); the code is merged and deployed either way.
 - #265 — fan-out lists `expired` as an option and names the node by kind.
 - #93 — per-run checkouts; the shared checkout collided twice on 2026-08-30.

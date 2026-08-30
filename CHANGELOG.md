@@ -5,6 +5,12 @@ All notable changes to this project will be documented in this file.
 Format follows [Keep a Changelog](https://keepachangelog.com/). This project
 adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.45.3] - 2026-08-30
+
+### Changed
+
+- Delivery summary and measurement audit follow-ups: the page-link claim states its LAN/Tailscale boundary (Qodo finding 2 on #266, unworked by the sweep because the PR had merged); the eight stale approvals are recorded as decided, not staged.
+
 ## [0.45.2] - 2026-08-30
 
 ### Added

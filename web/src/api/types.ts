@@ -130,7 +130,7 @@ export interface Attempt {
   status: AttemptStatus;
   fencing_token?: number;
   result?: unknown;
-  started_at: string;
+  started_at?: string;
   completed_at?: string;
   usage?: AttemptUsage;
   termination_reason?: string;

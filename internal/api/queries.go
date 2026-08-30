@@ -415,7 +415,12 @@ func (s *Server) runNodeRuns(ctx context.Context, runID string) ([]NodeRunOut, e
 		// are listed -- the aggregates are where superseded history drops
 		// out, not the run's own account of what happened.
 		a.Supersedes = textOrEmpty(supersedes)
-		a.StartedAt = tsOrZero(startedAt)
+		// NULL since migration 0049: an attempt with no invocation row has an
+		// unknown start, which is omitted rather than rendered as year 1.
+		if startedAt.Valid {
+			started := startedAt.Time
+			a.StartedAt = &started
+		}
 		if completedAt.Valid {
 			completed := completedAt.Time
 			a.CompletedAt = &completed

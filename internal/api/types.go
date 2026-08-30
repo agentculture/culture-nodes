@@ -274,7 +274,7 @@ type AttemptOut struct {
 	Status            string           `json:"status"`
 	FencingToken      int64            `json:"fencing_token,omitempty"`
 	Result            json.RawMessage  `json:"result,omitempty"`
-	StartedAt         time.Time        `json:"started_at"`
+	StartedAt         *time.Time       `json:"started_at,omitempty"`
 	CompletedAt       *time.Time       `json:"completed_at,omitempty"`
 	Usage             *AttemptUsageOut `json:"usage,omitempty"`
 	TerminationReason string           `json:"termination_reason,omitempty"`

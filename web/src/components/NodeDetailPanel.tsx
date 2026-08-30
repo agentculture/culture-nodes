@@ -253,7 +253,9 @@ export function NodeDetailPanel({
                         </span>
                       ) : null}
                     </th>
-                    <td data-attempt-status={attempt.status}>{attempt.status}</td>
+                    <td data-attempt-status={attempt.status}>
+                      {attempt.status}
+                    </td>
                     <td>
                       <code>{attempt.actor_id ?? "—"}</code>
                     </td>
@@ -261,11 +263,20 @@ export function NodeDetailPanel({
                       {/* Clock time in the cell, the full instant in the title
                           and in dateTime — the panel is narrow, the record is
                           not truncated. */}
-                      <time dateTime={attempt.started_at} title={attempt.started_at}>
-                        {clockTime(attempt.started_at)}
-                      </time>
+                      {attempt.started_at ? (
+                        <time
+                          dateTime={attempt.started_at}
+                          title={attempt.started_at}
+                        >
+                          {clockTime(attempt.started_at)}
+                        </time>
+                      ) : (
+                        "—"
+                      )}
                     </td>
-                    <td>{duration(attempt.started_at, attempt.completed_at)}</td>
+                    <td>
+                      {duration(attempt.started_at, attempt.completed_at)}
+                    </td>
                     <td>
                       <code>{attempt.usage?.usage_model ?? "—"}</code>
                       {attempt.usage?.reasoning_tokens !== undefined ? (
@@ -420,7 +431,10 @@ export function NodeDetailPanel({
                       >
                         {workspace.artifactRefs.map((ref) => (
                           <li key={ref}>
-                            <a href={ref} className="detail-panel__artifact-ref">
+                            <a
+                              href={ref}
+                              className="detail-panel__artifact-ref"
+                            >
                               <code>{ref}</code>
                             </a>
                           </li>

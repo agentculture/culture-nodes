@@ -318,12 +318,19 @@ func scanPendingInvocation(row invocationRowScanner) (actors.PendingInvocation, 
 // can tell "another revision of the same actor" from "another actor". A
 // bridge reports the identity row it holds (an actor_claude_<role>_* id
 // minted at issuance) while dispatch names the registration row the worker
-// chose (an actor_register_* id); both carry one actor_key. Unknown ids
-// return ErrActorNotFound.
+// chose (an actor_register_* id); both carry one actor_key.
+//
+// Unknown ids return actors.ErrUnknownActor, and only unknown ids do: a
+// connection reset, a cancelled context or a scan failure comes back as
+// itself. The caller's refusal is terminal, so "there is no such actor" and
+// "I could not ask" must not arrive as the same error.
 func (cs *CallbackStore) ActorKey(ctx context.Context, actorID string) (string, error) {
 	a, err := engineQueries{q: cs.store.pool, namespaceID: cs.namespaceID}.GetActor(ctx, actorID)
 	if err != nil {
-		return "", err
+		if errors.Is(err, ErrNotFound) {
+			return "", fmt.Errorf("postgres: actor %s: %w", actorID, actors.ErrUnknownActor)
+		}
+		return "", fmt.Errorf("postgres: ActorKey %s: %w", actorID, err)
 	}
 	return a.ActorKey, nil
 }

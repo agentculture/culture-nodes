@@ -154,10 +154,11 @@ func TestMergeWorkspaceMeasuredTopLevelBlockWinsOverInlineKey(t *testing.T) {
 // or engine packages) fails here and must argue its authority first.
 func TestWorkspaceMeasuredTouchesNoEvidenceWriters(t *testing.T) {
 	allowed := map[string]bool{
-		filepath.Join("internal", "actors", "protocol.go"):  true,
-		filepath.Join("internal", "actors", "workspace.go"): true,
-		filepath.Join("internal", "actors", "callback.go"):  true,
-		filepath.Join("internal", "worker", "dispatch.go"):  true,
+		filepath.Join("internal", "actors", "protocol.go"):            true,
+		filepath.Join("internal", "actors", "workspace.go"):           true,
+		filepath.Join("internal", "actors", "callback.go"):            true,
+		filepath.Join("internal", "actors", "callback_completion.go"): true,
+		filepath.Join("internal", "worker", "dispatch.go"):            true,
 	}
 
 	root := filepath.Join("..", "..")

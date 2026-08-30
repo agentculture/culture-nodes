@@ -136,11 +136,15 @@ func (s *Server) handleCreateSuiteVerdict(w http.ResponseWriter, r *http.Request
 				"something other than what this run handed over",
 			measuredCommit, req.CommitSHA)
 	}
+	attemptID, err := s.recordedAttemptID(ctx, req.NodeRunRef, req.AttemptRef)
+	if err != nil {
+		return internalError(err)
+	}
 
 	record, err := handover.SuiteVerdict{
 		RunID:             id,
 		NodeRunID:         req.NodeRunRef,
-		AttemptID:         req.AttemptRef,
+		AttemptID:         attemptID,
 		Suite:             req.Suite,
 		Command:           req.Command,
 		ExitCode:          *req.ExitCode,
@@ -153,6 +157,10 @@ func (s *Server) handleCreateSuiteVerdict(w http.ResponseWriter, r *http.Request
 	}.Record()
 	if err != nil {
 		return classify(err)
+	}
+	record, err = withAttemptRef(record, req.AttemptRef)
+	if err != nil {
+		return internalError(err)
 	}
 
 	appended, err := s.Ledger.Append(ctx, record)

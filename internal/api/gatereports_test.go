@@ -1,12 +1,16 @@
 package api_test
 
 import (
+	"context"
 	"encoding/json"
 	"net/http"
 	"testing"
 
+	"github.com/agentculture/culture-nodes/internal/engine"
 	"github.com/agentculture/culture-nodes/internal/handover"
 	"github.com/agentculture/culture-nodes/internal/ledger"
+	"github.com/agentculture/culture-nodes/internal/store"
+	storepg "github.com/agentculture/culture-nodes/internal/store/postgres"
 )
 
 // The gate-report wire shapes, encoded here rather than reached for out of
@@ -73,6 +77,63 @@ func postGateReport(t *testing.T, f *fixture, runID string, req gateReportReq, w
 		f.url("/v1alpha1/runs/"+runID+"/gate-reports"), decisionAuthSecret, req, &out)
 	requireStatus(t, resp, body, want)
 	return out, body
+}
+
+func insertCompletedAttempt(t *testing.T, f *fixture, nodeRunID string) string {
+	t.Helper()
+	attemptID := store.NewULID()
+	es, err := storepg.NewEngineStore(f.store, f.nsID)
+	if err != nil {
+		t.Fatalf("NewEngineStore: %v", err)
+	}
+	err = es.InTx(context.Background(), func(ctx context.Context, tx engine.Tx) error {
+		return tx.InsertAttempt(ctx, engine.Attempt{
+			ID: attemptID, NodeRunID: nodeRunID, Number: 1, Status: engine.StatusSucceeded,
+		})
+	})
+	if err != nil {
+		t.Fatalf("insert completed attempt: %v", err)
+	}
+	return attemptID
+}
+
+func TestGateReportKeepsAttemptRefWithoutInventingAnAttemptForeignKey(t *testing.T) {
+	for _, tc := range []struct {
+		name     string
+		complete bool
+	}{
+		{name: "in flight"},
+		{name: "completed", complete: true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			f := newFixtureWithDecisionAuth(t, decisionAuthSecret)
+			run, nodeRunID := createMinimalRun(t, f)
+			validator := f.insertActorKind("merge-gate-node", "validator")
+			attemptRef := "att_" + store.NewULID()
+			if tc.complete {
+				attemptRef = insertCompletedAttempt(t, f, nodeRunID)
+			}
+
+			out, _ := postGateReport(t, f, run.ID, gateReportReq{
+				CommitSHA: gateCommit, ValidatorActorID: validator,
+				NodeRunRef: nodeRunID, AttemptRef: attemptRef,
+				Gates: []gateEntryReq{{Gate: "go-test", ExitCode: exitCode(0)}},
+			}, http.StatusCreated)
+
+			for _, rec := range append(out.Gates, out.Aggregate) {
+				if got := verdictPayload(t, rec)["attempt_ref"]; got != attemptRef {
+					t.Errorf("record %s data.attempt_ref = %v, want %s", rec.ID, got, attemptRef)
+				}
+				wantAttemptID := ""
+				if tc.complete {
+					wantAttemptID = attemptRef
+				}
+				if rec.AttemptID.String() != wantAttemptID {
+					t.Errorf("record %s attempt_id = %q, want %q", rec.ID, rec.AttemptID, wantAttemptID)
+				}
+			}
+		})
+	}
 }
 
 // TestGateReportRecordsEveryGateAsDerivedFromAValidator is criterion 3: every

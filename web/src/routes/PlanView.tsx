@@ -137,16 +137,27 @@ export function PlanView() {
         Ledger view does.
       </p>
 
-      <form className="plan-view__slug-form" onSubmit={submitSlug}>
-        <label htmlFor="plan-slug-input">Plan slug</label>
-        <input
-          id="plan-slug-input"
-          type="text"
-          value={slugInput}
-          onChange={(event) => setSlugInput(event.target.value)}
-          placeholder="economy-discord-graphs"
-        />
-        <button type="submit">Go</button>
+      {/* Label above the control, and the shared `control` classes rather
+          than a native unstyled input (task t27): this form and the
+          Generate view's were the two places where a field looked like a
+          different product from the rest of the app. */}
+      <form className="field-row plan-view__slug-form" onSubmit={submitSlug}>
+        <div className="field">
+          <label className="field__label" htmlFor="plan-slug-input">
+            Plan slug
+          </label>
+          <input
+            id="plan-slug-input"
+            className="control control--input"
+            type="text"
+            value={slugInput}
+            onChange={(event) => setSlugInput(event.target.value)}
+            placeholder="economy-discord-graphs"
+          />
+        </div>
+        <button type="submit" className="control control--button">
+          Go
+        </button>
       </form>
 
       {error ? <ErrorNotice error={error} /> : null}

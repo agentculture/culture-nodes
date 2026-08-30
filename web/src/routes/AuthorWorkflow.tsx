@@ -26,6 +26,94 @@ import {
 
 const NODE_TYPES = { workflow: WorkflowNode };
 
+/**
+ * The document the "Load a sample" button drops in (task t27): the minimal
+ * shape a workflow can have and still compile — one agent node, one end node,
+ * one edge between them.
+ *
+ * It is `deploy/compose/testdata/smoke.workflow.yaml` with its comments
+ * stripped and its name changed, deliberately rather than a fresh document
+ * invented here: that fixture is the one the compose smoke test validates,
+ * publishes and runs on every check, so a sample that stops compiling is a
+ * failure somebody else's suite catches first.
+ *
+ * `uses` names an actor reference that resolves to nothing. That is correct
+ * for a sample: this page validates and publishes, it never runs anything,
+ * and a sample pinned to a real actor digest would go stale the moment that
+ * actor was re-registered.
+ */
+const SAMPLE_WORKFLOW = `apiVersion: nodes.culture.dev/v1alpha1
+kind: Workflow
+
+metadata:
+  name: sample-workflow
+  version: 1.0.0
+  ownerRef: team/platform-ai
+
+spec:
+  entry: work
+
+  contract:
+    input:
+      schema:
+        type: object
+        required: [subject]
+        properties:
+          subject:
+            type: string
+    output:
+      schema:
+        type: object
+        required: [summary]
+        properties:
+          summary:
+            type: string
+
+  limits:
+    maxDuration: 1h
+    maxTransitions: 8
+    maxVisitsPerNode: 4
+    maxParallelTokens: 1
+
+  ledger:
+    schemaVersion: nodes.culture.dev/ledger/v1alpha1
+    maxRecordsPerNode: 10
+
+  nodes:
+    work:
+      kind: agent
+      ownerRef: team/platform-ai
+      uses: actor://company/smoke-test@sha256:aaaaaa
+      input:
+        from: /run/input
+      contract:
+        outcomes:
+          completed:
+            schema:
+              type: object
+              required: [summary]
+              properties:
+                summary:
+                  type: string
+      ledger:
+        propose: [claim, result]
+      policy:
+        timeout: 2m
+        retry:
+          maxAttempts: 1
+          backoff: none
+
+    finish:
+      kind: end
+      ownerRef: team/platform-ai
+      output:
+        from: /nodes/work/output
+
+  edges:
+    - from: work.completed
+      to: finish
+`;
+
 const noop = () => {
   /* the preview canvas is read-only: nothing opens on click */
 };
@@ -134,6 +222,12 @@ function AuthorWorkflowInner() {
     // Allow re-selecting the same file to trigger onChange again.
     event.target.value = "";
   }, []);
+
+  const onLoadSample = () => {
+    setSource(SAMPLE_WORKFLOW);
+    setFormat("yaml");
+    resetOutcome();
+  };
 
   const onValidate = async () => {
     setValidating(true);
@@ -268,6 +362,18 @@ function AuthorWorkflowInner() {
               accept=".yaml,.yml,.json"
               onChange={onFileChange}
             />
+            {/* An empty textarea and a Validate button is a door with no
+                handle — a reader who has never written this schema has
+                nowhere to start (task t27). The sample compiles, so the
+                first thing the page does is show them a green validate. */}
+            <button
+              type="button"
+              id="load-sample-workflow-button"
+              className="author-workflow__button"
+              onClick={onLoadSample}
+            >
+              Load a sample
+            </button>
           </div>
         </div>
         <textarea

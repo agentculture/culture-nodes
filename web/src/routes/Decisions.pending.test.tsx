@@ -119,3 +119,39 @@ describe("Decisions pending tab", () => {
     }
   });
 });
+
+
+describe("Decisions pending tab record rendering (task t27)", () => {
+  it("labels each claim checkbox with the record it selects and shows the statement as prose", async () => {
+    const statement = "Ran the suite twice.\nBoth greens are CI's, not mine.";
+    mockListHumanTasks.mockResolvedValue({ items: [] });
+    mockListPendingDecisions.mockResolvedValue({
+      record_count: 1,
+      items: [
+        {
+          run_id: "run-t27",
+          ledger_version: 9,
+          records: [
+            {
+              id: "rec-t27-0001",
+              record_type: "claim",
+              origin_kind: "agent",
+              origin_actor_id: "codex-orin",
+              created_at: "2026-08-30T10:00:00Z",
+              data: { kind: "completion", statement },
+            },
+          ],
+        },
+      ],
+    });
+    await renderPending();
+
+    expect(
+      await screen.findByRole("checkbox", {
+        name: "include this record in the verdict (rec-t27-0001)",
+      }),
+    ).toBeInTheDocument();
+    const prose = document.querySelector(".decisions-record__statement")!;
+    expect(prose.textContent).toBe(statement);
+  });
+});

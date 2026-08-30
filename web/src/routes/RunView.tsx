@@ -24,7 +24,7 @@ import WorkflowNode, {
 } from "../components/WorkflowNode";
 import { NODE_HEIGHT, NODE_WIDTH, useElkLayout } from "../hooks/useElkLayout";
 import { useReducedMotion } from "../hooks/useReducedMotion";
-import { useRunEvents } from "../hooks/useRunEvents";
+import { useRunEvents, type StreamStatus } from "../hooks/useRunEvents";
 import {
   applyEvent,
   executionFromRunView,
@@ -35,6 +35,26 @@ import { mergeUsage, runDisplayName } from "../domain/usage";
 import { useRunData } from "./useRunData";
 
 const NODE_TYPES = { workflow: WorkflowNode };
+
+/**
+ * What each `stream:` state means for what is on screen (task t27). "closed"
+ * is the one that needed saying: it does not mean the run stopped, and it does
+ * not mean the page is wrong — it means the live feed ended, so what is
+ * rendered is the last state the page was told about. Read as a bare word next
+ * to a run state chip it looked like a failure, and operators reloaded pages
+ * that had nothing wrong with them.
+ *
+ * The wording tracks useRunEvents's own status vocabulary; a state added there
+ * without an entry here is a TypeScript error, not a silently missing tooltip.
+ */
+const STREAM_STATUS_EXPLANATION: Record<StreamStatus, string> = {
+  connecting: "opening the live event stream; the graph shows the snapshot the page loaded with",
+  open: "live: every committed event is being applied to this page as it happens",
+  error:
+    "the live event stream dropped and could not be re-established — this page is showing the last state it was told about. The run itself is unaffected; reload to try again.",
+  closed:
+    "the live event stream has ended — this page is showing the last state it was told about, not necessarily the run's current one. The run itself is unaffected; reload to resume the stream.",
+};
 const PAN_STEP = 64;
 const EMPTY_WALKED: ReadonlySet<string> = new Set<string>();
 
@@ -271,6 +291,12 @@ function RunViewInner() {
       ? mergeUsage(selectedNodeUsageEntries)
       : undefined;
 
+  // `runDisplayName` falls back to the run id when a run has neither a given
+  // name nor a display hint (domain/usage.ts) — and the heading above already
+  // prints the id. Rendering the name line anyway put the same ULID on screen
+  // twice, once as the title's subject and once as its "name", which reads as
+  // two different facts. The line renders only when it says something the
+  // heading does not.
   const runDisplay = view ? runDisplayName(view.run) : null;
 
   if (error) {
@@ -293,7 +319,7 @@ function RunViewInner() {
             {graph?.name ?? "Run"}{" "}
             <span className="run-view__id">{runId}</span>
           </h1>
-          {view && runDisplay ? (
+          {view && runDisplay && runDisplay.text !== view.run.id ? (
             <p className="run-view__run-name" id="run-view-name">
               <span
                 className={`run-name${runDisplay.derived ? " run-name--derived" : ""}`}
@@ -334,8 +360,13 @@ function RunViewInner() {
             id="stream-status"
             className="stream-status"
             data-stream-status={streamStatus}
+            title={STREAM_STATUS_EXPLANATION[streamStatus]}
           >
             stream: {streamStatus}
+            <span className="sr-only">
+              {" "}
+              — {STREAM_STATUS_EXPLANATION[streamStatus]}
+            </span>
           </span>
           <Link id="ledger-link" to={`/runs/${runId}/ledger`}>
             Ledger

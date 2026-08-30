@@ -23,11 +23,64 @@ import RunsList from "./routes/RunsList";
 import Statistics from "./routes/Statistics";
 import TicketView from "./routes/TicketView";
 
-/** Keeps agent-state's `route` in step with the router. */
+/**
+ * Route path → the leading half of the document title (task t27). Matched
+ * longest-prefix-first below, so `/runs/:id/ledger` beats `/runs/:id` beats
+ * `/runs`. Every entry is the same word the header nav uses for that view —
+ * a tab strip and a browser tab that name the same page differently is the
+ * defect this fixes, not two vocabularies to maintain.
+ */
+const ROUTE_TITLES: ReadonlyArray<readonly [string, string]> = [
+  ["/runs", "Runs"],
+  ["/board", "Board"],
+  ["/jobs", "Jobs"],
+  ["/inbox", "Inbox"],
+  ["/decisions", "Decisions"],
+  ["/mesh", "Mesh"],
+  ["/stats", "Statistics"],
+  ["/graphs", "Node Graphs"],
+  ["/plan", "Plan"],
+  ["/workflows/new", "New workflow"],
+  ["/workflows/generate", "Generate workflow"],
+  ["/tickets", "Ticket"],
+];
+
+const APP_TITLE = "Culture Nodes";
+
+/**
+ * The title for a path. A run/ticket/plan detail page names its subject —
+ * `Run 01J… · Culture Nodes` — because a reader with eight tabs open is
+ * choosing between runs, not between the word "Runs" eight times.
+ */
+export function titleForPath(pathname: string): string {
+  const ledger = /^\/runs\/([^/]+)\/ledger$/.exec(pathname);
+  if (ledger) return `Ledger ${decodeURIComponent(ledger[1])} · ${APP_TITLE}`;
+  const run = /^\/runs\/([^/]+)$/.exec(pathname);
+  if (run) return `Run ${decodeURIComponent(run[1])} · ${APP_TITLE}`;
+  const ticket = /^\/tickets\/([^/]+)$/.exec(pathname);
+  if (ticket) return `Ticket ${decodeURIComponent(ticket[1])} · ${APP_TITLE}`;
+  const plan = /^\/plan\/([^/]+)$/.exec(pathname);
+  if (plan) return `Plan ${decodeURIComponent(plan[1])} · ${APP_TITLE}`;
+
+  const matches = ROUTE_TITLES.filter(
+    ([prefix]) => pathname === prefix || pathname.startsWith(`${prefix}/`),
+  ).sort((a, b) => b[0].length - a[0].length);
+  if (matches.length > 0) return `${matches[0][1]} · ${APP_TITLE}`;
+  if (pathname === "/") return APP_TITLE;
+  return `Not found · ${APP_TITLE}`;
+}
+
+/**
+ * Keeps agent-state's `route` — and the document title — in step with the
+ * router. Both are the same fact ("which view is on screen") told to two
+ * different readers, so they are set from one effect rather than drifting
+ * apart in two.
+ */
 function RouteWatcher() {
   const location = useLocation();
   useEffect(() => {
     setAgentState({ route: location.pathname });
+    document.title = titleForPath(location.pathname);
   }, [location.pathname]);
   return null;
 }

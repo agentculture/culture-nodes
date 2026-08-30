@@ -155,3 +155,43 @@ describe("PlanView — waves, task status, and the origin distinction (task t23)
     expect(getAgentState().status).toBe("ready");
   });
 });
+
+
+describe("PlanView slug field styling and structure (task t27)", () => {
+  it("puts the label above the input and gives both the shared control classes", async () => {
+    mockListPlanImports.mockResolvedValue({ items: [] });
+    renderPlan(null);
+
+    const input = screen.getByLabelText("Plan slug");
+    expect(input).toHaveClass("control", "control--input");
+
+    const field = input.closest(".field")!;
+    const label = field.querySelector("label")!;
+    expect(label).toHaveClass("field__label");
+    // Label first in document order — "above", once the .field grid applies.
+    expect(
+      label.compareDocumentPosition(input) & Node.DOCUMENT_POSITION_FOLLOWING,
+    ).toBeTruthy();
+
+    expect(screen.getByRole("button", { name: "Go" })).toHaveClass(
+      "control",
+      "control--button",
+    );
+  });
+
+  it("still navigates to the typed slug", async () => {
+    mockListPlanImports.mockResolvedValue({ items: PLAN_IMPORT_SUMMARIES });
+    mockGetPlanImport.mockResolvedValue(PLAN_IMPORT);
+    renderPlan(null);
+
+    await userEvent.type(screen.getByLabelText("Plan slug"), PLAN_SLUG);
+    await userEvent.click(screen.getByRole("button", { name: "Go" }));
+
+    await waitFor(() =>
+      expect(mockListPlanImports).toHaveBeenCalledWith(
+        PLAN_SLUG,
+        expect.anything(),
+      ),
+    );
+  });
+});

@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { render, screen, within } from "@testing-library/react";
 import { MemoryRouter } from "react-router-dom";
 import JobsTable from "./JobsTable";
@@ -175,5 +175,39 @@ describe("JobsTable", () => {
       expect(hint).toHaveAttribute("data-derived", "true");
       expect(hint.className).toContain("run-name--derived");
     });
+  });
+});
+
+
+describe("JobsTable humanised timestamps (task t27)", () => {
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  it("renders started and updated relative, with the exact instant on title", () => {
+    const item = {
+      ...JOB_RUNS_PAGE_1[0],
+      created_at: "2026-08-30T09:00:00Z",
+      updated_at: "2026-08-30T11:30:00Z",
+    };
+    vi.useFakeTimers({
+      now: new Date("2026-08-30T12:00:00Z"),
+      shouldAdvanceTime: true,
+    });
+    render(
+      <MemoryRouter>
+        <JobsTable items={[item]} id="jobs-table" />
+      </MemoryRouter>,
+    );
+
+    const times = document.querySelectorAll(
+      "#jobs-table tbody time",
+    ) as NodeListOf<HTMLTimeElement>;
+    expect(times).toHaveLength(2);
+    expect(times[0]).toHaveTextContent("3 hours ago");
+    expect(times[0]).toHaveAttribute("title", item.created_at);
+    expect(times[0]).toHaveAttribute("dateTime", item.created_at);
+    expect(times[1]).toHaveTextContent("30 minutes ago");
+    expect(times[1]).toHaveAttribute("title", item.updated_at);
   });
 });

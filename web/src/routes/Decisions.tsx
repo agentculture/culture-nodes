@@ -85,6 +85,53 @@ export function Decisions() {
 
 const PAGE_SIZE = 25;
 
+/**
+ * A ledger record's payload, with its prose readable as prose (task t27).
+ *
+ * A `claim` record's `statement` is a paragraph a human wrote or an agent
+ * composed — often several, with newlines. `JSON.stringify` renders those as
+ * literal `\n` inside a quoted string, so the one field a decider must
+ * actually READ was the one field they could not: PRD §10.4's whole premise is
+ * that a confirmation on an unread claim is worse than no confirmation. The
+ * statement is lifted out and rendered as text with its newlines intact; every
+ * other field still renders as the exact JSON payload, unmodified and
+ * untruncated, below it.
+ */
+function RecordPayload({ data }: { data: unknown }) {
+  const statement = statementOf(data);
+  const rest = statement === null ? data : withoutStatement(data);
+  const restIsEmpty =
+    rest !== null &&
+    typeof rest === "object" &&
+    !Array.isArray(rest) &&
+    Object.keys(rest as Record<string, unknown>).length === 0;
+
+  return (
+    <>
+      {statement !== null ? (
+        <p className="decisions-record__statement">{statement}</p>
+      ) : null}
+      {restIsEmpty ? null : (
+        <pre className="decisions-record__data">
+          {JSON.stringify(rest, null, 2)}
+        </pre>
+      )}
+    </>
+  );
+}
+
+/** The record's `statement`, when it has one that is prose. */
+function statementOf(data: unknown): string | null {
+  if (!data || typeof data !== "object" || Array.isArray(data)) return null;
+  const value = (data as Record<string, unknown>).statement;
+  return typeof value === "string" && value.trim() !== "" ? value : null;
+}
+
+function withoutStatement(data: unknown): unknown {
+  const { statement: _statement, ...rest } = data as Record<string, unknown>;
+  return rest;
+}
+
 function PendingDecisionsView() {
   const [tasks, setTasks] = useState<HumanTask[] | null>(null);
   const [claims, setClaims] = useState<PendingDecisionRun[]>([]);
@@ -192,9 +239,16 @@ function PendingDecisionsView() {
                   </li>
                 ) : (
                   <li className="inbox-card" key={item.record.id}>
-                    <label><input type="checkbox" defaultChecked /> include this record in the verdict</label>{" "}
+                    <label className="decisions-record__select">
+                      <input
+                        type="checkbox"
+                        defaultChecked
+                        aria-label={`include this record in the verdict (${item.record.id})`}
+                      />{" "}
+                      include this record in the verdict
+                    </label>{" "}
                     <code>{item.record.id}</code> · {item.record.record_type}
-                    <pre>{JSON.stringify(item.record.data, null, 2)}</pre>
+                    <RecordPayload data={item.record.data} />
                   </li>
                 ))}
               </ul>
@@ -547,10 +601,10 @@ function RunDecisionCard({
               {record.origin_kind})
             </label>
             {/* The payload in full: a decision on a claim nobody read is the
-                failure this whole surface exists to prevent. */}
-            <pre className="decisions-record__data">
-              {JSON.stringify(record.data, null, 2)}
-            </pre>
+                failure this whole surface exists to prevent. The statement
+                renders as prose so it can actually be read (task t27); the
+                rest is still the exact JSON, untruncated. */}
+            <RecordPayload data={record.data} />
           </li>
         ))}
       </ul>

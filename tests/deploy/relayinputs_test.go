@@ -108,6 +108,12 @@ func relayingScripts(t *testing.T) []string {
 		filepath.Join(dir, "install-secrets.sh"),
 		filepath.Join(dir, "actor-placement.sh"),
 		filepath.Join(dir, "issue-dialin-credential.sh"),
+		// The grant check (task t5, issue #253) reads a control-plane URL out
+		// of the invoking environment and is executed by
+		// grantsafety_test.go, so it is in the completeness guard's scope --
+		// even though it relays nothing to a host, which is a property that
+		// has to keep being true rather than one to assume.
+		filepath.Join(dir, "lanes", "grant-check.sh"),
 	}
 }
 
@@ -262,7 +268,7 @@ func inspectRelayRisk(t *testing.T, path string) relayRisk {
 	ast.Inspect(parsed, func(node ast.Node) bool {
 		switch n := node.(type) {
 		case *ast.Ident:
-			if n.Name == "installSecretsPath" || n.Name == "issueDialInPath" {
+			if n.Name == "installSecretsPath" || n.Name == "issueDialInPath" || n.Name == "grantCheckPath" {
 				risk.namesARelayingScript = true
 			}
 		case *ast.SelectorExpr:

@@ -53,7 +53,14 @@ def _run_block(tmp_path: Path, *, shell_api_url: str | None = None) -> subproces
     }
     if shell_api_url is not None:
         env["NODES_API_URL"] = shell_api_url
-    snippet = "set -euo pipefail\nsay() { :; }\n" + _env_write_block()
+    # deploy.sh has the timestamped-backup helper in scope by the time it
+    # sources this lane (task t5, issue #253), the same way it has `say` —
+    # sourced here from the real file rather than stubbed, so this harness
+    # exercises the backup the lane actually takes.
+    snippet = (
+        "set -euo pipefail\nsay() { :; }\n"
+        f'. "{ROOT / "deploy/prod/lanes/env-backup.sh"}"\n' + _env_write_block()
+    )
     return subprocess.run(  # nosec B603 - fixed bash and extracted repository script
         ["bash", "-c", snippet],
         env=env,

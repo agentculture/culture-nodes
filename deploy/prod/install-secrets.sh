@@ -50,6 +50,11 @@ SCRIPT_DIR=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
 # for that one resolver; the lane's bootstrap/provision verbs are deploy.sh's.
 # shellcheck source=deploy/prod/lanes/unix-user.sh
 . "$SCRIPT_DIR/lanes/unix-user.sh"
+# The timestamped backup behind every runner grant rewrite (task t5, issue
+# #253). Shared with deploy.sh so the two lanes that can rewrite
+# runner-secrets.env and runner.env leave the same recoverable trail.
+# shellcheck source=deploy/prod/lanes/env-backup.sh
+. "$SCRIPT_DIR/lanes/env-backup.sh"
 
 THOR=${1:-thor}
 ORIN=${2:-orin}
@@ -735,9 +740,49 @@ fi
 # token as one Basic-auth pair. Refuse a partial pair; relay both over stdin
 # to the runner's separate mode-600 EnvironmentFile so deploy.sh can safely
 # rewrite its non-secret runner.env without erasing them.
+#
+# This lane MERGES, for the same reason every prod.env write in this file
+# does, and it learned it the same way (task t5, issue #253). runner-secrets.env
+# holds two populations: the Jira pair this lane owns, and the sweep
+# credentials an operator grants by hand -- GITHUB_TOKEN, SONAR_TOKEN,
+# NODES_EVENT_TOKEN, which NO lane in this repo writes. The lane used to
+# `cat >` the whole file from its own two lines, so the #243 cutover deploy,
+# run by a shell holding no Jira pair, reduced thor's runner-secrets.env to 36
+# bytes of empty grants. The runner boundary then refused every sweep attempt
+# with `rejected_input: environment_refs names GITHUB_TOKEN, SONAR_TOKEN,
+# NODES_EVENT_TOKEN, not set in this worker process's own environment` -- 183
+# of 275 runs across the next sixteen hours, on a digest that had completed 92
+# times before the deploy.
+#
+# RUNNER_SECRETS_MERGE is $PROD_ENV_MERGE retargeted at the other file rather
+# than a second copy of the loop: the copies of that loop had already drifted
+# once (the trailing-newline guard existed in one and not the other), so the
+# one place it is written is the one place it can be fixed. Everything the
+# original says about why the replacement is a `case` and not a `sed s///`
+# applies here unchanged, and applies harder -- these values are relayed from
+# outside, not generated, so a value carrying the delimiter is an operator's
+# token rather than hex from `openssl rand`.
+RUNNER_SECRETS_MERGE=${PROD_ENV_MERGE//prod.env/runner-secrets.env}
+
 install_jira_runner_env() { # host
-  local host=$1
+  local host=$1 exists
+  exists=$(ssh "$host" 'if [ -f ~/.culture-nodes/runner-secrets.env ]; then echo yes; else echo no; fi')
   if [ -z "${JIRA_ACCOUNT_EMAIL:-}" ] && [ -z "${JIRA_API_TOKEN:-}" ]; then
+    if [ "$exists" = yes ]; then
+      # The #253 path. An unset pair is not an instruction to blank the two
+      # names -- on a host that already carries the file it is an instruction
+      # to do NOTHING, because the names are already granted there (by an
+      # earlier deploy, or by hand) and writing empty values over them is
+      # exactly the truncation this lane caused.
+      #
+      # Refusing the WRITE, not the deploy: the file already holds the grants,
+      # so there is nothing broken to stop for, and aborting install-secrets.sh
+      # here would take the notify and issuance lanes below it down with every
+      # deploy that has no Jira configured.
+      echo "refusing to rewrite ~/.culture-nodes/runner-secrets.env on $host: JIRA_ACCOUNT_EMAIL and JIRA_API_TOKEN are unset in this shell and the file already exists — its current grants (which may include GITHUB_TOKEN, SONAR_TOKEN, NODES_EVENT_TOKEN, granted by hand and written by no lane) were left untouched" >&2
+      echo "hint: export JIRA_ACCOUNT_EMAIL and JIRA_API_TOKEN to rotate the pair; leaving them unset is not a way to clear them" >&2
+      return 0
+    fi
     # Grant the NAMES with empty values rather than skipping the file.
     #
     # The runner boundary refuses an operation whose environment_refs name
@@ -753,6 +798,9 @@ install_jira_runner_env() { # host
     # deployment skips the Jira source entirely and never looks at them. What
     # the boundary needs is for the name to EXIST; what the script needs is to
     # know Jira is off. Both are true of an empty value.
+    #
+    # Reachable only when the host has NO runner-secrets.env at all, which is
+    # a first deploy: there is nothing here to overwrite.
     echo "JIRA_ACCOUNT_EMAIL/JIRA_API_TOKEN not set — granting empty values on $host so the sweep's environment_refs resolve" >&2
     printf 'JIRA_ACCOUNT_EMAIL=\nJIRA_API_TOKEN=\n' \
       | ssh "$host" 'umask 077; mkdir -p ~/.culture-nodes; cat > ~/.culture-nodes/runner-secrets.env; chmod 600 ~/.culture-nodes/runner-secrets.env'
@@ -762,9 +810,10 @@ install_jira_runner_env() { # host
     echo "JIRA_ACCOUNT_EMAIL and JIRA_API_TOKEN must both be set" >&2
     return 1
   fi
+  backup_env_file "$host" runner-secrets.env
   printf 'JIRA_ACCOUNT_EMAIL=%s\nJIRA_API_TOKEN=%s\n' "$JIRA_ACCOUNT_EMAIL" "$JIRA_API_TOKEN" \
-    | ssh "$host" 'umask 077; mkdir -p ~/.culture-nodes; cat > ~/.culture-nodes/runner-secrets.env; chmod 600 ~/.culture-nodes/runner-secrets.env'
-  echo "installed Jira Basic-auth pair in mode-600 runner-secrets.env on $host"
+    | ssh "$host" 'umask 077; mkdir -p ~/.culture-nodes; '"$RUNNER_SECRETS_MERGE"
+  echo "merged the Jira Basic-auth pair into mode-600 runner-secrets.env on $host (every other key in the file was left as it was)"
 }
 
 install_jira_runner_env "$THOR"

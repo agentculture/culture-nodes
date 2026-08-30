@@ -34,6 +34,11 @@ SCRIPT_DIR=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
 source "$SCRIPT_DIR/lanes/unix-user.sh"
 # shellcheck source=deploy/prod/lanes/account-bridges.sh
 source "$SCRIPT_DIR/lanes/account-bridges.sh"
+# The timestamped backup behind every runner grant rewrite (task t5, issue
+# #253), shared with install-secrets.sh. Sourced before any lane so the
+# runner.env lane below has it in scope.
+# shellcheck source=deploy/prod/lanes/env-backup.sh
+source "$SCRIPT_DIR/lanes/env-backup.sh"
 
 HOST=${1:?usage: deploy.sh <thor|orin|spark>}
 REMOTE_DIR="culture-nodes-prod"
@@ -51,6 +56,15 @@ if [[ "$HOST" != spark* ]]; then
   # --- preflight (task t2, spec c25/c28, PR #236 Qodo finding 6) -------------
   # shellcheck source=deploy/prod/lanes/preflight.sh
   source "$SCRIPT_DIR/lanes/preflight.sh"
+  # --- grant check (task t5, issue #253) ------------------------------------
+  # Still inside preflight's contract — read-only, before the archive, the
+  # image build and any `docker compose stop` — because a host missing a
+  # grant a startable workflow declares must be refused while there is still
+  # nothing to undo. Last of the preflight lanes: it diffs against runner.env,
+  # so the checkout and doctor refusals above (which say something is wrong
+  # with the host itself) come first.
+  # shellcheck source=deploy/prod/lanes/grant-check.sh
+  source "$SCRIPT_DIR/lanes/grant-check.sh"
 
   say "shipping $(git rev-parse --short "$REVISION") to $HOST:$REMOTE_DIR"
   git archive --format=tar "$REVISION" | ssh "$HOST" "rm -rf $REMOTE_DIR && mkdir -p $REMOTE_DIR && tar -x -C $REMOTE_DIR"

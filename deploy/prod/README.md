@@ -333,6 +333,64 @@ deployment decides *whose*. Leave them unset on a host that does not run the
 pr-upkeep loop — the sweep is then refused there by name, which is the
 correct answer and not a silent fallback to someone else's code.
 
+### Runner grants: what lives where, and how to put it back
+
+Five grants keep the pr-upkeep loop running, and they live in **two files**
+on each runner host, for one reason: `deploy.sh` rewrites `runner.env` on
+every deploy, so anything that must survive a deploy without being retyped
+belongs in the other file.
+
+| Grant | File | Who writes it |
+| --- | --- | --- |
+| `PR_UPKEEP_SWEEP_SOURCE_URL` / `_SHA256`, `PR_UPKEEP_SWEEP_JIRA_SOURCE_URL` / `_SHA256`, `PR_UPKEEP_REPOSITORIES` | `~/.culture-nodes/runner.env` | `deploy.sh` (`lanes/runner-env-write.sh`), every deploy, from the deploying shell or by retaining the existing line |
+| `JIRA_ACCOUNT_EMAIL` + `JIRA_API_TOKEN` | `~/.culture-nodes/runner-secrets.env` | `install-secrets.sh`'s Jira lane, **merged** — it replaces these two keys and no other |
+| `GITHUB_TOKEN` | `~/.culture-nodes/runner-secrets.env` | **by hand.** No lane in this repo writes it |
+| `SONAR_TOKEN` | `~/.culture-nodes/runner-secrets.env` | **by hand.** No lane in this repo writes it |
+| `NODES_EVENT_TOKEN` | `~/.culture-nodes/runner-secrets.env` | **by hand.** No lane in this repo writes it |
+
+The three hand-granted ones are why the Jira lane merges. It used to `cat >`
+the whole file, so the 2026-08-29 cutover deploy — run by a shell holding no
+Jira pair — reduced `runner-secrets.env` to 36 bytes of empty grants and took
+the other three with it. 183 of the next 275 sweep runs were refused with
+`rejected_input: environment_refs names GITHUB_TOKEN, SONAR_TOKEN,
+NODES_EVENT_TOKEN, not set in this worker process's own environment`, over
+sixteen hours (issue #253). Today the lane refuses to rewrite an existing
+`runner-secrets.env` when the pair is unset, and says so by name; leaving the
+pair unset is not a way to clear it.
+
+Add a hand-granted value the same way, without going through a lane:
+
+```bash
+ssh thor 'umask 077; printf "SONAR_TOKEN=%s\n" "$TOKEN" >> ~/.culture-nodes/runner-secrets.env'
+ssh thor 'systemctl --user restart nodes-runner'   # the unit reads it at start
+```
+
+**The deploy checks this before it ships anything.** `lanes/grant-check.sh`
+runs in preflight: it reads the latest version of every `workflow_key` the
+control plane can start today (one with a trigger, or one an enabled schedule
+fires) and diffs the `environmentRefs` those versions declare against the key
+*names* present in `runner.env` + `runner-secrets.env` on the host. A missing
+grant fails the deploy, naming the key and the workflow that declares it,
+while nothing on the host has been touched. It prints key names only — never a
+value, on any path — so the refusal can be pasted into an issue as-is. When
+the control plane cannot be reached it prints a `WARNING` and proceeds: an
+unreachable control plane is a state a deploy is often the fix for.
+
+**Rollback.** Every lane that rewrites either file copies the previous bytes
+aside first, as `<file>.bak-<UTC timestamp>` in the same directory, mode 600,
+and prints the restore command in the deploy log — for example:
+
+```text
+==> backed up runner-secrets.env on thor to /home/ori/.culture-nodes/runner-secrets.env.bak-20260830T172214Z
+==> restore it with: ssh thor 'cp /home/ori/.culture-nodes/runner-secrets.env.bak-20260830T172214Z ~/.culture-nodes/runner-secrets.env'
+```
+
+Restore, then `ssh thor 'systemctl --user restart nodes-runner'` — the unit
+reads both files at start, so an unrestarted runner keeps serving the grants
+it booted with. The ten most recent backups of each file are kept and older
+ones removed: each one is a second copy of live credentials, so the trail is
+bounded on purpose.
+
 ## The runner registry (NODES_RUNNER_SERVICES_FILE)
 
 A worker only dispatches code over the network when

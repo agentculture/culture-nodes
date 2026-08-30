@@ -105,6 +105,12 @@ if [ -n "$PR_UPKEEP_SWEEP_SOURCE_URL" ] && [ -n "$PR_UPKEEP_SWEEP_SOURCE_SHA256"
 	# file left nodes-runner in activating/auto-restart on thor, exit 2.)
 	target_home=$(ssh "$HOST" 'printf %s "$HOME"')
 	[ -n "$target_home" ] || { echo "refusing: could not resolve \$HOME on $HOST; runner.env was not touched" >&2; exit 1; }
+	# Last thing before the replacement, and after every refusal above: the
+	# bytes this deploy is about to replace stay on the host, and the deploy
+	# log carries the command that puts them back (task t5, issue #253).
+	# A backup taken before a refusal would be a copy of a file nothing
+	# changed.
+	backup_env_file "$HOST" runner.env
 	{ printf '%s\n' \
 		'NODES_RUNNER_LISTEN=:17070' \
 		"NODES_RUNNER_SECRET_FILE=$target_home/.culture-nodes/runner.secret" \

@@ -35,11 +35,21 @@
 # is not a list, a current version whose `normalized_ir` will not parse — is
 # reported as `unreadable:` and refuses the deploy alongside `missing:`.
 #
-# The three declines that remain are about not being able to ASK at all, not
-# about failing to understand an answer: a host with no runner.env yet (first
-# deploy), no python3 on the operator's machine, and a control plane that does
-# not answer. Each says UNVERIFIED out loud and none of them reaches the line
-# that claims the grants were checked.
+# EXACTLY TWO PATHS DO NOT REFUSE, and neither of them is an error.
+#
+#   1. A host with no runner.env yet (a first deploy). There are no grants to
+#      diff, so there is nothing this check could have found.
+#   2. A control plane that does not answer. That is a state a deploy is often
+#      the fix for, so it prints WARNING ... UNVERIFIED and proceeds. It is the
+#      one deliberate hole, and it is documented in deploy/prod/README.md.
+#
+# Everything else refuses and names the step: an ssh call that failed, a
+# runner.env that names no control plane, a temporary directory that could not
+# be created, no python3 to read the answer with, and every unreadable payload
+# above. The `no python3` case in particular used to print WARNING and proceed;
+# it does not any more, because it is the purest form of the thing this gate
+# exists to prevent -- a deploy in which nothing compared the grants, reported
+# in a line nobody reads at 03:00.
 #
 # NOT A ROLLBACK GATE. This lane writes nothing, on any path — it is the one
 # lane that touches these files and needs no backup, because it never opens
@@ -253,16 +263,51 @@ for ref in sorted(missing):
     print("missing: %s — declared by %s" % (ref, ", ".join(missing[ref])))
 PYTHON
 
-grant_check_host() { # host
-  local host=$1 url source_of_url workspace granted report read_status
+# grant_check_refuse <host> <what could not be done> [<remediation line>...]
+#
+# Every path that cannot COMPLETE the diff ends here, and ends the deploy. The
+# wording is fixed on purpose: an operator greps a deploy log for
+# "preflight failed", and a step that failed for a reason nobody named is a
+# step that gets skipped by hand on the next run.
+grant_check_refuse() { # host, step, remediation lines
+  local host=$1 step=$2 line
+  shift 2
+  {
+    echo "preflight failed on $host: $step, so not one workflow's grants were diffed. Nothing on $host was changed."
+    for line in "$@"; do echo "$line"; done
+    echo "See deploy/prod/README.md, 'Runner grants'."
+  } >&2
+  exit 1
+}
 
-  if [ "$(ssh "$host" 'if [ -f ~/.culture-nodes/runner.env ]; then echo yes; else echo no; fi')" = no ]; then
-    say "grant check: no runner.env on $host yet (first deploy) — the runner holds no grants to diff; skipped"
-    return 0
-  fi
+grant_check_host() { # host
+  local host=$1 url source_of_url workspace granted report read_status runner_env_state
+
+  # THE SSH CALLS ARE CHECKED, all three of them. Each answers a question this
+  # diff is built out of, and each used to answer the empty string when it
+  # failed -- which is a valid-looking answer to every one of them. An ssh
+  # failure here read as "the file is not absent" (so: carry on), as "the host
+  # names no control plane" (so: UNVERIFIED, carry on) and as "the host holds
+  # no grants at all" (so: refuse, naming keys the host may well have). Only
+  # the third of those even stopped the deploy, and it stopped it with a
+  # diagnosis that was not true.
+  runner_env_state=$(ssh "$host" 'if [ -f ~/.culture-nodes/runner.env ]; then echo yes; else echo no; fi') ||
+    grant_check_refuse "$host" "the ssh probe for ~/.culture-nodes/runner.env on $host failed" \
+      "Restore ssh access to $host and re-run this deploy. A host this check cannot reach is a host whose grants it cannot read, and shipping to it is the 2026-08-29 shape exactly: sixteen hours of refused runs caused by an environment nobody had compared."
+  case "$runner_env_state" in
+    no)
+      say "grant check: no runner.env on $host yet (first deploy) — the runner holds no grants to diff; skipped"
+      return 0
+      ;;
+    yes) ;;
+    *)
+      grant_check_refuse "$host" "the ssh probe for ~/.culture-nodes/runner.env on $host answered '$runner_env_state' rather than yes or no" \
+        "Something between this script and $host is rewriting command output (a login banner on a non-interactive shell is the usual one). Until that is fixed this check cannot tell a first deploy from a host it failed to read."
+      ;;
+  esac
   if ! command -v python3 >/dev/null 2>&1; then
-    say "WARNING: grant check skipped — no python3 on this machine to read the published workflows with; this deploy's grants are UNVERIFIED"
-    return 0
+    grant_check_refuse "$host" "there is no python3 on the machine running this deploy to read the published workflows with" \
+      "Install python3 here and re-run. This step used to print a WARNING and proceed; it does not any more, because 'nothing compared the grants' and 'the grants are fine' are the two states this gate exists to tell apart, and only one of them may ship."
   fi
 
   # The control plane to ask. The operator's own NODES_API_URL wins; otherwise
@@ -272,12 +317,19 @@ grant_check_host() { # host
   source_of_url="the NODES_API_URL set in this shell"
   if [ -z "$url" ]; then
     # shellcheck disable=SC2016 # the expansion is deliberately remote
-    url=$(ssh "$host" 'sed -n "s/^NODES_API_URL=//p" "$HOME/.culture-nodes/runner.env" | tail -n 1')
+    url=$(ssh "$host" 'sed -n "s/^NODES_API_URL=//p" "$HOME/.culture-nodes/runner.env" | tail -n 1') ||
+      grant_check_refuse "$host" "reading NODES_API_URL out of runner.env on $host over ssh failed" \
+        "Restore ssh access to $host and re-run, or export NODES_API_URL in this shell to name the control plane directly."
     source_of_url="the NODES_API_URL granted to the runner on $host"
   fi
   if [ -z "$url" ]; then
-    say "WARNING: grant check skipped — no control-plane URL in this shell or in runner.env on $host; this deploy's grants are UNVERIFIED"
-    return 0
+    # NOT the documented unreachable-control-plane decline. Nothing has been
+    # asked yet: this is a runner.env with no NODES_API_URL in it, which is the
+    # same host state lanes/runner-env-write.sh refuses this deploy over two
+    # lanes further on. Saying so here says it while the operator is still
+    # watching.
+    grant_check_refuse "$host" "no control-plane URL is set in this shell and runner.env on $host names none" \
+      "export NODES_API_URL=http://<thor-address>:18080 and re-run. runner.env on $host is missing the key lanes/runner-env-write.sh refuses a deploy for, so this is a host to correct rather than a check to skip."
   fi
   url=${url%/}
 
@@ -287,7 +339,12 @@ grant_check_host() { # host
   # reports as `Argument list too long` and this lane used to swallow as one
   # more "UNVERIFIED, proceeding". A gate that only fails on the payload size
   # the production control plane actually returns is not a gate.
-  workspace=$(mktemp -d "${TMPDIR:-/tmp}/nodes-grant-check.XXXXXX")
+  # A workspace that could not be created is not an unreachable control plane,
+  # though it arrives looking like one: curl would have nowhere to write, and
+  # curl failing is the ONE decline this lane is allowed to proceed on.
+  workspace=$(mktemp -d "${TMPDIR:-/tmp}/nodes-grant-check.XXXXXX") ||
+    grant_check_refuse "$host" "a temporary directory for the control plane's answers could not be created under ${TMPDIR:-/tmp}" \
+      "Make ${TMPDIR:-/tmp} writable on the machine running this deploy (or set TMPDIR to somewhere that is) and re-run."
 
   say "grant check: reading published workflows and schedules from $source_of_url (read-only)"
   curl -fsS --max-time "${NODES_API_TIMEOUT_SECONDS:-10}" -o "$workspace/workflows.json" "$url/v1alpha1/workflows?limit=500" || {
@@ -300,7 +357,11 @@ grant_check_host() { # host
     say "WARNING: grant check skipped — the control plane did not answer GET /v1alpha1/schedules; this deploy's grants are UNVERIFIED"
     return 0
   }
-  granted=$(grant_check_names_on_host "$host")
+  granted=$(grant_check_names_on_host "$host") || {
+    rm -rf "$workspace"
+    grant_check_refuse "$host" "reading the granted key NAMES off $host over ssh failed" \
+      "Restore ssh access to $host and re-run. Continuing here would diff every declared ref against an empty set and name keys as missing that $host may hold — a refusal an operator would act on by re-granting what was never gone."
+  }
 
   # The reader dying is a refusal, not a skip. It only runs once curl has an
   # answer in hand, so "I could not read it" means the answer itself was not

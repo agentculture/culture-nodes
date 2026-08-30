@@ -430,13 +430,17 @@ func grantedHost(t *testing.T, c *fakeCluster, host string, secrets string) {
 	seedFile(t, runnerSecretsPath(t, c, host), secrets)
 }
 
-func runGrantCheck(t *testing.T, c *fakeCluster, host, apiURL string) (string, string, int) {
+// extraEnv is appended after NODES_API_URL, so a caller may override PATH or
+// TMPDIR for it -- grantcheckfailclosed_test.go breaks one dependency of this
+// lane per test, and several of them are reachable only through the
+// environment.
+func runGrantCheck(t *testing.T, c *fakeCluster, host, apiURL string, extraEnv ...string) (string, string, int) {
 	t.Helper()
 	snippet := "set -euo pipefail\n" +
 		"say() { printf '==> %s\\n' \"$*\"; }\n" +
 		"HOST=" + host + "\n" +
 		". " + grantCheckPath(t) + "\n"
-	return runSnippet(t, c, snippet, "NODES_API_URL="+apiURL)
+	return runSnippet(t, c, snippet, append([]string{"NODES_API_URL=" + apiURL}, extraEnv...)...)
 }
 
 // TestGrantCheckPassesWhenEveryReachableRefIsGranted is the green path, and

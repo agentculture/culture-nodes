@@ -8,6 +8,7 @@
 package deploytest
 
 import (
+	"os"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -563,4 +564,125 @@ func TestTheDeploymentSettingsDefaultsAreParametersWithOneCopyEach(t *testing.T)
 func readDeploymentSettingsLane(t *testing.T) string {
 	t.Helper()
 	return readFileString(t, filepath.Join(filepath.Dir(installSecretsPath(t)), "lanes", "deployment-settings.sh"))
+}
+
+// --- the two operator-supplied origins are DATA, not shell syntax ----------
+
+// TestAnOperatorURLCrossesToTheHostAsDataAndExecutesNothing is PR #263 review
+// finding 9.
+//
+// NODES_UI_BASE_URL and NODES_CALLBACK_BASE_URL come from the operator's own
+// environment, and the lane used to carry them to the target by building the
+// remote command string `UI_BASE_URL='<value>'; CALLBACK_BASE_URL='<value>'; …`.
+// A single quote anywhere in either value closes that assignment early, and
+// everything after it is shell syntax the TARGET evaluates -- as root of the
+// deploy account, on a production host, before a single test in this file
+// would have noticed, because every fixture URL in the suite was
+// well-behaved.
+//
+// The value below is the two-character proof: a quote to break out and a
+// semicolon to start a command. It has to arrive in prod.env byte-for-byte,
+// and the file it would have created has to not exist. Both hosts, because a
+// value that is safe on one and executed on the other is the same defect.
+func TestAnOperatorURLCrossesToTheHostAsDataAndExecutesNothing(t *testing.T) {
+	c := newFakeCluster(t)
+	canary := filepath.Join(t.TempDir(), "executed-on-the-target")
+	uiURL := "http://ui.example.invalid/a';touch " + canary + "-ui;echo 'b"
+	callbackURL := "http://cb.example.invalid/c';touch " + canary + "-cb;echo 'd"
+
+	for _, host := range []string{"thor", "orin"} {
+		c.hostHome(t, host)
+	}
+	out, code := c.run(t, installSecretsPath(t), []string{"thor", "orin"},
+		"NODES_UI_BASE_URL="+uiURL,
+		"NODES_CALLBACK_BASE_URL="+callbackURL)
+	if code != 0 {
+		t.Fatalf("install-secrets.sh exited %d with a quote-bearing URL; the value is data and must "+
+			"neither break the deploy nor be executed by it\noutput:\n%s", code, out)
+	}
+
+	for _, host := range []string{"thor", "orin"} {
+		path := c.prodEnvPath(t, host)
+		env := readEnvFile(t, path)
+		env.assertNoDuplicateKeys(t, path)
+		if got := env.values["NODES_UI_BASE_URL"]; got != uiURL {
+			t.Errorf("%s: NODES_UI_BASE_URL = %q, want the operator's value verbatim %q", host, got, uiURL)
+		}
+		if got := env.values["NODES_CALLBACK_BASE_URL"]; got != callbackURL {
+			t.Errorf("%s: NODES_CALLBACK_BASE_URL = %q, want the operator's value verbatim %q", host, got, callbackURL)
+		}
+	}
+
+	// The whole finding, in one assertion: whatever the lane did with those
+	// values, it did not RUN them.
+	for _, suffix := range []string{"-ui", "-cb"} {
+		if _, err := os.Stat(canary + suffix); err == nil {
+			t.Errorf("%s exists: the quote in the URL closed the remote assignment and the shell after "+
+				"it ran on the ssh target", canary+suffix)
+		}
+	}
+}
+
+// TestTheDeploymentSettingsLaneBuildsNoRemoteAssignmentFromAValue is the
+// source-text half. The behavioural test above proves today's two values are
+// safe; this one is what stops the `KEY='$value'` idiom coming back for a
+// third value nobody writes a quote test for.
+//
+// The permitted shape is the one lanes/runner-env-write.sh already uses: the
+// values cross on stdin and are read with `read -r`, which never re-scans what
+// it reads. Interpolating a value into the ssh command string is the shape
+// that cannot be made safe by quoting it harder.
+func TestTheDeploymentSettingsLaneBuildsNoRemoteAssignmentFromAValue(t *testing.T) {
+	lane := readDeploymentSettingsLane(t)
+	for _, forbidden := range []string{
+		"UI_BASE_URL='$UI_BASE_URL'",
+		"CALLBACK_BASE_URL='$CALLBACK_BASE_URL'",
+		"HOST='$host'",
+		"DB_HOST='$db_host'",
+		"PROFILES='$profiles'",
+	} {
+		if strings.Contains(lane, forbidden) {
+			t.Errorf("deploy/prod/lanes/deployment-settings.sh still builds the remote assignment %s; a "+
+				"single quote in the value closes it and the target evaluates the rest", forbidden)
+		}
+	}
+	// The permitted shape, named rather than implied: each parameter is read
+	// on the far side. `read -r` appears elsewhere in this lane for unrelated
+	// reasons, so a bare substring test for it would pass a lane that had gone
+	// back to interpolation.
+	for _, parameter := range []string{"HOST", "DB_HOST", "PROFILES", "UI_BASE_URL", "CALLBACK_BASE_URL"} {
+		if want := "IFS= read -r " + parameter; !strings.Contains(lane, want) {
+			t.Errorf("the lane does not read %s on the far side (want %q); the stdin convention (see "+
+				"lanes/runner-env-write.sh) is what keeps an operator-supplied value from being shell syntax",
+				parameter, want)
+		}
+	}
+}
+
+// TestADeploymentSettingWithANewlineIsRefusedByName -- the one value the stdin
+// transport cannot carry.
+//
+// It is refused rather than truncated, and the refusal is not really about the
+// transport: prod.env is one KEY=value per line, so a value with a newline in
+// it has no representation on the host either. Silently sending the first line
+// would write a prod.env whose NODES_UI_BASE_URL is a value the operator never
+// typed, and the remaining lines would be read as further keys.
+func TestADeploymentSettingWithANewlineIsRefusedByName(t *testing.T) {
+	c := newFakeCluster(t)
+	for _, host := range []string{"thor", "orin"} {
+		c.hostHome(t, host)
+	}
+	_, stderr, code := c.runSplit(t, installSecretsPath(t), []string{"thor", "orin"},
+		"NODES_UI_BASE_URL=http://ui.example.invalid\nNODES_ADMIN=1")
+	if code == 0 {
+		t.Fatalf("install-secrets.sh accepted a deployment setting containing a newline; stderr:\n%s", stderr)
+	}
+	if !strings.Contains(stderr, "newline") || !strings.Contains(stderr, "NODES_UI_BASE_URL") {
+		t.Errorf("the refusal does not name the newline or the key to correct; stderr was:\n%s", stderr)
+	}
+	for _, host := range []string{"thor", "orin"} {
+		if got := readEnvFile(t, c.prodEnvPath(t, host)).values["NODES_ADMIN"]; got != "" {
+			t.Errorf("%s: the second line of the value landed as its own key NODES_ADMIN=%q", host, got)
+		}
+	}
 }

@@ -10,8 +10,10 @@ import {
   HELLO_WORLD_DIGEST,
   NODE_CATALOG_DEFINITION_COUNT,
   NODE_CATALOG_WORKFLOW_VERSIONS,
+  SWEEP_DOMINATED_RUNS,
   WORKFLOW_VERSIONS,
   WORKFLOWS_RUNS,
+  workflowsRunsFor,
 } from "../fixtures/workflows-fixture";
 import {
   ACTIVE_NODE_ID,
@@ -20,6 +22,7 @@ import {
   UNKNOWN_RUN_ID,
 } from "../fixtures/active-graphs-fixture";
 import { WORKFLOW_DIGEST } from "../fixtures/run-fixture";
+import { RECENT_RUNS_LIMIT } from "../domain/workflows";
 import { getAgentState, resetAgentState } from "../agent-state/store";
 import { resetSharedEventsForTests } from "../hooks/useSharedEvents";
 
@@ -153,9 +156,27 @@ function renderNodeGraphs(initialEntries: string[] = ["/graphs"]) {
   );
 }
 
+/**
+ * The mock server's `GET /v1alpha1/runs`, honoring `workflow_key` the way
+ * the real endpoint does (task t7's filter): a keyed request answers only
+ * that workflow's runs, an unkeyed one answers the whole window. The Node
+ * Graphs sub-tab asks per key (task t8); the Active Graphs sub-tab asks
+ * unkeyed, because "what is alive right now" is a cross-workflow question.
+ */
+function runsFor(
+  _signal?: AbortSignal,
+  params?: { workflow_key?: string },
+): Promise<{ items: typeof WORKFLOWS_RUNS }> {
+  return Promise.resolve({
+    items: params?.workflow_key
+      ? workflowsRunsFor(params.workflow_key)
+      : WORKFLOWS_RUNS,
+  });
+}
+
 function resolveFixture() {
   mockListWorkflows.mockResolvedValue({ items: WORKFLOW_VERSIONS });
-  mockListRuns.mockResolvedValue({ items: WORKFLOWS_RUNS });
+  mockListRuns.mockImplementation(runsFor);
   mockListNodeRuns.mockResolvedValue({ items: ACTIVE_NODE_RUNS });
 }
 
@@ -573,14 +594,94 @@ describe("Node Graphs sub-tab loading/empty/error", () => {
 });
 
 describe("Node Graphs sub-tab data fetch", () => {
-  it("requests every published workflow version and every run sorted by updated_at", async () => {
+  it("requests every published workflow version, then one runs page PER workflow_key", async () => {
     resolveFixture();
     renderNodeGraphs(["/graphs?tab=graphs"]);
     await screen.findByText("deliver-change");
     expect(mockListWorkflows).toHaveBeenCalledTimes(1);
-    expect(mockListRuns).toHaveBeenCalledTimes(1);
-    const [, runParams] = mockListRuns.mock.calls[0];
-    expect(runParams).toEqual({ sort: "updated_at" });
+    // One keyed request per published workflow_key — never one global
+    // listing sliced client-side (task t8).
+    expect(mockListRuns).toHaveBeenCalledTimes(2);
+    expect(mockListRuns.mock.calls.map(([, params]) => params)).toEqual([
+      { workflow_key: "deliver-change", sort: "updated_at", limit: RECENT_RUNS_LIMIT },
+      { workflow_key: "hello-world", sort: "updated_at", limit: RECENT_RUNS_LIMIT },
+    ]);
+  });
+});
+
+/**
+ * Task t8 / claim c8. The defect: each card's "recent runs" was filtered
+ * out of ONE unfiltered `GET /v1alpha1/runs` page. In production the
+ * pr-upkeep sweep mints a run every few minutes, so that page holds nothing
+ * but sweep runs and every workflow card claimed "No runs yet" while having
+ * hundreds of runs. The fixture below reproduces exactly that: the unkeyed
+ * listing is 50 sweep runs, and no card's own run is anywhere in it.
+ */
+describe("Node Graphs recent runs survive a sweep-dominated global window (task t8)", () => {
+  function resolveSweepDominated() {
+    mockListWorkflows.mockResolvedValue({
+      items: NODE_CATALOG_WORKFLOW_VERSIONS,
+    });
+    mockListRuns.mockImplementation((_signal, params) =>
+      Promise.resolve({
+        items: params?.workflow_key
+          ? workflowsRunsFor(params.workflow_key)
+          : SWEEP_DOMINATED_RUNS,
+      }),
+    );
+    mockListNodeRuns.mockResolvedValue({ items: [] });
+  }
+
+  it("renders a workflow's own runs even though not one of them is in the unfiltered window", async () => {
+    resolveSweepDominated();
+    renderNodeGraphs(["/graphs?tab=graphs"]);
+    const card = (await screen.findByText("deliver-change")).closest(
+      ".workflow-card",
+    ) as HTMLElement;
+    const runLinks = within(card)
+      .getAllByRole("link")
+      .filter((link) => link.getAttribute("href")?.startsWith("/runs/"));
+    expect(runLinks.map((link) => link.textContent)).toEqual([
+      "run-deliver-v2-01J8XKWORKFLOWS02",
+      "run-deliver-v1-01J8XKWORKFLOWS04",
+    ]);
+    expect(within(card).queryByText(/No runs yet/)).not.toBeInTheDocument();
+  });
+
+  it("never renders the empty state for any workflow that has runs", async () => {
+    resolveSweepDominated();
+    renderNodeGraphs(["/graphs?tab=graphs"]);
+    await screen.findByText("deliver-change");
+    for (const key of ["deliver-change", "hello-world"]) {
+      const card = document.querySelector(
+        `[data-workflow-key="${key}"]`,
+      ) as HTMLElement;
+      expect(within(card).queryByText(/No runs yet/)).not.toBeInTheDocument();
+    }
+  });
+
+  it("still renders the honest empty state for a workflow that genuinely has none (h14)", async () => {
+    resolveSweepDominated();
+    renderNodeGraphs(["/graphs?tab=graphs"]);
+    await screen.findByText("notify-team");
+    const card = document.querySelector(
+      '[data-workflow-key="notify-team"]',
+    ) as HTMLElement;
+    expect(within(card).getByText(/No runs yet/)).toBeInTheDocument();
+    expect(
+      within(card)
+        .queryAllByRole("link")
+        .filter((link) => link.getAttribute("href")?.startsWith("/runs/")),
+    ).toHaveLength(0);
+  });
+
+  it("never shows another workflow's runs on a card — the sweep's runs appear nowhere", async () => {
+    resolveSweepDominated();
+    renderNodeGraphs(["/graphs?tab=graphs"]);
+    await screen.findByText("deliver-change");
+    expect(
+      screen.queryByText(SWEEP_DOMINATED_RUNS[0].id),
+    ).not.toBeInTheDocument();
   });
 });
 

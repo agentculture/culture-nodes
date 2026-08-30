@@ -176,6 +176,61 @@ export const WORKFLOWS_RUNS: Run[] = [
 ];
 
 /**
+ * Which published `workflow_key` each fixture digest belongs to — the join
+ * `GET /v1alpha1/runs` itself makes server-side (`runs` JOIN
+ * `workflow_versions`, internal/api/queries.go). `ORPHAN_DIGEST` is
+ * deliberately absent: it belongs to no published version, so no
+ * workflow_key query can ever return that run.
+ */
+const WORKFLOW_KEY_BY_DIGEST: Record<string, string> = {
+  [WORKFLOW_DIGEST]: "deliver-change",
+  [DELIVER_CHANGE_V2_DIGEST]: "deliver-change",
+  [HELLO_WORLD_DIGEST]: "hello-world",
+};
+
+/**
+ * What `GET /v1alpha1/runs?workflow_key=<key>` answers for this fixture
+ * (task t8, using the filter task t7 added) — the per-card query the Node
+ * Graphs sub-tab now makes, one per published workflow_key, instead of
+ * filtering one global listing client-side.
+ *
+ * `notify-team` (NODE_CATALOG_WORKFLOW_VERSIONS) has no runs at all, so it
+ * answers `[]` — the fixture's honest "No runs yet" workflow.
+ */
+export function workflowsRunsFor(workflowKey: string): Run[] {
+  return WORKFLOWS_RUNS.filter(
+    (run) => WORKFLOW_KEY_BY_DIGEST[run.workflow_digest] === workflowKey,
+  );
+}
+
+/**
+ * The unfiltered `GET /v1alpha1/runs` window as production actually looks
+ * (task t8, claim c8): a single high-frequency workflow — the pr-upkeep
+ * sweep, minting a run every few minutes — fills the default 50-row page,
+ * so NOT ONE run of any other workflow appears in it. Filling each card's
+ * "recent runs" from this list is exactly how every workflow came to say
+ * "No runs yet" while having hundreds of runs.
+ *
+ * The Active Graphs sub-tab still reads the unfiltered listing (it asks
+ * "what is alive right now" across all workflows, not per card), so this
+ * stays a separate export rather than replacing WORKFLOWS_RUNS.
+ */
+export const SWEEP_DIGEST =
+  "sha256:5eee9100000000000000000000000000000000000000000000000000000000ab";
+
+export const SWEEP_DOMINATED_RUNS: Run[] = Array.from(
+  { length: 50 },
+  (_, i): Run => ({
+    id: `run-sweep-01J8XKSWEEP${String(i).padStart(6, "0")}`,
+    workflow_digest: SWEEP_DIGEST,
+    state: "completed",
+    created_at: t(59, 59 - i),
+    updated_at: t(59, 59 - i),
+    completed_at: t(59, 59 - i),
+  }),
+);
+
+/**
  * The version list `domain/node-catalog.test.ts` derives its catalog from:
  * `WORKFLOW_VERSIONS` (deliver-change x2 + hello-world) plus `notify-team`.
  * Three distinct workflow_keys once grouped by latest version.

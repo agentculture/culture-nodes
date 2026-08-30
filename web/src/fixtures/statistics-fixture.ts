@@ -28,7 +28,10 @@
  * and nr-stat-b1 (800 of 2000 input) report any cached_input_tokens — every
  * other reporting node run's contract exposes none, contributing nothing
  * (never a fabricated zero standing in for "unmeasurable"). Total cached
- * 1000 / total input 7500 = cache_ratio ~0.1333 ("13.3% cached").
+ * 1000 over a total prompt of 8500 (input 7500 + the 1000 cache reads
+ * reported ALONGSIDE it, not inside it) = cache_ratio ~0.1176
+ * ("11.8% cached") — see task t8 / claim c8 for why the denominator is
+ * not input alone.
  */
 
 import type { NodeRunListItem, Run, Usage } from "../api/types";

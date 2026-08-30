@@ -178,9 +178,17 @@ func runOut(r engine.Run, usage postgres.UsageRollup, meta runMetadata) RunOut {
 //     are NOT independently gated by their own reported/not-reported count;
 //     AttemptsReported/AttemptsNotReported remains the one coverage signal,
 //     per the ADR's explicit instruction not to invent a second sentinel.
-//   - CacheRatio is CachedInputTokens/InputTokens, computed only when
-//     InputTokens > 0 — never a fabricated 0/0 ratio when nothing in scope
-//     reported any input tokens at all. Omitted (nil) in that case.
+//   - CacheRatio is CachedInputTokens/(InputTokens+CachedInputTokens),
+//     computed only when that denominator is > 0 — never a fabricated 0/0
+//     ratio when nothing in scope reported any prompt tokens at all;
+//     omitted (nil) in that case. The denominator includes the cached
+//     tokens because every backend that reports cache telemetry at all
+//     reports cache reads ALONGSIDE input_tokens, not inside them (a codex
+//     attempt's cached_input_tokens is a sibling of input_tokens, not a
+//     subset of it). Dividing by InputTokens alone therefore had no bound
+//     at 1.0 and rendered "588% cached" on real data (task t8, claim c8);
+//     input+cached is the whole prompt the attempt consumed, so the ratio
+//     is a share of it and can never exceed 100%.
 type UsageOut struct {
 	InputTokens         int64             `json:"input_tokens"`
 	OutputTokens        int64             `json:"output_tokens"`
@@ -215,8 +223,8 @@ func usageOut(r postgres.UsageRollup) *UsageOut {
 		AttemptsReported:    r.AttemptsReported,
 		AttemptsNotReported: r.AttemptsNotReported,
 	}
-	if r.InputTokens > 0 {
-		ratio := float64(r.CachedInputTokens) / float64(r.InputTokens)
+	if prompt := r.InputTokens + r.CachedInputTokens; prompt > 0 {
+		ratio := float64(r.CachedInputTokens) / float64(prompt)
 		out.CacheRatio = &ratio
 	}
 	switch len(r.Cost) {

@@ -29,16 +29,30 @@ export function formatUsageTokens(usage: Usage): string {
 }
 
 /**
- * `cached_input_tokens / input_tokens`, computed only when `input_tokens >
- * 0` (task t2, ADR 0009) — mirrors the server's `usageOut` exactly: never a
- * fabricated 0/0 ratio when nothing in scope reported any input tokens.
- * `undefined` in that case, matching `Usage.cache_ratio`'s own optionality
- * on the wire (this is the client-side computation `mergeUsage` uses so a
- * merged rollup's ratio is recomputed from its own summed fields rather
- * than averaged from its inputs' individual ratios, which would be wrong).
+ * `cached_input_tokens / (input_tokens + cached_input_tokens)` — the share
+ * of the whole prompt that was served from cache (task t2/ADR 0009, fixed
+ * in task t8 / claim c8), computed only when that denominator is > 0.
+ * Mirrors the server's `usageOut` exactly.
+ *
+ * The denominator is not `input_tokens` alone: every backend that reports
+ * cache telemetry at all reports cache reads ALONGSIDE `input_tokens`,
+ * never inside them, so `cached / input` has no upper bound — /stats
+ * rendered "588% cached" on real production data. `input + cached` is the
+ * prompt the attempt actually consumed, so the ratio is a share of it and
+ * can never exceed 100%. A fully resumed turn that reports every prompt
+ * token as a cache read and no uncached input is therefore 100% cached,
+ * not unmeasurable.
+ *
+ * Still never a fabricated 0/0 ratio when nothing in scope reported any
+ * prompt tokens at all: `undefined` in that case, matching
+ * `Usage.cache_ratio`'s own optionality on the wire (this is the
+ * client-side computation `mergeUsage` uses so a merged rollup's ratio is
+ * recomputed from its own summed fields rather than averaged from its
+ * inputs' individual ratios, which would be wrong).
  */
 export function cacheRatio(usage: Pick<Usage, "input_tokens" | "cached_input_tokens">): number | undefined {
-  return usage.input_tokens > 0 ? usage.cached_input_tokens / usage.input_tokens : undefined;
+  const prompt = usage.input_tokens + usage.cached_input_tokens;
+  return prompt > 0 ? usage.cached_input_tokens / prompt : undefined;
 }
 
 /** `"13.3% cached"` — the cache-ratio stat tile's rendering, honest about absence. */
@@ -78,7 +92,7 @@ export function formatCostByCurrency(entries: CurrencyCost[]): string[] {
  * ambiguity the server-side sum accepts). `cache_ratio` is NOT summed or
  * averaged from the inputs' own ratios (that would be wrong — a weighted
  * quantity is not a mean of ratios); it is recomputed from the merged
- * sums via `cacheRatio`, honoring the same input_tokens > 0 gate.
+ * sums via `cacheRatio`, honoring the same input+cached > 0 gate.
  */
 export function mergeUsage(entries: Usage[]): Usage {
   let inputTokens = 0;

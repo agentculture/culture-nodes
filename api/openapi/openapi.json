@@ -3553,7 +3553,7 @@
             "type": "integer"
           },
           "cache_ratio": {
-            "description": "cached_input_tokens / input_tokens, present only when input_tokens \u003e 0. Never computed as a fabricated 0 when no attempt in scope reported any input tokens (0/0 is undefined, not zero) — absent in that case.",
+            "description": "cached_input_tokens / (input_tokens + cached_input_tokens) — the share of the whole prompt that was served from cache, so it is bounded by 1.0. Cache reads are reported ALONGSIDE input_tokens, never inside them, so dividing by input_tokens alone is unbounded and read as high as 5.88 on real data (task t8). Present only when input_tokens + cached_input_tokens \u003e 0: never computed as a fabricated 0 when no attempt in scope reported any prompt tokens (0/0 is undefined, not zero) — absent in that case.",
             "type": "number"
           },
           "cached_input_tokens": {

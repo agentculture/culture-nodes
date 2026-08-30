@@ -29,9 +29,13 @@ export type RunState =
  * `cached_input_tokens`/`reasoning_tokens` (task t2, ADR 0009) sum the same
  * way `input_tokens`/`output_tokens` do: an attempt that reported tokens
  * but no cache telemetry at all contributes nothing, never a fabricated
- * zero. `cache_ratio` (`cached_input_tokens / input_tokens`) is present
- * only when `input_tokens > 0` — omitted, not a fabricated 0, when nothing
- * in scope reported any input tokens.
+ * zero. `cache_ratio` is `cached_input_tokens / (input_tokens +
+ * cached_input_tokens)` — the share of the whole prompt served from cache,
+ * so it is bounded by 1.0 (task t8: cache reads are reported alongside
+ * `input_tokens`, never inside them, and dividing by `input_tokens` alone
+ * read as high as 5.88 on real data). Present only when `input_tokens +
+ * cached_input_tokens > 0` — omitted, not a fabricated 0, when nothing in
+ * scope reported any prompt tokens.
  */
 export interface Usage {
   input_tokens: number;

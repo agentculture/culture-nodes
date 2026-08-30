@@ -3,7 +3,7 @@ import type { Run, WorkflowIR, WorkflowVersion } from "../api/types";
 import {
   groupWorkflowVersions,
   RECENT_RUNS_LIMIT,
-  withRecentRuns,
+  withRunsByWorkflowKey,
 } from "./workflows";
 
 function ir(ownerRef?: string): WorkflowIR {
@@ -91,33 +91,80 @@ describe("groupWorkflowVersions", () => {
   });
 });
 
-describe("withRecentRuns", () => {
-  it("attaches only the runs whose workflow_digest matches one of the group's own versions", () => {
+describe("withRunsByWorkflowKey", () => {
+  it("attaches the runs the server answered for that group's own workflow_key", () => {
     const groups = groupWorkflowVersions([
       version("deliver-change", 1, "sha256:v1"),
       version("deliver-change", 2, "sha256:v2"),
       version("hello-world", 1, "sha256:h1"),
     ]);
-    const runs = [
-      run("run-v1", "sha256:v1", "2026-08-09T09:01:00Z"),
-      run("run-v2", "sha256:v2", "2026-08-09T09:02:00Z"),
-      run("run-h1", "sha256:h1", "2026-08-09T09:03:00Z"),
-      run("run-unrelated", "sha256:orphan", "2026-08-09T09:04:00Z"),
-    ];
-    const withRuns = withRecentRuns(groups, runs);
+    const withRuns = withRunsByWorkflowKey(
+      groups,
+      new Map([
+        [
+          "deliver-change",
+          [
+            run("run-v2", "sha256:v2", "2026-08-09T09:02:00Z"),
+            run("run-v1", "sha256:v1", "2026-08-09T09:01:00Z"),
+          ],
+        ],
+        ["hello-world", [run("run-h1", "sha256:h1", "2026-08-09T09:03:00Z")]],
+      ]),
+    );
     const deliver = withRuns.find((g) => g.workflowKey === "deliver-change")!;
-    expect(deliver.recentRuns.map((r) => r.id)).toEqual(["run-v1", "run-v2"]);
+    expect(deliver.recentRuns.map((r) => r.id)).toEqual(["run-v2", "run-v1"]);
     const hello = withRuns.find((g) => g.workflowKey === "hello-world")!;
     expect(hello.recentRuns.map((r) => r.id)).toEqual(["run-h1"]);
   });
 
-  it("preserves the caller's run ordering (the API already sorts newest-first)", () => {
+  // The task t8 defect, at the domain layer: the previous implementation
+  // filtered ONE global run list by digest, so a run of this workflow that
+  // fell outside that list's page simply vanished and the card claimed the
+  // workflow had never run. A per-key answer can only ever be empty when
+  // the workflow genuinely has no runs.
+  it("never empties a group whose key the server answered with runs, whatever else is running", () => {
     const groups = groupWorkflowVersions([version("deliver-change", 1, "sha256:v1")]);
-    const runs = [
-      run("run-newer", "sha256:v1", "2026-08-09T09:05:00Z"),
-      run("run-older", "sha256:v1", "2026-08-09T09:01:00Z"),
-    ];
-    const withRuns = withRecentRuns(groups, runs);
+    const withRuns = withRunsByWorkflowKey(
+      groups,
+      new Map([["deliver-change", [run("run-v1", "sha256:v1", "2026-08-09T09:01:00Z")]]]),
+    );
+    expect(withRuns[0].recentRuns).toHaveLength(1);
+  });
+
+  it("leaves a group with no runs empty — the honest 'No runs yet' case", () => {
+    const groups = groupWorkflowVersions([
+      version("deliver-change", 1, "sha256:v1"),
+      version("never-run", 1, "sha256:n1"),
+    ]);
+    const withRuns = withRunsByWorkflowKey(
+      groups,
+      new Map([
+        ["deliver-change", [run("run-v1", "sha256:v1", "2026-08-09T09:01:00Z")]],
+        ["never-run", []],
+      ]),
+    );
+    expect(withRuns.find((g) => g.workflowKey === "never-run")!.recentRuns).toEqual([]);
+  });
+
+  it("leaves a group the map has no entry for empty rather than inventing runs", () => {
+    const groups = groupWorkflowVersions([version("deliver-change", 1, "sha256:v1")]);
+    expect(withRunsByWorkflowKey(groups, new Map())[0].recentRuns).toEqual([]);
+  });
+
+  it("preserves the server's run ordering (it already sorts newest-first)", () => {
+    const groups = groupWorkflowVersions([version("deliver-change", 1, "sha256:v1")]);
+    const withRuns = withRunsByWorkflowKey(
+      groups,
+      new Map([
+        [
+          "deliver-change",
+          [
+            run("run-newer", "sha256:v1", "2026-08-09T09:05:00Z"),
+            run("run-older", "sha256:v1", "2026-08-09T09:01:00Z"),
+          ],
+        ],
+      ]),
+    );
     expect(withRuns[0].recentRuns.map((r) => r.id)).toEqual([
       "run-newer",
       "run-older",
@@ -129,16 +176,19 @@ describe("withRecentRuns", () => {
     const runs = Array.from({ length: RECENT_RUNS_LIMIT + 3 }, (_, i) =>
       run(`run-${i}`, "sha256:v1", `2026-08-09T09:${String(i).padStart(2, "0")}:00Z`),
     );
-    const withRuns = withRecentRuns(groups, runs);
-    expect(withRuns[0].recentRuns).toHaveLength(RECENT_RUNS_LIMIT);
-
-    const withCustomLimit = withRecentRuns(groups, runs, 2);
-    expect(withCustomLimit[0].recentRuns).toHaveLength(2);
+    const byKey = new Map([["deliver-change", runs]]);
+    expect(withRunsByWorkflowKey(groups, byKey)[0].recentRuns).toHaveLength(
+      RECENT_RUNS_LIMIT,
+    );
+    expect(withRunsByWorkflowKey(groups, byKey, 2)[0].recentRuns).toHaveLength(2);
   });
 
   it("does not mutate the groups it was given", () => {
     const groups = groupWorkflowVersions([version("deliver-change", 1, "sha256:v1")]);
-    withRecentRuns(groups, [run("run-v1", "sha256:v1", "2026-08-09T09:01:00Z")]);
+    withRunsByWorkflowKey(
+      groups,
+      new Map([["deliver-change", [run("run-v1", "sha256:v1", "2026-08-09T09:01:00Z")]]]),
+    );
     expect(groups[0].recentRuns).toEqual([]);
   });
 });

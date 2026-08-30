@@ -2947,6 +2947,10 @@
             "description": "The `signal_events` fact the last fire appended — the audit trail in one field, since the runs it triggered are reachable from it.",
             "type": "string"
           },
+          "last_failure_detail": {
+            "description": "The repeated reason, verbatim: the last minted run's last attempt's `result.error.detail` (falling back to that attempt's technical status, then the run's, when the attempt reported no error envelope). Absent when the schedule is not currently failing, so its presence is the answer to \"is this schedule holding back, and why\".",
+            "type": "string"
+          },
           "last_fired_at": {
             "description": "Absent until the first fire.",
             "format": "date-time",
@@ -2969,6 +2973,11 @@
             "format": "int64",
             "type": "integer"
           },
+          "suppressed_count": {
+            "description": "Due occurrences this schedule held back because its last two minted runs failed with the SAME reason (task t9, issue #253).\n\nSuppression is a rate, not a stop: a suppressed schedule still mints a probe run at most every `NODES_SCHEDULE_PROBE_INTERVAL` (default 30m), so a repaired environment is discovered without an operator resuming anything, and one completed run puts the schedule straight back on its declared cadence. `enabled` therefore keeps its own meaning — an operator said stop — while this counter records the environment saying stop.\n\nCounted rather than inferred, and separate from `skip_count`, because \"the operator declared a catch-up policy\" and \"the work keeps failing identically\" are different answers to \"why has nothing run\".",
+            "format": "int64",
+            "type": "integer"
+          },
           "updated_at": {
             "format": "date-time",
             "type": "string"
@@ -2986,6 +2995,7 @@
           "next_fire_at",
           "fire_count",
           "skip_count",
+          "suppressed_count",
           "created_at",
           "updated_at"
         ],

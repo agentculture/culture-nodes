@@ -115,6 +115,15 @@ type Options struct {
 	// TicketReports drains lifecycle report intents after engine work. Nil
 	// disables the optional Jira operating surface.
 	TicketReports interface{ Run(context.Context) error }
+	// ScheduleProbeInterval is the floor between mints for a schedule whose
+	// last two runs failed identically (NODES_SCHEDULE_PROBE_INTERVAL, task
+	// t9). Zero selects postgres.DefaultScheduleProbeInterval.
+	ScheduleProbeInterval time.Duration
+	// ScheduleFailureAlertAfter is how many consecutive identical failures
+	// raise one pending schedule_failing human task
+	// (NODES_SWEEP_FAILURE_ALERT_AFTER). Zero selects
+	// postgres.DefaultSweepFailureAlertAfter; negative disables the alert.
+	ScheduleFailureAlertAfter int
 	// Now is the clock this scheduler reads when it asks what is due.
 	// Defaults to time.Now.
 	//

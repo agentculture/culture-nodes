@@ -3592,7 +3592,8 @@ components:
       type: object
       required:
         [id, name, event_name, emitter, payload, interval_seconds, catch_up,
-         enabled, next_fire_at, fire_count, skip_count, created_at, updated_at]
+         enabled, next_fire_at, fire_count, skip_count, suppressed_count,
+         created_at, updated_at]
       properties:
         id:
           type: string
@@ -3667,6 +3668,37 @@ components:
           type: integer
           format: int64
           description: Occurrences declined under a `skip` catch-up policy.
+        suppressed_count:
+          type: integer
+          format: int64
+          description: >-
+            Due occurrences this schedule held back because its last two
+            minted runs failed with the SAME reason (task t9, issue #253).
+
+
+            Suppression is a rate, not a stop: a suppressed schedule still
+            mints a probe run at most every
+            `NODES_SCHEDULE_PROBE_INTERVAL` (default 30m), so a repaired
+            environment is discovered without an operator resuming anything,
+            and one completed run puts the schedule straight back on its
+            declared cadence. `enabled` therefore keeps its own meaning — an
+            operator said stop — while this counter records the environment
+            saying stop.
+
+
+            Counted rather than inferred, and separate from `skip_count`,
+            because "the operator declared a catch-up policy" and "the work
+            keeps failing identically" are different answers to "why has
+            nothing run".
+        last_failure_detail:
+          type: string
+          description: >-
+            The repeated reason, verbatim: the last minted run's last
+            attempt's `result.error.detail` (falling back to that attempt's
+            technical status, then the run's, when the attempt reported no
+            error envelope). Absent when the schedule is not currently
+            failing, so its presence is the answer to "is this schedule
+            holding back, and why".
         created_at:
           type: string
           format: date-time

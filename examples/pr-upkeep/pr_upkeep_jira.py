@@ -92,9 +92,7 @@ def jira_work_items(payload: dict, *, site: str, project: str) -> list[dict]:
                 "line": None,
                 "title": fields.get("summary") or "",
                 "description": full_description[:JIRA_DESCRIPTION_MAX_CHARS],
-                "description_truncated": (
-                    len(full_description) > JIRA_DESCRIPTION_MAX_CHARS
-                ),
+                "description_truncated": (len(full_description) > JIRA_DESCRIPTION_MAX_CHARS),
                 "status": status,
                 "details_url": f"https://{site}/browse/{urllib.parse.quote(key)}",
             }
@@ -350,21 +348,23 @@ def jira_history_facts(
             }
         ],
     }
-    timeline = [
-        (creation["created"], -1, _history_id_key(creation["id"]), "changelog", creation)
-    ] + [
-        (str(h.get("created") or ""), 0, _history_id_key(h.get("id")), "changelog", h)
-        for h in histories
-    ] + [
-        (
-            str(c.get("created") or c.get("updated") or ""),
-            1,
-            _history_id_key(c.get("id")),
-            "comment",
-            c,
-        )
-        for c in comments
-    ]
+    timeline = (
+        [(creation["created"], -1, _history_id_key(creation["id"]), "changelog", creation)]
+        + [
+            (str(h.get("created") or ""), 0, _history_id_key(h.get("id")), "changelog", h)
+            for h in histories
+        ]
+        + [
+            (
+                str(c.get("created") or c.get("updated") or ""),
+                1,
+                _history_id_key(c.get("id")),
+                "comment",
+                c,
+            )
+            for c in comments
+        ]
+    )
     timeline.sort(key=lambda entry: entry[:3])
 
     facts = []

@@ -148,6 +148,8 @@ def _stub_sweep(
     `comments` maps PR number -> its GitHub issue comments (default none).
     `running_findings` seeds the finding ids a still-running pr-upkeep run
     already carries, which is what the emission dedupe reads (task t12).
+    The third element of the stubbed answer is `dedupe_truncated`, always
+    False here: these tests read a complete listing.
     `worked_by_head` seeds {head_sha: ids already dispatched at that head} —
     the second dedupe clause, which is what stops a finding whose run has
     ENDED being re-dispatched at the same commit (issue #268).
@@ -183,9 +185,10 @@ def _stub_sweep(
     monkeypatch.setattr(
         sweep,
         "fetch_dispatched_findings",
-        lambda: (
+        lambda *_a, **_kw: (
             set(running_findings or ()),
             {head: set(ids) for head, ids in (worked_by_head or {}).items()},
+            False,
         ),
     )
     monkeypatch.setattr(sweep, "fetch_check_runs", fake_checks)

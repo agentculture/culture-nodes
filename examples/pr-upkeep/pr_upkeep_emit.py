@@ -65,11 +65,20 @@ RUNS_MAX_PAGES = 20
 #: human merges (issue #268; README, "One finding per fact").
 FINDINGS_PER_EVENT = 1
 
-#: The run state that means "working it right now". Every other state — and a
-#: run whose state a future control plane spells differently — is treated as
-#: ended, which is the safe direction: an ended run only ever contributes to
-#: clause 2, which is scoped to one head sha.
-RUN_STATE_RUNNING = "running"
+#: The run states that mean "over" (engine.RunState.Terminal). Everything
+#: else counts as in flight for clause 1 — `created` and `waiting` as well as
+#: `running`, matching the engine's own ActiveRunStatuses.
+#:
+#: Qodo finding 2 on PR #269, and the direction is deliberate. Reading only
+#: `running` as in flight was wrong twice over: `waiting` is a real
+#: nonterminal state (a run frozen behind its ticket reaches it), and a state
+#: a future control plane adds would silently land on the permissive side. An
+#: unknown state therefore counts as IN FLIGHT — a finding wrongly held back
+#: shows up in `skipped_findings` where a reader can see it, while a finding
+#: wrongly released is a second billable session and a second approval for one
+#: change, seen by nobody. The comment this replaces called the opposite "the
+#: safe direction", which was exactly backwards.
+TERMINAL_RUN_STATES = frozenset({"completed", "failed", "cancelled"})
 
 
 def runs_query(limit: int = RUNS_PAGE_LIMIT, cursor: str = "") -> str:
@@ -99,7 +108,7 @@ def next_run_cursor(listed: dict | None) -> str:
     return cursor if isinstance(cursor, str) else ""
 
 
-def dispatched_finding_ids(listed: dict | list | None) -> tuple[set, dict]:
+def dispatched_finding_ids(listed: dict | list | None, repository: str = "") -> tuple[set, dict]:
     """The run listing -> (ids being worked now, {head_sha: ids worked there}).
 
     Takes one page or every page of the listing, because a page boundary is
@@ -110,6 +119,15 @@ def dispatched_finding_ids(listed: dict | list | None) -> tuple[set, dict]:
     exactly what was dispatched for it and `input.head_sha` is the commit it
     was dispatched against. Malformed rows are skipped rather than raising:
     this is a dedupe, and one unreadable run must not stop a whole tick.
+
+    `repository` scopes the answer to the one repo this cycle sweeps (Qodo
+    finding 4 on PR #269). Finding ids are NOT repository-qualified —
+    `pr236-qodo-1` names a PR number and an index, nothing more — so two
+    configured repositories sharing a commit sha and a PR number would answer
+    each other's questions, and a fork and its upstream share commit shas by
+    construction. A run that declares no repository is kept rather than
+    filtered: it cannot be ruled out, and for a dedupe the safe direction is
+    to suppress.
     """
     pages = [listed] if isinstance(listed, dict) else (listed or [])
     in_flight: set = set()
@@ -121,6 +139,9 @@ def dispatched_finding_ids(listed: dict | list | None) -> tuple[set, dict]:
             run_input = run.get("input")
             if not isinstance(run_input, dict):
                 continue
+            run_repository = run_input.get("repository")
+            if repository and isinstance(run_repository, str) and run_repository != repository:
+                continue
             findings = run_input.get("findings")
             ids = {
                 finding["id"]
@@ -129,7 +150,7 @@ def dispatched_finding_ids(listed: dict | list | None) -> tuple[set, dict]:
             }
             if not ids:
                 continue
-            if run.get("state") == RUN_STATE_RUNNING:
+            if run.get("state") not in TERMINAL_RUN_STATES:
                 in_flight |= ids
             head_sha = run_input.get("head_sha")
             if isinstance(head_sha, str) and head_sha:

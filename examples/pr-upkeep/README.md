@@ -289,9 +289,65 @@ PR move*, the finding id answers *is this a different piece of work*.
 Two properties fall out of that shape:
 
 - **A PR with N findings gets N fixes before its merge**, one per tick, in
-  priority order — not N parallel agents on one branch.
+  priority order — not N dispatched at once. (It does *not* promise only one
+  fix session ever touches a PR: if a fix outlasts the tick, the next
+  dispatch overlaps it. See the recipe's "one tick, precisely".)
 - **A PR with no findings keeps the two-key watermark it always had**, so
   rolling this out does not re-deliver every clean PR's current head.
+
+### The clause the old cursor was enforcing by accident
+
+Adding the finding to the cursor removed something nobody had written down.
+When the watermark was `{head_sha, newest_comment_at}` it was byte-identical
+on every tick, so `duplicate=true` suppressed not only "this finding again"
+but **"anything again, at this commit"** — including a finding whose run had
+already ended. Make the cursors differ per finding and that goes away: two
+findings that both end `no_change` alternate forever, one billable agent
+session every 30 minutes, each re-working a finding an actor already declined.
+
+So the implied rule is now a stated one, in `pr_upkeep_emit.py`, and a
+finding is emitted only when **both** clauses hold:
+
+1. **no run is working it**, at any head sha — a second dispatch of a finding
+   in flight is a second `human-merges-pr` approval for one change (the t12
+   clause);
+2. **no run has already worked it at THIS head sha**, whatever that run
+   decided — `no_change`, a rejected fix and a technical failure are all
+   answers, and re-asking at the same commit re-buys an answer already given.
+
+Clause 2 is scoped to the commit, not the finding: a push is new code, so a
+moved head re-opens every finding on the PR. The net contract is the old one
+plus exactly what #268 wanted — **nothing new until the PR moves, except a
+finding nobody has worked yet**.
+
+Answering clause 2 is why the run listing is no longer filtered to
+`state=running`: the runs it asks about are precisely the ones that have
+ended. Four consequences follow, all four caught by a Qodo review of PR #269
+before they shipped — and the first fixed by **this loop itself**, which
+picked the finding up off #269 and pushed the commit:
+
+- **The listing is followed to the end.** It is cursor-paginated and
+  newest-first, so ended runs are exactly what a single page drops, and a
+  dropped run's finding becomes eligible again at the same head. Past a page
+  bound the sweep says so — on stderr *and* as `dedupe_complete: false` in the
+  report — because past it clause 2 is a window rather than a guarantee.
+- **In flight means non-terminal, not `running`.** `waiting` is a real state
+  and a future control plane may add more, so anything outside
+  `completed / failed / cancelled` counts as in flight. A finding wrongly held
+  back appears in `skipped_findings` where a reader sees it; a finding wrongly
+  released is a second billable session nobody sees.
+- **The answer is scoped to the repository being swept.** Finding ids carry a
+  PR number and an index, never a repository, so a fork and its upstream —
+  which share commit shas by construction — would otherwise answer each
+  other's questions.
+- **The environment-read guard scans every fetched module.** The helper
+  written to stop coverage escaping by moving code between files did not list
+  the file the code then moved into; a test now reads the bootstrap's own
+  source tuples, so the guard's list and the workflow cannot drift.
+
+The tick's summary keeps the refusals apart — `skipped_findings` (in flight,
+possibly waiting on a person right now) and `worked_findings` (settled until
+the PR moves) — because a reader acts on them differently.
 
 On the first tick after the deploy, a PR *with* findings has a stored
 two-key watermark and will be sent a three-key one, which is not a duplicate —

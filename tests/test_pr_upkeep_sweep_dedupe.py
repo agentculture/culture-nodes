@@ -305,7 +305,7 @@ class TestFetchDispatchedFindings:
             return {"items": [{"state": "running", "input": {"findings": [{"id": "a"}]}}]}
 
         monkeypatch.setattr(sweep, "_get_json", fake_get)
-        assert sweep.fetch_dispatched_findings() == ({"a"}, {})
+        assert sweep.fetch_dispatched_findings() == ({"a"}, {}, False)
         assert seen["url"].startswith("https://nodes.example/v1alpha1/runs?")
         assert "workflow_key=pr-upkeep" in seen["url"]
         assert seen["token"] == "event-token"
@@ -338,7 +338,7 @@ class TestFetchDispatchedFindings:
             return pages[len(urls) - 1]
 
         monkeypatch.setattr(sweep, "_get_json", fake_get)
-        assert sweep.fetch_dispatched_findings() == ({"a"}, {"sha-a": {"a", "b"}})
+        assert sweep.fetch_dispatched_findings() == ({"a"}, {"sha-a": {"a", "b"}}, False)
         assert len(urls) == 2
         assert "cursor" not in urls[0]
         assert "cursor=cur-2" in urls[1]
@@ -358,7 +358,10 @@ class TestFetchDispatchedFindings:
             return {"items": [], "next_cursor": f"cur-{len(urls)}"}
 
         monkeypatch.setattr(sweep, "_get_json", fake_get)
-        assert sweep.fetch_dispatched_findings() == (set(), {})
+        # The third element is the truncation fact itself: stderr is for
+        # whoever opens the node output, and this is for whatever reads the
+        # report.
+        assert sweep.fetch_dispatched_findings() == (set(), {}, True)
         assert len(urls) == emit.RUNS_MAX_PAGES
         assert "were NOT read this cycle" in capsys.readouterr().err
 
@@ -374,7 +377,7 @@ def test_an_unreadable_runs_list_names_its_stage_and_emits_nothing(monkeypatch, 
     silently. The sweep fails loudly instead, like every other read surface."""
     calls = _pass(monkeypatch, head_sha="sha-a")
 
-    def boom():
+    def boom(*_args, **_kwargs):
         raise urllib.error.URLError("connection refused")
 
     monkeypatch.setattr(sweep, "fetch_dispatched_findings", boom)
@@ -440,3 +443,67 @@ class TestAFindingWorkedAtThisHeadIsNotDispatchedAgain:
         assert report["skipped_findings"] == ["pr236-qodo-1"]
         assert report["worked_findings"] == ["pr236-qodo-2", "pr236-qodo-3"]
         assert report["emitted"] == 0
+
+
+def test_a_waiting_or_unknown_state_counts_as_in_flight():
+    """Qodo finding 2, and clause 1's safe direction. `waiting` is nonterminal
+    (a run frozen behind its ticket reaches it), and a state a future control
+    plane adds must not land on the permissive side: a finding wrongly held
+    back is visible in `skipped_findings`, a finding wrongly released is a
+    second billable session and a second approval nobody sees."""
+    listed = {
+        "items": [
+            {"state": "waiting", "input": {"head_sha": "s", "findings": [{"id": "w"}]}},
+            {"state": "created", "input": {"head_sha": "s", "findings": [{"id": "n"}]}},
+            {"state": "from_the_future", "input": {"head_sha": "s", "findings": [{"id": "f"}]}},
+            {"state": "completed", "input": {"head_sha": "s", "findings": [{"id": "c"}]}},
+            {"state": "cancelled", "input": {"head_sha": "s", "findings": [{"id": "x"}]}},
+        ]
+    }
+    in_flight, by_head = emit.dispatched_finding_ids(listed)
+    assert in_flight == {"w", "n", "f"}, "only completed/failed/cancelled are over"
+    assert by_head == {"s": {"w", "n", "f", "c", "x"}}
+
+
+def test_a_finding_worked_in_another_repository_does_not_suppress_this_one():
+    """Qodo finding 4: finding ids carry a PR number and an index, never a
+    repository — so a fork and its upstream, which share commit shas by
+    construction, would otherwise answer each other's questions."""
+    listed = {
+        "items": [
+            {
+                "state": "completed",
+                "input": {
+                    "repository": "other/repo",
+                    "head_sha": "sha-a",
+                    "findings": [{"id": "pr236-qodo-1"}],
+                },
+            },
+            {
+                "state": "completed",
+                "input": {
+                    "repository": "owner/repo",
+                    "head_sha": "sha-a",
+                    "findings": [{"id": "pr236-qodo-2"}],
+                },
+            },
+            # No repository declared: kept, because it cannot be ruled out and
+            # for a dedupe the safe direction is to suppress.
+            {
+                "state": "running",
+                "input": {"head_sha": "sha-a", "findings": [{"id": "pr9-qodo-1"}]},
+            },
+        ]
+    }
+    in_flight, by_head = emit.dispatched_finding_ids(listed, "owner/repo")
+    assert in_flight == {"pr9-qodo-1"}
+    assert by_head == {"sha-a": {"pr236-qodo-2", "pr9-qodo-1"}}
+
+
+def test_the_summary_says_whether_the_dedupe_read_the_whole_population(monkeypatch, capsys):
+    """A degradation only stderr can see is one that gets noticed the month
+    after it starts costing. `dedupe_complete` puts it in the report an
+    operator's tooling reads."""
+    _pass(monkeypatch, head_sha="sha-a")
+    assert sweep.main() == 0
+    assert json.loads(capsys.readouterr().out)["dedupe_complete"] is True

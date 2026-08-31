@@ -726,7 +726,7 @@ def raise_event(
         return json.load(response)
 
 
-def fetch_dispatched_findings() -> tuple:
+def fetch_dispatched_findings(repository: str = "") -> tuple:
     """Ask the control plane which findings are already spoken for.
 
     The read is the run listing followed across its pages — the listing is
@@ -744,7 +744,7 @@ def fetch_dispatched_findings() -> tuple:
     if not base or not token:
         raise ValueError("NODES_API_URL and NODES_EVENT_TOKEN are required")
     runs_url = f"{base.rstrip('/')}/v1alpha1/runs?"
-    pages, cursor = [], ""
+    pages, cursor, truncated = [], "", False
     for _ in range(RUNS_MAX_PAGES):
         page = _get_json(f"{runs_url}{runs_query(cursor=cursor)}", token)
         pages.append(page)
@@ -752,6 +752,7 @@ def fetch_dispatched_findings() -> tuple:
         if not cursor:
             break
     else:
+        truncated = True
         # Said out loud rather than swallowed: past this bound the dedupe is
         # reading a window, not the population, so clause 2 stops being a
         # guarantee. The failure direction is re-emission, never wrong
@@ -764,7 +765,12 @@ def fetch_dispatched_findings() -> tuple:
             "can be dispatched again",
             file=sys.stderr,
         )
-    return dispatched_finding_ids(pages)
+        # ...and in the machine-readable summary as well as on stderr. The
+        # stderr line is for whoever opens the node's output; `dedupe_complete`
+        # is for whatever reads the report, which is the surface an operator
+        # actually watches. A degradation only one of those two can see is a
+        # degradation that gets noticed the month after it starts costing.
+    return (*dispatched_finding_ids(pages, repository), truncated)
 
 
 def _max_prs_per_sweep() -> int:
@@ -850,7 +856,11 @@ def main() -> int:
             )
 
         with attempting("reading pr-upkeep runs (control plane)"):
-            in_flight_findings, findings_worked_by_head = fetch_dispatched_findings()
+            (
+                in_flight_findings,
+                findings_worked_by_head,
+                dedupe_truncated,
+            ) = fetch_dispatched_findings(github_repo)
         emitted = []
         skipped_findings = []
         # Already dispatched at this PR's current head: settled until the PR
@@ -971,6 +981,10 @@ def main() -> int:
             "emitted": len(emitted),
             "skipped_findings": skipped_findings,
             "worked_findings": worked_findings,
+            # False means the dedupe read a window rather than the whole run
+            # population, so "already worked at this head" is not a guarantee
+            # this cycle.
+            "dedupe_complete": not dedupe_truncated,
             "deferred_findings": deferred_findings,
         },
         sys.stdout,
